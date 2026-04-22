@@ -6,6 +6,94 @@ use yggdrasil_ledger::{EpochNo, SlotNo};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EpochSize(pub u64);
 
+/// Era-aware epoch schedule covering the Byron→Shelley hard-fork.
+///
+/// Cardano mainnet, preprod, and preview have a Byron prefix with a
+/// fixed slots-per-epoch (21,600) followed by a Shelley-and-later
+/// region with a different slots-per-epoch (e.g. 432,000 on
+/// mainnet/preprod, 86,400 on preview).  The Byron→Shelley boundary
+/// occurs at a network-specific absolute slot, and the first
+/// post-Byron epoch number is also network-specific (208 on mainnet,
+/// 4 on preprod, 0 on preview).
+///
+/// When `byron_shelley_transition` is `Some((boundary_slot, first_shelley_epoch))`,
+/// slot-to-epoch math uses Byron pacing for `slot < boundary_slot` and
+/// Shelley pacing afterwards.  When it is `None`, the schedule
+/// degenerates to a simple fixed-length epoch using `slots_per_epoch`,
+/// matching the legacy `EpochSize` behavior.
+///
+/// Reference: `Cardano.Slotting.EpochInfo` plus the hard-fork-history
+/// summary in `Ouroboros.Consensus.HardFork.History`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EpochSchedule {
+    /// Slots per epoch in the post-Byron (Shelley+) region.
+    pub slots_per_epoch: EpochSize,
+    /// Slots per epoch in the Byron region.  Defaults to 21,600 on the
+    /// public networks.
+    pub byron_slots_per_epoch: u64,
+    /// Optional Byron→Shelley transition: `(boundary_slot, first_shelley_epoch)`.
+    /// `boundary_slot` is the absolute slot of the first Shelley block
+    /// (== `byron_epochs * byron_slots_per_epoch`).
+    pub byron_shelley_transition: Option<(u64, u64)>,
+}
+
+impl EpochSchedule {
+    /// Construct a fixed-length schedule (no Byron prefix).
+    pub fn fixed(slots_per_epoch: EpochSize) -> Self {
+        Self {
+            slots_per_epoch,
+            byron_slots_per_epoch: 21_600,
+            byron_shelley_transition: None,
+        }
+    }
+
+    /// Construct an era-aware schedule with the given Byron prefix.
+    pub fn with_byron_prefix(
+        slots_per_epoch: EpochSize,
+        byron_slots_per_epoch: u64,
+        boundary_slot: u64,
+        first_shelley_epoch: u64,
+    ) -> Self {
+        Self {
+            slots_per_epoch,
+            byron_slots_per_epoch,
+            byron_shelley_transition: Some((boundary_slot, first_shelley_epoch)),
+        }
+    }
+
+    /// Map an absolute slot to its containing epoch.
+    pub fn slot_to_epoch(&self, slot: SlotNo) -> EpochNo {
+        match self.byron_shelley_transition {
+            Some((boundary_slot, first_shelley_epoch)) if slot.0 >= boundary_slot => {
+                let post = slot.0 - boundary_slot;
+                EpochNo(first_shelley_epoch + post / self.slots_per_epoch.0)
+            }
+            Some((_, _)) => EpochNo(slot.0 / self.byron_slots_per_epoch),
+            None => slot_to_epoch(slot, self.slots_per_epoch),
+        }
+    }
+
+    /// True when `slot` is in a different epoch than `prev_slot`.
+    pub fn is_new_epoch(&self, prev_slot: Option<SlotNo>, slot: SlotNo) -> bool {
+        match prev_slot {
+            None => true,
+            Some(ps) => self.slot_to_epoch(ps) != self.slot_to_epoch(slot),
+        }
+    }
+
+    /// Shelley-region epoch size (used by reward formula / pool-perf
+    /// expected blocks computations, which are Shelley-only).
+    pub fn shelley_epoch_size(&self) -> EpochSize {
+        self.slots_per_epoch
+    }
+}
+
+impl From<EpochSize> for EpochSchedule {
+    fn from(size: EpochSize) -> Self {
+        Self::fixed(size)
+    }
+}
+
 /// Converts a slot to its containing epoch given a fixed epoch length.
 ///
 /// Reference: `epochInfoEpoch` applied to a simple fixed-length epoch info.

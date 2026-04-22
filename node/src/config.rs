@@ -188,6 +188,21 @@ pub struct NodeConfigFile {
     /// Number of slots per epoch (mainnet Shelley: 432000).
     #[serde(default = "default_epoch_length")]
     pub epoch_length: u64,
+    /// Slots per epoch in the Byron region (defaults to 21,600 on the
+    /// public networks).  Used together with [`Self::byron_to_shelley_slot`]
+    /// for era-aware slot→epoch math during sync.
+    #[serde(default = "default_byron_epoch_length")]
+    pub byron_epoch_length: u64,
+    /// Absolute slot of the first Shelley block (Byron→Shelley boundary).
+    /// `None` indicates the network has no Byron prefix (e.g. preview).
+    /// On mainnet this is `4_492_800` (epoch 208 × 21,600), on preprod
+    /// this is `86_400` (epoch 4 × 21,600).
+    #[serde(default)]
+    pub byron_to_shelley_slot: Option<u64>,
+    /// First Shelley epoch number.  Together with [`Self::byron_to_shelley_slot`]
+    /// drives [`yggdrasil_consensus::EpochSchedule`].
+    #[serde(default)]
+    pub first_shelley_epoch: Option<u64>,
     /// Security parameter `k` (mainnet: 2160).
     #[serde(default = "default_security_param_k")]
     pub security_param_k: u64,
@@ -477,6 +492,23 @@ impl NodeConfigFile {
             1
         } else {
             0
+        }
+    }
+
+    /// Build the era-aware [`yggdrasil_consensus::EpochSchedule`] for this
+    /// network from the configured Shelley `epoch_length`, Byron
+    /// `byron_epoch_length`, and the optional Byron→Shelley boundary
+    /// (`byron_to_shelley_slot` + `first_shelley_epoch`).
+    pub fn epoch_schedule(&self) -> yggdrasil_consensus::EpochSchedule {
+        let shelley = yggdrasil_consensus::EpochSize(self.epoch_length);
+        match (self.byron_to_shelley_slot, self.first_shelley_epoch) {
+            (Some(boundary), Some(first)) => yggdrasil_consensus::EpochSchedule::with_byron_prefix(
+                shelley,
+                self.byron_epoch_length,
+                boundary,
+                first,
+            ),
+            _ => yggdrasil_consensus::EpochSchedule::fixed(shelley),
         }
     }
 
@@ -814,6 +846,10 @@ fn default_epoch_length() -> u64 {
     432_000
 }
 
+fn default_byron_epoch_length() -> u64 {
+    21_600
+}
+
 fn default_security_param_k() -> u64 {
     2160
 }
@@ -1088,6 +1124,9 @@ pub fn mainnet_config() -> NodeConfigFile {
         slots_per_kes_period: 129_600,
         max_kes_evolutions: 62,
         epoch_length: 432_000,
+        byron_epoch_length: 21_600,
+        byron_to_shelley_slot: Some(4_492_800),
+        first_shelley_epoch: Some(208),
         security_param_k: 2160,
         active_slot_coeff: 0.05,
         max_major_protocol_version: default_max_major_protocol_version(),
@@ -1149,6 +1188,9 @@ pub fn preprod_config() -> NodeConfigFile {
         slots_per_kes_period: 129_600,
         max_kes_evolutions: 62,
         epoch_length: 432_000,
+        byron_epoch_length: 21_600,
+        byron_to_shelley_slot: Some(86_400),
+        first_shelley_epoch: Some(4),
         security_param_k: 2160,
         active_slot_coeff: 0.05,
         max_major_protocol_version: default_max_major_protocol_version(),
@@ -1210,6 +1252,10 @@ pub fn preview_config() -> NodeConfigFile {
         slots_per_kes_period: 129_600,
         max_kes_evolutions: 62,
         epoch_length: 86_400,
+        byron_epoch_length: 21_600,
+        // Preview launched directly into Shelley with no Byron prefix.
+        byron_to_shelley_slot: None,
+        first_shelley_epoch: None,
         security_param_k: 432,
         active_slot_coeff: 0.05,
         max_major_protocol_version: default_max_major_protocol_version(),

@@ -1102,14 +1102,6 @@ impl ShelleyUtxo {
             let utxo_entry = match self.get(input) {
                 Some(e) => e,
                 None => {
-                    fn hx(b: &[u8]) -> String { let mut s = String::with_capacity(b.len()*2); for x in b { s.push_str(&format!("{:02x}", x)); } s }
-                    eprintln!(
-                        "DEBUG shelley_input_not_found tx_id={} input_tx={} input_idx={} utxo_size={}",
-                        hx(&tx_id),
-                        hx(&input.transaction_id),
-                        input.index,
-                        self.entries.len(),
-                    );
                     return Err(LedgerError::InputNotInUtxo);
                 }
             };

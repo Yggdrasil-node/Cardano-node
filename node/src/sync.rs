@@ -12,11 +12,11 @@ use std::fs;
 use std::sync::{Arc, RwLock};
 
 use yggdrasil_consensus::{
-    ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSize,
+    ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule, EpochSize,
     FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
     NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters,
-    OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, is_new_epoch,
-    judge_header_slot, slot_to_epoch, verify_header, verify_leader_proof, verify_nonce_proof,
+    OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode,
+    judge_header_slot, verify_header, verify_leader_proof, verify_nonce_proof,
 };
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
@@ -1210,6 +1210,11 @@ pub struct VerifiedSyncServiceConfig {
     /// POSIX milliseconds in the `POSIXTimeRange` field of ScriptContext
     /// (upstream `transVITime`).
     pub system_start_unix_secs: Option<f64>,
+    /// Era-aware epoch schedule used for epoch-boundary detection during
+    /// sync.  When `None`, the schedule degenerates to a fixed-length
+    /// epoch using `nonce_config.epoch_size`, which is incorrect on
+    /// networks with a Byron prefix (mainnet, preprod).
+    pub epoch_schedule: Option<EpochSchedule>,
 }
 
 impl VerifiedSyncServiceConfig {
@@ -1270,9 +1275,9 @@ pub(crate) struct LedgerCheckpointTracking {
     /// NEWEPOCH / SNAP / RUPD sequence before the first block of each
     /// new epoch.
     pub(crate) stake_snapshots: Option<StakeSnapshots>,
-    /// Epoch size (slots per epoch) for epoch boundary detection.
-    /// Required when `stake_snapshots` is `Some`.
-    pub(crate) epoch_size: Option<EpochSize>,
+    /// Epoch schedule (era-aware slots per epoch) for epoch boundary
+    /// detection.  Required when `stake_snapshots` is `Some`.
+    pub(crate) epoch_size: Option<EpochSchedule>,
     /// Per-pool block production counts for the current epoch.
     ///
     /// At each epoch boundary, these counts are converted to performance
@@ -1396,13 +1401,14 @@ pub(crate) struct VrfVerificationContext<'a> {
 pub(crate) fn advance_ledger_with_epoch_boundary(
     ledger_state: &mut LedgerState,
     snapshots: &mut StakeSnapshots,
-    epoch_size: EpochSize,
+    epoch_schedule: EpochSchedule,
     progress: &MultiEraSyncProgress,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
     pool_block_counts: &mut BTreeMap<PoolKeyHash, u64>,
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
+    let shelley_epoch_size = epoch_schedule.shelley_epoch_size();
     for_each_roll_forward_block(progress, |block| -> Result<(), SyncError> {
         let converted = multi_era_block_to_block(block);
         let block_slot = converted.header.slot_no;
@@ -1412,15 +1418,18 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
             Point::BlockPoint(s, _) => Some(s),
             Point::Origin => None,
         };
-        if is_new_epoch(prev_slot, block_slot, epoch_size) {
-            let new_epoch = slot_to_epoch(block_slot, epoch_size);
+        if epoch_schedule.is_new_epoch(prev_slot, block_slot) {
+            let new_epoch = epoch_schedule.slot_to_epoch(block_slot);
             // Compute pool performance ratios from accumulated block counts.
             // Performance = blocks_produced / expected_blocks where
             // expected_blocks ≈ σ_pool * epoch_size * f.  When the set
             // snapshot has stake data we use it; otherwise fall back to
             // the previous behavior of treating all pools as perfect.
-            let pool_performance =
-                compute_pool_performance(pool_block_counts, &snapshots.set, epoch_size);
+            let pool_performance = compute_pool_performance(
+                pool_block_counts,
+                &snapshots.set,
+                shelley_epoch_size,
+            );
             apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
@@ -1752,7 +1761,11 @@ where
     // Enable epoch boundary processing when nonce config provides epoch size.
     if let Some(ref nonce_cfg) = config.nonce_config {
         checkpoint_tracking.stake_snapshots = Some(StakeSnapshots::new());
-        checkpoint_tracking.epoch_size = Some(nonce_cfg.epoch_size);
+        checkpoint_tracking.epoch_size = Some(
+            config
+                .epoch_schedule
+                .unwrap_or_else(|| EpochSchedule::fixed(nonce_cfg.epoch_size)),
+        );
     }
 
     loop {

@@ -882,6 +882,7 @@ fn main() -> Result<()> {
                     active_slot_coeff: active_slot_coeff.clone(),
                     slot_length_secs: genesis_slot_length,
                     system_start_unix_secs: genesis_system_start_unix_secs,
+                    epoch_schedule: Some(file_cfg.epoch_schedule()),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -906,6 +907,7 @@ fn main() -> Result<()> {
                     active_slot_coeff,
                     slot_length_secs: genesis_slot_length,
                     system_start_unix_secs: genesis_system_start_unix_secs,
+                    epoch_schedule: Some(file_cfg.epoch_schedule()),
                 }
             };
 

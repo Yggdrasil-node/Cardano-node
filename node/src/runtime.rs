@@ -4846,7 +4846,11 @@ where
             .nonce_config
             .as_ref()
             .map(|_| yggdrasil_ledger::StakeSnapshots::new()),
-        epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
+        epoch_size: config.nonce_config.as_ref().map(|nc| {
+            config
+                .epoch_schedule
+                .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
+        }),
         pool_block_counts: std::collections::BTreeMap::new(),
     };
 
@@ -4956,7 +4960,11 @@ where
             .nonce_config
             .as_ref()
             .map(|_| yggdrasil_ledger::StakeSnapshots::new()),
-        epoch_size: config.nonce_config.as_ref().map(|nc| nc.epoch_size),
+        epoch_size: config.nonce_config.as_ref().map(|nc| {
+            config
+                .epoch_schedule
+                .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
+        }),
         pool_block_counts: std::collections::BTreeMap::new(),
     };
 
@@ -5018,7 +5026,11 @@ where
         let mut ct = crate::sync::default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
         if let Some(ref nonce_cfg) = config.nonce_config {
             ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
-            ct.epoch_size = Some(nonce_cfg.epoch_size);
+            ct.epoch_size = Some(
+                config
+                    .epoch_schedule
+                    .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nonce_cfg.epoch_size)),
+            );
         }
         Some(ct)
     };
@@ -5138,6 +5150,7 @@ mod tests {
             active_slot_coeff: None,
             slot_length_secs: None,
             system_start_unix_secs: None,
+        epoch_schedule: None,
         }
     }
 

@@ -3119,7 +3119,6 @@ impl LedgerState {
         &mut self,
         entries: impl IntoIterator<Item = (Vec<u8>, u64)>,
     ) {
-        use crate::cbor::Encoder;
         use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut};
         use crate::utxo::MultiEraTxOut;
 
@@ -3127,22 +3126,19 @@ impl LedgerState {
             if amount == 0 {
                 continue;
             }
-            // CBOR( [address_cbor, amount] ) — the address bytes already
-            // are the canonical Byron address CBOR (CBOR-in-CBOR with
-            // CRC32), so we splice them in raw and append the amount.
-            let mut enc = Encoder::with_capacity(1 + address.len() + 9);
-            enc.array(2).raw(&address).unsigned(amount);
-            let cbor = enc.into_bytes();
-            let tx_id = yggdrasil_crypto::hash_bytes_256(&cbor).0;
-            fn hx(b: &[u8]) -> String { let mut s = String::with_capacity(b.len()*2); for x in b { s.push_str(&format!("{:02x}", x)); } s }
-            eprintln!(
-                "DEBUG byron_genesis seed: amount={} address_len={} address_hex={} cbor_hex={} tx_id={}",
-                amount,
-                address.len(),
-                hx(&address),
-                hx(&cbor),
-                hx(&tx_id),
-            );
+            // The Byron genesis TxIn for an entry `(addr, amount)` is
+            //   TxIn { tx_id = blake2b_256(serialize Address), index = 0 }
+            // i.e. the CBOR bytes of the *address alone* are hashed —
+            // NOT a `TxOut(addr, amount)` tuple.  This matches pallas
+            // `genesis_non_avvm_utxos` / `genesis_avvm_utxos`
+            // (`pallas-configs/src/byron.rs`), which is the
+            // implementation verified against on-chain pre-production
+            // and mainnet genesis distributions.
+            //
+            // The base58-decoded address bytes ARE the canonical CBOR
+            // encoding of the Byron `Address` (CBOR-in-CBOR with CRC32),
+            // so we hash them directly.
+            let tx_id = yggdrasil_crypto::hash_bytes_256(&address).0;
             let txin = ShelleyTxIn {
                 transaction_id: tx_id,
                 index: 0,
@@ -5906,16 +5902,9 @@ impl LedgerState {
                 _ => None,
             })
             .collect();
-        let translated_count = translated.len();
         for (txin, txout) in translated {
             self.shelley_utxo.insert(txin, txout);
         }
-        eprintln!(
-            "DEBUG byron_to_shelley translation: translated={} shelley_utxo_size={} multi_era_utxo_size={}",
-            translated_count,
-            self.shelley_utxo.len(),
-            self.multi_era_utxo.len(),
-        );
 
         let utxo_entries = self.pending_shelley_genesis_utxo.take();
         let stake_entries = self.pending_shelley_genesis_stake.take();

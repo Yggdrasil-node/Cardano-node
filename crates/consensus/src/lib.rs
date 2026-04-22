@@ -32,7 +32,7 @@ pub use diffusion_pipelining::{
     TentativeHeaderState, TentativeHeaderView, TentativeState,
 };
 /// Epoch size and slot-to-epoch helpers.
-pub use epoch::{EpochSize, epoch_first_slot, is_new_epoch, slot_to_epoch};
+pub use epoch::{EpochSchedule, EpochSize, epoch_first_slot, is_new_epoch, slot_to_epoch};
 /// Consensus-facing error type.
 pub use error::ConsensusError;
 /// Block header types and verification entry point.
