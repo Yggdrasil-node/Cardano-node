@@ -1042,9 +1042,37 @@ pub fn forge_block(
     })?;
 
     // Step 3: Compute the canonical block body hash.
+    //
+    // Upstream `bbHash` / `hashTxSeq` composes Blake2b-256 over the
+    // per-segment hashes of the post-header block elements:
+    //
+    //     H( H(transaction_bodies) || H(witness_sets)
+    //        || H(auxiliary_data_set) || H(invalid_transactions) )
+    //
+    // We replicate that here by hashing each top-level element of
+    // `body_payload` (which is the four-element CBOR sequence emitted by
+    // [`encode_forged_body_payload`]) and then hashing the concatenation
+    // of those segment hashes.
     let body_hash = {
         use yggdrasil_crypto::blake2b::hash_bytes_256;
-        hash_bytes_256(&body_payload).0
+        use yggdrasil_ledger::cbor::Decoder;
+
+        let mut dec = Decoder::new(&body_payload);
+        let mut combined = Vec::with_capacity(32 * 4);
+        // Body payload is a flat sequence of 4 top-level CBOR items
+        // (tx_bodies, witness_sets, aux_data_map, invalid_txs).
+        for _ in 0..4 {
+            let seg_start = dec.position();
+            dec.skip().map_err(|err| {
+                BlockProducerError::Crypto(format!(
+                    "forged body payload skip failed: {err}"
+                ))
+            })?;
+            let seg_end = dec.position();
+            let seg_hash = hash_bytes_256(&body_payload[seg_start..seg_end]).0;
+            combined.extend_from_slice(&seg_hash);
+        }
+        hash_bytes_256(&combined).0
     };
 
     let total_fees: u64 = body_txs.iter().map(|tx| tx.fee).sum();

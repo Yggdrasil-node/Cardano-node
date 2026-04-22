@@ -5168,7 +5168,20 @@ mod tests {
         body_enc.map(0);
         body_enc.array(0);
         let body_payload = body_enc.into_bytes();
-        let body_hash = hash_bytes_256(&body_payload).0;
+        // Match upstream `bbHash` / `hashTxSeq`: H( H(seg_1) || ... || H(seg_n) )
+        // over the four post-header CBOR segments emitted above.
+        let body_hash = {
+            use yggdrasil_ledger::cbor::Decoder;
+            let mut dec = Decoder::new(&body_payload);
+            let mut combined = Vec::with_capacity(32 * 4);
+            for _ in 0..4 {
+                let s = dec.position();
+                dec.skip().expect("skip body segment");
+                let e = dec.position();
+                combined.extend_from_slice(&hash_bytes_256(&body_payload[s..e]).0);
+            }
+            hash_bytes_256(&combined).0
+        };
         let body_size = u32::try_from(body_payload.len()).expect("body size must fit in u32");
 
         let header_body = ConsensusHeaderBody {
