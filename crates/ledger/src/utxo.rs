@@ -300,6 +300,25 @@ impl MultiEraUtxo {
     ///
     /// Reference: `Cardano.Chain.UTxO.TxValidation` from `cardano-ledger-byron`.
     pub fn apply_byron_tx(&mut self, tx: &ByronTx) -> Result<(), LedgerError> {
+        let tx_id = tx.tx_id();
+        self.apply_byron_tx_with_id(tx_id, tx)
+    }
+
+    /// Applies a Byron transaction whose `tx_id` has been pre-computed
+    /// from the on-wire CBOR bytes.
+    ///
+    /// Byron `tx_id` is `Blake2b-256` of the **annotated** wire CBOR.
+    /// Re-encoding from the decoded `ByronTx` structure can yield
+    /// different bytes (definite vs indefinite arrays, attribute map
+    /// ordering), so callers that have access to the original wire
+    /// bytes (e.g. `apply_byron_block`) MUST use this entry point
+    /// rather than [`apply_byron_tx`] to ensure inserted UTxO keys
+    /// match what subsequent transactions will spend.
+    pub fn apply_byron_tx_with_id(
+        &mut self,
+        tx_id: [u8; 32],
+        tx: &ByronTx,
+    ) -> Result<(), LedgerError> {
         if tx.inputs.is_empty() {
             return Err(LedgerError::NoInputs);
         }
@@ -335,7 +354,6 @@ impl MultiEraUtxo {
 
         // State update: remove consumed inputs, insert produced outputs.
         self.remove_inputs(&shelley_inputs);
-        let tx_id = tx.tx_id();
         for (idx, output) in tx.outputs.iter().enumerate() {
             let txin = ShelleyTxIn {
                 transaction_id: tx_id,

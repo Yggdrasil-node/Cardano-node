@@ -299,6 +299,14 @@ pub struct NodeConfigFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub shelley_genesis_file: Option<String>,
+    /// Relative path to the Byron genesis file.  Matches `ByronGenesisFile`
+    /// in the official Cardano node configuration.
+    #[serde(
+        rename = "ByronGenesisFile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub byron_genesis_file: Option<String>,
     /// Relative path to the Alonzo genesis file.  Matches `AlonzoGenesisFile`
     /// in the official Cardano node configuration.
     #[serde(
@@ -553,6 +561,28 @@ impl NodeConfigFile {
         };
 
         Ok(Some(load_shelley_genesis_bootstrap(&path)?))
+    }
+
+    /// Load the Byron genesis UTxO entries from the configured Byron genesis
+    /// file when one is present.
+    pub fn load_byron_genesis_utxo(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<Vec<crate::genesis::ByronGenesisUtxoEntry>, crate::genesis::GenesisLoadError>
+    {
+        use crate::genesis::load_byron_genesis_utxo;
+
+        let Some(path) = self.byron_genesis_file.as_deref() else {
+            return Ok(Vec::new());
+        };
+
+        let path = if let Some(base) = config_base_dir {
+            base.join(Path::new(path))
+        } else {
+            Path::new(path).to_path_buf()
+        };
+
+        load_byron_genesis_utxo(&path)
     }
 
     /// Load the genesis [`EnactState`] from the configured Conway genesis file
@@ -1081,6 +1111,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         trace_options: default_trace_options(),
         socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        byron_genesis_file: Some("byron-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
         topology_file_path: None,
@@ -1141,6 +1172,7 @@ pub fn preprod_config() -> NodeConfigFile {
         trace_options: default_trace_options(),
         socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        byron_genesis_file: Some("byron-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
         topology_file_path: None,
@@ -1201,6 +1233,7 @@ pub fn preview_config() -> NodeConfigFile {
         trace_options: default_trace_options(),
         socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        byron_genesis_file: Some("byron-genesis.json".to_owned()),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
         topology_file_path: None,

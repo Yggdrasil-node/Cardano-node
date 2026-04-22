@@ -244,6 +244,7 @@ fn cbor_golden_byron_tx_aux_round_trip() {
             witness_type: 0,
             payload: vec![0x82, 0x40, 0x40],
         }],
+        raw_tx_cbor: Vec::new(),
     };
 
     let encoded = tx_aux.to_cbor_bytes();

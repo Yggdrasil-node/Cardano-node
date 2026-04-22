@@ -298,12 +298,41 @@ impl CborEncode for ByronTxWitness {
 /// Wire format: `[Tx, [witnesses...]]`.
 ///
 /// Reference: `Cardano.Chain.UTxO.TxAux` from `cardano-ledger-byron`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ByronTxAux {
     /// The transaction body.
     pub tx: ByronTx,
     /// Witness signatures.
     pub witnesses: Vec<ByronTxWitness>,
+    /// Raw on-wire CBOR bytes of the inner [`ByronTx`].
+    ///
+    /// Byron transaction identifiers are computed as
+    /// `Blake2b-256(raw_tx_cbor)` over the **annotated** wire bytes —
+    /// re-encoding from the decoded structure can produce a different
+    /// byte sequence (definite vs indefinite arrays, attribute map
+    /// ordering, etc.) and therefore a wrong tx_id, which would later
+    /// cause every spend of that output to fail with
+    /// `InputNotFound`.
+    ///
+    /// Reference: `Cardano.Chain.UTxO.TxId` — `txid = hash(serialize tx)`
+    /// where the serialized form is the on-wire CBOR captured by the
+    /// upstream `Annotator`.
+    pub raw_tx_cbor: Vec<u8>,
+}
+
+impl PartialEq for ByronTxAux {
+    fn eq(&self, other: &Self) -> bool {
+        self.tx == other.tx && self.witnesses == other.witnesses
+    }
+}
+
+impl Eq for ByronTxAux {}
+
+impl ByronTxAux {
+    /// Compute the Byron transaction identifier from the on-wire CBOR.
+    pub fn tx_id(&self) -> [u8; 32] {
+        yggdrasil_crypto::hash_bytes_256(&self.raw_tx_cbor).0
+    }
 }
 
 impl CborDecode for ByronTxAux {
@@ -315,13 +344,20 @@ impl CborDecode for ByronTxAux {
                 actual: len as usize,
             });
         }
+        let tx_start = dec.position();
         let tx = ByronTx::decode_cbor(dec)?;
+        let tx_end = dec.position();
+        let raw_tx_cbor = dec.slice(tx_start, tx_end)?.to_vec();
         let n_witnesses = dec.array()?;
         let mut witnesses = Vec::with_capacity(n_witnesses as usize);
         for _ in 0..n_witnesses {
             witnesses.push(ByronTxWitness::decode_cbor(dec)?);
         }
-        Ok(Self { tx, witnesses })
+        Ok(Self {
+            tx,
+            witnesses,
+            raw_tx_cbor,
+        })
     }
 }
 
@@ -952,6 +988,7 @@ mod tests {
                 witness_type: 0,
                 payload: vec![0xEE; 64],
             }],
+            raw_tx_cbor: Vec::new(),
         };
         let decoded = ByronTxAux::from_cbor_bytes(&aux.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, aux);
@@ -972,6 +1009,7 @@ mod tests {
                 attributes: mk_attrs(),
             },
             witnesses: vec![],
+            raw_tx_cbor: Vec::new(),
         };
         let decoded = ByronTxAux::from_cbor_bytes(&aux.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, aux);

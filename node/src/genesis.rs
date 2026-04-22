@@ -1217,6 +1217,244 @@ pub fn load_conway_genesis(path: &Path) -> Result<ConwayGenesis, GenesisLoadErro
     load_json(path)
 }
 
+// ---------------------------------------------------------------------------
+// Byron genesis UTxO
+// ---------------------------------------------------------------------------
+
+/// Subset of `byron-genesis.json` consumed by [`load_byron_genesis_utxo`].
+///
+/// Only the two UTxO-bearing fields are deserialised; everything else
+/// is ignored so the parser remains forward-compatible.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct ByronGenesisFile {
+    /// Non-AVVM balances keyed by Base58-encoded Byron address with
+    /// stringified lovelace value.
+    #[serde(default, rename = "nonAvvmBalances")]
+    non_avvm_balances: BTreeMap<String, String>,
+
+    /// AVVM (ADA Voucher Vending Machine) balances keyed by
+    /// Base64-encoded redeem public key with stringified lovelace value.
+    #[serde(default, rename = "avvmDistr")]
+    avvm_distr: BTreeMap<String, String>,
+}
+
+/// A single decoded Byron genesis UTxO entry.
+///
+/// `address` carries the canonical Byron address CBOR bytes (the form
+/// suitable for direct insertion into the multi-era UTxO).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ByronGenesisUtxoEntry {
+    /// Raw on-wire Byron address CBOR bytes (CBOR-in-CBOR with CRC32).
+    pub address: Vec<u8>,
+    /// Initial balance in lovelace.
+    pub amount: u64,
+}
+
+/// Decode a Cardano Base58 string (Bitcoin alphabet) into raw bytes.
+///
+/// Cardano Base58 uses the standard Bitcoin alphabet — the same
+/// implementation that `cardano-base` and `cardano-ledger` use to
+/// (de)serialise legacy Byron addresses.
+fn base58_decode(input: &str) -> Result<Vec<u8>, String> {
+    const ALPHABET: &[u8; 58] =
+        b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut map = [255u8; 128];
+    for (i, &c) in ALPHABET.iter().enumerate() {
+        map[c as usize] = i as u8;
+    }
+    // Count leading '1's → leading zero bytes.
+    let mut zeros = 0usize;
+    let mut iter = input.bytes();
+    while let Some(b'1') = iter.clone().next() {
+        zeros += 1;
+        iter.next();
+    }
+    // Big-endian base-58 → base-256 conversion.
+    let mut out: Vec<u8> = Vec::with_capacity(input.len());
+    for c in iter {
+        if c >= 128 {
+            return Err(format!("invalid base58 character: 0x{c:02x}"));
+        }
+        let mut carry = map[c as usize] as u32;
+        if carry == 255 {
+            return Err(format!("invalid base58 character: '{}'", c as char));
+        }
+        for byte in out.iter_mut() {
+            carry += (*byte as u32) * 58;
+            *byte = (carry & 0xff) as u8;
+            carry >>= 8;
+        }
+        while carry > 0 {
+            out.push((carry & 0xff) as u8);
+            carry >>= 8;
+        }
+    }
+    out.reverse();
+    let mut result = Vec::with_capacity(zeros + out.len());
+    result.extend(std::iter::repeat_n(0u8, zeros));
+    result.extend(out);
+    Ok(result)
+}
+
+/// Load Byron genesis UTxO entries from `byron-genesis.json`.
+///
+/// Decodes both `nonAvvmBalances` (Base58-encoded Byron addresses) and
+/// `avvmDistr` (Base64-encoded redeem public keys) into the canonical
+/// address byte sequences expected by the ledger.  Zero-valued entries
+/// are preserved so the caller can decide whether to skip them; the
+/// ledger seeding helper filters them out.
+///
+/// Reference: `Cardano.Chain.Genesis.Data` and
+/// `Cardano.Chain.Genesis.UTxO.genesisUtxo`.
+pub fn load_byron_genesis_utxo(
+    path: &Path,
+) -> Result<Vec<ByronGenesisUtxoEntry>, GenesisLoadError> {
+    let raw = fs::read_to_string(path).map_err(|source| GenesisLoadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let parsed: ByronGenesisFile =
+        serde_json::from_str(&raw).map_err(|source| GenesisLoadError::Json {
+            path: path.to_path_buf(),
+            source,
+        })?;
+
+    let mut entries = Vec::with_capacity(parsed.non_avvm_balances.len());
+    for (addr_b58, amount_str) in &parsed.non_avvm_balances {
+        let amount = amount_str.parse::<u64>().map_err(|err| {
+            GenesisLoadError::InvalidField {
+                field: "nonAvvmBalances",
+                value: amount_str.clone(),
+                message: format!("invalid lovelace amount: {err}"),
+            }
+        })?;
+        let address = base58_decode(addr_b58).map_err(|err| GenesisLoadError::InvalidField {
+            field: "nonAvvmBalances",
+            value: addr_b58.clone(),
+            message: format!("invalid Base58 address: {err}"),
+        })?;
+        entries.push(ByronGenesisUtxoEntry { address, amount });
+    }
+
+    if !parsed.avvm_distr.is_empty() {
+        // AVVM addresses are derived from a Base64URL-encoded 32-byte
+        // RedeemPublicKey by wrapping them in an
+        // `Address (Attributes ()) ATRedeem` and serialising via the
+        // Byron canonical CBOR encoder.  Construction from the raw key
+        // is implemented inline rather than pulling in extra crates.
+        for (key_b64, amount_str) in &parsed.avvm_distr {
+            let amount = amount_str.parse::<u64>().map_err(|err| {
+                GenesisLoadError::InvalidField {
+                    field: "avvmDistr",
+                    value: amount_str.clone(),
+                    message: format!("invalid lovelace amount: {err}"),
+                }
+            })?;
+            let key_bytes = base64url_decode(key_b64).map_err(|err| {
+                GenesisLoadError::InvalidField {
+                    field: "avvmDistr",
+                    value: key_b64.clone(),
+                    message: format!("invalid Base64URL redeem key: {err}"),
+                }
+            })?;
+            let address = build_avvm_address(&key_bytes);
+            entries.push(ByronGenesisUtxoEntry { address, amount });
+        }
+    }
+
+    Ok(entries)
+}
+
+/// Decode a Base64URL string (`-`/`_` alphabet, optional `=` padding).
+fn base64url_decode(input: &str) -> Result<Vec<u8>, String> {
+    fn val(c: u8) -> Result<u8, String> {
+        Ok(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            _ => return Err(format!("invalid base64 char 0x{c:02x}")),
+        })
+    }
+    let bytes = input.as_bytes();
+    let trimmed = bytes
+        .iter()
+        .position(|&c| c == b'=')
+        .map(|p| &bytes[..p])
+        .unwrap_or(bytes);
+    let mut out = Vec::with_capacity(trimmed.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u8;
+    for &c in trimmed {
+        buf = (buf << 6) | val(c)? as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xff) as u8);
+        }
+    }
+    Ok(out)
+}
+
+/// Build the canonical Byron AVVM address CBOR bytes from a
+/// 32-byte redeem public key.
+///
+/// The construction follows
+/// `Cardano.Chain.Common.Address.makeRedeemAddress`:
+///
+/// 1. `addrRoot = Blake2b-224(serialize (AddrType=2, AddrSpendingData (RedeemASD pk), AddrAttributes(network)))`
+/// 2. `payload  = serialize [addrRoot, AddrAttributes(network), AddrType=2]`
+/// 3. `crc32`   over `payload`
+/// 4. Outer wrapping: `[#6.24(bytes payload), crc32]`
+///
+/// Network attribute is left empty (mainnet form) because preprod's
+/// `avvmDistr` is empty in practice; testnet AVVM payouts would need
+/// the `addrAttributes` map populated with a `networkMagic` entry.
+fn build_avvm_address(redeem_pk: &[u8]) -> Vec<u8> {
+    use yggdrasil_ledger::cbor::Encoder;
+    // AddrSpendingData = [type=2, pk_bytes]
+    let mut spending = Encoder::new();
+    spending.array(2).unsigned(2).bytes(redeem_pk);
+    let spending_bytes = spending.into_bytes();
+    // Pre-image for addrRoot: [type=2, spending_data, attrs={}]
+    let mut pre = Encoder::new();
+    pre.array(3).unsigned(2).raw(&spending_bytes).map(0);
+    let pre_bytes = pre.into_bytes();
+    let addr_root = yggdrasil_crypto::blake2b::hash_bytes_224(&pre_bytes).0;
+    // payload = [addr_root, attrs={}, type=2]
+    let mut payload = Encoder::new();
+    payload
+        .array(3)
+        .bytes(&addr_root)
+        .map(0)
+        .unsigned(2);
+    let payload_bytes = payload.into_bytes();
+    // CRC32 (IEEE polynomial) over the payload bytes.
+    let crc = crc32_ieee(&payload_bytes);
+    // Outer wrapping: [#6.24(bytes payload), crc32]
+    let mut outer = Encoder::new();
+    outer
+        .array(2)
+        .tag(24)
+        .bytes(&payload_bytes)
+        .unsigned(crc as u64);
+    outer.into_bytes()
+}
+
+/// CRC32 (IEEE 802.3 polynomial) over a byte slice.
+fn crc32_ieee(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            let mask = 0u32.wrapping_sub(crc & 1);
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
+}
+
 /// Compute the current wall-clock slot from `system_start` and `slot_length`.
 ///
 /// Returns `None` if the current time is before `system_start` or if the

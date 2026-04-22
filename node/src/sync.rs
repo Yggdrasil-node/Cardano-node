@@ -2266,9 +2266,16 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
                 .transactions()
                 .iter()
                 .map(|tx_aux| {
-                    let raw = tx_aux.tx.to_cbor_bytes();
+                    // Byron tx_id MUST be computed over the on-wire CBOR bytes
+                    // captured during decoding — re-encoding from the decoded
+                    // structure can produce different bytes (definite vs
+                    // indefinite arrays, attributes ordering) and yield a
+                    // wrong tx_id which would later cause every spend of that
+                    // output to fail with InputNotFound.
+                    let raw = tx_aux.raw_tx_cbor.clone();
+                    let id = compute_tx_id(&raw);
                     Tx {
-                        id: compute_tx_id(&raw),
+                        id,
                         body: raw,
                         witnesses: None,
                         auxiliary_data: None,

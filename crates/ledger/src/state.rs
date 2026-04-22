@@ -3095,6 +3095,58 @@ impl LedgerState {
         };
     }
 
+    /// Seeds the multi-era UTxO with Byron genesis UTxO entries.
+    ///
+    /// Byron genesis distributes initial Ada via two channels:
+    /// `avvmDistr` (ADA Voucher Vending Machine) and `nonAvvmBalances`.
+    /// For each non-zero entry the upstream `genesisUtxo` formula
+    /// computes:
+    ///
+    /// ```text
+    ///     tx_id = Blake2b-256( CBOR( [address_cbor, amount] ) )
+    ///     utxo[ TxIn(tx_id, 0) ] = TxOut(address, amount)
+    /// ```
+    ///
+    /// where `address_cbor` is the canonical CBOR encoding of the Byron
+    /// address (already preserved as raw bytes in `address`).  The
+    /// resulting UTxO is available immediately at slot 0 so the first
+    /// Byron transaction that spends a genesis output can resolve its
+    /// inputs.
+    ///
+    /// Reference: `Cardano.Chain.Genesis.UTxO.genesisUtxo` in
+    /// `cardano-ledger/eras/byron/ledger/impl/src/Cardano/Chain/Genesis/UTxO.hs`.
+    pub fn seed_byron_genesis_utxo(
+        &mut self,
+        entries: impl IntoIterator<Item = (Vec<u8>, u64)>,
+    ) {
+        use crate::cbor::Encoder;
+        use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut};
+        use crate::utxo::MultiEraTxOut;
+
+        for (address, amount) in entries {
+            if amount == 0 {
+                continue;
+            }
+            // CBOR( [address_cbor, amount] ) — the address bytes already
+            // are the canonical Byron address CBOR (CBOR-in-CBOR with
+            // CRC32), so we splice them in raw and append the amount.
+            let mut enc = Encoder::with_capacity(1 + address.len() + 9);
+            enc.array(2).raw(&address).unsigned(amount);
+            let cbor = enc.into_bytes();
+            let tx_id = yggdrasil_crypto::hash_bytes_256(&cbor).0;
+            let txin = ShelleyTxIn {
+                transaction_id: tx_id,
+                index: 0,
+            };
+            let txout = ShelleyTxOut {
+                address: address.clone(),
+                amount,
+            };
+            self.multi_era_utxo
+                .insert(txin, MultiEraTxOut::Shelley(txout));
+        }
+    }
+
     /// Configures Shelley genesis stake delegations that should become
     /// visible only when replay first reaches a Shelley-family block.
     pub fn configure_pending_shelley_genesis_stake(
@@ -5880,9 +5932,17 @@ impl LedgerState {
             .collect::<Result<Vec<_>, LedgerError>>()?;
 
         // Atomic: clone the multi-era UTxO, apply all txs, then commit.
+        //
+        // Use the pre-computed `Tx.id` (derived from the on-wire CBOR
+        // bytes by `multi_era_block_to_block`) rather than re-deriving
+        // from the decoded structure: Byron tx_ids are over the
+        // annotated wire bytes, and re-encoding can produce a different
+        // byte sequence (e.g. definite vs indefinite arrays) which
+        // would yield a wrong tx_id and cause every spend of that
+        // output to fail with `InputNotFound`.
         let mut staged = self.multi_era_utxo.clone();
-        for byron_tx in &decoded {
-            staged.apply_byron_tx(byron_tx)?;
+        for (tx, byron_tx) in block.transactions.iter().zip(decoded.iter()) {
+            staged.apply_byron_tx_with_id(tx.id.0, byron_tx)?;
         }
         self.multi_era_utxo = staged;
         Ok(())

@@ -242,6 +242,7 @@ fn byron_tx_aux_cbor_round_trip() {
             witness_type: 0,
             payload: vec![0x82, 0x40, 0x40], // [bytes"", bytes""]
         }],
+        raw_tx_cbor: Vec::new(),
     };
     let encoded = tx_aux.to_cbor_bytes();
     let decoded = ByronTxAux::from_cbor_bytes(&encoded).expect("decode ByronTxAux");

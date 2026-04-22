@@ -1123,6 +1123,23 @@ fn strict_base_ledger_state(
 ) -> Result<LedgerState> {
     let mut state = LedgerState::new(Era::Byron);
     state.set_expected_network_id(file_cfg.expected_network_id());
+
+    // Seed the multi-era UTxO with Byron genesis distributions so the
+    // first Byron transaction that spends a genesis output can resolve
+    // its inputs.  Without this seeding every Byron block beyond the
+    // genesis-funded first transaction would fail with `InputNotFound`.
+    //
+    // Reference: `Cardano.Chain.Genesis.UTxO.genesisUtxo`.
+    let byron_entries = file_cfg
+        .load_byron_genesis_utxo(config_base_dir)
+        .wrap_err("failed to load Byron genesis UTxO")?;
+    if !byron_entries.is_empty() {
+        state.seed_byron_genesis_utxo(
+            byron_entries
+                .into_iter()
+                .map(|entry| (entry.address, entry.amount)),
+        );
+    }
     if let Some(bootstrap) = file_cfg
         .load_shelley_genesis_bootstrap(config_base_dir)
         .wrap_err("failed to load Shelley genesis bootstrap")?

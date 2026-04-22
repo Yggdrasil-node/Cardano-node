@@ -2051,10 +2051,12 @@ fn extract_tx_ids_from_byron_main_block() {
                 ByronTxAux {
                     tx: tx1,
                     witnesses: vec![],
+                    raw_tx_cbor: Vec::new(),
                 },
                 ByronTxAux {
                     tx: tx2,
                     witnesses: vec![],
+                    raw_tx_cbor: Vec::new(),
                 },
             ],
         },
