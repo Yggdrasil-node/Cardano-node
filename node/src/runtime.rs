@@ -4203,6 +4203,7 @@ where
                                                 mempool, blocks, tip,
                                                 &mut recently_confirmed,
                                                 checkpoint_tracking.as_ref(),
+                                                inbound_tx_state.as_ref(),
                                             );
                                         if cached + removed + conflicting + purged + revalidated > 0 {
                                             tracer.trace_runtime(
@@ -4656,6 +4657,7 @@ where
                                                 mempool, blocks, tip,
                                                 &mut recently_confirmed,
                                                 checkpoint_tracking.as_ref(),
+                                                inbound_tx_state.as_ref(),
                                             );
                                         if cached + removed + conflicting + purged + revalidated > 0 {
                                             tracer.trace_runtime(

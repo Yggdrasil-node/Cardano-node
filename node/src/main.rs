@@ -2146,7 +2146,8 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
     .with_bp_state(
         bp_pool_key_hash.map(|_| std::sync::Arc::clone(&shared_bp_state)),
         bp_pool_key_hash,
-    );
+    )
+    .with_inbound_tx_state(Some(inbound_tx_state));
 
     let mut sync_shutdown = shutdown_rx.clone();
     let outcome: ResumedSyncServiceOutcome =
