@@ -1720,15 +1720,20 @@ impl ShelleyBlock {
 /// those elements concatenated:
 ///
 /// - Shelley/Allegra/Mary (4-element block):
-///   `Blake2b-256(txBodies_bytes || witnesses_bytes || metadata_bytes)`
+///   `H( H(txBodies_bytes) || H(witnesses_bytes) || H(metadata_bytes) )`
 /// - Alonzo/Babbage/Conway (5-element block):
-///   `Blake2b-256(txBodies_bytes || witnesses_bytes || auxData_bytes || invalidTxs_bytes)`
+///   `H( H(txBodies_bytes) || H(witnesses_bytes) || H(auxData_bytes) || H(invalidTxs_bytes) )`
+///
+/// All hashes are Blake2b-256.  Each body segment is hashed individually and
+/// the concatenation of those segment hashes is hashed again — this matches
+/// upstream `bbHash` / `hashTxSeq` which compose `hashStrict . serialize'`
+/// per-part rather than hashing the raw concatenation.
 ///
 /// The `block_bytes` parameter is the raw CBOR of the inner block (after
 /// the multi-era `[era_tag, block_body]` envelope has been peeled).
 ///
 /// Reference: `Cardano.Ledger.Shelley.BlockChain.bbHash` (Shelley) and
-/// `Cardano.Ledger.Alonzo.TxSeq.hashAnnotated` (Alonzo onwards).
+/// `Cardano.Ledger.Alonzo.TxSeq.hashTxSeq` (Alonzo onwards).
 pub fn compute_block_body_hash(block_bytes: &[u8]) -> Result<[u8; 32], crate::LedgerError> {
     let mut dec = crate::cbor::Decoder::new(block_bytes);
     let arr_len = dec.array()?;
@@ -1742,15 +1747,18 @@ pub fn compute_block_body_hash(block_bytes: &[u8]) -> Result<[u8; 32], crate::Le
     // Skip element 0 (header).
     dec.skip()?;
 
-    // Elements 1..arr_len are the block body.
-    let body_start = dec.position();
+    // Hash each body segment separately, then hash the concatenation of
+    // those hashes — matches upstream Haskell `bbHash` semantics.
+    let mut combined = Vec::with_capacity(32 * (arr_len as usize - 1));
     for _ in 1..arr_len {
+        let seg_start = dec.position();
         dec.skip()?;
+        let seg_end = dec.position();
+        let seg_bytes = dec.slice(seg_start, seg_end)?;
+        let seg_hash = yggdrasil_crypto::hash_bytes_256(seg_bytes).0;
+        combined.extend_from_slice(&seg_hash);
     }
-    let body_end = dec.position();
-
-    let body_bytes = dec.slice(body_start, body_end)?;
-    Ok(yggdrasil_crypto::hash_bytes_256(body_bytes).0)
+    Ok(yggdrasil_crypto::hash_bytes_256(&combined).0)
 }
 
 // ---------------------------------------------------------------------------

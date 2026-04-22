@@ -430,6 +430,14 @@ fn normalize_blockfetch_range_points(lower: Point, upper: Point) -> Option<(Poin
         }
     }
 
+    // Upstream BlockFetch (Ouroboros.Network.BlockFetch.Server) cannot resolve
+    // `Point::Origin` as a lower bound — genesis is a virtual point with no
+    // fetchable header. When the caller has no prior known tip we collapse the
+    // range to `[upper, upper]` so the wire `MsgRequestRange` requests just the
+    // single block at `upper`. Callers that need to detect this case and avoid
+    // dropping the fetched block must inspect the *original* `from_point`
+    // before normalization (see the dedup gate in
+    // `sync_batch_verified_with_tentative`).
     let normalized_lower = if matches!(lower, Point::Origin) {
         upper
     } else {
@@ -440,14 +448,24 @@ fn normalize_blockfetch_range_points(lower: Point, upper: Point) -> Option<(Poin
 }
 
 fn normalize_blockfetch_range_bytes(lower: Vec<u8>, upper: Vec<u8>) -> Option<(Vec<u8>, Vec<u8>)> {
-    let lower_point = Point::from_cbor_bytes(&lower).ok()?;
-    let upper_point = Point::from_cbor_bytes(&upper).ok()?;
-    let (normalized_lower, normalized_upper) =
-        normalize_blockfetch_range_points(lower_point, upper_point)?;
-    Some((
-        normalized_lower.to_cbor_bytes(),
-        normalized_upper.to_cbor_bytes(),
-    ))
+    // When both bounds decode as proper Points, apply upstream Origin->upper
+    // normalization. Otherwise (synthetic/opaque payloads used by lower-level
+    // tests and pass-through call sites) hand the raw bytes through unchanged
+    // so the BlockFetch wire request still carries the caller's intent.
+    match (
+        Point::from_cbor_bytes(&lower).ok(),
+        Point::from_cbor_bytes(&upper).ok(),
+    ) {
+        (Some(lower_point), Some(upper_point)) => {
+            let (normalized_lower, normalized_upper) =
+                normalize_blockfetch_range_points(lower_point, upper_point)?;
+            Some((
+                normalized_lower.to_cbor_bytes(),
+                normalized_upper.to_cbor_bytes(),
+            ))
+        }
+        _ => Some((lower, upper)),
+    }
 }
 
 fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
@@ -617,6 +635,20 @@ fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
                         }
                         if let Some(point) = decode_header_point_bytes(second) {
                             return Some(point);
+                        }
+                        // NTN ChainSync wraps the actual header body as
+                        // tag(24, bytes(<header-cbor>)) (CBOR-in-CBOR). Unwrap
+                        // and retry Shelley/Praos point extraction. Without
+                        // this, post-Byron headers fail to decode and the
+                        // BlockFetch upper falls back to the chain tip, which
+                        // upstream rejects as an unfetchable range.
+                        if let Some(unwrapped) = decode_cbor_in_cbor_bytes(second) {
+                            if let Some(point) = decode_header_point_bytes(&unwrapped) {
+                                return Some(point);
+                            }
+                            if let Some(point) = decode_point_from_byron_raw_header(&unwrapped) {
+                                return Some(point);
+                            }
                         }
                     }
                 }
@@ -3535,7 +3567,16 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                 .await
                             {
                                 Ok(mut blocks) => {
-                                    if let Point::BlockPoint(_, lower_hash) = lower {
+                                    // Only deduplicate against `lower_hash` when the
+                                    // caller actually had a known prior tip
+                                    // (`from_point` was a BlockPoint).  When syncing
+                                    // from Origin, `normalize_blockfetch_range_points`
+                                    // sets `lower = upper`, and dropping blocks that
+                                    // match `lower_hash` would erase the very first
+                                    // block we just fetched.
+                                    if let (Point::BlockPoint(_, lower_hash), true) =
+                                        (lower, matches!(from_point, Point::BlockPoint(_, _)))
+                                    {
                                         while let Some((_, first)) = blocks.first() {
                                             let first_hash = multi_era_block_to_block(first).header.hash;
                                             if first_hash == lower_hash {

@@ -624,6 +624,9 @@ async fn spawn_decoded_rollforward_responder(magic: u32, block_bytes: Vec<u8>) -
         let bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
         match bf_msg {
             BlockFetchMessage::MsgRequestRange(range) => {
+                // Synthetic tip bytes (`[0x82,0x06,0x06]`) are not a valid
+                // Point CBOR, so `normalize_blockfetch_range_bytes` falls back
+                // to a raw pass-through and `lower` stays as Origin.
                 assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
                 assert_eq!(range.upper, vec![0x82, 0x06, 0x06]);
             }
@@ -691,7 +694,8 @@ async fn spawn_typed_rollforward_responder(
         let bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
         match bf_msg {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                // Fresh-from-Origin sync collapses to single-block fetch.
+                assert_eq!(range.lower, range.upper);
             }
             other => panic!("unexpected blockfetch request: {other:?}"),
         }
@@ -792,7 +796,8 @@ async fn spawn_two_step_typed_responder(
         let bf_msg_1 = BlockFetchMessage::from_cbor(&bf_req_1).expect("decode bf request 1");
         match bf_msg_1 {
             BlockFetchMessage::MsgRequestRange(range) => {
-                assert_eq!(range.lower, Point::Origin.to_cbor_bytes());
+                // Fresh-from-Origin sync collapses to single-block fetch.
+                assert_eq!(range.lower, range.upper);
             }
             other => panic!("unexpected blockfetch request step 1: {other:?}"),
         }
