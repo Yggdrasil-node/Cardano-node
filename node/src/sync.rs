@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule, EpochSize,
@@ -31,9 +33,9 @@ use yggdrasil_ledger::{
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_network::{
-    BlockFetchClient, BlockFetchClientError, ChainRange, ChainSyncClient, ChainSyncClientError,
-    DecodedHeaderNextResponse, KeepAliveClient, KeepAliveClientError, NextResponse, PeerError,
-    TypedIntersectResponse, TypedNextResponse,
+    BlockFetchClient, BlockFetchClientError, BlockFetchInstrumentation, ChainRange,
+    ChainSyncClient, ChainSyncClientError, DecodedHeaderNextResponse, KeepAliveClient,
+    KeepAliveClientError, NextResponse, PeerError, TypedIntersectResponse, TypedNextResponse,
 };
 use yggdrasil_plutus::CostModel;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
@@ -1213,6 +1215,18 @@ pub struct VerifiedSyncServiceConfig {
     /// epoch using `nonce_config.epoch_size`, which is incorrect on
     /// networks with a Byron prefix (mainnet, preprod).
     pub epoch_schedule: Option<EpochSchedule>,
+    /// Optional shared [`BlockFetchInstrumentation`] handle.  When set, the
+    /// verified-sync batch loop records per-peer fetch dispatch / success /
+    /// failure into the shared [`crate::sync::BlockFetchInstrumentation`]
+    /// pool so the BlockFetch decision engine has live per-peer accounting
+    /// across reconnects.  When `None`, the verified-sync path runs
+    /// unchanged with no instrumentation overhead.
+    ///
+    /// The pool is currently single-peer-equivalent: concurrency is gated
+    /// by the existing single-session pipeline.  A future slice (see
+    /// `docs/PARITY_PLAN.md` Phase 3 item 5) will lift this to N≥2 peers
+    /// via [`crate::sync::BlockFetchInstrumentation`]-driven scheduling.
+    pub block_fetch_pool: Option<BlockFetchInstrumentation>,
 }
 
 impl VerifiedSyncServiceConfig {
@@ -1681,6 +1695,7 @@ where
             config.batch_size,
             Some(&config.verification),
             &mut ocert_counters,
+            None,
         );
 
         tokio::select! {
@@ -1774,6 +1789,7 @@ where
             config.batch_size,
             Some(&config.verification),
             &mut ocert_counters,
+            None,
         );
 
         tokio::select! {
@@ -3640,6 +3656,7 @@ pub(crate) async fn sync_batch_verified(
     batch_size: usize,
     verification: Option<&VerificationConfig>,
     ocert_counters: &mut Option<OcertCounters>,
+    pool_instr: Option<(&BlockFetchInstrumentation, SocketAddr)>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     sync_batch_verified_with_tentative(
         chain_sync,
@@ -3649,10 +3666,12 @@ pub(crate) async fn sync_batch_verified(
         verification,
         None,
         ocert_counters,
+        pool_instr,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn sync_batch_verified_with_tentative(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
@@ -3661,6 +3680,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     verification: Option<&VerificationConfig>,
     tentative_state: Option<&Arc<RwLock<TentativeState>>>,
     ocert_counters: &mut Option<OcertCounters>,
+    pool_instr: Option<(&BlockFetchInstrumentation, SocketAddr)>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     let mut steps = Vec::new();
     let mut fetched_blocks = 0usize;
@@ -3698,6 +3718,16 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 } else {
                     match effective_range {
                         Some((lower, upper)) => {
+                            // Pool instrumentation: record dispatch synchronously
+                            // so per-peer in-flight accounting reflects the
+                            // outstanding fetch.  Mirrors upstream
+                            // `bumpFetchClientStateVars` in
+                            // `Ouroboros.Network.BlockFetch.ClientState`.
+                            if let Some((pool, peer)) = pool_instr {
+                                if let Ok(mut g) = pool.lock() {
+                                    g.note_dispatch(peer);
+                                }
+                            }
                             match fetch_range_blocks_multi_era_raw_decoded(block_fetch, lower, upper)
                                 .await
                             {
@@ -3724,6 +3754,11 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                     blocks
                                 }
                                 Err(err) => {
+                                    if let Some((pool, peer)) = pool_instr {
+                                        if let Ok(mut g) = pool.lock() {
+                                            g.note_failure(peer);
+                                        }
+                                    }
                                     if tentative_set {
                                         if let Some(state) = tentative_state {
                                             clear_tentative_trap(state);
@@ -3736,6 +3771,17 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                         None => Vec::new(),
                     }
                 };
+
+                // Pool instrumentation: record success after fetch completes
+                // (and any caller-side dedup is applied above).
+                if let Some((pool, peer)) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        let n_blocks = raw_and_decoded.len() as u64;
+                        let n_bytes: u64 =
+                            raw_and_decoded.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        g.note_success(peer, n_blocks, n_bytes, Instant::now());
+                    }
+                }
 
                 if let Some(config) = verification {
                     if config.verify_body_hash {
@@ -3895,6 +3941,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
 /// - Every Shelley-family block header is KES-verified after decoding.
 ///
 /// Byron blocks pass through both checks without verification.
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_batch_apply_verified<S: VolatileStore>(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
@@ -3903,6 +3950,7 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
     batch_size: usize,
     verification: Option<&VerificationConfig>,
     ocert_counters: &mut Option<OcertCounters>,
+    pool_instr: Option<(&BlockFetchInstrumentation, SocketAddr)>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     let progress = sync_batch_verified(
         chain_sync,
@@ -3911,6 +3959,7 @@ pub async fn sync_batch_apply_verified<S: VolatileStore>(
         batch_size,
         verification,
         ocert_counters,
+        pool_instr,
     )
     .await?;
 

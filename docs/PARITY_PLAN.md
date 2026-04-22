@@ -782,10 +782,54 @@ The Rust Cardano node (Yggdrasil) has achieved:
    - Scope: Inbound/outbound connection limits
    - Tests: Pool exhaustion scenarios
 
+5. **Multi-peer concurrent BlockFetch** (`node/src/sync.rs`, `node/src/runtime.rs`)
+   - Scope: Decouple ChainSync (single leading peer for tip tracking) from
+     per-range BlockFetch (distributed across N warm peers). Today
+     `sync_batch_verified_with_tentative` runs strictly serial:
+     `request_next_typed → request_range(1 block) → verify+apply`, two
+     full RTTs per block from a single peer. Live preprod soak measured
+     ~12 000 slots/min sustained, far below upstream throughput.
+   - Architecture (upstream parity):
+     1. **Fetch decision policy** mirroring
+        `Ouroboros.Network.BlockFetch.Decision.fetchDecisions`:
+        per-peer in-flight tracking, candidate-fragment intersection,
+        max-in-flight gate (`bfcMaxRequestsInFlight`,
+        `bfcMaxConcurrencyDeadline=1`,
+        `bfcMaxConcurrencyBulkSync=2`), peer-rate scoring.
+     2. **Fetch client registry** mirroring
+        `Ouroboros.Network.BlockFetch.ClientRegistry`: one BlockFetch
+        client per warm peer, shared `FetchClientStateVars`.
+     3. **Range scheduler**: split `from_point..tip_candidate` into
+        contiguous sub-ranges and dispatch to least-loaded healthy peer.
+     4. **Reorder buffer** keyed by `(slot, hash)` ahead of validator;
+        only release blocks whose predecessor matches the chain head.
+     5. **Failure rebalance**: re-queue sub-range to healthy peer on
+        timeout/error, with peer demotion on repeated failure
+        (per peer-governor policy).
+   - Upstream references:
+     - [`Ouroboros.Network.BlockFetch.Decision`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision.hs)
+     - [`Ouroboros.Network.BlockFetch.ClientRegistry`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/ClientRegistry.hs)
+     - [`Ouroboros.Network.BlockFetch.State`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/State.hs)
+   - Stepwise plan (each step compiles + tests cleanly):
+     1. Lift `FetchClientStateVars` equivalent into `runtime.rs`
+        (per-peer in-flight set, last-success timestamp, fragment head).
+     2. Add `BlockFetchPool` with N≥2 warm-peer clients held alongside
+        the existing leading-peer `PeerSession`.
+     3. Implement single-peer fall-back path that uses pool of size 1
+        (parity with current behavior, no test regression).
+     4. Implement range-splitter + reorder buffer behind a feature
+        flag/runtime config (`max_concurrent_block_fetch_peers`, default 1).
+     5. Wire fetch-decision policy and enable pool-of-N by default.
+   - Tests: at least one mock-peer integration test in
+     `node/tests/runtime.rs` covering 2-peer parallel fetch with one
+     slow peer; soak with `max_concurrent_block_fetch_peers=4` reaching
+     deeper into Shelley/Allegra eras within a 1-hour wall-clock budget.
+
 **Success Criteria**:
 - ✅ Stable mainnet peer set without thrashing
 - ✅ Connection limits enforced
 - ✅ Failed peers properly demoted
+- ⏳ Concurrent BlockFetch from N warm peers with reorder + rebalance
 
 ---
 

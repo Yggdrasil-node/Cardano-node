@@ -911,6 +911,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         slot_length_secs: None,
         system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
     };
     let mut store = InMemoryVolatile::default();
 
@@ -1001,6 +1002,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         slot_length_secs: None,
         system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -1085,6 +1087,7 @@ async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure(
         slot_length_secs: None,
         system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
     };
 
     let tentative_state = Arc::new(RwLock::new(TentativeState::initial()));
@@ -1165,6 +1168,7 @@ async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
         slot_length_secs: None,
         system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
     };
 
     let mut chain_db = ChainDb::new(
@@ -1260,6 +1264,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         slot_length_secs: None,
         system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -1368,6 +1373,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         slot_length_secs: None,
         system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);
@@ -1494,6 +1500,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         slot_length_secs: None,
         system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);
@@ -1914,4 +1921,133 @@ async fn runtime_txsubmission_service_shared_observes_concurrent_insert() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     session.mux.abort();
+}
+
+/// Verifies that when a `VerifiedSyncServiceConfig.block_fetch_pool` is
+/// provided, the verified-sync batch loop records per-peer dispatch and
+/// success into the shared `BlockFetchPool`.  Mirrors the upstream
+/// `bumpFetchClientStateVars` accounting in
+/// `Ouroboros.Network.BlockFetch.ClientState`.
+#[tokio::test]
+async fn runtime_verified_sync_records_blockfetch_pool_per_peer_counters() {
+    use std::sync::{Arc, Mutex};
+    use yggdrasil_network::blockfetch_pool::{BlockFetchPool, FetchMode};
+
+    let magic = 44;
+    let block_one_body = build_byron_ebb_body(1, 1, &[0x33; 32]);
+    let block_two_body = build_byron_ebb_body(2, 2, &[0x44; 32]);
+    let block_one = build_multi_era_envelope(0, &block_one_body);
+    let block_two = build_multi_era_envelope(0, &block_two_body);
+    let tip_one = Point::BlockPoint(
+        SlotNo(21_600),
+        ByronBlock::decode_ebb(&block_one_body)
+            .expect("decode block one")
+            .header_hash(),
+    );
+    let tip_two = Point::BlockPoint(
+        SlotNo(43_200),
+        ByronBlock::decode_ebb(&block_two_body)
+            .expect("decode block two")
+            .header_hash(),
+    );
+
+    let first_addr = spawn_verified_batch_responder(
+        magic,
+        tip_one,
+        block_one,
+        std::time::Duration::from_millis(10),
+    )
+    .await;
+    let second_addr = spawn_verified_batch_responder(
+        magic,
+        tip_two,
+        block_two,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    let pool: Arc<Mutex<BlockFetchPool>> =
+        Arc::new(Mutex::new(BlockFetchPool::new(FetchMode::BulkSync)));
+
+    let node_config = NodeConfig {
+        peer_addr: first_addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
+    };
+    let service_config = VerifiedSyncServiceConfig {
+        batch_size: 1,
+        verification: VerificationConfig {
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            verify_body_hash: true,
+            max_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
+        },
+        nonce_config: None,
+        security_param: None,
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
+        slot_length_secs: None,
+        system_start_unix_secs: None,
+        epoch_schedule: None,
+        block_fetch_pool: Some(Arc::clone(&pool)),
+    };
+    let mut store = InMemoryVolatile::default();
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        let _ = shutdown_tx.send(());
+    });
+
+    let outcome: ReconnectingSyncServiceOutcome = run_reconnecting_verified_sync_service(
+        &mut store,
+        ReconnectingVerifiedSyncRequest::new(
+            &node_config,
+            &[second_addr],
+            Point::Origin,
+            LedgerState::new(Era::Byron),
+            &service_config,
+        ),
+        async {
+            let _ = shutdown_rx.await;
+        },
+    )
+    .await
+    .expect("reconnecting verified sync service");
+
+    assert!(outcome.total_blocks >= 1);
+
+    let pool_guard = pool.lock().expect("pool lock");
+    // At least one of the two responder peers should have recorded
+    // dispatch + success in the shared pool.
+    let observed_peers: Vec<_> = pool_guard.peers.values().collect();
+    assert!(
+        !observed_peers.is_empty(),
+        "instrumentation should have recorded at least one peer"
+    );
+    let total_blocks: u64 = observed_peers.iter().map(|s| s.blocks_delivered).sum();
+    let total_bytes: u64 = observed_peers.iter().map(|s| s.bytes_delivered).sum();
+    let total_in_flight: usize = observed_peers.iter().map(|s| s.in_flight).sum();
+    assert_eq!(
+        total_in_flight, 0,
+        "all dispatched fetches should have settled (success or failure)"
+    );
+    assert!(
+        total_blocks >= 1,
+        "pool should have observed at least one delivered block, got {total_blocks}"
+    );
+    assert!(
+        total_bytes > 0,
+        "pool should have observed nonzero bytes delivered"
+    );
+    assert!(
+        observed_peers.iter().any(|s| s.last_success.is_some()),
+        "at least one peer should have a last_success timestamp"
+    );
 }

@@ -883,6 +883,7 @@ fn main() -> Result<()> {
                     slot_length_secs: genesis_slot_length,
                     system_start_unix_secs: genesis_system_start_unix_secs,
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
+                    block_fetch_pool: None,
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -908,6 +909,7 @@ fn main() -> Result<()> {
                     slot_length_secs: genesis_slot_length,
                     system_start_unix_secs: genesis_system_start_unix_secs,
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
+                    block_fetch_pool: None,
                 }
             };
 

@@ -9,6 +9,16 @@
 pub mod bearer;
 /// BlockFetch client driver — typed, state-machine-correct protocol loop.
 pub mod blockfetch_client;
+/// Multi-peer concurrent BlockFetch foundation — pool, scheduler, reorder buffer.
+pub mod blockfetch_pool;
+
+/// Shared, runtime-instrumentable handle to a [`crate::blockfetch_pool::BlockFetchPool`].
+///
+/// Mutex is brief and never held across `.await`; the runtime calls
+/// `note_dispatch` / `note_success` / `note_failure` synchronously around
+/// each BlockFetch round-trip.
+pub type BlockFetchInstrumentation =
+    std::sync::Arc<std::sync::Mutex<crate::blockfetch_pool::BlockFetchPool>>;
 /// ChainSync client driver — typed, state-machine-correct protocol loop.
 pub mod chainsync_client;
 /// Connection manager types and state machine.

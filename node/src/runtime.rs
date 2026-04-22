@@ -3962,6 +3962,10 @@ where
                 Some(&config.verification),
                 tentative_state.as_ref(),
                 &mut ocert_counters,
+                config
+                    .block_fetch_pool
+                    .as_ref()
+                    .map(|p| (p, session.connected_peer_addr)),
             );
 
             tokio::select! {
@@ -4377,6 +4381,10 @@ where
                 Some(&config.verification),
                 tentative_state.as_ref(),
                 &mut ocert_counters,
+                config
+                    .block_fetch_pool
+                    .as_ref()
+                    .map(|p| (p, session.connected_peer_addr)),
             );
 
             tokio::select! {
@@ -4934,6 +4942,10 @@ where
                 config.batch_size,
                 Some(&config.verification),
                 &mut ocert_counters,
+                config
+                    .block_fetch_pool
+                    .as_ref()
+                    .map(|p| (p, session.connected_peer_addr)),
             );
 
             tokio::select! {
@@ -5377,6 +5389,7 @@ mod tests {
             slot_length_secs: None,
             system_start_unix_secs: None,
         epoch_schedule: None,
+        block_fetch_pool: None,
         }
     }
 
