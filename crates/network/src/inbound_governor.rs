@@ -289,7 +289,7 @@ impl InboundGovernorState {
 
     /// Handle a new inbound connection with explicit data flow.
     ///
-    /// Same as [`handle_new_connection`] but takes the negotiated
+    /// Same as the private `handle_new_connection` but takes the negotiated
     /// `DataFlow` explicitly. Only duplex connections are tracked for
     /// maturation.
     pub fn new_connection_with_data_flow(
@@ -514,7 +514,7 @@ impl InboundGovernorState {
     /// Scan for connections whose idle timeout has expired and return
     /// `CommitRemote` events for them.
     ///
-    /// The caller should feed these events back through [`step`] or
+    /// The caller should feed these events back through [`Self::step`] or
     /// process them directly. This is used when the runtime wants to
     /// poll for expired idle timeouts without waiting for the full
     /// inactivity timeout cycle.
@@ -546,7 +546,7 @@ impl InboundGovernorState {
     /// counters change, appropriate `AwakeRemote`, `RemotePromotedToHot`,
     /// `RemoteDemotedToWarm`, and `WaitIdleRemote` events are generated.
     ///
-    /// Returns events to be fed into [`step`].
+    /// Returns events to be fed into [`Self::step`].
     pub fn update_responder_counters(
         &self,
         peer: &SocketAddr,
@@ -592,7 +592,7 @@ impl InboundGovernorState {
 
     /// Actually apply new responder counters to the stored entry.
     ///
-    /// Call this after processing the events from [`update_responder_counters`].
+    /// Call this after processing the events from [`Self::update_responder_counters`].
     pub fn set_responder_counters(&mut self, peer: &SocketAddr, new_counters: ResponderCounters) {
         if let Some(entry) = self.connections.get_mut(peer) {
             entry.responder_counters = new_counters;

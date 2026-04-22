@@ -67,9 +67,9 @@ pub enum TxIdsReply {
 /// A TxSubmission2 server driver maintaining the protocol state machine.
 ///
 /// Usage:
-/// 1. Call [`recv_init`] to receive the client's `MsgInit`.
-/// 2. Call [`request_tx_ids`] to ask for transaction identifiers.
-/// 3. Call [`request_txs`] to fetch specific transactions by id.
+/// 1. Call [`Self::recv_init`] to receive the client's `MsgInit`.
+/// 2. Call [`Self::request_tx_ids`] to ask for transaction identifiers.
+/// 3. Call [`Self::request_txs`] to fetch specific transactions by id.
 /// 4. Repeat from step 2 until the client sends `MsgDone`.
 pub struct TxSubmissionServer {
     channel: MessageChannel,

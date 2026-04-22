@@ -3304,7 +3304,7 @@ impl LedgerState {
     /// Duplicate proposals from the same genesis key for the same epoch
     /// overwrite the earlier entry (last-writer-wins per block ordering).
     ///
-    /// **Pre-condition**: the caller should call [`validate_ppup_proposal`]
+    /// **Pre-condition**: the caller should call [`Self::validate_ppup_proposal`]
     /// first to enforce the upstream PPUP rule.
     pub fn collect_pparam_proposals(&mut self, update: &crate::eras::shelley::ShelleyUpdate) {
         let epoch = EpochNo(update.epoch);
@@ -3859,7 +3859,7 @@ impl LedgerState {
     ///
     /// When `evaluator` is `Some`, Alonzo+ transactions with Plutus
     /// scripts have their scripts evaluated via the provided
-    /// [`PlutusEvaluator`]. When `None`, Plutus scripts are silently
+    /// [`crate::plutus_validation::PlutusEvaluator`]. When `None`, Plutus scripts are silently
     /// skipped (soft-skip for sync without a CEK machine configured).
     pub fn apply_block_validated(
         &mut self,

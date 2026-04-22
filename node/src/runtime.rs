@@ -46,7 +46,8 @@ use yggdrasil_network::{
     AbstractState, AcquireOutboundResult, AfterSlot, BlockFetchClient, ChainSyncClient, CmAction,
     ConnectionManagerState, ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, ConsensusMode,
     ControlMessage, DataFlow, DnsRefreshPolicy, DnsRootPeerProvider, GovernorAction,
-    GovernorState, GovernorTargets, HandshakeVersion, KeepAliveClient, LedgerPeerSnapshot,
+    GovernorState, GovernorTargets, HandshakeVersion, KeepAliveClient, KeepAliveClientError,
+    LedgerPeerSnapshot,
     LedgerPeerUseDecision, LedgerStateJudgement, LiveLedgerPeerRefreshObservation,
     LocalRootConfig, LocalRootTargets,
     MiniProtocolNum, NodePeerSharing, NodeToNodeVersionData, PeerAccessPoint, PeerAttemptState,
@@ -3399,6 +3400,56 @@ fn trace_reconnectable_sync_error(
     );
 }
 
+/// Wall-clock cadence at which the verified-sync reconnect loops emit
+/// `MsgKeepAlive` heartbeats to peers.
+///
+/// Upstream `keepAliveTimeout` defaults to ~97 s; we send well below that
+/// to keep the connection live without saturating the channel.  Reference:
+/// `Ouroboros.Network.Protocol.KeepAlive.Codec`.
+const KEEPALIVE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
+
+/// Heartbeat scheduler driving `MsgKeepAlive` traffic alongside the
+/// verified-sync request/reply loop.
+///
+/// Each reconnecting verified-sync inner loop owns one of these so the
+/// shared `session.keep_alive` driver receives a periodic ping that
+/// matches upstream's `keepAliveClient` cadence.  Cookies are
+/// monotonically wrapping `u16` values.
+struct KeepAliveScheduler {
+    last_sent_at: Instant,
+    next_cookie: u16,
+}
+
+impl KeepAliveScheduler {
+    /// Create a fresh scheduler that fires its first heartbeat one
+    /// `KEEPALIVE_HEARTBEAT_INTERVAL` from now.
+    fn new(now: Instant) -> Self {
+        Self {
+            last_sent_at: now,
+            next_cookie: 1,
+        }
+    }
+
+    /// Send a `MsgKeepAlive` if the heartbeat interval has elapsed.
+    ///
+    /// Returns `Ok(true)` when a heartbeat was sent and acknowledged,
+    /// `Ok(false)` when no heartbeat was due, and propagates the
+    /// underlying [`KeepAliveClient`] error otherwise so the caller can
+    /// abort the mux and record a reconnect.
+    async fn tick(
+        &mut self,
+        client: &mut KeepAliveClient,
+    ) -> Result<bool, KeepAliveClientError> {
+        if self.last_sent_at.elapsed() < KEEPALIVE_HEARTBEAT_INTERVAL {
+            return Ok(false);
+        }
+        client.keep_alive(self.next_cookie).await?;
+        self.next_cookie = self.next_cookie.wrapping_add(1);
+        self.last_sent_at = Instant::now();
+        Ok(true)
+    }
+}
+
 fn trace_sync_failure(
     tracer: &NodeTracer,
     peer_addr: SocketAddr,
@@ -3884,7 +3935,25 @@ where
             continue;
         }
 
+        let mut keepalive = KeepAliveScheduler::new(Instant::now());
         loop {
+            // Drive the KeepAlive heartbeat alongside ChainSync/BlockFetch so
+            // upstream peers do not tear down the connection at
+            // `keepAliveTimeout` (~97 s default).
+            if let Err(err) = keepalive.tick(&mut session.keep_alive).await {
+                trace_reconnectable_sync_error(
+                    tracer,
+                    "KeepAlive.Client",
+                    "keepalive failed; reconnecting",
+                    session.connected_peer_addr,
+                    &err,
+                    from_point,
+                );
+                session.mux.abort();
+                run_state.record_reconnect_failure();
+                break;
+            }
+
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
                 &mut session.block_fetch,
@@ -4281,7 +4350,25 @@ where
             continue;
         }
 
+        let mut keepalive = KeepAliveScheduler::new(Instant::now());
         loop {
+            // Drive the KeepAlive heartbeat alongside ChainSync/BlockFetch so
+            // upstream peers do not tear down the connection at
+            // `keepAliveTimeout` (~97 s default).
+            if let Err(err) = keepalive.tick(&mut session.keep_alive).await {
+                trace_reconnectable_sync_error(
+                    tracer,
+                    "KeepAlive.Client",
+                    "keepalive failed; reconnecting",
+                    session.connected_peer_addr,
+                    &err,
+                    from_point,
+                );
+                session.mux.abort();
+                run_state.record_reconnect_failure();
+                break;
+            }
+
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
                 &mut session.block_fetch,
@@ -4820,7 +4907,25 @@ where
             continue;
         }
 
+        let mut keepalive = KeepAliveScheduler::new(Instant::now());
         loop {
+            // Drive the KeepAlive heartbeat alongside ChainSync/BlockFetch so
+            // upstream peers do not tear down the connection at
+            // `keepAliveTimeout` (~97 s default).
+            if let Err(err) = keepalive.tick(&mut session.keep_alive).await {
+                trace_reconnectable_sync_error(
+                    tracer,
+                    "KeepAlive.Client",
+                    "keepalive failed; reconnecting",
+                    session.connected_peer_addr,
+                    &err,
+                    from_point,
+                );
+                session.mux.abort();
+                run_state.record_reconnect_failure();
+                break;
+            }
+
             let batch_fut = sync_batch_apply_verified(
                 &mut session.chain_sync,
                 &mut session.block_fetch,

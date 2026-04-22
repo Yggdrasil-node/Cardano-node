@@ -63,9 +63,9 @@ pub enum LocalTxRequest {
 /// A LocalTxSubmission server driver maintaining the protocol state machine.
 ///
 /// Usage:
-/// 1. Call [`recv_request`] to wait for a client transaction or `MsgDone`.
-/// 2. If a transaction was submitted, validate it and call [`accept`] or
-///    [`reject`].
+/// 1. Call [`Self::recv_request`] to wait for a client transaction or `MsgDone`.
+/// 2. If a transaction was submitted, validate it and call [`Self::accept`] or
+///    [`Self::reject`].
 /// 3. Repeat from step 1 until `Done` is received.
 pub struct LocalTxSubmissionServer {
     channel: MessageChannel,

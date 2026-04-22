@@ -1,6 +1,6 @@
 //! Plutus Phase-2 script validation bridge.
 //!
-//! This module defines the [`PlutusEvaluator`] trait that higher layers
+//! This module defines the [`PlutusEvaluator`](crate::plutus_validation::PlutusEvaluator) trait that higher layers
 //! (e.g. the node crate) implement using the actual CEK machine, and
 //! provides script resolution and orchestration helpers that map redeemers
 //! to their corresponding scripts and invoke the evaluator.

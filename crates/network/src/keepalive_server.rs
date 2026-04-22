@@ -50,9 +50,9 @@ pub enum KeepAliveServerError {
 /// A KeepAlive server driver maintaining the protocol state machine.
 ///
 /// The server loop:
-/// 1. Wait for [`MsgKeepAlive`] with a cookie.
-/// 2. Echo the cookie via [`MsgKeepAliveResponse`].
-/// 3. Repeat until the client sends [`MsgDone`].
+/// 1. Wait for `MsgKeepAlive` with a cookie.
+/// 2. Echo the cookie via `MsgKeepAliveResponse`.
+/// 3. Repeat until the client sends `MsgDone`.
 pub struct KeepAliveServer {
     channel: MessageChannel,
     state: KeepAliveState,

@@ -132,11 +132,11 @@ pub enum TxSubmissionClientError {
 /// A TxSubmission2 client driver maintaining the protocol state machine.
 ///
 /// Usage:
-/// 1. Call [`init`] to send `MsgInit`.
-/// 2. Call [`recv_request`] to receive the next server request.
-/// 3. Call [`reply_tx_ids`] or [`reply_txs`] depending on the request.
+/// 1. Call [`Self::init`] to send `MsgInit`.
+/// 2. Call [`Self::recv_request`] to receive the next server request.
+/// 3. Call [`Self::reply_tx_ids`] or [`Self::reply_txs`] depending on the request.
 /// 4. Repeat from step 2.
-/// 5. Call [`done`] from a blocking `StTxIds` state to terminate.
+/// 5. Call [`Self::done`] from a blocking `StTxIds` state to terminate.
 pub struct TxSubmissionClient {
     channel: MessageChannel,
     state: TxSubmissionState,

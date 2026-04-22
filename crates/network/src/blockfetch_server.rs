@@ -62,7 +62,7 @@ pub enum BlockFetchServerRequest {
 /// A BlockFetch server driver maintaining the protocol state machine.
 ///
 /// The server loop:
-/// 1. Wait for [`MsgRequestRange`] or [`MsgClientDone`].
+/// 1. Wait for `MsgRequestRange` or `MsgClientDone`.
 /// 2. On `MsgRequestRange`:
 ///    a. If blocks available: send `MsgStartBatch`, then stream `MsgBlock`
 ///    for each block, then send `MsgBatchDone`.

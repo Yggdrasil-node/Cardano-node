@@ -576,7 +576,7 @@ fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
             }
 
             // Common serialised-header form: [point, header-bytes]
-            if let Some(point) = Point::from_cbor_bytes(first).ok() {
+            if let Ok(point) = Point::from_cbor_bytes(first) {
                 return Some(point);
             }
 
@@ -628,27 +628,25 @@ fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
             if dec.is_empty() {
                 // Layout A: [eraTag, headerPayload]
                 let mut first_dec = Decoder::new(first);
-                if first_dec.unsigned().is_ok() {
-                    if first_dec.is_empty() {
-                        if let Some(point) = decode_point_from_serialised_header(second) {
+                if first_dec.unsigned().is_ok() && first_dec.is_empty() {
+                    if let Some(point) = decode_point_from_serialised_header(second) {
+                        return Some(point);
+                    }
+                    if let Some(point) = decode_header_point_bytes(second) {
+                        return Some(point);
+                    }
+                    // NTN ChainSync wraps the actual header body as
+                    // tag(24, bytes(<header-cbor>)) (CBOR-in-CBOR). Unwrap
+                    // and retry Shelley/Praos point extraction. Without
+                    // this, post-Byron headers fail to decode and the
+                    // BlockFetch upper falls back to the chain tip, which
+                    // upstream rejects as an unfetchable range.
+                    if let Some(unwrapped) = decode_cbor_in_cbor_bytes(second) {
+                        if let Some(point) = decode_header_point_bytes(&unwrapped) {
                             return Some(point);
                         }
-                        if let Some(point) = decode_header_point_bytes(second) {
+                        if let Some(point) = decode_point_from_byron_raw_header(&unwrapped) {
                             return Some(point);
-                        }
-                        // NTN ChainSync wraps the actual header body as
-                        // tag(24, bytes(<header-cbor>)) (CBOR-in-CBOR). Unwrap
-                        // and retry Shelley/Praos point extraction. Without
-                        // this, post-Byron headers fail to decode and the
-                        // BlockFetch upper falls back to the chain tip, which
-                        // upstream rejects as an unfetchable range.
-                        if let Some(unwrapped) = decode_cbor_in_cbor_bytes(second) {
-                            if let Some(point) = decode_header_point_bytes(&unwrapped) {
-                                return Some(point);
-                            }
-                            if let Some(point) = decode_point_from_byron_raw_header(&unwrapped) {
-                                return Some(point);
-                            }
                         }
                     }
                 }
@@ -2206,23 +2204,13 @@ fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerErro
                     }
                 };
                 let preview_len = raw.len().min(64);
-                let preview = raw[..preview_len]
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>();
+                let preview = bytes_to_hex(&raw[..preview_len]);
                 let full_hex = if raw.len() <= 4096 {
-                    Some(
-                        raw.iter()
-                            .map(|b| format!("{b:02x}"))
-                            .collect::<String>(),
-                    )
+                    Some(bytes_to_hex(raw))
                 } else {
                     let _ = fs::create_dir_all("tmp");
                     let _ = fs::write("tmp/last-decode-fail.cbor", raw);
-                    let _ = fs::write(
-                        "tmp/last-decode-fail.hex",
-                        raw.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-                    );
+                    let _ = fs::write("tmp/last-decode-fail.hex", bytes_to_hex(raw));
                     None
                 };
                 eprintln!(
@@ -3340,7 +3328,7 @@ pub async fn sync_step_multi_era(
     match next {
         TypedNextResponse::RollForward { header, tip }
         | TypedNextResponse::AwaitRollForward { header, tip } => {
-            let range_upper = point_from_raw_header(&header).unwrap_or_else(|| tip.clone());
+            let range_upper = point_from_raw_header(&header).unwrap_or(tip);
             let blocks = if let Some((lower, upper)) =
                 normalize_blockfetch_range_points(from_point, range_upper)
             {
@@ -3630,6 +3618,21 @@ fn sync_debug_enabled() -> bool {
     std::env::var("YGG_SYNC_DEBUG").is_ok_and(|v| v != "0")
 }
 
+/// Lowercase hex-encode a byte slice without per-byte `format!` allocations.
+///
+/// Used by the optional `YGG_SYNC_DEBUG` trace path to render raw header /
+/// block CBOR for diagnostic comparison against upstream `cardano-cli debug`
+/// output. Mirrors the helper in `crates/storage/src/file_immutable.rs`.
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        })
+}
+
 pub(crate) async fn sync_batch_verified(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
@@ -3674,10 +3677,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 let effective_range = normalize_blockfetch_range_points(from_point, range_upper);
                 let skip_fetch = header_point.is_some() && effective_range.is_none();
                 if sync_debug_enabled() {
-                    let header_hex = header
-                        .iter()
-                        .map(|b| format!("{b:02x}"))
-                        .collect::<String>();
+                    let header_hex = bytes_to_hex(&header);
                     eprintln!(
                         "[ygg-sync-debug] blockfetch-range lower={:?} upper={:?} tip={:?} header_point_decoded={} range_valid={} skip_fetch={} raw_header_len={} raw_header_hex={}",
                         from_point,

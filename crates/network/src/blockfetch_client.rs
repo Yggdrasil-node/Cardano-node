@@ -77,10 +77,10 @@ pub enum BlockFetchClientError {
 /// A BlockFetch client driver maintaining the protocol state machine.
 ///
 /// Usage:
-/// 1. Call [`request_range`] to initiate a batch.
-/// 2. If `BatchResponse::StartedBatch`, call [`recv_block`] repeatedly
+/// 1. Call [`Self::request_range`] to initiate a batch.
+/// 2. If `BatchResponse::StartedBatch`, call [`Self::recv_block`] repeatedly
 ///    until it returns `None` (which indicates `MsgBatchDone`).
-/// 3. Repeat from step 1 for more ranges, or call [`done`] to terminate.
+/// 3. Repeat from step 1 for more ranges, or call [`Self::done`] to terminate.
 pub struct BlockFetchClient {
     channel: MessageChannel,
     state: BlockFetchState,
@@ -143,21 +143,22 @@ impl BlockFetchClient {
     ///
     /// The client must be in `StIdle`.  If `BatchResponse::StartedBatch` is
     /// returned the client enters `StStreaming` and the caller should call
-    /// [`recv_block`] to consume the stream.
+    /// [`Self::recv_block`] to consume the stream.
     pub async fn request_range(
         &mut self,
         range: ChainRange,
     ) -> Result<BatchResponse, BlockFetchClientError> {
         let msg = BlockFetchMessage::MsgRequestRange(range);
         if std::env::var("YGG_SYNC_DEBUG").is_ok_and(|v| v != "0") {
+            use std::fmt::Write;
             let bytes = msg.to_cbor();
-            eprintln!(
-                "[ygg-sync-debug] blockfetch-request-cbor={}",
-                bytes
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>()
-            );
+            let hex = bytes
+                .iter()
+                .fold(String::with_capacity(bytes.len() * 2), |mut acc, b| {
+                    let _ = write!(acc, "{b:02x}");
+                    acc
+                });
+            eprintln!("[ygg-sync-debug] blockfetch-request-cbor={hex}");
         }
         self.send_msg(&msg).await?;
         let msg = self.recv_msg_timeout(bf_limits::BF_BUSY).await?;

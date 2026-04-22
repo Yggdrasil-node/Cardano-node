@@ -59,9 +59,9 @@ pub enum PeerSharingClientError {
 /// A PeerSharing client driver maintaining the protocol state machine.
 ///
 /// Usage:
-/// 1. Call [`share_request`] to ask the server for peer addresses.
+/// 1. Call [`Self::share_request`] to ask the server for peer addresses.
 /// 2. Repeat step 1 as needed (each call is a full request/reply cycle).
-/// 3. Call [`done`] to terminate the protocol cleanly.
+/// 3. Call [`Self::done`] to terminate the protocol cleanly.
 pub struct PeerSharingClient {
     channel: MessageChannel,
     state: PeerSharingState,

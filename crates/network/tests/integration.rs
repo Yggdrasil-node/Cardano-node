@@ -667,6 +667,42 @@ fn keepalive_cbor_msg_response_round_trip() {
     assert_eq!(msg, decoded);
 }
 
+/// Wire-format parity with upstream
+/// `Ouroboros.Network.Protocol.KeepAlive.Codec`:
+/// `MsgKeepAlive=[0,c]`, `MsgKeepAliveResponse=[1,c]`, `MsgDone=[2]`.
+///
+/// Locks the on-wire tag mapping so a future codec refactor cannot
+/// silently swap `MsgDone` and `MsgKeepAliveResponse` again.
+#[test]
+fn keepalive_cbor_wire_tags_match_upstream() {
+    // [0, 0x2A] — MsgKeepAlive cookie=42
+    assert_eq!(
+        KeepAliveMessage::MsgKeepAlive { cookie: 42 }.to_cbor(),
+        vec![0x82, 0x00, 0x18, 0x2A],
+    );
+    // [1, 0x2A] — MsgKeepAliveResponse cookie=42
+    assert_eq!(
+        KeepAliveMessage::MsgKeepAliveResponse { cookie: 42 }.to_cbor(),
+        vec![0x82, 0x01, 0x18, 0x2A],
+    );
+    // [2] — MsgDone
+    assert_eq!(KeepAliveMessage::MsgDone.to_cbor(), vec![0x81, 0x02]);
+
+    // Round-trip decode of canonical upstream-shape bytes.
+    assert_eq!(
+        KeepAliveMessage::from_cbor(&[0x82, 0x00, 0x18, 0x2A]).unwrap(),
+        KeepAliveMessage::MsgKeepAlive { cookie: 42 },
+    );
+    assert_eq!(
+        KeepAliveMessage::from_cbor(&[0x82, 0x01, 0x18, 0x2A]).unwrap(),
+        KeepAliveMessage::MsgKeepAliveResponse { cookie: 42 },
+    );
+    assert_eq!(
+        KeepAliveMessage::from_cbor(&[0x81, 0x02]).unwrap(),
+        KeepAliveMessage::MsgDone,
+    );
+}
+
 // ===========================================================================
 // ChainSync CBOR round-trip
 // ===========================================================================

@@ -246,8 +246,8 @@ pub enum CostExpr {
     /// Used by and/or/xorByteString memory costing where the first arg is a
     /// boolean padding flag and the two bytestring operands are args 1 and 2.
     MaxSizeYZ { intercept: i64, slope: i64 },
-    /// `c00 + c11 * (y * z) + c12 * (y * z²)` where y = size(arg[1]),
-    /// z = size(arg[2]). If size(arg[0]) > size(arg[2]), cost is increased
+    /// `c00 + c11 * (y * z) + c12 * (y * z²)` where `y = size(arg[1])`,
+    /// `z = size(arg[2])`. If `size(arg[0]) > size(arg[2])`, cost is increased
     /// by 50% (upstream penalty for unreduced base in `expModInteger`).
     ///
     /// Upstream `evaluateExpModCostingFunction` from the Plutus CEK cost model.
@@ -273,7 +273,7 @@ pub enum CostExpr {
     /// Used by division builtins (`divideInteger`, `modInteger`, etc.).
     ConstAboveDiagonal { constant: i64, inner: Box<CostExpr> },
     /// `max(minimum, c00 + c10*x + c01*y + c20*x² + c11*x*y + c02*y²)`
-    /// where x = size(arg[0]), y = size(arg[1]).
+    /// where `x = size(arg[0])`, `y = size(arg[1])`.
     ///
     /// Upstream `TwoVariableQuadraticFunction`.
     TwoVarQuadratic {
@@ -664,8 +664,8 @@ impl CostModel {
     /// against the actual argument sizes. When [`Self::strict_builtin_costs`]
     /// is `false`, falls back to the flat `builtin_cpu` / `builtin_mem` costs
     /// for any builtin without a per-builtin entry. When strict mode is
-    /// enabled, returns [`MachineError::MissingBuiltinCost`] instead so
-    /// incomplete cost models surface as a structural failure.
+    /// enabled, returns [`crate::error::MachineError::MissingBuiltinCost`]
+    /// instead so incomplete cost models surface as a structural failure.
     pub fn builtin_cost(
         &self,
         fun: DefaultFun,

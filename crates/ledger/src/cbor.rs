@@ -320,7 +320,7 @@ impl<'a> Decoder<'a> {
     /// Decodes a definite-length byte string (CBOR major type 2) and
     /// returns a borrowed slice into the input.
     ///
-    /// For indefinite-length byte strings, use [`bytes_owned()`].
+    /// For indefinite-length byte strings, use [`Self::bytes_owned`].
     pub fn bytes(&mut self) -> Result<&'a [u8], LedgerError> {
         self.bytes_definite()
     }

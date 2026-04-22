@@ -312,7 +312,7 @@ impl MultiEraUtxo {
     /// different bytes (definite vs indefinite arrays, attribute map
     /// ordering), so callers that have access to the original wire
     /// bytes (e.g. `apply_byron_block`) MUST use this entry point
-    /// rather than [`apply_byron_tx`] to ensure inserted UTxO keys
+    /// rather than [`Self::apply_byron_tx`] to ensure inserted UTxO keys
     /// match what subsequent transactions will spend.
     pub fn apply_byron_tx_with_id(
         &mut self,

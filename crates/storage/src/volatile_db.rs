@@ -43,7 +43,7 @@ pub trait VolatileStore {
     /// This is used during rollback to capture the blocks that will be
     /// discarded so their transactions can be re-admitted to the mempool.
     ///
-    /// The default implementation uses [`prefix_up_to`] to find the split
+    /// The default implementation uses [`Self::prefix_up_to`] to find the split
     /// point and returns the remaining suffix. Returns an empty vec for
     /// `Origin` (the entire chain would be returned by the rollback path
     /// instead) or if the point is not found.

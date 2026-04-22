@@ -64,8 +64,8 @@ pub enum PeerSharingServerRequest {
 /// A PeerSharing server driver maintaining the protocol state machine.
 ///
 /// Usage:
-/// 1. Call [`recv_request`] to wait for the client's next message.
-/// 2. If `ShareRequest`, call [`share_peers`] with available addresses.
+/// 1. Call [`Self::recv_request`] to wait for the client's next message.
+/// 2. If `ShareRequest`, call [`Self::share_peers`] with available addresses.
 /// 3. Repeat until `Done`.
 pub struct PeerSharingServer {
     channel: MessageChannel,

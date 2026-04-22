@@ -61,10 +61,10 @@ pub enum KeepAliveClientError {
 /// A KeepAlive client driver maintaining the protocol state machine.
 ///
 /// Usage:
-/// 1. Call [`keep_alive`] with a cookie — the driver sends `MsgKeepAlive`
+/// 1. Call [`Self::keep_alive`] with a cookie — the driver sends `MsgKeepAlive`
 ///    and waits for `MsgKeepAliveResponse`, verifying the echoed cookie.
 /// 2. Repeat step 1 as many times as needed.
-/// 3. Call [`done`] to terminate the protocol cleanly.
+/// 3. Call [`Self::done`] to terminate the protocol cleanly.
 pub struct KeepAliveClient {
     channel: MessageChannel,
     state: KeepAliveState,

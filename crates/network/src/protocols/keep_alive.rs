@@ -30,13 +30,14 @@ pub enum KeepAliveState {
 
 /// Messages of the KeepAlive mini-protocol.
 ///
-/// CDDL wire tags (from `keep-alive.cddl`):
+/// CDDL wire tags (from upstream
+/// `Ouroboros.Network.Protocol.KeepAlive.Codec`):
 ///
 /// | Tag | Message                |
 /// |-----|------------------------|
 /// |  0  | `MsgKeepAlive`         |
-/// |  1  | `MsgDone`              |
-/// |  2  | `MsgKeepAliveResponse` |
+/// |  1  | `MsgKeepAliveResponse` |
+/// |  2  | `MsgDone`              |
 ///
 /// Reference: `Ouroboros.Network.Protocol.KeepAlive.Type` — `Message`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,12 +50,12 @@ pub enum KeepAliveMessage {
         cookie: u16,
     },
 
-    /// `[1]` — client terminates the protocol.
+    /// `[2]` — client terminates the protocol.
     ///
     /// Transition: `StClient → StDone`.
     MsgDone,
 
-    /// `[2, cookie]` — server echoes the cookie back.
+    /// `[1, cookie]` — server echoes the cookie back.
     ///
     /// Transition: `StServer → StClient`.
     MsgKeepAliveResponse {
@@ -110,21 +111,22 @@ use yggdrasil_ledger::cbor::{Decoder, Encoder};
 impl KeepAliveMessage {
     /// Encode this message to CBOR bytes.
     ///
-    /// Wire format (matching upstream CDDL):
+    /// Wire format (matching upstream
+    /// `Ouroboros.Network.Protocol.KeepAlive.Codec`):
     /// - `MsgKeepAlive`         → `[0, cookie]`
-    /// - `MsgDone`              → `[1]`
-    /// - `MsgKeepAliveResponse` → `[2, cookie]`
+    /// - `MsgKeepAliveResponse` → `[1, cookie]`
+    /// - `MsgDone`              → `[2]`
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut enc = Encoder::new();
         match self {
             Self::MsgKeepAlive { cookie } => {
                 enc.array(2).unsigned(0).unsigned(u64::from(*cookie));
             }
-            Self::MsgDone => {
-                enc.array(1).unsigned(1);
-            }
             Self::MsgKeepAliveResponse { cookie } => {
-                enc.array(2).unsigned(2).unsigned(u64::from(*cookie));
+                enc.array(2).unsigned(1).unsigned(u64::from(*cookie));
+            }
+            Self::MsgDone => {
+                enc.array(1).unsigned(2);
             }
         }
         enc.into_bytes()
@@ -140,11 +142,11 @@ impl KeepAliveMessage {
                 let cookie = dec.unsigned()? as u16;
                 Self::MsgKeepAlive { cookie }
             }
-            (1, 1) => Self::MsgDone,
-            (2, 2) => {
+            (1, 2) => {
                 let cookie = dec.unsigned()? as u16;
                 Self::MsgKeepAliveResponse { cookie }
             }
+            (2, 1) => Self::MsgDone,
             _ => {
                 return Err(LedgerError::CborTypeMismatch {
                     expected: 0,

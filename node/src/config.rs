@@ -617,8 +617,8 @@ impl NodeConfigFile {
         load_byron_genesis_utxo(&path)
     }
 
-    /// Load the genesis [`EnactState`] from the configured Conway genesis file
-    /// when a `constitution` section is present.
+    /// Load the genesis [`yggdrasil_ledger::EnactState`] from the configured
+    /// Conway genesis file when a `constitution` section is present.
     pub fn load_genesis_enact_state(
         &self,
         config_base_dir: Option<&Path>,
