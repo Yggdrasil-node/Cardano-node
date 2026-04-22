@@ -3134,6 +3134,15 @@ impl LedgerState {
             enc.array(2).raw(&address).unsigned(amount);
             let cbor = enc.into_bytes();
             let tx_id = yggdrasil_crypto::hash_bytes_256(&cbor).0;
+            fn hx(b: &[u8]) -> String { let mut s = String::with_capacity(b.len()*2); for x in b { s.push_str(&format!("{:02x}", x)); } s }
+            eprintln!(
+                "DEBUG byron_genesis seed: amount={} address_len={} address_hex={} cbor_hex={} tx_id={}",
+                amount,
+                address.len(),
+                hx(&address),
+                hx(&cbor),
+                hx(&tx_id),
+            );
             let txin = ShelleyTxIn {
                 transaction_id: tx_id,
                 index: 0,
@@ -5871,6 +5880,42 @@ impl LedgerState {
         if self.current_era != Era::Byron || next_era == Era::Byron {
             return;
         }
+
+        // Byron→Shelley UTxO translation.
+        //
+        // Upstream `Cardano.Ledger.Shelley.Translation.translateUtxo`
+        // converts every Byron `TxOut(addr, val)` into a Shelley
+        // `TxOut(addr, Coin val)`, preserving `TxIn` keys bit-for-bit
+        // (Byron txids are the same hash space as Shelley txids; the
+        // 32-bit Byron output index always fits in the 16-bit Shelley
+        // index in practice).  Without this step the first Shelley
+        // block that spends a Byron-era output (e.g. preprod's seed
+        // distribution) would fail with `InputNotFound`, since
+        // `apply_shelley_block` reads exclusively from `shelley_utxo`.
+        //
+        // The Byron entries already live in `multi_era_utxo` as
+        // `MultiEraTxOut::Shelley` (see `apply_byron_tx_with_id`), so
+        // the translation reduces to draining those into `shelley_utxo`.
+        let translated: Vec<_> = self
+            .multi_era_utxo
+            .iter()
+            .filter_map(|(txin, txout)| match txout {
+                crate::utxo::MultiEraTxOut::Shelley(out) => {
+                    Some((txin.clone(), out.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        let translated_count = translated.len();
+        for (txin, txout) in translated {
+            self.shelley_utxo.insert(txin, txout);
+        }
+        eprintln!(
+            "DEBUG byron_to_shelley translation: translated={} shelley_utxo_size={} multi_era_utxo_size={}",
+            translated_count,
+            self.shelley_utxo.len(),
+            self.multi_era_utxo.len(),
+        );
 
         let utxo_entries = self.pending_shelley_genesis_utxo.take();
         let stake_entries = self.pending_shelley_genesis_stake.take();
