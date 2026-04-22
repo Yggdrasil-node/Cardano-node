@@ -890,6 +890,41 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                     enc.unsigned(*stake);
                 }
             }
+            Some(18) => {
+                // GetGenesisDelegations — respond with CBOR map
+                // { genesis_hash_bytes => [delegate_hash_bytes, vrf_hash_bytes] }.
+                //
+                // Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+                // `GetGenesisConfig` (the genesis-delegation portion).
+                let gd = snapshot.gen_delegs();
+                enc.map(gd.len() as u64);
+                for (hash, state) in gd {
+                    enc.bytes(hash);
+                    enc.array(2);
+                    enc.bytes(&state.delegate);
+                    enc.bytes(&state.vrf);
+                }
+            }
+            Some(19) => {
+                // GetStabilityWindow — respond with the configured `3k/f`
+                // window as a plain u64 or CBOR null when not configured.
+                //
+                // Reference: `Ouroboros.Consensus.HardFork.History.Util` —
+                // stability window derivation from chain parameters.
+                match snapshot.stability_window() {
+                    Some(w) => enc.unsigned(w),
+                    None => enc.null(),
+                };
+            }
+            Some(20) => {
+                // GetNumDormantEpochs — respond with the consecutive
+                // dormant-epoch count as a plain u64.  Conway-only governance
+                // bookkeeping.
+                //
+                // Reference: `Cardano.Ledger.Conway.Governance.DRepPulser` —
+                // `csNumDormantEpochs`.
+                enc.unsigned(snapshot.num_dormant_epochs());
+            }
             _ => {
                 // Unknown query — return empty bytes; client should handle gracefully.
             }
@@ -1336,5 +1371,56 @@ mod tests {
         assert!(!result.is_empty());
         // Empty CBOR map is 0xa0.
         assert_eq!(result, vec![0xa0]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_genesis_delegations_empty() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query [18] — GetGenesisDelegations.
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(18u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // Empty CBOR map is 0xa0.
+        assert_eq!(result, vec![0xa0]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_stability_window_unset() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query [19] — GetStabilityWindow.
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(19u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // CBOR null is 0xf6.
+        assert_eq!(result, vec![0xf6]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_num_dormant_epochs_zero() {
+        use yggdrasil_ledger::Encoder;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Query [20] — GetNumDormantEpochs.
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(20u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // CBOR unsigned 0 is 0x00.
+        assert_eq!(result, vec![0x00]);
     }
 }

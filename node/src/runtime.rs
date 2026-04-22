@@ -3134,6 +3134,84 @@ impl ReconnectingRunState {
         }
         self.last_connected_peer_addr = Some(peer_addr);
     }
+}
+
+/// Register a freshly-bootstrapped peer in the shared `BlockFetchPool` so the
+/// pool tracks per-peer state across reconnects.  Mirrors upstream
+/// `addNewFetchClient` / `bracketFetchClient` in
+/// `Ouroboros.Network.BlockFetch.ClientRegistry`: every active fetch client
+/// must be registered with the registry while the session is live.
+fn pool_register_peer(
+    pool: Option<&yggdrasil_network::BlockFetchInstrumentation>,
+    peer_addr: SocketAddr,
+) {
+    if let Some(p) = pool {
+        if let Ok(mut guard) = p.lock() {
+            guard.register_peer(peer_addr);
+        }
+    }
+}
+
+/// Update this peer's known fragment head in the shared pool after a
+/// successful sync batch advances `current_point`.  The pool's scheduling
+/// policy uses this to gate range assignments — a peer can only receive a
+/// range whose `upper` is at or behind its known fragment head.  Mirrors
+/// upstream `setFetchClientFragment` in
+/// `Ouroboros.Network.BlockFetch.ClientState`.
+fn pool_update_fragment_head(
+    pool: Option<&yggdrasil_network::BlockFetchInstrumentation>,
+    peer_addr: SocketAddr,
+    head: Point,
+) {
+    if let Some(p) = pool {
+        if let Ok(mut guard) = p.lock() {
+            guard.set_peer_fragment_head(peer_addr, head);
+        }
+    }
+}
+
+/// Returns `true` when the pool has recorded enough consecutive failures
+/// from `peer_addr` to warrant proactive demotion + mux teardown.  Mirrors
+/// upstream `maxFetchClientFailures` policy in
+/// `Ouroboros.Network.BlockFetch.ClientState`.
+fn pool_should_demote_peer(
+    pool: Option<&yggdrasil_network::BlockFetchInstrumentation>,
+    peer_addr: SocketAddr,
+) -> bool {
+    if let Some(p) = pool {
+        if let Ok(guard) = p.lock() {
+            if let Some(state) = guard.peer_state(peer_addr) {
+                return state.consecutive_failures
+                    >= yggdrasil_network::blockfetch_pool::DEFAULT_FAILURE_DEMOTION_THRESHOLD;
+            }
+        }
+    }
+    false
+}
+
+/// Remove `peer_addr` from the pool when its session ends.  Preserves
+/// historical counters for inspection but frees the per-peer slot so the
+/// next connection re-registers cleanly.  Mirrors upstream
+/// `removeFetchClient` in `Ouroboros.Network.BlockFetch.ClientRegistry`.
+fn pool_unregister_peer(
+    pool: Option<&yggdrasil_network::BlockFetchInstrumentation>,
+    peer_addr: SocketAddr,
+) {
+    if let Some(p) = pool {
+        if let Ok(mut guard) = p.lock() {
+            let _ = guard.remove_peer(peer_addr);
+        }
+    }
+}
+
+#[allow(dead_code)]
+mod _runstate_impl_marker {
+    // Marker module — keeps the split impl-block boundary visible and
+    // prevents accidental insertion of unrelated items between the two
+    // halves of `impl ReconnectingRunState`.
+}
+
+impl ReconnectingRunState {
 
     fn record_progress(&mut self, progress: &MultiEraSyncProgress) {
         self.total_blocks += progress.fetched_blocks;
@@ -3900,6 +3978,10 @@ where
         };
 
         run_state.record_session(session.connected_peer_addr, &mut had_session);
+        pool_register_peer(
+            config.block_fetch_pool.as_ref(),
+            session.connected_peer_addr,
+        );
         if had_session && run_state.reconnect_count > 0 {
             if let Some(m) = metrics {
                 m.inc_reconnects();
@@ -4109,6 +4191,15 @@ where
                                 metrics,
                             );
 
+                            // Update pool fragment-head tracking with the
+                            // live current_point so the multi-peer scheduler
+                            // knows this peer can serve up through this slot.
+                            pool_update_fragment_head(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
+                                from_point,
+                            );
+
                             // Push live epoch nonce to the concurrent block producer.
                             update_bp_state_nonce(&bp_state, nonce_state.as_ref());
 
@@ -4170,6 +4261,24 @@ where
                                 session.connected_peer_addr,
                                 from_point,
                                 &err,
+                            );
+                            if pool_should_demote_peer(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
+                            ) {
+                                tracer.trace_runtime(
+                                    "Net.BlockFetch.PoolDemote",
+                                    "Warning",
+                                    "fetch-client failure threshold exceeded for peer",
+                                    trace_fields([(
+                                        "peer",
+                                        json!(session.connected_peer_addr.to_string()),
+                                    )]),
+                                );
+                            }
+                            pool_unregister_peer(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
                             );
                             session.mux.abort();
                             match disposition {
@@ -4319,6 +4428,10 @@ where
         };
 
         run_state.record_session(session.connected_peer_addr, &mut had_session);
+        pool_register_peer(
+            config.block_fetch_pool.as_ref(),
+            session.connected_peer_addr,
+        );
         if had_session && run_state.reconnect_count > 0 {
             if let Some(m) = metrics {
                 m.inc_reconnects();
@@ -4530,6 +4643,15 @@ where
                                 metrics,
                             );
 
+                            // Update pool fragment-head tracking with the
+                            // live current_point so the multi-peer scheduler
+                            // knows this peer can serve up through this slot.
+                            pool_update_fragment_head(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
+                                from_point,
+                            );
+
                             // Push live epoch nonce to the concurrent block producer.
                             update_bp_state_nonce(&bp_state, nonce_state.as_ref());
 
@@ -4591,6 +4713,24 @@ where
                                 session.connected_peer_addr,
                                 from_point,
                                 &err,
+                            );
+                            if pool_should_demote_peer(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
+                            ) {
+                                tracer.trace_runtime(
+                                    "Net.BlockFetch.PoolDemote",
+                                    "Warning",
+                                    "fetch-client failure threshold exceeded for peer",
+                                    trace_fields([(
+                                        "peer",
+                                        json!(session.connected_peer_addr.to_string()),
+                                    )]),
+                                );
+                            }
+                            pool_unregister_peer(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
                             );
                             session.mux.abort();
                             match disposition {
@@ -4886,6 +5026,10 @@ where
         };
 
         run_state.record_session(session.connected_peer_addr, &mut had_session);
+        pool_register_peer(
+            config.block_fetch_pool.as_ref(),
+            session.connected_peer_addr,
+        );
 
         trace_session_established(
             tracer,
@@ -4973,6 +5117,15 @@ where
                                 None,
                             );
 
+                            // Update pool fragment-head tracking with the
+                            // live current_point so the multi-peer scheduler
+                            // knows this peer can serve up through this slot.
+                            pool_update_fragment_head(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
+                                from_point,
+                            );
+
                             if let Some(ref mut cs) = chain_state {
                                 for step in &progress.steps {
                                     run_state.stable_block_count += track_chain_state(cs, step)?;
@@ -4997,6 +5150,24 @@ where
                                 session.connected_peer_addr,
                                 from_point,
                                 &err,
+                            );
+                            if pool_should_demote_peer(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
+                            ) {
+                                tracer.trace_runtime(
+                                    "Net.BlockFetch.PoolDemote",
+                                    "Warning",
+                                    "fetch-client failure threshold exceeded for peer",
+                                    trace_fields([(
+                                        "peer",
+                                        json!(session.connected_peer_addr.to_string()),
+                                    )]),
+                                );
+                            }
+                            pool_unregister_peer(
+                                config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
                             );
                             session.mux.abort();
                             match disposition {

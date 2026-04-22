@@ -628,6 +628,48 @@ mod tests {
         );
     }
 
+    /// Shipped network presets must parse with the exact field shape used by
+    /// upstream `cardano-node` topology files (camelCase, optional groups,
+    /// `valency`/`hotValency`/`warmValency` aliasing, integer
+    /// `useLedgerAfterSlot`, optional `peerSnapshotFile`).  Reference:
+    /// `Ouroboros.Network.PeerSelection.RootPeersDNS.LocalRootPeers` +
+    /// `Cardano.Network.ConsensusMode` topology schema.
+    #[test]
+    fn topology_config_parses_each_shipped_network_preset() {
+        for net in ["mainnet", "preprod", "preview"] {
+            let path = format!(
+                "{}/configuration/{}/topology.json",
+                env!("CARGO_MANIFEST_DIR").replace("crates/network", "node"),
+                net
+            );
+            let bytes = std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("read {path}: {err}"));
+            let parsed: TopologyConfig = serde_json::from_str(&bytes)
+                .unwrap_or_else(|err| panic!("parse {path}: {err}"));
+            // Real upstream topology files always set useLedgerAfterSlot to a
+            // concrete network-specific slot so ledger-peer onboarding is
+            // gated until after that slot.
+            assert!(
+                matches!(
+                    parsed.use_ledger_peers,
+                    UseLedgerPeers::UseLedgerPeers(AfterSlot::After(_))
+                ),
+                "{net} topology should have a non-zero useLedgerAfterSlot",
+            );
+            // All shipped presets use a peer snapshot file.
+            assert!(
+                parsed.peer_snapshot_file.is_some(),
+                "{net} topology should declare peerSnapshotFile",
+            );
+            // Round-trip: re-serialize and re-parse to catch any field-name
+            // mismatch that would lose data on persistence.
+            let json = serde_json::to_string(&parsed).expect("re-serialize");
+            let reparsed: TopologyConfig =
+                serde_json::from_str(&json).expect("reparse round-trip");
+            assert_eq!(parsed, reparsed, "round-trip mismatch for {net}");
+        }
+    }
+
     #[test]
     fn resolved_root_providers_enforce_local_and_bootstrap_public_precedence() {
         let providers = resolve_root_peer_providers(

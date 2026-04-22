@@ -1998,6 +1998,9 @@ pub struct LedgerStateSnapshot {
     deposit_pot: DepositPot,
     accounting: AccountingState,
     enact_state: EnactState,
+    gen_delegs: BTreeMap<GenesisHash, GenesisDelegationState>,
+    stability_window: Option<u64>,
+    num_dormant_epochs: u64,
 }
 
 impl LedgerStateSnapshot {
@@ -2132,6 +2135,26 @@ impl LedgerStateSnapshot {
     /// Returns the Conway enactment state captured in this snapshot.
     pub fn enact_state(&self) -> &EnactState {
         &self.enact_state
+    }
+
+    /// Returns the active genesis-delegation map captured in this snapshot.
+    /// Mirrors upstream `dsGenDelegs` from
+    /// `Cardano.Ledger.Shelley.LedgerState.DPState`.
+    pub fn gen_delegs(&self) -> &BTreeMap<GenesisHash, GenesisDelegationState> {
+        &self.gen_delegs
+    }
+
+    /// Returns the configured stability window (`3k/f`) captured in this
+    /// snapshot, if known.
+    pub fn stability_window(&self) -> Option<u64> {
+        self.stability_window
+    }
+
+    /// Returns the consecutive dormant-epoch count captured in this
+    /// snapshot.  Mirrors upstream `csNumDormantEpochs` from
+    /// `Cardano.Ledger.Conway.Governance.DRepPulser`.
+    pub fn num_dormant_epochs(&self) -> u64 {
+        self.num_dormant_epochs
     }
 
     /// Returns UTxO entries for the given transaction inputs.
@@ -3813,6 +3836,9 @@ impl LedgerState {
             deposit_pot: self.deposit_pot.clone(),
             accounting: self.accounting.clone(),
             enact_state: self.enact_state.clone(),
+            gen_delegs: self.gen_delegs.clone(),
+            stability_window: self.stability_window,
+            num_dormant_epochs: self.num_dormant_epochs,
         }
     }
 

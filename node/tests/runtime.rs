@@ -2050,4 +2050,25 @@ async fn runtime_verified_sync_records_blockfetch_pool_per_peer_counters() {
         observed_peers.iter().any(|s| s.last_success.is_some()),
         "at least one peer should have a last_success timestamp"
     );
+
+    // Pool should have explicit per-peer entries (via runtime
+    // `pool_register_peer` wiring) keyed by the connected peer addr — not
+    // just auto-registration from `note_dispatch`.  Mirrors upstream
+    // `addNewFetchClient` in
+    // `Ouroboros.Network.BlockFetch.ClientRegistry`.
+    assert!(
+        pool_guard.peers.contains_key(&first_addr) || pool_guard.peers.contains_key(&second_addr),
+        "runtime should have registered at least one connected peer"
+    );
+
+    // After a successful batch, runtime `pool_update_fragment_head` wiring
+    // should have populated `fragment_head` for the producing peer.
+    // Mirrors upstream `setFetchClientFragment` in
+    // `Ouroboros.Network.BlockFetch.ClientState`.
+    assert!(
+        observed_peers
+            .iter()
+            .any(|s| matches!(s.fragment_head, Some(Point::BlockPoint(_, _)))),
+        "successful batch should update at least one peer's fragment_head"
+    );
 }
