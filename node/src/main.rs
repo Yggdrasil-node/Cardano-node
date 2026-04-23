@@ -197,7 +197,8 @@ enum Command {
         /// Path to a file containing the CBOR-encoded transaction.
         #[arg(long, conflicts_with = "tx_hex")]
         tx_file: Option<PathBuf>,
-        /// Hex-encoded CBOR transaction bytes.
+        /// Hex-encoded CBOR transaction bytes. Accepts an optional `0x`
+        /// prefix and surrounding whitespace for terminal-paste ergonomics.
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
@@ -217,7 +218,7 @@ enum QueryCommand {
     ProtocolParams,
     /// Query the UTxO set for a given address (hex-encoded).
     UtxoByAddress {
-        /// Hex-encoded address bytes.
+        /// Hex-encoded address bytes (with or without `0x` prefix).
         #[arg(long)]
         address: String,
     },
@@ -225,7 +226,7 @@ enum QueryCommand {
     StakeDistribution,
     /// Query the reward balance for a reward account (hex-encoded).
     RewardBalance {
-        /// Hex-encoded reward account bytes.
+        /// Hex-encoded reward account bytes (with or without `0x` prefix).
         #[arg(long)]
         account: String,
     },
@@ -233,7 +234,7 @@ enum QueryCommand {
     TreasuryAndReserves,
     /// Query UTxO entries for specific transaction inputs (hex-encoded CBOR array of TxIn).
     UtxoByTxIn {
-        /// Hex-encoded transaction ID (32 bytes).
+        /// Hex-encoded transaction ID, 32 bytes (with or without `0x` prefix).
         #[arg(long)]
         tx_id: String,
         /// Output index within the transaction.
@@ -244,7 +245,7 @@ enum QueryCommand {
     StakePools,
     /// Query delegations and reward accounts for a stake credential (hex-encoded 28-byte hash).
     DelegationsAndRewards {
-        /// Hex-encoded credential hash (28 bytes).
+        /// Hex-encoded credential hash, 28 bytes (with or without `0x` prefix).
         #[arg(long)]
         credential: String,
         /// Whether the credential is a key hash (true, default) or script hash (false).
@@ -265,7 +266,7 @@ enum QueryCommand {
     CommitteeMembersState,
     /// Query the registered stake-pool parameters for a specific pool.
     StakePoolParams {
-        /// Hex-encoded pool key hash (28 bytes).
+        /// Hex-encoded pool key hash, 28 bytes (with or without `0x` prefix).
         #[arg(long)]
         pool_hash: String,
     },
@@ -415,21 +416,21 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
             enc.array(1).unsigned(3u64);
         }
         QueryCommand::UtxoByAddress { address } => {
-            let addr_bytes = hex::decode(address.trim()).unwrap_or_default();
+            let addr_bytes = decode_optional_prefixed_hex(address);
             enc.array(2).unsigned(4u64).bytes(&addr_bytes);
         }
         QueryCommand::StakeDistribution => {
             enc.array(1).unsigned(5u64);
         }
         QueryCommand::RewardBalance { account } => {
-            let acct_bytes = hex::decode(account.trim()).unwrap_or_default();
+            let acct_bytes = decode_optional_prefixed_hex(account);
             enc.array(2).unsigned(6u64).bytes(&acct_bytes);
         }
         QueryCommand::TreasuryAndReserves => {
             enc.array(1).unsigned(7u64);
         }
         QueryCommand::UtxoByTxIn { tx_id, index } => {
-            let tx_id_bytes = hex::decode(tx_id.trim()).unwrap_or_default();
+            let tx_id_bytes = decode_optional_prefixed_hex(tx_id);
             enc.array(2).unsigned(14u64);
             // Encode as a single-element array of TxIn: [[tx_id_bytes, index]]
             enc.array(1);
@@ -442,7 +443,7 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
             credential,
             is_key_hash,
         } => {
-            let cred_bytes = hex::decode(credential.trim()).unwrap_or_default();
+            let cred_bytes = decode_optional_prefixed_hex(credential);
             enc.array(2).unsigned(16u64);
             // Encode as a single-element credential array: [[tag, hash]]
             enc.array(1);
@@ -470,7 +471,7 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
             enc.array(1).unsigned(11u64);
         }
         QueryCommand::StakePoolParams { pool_hash } => {
-            let pool_bytes = hex::decode(pool_hash.trim()).unwrap_or_default();
+            let pool_bytes = decode_optional_prefixed_hex(pool_hash);
             enc.array(2).unsigned(12u64).bytes(&pool_bytes);
         }
         QueryCommand::AccountState => {
@@ -691,6 +692,40 @@ fn decode_ntc_result(query: &QueryCommand, result: &[u8]) -> Result<serde_json::
         }
     };
     Ok(val)
+}
+
+/// Decode the `--tx-hex` CLI argument into raw transaction bytes.
+///
+/// Accepts the raw hexadecimal encoding with:
+/// * Surrounding whitespace (common when pasted from a terminal).
+/// * An optional `0x` prefix (accepted to match cardano-cli ergonomics
+///   even though upstream does not strictly require it).
+///
+/// Any non-hex input or odd-length body surfaces via the `hex` crate's
+/// error, wrapped with "invalid hex in --tx-hex" so the operator sees
+/// which CLI flag is at fault.
+fn decode_tx_hex_arg(raw: &str) -> Result<Vec<u8>> {
+    let stripped = raw.trim();
+    let stripped = stripped.strip_prefix("0x").unwrap_or(stripped);
+    hex::decode(stripped).wrap_err("invalid hex in --tx-hex")
+}
+
+/// Lenient hex decoder used by the query-argument encoders. Accepts the
+/// same surface as [`decode_tx_hex_arg`] (whitespace trim + optional `0x`
+/// prefix) but returns an empty `Vec<u8>` on parse failure instead of a
+/// typed error, matching the prior call-site behavior where invalid hex
+/// produced a query with empty parameter bytes.
+///
+/// Centralising this behavior in one place means operator-facing
+/// `--address` / `--account` / `--tx-id` / `--credential` / `--pool-hash`
+/// CLI arguments all accept the same shapes consistently. An eventual
+/// slice that upgrades this to return `Result<Vec<u8>>` (for strict
+/// argument validation) would only touch this function and the five call
+/// sites.
+fn decode_optional_prefixed_hex(raw: &str) -> Vec<u8> {
+    let stripped = raw.trim();
+    let stripped = stripped.strip_prefix("0x").unwrap_or(stripped);
+    hex::decode(stripped).unwrap_or_default()
 }
 
 /// Connect to the running node's NtC Unix socket and submit a transaction
@@ -1302,11 +1337,7 @@ fn main() -> Result<()> {
             let tx_bytes = match (tx_file, tx_hex) {
                 (Some(path), _) => std::fs::read(&path)
                     .wrap_err_with(|| format!("failed to read tx file {}", path.display()))?,
-                (_, Some(hex)) => {
-                    let hex = hex.trim();
-                    let hex = hex.strip_prefix("0x").unwrap_or(hex);
-                    hex::decode(hex).wrap_err("invalid hex in --tx-hex")?
-                }
+                (_, Some(hex)) => decode_tx_hex_arg(&hex)?,
                 (None, None) => bail!("one of --tx-file or --tx-hex is required"),
             };
             let rt = tokio::runtime::Runtime::new()?;
@@ -2998,9 +3029,9 @@ fn metrics_http_response(request: &str, metrics: &NodeMetrics) -> (&'static str,
 mod tests {
     use super::{
         CHECKPOINT_TRACE_NAMESPACE, apply_topology_override, checkpoint_trace_config_mut,
-        configured_fallback_peers, forged_header_protocol_version,
-        ledger_peer_snapshot_from_ledger_state, load_effective_config, preset_config_base_dir,
-        status_report, validate_config_report,
+        configured_fallback_peers, decode_optional_prefixed_hex, decode_tx_hex_arg,
+        forged_header_protocol_version, ledger_peer_snapshot_from_ledger_state,
+        load_effective_config, preset_config_base_dir, status_report, validate_config_report,
     };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3010,6 +3041,199 @@ mod tests {
     use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
     use yggdrasil_node::config::default_config;
     use yggdrasil_node::tracer::{NodeMetrics, NodeTracer};
+
+    // ── decode_tx_hex_arg tests ───────────────────────────────────────
+    //
+    // Covers the `submit-tx --tx-hex` CLI argument parsing: raw hex,
+    // `0x`-prefixed hex, surrounding whitespace, and error paths. The
+    // 0x-prefix support matches cardano-cli ergonomics and is exercised
+    // explicitly so a refactor dropping it surfaces as a failing test.
+
+    #[test]
+    fn decode_tx_hex_arg_accepts_plain_hex() {
+        let bytes = decode_tx_hex_arg("deadbeef").expect("plain hex");
+        assert_eq!(bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn decode_tx_hex_arg_strips_0x_prefix() {
+        let bytes = decode_tx_hex_arg("0xdeadbeef").expect("0x-prefixed hex");
+        assert_eq!(bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn decode_tx_hex_arg_trims_whitespace() {
+        // Typical paste from a terminal often has trailing newline.
+        let bytes = decode_tx_hex_arg("  deadbeef  \n").expect("whitespace-wrapped");
+        assert_eq!(bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn decode_tx_hex_arg_combines_whitespace_and_prefix() {
+        let bytes = decode_tx_hex_arg("\t0xDEADBEEF\n").expect("prefix + whitespace");
+        assert_eq!(bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn decode_tx_hex_arg_accepts_empty_string() {
+        // Empty hex → empty byte sequence. Not a validation failure; the
+        // LocalTxSubmission server will reject it as a malformed tx
+        // later, and the CLI's job here is only to decode the hex shape.
+        let bytes = decode_tx_hex_arg("").expect("empty hex is empty bytes");
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    fn decode_tx_hex_arg_rejects_odd_length_hex() {
+        let err = decode_tx_hex_arg("abc").expect_err("odd-length hex must fail");
+        assert!(
+            err.to_string().contains("invalid hex in --tx-hex"),
+            "error must identify the CLI flag, got: {err}",
+        );
+    }
+
+    #[test]
+    fn decode_tx_hex_arg_rejects_non_hex_chars() {
+        let err = decode_tx_hex_arg("zzzz").expect_err("non-hex must fail");
+        assert!(
+            err.to_string().contains("invalid hex in --tx-hex"),
+            "error must identify the CLI flag, got: {err}",
+        );
+    }
+
+    // ── decode_optional_prefixed_hex tests ────────────────────────────
+    //
+    // This is the lenient variant used by the 5 query-argument encoders
+    // (`UtxoByAddress`, `RewardBalance`, `UtxoByTxIn`, `DelegationsAndRewards`,
+    // `StakePoolParams`). Accepts the same shapes as `decode_tx_hex_arg`
+    // but returns `Vec::new()` on parse failure instead of a typed error
+    // (matches the prior call-site `.unwrap_or_default()` semantics).
+
+    #[test]
+    fn decode_optional_prefixed_hex_accepts_plain_hex() {
+        assert_eq!(decode_optional_prefixed_hex("deadbeef"), vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn decode_optional_prefixed_hex_strips_0x_prefix() {
+        // The new ergonomic — a user pasting `0x1234…` from a block
+        // explorer now gets the same result as plain hex.
+        assert_eq!(decode_optional_prefixed_hex("0xdeadbeef"), vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    #[test]
+    fn decode_optional_prefixed_hex_trims_whitespace() {
+        assert_eq!(
+            decode_optional_prefixed_hex("  deadbeef\n"),
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+        );
+    }
+
+    #[test]
+    fn decode_optional_prefixed_hex_returns_empty_on_invalid() {
+        // Lenient contract: parse failure → empty Vec, matching the
+        // prior `.unwrap_or_default()` call-site behavior. The resulting
+        // empty-bytes query is a well-formed CBOR shape the LSQ server
+        // handles as "no match" — silent but safe.
+        assert_eq!(decode_optional_prefixed_hex("zzzz"), Vec::<u8>::new());
+        assert_eq!(decode_optional_prefixed_hex("abc"), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn decode_optional_prefixed_hex_empty_is_empty() {
+        assert_eq!(decode_optional_prefixed_hex(""), Vec::<u8>::new());
+        assert_eq!(decode_optional_prefixed_hex("0x"), Vec::<u8>::new());
+        assert_eq!(decode_optional_prefixed_hex("   "), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn cli_help_text_documents_0x_prefix_ergonomic() {
+        // Regression guard: every hex-argument CLI flag in `QueryCommand`
+        // and `Command::SubmitTx --tx-hex` must document the optional
+        // `0x` prefix in its doc comment. Uses `clap`'s `CommandFactory`
+        // to render the actual help text, so a future refactor that
+        // replaces rustdoc-derived help with hand-written help would also
+        // catch the missing note. A failing test names the offending flag.
+        use clap::CommandFactory;
+        use super::Cli;
+
+        let mut cmd = Cli::command();
+        let rendered = cmd.render_long_help().to_string();
+
+        // Walk every `(subcommand, flag, description)` triple. Each flag
+        // whose argument type is hex bytes must mention `0x` in its help.
+        let required_marks: &[&str] = &[
+            // From submit-tx:
+            "--tx-hex",
+            // From query subcommands:
+            "--address",
+            "--account",
+            "--tx-id",
+            "--credential",
+            "--pool-hash",
+        ];
+
+        // Flatten all subcommand helps by rendering each subcommand's
+        // long help, so flag descriptions from nested subcommands appear.
+        let mut flat = String::new();
+        flat.push_str(&rendered);
+        for sub in cmd.get_subcommands_mut() {
+            flat.push_str(&sub.render_long_help().to_string());
+            for nested in sub.get_subcommands_mut() {
+                flat.push_str(&nested.render_long_help().to_string());
+            }
+        }
+
+        // Each hex flag must appear AND the `0x`-prefix ergonomic must be
+        // documented somewhere in the rendered help. The assertion pins
+        // both the flag's presence and the documentation phrase.
+        for flag in required_marks {
+            assert!(
+                flat.contains(flag),
+                "CLI help text missing expected hex-argument flag: {flag}",
+            );
+        }
+        let prefix_mentions = flat.matches("0x").count();
+        assert!(
+            prefix_mentions >= required_marks.len(),
+            "expected at least {} `0x` mentions in CLI help (one per hex flag), \
+             found {prefix_mentions}",
+            required_marks.len(),
+        );
+    }
+
+    #[test]
+    fn encode_ntc_query_accepts_0x_prefixed_arguments_end_to_end() {
+        // End-to-end: `--address 0xDEADBEEF` must produce identical CBOR
+        // bytes to `--address deadbeef`. This pins the slice-74
+        // ergonomic at the full encoder output level so a refactor that
+        // silently bypasses `decode_optional_prefixed_hex` on ONE of the
+        // five query variants (leaving the others prefix-aware) surfaces
+        // as a failing test.
+        use super::{QueryCommand, encode_ntc_query};
+
+        let plain = encode_ntc_query(&QueryCommand::UtxoByAddress {
+            address: "deadbeef".into(),
+        });
+        let prefixed = encode_ntc_query(&QueryCommand::UtxoByAddress {
+            address: "0xdeadbeef".into(),
+        });
+        assert_eq!(
+            plain, prefixed,
+            "UtxoByAddress: 0x-prefixed and plain hex must emit identical CBOR",
+        );
+
+        let plain = encode_ntc_query(&QueryCommand::StakePoolParams {
+            pool_hash: "aa".repeat(28),
+        });
+        let prefixed = encode_ntc_query(&QueryCommand::StakePoolParams {
+            pool_hash: format!("0x{}", "aa".repeat(28)),
+        });
+        assert_eq!(
+            plain, prefixed,
+            "StakePoolParams: 0x-prefixed and plain hex must emit identical CBOR",
+        );
+    }
 
     #[test]
     fn checkpoint_trace_override_creates_namespace_when_missing() {

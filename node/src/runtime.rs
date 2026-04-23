@@ -3320,6 +3320,7 @@ struct BatchTraceExtras {
     checkpoint_tracked: Option<bool>,
 }
 
+#[derive(Debug)]
 enum BatchErrorDisposition {
     /// Reconnect to a different peer and retry.
     Reconnect,
@@ -6203,29 +6204,50 @@ mod tests {
     fn handle_reconnect_batch_error_punishes_for_peer_attributable_errors() {
         let tracer = NodeTracer::disabled();
 
-        // Body hash mismatch → peer sent tampered data
-        let body_hash = handle_reconnect_batch_error(
-            &tracer,
-            local_addr(3006),
-            Point::Origin,
-            &SyncError::BlockBodyHashMismatch,
-        );
-        assert!(matches!(
-            body_hash,
-            BatchErrorDisposition::ReconnectAndPunish
-        ));
+        // Exhaustive — every variant that `SyncError::is_peer_attributable`
+        // returns `true` for MUST route to `ReconnectAndPunish`. Keeping
+        // this list in lockstep with the `matches!` arms in
+        // `is_peer_attributable` (+ the slice-52 exhaustiveness test)
+        // gives two independent sources of truth: the classification
+        // function AND the downstream disposition.
+        let variants: Vec<SyncError> = vec![
+            SyncError::BlockBodyHashMismatch,
+            SyncError::Consensus(yggdrasil_consensus::ConsensusError::InvalidKesSignature),
+            SyncError::LedgerDecode(yggdrasil_ledger::LedgerError::CborTrailingBytes(1)),
+            SyncError::BlockFromFuture {
+                slot: 999,
+                excess_slots: 100,
+            },
+            SyncError::WrongBlockBodySize {
+                declared: 1,
+                actual: 2,
+            },
+            SyncError::ProtocolVersionMismatch {
+                era: yggdrasil_ledger::Era::Conway,
+                major: 1,
+                minor: 0,
+                expected_range: "9+".to_owned(),
+            },
+            SyncError::ProtocolVersionTooHigh { major: 99, max: 10 },
+            SyncError::HeaderProtVerTooHigh {
+                header_major: 15,
+                pp_major: 10,
+            },
+        ];
 
-        // Consensus verification failure → bad header
-        let consensus = handle_reconnect_batch_error(
-            &tracer,
-            local_addr(3006),
-            Point::Origin,
-            &SyncError::Consensus(yggdrasil_consensus::ConsensusError::InvalidKesSignature),
-        );
-        assert!(matches!(
-            consensus,
-            BatchErrorDisposition::ReconnectAndPunish
-        ));
+        for err in &variants {
+            assert!(
+                err.is_peer_attributable(),
+                "test precondition: {err:?} must be peer-attributable",
+            );
+            let disposition =
+                handle_reconnect_batch_error(&tracer, local_addr(3006), Point::Origin, err);
+            assert!(
+                matches!(disposition, BatchErrorDisposition::ReconnectAndPunish),
+                "expected ReconnectAndPunish for peer-attributable {err:?}, \
+                 got {disposition:?}",
+            );
+        }
     }
 
     #[test]

@@ -120,6 +120,31 @@ fn default_trace_forwarder_socket_path() -> String {
     "/tmp/cardano-trace-forwarder.sock".to_owned()
 }
 
+/// Canonical mainnet network magic — the discriminant that distinguishes
+/// Cardano mainnet from test networks (preprod / preview / private
+/// testnets). Every NtN and NtC handshake verifies this byte-for-byte,
+/// and several preflight checks (e.g. `RequiresNetworkMagic` sanity) key
+/// their canonical-default decision on whether `network_magic` equals
+/// this value.
+///
+/// Reference: `cardano-node` `Cardano.Chain.Genesis.Data` mainnet config
+/// / `protocolMagicId = 764824073`.
+pub const MAINNET_NETWORK_MAGIC: u32 = 764_824_073;
+
+/// Canonical preprod (public long-running testnet) network magic.
+///
+/// Reference: `cardano-configurations` preprod `shelley-genesis.json`
+/// `networkMagic = 1`. Used by `--network preprod` and by every vendored
+/// preprod config we ship.
+pub const PREPROD_NETWORK_MAGIC: u32 = 1;
+
+/// Canonical preview (shorter-cycle public testnet) network magic.
+///
+/// Reference: `cardano-configurations` preview `shelley-genesis.json`
+/// `networkMagic = 2`. Used by `--network preview` and by every vendored
+/// preview config we ship.
+pub const PREVIEW_NETWORK_MAGIC: u32 = 2;
+
 /// Runtime consensus mode used for governor churn-regime selection.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum ConsensusModeConfig {
@@ -152,11 +177,11 @@ pub enum RequiresNetworkMagic {
 
 impl RequiresNetworkMagic {
     /// Default for a given mainnet magic. Returns `RequiresNoMagic` only
-    /// for the canonical mainnet magic `764824073`; every other magic is
+    /// for the canonical [`MAINNET_NETWORK_MAGIC`]; every other magic is
     /// treated as a test network requiring inline magic, matching upstream
     /// `Cardano.Chain.Genesis.Config.mkConfigFromGenesisData` defaults.
     pub fn default_for_magic(network_magic: u32) -> Self {
-        if network_magic == 764_824_073 {
+        if network_magic == MAINNET_NETWORK_MAGIC {
             Self::RequiresNoMagic
         } else {
             Self::RequiresMagic
@@ -1378,7 +1403,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         storage_dir: PathBuf::from("data/mainnet"),
         checkpoint_interval_slots: default_checkpoint_interval_slots(),
         max_ledger_snapshots: default_max_ledger_snapshots(),
-        network_magic: 764_824_073,
+        network_magic: MAINNET_NETWORK_MAGIC,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
         max_kes_evolutions: 62,
@@ -1462,7 +1487,7 @@ pub fn preprod_config() -> NodeConfigFile {
         storage_dir: PathBuf::from("data/preprod"),
         checkpoint_interval_slots: default_checkpoint_interval_slots(),
         max_ledger_snapshots: default_max_ledger_snapshots(),
-        network_magic: 1,
+        network_magic: PREPROD_NETWORK_MAGIC,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
         max_kes_evolutions: 62,
@@ -1546,7 +1571,7 @@ pub fn preview_config() -> NodeConfigFile {
         storage_dir: PathBuf::from("data/preview"),
         checkpoint_interval_slots: default_checkpoint_interval_slots(),
         max_ledger_snapshots: default_max_ledger_snapshots(),
-        network_magic: 2,
+        network_magic: PREVIEW_NETWORK_MAGIC,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
         max_kes_evolutions: 62,
@@ -1612,6 +1637,75 @@ pub fn preview_config() -> NodeConfigFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mainnet_network_magic_constant_matches_upstream() {
+        // Upstream `cardano-node` `Cardano.Chain.Genesis.Data`
+        // `protocolMagicId = 764824073`. This constant MUST NOT drift —
+        // every NtN / NtC handshake verifies it byte-for-byte, so any
+        // other value produces a silently-incompatible client.
+        assert_eq!(MAINNET_NETWORK_MAGIC, 764_824_073);
+    }
+
+    #[test]
+    fn preprod_network_magic_constant_matches_upstream() {
+        // Upstream `cardano-configurations` preprod
+        // `shelley-genesis.json` `networkMagic = 1`.
+        assert_eq!(PREPROD_NETWORK_MAGIC, 1);
+    }
+
+    #[test]
+    fn preview_network_magic_constant_matches_upstream() {
+        // Upstream `cardano-configurations` preview
+        // `shelley-genesis.json` `networkMagic = 2`.
+        assert_eq!(PREVIEW_NETWORK_MAGIC, 2);
+    }
+
+    #[test]
+    fn all_three_network_magics_are_distinct() {
+        // Defensive invariant: if any two preset magics ever collide,
+        // handshake disambiguation breaks. Upstream guarantees all three
+        // are distinct; pin it locally so a typo on any constant fails.
+        assert_ne!(MAINNET_NETWORK_MAGIC, PREPROD_NETWORK_MAGIC);
+        assert_ne!(MAINNET_NETWORK_MAGIC, PREVIEW_NETWORK_MAGIC);
+        assert_ne!(PREPROD_NETWORK_MAGIC, PREVIEW_NETWORK_MAGIC);
+    }
+
+    #[test]
+    fn preset_configs_use_canonical_magic_constants() {
+        // Pin `preprod_config()` / `preview_config()` → their canonical
+        // constants so a future refactor re-inlining the literals fails CI.
+        assert_eq!(preprod_config().network_magic, PREPROD_NETWORK_MAGIC);
+        assert_eq!(preview_config().network_magic, PREVIEW_NETWORK_MAGIC);
+    }
+
+    #[test]
+    fn mainnet_config_uses_canonical_magic_constant() {
+        // Pin the `mainnet_config()` → `MAINNET_NETWORK_MAGIC` link so a
+        // future refactor that accidentally hard-codes a different value
+        // inline in the constructor fails CI.
+        let cfg = mainnet_config();
+        assert_eq!(cfg.network_magic, MAINNET_NETWORK_MAGIC);
+    }
+
+    #[test]
+    fn requires_network_magic_default_pins_constant() {
+        // Mainnet → RequiresNoMagic, anything else → RequiresMagic. Pin
+        // both branches so a regression flipping the constant silently
+        // loses mainnet Byron-header-decode compatibility.
+        assert_eq!(
+            RequiresNetworkMagic::default_for_magic(MAINNET_NETWORK_MAGIC),
+            RequiresNetworkMagic::RequiresNoMagic,
+        );
+        assert_eq!(
+            RequiresNetworkMagic::default_for_magic(MAINNET_NETWORK_MAGIC + 1),
+            RequiresNetworkMagic::RequiresMagic,
+        );
+        assert_eq!(
+            RequiresNetworkMagic::default_for_magic(2),
+            RequiresNetworkMagic::RequiresMagic,
+        );
+    }
 
     #[test]
     fn default_config_round_trips_json() {
