@@ -1615,6 +1615,40 @@ fn named_value(params: &BTreeMap<String, i64>, key: &'static str) -> Result<i64,
 mod tests {
     use super::*;
 
+    // ── CostModelError Display-content tests ───────────────────────────
+    //
+    // Both variants carry operator-facing diagnostic fields (parameter name
+    // + offending value). Without content tests, a refactor that drops the
+    // `{name}` or `{value}` placeholder from `#[error(...)]` would strip the
+    // actionable field from cost-model-construction failures, leaving
+    // operators to guess which cost-model entry is wrong.
+
+    #[test]
+    fn display_cost_model_missing_parameter_names_parameter() {
+        let e = CostModelError::MissingParameter("verifyEd25519Signature-cpu-arguments");
+        let s = format!("{e}");
+        assert!(s.contains("missing"), "rule name: {s}");
+        assert!(
+            s.contains("verifyEd25519Signature-cpu-arguments"),
+            "must name the missing parameter: {s}",
+        );
+    }
+
+    #[test]
+    fn display_cost_model_negative_parameter_names_field_and_value() {
+        let e = CostModelError::NegativeParameter {
+            name: "addInteger-cpu-arguments-intercept",
+            value: -1_234,
+        };
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("negative"), "rule name: {s}");
+        assert!(
+            s.contains("addInteger-cpu-arguments-intercept"),
+            "must name the parameter: {s}",
+        );
+        assert!(s.contains("-1234") || s.contains("-1_234"), "must show value: {s}");
+    }
+
     fn sample_params() -> BTreeMap<String, i64> {
         BTreeMap::from([
             // Machine step costs

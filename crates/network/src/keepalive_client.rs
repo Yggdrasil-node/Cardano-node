@@ -157,3 +157,61 @@ impl KeepAliveClient {
         self.send_msg(&KeepAliveMessage::MsgDone).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── KeepAliveClientError Display-content tests ─────────────────────
+    //
+    // `CookieMismatch` is unique to KeepAlive and carries two u16 values
+    // (sent vs received) that operators need to diagnose peer misbehavior.
+    // Covering both here rather than only the common variants so the
+    // mismatch-pair is pinned in addition to the shared ones.
+
+    #[test]
+    fn display_keepalive_connection_closed() {
+        let s = format!("{}", KeepAliveClientError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_keepalive_timeout_surfaces_duration() {
+        let e = KeepAliveClientError::Timeout(std::time::Duration::from_secs(97));
+        let s = format!("{e}");
+        assert!(s.contains("timeout"));
+        assert!(s.contains("97"));
+    }
+
+    #[test]
+    fn display_keepalive_cookie_mismatch_names_both_cookies() {
+        // CookieMismatch is the KeepAlive-specific diagnostic: when a peer
+        // echoes a cookie different from the one we sent, operators need
+        // both values to determine whether the peer is malicious, buggy,
+        // or simply echoed an older cookie after a retry.
+        let e = KeepAliveClientError::CookieMismatch {
+            sent: 0xABCD,
+            received: 0x1234,
+        };
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("cookie"));
+        assert!(s.contains("43981"), "must show sent as decimal: {s}"); // 0xABCD
+        assert!(s.contains("4660"), "must show received as decimal: {s}"); // 0x1234
+    }
+
+    #[test]
+    fn display_keepalive_decode_propagates_inner_reason() {
+        let e = KeepAliveClientError::Decode("MsgKeepAliveResponse wrong cookie shape".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("MsgKeepAliveResponse wrong cookie shape"));
+    }
+
+    #[test]
+    fn display_keepalive_unexpected_message_propagates_inner() {
+        let e = KeepAliveClientError::UnexpectedMessage("MsgDone in StBusy".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgDone in StBusy"));
+    }
+}
