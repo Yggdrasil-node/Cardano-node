@@ -87,6 +87,11 @@ pub struct SharedTxSubmissionConsumer<I, V, L> {
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
+    /// Optional operator metrics — when set, every successful admission
+    /// increments `mempool_tx_added` and every rejection increments
+    /// `mempool_tx_rejected`, backing the Prometheus exports of the same
+    /// names.
+    metrics: Option<Arc<crate::tracer::NodeMetrics>>,
 }
 
 impl<I: std::fmt::Debug, V: std::fmt::Debug, L: std::fmt::Debug> std::fmt::Debug
@@ -100,6 +105,7 @@ impl<I: std::fmt::Debug, V: std::fmt::Debug, L: std::fmt::Debug> std::fmt::Debug
                 "evaluator",
                 &self.evaluator.as_ref().map(|_| "<PlutusEvaluator>"),
             )
+            .field("metrics", &self.metrics.as_ref().map(|_| "<NodeMetrics>"))
             .finish()
     }
 }
@@ -111,6 +117,7 @@ impl<I, V, L> SharedTxSubmissionConsumer<I, V, L> {
             chain_db,
             mempool,
             evaluator: None,
+            metrics: None,
         }
     }
 
@@ -126,7 +133,17 @@ impl<I, V, L> SharedTxSubmissionConsumer<I, V, L> {
             chain_db,
             mempool,
             evaluator,
+            metrics: None,
         }
+    }
+
+    /// Attach a [`crate::tracer::NodeMetrics`] handle so per-tx admission
+    /// outcomes are mirrored into the `mempool_tx_added` /
+    /// `mempool_tx_rejected` Prometheus counters.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: Arc<crate::tracer::NodeMetrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Shared mempool receiving admitted inbound transactions.
@@ -184,10 +201,25 @@ where
             current_slot,
             eval_ref,
         ) {
-            Ok(results) => results
-                .into_iter()
-                .filter(|result| matches!(result, MempoolAddTxResult::MempoolTxAdded(_)))
-                .count(),
+            Ok(results) => {
+                let mut admitted = 0;
+                for result in &results {
+                    match result {
+                        MempoolAddTxResult::MempoolTxAdded(_) => {
+                            admitted += 1;
+                            if let Some(m) = &self.metrics {
+                                m.inc_mempool_tx_added();
+                            }
+                        }
+                        MempoolAddTxResult::MempoolTxRejected(_, _) => {
+                            if let Some(m) = &self.metrics {
+                                m.inc_mempool_tx_rejected();
+                            }
+                        }
+                    }
+                }
+                admitted
+            }
             Err(_) => 0,
         }
     }

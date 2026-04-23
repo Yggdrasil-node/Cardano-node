@@ -369,6 +369,18 @@ impl PoolState {
         self.entries.iter()
     }
 
+    /// Returns the number of registered pools.
+    ///
+    /// O(1) via the underlying `BTreeMap::len`.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` when no pools are registered.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Returns all directly dialable relay access points from registered pools.
     ///
     /// The result is deduplicated in stable pool iteration order.
@@ -621,6 +633,18 @@ impl RewardAccounts {
         self.entries.iter()
     }
 
+    /// Returns the number of known reward accounts.
+    ///
+    /// O(1) via the underlying `BTreeMap::len`.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` when no reward accounts are known.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Inserts or replaces reward-account state.
     pub fn insert(
         &mut self,
@@ -822,6 +846,18 @@ impl StakeCredentials {
     /// Iterates over registered stake credentials in key order.
     pub fn iter(&self) -> impl Iterator<Item = (&StakeCredential, &StakeCredentialState)> {
         self.entries.iter()
+    }
+
+    /// Returns the number of registered stake credentials.
+    ///
+    /// O(1) via the underlying `BTreeMap::len`.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` when no stake credentials are registered.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     /// Returns true when `credential` is registered.

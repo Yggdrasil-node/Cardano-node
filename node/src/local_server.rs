@@ -645,6 +645,16 @@ where
 /// |  11 | GetCommitteeMembersState | none                           | CBOR-encoded `CommitteeState` array             |
 /// |  12 | GetStakePoolParams     | `[tag, pool_hash_bytes]`         | CBOR-encoded `RegisteredPool` or null           |
 /// |  13 | GetAccountState        | none                             | CBOR array [treasury, reserves, deposits]       |
+/// |  14 | GetUTxOByTxIn          | `[tag, [txin, ..]]`              | CBOR map { txin => txout }                      |
+/// |  15 | GetStakePools          | none                             | CBOR array of pool_hash_bytes                   |
+/// |  16 | GetFilteredDelegationsAndRewardAccounts | `[tag, [cred, ..]]`     | CBOR map { cred => [delegation, rewards] }      |
+/// |  17 | GetDRepStakeDistr      | none                             | CBOR map { DRep => stake }                      |
+/// |  18 | GetGenesisDelegations  | none                             | CBOR map { genesis_hash => [delegate, vrf] }    |
+/// |  19 | GetStabilityWindow     | none                             | CBOR unsigned (3k/f) or null                    |
+/// |  20 | GetNumDormantEpochs    | none                             | CBOR unsigned (consecutive dormant epochs)      |
+/// |  21 | GetExpectedNetworkId   | none                             | CBOR unsigned (network id 0 or 1) or null       |
+/// |  22 | GetDepositPot          | none                             | CBOR array [key, pool, drep, proposal]          |
+/// |  23 | GetLedgerCounts        | none                             | CBOR array of 6 cardinalities                   |
 pub struct BasicLocalQueryDispatcher;
 
 impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
@@ -924,6 +934,59 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                 // Reference: `Cardano.Ledger.Conway.Governance.DRepPulser` —
                 // `csNumDormantEpochs`.
                 enc.unsigned(snapshot.num_dormant_epochs());
+            }
+            Some(21) => {
+                // GetExpectedNetworkId — respond with the configured reward-
+                // account network id as a plain u64, or CBOR null when no
+                // expectation is set. Lets LSQ clients verify they are
+                // talking to a node on the expected network (mainnet = 1,
+                // test networks = 0).
+                //
+                // Reference: upstream `Cardano.Ledger.Api.Tx.Address` —
+                // network-id encoding in reward / Shelley addresses.
+                match snapshot.expected_network_id() {
+                    Some(id) => enc.unsigned(u64::from(id)),
+                    None => enc.null(),
+                };
+            }
+            Some(22) => {
+                // GetDepositPot — respond with the four Conway-era deposit
+                // categories as a 4-element CBOR array
+                // `[key_deposits, pool_deposits, drep_deposits, proposal_deposits]`.
+                // The scalar sum is already exposed via tag 13
+                // `GetAccountState`; this query breaks out the individual
+                // buckets so explorers and stake-pool operators can
+                // reconcile per-category obligation growth across epochs
+                // (key/pool/DRep registrations + open governance proposals).
+                //
+                // Reference: upstream `Cardano.Ledger.Shelley.Rules.Pool`
+                // (pool deposits), `Cardano.Ledger.Conway.Governance`
+                // (DRep + proposal deposits), `Cardano.Ledger.Obligation`
+                // (`Obligations` sub-components of `sumObligation`).
+                let pot = snapshot.deposit_pot();
+                enc.array(4);
+                enc.unsigned(pot.key_deposits);
+                enc.unsigned(pot.pool_deposits);
+                enc.unsigned(pot.drep_deposits);
+                enc.unsigned(pot.proposal_deposits);
+            }
+            Some(23) => {
+                // GetLedgerCounts — respond with a 6-element CBOR array of
+                // cardinalities of the major ledger state buckets:
+                //   [stake_credentials, pools, dreps,
+                //    committee_members, gov_actions, gen_delegs]
+                // All counts are O(1) via the underlying `BTreeMap::len`.
+                // Designed for monitoring dashboards and "node health"
+                // checks where an explorer or operator wants a cheap
+                // summary of ledger-state growth without serialising the
+                // full sub-structure CBOR.
+                enc.array(6);
+                enc.unsigned(snapshot.stake_credentials().len() as u64);
+                enc.unsigned(snapshot.pool_state().len() as u64);
+                enc.unsigned(snapshot.drep_state().len() as u64);
+                enc.unsigned(snapshot.committee_state().len() as u64);
+                enc.unsigned(snapshot.governance_actions().len() as u64);
+                enc.unsigned(snapshot.gen_delegs().len() as u64);
             }
             _ => {
                 // Unknown query — return empty bytes; client should handle gracefully.
@@ -1422,5 +1485,103 @@ mod tests {
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         // CBOR unsigned 0 is 0x00.
         assert_eq!(result, vec![0x00]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_expected_network_id_returns_null_when_unset() {
+        use yggdrasil_ledger::Encoder;
+
+        // Default `LedgerState::new(Era::Conway)` does not set an expected
+        // network id; the dispatcher should surface that as CBOR null so
+        // clients can distinguish "unset" from a real id.
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(21u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // CBOR null is 0xf6.
+        assert_eq!(result, vec![0xf6]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_deposit_pot_default_is_all_zeros() {
+        use yggdrasil_ledger::Encoder;
+
+        // Fresh ledger has no deposits; all four buckets zero.
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(22u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // 4-element array of four CBOR zeros.
+        assert_eq!(result, vec![0x84, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_deposit_pot_preserves_bucket_order() {
+        use yggdrasil_ledger::{Decoder, Encoder};
+
+        // Populate each bucket with a distinct value and verify the wire
+        // encoding preserves `[key, pool, drep, proposal]` ordering.
+        let mut state = LedgerState::new(Era::Conway);
+        state.deposit_pot_mut().add_key_deposit(2_000_000);
+        state.deposit_pot_mut().add_pool_deposit(500_000_000);
+        state.deposit_pot_mut().add_drep_deposit(500_000_000);
+        state.deposit_pot_mut().add_proposal_deposit(100_000_000_000);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(22u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+
+        let mut dec = Decoder::new(&result);
+        assert_eq!(dec.array().unwrap(), 4);
+        assert_eq!(dec.unsigned().unwrap(), 2_000_000);
+        assert_eq!(dec.unsigned().unwrap(), 500_000_000);
+        assert_eq!(dec.unsigned().unwrap(), 500_000_000);
+        assert_eq!(dec.unsigned().unwrap(), 100_000_000_000);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_ledger_counts_default_is_all_zero() {
+        use yggdrasil_ledger::Encoder;
+
+        // Fresh ledger has zero registered credentials / pools / DReps /
+        // committee members / governance actions / gen_delegs.
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(23u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // 6-element array of six CBOR zeros.
+        assert_eq!(result, vec![0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_basic_dispatcher_get_expected_network_id_returns_mainnet_id() {
+        use yggdrasil_ledger::Encoder;
+
+        let mut state = LedgerState::new(Era::Conway);
+        state.set_expected_network_id(1); // mainnet
+        let snapshot = state.snapshot();
+
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(21u64);
+        let query = enc.into_bytes();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        // CBOR unsigned 1 is 0x01.
+        assert_eq!(result, vec![0x01]);
     }
 }

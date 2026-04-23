@@ -205,7 +205,7 @@ enum Command {
 
 /// LocalStateQuery query sub-commands.
 #[cfg(unix)]
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum QueryCommand {
     /// Query the current era.
     CurrentEra,
@@ -253,6 +253,44 @@ enum QueryCommand {
     },
     /// Query the DRep stake distribution.
     DrepStakeDistr,
+    /// Query the enacted Conway constitution (anchor + guardrails script hash).
+    Constitution,
+    /// Query pending Conway governance-action state
+    /// (all currently-submitted proposals + recorded votes).
+    GovState,
+    /// Query all registered DReps and their registration metadata.
+    DrepState,
+    /// Query known Conway constitutional committee members
+    /// (cold credential, hot-key status, expiration epoch).
+    CommitteeMembersState,
+    /// Query the registered stake-pool parameters for a specific pool.
+    StakePoolParams {
+        /// Hex-encoded pool key hash (28 bytes).
+        #[arg(long)]
+        pool_hash: String,
+    },
+    /// Query the ledger accounting state
+    /// (treasury, reserves, and total deposit obligation).
+    AccountState,
+    /// Query the Shelley genesis-delegations map
+    /// (genesis key hash → (cold delegate, vrf key) pair).
+    GenesisDelegations,
+    /// Query the derived `3k/f` chain stability window in slots
+    /// (null when not configured).
+    StabilityWindow,
+    /// Query the consecutive dormant-epoch counter
+    /// (Conway-only governance bookkeeping; `0` until a dormant epoch fires).
+    NumDormantEpochs,
+    /// Query the configured expected reward-account network id
+    /// (mainnet = 1, test networks = 0; null when not configured).
+    ExpectedNetworkId,
+    /// Query the four Conway-era deposit-pot buckets
+    /// (key / pool / DRep / proposal deposits, in lovelace).
+    DepositPot,
+    /// Query aggregate cardinality counters for the major ledger-state
+    /// buckets (stake credentials / pools / DReps / committee members /
+    /// governance actions / genesis delegates). Cheap monitoring query.
+    LedgerCounts,
 }
 
 /// cardano-cli actions exposed through the pure Rust command implementation.
@@ -419,6 +457,43 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
         QueryCommand::DrepStakeDistr => {
             enc.array(1).unsigned(17u64);
         }
+        QueryCommand::Constitution => {
+            enc.array(1).unsigned(8u64);
+        }
+        QueryCommand::GovState => {
+            enc.array(1).unsigned(9u64);
+        }
+        QueryCommand::DrepState => {
+            enc.array(1).unsigned(10u64);
+        }
+        QueryCommand::CommitteeMembersState => {
+            enc.array(1).unsigned(11u64);
+        }
+        QueryCommand::StakePoolParams { pool_hash } => {
+            let pool_bytes = hex::decode(pool_hash.trim()).unwrap_or_default();
+            enc.array(2).unsigned(12u64).bytes(&pool_bytes);
+        }
+        QueryCommand::AccountState => {
+            enc.array(1).unsigned(13u64);
+        }
+        QueryCommand::GenesisDelegations => {
+            enc.array(1).unsigned(18u64);
+        }
+        QueryCommand::StabilityWindow => {
+            enc.array(1).unsigned(19u64);
+        }
+        QueryCommand::NumDormantEpochs => {
+            enc.array(1).unsigned(20u64);
+        }
+        QueryCommand::ExpectedNetworkId => {
+            enc.array(1).unsigned(21u64);
+        }
+        QueryCommand::DepositPot => {
+            enc.array(1).unsigned(22u64);
+        }
+        QueryCommand::LedgerCounts => {
+            enc.array(1).unsigned(23u64);
+        }
     }
     enc.into_bytes()
 }
@@ -502,6 +577,117 @@ fn decode_ntc_result(query: &QueryCommand, result: &[u8]) -> Result<serde_json::
         }
         QueryCommand::DrepStakeDistr => {
             json!({"drep_stake_distribution_cbor": hex::encode(result)})
+        }
+        QueryCommand::Constitution => {
+            // Complex Conway type — surface raw CBOR so clients can decode.
+            json!({"constitution_cbor": hex::encode(result)})
+        }
+        QueryCommand::GovState => {
+            json!({"governance_actions_cbor": hex::encode(result)})
+        }
+        QueryCommand::DrepState => {
+            json!({"drep_state_cbor": hex::encode(result)})
+        }
+        QueryCommand::CommitteeMembersState => {
+            json!({"committee_state_cbor": hex::encode(result)})
+        }
+        QueryCommand::StakePoolParams { .. } => {
+            // Server returns CBOR-encoded RegisteredPool or CBOR null when
+            // the pool is not registered.
+            if result == [0xf6] {
+                json!({"pool": null})
+            } else {
+                json!({"pool_cbor": hex::encode(result)})
+            }
+        }
+        QueryCommand::AccountState => {
+            // Server returns `[treasury, reserves, total_deposits]`.
+            let mut dec = Decoder::new(result);
+            if dec.array().ok() == Some(3) {
+                let treasury = dec.unsigned().unwrap_or(0);
+                let reserves = dec.unsigned().unwrap_or(0);
+                let deposits = dec.unsigned().unwrap_or(0);
+                json!({
+                    "treasury_lovelace": treasury,
+                    "reserves_lovelace": reserves,
+                    "total_deposits_lovelace": deposits,
+                })
+            } else {
+                json!({"account_state_cbor": hex::encode(result)})
+            }
+        }
+        QueryCommand::GenesisDelegations => {
+            // CBOR map keyed by genesis hash; surface raw for now since
+            // the value side carries multiple sub-entries per key.
+            json!({"genesis_delegations_cbor": hex::encode(result)})
+        }
+        QueryCommand::StabilityWindow => {
+            // CBOR null (0xf6) when unset; otherwise plain unsigned u64.
+            if result == [0xf6] {
+                json!({"stability_window": null})
+            } else {
+                let mut dec = Decoder::new(result);
+                let w = dec.unsigned().unwrap_or(0);
+                json!({"stability_window_slots": w})
+            }
+        }
+        QueryCommand::NumDormantEpochs => {
+            let mut dec = Decoder::new(result);
+            let n = dec.unsigned().unwrap_or(0);
+            json!({"num_dormant_epochs": n})
+        }
+        QueryCommand::ExpectedNetworkId => {
+            // CBOR null (0xf6) means no expectation is configured;
+            // otherwise the server returns a plain CBOR unsigned (u8 range).
+            if result == [0xf6] {
+                json!({"expected_network_id": null})
+            } else {
+                let mut dec = Decoder::new(result);
+                let id = dec.unsigned().unwrap_or(0);
+                json!({"expected_network_id": id})
+            }
+        }
+        QueryCommand::DepositPot => {
+            // 4-element CBOR array [key, pool, drep, proposal].
+            let mut dec = Decoder::new(result);
+            if dec.array().ok() == Some(4) {
+                let key_deposits = dec.unsigned().unwrap_or(0);
+                let pool_deposits = dec.unsigned().unwrap_or(0);
+                let drep_deposits = dec.unsigned().unwrap_or(0);
+                let proposal_deposits = dec.unsigned().unwrap_or(0);
+                json!({
+                    "key_deposits_lovelace": key_deposits,
+                    "pool_deposits_lovelace": pool_deposits,
+                    "drep_deposits_lovelace": drep_deposits,
+                    "proposal_deposits_lovelace": proposal_deposits,
+                    "total_lovelace":
+                        key_deposits + pool_deposits + drep_deposits + proposal_deposits,
+                })
+            } else {
+                json!({"deposit_pot_cbor": hex::encode(result)})
+            }
+        }
+        QueryCommand::LedgerCounts => {
+            // 6-element CBOR array of cardinality counters.
+            let mut dec = Decoder::new(result);
+            if dec.array().ok() == Some(6) {
+                let stake_credentials = dec.unsigned().unwrap_or(0);
+                let pools = dec.unsigned().unwrap_or(0);
+                let dreps = dec.unsigned().unwrap_or(0);
+                let committee_members = dec.unsigned().unwrap_or(0);
+                let governance_actions = dec.unsigned().unwrap_or(0);
+                let gen_delegs = dec.unsigned().unwrap_or(0);
+                json!({
+                    "stake_credentials": stake_credentials,
+                    "pools": pools,
+                    "dreps": dreps,
+                    "committee_members": committee_members,
+                    "governance_actions": governance_actions,
+                    "gen_delegs": gen_delegs,
+                })
+            } else {
+                json!({"ledger_counts_cbor": hex::encode(result)})
+            }
         }
     };
     Ok(val)
@@ -918,6 +1104,14 @@ fn main() -> Result<()> {
                 resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
             let base_ledger_state =
                 strict_base_ledger_state(&file_cfg, config_base_dir.as_deref())?;
+
+            // Positive audit-trail trace for the genesis-hash integrity
+            // check. `strict_base_ledger_state` bails on mismatch before
+            // returning `Ok`, so reaching this point means every declared
+            // `*GenesisHash` matched the file on disk. Surfacing this in
+            // the log gives operators confirmation that the integrity
+            // check actually ran, alongside the count of verified pairs.
+            trace_genesis_hashes_verified(&tracer, &file_cfg);
             let chain_db = ChainDb::new(
                 FileImmutable::open(storage_dir.join("immutable"))?,
                 FileVolatile::open(storage_dir.join("volatile"))?,
@@ -1121,6 +1315,44 @@ fn main() -> Result<()> {
     }
 }
 
+/// Emit a positive-path `Node.GenesisHash.Verified` trace event after
+/// `strict_base_ledger_state` has completed genesis-hash verification.
+///
+/// Each `(file, hash)` pair is reported so operators can confirm exactly
+/// which files were checked. `byron` is counted only when an expected hash
+/// is declared — Byron hash verification is still a follow-up slice
+/// (requires canonical CBOR), so a present expectation is currently a
+/// "declared but not yet verified" nuance we surface separately.
+fn trace_genesis_hashes_verified(tracer: &NodeTracer, file_cfg: &NodeConfigFile) {
+    let shelley_verified = file_cfg.shelley_genesis_file.is_some()
+        && file_cfg.shelley_genesis_hash.is_some();
+    let alonzo_verified = file_cfg.alonzo_genesis_file.is_some()
+        && file_cfg.alonzo_genesis_hash.is_some();
+    let conway_verified = file_cfg.conway_genesis_file.is_some()
+        && file_cfg.conway_genesis_hash.is_some();
+    let byron_declared = file_cfg.byron_genesis_file.is_some()
+        && file_cfg.byron_genesis_hash.is_some();
+    let verified_count = u64::from(shelley_verified)
+        + u64::from(alonzo_verified)
+        + u64::from(conway_verified);
+
+    tracer.trace_runtime(
+        "Node.GenesisHash.Verified",
+        "Notice",
+        "genesis hash integrity check passed",
+        trace_fields([
+            ("shelleyVerified", json!(shelley_verified)),
+            ("alonzoVerified", json!(alonzo_verified)),
+            ("conwayVerified", json!(conway_verified)),
+            (
+                "byronHashDeclaredButCanonicalCborPending",
+                json!(byron_declared),
+            ),
+            ("verifiedCount", json!(verified_count)),
+        ]),
+    );
+}
+
 fn strict_base_ledger_state(
     file_cfg: &NodeConfigFile,
     config_base_dir: Option<&std::path::Path>,
@@ -1301,6 +1533,42 @@ fn validate_config_report(
         bail!("node config must include at least one protocol version");
     }
 
+    if file_cfg.security_param_k == 0 {
+        bail!(
+            "security_param_k (Ouroboros k) must be > 0; a zero value \
+             collapses the stability window and makes Praos non-functional"
+        );
+    }
+
+    if file_cfg.epoch_length == 0 {
+        bail!(
+            "epoch_length must be > 0; a zero value causes a divide-by-zero \
+             in slot-to-epoch conversion"
+        );
+    }
+
+    if file_cfg.byron_to_shelley_slot.is_some() && file_cfg.byron_epoch_length == 0 {
+        bail!(
+            "byron_epoch_length must be > 0 when byron_to_shelley_slot is set; \
+             the Byron prefix is otherwise ill-formed"
+        );
+    }
+
+    if file_cfg.slots_per_kes_period == 0 {
+        bail!(
+            "slots_per_kes_period must be > 0; a zero period makes KES \
+             evolution math ill-defined and blocks header verification"
+        );
+    }
+
+    if file_cfg.max_kes_evolutions == 0 {
+        bail!(
+            "max_kes_evolutions must be > 0; a zero cap means every KES \
+             period is immediately expired and all operational certificates \
+             are rejected"
+        );
+    }
+
     if !(file_cfg.active_slot_coeff.is_finite()
         && file_cfg.active_slot_coeff > 0.0
         && file_cfg.active_slot_coeff <= 1.0)
@@ -1325,6 +1593,88 @@ fn validate_config_report(
     // `strict_base_ledger_state` so a misconfigured node cannot start.
     if let Err(err) = file_cfg.verify_known_genesis_hashes(config_base_dir) {
         warnings.push(format!("genesis hash verification: {err}"));
+    }
+
+    // Protocol-version floor: the Shelley-era hard fork introduced
+    // protocol major version 2, so a node operating below that refuses
+    // every block beyond Byron.  Warn but do not bail — an operator
+    // legitimately pinned to Byron (replay testing, historical audit)
+    // may still want `run` to proceed.
+    //
+    // Reference: upstream `MaxMajorProtVer` in
+    // `Ouroboros.Consensus.Protocol.Abstract`; Shelley hard-fork was at
+    // major protocol version 2, Conway at 9.
+    if file_cfg.max_major_protocol_version < 2 {
+        warnings.push(format!(
+            "max_major_protocol_version = {} is pre-Shelley; Shelley-era \
+             and later blocks will be rejected as unsupported. \
+             Recommended: 10 (Conway-era default)",
+            file_cfg.max_major_protocol_version,
+        ));
+    }
+
+    if file_cfg.governor_tick_interval_secs == 0 {
+        warnings.push(
+            "governor_tick_interval_secs is 0; the governor loop will busy-\
+             spin at runtime-scheduler resolution and pin a CPU core. \
+             Recommended: 1-30"
+                .to_owned(),
+        );
+    }
+
+    // Validate the six governor peer-count targets against the upstream
+    // `sanePeerSelectionTargets` invariants using the already-available
+    // `GovernorTargets::is_sane()` predicate. Invalid configurations
+    // (e.g. `target_active > target_established`) would not crash at
+    // runtime but would cause the governor to churn indefinitely trying
+    // to satisfy an unsatisfiable shape.
+    let targets = GovernorTargets {
+        target_known: file_cfg.governor_target_known,
+        target_established: file_cfg.governor_target_established,
+        target_active: file_cfg.governor_target_active,
+        target_known_big_ledger: file_cfg.governor_target_known_big_ledger,
+        target_established_big_ledger: file_cfg.governor_target_established_big_ledger,
+        target_active_big_ledger: file_cfg.governor_target_active_big_ledger,
+        ..Default::default()
+    };
+    if !targets.is_sane() {
+        warnings.push(format!(
+            "governor targets violate upstream `sanePeerSelectionTargets` \
+             invariants (0 <= active <= established <= known; active <= 100, \
+             established <= 1000, known <= 10000; same for big-ledger). \
+             Got: target_known={}, target_established={}, target_active={}; \
+             target_known_big_ledger={}, target_established_big_ledger={}, \
+             target_active_big_ledger={}",
+            file_cfg.governor_target_known,
+            file_cfg.governor_target_established,
+            file_cfg.governor_target_active,
+            file_cfg.governor_target_known_big_ledger,
+            file_cfg.governor_target_established_big_ledger,
+            file_cfg.governor_target_active_big_ledger,
+        ));
+    }
+
+    if let Some(secs) = file_cfg.keepalive_interval_secs {
+        // The upstream NtN KeepAlive client timeout (`keepalive::CLIENT`)
+        // is 97 s; a heartbeat interval >= 97 s means the peer's
+        // inactivity timer fires before our next heartbeat and tears the
+        // connection down. Values <= 1 s are wasteful (constant wire
+        // traffic for no benefit).  A sensible operator-tuned range is
+        // 10-60 seconds; upstream defaults to around 30 s.
+        if secs >= 97 {
+            warnings.push(format!(
+                "keepalive_interval_secs = {secs} is >= the 97s upstream \
+                 KeepAlive client timeout; peers will disconnect before the \
+                 next heartbeat. Recommended: 10-60",
+            ));
+        } else if secs == 0 {
+            warnings.push(
+                "keepalive_interval_secs is 0; heartbeats will fire as \
+                 fast as the runtime can schedule them (wasteful). \
+                 Recommended: 10-60"
+                    .to_owned(),
+            );
+        }
     }
 
     if file_cfg.checkpoint_interval_slots == 0 {
@@ -1471,6 +1821,19 @@ fn validate_config_report(
 // status subcommand
 // ---------------------------------------------------------------------------
 
+/// Ledger-state cardinality summary mirroring LSQ tag 23
+/// `GetLedgerCounts`.  Exposed inside [`StatusReport`] when the node has
+/// successfully recovered the latest ledger state from storage.
+#[derive(Serialize)]
+struct LedgerCountsReport {
+    stake_credentials: usize,
+    pools: usize,
+    dreps: usize,
+    committee_members: usize,
+    governance_actions: usize,
+    gen_delegs: usize,
+}
+
 /// On-disk node status report produced by the `status` subcommand.
 #[derive(Serialize)]
 struct StatusReport {
@@ -1488,6 +1851,18 @@ struct StatusReport {
     ledger_checkpoint_count: usize,
     replayed_volatile_blocks: Option<usize>,
     recovered_ledger_point: Option<String>,
+    /// Era of the recovered ledger state (`Byron`, `Shelley`, …, `Conway`).
+    /// `None` when storage is uninitialized or recovery fails.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_era: Option<String>,
+    /// Current epoch number at the recovered ledger tip.
+    /// `None` when storage is uninitialized or recovery fails.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_epoch: Option<u64>,
+    /// Aggregate ledger-state cardinalities at the recovered tip.
+    /// `None` when storage replay failed or no ledger state was recovered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ledger_counts: Option<LedgerCountsReport>,
 }
 
 fn status_report(
@@ -1515,6 +1890,9 @@ fn status_report(
             ledger_checkpoint_count: 0,
             replayed_volatile_blocks: None,
             recovered_ledger_point: None,
+            current_era: None,
+            current_epoch: None,
+            ledger_counts: None,
         });
     }
 
@@ -1551,6 +1929,26 @@ fn status_report(
         Point::BlockPoint(slot, hash) => (Some(slot.0), Some(format!("{hash:?}"))),
     };
 
+    // Derive ledger-state cardinalities from the recovered state when
+    // available.  Matches the LSQ tag 23 `GetLedgerCounts` breakdown so
+    // the two surfaces report the same numbers.
+    let ledger_counts = recovery.as_ref().ok().map(|r| {
+        let state = &r.ledger_state;
+        LedgerCountsReport {
+            stake_credentials: state.stake_credentials().len(),
+            pools: state.pool_state().len(),
+            dreps: state.drep_state().len(),
+            committee_members: state.committee_state().len(),
+            governance_actions: state.governance_actions().len(),
+            gen_delegs: state.gen_delegs().len(),
+        }
+    });
+    let current_era = recovery
+        .as_ref()
+        .ok()
+        .map(|r| format!("{:?}", r.ledger_state.current_era()));
+    let current_epoch = recovery.as_ref().ok().map(|r| r.ledger_state.current_epoch().0);
+
     Ok(StatusReport {
         network_magic: file_cfg.network_magic,
         storage_dir: storage_dir.display().to_string(),
@@ -1569,6 +1967,9 @@ fn status_report(
         ledger_checkpoint_count,
         replayed_volatile_blocks: recovery.as_ref().ok().map(|r| r.replayed_volatile_blocks),
         recovered_ledger_point: recovery.as_ref().ok().map(|r| format!("{:?}", r.point)),
+        current_era,
+        current_epoch,
+        ledger_counts,
     })
 }
 
@@ -2034,10 +2435,10 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         };
         let block_provider: Arc<dyn BlockProvider> = shared_provider.clone();
         let chain_provider: Arc<dyn ChainProvider> = shared_provider;
-        let tx_submission_consumer = Arc::new(SharedTxSubmissionConsumer::new(
-            Arc::clone(&chain_db),
-            shared_mempool.clone(),
-        ));
+        let tx_submission_consumer = Arc::new(
+            SharedTxSubmissionConsumer::new(Arc::clone(&chain_db), shared_mempool.clone())
+                .with_metrics(Arc::clone(&metrics)),
+        );
         let peer_sharing = Arc::new(SharedPeerSharingProvider::with_inbound_governor(
             Arc::clone(&peer_registry),
             Some(Arc::clone(&shared_inbound_governor)),
@@ -2361,6 +2762,11 @@ async fn serve_metrics(port: u16, metrics: std::sync::Arc<NodeMetrics>) -> std::
 }
 
 fn metrics_http_response(request: &str, metrics: &NodeMetrics) -> (&'static str, &'static str, String) {
+    // Route order matters: more-specific prefixes MUST be tested before
+    // less-specific ones.  Before the fix, `GET /metrics` was checked
+    // before `GET /metrics/json`, so every JSON request matched the
+    // Prometheus-text prefix first and never reached the JSON arm,
+    // silently turning `/metrics/json` into dead code.
     if request.starts_with("GET /health") || request.starts_with("GET /debug/health") {
         let snap = metrics.snapshot();
         let body = serde_json::json!({
@@ -2371,15 +2777,13 @@ fn metrics_http_response(request: &str, metrics: &NodeMetrics) -> (&'static str,
         })
         .to_string();
         ("200 OK", "application/json", body)
-    } else if request.starts_with("GET /debug/metrics/prometheus")
-        || request.starts_with("GET /metrics")
-    {
-        let body = metrics.snapshot().to_prometheus_text();
-        ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
     } else if request.starts_with("GET /metrics/json")
-        || request.starts_with("GET /debug/metrics")
+        || request.starts_with("GET /debug/metrics/json")
+        || request.starts_with("GET /debug/metrics ")
         || request.starts_with("GET /debug ")
     {
+        // JSON first — must precede the `/metrics` / `/debug/metrics`
+        // Prometheus text arms below.
         let snap = metrics.snapshot();
         match serde_json::to_string_pretty(&snap) {
             Ok(json) => ("200 OK", "application/json", json),
@@ -2389,6 +2793,12 @@ fn metrics_http_response(request: &str, metrics: &NodeMetrics) -> (&'static str,
                 "serialization error".to_owned(),
             ),
         }
+    } else if request.starts_with("GET /debug/metrics/prometheus")
+        || request.starts_with("GET /debug/metrics")
+        || request.starts_with("GET /metrics")
+    {
+        let body = metrics.snapshot().to_prometheus_text();
+        ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
     } else {
         ("404 Not Found", "text/plain", "not found\n".to_owned())
     }
@@ -2677,6 +3087,328 @@ mod tests {
     }
 
     #[test]
+    fn validate_config_report_rejects_zero_slots_per_kes_period() {
+        let mut cfg = default_config();
+        cfg.slots_per_kes_period = 0;
+        let err = validate_config_report(&cfg, None)
+            .err()
+            .expect("zero slots_per_kes_period must fail");
+        assert!(
+            err.to_string().contains("slots_per_kes_period"),
+            "error should mention slots_per_kes_period: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_config_report_rejects_zero_max_kes_evolutions() {
+        let mut cfg = default_config();
+        cfg.max_kes_evolutions = 0;
+        let err = validate_config_report(&cfg, None)
+            .err()
+            .expect("zero max_kes_evolutions must fail");
+        assert!(
+            err.to_string().contains("max_kes_evolutions"),
+            "error should mention max_kes_evolutions: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_pre_shelley_max_major_protocol_version() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-pv-warn-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.max_major_protocol_version = 1; // pre-Shelley
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("pre-Shelley") || w.contains("max_major_protocol_version")),
+            "expected pre-Shelley warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn encode_ntc_query_emits_expected_tag_bytes() {
+        // Lock in the on-wire byte sequence for every QueryCommand variant
+        // so silent tag drift between the CLI encoder and the
+        // BasicLocalQueryDispatcher server-side arms surfaces as a failing
+        // test.  Every simple (no-parameter) variant produces CBOR
+        // `[tag]` == `0x81` + one-byte-unsigned(tag); the four parametric
+        // variants produce `[tag, <param>]` which we spot-check separately.
+        use super::{QueryCommand, encode_ntc_query};
+
+        let cases: &[(QueryCommand, &[u8])] = &[
+            (QueryCommand::CurrentEra, &[0x81, 0x00]),
+            (QueryCommand::Tip, &[0x81, 0x01]),
+            (QueryCommand::CurrentEpoch, &[0x81, 0x02]),
+            (QueryCommand::ProtocolParams, &[0x81, 0x03]),
+            (QueryCommand::StakeDistribution, &[0x81, 0x05]),
+            (QueryCommand::TreasuryAndReserves, &[0x81, 0x07]),
+            (QueryCommand::Constitution, &[0x81, 0x08]),
+            (QueryCommand::GovState, &[0x81, 0x09]),
+            (QueryCommand::DrepState, &[0x81, 0x0a]),
+            (QueryCommand::CommitteeMembersState, &[0x81, 0x0b]),
+            (QueryCommand::AccountState, &[0x81, 0x0d]),
+            (QueryCommand::StakePools, &[0x81, 0x0f]),
+            (QueryCommand::DrepStakeDistr, &[0x81, 0x11]),
+            (QueryCommand::GenesisDelegations, &[0x81, 0x12]),
+            (QueryCommand::StabilityWindow, &[0x81, 0x13]),
+            (QueryCommand::NumDormantEpochs, &[0x81, 0x14]),
+            (QueryCommand::ExpectedNetworkId, &[0x81, 0x15]),
+            (QueryCommand::DepositPot, &[0x81, 0x16]),
+            (QueryCommand::LedgerCounts, &[0x81, 0x17]),
+        ];
+        for (query, want) in cases {
+            let got = encode_ntc_query(query);
+            assert_eq!(
+                got, *want,
+                "encode_ntc_query drifted for {query:?}: expected {want:?}, got {got:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn metrics_http_response_routes_json_before_prometheus() {
+        // Regression for the `starts_with("GET /metrics")` routing bug:
+        // `GET /metrics/json` must reach the JSON arm, not match the
+        // shorter `/metrics` prefix first.
+        let metrics = yggdrasil_node::tracer::NodeMetrics::default();
+
+        let (status, ctype, body) =
+            super::metrics_http_response("GET /metrics/json HTTP/1.1\r\n", &metrics);
+        assert_eq!(status, "200 OK");
+        assert_eq!(ctype, "application/json");
+        // JSON snapshot starts with `{` (not Prometheus `#` or metric name).
+        assert!(body.trim_start().starts_with('{'));
+
+        let (status, ctype, body) =
+            super::metrics_http_response("GET /metrics HTTP/1.1\r\n", &metrics);
+        assert_eq!(status, "200 OK");
+        assert!(
+            ctype.starts_with("text/plain"),
+            "expected Prometheus text content type, got {ctype}",
+        );
+        assert!(body.contains("# HELP yggdrasil_blocks_synced"));
+
+        // /debug/metrics/json is a documented JSON alias.
+        let (_, ctype, body) =
+            super::metrics_http_response("GET /debug/metrics/json HTTP/1.1\r\n", &metrics);
+        assert_eq!(ctype, "application/json");
+        assert!(body.trim_start().starts_with('{'));
+
+        // /debug/metrics (with trailing space) is the JSON alias matching
+        // the upstream cardano-tracer debug-dump convention.
+        let (_, ctype, body) =
+            super::metrics_http_response("GET /debug/metrics HTTP/1.1\r\n", &metrics);
+        assert_eq!(ctype, "application/json");
+        assert!(body.trim_start().starts_with('{'));
+
+        // /debug/metrics/prometheus is the explicit Prometheus-text alias.
+        let (_, ctype, body) = super::metrics_http_response(
+            "GET /debug/metrics/prometheus HTTP/1.1\r\n",
+            &metrics,
+        );
+        assert!(ctype.starts_with("text/plain"));
+        assert!(body.contains("# HELP"));
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_zero_governor_tick() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-gov-tick-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.governor_tick_interval_secs = 0;
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("governor_tick_interval_secs")),
+            "expected governor-tick warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_insane_governor_targets() {
+        // `target_active > target_established` violates upstream
+        // `sanePeerSelectionTargets`; the preflight should flag it.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-gov-targets-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.governor_target_active = 99; // > established, impossible to satisfy
+        cfg.governor_target_established = 10;
+        cfg.governor_target_known = 20;
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("sanePeerSelectionTargets")),
+            "expected sane-targets warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_unsafe_keepalive_interval() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+
+        // A value >= 97 collides with the upstream KeepAlive client timeout.
+        let dir_hi = std::env::temp_dir().join(format!("yggdrasil-keepalive-hi-{unique}"));
+        std::fs::create_dir_all(&dir_hi).expect("temp dir");
+        let mut cfg_hi = default_config();
+        cfg_hi.storage_dir = PathBuf::from("data");
+        cfg_hi.peer_snapshot_file = None;
+        cfg_hi.keepalive_interval_secs = Some(120);
+        let report = validate_config_report(&cfg_hi, Some(&dir_hi)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("KeepAlive") && w.contains("120")),
+            "expected KeepAlive timeout warning for 120s interval, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir_hi).ok();
+
+        // A value of 0 is also called out as wasteful.
+        let dir_zero = std::env::temp_dir().join(format!("yggdrasil-keepalive-zero-{unique}"));
+        std::fs::create_dir_all(&dir_zero).expect("temp dir");
+        let mut cfg_zero = default_config();
+        cfg_zero.storage_dir = PathBuf::from("data");
+        cfg_zero.peer_snapshot_file = None;
+        cfg_zero.keepalive_interval_secs = Some(0);
+        let report = validate_config_report(&cfg_zero, Some(&dir_zero)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("keepalive_interval_secs is 0")),
+            "expected zero-keepalive warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir_zero).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_sensible_keepalive_interval() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-keepalive-ok-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.keepalive_interval_secs = Some(30); // upstream default ballpark
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("keepalive_interval_secs") || w.contains("KeepAlive")),
+            "no keepalive warning expected at 30s, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_rejects_zero_security_param_k() {
+        let mut cfg = default_config();
+        cfg.security_param_k = 0;
+        let err = validate_config_report(&cfg, None)
+            .err()
+            .expect("zero k must fail");
+        assert!(
+            err.to_string().contains("security_param_k"),
+            "error should mention security_param_k: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_config_report_rejects_zero_epoch_length() {
+        let mut cfg = default_config();
+        cfg.epoch_length = 0;
+        let err = validate_config_report(&cfg, None)
+            .err()
+            .expect("zero epoch_length must fail");
+        assert!(
+            err.to_string().contains("epoch_length"),
+            "error should mention epoch_length: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_config_report_rejects_zero_byron_epoch_length_with_boundary_set() {
+        let mut cfg = default_config();
+        cfg.byron_to_shelley_slot = Some(86_400);
+        cfg.byron_epoch_length = 0;
+        let err = validate_config_report(&cfg, None)
+            .err()
+            .expect("zero byron_epoch_length with boundary must fail");
+        assert!(
+            err.to_string().contains("byron_epoch_length"),
+            "error should mention byron_epoch_length: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_config_report_allows_zero_byron_epoch_length_without_boundary() {
+        // When `byron_to_shelley_slot` is not set, the Byron prefix is
+        // inapplicable (e.g. preview testnet) and a zero
+        // byron_epoch_length should not abort the preflight.
+        let mut cfg = default_config();
+        cfg.byron_to_shelley_slot = None;
+        cfg.byron_epoch_length = 0;
+        // Other fields still sane — no bail expected from this check.
+        let result = validate_config_report(&cfg, None);
+        // We don't require full success here (other checks may warn or
+        // fail depending on storage/genesis), but we DO require that the
+        // byron_epoch_length check specifically does not fire.
+        if let Err(e) = &result {
+            assert!(
+                !e.to_string().contains("byron_epoch_length"),
+                "byron_epoch_length bail should not fire without byron_to_shelley_slot: {e}",
+            );
+        }
+    }
+
+    #[test]
     fn validate_config_report_warns_on_genesis_hash_mismatch() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join("shelley.json"), b"{}").expect("write");
@@ -2807,6 +3539,27 @@ mod tests {
         assert_eq!(report.volatile_block_count, 0);
         assert_eq!(report.ledger_checkpoint_count, 0);
         assert!(report.chain_tip_slot.is_none());
+        // Ledger-derived fields must be absent on uninitialized storage.
+        assert!(report.current_era.is_none());
+        assert!(report.current_epoch.is_none());
+        assert!(report.ledger_counts.is_none());
+
+        // And the JSON serialisation must elide them (skip_serializing_if
+        // = Option::is_none) so pre-existing consumers see no breaking
+        // change when the data is absent.
+        let json = serde_json::to_string(&report).expect("serialize");
+        assert!(
+            !json.contains("current_era"),
+            "current_era key should be absent when unset, got: {json}",
+        );
+        assert!(
+            !json.contains("current_epoch"),
+            "current_epoch key should be absent when unset, got: {json}",
+        );
+        assert!(
+            !json.contains("ledger_counts"),
+            "ledger_counts key should be absent when unset, got: {json}",
+        );
 
         std::fs::remove_dir_all(dir).ok();
     }
@@ -2833,6 +3586,33 @@ mod tests {
         assert_eq!(report.immutable_block_count, 0);
         assert_eq!(report.volatile_block_count, 0);
         assert!(report.chain_tip.contains("Origin"));
+
+        // Storage is present so recovery succeeds from an empty state;
+        // the ledger-counts summary should therefore be populated, and all
+        // six cardinalities should be zero on a fresh node.
+        let counts = report
+            .ledger_counts
+            .as_ref()
+            .expect("ledger counts present when storage is initialized");
+        assert_eq!(counts.stake_credentials, 0);
+        assert_eq!(counts.pools, 0);
+        assert_eq!(counts.dreps, 0);
+        assert_eq!(counts.committee_members, 0);
+        assert_eq!(counts.governance_actions, 0);
+        assert_eq!(counts.gen_delegs, 0);
+
+        // Era + epoch are populated on a successful recovery. A fresh
+        // ledger starts in Byron era, epoch 0 until blocks advance it.
+        assert_eq!(
+            report.current_era.as_deref(),
+            Some("Byron"),
+            "fresh ledger should report Byron era",
+        );
+        assert_eq!(
+            report.current_epoch,
+            Some(0),
+            "fresh ledger should report epoch 0",
+        );
 
         std::fs::remove_dir_all(dir).ok();
     }
