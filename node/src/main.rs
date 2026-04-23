@@ -4446,6 +4446,61 @@ mod tests {
         );
     }
 
+    /// Regression guard: every vendored network preset (`mainnet`, `preprod`,
+    /// `preview`) must validate through `validate_config_report` with NO
+    /// warnings outside a narrow allowlist of known environmental
+    /// conditions (no peer-snapshot file shipped with the repo; fresh
+    /// checkout has no initialized storage dirs yet). Any NEW warning that
+    /// fires on a canonical preset is almost certainly a broken preflight
+    /// (slice 42's `protocol_versions` false positive is the prototypical
+    /// example). This test pins the expected category set so the next time
+    /// a preflight fires incorrectly on all three presets, CI catches it.
+    ///
+    /// Matches against warning *substrings* rather than exact strings so
+    /// the test remains stable across message-wording refinements. The
+    /// allowlist is intentionally small — ≤2 entries per preset —
+    /// because every entry is a genuine environmental condition the repo
+    /// cannot resolve without a real node run.
+    #[test]
+    fn vendored_network_presets_produce_only_environmental_warnings() {
+        use yggdrasil_node::config::NetworkPreset;
+
+        const ENVIRONMENTAL_SUBSTRINGS: &[&str] = &[
+            // No peer-snapshot.json is vendored with the repo — this is a
+            // real runtime artifact, not a preset misconfiguration.
+            "peer snapshot file",
+            // Fresh checkout has no storage dirs yet — validate-config
+            // cannot check restart recovery until a real sync has occurred.
+            "storage directories are not initialized",
+        ];
+
+        for preset in [
+            NetworkPreset::Mainnet,
+            NetworkPreset::Preprod,
+            NetworkPreset::Preview,
+        ] {
+            let (cfg, config_base_dir) =
+                load_effective_config(None, Some(preset)).expect("preset config");
+            let report = validate_config_report(&cfg, config_base_dir.as_deref())
+                .expect("preset must validate successfully");
+            for warning in &report.warnings {
+                let matched_category = ENVIRONMENTAL_SUBSTRINGS
+                    .iter()
+                    .any(|pattern| warning.contains(pattern));
+                assert!(
+                    matched_category,
+                    "preset {preset:?} produced an unexpected warning outside \
+                     the environmental allowlist: {warning:?}\n\
+                     If this is a genuine new environmental condition, add \
+                     its substring to `ENVIRONMENTAL_SUBSTRINGS`. If it is a \
+                     preflight that should never fire on a canonical \
+                     vendored preset, the preflight check is buggy (see \
+                     slice 44 in AGENTS.md for the prototypical case).",
+                );
+            }
+        }
+    }
+
     #[test]
     fn load_effective_config_uses_network_preset_when_file_is_absent() {
         let (cfg, config_base_dir) =

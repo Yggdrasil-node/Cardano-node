@@ -4319,6 +4319,32 @@ mod tests {
             }
             .is_peer_attributable()
         );
+        assert!(
+            SyncError::WrongBlockBodySize {
+                declared: 100,
+                actual: 200,
+            }
+            .is_peer_attributable()
+        );
+        assert!(
+            SyncError::ProtocolVersionMismatch {
+                era: Era::Alonzo,
+                major: 4,
+                minor: 0,
+                expected_range: "5..=6".to_owned(),
+            }
+            .is_peer_attributable()
+        );
+        assert!(
+            SyncError::ProtocolVersionTooHigh { major: 99, max: 10 }.is_peer_attributable()
+        );
+        assert!(
+            SyncError::HeaderProtVerTooHigh {
+                header_major: 15,
+                pp_major: 10,
+            }
+            .is_peer_attributable()
+        );
     }
 
     #[test]
@@ -4332,6 +4358,90 @@ mod tests {
             !SyncError::KeepAlive(yggdrasil_network::KeepAliveClientError::ConnectionClosed)
                 .is_peer_attributable()
         );
+    }
+
+    /// Drift-detection invariant: every `SyncError` variant must have an
+    /// explicit classification decision in `is_peer_attributable`. The
+    /// exhaustive match guard below forces any new variant to appear here,
+    /// which in turn forces the author to think through whether the new
+    /// error should be attributed to the peer (reconnect) or the local
+    /// node (propagate up). Without this guard, a future variant would
+    /// default to the `_ =>` fall-through inside `matches!` and silently
+    /// be classified as non-peer-attributable — masking a real peer
+    /// misbehavior if the variant represents validation failure.
+    ///
+    /// Each arm calls `.is_peer_attributable()` so the classification
+    /// decision is exercised and a flipped boolean between the match arm
+    /// here and the `matches!` in `is_peer_attributable` shows as a test
+    /// failure rather than a silent misclassification.
+    #[test]
+    fn every_sync_error_variant_has_explicit_peer_attributable_decision() {
+        use yggdrasil_network::{ChainSyncClientError, PeerError};
+        // Construct one representative of every variant. The `match` over
+        // a fictional SyncError acts as a compile-time exhaustiveness gate:
+        // adding a new variant without extending this list is a hard compile
+        // error.
+        let all: Vec<SyncError> = vec![
+            SyncError::Peer(PeerError::NoCompatibleVersion),
+            SyncError::ChainSync(ChainSyncClientError::ConnectionClosed),
+            SyncError::BlockFetch(BlockFetchClientError::ConnectionClosed),
+            SyncError::LedgerDecode(LedgerError::CborTrailingBytes(1)),
+            SyncError::Storage(StorageError::Serialization("x".to_owned())),
+            SyncError::KeepAlive(yggdrasil_network::KeepAliveClientError::ConnectionClosed),
+            SyncError::Consensus(yggdrasil_consensus::ConsensusError::InvalidKesSignature),
+            SyncError::Recovery("x".to_owned()),
+            SyncError::BlockBodyHashMismatch,
+            SyncError::BlockFromFuture {
+                slot: 1,
+                excess_slots: 1,
+            },
+            SyncError::WrongBlockBodySize {
+                declared: 1,
+                actual: 2,
+            },
+            SyncError::ProtocolVersionMismatch {
+                era: Era::Conway,
+                major: 1,
+                minor: 0,
+                expected_range: "9+".to_owned(),
+            },
+            SyncError::ProtocolVersionTooHigh { major: 20, max: 10 },
+            SyncError::HeaderProtVerTooHigh {
+                header_major: 20,
+                pp_major: 10,
+            },
+        ];
+
+        for err in &all {
+            // Compiler-enforced exhaustive match: if a new SyncError
+            // variant is added without being classified here, this match
+            // will fail to compile.
+            let expected_peer_attributable = match err {
+                SyncError::Peer(_) => false,
+                SyncError::ChainSync(_) => false,
+                SyncError::BlockFetch(_) => false,
+                SyncError::LedgerDecode(_) => true,
+                SyncError::Storage(_) => false,
+                SyncError::KeepAlive(_) => false,
+                SyncError::Consensus(_) => true,
+                SyncError::Recovery(_) => false,
+                SyncError::BlockBodyHashMismatch => true,
+                SyncError::BlockFromFuture { .. } => true,
+                SyncError::WrongBlockBodySize { .. } => true,
+                SyncError::ProtocolVersionMismatch { .. } => true,
+                SyncError::ProtocolVersionTooHigh { .. } => true,
+                SyncError::HeaderProtVerTooHigh { .. } => true,
+            };
+            assert_eq!(
+                err.is_peer_attributable(),
+                expected_peer_attributable,
+                "classification mismatch for {err:?}: test expected \
+                 {expected_peer_attributable}, implementation returned \
+                 {}. Review the `is_peer_attributable` matches! list \
+                 against this test's expected map.",
+                err.is_peer_attributable(),
+            );
+        }
     }
 
     #[test]
