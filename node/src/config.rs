@@ -145,6 +145,20 @@ pub const PREPROD_NETWORK_MAGIC: u32 = 1;
 /// preview config we ship.
 pub const PREVIEW_NETWORK_MAGIC: u32 = 2;
 
+/// The Cardano network ID that mainnet reward / Shelley addresses must
+/// carry in their high nibble. Distinct from [`MAINNET_NETWORK_MAGIC`]
+/// (the handshake discriminant): the network ID lives inside every
+/// address byte string and is checked at transaction-validation time.
+///
+/// Reference: `Cardano.Ledger.Api.Tx.Address` / `cardano-ledger`
+/// `Network = Mainnet | Testnet`; the encoded form puts mainnet at `1`.
+pub const MAINNET_NETWORK_ID: u8 = 1;
+
+/// The Cardano network ID for ALL test networks (preprod, preview, and
+/// any private testnet). Same encoding rule as [`MAINNET_NETWORK_ID`]
+/// but represents `Network = Testnet` upstream.
+pub const TESTNET_NETWORK_ID: u8 = 0;
+
 /// Runtime consensus mode used for governor churn-regime selection.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum ConsensusModeConfig {
@@ -709,12 +723,13 @@ fn default_max_ledger_snapshots() -> usize {
 impl NodeConfigFile {
     /// Returns the expected Cardano network id for reward-account validation.
     ///
-    /// Mainnet uses network id `1`. Test networks use network id `0`.
+    /// Mainnet uses [`MAINNET_NETWORK_ID`] (`1`); every other magic is
+    /// considered a test network and uses [`TESTNET_NETWORK_ID`] (`0`).
     pub fn expected_network_id(&self) -> u8 {
-        if self.network_magic == 764_824_073 {
-            1
+        if self.network_magic == MAINNET_NETWORK_MAGIC {
+            MAINNET_NETWORK_ID
         } else {
-            0
+            TESTNET_NETWORK_ID
         }
     }
 
@@ -1713,6 +1728,32 @@ mod tests {
                 "preset {preset:?}: cheap accessor disagrees with to_config()",
             );
         }
+    }
+
+    #[test]
+    fn mainnet_network_id_constant_matches_upstream() {
+        // Upstream `Cardano.Ledger.Api.Tx.Address`: `Network = Mainnet`
+        // encodes to `1` in the high nibble of every reward / Shelley
+        // address. Drift would silently misclassify mainnet addresses
+        // as testnet (or vice versa) at value-preservation time.
+        assert_eq!(MAINNET_NETWORK_ID, 1);
+        assert_eq!(TESTNET_NETWORK_ID, 0);
+    }
+
+    #[test]
+    fn expected_network_id_uses_named_constants_consistently() {
+        // Mainnet config → MAINNET_NETWORK_ID, every test net → TESTNET_NETWORK_ID.
+        // Pin both branches so a refactor that flips one fails CI.
+        assert_eq!(mainnet_config().expected_network_id(), MAINNET_NETWORK_ID);
+        assert_eq!(preprod_config().expected_network_id(), TESTNET_NETWORK_ID);
+        assert_eq!(preview_config().expected_network_id(), TESTNET_NETWORK_ID);
+
+        // Custom magic → testnet (defensive: any non-mainnet magic
+        // including the canonical preprod/preview values must classify
+        // as testnet).
+        let mut cfg = mainnet_config();
+        cfg.network_magic = 99_999;
+        assert_eq!(cfg.expected_network_id(), TESTNET_NETWORK_ID);
     }
 
     #[test]

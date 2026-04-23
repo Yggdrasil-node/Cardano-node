@@ -11529,11 +11529,17 @@ pub(crate) fn tally_drep_votes(
 
         total = total.saturating_add(*stake);
 
-        // Find vote keyed by DRep voter tag.
+        // Find vote keyed by DRep voter tag. `AlwaysAbstain` /
+        // `AlwaysNoConfidence` are already handled via `continue` in the
+        // early match at the top of this loop so they cannot reach here
+        // under current control-flow. `continue` (rather than
+        // `unreachable!()`) keeps us defensive: if a future refactor
+        // removes the early filter, we silently skip the variant instead
+        // of panicking in production.
         let voter = match drep {
             DRep::KeyHash(h) => Voter::DRepKeyHash(*h),
             DRep::ScriptHash(h) => Voter::DRepScript(*h),
-            DRep::AlwaysAbstain | DRep::AlwaysNoConfidence => unreachable!(),
+            DRep::AlwaysAbstain | DRep::AlwaysNoConfidence => continue,
         };
 
         match action.votes.get(&voter) {
@@ -15024,6 +15030,49 @@ mod tests {
             denominator: 100,
         };
         assert!(tally.meets_threshold(&threshold)); // 700/1000 = 70% >= 67%
+    }
+
+    #[test]
+    fn drep_tally_handles_always_abstain_and_no_confidence_without_panic() {
+        // Regression guard for the `AlwaysAbstain` / `AlwaysNoConfidence`
+        // paths through `tally_drep_votes`. The inner match at the bottom
+        // of the loop previously used `unreachable!()` for these variants,
+        // relying on the early filter at the top of the loop body to
+        // short-circuit them. The refactor swapped `unreachable!()` for
+        // `continue` as defensive-coding; this test pins the end-to-end
+        // behavior at both the tally-correctness AND the no-panic level.
+        let mut action = test_hf_action();
+        let mut drep_state = DrepState::new();
+        let drep_regular = DRep::KeyHash([1; 28]);
+        drep_state.register(drep_regular, RegisteredDrep::new_active(0, None, EpochNo(1)));
+
+        let mut stake = BTreeMap::new();
+        // A registered DRep that votes Yes with stake 100.
+        stake.insert(drep_regular, 100);
+        // AlwaysAbstain stake — must NOT be added to `total`.
+        stake.insert(DRep::AlwaysAbstain, 500);
+        // AlwaysNoConfidence stake — added to `total`; counted as Yes
+        // ONLY when `count_no_confidence_as_yes` is true.
+        stake.insert(DRep::AlwaysNoConfidence, 200);
+
+        action.votes.insert(Voter::DRepKeyHash([1; 28]), Vote::Yes);
+
+        // count_no_confidence_as_yes = false:
+        //   total = regular (100) + AlwaysNoConfidence (200) = 300
+        //   yes = regular's Yes (100) only
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, false);
+        assert_eq!(tally.total, 300, "AlwaysAbstain (500) must be excluded");
+        assert_eq!(tally.yes, 100);
+
+        // count_no_confidence_as_yes = true:
+        //   total = 300 (same as above)
+        //   yes = regular's Yes (100) + AlwaysNoConfidence (200) = 300
+        let tally = tally_drep_votes(&action, &drep_state, &stake, EpochNo(5), 100, true);
+        assert_eq!(tally.total, 300);
+        assert_eq!(
+            tally.yes, 300,
+            "AlwaysNoConfidence stake counts as Yes when flag is set",
+        );
     }
 
     #[test]
