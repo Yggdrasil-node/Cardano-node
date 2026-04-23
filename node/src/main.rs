@@ -311,7 +311,7 @@ enum CardanoCliCommand {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct ConfigValidationReport {
     primary_peer: String,
     network_magic: u32,
@@ -327,7 +327,7 @@ struct ConfigValidationReport {
     warnings: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct PeerSnapshotValidationReport {
     status: &'static str,
     path: Option<String>,
@@ -337,7 +337,7 @@ struct PeerSnapshotValidationReport {
     error: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct StorageValidationReport {
     status: &'static str,
     tip: String,
@@ -1993,7 +1993,7 @@ fn validate_config_report(
 /// Ledger-state cardinality summary mirroring LSQ tag 23
 /// `GetLedgerCounts`.  Exposed inside [`StatusReport`] when the node has
 /// successfully recovered the latest ledger state from storage.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct LedgerCountsReport {
     stake_credentials: usize,
     pools: usize,
@@ -2004,7 +2004,7 @@ struct LedgerCountsReport {
 }
 
 /// On-disk node status report produced by the `status` subcommand.
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct StatusReport {
     network_magic: u32,
     storage_dir: String,
@@ -3262,8 +3262,7 @@ mod tests {
         let mut cfg = default_config();
         cfg.slots_per_kes_period = 0;
         let err = validate_config_report(&cfg, None)
-            .err()
-            .expect("zero slots_per_kes_period must fail");
+            .expect_err("zero slots_per_kes_period must fail");
         assert!(
             err.to_string().contains("slots_per_kes_period"),
             "error should mention slots_per_kes_period: {err}",
@@ -3275,8 +3274,7 @@ mod tests {
         let mut cfg = default_config();
         cfg.max_kes_evolutions = 0;
         let err = validate_config_report(&cfg, None)
-            .err()
-            .expect("zero max_kes_evolutions must fail");
+            .expect_err("zero max_kes_evolutions must fail");
         assert!(
             err.to_string().contains("max_kes_evolutions"),
             "error should mention max_kes_evolutions: {err}",
@@ -4356,9 +4354,7 @@ mod tests {
     fn validate_config_report_rejects_zero_security_param_k() {
         let mut cfg = default_config();
         cfg.security_param_k = 0;
-        let err = validate_config_report(&cfg, None)
-            .err()
-            .expect("zero k must fail");
+        let err = validate_config_report(&cfg, None).expect_err("zero k must fail");
         assert!(
             err.to_string().contains("security_param_k"),
             "error should mention security_param_k: {err}",
@@ -4369,9 +4365,8 @@ mod tests {
     fn validate_config_report_rejects_zero_epoch_length() {
         let mut cfg = default_config();
         cfg.epoch_length = 0;
-        let err = validate_config_report(&cfg, None)
-            .err()
-            .expect("zero epoch_length must fail");
+        let err =
+            validate_config_report(&cfg, None).expect_err("zero epoch_length must fail");
         assert!(
             err.to_string().contains("epoch_length"),
             "error should mention epoch_length: {err}",
@@ -4384,8 +4379,7 @@ mod tests {
         cfg.byron_to_shelley_slot = Some(86_400);
         cfg.byron_epoch_length = 0;
         let err = validate_config_report(&cfg, None)
-            .err()
-            .expect("zero byron_epoch_length with boundary must fail");
+            .expect_err("zero byron_epoch_length with boundary must fail");
         assert!(
             err.to_string().contains("byron_epoch_length"),
             "error should mention byron_epoch_length: {err}",

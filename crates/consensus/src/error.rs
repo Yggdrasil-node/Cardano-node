@@ -228,6 +228,92 @@ mod tests {
     }
 
     #[test]
+    fn display_slot_not_increasing() {
+        let e = ConsensusError::SlotNotIncreasing {
+            tip_slot: 1_000,
+            block_slot: 999,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("1000") || s.contains("1_000"));
+        assert!(s.contains("999"));
+    }
+
+    #[test]
+    fn display_prev_hash_mismatch() {
+        let e = ConsensusError::PrevHashMismatch {
+            expected: HeaderHash([0xAA; 32]),
+            got: HeaderHash([0xBB; 32]),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("expected"));
+        assert!(s.contains("got"));
+    }
+
+    #[test]
+    fn display_ocert_counter_too_old() {
+        let e = ConsensusError::OcertCounterTooOld {
+            stored: 100,
+            received: 50,
+        };
+        let s = format!("{e}");
+        // Both values must appear so the operator sees exactly which
+        // counter was out-of-order.
+        assert!(s.contains("100"));
+        assert!(s.contains("50"));
+    }
+
+    #[test]
+    fn display_ocert_counter_too_far() {
+        let e = ConsensusError::OcertCounterTooFar {
+            stored: 7,
+            received: 20,
+        };
+        let s = format!("{e}");
+        assert!(s.contains('7'));
+        assert!(s.contains("20"));
+    }
+
+    #[test]
+    fn display_obsolete_node() {
+        // Slice 43 added this variant — ensure the Display message surfaces
+        // both the offending header version and the configured ceiling,
+        // matching the "fix one or the other" operator diagnosis pattern.
+        let e = ConsensusError::ObsoleteNode {
+            header_major: 15,
+            max_major: 10,
+        };
+        let s = format!("{e}");
+        assert!(
+            s.contains("15"),
+            "Display must mention the offending header major: {s}",
+        );
+        assert!(
+            s.contains("10"),
+            "Display must mention the configured ceiling: {s}",
+        );
+        assert!(
+            s.to_lowercase().contains("obsolete"),
+            "Display must identify the rule by name: {s}",
+        );
+    }
+
+    #[test]
+    fn display_vrf_key_mismatch_names_both_hashes() {
+        // `VrfKeyMismatch` uses Debug formatting for the 32-byte hashes;
+        // verify the message surfaces at least one distinguishable byte
+        // prefix from each so an operator can confirm the mismatch is
+        // real rather than a spurious identity compare.
+        let e = ConsensusError::VrfKeyMismatch {
+            expected: [0xAA; 32],
+            actual: [0xBB; 32],
+        };
+        let s = format!("{e}");
+        // Debug format of [u8; 32] produces decimals; 0xAA == 170, 0xBB == 187.
+        assert!(s.contains("170"), "must show expected hash byte 0xAA: {s}");
+        assert!(s.contains("187"), "must show actual hash byte 0xBB: {s}");
+    }
+
+    #[test]
     fn all_variants_are_displayable() {
         let variants: Vec<ConsensusError> = vec![
             ConsensusError::InvalidActiveSlotCoeff,
