@@ -420,3 +420,53 @@ impl BlockFetchClient {
         self.send_msg(&BlockFetchMessage::MsgClientDone).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── BlockFetchClientError Display-content tests ────────────────────
+    //
+    // Parallel to the slice-55/56/57/64/67 Display-content-regression
+    // pattern. BlockFetch errors reach operators via sync-layer peer-
+    // attribution logs; the diagnostic fields (timeout duration, decode
+    // reasons, inner protocol/ledger errors) need to survive any future
+    // `#[error(...)]` refactor.
+
+    #[test]
+    fn display_blockfetch_connection_closed() {
+        let s = format!("{}", BlockFetchClientError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_blockfetch_timeout_surfaces_duration() {
+        let e = BlockFetchClientError::Timeout(std::time::Duration::from_secs(30));
+        let s = format!("{e}");
+        assert!(s.contains("timeout"), "rule name: {s}");
+        // Debug format for `Duration::from_secs(30)` contains "30s".
+        assert!(s.contains("30"), "must surface the duration: {s}");
+    }
+
+    #[test]
+    fn display_blockfetch_decode_propagates_inner_reason() {
+        let e = BlockFetchClientError::Decode("trailing bytes at offset 17".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(
+            s.contains("trailing bytes at offset 17"),
+            "must surface the inner decode diagnostic: {s}",
+        );
+    }
+
+    #[test]
+    fn display_blockfetch_unexpected_message_propagates_inner() {
+        let e = BlockFetchClientError::UnexpectedMessage("MsgNoBlocks in StStreaming".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(
+            s.contains("MsgNoBlocks in StStreaming"),
+            "must surface the inner context: {s}",
+        );
+    }
+}

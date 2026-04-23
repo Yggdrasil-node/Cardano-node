@@ -423,3 +423,56 @@ impl ChainSyncClient {
         self.send_msg(&ChainSyncMessage::MsgDone).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ChainSyncClientError Display-content tests ─────────────────────
+
+    #[test]
+    fn display_chainsync_connection_closed() {
+        let s = format!("{}", ChainSyncClientError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_chainsync_timeout_surfaces_duration() {
+        let e = ChainSyncClientError::Timeout(std::time::Duration::from_secs(269));
+        let s = format!("{e}");
+        assert!(s.contains("timeout"), "rule name: {s}");
+        assert!(s.contains("269"), "must surface the duration: {s}");
+    }
+
+    #[test]
+    fn display_chainsync_decode_propagates_inner_reason() {
+        let e = ChainSyncClientError::Decode("expected map".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("expected map"));
+    }
+
+    #[test]
+    fn display_chainsync_unexpected_message_propagates_inner() {
+        let e = ChainSyncClientError::UnexpectedMessage("RollBackward in StIdle".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("RollBackward in StIdle"));
+    }
+
+    #[test]
+    fn display_chainsync_point_decode_propagates_inner_reason() {
+        let e = ChainSyncClientError::PointDecode("bad slot bytes".into());
+        let s = format!("{e}");
+        assert!(s.contains("point decode"));
+        assert!(s.contains("bad slot bytes"));
+    }
+
+    #[test]
+    fn display_chainsync_header_decode_propagates_inner_reason() {
+        let e = ChainSyncClientError::HeaderDecode("bad vrf proof size".into());
+        let s = format!("{e}");
+        assert!(s.contains("header decode"));
+        assert!(s.contains("bad vrf proof size"));
+    }
+}

@@ -277,6 +277,37 @@ mod tests {
     }
 
     #[test]
+    fn missing_builtin_cost_display() {
+        // Structural error emitted when the active cost model lacks a
+        // requested builtin. Upstream enforces cost-model completeness at
+        // construction time, so reaching this in Yggdrasil indicates an
+        // incomplete local CostModel mapping — the operator needs to see
+        // WHICH builtin is missing.
+        let e = MachineError::MissingBuiltinCost("bls12_381_G1_neg".into());
+        let msg = format!("{e}");
+        assert!(msg.contains("cost model"), "rule name: {msg}");
+        assert!(msg.contains("bls12_381_G1_neg"), "must name the builtin: {msg}");
+    }
+
+    #[test]
+    fn non_constr_scrutinized_display() {
+        let e = MachineError::NonConstrScrutinized;
+        let msg = format!("{e}");
+        assert!(msg.contains("non-constr"));
+    }
+
+    #[test]
+    fn builtin_term_argument_expected_display() {
+        let e = MachineError::BuiltinTermArgumentExpected {
+            expected: "term argument",
+            received: "type force",
+        };
+        let msg = format!("{e}");
+        assert!(msg.contains("term argument"), "must name expected: {msg}");
+        assert!(msg.contains("type force"), "must name received: {msg}");
+    }
+
+    #[test]
     fn error_is_debug() {
         let e = MachineError::DivisionByZero;
         let dbg = format!("{:?}", e);
@@ -335,9 +366,97 @@ mod tests {
             MachineError::OutOfBudget("cpu overrun".into()),
             MachineError::UnboundVariable(42),
             MachineError::FlatDecodeError("trailing bits".into()),
+            // Missing cost-model entries are structural (malformed cost
+            // model, not runtime script failure) — upstream enforces this
+            // at cost-model construction via `mkCostModel` completeness.
+            MachineError::MissingBuiltinCost("bls12_381_G1_neg".into()),
         ];
         for e in &structs {
             assert!(!e.is_operational(), "{e:?} should be structural");
+        }
+    }
+
+    /// Exhaustiveness drift guard: every `MachineError` variant must have
+    /// an explicit operational/structural classification decision. The
+    /// exhaustive `match` below forces any new variant to receive an
+    /// explicit classification call — without this, a new variant would
+    /// silently default to "structural" via the `matches!` fall-through
+    /// in `is_operational`, which could let operational errors (expected
+    /// to collapse to opaque `EvaluationFailure` for ledger safety) leak
+    /// their internal diagnostic through the outer error surface.
+    #[test]
+    fn every_machine_error_variant_has_explicit_operational_decision() {
+        // Representative of every variant. The match guarantees compile-
+        // time exhaustiveness; each arm hard-codes the expected boolean.
+        // A classification drift between this map and `is_operational`
+        // will fail assertion and name the mismatched variant.
+        let all: Vec<MachineError> = vec![
+            MachineError::OutOfBudget("x".into()),
+            MachineError::TypeMismatch {
+                expected: "a",
+                actual: "b".into(),
+            },
+            MachineError::BuiltinError {
+                builtin: "x".into(),
+                message: "y".into(),
+            },
+            MachineError::UnboundVariable(0),
+            MachineError::NonFunctionApplication,
+            MachineError::NonPolymorphicForce,
+            MachineError::BuiltinTermArgumentExpected {
+                expected: "a",
+                received: "b",
+            },
+            MachineError::EvaluationFailure,
+            MachineError::UnimplementedBuiltin("x".into()),
+            MachineError::DivisionByZero,
+            MachineError::IntegerOverflow,
+            MachineError::IndexOutOfBounds {
+                index: 0,
+                length: 0,
+            },
+            MachineError::EmptyList,
+            MachineError::InvalidUtf8,
+            MachineError::UnexpectedConstructorTag {
+                tag: 0,
+                branches: 0,
+            },
+            MachineError::NonConstrScrutinized,
+            MachineError::FlatDecodeError("x".into()),
+            MachineError::CryptoError("x".into()),
+            MachineError::MissingBuiltinCost("x".into()),
+        ];
+        for e in &all {
+            // Exhaustive match forces explicit classification of new variants.
+            let expected_op = match e {
+                MachineError::OutOfBudget(_) => false,
+                MachineError::TypeMismatch { .. } => true,
+                MachineError::BuiltinError { .. } => true,
+                MachineError::UnboundVariable(_) => false,
+                MachineError::NonFunctionApplication => true,
+                MachineError::NonPolymorphicForce => true,
+                MachineError::BuiltinTermArgumentExpected { .. } => true,
+                MachineError::EvaluationFailure => true,
+                MachineError::UnimplementedBuiltin(_) => false,
+                MachineError::DivisionByZero => true,
+                MachineError::IntegerOverflow => true,
+                MachineError::IndexOutOfBounds { .. } => true,
+                MachineError::EmptyList => true,
+                MachineError::InvalidUtf8 => true,
+                MachineError::UnexpectedConstructorTag { .. } => true,
+                MachineError::NonConstrScrutinized => true,
+                MachineError::FlatDecodeError(_) => false,
+                MachineError::CryptoError(_) => true,
+                MachineError::MissingBuiltinCost(_) => false,
+            };
+            assert_eq!(
+                e.is_operational(),
+                expected_op,
+                "classification mismatch for {e:?}: test expected \
+                 {expected_op}, impl returned {}. Review the \
+                 `matches!` list in `is_operational` against this test.",
+                e.is_operational(),
+            );
         }
     }
 
