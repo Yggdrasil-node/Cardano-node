@@ -849,6 +849,102 @@ mod tests {
         }
     }
 
+    // ── ConnectionManagerError Display-content tests ──────────────────
+    //
+    // Every variant's Display includes peer/ConnectionId identifiers so
+    // operators can pinpoint which peer hit the state-machine violation.
+    // A future refactor that accidentally omits one of these fields would
+    // leave operators chasing timeouts with no actionable signal.
+
+    #[test]
+    fn display_cm_error_connection_exists_names_provenance_and_peer() {
+        let e = ConnectionManagerError::ConnectionExists {
+            provenance: Provenance::Inbound,
+            peer: addr(3001),
+        };
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("connection") && s.contains("exists"));
+        assert!(s.contains("Inbound"), "must name provenance: {s}");
+        assert!(s.contains("127.0.0.1:3001"), "must name peer: {s}");
+    }
+
+    #[test]
+    fn display_cm_error_forbidden_connection_names_conn_id() {
+        let e = ConnectionManagerError::ForbiddenConnection(conn_id(100, 200));
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("forbidden"));
+        assert!(s.contains("127.0.0.1:100"), "must name local: {s}");
+        assert!(s.contains("127.0.0.1:200"), "must name remote: {s}");
+    }
+
+    #[test]
+    fn display_cm_error_inbound_not_found_names_peer() {
+        let e = ConnectionManagerError::InboundConnectionNotFound(addr(3001));
+        let s = format!("{e}");
+        assert!(s.contains("inbound"));
+        assert!(s.contains("127.0.0.1:3001"));
+    }
+
+    #[test]
+    fn display_cm_error_impossible_connection_names_conn_id() {
+        let e = ConnectionManagerError::ImpossibleConnection(conn_id(100, 200));
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("impossible"));
+        assert!(s.contains("127.0.0.1:100"));
+        assert!(s.contains("127.0.0.1:200"));
+    }
+
+    #[test]
+    fn display_cm_error_connection_terminating_names_conn_id() {
+        let e = ConnectionManagerError::ConnectionTerminating(conn_id(1, 2));
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("terminating"));
+        assert!(s.contains("127.0.0.1:1"));
+        assert!(s.contains("127.0.0.1:2"));
+    }
+
+    #[test]
+    fn display_cm_error_connection_terminated_names_conn_id() {
+        let e = ConnectionManagerError::ConnectionTerminated(conn_id(1, 2));
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("terminated"));
+        assert!(s.contains("127.0.0.1:1"));
+        assert!(s.contains("127.0.0.1:2"));
+    }
+
+    #[test]
+    fn display_cm_error_impossible_state_names_peer() {
+        let e = ConnectionManagerError::ImpossibleState(addr(3001));
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("impossible"));
+        assert!(s.contains("127.0.0.1:3001"));
+    }
+
+    #[test]
+    fn display_cm_error_forbidden_operation_names_peer_and_state() {
+        // ForbiddenOperation carries both peer AND the AbstractState it
+        // was forbidden from — both must appear in the operator diagnostic.
+        let e = ConnectionManagerError::ForbiddenOperation {
+            peer: addr(3001),
+            state: AbstractState::InboundIdleSt(DataFlow::Duplex),
+        };
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("forbidden"));
+        assert!(s.contains("127.0.0.1:3001"), "must name peer: {s}");
+        assert!(
+            s.contains("InboundIdleSt") || s.to_lowercase().contains("idle"),
+            "must name state: {s}",
+        );
+    }
+
+    #[test]
+    fn display_cm_error_unknown_peer_names_addr() {
+        let e = ConnectionManagerError::UnknownPeer(addr(3001));
+        let s = format!("{e}");
+        assert!(s.to_lowercase().contains("unknown"));
+        assert!(s.contains("127.0.0.1:3001"));
+    }
+
     // -- Provenance / DataFlow / TimeoutExpired --
 
     #[test]
