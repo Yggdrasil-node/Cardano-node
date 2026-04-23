@@ -212,3 +212,30 @@ impl LocalStateQueryServer {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_lsq_server_connection_closed() {
+        let s = format!("{}", LocalStateQueryServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_lsq_server_decode_propagates_inner() {
+        let e = LocalStateQueryServerError::Decode("acquire-point CBOR malformed".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("acquire-point CBOR malformed"));
+    }
+
+    #[test]
+    fn display_lsq_server_unexpected_message_propagates_inner() {
+        let e = LocalStateQueryServerError::UnexpectedMessage("MsgQuery in StIdle".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgQuery in StIdle"));
+    }
+}

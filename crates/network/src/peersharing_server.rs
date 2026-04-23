@@ -164,3 +164,30 @@ impl PeerSharingServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_ps_server_connection_closed() {
+        let s = format!("{}", PeerSharingServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_ps_server_decode_propagates_inner() {
+        let e = PeerSharingServerError::Decode("peer-address CBOR malformed".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("peer-address CBOR malformed"));
+    }
+
+    #[test]
+    fn display_ps_server_unexpected_message_propagates_inner() {
+        let e = PeerSharingServerError::UnexpectedMessage("MsgShareRequest in StBusy".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgShareRequest in StBusy"));
+    }
+}

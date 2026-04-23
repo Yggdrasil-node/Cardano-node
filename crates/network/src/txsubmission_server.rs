@@ -196,3 +196,30 @@ impl TxSubmissionServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_txsub_server_connection_closed() {
+        let s = format!("{}", TxSubmissionServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_txsub_server_decode_propagates_inner() {
+        let e = TxSubmissionServerError::Decode("reply-txs list length invalid".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("reply-txs list length invalid"));
+    }
+
+    #[test]
+    fn display_txsub_server_unexpected_message_propagates_inner() {
+        let e = TxSubmissionServerError::UnexpectedMessage("MsgDone in StIdle".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgDone in StIdle"));
+    }
+}

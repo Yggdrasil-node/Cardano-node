@@ -230,3 +230,30 @@ impl LocalTxMonitorServer {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_ltm_server_connection_closed() {
+        let s = format!("{}", LocalTxMonitorServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_ltm_server_decode_propagates_inner() {
+        let e = LocalTxMonitorServerError::Decode("has-tx txid truncated".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("has-tx txid truncated"));
+    }
+
+    #[test]
+    fn display_ltm_server_unexpected_message_propagates_inner() {
+        let e = LocalTxMonitorServerError::UnexpectedMessage("MsgNextTx in StIdle".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgNextTx in StIdle"));
+    }
+}

@@ -153,3 +153,30 @@ impl LocalTxSubmissionServer {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_lts_server_connection_closed() {
+        let s = format!("{}", LocalTxSubmissionServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_lts_server_decode_propagates_inner() {
+        let e = LocalTxSubmissionServerError::Decode("submit-tx body CBOR truncated".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("submit-tx body CBOR truncated"));
+    }
+
+    #[test]
+    fn display_lts_server_unexpected_message_propagates_inner() {
+        let e = LocalTxSubmissionServerError::UnexpectedMessage("MsgDone in StBusy".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgDone in StBusy"));
+    }
+}
