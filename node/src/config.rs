@@ -159,6 +159,18 @@ pub const MAINNET_NETWORK_ID: u8 = 1;
 /// but represents `Network = Testnet` upstream.
 pub const TESTNET_NETWORK_ID: u8 = 0;
 
+/// Canonical major protocol version for the Conway era — the current
+/// `MaxMajorProtVer` ceiling used as the default for
+/// [`NodeConfigFile::max_major_protocol_version`].
+///
+/// Reference: upstream `Ouroboros.Consensus.Protocol.Abstract`
+/// `MaxMajorProtVer`; Conway hard-fork advanced this from Babbage's 8
+/// to 9, and on-chain pp-update has since advanced it to 10 on mainnet.
+/// A hard-fork to a new era would add a new constant (e.g.
+/// `NEXT_ERA_MAJOR_PROTOCOL_VERSION = 11`) and this one would remain as
+/// the Conway-era ceiling.
+pub const CONWAY_MAJOR_PROTOCOL_VERSION: u64 = 10;
+
 /// Runtime consensus mode used for governor churn-regime selection.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum ConsensusModeConfig {
@@ -1157,9 +1169,9 @@ fn default_active_slot_coeff() -> f64 {
     0.05
 }
 
-/// Conway-era `MaxMajorProtVer` (upstream default: 10).
+/// Conway-era `MaxMajorProtVer` — see [`CONWAY_MAJOR_PROTOCOL_VERSION`].
 fn default_max_major_protocol_version() -> u64 {
-    10
+    CONWAY_MAJOR_PROTOCOL_VERSION
 }
 
 fn default_governor_tick_interval_secs() -> u64 {
@@ -1738,6 +1750,34 @@ mod tests {
                 "preset {preset:?}: cheap accessor disagrees with to_config()",
             );
         }
+    }
+
+    #[test]
+    fn conway_major_protocol_version_constant_matches_upstream_default() {
+        // Pin the Conway-era default `MaxMajorProtVer` against the
+        // upstream value. Also pin the relationship to
+        // `default_max_major_protocol_version()` so a refactor that
+        // inlines the value in one place but not the other fails CI.
+        assert_eq!(CONWAY_MAJOR_PROTOCOL_VERSION, 10);
+        assert_eq!(default_max_major_protocol_version(), CONWAY_MAJOR_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn preset_configs_use_conway_major_protocol_version() {
+        // All three presets default to Conway-era; each `max_major` must
+        // route through the named constant.
+        assert_eq!(
+            mainnet_config().max_major_protocol_version,
+            CONWAY_MAJOR_PROTOCOL_VERSION,
+        );
+        assert_eq!(
+            preprod_config().max_major_protocol_version,
+            CONWAY_MAJOR_PROTOCOL_VERSION,
+        );
+        assert_eq!(
+            preview_config().max_major_protocol_version,
+            CONWAY_MAJOR_PROTOCOL_VERSION,
+        );
     }
 
     #[test]

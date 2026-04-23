@@ -84,4 +84,57 @@ impl Era {
     pub fn is_era_regression(self, other: Era) -> bool {
         other.era_ordinal() < self.era_ordinal()
     }
+
+    /// All Cardano eras in canonical ascending order
+    /// (`Byron`, `Shelley`, `Allegra`, `Mary`, `Alonzo`, `Babbage`, `Conway`).
+    ///
+    /// Useful for exhaustive tests and iterate-over-all-eras scenarios
+    /// (e.g. "every era must round-trip CBOR encoding"). Returns a
+    /// `'static` slice so callers can write `for &era in Era::all()`.
+    /// Adding a new hard-fork era MUST extend this list — the
+    /// `era_ordinal_is_sequential` test keys its assertion count off
+    /// `Era::all().len()`, so a new variant without a matching extension
+    /// fails CI at test time.
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Byron,
+            Self::Shelley,
+            Self::Allegra,
+            Self::Mary,
+            Self::Alonzo,
+            Self::Babbage,
+            Self::Conway,
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Era;
+
+    /// Pin `Era::all()` content and length — 7 eras in canonical ascending
+    /// order. Mirrors slice-82's `NetworkPreset::all()` drift guard.
+    #[test]
+    fn era_all_returns_every_variant_in_canonical_order() {
+        let all = Era::all();
+        assert_eq!(all.len(), 7);
+        assert_eq!(all[0], Era::Byron);
+        assert_eq!(all[1], Era::Shelley);
+        assert_eq!(all[2], Era::Allegra);
+        assert_eq!(all[3], Era::Mary);
+        assert_eq!(all[4], Era::Alonzo);
+        assert_eq!(all[5], Era::Babbage);
+        assert_eq!(all[6], Era::Conway);
+    }
+
+    #[test]
+    fn era_all_ordinals_are_zero_through_six_in_order() {
+        // `Era::all()` must be ordered by ascending `era_ordinal()` so
+        // `Era::all()[i].era_ordinal() == i`. A copy-paste refactor that
+        // mis-orders the slice silently breaks the invariant that
+        // `is_hard_fork_to` / `is_era_regression` rely on.
+        for (i, &era) in Era::all().iter().enumerate() {
+            assert_eq!(era.era_ordinal() as usize, i, "era {era:?}");
+        }
+    }
 }

@@ -1743,8 +1743,9 @@ fn validate_config_report(
         warnings.push(format!(
             "max_major_protocol_version = {} is pre-Shelley; Shelley-era \
              and later blocks will be rejected as unsupported. \
-             Recommended: 10 (Conway-era default)",
+             Recommended: {} (Conway-era default)",
             file_cfg.max_major_protocol_version,
+            yggdrasil_node::config::CONWAY_MAJOR_PROTOCOL_VERSION,
         ));
     }
 
