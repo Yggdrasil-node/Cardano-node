@@ -199,6 +199,15 @@ struct IndexedMempoolEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MempoolSnapshot {
     entries: Vec<IndexedMempoolEntry>,
+    /// Position index `tx_id → entries[pos]`.
+    ///
+    /// Built once per snapshot construction (O(n) with the Vec clone) so
+    /// individual `mempool_lookup_tx_by_id` / `mempool_has_tx` calls are
+    /// O(1). The TxSubmission outbound path calls `lookup_tx_by_id` once
+    /// per requested id per round-trip (`MsgRequestTxs` batches up to the
+    /// per-peer policy cap of 64), so without the index that path is
+    /// O(M*N) where N is mempool size; with it it becomes O(M + N).
+    tx_id_to_pos: HashMap<TxId, usize>,
 }
 
 impl MempoolSnapshot {
@@ -224,14 +233,14 @@ impl MempoolSnapshot {
 
     /// Determine whether the snapshot contains the given transaction id.
     pub fn mempool_has_tx(&self, tx_id: &TxId) -> bool {
-        self.entries.iter().any(|entry| &entry.entry.tx_id == tx_id)
+        self.tx_id_to_pos.contains_key(tx_id)
     }
 
     /// Look up a transaction entry by transaction id.
     pub fn mempool_lookup_tx_by_id(&self, tx_id: &TxId) -> Option<&MempoolEntry> {
-        self.entries
-            .iter()
-            .find(|entry| &entry.entry.tx_id == tx_id)
+        self.tx_id_to_pos
+            .get(tx_id)
+            .and_then(|pos| self.entries.get(*pos))
             .map(|entry| &entry.entry)
     }
 }
@@ -426,8 +435,15 @@ impl Mempool {
 
     /// Create a pure owned snapshot of the current mempool contents.
     pub fn snapshot(&self) -> MempoolSnapshot {
+        let entries = self.entries.clone();
+        let tx_id_to_pos = entries
+            .iter()
+            .enumerate()
+            .map(|(pos, e)| (e.entry.tx_id, pos))
+            .collect::<HashMap<_, _>>();
         MempoolSnapshot {
-            entries: self.entries.clone(),
+            entries,
+            tx_id_to_pos,
         }
     }
 

@@ -214,8 +214,13 @@ pub struct NodeConfigFile {
     /// Blocks whose protocol-version major component exceeds this value are
     /// rejected during verification.  Matches `MaxMajorProtVer` from
     /// `Ouroboros.Consensus.Protocol.Abstract` in the Haskell node; the
-    /// Conway-era default is 10.
-    #[serde(default = "default_max_major_protocol_version")]
+    /// Conway-era default is 10.  Accepts the upstream operator-config
+    /// key `MaxKnownMajorProtocolVersion` from the official `cardano-node`
+    /// `config.json` so vendored configs parse without translation.
+    #[serde(
+        default = "default_max_major_protocol_version",
+        alias = "MaxKnownMajorProtocolVersion"
+    )]
     pub max_major_protocol_version: u64,
     /// KeepAlive heartbeat interval in seconds. `null` disables heartbeats.
     #[serde(default)]
@@ -236,22 +241,54 @@ pub struct NodeConfigFile {
     #[serde(default = "default_governor_tick_interval_secs")]
     pub governor_tick_interval_secs: u64,
     /// Target number of known peers the governor maintains.
-    #[serde(default = "default_governor_target_known")]
+    ///
+    /// Accepts the upstream config key `TargetNumberOfKnownPeers` as an
+    /// alias so vendored / operator-supplied configs that use the official
+    /// `cardano-node` key names parse without translation.
+    #[serde(
+        default = "default_governor_target_known",
+        alias = "TargetNumberOfKnownPeers"
+    )]
     pub governor_target_known: usize,
     /// Target number of established (warm + hot) peers the governor maintains.
-    #[serde(default = "default_governor_target_established")]
+    ///
+    /// Upstream alias: `TargetNumberOfEstablishedPeers`.
+    #[serde(
+        default = "default_governor_target_established",
+        alias = "TargetNumberOfEstablishedPeers"
+    )]
     pub governor_target_established: usize,
     /// Target number of active (hot) peers the governor maintains.
-    #[serde(default = "default_governor_target_active")]
+    ///
+    /// Upstream alias: `TargetNumberOfActivePeers`.
+    #[serde(
+        default = "default_governor_target_active",
+        alias = "TargetNumberOfActivePeers"
+    )]
     pub governor_target_active: usize,
     /// Target number of known big-ledger peers the governor maintains.
-    #[serde(default = "default_governor_target_known_big_ledger")]
+    ///
+    /// Upstream alias: `TargetNumberOfKnownBigLedgerPeers`.
+    #[serde(
+        default = "default_governor_target_known_big_ledger",
+        alias = "TargetNumberOfKnownBigLedgerPeers"
+    )]
     pub governor_target_known_big_ledger: usize,
     /// Target number of established big-ledger peers the governor maintains.
-    #[serde(default = "default_governor_target_established_big_ledger")]
+    ///
+    /// Upstream alias: `TargetNumberOfEstablishedBigLedgerPeers`.
+    #[serde(
+        default = "default_governor_target_established_big_ledger",
+        alias = "TargetNumberOfEstablishedBigLedgerPeers"
+    )]
     pub governor_target_established_big_ledger: usize,
     /// Target number of active big-ledger peers the governor maintains.
-    #[serde(default = "default_governor_target_active_big_ledger")]
+    ///
+    /// Upstream alias: `TargetNumberOfActiveBigLedgerPeers`.
+    #[serde(
+        default = "default_governor_target_active_big_ledger",
+        alias = "TargetNumberOfActiveBigLedgerPeers"
+    )]
     pub governor_target_active_big_ledger: usize,
     /// Whether local logging output is enabled.
     #[serde(rename = "TurnOnLogging", default = "default_turn_on_logging")]
@@ -314,6 +351,18 @@ pub struct NodeConfigFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub shelley_genesis_file: Option<String>,
+    /// Expected Blake2b-256 hash (lowercase hex) of the Shelley genesis
+    /// file referenced by [`Self::shelley_genesis_file`]. Matches
+    /// `ShelleyGenesisHash` in the official Cardano node configuration.
+    /// When set, [`crate::genesis::verify_genesis_file_hash`] is invoked
+    /// at startup to verify the file matches; mismatches abort startup
+    /// rather than silently using a wrong genesis.
+    #[serde(
+        rename = "ShelleyGenesisHash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shelley_genesis_hash: Option<String>,
     /// Relative path to the Byron genesis file.  Matches `ByronGenesisFile`
     /// in the official Cardano node configuration.
     #[serde(
@@ -322,6 +371,17 @@ pub struct NodeConfigFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub byron_genesis_file: Option<String>,
+    /// Expected Byron genesis hash. **Currently parsed but not verified**
+    /// because upstream Byron hashing uses canonical CBOR (round-trips the
+    /// JSON through canonical CBOR and hashes that), which has not yet
+    /// been ported to Rust. Tracked separately from the Shelley-family
+    /// hashes which use raw-file Blake2b-256.
+    #[serde(
+        rename = "ByronGenesisHash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub byron_genesis_hash: Option<String>,
     /// Relative path to the Alonzo genesis file.  Matches `AlonzoGenesisFile`
     /// in the official Cardano node configuration.
     #[serde(
@@ -330,6 +390,14 @@ pub struct NodeConfigFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub alonzo_genesis_file: Option<String>,
+    /// Expected Blake2b-256 hash of the Alonzo genesis file. Matches
+    /// `AlonzoGenesisHash` in the official Cardano node configuration.
+    #[serde(
+        rename = "AlonzoGenesisHash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub alonzo_genesis_hash: Option<String>,
     /// Relative path to the Conway genesis file.  Matches `ConwayGenesisFile`
     /// in the official Cardano node configuration.
     #[serde(
@@ -338,6 +406,14 @@ pub struct NodeConfigFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub conway_genesis_file: Option<String>,
+    /// Expected Blake2b-256 hash of the Conway genesis file. Matches
+    /// `ConwayGenesisHash` in the official Cardano node configuration.
+    #[serde(
+        rename = "ConwayGenesisHash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conway_genesis_hash: Option<String>,
     /// Relative path to a P2P topology file.  Matches `TopologyFilePath` in
     /// the official Cardano node configuration.  When set, the topology file
     /// overrides any inline `local_roots`, `public_roots`, `bootstrap_peers`,
@@ -615,6 +691,67 @@ impl NodeConfigFile {
         };
 
         load_byron_genesis_utxo(&path)
+    }
+
+    /// Verify the Blake2b-256 hashes of the configured Shelley / Alonzo /
+    /// Conway genesis files against the operator-supplied
+    /// `*GenesisHash` declarations.
+    ///
+    /// For each `(file_path, expected_hash)` pair where both sides are
+    /// present, this method invokes
+    /// [`crate::genesis::verify_genesis_file_hash`] and short-circuits on
+    /// the first mismatch. Pairs where either the file path or the
+    /// expected hash is `None` are skipped (no expectation, no check).
+    /// Byron is intentionally skipped because upstream Byron hashing uses
+    /// canonical CBOR rather than raw-file Blake2b-256; that case is
+    /// tracked separately and will become a follow-up slice.
+    ///
+    /// Returns `Ok(())` when every checked file matches, or
+    /// [`crate::genesis::GenesisLoadError::HashMismatch`] /
+    /// [`crate::genesis::GenesisLoadError::InvalidHashHex`] on the first
+    /// failure.
+    ///
+    /// Reference: `cardano-node` `Cardano.Node.Configuration.POM` —
+    /// `parseGenesisHash` startup verification.
+    pub fn verify_known_genesis_hashes(
+        &self,
+        config_base_dir: Option<&Path>,
+    ) -> Result<(), crate::genesis::GenesisLoadError> {
+        use crate::genesis::verify_genesis_file_hash;
+
+        let resolve = |relative: &str| -> std::path::PathBuf {
+            let p = Path::new(relative);
+            if let Some(base) = config_base_dir {
+                base.join(p)
+            } else {
+                p.to_path_buf()
+            }
+        };
+
+        let pairs = [
+            (
+                self.shelley_genesis_file.as_deref(),
+                self.shelley_genesis_hash.as_deref(),
+                "ShelleyGenesisHash",
+            ),
+            (
+                self.alonzo_genesis_file.as_deref(),
+                self.alonzo_genesis_hash.as_deref(),
+                "AlonzoGenesisHash",
+            ),
+            (
+                self.conway_genesis_file.as_deref(),
+                self.conway_genesis_hash.as_deref(),
+                "ConwayGenesisHash",
+            ),
+        ];
+
+        for (file, expected, field) in pairs {
+            if let (Some(file), Some(expected)) = (file, expected) {
+                verify_genesis_file_hash(&resolve(file), expected, field)?;
+            }
+        }
+        Ok(())
     }
 
     /// Load the genesis [`yggdrasil_ledger::EnactState`] from the configured
@@ -1150,9 +1287,21 @@ pub fn mainnet_config() -> NodeConfigFile {
         trace_options: default_trace_options(),
         socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        shelley_genesis_hash: Some(
+            "1a3be38bcbb7911969283716ad7aa550250226b76a61fc51cc9a9a35d9276d81".to_owned(),
+        ),
         byron_genesis_file: Some("byron-genesis.json".to_owned()),
+        byron_genesis_hash: Some(
+            "5f20df933584822601f9e3f8c024eb5eb252fe8cefb24d1317dc3d432e940ebb".to_owned(),
+        ),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
+        alonzo_genesis_hash: Some(
+            "7e94a15f55d1e82d10f09203fa1d40f8eede58fd8066542cf6566008068ed874".to_owned(),
+        ),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
+        conway_genesis_hash: Some(
+            "15a199f895e461ec0ffc6dd4e4028af28a492ab4e806d39cb674c88f7643ef62".to_owned(),
+        ),
         topology_file_path: None,
         shelley_kes_key: None,
         shelley_vrf_key: None,
@@ -1214,9 +1363,21 @@ pub fn preprod_config() -> NodeConfigFile {
         trace_options: default_trace_options(),
         socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        shelley_genesis_hash: Some(
+            "162d29c4e1cf6b8a84f2d692e67a3ac6bc7851bc3e6e4afe64d15778bed8bd86".to_owned(),
+        ),
         byron_genesis_file: Some("byron-genesis.json".to_owned()),
+        byron_genesis_hash: Some(
+            "d4b8de7a11d929a323373cbab6c1a9bdc931beffff11db111cf9d57356ee1937".to_owned(),
+        ),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
+        alonzo_genesis_hash: Some(
+            "7e94a15f55d1e82d10f09203fa1d40f8eede58fd8066542cf6566008068ed874".to_owned(),
+        ),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
+        conway_genesis_hash: Some(
+            "0eb6adaec3fcb1fe286c1b4ae0da2a117eafc3add51e17577d36dd39eddfc3db".to_owned(),
+        ),
         topology_file_path: None,
         shelley_kes_key: None,
         shelley_vrf_key: None,
@@ -1279,9 +1440,21 @@ pub fn preview_config() -> NodeConfigFile {
         trace_options: default_trace_options(),
         socket_path: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
+        shelley_genesis_hash: Some(
+            "363498d1024f84bb39d3fa9593ce391483cb40d479b87233f868d6e57c3a400d".to_owned(),
+        ),
         byron_genesis_file: Some("byron-genesis.json".to_owned()),
+        byron_genesis_hash: Some(
+            "83de1d7302569ad56cf9139a41e2e11346d4cb4a31c00142557b6ab3fa550761".to_owned(),
+        ),
         alonzo_genesis_file: Some("alonzo-genesis.json".to_owned()),
+        alonzo_genesis_hash: Some(
+            "7e94a15f55d1e82d10f09203fa1d40f8eede58fd8066542cf6566008068ed874".to_owned(),
+        ),
         conway_genesis_file: Some("conway-genesis.json".to_owned()),
+        conway_genesis_hash: Some(
+            "9cc5084f02e27210eacba47af0872e3dba8946ad9460b6072d793e1d2f3987ef".to_owned(),
+        ),
         topology_file_path: None,
         shelley_kes_key: None,
         shelley_vrf_key: None,
@@ -1414,6 +1587,155 @@ mod tests {
         assert_eq!(cfg.governor_target_known_big_ledger, 8);
         assert_eq!(cfg.governor_target_established_big_ledger, 3);
         assert_eq!(cfg.governor_target_active_big_ledger, 1);
+    }
+
+    #[test]
+    fn config_parses_upstream_genesis_hash_aliases() {
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "ShelleyGenesisFile": "shelley-genesis.json",
+            "ShelleyGenesisHash": "1a3be38bcbb7911969283716ad7aa550250226b76a61fc51cc9a9a35d9276d81",
+            "AlonzoGenesisFile": "alonzo-genesis.json",
+            "AlonzoGenesisHash": "7e94a15f55d1e82d10f09203fa1d40f8eede58fd8066542cf6566008068ed874",
+            "ConwayGenesisFile": "conway-genesis.json",
+            "ConwayGenesisHash": "15a199f895e461ec0ffc6dd4e4028af28a492ab4e806d39cb674c88f7643ef62",
+            "ByronGenesisFile": "byron-genesis.json",
+            "ByronGenesisHash": "5f20df933584822601f9e3f8c024eb5eb252fe8cefb24d1317dc3d432e940ebb"
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert_eq!(
+            cfg.shelley_genesis_hash.as_deref(),
+            Some("1a3be38bcbb7911969283716ad7aa550250226b76a61fc51cc9a9a35d9276d81")
+        );
+        assert_eq!(
+            cfg.alonzo_genesis_hash.as_deref(),
+            Some("7e94a15f55d1e82d10f09203fa1d40f8eede58fd8066542cf6566008068ed874")
+        );
+        assert_eq!(
+            cfg.conway_genesis_hash.as_deref(),
+            Some("15a199f895e461ec0ffc6dd4e4028af28a492ab4e806d39cb674c88f7643ef62")
+        );
+        assert_eq!(
+            cfg.byron_genesis_hash.as_deref(),
+            Some("5f20df933584822601f9e3f8c024eb5eb252fe8cefb24d1317dc3d432e940ebb")
+        );
+    }
+
+    #[test]
+    fn verify_known_genesis_hashes_passes_when_files_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let body = b"{\"k\":1}";
+        std::fs::write(dir.path().join("shelley.json"), body).expect("write");
+        std::fs::write(dir.path().join("alonzo.json"), body).expect("write");
+        std::fs::write(dir.path().join("conway.json"), body).expect("write");
+        let expected_hex = hex::encode(yggdrasil_crypto::blake2b::hash_bytes_256(body).0);
+
+        let mut cfg = mainnet_config();
+        cfg.shelley_genesis_file = Some("shelley.json".to_owned());
+        cfg.shelley_genesis_hash = Some(expected_hex.clone());
+        cfg.alonzo_genesis_file = Some("alonzo.json".to_owned());
+        cfg.alonzo_genesis_hash = Some(expected_hex.clone());
+        cfg.conway_genesis_file = Some("conway.json".to_owned());
+        cfg.conway_genesis_hash = Some(expected_hex);
+
+        cfg.verify_known_genesis_hashes(Some(dir.path()))
+            .expect("matching hashes should pass");
+    }
+
+    #[test]
+    fn vendored_preset_hashes_match_vendored_genesis_files_end_to_end() {
+        // Exercises the full path that runs on every `--network <preset>`
+        // startup: each preset's preset constructor declares the
+        // canonical *GenesisHash values, and `verify_known_genesis_hashes`
+        // reads the vendored genesis files from `node/configuration/<network>/`
+        // and compares Blake2b-256 of the file bytes. If a vendored file
+        // is updated without bumping the in-code hash (or vice versa),
+        // this test fails immediately so the drift is caught at CI time.
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        for preset in [
+            NetworkPreset::Mainnet,
+            NetworkPreset::Preprod,
+            NetworkPreset::Preview,
+        ] {
+            let cfg = preset.to_config();
+            let base = manifest_dir.join("configuration").join(preset.to_string());
+            cfg.verify_known_genesis_hashes(Some(&base))
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "preset {preset:?} hashes drifted from vendored files at {}: {err}",
+                        base.display(),
+                    );
+                });
+        }
+    }
+
+    #[test]
+    fn verify_known_genesis_hashes_short_circuits_on_first_mismatch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("shelley.json"), b"{}").expect("write");
+
+        let mut cfg = mainnet_config();
+        cfg.shelley_genesis_file = Some("shelley.json".to_owned());
+        cfg.shelley_genesis_hash = Some("0".repeat(64));
+        // Other genesis paths intentionally point at non-existent files
+        // so we can prove short-circuit: if the Shelley check did not fire
+        // first, the loader for the next file would surface a different
+        // error variant.
+        cfg.alonzo_genesis_file = Some("missing-alonzo.json".to_owned());
+        cfg.alonzo_genesis_hash = Some("0".repeat(64));
+        cfg.conway_genesis_file = Some("missing-conway.json".to_owned());
+        cfg.conway_genesis_hash = Some("0".repeat(64));
+
+        let err = cfg
+            .verify_known_genesis_hashes(Some(dir.path()))
+            .expect_err("Shelley mismatch must surface");
+        assert!(
+            matches!(err, crate::genesis::GenesisLoadError::HashMismatch { .. }),
+            "expected HashMismatch first, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn config_parses_max_known_major_protocol_version_upstream_alias() {
+        // Upstream `cardano-node` ships `MaxKnownMajorProtocolVersion` in
+        // `config.json`; vendored configs that use this key must parse
+        // straight into our `max_major_protocol_version` field.
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "MaxKnownMajorProtocolVersion": 11
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert_eq!(cfg.max_major_protocol_version, 11);
+    }
+
+    #[test]
+    fn config_parses_upstream_target_peer_count_aliases() {
+        // The official cardano-node config uses PascalCase keys
+        // `TargetNumberOfKnownPeers` etc.; vendored / operator-supplied
+        // configs that use those names must parse without translation.
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 42,
+            "protocol_versions": [13],
+            "TargetNumberOfKnownPeers": 150,
+            "TargetNumberOfEstablishedPeers": 60,
+            "TargetNumberOfActivePeers": 30,
+            "TargetNumberOfKnownBigLedgerPeers": 20,
+            "TargetNumberOfEstablishedBigLedgerPeers": 10,
+            "TargetNumberOfActiveBigLedgerPeers": 4
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+
+        assert_eq!(cfg.governor_target_known, 150);
+        assert_eq!(cfg.governor_target_established, 60);
+        assert_eq!(cfg.governor_target_active, 30);
+        assert_eq!(cfg.governor_target_known_big_ledger, 20);
+        assert_eq!(cfg.governor_target_established_big_ledger, 10);
+        assert_eq!(cfg.governor_target_active_big_ledger, 4);
     }
 
     #[test]

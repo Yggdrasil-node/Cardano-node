@@ -23,7 +23,7 @@ use crate::protocol_limits::txsubmission as tx_limits;
 use crate::protocols::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
 };
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use yggdrasil_ledger::{MultiEraSubmittedTx, Tx, TxId};
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,18 @@ pub enum TxSubmissionClientError {
 pub struct TxSubmissionClient {
     channel: MessageChannel,
     state: TxSubmissionState,
+    /// FIFO of outstanding (advertised but not yet acknowledged) tx ids.
+    /// Insertion order matches the wire-protocol acknowledgement order so
+    /// `apply_acknowledgements` can drain from the front.
     outstanding_txids: VecDeque<TxId>,
+    /// Membership index mirroring [`Self::outstanding_txids`].  Maintained
+    /// in lockstep with the FIFO so `reply_tx_ids`'s duplicate check is
+    /// O(1) per advertised id instead of paying the O(n) cost of an
+    /// `iter().any(...)` scan over the FIFO. Mempools commonly carry
+    /// dozens of outstanding ids per peer; with both a peer-side outbound
+    /// queue and our inbound FIFO at the policy cap (`MAX_UNACKED = 64`)
+    /// this saves a few thousand comparisons per round-trip.
+    outstanding_txid_set: HashSet<TxId>,
     requestable_txids: BTreeSet<TxId>,
     requested_txids: Vec<TxId>,
 }
@@ -154,6 +165,7 @@ impl TxSubmissionClient {
             channel: MessageChannel::new(handle),
             state: TxSubmissionState::StInit,
             outstanding_txids: VecDeque::new(),
+            outstanding_txid_set: HashSet::new(),
             requestable_txids: BTreeSet::new(),
             requested_txids: Vec::new(),
         }
@@ -265,7 +277,7 @@ impl TxSubmissionClient {
         }
         for item in &txids {
             if self.requestable_txids.contains(&item.txid)
-                || self.outstanding_txids.iter().any(|txid| *txid == item.txid)
+                || self.outstanding_txid_set.contains(&item.txid)
             {
                 return Err(TxSubmissionClientError::DuplicateAdvertisedTxId { txid: item.txid });
             }
@@ -275,8 +287,14 @@ impl TxSubmissionClient {
             .await?;
         for txid in advertised_txids {
             self.outstanding_txids.push_back(txid);
+            self.outstanding_txid_set.insert(txid);
             self.requestable_txids.insert(txid);
         }
+        debug_assert_eq!(
+            self.outstanding_txids.len(),
+            self.outstanding_txid_set.len(),
+            "outstanding_txid_set drifted from outstanding_txids FIFO",
+        );
         Ok(())
     }
 
@@ -335,8 +353,14 @@ impl TxSubmissionClient {
         for _ in 0..ack {
             if let Some(txid) = self.outstanding_txids.pop_front() {
                 self.requestable_txids.remove(&txid);
+                self.outstanding_txid_set.remove(&txid);
             }
         }
+        debug_assert_eq!(
+            self.outstanding_txids.len(),
+            self.outstanding_txid_set.len(),
+            "outstanding_txid_set drifted from outstanding_txids FIFO after ack",
+        );
 
         Ok(())
     }

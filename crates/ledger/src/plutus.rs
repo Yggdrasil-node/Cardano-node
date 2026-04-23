@@ -78,7 +78,7 @@ impl CborEncode for PlutusData {
     /// Walks `self` in depth-first, in-order traversal using an explicit
     /// heap-allocated work stack so encoding runs in constant native stack
     /// regardless of the input shape.  Mirrors the iterative
-    /// [`Self::decode_with_depth`] decoder so deeply nested values that the
+    /// `Self::decode_with_depth` decoder so deeply nested values that the
     /// decoder accepted (up to [`Self::MAX_DECODE_DEPTH`]) can always be
     /// re-serialised for relay without risk of stack overflow.
     ///
@@ -169,7 +169,7 @@ impl PlutusData {
     ///
     /// Reference: defensive bound. Upstream Haskell relies on its lazy CPS
     /// CBOR decoder being stack-safe by construction; in Rust both the
-    /// decoder ([`Self::decode_with_depth`]) and destructor ([`Drop`]) are
+    /// decoder (`Self::decode_with_depth`) and destructor (`Drop`) are
     /// implemented iteratively with explicit work stacks on the heap, so this
     /// bound is purely a policy limit on accepted depth rather than a
     /// stack-frame budget. 256 sits well above any realistic on-chain Plutus

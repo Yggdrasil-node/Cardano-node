@@ -1125,6 +1125,14 @@ fn strict_base_ledger_state(
     file_cfg: &NodeConfigFile,
     config_base_dir: Option<&std::path::Path>,
 ) -> Result<LedgerState> {
+    // Verify the operator-declared genesis hashes BEFORE loading any
+    // genesis content so a wrong genesis file aborts startup cleanly
+    // rather than silently corrupting subsequent ledger state. Mirrors
+    // upstream `Cardano.Node.Configuration.POM.parseGenesisHash`.
+    file_cfg
+        .verify_known_genesis_hashes(config_base_dir)
+        .wrap_err("genesis hash verification failed")?;
+
     let mut state = LedgerState::new(Era::Byron);
     state.set_expected_network_id(file_cfg.expected_network_id());
 

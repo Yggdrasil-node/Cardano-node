@@ -37,7 +37,7 @@ use crate::types::{Constant, DefaultFun, Program, Term, Type};
 /// Untrusted Plutus scripts arrive in witness sets and are decoded directly
 /// from on-chain bytes; without a depth bound a malicious script with
 /// deeply nested `Apply` / `LamAbs` / `Constr` could overflow the runtime
-/// stack via the recursive [`FlatDecoder::decode_term`] path. Real on-chain
+/// stack via the recursive `FlatDecoder::decode_term` path. Real on-chain
 /// scripts rarely nest beyond a few dozen levels even after extensive
 /// macro expansion; 128 sits well above any realistic legitimate payload
 /// while keeping per-frame stack usage of the recursive decoder (which

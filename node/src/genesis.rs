@@ -61,6 +61,27 @@ pub enum GenesisLoadError {
         value: String,
         message: String,
     },
+    /// The Blake2b-256 hash of a genesis file did not match the expected
+    /// value declared in the operator config (e.g. `ShelleyGenesisHash`).
+    ///
+    /// Reference: `cardano-node` `Cardano.Node.Configuration.POM` —
+    /// `parseGenesisHash` rejects mismatches at startup so a wrong genesis
+    /// file cannot silently corrupt subsequent ledger state.
+    #[error(
+        "genesis hash mismatch for {path}: expected {expected}, computed {actual}"
+    )]
+    HashMismatch {
+        path: std::path::PathBuf,
+        expected: String,
+        actual: String,
+    },
+    /// The expected hash value supplied by the operator was not a valid
+    /// 64-character lowercase hex Blake2b-256 digest.
+    #[error("invalid genesis hash hex string for {field}: {value}")]
+    InvalidHashHex {
+        field: &'static str,
+        value: String,
+    },
 }
 
 /// Error returned while deriving the node's simplified CEK cost model from
@@ -1192,6 +1213,60 @@ fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, GenesisLo
         path: path.to_path_buf(),
         source,
     })
+}
+
+/// Compute the Blake2b-256 hash of a genesis file's raw bytes.
+///
+/// Matches upstream `cardano-node` `Cardano.Node.Configuration.POM`
+/// hashing for **Shelley / Alonzo / Conway** genesis files, where the
+/// declared `*GenesisHash` is computed over the JSON file's bytes
+/// directly.
+///
+/// **Byron caveat**: upstream Byron genesis hashing uses canonical CBOR
+/// (`Cardano.Crypto.Hashing` round-trips the JSON through canonical CBOR
+/// before hashing); a future slice can extend this helper for the Byron
+/// case. For now Byron hash verification is a no-op via
+/// [`NodeConfigFile::verify_known_genesis_hashes`].
+pub fn compute_genesis_file_hash(path: &Path) -> Result<[u8; 32], GenesisLoadError> {
+    let bytes = fs::read(path).map_err(|source| GenesisLoadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(hash_bytes_256(&bytes).0)
+}
+
+/// Verify that the file at `path` hashes to `expected_hex` using
+/// [`compute_genesis_file_hash`]. Returns a typed mismatch error when the
+/// hashes differ.
+///
+/// `expected_hex` must be a 64-character lowercase hexadecimal Blake2b-256
+/// digest; otherwise [`GenesisLoadError::InvalidHashHex`] is returned.
+pub fn verify_genesis_file_hash(
+    path: &Path,
+    expected_hex: &str,
+    field: &'static str,
+) -> Result<(), GenesisLoadError> {
+    let expected_bytes = hex::decode(expected_hex.trim()).map_err(|_| {
+        GenesisLoadError::InvalidHashHex {
+            field,
+            value: expected_hex.to_string(),
+        }
+    })?;
+    if expected_bytes.len() != 32 {
+        return Err(GenesisLoadError::InvalidHashHex {
+            field,
+            value: expected_hex.to_string(),
+        });
+    }
+    let actual = compute_genesis_file_hash(path)?;
+    if actual.as_slice() != expected_bytes.as_slice() {
+        return Err(GenesisLoadError::HashMismatch {
+            path: path.to_path_buf(),
+            expected: expected_hex.to_string(),
+            actual: hex::encode(actual),
+        });
+    }
+    Ok(())
 }
 
 /// Load `shelley-genesis.json` from the given path.
@@ -2361,5 +2436,73 @@ mod tests {
         let ms_slot_10 = slot_to_posix_ms(10, start, 0.5);
         let ms_slot_0 = slot_to_posix_ms(0, start, 0.5);
         assert_eq!(ms_slot_10 - ms_slot_0, 5_000); // 10 slots × 0.5 s = 5 s = 5000 ms
+    }
+
+    // ── Genesis-file hash verification ─────────────────────────────────
+
+    #[test]
+    fn compute_genesis_file_hash_matches_blake2b_256_of_raw_bytes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("g.json");
+        let body = b"{\"hello\":\"world\"}";
+        std::fs::write(&path, body).expect("write");
+
+        let computed = compute_genesis_file_hash(&path).expect("hash");
+        let direct = hash_bytes_256(body).0;
+        assert_eq!(computed, direct);
+    }
+
+    #[test]
+    fn verify_genesis_file_hash_accepts_correct_hash() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("g.json");
+        let body = b"{\"k\":1}";
+        std::fs::write(&path, body).expect("write");
+
+        let expected_hex = hex::encode(hash_bytes_256(body).0);
+        verify_genesis_file_hash(&path, &expected_hex, "ShelleyGenesisHash")
+            .expect("matching hash should pass");
+    }
+
+    #[test]
+    fn verify_genesis_file_hash_rejects_mismatch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("g.json");
+        std::fs::write(&path, b"{\"k\":1}").expect("write");
+
+        // 32-byte all-zero hex digest will never match any non-empty content.
+        let zero_hex = "0".repeat(64);
+        let err = verify_genesis_file_hash(&path, &zero_hex, "ShelleyGenesisHash")
+            .expect_err("mismatched hash must fail");
+        match err {
+            GenesisLoadError::HashMismatch {
+                expected, actual, ..
+            } => {
+                assert_eq!(expected, zero_hex);
+                assert_ne!(actual, zero_hex);
+            }
+            other => panic!("expected HashMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_genesis_file_hash_rejects_invalid_hex() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("g.json");
+        std::fs::write(&path, b"{}").expect("write");
+
+        // Wrong length.
+        let err = verify_genesis_file_hash(&path, "abcd", "ShelleyGenesisHash")
+            .expect_err("short hex must fail");
+        assert!(matches!(err, GenesisLoadError::InvalidHashHex { .. }));
+
+        // Non-hex characters.
+        let err = verify_genesis_file_hash(
+            &path,
+            "zzzz000000000000000000000000000000000000000000000000000000000000",
+            "ShelleyGenesisHash",
+        )
+        .expect_err("non-hex must fail");
+        assert!(matches!(err, GenesisLoadError::InvalidHashHex { .. }));
     }
 }

@@ -307,8 +307,8 @@ impl NativeScript {
 }
 
 impl CborEncode for NativeScript {
-    /// Iterative encoder mirroring the iterative
-    /// [`<Self as CborDecode>::decode_cbor`] decoder.
+    /// Iterative encoder mirroring the iterative `CborDecode::decode_cbor`
+    /// decoder for [`NativeScript`].
     ///
     /// Walks `self` in depth-first, in-order traversal using an explicit
     /// heap-allocated work stack, producing the exact same byte sequence as
