@@ -37,7 +37,8 @@ pub use epoch::{EpochSchedule, EpochSize, epoch_first_slot, is_new_epoch, slot_t
 pub use error::ConsensusError;
 /// Block header types and verification entry point.
 pub use header::{
-    Header, HeaderBody, verify_header, verify_header_with_signed_bytes, verify_opcert_only,
+    Header, HeaderBody, check_header_protocol_version, verify_header,
+    verify_header_with_signed_bytes, verify_opcert_only,
 };
 /// Blocks-from-the-future detection types.
 pub use in_future::{ClockSkew, FutureSlotJudgement, judge_header_slot};

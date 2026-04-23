@@ -150,6 +150,23 @@ pub enum ConsensusError {
         /// Blake2b-224 of the issuer cold verification key.
         pool_hash: [u8; 28],
     },
+
+    /// The block header's major protocol version exceeds the
+    /// operator-configured `MaxMajorProtVer`, so this node considers
+    /// itself obsolete relative to the block's proposed protocol.
+    ///
+    /// Reference: `ObsoleteNode` in
+    /// `Cardano.Protocol.Praos.Rules.Prtcl.headerView`.
+    #[error(
+        "obsolete node: header protocol major {header_major} exceeds configured \
+         max_major_protocol_version {max_major}"
+    )]
+    ObsoleteNode {
+        /// The major component of the header's protocol version.
+        header_major: u64,
+        /// The configured accept ceiling.
+        max_major: u64,
+    },
 }
 
 #[cfg(test)]
@@ -235,6 +252,10 @@ mod tests {
             },
             ConsensusError::VrfKeyUnknownPool {
                 pool_hash: [0xCC; 28],
+            },
+            ConsensusError::ObsoleteNode {
+                header_major: 99,
+                max_major: 10,
             },
         ];
         for v in &variants {

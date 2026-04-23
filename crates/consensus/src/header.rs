@@ -191,6 +191,36 @@ pub fn verify_header_with_signed_bytes(
     .map_err(|_| ConsensusError::InvalidKesSignature)
 }
 
+/// Check the header's major protocol version against the operator-
+/// configured `MaxMajorProtVer` ceiling.
+///
+/// Upstream `Cardano.Protocol.Praos.Rules.Prtcl.headerView` applies this
+/// check before returning a successful header view: a header whose major
+/// protocol version strictly exceeds the accept ceiling causes the
+/// validation to fail with `ObsoleteNode`, which consumer code treats as
+/// "this node is too old to continue validating the chain".
+///
+/// Accept semantics are `<=` (equal is valid) to match upstream.
+///
+/// This is intentionally a separate helper rather than being folded into
+/// [`verify_header`]: the ceiling is an operator-configured value, not a
+/// per-header crypto property, and upstream models it the same way — the
+/// check lives in the PRTCL rule, not in the header-signature check.
+/// Callers supply the ceiling from their protocol parameters or config.
+pub fn check_header_protocol_version(
+    header_major: u64,
+    max_major_protocol_version: u64,
+) -> Result<(), ConsensusError> {
+    if header_major > max_major_protocol_version {
+        Err(ConsensusError::ObsoleteNode {
+            header_major,
+            max_major: max_major_protocol_version,
+        })
+    } else {
+        Ok(())
+    }
+}
+
 /// Verify the cold-key signature on an operational certificate and check
 /// the KES period, without verifying the KES body signature.
 ///
@@ -400,5 +430,31 @@ mod tests {
             result,
             Err(ConsensusError::KesPeriodExpired { .. })
         ));
+    }
+
+    #[test]
+    fn check_header_protocol_version_accepts_at_ceiling() {
+        // Upstream `MaxMajorProtVer` check is `header.major <= max`, so the
+        // boundary itself is valid.
+        assert!(check_header_protocol_version(10, 10).is_ok());
+    }
+
+    #[test]
+    fn check_header_protocol_version_accepts_below_ceiling() {
+        assert!(check_header_protocol_version(9, 10).is_ok());
+    }
+
+    #[test]
+    fn check_header_protocol_version_rejects_above_ceiling() {
+        match check_header_protocol_version(11, 10) {
+            Err(ConsensusError::ObsoleteNode {
+                header_major,
+                max_major,
+            }) => {
+                assert_eq!(header_major, 11);
+                assert_eq!(max_major, 10);
+            }
+            other => panic!("expected ObsoleteNode, got {other:?}"),
+        }
     }
 }
