@@ -4302,6 +4302,70 @@ mod tests {
         assert!(!perf.contains_key(&pool_c));
     }
 
+    // -- SyncError Display-message content tests --
+    //
+    // Mirrors the `ConsensusError` pattern: dedicated assertions on each
+    // variant's Display message, ensuring the diagnostic fields survive
+    // future refactors of the `#[error(...)]` format strings.
+
+    #[test]
+    fn display_block_from_future_names_slot_and_excess() {
+        let e = SyncError::BlockFromFuture {
+            slot: 12_345,
+            excess_slots: 42,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("12345") || s.contains("12_345"));
+        assert!(s.contains("42"));
+    }
+
+    #[test]
+    fn display_wrong_block_body_size_names_both_sizes() {
+        let e = SyncError::WrongBlockBodySize {
+            declared: 1_000,
+            actual: 1_500,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("1000") || s.contains("1_000"));
+        assert!(s.contains("1500") || s.contains("1_500"));
+    }
+
+    #[test]
+    fn display_protocol_version_mismatch_names_era_and_versions() {
+        let e = SyncError::ProtocolVersionMismatch {
+            era: Era::Alonzo,
+            major: 4,
+            minor: 0,
+            expected_range: "5..=6".to_owned(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("Alonzo"), "must name the offending era: {s}");
+        assert!(s.contains('4'), "must name the declared major: {s}");
+        assert!(
+            s.contains("5..=6"),
+            "must name the expected range: {s}",
+        );
+    }
+
+    #[test]
+    fn display_protocol_version_too_high_names_both_majors() {
+        let e = SyncError::ProtocolVersionTooHigh { major: 99, max: 10 };
+        let s = format!("{e}");
+        assert!(s.contains("99"), "must name the offending major: {s}");
+        assert!(s.contains("10"), "must name the configured ceiling: {s}");
+    }
+
+    #[test]
+    fn display_header_prot_ver_too_high_names_both_majors() {
+        let e = SyncError::HeaderProtVerTooHigh {
+            header_major: 12,
+            pp_major: 10,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("12"), "must name the header major: {s}");
+        assert!(s.contains("10"), "must name the pp major: {s}");
+    }
+
     // -- is_peer_attributable classification tests --
 
     #[test]
