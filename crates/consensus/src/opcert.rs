@@ -396,6 +396,30 @@ mod tests {
     }
 
     #[test]
+    fn check_kes_period_rejects_overflow() {
+        // When `opcert.kes_period + max_kes_evolutions` would overflow u64,
+        // the checked_add-based computation returns `None` and yields
+        // `KesPeriodOverflow` instead of silently wrapping to a smaller
+        // period that might accept or reject the wrong way.
+        //
+        // Use opcert.kes_period = u64::MAX - 5 and max_kes_evolutions = 10
+        // so the sum overflows into the "wrapped" range [0, 4].
+        let (mut oc, _) = mk_valid_opcert(u64::MAX - 5, 0);
+        // Even current_kes_period = u64::MAX - 5 (equal to cert_start)
+        // must not slip through via wraparound — the overflow guard fires
+        // before the <= comparison.
+        oc.kes_period = u64::MAX - 5;
+        assert_eq!(
+            check_kes_period(&oc, u64::MAX - 5, 10),
+            Err(ConsensusError::KesPeriodOverflow)
+        );
+        // At the exact non-overflow boundary `max_kes_evolutions = 5`,
+        // `u64::MAX - 5 + 5 == u64::MAX` is representable, so the function
+        // must return `Ok` for a current period strictly below u64::MAX.
+        assert!(check_kes_period(&oc, u64::MAX - 5, 5).is_ok());
+    }
+
+    #[test]
     fn kes_period_of_slot_large_values() {
         // Verify it works without overflow for large slot numbers
         let period = kes_period_of_slot(u64::MAX / 2, 1).unwrap();
