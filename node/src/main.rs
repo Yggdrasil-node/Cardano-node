@@ -1613,35 +1613,6 @@ fn validate_config_report(
         ));
     }
 
-    // Cross-field sanity: every version the operator advertises in
-    // `protocol_versions` must be at or below `max_major_protocol_version`.
-    // Advertising a major the node itself would reject as unsupported is a
-    // self-defeating config — the node would forge a block with that
-    // header-version and then fail to apply its own block during the
-    // verification pass. Surface the exact offending versions and the
-    // accepted ceiling so the fix is obvious.
-    //
-    // Reference: upstream `MaxMajorProtVer` is the same value consulted in
-    // header verification (`Cardano.Protocol.Praos.Rules.Prtcl.headerView`);
-    // any proposed version above it causes `ObsoleteNode`.
-    if let Some(&max_proposed) = file_cfg.protocol_versions.iter().max() {
-        if (max_proposed as u64) > file_cfg.max_major_protocol_version {
-            let offending: Vec<u32> = file_cfg
-                .protocol_versions
-                .iter()
-                .copied()
-                .filter(|&v| (v as u64) > file_cfg.max_major_protocol_version)
-                .collect();
-            warnings.push(format!(
-                "protocol_versions contains {:?} which exceeds max_major_protocol_version = {}; \
-                 blocks forged at these major versions would be rejected by this node's \
-                 own header verification (ObsoleteNode). \
-                 Raise max_major_protocol_version or drop the offending entries.",
-                offending, file_cfg.max_major_protocol_version,
-            ));
-        }
-    }
-
     if file_cfg.governor_tick_interval_secs == 0 {
         warnings.push(
             "governor_tick_interval_secs is 0; the governor loop will busy-\
@@ -3587,54 +3558,31 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    /// Regression guard: `protocol_versions` (the NtN HANDSHAKE protocol-
+    /// version list, e.g. `[13, 14]`) lives in a completely different
+    /// number space than `max_major_protocol_version` (the block HEADER
+    /// protocol-version major cap, e.g. `10` for Conway). A prior slice
+    /// incorrectly cross-checked them and fired a false positive on every
+    /// valid mainnet config. This test pins the fact that the two fields
+    /// must NOT be comparison-linked: the default mainnet config
+    /// (`protocol_versions = [13, 14]`, `max_major_protocol_version = 10`)
+    /// must produce no "exceeds max_major_protocol_version" warning.
     #[test]
-    fn validate_config_report_warns_on_protocol_versions_exceeding_max_major() {
-        // Operator proposes major version 99 but max-accept is 10 →
-        // forged blocks at 99 would be rejected by this node's own
-        // header verification (ObsoleteNode).
+    fn validate_config_report_does_not_cross_check_handshake_versions_against_block_major() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("yggdrasil-pv-above-{unique}"));
+        let dir = std::env::temp_dir().join(format!("yggdrasil-pv-no-crosscheck-{unique}"));
         std::fs::create_dir_all(&dir).expect("temp dir");
 
         let mut cfg = default_config();
         cfg.storage_dir = PathBuf::from("data");
         cfg.peer_snapshot_file = None;
+        // Default mainnet values: NtN handshake versions 13/14 with a
+        // Conway-era block-major cap of 10. These are disjoint axes.
+        cfg.protocol_versions = vec![13, 14];
         cfg.max_major_protocol_version = 10;
-        cfg.protocol_versions = vec![10, 13, 99];
-
-        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
-        assert!(
-            report.warnings.iter().any(|w| {
-                w.contains("exceeds max_major_protocol_version")
-                    && w.contains("13")
-                    && w.contains("99")
-            }),
-            "expected ObsoleteNode warning naming 13 and 99, got: {:?}",
-            report.warnings,
-        );
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn validate_config_report_accepts_protocol_versions_at_or_below_max_major() {
-        // Boundary: every proposed version == or <= max is safe; equal-to
-        // the ceiling is explicitly allowed (upstream `MaxMajorProtVer`
-        // comparison is `<=`).
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("yggdrasil-pv-ok-{unique}"));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-
-        let mut cfg = default_config();
-        cfg.storage_dir = PathBuf::from("data");
-        cfg.peer_snapshot_file = None;
-        cfg.max_major_protocol_version = 10;
-        cfg.protocol_versions = vec![9, 10];
 
         let report = validate_config_report(&cfg, Some(&dir)).expect("report");
         assert!(
@@ -3642,7 +3590,7 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|w| w.contains("exceeds max_major_protocol_version")),
-            "no exceeds-max warning expected when all <= max, got: {:?}",
+            "handshake versions must NOT be cross-checked against max_major_protocol_version; got: {:?}",
             report.warnings,
         );
         std::fs::remove_dir_all(dir).ok();
