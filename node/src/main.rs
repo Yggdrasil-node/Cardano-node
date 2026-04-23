@@ -4783,11 +4783,7 @@ mod tests {
             "storage directories are not initialized",
         ];
 
-        for preset in [
-            NetworkPreset::Mainnet,
-            NetworkPreset::Preprod,
-            NetworkPreset::Preview,
-        ] {
+        for &preset in NetworkPreset::all() {
             let (cfg, config_base_dir) =
                 load_effective_config(None, Some(preset)).expect("preset config");
             let report = validate_config_report(&cfg, config_base_dir.as_deref())

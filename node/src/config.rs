@@ -1403,6 +1403,20 @@ impl NetworkPreset {
             Self::Preview => PREVIEW_NETWORK_MAGIC,
         }
     }
+
+    /// All valid network presets in canonical declaration order
+    /// (`Mainnet`, `Preprod`, `Preview`).
+    ///
+    /// Useful for exhaustive tests and iterate-over-all-presets
+    /// scenarios. Returns a `'static` slice so callers can pattern the
+    /// iteration as `for &preset in NetworkPreset::all()`. Adding a new
+    /// variant to [`NetworkPreset`] MUST extend this list — the preset
+    /// enumeration tests (`vendored_network_presets_produce_only_…`,
+    /// `network_preset_network_magic_matches_to_config_for_all_presets`,
+    /// etc.) rely on this as their source of truth.
+    pub const fn all() -> &'static [Self] {
+        &[Self::Mainnet, Self::Preprod, Self::Preview]
+    }
 }
 
 /// Returns a sensible default configuration targeting Cardano mainnet
@@ -1717,11 +1731,7 @@ mod tests {
         // accessor) and the actual node startup (which uses `to_config`)
         // disagree on the network — silently producing handshake
         // failures on real connections.
-        for preset in [
-            NetworkPreset::Mainnet,
-            NetworkPreset::Preprod,
-            NetworkPreset::Preview,
-        ] {
+        for &preset in NetworkPreset::all() {
             assert_eq!(
                 preset.network_magic(),
                 preset.to_config().network_magic,
@@ -1981,11 +1991,7 @@ mod tests {
         // is updated without bumping the in-code hash (or vice versa),
         // this test fails immediately so the drift is caught at CI time.
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        for preset in [
-            NetworkPreset::Mainnet,
-            NetworkPreset::Preprod,
-            NetworkPreset::Preview,
-        ] {
+        for &preset in NetworkPreset::all() {
             let cfg = preset.to_config();
             let base = manifest_dir.join("configuration").join(preset.to_string());
             cfg.verify_known_genesis_hashes(Some(&base))
@@ -2736,12 +2742,29 @@ mod tests {
     }
 
     #[test]
+    fn network_preset_all_returns_every_variant_exactly_once() {
+        // Pins `NetworkPreset::all()` content: exactly the three variants
+        // in canonical declaration order. Extends the slice-80-era guard
+        // that every preset's constants match upstream by ensuring the
+        // iteration helper's set itself can't silently drift — a new
+        // enum variant must be explicitly added to `all()` or this test
+        // (and the downstream `.all()` callers) fail immediately.
+        let all = NetworkPreset::all();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0], NetworkPreset::Mainnet);
+        assert_eq!(all[1], NetworkPreset::Preprod);
+        assert_eq!(all[2], NetworkPreset::Preview);
+
+        // And every variant must be distinct — catches a duplicated
+        // entry from a copy-paste refactor.
+        assert_ne!(all[0], all[1]);
+        assert_ne!(all[0], all[2]);
+        assert_ne!(all[1], all[2]);
+    }
+
+    #[test]
     fn network_preset_display_round_trips() {
-        for preset in [
-            NetworkPreset::Mainnet,
-            NetworkPreset::Preprod,
-            NetworkPreset::Preview,
-        ] {
+        for &preset in NetworkPreset::all() {
             let s = preset.to_string();
             let parsed: NetworkPreset = s.parse().expect("display should round-trip");
             assert_eq!(parsed, preset);
