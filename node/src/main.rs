@@ -795,7 +795,9 @@ fn resolve_upstream_reference_paths(
 }
 
 fn extract_reference_network_magic(config_path: &std::path::Path, network: NetworkPreset) -> u32 {
-    let fallback_magic = network.to_config().network_magic;
+    // Use the cheap accessor — `to_config()` would re-load topology +
+    // peer-snapshot files just to read a single u32.
+    let fallback_magic = network.network_magic();
 
     let config_json = std::fs::read(config_path)
         .ok()

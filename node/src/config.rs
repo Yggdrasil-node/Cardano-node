@@ -1373,6 +1373,21 @@ impl NetworkPreset {
             Self::Preview => preview_config(),
         }
     }
+
+    /// Return the canonical NtN/NtC handshake network magic for this
+    /// preset, without constructing the full [`NodeConfigFile`].
+    ///
+    /// Useful for preflight cross-checks and CLI defaults that only need
+    /// the magic value (e.g. `cardano-cli query-tip --network mainnet`).
+    /// Returns the same value `to_config().network_magic` would, but at
+    /// `O(1)` cost without touching the topology / genesis loader paths.
+    pub fn network_magic(self) -> u32 {
+        match self {
+            Self::Mainnet => MAINNET_NETWORK_MAGIC,
+            Self::Preprod => PREPROD_NETWORK_MAGIC,
+            Self::Preview => PREVIEW_NETWORK_MAGIC,
+        }
+    }
 }
 
 /// Returns a sensible default configuration targeting Cardano mainnet
@@ -1677,6 +1692,37 @@ mod tests {
         // constants so a future refactor re-inlining the literals fails CI.
         assert_eq!(preprod_config().network_magic, PREPROD_NETWORK_MAGIC);
         assert_eq!(preview_config().network_magic, PREVIEW_NETWORK_MAGIC);
+    }
+
+    #[test]
+    fn network_preset_network_magic_matches_to_config_for_all_presets() {
+        // Cheap accessor (`network_magic()`) and full constructor
+        // (`to_config().network_magic`) MUST agree for every preset.
+        // A drift here would mean preflight code (which uses the cheap
+        // accessor) and the actual node startup (which uses `to_config`)
+        // disagree on the network — silently producing handshake
+        // failures on real connections.
+        for preset in [
+            NetworkPreset::Mainnet,
+            NetworkPreset::Preprod,
+            NetworkPreset::Preview,
+        ] {
+            assert_eq!(
+                preset.network_magic(),
+                preset.to_config().network_magic,
+                "preset {preset:?}: cheap accessor disagrees with to_config()",
+            );
+        }
+    }
+
+    #[test]
+    fn network_preset_network_magic_returns_named_constants() {
+        // Pin the cheap accessor's output to the named constants so a
+        // refactor that inlines the literal in one branch (and not the
+        // others) fails CI.
+        assert_eq!(NetworkPreset::Mainnet.network_magic(), MAINNET_NETWORK_MAGIC);
+        assert_eq!(NetworkPreset::Preprod.network_magic(), PREPROD_NETWORK_MAGIC);
+        assert_eq!(NetworkPreset::Preview.network_magic(), PREVIEW_NETWORK_MAGIC);
     }
 
     #[test]
