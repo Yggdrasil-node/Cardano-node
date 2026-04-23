@@ -260,9 +260,11 @@ pub struct NodeConfigFile {
     /// Expected Blake2b-256 hash (lowercase hex) of the checkpoint file
     /// referenced by [`Self::checkpoints_file`]. Matches
     /// `CheckpointsFileHash` in the official Cardano node configuration.
-    /// Will be wired into the same verification path as
-    /// [`Self::shelley_genesis_hash`] once the underlying checkpoint
-    /// loader exists.
+    /// Verified at `validate-config` time against the raw-bytes digest of
+    /// `checkpoints_file` via
+    /// [`crate::genesis::verify_genesis_file_hash`] (era-agnostic, no
+    /// canonical-CBOR step). Enforcement at the loader level will land
+    /// alongside the checkpoint-pinning feature.
     #[serde(
         rename = "CheckpointsFileHash",
         default,

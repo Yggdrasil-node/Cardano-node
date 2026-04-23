@@ -1613,6 +1613,35 @@ fn validate_config_report(
         ));
     }
 
+    // Cross-field sanity: every version the operator advertises in
+    // `protocol_versions` must be at or below `max_major_protocol_version`.
+    // Advertising a major the node itself would reject as unsupported is a
+    // self-defeating config — the node would forge a block with that
+    // header-version and then fail to apply its own block during the
+    // verification pass. Surface the exact offending versions and the
+    // accepted ceiling so the fix is obvious.
+    //
+    // Reference: upstream `MaxMajorProtVer` is the same value consulted in
+    // header verification (`Cardano.Protocol.Praos.Rules.Prtcl.headerView`);
+    // any proposed version above it causes `ObsoleteNode`.
+    if let Some(&max_proposed) = file_cfg.protocol_versions.iter().max() {
+        if (max_proposed as u64) > file_cfg.max_major_protocol_version {
+            let offending: Vec<u32> = file_cfg
+                .protocol_versions
+                .iter()
+                .copied()
+                .filter(|&v| (v as u64) > file_cfg.max_major_protocol_version)
+                .collect();
+            warnings.push(format!(
+                "protocol_versions contains {:?} which exceeds max_major_protocol_version = {}; \
+                 blocks forged at these major versions would be rejected by this node's \
+                 own header verification (ObsoleteNode). \
+                 Raise max_major_protocol_version or drop the offending entries.",
+                offending, file_cfg.max_major_protocol_version,
+            ));
+        }
+    }
+
     if file_cfg.governor_tick_interval_secs == 0 {
         warnings.push(
             "governor_tick_interval_secs is 0; the governor loop will busy-\
@@ -1714,6 +1743,38 @@ fn validate_config_report(
             "max_ledger_snapshots is 0; persisted ledger checkpoints will be pruned immediately"
                 .to_owned(),
         );
+    }
+
+    // Upstream `CheckpointsFile` integrity preflight: if the operator
+    // points at a checkpoints JSON file, the file must exist; if they
+    // ALSO declare `CheckpointsFileHash`, the file's raw-bytes Blake2b-256
+    // must match. Same integrity story as `*GenesisFile` + `*GenesisHash`
+    // — supply-chain swap or typo-shifted path would otherwise surface
+    // later as "checkpoint pinning silently disabled" or a confusing
+    // consensus divergence once checkpoint enforcement lands. Doing this
+    // check now means the declared hash is validated BEFORE any future
+    // checkpoint-loader slice wires the pinning semantics, so the
+    // verification cannot regress in that follow-up.
+    //
+    // Reference: `Cardano.Node.Configuration.Checkpoints` in cardano-node;
+    // the Blake2b-256 digest is taken over the raw JSON bytes (era-
+    // agnostic — no canonical-CBOR step — so the existing
+    // `verify_genesis_file_hash` helper applies unchanged).
+    if let Some(ckpt_file) = file_cfg.checkpoints_file.as_deref() {
+        let ckpt_path = resolve_config_path(std::path::Path::new(ckpt_file), config_base_dir);
+        if !ckpt_path.exists() {
+            warnings.push(format!(
+                "CheckpointsFile points at {} which does not exist; \
+                 checkpoint pinning will be disabled at runtime",
+                ckpt_path.display(),
+            ));
+        } else if let Some(expected_hex) = file_cfg.checkpoints_file_hash.as_deref() {
+            if let Err(err) =
+                genesis::verify_genesis_file_hash(&ckpt_path, expected_hex, "CheckpointsFileHash")
+            {
+                warnings.push(format!("CheckpointsFile hash verification: {err}"));
+            }
+        }
     }
 
     // Cross-field sanity: `RequiresNetworkMagic` must match the canonical
@@ -3521,6 +3582,161 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("RequiresNetworkMagic") && w.contains("inconsistent")),
             "None requires_network_magic must not warn, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_protocol_versions_exceeding_max_major() {
+        // Operator proposes major version 99 but max-accept is 10 →
+        // forged blocks at 99 would be rejected by this node's own
+        // header verification (ObsoleteNode).
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-pv-above-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.max_major_protocol_version = 10;
+        cfg.protocol_versions = vec![10, 13, 99];
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report.warnings.iter().any(|w| {
+                w.contains("exceeds max_major_protocol_version")
+                    && w.contains("13")
+                    && w.contains("99")
+            }),
+            "expected ObsoleteNode warning naming 13 and 99, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_protocol_versions_at_or_below_max_major() {
+        // Boundary: every proposed version == or <= max is safe; equal-to
+        // the ceiling is explicitly allowed (upstream `MaxMajorProtVer`
+        // comparison is `<=`).
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-pv-ok-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.max_major_protocol_version = 10;
+        cfg.protocol_versions = vec![9, 10];
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("exceeds max_major_protocol_version")),
+            "no exceeds-max warning expected when all <= max, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_missing_checkpoints_file() {
+        // CheckpointsFile set but the path does not exist → warn that
+        // checkpoint pinning will be silently disabled at runtime.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ckpt-missing-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.checkpoints_file = Some("not-here.json".to_owned());
+        cfg.checkpoints_file_hash = None;
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("CheckpointsFile") && w.contains("does not exist")),
+            "expected missing-checkpoints-file warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_checkpoints_file_hash_mismatch() {
+        // CheckpointsFile + CheckpointsFileHash set, but the file bytes
+        // don't hash to the declared value → warn with the mismatch
+        // surfaced from `verify_genesis_file_hash`.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ckpt-hash-bad-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(dir.join("checkpoints.json"), b"{}").expect("write ckpt");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.checkpoints_file = Some("checkpoints.json".to_owned());
+        // Wrong hash — `{}` does NOT hash to all-zeros.
+        cfg.checkpoints_file_hash = Some("0".repeat(64));
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("CheckpointsFile hash verification")),
+            "expected checkpoints hash-mismatch warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_matching_checkpoints_file_hash() {
+        // CheckpointsFile points at an existing file AND CheckpointsFileHash
+        // is the correct Blake2b-256 digest → no warning.
+        use yggdrasil_crypto::hash_bytes_256;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ckpt-hash-ok-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let ckpt_bytes = b"{\"checkpoints\":[]}";
+        std::fs::write(dir.join("checkpoints.json"), ckpt_bytes).expect("write ckpt");
+        let correct_hash = hex::encode(hash_bytes_256(ckpt_bytes).0);
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.checkpoints_file = Some("checkpoints.json".to_owned());
+        cfg.checkpoints_file_hash = Some(correct_hash);
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("CheckpointsFile")),
+            "correct hash must not produce any CheckpointsFile warning, got: {:?}",
             report.warnings,
         );
         std::fs::remove_dir_all(dir).ok();
