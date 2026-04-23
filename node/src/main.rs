@@ -1628,6 +1628,25 @@ fn validate_config_report(
         }
     }
 
+    // Upstream NtN handshake `peerSharing` field is a `Word8` with exactly
+    // two defined wire values: 0 (disabled) and 1 (enabled). Values ≥ 2
+    // are undefined and will be silently normalized to "enabled" by the
+    // receiver (`NodePeerSharing::from_wire` uses `value >= 1`), but
+    // transmitting an undefined value is a misconfiguration on our side
+    // that other peers implementing strict wire-value checks may reject.
+    // Warn so an operator who meant `0` or `1` spots a typo like `2`.
+    //
+    // Reference: `Ouroboros.Network.PeerSharing` — `peerSharing` codec in
+    // `NodeToNodeVersionData`.
+    if file_cfg.peer_sharing > 1 {
+        warnings.push(format!(
+            "peer_sharing = {} is outside the upstream-defined wire range {{0, 1}}; \
+             peers implementing strict codecs may reject this handshake. \
+             Use 0 (disabled) or 1 (enabled)",
+            file_cfg.peer_sharing,
+        ));
+    }
+
     // Upstream `MinNodeVersion` (e.g. `"10.6.2"`) is a dotted-numeric
     // cardano-node version string. We do NOT cross-compare it against our
     // own `CARGO_PKG_VERSION` because the two namespaces are independent
@@ -3755,6 +3774,76 @@ mod tests {
             "None requires_network_magic must not warn, got: {:?}",
             report.warnings,
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_out_of_range_peer_sharing() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ps-bad-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        // 2 is outside the upstream-defined set {0, 1}.
+        cfg.peer_sharing = 2;
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report.warnings.iter().any(|w| {
+                w.contains("peer_sharing")
+                    && w.contains("outside")
+                    && w.contains('2')
+            }),
+            "expected peer_sharing range warning, got: {:?}",
+            report.warnings,
+        );
+
+        // 255 (common typo / max u8) is also outside.
+        cfg.peer_sharing = 255;
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("peer_sharing") && w.contains("255")),
+            "expected peer_sharing range warning for 255, got: {:?}",
+            report.warnings,
+        );
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_canonical_peer_sharing_values() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ps-ok-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        for sample in [0u8, 1u8] {
+            cfg.peer_sharing = sample;
+            let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+            assert!(
+                !report
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("peer_sharing") && w.contains("outside")),
+                "canonical peer_sharing = {sample} must not warn, got: {:?}",
+                report.warnings,
+            );
+        }
+
         std::fs::remove_dir_all(dir).ok();
     }
 
