@@ -1047,7 +1047,118 @@ impl Default for SharedMempool {
 
 #[cfg(test)]
 mod tests {
-    use super::{MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, SharedMempool, SlotNo, TxId};
+    use super::{
+        MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, MempoolError, SharedMempool, SlotNo, TxId,
+    };
+
+    // ── MempoolError Display-content tests ────────────────────────────
+    //
+    // Follows the slice-55/56/57/58 pattern of pinning the `#[error(...)]`
+    // format-string content. Operator-facing rejection reasons reach the
+    // CLI via `submit-tx` and over NtC; any silent drop of a diagnostic
+    // field would blind operators to which configured limit they hit.
+
+    #[test]
+    fn display_mempool_duplicate_names_tx_id() {
+        let e = MempoolError::Duplicate(TxId([0xAB; 32]));
+        let s = format!("{e}");
+        assert!(
+            s.to_lowercase().contains("duplicate"),
+            "must identify the rule: {s}",
+        );
+        // Debug-format of [u8; 32] includes "TxId(" + at least the short
+        // hex prefix; assert the first byte's decimal (0xAB = 171) appears
+        // in some form so a future switch from Debug to opaque formatting
+        // fails the test.
+        assert!(
+            s.contains("TxId") || s.contains("171") || s.contains("ab"),
+            "must surface the TxId content: {s}",
+        );
+    }
+
+    #[test]
+    fn display_mempool_capacity_exceeded_names_all_three_counts() {
+        let e = MempoolError::CapacityExceeded {
+            current: 900,
+            incoming: 250,
+            limit: 1024,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("900"), "must show current: {s}");
+        assert!(s.contains("250"), "must show incoming: {s}");
+        assert!(s.contains("1024"), "must show limit: {s}");
+    }
+
+    #[test]
+    fn display_mempool_ttl_expired_names_both_slots() {
+        let e = MempoolError::TtlExpired {
+            ttl: SlotNo(100),
+            current_slot: SlotNo(150),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("100"), "must show ttl: {s}");
+        assert!(s.contains("150"), "must show current slot: {s}");
+    }
+
+    #[test]
+    fn display_mempool_fee_too_small_names_both_amounts() {
+        let e = MempoolError::FeeTooSmall {
+            minimum: 170_000,
+            declared: 155_000,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("170000") || s.contains("170_000"));
+        assert!(s.contains("155000") || s.contains("155_000"));
+    }
+
+    #[test]
+    fn display_mempool_tx_too_large_names_both_sizes() {
+        let e = MempoolError::TxTooLarge {
+            actual: 17_000,
+            max: 16_384,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("17000") || s.contains("17_000"));
+        assert!(s.contains("16384") || s.contains("16_384"));
+    }
+
+    #[test]
+    fn display_mempool_ex_units_exceed_names_all_four_dimensions() {
+        let e = MempoolError::ExUnitsExceedTxLimit {
+            tx_mem: 14_000_000,
+            tx_steps: 10_100_000_000,
+            max_mem: 14_000_000,
+            max_steps: 10_000_000_000,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("14000000") || s.contains("14_000_000"));
+        assert!(s.contains("10100000000") || s.contains("10_100_000_000"));
+        assert!(s.contains("10000000000") || s.contains("10_000_000_000"));
+    }
+
+    #[test]
+    fn display_mempool_conflicting_inputs_names_colliding_tx() {
+        let e = MempoolError::ConflictingInputs(TxId([0xCD; 32]));
+        let s = format!("{e}");
+        assert!(
+            s.to_lowercase().contains("conflict"),
+            "must identify the rule: {s}",
+        );
+        assert!(
+            s.contains("TxId") || s.contains("205") || s.contains("cd"),
+            "must surface the colliding TxId: {s}",
+        );
+    }
+
+    #[test]
+    fn display_mempool_protocol_param_validation_propagates_message() {
+        let e = MempoolError::ProtocolParamValidation("negative min_fee_a".to_owned());
+        let s = format!("{e}");
+        assert!(
+            s.contains("negative min_fee_a"),
+            "must propagate the inner diagnostic: {s}",
+        );
+    }
 
     fn sample_entry(seed: u8, fee: u64) -> MempoolEntry {
         MempoolEntry {
