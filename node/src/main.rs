@@ -1677,11 +1677,37 @@ fn validate_config_report(
         }
     }
 
+    // Defend against very-small cadences too — a slot-every-block
+    // checkpoint cadence hammers the ledger-snapshot store and steals
+    // fsync bandwidth from the hot sync path. A reasonable floor of 32
+    // matches upstream's per-block snapshot batch size.
+    const CHECKPOINT_INTERVAL_LOWER_SOFT_FLOOR: u64 = 32;
+
     if file_cfg.checkpoint_interval_slots == 0 {
         warnings.push(
             "checkpoint_interval_slots is 0; checkpoint persistence cadence is effectively unbounded"
                 .to_owned(),
         );
+    } else if file_cfg.checkpoint_interval_slots < CHECKPOINT_INTERVAL_LOWER_SOFT_FLOOR {
+        warnings.push(format!(
+            "checkpoint_interval_slots = {} is below the {}-slot soft floor; \
+             small cadences steal fsync bandwidth from the hot sync path \
+             and can noticeably slow catch-up. Recommended: 100-10_000",
+            file_cfg.checkpoint_interval_slots, CHECKPOINT_INTERVAL_LOWER_SOFT_FLOOR,
+        ));
+    } else if file_cfg.checkpoint_interval_slots > file_cfg.epoch_length {
+        // A checkpoint cadence longer than a full epoch means a crash
+        // after a new epoch rotates stake snapshots but before the next
+        // checkpoint lands forces replay of the entire prior epoch on
+        // restart — wasteful at best, recovery-stalling at worst. Warn
+        // so operators spot typo-shifted units (slots vs epochs vs ms).
+        warnings.push(format!(
+            "checkpoint_interval_slots = {} exceeds epoch_length = {}; \
+             a crash after an epoch boundary will force replay of the \
+             entire prior epoch on restart. Recommended: at most one \
+             checkpoint per epoch (i.e. interval <= epoch_length)",
+            file_cfg.checkpoint_interval_slots, file_cfg.epoch_length,
+        ));
     }
     if file_cfg.max_ledger_snapshots == 0 {
         warnings.push(
@@ -3139,6 +3165,69 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn decode_ntc_result_shapes_typed_json_for_new_queries() {
+        // Lock in the decoder output for every recently-added typed
+        // response so a silent drift in the CLI-side parser (which turns
+        // the server's raw CBOR into structured JSON) is caught at CI
+        // time rather than showing up as wrong keys in user-facing
+        // `yggdrasil-node query ...` output.
+        use super::{QueryCommand, decode_ntc_result};
+
+        // AccountState: `[treasury, reserves, total_deposits]`
+        // CBOR: 0x83 0x01 0x02 0x03 → [1, 2, 3]
+        let v = decode_ntc_result(&QueryCommand::AccountState, &[0x83, 0x01, 0x02, 0x03])
+            .expect("decode AccountState");
+        assert_eq!(v["treasury_lovelace"], 1);
+        assert_eq!(v["reserves_lovelace"], 2);
+        assert_eq!(v["total_deposits_lovelace"], 3);
+
+        // StabilityWindow: unsigned u64 or null.
+        let v = decode_ntc_result(&QueryCommand::StabilityWindow, &[0x19, 0x08, 0x70])
+            .expect("decode StabilityWindow");
+        assert_eq!(v["stability_window_slots"], 2160);
+        let v = decode_ntc_result(&QueryCommand::StabilityWindow, &[0xf6])
+            .expect("decode StabilityWindow null");
+        assert!(v["stability_window"].is_null());
+
+        // NumDormantEpochs: unsigned u64.
+        let v = decode_ntc_result(&QueryCommand::NumDormantEpochs, &[0x03])
+            .expect("decode NumDormantEpochs");
+        assert_eq!(v["num_dormant_epochs"], 3);
+
+        // ExpectedNetworkId: mainnet id (1) or null.
+        let v = decode_ntc_result(&QueryCommand::ExpectedNetworkId, &[0x01])
+            .expect("decode ExpectedNetworkId");
+        assert_eq!(v["expected_network_id"], 1);
+        let v = decode_ntc_result(&QueryCommand::ExpectedNetworkId, &[0xf6])
+            .expect("decode ExpectedNetworkId null");
+        assert!(v["expected_network_id"].is_null());
+
+        // DepositPot: 4-element array with derived total.
+        // CBOR: 0x84 0x01 0x02 0x03 0x04 → [1, 2, 3, 4]
+        let v = decode_ntc_result(&QueryCommand::DepositPot, &[0x84, 0x01, 0x02, 0x03, 0x04])
+            .expect("decode DepositPot");
+        assert_eq!(v["key_deposits_lovelace"], 1);
+        assert_eq!(v["pool_deposits_lovelace"], 2);
+        assert_eq!(v["drep_deposits_lovelace"], 3);
+        assert_eq!(v["proposal_deposits_lovelace"], 4);
+        assert_eq!(v["total_lovelace"], 10);
+
+        // LedgerCounts: 6-element array.
+        let v = decode_ntc_result(
+            &QueryCommand::LedgerCounts,
+            &[0x86, 0x05, 0x04, 0x03, 0x02, 0x01, 0x00],
+        )
+        .expect("decode LedgerCounts");
+        assert_eq!(v["stake_credentials"], 5);
+        assert_eq!(v["pools"], 4);
+        assert_eq!(v["dreps"], 3);
+        assert_eq!(v["committee_members"], 2);
+        assert_eq!(v["governance_actions"], 1);
+        assert_eq!(v["gen_delegs"], 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn encode_ntc_query_emits_expected_tag_bytes() {
         // Lock in the on-wire byte sequence for every QueryCommand variant
         // so silent tag drift between the CLI encoder and the
@@ -3221,6 +3310,88 @@ mod tests {
         );
         assert!(ctype.starts_with("text/plain"));
         assert!(body.contains("# HELP"));
+    }
+
+    #[test]
+    fn validate_config_report_warns_when_checkpoint_interval_exceeds_epoch() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ckpt-epoch-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        // Set the cadence to 10× the epoch length — a typical "operator
+        // confused slots with epochs" typo shape.
+        cfg.checkpoint_interval_slots = cfg.epoch_length * 10;
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("exceeds epoch_length")),
+            "expected epoch-bound warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_too_small_checkpoint_interval() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ckpt-small-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.checkpoint_interval_slots = 1; // well below the 32-slot soft floor
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("soft floor")),
+            "expected soft-floor warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_checkpoint_interval_at_epoch_length() {
+        // Equal-to-epoch must NOT warn; the message reads "at most one per
+        // epoch (interval <= epoch_length)" and the boundary is safe.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-ckpt-at-epoch-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.checkpoint_interval_slots = cfg.epoch_length;
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("exceeds epoch_length")),
+            "no epoch-bound warning expected at interval == epoch_length, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
