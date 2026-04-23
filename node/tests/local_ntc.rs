@@ -26,7 +26,7 @@ use yggdrasil_mempool::{Mempool, SharedMempool};
 use yggdrasil_network::{
     AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
 };
-use yggdrasil_node::{BasicLocalQueryDispatcher, run_local_accept_loop};
+use yggdrasil_node::{BasicLocalQueryDispatcher, NodeMetrics, run_local_accept_loop};
 use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
 /// Network magic used for all tests in this file.
@@ -72,6 +72,7 @@ async fn spawn_local_server()
             mempool,
             dispatcher,
             None,
+            None,
             async move {
                 let _ = rx.await;
             },
@@ -88,6 +89,55 @@ async fn spawn_local_server()
     }
 
     (socket_path, tx, handle, tmp)
+}
+
+/// Variant of [`spawn_local_server`] that attaches a shared [`NodeMetrics`]
+/// handle so tests can observe the `mempool_tx_added` / `mempool_tx_rejected`
+/// counters bumped by `run_local_tx_submission_session`.
+async fn spawn_local_server_with_metrics()
+-> (
+    std::path::PathBuf,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+    tempfile::TempDir,
+    Arc<NodeMetrics>,
+) {
+    let tmp = tempdir().expect("tempdir");
+    let socket_path = tmp.path().join("ntc.sock");
+
+    let chain_db = build_empty_chain_db();
+    let mempool = SharedMempool::new(Mempool::with_capacity(1 << 20));
+    let dispatcher = Arc::new(BasicLocalQueryDispatcher);
+    let metrics = Arc::new(NodeMetrics::new());
+
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let socket_path_server = socket_path.clone();
+    let server_metrics = Arc::clone(&metrics);
+
+    let handle = tokio::spawn(async move {
+        let _ = run_local_accept_loop(
+            &socket_path_server,
+            TEST_MAGIC,
+            chain_db,
+            mempool,
+            dispatcher,
+            None,
+            Some(server_metrics),
+            async move {
+                let _ = rx.await;
+            },
+        )
+        .await;
+    });
+
+    for _ in 0..50 {
+        if socket_path.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    (socket_path, tx, handle, tmp, metrics)
 }
 
 /// End-to-end test: connect through the same `ntc_connect` driver the CLI
@@ -275,6 +325,139 @@ async fn ntc_connect_wrong_magic_refused() {
     assert!(
         result.is_err(),
         "handshake must fail on network-magic mismatch"
+    );
+
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
+/// End-to-end test: a successful NtC handshake bumps the
+/// `ntc_connections_accepted` counter and leaves `ntc_connections_rejected`
+/// alone. Mirrors the NtN pair (`inbound_connections_accepted` /
+/// `inbound_connections_rejected`) but is kept distinct because NtC is a
+/// local wallet/tooling socket — conflating it with NtN would mask both
+/// channels' failure modes in operator dashboards.
+#[tokio::test]
+async fn ntc_handshake_success_bumps_accepted_metric() {
+    let (socket_path, shutdown, handle, _tmp, metrics) = spawn_local_server_with_metrics().await;
+
+    let before = metrics.snapshot();
+    assert_eq!(before.ntc_connections_accepted, 0);
+    assert_eq!(before.ntc_connections_rejected, 0);
+
+    let conn = ntc_connect(&socket_path, TEST_MAGIC, true)
+        .await
+        .expect("ntc_connect should succeed");
+    drop(conn);
+
+    let mut after = metrics.snapshot();
+    for _ in 0..50 {
+        after = metrics.snapshot();
+        if after.ntc_connections_accepted >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        after.ntc_connections_accepted, 1,
+        "a successful handshake must bump accepted exactly once"
+    );
+    assert_eq!(
+        after.ntc_connections_rejected, 0,
+        "a successful handshake must not bump rejected"
+    );
+
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
+/// End-to-end test: an NtC client with the wrong network magic causes the
+/// server-side handshake to fail; the `ntc_connections_rejected` counter
+/// must bump while `ntc_connections_accepted` stays at zero. Before this
+/// slice NtC handshake failures were silently swallowed (`Err(_e)` dropped
+/// in `run_local_client_session`) so wallet/tool misconfiguration was
+/// invisible to operators.
+#[tokio::test]
+async fn ntc_handshake_wrong_magic_bumps_rejected_metric() {
+    let (socket_path, shutdown, handle, _tmp, metrics) = spawn_local_server_with_metrics().await;
+
+    let before = metrics.snapshot();
+    assert_eq!(before.ntc_connections_accepted, 0);
+    assert_eq!(before.ntc_connections_rejected, 0);
+
+    let result = ntc_connect(&socket_path, TEST_MAGIC + 1, true).await;
+    assert!(result.is_err(), "wrong-magic handshake must fail");
+
+    let mut after = metrics.snapshot();
+    for _ in 0..50 {
+        after = metrics.snapshot();
+        if after.ntc_connections_rejected >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        after.ntc_connections_accepted, 0,
+        "rejected handshake must not bump accepted"
+    );
+    assert_eq!(
+        after.ntc_connections_rejected, 1,
+        "rejected handshake must bump rejected exactly once"
+    );
+
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
+/// End-to-end test: a malformed LocalTxSubmission payload increments the
+/// `mempool_tx_rejected` Prometheus counter while leaving `mempool_tx_added`
+/// at zero. This pins the NtC-side observability path that previously
+/// existed only for the NtN `SharedTxSubmissionConsumer`; regressing it
+/// would make the counters silently under-count local wallet rejections.
+#[tokio::test]
+async fn ntc_local_tx_submission_rejection_bumps_metrics() {
+    let (socket_path, shutdown, handle, _tmp, metrics) = spawn_local_server_with_metrics().await;
+
+    let before = metrics.snapshot();
+    assert_eq!(before.mempool_tx_added, 0);
+    assert_eq!(before.mempool_tx_rejected, 0);
+
+    let mut conn = ntc_connect(&socket_path, TEST_MAGIC, false)
+        .await
+        .expect("ntc_connect should succeed");
+    let tx_handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION)
+        .expect("NTC_LOCAL_TX_SUBMISSION handle missing");
+    let mut client = LocalTxSubmissionClient::new(tx_handle);
+
+    let bogus_tx = vec![0xff, 0xff, 0xff];
+    let result = client.submit(bogus_tx).await;
+    assert!(
+        result.is_err(),
+        "malformed tx bytes should produce LocalTxSubmissionClientError::RejectTx"
+    );
+    let _ = client.done().await;
+
+    // Metrics are bumped synchronously in the server's SubmitTx handler
+    // before the reject is written, but the reject itself must also flush
+    // back over the mux before the client sees it. Poll briefly in case
+    // the reject arrived slightly before the counter store.
+    let mut after = metrics.snapshot();
+    for _ in 0..50 {
+        after = metrics.snapshot();
+        if after.mempool_tx_rejected >= 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        after.mempool_tx_added, 0,
+        "malformed submissions must not count as admitted"
+    );
+    assert_eq!(
+        after.mempool_tx_rejected, 1,
+        "malformed submissions must bump the rejected counter exactly once"
     );
 
     let _ = shutdown.send(());

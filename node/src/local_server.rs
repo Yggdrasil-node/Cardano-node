@@ -45,6 +45,7 @@ use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
 use crate::runtime::{MempoolAddTxResult, add_tx_to_shared_mempool};
 use crate::sync::recover_ledger_state_chaindb;
+use crate::tracer::NodeMetrics;
 
 // ---------------------------------------------------------------------------
 // LocalQueryDispatcher — opaque query dispatch trait
@@ -113,12 +114,20 @@ pub enum LocalServerError {
 /// Accepted transactions receive `MsgAcceptTx`; rejected transactions
 /// receive `MsgRejectTx` with a CBOR-encoded reason byte vector.
 ///
+/// When a `metrics` handle is supplied each admission outcome is mirrored
+/// into the `mempool_tx_added` / `mempool_tx_rejected` Prometheus counters
+/// — matching the accounting the NtN inbound path already performs via
+/// [`crate::server::SharedTxSubmissionConsumer`]. Decode failures and
+/// ledger-recovery failures also count as rejections so the counter
+/// stays an accurate view of LocalTxSubmission outcomes.
+///
 /// The session ends when the client sends `MsgDone` or the protocol errors.
 pub async fn run_local_tx_submission_session<I, V, L>(
     mut server: LocalTxSubmissionServer,
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     mempool: SharedMempool,
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
+    metrics: Option<Arc<NodeMetrics>>,
 ) -> Result<(), LocalTxSubmissionSessionError>
 where
     I: ImmutableStore + Send + Sync,
@@ -142,6 +151,9 @@ where
                 let mut ledger_state = match ledger_result {
                     Some(recovery) => recovery.ledger_state,
                     None => {
+                        if let Some(m) = &metrics {
+                            m.inc_mempool_tx_rejected();
+                        }
                         let reason = encode_rejection_reason("internal error: ledger recovery");
                         let _ = server.reject(reason).await;
                         continue;
@@ -156,6 +168,9 @@ where
                     match MultiEraSubmittedTx::from_cbor_bytes_for_era(era, &tx_bytes) {
                         Ok(tx) => tx,
                         Err(e) => {
+                            if let Some(m) = &metrics {
+                                m.inc_mempool_tx_rejected();
+                            }
                             let reason = encode_rejection_reason(&format!("decode error: {e}"));
                             server.reject(reason).await?;
                             continue;
@@ -174,13 +189,22 @@ where
                     eval_ref,
                 ) {
                     Ok(MempoolAddTxResult::MempoolTxAdded(_)) => {
+                        if let Some(m) = &metrics {
+                            m.inc_mempool_tx_added();
+                        }
                         server.accept().await?;
                     }
                     Ok(MempoolAddTxResult::MempoolTxRejected(_, reason)) => {
+                        if let Some(m) = &metrics {
+                            m.inc_mempool_tx_rejected();
+                        }
                         let reason_bytes = encode_rejection_reason(&format!("{reason}"));
                         server.reject(reason_bytes).await?;
                     }
                     Err(e) => {
+                        if let Some(m) = &metrics {
+                            m.inc_mempool_tx_rejected();
+                        }
                         let reason_bytes = encode_rejection_reason(&format!("mempool error: {e}"));
                         server.reject(reason_bytes).await?;
                     }
@@ -488,6 +512,7 @@ pub async fn run_local_client_session<I, V, L>(
     mempool: SharedMempool,
     dispatcher: Arc<dyn LocalQueryDispatcher>,
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
+    metrics: Option<Arc<NodeMetrics>>,
 ) -> Option<yggdrasil_network::MuxHandle>
 where
     I: ImmutableStore + Send + Sync + 'static,
@@ -497,9 +522,17 @@ where
     use yggdrasil_network::{MiniProtocolNum, ntc_accept};
 
     let conn = match ntc_accept(stream, network_magic).await {
-        Ok(c) => c,
+        Ok(c) => {
+            if let Some(m) = &metrics {
+                m.inc_ntc_accepted();
+            }
+            c
+        }
         Err(_e) => {
             // Handshake failed (version mismatch, closed, etc.) — drop connection.
+            if let Some(m) = &metrics {
+                m.inc_ntc_rejected();
+            }
             return None;
         }
     };
@@ -526,9 +559,16 @@ where
     let tx_chain_db = Arc::clone(&chain_db);
     let tx_mempool = mempool.clone();
     let tx_evaluator = evaluator.clone();
+    let tx_metrics = metrics.clone();
     tokio::spawn(async move {
-        let _ =
-            run_local_tx_submission_session(tx_server, tx_chain_db, tx_mempool, tx_evaluator).await;
+        let _ = run_local_tx_submission_session(
+            tx_server,
+            tx_chain_db,
+            tx_mempool,
+            tx_evaluator,
+            tx_metrics,
+        )
+        .await;
     });
 
     // Spawn LocalStateQuery task.
@@ -568,6 +608,7 @@ where
 ///
 /// Reference: `ouroboros-network/LocalClient.hs` — local-socket server setup.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)] // thin orchestration entry-point; each parameter is a shared handle wired from the node bootstrap
 pub async fn run_local_accept_loop<I, V, L, F>(
     socket_path: &Path,
     network_magic: u32,
@@ -575,6 +616,7 @@ pub async fn run_local_accept_loop<I, V, L, F>(
     mempool: SharedMempool,
     dispatcher: Arc<dyn LocalQueryDispatcher>,
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
+    metrics: Option<Arc<NodeMetrics>>,
     shutdown: F,
 ) -> Result<(), LocalServerError>
 where
@@ -604,9 +646,10 @@ where
                 let mp = mempool.clone();
                 let disp = Arc::clone(&dispatcher);
                 let eval = evaluator.clone();
+                let met = metrics.clone();
 
                 tokio::spawn(async move {
-                    let mux = run_local_client_session(stream, network_magic, db, mp, disp, eval).await;
+                    let mux = run_local_client_session(stream, network_magic, db, mp, disp, eval, met).await;
                     // Mux runs until either protocol task finishes or the
                     // connection drops; we do not abort here since each task
                     // terminates cleanly on `MsgDone` or socket close.

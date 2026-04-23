@@ -574,6 +574,13 @@ pub struct NodeMetrics {
     // Inbound server counters
     inbound_connections_accepted: AtomicU64,
     inbound_connections_rejected: AtomicU64,
+    // NtC (local Unix socket) server counters. Kept distinct from the NtN
+    // `inbound_connections_*` pair above because NtC connections are wallet
+    // / tooling handshakes driven by a different accept path and a wrong
+    // signal here would mask the wrong class of issue (e.g. wallet
+    // network-magic mismatch vs. NtN rate-limit rejection).
+    ntc_connections_accepted: AtomicU64,
+    ntc_connections_rejected: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -652,6 +659,12 @@ pub struct MetricsSnapshot {
     pub inbound_connections_accepted: u64,
     /// Total inbound connections rejected (rate-limited or CM-refused).
     pub inbound_connections_rejected: u64,
+    /// Total NtC (local Unix socket) connections that completed the
+    /// handshake and entered protocol dispatch.
+    pub ntc_connections_accepted: u64,
+    /// Total NtC connections whose handshake failed (e.g. network-magic
+    /// mismatch, unsupported protocol version, early disconnect).
+    pub ntc_connections_rejected: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -694,6 +707,8 @@ impl NodeMetrics {
             cm_outbound_conns: AtomicU64::new(0),
             inbound_connections_accepted: AtomicU64::new(0),
             inbound_connections_rejected: AtomicU64::new(0),
+            ntc_connections_accepted: AtomicU64::new(0),
+            ntc_connections_rejected: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
     }
@@ -835,6 +850,18 @@ impl NodeMetrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the NtC-connections-accepted counter.
+    pub fn inc_ntc_accepted(&self) {
+        self.ntc_connections_accepted
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Increment the NtC-connections-rejected counter (handshake failure).
+    pub fn inc_ntc_rejected(&self) {
+        self.ntc_connections_rejected
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Read a consistent snapshot of all current metric values.
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
@@ -880,6 +907,8 @@ impl NodeMetrics {
             cm_outbound_conns: self.cm_outbound_conns.load(Ordering::Relaxed),
             inbound_connections_accepted: self.inbound_connections_accepted.load(Ordering::Relaxed),
             inbound_connections_rejected: self.inbound_connections_rejected.load(Ordering::Relaxed),
+            ntc_connections_accepted: self.ntc_connections_accepted.load(Ordering::Relaxed),
+            ntc_connections_rejected: self.ntc_connections_rejected.load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -1006,7 +1035,13 @@ yggdrasil_cm_outbound_conns {}\n\
 yggdrasil_inbound_connections_accepted {}\n\
 # HELP yggdrasil_inbound_connections_rejected Total inbound connections rejected.\n\
 # TYPE yggdrasil_inbound_connections_rejected counter\n\
-yggdrasil_inbound_connections_rejected {}\n",
+yggdrasil_inbound_connections_rejected {}\n\
+# HELP yggdrasil_ntc_connections_accepted Total NtC (local socket) connections that completed the handshake.\n\
+# TYPE yggdrasil_ntc_connections_accepted counter\n\
+yggdrasil_ntc_connections_accepted {}\n\
+# HELP yggdrasil_ntc_connections_rejected Total NtC (local socket) handshake failures (magic mismatch, unsupported version, early disconnect).\n\
+# TYPE yggdrasil_ntc_connections_rejected counter\n\
+yggdrasil_ntc_connections_rejected {}\n",
             self.blocks_synced,
             self.rollbacks,
             self.batches_completed,
@@ -1044,6 +1079,8 @@ yggdrasil_inbound_connections_rejected {}\n",
             self.cm_outbound_conns,
             self.inbound_connections_accepted,
             self.inbound_connections_rejected,
+            self.ntc_connections_accepted,
+            self.ntc_connections_rejected,
         )
     }
 }

@@ -1715,6 +1715,34 @@ fn validate_config_report(
                 .to_owned(),
         );
     }
+
+    // Cross-field sanity: `RequiresNetworkMagic` must match the canonical
+    // default for the configured `network_magic`. Mainnet magic (764_824_073)
+    // expects `RequiresNoMagic`; every other magic expects `RequiresMagic`.
+    // An explicit override in the opposite direction is almost always a
+    // copy-paste bug (e.g. mainnet config repurposed for testnet without
+    // updating this field) and would cause Byron-era header decoding to
+    // desync between the two peers. Warn with the recommended value
+    // inlined so the fix is immediately obvious.
+    //
+    // Reference: upstream `Cardano.Chain.Genesis.Config.mkConfigFromGenesisData`
+    // derives the default from the magic; operator-supplied overrides in
+    // mismatched shape are rejected at Byron handshake time on the Haskell
+    // node too. Warning-only here (not a bail) so pure Shelley+ test
+    // environments can still run.
+    if let Some(explicit) = file_cfg.requires_network_magic {
+        let expected =
+            yggdrasil_node::config::RequiresNetworkMagic::default_for_magic(file_cfg.network_magic);
+        if explicit != expected {
+            warnings.push(format!(
+                "RequiresNetworkMagic = {:?} is inconsistent with network_magic = {}; \
+                 the canonical default for this magic is {:?}. Byron-era header \
+                 decoding expects the canonical shape and peers using the \
+                 default will disagree with this node",
+                explicit, file_cfg.network_magic, expected,
+            ));
+        }
+    }
     if !(file_cfg.turn_on_logging && file_cfg.use_trace_dispatcher) {
         warnings.push("runtime tracing is disabled for local operator output".to_owned());
     }
@@ -2531,6 +2559,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         let ntc_evaluator: Option<
             Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>,
         > = None;
+        let ntc_metrics = Some(Arc::clone(&metrics));
         let ntc_network_magic = node_config.network_magic;
 
         tracer.trace_runtime(
@@ -2560,6 +2589,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
                 ntc_mempool,
                 dispatcher,
                 ntc_evaluator,
+                ntc_metrics,
                 shutdown,
             )
             .await
@@ -3389,6 +3419,108 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("exceeds epoch_length")),
             "no epoch-bound warning expected at interval == epoch_length, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_mainnet_requires_magic_override() {
+        // Mainnet (magic 764_824_073) canonical default is RequiresNoMagic.
+        // An explicit RequiresMagic override is a copy-paste bug that would
+        // desync Byron-era header decoding with every other mainnet peer.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-req-magic-mainnet-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.requires_network_magic =
+            Some(yggdrasil_node::config::RequiresNetworkMagic::RequiresMagic);
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("RequiresNetworkMagic") && w.contains("inconsistent")),
+            "expected RequiresNetworkMagic mismatch warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_testnet_requires_no_magic_override() {
+        // Any non-mainnet magic's canonical default is RequiresMagic. An
+        // explicit RequiresNoMagic override is a copy-paste bug that would
+        // desync Byron-era header decoding with testnet peers.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-req-magic-testnet-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        // Not the mainnet magic.
+        cfg.network_magic = 2;
+        cfg.requires_network_magic =
+            Some(yggdrasil_node::config::RequiresNetworkMagic::RequiresNoMagic);
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("RequiresNetworkMagic") && w.contains("inconsistent")),
+            "expected RequiresNetworkMagic mismatch warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_canonical_requires_network_magic() {
+        // Mainnet with RequiresNoMagic AND testnet with RequiresMagic are
+        // both canonical; neither must produce the mismatch warning.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-req-magic-ok-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.requires_network_magic =
+            Some(yggdrasil_node::config::RequiresNetworkMagic::RequiresNoMagic);
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("RequiresNetworkMagic") && w.contains("inconsistent")),
+            "mainnet + RequiresNoMagic must not warn, got: {:?}",
+            report.warnings,
+        );
+
+        // And the None case — default inferred — must not warn either.
+        cfg.requires_network_magic = None;
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("RequiresNetworkMagic") && w.contains("inconsistent")),
+            "None requires_network_magic must not warn, got: {:?}",
             report.warnings,
         );
         std::fs::remove_dir_all(dir).ok();
