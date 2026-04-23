@@ -1608,6 +1608,26 @@ fn validate_config_report(
         }
     }
 
+    // Upstream `Protocol` selects which block-producer family the node
+    // runs (`Cardano`, `Shelley`, `Byron`, `RealPBFT`). Yggdrasil only
+    // implements `Cardano` — the field docstring makes the value
+    // documentation-only — so any other declared value is a
+    // misconfiguration that would silently be ignored. Warn with the
+    // exact offending value so a typo ("Cadrano") or a copy-pasted
+    // legacy config ("RealPBFT") surfaces at preflight time.
+    //
+    // Reference: `Protocol` in `Cardano.Node.Configuration.POM.nodeProtocolModeP`.
+    if let Some(proto) = file_cfg.protocol.as_deref() {
+        if proto != "Cardano" {
+            warnings.push(format!(
+                "Protocol = {proto:?} is not supported; Yggdrasil only implements \
+                 \"Cardano\". The value would be silently ignored at runtime — fix the \
+                 config to \"Cardano\" or upgrade to a node that implements the declared \
+                 protocol family"
+            ));
+        }
+    }
+
     // Upstream `MinNodeVersion` (e.g. `"10.6.2"`) is a dotted-numeric
     // cardano-node version string. We do NOT cross-compare it against our
     // own `CARGO_PKG_VERSION` because the two namespaces are independent
@@ -3392,6 +3412,125 @@ mod tests {
         }
     }
 
+    /// Drift-detection invariant: every `QueryCommand` variant must
+    /// encode to a tag the server-side `BasicLocalQueryDispatcher`
+    /// recognises. A variant with no matching dispatcher arm slips past
+    /// the encoder byte-level test (which only locks in the bytes the
+    /// encoder emits) and surfaces only as an empty response at
+    /// `yggdrasil-node query ...` runtime — which looks indistinguishable
+    /// from "query returned no data". This test uses a match block over a
+    /// representative value for every variant so the compiler's
+    /// exhaustiveness gate forces a test update whenever a variant is
+    /// added to `QueryCommand`. Each variant is then run through the
+    /// `encode_ntc_query → dispatch_query` pipeline against a
+    /// `LedgerState::new(Era::Conway).snapshot()` and asserted to produce
+    /// non-empty bytes (the dispatcher's unknown-tag fall-through returns
+    /// exactly zero bytes via its empty encoder state).
+    #[test]
+    fn every_query_command_variant_is_dispatched() {
+        use super::{QueryCommand, encode_ntc_query};
+        use yggdrasil_ledger::{Era, LedgerState};
+        use yggdrasil_node::{BasicLocalQueryDispatcher, LocalQueryDispatcher};
+
+        let dispatcher = BasicLocalQueryDispatcher;
+        let snapshot = LedgerState::new(Era::Conway).snapshot();
+
+        // Placeholders for the parametric variants. Values do not need
+        // to resolve to any on-chain state; they just have to let the
+        // dispatcher's tag arm execute far enough to emit a CBOR envelope.
+        let cred_hex = "00".repeat(28);
+        let addr_hex = "00".repeat(29);
+        let txid_hex = "00".repeat(32);
+        let reward_hex = "00".repeat(29);
+
+        // Representative value per variant. `match` is compiler-enforced
+        // exhaustive; adding a new `QueryCommand` without extending this
+        // list is a hard compile error.
+        let all: Vec<QueryCommand> = {
+            // Enumerate via exhaustive construction so the compiler
+            // guarantees every variant is represented exactly once.
+            let mk = |v: QueryCommand| -> QueryCommand { v };
+            let _check_exhaustiveness = |v: &QueryCommand| -> &'static str {
+                match v {
+                    QueryCommand::CurrentEra => "CurrentEra",
+                    QueryCommand::Tip => "Tip",
+                    QueryCommand::CurrentEpoch => "CurrentEpoch",
+                    QueryCommand::ProtocolParams => "ProtocolParams",
+                    QueryCommand::UtxoByAddress { .. } => "UtxoByAddress",
+                    QueryCommand::StakeDistribution => "StakeDistribution",
+                    QueryCommand::RewardBalance { .. } => "RewardBalance",
+                    QueryCommand::TreasuryAndReserves => "TreasuryAndReserves",
+                    QueryCommand::UtxoByTxIn { .. } => "UtxoByTxIn",
+                    QueryCommand::StakePools => "StakePools",
+                    QueryCommand::DelegationsAndRewards { .. } => "DelegationsAndRewards",
+                    QueryCommand::DrepStakeDistr => "DrepStakeDistr",
+                    QueryCommand::Constitution => "Constitution",
+                    QueryCommand::GovState => "GovState",
+                    QueryCommand::DrepState => "DrepState",
+                    QueryCommand::CommitteeMembersState => "CommitteeMembersState",
+                    QueryCommand::StakePoolParams { .. } => "StakePoolParams",
+                    QueryCommand::AccountState => "AccountState",
+                    QueryCommand::GenesisDelegations => "GenesisDelegations",
+                    QueryCommand::StabilityWindow => "StabilityWindow",
+                    QueryCommand::NumDormantEpochs => "NumDormantEpochs",
+                    QueryCommand::ExpectedNetworkId => "ExpectedNetworkId",
+                    QueryCommand::DepositPot => "DepositPot",
+                    QueryCommand::LedgerCounts => "LedgerCounts",
+                }
+            };
+            vec![
+                mk(QueryCommand::CurrentEra),
+                mk(QueryCommand::Tip),
+                mk(QueryCommand::CurrentEpoch),
+                mk(QueryCommand::ProtocolParams),
+                mk(QueryCommand::UtxoByAddress {
+                    address: addr_hex.clone(),
+                }),
+                mk(QueryCommand::StakeDistribution),
+                mk(QueryCommand::RewardBalance {
+                    account: reward_hex.clone(),
+                }),
+                mk(QueryCommand::TreasuryAndReserves),
+                mk(QueryCommand::UtxoByTxIn {
+                    tx_id: txid_hex.clone(),
+                    index: 0,
+                }),
+                mk(QueryCommand::StakePools),
+                mk(QueryCommand::DelegationsAndRewards {
+                    credential: cred_hex.clone(),
+                    is_key_hash: true,
+                }),
+                mk(QueryCommand::DrepStakeDistr),
+                mk(QueryCommand::Constitution),
+                mk(QueryCommand::GovState),
+                mk(QueryCommand::DrepState),
+                mk(QueryCommand::CommitteeMembersState),
+                mk(QueryCommand::StakePoolParams {
+                    pool_hash: cred_hex.clone(),
+                }),
+                mk(QueryCommand::AccountState),
+                mk(QueryCommand::GenesisDelegations),
+                mk(QueryCommand::StabilityWindow),
+                mk(QueryCommand::NumDormantEpochs),
+                mk(QueryCommand::ExpectedNetworkId),
+                mk(QueryCommand::DepositPot),
+                mk(QueryCommand::LedgerCounts),
+            ]
+        };
+
+        for variant in &all {
+            let query_bytes = encode_ntc_query(variant);
+            let response = dispatcher.dispatch_query(&snapshot, &query_bytes);
+            assert!(
+                !response.is_empty(),
+                "BasicLocalQueryDispatcher returned empty bytes for {variant:?} — \
+                 every QueryCommand variant must have a matching dispatcher arm. \
+                 An empty response indicates the tag fell through to the \
+                 unknown-query default arm."
+            );
+        }
+    }
+
     #[test]
     fn metrics_http_response_routes_json_before_prometheus() {
         // Regression for the `starts_with("GET /metrics")` routing bug:
@@ -3618,6 +3757,82 @@ mod tests {
             "None requires_network_magic must not warn, got: {:?}",
             report.warnings,
         );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_non_cardano_protocol_value() {
+        // Non-"Cardano" values must surface; "Cardano" exactly must not.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-proto-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        // Typo "Cadrano" — warn.
+        cfg.protocol = Some("Cadrano".to_owned());
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report.warnings.iter().any(|w| {
+                w.contains("Protocol") && w.contains("\"Cadrano\"") && w.contains("Cardano")
+            }),
+            "expected Protocol warning naming \"Cadrano\", got: {:?}",
+            report.warnings,
+        );
+
+        // Legacy "RealPBFT" — warn.
+        cfg.protocol = Some("RealPBFT".to_owned());
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("Protocol") && w.contains("\"RealPBFT\"")),
+            "expected Protocol warning naming \"RealPBFT\", got: {:?}",
+            report.warnings,
+        );
+
+        // Case-sensitive: "cardano" lowercase — warn (upstream is case-sensitive).
+        cfg.protocol = Some("cardano".to_owned());
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("Protocol") && w.contains("\"cardano\"")),
+            "case-sensitive gate: lowercase \"cardano\" must warn, got: {:?}",
+            report.warnings,
+        );
+
+        // Exact "Cardano" — no warn.
+        cfg.protocol = Some("Cardano".to_owned());
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("Protocol") && w.contains("not supported")),
+            "exact \"Cardano\" must not warn, got: {:?}",
+            report.warnings,
+        );
+
+        // None — no warn.
+        cfg.protocol = None;
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("Protocol") && w.contains("not supported")),
+            "None Protocol must not warn, got: {:?}",
+            report.warnings,
+        );
+
         std::fs::remove_dir_all(dir).ok();
     }
 

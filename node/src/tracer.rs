@@ -1323,6 +1323,47 @@ mod tests {
         assert_eq!(parsed["blocks_synced"], Value::from(7));
     }
 
+    /// Invariant: every numeric field of [`MetricsSnapshot`] must appear in
+    /// the Prometheus text emission as `yggdrasil_<field>`. Enforces the
+    /// "added an AtomicU64 but forgot to emit it" drift case — without
+    /// this test, a new counter slips into the struct + snapshot + JSON
+    /// surface silently invisible to Prometheus scrapers.
+    ///
+    /// Iteration is done via `serde_json::to_value` reflection over the
+    /// snapshot so the check stays automatic as fields are added.
+    /// `uptime_ms` is the only snapshot field NOT emitted verbatim —
+    /// it's published as `yggdrasil_uptime_seconds` (divided by 1000) so
+    /// the check accepts either spelling.
+    #[test]
+    fn every_metrics_snapshot_field_is_exported_in_prometheus_text() {
+        let metrics = NodeMetrics::new();
+        let snapshot = metrics.snapshot();
+        let text = snapshot.to_prometheus_text();
+
+        let json = serde_json::to_value(&snapshot).expect("snapshot is serializable");
+        let fields = json
+            .as_object()
+            .expect("snapshot serialises as a JSON object");
+
+        let mut missing: Vec<&str> = Vec::new();
+        for field_name in fields.keys() {
+            // Only numeric counter/gauge fields are expected to surface;
+            // every current field is u64 or u128.
+            let metric_canonical = format!("yggdrasil_{field_name} ");
+            // Accept the documented rename for the one non-verbatim field.
+            let accepts = text.contains(&metric_canonical)
+                || (field_name == "uptime_ms" && text.contains("yggdrasil_uptime_seconds"));
+            if !accepts {
+                missing.push(field_name);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "MetricsSnapshot fields with no Prometheus export line: {missing:?}\n\
+             Every new counter must be mirrored in `MetricsSnapshot::to_prometheus_text`."
+        );
+    }
+
     #[test]
     fn node_metrics_snapshot_renders_prometheus_text() {
         let metrics = NodeMetrics::new();
