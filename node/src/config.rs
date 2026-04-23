@@ -1753,6 +1753,62 @@ mod tests {
     }
 
     #[test]
+    fn default_governor_target_fns_match_governor_targets_default() {
+        // The six `default_governor_target_*` serde-default functions
+        // MUST agree with the corresponding fields of
+        // `GovernorTargets::default()`. Drift here would mean a freshly
+        // parsed config (uses serde defaults) and a hand-constructed
+        // `GovernorTargets::default()` (used internally by the governor)
+        // disagree on peer-selection targets — silently producing
+        // different peer-governor behavior. Pinning both sides here
+        // turns the drift into a CI failure.
+        use yggdrasil_network::GovernorTargets;
+
+        let defaults = GovernorTargets::default();
+        assert_eq!(default_governor_target_known(), defaults.target_known);
+        assert_eq!(
+            default_governor_target_established(),
+            defaults.target_established,
+        );
+        assert_eq!(default_governor_target_active(), defaults.target_active);
+        assert_eq!(
+            default_governor_target_known_big_ledger(),
+            defaults.target_known_big_ledger,
+        );
+        assert_eq!(
+            default_governor_target_established_big_ledger(),
+            defaults.target_established_big_ledger,
+        );
+        assert_eq!(
+            default_governor_target_active_big_ledger(),
+            defaults.target_active_big_ledger,
+        );
+    }
+
+    #[test]
+    fn default_governor_targets_are_sane() {
+        // Pins that the config defaults themselves satisfy
+        // `sanePeerSelectionTargets` — a preflight failure here would
+        // mean every fresh install hits the slice-40 `insane governor
+        // targets` warning right out of the box. Belt-and-braces next
+        // to slice 60's direct unit coverage of `is_sane`.
+        use yggdrasil_network::GovernorTargets;
+        let defaults = GovernorTargets {
+            target_known: default_governor_target_known(),
+            target_established: default_governor_target_established(),
+            target_active: default_governor_target_active(),
+            target_known_big_ledger: default_governor_target_known_big_ledger(),
+            target_established_big_ledger: default_governor_target_established_big_ledger(),
+            target_active_big_ledger: default_governor_target_active_big_ledger(),
+            ..Default::default()
+        };
+        assert!(
+            defaults.is_sane(),
+            "default governor targets must be sane — they are the fresh-install baseline",
+        );
+    }
+
+    #[test]
     fn conway_major_protocol_version_constant_matches_upstream_default() {
         // Pin the Conway-era default `MaxMajorProtVer` against the
         // upstream value. Also pin the relationship to
