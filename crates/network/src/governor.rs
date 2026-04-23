@@ -3121,6 +3121,153 @@ mod tests {
         reg
     }
 
+    // ── GovernorTargets::is_sane — direct unit coverage ───────────────
+    //
+    // Upstream `sanePeerSelectionTargets` is the single safety gate that
+    // keeps the governor from entering an unreachable target configuration.
+    // It is consulted at node startup via `validate_config_report` but had
+    // no direct unit-level coverage; `_warns_on_insane_governor_targets`
+    // tests the preflight warning but not the individual invariants.
+    //
+    // Each test below pins one invariant in isolation so a future regression
+    // that flips a single predicate surfaces as the exact failing test.
+
+    fn sane_baseline() -> GovernorTargets {
+        GovernorTargets::default()
+    }
+
+    #[test]
+    fn is_sane_accepts_default_targets() {
+        assert!(GovernorTargets::default().is_sane());
+    }
+
+    #[test]
+    fn is_sane_rejects_active_above_established() {
+        let mut t = sane_baseline();
+        t.target_active = t.target_established + 1;
+        assert!(!t.is_sane(), "active > established must be rejected");
+    }
+
+    #[test]
+    fn is_sane_rejects_established_above_known() {
+        let mut t = sane_baseline();
+        t.target_established = t.target_known + 1;
+        assert!(!t.is_sane(), "established > known must be rejected");
+    }
+
+    #[test]
+    fn is_sane_rejects_root_above_known() {
+        let mut t = sane_baseline();
+        t.target_root = t.target_known + 1;
+        assert!(!t.is_sane(), "root > known must be rejected");
+    }
+
+    #[test]
+    fn is_sane_rejects_active_big_above_established_big() {
+        let mut t = sane_baseline();
+        t.target_established_big_ledger = 5;
+        t.target_active_big_ledger = 6;
+        t.target_known_big_ledger = 10;
+        assert!(
+            !t.is_sane(),
+            "active_big > established_big must be rejected",
+        );
+    }
+
+    #[test]
+    fn is_sane_rejects_established_big_above_known_big() {
+        let mut t = sane_baseline();
+        t.target_known_big_ledger = 5;
+        t.target_established_big_ledger = 6;
+        t.target_active_big_ledger = 0;
+        assert!(
+            !t.is_sane(),
+            "established_big > known_big must be rejected",
+        );
+    }
+
+    #[test]
+    fn is_sane_accepts_boundary_upper_limits() {
+        // Exact upper bounds (100 / 1000 / 10000) must pass.
+        let t = GovernorTargets {
+            target_root: 0,
+            target_known: 10_000,
+            target_established: 1_000,
+            target_active: 100,
+            target_known_big_ledger: 10_000,
+            target_established_big_ledger: 1_000,
+            target_active_big_ledger: 100,
+        };
+        assert!(t.is_sane(), "upper-bound values must be accepted");
+    }
+
+    #[test]
+    fn is_sane_rejects_active_above_100() {
+        let mut t = sane_baseline();
+        t.target_active = 101;
+        t.target_established = 101;
+        t.target_known = 101;
+        assert!(!t.is_sane(), "active > 100 must be rejected");
+    }
+
+    #[test]
+    fn is_sane_rejects_established_above_1000() {
+        let mut t = sane_baseline();
+        t.target_established = 1_001;
+        t.target_known = 1_001;
+        assert!(!t.is_sane(), "established > 1000 must be rejected");
+    }
+
+    #[test]
+    fn is_sane_rejects_known_above_10000() {
+        let mut t = sane_baseline();
+        t.target_known = 10_001;
+        assert!(!t.is_sane(), "known > 10000 must be rejected");
+    }
+
+    #[test]
+    fn is_sane_rejects_active_big_above_100() {
+        let mut t = sane_baseline();
+        t.target_active_big_ledger = 101;
+        t.target_established_big_ledger = 101;
+        t.target_known_big_ledger = 101;
+        assert!(!t.is_sane(), "active_big > 100 must be rejected");
+    }
+
+    #[test]
+    fn is_sane_rejects_established_big_above_1000() {
+        let mut t = sane_baseline();
+        t.target_established_big_ledger = 1_001;
+        t.target_known_big_ledger = 1_001;
+        assert!(
+            !t.is_sane(),
+            "established_big > 1000 must be rejected",
+        );
+    }
+
+    #[test]
+    fn is_sane_rejects_known_big_above_10000() {
+        let mut t = sane_baseline();
+        t.target_known_big_ledger = 10_001;
+        assert!(!t.is_sane(), "known_big > 10000 must be rejected");
+    }
+
+    #[test]
+    fn is_sane_accepts_all_zeros() {
+        // All-zero targets (no governor pressure) are sane — governor just
+        // won't maintain any peers, but that is a valid no-op config.
+        let t = GovernorTargets {
+            target_root: 0,
+            target_known: 0,
+            target_established: 0,
+            target_active: 0,
+            target_known_big_ledger: 0,
+            target_established_big_ledger: 0,
+            target_active_big_ledger: 0,
+        };
+        assert!(t.is_sane(), "all-zero targets must be sane");
+    }
+
     #[test]
     fn promote_cold_to_warm_when_below_target() {
         let reg = make_registry(&[

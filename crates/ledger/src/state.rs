@@ -8577,7 +8577,19 @@ fn conway_bootstrap_vote_is_allowed(
 }
 
 fn conway_pv_can_follow(previous: (u64, u64), new: (u64, u64)) -> bool {
-    (previous.0, previous.1.saturating_add(1)) == new
+    // Upstream `pvCanFollow`: new protocol version is valid iff it is
+    // exactly one step above `previous` — either `(major, minor+1)` (same
+    // major, next minor) or `(major+1, 0)` (next major, reset minor).
+    //
+    // `checked_add` on both branches rejects the `u64::MAX` saturating
+    // edge case that would otherwise let `(M, u64::MAX) → (M, u64::MAX)`
+    // be accepted as an identity increment. A previous `saturating_add(1)`
+    // form collapsed to identity at MAX, which would silently let
+    // same-version proposals slip past the first branch at that boundary.
+    previous
+        .1
+        .checked_add(1)
+        .is_some_and(|next_minor| (previous.0, next_minor) == new)
         || previous
             .0
             .checked_add(1)
@@ -23015,6 +23027,27 @@ mod tests {
     fn pv_can_follow_rejects_major_jump() {
         // Major +2 is not allowed (per upstream pvCanFollow).
         assert!(!conway_pv_can_follow((9, 0), (11, 0)));
+    }
+
+    #[test]
+    fn pv_can_follow_rejects_identity_at_u64_max_minor_boundary() {
+        // A prior `saturating_add(1)` implementation would collapse at
+        // `u64::MAX` and silently treat `(M, u64::MAX) → (M, u64::MAX)`
+        // as an increment, accepting identity proposals at that
+        // boundary. The `checked_add` form rejects it correctly since
+        // the overflow branch becomes `None`.
+        assert!(!conway_pv_can_follow((10, u64::MAX), (10, u64::MAX)));
+        // But `(10, u64::MAX - 1) → (10, u64::MAX)` is still a valid
+        // minor increment and must stay accepted.
+        assert!(conway_pv_can_follow((10, u64::MAX - 1), (10, u64::MAX)));
+    }
+
+    #[test]
+    fn pv_can_follow_rejects_major_overflow() {
+        // `(u64::MAX, 5) → (0, 0)` would wrap in unchecked arithmetic.
+        // `checked_add` on the major branch returns `None`, so this is
+        // rejected — no overflow sneaks through.
+        assert!(!conway_pv_can_follow((u64::MAX, 5), (0, 0)));
     }
 
     // ── validate_alonzo_plus_tx: mandatory collateral for redeemers ────
