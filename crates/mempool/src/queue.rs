@@ -208,6 +208,16 @@ pub struct MempoolSnapshot {
     /// per-peer policy cap of 64), so without the index that path is
     /// O(M*N) where N is mempool size; with it it becomes O(M + N).
     tx_id_to_pos: HashMap<TxId, usize>,
+    /// Position index `MempoolIdx → entries[pos]`.
+    ///
+    /// Same construction-time pattern as [`Self::tx_id_to_pos`] but keyed
+    /// by the monotonic mempool index. Block production
+    /// (`mempool_entries_for_forging` in the node runtime) walks every
+    /// snapshot entry and calls `mempool_lookup_tx(idx)` once per entry,
+    /// so without this index that path is O(N²) for a mempool of size N
+    /// — every block forge re-scans the whole mempool N times. With the
+    /// index it becomes O(N).
+    idx_to_pos: HashMap<MempoolIdx, usize>,
 }
 
 impl MempoolSnapshot {
@@ -225,9 +235,9 @@ impl MempoolSnapshot {
 
     /// Look up a transaction entry by its mempool index.
     pub fn mempool_lookup_tx(&self, idx: MempoolIdx) -> Option<&MempoolEntry> {
-        self.entries
-            .iter()
-            .find(|entry| entry.idx == idx)
+        self.idx_to_pos
+            .get(&idx)
+            .and_then(|pos| self.entries.get(*pos))
             .map(|entry| &entry.entry)
     }
 
@@ -436,14 +446,16 @@ impl Mempool {
     /// Create a pure owned snapshot of the current mempool contents.
     pub fn snapshot(&self) -> MempoolSnapshot {
         let entries = self.entries.clone();
-        let tx_id_to_pos = entries
-            .iter()
-            .enumerate()
-            .map(|(pos, e)| (e.entry.tx_id, pos))
-            .collect::<HashMap<_, _>>();
+        let mut tx_id_to_pos = HashMap::with_capacity(entries.len());
+        let mut idx_to_pos = HashMap::with_capacity(entries.len());
+        for (pos, e) in entries.iter().enumerate() {
+            tx_id_to_pos.insert(e.entry.tx_id, pos);
+            idx_to_pos.insert(e.idx, pos);
+        }
         MempoolSnapshot {
             entries,
             tx_id_to_pos,
+            idx_to_pos,
         }
     }
 
@@ -457,10 +469,16 @@ impl Mempool {
     ///
     /// Returns the number of entries removed.
     pub fn remove_confirmed(&mut self, confirmed_tx_ids: &[TxId]) -> usize {
+        // Hash the confirmed set once so the per-entry check is O(1) rather
+        // than O(m).  Called after every successful block apply, so the
+        // quadratic form costs (mempool size N) × (block-tx count m) per
+        // block; for a typical 5000-tx mempool + 20-tx block that's
+        // 100k comparisons per block.
+        let confirmed: HashSet<TxId> = confirmed_tx_ids.iter().copied().collect();
         let mut removed_count = 0;
         let mut i = 0;
         while i < self.entries.len() {
-            if confirmed_tx_ids.contains(&self.entries[i].entry.tx_id) {
+            if confirmed.contains(&self.entries[i].entry.tx_id) {
                 let entry = self.entries.remove(i);
                 self.current_bytes -= entry.entry.size_bytes;
                 for input in &entry.entry.inputs {
@@ -495,6 +513,13 @@ impl Mempool {
         if consumed_inputs.is_empty() {
             return 0;
         }
+        // Hash the consumed-input set once.  The previous
+        // `consumed_inputs.contains(inp)` call per-entry-per-input was
+        // O(N*k*I) per block (mempool size × inputs-per-tx × block
+        // consumed-input count); for a 5000-tx mempool averaging 2 inputs
+        // each plus a 20-tx block consuming ~40 inputs that's ~400k
+        // comparisons per block, fired after every successful apply.
+        let consumed: HashSet<ShelleyTxIn> = consumed_inputs.iter().cloned().collect();
         let mut removed_count = 0;
         let mut i = 0;
         while i < self.entries.len() {
@@ -502,7 +527,7 @@ impl Mempool {
                 .entry
                 .inputs
                 .iter()
-                .any(|inp| consumed_inputs.contains(inp));
+                .any(|inp| consumed.contains(inp));
             if conflicts {
                 let removed = self.entries.remove(i);
                 self.current_bytes -= removed.entry.size_bytes;
@@ -1060,6 +1085,30 @@ mod tests {
             snapshot.mempool_lookup_tx_by_id(&second.tx_id),
             Some(&second)
         );
+    }
+
+    #[test]
+    fn snapshot_idx_index_returns_same_results_as_linear_scan() {
+        // Exercise the new `idx_to_pos` index against the previous
+        // `entries.iter().find(...)` semantics. Build a snapshot of
+        // several entries, then for each known idx assert the lookup
+        // returns the same MempoolEntry that a manual linear find would
+        // have returned. Also verify an unknown idx returns None.
+        let mut mempool = Mempool::with_capacity(1024);
+        let entries = (1u8..=5)
+            .map(|seed| sample_entry(seed, 100 + u64::from(seed)))
+            .collect::<Vec<_>>();
+        for entry in &entries {
+            mempool.insert(entry.clone()).expect("insert");
+        }
+        let snapshot = mempool.snapshot();
+        let txids = snapshot.mempool_txids_after(MEMPOOL_ZERO_IDX);
+        for (txid, idx, _) in &txids {
+            let by_idx = snapshot.mempool_lookup_tx(*idx).expect("by-idx");
+            assert_eq!(by_idx.tx_id, *txid);
+        }
+        // MempoolIdx is i64; large positive index that was never assigned.
+        assert!(snapshot.mempool_lookup_tx(99_999).is_none());
     }
 
     #[test]

@@ -131,6 +131,39 @@ pub enum ConsensusModeConfig {
     GenesisMode,
 }
 
+/// Whether on-the-wire Byron-era headers carry an explicit network magic.
+///
+/// Maps to upstream `RequiresNetworkMagic` from `cardano-node`'s
+/// `Cardano.Crypto.ProtocolMagic`. Mainnet uses `RequiresNoMagic` (the
+/// magic is implicit from the header's structural placement); test
+/// networks (preprod/preview) use `RequiresMagic` (the magic is included
+/// inline). Shelley-era and later handle magic separately, so this flag
+/// is primarily relevant for Byron-era header decoding and for documenting
+/// operator intent.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub enum RequiresNetworkMagic {
+    /// Byron headers omit the magic (mainnet behaviour).
+    #[serde(rename = "RequiresNoMagic")]
+    RequiresNoMagic,
+    /// Byron headers carry the magic inline (testnet behaviour).
+    #[serde(rename = "RequiresMagic")]
+    RequiresMagic,
+}
+
+impl RequiresNetworkMagic {
+    /// Default for a given mainnet magic. Returns `RequiresNoMagic` only
+    /// for the canonical mainnet magic `764824073`; every other magic is
+    /// treated as a test network requiring inline magic, matching upstream
+    /// `Cardano.Chain.Genesis.Config.mkConfigFromGenesisData` defaults.
+    pub fn default_for_magic(network_magic: u32) -> Self {
+        if network_magic == 764_824_073 {
+            Self::RequiresNoMagic
+        } else {
+            Self::RequiresMagic
+        }
+    }
+}
+
 impl ConsensusModeConfig {
     /// Convert to the network-owned consensus mode type.
     pub fn to_network_mode(self) -> ConsensusMode {
@@ -177,6 +210,93 @@ pub struct NodeConfigFile {
     pub max_ledger_snapshots: usize,
     /// The network magic for handshake (mainnet = 764824073).
     pub network_magic: u32,
+    /// Whether on-the-wire Byron-era headers carry the network magic
+    /// inline. Matches the upstream `RequiresNetworkMagic` config key.
+    /// `None` means the value defaults to
+    /// [`RequiresNetworkMagic::default_for_magic`] for the configured
+    /// `network_magic` (mainnet → `RequiresNoMagic`, otherwise
+    /// `RequiresMagic`). Currently parsed for upstream-config
+    /// compatibility and operator-intent documentation; the ledger Byron
+    /// header decoder already handles both shapes structurally.
+    #[serde(
+        rename = "RequiresNetworkMagic",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requires_network_magic: Option<RequiresNetworkMagic>,
+    /// Minimum Cardano node version reported by the operator's config.
+    /// Matches the upstream `MinNodeVersion` config key. Currently parsed
+    /// for upstream-config compatibility but no version gate is enforced
+    /// (no semantic action is taken based on this value).
+    #[serde(
+        rename = "MinNodeVersion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_node_version: Option<String>,
+    /// Upstream `Protocol` field (typically the literal string `"Cardano"`).
+    /// Parsed for byte-for-byte compatibility with vendored upstream
+    /// `config.json` files; semantically Yggdrasil only implements the
+    /// Cardano protocol, so the value is documentation-only.
+    #[serde(
+        rename = "Protocol",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub protocol: Option<String>,
+    /// Optional path to an upstream `checkpoints.json` file.  Matches
+    /// `CheckpointsFile` in the official Cardano node configuration.
+    /// Currently parsed for upstream-config compatibility; the full
+    /// upstream "checkpoint pinning" feature (where listed
+    /// `(slot, header_hash)` pairs are treated as authoritative chain
+    /// anchors that no rollback may cross) is a separate follow-up
+    /// slice. See `Cardano.Node.Configuration.Checkpoints`.
+    #[serde(
+        rename = "CheckpointsFile",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checkpoints_file: Option<String>,
+    /// Expected Blake2b-256 hash (lowercase hex) of the checkpoint file
+    /// referenced by [`Self::checkpoints_file`]. Matches
+    /// `CheckpointsFileHash` in the official Cardano node configuration.
+    /// Will be wired into the same verification path as
+    /// [`Self::shelley_genesis_hash`] once the underlying checkpoint
+    /// loader exists.
+    #[serde(
+        rename = "CheckpointsFileHash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checkpoints_file_hash: Option<String>,
+    /// Byron-era last-known block version triplet `(major, minor, alt)`.
+    /// Maps to upstream `LastKnownBlockVersion-Major` /
+    /// `LastKnownBlockVersion-Minor` / `LastKnownBlockVersion-Alt`. The
+    /// fields parse `(u32, u32, u32)` defaults of `(0, 0, 0)` when absent
+    /// and round-trip into the exact upstream JSON key shape via
+    /// individual `rename` annotations. Currently documentation-only — the
+    /// active Shelley+ protocol-version proposal lives in
+    /// [`Self::protocol_versions`].
+    #[serde(
+        rename = "LastKnownBlockVersion-Major",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_known_block_version_major: Option<u32>,
+    /// See [`Self::last_known_block_version_major`].
+    #[serde(
+        rename = "LastKnownBlockVersion-Minor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_known_block_version_minor: Option<u32>,
+    /// See [`Self::last_known_block_version_major`].
+    #[serde(
+        rename = "LastKnownBlockVersion-Alt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_known_block_version_alt: Option<u32>,
     /// Protocol version numbers to propose during handshake.
     pub protocol_versions: Vec<u32>,
     /// Slots per KES period for header verification (mainnet: 129600).
@@ -1286,6 +1406,14 @@ pub fn mainnet_config() -> NodeConfigFile {
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
         socket_path: None,
+        requires_network_magic: None,
+        min_node_version: None,
+        protocol: None,
+        checkpoints_file: None,
+        checkpoints_file_hash: None,
+        last_known_block_version_major: None,
+        last_known_block_version_minor: None,
+        last_known_block_version_alt: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         shelley_genesis_hash: Some(
             "1a3be38bcbb7911969283716ad7aa550250226b76a61fc51cc9a9a35d9276d81".to_owned(),
@@ -1362,6 +1490,14 @@ pub fn preprod_config() -> NodeConfigFile {
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
         socket_path: None,
+        requires_network_magic: None,
+        min_node_version: None,
+        protocol: None,
+        checkpoints_file: None,
+        checkpoints_file_hash: None,
+        last_known_block_version_major: None,
+        last_known_block_version_minor: None,
+        last_known_block_version_alt: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         shelley_genesis_hash: Some(
             "162d29c4e1cf6b8a84f2d692e67a3ac6bc7851bc3e6e4afe64d15778bed8bd86".to_owned(),
@@ -1439,6 +1575,14 @@ pub fn preview_config() -> NodeConfigFile {
         trace_option_forwarder: default_trace_option_forwarder(),
         trace_options: default_trace_options(),
         socket_path: None,
+        requires_network_magic: None,
+        min_node_version: None,
+        protocol: None,
+        checkpoints_file: None,
+        checkpoints_file_hash: None,
+        last_known_block_version_major: None,
+        last_known_block_version_minor: None,
+        last_known_block_version_alt: None,
         shelley_genesis_file: Some("shelley-genesis.json".to_owned()),
         shelley_genesis_hash: Some(
             "363498d1024f84bb39d3fa9593ce391483cb40d479b87233f868d6e57c3a400d".to_owned(),
@@ -1695,6 +1839,104 @@ mod tests {
             matches!(err, crate::genesis::GenesisLoadError::HashMismatch { .. }),
             "expected HashMismatch first, got {err:?}",
         );
+    }
+
+    #[test]
+    fn config_parses_requires_network_magic_and_min_node_version() {
+        // Mainnet uses RequiresNoMagic; preprod/preview use RequiresMagic.
+        // Both keys parse into our typed fields and the operator-supplied
+        // MinNodeVersion string round-trips verbatim.
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 764824073,
+            "protocol_versions": [13],
+            "RequiresNetworkMagic": "RequiresNoMagic",
+            "MinNodeVersion": "10.6.2"
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert_eq!(
+            cfg.requires_network_magic,
+            Some(RequiresNetworkMagic::RequiresNoMagic)
+        );
+        assert_eq!(cfg.min_node_version.as_deref(), Some("10.6.2"));
+
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 1,
+            "protocol_versions": [13],
+            "RequiresNetworkMagic": "RequiresMagic"
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert_eq!(
+            cfg.requires_network_magic,
+            Some(RequiresNetworkMagic::RequiresMagic)
+        );
+        assert_eq!(cfg.min_node_version, None);
+    }
+
+    #[test]
+    fn requires_network_magic_default_for_magic_matches_upstream() {
+        // Canonical mainnet magic → RequiresNoMagic.
+        assert_eq!(
+            RequiresNetworkMagic::default_for_magic(764_824_073),
+            RequiresNetworkMagic::RequiresNoMagic,
+        );
+        // Anything else → RequiresMagic (preprod is 1, preview is 2,
+        // sancho/scratchpad networks have arbitrary magics).
+        assert_eq!(
+            RequiresNetworkMagic::default_for_magic(1),
+            RequiresNetworkMagic::RequiresMagic,
+        );
+        assert_eq!(
+            RequiresNetworkMagic::default_for_magic(2),
+            RequiresNetworkMagic::RequiresMagic,
+        );
+        assert_eq!(
+            RequiresNetworkMagic::default_for_magic(0),
+            RequiresNetworkMagic::RequiresMagic,
+        );
+    }
+
+    #[test]
+    fn config_parses_checkpoints_file_upstream_keys() {
+        // Vendored mainnet config ships these alongside the genesis hash
+        // declarations. We currently parse them for byte-for-byte
+        // upstream-config compat; the underlying checkpoint-pinning
+        // feature is a separate slice.
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 764824073,
+            "protocol_versions": [13],
+            "CheckpointsFile": "checkpoints.json",
+            "CheckpointsFileHash": "3e6dee5bae7acc6d870187e72674b37c929be8c66e62a552cf6a876b1af31ade"
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert_eq!(cfg.checkpoints_file.as_deref(), Some("checkpoints.json"));
+        assert_eq!(
+            cfg.checkpoints_file_hash.as_deref(),
+            Some("3e6dee5bae7acc6d870187e72674b37c929be8c66e62a552cf6a876b1af31ade")
+        );
+    }
+
+    #[test]
+    fn config_parses_last_known_block_version_and_protocol_upstream_keys() {
+        // The hyphenated `LastKnownBlockVersion-*` keys round-trip into
+        // distinct typed fields and the literal `Protocol` string is
+        // preserved, matching upstream `cardano-node`'s mainnet config.
+        let json = r#"{
+            "peer_addr": "127.0.0.1:3001",
+            "network_magic": 764824073,
+            "protocol_versions": [13],
+            "Protocol": "Cardano",
+            "LastKnownBlockVersion-Major": 3,
+            "LastKnownBlockVersion-Minor": 0,
+            "LastKnownBlockVersion-Alt": 0
+        }"#;
+        let cfg: NodeConfigFile = serde_json::from_str(json).expect("parse");
+        assert_eq!(cfg.protocol.as_deref(), Some("Cardano"));
+        assert_eq!(cfg.last_known_block_version_major, Some(3));
+        assert_eq!(cfg.last_known_block_version_minor, Some(0));
+        assert_eq!(cfg.last_known_block_version_alt, Some(0));
     }
 
     #[test]

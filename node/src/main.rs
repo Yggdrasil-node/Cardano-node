@@ -1317,6 +1317,16 @@ fn validate_config_report(
     let ledger_dir = storage_dir.join("ledger");
 
     let mut warnings = Vec::new();
+
+    // Surface genesis-hash mismatches in the preflight report (without
+    // bailing) so an operator running `validate-config` sees the
+    // corruption flag alongside any other warnings rather than seeing
+    // only the first error. The actual `run` path bails on mismatch via
+    // `strict_base_ledger_state` so a misconfigured node cannot start.
+    if let Err(err) = file_cfg.verify_known_genesis_hashes(config_base_dir) {
+        warnings.push(format!("genesis hash verification: {err}"));
+    }
+
     if file_cfg.checkpoint_interval_slots == 0 {
         warnings.push(
             "checkpoint_interval_slots is 0; checkpoint persistence cadence is effectively unbounded"
@@ -2664,6 +2674,39 @@ mod tests {
         cfg.active_slot_coeff = 0.0;
 
         assert!(validate_config_report(&cfg, None).is_err());
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_genesis_hash_mismatch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("shelley.json"), b"{}").expect("write");
+        std::fs::write(dir.path().join("alonzo.json"), b"{}").expect("write");
+        std::fs::write(dir.path().join("conway.json"), b"{}").expect("write");
+
+        let mut cfg = default_config();
+        cfg.shelley_genesis_file = Some("shelley.json".to_owned());
+        cfg.shelley_genesis_hash = Some("0".repeat(64));
+        cfg.alonzo_genesis_file = Some("alonzo.json".to_owned());
+        cfg.alonzo_genesis_hash = None;
+        cfg.conway_genesis_file = Some("conway.json".to_owned());
+        cfg.conway_genesis_hash = None;
+        // Default mainnet config sets a real Byron path; clear it so the
+        // preflight does not also warn about the missing Byron UTxO file.
+        cfg.byron_genesis_file = None;
+        cfg.byron_genesis_hash = None;
+        // storage_dir does not need to exist for the warning we want to
+        // assert here; the validate path continues despite that.
+
+        let report = validate_config_report(&cfg, Some(dir.path()))
+            .expect("validate succeeds with hash warning");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("genesis hash verification")),
+            "expected genesis hash warning in report, got: {:?}",
+            report.warnings,
+        );
     }
 
     #[test]
