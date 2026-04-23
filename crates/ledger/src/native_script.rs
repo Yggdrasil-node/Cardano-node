@@ -29,35 +29,86 @@ pub struct NativeScriptContext<'a> {
 ///
 /// Returns `true` when the script is satisfied.
 ///
+/// Implementation walks the script tree iteratively with an explicit
+/// work stack so deeply nested `ScriptAll` / `ScriptAny` / `ScriptNOfK`
+/// values evaluate in constant native stack regardless of depth. Unlike
+/// the prior recursive implementation this version evaluates every
+/// sub-script (no boolean short-circuit), but the returned answer is
+/// identical because all branches are pure and side-effect-free.
+///
 /// Reference: upstream `evalTimelock` in `Cardano.Ledger.Allegra.Scripts`.
 pub fn evaluate_native_script(script: &NativeScript, ctx: &NativeScriptContext<'_>) -> bool {
-    match script {
-        NativeScript::ScriptPubkey(keyhash) => ctx.vkey_hashes.contains(keyhash),
+    enum Combine {
+        All,
+        Any,
+        NOfK(usize),
+    }
+    enum Action<'a> {
+        Eval(&'a NativeScript),
+        Combine { kind: Combine, child_count: usize },
+    }
 
-        NativeScript::ScriptAll(scripts) => scripts.iter().all(|s| evaluate_native_script(s, ctx)),
+    let mut work: Vec<Action> = vec![Action::Eval(script)];
+    let mut results: Vec<bool> = Vec::new();
 
-        NativeScript::ScriptAny(scripts) => scripts.iter().any(|s| evaluate_native_script(s, ctx)),
-
-        NativeScript::ScriptNOfK(n, scripts) => {
-            let required = *n as usize;
-            scripts
-                .iter()
-                .filter(|s| evaluate_native_script(s, ctx))
-                .take(required)
-                .count()
-                >= required
-        }
-
-        NativeScript::InvalidBefore(slot) => {
-            // The transaction is valid only at or after this slot.
-            ctx.current_slot >= *slot
-        }
-
-        NativeScript::InvalidHereafter(slot) => {
-            // The transaction is invalid at or after this slot.
-            ctx.current_slot < *slot
+    while let Some(action) = work.pop() {
+        match action {
+            Action::Eval(node) => match node {
+                NativeScript::ScriptPubkey(keyhash) => {
+                    results.push(ctx.vkey_hashes.contains(keyhash));
+                }
+                NativeScript::InvalidBefore(slot) => {
+                    // The transaction is valid only at or after this slot.
+                    results.push(ctx.current_slot >= *slot);
+                }
+                NativeScript::InvalidHereafter(slot) => {
+                    // The transaction is invalid at or after this slot.
+                    results.push(ctx.current_slot < *slot);
+                }
+                NativeScript::ScriptAll(scripts) => {
+                    work.push(Action::Combine {
+                        kind: Combine::All,
+                        child_count: scripts.len(),
+                    });
+                    for s in scripts.iter().rev() {
+                        work.push(Action::Eval(s));
+                    }
+                }
+                NativeScript::ScriptAny(scripts) => {
+                    work.push(Action::Combine {
+                        kind: Combine::Any,
+                        child_count: scripts.len(),
+                    });
+                    for s in scripts.iter().rev() {
+                        work.push(Action::Eval(s));
+                    }
+                }
+                NativeScript::ScriptNOfK(n, scripts) => {
+                    let required = (*n).max(0) as usize;
+                    work.push(Action::Combine {
+                        kind: Combine::NOfK(required),
+                        child_count: scripts.len(),
+                    });
+                    for s in scripts.iter().rev() {
+                        work.push(Action::Eval(s));
+                    }
+                }
+            },
+            Action::Combine { kind, child_count } => {
+                let start = results.len() - child_count;
+                let satisfied = results[start..].iter().filter(|&&b| b).count();
+                let combined = match kind {
+                    Combine::All => satisfied == child_count,
+                    Combine::Any => satisfied > 0,
+                    Combine::NOfK(required) => satisfied >= required,
+                };
+                results.truncate(start);
+                results.push(combined);
+            }
         }
     }
+
+    results.pop().expect("evaluator produced a result")
 }
 
 /// Computes the Blake2b-224 hash of a native script's CBOR encoding.

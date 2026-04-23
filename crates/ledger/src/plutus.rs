@@ -73,41 +73,58 @@ const BIG_UINT_TAG: u64 = 2;
 const BIG_NINT_TAG: u64 = 3;
 
 impl CborEncode for PlutusData {
+    /// Iterative encoder.
+    ///
+    /// Walks `self` in depth-first, in-order traversal using an explicit
+    /// heap-allocated work stack so encoding runs in constant native stack
+    /// regardless of the input shape.  Mirrors the iterative
+    /// [`Self::decode_with_depth`] decoder so deeply nested values that the
+    /// decoder accepted (up to [`Self::MAX_DECODE_DEPTH`]) can always be
+    /// re-serialised for relay without risk of stack overflow.
+    ///
+    /// Children are pushed onto the work stack in reverse order so that the
+    /// pop order produces the exact same byte sequence as a recursive
+    /// pre-order encoder would have produced.
     fn encode_cbor(&self, enc: &mut Encoder) {
-        match self {
-            Self::Constr(alt, fields) => {
-                if *alt <= 6 {
-                    // Compact form: tags 121–127.
-                    enc.tag(CONSTR_TAG_BASE + alt);
-                    enc.array(fields.len() as u64);
-                } else {
-                    // General form: tag 102, [alternative, [* fields]].
-                    enc.tag(CONSTR_TAG_GENERAL);
-                    enc.array(2).unsigned(*alt);
-                    enc.array(fields.len() as u64);
+        let mut stack: Vec<&PlutusData> = vec![self];
+        while let Some(node) = stack.pop() {
+            match node {
+                Self::Constr(alt, fields) => {
+                    if *alt <= 6 {
+                        // Compact form: tags 121–127.
+                        enc.tag(CONSTR_TAG_BASE + alt);
+                        enc.array(fields.len() as u64);
+                    } else {
+                        // General form: tag 102, [alternative, [* fields]].
+                        enc.tag(CONSTR_TAG_GENERAL);
+                        enc.array(2).unsigned(*alt);
+                        enc.array(fields.len() as u64);
+                    }
+                    for field in fields.iter().rev() {
+                        stack.push(field);
+                    }
                 }
-                for field in fields {
-                    field.encode_cbor(enc);
+                Self::Map(entries) => {
+                    enc.map(entries.len() as u64);
+                    // Push v before k for each pair so the next pop yields k
+                    // first, matching upstream key-then-value emission order.
+                    for (k, v) in entries.iter().rev() {
+                        stack.push(v);
+                        stack.push(k);
+                    }
                 }
-            }
-            Self::Map(entries) => {
-                enc.map(entries.len() as u64);
-                for (k, v) in entries {
-                    k.encode_cbor(enc);
-                    v.encode_cbor(enc);
+                Self::List(items) => {
+                    enc.array(items.len() as u64);
+                    for item in items.iter().rev() {
+                        stack.push(item);
+                    }
                 }
-            }
-            Self::List(items) => {
-                enc.array(items.len() as u64);
-                for item in items {
-                    item.encode_cbor(enc);
+                Self::Integer(n) => {
+                    encode_big_int(enc, *n);
                 }
-            }
-            Self::Integer(n) => {
-                encode_big_int(enc, *n);
-            }
-            Self::Bytes(b) => {
-                enc.bytes(b);
+                Self::Bytes(b) => {
+                    enc.bytes(b);
+                }
             }
         }
     }
@@ -151,193 +168,274 @@ impl PlutusData {
     /// causing a process crash.
     ///
     /// Reference: defensive bound. Upstream Haskell relies on its lazy CPS
-    /// CBOR decoder being stack-safe by construction; in Rust we make this
-    /// explicit.
+    /// CBOR decoder being stack-safe by construction; in Rust both the
+    /// decoder ([`Self::decode_with_depth`]) and destructor ([`Drop`]) are
+    /// implemented iteratively with explicit work stacks on the heap, so this
+    /// bound is purely a policy limit on accepted depth rather than a
+    /// stack-frame budget. 256 sits well above any realistic on-chain Plutus
+    /// data while keeping adversarial deeply-nested CBOR a bounded operation.
     pub const MAX_DECODE_DEPTH: usize = 256;
 
     /// Decode a `PlutusData` value from CBOR with an explicit recursion budget.
     ///
-    /// `depth_remaining` is decremented at each container boundary (List,
-    /// Map entries, Constr fields). When it would drop below zero the
-    /// decoder returns [`crate::error::LedgerError::CborNestingTooDeep`].
+    /// Implementation is iterative with an explicit work stack on the heap so
+    /// nesting up to [`Self::MAX_DECODE_DEPTH`] runs in constant native stack
+    /// regardless of the input shape; exceeding the depth bound returns
+    /// [`crate::error::LedgerError::CborNestingTooDeep`].
     fn decode_with_depth(
         dec: &mut Decoder<'_>,
-        depth_remaining: usize,
+        max_depth: usize,
     ) -> Result<Self, LedgerError> {
-        if depth_remaining == 0 {
-            return Err(LedgerError::CborNestingTooDeep {
-                max: Self::MAX_DECODE_DEPTH,
-            });
+        // Frame describes one in-progress container.  `remaining = None`
+        // marks an indefinite-length container terminated by a CBOR break
+        // marker; `Some(0)` is interpreted by the fold logic as "no more
+        // children expected".
+        enum ContainerKind {
+            List,
+            Constr(u64),
         }
-        let next_depth = depth_remaining - 1;
-        let major = dec.peek_major()?;
-        match major {
-            // Unsigned integer (major 0).
-            0 => {
-                let v = dec.unsigned()?;
-                Ok(Self::Integer(i128::from(v)))
+        enum Frame {
+            Seq {
+                kind: ContainerKind,
+                remaining: Option<u64>,
+                children: Vec<PlutusData>,
+            },
+            Map {
+                remaining: Option<u64>,
+                entries: Vec<(PlutusData, PlutusData)>,
+                pending_key: Option<PlutusData>,
+            },
+        }
+
+        // Folds a completed frame into a `PlutusData` value.
+        fn fold(frame: Frame) -> PlutusData {
+            match frame {
+                Frame::Seq {
+                    kind: ContainerKind::List,
+                    children,
+                    ..
+                } => PlutusData::List(children),
+                Frame::Seq {
+                    kind: ContainerKind::Constr(alt),
+                    children,
+                    ..
+                } => PlutusData::Constr(alt, children),
+                Frame::Map { entries, .. } => PlutusData::Map(entries),
             }
-            // Negative integer (major 1).
-            1 => {
-                let v = dec.negative()?;
-                // Decoder.negative() returns the magnitude n for CBOR -1-n.
-                Ok(Self::Integer(-1 - i128::from(v)))
-            }
-            // Byte string (major 2).
-            2 => {
-                let b = dec.bytes_owned()?;
-                Ok(Self::Bytes(b))
-            }
-            // Array (major 4) → List.
-            4 => {
-                let mut items = Vec::new();
-                match dec.array_begin()? {
-                    Some(len) => {
-                        items.reserve(len as usize);
-                        for _ in 0..len {
-                            items.push(Self::decode_with_depth(dec, next_depth)?);
+        }
+
+        // Returns `true` when a (definite-length) frame has consumed all
+        // expected children and is ready to fold.  Indefinite frames are
+        // never folded by this predicate; they fold when the break marker
+        // appears in the stream.
+        fn frame_complete(frame: &Frame) -> bool {
+            matches!(
+                frame,
+                Frame::Seq {
+                    remaining: Some(0),
+                    ..
+                } | Frame::Map {
+                    remaining: Some(0),
+                    pending_key: None,
+                    ..
+                }
+            )
+        }
+
+        let mut stack: Vec<Frame> = Vec::new();
+        // The most recently produced value waiting to be placed into the
+        // topmost frame (or returned as the final result).
+        let mut value: Option<PlutusData> = None;
+
+        loop {
+            // 1. If we have a pending value, place it into the topmost frame
+            //    or return it when the stack is empty.  Then collapse any
+            //    completed frames upward.
+            if let Some(v) = value.take() {
+                match stack.last_mut() {
+                    None => return Ok(v),
+                    Some(Frame::Seq {
+                        children, remaining, ..
+                    }) => {
+                        children.push(v);
+                        if let Some(r) = remaining {
+                            *r = r.saturating_sub(1);
                         }
                     }
-                    None => {
-                        while !dec.is_break() {
-                            items.push(Self::decode_with_depth(dec, next_depth)?);
+                    Some(Frame::Map {
+                        entries,
+                        remaining,
+                        pending_key,
+                    }) => {
+                        if let Some(k) = pending_key.take() {
+                            entries.push((k, v));
+                            if let Some(r) = remaining {
+                                *r = r.saturating_sub(1);
+                            }
+                        } else {
+                            *pending_key = Some(v);
                         }
-                        dec.consume_break()?;
                     }
                 }
-                Ok(Self::List(items))
-            }
-            // Map (major 5) → Map.
-            5 => {
-                let mut entries = Vec::new();
-                match dec.map_begin()? {
-                    Some(len) => {
-                        entries.reserve(len as usize);
-                        for _ in 0..len {
-                            let k = Self::decode_with_depth(dec, next_depth)?;
-                            let v = Self::decode_with_depth(dec, next_depth)?;
-                            entries.push((k, v));
-                        }
-                    }
-                    None => {
-                        while !dec.is_break() {
-                            let k = Self::decode_with_depth(dec, next_depth)?;
-                            let v = Self::decode_with_depth(dec, next_depth)?;
-                            entries.push((k, v));
-                        }
-                        dec.consume_break()?;
+                if let Some(top) = stack.last() {
+                    if frame_complete(top) {
+                        let frame = stack.pop().expect("non-empty");
+                        value = Some(fold(frame));
                     }
                 }
-                Ok(Self::Map(entries))
+                continue;
             }
-            // Tag (major 6) → constructor or big integer.
-            6 => {
-                let tag = dec.tag()?;
-                match tag {
-                    121..=127 => {
-                        let alt = tag - CONSTR_TAG_BASE;
-                        let mut fields = Vec::new();
-                        match dec.array_begin()? {
-                            Some(len) => {
-                                fields.reserve(len as usize);
-                                for _ in 0..len {
-                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
-                                }
-                            }
-                            None => {
-                                while !dec.is_break() {
-                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
-                                }
-                                dec.consume_break()?;
-                            }
-                        }
-                        Ok(Self::Constr(alt, fields))
+
+            // 2. If the topmost frame is indefinite-length and the next byte
+            //    is the CBOR break marker, fold that frame.
+            if let Some(top) = stack.last() {
+                let is_indef = matches!(
+                    top,
+                    Frame::Seq { remaining: None, .. } | Frame::Map { remaining: None, .. }
+                );
+                if is_indef && dec.is_break() {
+                    dec.consume_break()?;
+                    let frame = stack.pop().expect("non-empty");
+                    value = Some(fold(frame));
+                    continue;
+                }
+            }
+
+            // 3. Decode the next item from the stream.  Atoms become the
+            //    pending `value`; container headers push a frame.
+            let major = dec.peek_major()?;
+            match major {
+                0 => {
+                    let v = dec.unsigned()?;
+                    value = Some(Self::Integer(i128::from(v)));
+                }
+                1 => {
+                    let v = dec.negative()?;
+                    value = Some(Self::Integer(-1 - i128::from(v)));
+                }
+                2 => {
+                    let b = dec.bytes_owned()?;
+                    value = Some(Self::Bytes(b));
+                }
+                4 => {
+                    if stack.len() >= max_depth {
+                        return Err(LedgerError::CborNestingTooDeep {
+                            max: Self::MAX_DECODE_DEPTH,
+                        });
                     }
-                    1280..=1400 => {
-                        // Compact constructor tags for alternatives 7..127.
-                        let alt = (tag - 1280) + 7;
-                        let mut fields = Vec::new();
-                        match dec.array_begin()? {
-                            Some(len) => {
-                                fields.reserve(len as usize);
-                                for _ in 0..len {
-                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
-                                }
-                            }
-                            None => {
-                                while !dec.is_break() {
-                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
-                                }
-                                dec.consume_break()?;
-                            }
+                    let len = dec.array_begin()?;
+                    if matches!(len, Some(0)) {
+                        value = Some(Self::List(Vec::new()));
+                    } else {
+                        let mut children = Vec::new();
+                        if let Some(n) = len {
+                            children.reserve(n as usize);
                         }
-                        Ok(Self::Constr(alt, fields))
+                        stack.push(Frame::Seq {
+                            kind: ContainerKind::List,
+                            remaining: len,
+                            children,
+                        });
                     }
-                    CONSTR_TAG_GENERAL => {
-                        let outer_len = dec.array()?;
-                        if outer_len != 2 {
-                            return Err(LedgerError::CborInvalidLength {
-                                expected: 2,
-                                actual: outer_len as usize,
-                            });
-                        }
-                        let alt = dec.unsigned()?;
-                        let mut fields = Vec::new();
-                        match dec.array_begin()? {
-                            Some(len) => {
-                                fields.reserve(len as usize);
-                                for _ in 0..len {
-                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
-                                }
-                            }
-                            None => {
-                                while !dec.is_break() {
-                                    fields.push(Self::decode_with_depth(dec, next_depth)?);
-                                }
-                                dec.consume_break()?;
-                            }
-                        }
-                        Ok(Self::Constr(alt, fields))
+                }
+                5 => {
+                    if stack.len() >= max_depth {
+                        return Err(LedgerError::CborNestingTooDeep {
+                            max: Self::MAX_DECODE_DEPTH,
+                        });
                     }
-                    BIG_UINT_TAG => {
-                        // big_uint = #6.2(bounded_bytes)
-                        let raw = dec.bytes()?;
-                        let mut val: i128 = 0;
-                        for &b in raw {
-                            val = val.checked_shl(8).ok_or(LedgerError::CborTypeMismatch {
-                                expected: 0,
-                                actual: 0,
-                            })? | i128::from(b);
+                    let len = dec.map_begin()?;
+                    if matches!(len, Some(0)) {
+                        value = Some(Self::Map(Vec::new()));
+                    } else {
+                        let mut entries = Vec::new();
+                        if let Some(n) = len {
+                            entries.reserve(n as usize);
                         }
-                        Ok(Self::Integer(val))
+                        stack.push(Frame::Map {
+                            remaining: len,
+                            entries,
+                            pending_key: None,
+                        });
                     }
-                    BIG_NINT_TAG => {
-                        // big_nint = #6.3(bounded_bytes) — value is -(1+n)
-                        let raw = dec.bytes()?;
-                        let mut magnitude: u128 = 0;
-                        for &b in raw {
-                            magnitude =
-                                magnitude
-                                    .checked_shl(8)
-                                    .ok_or(LedgerError::CborTypeMismatch {
+                }
+                6 => {
+                    let tag = dec.tag()?;
+                    let alt = match tag {
+                        121..=127 => tag - CONSTR_TAG_BASE,
+                        1280..=1400 => (tag - 1280) + 7,
+                        CONSTR_TAG_GENERAL => {
+                            let outer_len = dec.array()?;
+                            if outer_len != 2 {
+                                return Err(LedgerError::CborInvalidLength {
+                                    expected: 2,
+                                    actual: outer_len as usize,
+                                });
+                            }
+                            dec.unsigned()?
+                        }
+                        BIG_UINT_TAG => {
+                            // big_uint = #6.2(bounded_bytes)
+                            let raw = dec.bytes()?;
+                            let mut val: i128 = 0;
+                            for &b in raw {
+                                val = val.checked_shl(8).ok_or(LedgerError::CborTypeMismatch {
+                                    expected: 0,
+                                    actual: 0,
+                                })? | i128::from(b);
+                            }
+                            value = Some(Self::Integer(val));
+                            continue;
+                        }
+                        BIG_NINT_TAG => {
+                            // big_nint = #6.3(bounded_bytes) — value is -(1+n)
+                            let raw = dec.bytes()?;
+                            let mut magnitude: u128 = 0;
+                            for &b in raw {
+                                magnitude = magnitude.checked_shl(8).ok_or(
+                                    LedgerError::CborTypeMismatch {
                                         expected: 0,
                                         actual: 0,
-                                    })?
-                                    | u128::from(b);
+                                    },
+                                )? | u128::from(b);
+                            }
+                            value = Some(Self::Integer(-1 - magnitude as i128));
+                            continue;
                         }
-                        let val = -1 - magnitude as i128;
-                        Ok(Self::Integer(val))
+                        _ => {
+                            return Err(LedgerError::CborTypeMismatch {
+                                expected: 121,
+                                actual: tag as u8,
+                            });
+                        }
+                    };
+                    if stack.len() >= max_depth {
+                        return Err(LedgerError::CborNestingTooDeep {
+                            max: Self::MAX_DECODE_DEPTH,
+                        });
                     }
-                    _ => Err(LedgerError::CborTypeMismatch {
-                        expected: 121,
-                        actual: tag as u8,
-                    }),
+                    let len = dec.array_begin()?;
+                    if matches!(len, Some(0)) {
+                        value = Some(Self::Constr(alt, Vec::new()));
+                    } else {
+                        let mut children = Vec::new();
+                        if let Some(n) = len {
+                            children.reserve(n as usize);
+                        }
+                        stack.push(Frame::Seq {
+                            kind: ContainerKind::Constr(alt),
+                            remaining: len,
+                            children,
+                        });
+                    }
+                }
+                _ => {
+                    return Err(LedgerError::CborTypeMismatch {
+                        expected: 0,
+                        actual: major,
+                    });
                 }
             }
-            _ => Err(LedgerError::CborTypeMismatch {
-                expected: 0,
-                actual: major,
-            }),
         }
     }
 }
@@ -720,6 +818,30 @@ mod tests {
             }
             other => panic!("expected CborNestingTooDeep, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn encode_deeply_nested_list_does_not_overflow() {
+        // Build a list nested `MAX_DECODE_DEPTH - 1` levels deep from the
+        // inside out (no recursion in the construction step), then encode
+        // it.  The iterative encoder must produce the canonical CBOR byte
+        // sequence `[0x81] * (MAX_DEPTH - 1)` followed by a `0x00` leaf and
+        // must not overflow the runtime stack.
+        let depth = PlutusData::MAX_DECODE_DEPTH - 1;
+        let mut value = PlutusData::Integer(0);
+        for _ in 0..depth {
+            value = PlutusData::List(vec![value]);
+        }
+        let bytes = value.to_cbor_bytes();
+        let mut expected = vec![0x81_u8; depth];
+        expected.push(0x00);
+        assert_eq!(bytes, expected);
+
+        // Re-decoding must yield the original value (round-trip parity with
+        // the iterative decoder).
+        let decoded =
+            PlutusData::from_cbor_bytes(&bytes).expect("re-decode of iteratively-encoded value");
+        assert_eq!(decoded, value);
     }
 
     #[test]

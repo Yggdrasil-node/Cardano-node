@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 use yggdrasil_ledger::{
@@ -297,6 +297,14 @@ pub struct Mempool {
     ///
     /// Reference: `Ouroboros.Consensus.Mempool.Impl.Common` — conflict check.
     claimed_inputs: HashMap<ShelleyTxIn, TxId>,
+    /// Membership index of currently-resident transaction ids.
+    ///
+    /// Maintained alongside `entries` so [`Self::insert`] / [`Self::contains`]
+    /// /  [`Self::remove_by_id`] can short-circuit on duplicate or absent
+    /// ids without paying the O(n) scan a `entries.iter().any(...)` would
+    /// otherwise cost on each call. Stable across `entries` re-sorts because
+    /// it stores no positional information.
+    tx_ids: HashSet<TxId>,
 }
 
 impl Mempool {
@@ -310,6 +318,7 @@ impl Mempool {
             current_bytes: 0,
             next_idx: 0,
             claimed_inputs: HashMap::new(),
+            tx_ids: HashSet::new(),
         }
     }
 
@@ -317,7 +326,8 @@ impl Mempool {
     ///
     /// Keeps the queue ordered by descending fee.
     pub fn insert(&mut self, entry: MempoolEntry) -> Result<(), MempoolError> {
-        if self.entries.iter().any(|e| e.entry.tx_id == entry.tx_id) {
+        // Duplicate check via O(1) membership index.
+        if self.tx_ids.contains(&entry.tx_id) {
             return Err(MempoolError::Duplicate(entry.tx_id));
         }
         // Check for UTxO double-spend conflicts: reject if any input is already
@@ -340,6 +350,7 @@ impl Mempool {
         for input in &entry.inputs {
             self.claimed_inputs.insert(input.clone(), tx_id);
         }
+        self.tx_ids.insert(tx_id);
         self.entries.push(IndexedMempoolEntry {
             idx: self.next_idx,
             entry,
@@ -360,27 +371,37 @@ impl Mempool {
             for input in &entry.entry.inputs {
                 self.claimed_inputs.remove(input);
             }
+            self.tx_ids.remove(&entry.entry.tx_id);
             Some(entry.entry)
         }
     }
 
     /// Remove a transaction by its identifier. Returns `true` if found.
     pub fn remove_by_id(&mut self, tx_id: &TxId) -> bool {
+        // Short-circuit on absence via the O(1) membership index so an
+        // unknown id does not cost an O(n) scan.
+        if !self.tx_ids.contains(tx_id) {
+            return false;
+        }
         if let Some(pos) = self.entries.iter().position(|e| &e.entry.tx_id == tx_id) {
             let entry = self.entries.remove(pos);
             self.current_bytes -= entry.entry.size_bytes;
             for input in &entry.entry.inputs {
                 self.claimed_inputs.remove(input);
             }
+            self.tx_ids.remove(tx_id);
             true
         } else {
+            // Index says present but entries scan disagrees — fix up the
+            // index to keep invariants intact and report not found.
+            self.tx_ids.remove(tx_id);
             false
         }
     }
 
     /// Check whether a transaction with the given id exists in the mempool.
     pub fn contains(&self, tx_id: &TxId) -> bool {
-        self.entries.iter().any(|e| &e.entry.tx_id == tx_id)
+        self.tx_ids.contains(tx_id)
     }
 
     /// Number of transactions currently in the mempool.
@@ -429,6 +450,7 @@ impl Mempool {
                 for input in &entry.entry.inputs {
                     self.claimed_inputs.remove(input);
                 }
+                self.tx_ids.remove(&entry.entry.tx_id);
                 removed_count += 1;
             } else {
                 i += 1;
@@ -471,6 +493,7 @@ impl Mempool {
                 for input in &removed.entry.inputs {
                     self.claimed_inputs.remove(input);
                 }
+                self.tx_ids.remove(&removed.entry.tx_id);
                 removed_count += 1;
             } else {
                 i += 1;
@@ -556,6 +579,7 @@ impl Mempool {
                 for input in &entry.entry.inputs {
                     self.claimed_inputs.remove(input);
                 }
+                self.tx_ids.remove(&entry.entry.tx_id);
                 removed_count += 1;
             } else {
                 i += 1;
@@ -600,6 +624,7 @@ impl Mempool {
                 for input in &removed.entry.inputs {
                     self.claimed_inputs.remove(input);
                 }
+                self.tx_ids.remove(&removed.entry.tx_id);
                 removed_count += 1;
             } else {
                 i += 1;
@@ -641,6 +666,7 @@ impl Mempool {
                 for input in &removed.entry.inputs {
                     self.claimed_inputs.remove(input);
                 }
+                self.tx_ids.remove(&removed.entry.tx_id);
                 removed_count += 1;
                 continue;
             }
@@ -665,6 +691,7 @@ impl Mempool {
                 for input in &removed.entry.inputs {
                     self.claimed_inputs.remove(input);
                 }
+                self.tx_ids.remove(&removed.entry.tx_id);
                 removed_count += 1;
             } else {
                 i += 1;
@@ -706,6 +733,7 @@ impl Mempool {
                 for input in &removed.entry.inputs {
                     self.claimed_inputs.remove(input);
                 }
+                self.tx_ids.remove(&removed.entry.tx_id);
                 removed_count += 1;
             }
         }
@@ -1016,6 +1044,57 @@ mod tests {
             snapshot.mempool_lookup_tx_by_id(&second.tx_id),
             Some(&second)
         );
+    }
+
+    #[test]
+    fn membership_index_stays_in_sync_across_full_lifecycle() {
+        // Locks in the invariant that `Mempool::tx_ids` mirrors the
+        // resident `entries` set after every mutation path.  If a future
+        // mutator forgets to update `tx_ids`, `contains` would stop
+        // matching the entry list and `insert` would either reject a
+        // re-insertion of an evicted tx or silently accept a duplicate of
+        // a still-resident one.
+        let mut mempool = Mempool::with_capacity(1024);
+        let a = sample_entry(1, 10);
+        let b = sample_entry(2, 20);
+        let c = sample_entry(3, 30);
+
+        // Insert: index gains all three.
+        mempool.insert(a.clone()).expect("insert a");
+        mempool.insert(b.clone()).expect("insert b");
+        mempool.insert(c.clone()).expect("insert c");
+        assert!(mempool.contains(&a.tx_id));
+        assert!(mempool.contains(&b.tx_id));
+        assert!(mempool.contains(&c.tx_id));
+
+        // Duplicate is rejected (index hit, no entries scan).
+        assert!(matches!(
+            mempool.insert(a.clone()),
+            Err(super::MempoolError::Duplicate(id)) if id == a.tx_id
+        ));
+
+        // pop_best removes the highest-fee entry and clears the index.
+        let popped = mempool.pop_best().expect("pop");
+        assert_eq!(popped.tx_id, c.tx_id);
+        assert!(!mempool.contains(&c.tx_id));
+        assert!(mempool.contains(&a.tx_id));
+        assert!(mempool.contains(&b.tx_id));
+
+        // remove_by_id clears the index for an existing entry and is a
+        // no-op (with O(1) early return) for an unknown one.
+        assert!(mempool.remove_by_id(&a.tx_id));
+        assert!(!mempool.contains(&a.tx_id));
+        assert!(!mempool.remove_by_id(&a.tx_id));
+
+        // remove_confirmed and purge_expired both also clear the index.
+        assert_eq!(mempool.remove_confirmed(&[b.tx_id]), 1);
+        assert!(!mempool.contains(&b.tx_id));
+        assert!(mempool.is_empty());
+        // Re-insert + purge_expired path.
+        mempool.insert(a.clone()).expect("re-insert a");
+        assert!(mempool.contains(&a.tx_id));
+        assert_eq!(mempool.purge_expired(SlotNo(a.ttl.0 + 1)), 1);
+        assert!(!mempool.contains(&a.tx_id));
     }
 
     #[test]

@@ -2610,11 +2610,22 @@ pub async fn serve_txsubmission_request_from_mempool(
             }
         }
         TxServerRequest::RequestTxs { txids } => {
-            let txs = txids
+            // Build an index of the requested ids in one pass over the
+            // mempool (O(n)) instead of doing a linear scan per requested
+            // id (O(n*m)). The reply preserves the requested order; missing
+            // ids are silently skipped, matching upstream
+            // `Ouroboros.Network.TxSubmission.Outbound.txSubmissionOutbound`.
+            use std::collections::{HashMap, HashSet};
+            let requested: HashSet<TxId> = txids.iter().copied().collect();
+            let by_id: HashMap<TxId, &Vec<u8>> = mempool
+                .iter()
+                .filter(|entry| requested.contains(&entry.tx_id))
+                .map(|entry| (entry.tx_id, &entry.raw_tx))
+                .collect();
+            let txs: Vec<Vec<u8>> = txids
                 .into_iter()
-                .filter_map(|txid| mempool.iter().find(|entry| entry.tx_id == txid))
-                .map(|entry| entry.raw_tx.clone())
-                .collect::<Vec<_>>();
+                .filter_map(|txid| by_id.get(&txid).map(|raw| (*raw).clone()))
+                .collect();
             client.reply_txs(txs).await?;
             Ok(true)
         }

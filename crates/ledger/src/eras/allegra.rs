@@ -287,36 +287,65 @@ pub enum NativeScript {
     InvalidHereafter(u64),
 }
 
+impl NativeScript {
+    /// Maximum nesting depth permitted when decoding a `NativeScript` from
+    /// CBOR.
+    ///
+    /// Realistic on-chain native scripts rarely nest beyond a handful of
+    /// levels (most are flat ScriptPubkey or one-level `n`-of-`k`
+    /// multisigs). The bound is set well above any plausible legitimate
+    /// payload while still preventing a malicious or malformed witness from
+    /// blowing the runtime stack via pathological recursion. Exceeding it
+    /// returns [`crate::error::LedgerError::CborNestingTooDeep`] cleanly
+    /// instead of a process crash.
+    ///
+    /// Reference: defensive bound. Upstream Haskell relies on its lazy CPS
+    /// CBOR decoder being stack-safe by construction; the Rust decoder is
+    /// implemented iteratively with an explicit work stack to achieve the
+    /// same property.
+    pub const MAX_DECODE_DEPTH: usize = 256;
+}
+
 impl CborEncode for NativeScript {
+    /// Iterative encoder mirroring the iterative
+    /// [`<Self as CborDecode>::decode_cbor`] decoder.
+    ///
+    /// Walks `self` in depth-first, in-order traversal using an explicit
+    /// heap-allocated work stack, producing the exact same byte sequence as
+    /// the previous recursive pre-order encoder while running in constant
+    /// native stack regardless of the input depth.
     fn encode_cbor(&self, enc: &mut Encoder) {
-        match self {
-            NativeScript::ScriptPubkey(keyhash) => {
-                enc.array(2).unsigned(0).bytes(keyhash);
-            }
-            NativeScript::ScriptAll(scripts) => {
-                enc.array(2).unsigned(1).array(scripts.len() as u64);
-                for s in scripts {
-                    s.encode_cbor(enc);
+        let mut stack: Vec<&NativeScript> = vec![self];
+        while let Some(node) = stack.pop() {
+            match node {
+                NativeScript::ScriptPubkey(keyhash) => {
+                    enc.array(2).unsigned(0).bytes(keyhash);
                 }
-            }
-            NativeScript::ScriptAny(scripts) => {
-                enc.array(2).unsigned(2).array(scripts.len() as u64);
-                for s in scripts {
-                    s.encode_cbor(enc);
+                NativeScript::ScriptAll(scripts) => {
+                    enc.array(2).unsigned(1).array(scripts.len() as u64);
+                    for s in scripts.iter().rev() {
+                        stack.push(s);
+                    }
                 }
-            }
-            NativeScript::ScriptNOfK(n, scripts) => {
-                enc.array(3).unsigned(3).integer(*n);
-                enc.array(scripts.len() as u64);
-                for s in scripts {
-                    s.encode_cbor(enc);
+                NativeScript::ScriptAny(scripts) => {
+                    enc.array(2).unsigned(2).array(scripts.len() as u64);
+                    for s in scripts.iter().rev() {
+                        stack.push(s);
+                    }
                 }
-            }
-            NativeScript::InvalidBefore(slot) => {
-                enc.array(2).unsigned(4).unsigned(*slot);
-            }
-            NativeScript::InvalidHereafter(slot) => {
-                enc.array(2).unsigned(5).unsigned(*slot);
+                NativeScript::ScriptNOfK(n, scripts) => {
+                    enc.array(3).unsigned(3).integer(*n);
+                    enc.array(scripts.len() as u64);
+                    for s in scripts.iter().rev() {
+                        stack.push(s);
+                    }
+                }
+                NativeScript::InvalidBefore(slot) => {
+                    enc.array(2).unsigned(4).unsigned(*slot);
+                }
+                NativeScript::InvalidHereafter(slot) => {
+                    enc.array(2).unsigned(5).unsigned(*slot);
+                }
             }
         }
     }
@@ -324,92 +353,157 @@ impl CborEncode for NativeScript {
 
 impl CborDecode for NativeScript {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
-        let arr_len = dec.array()?;
-        let tag = dec.unsigned()?;
+        // Iterative decoder.  Each in-progress combinator (ScriptAll /
+        // ScriptAny / ScriptNOfK) sits on the work stack as a `Frame`; leaf
+        // variants produce a value that is then placed into the topmost
+        // frame and the frame is folded once its expected child count is
+        // reached.  Nesting beyond [`Self::MAX_DECODE_DEPTH`] returns
+        // [`LedgerError::CborNestingTooDeep`] cleanly instead of allowing
+        // adversarial CBOR to overflow the runtime stack.
+        enum Kind {
+            ScriptAll,
+            ScriptAny,
+            ScriptNOfK(i64),
+        }
+        struct Frame {
+            kind: Kind,
+            remaining: u64,
+            children: Vec<NativeScript>,
+        }
 
-        match tag {
-            0 => {
-                if arr_len != 2 {
-                    return Err(LedgerError::CborInvalidLength {
-                        expected: 2,
-                        actual: arr_len as usize,
+        fn fold(frame: Frame) -> NativeScript {
+            match frame.kind {
+                Kind::ScriptAll => NativeScript::ScriptAll(frame.children),
+                Kind::ScriptAny => NativeScript::ScriptAny(frame.children),
+                Kind::ScriptNOfK(n) => NativeScript::ScriptNOfK(n, frame.children),
+            }
+        }
+
+        let max_depth = Self::MAX_DECODE_DEPTH;
+        let mut stack: Vec<Frame> = Vec::new();
+        let mut value: Option<NativeScript> = None;
+
+        loop {
+            // 1. Place pending value into top frame; fold completed frames.
+            if let Some(v) = value.take() {
+                match stack.last_mut() {
+                    None => return Ok(v),
+                    Some(top) => {
+                        top.children.push(v);
+                        top.remaining = top.remaining.saturating_sub(1);
+                    }
+                }
+                if let Some(top) = stack.last() {
+                    if top.remaining == 0 {
+                        let frame = stack.pop().expect("non-empty");
+                        value = Some(fold(frame));
+                    }
+                }
+                continue;
+            }
+
+            // 2. Decode next item.
+            let arr_len = dec.array()?;
+            let tag = dec.unsigned()?;
+            match tag {
+                0 => {
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: arr_len as usize,
+                        });
+                    }
+                    let raw = dec.bytes()?;
+                    let keyhash: [u8; 28] =
+                        raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
+                            expected: 28,
+                            actual: raw.len(),
+                        })?;
+                    value = Some(NativeScript::ScriptPubkey(keyhash));
+                }
+                1 | 2 => {
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: arr_len as usize,
+                        });
+                    }
+                    if stack.len() >= max_depth {
+                        return Err(LedgerError::CborNestingTooDeep {
+                            max: Self::MAX_DECODE_DEPTH,
+                        });
+                    }
+                    let count = dec.array()?;
+                    let kind = if tag == 1 {
+                        Kind::ScriptAll
+                    } else {
+                        Kind::ScriptAny
+                    };
+                    if count == 0 {
+                        value = Some(fold(Frame {
+                            kind,
+                            remaining: 0,
+                            children: Vec::new(),
+                        }));
+                    } else {
+                        stack.push(Frame {
+                            kind,
+                            remaining: count,
+                            children: Vec::with_capacity(count as usize),
+                        });
+                    }
+                }
+                3 => {
+                    if arr_len != 3 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 3,
+                            actual: arr_len as usize,
+                        });
+                    }
+                    let n = dec.integer()?;
+                    if stack.len() >= max_depth {
+                        return Err(LedgerError::CborNestingTooDeep {
+                            max: Self::MAX_DECODE_DEPTH,
+                        });
+                    }
+                    let count = dec.array()?;
+                    if count == 0 {
+                        value = Some(NativeScript::ScriptNOfK(n, Vec::new()));
+                    } else {
+                        stack.push(Frame {
+                            kind: Kind::ScriptNOfK(n),
+                            remaining: count,
+                            children: Vec::with_capacity(count as usize),
+                        });
+                    }
+                }
+                4 => {
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: arr_len as usize,
+                        });
+                    }
+                    let slot = dec.unsigned()?;
+                    value = Some(NativeScript::InvalidBefore(slot));
+                }
+                5 => {
+                    if arr_len != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: arr_len as usize,
+                        });
+                    }
+                    let slot = dec.unsigned()?;
+                    value = Some(NativeScript::InvalidHereafter(slot));
+                }
+                other => {
+                    return Err(LedgerError::CborTypeMismatch {
+                        expected: 0, // script tag
+                        actual: other as u8,
                     });
                 }
-                let raw = dec.bytes()?;
-                let keyhash: [u8; 28] =
-                    raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
-                        expected: 28,
-                        actual: raw.len(),
-                    })?;
-                Ok(NativeScript::ScriptPubkey(keyhash))
             }
-            1 => {
-                if arr_len != 2 {
-                    return Err(LedgerError::CborInvalidLength {
-                        expected: 2,
-                        actual: arr_len as usize,
-                    });
-                }
-                let count = dec.array()?;
-                let mut scripts = Vec::with_capacity(count as usize);
-                for _ in 0..count {
-                    scripts.push(NativeScript::decode_cbor(dec)?);
-                }
-                Ok(NativeScript::ScriptAll(scripts))
-            }
-            2 => {
-                if arr_len != 2 {
-                    return Err(LedgerError::CborInvalidLength {
-                        expected: 2,
-                        actual: arr_len as usize,
-                    });
-                }
-                let count = dec.array()?;
-                let mut scripts = Vec::with_capacity(count as usize);
-                for _ in 0..count {
-                    scripts.push(NativeScript::decode_cbor(dec)?);
-                }
-                Ok(NativeScript::ScriptAny(scripts))
-            }
-            3 => {
-                if arr_len != 3 {
-                    return Err(LedgerError::CborInvalidLength {
-                        expected: 3,
-                        actual: arr_len as usize,
-                    });
-                }
-                let n = dec.integer()?;
-                let count = dec.array()?;
-                let mut scripts = Vec::with_capacity(count as usize);
-                for _ in 0..count {
-                    scripts.push(NativeScript::decode_cbor(dec)?);
-                }
-                Ok(NativeScript::ScriptNOfK(n, scripts))
-            }
-            4 => {
-                if arr_len != 2 {
-                    return Err(LedgerError::CborInvalidLength {
-                        expected: 2,
-                        actual: arr_len as usize,
-                    });
-                }
-                let slot = dec.unsigned()?;
-                Ok(NativeScript::InvalidBefore(slot))
-            }
-            5 => {
-                if arr_len != 2 {
-                    return Err(LedgerError::CborInvalidLength {
-                        expected: 2,
-                        actual: arr_len as usize,
-                    });
-                }
-                let slot = dec.unsigned()?;
-                Ok(NativeScript::InvalidHereafter(slot))
-            }
-            other => Err(LedgerError::CborTypeMismatch {
-                expected: 0, // script tag
-                actual: other as u8,
-            }),
         }
     }
 }
@@ -459,6 +553,57 @@ mod tests {
         ]);
         let decoded = NativeScript::from_cbor_bytes(&s.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, s);
+    }
+
+    #[test]
+    fn deeply_nested_script_all_round_trips_iteratively() {
+        // Build a `ScriptAll(vec![ScriptAll(vec![ScriptAll(...)])])` value
+        // nested `MAX_DECODE_DEPTH - 1` levels deep from the inside out.
+        // The leaf is a `ScriptPubkey` so the structural depth equals the
+        // number of nested combinators.  Encode + decode + evaluate must
+        // all run in constant native stack.
+        let depth = NativeScript::MAX_DECODE_DEPTH - 1;
+        let mut script = NativeScript::ScriptPubkey([0xAA; 28]);
+        for _ in 0..depth {
+            script = NativeScript::ScriptAll(vec![script]);
+        }
+        let bytes = script.to_cbor_bytes();
+        let decoded = NativeScript::from_cbor_bytes(&bytes)
+            .expect("iterative decoder accepts MAX_DECODE_DEPTH - 1 nesting");
+        assert_eq!(decoded, script);
+
+        // Evaluator must not overflow either; with the leaf signature
+        // present the entire all-chain is satisfied.
+        use std::collections::HashSet;
+        let set: HashSet<[u8; 28]> = std::iter::once([0xAA; 28]).collect();
+        let ctx = crate::native_script::NativeScriptContext {
+            vkey_hashes: &set,
+            current_slot: 0,
+        };
+        assert!(crate::native_script::evaluate_native_script(&decoded, &ctx));
+    }
+
+    #[test]
+    fn pathologically_deep_native_script_rejected_without_overflow() {
+        // CBOR bytes representing `ScriptAll(vec![ScriptAll(vec![ ... ])])`
+        // nested `MAX_DECODE_DEPTH + 16` deep, terminated by an empty
+        // ScriptAll.  Each level is the 9-byte sequence
+        //   0x82 0x01 0x81 (== `[1, [`...`]]` array(2) + tag 1 + array(1))
+        // and the innermost element is `0x82 0x01 0x80` (== empty
+        // ScriptAll).  The decoder must return CborNestingTooDeep cleanly.
+        let outer_count = NativeScript::MAX_DECODE_DEPTH + 16;
+        let mut bytes = Vec::with_capacity(outer_count * 3 + 3);
+        for _ in 0..outer_count {
+            bytes.extend_from_slice(&[0x82, 0x01, 0x81]); // [1, [
+        }
+        bytes.extend_from_slice(&[0x82, 0x01, 0x80]); // innermost empty ScriptAll
+        let res = NativeScript::from_cbor_bytes(&bytes);
+        match res {
+            Err(crate::error::LedgerError::CborNestingTooDeep { max }) => {
+                assert_eq!(max, NativeScript::MAX_DECODE_DEPTH);
+            }
+            other => panic!("expected CborNestingTooDeep, got {other:?}"),
+        }
     }
 
     #[test]

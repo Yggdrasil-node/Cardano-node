@@ -1984,6 +1984,13 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
             None
         };
 
+    // Shared TxSubmission inbound dedup state; threaded into both the inbound
+    // accept loop (populated when peers advertise TxIds) and the reconnecting
+    // sync request (consulted during mempool eviction to avoid re-fetching
+    // transactions already confirmed on the applied chain).  Cloning is cheap
+    // (Arc<RwLock<_>>).
+    let inbound_tx_state = SharedTxState::default();
+
     let inbound_task = if let Some(listen_addr) = inbound_listen_addr {
         let listener = PeerListener::bind(
             listen_addr,
@@ -2019,7 +2026,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         ));
         let inbound_connection_manager = Arc::clone(&shared_connection_manager);
         let inbound_governor = Arc::clone(&shared_inbound_governor);
-        let inbound_tx_state = SharedTxState::default();
+        let inbound_tx_state = inbound_tx_state.clone();
         let mut inbound_shutdown = shutdown_rx.clone();
         let inbound_tracer = tracer.clone();
         let inbound_metrics = metrics.clone();

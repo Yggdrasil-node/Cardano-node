@@ -31,6 +31,26 @@ use crate::types::{Constant, DefaultFun, Program, Term, Type};
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Maximum nesting depth permitted when decoding a UPLC `Term` or its
+/// constituent `Type` / `Constant` values from Flat-encoded bytes.
+///
+/// Untrusted Plutus scripts arrive in witness sets and are decoded directly
+/// from on-chain bytes; without a depth bound a malicious script with
+/// deeply nested `Apply` / `LamAbs` / `Constr` could overflow the runtime
+/// stack via the recursive [`FlatDecoder::decode_term`] path. Real on-chain
+/// scripts rarely nest beyond a few dozen levels even after extensive
+/// macro expansion; 128 sits well above any realistic legitimate payload
+/// while keeping per-frame stack usage of the recursive decoder (which
+/// holds local `Box<Term>` allocations and large match scaffolding) safely
+/// inside the default 2 MB Rust thread stack in debug builds. Exceeding
+/// the bound returns [`MachineError::FlatDecodeError`] cleanly instead of
+/// a process crash.
+///
+/// Reference: defensive bound. Upstream Haskell relies on its lazy `Flat`
+/// decoder being stack-safe by construction; the Rust port makes the limit
+/// explicit.
+pub const MAX_TERM_DECODE_DEPTH: usize = 128;
+
 /// Decode a UPLC program from raw Flat bytes.
 pub fn decode_flat_program(bytes: &[u8]) -> Result<Program, MachineError> {
     let mut dec = FlatDecoder::new(bytes);
@@ -269,6 +289,31 @@ impl<'a> FlatDecoder<'a> {
     }
 
     fn decode_term(&mut self) -> Result<Term, MachineError> {
+        self.decode_term_with_depth(MAX_TERM_DECODE_DEPTH)
+    }
+
+    /// Recursive flat decoder for [`Term`] with an explicit depth budget.
+    ///
+    /// Untrusted Plutus scripts arrive in witness sets and are decoded
+    /// directly from on-chain bytes; without a depth bound a malicious
+    /// script with deeply nested `Apply` / `LamAbs` / `Constr` could
+    /// overflow the runtime stack. The bound is enforced on every recursive
+    /// entry; exceeding it returns
+    /// [`MachineError::FlatDecodeError`]. Per-frame size of `decode_term`
+    /// is small (no `Vec` accumulator on the stack), so the chosen
+    /// [`MAX_TERM_DECODE_DEPTH`] of 256 fits comfortably inside the default
+    /// 2 MB Rust thread stack in debug builds.
+    ///
+    /// Reference: defensive bound. Upstream Haskell relies on its lazy
+    /// `Flat` decoder being stack-safe by construction; the Rust port
+    /// makes the limit explicit.
+    fn decode_term_with_depth(&mut self, depth_remaining: usize) -> Result<Term, MachineError> {
+        if depth_remaining == 0 {
+            return Err(MachineError::FlatDecodeError(format!(
+                "term nesting exceeded depth budget {MAX_TERM_DECODE_DEPTH}"
+            )));
+        }
+        let next = depth_remaining - 1;
         let tag = self.read_bits8(4)?;
         match tag {
             0 => {
@@ -278,29 +323,29 @@ impl<'a> FlatDecoder<'a> {
             }
             1 => {
                 // Delay
-                let body = self.decode_term()?;
+                let body = self.decode_term_with_depth(next)?;
                 Ok(Term::Delay(Box::new(body)))
             }
             2 => {
                 // LamAbs
-                let body = self.decode_term()?;
+                let body = self.decode_term_with_depth(next)?;
                 Ok(Term::LamAbs(Box::new(body)))
             }
             3 => {
                 // Apply
-                let fun = self.decode_term()?;
-                let arg = self.decode_term()?;
+                let fun = self.decode_term_with_depth(next)?;
+                let arg = self.decode_term_with_depth(next)?;
                 Ok(Term::Apply(Box::new(fun), Box::new(arg)))
             }
             4 => {
                 // Constant — type list then value.
-                let ty = self.decode_type_list()?;
-                let constant = self.decode_constant(&ty)?;
+                let ty = self.decode_type_list_with_depth(next)?;
+                let constant = self.decode_constant_with_depth(&ty, next)?;
                 Ok(Term::Constant(constant))
             }
             5 => {
                 // Force
-                let body = self.decode_term()?;
+                let body = self.decode_term_with_depth(next)?;
                 Ok(Term::Force(Box::new(body)))
             }
             6 => {
@@ -316,13 +361,13 @@ impl<'a> FlatDecoder<'a> {
             8 => {
                 // Constr (UPLC 1.1.0+)
                 let tag_val = self.read_natural()?;
-                let fields = self.read_list(|d| d.decode_term())?;
+                let fields = self.read_list(|d| d.decode_term_with_depth(next))?;
                 Ok(Term::Constr(tag_val, fields))
             }
             9 => {
                 // Case (UPLC 1.1.0+)
-                let scrutinee = self.decode_term()?;
-                let branches = self.read_list(|d| d.decode_term())?;
+                let scrutinee = self.decode_term_with_depth(next)?;
+                let branches = self.read_list(|d| d.decode_term_with_depth(next))?;
                 Ok(Term::Case(Box::new(scrutinee), branches))
             }
             _ => Err(MachineError::FlatDecodeError(format!(
@@ -331,13 +376,17 @@ impl<'a> FlatDecoder<'a> {
         }
     }
 
-    /// Decode a type-tag list (used for constant encoding).
+    /// Decode a type-tag list (used for constant encoding) with an explicit
+    /// nesting depth budget.
     ///
     /// The type is encoded as a list of tags using the 1-bit continuation
     /// scheme, with recursive structure for parameterized types.
-    fn decode_type_list(&mut self) -> Result<Type, MachineError> {
+    fn decode_type_list_with_depth(
+        &mut self,
+        depth_remaining: usize,
+    ) -> Result<Type, MachineError> {
         let tag = self.decode_single_type_tag()?;
-        self.build_type(tag)
+        self.build_type_with_depth(tag, depth_remaining)
     }
 
     fn decode_single_type_tag(&mut self) -> Result<u8, MachineError> {
@@ -370,7 +419,17 @@ impl<'a> FlatDecoder<'a> {
         Ok(tag)
     }
 
-    fn build_type(&mut self, first_tag: u8) -> Result<Type, MachineError> {
+    fn build_type_with_depth(
+        &mut self,
+        first_tag: u8,
+        depth_remaining: usize,
+    ) -> Result<Type, MachineError> {
+        if depth_remaining == 0 {
+            return Err(MachineError::FlatDecodeError(format!(
+                "type nesting exceeded depth budget {MAX_TERM_DECODE_DEPTH}"
+            )));
+        }
+        let next = depth_remaining - 1;
         match first_tag {
             0 => Ok(Type::Integer),
             1 => Ok(Type::ByteString),
@@ -385,7 +444,7 @@ impl<'a> FlatDecoder<'a> {
                     ));
                 }
                 let elem_tag = self.read_bits8(4)?;
-                let elem = self.build_type(elem_tag)?;
+                let elem = self.build_type_with_depth(elem_tag, next)?;
                 Ok(Type::List(Box::new(elem)))
             }
             6 => {
@@ -396,14 +455,14 @@ impl<'a> FlatDecoder<'a> {
                     ));
                 }
                 let key_tag = self.read_bits8(4)?;
-                let key = self.build_type(key_tag)?;
+                let key = self.build_type_with_depth(key_tag, next)?;
                 if !self.read_bit()? {
                     return Err(MachineError::FlatDecodeError(
                         "expected second type for pair".into(),
                     ));
                 }
                 let val_tag = self.read_bits8(4)?;
-                let val = self.build_type(val_tag)?;
+                let val = self.build_type_with_depth(val_tag, next)?;
                 Ok(Type::Pair(Box::new(key), Box::new(val)))
             }
             7 => {
@@ -416,7 +475,7 @@ impl<'a> FlatDecoder<'a> {
                     ));
                 }
                 let inner_tag = self.read_bits8(4)?;
-                self.build_applied_type(inner_tag)
+                self.build_applied_type_with_depth(inner_tag, next)
             }
             8 => Ok(Type::Data),
             9 => Ok(Type::Bls12_381_G1_Element),
@@ -429,7 +488,17 @@ impl<'a> FlatDecoder<'a> {
     }
 
     /// Handle type application: `apply(ctor, args...)`.
-    fn build_applied_type(&mut self, ctor_tag: u8) -> Result<Type, MachineError> {
+    fn build_applied_type_with_depth(
+        &mut self,
+        ctor_tag: u8,
+        depth_remaining: usize,
+    ) -> Result<Type, MachineError> {
+        if depth_remaining == 0 {
+            return Err(MachineError::FlatDecodeError(format!(
+                "applied-type nesting exceeded depth budget {MAX_TERM_DECODE_DEPTH}"
+            )));
+        }
+        let next = depth_remaining - 1;
         match ctor_tag {
             5 => {
                 // apply(list, elem_type)
@@ -439,7 +508,7 @@ impl<'a> FlatDecoder<'a> {
                     ));
                 }
                 let elem_tag = self.read_bits8(4)?;
-                let elem = self.build_type(elem_tag)?;
+                let elem = self.build_type_with_depth(elem_tag, next)?;
                 Ok(Type::List(Box::new(elem)))
             }
             6 => {
@@ -452,7 +521,7 @@ impl<'a> FlatDecoder<'a> {
                     ));
                 }
                 let a_tag = self.read_bits8(4)?;
-                let a = self.build_type(a_tag)?;
+                let a = self.build_type_with_depth(a_tag, next)?;
                 // Need another apply for b.
                 if !self.read_bit()? {
                     return Err(MachineError::FlatDecodeError(
@@ -460,7 +529,7 @@ impl<'a> FlatDecoder<'a> {
                     ));
                 }
                 let b_tag = self.read_bits8(4)?;
-                let b = self.build_type(b_tag)?;
+                let b = self.build_type_with_depth(b_tag, next)?;
                 Ok(Type::Pair(Box::new(a), Box::new(b)))
             }
             7 => {
@@ -471,7 +540,7 @@ impl<'a> FlatDecoder<'a> {
                     ));
                 }
                 let inner = self.read_bits8(4)?;
-                let base = self.build_applied_type(inner)?;
+                let base = self.build_applied_type_with_depth(inner, next)?;
                 // The result of the nested apply is applied to one more arg.
                 if !self.read_bit()? {
                     return Err(MachineError::FlatDecodeError(
@@ -488,7 +557,7 @@ impl<'a> FlatDecoder<'a> {
                     }
                     Type::Pair(a, _) => {
                         // pair applied to second arg.
-                        let b = self.build_type(arg_tag)?;
+                        let b = self.build_type_with_depth(arg_tag, next)?;
                         Ok(Type::Pair(a, Box::new(b)))
                     }
                     _ => Err(MachineError::FlatDecodeError(format!(
@@ -502,7 +571,17 @@ impl<'a> FlatDecoder<'a> {
         }
     }
 
-    fn decode_constant(&mut self, ty: &Type) -> Result<Constant, MachineError> {
+    fn decode_constant_with_depth(
+        &mut self,
+        ty: &Type,
+        depth_remaining: usize,
+    ) -> Result<Constant, MachineError> {
+        if depth_remaining == 0 {
+            return Err(MachineError::FlatDecodeError(format!(
+                "constant nesting exceeded depth budget {MAX_TERM_DECODE_DEPTH}"
+            )));
+        }
+        let next = depth_remaining - 1;
         match ty {
             Type::Integer => {
                 let val = self.read_integer()?;
@@ -522,12 +601,12 @@ impl<'a> FlatDecoder<'a> {
                 Ok(Constant::Bool(b))
             }
             Type::List(elem_ty) => {
-                let items = self.read_list(|d| d.decode_constant(elem_ty))?;
+                let items = self.read_list(|d| d.decode_constant_with_depth(elem_ty, next))?;
                 Ok(Constant::ProtoList(elem_ty.as_ref().clone(), items))
             }
             Type::Pair(a_ty, b_ty) => {
-                let a = self.decode_constant(a_ty)?;
-                let b = self.decode_constant(b_ty)?;
+                let a = self.decode_constant_with_depth(a_ty, next)?;
+                let b = self.decode_constant_with_depth(b_ty, next)?;
                 Ok(Constant::ProtoPair(
                     a_ty.as_ref().clone(),
                     b_ty.as_ref().clone(),
@@ -973,6 +1052,41 @@ mod tests {
         dec.skip_to_byte_boundary();
         assert_eq!(dec.pos, 0);
         assert_eq!(dec.bit, 0);
+    }
+
+    // -- depth bound ----------------------------------------------------
+
+    #[test]
+    fn test_decode_term_rejects_pathologically_deep_lambda_chain() {
+        // A chain of `LamAbs` (term tag 2 = `0010`) terms, then a final
+        // `Error` (term tag 6 = `0110`) at the bottom. Each LamAbs adds one
+        // level of recursion; building `MAX_TERM_DECODE_DEPTH + 16` of them
+        // must trigger the depth-bound check rather than overflow the
+        // runtime stack.
+        let depth = MAX_TERM_DECODE_DEPTH + 16;
+        // Each `LamAbs` is a 4-bit tag `0010`. We pack two tags per byte:
+        // `0010_0010 = 0x22` → two LamAbs prefixes.
+        // Final `Error` is `0110`. If `depth` is even, the trailing nibble
+        // for Error follows alone in the next byte's high nibble; we encode
+        // explicitly using the bit reader's MSB-first scheme.
+        //
+        // Use the FlatDecoder bit reader's expected byte order: first bit
+        // read is MSB of byte 0. So the first 4-bit nibble decoded is the
+        // high nibble of byte 0.
+        let mut bytes = Vec::with_capacity(depth / 2 + 4);
+        let mut nibbles: Vec<u8> = vec![0b0010; depth]; // LamAbs tag chain
+        nibbles.push(0b0110); // Error tag
+        for chunk in nibbles.chunks(2) {
+            let hi = chunk[0] << 4;
+            let lo = chunk.get(1).copied().unwrap_or(0);
+            bytes.push(hi | lo);
+        }
+        let mut dec = FlatDecoder::new(&bytes);
+        let res = dec.decode_term();
+        assert!(
+            matches!(&res, Err(MachineError::FlatDecodeError(msg)) if msg.contains("depth budget")),
+            "expected depth-budget FlatDecodeError, got {res:?}"
+        );
     }
 
     // -- decode_script_bytes with CBOR wrapping -------------------------
