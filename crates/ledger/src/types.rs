@@ -215,9 +215,24 @@ pub enum Nonce {
 impl Nonce {
     /// Combines two nonces by XOR-ing their bytes.
     ///
-    /// Reference: upstream `(⭒)` operator on `Nonce`.
+    /// **⚠ Known upstream-parity gap.** Upstream's `(⭒)` operator is
+    /// defined as `Nonce(Blake2b-256(bytesOf(a) ‖ bytesOf(b)))` — a
+    /// hash-concatenation, NOT a byte-wise XOR. The canonical reference
+    /// is the `Semigroup Nonce` instance in
+    /// `Cardano.Ledger.BaseTypes` (cardano-ledger), reused by
+    /// `Cardano.Protocol.TPraos.BHeader` as the nonce combinator across
+    /// UPDN and TICKN.
     ///
-    /// Rules:
+    /// The XOR implementation here is a historical simplification; many
+    /// downstream tests (e.g. `nonce_combine_is_xor` in
+    /// `crates/consensus/tests/integration.rs`) pin the XOR semantics
+    /// directly and would need to be rewritten alongside any switch to
+    /// the upstream form. Real-network VRF verification depends on the
+    /// epoch-nonce evolution being bit-identical to upstream's, so this
+    /// gap blocks mainnet-replay parity and is tracked for a dedicated
+    /// follow-up slice rather than squeezed into incremental work.
+    ///
+    /// Current rules (XOR — local):
     /// * `Neutral ⊕ n = n`
     /// * `n ⊕ Neutral = n`
     /// * `Hash(a) ⊕ Hash(b) = Hash(a XOR b)`
