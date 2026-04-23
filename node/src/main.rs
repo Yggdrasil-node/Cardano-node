@@ -1595,6 +1595,69 @@ fn validate_config_report(
         warnings.push(format!("genesis hash verification: {err}"));
     }
 
+    // `ByronGenesisHash` content verification is deferred pending a Rust
+    // port of upstream's canonical-CBOR hashing (`verify_known_genesis_hashes`
+    // intentionally skips it). But the declared value can still be
+    // syntax-checked at preflight time — typos / wrong-length pastes /
+    // non-hex input are real user errors that surface today as a garbled
+    // mismatch much later. Warn when the declared `ByronGenesisHash` fails
+    // the 64-char lowercase-hex shape check.
+    if let Some(byron_hex) = file_cfg.byron_genesis_hash.as_deref() {
+        if let Err(err) = genesis::parse_blake2b_256_hex(byron_hex, "ByronGenesisHash") {
+            warnings.push(format!("ByronGenesisHash format: {err}"));
+        }
+    }
+
+    // Upstream `MinNodeVersion` (e.g. `"10.6.2"`) is a dotted-numeric
+    // cardano-node version string. We do NOT cross-compare it against our
+    // own `CARGO_PKG_VERSION` because the two namespaces are independent
+    // (yggdrasil's version is not a cardano-node version even under
+    // 100%-parity goals). But we can still format-sanity the declared
+    // string: a typo like `"10,6.2"` or `"ten.six.two"` is always a bug,
+    // and surfacing it at preflight time avoids the silent "carried but
+    // ignored" pitfall the field doc already warns about.
+    if let Some(mnv) = file_cfg.min_node_version.as_deref() {
+        let trimmed = mnv.trim();
+        let valid = !trimmed.is_empty()
+            && trimmed
+                .split('.')
+                .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()));
+        if !valid {
+            warnings.push(format!(
+                "MinNodeVersion = {mnv:?} is not a dotted-numeric version string \
+                 (expected shape like \"10.6.2\"). The value is otherwise carried \
+                 through verbatim for upstream-config compatibility."
+            ));
+        }
+    }
+
+    // Upstream `LastKnownBlockVersion-{Major, Minor, Alt}` is the Byron-era
+    // block-version triplet; it is declared atomically in cardano-node
+    // configs (all three appear together or none of them do). A partial
+    // set is almost always a copy-paste bug — the operator started to
+    // override the major but forgot the sibling fields, or copied from a
+    // config that declared the triplet and dropped only some. Warn with
+    // the concrete Some/None pattern surfaced so the fix is obvious.
+    //
+    // Reference: `LastKnownBlockVersion` in
+    // `Cardano.Chain.Update.Proposal` / `cardano-node` config parser.
+    let lkbv_present = [
+        file_cfg.last_known_block_version_major.is_some(),
+        file_cfg.last_known_block_version_minor.is_some(),
+        file_cfg.last_known_block_version_alt.is_some(),
+    ];
+    let set_count = lkbv_present.iter().filter(|b| **b).count();
+    if set_count != 0 && set_count != 3 {
+        warnings.push(format!(
+            "LastKnownBlockVersion triplet is partially set (Major: {}, Minor: {}, Alt: {}); \
+             upstream expects all three fields together or none. This is almost always a \
+             copy-paste bug",
+            if lkbv_present[0] { "set" } else { "missing" },
+            if lkbv_present[1] { "set" } else { "missing" },
+            if lkbv_present[2] { "set" } else { "missing" },
+        ));
+    }
+
     // Protocol-version floor: the Shelley-era hard fork introduced
     // protocol major version 2, so a node operating below that refuses
     // every block beyond Byron.  Warn but do not bail — an operator
@@ -3553,6 +3616,266 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("RequiresNetworkMagic") && w.contains("inconsistent")),
             "None requires_network_magic must not warn, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_non_dotted_numeric_min_node_version() {
+        // Typos that reach the config are common: "10,6.2" (comma for
+        // dot) and "ten.six.two" (non-numeric) must surface as warnings.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-mnv-bad-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        cfg.min_node_version = Some("10,6.2".to_owned());
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("MinNodeVersion") && w.contains("dotted-numeric")),
+            "expected MinNodeVersion format warning on \"10,6.2\", got: {:?}",
+            report.warnings,
+        );
+
+        cfg.min_node_version = Some("ten.six.two".to_owned());
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("MinNodeVersion") && w.contains("dotted-numeric")),
+            "expected MinNodeVersion format warning on \"ten.six.two\", got: {:?}",
+            report.warnings,
+        );
+
+        // Empty string is also invalid.
+        cfg.min_node_version = Some(String::new());
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("MinNodeVersion") && w.contains("dotted-numeric")),
+            "expected MinNodeVersion format warning on empty string, got: {:?}",
+            report.warnings,
+        );
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_well_formed_min_node_version() {
+        // Vendored-upstream-shape (canonical "10.6.2") + single-component
+        // ("1") + many-component ("1.2.3.4.5") all pass the shape gate.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-mnv-ok-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+
+        for sample in ["10.6.2", "1", "1.2.3.4.5", "0.0.0"] {
+            cfg.min_node_version = Some(sample.to_owned());
+            let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+            assert!(
+                !report
+                    .warnings
+                    .iter()
+                    .any(|w| w.contains("MinNodeVersion") && w.contains("dotted-numeric")),
+                "well-formed MinNodeVersion {sample:?} must not warn, got: {:?}",
+                report.warnings,
+            );
+        }
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_partial_last_known_block_version_triplet() {
+        // Only Major set → partial triplet → warning.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-lkbv-partial-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.last_known_block_version_major = Some(0);
+        cfg.last_known_block_version_minor = None;
+        cfg.last_known_block_version_alt = None;
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report.warnings.iter().any(|w| {
+                w.contains("LastKnownBlockVersion")
+                    && w.contains("partially set")
+                    && w.contains("Major: set")
+                    && w.contains("Minor: missing")
+                    && w.contains("Alt: missing")
+            }),
+            "expected LKBV partial warning naming exact Some/None pattern, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_full_last_known_block_version_triplet() {
+        // All three set → accepted (atomic triplet).
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-lkbv-full-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.last_known_block_version_major = Some(3);
+        cfg.last_known_block_version_minor = Some(0);
+        cfg.last_known_block_version_alt = Some(0);
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("LastKnownBlockVersion")),
+            "full LKBV triplet must produce no LKBV warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_absent_last_known_block_version_triplet() {
+        // Default mainnet (all None) must produce no LKBV warning.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-lkbv-absent-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        // Defaults are already all-None; make the intent explicit.
+        cfg.last_known_block_version_major = None;
+        cfg.last_known_block_version_minor = None;
+        cfg.last_known_block_version_alt = None;
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("LastKnownBlockVersion")),
+            "all-absent LKBV must produce no warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_malformed_byron_genesis_hash() {
+        // Full Byron-canonical-CBOR verification is deferred, but the
+        // declared hex itself can still be syntax-checked today. Wrong
+        // length ("abcd" → 2 bytes) must surface as an InvalidHashHex
+        // warning so the operator fixes the typo at preflight time.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-byron-hex-bad-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.byron_genesis_hash = Some("abcd".to_owned()); // too short
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("ByronGenesisHash format")),
+            "expected ByronGenesisHash format warning, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_warns_on_non_hex_byron_genesis_hash() {
+        // Non-hex characters (e.g. "z" repeated) must also surface.
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-byron-hex-nonhex-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.byron_genesis_hash = Some("z".repeat(64)); // 64 chars, invalid hex
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("ByronGenesisHash format")),
+            "expected ByronGenesisHash format warning on non-hex input, got: {:?}",
+            report.warnings,
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn validate_config_report_accepts_well_formed_byron_genesis_hash() {
+        // 64-char lowercase-hex → parses cleanly → no format warning.
+        // (Content verification is still deferred — we're only checking
+        // the hex shape here.)
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("yggdrasil-byron-hex-ok-{unique}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let mut cfg = default_config();
+        cfg.storage_dir = PathBuf::from("data");
+        cfg.peer_snapshot_file = None;
+        cfg.byron_genesis_hash = Some("0".repeat(64));
+
+        let report = validate_config_report(&cfg, Some(&dir)).expect("report");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|w| w.contains("ByronGenesisHash format")),
+            "well-formed ByronGenesisHash must produce no format warning, got: {:?}",
             report.warnings,
         );
         std::fs::remove_dir_all(dir).ok();

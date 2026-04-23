@@ -1246,18 +1246,7 @@ pub fn verify_genesis_file_hash(
     expected_hex: &str,
     field: &'static str,
 ) -> Result<(), GenesisLoadError> {
-    let expected_bytes = hex::decode(expected_hex.trim()).map_err(|_| {
-        GenesisLoadError::InvalidHashHex {
-            field,
-            value: expected_hex.to_string(),
-        }
-    })?;
-    if expected_bytes.len() != 32 {
-        return Err(GenesisLoadError::InvalidHashHex {
-            field,
-            value: expected_hex.to_string(),
-        });
-    }
+    let expected_bytes = parse_blake2b_256_hex(expected_hex, field)?;
     let actual = compute_genesis_file_hash(path)?;
     if actual.as_slice() != expected_bytes.as_slice() {
         return Err(GenesisLoadError::HashMismatch {
@@ -1267,6 +1256,36 @@ pub fn verify_genesis_file_hash(
         });
     }
     Ok(())
+}
+
+/// Parse an operator-declared Blake2b-256 hash written as lowercase
+/// hexadecimal, validating both the hex encoding and the fixed 32-byte
+/// (64-hex-char) length.
+///
+/// Surfaces the structural check that previously lived inline inside
+/// [`verify_genesis_file_hash`] so other config-level fields whose content
+/// verification is deferred (e.g. `ByronGenesisHash`, whose canonical-CBOR
+/// hashing path has not yet been ported) can still syntax-check their
+/// declared value today. Catches typos and wrong-length pastes at preflight
+/// time instead of at first-use time.
+pub fn parse_blake2b_256_hex(
+    expected_hex: &str,
+    field: &'static str,
+) -> Result<[u8; 32], GenesisLoadError> {
+    let expected_bytes = hex::decode(expected_hex.trim()).map_err(|_| {
+        GenesisLoadError::InvalidHashHex {
+            field,
+            value: expected_hex.to_string(),
+        }
+    })?;
+    let bytes: [u8; 32] =
+        expected_bytes
+            .try_into()
+            .map_err(|_: Vec<u8>| GenesisLoadError::InvalidHashHex {
+                field,
+                value: expected_hex.to_string(),
+            })?;
+    Ok(bytes)
 }
 
 /// Load `shelley-genesis.json` from the given path.

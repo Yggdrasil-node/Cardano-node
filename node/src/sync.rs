@@ -3275,9 +3275,22 @@ fn validate_protocol_version_for_era(
     minor: u64,
     max_major_protocol_version: Option<u64>,
 ) -> Result<(), SyncError> {
+    // Delegate the `MaxMajorProtVer` ceiling check to the consensus-crate
+    // helper (slice 43) so the canonical PRTCL rule from
+    // `Cardano.Protocol.Praos.Rules.Prtcl.headerView` is the single source
+    // of truth. Converting `ConsensusError::ObsoleteNode` back into
+    // `SyncError::ProtocolVersionTooHigh` preserves the existing sync-layer
+    // error surface and keeps peer-attribution semantics intact.
     if let Some(max) = max_major_protocol_version {
-        if major > max {
-            return Err(SyncError::ProtocolVersionTooHigh { major, max });
+        if let Err(yggdrasil_consensus::ConsensusError::ObsoleteNode {
+            header_major,
+            max_major,
+        }) = yggdrasil_consensus::check_header_protocol_version(major, max)
+        {
+            return Err(SyncError::ProtocolVersionTooHigh {
+                major: header_major,
+                max: max_major,
+            });
         }
     }
 
@@ -4362,6 +4375,35 @@ mod tests {
             validate_protocol_version_for_era(Era::Alonzo, 7, 0, Some(6)),
             Err(SyncError::ProtocolVersionTooHigh { major: 7, max: 6 })
         ));
+    }
+
+    #[test]
+    fn max_major_guard_delegates_to_consensus_obsolete_node_rule() {
+        // Cross-check that the sync-layer ceiling enforcement uses the
+        // consensus-crate `check_header_protocol_version` helper (slice 43)
+        // rather than a duplicate inline comparison. The canonical PRTCL
+        // rule uses `<=` at the boundary; this test pins the two layers
+        // together so a future refactor that inlines the check cannot
+        // silently drift to a stricter `<` comparison (off-by-one at the
+        // era boundary slot of a hard fork).
+        // Above ceiling at the sync layer ↔ ObsoleteNode at the consensus layer.
+        assert!(matches!(
+            validate_protocol_version_for_era(Era::Conway, 15, 0, Some(10)),
+            Err(SyncError::ProtocolVersionTooHigh { major: 15, max: 10 })
+        ));
+        match yggdrasil_consensus::check_header_protocol_version(15, 10) {
+            Err(yggdrasil_consensus::ConsensusError::ObsoleteNode {
+                header_major,
+                max_major,
+            }) => {
+                assert_eq!(header_major, 15);
+                assert_eq!(max_major, 10);
+            }
+            other => panic!("consensus helper should reject 15 > 10, got {other:?}"),
+        }
+        // Equal-to-ceiling at the sync layer ↔ Ok at the consensus layer.
+        assert!(validate_protocol_version_for_era(Era::Conway, 10, 0, Some(10)).is_ok());
+        assert!(yggdrasil_consensus::check_header_protocol_version(10, 10).is_ok());
     }
 
     #[test]
