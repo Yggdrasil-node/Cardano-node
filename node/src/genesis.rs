@@ -2524,4 +2524,107 @@ mod tests {
         .expect_err("non-hex must fail");
         assert!(matches!(err, GenesisLoadError::InvalidHashHex { .. }));
     }
+
+    // ── GenesisLoadError Display-content tests ─────────────────────────
+    //
+    // Follows the slice-55/56/57 pattern of pinning the `#[error(...)]`
+    // format-string content so a future refactor dropping a struct field
+    // (e.g. the expected-vs-actual hex pair from `HashMismatch`) surfaces
+    // as a failing test rather than silently degraded operator diagnostics.
+
+    #[test]
+    fn display_hash_mismatch_names_path_expected_actual() {
+        let e = GenesisLoadError::HashMismatch {
+            path: std::path::PathBuf::from("/tmp/shelley.json"),
+            expected: "00".repeat(32),
+            actual: "ff".repeat(32),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("/tmp/shelley.json"), "must name the path: {s}");
+        assert!(
+            s.contains(&"00".repeat(32)),
+            "must surface the declared hash: {s}",
+        );
+        assert!(
+            s.contains(&"ff".repeat(32)),
+            "must surface the computed hash: {s}",
+        );
+    }
+
+    #[test]
+    fn display_invalid_hash_hex_names_field_and_value() {
+        let e = GenesisLoadError::InvalidHashHex {
+            field: "ByronGenesisHash",
+            value: "abcd".to_owned(),
+        };
+        let s = format!("{e}");
+        assert!(
+            s.contains("ByronGenesisHash"),
+            "must name the offending field: {s}",
+        );
+        assert!(s.contains("abcd"), "must echo the offending value: {s}");
+    }
+
+    #[test]
+    fn display_invalid_field_names_field_value_and_reason() {
+        let e = GenesisLoadError::InvalidField {
+            field: "nonAvvmBalances",
+            value: "not-a-number".to_owned(),
+            message: "invalid lovelace amount: digit expected".to_owned(),
+        };
+        let s = format!("{e}");
+        assert!(s.contains("nonAvvmBalances"), "must name the field: {s}");
+        assert!(
+            s.contains("not-a-number"),
+            "must echo the offending value: {s}",
+        );
+        assert!(
+            s.contains("invalid lovelace amount"),
+            "must surface the diagnostic reason: {s}",
+        );
+    }
+
+    #[test]
+    fn display_io_error_names_path_and_inner() {
+        let e = GenesisLoadError::Io {
+            path: std::path::PathBuf::from("/does/not/exist.json"),
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "No such file or directory",
+            ),
+        };
+        let s = format!("{e}");
+        assert!(
+            s.contains("/does/not/exist.json"),
+            "must name the offending path: {s}",
+        );
+        assert!(
+            s.contains("No such file or directory"),
+            "must propagate the inner I/O error message: {s}",
+        );
+    }
+
+    #[test]
+    fn display_json_error_names_path_and_inner_reason() {
+        let source: serde_json::Error =
+            serde_json::from_str::<serde_json::Value>("{invalid json}").unwrap_err();
+        let e = GenesisLoadError::Json {
+            path: std::path::PathBuf::from("/tmp/broken.json"),
+            source,
+        };
+        let s = format!("{e}");
+        assert!(
+            s.contains("/tmp/broken.json"),
+            "must name the offending path: {s}",
+        );
+        // serde_json's Display includes "expected" or "key" or similar
+        // diagnostic substrings; assert at least one common token appears
+        // so a future upgrade that truncates the message still surfaces
+        // something diagnostic.
+        let diag = s.to_lowercase();
+        assert!(
+            diag.contains("parse") || diag.contains("expected") || diag.contains("key"),
+            "must surface a parse-failure diagnostic from serde_json: {s}",
+        );
+    }
 }
