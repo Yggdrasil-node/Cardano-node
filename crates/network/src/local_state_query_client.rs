@@ -33,7 +33,7 @@ pub enum LocalStateQueryClientError {
     Protocol(String),
 
     /// The server refused to acquire the requested point.
-    #[error("acquire failed: {0:?}")]
+    #[error("acquire failed: {0}")]
     AcquireFailed(AcquireFailure),
 
     /// Unexpected message received from the server.

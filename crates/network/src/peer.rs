@@ -35,7 +35,7 @@ pub enum PeerError {
     Io(#[from] std::io::Error),
 
     /// The remote peer refused the handshake.
-    #[error("handshake refused: {reason:?}")]
+    #[error("handshake refused: {reason}")]
     Refused {
         /// Why the handshake was refused.
         reason: RefuseReason,

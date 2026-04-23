@@ -70,6 +70,15 @@ pub enum AcquireFailure {
     PointNotOnChain,
 }
 
+impl std::fmt::Display for AcquireFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PointTooOld => f.write_str("point too old (older than the immutable tip)"),
+            Self::PointNotOnChain => f.write_str("point not on current chain"),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
@@ -352,6 +361,36 @@ impl LocalStateQueryMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acquire_failure_display_point_too_old() {
+        // Display output should be human-readable (not Debug-formatted) so
+        // LSQ clients logging `AcquireFailed(AcquireFailure)` surface a
+        // descriptive diagnostic rather than "PointTooOld".
+        let s = format!("{}", AcquireFailure::PointTooOld);
+        assert!(
+            s.contains("too old") || s.contains("immutable tip"),
+            "PointTooOld Display must identify the rule: {s}",
+        );
+        // Not the Debug-formatted identifier.
+        assert!(
+            !s.contains("PointTooOld"),
+            "Display must not leak the Debug variant name: {s}",
+        );
+    }
+
+    #[test]
+    fn acquire_failure_display_point_not_on_chain() {
+        let s = format!("{}", AcquireFailure::PointNotOnChain);
+        assert!(
+            s.contains("not on") && s.contains("chain"),
+            "PointNotOnChain Display must identify the rule: {s}",
+        );
+        assert!(
+            !s.contains("PointNotOnChain"),
+            "Display must not leak the Debug variant name: {s}",
+        );
+    }
 
     #[test]
     fn acquire_point_roundtrip() {

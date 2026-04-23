@@ -74,6 +74,33 @@ pub enum RefuseReason {
     Refused(HandshakeVersion, String),
 }
 
+impl std::fmt::Display for RefuseReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::VersionMismatch(accepted) => {
+                write!(f, "version mismatch — peer accepts [")?;
+                for (i, v) in accepted.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", v.0)?;
+                }
+                write!(f, "]")
+            }
+            Self::HandshakeDecodeError(version, reason) => {
+                write!(
+                    f,
+                    "handshake version data for version {} failed to decode: {reason}",
+                    version.0,
+                )
+            }
+            Self::Refused(version, reason) => {
+                write!(f, "refused version {}: {reason}", version.0)
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handshake state machine
 // ---------------------------------------------------------------------------
@@ -355,5 +382,68 @@ impl HandshakeMessage {
             return Err(LedgerError::CborTrailingBytes(dec.remaining()));
         }
         Ok(msg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── RefuseReason Display tests ────────────────────────────────────
+    //
+    // Operator-facing error messages embed `RefuseReason` via
+    // `PeerError::Refused { reason: {reason} }` (slice 66 switched from
+    // Debug formatting to Display). These tests pin the human-readable
+    // format so a future refactor reverting to Debug would surface the
+    // variant names and fail CI.
+
+    #[test]
+    fn refuse_reason_display_version_mismatch() {
+        let r = RefuseReason::VersionMismatch(vec![
+            HandshakeVersion(13),
+            HandshakeVersion(14),
+        ]);
+        let s = format!("{r}");
+        assert!(
+            s.contains("version mismatch"),
+            "must identify the rule: {s}",
+        );
+        assert!(s.contains("13"), "must list version 13: {s}");
+        assert!(s.contains("14"), "must list version 14: {s}");
+        // Not the Debug variant name.
+        assert!(
+            !s.contains("VersionMismatch"),
+            "Display must not leak the Debug variant name: {s}",
+        );
+    }
+
+    #[test]
+    fn refuse_reason_display_handshake_decode_error() {
+        let r = RefuseReason::HandshakeDecodeError(
+            HandshakeVersion(14),
+            "expected map".to_owned(),
+        );
+        let s = format!("{r}");
+        assert!(s.contains("handshake version data"), "rule name: {s}");
+        assert!(s.contains("14"), "must name the version: {s}");
+        assert!(s.contains("expected map"), "must surface the inner reason: {s}");
+    }
+
+    #[test]
+    fn refuse_reason_display_refused() {
+        let r = RefuseReason::Refused(HandshakeVersion(13), "wrong magic".to_owned());
+        let s = format!("{r}");
+        assert!(s.contains("refused version 13"), "rule + version: {s}");
+        assert!(s.contains("wrong magic"), "must surface the inner reason: {s}");
+    }
+
+    #[test]
+    fn refuse_reason_display_empty_version_list_is_stable() {
+        // Edge case: empty accepted-versions list must still render cleanly
+        // rather than panicking or producing trailing punctuation.
+        let r = RefuseReason::VersionMismatch(Vec::new());
+        let s = format!("{r}");
+        assert!(s.contains("version mismatch"));
+        assert!(s.contains("[]"), "empty list rendered as `[]`: {s}");
     }
 }
