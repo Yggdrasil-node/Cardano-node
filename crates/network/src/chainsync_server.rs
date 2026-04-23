@@ -196,3 +196,38 @@ impl ChainSyncServer {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── ChainSyncServerError Display-content tests ─────────────────────
+
+    #[test]
+    fn display_chainsync_server_connection_closed() {
+        let s = format!("{}", ChainSyncServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_chainsync_server_timeout() {
+        let s = format!("{}", ChainSyncServerError::Timeout);
+        assert!(s.to_lowercase().contains("timeout"));
+    }
+
+    #[test]
+    fn display_chainsync_server_decode_propagates_inner() {
+        let e = ChainSyncServerError::Decode("bad intersect point".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("bad intersect point"));
+    }
+
+    #[test]
+    fn display_chainsync_server_unexpected_message_propagates_inner() {
+        let e = ChainSyncServerError::UnexpectedMessage("MsgFindIntersect in StMustReply".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgFindIntersect in StMustReply"));
+    }
+}

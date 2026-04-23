@@ -140,3 +140,38 @@ impl KeepAliveServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── KeepAliveServerError Display-content tests ─────────────────────
+
+    #[test]
+    fn display_keepalive_server_connection_closed() {
+        let s = format!("{}", KeepAliveServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_keepalive_server_timeout() {
+        let s = format!("{}", KeepAliveServerError::Timeout);
+        assert!(s.to_lowercase().contains("timeout"));
+    }
+
+    #[test]
+    fn display_keepalive_server_decode_propagates_inner() {
+        let e = KeepAliveServerError::Decode("malformed cookie".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("malformed cookie"));
+    }
+
+    #[test]
+    fn display_keepalive_server_unexpected_message_propagates_inner() {
+        let e = KeepAliveServerError::UnexpectedMessage("MsgKeepAliveResponse in StIdle".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgKeepAliveResponse in StIdle"));
+    }
+}

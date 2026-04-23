@@ -176,3 +176,42 @@ impl BlockFetchServer {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── BlockFetchServerError Display-content tests ────────────────────
+    //
+    // Server-side mirror of slice-69's client-side coverage. Server errors
+    // appear in peer-attribution logs when we refuse a BlockFetch client
+    // — diagnostic content must survive format-string refactors.
+
+    #[test]
+    fn display_blockfetch_server_connection_closed() {
+        let s = format!("{}", BlockFetchServerError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"));
+    }
+
+    #[test]
+    fn display_blockfetch_server_timeout() {
+        let s = format!("{}", BlockFetchServerError::Timeout);
+        assert!(s.to_lowercase().contains("timeout"));
+    }
+
+    #[test]
+    fn display_blockfetch_server_decode_propagates_inner() {
+        let e = BlockFetchServerError::Decode("invalid range point".into());
+        let s = format!("{e}");
+        assert!(s.contains("CBOR decode"));
+        assert!(s.contains("invalid range point"));
+    }
+
+    #[test]
+    fn display_blockfetch_server_unexpected_message_propagates_inner() {
+        let e = BlockFetchServerError::UnexpectedMessage("MsgRequestRange in StStreaming".into());
+        let s = format!("{e}");
+        assert!(s.contains("unexpected message"));
+        assert!(s.contains("MsgRequestRange in StStreaming"));
+    }
+}
