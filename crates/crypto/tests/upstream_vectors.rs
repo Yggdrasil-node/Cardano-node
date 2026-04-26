@@ -589,6 +589,183 @@ fn vendored_standard_full_corpus_probe() {
     );
 }
 
+/// Cross-check EVERY hand-transcribed `vrf_praos_test_vectors()` entry
+/// against its corresponding vendored `vrf_ver03_*` fixture file.
+///
+/// `embedded_vrf_vectors_match_vendored_standard_examples` already pairs
+/// `standard_10` for both cipher suites — this test extends the coverage
+/// to the full 7-entry ver03 corpus (4 generated + 3 standard) so a
+/// future upstream commit-bump that refreshes any of the other 6 files
+/// without also updating the hand-transcribed Rust copy fails CI naming
+/// the offending vector.
+///
+/// The cross-check is exhaustive in BOTH directions:
+///   - every embedded vector must match its on-disk fixture (sk, pk,
+///     pi, beta, alpha, vrf header)
+///   - the embedded set and the on-disk ver03 set must have the same
+///     names, so an orphaned fixture file (added upstream but not
+///     transcribed) or an orphan embedded vector (transcribed but the
+///     fixture was renamed/removed upstream) both fail CI.
+///
+/// Reference: `cardano-base/cardano-crypto-praos/test_vectors/vrf_ver03_*`.
+#[test]
+fn embedded_ver03_vrf_vectors_match_full_vendored_corpus() {
+    let dir = vendored_root().join("cardano-crypto-praos/test_vectors");
+    let embedded = vrf_praos_test_vectors();
+
+    // Coverage: embedded names must match the ver03 file set on disk
+    // (after hyphen→underscore name normalization).
+    let embedded_filenames: Vec<String> =
+        embedded.iter().map(|v| v.name.replace('-', "_")).collect();
+    let on_disk_ver03: Vec<String> = vendored_praos_files()
+        .iter()
+        .filter_map(|p| p.file_name()?.to_str().map(str::to_owned))
+        .filter(|n| n.starts_with("vrf_ver03_"))
+        .collect();
+    let mut sorted_embedded = embedded_filenames.clone();
+    sorted_embedded.sort();
+    let mut sorted_disk = on_disk_ver03;
+    sorted_disk.sort();
+    assert_eq!(
+        sorted_embedded, sorted_disk,
+        "embedded ver03 vector names must match on-disk fixture names exactly \
+         (orphan fixture file or orphan embedded vector)",
+    );
+
+    // Field-by-field cross-check for every entry.
+    for vector in embedded {
+        let path = dir.join(vector.name.replace('-', "_"));
+        let kv = parse_kv(
+            &fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display())),
+        );
+
+        assert_eq!(
+            kv.get("vrf").map(String::as_str),
+            Some("PraosVRF"),
+            "{}: vrf header must be PraosVRF",
+            vector.name,
+        );
+        assert_eq!(
+            kv.get("ver").map(String::as_str),
+            Some("ietfdraft03"),
+            "{}: ver must be ietfdraft03",
+            vector.name,
+        );
+        assert_eq!(
+            hex(&vector.secret_key[..32]),
+            kv["sk"],
+            "{}: sk drift between embedded and vendored",
+            vector.name,
+        );
+        // Embedded `secret_key` is `sk || pk` (libsodium signing-key shape).
+        // Pin both halves so a refactor that re-orders them silently fails CI.
+        assert_eq!(
+            hex(&vector.secret_key[32..]),
+            kv["pk"],
+            "{}: pk-half of secret_key drift",
+            vector.name,
+        );
+        assert_eq!(
+            hex(&vector.public_key),
+            kv["pk"],
+            "{}: pk drift between embedded and vendored",
+            vector.name,
+        );
+        assert_eq!(
+            hex(&vector.proof),
+            kv["pi"],
+            "{}: proof drift between embedded and vendored",
+            vector.name,
+        );
+        assert_eq!(
+            hex(&vector.output),
+            kv["beta"],
+            "{}: output drift between embedded and vendored",
+            vector.name,
+        );
+        // alpha: "empty" → empty message, otherwise a hex-encoded message.
+        let expected_message: Vec<u8> = match kv["alpha"].as_str() {
+            "empty" => Vec::new(),
+            hex_value => decode_hex_vec(hex_value),
+        };
+        assert_eq!(
+            vector.message, expected_message,
+            "{}: alpha (message) drift between embedded and vendored",
+            vector.name,
+        );
+    }
+}
+
+/// Cross-check EVERY hand-transcribed
+/// `vrf_praos_batchcompat_test_vectors()` entry against its corresponding
+/// vendored `vrf_ver13_*` fixture file. Mirror of the ver03 full-corpus
+/// guard above, for the 128-byte-proof batch-compatible cipher suite.
+///
+/// Reference: `cardano-base/cardano-crypto-praos/test_vectors/vrf_ver13_*`.
+#[test]
+fn embedded_ver13_vrf_vectors_match_full_vendored_corpus() {
+    let dir = vendored_root().join("cardano-crypto-praos/test_vectors");
+    let embedded = vrf_praos_batchcompat_test_vectors();
+
+    let embedded_filenames: Vec<String> =
+        embedded.iter().map(|v| v.name.replace('-', "_")).collect();
+    let on_disk_ver13: Vec<String> = vendored_praos_files()
+        .iter()
+        .filter_map(|p| p.file_name()?.to_str().map(str::to_owned))
+        .filter(|n| n.starts_with("vrf_ver13_"))
+        .collect();
+    let mut sorted_embedded = embedded_filenames.clone();
+    sorted_embedded.sort();
+    let mut sorted_disk = on_disk_ver13;
+    sorted_disk.sort();
+    assert_eq!(
+        sorted_embedded, sorted_disk,
+        "embedded ver13 vector names must match on-disk fixture names exactly \
+         (orphan fixture file or orphan embedded vector)",
+    );
+
+    for vector in embedded {
+        let path = dir.join(vector.name.replace('-', "_"));
+        let kv = parse_kv(
+            &fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display())),
+        );
+
+        assert_eq!(
+            kv.get("vrf").map(String::as_str),
+            Some("PraosBatchCompatVRF"),
+            "{}: vrf header must be PraosBatchCompatVRF",
+            vector.name,
+        );
+        assert_eq!(
+            kv.get("ver").map(String::as_str),
+            Some("ietfdraft13"),
+            "{}: ver must be ietfdraft13",
+            vector.name,
+        );
+        assert_eq!(hex(&vector.secret_key[..32]), kv["sk"], "{}: sk drift", vector.name);
+        assert_eq!(
+            hex(&vector.secret_key[32..]),
+            kv["pk"],
+            "{}: pk-half of secret_key drift",
+            vector.name,
+        );
+        assert_eq!(hex(&vector.public_key), kv["pk"], "{}: pk drift", vector.name);
+        assert_eq!(hex(&vector.proof), kv["pi"], "{}: proof drift", vector.name);
+        assert_eq!(hex(&vector.output), kv["beta"], "{}: output drift", vector.name);
+        let expected_message: Vec<u8> = match kv["alpha"].as_str() {
+            "empty" => Vec::new(),
+            hex_value => decode_hex_vec(hex_value),
+        };
+        assert_eq!(
+            vector.message, expected_message,
+            "{}: alpha (message) drift",
+            vector.name,
+        );
+    }
+}
+
 fn parse_kv(content: &str) -> HashMap<String, String> {
     content
         .lines()
