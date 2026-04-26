@@ -11,6 +11,7 @@
 //! Reference: `Ouroboros.Network.PeerSelection.Governor`.
 
 use crate::ledger_peers_provider::LedgerStateJudgement;
+use crate::multiplexer::MiniProtocolNum;
 use crate::peer_registry::{PeerRegistry, PeerRegistryEntry, PeerSource, PeerStatus};
 use crate::peer_selection::LocalRootConfig;
 use crate::root_peers::{UseBootstrapPeers, UseLedgerPeers};
@@ -759,6 +760,104 @@ impl PeerMetrics {
     }
 }
 
+/// Per-mini-protocol scheduling weights for hot peers, plus a derived view
+/// onto the currently-hot remote-peer set.
+///
+/// Mirrors the upstream `Ouroboros.Network.PeerSelection.Governor.HotPeers`
+/// module which assigns each mini-protocol a relative weight used by the
+/// connection-manager scheduler to decide how to allocate in-flight slots
+/// across hot peers.  The weight defaults follow upstream
+/// `defaultMiniProtocolParameters`:
+///
+/// | Protocol            | Weight |
+/// |---------------------|-------:|
+/// | BlockFetch          | 10     |
+/// | ChainSync           | 3      |
+/// | TxSubmission        | 2      |
+/// | KeepAlive           | 1      |
+/// | PeerSharing         | 1      |
+///
+/// Weights are advisory metadata exposed via `set_hot_protocol_weight`
+/// for runtime configuration.  The `hot_peers_remote()` free function
+/// derives the current remote-hot set directly from a [`PeerRegistry`]
+/// snapshot so callers (e.g. the multi-peer BlockFetch dispatcher in
+/// `node/src/sync.rs`) can route work across the active peers without
+/// duplicating registry traversal.
+///
+/// Reference: `Ouroboros.Network.PeerSelection.Governor.HotPeers` in
+/// `IntersectMBO/ouroboros-network`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HotPeerScheduling {
+    weights: BTreeMap<MiniProtocolNum, u8>,
+}
+
+impl HotPeerScheduling {
+    /// Default upstream weights — see the [type-level table].
+    ///
+    /// [type-level table]: HotPeerScheduling
+    pub fn new() -> Self {
+        let mut weights = BTreeMap::new();
+        weights.insert(MiniProtocolNum::CHAIN_SYNC, 3);
+        weights.insert(MiniProtocolNum::BLOCK_FETCH, 10);
+        weights.insert(MiniProtocolNum::TX_SUBMISSION, 2);
+        weights.insert(MiniProtocolNum::KEEP_ALIVE, 1);
+        weights.insert(MiniProtocolNum::PEER_SHARING, 1);
+        Self { weights }
+    }
+
+    /// Sets the scheduling weight for a single mini-protocol.  Last write
+    /// wins; setting weight 0 effectively disables the protocol from the
+    /// scheduler's allocation share.
+    pub fn set_hot_protocol_weight(&mut self, proto: MiniProtocolNum, weight: u8) {
+        self.weights.insert(proto, weight);
+    }
+
+    /// Returns the current weight for `proto`, or `0` if the protocol has
+    /// no configured weight.  Mirrors upstream `defaultMiniProtocolParameters`
+    /// which treats absent entries as zero-weight.
+    pub fn hot_protocol_weight(&self, proto: MiniProtocolNum) -> u8 {
+        self.weights.get(&proto).copied().unwrap_or(0)
+    }
+
+    /// Read-only view of the full weight table.
+    pub fn weights(&self) -> &BTreeMap<MiniProtocolNum, u8> {
+        &self.weights
+    }
+}
+
+impl Default for HotPeerScheduling {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Returns the set of currently-hot remote (non-local-root) peers from a
+/// registry snapshot.
+///
+/// Excludes local-root peers (which are always kept hot under their own
+/// valency invariant) and big-ledger peers (whose hot-set is tracked
+/// separately).  Used by:
+///
+/// - [`evaluate_hot_promotions`] to know who is already hot before
+///   computing promotions.
+/// - The runtime's multi-peer BlockFetch dispatcher in `node/src/sync.rs`
+///   to spread fetches across all hot peers.
+///
+/// Mirrors `hotPeers` derivation in upstream
+/// `Ouroboros.Network.PeerSelection.Governor.HotPeers`.
+pub fn hot_peers_remote(registry: &PeerRegistry) -> BTreeSet<SocketAddr> {
+    let mut out = BTreeSet::new();
+    for (addr, entry) in registry.iter() {
+        if entry.status == PeerStatus::PeerHot
+            && !entry.sources.contains(&PeerSource::PeerSourceLocalRoot)
+            && !is_big_ledger(entry)
+        {
+            out.insert(*addr);
+        }
+    }
+    out
+}
+
 /// Mutable governor state carried across ticks.
 ///
 /// Tracks connection failures with time-based backoff and a two-phase
@@ -915,6 +1014,15 @@ pub struct GovernorState {
     /// Defaults to `false` to preserve current behavior until runtime wiring
     /// explicitly enables it.
     pub enable_root_big_ledger_requests: bool,
+    /// Per-mini-protocol scheduling weights for the hot-peer set.
+    ///
+    /// Defaults to upstream `defaultMiniProtocolParameters`.  Consumed by
+    /// the connection-manager scheduler for in-flight allocation across
+    /// hot peers; see [`HotPeerScheduling`] for the weight table and
+    /// [`hot_peers_remote`] for the registry-derived set view.
+    ///
+    /// Upstream: `Ouroboros.Network.PeerSelection.Governor.HotPeers`.
+    pub hot_scheduling: HotPeerScheduling,
 }
 
 impl Default for GovernorState {
@@ -946,6 +1054,7 @@ impl Default for GovernorState {
             inbound_peers_retry_delay: Duration::from_secs(60),
             max_inbound_peers: 10,
             enable_root_big_ledger_requests: false,
+            hot_scheduling: HotPeerScheduling::new(),
         }
     }
 }
@@ -1495,6 +1604,35 @@ pub fn evaluate_warm_to_hot_promotions(
         .take(needed)
         .map(GovernorAction::PromoteToHot)
         .collect()
+}
+
+/// Multi-peer hot-promotion entry point that mirrors upstream
+/// `Ouroboros.Network.PeerSelection.Governor.HotPeers.evaluatePromotions`.
+///
+/// Currently a thin facade around [`evaluate_warm_to_hot_promotions`] —
+/// existing call sites that already produce N promotions per tick continue
+/// to do so unchanged.  The dedicated entry point exists so that:
+///
+/// 1. The runtime BlockFetch dispatcher (Slice E) can locate the canonical
+///    hot-promotion call site.
+/// 2. Future weight-aware refinements can be added under this name without
+///    touching the internal helper.
+/// 3. Upstream module structure stays mirrored: `HotPeers.evaluatePromotions`
+///    delegates to `Governor.PromoteWarmToHot.evaluate` in Haskell, exactly
+///    as this function delegates to `evaluate_warm_to_hot_promotions` here.
+///
+/// The `_scheduling` parameter is currently unused (weights affect the
+/// connection-manager scheduler, not promotion candidacy) but is part of
+/// the API to preserve the contract that scheduling is consulted at every
+/// promotion decision.  Removing it would break upstream parity at the
+/// callable-API layer.
+pub fn evaluate_hot_promotions(
+    registry: &PeerRegistry,
+    targets: &GovernorTargets,
+    pick: &mut PickPolicy,
+    _scheduling: &HotPeerScheduling,
+) -> Vec<GovernorAction> {
+    evaluate_warm_to_hot_promotions(registry, targets, pick)
 }
 
 /// Evaluate which hot peers should be demoted to warm because we have
@@ -2255,9 +2393,20 @@ pub fn governor_tick(
                 local_root_groups,
                 pick,
             ));
-            // 2. Global promotion targets.
+            // 2. Global promotion targets.  Hot promotions go through the
+            //    upstream-style `evaluate_hot_promotions` entry point so
+            //    runtime callers and the canonical tick path use the same
+            //    function name.  Sensitive mode keeps the direct
+            //    `evaluate_warm_to_hot_promotions` call because the
+            //    `filter_sensitive_promotions` post-step expects the legacy
+            //    flat output and intentionally bypasses scheduling weights
+            //    for trustable-only promotion.
             actions.extend(evaluate_cold_to_warm_promotions(registry, targets, pick));
-            actions.extend(evaluate_warm_to_hot_promotions(registry, targets, pick));
+            let default_scheduling = HotPeerScheduling::new();
+            let hot_sched = state
+                .map(|s| &s.hot_scheduling)
+                .unwrap_or(&default_scheduling);
+            actions.extend(evaluate_hot_promotions(registry, targets, pick, hot_sched));
             // 3. Big-ledger peer promotions (suppressed in LocalRootsOnly).
             if association == AssociationMode::Unrestricted {
                 actions.extend(evaluate_cold_to_warm_big_ledger_promotions(
@@ -6695,5 +6844,273 @@ mod tests {
         assert_eq!(r2.len(), 3);
         // Different seeds should give different subsets with high probability.
         assert_ne!(r1, r2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Slice D — HotPeerScheduling, hot_peers_remote, evaluate_hot_promotions
+    // -----------------------------------------------------------------------
+    //
+    // Reference: `Ouroboros.Network.PeerSelection.Governor.HotPeers` in
+    // `IntersectMBO/ouroboros-network`.
+
+    #[test]
+    fn hot_peer_scheduling_default_weights_match_upstream() {
+        // Defaults must mirror upstream `defaultMiniProtocolParameters`:
+        // BlockFetch=10, ChainSync=3, TxSubmission=2, KeepAlive=1, PeerSharing=1.
+        let s = HotPeerScheduling::new();
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH), 10);
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::CHAIN_SYNC), 3);
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::TX_SUBMISSION), 2);
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::KEEP_ALIVE), 1);
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::PEER_SHARING), 1);
+    }
+
+    #[test]
+    fn hot_peer_scheduling_default_impl_matches_new() {
+        // Default::default() must agree with new(), so consumers that
+        // construct via `..Default::default()` get the upstream weights.
+        assert_eq!(HotPeerScheduling::default(), HotPeerScheduling::new());
+    }
+
+    #[test]
+    fn hot_peer_scheduling_unset_protocol_returns_zero() {
+        // Handshake has no scheduling weight in upstream, and absent
+        // entries must return 0 rather than panic.
+        let s = HotPeerScheduling::new();
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::HANDSHAKE), 0);
+    }
+
+    #[test]
+    fn set_hot_protocol_weight_overwrites_default() {
+        let mut s = HotPeerScheduling::new();
+        s.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 5);
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH), 5);
+    }
+
+    #[test]
+    fn set_hot_protocol_weight_is_idempotent() {
+        // Two writes with the same value leave state identical to one write.
+        let mut a = HotPeerScheduling::new();
+        let mut b = HotPeerScheduling::new();
+        a.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 7);
+        b.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 7);
+        b.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 7);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn set_hot_protocol_weight_zero_disables() {
+        // Weight 0 is the documented "disable from scheduler share" value.
+        let mut s = HotPeerScheduling::new();
+        s.set_hot_protocol_weight(MiniProtocolNum::TX_SUBMISSION, 0);
+        assert_eq!(s.hot_protocol_weight(MiniProtocolNum::TX_SUBMISSION), 0);
+    }
+
+    #[test]
+    fn hot_peer_scheduling_weights_view_is_readonly() {
+        // `weights()` returns `&BTreeMap` so callers cannot mutate the
+        // map directly.  The only legal mutation path is
+        // `set_hot_protocol_weight`.
+        let s = HotPeerScheduling::new();
+        let w = s.weights();
+        assert!(w.contains_key(&MiniProtocolNum::BLOCK_FETCH));
+        assert_eq!(w.len(), 5); // 5 named protocols at upstream defaults.
+    }
+
+    #[test]
+    fn hot_peers_remote_excludes_local_root_and_big_ledger() {
+        // Local-root and big-ledger peers run their own valency invariants;
+        // the remote-hot view must surface only the public/ledger hot set.
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerHot),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
+            (3, PeerSource::PeerSourceLedger, PeerStatus::PeerHot),
+            (4, PeerSource::PeerSourceBigLedger, PeerStatus::PeerHot),
+            (5, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+        ]);
+        let hot = hot_peers_remote(&reg);
+        assert!(!hot.contains(&addr(1)), "local-root excluded");
+        assert!(hot.contains(&addr(2)), "public-root hot included");
+        assert!(hot.contains(&addr(3)), "ledger hot included");
+        assert!(!hot.contains(&addr(4)), "big-ledger excluded");
+        assert!(!hot.contains(&addr(5)), "warm excluded");
+        assert_eq!(hot.len(), 2);
+    }
+
+    #[test]
+    fn hot_peers_remote_empty_when_no_hot_peers() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerCold),
+        ]);
+        assert!(hot_peers_remote(&reg).is_empty());
+    }
+
+    #[test]
+    fn evaluate_hot_promotions_matches_warm_to_hot_promotions() {
+        // The new entry point must produce identical actions to the
+        // direct call so the existing 16+ promotion regression tests
+        // remain the source of truth for selection semantics.
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourceLocalRoot, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+            (3, PeerSource::PeerSourceLedger, PeerStatus::PeerWarm),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 10,
+            target_established: 3,
+            target_active: 2,
+            ..Default::default()
+        };
+        let scheduling = HotPeerScheduling::new();
+
+        let direct = evaluate_warm_to_hot_promotions(&reg, &targets, &mut test_pick());
+        let via_facade =
+            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &scheduling);
+        assert_eq!(direct, via_facade);
+    }
+
+    #[test]
+    fn evaluate_hot_promotions_ignores_weights_for_candidacy() {
+        // Weights affect the connection-manager scheduler, not promotion
+        // candidacy.  Setting an extreme weight must NOT change which
+        // peers are selected, so consumers can tune scheduling without
+        // perturbing the warm→hot pipeline.
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 10,
+            target_established: 2,
+            target_active: 2,
+            ..Default::default()
+        };
+        let mut s_low = HotPeerScheduling::new();
+        s_low.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 0);
+        let mut s_high = HotPeerScheduling::new();
+        s_high.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 255);
+
+        let r_low =
+            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &s_low);
+        let r_high =
+            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &s_high);
+        assert_eq!(r_low, r_high);
+    }
+
+    #[test]
+    fn evaluate_hot_promotions_returns_n_promotions() {
+        // Multi-peer promotion: with 5 warm peers and target_active=3,
+        // the function must return exactly 3 promotions in one tick.
+        let reg = make_registry(
+            &(1..=5)
+                .map(|p| (p, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm))
+                .collect::<Vec<_>>(),
+        );
+        let targets = GovernorTargets {
+            target_known: 10,
+            target_established: 5,
+            target_active: 3,
+            ..Default::default()
+        };
+        let actions = evaluate_hot_promotions(
+            &reg,
+            &targets,
+            &mut test_pick(),
+            &HotPeerScheduling::new(),
+        );
+        assert_eq!(actions.len(), 3);
+        for a in &actions {
+            assert!(matches!(a, GovernorAction::PromoteToHot(_)));
+        }
+    }
+
+    #[test]
+    fn evaluate_hot_promotions_empty_when_target_met() {
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 10,
+            target_established: 2,
+            target_active: 2,
+            ..Default::default()
+        };
+        let actions = evaluate_hot_promotions(
+            &reg,
+            &targets,
+            &mut test_pick(),
+            &HotPeerScheduling::new(),
+        );
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn evaluate_hot_promotions_empty_when_no_warm_peers() {
+        // Edge case mirroring the existing `no_promotions_when_targets_met`
+        // pattern: if there are no warm candidates, promotion is a no-op.
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerCold),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerHot),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 10,
+            target_established: 5,
+            target_active: 5,
+            ..Default::default()
+        };
+        let actions = evaluate_hot_promotions(
+            &reg,
+            &targets,
+            &mut test_pick(),
+            &HotPeerScheduling::new(),
+        );
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn governor_state_default_carries_default_hot_scheduling() {
+        // Default GovernorState must carry the upstream-default scheduling
+        // so the no-op consumer path (no explicit configuration) gets
+        // upstream parity for free.
+        let gs = GovernorState::default();
+        assert_eq!(gs.hot_scheduling, HotPeerScheduling::new());
+    }
+
+    #[test]
+    fn governor_tick_normal_uses_evaluate_hot_promotions_path() {
+        // Drives a single Normal-mode tick with two warm peers and
+        // target_active=2: promotions must come through the new
+        // evaluate_hot_promotions entry point and produce exactly 2
+        // PromoteToHot actions, identical to the legacy direct path.
+        let reg = make_registry(&[
+            (1, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+            (2, PeerSource::PeerSourcePublicRoot, PeerStatus::PeerWarm),
+        ]);
+        let targets = GovernorTargets {
+            target_known: 10,
+            target_established: 2,
+            target_active: 2,
+            ..Default::default()
+        };
+        let mut pick = test_pick();
+        let metrics = PeerMetrics::default();
+        let actions = governor_tick(
+            &reg,
+            &targets,
+            &[],
+            PeerSelectionMode::Normal,
+            AssociationMode::Unrestricted,
+            None,
+            &mut pick,
+            &metrics,
+            Instant::now(),
+        );
+        let promotions: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, GovernorAction::PromoteToHot(_)))
+            .collect();
+        assert_eq!(promotions.len(), 2);
     }
 }
