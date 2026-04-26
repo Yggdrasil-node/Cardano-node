@@ -81,14 +81,27 @@ Reference commits in this session correcting earlier stale AGENTS.md notes: `db3
 
 ## Status: Yggdrasil 1.0 — every confirmed-active slice is closed
 
-As of the GD commit `682dfa8`, every `confirmed-active` row in this audit is `done`.  The deferred-slice rationale section has been removed: there are no remaining deferred slices.  Test count delta from this audit cycle: +57 (Slice B 16 + Slice D 16 + Slice E 10 + Slice GD 15) on top of the ~4,284 baseline; full workspace gates (`cargo check-all`, `cargo test-all`, `cargo lint`) green at every slice boundary.
+As of the GD-Final commit `6b5431b`, every `confirmed-active` row in this audit is `done`, and the consensus → network → governor data flow opened by Slice GD is now end-to-end live.  The deferred-slice rationale section has been removed: there are no remaining deferred slices.  Test count delta from this audit cycle: **+76** (Slice B 16 + Slice D 16 + Slice E 10 + Slice GD 15 + GD-RT 9 + GD-Governor 10) on top of the ~4,284 baseline; full workspace gates (`cargo check-all`, `cargo test-all`, `cargo lint`) green at every slice boundary.
+
+### Runtime integration follow-ups (Slice GD-RT / GD-Governor / GD-Final)
+
+After the original five-slice closure, the runtime integrations originally tracked as "follow-ups outside this audit" landed in the same cycle:
+
+| Slice | Status | Commit | Notes |
+|---|---|---|---|
+| GD-RT (ChainSync observation hook) | done | `36bdbef` | `node/src/sync.rs::DensityRegistry` + `observe_chain_sync_header_density` + `read_peer_density` + `forget_peer_density`; `VerifiedSyncServiceConfig.density_registry` field; `sync_batch_verified_with_tentative` observes every RollForward header. +9 tests. |
+| GD-Governor (density-biased scoring) | done | `d3316d1` | `PeerMetrics.density` + `density_for` + `is_low_density` + `set_density`; `LOW_DENSITY_THRESHOLD = 0.6` (pinned against consensus-side default); `HIGH_DENSITY_BONUS = 5` additive score for healthy peers; `combined_score` adds bonus when applicable; `remove_peer` clears density entry. +10 tests. |
+| GD-Final (runtime data flow) | done | `6b5431b` | `RuntimeGovernorConfig.density_registry` + `with_density_registry()`; `run_governor_loop` reads density into `governor_state.metrics.density` before each tick; `node/src/main.rs` constructs ONE shared registry passed to both sync and governor (writer/reader unified). |
+
+The Genesis density signal is now end-to-end live: ChainSync RollForward → `DensityWindow` → governor's hot-demotion bias → peer ranking on the next tick.
+
+### Remaining future-milestone follow-ups (NOT blocking 1.0)
+
+- **Multi-session orchestration in the runtime** so `partition_fetch_range_across_peers` actually fans out across N concurrent peers per fetch (Slice E primitive is in place; runtime restructuring is the consumer).  Consensus-correctness review of the `sync_batch_verified_with_tentative` tentative-header timing change is required before this lands.
+- **Hot-peer in-flight scheduling** that actually consults `HotPeerScheduling` weights for connection-manager allocation (Slice D weight surface is in place; scheduler integration is the consumer).
+
+### Production readiness
 
 The operator-side manual rehearsal (`docs/MANUAL_TEST_RUNBOOK.md` §2–9) is the next step toward production sign-off.  Scripts and runbook are committed; the runbook §9 sign-off entry is filled in by the operator after running the ~36-hour aggregate wallclock procedure.
-
-Future-milestone follow-ups that did NOT block 1.0 (and are tracked outside this audit):
-
-- **Multi-session orchestration in the runtime** so `partition_fetch_range_across_peers` actually fans out across N concurrent peers per fetch (Slice E primitive is in place; runtime restructuring is the consumer).
-- **ChainSync density observation hook** so the network governor consumes `DensityWindow` density signals for hot demotion (Slice GD primitive is in place; ChainSync `request_next_typed` instrumentation is the consumer).
-- **Hot-peer in-flight scheduling** that actually consults `HotPeerScheduling` weights for connection-manager allocation (Slice D weight surface is in place; scheduler integration is the consumer).
 
 The user can begin manual real-life testing today — all prerequisites (rehearsal scripts, hash-comparison harness, restart-resilience automation, runbook, audit baseline pins) are in place at the latest commit against the now-100%-feature-complete codebase.
