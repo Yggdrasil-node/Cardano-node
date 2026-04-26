@@ -2,6 +2,7 @@
 /// Yggdrasil node — integration layer wiring consensus, ledger, network,
 /// storage, and mempool crates into a running Cardano node.
 pub mod block_producer;
+pub mod blockfetch_worker;
 pub mod trace_forwarder;
 
 pub mod config;
@@ -60,6 +61,9 @@ pub use sync::{
     validate_block_protocol_version, verify_block_body_hash, verify_block_vrf,
     verify_block_vrf_with_stake, verify_multi_era_block, verify_praos_header,
     verify_shelley_header,
+};
+pub use blockfetch_worker::{
+    DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
 };
 pub use tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};
 
