@@ -1513,7 +1513,7 @@ pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
     progress: &MultiEraSyncProgress,
     policy: &LedgerCheckpointPolicy,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
-    ocert_counters: Option<&OcertCounters>,
+    mut ocert_counters: Option<&mut OcertCounters>,
 ) -> Result<(LedgerCheckpointUpdateOutcome, Vec<EpochBoundaryEvent>), SyncError>
 where
     I: ImmutableStore,
@@ -1535,6 +1535,18 @@ where
         }
         // Pool block counts are epoch-relative and stale after rollback.
         tracking.pool_block_counts.clear();
+        // Per-pool OpCert counters are part of upstream `PraosState.csCounters`
+        // (rolled back via `ChainDepState` snapshot at the rollback restore
+        // point). Reset them here so a fork that legitimately includes
+        // lower-sequence OpCerts from the same pool is accepted as
+        // "first-seen" via `OcertCounters::validate_and_update`'s permissive
+        // initialisation rule, instead of being rejected as
+        // `OcertCounterTooOld` against a stale pre-rollback high-water mark.
+        // The persisted sidecar will be overwritten with the post-reset
+        // map at the next checkpoint persistence below.
+        if let Some(counters) = ocert_counters.as_mut() {
+            counters.clear();
+        }
     } else if let (Some(snapshots), Some(epoch_size)) =
         (tracking.stake_snapshots.as_mut(), tracking.epoch_size)
     {
@@ -1587,7 +1599,7 @@ where
                 // marks to zero and a peer can replay an old block whose
                 // OpCert sequence number is below the true on-chain value.
                 if let (Some(dir), Some(counters)) =
-                    (tracking.ocert_persist_dir.as_ref(), ocert_counters)
+                    (tracking.ocert_persist_dir.as_ref(), ocert_counters.as_deref())
                 {
                     let encoded = counters.to_cbor_bytes();
                     yggdrasil_storage::save_ocert_counters(dir, &encoded)
@@ -1856,7 +1868,7 @@ where
                     Some(&mut checkpoint_tracking),
                     &config.checkpoint_policy,
                     vrf_ctx.as_ref(),
-                    ocert_counters.as_ref(),
+                    ocert_counters.as_mut(),
                 )?;
                 from_point = progress.current_point;
                 total_blocks += progress.fetched_blocks;
@@ -3572,7 +3584,7 @@ pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
     checkpoint_tracking: Option<&mut LedgerCheckpointTracking>,
     checkpoint_policy: &LedgerCheckpointPolicy,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
-    ocert_counters: Option<&OcertCounters>,
+    ocert_counters: Option<&mut OcertCounters>,
 ) -> Result<AppliedVerifiedProgress, SyncError>
 where
     I: ImmutableStore,
@@ -4221,6 +4233,80 @@ mod tests {
         assert!(near_future_wait_duration_until_slot_at(1020.0, 1000.0, 2.0, SlotNo(8)).is_none());
         assert!(near_future_wait_duration_until_slot_at(1010.0, 1000.0, 0.0, SlotNo(8)).is_none());
         assert!(near_future_wait_duration_until_slot_at(1010.0, 1000.0, -1.0, SlotNo(8)).is_none());
+    }
+
+    /// Pins the rollback-aware reset of `OcertCounters` in
+    /// `update_ledger_checkpoint_after_progress`. Mirrors upstream
+    /// `Cardano.Protocol.TPraos.API` `tickChainDepState` semantics
+    /// where `PraosState.csCounters` is restored from the rollback's
+    /// `ChainDepState` snapshot — without the reset, an alt chain that
+    /// legitimately includes lower-sequence OpCerts from the same pool
+    /// would be rejected as `OcertCounterTooOld`.
+    #[test]
+    fn update_ledger_checkpoint_after_progress_clears_ocert_counters_on_rollback() {
+        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_consensus::OcertCounters;
+        use yggdrasil_ledger::Era;
+        use yggdrasil_storage::{
+            ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
+        };
+
+        // Pre-loaded counter map: pool advanced to seq 5.
+        let pool = [0xAA; 28];
+        let mut counters = OcertCounters::new();
+        for seq in 0..=5 {
+            counters.validate_and_update(pool, seq, true).unwrap();
+        }
+        assert_eq!(counters.get(&pool), Some(5));
+
+        // Minimal in-memory ChainDb + base ledger state.
+        let mut chain_db = ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        );
+        let base = LedgerState::new(Era::Byron);
+        let mut tracking = LedgerCheckpointTracking {
+            base_ledger_state: base.clone(),
+            ledger_state: base,
+            last_persisted_point: Point::Origin,
+            plutus_evaluator: CekPlutusEvaluator::default(),
+            stake_snapshots: None,
+            epoch_size: None,
+            pool_block_counts: BTreeMap::new(),
+            ocert_persist_dir: None,
+        };
+
+        // A progress with a rollback-only batch (no real blocks needed —
+        // the helper inspects `progress.rollback_count` for the reset
+        // branch).
+        let progress = MultiEraSyncProgress {
+            current_point: Point::Origin,
+            steps: Vec::new(),
+            fetched_blocks: 0,
+            rollback_count: 1,
+        };
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 0,
+            max_snapshots: 0,
+        };
+
+        // Run the helper. Pre-this-slice, counters would still hold
+        // pool → 5 after the call.
+        update_ledger_checkpoint_after_progress(
+            &mut chain_db,
+            &mut tracking,
+            &progress,
+            &policy,
+            None,
+            Some(&mut counters),
+        )
+        .expect("rollback path");
+
+        // The reset must have cleared the counters so the next OpCert
+        // from the same pool is treated as first-seen.
+        assert!(counters.is_empty());
+        assert_eq!(counters.get(&pool), None);
     }
 
     #[test]
