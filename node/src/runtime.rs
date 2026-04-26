@@ -623,6 +623,11 @@ impl OutboundPeerManager {
             Some(mut session) => {
                 apply_control_close(&mut session.control);
                 session.abort();
+                // Unregister any per-peer fetch worker so the per-peer
+                // task exits cleanly without affecting siblings.  No-op
+                // when no worker was migrated for this peer.  Mirrors
+                // upstream `bracketSyncWithFetchClient` exit path.
+                let _ = self.fetch_worker_pool.unregister(&peer);
                 true
             }
             None => false,
