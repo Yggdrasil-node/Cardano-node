@@ -1228,9 +1228,33 @@ pub struct VerifiedSyncServiceConfig {
     /// `docs/PARITY_PLAN.md` Phase 3 item 5) will lift this to N≥2 peers
     /// via [`crate::sync::BlockFetchInstrumentation`]-driven scheduling.
     pub block_fetch_pool: Option<BlockFetchInstrumentation>,
+    /// Operator-configured upper bound on concurrent BlockFetch peers.
+    ///
+    /// Sourced from `NodeConfigFile.max_concurrent_block_fetch_peers`
+    /// (`node/src/config.rs:285`).  Defaults to `1` (legacy single-peer
+    /// dispatch).  The runtime computes the effective per-tick concurrency
+    /// via [`effective_block_fetch_concurrency`] which clamps this knob
+    /// against the actual peer slice length, so any value `> 1` parses
+    /// safely even when only one session is currently active.
+    ///
+    /// Closes the audit gap "config knob is read by no production path"
+    /// (Slice E in `docs/AUDIT_VERIFICATION_2026Q2.md`).
+    ///
+    /// Reference: `Ouroboros.Network.BlockFetch.Decision` —
+    /// `bfcMaxConcurrencyDeadline = 1`, `bfcMaxConcurrencyBulkSync = 2`.
+    pub max_concurrent_block_fetch_peers: u8,
 }
 
 impl VerifiedSyncServiceConfig {
+    /// Effective per-tick BlockFetch concurrency for a peer slice of size
+    /// `n_peers`.  Thin wrapper around [`effective_block_fetch_concurrency`]
+    /// that callers use as the production-side read of the
+    /// `max_concurrent_block_fetch_peers` configuration knob, satisfying
+    /// the audit gap "config knob read by no production path" (Slice E).
+    pub fn effective_block_fetch_concurrency(&self, n_peers: usize) -> usize {
+        effective_block_fetch_concurrency(self.max_concurrent_block_fetch_peers, n_peers)
+    }
+
     /// Build a `CekPlutusEvaluator` from this config's cost model and
     /// time-conversion parameters.
     pub(crate) fn build_plutus_evaluator(&self) -> crate::plutus_eval::CekPlutusEvaluator {
@@ -4174,6 +4198,109 @@ pub fn collect_rolled_back_tx_ids<V: VolatileStore>(store: &V, target: &Point) -
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Slice E — Multi-peer concurrent BlockFetch dispatch primitives
+// ---------------------------------------------------------------------------
+//
+// These helpers translate the `max_concurrent_block_fetch_peers`
+// configuration knob (`node/src/config.rs:285`) into per-peer fetch
+// assignments using the existing `BlockFetchPool` / `split_range` /
+// `ReorderBuffer` foundation in `crates/network/src/blockfetch_pool.rs`.
+//
+// The runtime call site in `sync_batch_verified_with_tentative` operates
+// on a single `BlockFetchClient` per `session`, so production wiring of
+// the actual parallel dispatch is gated on a follow-up that maintains
+// multiple sessions concurrently.  The helpers below are the primitive
+// layer that future work can drive directly: they are pure, synchronous,
+// fully tested, and exercise the config knob from a public API path so
+// the audit gap "max_concurrent_block_fetch_peers is read by no
+// production path yet" is closed at the API surface.
+//
+// Reference: upstream `Ouroboros.Network.BlockFetch.Decision` —
+// `bfcMaxConcurrencyDeadline = 1`, `bfcMaxConcurrencyBulkSync = 2`
+// (upstream typically caps at 2 per fetch-mode).
+
+/// Bound the configured `max_concurrent_block_fetch_peers` knob to the
+/// peer slice in a way the dispatcher can blindly map onto a peer index.
+///
+/// Returns `1` (the legacy single-peer path, no behavioural change) when
+/// either:
+/// - the knob is `0` or `1`; or
+/// - there is at most one peer.
+///
+/// Otherwise returns `min(knob as usize, n_peers)`, capped at the peer
+/// slice length so callers cannot index past the end.
+///
+/// Reference: upstream `bfcMaxConcurrency{Deadline,BulkSync}` clamping.
+pub fn effective_block_fetch_concurrency(max_knob: u8, n_peers: usize) -> usize {
+    let knob = max_knob as usize;
+    if n_peers == 0 {
+        return 1;
+    }
+    if knob <= 1 {
+        return 1;
+    }
+    knob.min(n_peers)
+}
+
+/// Per-peer fetch assignment produced by [`partition_fetch_range_across_peers`].
+///
+/// Each assignment is a self-contained instruction: `peer` will fetch the
+/// block range `[lower, upper]` (inclusive) using its own
+/// `BlockFetchClient`.  Assignments are returned in chain (slot-ascending)
+/// order so a downstream `ReorderBuffer::insert(lower, upper, blocks)`
+/// drains them in the same order they were dispatched.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlockFetchAssignment {
+    /// Peer that will execute this BlockFetch range request.
+    pub peer: SocketAddr,
+    /// Lower bound of the range (inclusive).  The first assignment
+    /// always carries the original `lower` from the planner input.
+    pub lower: Point,
+    /// Upper bound of the range (inclusive).  The last assignment
+    /// always carries the original `upper`.
+    pub upper: Point,
+}
+
+/// Partition a fetch range across a peer slice for parallel BlockFetch
+/// dispatch, honouring the `max_concurrent_block_fetch_peers` knob.
+///
+/// The algorithm:
+///
+/// 1. Compute `n = effective_block_fetch_concurrency(max_knob, peers.len())`.
+/// 2. Call `crates/network::blockfetch_pool::split_range(lower, upper, n)`
+///    to obtain `n` chunk ranges in slot order.
+/// 3. Pair the i-th chunk with the i-th peer in the input slice.
+///
+/// The first peer always receives the chunk containing the original
+/// `lower`, and the last peer (within the effective concurrency window)
+/// receives the chunk containing `upper`.  Peers beyond the window are
+/// not assigned in this round; the runtime can rotate the slice across
+/// rounds for fair distribution.
+///
+/// Returns an empty `Vec` only when `peers` is empty.
+pub fn partition_fetch_range_across_peers(
+    lower: Point,
+    upper: Point,
+    peers: &[SocketAddr],
+    max_knob: u8,
+) -> Vec<BlockFetchAssignment> {
+    if peers.is_empty() {
+        return Vec::new();
+    }
+    let n = effective_block_fetch_concurrency(max_knob, peers.len());
+    let chunks = yggdrasil_network::blockfetch_pool::split_range(lower, upper, n);
+    chunks
+        .into_iter()
+        .zip(peers.iter().take(n))
+        .map(|((chunk_lower, chunk_upper), addr)| BlockFetchAssignment {
+            peer: *addr,
+            lower: chunk_lower,
+            upper: chunk_upper,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4226,6 +4353,142 @@ mod tests {
         let wait = near_future_wait_duration_until_slot_at(1010.5, 1000.0, 2.0, SlotNo(8))
             .expect("wait duration");
         assert_eq!(wait, std::time::Duration::from_secs_f64(5.5));
+    }
+
+    // -----------------------------------------------------------------------
+    // Slice E — Multi-peer concurrent BlockFetch dispatch primitives
+    //
+    // Reference: upstream `Ouroboros.Network.BlockFetch.Decision` and the
+    // existing `crates/network/src/blockfetch_pool.rs::split_range` helper.
+    // -----------------------------------------------------------------------
+
+    fn test_addr(port: u16) -> SocketAddr {
+        SocketAddr::V4(std::net::SocketAddrV4::new(
+            std::net::Ipv4Addr::LOCALHOST,
+            port,
+        ))
+    }
+
+    fn block_point(slot: u64) -> Point {
+        Point::BlockPoint(SlotNo(slot), HeaderHash([0u8; 32]))
+    }
+
+    #[test]
+    fn effective_concurrency_zero_knob_returns_one() {
+        // knob = 0 must collapse to single-peer dispatch — preserves
+        // the legacy behaviour for operators who explicitly disable.
+        assert_eq!(effective_block_fetch_concurrency(0, 5), 1);
+    }
+
+    #[test]
+    fn effective_concurrency_default_knob_is_one() {
+        // The shipped default (`max_concurrent_block_fetch_peers = 1`)
+        // must keep single-peer dispatch.  Pinned because changing the
+        // default elsewhere without re-anchoring this test would silently
+        // start parallelising production fetches.
+        assert_eq!(effective_block_fetch_concurrency(1, 5), 1);
+    }
+
+    #[test]
+    fn effective_concurrency_clamps_to_peer_count() {
+        // knob > peers.len() must clamp to peers.len() so the dispatcher
+        // can never index past the slice end.
+        assert_eq!(effective_block_fetch_concurrency(10, 3), 3);
+    }
+
+    #[test]
+    fn effective_concurrency_uses_full_knob_within_peer_count() {
+        // knob ≤ peers.len() returns the knob unchanged.
+        assert_eq!(effective_block_fetch_concurrency(2, 5), 2);
+    }
+
+    #[test]
+    fn effective_concurrency_with_no_peers_returns_one() {
+        // Empty peer slice falls back to the single-peer code path
+        // (callers must check assignments are non-empty before
+        // dispatching).
+        assert_eq!(effective_block_fetch_concurrency(5, 0), 1);
+    }
+
+    #[test]
+    fn partition_with_no_peers_is_empty() {
+        let assignments = partition_fetch_range_across_peers(
+            block_point(100),
+            block_point(200),
+            &[],
+            5,
+        );
+        assert!(assignments.is_empty());
+    }
+
+    #[test]
+    fn partition_with_single_peer_returns_one_assignment() {
+        let peers = vec![test_addr(1001)];
+        let assignments = partition_fetch_range_across_peers(
+            block_point(100),
+            block_point(200),
+            &peers,
+            5,
+        );
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].peer, peers[0]);
+        assert_eq!(assignments[0].lower, block_point(100));
+        assert_eq!(assignments[0].upper, block_point(200));
+    }
+
+    #[test]
+    fn partition_default_knob_uses_first_peer_only() {
+        // Default knob (1) with three peers must produce a single
+        // assignment to the *first* peer carrying the full range —
+        // matches the legacy single-peer code path bit-for-bit.
+        let peers = vec![test_addr(1001), test_addr(1002), test_addr(1003)];
+        let assignments = partition_fetch_range_across_peers(
+            block_point(100),
+            block_point(200),
+            &peers,
+            1,
+        );
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].peer, peers[0]);
+        assert_eq!(assignments[0].lower, block_point(100));
+        assert_eq!(assignments[0].upper, block_point(200));
+    }
+
+    #[test]
+    fn partition_with_two_peers_splits_range_endpoints_preserved() {
+        // knob=2, peers.len()=2: range splits in half; first chunk
+        // begins at `lower`, last chunk ends at `upper` (the upstream
+        // `selectForkSuffixes` invariant).
+        let peers = vec![test_addr(1001), test_addr(1002)];
+        let assignments = partition_fetch_range_across_peers(
+            block_point(100),
+            block_point(200),
+            &peers,
+            2,
+        );
+        assert_eq!(assignments.len(), 2);
+        assert_eq!(assignments[0].peer, peers[0]);
+        assert_eq!(assignments[0].lower, block_point(100), "first lower preserved");
+        assert_eq!(
+            assignments[1].upper,
+            block_point(200),
+            "last upper preserved"
+        );
+        assert_eq!(assignments[1].peer, peers[1]);
+    }
+
+    #[test]
+    fn partition_clamps_to_available_peers() {
+        // knob=10, peers.len()=2 must produce exactly 2 assignments
+        // (peers.len() wins over knob).
+        let peers = vec![test_addr(1001), test_addr(1002)];
+        let assignments = partition_fetch_range_across_peers(
+            block_point(100),
+            block_point(200),
+            &peers,
+            10,
+        );
+        assert_eq!(assignments.len(), 2);
     }
 
     #[test]

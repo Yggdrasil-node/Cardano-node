@@ -1158,6 +1158,7 @@ fn main() -> Result<()> {
                     system_start_unix_secs: genesis_system_start_unix_secs,
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
                     block_fetch_pool: Some(block_fetch_pool.clone()),
+                    max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -1184,6 +1185,7 @@ fn main() -> Result<()> {
                     system_start_unix_secs: genesis_system_start_unix_secs,
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
                     block_fetch_pool: Some(block_fetch_pool.clone()),
+                    max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
                 }
             };
 
