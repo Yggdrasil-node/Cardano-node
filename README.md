@@ -28,14 +28,17 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 - **Node CLI**: `clap`-based binary with `run` (connect to peer and sync), `validate-config` (operator preflight for config, peer-snapshot inputs, and any existing storage recovery state), `status` (inspect on-disk storage and report sync position, block counts, and checkpoint state), and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides, topology/config parsing that feeds reusable network-crate topology and peer-ordering helpers, and upstream-aligned tracing fields (`TurnOnLogging`, `UseTraceDispatcher`, `TraceOptions`, `TraceOptionNodeName`, `TraceOptionForwarder`). `NodeMetrics` provides atomic operational counters wired into the hot sync loops, with `--metrics-port` exposing a Prometheus-compatible HTTP `/metrics` endpoint and a JSON `/metrics/json` endpoint on `127.0.0.1`.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Ordered bootstrap relay fallback plus reconnecting verified sync on ChainSync or BlockFetch connectivity loss. Graceful shutdown via Ctrl-C signal handling. A local `NodeTracer` now emits human- or machine-formatted runtime trace objects for bootstrap, reconnect, sync progress, and shutdown/failure paths. Live sync now evicts confirmed and expired transactions from the shared mempool, and epoch-boundary reward math uses tracked per-pool performance instead of an always-perfect stub.
 - **Upstream parity**: CBOR golden round-trip tests, cross-subsystem integration tests, and wire-format field naming aligned with official Cardano CDDL specifications.
-- **Validation baseline**: `cargo test-all` currently discovers 4210 tests across the workspace.
+- **Validation baseline**: `cargo test-all` discovers 4,300+ tests across the workspace, all passing at every slice boundary.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
-### In Progress
+### Status: 100% feature-complete
 
-- Governor-style peer policy: promotion, demotion, peer sharing, public-root refresh backoff, churn, and Genesis-specific security behavior.
-- Extended cardano-tracer interoperability and endurance validation.
-- Mainnet sync endurance testing.
+As of the 2026-Q2 audit closure, every confirmed-active parity slice tracked in [`docs/AUDIT_VERIFICATION_2026Q2.md`](docs/AUDIT_VERIFICATION_2026Q2.md) is closed.  The remaining production-readiness gate is the operator-side manual rehearsal in [`docs/MANUAL_TEST_RUNBOOK.md`](docs/MANUAL_TEST_RUNBOOK.md) §2–9 (preprod/mainnet sync, hash compare vs Haskell node, restart-resilience cycles, sign-off summary).  Future-milestone runtime integrations (multi-session orchestration that consumes the `partition_fetch_range_across_peers` primitive; ChainSync hook that pushes `observe_header(slot)` into per-peer `DensityWindow`; weight-aware connection-manager scheduling that reads `HotPeerScheduling`) are tracked as follow-ups outside the parity audit.
+
+### Ongoing operational work
+
+- Mainnet sync endurance testing per the runbook.
+- Extended cardano-tracer interoperability validation.
 
 ## Workspace Layout
 

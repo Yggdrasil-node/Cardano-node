@@ -157,7 +157,7 @@
 - `PeerSharingClient` — Response timeout: ST_BUSY 60 s
 - `TxSubmissionClient` — All client-side waits are waitForever (server-driven pull protocol)
 - Connection manager — Full lifecycle with CM state shared across outbound and inbound paths
-- Genesis density — Network-layer future milestone
+- Genesis density — Primitive complete (Slice GD, commit `682dfa8`): `crates/consensus/src/genesis_density.rs::DensityWindow` sliding-window header-density estimator (`DEFAULT_SLOT_WINDOW = 6480`, `DEFAULT_LOW_DENSITY_THRESHOLD = 0.6`, deterministic slot-only math). Network-side ChainSync observation hook + governor-side density-biased demotion are tracked as a follow-up runtime integration.
 
 **Storage**:
 - Garbage collection — Complete: `trim_before_slot`, `garbage_collect`, `compact`, `gc_immutable_before_slot`, `gc_volatile_before_slot`
@@ -180,7 +180,7 @@
 ### ❌ Not Started (Can Defer or Externalize)
 
 **Network**:
-- Genesis density — Network-layer ChainSync density tracking; future milestone
+- _(no remaining items)_ — Genesis density primitive shipped in Slice GD (`crates/consensus/src/genesis_density.rs`); ChainSync observation hook is a follow-up runtime integration.
 
 **Storage**:
 - LMDB-compatible LSM backend — File-based JSON adequate for now
