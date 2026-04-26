@@ -1837,6 +1837,62 @@ mod tests {
     }
 
     #[test]
+    fn preset_configs_share_canonical_protocol_versions() {
+        // The three preset constructors (`mainnet_config`, `preprod_config`,
+        // `preview_config`) each independently hand-code
+        // `protocol_versions: vec![13, 14]`. Drift between them would mean
+        // a freshly bootstrapped mainnet relay proposes a different NtN
+        // version range than a preprod relay built from the same binary
+        // — silently producing handshake mismatches that look like
+        // peer-misbehaviour at the operator level. This test iterates
+        // every preset via `NetworkPreset::all()` (slice 82) and asserts
+        // each preset's `protocol_versions` is identical to mainnet's.
+        // A divergent edit to ANY single preset fails CI naming the
+        // offending preset.
+        let mainnet = mainnet_config().protocol_versions.clone();
+        for &preset in NetworkPreset::all() {
+            let cfg = preset.to_config();
+            assert_eq!(
+                cfg.protocol_versions, mainnet,
+                "preset {preset:?}: protocol_versions {:?} drifted from mainnet {:?}",
+                cfg.protocol_versions, mainnet,
+            );
+        }
+    }
+
+    #[test]
+    fn preset_configs_protocol_versions_match_named_handshake_constants() {
+        // Every entry in the canonical `protocol_versions` vector MUST
+        // correspond to one of the named NtN handshake constants
+        // (`HandshakeVersion::V13`, `V14`, `V15` — see slice 88). A
+        // typo like `vec![13, 41]` (transposed digits) would otherwise
+        // pass the slice-82 cross-preset check (since all three would
+        // share the same typo) but break real handshake negotiation
+        // because tag 41 is not a known NtN protocol version.
+        //
+        // Pinning the literal `[13, 14]` AND cross-asserting against the
+        // named constants composes the two slice-88 named constants with
+        // the canonical preset content, so a future bump of the proposed
+        // version range (e.g. adding V15 once Conway+1 is live) is a
+        // single coordinated edit: update the preset constructors,
+        // update this test's `expected` array, and the named constants
+        // already exist.
+        use yggdrasil_network::HandshakeVersion;
+
+        let expected: Vec<u32> = vec![HandshakeVersion::V13.0 as u32, HandshakeVersion::V14.0 as u32];
+        assert_eq!(
+            expected,
+            vec![13_u32, 14_u32],
+            "named NtN constants must correspond to literal protocol versions 13/14",
+        );
+        assert_eq!(
+            mainnet_config().protocol_versions,
+            expected,
+            "mainnet preset must propose exactly the named NtN constants",
+        );
+    }
+
+    #[test]
     fn mainnet_network_id_constant_matches_upstream() {
         // Upstream `Cardano.Ledger.Api.Tx.Address`: `Network = Mainnet`
         // encodes to `1` in the high nibble of every reward / Shelley
