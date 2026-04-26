@@ -727,18 +727,74 @@ pub struct PeerMetrics {
     pub upstreamyness: BTreeMap<SocketAddr, u64>,
     /// Per-peer fetchyness score (block delivery timeliness).
     pub fetchyness: BTreeMap<SocketAddr, u64>,
+    /// Per-peer ChainSync header density (Slice GD-Governor).
+    ///
+    /// `density ∈ [0.0, ~1.0]` is the per-peer chain-quality signal
+    /// derived from the consensus-side `DensityWindow` sliding window.
+    /// Updated by the runtime each governor tick from the
+    /// `node/src/sync.rs::DensityRegistry`.  Consumed by
+    /// [`PeerMetrics::combined_score`] and [`PeerMetrics::is_low_density`]
+    /// to bias hot demotion away from healthy chain-quality peers and
+    /// toward laggards.
+    ///
+    /// Reference: `Ouroboros.Consensus.Genesis.Governor` density
+    /// signal in `IntersectMBO/ouroboros-consensus`.
+    pub density: BTreeMap<SocketAddr, f64>,
 }
 
+/// Density-quality bonus added to a peer's combined score when its
+/// observed chain density meets or exceeds
+/// [`LOW_DENSITY_THRESHOLD`].  Small enough not to override the
+/// upstreamyness+fetchyness signal; large enough to act as a
+/// tie-breaker between two equally-scored peers.
+pub const HIGH_DENSITY_BONUS: u64 = 5;
+
+/// Density floor below which a peer is considered low-quality for
+/// demotion biasing.  Mirrors upstream
+/// `genesisHotDemotionLowDensityThreshold` heuristic and the
+/// consensus-side `DEFAULT_LOW_DENSITY_THRESHOLD = 0.6`.
+pub const LOW_DENSITY_THRESHOLD: f64 = 0.6;
+
 impl PeerMetrics {
-    /// Return the combined score for a peer (`upstreamyness + fetchyness`).
+    /// Return the combined score for a peer (`upstreamyness + fetchyness +
+    /// density bonus`).
     ///
     /// This matches the upstream `hotDemotionPolicy` which adds
     /// `upstreamyness + fetchyness` to the random weight when scoring
-    /// hot peers for demotion.  Higher score means the peer is more
-    /// productive and should be kept hot longer.
+    /// hot peers for demotion.  When per-peer density is available
+    /// (Slice GD-Governor), peers with `density >= LOW_DENSITY_THRESHOLD`
+    /// receive an additive [`HIGH_DENSITY_BONUS`] so high-quality
+    /// chain peers stay hot through close score ties.  Higher score
+    /// means the peer is more productive and should be kept hot longer.
     pub fn combined_score(&self, addr: &SocketAddr) -> u64 {
-        self.upstreamyness.get(addr).copied().unwrap_or(0)
-            + self.fetchyness.get(addr).copied().unwrap_or(0)
+        let base = self.upstreamyness.get(addr).copied().unwrap_or(0)
+            + self.fetchyness.get(addr).copied().unwrap_or(0);
+        let density_bonus = if self.density_for(addr) >= LOW_DENSITY_THRESHOLD {
+            HIGH_DENSITY_BONUS
+        } else {
+            0
+        };
+        base + density_bonus
+    }
+
+    /// Read the per-peer density score, defaulting to `0.0` if no
+    /// observation is recorded.  Equivalent to `density.get(addr)
+    /// .copied().unwrap_or(0.0)` and exposed as a method so the
+    /// governor's tests and the runtime path use the same accessor.
+    pub fn density_for(&self, addr: &SocketAddr) -> f64 {
+        self.density.get(addr).copied().unwrap_or(0.0)
+    }
+
+    /// Returns `true` when the peer's recorded density is below
+    /// [`LOW_DENSITY_THRESHOLD`].  Unknown peers (no density entry yet)
+    /// are NOT treated as low-density — that returns `false` — so a
+    /// freshly-promoted peer gets a chance to deliver a few headers
+    /// before becoming a demotion candidate.
+    pub fn is_low_density(&self, addr: &SocketAddr) -> bool {
+        match self.density.get(addr) {
+            Some(d) => *d < LOW_DENSITY_THRESHOLD,
+            None => false,
+        }
     }
 
     /// Record an upstreamyness observation: the peer was first to
@@ -753,10 +809,18 @@ impl PeerMetrics {
         *self.fetchyness.entry(addr).or_insert(0) += 1;
     }
 
+    /// Set the per-peer density score (Slice GD-Governor).  Called by
+    /// the runtime each governor tick after reading the consensus-side
+    /// `DensityRegistry`.
+    pub fn set_density(&mut self, addr: SocketAddr, density: f64) {
+        self.density.insert(addr, density);
+    }
+
     /// Remove metrics for a peer that has been forgotten.
     pub fn remove_peer(&mut self, addr: &SocketAddr) {
         self.upstreamyness.remove(addr);
         self.fetchyness.remove(addr);
+        self.density.remove(addr);
     }
 }
 
@@ -7076,6 +7140,96 @@ mod tests {
         // upstream parity for free.
         let gs = GovernorState::default();
         assert_eq!(gs.hot_scheduling, HotPeerScheduling::new());
+    }
+
+    // -----------------------------------------------------------------------
+    // Slice GD-Governor — density-aware combined_score
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn density_for_unknown_peer_returns_zero() {
+        let m = PeerMetrics::default();
+        assert_eq!(m.density_for(&addr(3001)), 0.0);
+    }
+
+    #[test]
+    fn set_density_overwrites_previous_observation() {
+        let mut m = PeerMetrics::default();
+        m.set_density(addr(3002), 0.3);
+        m.set_density(addr(3002), 0.8);
+        assert!((m.density_for(&addr(3002)) - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn is_low_density_false_for_unknown_peer() {
+        // Freshly-promoted peer: no density observation yet must NOT
+        // be treated as low-density (let it deliver a few headers
+        // before scoring kicks in).
+        let m = PeerMetrics::default();
+        assert!(!m.is_low_density(&addr(3003)));
+    }
+
+    #[test]
+    fn is_low_density_true_below_threshold() {
+        let mut m = PeerMetrics::default();
+        m.set_density(addr(3004), 0.1);
+        assert!(m.is_low_density(&addr(3004)));
+    }
+
+    #[test]
+    fn is_low_density_false_at_or_above_threshold() {
+        let mut m = PeerMetrics::default();
+        m.set_density(addr(3005), LOW_DENSITY_THRESHOLD);
+        // Threshold is the boundary — at-threshold is NOT low.
+        assert!(!m.is_low_density(&addr(3005)));
+    }
+
+    #[test]
+    fn combined_score_adds_density_bonus_above_threshold() {
+        let mut m = PeerMetrics::default();
+        let a = addr(3006);
+        m.upstreamyness.insert(a, 10);
+        m.fetchyness.insert(a, 20);
+        // No density set → no bonus.
+        assert_eq!(m.combined_score(&a), 30);
+        // High density → +HIGH_DENSITY_BONUS.
+        m.set_density(a, 0.8);
+        assert_eq!(m.combined_score(&a), 30 + HIGH_DENSITY_BONUS);
+    }
+
+    #[test]
+    fn combined_score_no_bonus_for_low_density() {
+        let mut m = PeerMetrics::default();
+        let a = addr(3007);
+        m.upstreamyness.insert(a, 5);
+        m.fetchyness.insert(a, 5);
+        m.set_density(a, 0.2); // below threshold
+        assert_eq!(m.combined_score(&a), 10);
+    }
+
+    #[test]
+    fn remove_peer_clears_density() {
+        let mut m = PeerMetrics::default();
+        let a = addr(3008);
+        m.set_density(a, 0.7);
+        m.remove_peer(&a);
+        assert_eq!(m.density_for(&a), 0.0);
+    }
+
+    #[test]
+    fn high_density_bonus_is_canonical() {
+        // Pin the bonus magnitude so a future regression that changes
+        // it surfaces immediately. Currently chosen small enough to act
+        // as a tie-breaker without overriding upstreamyness+fetchyness.
+        assert_eq!(HIGH_DENSITY_BONUS, 5);
+    }
+
+    #[test]
+    fn low_density_threshold_matches_consensus_default() {
+        // Pin against the consensus-side `DEFAULT_LOW_DENSITY_THRESHOLD
+        // = 0.6` so a future regression that drifts the network value
+        // away from the consensus default surfaces immediately.
+        assert!((LOW_DENSITY_THRESHOLD - 0.6).abs() < f64::EPSILON);
     }
 
     #[test]
