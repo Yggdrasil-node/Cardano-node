@@ -332,6 +332,110 @@ impl DefaultFun {
         }
     }
 
+    /// Canonical, tag-ascending slice of every `DefaultFun` variant.
+    ///
+    /// Returned in the same order as the discriminant assignments
+    /// (`AddInteger = 0` … `ExpModInteger = 87`), so `all()[i] as u8 == i`.
+    /// Adding a new builtin upstream MUST extend this list — drift-guard
+    /// tests in this module pin the length, the discriminant ordering,
+    /// and `from_tag` round-trip for every entry, so a missed update
+    /// here fails CI before it can corrupt on-chain script decoding.
+    ///
+    /// Reference: `PlutusCore.Default.Builtins.DefaultFun` ordering.
+    pub const fn all() -> &'static [Self] {
+        use DefaultFun::*;
+        &[
+            AddInteger,
+            SubtractInteger,
+            MultiplyInteger,
+            DivideInteger,
+            QuotientInteger,
+            RemainderInteger,
+            ModInteger,
+            EqualsInteger,
+            LessThanInteger,
+            LessThanEqualsInteger,
+            AppendByteString,
+            ConsByteString,
+            SliceByteString,
+            LengthOfByteString,
+            IndexByteString,
+            EqualsByteString,
+            LessThanByteString,
+            LessThanEqualsByteString,
+            Sha2_256,
+            Sha3_256,
+            Blake2b_256,
+            VerifyEd25519Signature,
+            AppendString,
+            EqualsString,
+            EncodeUtf8,
+            DecodeUtf8,
+            IfThenElse,
+            ChooseUnit,
+            Trace,
+            FstPair,
+            SndPair,
+            ChooseList,
+            MkCons,
+            HeadList,
+            TailList,
+            NullList,
+            ChooseData,
+            ConstrData,
+            MapData,
+            ListData,
+            IData,
+            BData,
+            UnConstrData,
+            UnMapData,
+            UnListData,
+            UnIData,
+            UnBData,
+            EqualsData,
+            MkPairData,
+            MkNilData,
+            MkNilPairData,
+            SerialiseData,
+            VerifyEcdsaSecp256k1Signature,
+            VerifySchnorrSecp256k1Signature,
+            Bls12_381_G1_Add,
+            Bls12_381_G1_Neg,
+            Bls12_381_G1_ScalarMul,
+            Bls12_381_G1_Equal,
+            Bls12_381_G1_HashToGroup,
+            Bls12_381_G1_Compress,
+            Bls12_381_G1_Uncompress,
+            Bls12_381_G2_Add,
+            Bls12_381_G2_Neg,
+            Bls12_381_G2_ScalarMul,
+            Bls12_381_G2_Equal,
+            Bls12_381_G2_HashToGroup,
+            Bls12_381_G2_Compress,
+            Bls12_381_G2_Uncompress,
+            Bls12_381_MillerLoop,
+            Bls12_381_MulMlResult,
+            Bls12_381_FinalVerify,
+            Keccak_256,
+            Blake2b_224,
+            IntegerToByteString,
+            ByteStringToInteger,
+            AndByteString,
+            OrByteString,
+            XorByteString,
+            ComplementByteString,
+            ReadBit,
+            WriteBits,
+            ReplicateByte,
+            ShiftByteString,
+            RotateByteString,
+            CountSetBits,
+            FindFirstSetBit,
+            Ripemd_160,
+            ExpModInteger,
+        ]
+    }
+
     /// Returns `(type_forces, value_args)` — how many `Force` applications
     /// and how many `Apply` value arguments this builtin expects before it
     /// can be evaluated.
@@ -1461,6 +1565,92 @@ mod tests {
             assert_eq!(items.len(), 1);
         } else {
             panic!("expected ProtoList");
+        }
+    }
+
+    // -- DefaultFun drift guards -------------------------------------------
+    //
+    // These tests pin the canonical `DefaultFun` set against silent drift
+    // between the discriminant assignments (lines ~134..234), the
+    // `from_tag` cascade, and the `all()` helper. A mismatch in any of
+    // these three independent hand-written statements would corrupt
+    // on-chain Flat decoding (`unknown builtin tag` for a real builtin,
+    // OR — worse — a tag mapping to the wrong builtin and silently
+    // executing an unintended on-chain operation).
+    //
+    // Reference: `PlutusCore.Default.Builtins.DefaultFun` ordering.
+
+    #[test]
+    fn default_fun_all_covers_every_tag_in_canonical_order() {
+        // Pin the slice length to the current upstream surface (88 builtins:
+        // 52 base, 2 V2 secp, 17 BLS12-381, 2 extra hashes, 2 conversions,
+        // 11 bitwise, 1 modular). Adding a builtin upstream MUST extend
+        // `all()` AND the discriminant list AND `from_tag` — this test
+        // catches the case where someone adds a new variant but forgets
+        // to extend `all()`.
+        let all = DefaultFun::all();
+        assert_eq!(
+            all.len(),
+            88,
+            "DefaultFun::all() must cover every variant (88 as of PlutusV3 + Plomin)",
+        );
+
+        // Cross-assert each `all()[i] as u8 == i`. A copy-paste reorder in
+        // `all()` (e.g. accidentally swapping two entries) fails here with
+        // the offending index — and because the discriminant ordering
+        // matches the on-chain Flat tag ordering, this test guards the
+        // correctness of the slice as an iteration surface for future
+        // drift-guard tests (cost-model coverage, arity coverage, etc.).
+        for (i, &v) in all.iter().enumerate() {
+            assert_eq!(
+                v as u8, i as u8,
+                "DefaultFun::all()[{i}] = {v:?} but its discriminant is {}",
+                v as u8,
+            );
+        }
+    }
+
+    #[test]
+    fn default_fun_from_tag_round_trips_for_every_variant() {
+        // For every variant `v` in `all()`, `from_tag(v as u8)` must
+        // return `Ok(v)`. This catches typos in the `from_tag` cascade
+        // (e.g. `60 => Ok(Self::Bls12_381_G1_Compress)` accidentally
+        // typed as `60 => Ok(Self::Bls12_381_G1_Uncompress)`) — the
+        // worst-case bug because handshake-level decoding succeeds but
+        // the script silently executes the wrong builtin.
+        for &v in DefaultFun::all() {
+            let tag = v as u8;
+            let decoded = DefaultFun::from_tag(tag).unwrap_or_else(|e| {
+                panic!("from_tag({tag}) failed for {v:?}: {e:?}");
+            });
+            assert_eq!(
+                decoded, v,
+                "from_tag({tag}) returned {decoded:?}, expected {v:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn default_fun_from_tag_rejects_tags_outside_canonical_range() {
+        // First out-of-range tag (one past `ExpModInteger = 87`) and the
+        // saturated `u8::MAX` must both fail with a `FlatDecodeError`,
+        // not silently map to a placeholder. A future builtin slot at
+        // tag 88 will require extending `all()` AND `from_tag` — at
+        // which point this test should be updated to bump the rejection
+        // boundary, surfacing the new contract explicitly.
+        let next = DefaultFun::all().len() as u8;
+        assert_eq!(next, 88, "next-unused tag should be one past last variant");
+
+        for bogus in [next, 100, 200, u8::MAX] {
+            let err = DefaultFun::from_tag(bogus)
+                .expect_err(&format!("tag {bogus} must be rejected"));
+            match err {
+                MachineError::FlatDecodeError(msg) => assert!(
+                    msg.contains(&format!("unknown builtin tag {bogus}")),
+                    "rejection message must name the offending tag, got: {msg}",
+                ),
+                other => panic!("expected FlatDecodeError, got {other:?}"),
+            }
         }
     }
 }
