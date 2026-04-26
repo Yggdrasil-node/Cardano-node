@@ -253,6 +253,10 @@ impl ImmutableStore for FileImmutable {
         self.index.get(hash)
     }
 
+    fn contains_block(&self, hash: &HeaderHash) -> bool {
+        self.index.contains_key(hash)
+    }
+
     fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError> {
         match point {
             Point::Origin => Ok(self

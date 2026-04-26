@@ -19,6 +19,26 @@ pub trait ImmutableStore {
     /// Retrieves a block by its header hash.
     fn get_block(&self, hash: &HeaderHash) -> Option<&Block>;
 
+    /// Returns `true` when a block with the given header hash is already
+    /// stored. The default implementation delegates to [`Self::get_block`];
+    /// backends with an internal hash index (e.g. `FileImmutable`) should
+    /// override for `O(1)` lookups.
+    ///
+    /// Used by [`crate::ChainDb::promote_volatile_prefix`] to make the
+    /// volatile-to-immutable promotion idempotent under partial-completion
+    /// crashes: if a previous run crashed between `append_block` calls or
+    /// between the final append and `prune_up_to`, the volatile store still
+    /// contains blocks that were already appended to the immutable store,
+    /// so the next promotion attempt would otherwise fail with
+    /// [`StorageError::DuplicateBlock`].
+    ///
+    /// Reference: upstream `Ouroboros.Consensus.Storage.ChainDB.Impl`
+    /// recovers from a partial copy-to-immutable by treating already-copied
+    /// blocks as a no-op rather than restarting from scratch.
+    fn contains_block(&self, hash: &HeaderHash) -> bool {
+        self.get_block(hash).is_some()
+    }
+
     /// Returns clones of all immutable blocks strictly after `point`.
     ///
     /// Passing [`Point::Origin`] returns the full immutable chain. If `point`
@@ -87,6 +107,10 @@ impl ImmutableStore for InMemoryImmutable {
 
     fn get_block(&self, hash: &HeaderHash) -> Option<&Block> {
         self.blocks.iter().find(|b| b.header.hash == *hash)
+    }
+
+    fn contains_block(&self, hash: &HeaderHash) -> bool {
+        self.blocks.iter().any(|b| b.header.hash == *hash)
     }
 
     fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError> {

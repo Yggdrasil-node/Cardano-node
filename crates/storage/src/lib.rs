@@ -20,11 +20,16 @@ pub mod file_volatile;
 pub mod immutable_db;
 /// Ledger snapshot storage.
 pub mod ledger_db;
+/// Sidecar persistence for opaque consensus state files (OpCert counters).
+pub mod ocert_sidecar;
 /// Rollback-aware volatile block storage.
 pub mod volatile_db;
 
 // -- Error re-exports ---------------------------------------------------------
 pub use error::StorageError;
+
+// -- Sidecar re-exports -------------------------------------------------------
+pub use ocert_sidecar::{OCERT_COUNTERS_FILENAME, load_ocert_counters, save_ocert_counters};
 
 // -- Coordination re-exports --------------------------------------------------
 pub use chain_db::{ChainDb, ChainDbRecovery, LedgerCheckpointRetention, LedgerRecoveryOutcome};

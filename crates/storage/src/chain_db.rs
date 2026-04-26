@@ -343,11 +343,38 @@ where
         }
     }
 
-    /// Promotes the volatile prefix through `point` into immutable storage and
-    /// prunes the promoted prefix from the volatile store.
+    /// Promotes the volatile prefix through `point` into immutable storage
+    /// and prunes the promoted prefix from the volatile store.
+    ///
+    /// The promotion is idempotent under partial-completion crashes: each
+    /// per-block append is skipped when the immutable store already
+    /// contains a block with the same header hash. Without this, a crash
+    /// between two `append_block` calls — or between the final append and
+    /// `prune_up_to` — would leave overlap between the two stores, and the
+    /// next promotion attempt would fail with
+    /// [`StorageError::DuplicateBlock`] from the very first overlapping
+    /// block, blocking all subsequent sync until manual cleanup.
+    ///
+    /// The append-then-prune ordering is preserved on purpose: it keeps
+    /// every block present in at least one store at all times across the
+    /// crash window, so recovery can always reach the chain tip via
+    /// immutable + volatile suffix replay even if the process is killed
+    /// mid-promotion.
+    ///
+    /// Returns the total number of volatile blocks that were on the
+    /// promotion path (including any skipped because they were already in
+    /// immutable).
+    ///
+    /// Reference: `Ouroboros.Consensus.Storage.ChainDB.Impl` —
+    /// `copyToImmutableDB` runs as an idempotent operation on restart so a
+    /// previously-interrupted copy resumes cleanly.
     pub fn promote_volatile_prefix(&mut self, point: &Point) -> Result<usize, StorageError> {
         let blocks = self.volatile.prefix_up_to(point)?;
         for block in &blocks {
+            if self.immutable.contains_block(&block.header.hash) {
+                // Already promoted by a previous (possibly crashed) run.
+                continue;
+            }
             self.immutable.append_block(block.clone())?;
         }
         self.volatile.prune_up_to(point)?;

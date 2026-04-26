@@ -2888,6 +2888,15 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     /// `Ouroboros.Network.TxSubmission.Inbound.V2.State` `bufferedTxs`
     /// population on confirmation.
     pub inbound_tx_state: Option<SharedTxState>,
+    /// Optional storage directory under which the OpCert counter sidecar
+    /// (`ocert_counters.cbor`) is persisted whenever a ledger checkpoint
+    /// is written. When `None`, the counters are process-local — same
+    /// behavior as before this slice. When `Some(path)`, the runtime
+    /// writes the encoded counter map atomically alongside each
+    /// checkpoint persistence event so a restarted node retains its
+    /// per-pool monotonicity high-water marks. Reference:
+    /// `PraosState.csCounters` in `Ouroboros.Consensus.Protocol.Praos`.
+    pub ocert_persist_dir: Option<PathBuf>,
 }
 
 impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
@@ -2915,6 +2924,7 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
             bp_state: None,
             bp_pool_key_hash: None,
             inbound_tx_state: None,
+            ocert_persist_dir: None,
         }
     }
 
@@ -2979,6 +2989,16 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
     ) -> Self {
         self.bp_state = bp_state;
         self.bp_pool_key_hash = bp_pool_key_hash;
+        self
+    }
+
+    /// Enable atomic persistence of the OpCert counter sidecar
+    /// (`ocert_counters.cbor`) under `dir` whenever a ledger checkpoint is
+    /// written. Pass `None` (the default) to keep counters process-local.
+    /// Reference: `PraosState.csCounters` in
+    /// `Ouroboros.Consensus.Protocol.Praos`.
+    pub fn with_ocert_persist_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.ocert_persist_dir = dir;
         self
     }
 
@@ -4135,6 +4155,7 @@ where
                                 checkpoint_tracking.as_mut(),
                                 &config.checkpoint_policy,
                                 vrf_ctx.as_ref(),
+                                ocert_counters.as_ref(),
                             )?;
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
@@ -4589,6 +4610,7 @@ where
                                     checkpoint_tracking.as_mut(),
                                     &config.checkpoint_policy,
                                     vrf_ctx.as_ref(),
+                                    ocert_counters.as_ref(),
                                 )?
                             };
 
@@ -5282,6 +5304,7 @@ where
         bp_state: _,
         bp_pool_key_hash: _,
         inbound_tx_state: _,
+        ocert_persist_dir,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -5317,6 +5340,7 @@ where
                 .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
         }),
         pool_block_counts: std::collections::BTreeMap::new(),
+        ocert_persist_dir: ocert_persist_dir.clone(),
     };
 
     let sync = run_reconnecting_verified_sync_service_chaindb_inner(
@@ -5395,6 +5419,7 @@ where
         bp_state,
         bp_pool_key_hash,
         inbound_tx_state,
+        ocert_persist_dir,
     } = request;
 
     let recovery = {
@@ -5433,6 +5458,7 @@ where
                 .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
         }),
         pool_block_counts: std::collections::BTreeMap::new(),
+        ocert_persist_dir: ocert_persist_dir.clone(),
     };
 
     let sync = run_reconnecting_verified_sync_service_shared_chaindb_inner(

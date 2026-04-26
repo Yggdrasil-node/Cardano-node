@@ -198,6 +198,59 @@ impl OcertCounters {
     pub fn is_empty(&self) -> bool {
         self.counters.is_empty()
     }
+
+    /// Returns an iterator over `(pool_key_hash, sequence_number)` pairs in
+    /// `BTreeMap` order. Used by the CBOR encoder so encoded bytes are
+    /// deterministic regardless of insertion order.
+    pub fn iter(&self) -> impl Iterator<Item = (&[u8; 28], &u64)> {
+        self.counters.iter()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OcertCounters — CBOR codec (sidecar persistence)
+// ---------------------------------------------------------------------------
+
+/// CBOR encoding of `OcertCounters`: a single CBOR map keyed by the 28-byte
+/// pool key hash with `u64` sequence-number values, emitted in canonical
+/// `BTreeMap` (lexicographic) key order.
+///
+/// This sidecar is persisted alongside the ledger checkpoint so a
+/// restarted node retains its per-pool monotonicity guarantees rather than
+/// resetting the high-water mark to zero — closing the upstream-parity
+/// gap with `PraosState.csCounters`, which is part of the persistent
+/// `ChainDepState` in `Ouroboros.Consensus.Protocol.Praos`.
+impl yggdrasil_ledger::cbor::CborEncode for OcertCounters {
+    fn encode_cbor(&self, enc: &mut yggdrasil_ledger::cbor::Encoder) {
+        enc.map(self.counters.len() as u64);
+        for (pool_key_hash, &seq) in &self.counters {
+            enc.bytes(pool_key_hash);
+            enc.unsigned(seq);
+        }
+    }
+}
+
+impl yggdrasil_ledger::cbor::CborDecode for OcertCounters {
+    fn decode_cbor(
+        dec: &mut yggdrasil_ledger::cbor::Decoder<'_>,
+    ) -> Result<Self, yggdrasil_ledger::LedgerError> {
+        let entries = dec.map()?;
+        let mut counters = BTreeMap::new();
+        for _ in 0..entries {
+            let key_bytes = dec.bytes()?;
+            if key_bytes.len() != 28 {
+                return Err(yggdrasil_ledger::LedgerError::CborInvalidLength {
+                    expected: 28,
+                    actual: key_bytes.len(),
+                });
+            }
+            let mut pool_key_hash = [0u8; 28];
+            pool_key_hash.copy_from_slice(key_bytes);
+            let seq = dec.unsigned()?;
+            counters.insert(pool_key_hash, seq);
+        }
+        Ok(Self { counters })
+    }
 }
 
 #[cfg(test)]
@@ -526,5 +579,66 @@ mod tests {
         let pool = [0x07; 28];
         assert!(c.validate_and_update(pool, 0, true).is_ok());
         assert_eq!(c.get(&pool), Some(0));
+    }
+
+    // ── OcertCounters CBOR codec (sidecar persistence) ───────────────────
+
+    #[test]
+    fn ocert_counters_cbor_round_trip_empty() {
+        use yggdrasil_ledger::cbor::{CborDecode, CborEncode};
+        let original = OcertCounters::new();
+        let bytes = original.to_cbor_bytes();
+        // Empty CBOR map is a single byte: 0xa0.
+        assert_eq!(bytes, vec![0xa0]);
+        let decoded = OcertCounters::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn ocert_counters_cbor_round_trip_multiple_pools() {
+        use yggdrasil_ledger::cbor::{CborDecode, CborEncode};
+        let mut original = OcertCounters::new();
+        original.validate_and_update([0x01; 28], 0, true).unwrap();
+        original.validate_and_update([0x01; 28], 1, true).unwrap();
+        original.validate_and_update([0x01; 28], 2, true).unwrap();
+        original.validate_and_update([0x42; 28], 17, true).unwrap();
+        original.validate_and_update([0xff; 28], 99, true).unwrap();
+        let bytes = original.to_cbor_bytes();
+        let decoded = OcertCounters::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.get(&[0x01; 28]), Some(2));
+        assert_eq!(decoded.get(&[0x42; 28]), Some(17));
+        assert_eq!(decoded.get(&[0xff; 28]), Some(99));
+    }
+
+    #[test]
+    fn ocert_counters_cbor_decode_rejects_short_key() {
+        use yggdrasil_ledger::cbor::CborDecode;
+        // A 1-element map whose key is 16 bytes (not 28) — must reject.
+        // 0xa1 = map(1), 0x50 = bytes(16), 16 zeros, 0x00 = unsigned(0).
+        let mut bad = vec![0xa1, 0x50];
+        bad.extend(std::iter::repeat_n(0u8, 16));
+        bad.push(0x00);
+        assert!(OcertCounters::from_cbor_bytes(&bad).is_err());
+    }
+
+    #[test]
+    fn ocert_counters_cbor_encoding_is_deterministic_in_btree_order() {
+        use yggdrasil_ledger::cbor::CborEncode;
+        // Two counters built via different insertion orders must yield
+        // identical CBOR bytes — the BTreeMap iterator order is the
+        // canonical wire order, so a future regression to a HashMap
+        // backing store would fail here.
+        let mut a = OcertCounters::new();
+        a.validate_and_update([0x99; 28], 1, true).unwrap();
+        a.validate_and_update([0x11; 28], 2, true).unwrap();
+        a.validate_and_update([0x55; 28], 3, true).unwrap();
+
+        let mut b = OcertCounters::new();
+        b.validate_and_update([0x11; 28], 2, true).unwrap();
+        b.validate_and_update([0x55; 28], 3, true).unwrap();
+        b.validate_and_update([0x99; 28], 1, true).unwrap();
+
+        assert_eq!(a.to_cbor_bytes(), b.to_cbor_bytes());
     }
 }
