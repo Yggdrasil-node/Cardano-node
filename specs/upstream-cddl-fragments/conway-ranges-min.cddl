@@ -1,0 +1,32 @@
+; Pinned fragment exercising CDDL range and inequality constraints.
+;
+; Upstream source: IntersectMBO/cardano-ledger
+;   path: eras/conway/impl/cddl/data/conway.cddl
+;   revision: 9ae77d611ad86ae58add04b6042ab730272f2327
+;
+; Recorded in node/src/upstream_pins.rs.  This fragment is intentionally
+; minimal — it covers only the range/inequality control operators that the
+; yggdrasil cddl-codegen parser supports (`.size N..M`, `.le`, `.ge`, `.lt`,
+; `.gt`).  Standalone CDDL value-ranges like `1 .. 9223372036854775807` and
+; signed bounds are deliberately out of scope; they require RFC 8610 syntax
+; the workspace does not yet need.
+;
+; The literal values below are aligned with the constructs Conway uses:
+;   - `anchor_url = text .size 0..128` mirrors upstream `url` size bound.
+;   - `bounded_bytes` mirrors variable-size hash slots.
+;   - `.le`/`.ge`/`.lt`/`.gt` mirror per-protocol-parameter inequality
+;     guards used by Conway governance ratification rules.
+
+; --- Range size constraints (.size N..M) ---
+anchor_url = text .size 0..128
+bounded_bytes = bytes .size 0..64
+
+; --- Inequality constraints (.le, .ge, .lt, .gt) ---
+bounded_value = uint .le 65535
+min_value = uint .ge 1
+strict_lt = uint .lt 100
+strict_gt = uint .gt 0
+
+; --- Regression: existing .size N fast-path must remain bit-identical ---
+fixed_hash = bytes .size 32
+fixed_uint = uint .size 8

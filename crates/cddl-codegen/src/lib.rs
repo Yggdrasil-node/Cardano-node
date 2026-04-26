@@ -10,5 +10,6 @@ pub mod parser;
 pub use generator::{GeneratedModule, generate_module, generate_module_with_codecs};
 /// Parsed schema definitions and parsing entry points.
 pub use parser::{
-    ArrayItem, FieldKey, ParsedField, ParsedType, TypeDefinition, TypeExpr, parse_schema,
+    ArrayItem, FieldKey, ParsedField, ParsedType, RangeBound, TypeDefinition, TypeExpr,
+    parse_schema,
 };

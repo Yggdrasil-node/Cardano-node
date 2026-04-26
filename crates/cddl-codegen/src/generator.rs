@@ -1,4 +1,6 @@
-use crate::parser::{ArrayItem, FieldKey, ParsedField, ParsedType, TypeDefinition, TypeExpr};
+use crate::parser::{
+    ArrayItem, FieldKey, ParsedField, ParsedType, RangeBound, TypeDefinition, TypeExpr,
+};
 
 /// A generated Rust module represented as source text.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -105,6 +107,13 @@ fn map_type_expr(expr: &TypeExpr) -> String {
     match expr {
         TypeExpr::Named(name) => map_cddl_builtin(name),
         TypeExpr::Sized(base, size) => map_sized_type(base, *size),
+        // Size ranges over bytes/text emit the variable-length Rust type
+        // and rely on a runtime length check at decode time.  uint/int with
+        // a size range fall back to the unconstrained 64-bit form.
+        TypeExpr::SizeRange(base, _) => map_cddl_builtin(base),
+        // Value ranges over uint/int emit the unconstrained 64-bit form;
+        // the bound is enforced at decode time.
+        TypeExpr::ValueRange(base, _) => map_cddl_builtin(base),
         TypeExpr::VarArray(inner) => format!("Vec<{}>", map_type_expr(inner)),
         TypeExpr::Optional(inner) => format!("Option<{}>", map_type_expr(inner)),
         // CBOR tags are a serialization concern; the Rust type is the inner
@@ -552,6 +561,11 @@ fn is_builtin_primitive(expr: &TypeExpr) -> bool {
             "uint" | "int" | "bool" | "bytes" | "bstr" | "text" | "tstr"
         ),
         TypeExpr::Sized(base, _) => matches!(base.as_str(), "uint" | "int" | "bytes" | "bstr"),
+        TypeExpr::SizeRange(base, _) => matches!(
+            base.as_str(),
+            "uint" | "int" | "bytes" | "bstr" | "text" | "tstr"
+        ),
+        TypeExpr::ValueRange(base, _) => matches!(base.as_str(), "uint" | "int"),
         TypeExpr::VarArray(_) | TypeExpr::Optional(_) => false,
         TypeExpr::Tagged(_, inner) => is_builtin_primitive(inner),
     }
@@ -575,6 +589,20 @@ fn emit_encode_field(expr: &TypeExpr, accessor: &str, indent: &str) -> String {
             "uint" => format!("{indent}enc.unsigned({accessor} as u64);\n"),
             "int" => format!("{indent}enc.integer({accessor} as i64);\n"),
             "bytes" | "bstr" => format!("{indent}enc.bytes(&{accessor});\n"),
+            _ => format!("{indent}{accessor}.encode_cbor(enc);\n"),
+        },
+        // Size ranges and value ranges emit the same encoding as their base
+        // primitive; the bound is purely a decode-time validation rule.
+        TypeExpr::SizeRange(base, _) => match base.as_str() {
+            "uint" => format!("{indent}enc.unsigned({accessor});\n"),
+            "int" => format!("{indent}enc.integer({accessor});\n"),
+            "bytes" | "bstr" => format!("{indent}enc.bytes(&{accessor});\n"),
+            "text" | "tstr" => format!("{indent}enc.text(&{accessor});\n"),
+            _ => format!("{indent}{accessor}.encode_cbor(enc);\n"),
+        },
+        TypeExpr::ValueRange(base, _) => match base.as_str() {
+            "uint" => format!("{indent}enc.unsigned({accessor});\n"),
+            "int" => format!("{indent}enc.integer({accessor});\n"),
             _ => format!("{indent}{accessor}.encode_cbor(enc);\n"),
         },
         TypeExpr::VarArray(inner) => {
@@ -643,6 +671,8 @@ fn emit_decode_expr(expr: &TypeExpr, indent: &str) -> String {
             }
             _ => format!("{}::decode_cbor(dec)?", to_rust_type_name(base)),
         },
+        TypeExpr::SizeRange(base, bound) => emit_size_range_decode(base, *bound, indent),
+        TypeExpr::ValueRange(base, bound) => emit_value_range_decode(base, *bound, indent),
         TypeExpr::VarArray(inner) => {
             let inner_decode = emit_decode_expr(inner, &format!("{indent}    "));
             format!(
@@ -666,5 +696,114 @@ fn map_field_name(f: &ParsedField) -> String {
     match &f.key {
         FieldKey::Label(label) => to_snake_case(label),
         FieldKey::Index(idx) => format!("field_{idx}"),
+    }
+}
+
+/// Emits a decode expression for `<base> .size <bound>` where the bound
+/// applies to the *length* of bytes/text or to the *value* of uint/int.
+/// The check uses [`LedgerError::CborInvalidLength`] (the same variant the
+/// fixed-`.size N` decode path already emits) for consistency.
+fn emit_size_range_decode(base: &str, bound: RangeBound, indent: &str) -> String {
+    let inner = format!("{indent}    ");
+    match base {
+        "bytes" | "bstr" => format!(
+            "{{\n{inner}let v = dec.bytes()?.to_vec();\n{check}{inner}v\n{indent}}}",
+            check = emit_length_check("v.len()", bound, &inner),
+        ),
+        "text" | "tstr" => format!(
+            "{{\n{inner}let s = dec.text()?.to_string();\n{check}{inner}s\n{indent}}}",
+            check = emit_length_check("s.len()", bound, &inner),
+        ),
+        "uint" => format!(
+            "{{\n{inner}let v = dec.unsigned()?;\n{check}{inner}v\n{indent}}}",
+            check = emit_value_check("v", bound, &inner, /* is_int = */ false),
+        ),
+        "int" => format!(
+            "{{\n{inner}let v = dec.integer()?;\n{check}{inner}v\n{indent}}}",
+            check = emit_value_check("v", bound, &inner, /* is_int = */ true),
+        ),
+        _ => format!("{}::decode_cbor(dec)?", to_rust_type_name(base)),
+    }
+}
+
+/// Emits a decode expression for `<base> .le | .ge | .lt | .gt N` over uint/int.
+fn emit_value_range_decode(base: &str, bound: RangeBound, indent: &str) -> String {
+    let inner = format!("{indent}    ");
+    match base {
+        "uint" => format!(
+            "{{\n{inner}let v = dec.unsigned()?;\n{check}{inner}v\n{indent}}}",
+            check = emit_value_check("v", bound, &inner, /* is_int = */ false),
+        ),
+        "int" => format!(
+            "{{\n{inner}let v = dec.integer()?;\n{check}{inner}v\n{indent}}}",
+            check = emit_value_check("v", bound, &inner, /* is_int = */ true),
+        ),
+        _ => format!("{}::decode_cbor(dec)?", to_rust_type_name(base)),
+    }
+}
+
+/// Emits an `if … { return Err(…); }` block that validates a `usize` length
+/// against the bound.  The lower bound is omitted when the value is `0` —
+/// any `usize` is ≥ 0, and emitting the check would trigger an
+/// `unused_comparisons` clippy lint in the generated code.
+fn emit_length_check(len_expr: &str, bound: RangeBound, indent: &str) -> String {
+    match bound {
+        RangeBound::AtLeast(n) => {
+            if n == 0 {
+                String::new()
+            } else {
+                format!(
+                    "{indent}if {len_expr} < {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {len_expr} }}); }}\n",
+                )
+            }
+        }
+        RangeBound::AtMost(n) => format!(
+            "{indent}if {len_expr} > {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {len_expr} }}); }}\n",
+        ),
+        RangeBound::Between(lo, hi) => {
+            let mut s = String::new();
+            if lo > 0 {
+                s.push_str(&format!(
+                    "{indent}if {len_expr} < {lo} {{ return Err(LedgerError::CborInvalidLength {{ expected: {lo}, actual: {len_expr} }}); }}\n",
+                ));
+            }
+            s.push_str(&format!(
+                "{indent}if {len_expr} > {hi} {{ return Err(LedgerError::CborInvalidLength {{ expected: {hi}, actual: {len_expr} }}); }}\n",
+            ));
+            s
+        }
+        RangeBound::StrictlyLess(n) => format!(
+            "{indent}if {len_expr} >= {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {len_expr} }}); }}\n",
+        ),
+        RangeBound::StrictlyGreater(n) => format!(
+            "{indent}if {len_expr} <= {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {len_expr} }}); }}\n",
+        ),
+    }
+}
+
+/// Emits a value-bound check for uint (`u64`) or int (`i64`).  The actual
+/// failure value is reported through `LedgerError::CborInvalidLength`
+/// (cast to `usize`) — the same error variant the fixed-size decode path
+/// uses, kept consistent so consumers only need to match one variant.
+/// The `is_int` parameter is reserved for future error formatting; both
+/// uint and int currently report the actual via `as usize`, since
+/// `CborInvalidLength.actual` is `usize`.
+fn emit_value_check(val: &str, bound: RangeBound, indent: &str, _is_int: bool) -> String {
+    match bound {
+        RangeBound::AtLeast(n) => format!(
+            "{indent}if {val} < {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {val} as usize }}); }}\n",
+        ),
+        RangeBound::AtMost(n) => format!(
+            "{indent}if {val} > {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {val} as usize }}); }}\n",
+        ),
+        RangeBound::Between(lo, hi) => format!(
+            "{indent}if {val} < {lo} || {val} > {hi} {{ return Err(LedgerError::CborInvalidLength {{ expected: {hi}, actual: {val} as usize }}); }}\n",
+        ),
+        RangeBound::StrictlyLess(n) => format!(
+            "{indent}if {val} >= {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {val} as usize }}); }}\n",
+        ),
+        RangeBound::StrictlyGreater(n) => format!(
+            "{indent}if {val} <= {n} {{ return Err(LedgerError::CborInvalidLength {{ expected: {n}, actual: {val} as usize }}); }}\n",
+        ),
     }
 }

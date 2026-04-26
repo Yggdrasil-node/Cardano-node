@@ -1,8 +1,8 @@
 #![allow(clippy::unwrap_used)]
 use yggdrasil_cddl_codegen::parser::ParseError;
 use yggdrasil_cddl_codegen::{
-    FieldKey, GeneratedModule, ParsedField, ParsedType, TypeDefinition, TypeExpr, generate_module,
-    generate_module_with_codecs, parse_schema,
+    FieldKey, GeneratedModule, ParsedField, ParsedType, RangeBound, TypeDefinition, TypeExpr,
+    generate_module, generate_module_with_codecs, parse_schema,
 };
 
 #[test]
@@ -695,4 +695,251 @@ fn codec_gen_empty_map() {
     let generated = generate_module_with_codecs(&parsed);
     assert_module_contains(&generated, "impl CborEncode for Empty {");
     assert_module_contains(&generated, "enc.map(0)");
+}
+
+// ===========================================================================
+// Range and inequality constraints (Slice B)
+//
+// Reference: RFC 8610 §3.8 control operators (`.size`, `.le`, `.ge`,
+// `.lt`, `.gt`).  Vendored fixture:
+// `specs/upstream-cddl-fragments/conway-ranges-min.cddl`.
+// ===========================================================================
+
+#[test]
+fn parses_size_range_between() {
+    let parsed = parse_schema("u = bytes .size 0..64\n").expect("size range should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::SizeRange(
+            String::from("bytes"),
+            RangeBound::Between(0, 64)
+        ))
+    );
+}
+
+#[test]
+fn parses_size_range_at_least_open_upper() {
+    let parsed = parse_schema("u = bytes .size 32..\n").expect("open-upper size range parses");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::SizeRange(
+            String::from("bytes"),
+            RangeBound::AtLeast(32)
+        ))
+    );
+}
+
+#[test]
+fn parses_size_range_at_most_open_lower() {
+    let parsed = parse_schema("u = bytes .size ..128\n").expect("open-lower size range parses");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::SizeRange(
+            String::from("bytes"),
+            RangeBound::AtMost(128)
+        ))
+    );
+}
+
+#[test]
+fn parses_size_constraint_single_int_stays_sized_fast_path() {
+    // Regression: `.size 32` MUST remain TypeExpr::Sized so the existing
+    // `[u8; 32]` byte-decode shortcut and existing 26 codec snapshots
+    // stay bit-identical.
+    let parsed = parse_schema("h = bytes .size 32\n").expect("fixed size still parses");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::Sized(String::from("bytes"), 32))
+    );
+}
+
+#[test]
+fn parses_value_le() {
+    let parsed = parse_schema("v = uint .le 65535\n").expect(".le should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::AtMost(65535)
+        ))
+    );
+}
+
+#[test]
+fn parses_value_ge() {
+    let parsed = parse_schema("v = uint .ge 1\n").expect(".ge should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::AtLeast(1)
+        ))
+    );
+}
+
+#[test]
+fn parses_value_lt() {
+    let parsed = parse_schema("v = uint .lt 100\n").expect(".lt should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::StrictlyLess(100)
+        ))
+    );
+}
+
+#[test]
+fn parses_value_gt() {
+    let parsed = parse_schema("v = uint .gt 0\n").expect(".gt should parse");
+    assert_eq!(
+        parsed[0].definition,
+        TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::StrictlyGreater(0)
+        ))
+    );
+}
+
+#[test]
+fn rejects_size_range_with_lower_above_upper() {
+    let err = parse_schema("v = bytes .size 10..5\n")
+        .expect_err("inverted range should be rejected");
+    assert!(matches!(err, ParseError::InvalidSize(_)));
+}
+
+#[test]
+fn rejects_value_constraint_with_non_numeric() {
+    let err = parse_schema("v = uint .le abc\n").expect_err("non-numeric .le bound");
+    assert!(matches!(err, ParseError::InvalidConstraint(_)));
+}
+
+#[test]
+fn rejects_completely_open_range() {
+    let err =
+        parse_schema("v = bytes .size ..\n").expect_err("`..` with no bounds should be rejected");
+    assert!(matches!(err, ParseError::InvalidSize(_)));
+}
+
+#[test]
+fn parses_vendored_conway_ranges_fixture() {
+    let fixture = std::fs::read_to_string("../../specs/upstream-cddl-fragments/conway-ranges-min.cddl")
+        .expect("vendored Conway ranges fixture should exist");
+    let parsed = parse_schema(&fixture).expect("fixture parses cleanly");
+
+    let by_name: std::collections::BTreeMap<&str, &TypeDefinition> = parsed
+        .iter()
+        .map(|p| (p.name.as_str(), &p.definition))
+        .collect();
+
+    assert_eq!(
+        by_name.get("anchor_url").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::SizeRange(
+            String::from("text"),
+            RangeBound::Between(0, 128)
+        )))
+    );
+    assert_eq!(
+        by_name.get("bounded_bytes").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::SizeRange(
+            String::from("bytes"),
+            RangeBound::Between(0, 64)
+        )))
+    );
+    assert_eq!(
+        by_name.get("bounded_value").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::AtMost(65535)
+        )))
+    );
+    assert_eq!(
+        by_name.get("min_value").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::AtLeast(1)
+        )))
+    );
+    assert_eq!(
+        by_name.get("strict_lt").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::StrictlyLess(100)
+        )))
+    );
+    assert_eq!(
+        by_name.get("strict_gt").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::ValueRange(
+            String::from("uint"),
+            RangeBound::StrictlyGreater(0)
+        )))
+    );
+    // Regression: fixed-size .size N stays on the Sized fast path.
+    assert_eq!(
+        by_name.get("fixed_hash").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::Sized(
+            String::from("bytes"),
+            32
+        )))
+    );
+    assert_eq!(
+        by_name.get("fixed_uint").copied(),
+        Some(&TypeDefinition::Alias(TypeExpr::Sized(
+            String::from("uint"),
+            8
+        )))
+    );
+}
+
+// --- Generator emission ---
+
+#[test]
+fn generates_bytes_size_range_as_vec_with_length_check() {
+    let schema = "u = [field: bytes .size 0..64]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    // Type maps to Vec<u8> (variable length).
+    assert_module_contains(&generated, "pub field: Vec<u8>");
+    // Decode emits a `> 64` length check; the `< 0` lower-bound check is
+    // suppressed because any usize is ≥ 0.
+    assert_module_contains(&generated, "let v = dec.bytes()?.to_vec();");
+    assert_module_contains(&generated, "if v.len() > 64");
+    assert!(
+        !generated.source.contains("if v.len() < 0"),
+        "trivial lower-bound check must be elided to keep generated code clippy-clean"
+    );
+}
+
+#[test]
+fn generates_text_size_range_as_string_with_length_check() {
+    let schema = "u = [url: text .size 0..128]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    assert_module_contains(&generated, "pub url: String");
+    assert_module_contains(&generated, "let s = dec.text()?.to_string();");
+    assert_module_contains(&generated, "if s.len() > 128");
+}
+
+#[test]
+fn generates_uint_le_with_value_check() {
+    let schema = "u = [val: uint .le 65535]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    assert_module_contains(&generated, "pub val: u64");
+    assert_module_contains(&generated, "let v = dec.unsigned()?;");
+    assert_module_contains(&generated, "if v > 65535");
+}
+
+#[test]
+fn generates_uint_gt_with_strict_value_check() {
+    // .gt N must emit `<= N` (strict greater-than failure on equality).
+    let schema = "u = [val: uint .gt 0]\n";
+    let parsed = parse_schema(schema).expect("should parse");
+    let generated = generate_module_with_codecs(&parsed);
+
+    assert_module_contains(&generated, "let v = dec.unsigned()?;");
+    assert_module_contains(&generated, "if v <= 0");
 }

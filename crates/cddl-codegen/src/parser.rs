@@ -31,6 +31,13 @@ pub enum TypeExpr {
     Named(String),
     /// A size-constrained type: `uint .size 4`, `bytes .size 32`.
     Sized(String, u64),
+    /// A variable-size-range constrained type: `bytes .size 0..64`,
+    /// `text .size 0..128`.  Reference: RFC 8610 §3.8.1 — `.size`.
+    SizeRange(String, RangeBound),
+    /// A value-range constrained type: `uint .le 65535`, `uint .ge 1`,
+    /// `uint .lt 100`, `uint .gt 0`.  Reference: RFC 8610 §3.8 — control
+    /// operators `.le`, `.ge`, `.lt`, `.gt`.
+    ValueRange(String, RangeBound),
     /// A variable-length sequence: `[* element_type]`.
     VarArray(Box<TypeExpr>),
     /// An optional alternative with nil: `type / nil`.
@@ -39,6 +46,38 @@ pub enum TypeExpr {
     ///
     /// Reference: RFC 8949 §3.4 — CBOR tags.
     Tagged(u64, Box<TypeExpr>),
+}
+
+/// A range bound carried by [`TypeExpr::SizeRange`] and [`TypeExpr::ValueRange`].
+///
+/// Mirrors the bound shapes expressible in CDDL control operators: closed
+/// ranges (`N..M`), open ranges (`N..` and `..M`), and the strict variants of
+/// the inequality operators (`.lt`, `.gt`).  An exact-equal constraint is
+/// already represented by [`TypeExpr::Sized`] and is kept distinct so existing
+/// fixed-size fast paths (e.g. `bytes .size 32` → `[u8; 32]`) remain
+/// bit-identical.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RangeBound {
+    /// `N..` or `.ge N` — value/length must be ≥ N.
+    AtLeast(u64),
+    /// `..N` or `.le N` — value/length must be ≤ N.
+    AtMost(u64),
+    /// `N..M` — value/length must be in `N..=M`.
+    Between(u64, u64),
+    /// `.lt N` — value must be strictly less than N.
+    StrictlyLess(u64),
+    /// `.gt N` — value must be strictly greater than N.
+    StrictlyGreater(u64),
+}
+
+/// Discriminator for `.size` / `.le` / `.ge` / `.lt` / `.gt` constraint kinds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ConstraintKind {
+    Size,
+    Le,
+    Ge,
+    Lt,
+    Gt,
 }
 
 /// An item in a CDDL array definition, which may be named or positional.
@@ -81,6 +120,8 @@ pub enum ParseError {
     InvalidField(String),
     #[error("invalid size constraint: {0}")]
     InvalidSize(String),
+    #[error("invalid range or inequality constraint: {0}")]
+    InvalidConstraint(String),
 }
 
 /// Parses a restricted, deterministic subset of CDDL into named definitions.
@@ -91,6 +132,10 @@ pub enum ParseError {
 /// - Flat arrays: `name = [item1, item2, ...]` with optional named fields.
 /// - Maps: `name = { key: type, ... }` with string or integer keys.
 /// - Size constraints: `uint .size N`, `bytes .size N`.
+/// - Size ranges: `bytes .size N..M`, `text .size N..M`, `bytes .size N..`,
+///   `bytes .size ..M` (RFC 8610 §3.8.1).
+/// - Inequality constraints: `uint .le N`, `uint .ge N`, `uint .lt N`,
+///   `uint .gt N` (RFC 8610 §3.8.4–§3.8.7).
 /// - Variable-length arrays: `[* type]`.
 /// - Optional fields: `? key: type`.
 /// - Nil alternatives: `type / nil`.
@@ -204,7 +249,8 @@ fn parse_definition(definition: &str) -> Result<TypeDefinition, ParseError> {
 
 /// Parses a type expression string into a `TypeExpr`.
 ///
-/// Handles: plain names, `.size N` constraints, `[* type]` var-arrays,
+/// Handles: plain names, `.size N` constraints, `.size N..M` size ranges,
+/// `.le`/`.ge`/`.lt`/`.gt` inequality constraints, `[* type]` var-arrays,
 /// and `type / nil` optionals.
 fn parse_type_expr(expr: &str) -> Result<TypeExpr, ParseError> {
     let expr = expr.trim();
@@ -230,15 +276,72 @@ fn parse_type_expr(expr: &str) -> Result<TypeExpr, ParseError> {
         }
     }
 
-    // Size constraint: type .size N
-    if let Some((base, size_str)) = split_size_constraint(expr) {
-        let size = size_str
-            .parse::<u64>()
-            .map_err(|_| ParseError::InvalidSize(expr.to_string()))?;
-        return Ok(TypeExpr::Sized(base.to_string(), size));
+    // Generalized constraint dispatch: .size N, .size N..M, .le N, .ge N,
+    // .lt N, .gt N.  `.size` is dispatched as either Sized (single integer,
+    // fast path) or SizeRange.  Inequality operators always emit ValueRange.
+    if let Some((base, kind, value_str)) = split_constraint(expr) {
+        return parse_constraint(expr, base, kind, value_str);
     }
 
     Ok(TypeExpr::Named(expr.to_string()))
+}
+
+/// Builds a [`TypeExpr`] for a parsed constraint kind + value-string pair.
+fn parse_constraint(
+    full_expr: &str,
+    base: &str,
+    kind: ConstraintKind,
+    value_str: &str,
+) -> Result<TypeExpr, ParseError> {
+    match kind {
+        ConstraintKind::Size => {
+            // Fast path: single integer maps to Sized so the existing
+            // [u8; N] / uN fixed-bit decode path stays bit-identical.
+            if let Ok(n) = value_str.parse::<u64>() {
+                return Ok(TypeExpr::Sized(base.to_string(), n));
+            }
+            // Otherwise parse as a range bound (`N..M`, `N..`, `..M`).
+            let bound = parse_range_bound(value_str)
+                .map_err(|_| ParseError::InvalidSize(full_expr.to_string()))?;
+            Ok(TypeExpr::SizeRange(base.to_string(), bound))
+        }
+        ConstraintKind::Le => {
+            let n = value_str
+                .parse::<u64>()
+                .map_err(|_| ParseError::InvalidConstraint(full_expr.to_string()))?;
+            Ok(TypeExpr::ValueRange(
+                base.to_string(),
+                RangeBound::AtMost(n),
+            ))
+        }
+        ConstraintKind::Ge => {
+            let n = value_str
+                .parse::<u64>()
+                .map_err(|_| ParseError::InvalidConstraint(full_expr.to_string()))?;
+            Ok(TypeExpr::ValueRange(
+                base.to_string(),
+                RangeBound::AtLeast(n),
+            ))
+        }
+        ConstraintKind::Lt => {
+            let n = value_str
+                .parse::<u64>()
+                .map_err(|_| ParseError::InvalidConstraint(full_expr.to_string()))?;
+            Ok(TypeExpr::ValueRange(
+                base.to_string(),
+                RangeBound::StrictlyLess(n),
+            ))
+        }
+        ConstraintKind::Gt => {
+            let n = value_str
+                .parse::<u64>()
+                .map_err(|_| ParseError::InvalidConstraint(full_expr.to_string()))?;
+            Ok(TypeExpr::ValueRange(
+                base.to_string(),
+                RangeBound::StrictlyGreater(n),
+            ))
+        }
+    }
 }
 
 /// Parses the remainder after `#6.` — expects `N(inner_type)`.
@@ -270,15 +373,101 @@ fn split_nil_alternative(expr: &str) -> Option<(&str, &str)> {
     Some((left, right))
 }
 
-/// Splits `type .size N` into `(base_type, size_string)`.
-fn split_size_constraint(expr: &str) -> Option<(&str, &str)> {
-    let idx = expr.find(".size")?;
+/// Splits a constrained type expression into `(base, kind, value_string)`.
+///
+/// Recognised constraint kinds: `.size`, `.le`, `.ge`, `.lt`, `.gt`.  The
+/// search is left-to-right and stops at the first hit.  Constraint operator
+/// boundaries are detected by looking for the leading `.` plus a known
+/// keyword followed by whitespace or end-of-string, so identifiers like
+/// `mySize` or `belt` cannot collide.
+fn split_constraint(expr: &str) -> Option<(&str, ConstraintKind, &str)> {
+    const OPERATORS: &[(&str, ConstraintKind)] = &[
+        (".size", ConstraintKind::Size),
+        (".le", ConstraintKind::Le),
+        (".ge", ConstraintKind::Ge),
+        (".lt", ConstraintKind::Lt),
+        (".gt", ConstraintKind::Gt),
+    ];
+
+    let bytes = expr.as_bytes();
+    let mut best: Option<(usize, usize, ConstraintKind)> = None;
+    for (op, kind) in OPERATORS {
+        let mut search_from = 0usize;
+        while let Some(rel) = expr[search_from..].find(op) {
+            let idx = search_from + rel;
+            let end = idx + op.len();
+            // Operator must be followed by whitespace or end-of-string,
+            // otherwise it's part of an identifier (e.g. `.size` vs `.sized`).
+            let next_ok =
+                end == bytes.len() || bytes[end].is_ascii_whitespace();
+            // And must start at the beginning or after whitespace, so it
+            // can't be embedded mid-identifier (e.g. `foo.size` where `foo.`
+            // is not actually allowed CDDL but we guard for safety).
+            let prev_ok = idx == 0 || bytes[idx - 1].is_ascii_whitespace();
+            if next_ok && prev_ok {
+                if best.is_none_or(|(b, _, _)| idx < b) {
+                    best = Some((idx, end, *kind));
+                }
+                break;
+            }
+            search_from = end;
+        }
+    }
+
+    let (idx, end, kind) = best?;
     let base = expr[..idx].trim();
-    let size_str = expr[idx + 5..].trim();
-    if base.is_empty() || size_str.is_empty() {
+    let value_str = expr[end..].trim();
+    if base.is_empty() || value_str.is_empty() {
         return None;
     }
-    Some((base, size_str))
+    Some((base, kind, value_str))
+}
+
+/// Parses a CDDL range-bound expression: `N`, `N..M`, `N..`, `..M`.
+///
+/// A bare `N` is intentionally rejected — the caller (`parse_constraint`)
+/// dispatches single integers to [`TypeExpr::Sized`] before falling back
+/// to this helper.
+fn parse_range_bound(s: &str) -> Result<RangeBound, ParseError> {
+    let s = s.trim();
+    // Strip parens if present: `(0..128)` → `0..128`.
+    let s = s.strip_prefix('(').unwrap_or(s);
+    let s = s.strip_suffix(')').unwrap_or(s);
+    let s = s.trim();
+
+    if let Some((lo, hi)) = s.split_once("..") {
+        let lo = lo.trim();
+        let hi = hi.trim();
+        match (lo.is_empty(), hi.is_empty()) {
+            (true, true) => Err(ParseError::InvalidConstraint(s.to_string())),
+            (false, true) => {
+                let n = lo
+                    .parse::<u64>()
+                    .map_err(|_| ParseError::InvalidConstraint(s.to_string()))?;
+                Ok(RangeBound::AtLeast(n))
+            }
+            (true, false) => {
+                let n = hi
+                    .parse::<u64>()
+                    .map_err(|_| ParseError::InvalidConstraint(s.to_string()))?;
+                Ok(RangeBound::AtMost(n))
+            }
+            (false, false) => {
+                let n = lo
+                    .parse::<u64>()
+                    .map_err(|_| ParseError::InvalidConstraint(s.to_string()))?;
+                let m = hi
+                    .parse::<u64>()
+                    .map_err(|_| ParseError::InvalidConstraint(s.to_string()))?;
+                if n > m {
+                    return Err(ParseError::InvalidConstraint(s.to_string()));
+                }
+                Ok(RangeBound::Between(n, m))
+            }
+        }
+    } else {
+        Err(ParseError::InvalidConstraint(s.to_string()))
+    }
 }
 
 fn parse_array(body: &str) -> Result<TypeDefinition, ParseError> {
