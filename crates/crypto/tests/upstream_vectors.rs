@@ -15,6 +15,50 @@ use yggdrasil_crypto::{
 
 const CARDANO_BASE_SHA: &str = "db52f43b38ba5d8927feb2199d4913fe6c0f974d";
 
+// ---------------------------------------------------------------------------
+// BLS12-381 hardcoded test parameters (drift-guarded; see
+// `bls_hardcoded_test_parameters_match_upstream_pins`).
+//
+// Unlike the VRF Praos vectors, the BLS12-381 fixture files (`ec_operations
+// _test_vectors`, `bls_sig_aug_test_vectors`) do NOT carry their input
+// scalars/DSTs/messages inline — those are part of upstream test setup
+// rather than the on-disk corpus. If upstream changes any of these
+// parameters and refreshes the corresponding output line in the fixture
+// (e.g. `[scalar]Q`), the operational tests below DO catch the drift,
+// but only as an opaque "scalar mul mismatch" failure.
+//
+// Naming the parameters here lets a future drift surface as a clear,
+// per-constant test failure in `bls_hardcoded_test_parameters_match_upstream
+// _pins` AND keeps the upstream-source link discoverable from the test code
+// itself (mirrors slices 76/78/80/84 — "named constant + drift guard").
+//
+// Reference: `cardano-base/cardano-crypto-class/bls12-381-test-vectors/`
+// at commit `db52f43b38ba5d8927feb2199d4913fe6c0f974d`.
+// ---------------------------------------------------------------------------
+
+/// Scalar used for `[scalar]Q` lines in `ec_operations_test_vectors`
+/// (lines 4 and 10). Sourced from upstream cardano-base BLS12-381 test
+/// setup. A future cardano-base commit-bump that refreshes the fixture
+/// with a different scalar will trip both the operational test and the
+/// per-constant drift-guard pin.
+const BLS_EC_OPERATIONS_SCALAR_HEX: &str =
+    "40df499974f62e2f268cd5096b0d952073900054122ffce0a27c9d96932891a5";
+
+/// Domain-separation tag for the `bls_sig_aug_test_vectors` pairing
+/// check. This is the canonical IETF BLS signature suite identifier
+/// (`BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_` with `_NUL_` upstream
+/// extension), specified in `draft-irtf-cfrg-bls-signature-05` §4.2.3
+/// "Suite ID for BLS12-381 G2".
+const BLS_SIG_AUG_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+
+/// Augmentation prefix for the `bls_sig_aug_test_vectors` pairing
+/// check, sourced from upstream cardano-base test setup.
+const BLS_SIG_AUG_AUG: &[u8] = b"Random value for test aug. ";
+
+/// Message body for the `bls_sig_aug_test_vectors` pairing check,
+/// sourced from upstream cardano-base test setup.
+const BLS_SIG_AUG_MSG: &[u8] = b"blst is such a blast";
+
 fn vendored_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../specs/upstream-test-vectors/cardano-base")
@@ -122,7 +166,7 @@ fn bls_ec_operations_match_upstream_vectors() {
         "G1 neg mismatch"
     );
 
-    let scalar = decode_hex_vec("40df499974f62e2f268cd5096b0d952073900054122ffce0a27c9d96932891a5");
+    let scalar = decode_hex_vec(BLS_EC_OPERATIONS_SCALAR_HEX);
     assert!(
         g1_equal(&g1_scalar_mul(&scalar, false, &g1_q), &g1_mul_expected),
         "G1 scalar mul mismatch"
@@ -252,14 +296,11 @@ fn bls_sig_aug_pairing_check() {
     let sig = g1_uncompress(&lines[0]).expect("sig");
     let pk = g2_uncompress(&lines[1]).expect("pk");
 
-    let dst = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-    let aug = b"Random value for test aug. ";
-    let msg = b"blst is such a blast";
-    let mut full_msg = Vec::with_capacity(aug.len() + msg.len());
-    full_msg.extend_from_slice(aug);
-    full_msg.extend_from_slice(msg);
+    let mut full_msg = Vec::with_capacity(BLS_SIG_AUG_AUG.len() + BLS_SIG_AUG_MSG.len());
+    full_msg.extend_from_slice(BLS_SIG_AUG_AUG);
+    full_msg.extend_from_slice(BLS_SIG_AUG_MSG);
 
-    let hashed_msg = g1_hash_to_group(&full_msg, dst).expect("hash to G1");
+    let hashed_msg = g1_hash_to_group(&full_msg, BLS_SIG_AUG_DST).expect("hash to G1");
     let lhs = miller_loop(&sig, &bls12_381::g2_generator());
     let rhs = miller_loop(&hashed_msg, &pk);
     assert!(final_verify(&lhs, &rhs), "BLS sig aug pairing check failed");
@@ -586,6 +627,66 @@ fn vendored_standard_full_corpus_probe() {
         failures.is_empty(),
         "full standard corpus parity failures: {}",
         failures.join("; ")
+    );
+}
+
+/// Drift-guard pin for the BLS12-381 hardcoded test parameters.
+///
+/// `bls_ec_operations_match_upstream_vectors` and
+/// `bls_sig_aug_pairing_check` both feed the BLS operations with input
+/// values (a scalar; a DST/aug/msg triple) that DO NOT live in the
+/// vendored fixture files — they're upstream test-setup constants,
+/// vendored only as the OUTPUTS in `ec_operations_test_vectors`/`bls_sig
+/// _aug_test_vectors`. If upstream silently changes any input parameter
+/// while we refresh the cardano-base SHA, the existing operational tests
+/// catch the drift only as opaque "scalar mul mismatch" / "BLS sig aug
+/// pairing check failed" failures.
+///
+/// This test pins each parameter byte-for-byte against the literal
+/// upstream value, so a future drift surfaces as a clearly-named test
+/// failure citing the offending constant rather than a downstream
+/// pairing/scalar-mul check failure several frames removed from the
+/// actual delta. Mirrors slices 76/78/80/84 — "named constant + drift
+/// guard" — for the BLS surface.
+///
+/// Reference: `cardano-base/cardano-crypto-class/bls12-381-test-vectors/`
+/// at commit `db52f43b38ba5d8927feb2199d4913fe6c0f974d`; IETF BLS suite
+/// ID per `draft-irtf-cfrg-bls-signature-05` §4.2.3.
+#[test]
+fn bls_hardcoded_test_parameters_match_upstream_pins() {
+    // Scalar must be exactly 32 bytes (BLS12-381 scalar field is ~255 bits)
+    // AND match the upstream literal byte-for-byte.
+    assert_eq!(
+        BLS_EC_OPERATIONS_SCALAR_HEX.len(),
+        64,
+        "BLS scalar must be 32-byte (64 hex char) value",
+    );
+    assert_eq!(
+        BLS_EC_OPERATIONS_SCALAR_HEX,
+        "40df499974f62e2f268cd5096b0d952073900054122ffce0a27c9d96932891a5",
+        "BLS_EC_OPERATIONS_SCALAR_HEX drifted from upstream cardano-base test setup",
+    );
+
+    // BLS sig aug DST is the canonical IETF BLS suite ID with cardano-base's
+    // `_NUL_` extension. A drift here means the upstream test moved to a
+    // different IETF draft revision OR changed the augmentation suite —
+    // both substantive correctness changes that must be reviewed manually.
+    assert_eq!(
+        BLS_SIG_AUG_DST, b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_",
+        "BLS_SIG_AUG_DST drifted from canonical IETF BLS suite ID",
+    );
+
+    // The aug + msg are upstream test-setup strings. Pin them so a refactor
+    // that strips the trailing space from `aug` (which would silently
+    // produce a different hash-to-curve result) fails CI naming the
+    // offending constant.
+    assert_eq!(
+        BLS_SIG_AUG_AUG, b"Random value for test aug. ",
+        "BLS_SIG_AUG_AUG drifted (note the trailing space — load-bearing)",
+    );
+    assert_eq!(
+        BLS_SIG_AUG_MSG, b"blst is such a blast",
+        "BLS_SIG_AUG_MSG drifted from upstream cardano-base test setup",
     );
 }
 
