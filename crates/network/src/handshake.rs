@@ -518,6 +518,134 @@ mod tests {
         );
     }
 
+    /// Encoder-side drift guard for the `HandshakeMessage` wire-tag space.
+    ///
+    /// 4 message variants (tags 0..=3) per the
+    /// `handshake-node-to-node-v14.cddl` outer envelope, with mixed
+    /// array lengths (2/3/2/2). A coupled encoder/decoder typo would
+    /// silently misinterpret every handshake — e.g. tag-1 `AcceptVersion`
+    /// mistakenly decoded as tag-2 `Refuse` would close every connection
+    /// that should have succeeded, indistinguishable from a real refusal.
+    /// Pre-existing tests cover RefuseReason `Display`, version-table
+    /// codec, and per-version constants — but no test pins the outer
+    /// message tag/arity directly. This closes that gap.
+    ///
+    /// Reference: `handshake-node-to-node-v14.cddl`;
+    /// `Ouroboros.Network.Protocol.Handshake.Codec`.
+    #[test]
+    fn handshake_message_encoder_tag_and_arity_match_canonical_cddl() {
+        use yggdrasil_ledger::Decoder;
+
+        let vd = NodeToNodeVersionData {
+            network_magic: 42,
+            initiator_only_diffusion_mode: false,
+            peer_sharing: 1,
+            query: false,
+        };
+        let cases: Vec<(u64, u64, HandshakeMessage)> = vec![
+            (0, 2, HandshakeMessage::ProposeVersions(vec![(HandshakeVersion(13), vd.clone())])),
+            (1, 3, HandshakeMessage::AcceptVersion(HandshakeVersion(14), vd.clone())),
+            (
+                2,
+                2,
+                HandshakeMessage::Refuse(RefuseReason::Refused(
+                    HandshakeVersion(13),
+                    "wrong magic".to_owned(),
+                )),
+            ),
+            (3, 2, HandshakeMessage::QueryReply(vec![(HandshakeVersion(15), vd)])),
+        ];
+        assert_eq!(cases.len(), 4, "HandshakeMessage tag space must be 0..=3");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(4);
+        for (canonical_tag, canonical_len, msg) in cases {
+            let bytes = msg.to_cbor();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("HandshakeMessage encodes as a CBOR array");
+            assert_eq!(
+                len, canonical_len,
+                "HandshakeMessage::{msg:?} array length {len}, expected {canonical_len}",
+            );
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical_tag, "HandshakeMessage::{msg:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec![0, 1, 2, 3],
+            "HandshakeMessage tag set must be exactly 0..=3",
+        );
+    }
+
+    /// Encoder-side drift guard for the inner `RefuseReason` wire-tag
+    /// space, embedded inside `HandshakeMessage::Refuse` (outer tag 2).
+    ///
+    /// 3 sub-tag variants (0..=2) with mixed array lengths (2/3/3):
+    /// `VersionMismatch` (length 2 with version list), `HandshakeDecode
+    /// Error` (length 3 with version + reason), `Refused` (length 3 with
+    /// version + reason). A typo swapping inner tag-1 `HandshakeDecode
+    /// Error` and tag-2 `Refused` would silently misclassify every
+    /// connection failure — operator dashboards would attribute decode
+    /// errors to deliberate refusals and vice versa.
+    ///
+    /// Reference: `handshake-node-to-node-v14.cddl` — `refuseReason`.
+    #[test]
+    fn refuse_reason_encoder_inner_tag_and_arity_match_canonical_cddl() {
+        use yggdrasil_ledger::Decoder;
+
+        let cases: Vec<(u64, u64, RefuseReason)> = vec![
+            (
+                0,
+                2,
+                RefuseReason::VersionMismatch(vec![HandshakeVersion(13), HandshakeVersion(14)]),
+            ),
+            (
+                1,
+                3,
+                RefuseReason::HandshakeDecodeError(
+                    HandshakeVersion(14),
+                    "expected map".to_owned(),
+                ),
+            ),
+            (
+                2,
+                3,
+                RefuseReason::Refused(HandshakeVersion(13), "wrong magic".to_owned()),
+            ),
+        ];
+        assert_eq!(cases.len(), 3, "RefuseReason inner tag space must be 0..=2");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(3);
+        for (canonical_tag, canonical_len, reason) in cases {
+            // Wrap in HandshakeMessage::Refuse to exercise the actual
+            // encoder path (RefuseReason has no standalone encode method).
+            let bytes = HandshakeMessage::Refuse(reason.clone()).to_cbor();
+            let mut dec = Decoder::new(&bytes);
+            let outer_len = dec.array().expect("outer Refuse array");
+            assert_eq!(outer_len, 2, "outer Refuse must be array length 2");
+            let outer_tag = dec.unsigned().expect("outer Refuse tag");
+            assert_eq!(outer_tag, 2, "outer Refuse tag must be 2");
+            let inner_len = dec.array().expect("inner RefuseReason array");
+            assert_eq!(
+                inner_len, canonical_len,
+                "RefuseReason::{reason:?} inner array length {inner_len}, expected {canonical_len}",
+            );
+            let inner_tag = dec.unsigned().expect("inner RefuseReason tag");
+            assert_eq!(
+                inner_tag, canonical_tag,
+                "RefuseReason::{reason:?} inner tag drift",
+            );
+            seen.push(inner_tag);
+        }
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec![0, 1, 2],
+            "RefuseReason inner tag set must be exactly 0..=2",
+        );
+    }
+
     #[test]
     fn ntn_handshake_version_constants_are_sequential() {
         // Mirror of slice-87's NtC drift guard for the NtN side: pin
