@@ -4417,7 +4417,7 @@ where
                                 checkpoint_tracking.as_mut(),
                                 &config.checkpoint_policy,
                                 vrf_ctx.as_ref(),
-                                ocert_counters.as_ref(),
+                                ocert_counters.as_mut(),
                             )?;
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
@@ -4872,7 +4872,7 @@ where
                                     checkpoint_tracking.as_mut(),
                                     &config.checkpoint_policy,
                                     vrf_ctx.as_ref(),
-                                    ocert_counters.as_ref(),
+                                    ocert_counters.as_mut(),
                                 )?
                             };
 

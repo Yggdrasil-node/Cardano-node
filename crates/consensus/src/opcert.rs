@@ -205,6 +205,27 @@ impl OcertCounters {
     pub fn iter(&self) -> impl Iterator<Item = (&[u8; 28], &u64)> {
         self.counters.iter()
     }
+
+    /// Resets the counter map to empty.
+    ///
+    /// Required at chain rollback boundaries: the per-pool monotonicity
+    /// high-water mark is part of upstream `PraosState.csCounters`,
+    /// which is persisted as part of `ChainDepState` and ROLLED BACK
+    /// to a snapshot at the rollback restore point. Without resetting,
+    /// a fork that happens to include lower-sequence OpCerts from the
+    /// same pool (legitimate on the alt chain) is rejected as
+    /// `OcertCounterTooOld` even though those certs are valid.
+    ///
+    /// The "first-seen pool is permissive" rule in
+    /// [`Self::validate_and_update`] then naturally re-initialises
+    /// each pool's counter from the next block we see, restoring the
+    /// monotonicity guard from that point forward.
+    ///
+    /// Reference: `Cardano.Protocol.TPraos.API` `tickChainDepState`
+    /// rollback semantics.
+    pub fn clear(&mut self) {
+        self.counters.clear();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -620,6 +641,40 @@ mod tests {
         bad.extend(std::iter::repeat_n(0u8, 16));
         bad.push(0x00);
         assert!(OcertCounters::from_cbor_bytes(&bad).is_err());
+    }
+
+    /// `clear()` empties the counter map and the next sequence number
+    /// from any pool is accepted (subject to the existing `pool_in_dist`
+    /// permissive rule). Pins the rollback-reset contract: after a chain
+    /// rollback, OpCerts that were rejected as `OcertCounterTooOld`
+    /// against the pre-rollback high-water mark must now be accepted as
+    /// "first-seen" because the fork's chain may legitimately have lower
+    /// sequence numbers from the same pool.
+    #[test]
+    fn ocert_counters_clear_resets_to_empty_and_accepts_next_block_as_first_seen() {
+        let mut c = OcertCounters::new();
+        let pool = [0xAA; 28];
+        // Advance to seq 5.
+        c.validate_and_update(pool, 0, true).unwrap();
+        c.validate_and_update(pool, 1, true).unwrap();
+        c.validate_and_update(pool, 2, true).unwrap();
+        c.validate_and_update(pool, 3, true).unwrap();
+        c.validate_and_update(pool, 4, true).unwrap();
+        c.validate_and_update(pool, 5, true).unwrap();
+        assert_eq!(c.get(&pool), Some(5));
+
+        // Pre-clear: replaying seq 2 fails as TooOld (5 → 2).
+        assert!(c.validate_and_update(pool, 2, true).is_err());
+
+        // Reset.
+        c.clear();
+        assert!(c.is_empty());
+        assert_eq!(c.get(&pool), None);
+
+        // Post-clear: same lower-seq block is now accepted as first-seen
+        // (the alt-chain scenario after a fork past the high-water mark).
+        c.validate_and_update(pool, 2, true).unwrap();
+        assert_eq!(c.get(&pool), Some(2));
     }
 
     #[test]
