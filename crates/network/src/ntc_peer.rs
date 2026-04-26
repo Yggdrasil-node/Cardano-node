@@ -464,6 +464,60 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ntc_supported_versions_covers_v9_through_v16_descending() {
+        // The NtC handshake selects "best common version" by iterating
+        // `NTC_SUPPORTED_VERSIONS` in declared order. Upstream convention
+        // is to list newest first so the first match wins the negotiation.
+        // Pin: (1) every V9..=V16 constant is present, (2) the list is
+        // strictly descending, (3) length matches the 8-variant range.
+        // Drift on any of these would silently change which version a
+        // client gets negotiated to (e.g. accidentally picking V9 against
+        // a V16-speaking CLI would downgrade NtC features without error).
+        assert_eq!(NTC_SUPPORTED_VERSIONS.len(), 8);
+
+        // Every declared constant must appear exactly once.
+        let expected = [
+            HandshakeVersion::NTC_V16,
+            HandshakeVersion::NTC_V15,
+            HandshakeVersion::NTC_V14,
+            HandshakeVersion::NTC_V13,
+            HandshakeVersion::NTC_V12,
+            HandshakeVersion::NTC_V11,
+            HandshakeVersion::NTC_V10,
+            HandshakeVersion::NTC_V9,
+        ];
+        assert_eq!(NTC_SUPPORTED_VERSIONS, expected);
+
+        // Strictly descending: `v[i].0 > v[i+1].0` for every adjacent pair.
+        for i in 0..NTC_SUPPORTED_VERSIONS.len() - 1 {
+            assert!(
+                NTC_SUPPORTED_VERSIONS[i].0 > NTC_SUPPORTED_VERSIONS[i + 1].0,
+                "NTC_SUPPORTED_VERSIONS must be strictly descending, violated at index {i}: \
+                 {:?} ≤ {:?}",
+                NTC_SUPPORTED_VERSIONS[i].0,
+                NTC_SUPPORTED_VERSIONS[i + 1].0,
+            );
+        }
+    }
+
+    #[test]
+    fn ntc_handshake_version_constants_are_sequential() {
+        // The 8 V9..=V16 `const`s must map to their literal u16 values
+        // one-to-one. Drift (e.g. `NTC_V14: Self(15)` from a copy-paste
+        // error) would silently renegotiate clients onto the wrong
+        // protocol — handshakes succeed but subsequent mini-protocol
+        // behavior diverges from what the peer expects.
+        assert_eq!(HandshakeVersion::NTC_V9.0, 9);
+        assert_eq!(HandshakeVersion::NTC_V10.0, 10);
+        assert_eq!(HandshakeVersion::NTC_V11.0, 11);
+        assert_eq!(HandshakeVersion::NTC_V12.0, 12);
+        assert_eq!(HandshakeVersion::NTC_V13.0, 13);
+        assert_eq!(HandshakeVersion::NTC_V14.0, 14);
+        assert_eq!(HandshakeVersion::NTC_V15.0, 15);
+        assert_eq!(HandshakeVersion::NTC_V16.0, 16);
+    }
+
+    #[test]
     fn encode_decode_ntc_version_data() {
         let vd = NodeToClientVersionData {
             network_magic: 764_824_073,

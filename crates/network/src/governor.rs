@@ -264,11 +264,34 @@ impl NodePeerSharing {
     }
 
     /// Construct from the handshake wire value (0 = disabled, 1 = enabled).
+    ///
+    /// Lenient on the receive side: any `value >= 1` is treated as
+    /// enabled, matching upstream's liberal-receiver semantics. The
+    /// slice-61 preflight warns operators against transmitting values
+    /// outside `{0, 1}`, so the transmit path is strict while the
+    /// receive path is tolerant.
     pub fn from_wire(value: u8) -> Self {
         if value >= 1 {
             Self::PeerSharingEnabled
         } else {
             Self::PeerSharingDisabled
+        }
+    }
+
+    /// Encode this value for handshake transmission.
+    ///
+    /// Strict inverse of [`from_wire`]: `PeerSharingDisabled → 0`,
+    /// `PeerSharingEnabled → 1`. Upstream's `NodeToNodeVersionData`
+    /// encoder always emits these two exact values, so our transmit
+    /// side does the same (rather than mirroring `from_wire`'s lenient
+    /// accept range).
+    ///
+    /// Reference: `Ouroboros.Network.PeerSharing` — `peerSharing` codec
+    /// in `NodeToNodeVersionData`.
+    pub fn to_wire(self) -> u8 {
+        match self {
+            Self::PeerSharingDisabled => 0,
+            Self::PeerSharingEnabled => 1,
         }
     }
 }
@@ -5476,6 +5499,38 @@ mod tests {
             NodePeerSharing::from_wire(42),
             NodePeerSharing::PeerSharingEnabled
         );
+    }
+
+    #[test]
+    fn node_peer_sharing_to_wire_is_strict_inverse_of_from_wire() {
+        // Canonical mapping: Disabled → 0, Enabled → 1 — matches the
+        // only two values upstream encoders ever emit.
+        assert_eq!(NodePeerSharing::PeerSharingDisabled.to_wire(), 0);
+        assert_eq!(NodePeerSharing::PeerSharingEnabled.to_wire(), 1);
+
+        // Round-trip every canonical value through to_wire → from_wire.
+        for &v in &[
+            NodePeerSharing::PeerSharingDisabled,
+            NodePeerSharing::PeerSharingEnabled,
+        ] {
+            let wire = v.to_wire();
+            let reconstructed = NodePeerSharing::from_wire(wire);
+            assert_eq!(reconstructed, v);
+        }
+    }
+
+    #[test]
+    fn node_peer_sharing_from_wire_then_to_wire_normalises_bogus_inputs() {
+        // Lenient receive + strict transmit: if we accept a bogus wire
+        // value (42), we must re-emit the canonical form (1) — not
+        // re-transmit the original. This is the "liberal in what you
+        // accept, conservative in what you send" Postel-style invariant
+        // that prevents accidental bogus-value amplification through
+        // the node.
+        let round_tripped = NodePeerSharing::from_wire(42).to_wire();
+        assert_eq!(round_tripped, 1);
+        let round_tripped = NodePeerSharing::from_wire(255).to_wire();
+        assert_eq!(round_tripped, 1);
     }
 
     #[test]

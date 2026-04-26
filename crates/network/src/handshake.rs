@@ -7,6 +7,8 @@
 pub struct HandshakeVersion(pub u16);
 
 impl HandshakeVersion {
+    /// Node-to-node protocol version 13 (Conway / PeerSharing).
+    pub const V13: Self = Self(13);
     /// Node-to-node protocol version 14.
     pub const V14: Self = Self(14);
     /// Node-to-node protocol version 15.
@@ -445,5 +447,87 @@ mod tests {
         let s = format!("{r}");
         assert!(s.contains("version mismatch"));
         assert!(s.contains("[]"), "empty list rendered as `[]`: {s}");
+    }
+
+    #[test]
+    fn version_data_codec_encodes_4_elements_decodes_2_to_4() {
+        // Deliberate asymmetry: the encoder always writes v13+ form
+        // (4 elements) because we only advertise v13+ in our supported
+        // version lists. The decoder accepts v7-v10 (2 elements) and
+        // v11-v12 (3 elements) for compatibility with older peers that
+        // might happen to speak to us.
+        //
+        // This test pins both halves so a future refactor that changes
+        // either direction silently breaks wire compatibility.
+        use yggdrasil_ledger::{Decoder, Encoder};
+
+        let vd = NodeToNodeVersionData {
+            network_magic: 42,
+            initiator_only_diffusion_mode: true,
+            peer_sharing: 1,
+            query: true,
+        };
+
+        // Encode always produces 4 elements.
+        let mut enc = Encoder::new();
+        encode_version_data(&mut enc, &vd);
+        let bytes = enc.into_bytes();
+        let mut dec = Decoder::new(&bytes);
+        let len = dec.array().expect("array header");
+        assert_eq!(
+            len, 4,
+            "encode_version_data must always emit 4 elements (v13+ shape)",
+        );
+
+        // Round-trip for the 4-element form preserves all fields.
+        let decoded = decode_version_data(&mut Decoder::new(&bytes)).expect("decode 4-elem");
+        assert_eq!(decoded, vd);
+
+        // Legacy 2-element form decodes with defaults for missing fields.
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(42).bool(true);
+        let legacy2 = enc.into_bytes();
+        let decoded = decode_version_data(&mut Decoder::new(&legacy2)).expect("decode 2-elem");
+        assert_eq!(decoded.network_magic, 42);
+        assert!(decoded.initiator_only_diffusion_mode);
+        assert_eq!(decoded.peer_sharing, 0, "missing field defaults to disabled");
+        assert!(!decoded.query, "missing field defaults to non-query");
+
+        // Legacy 3-element form decodes with default for `query` only.
+        let mut enc = Encoder::new();
+        enc.array(3).unsigned(42).bool(false).unsigned(1);
+        let legacy3 = enc.into_bytes();
+        let decoded = decode_version_data(&mut Decoder::new(&legacy3)).expect("decode 3-elem");
+        assert_eq!(decoded.network_magic, 42);
+        assert!(!decoded.initiator_only_diffusion_mode);
+        assert_eq!(decoded.peer_sharing, 1);
+        assert!(!decoded.query);
+
+        // Lengths outside [2, 4] are rejected.
+        let mut enc = Encoder::new();
+        enc.array(5).unsigned(1).bool(false).unsigned(0).bool(false).unsigned(99);
+        assert!(
+            decode_version_data(&mut Decoder::new(&enc.into_bytes())).is_err(),
+            "5-element array must be rejected",
+        );
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(1);
+        assert!(
+            decode_version_data(&mut Decoder::new(&enc.into_bytes())).is_err(),
+            "1-element array must be rejected",
+        );
+    }
+
+    #[test]
+    fn ntn_handshake_version_constants_are_sequential() {
+        // Mirror of slice-87's NtC drift guard for the NtN side: pin
+        // that `V13 / V14 / V15` map to literal u16 values `13 / 14 / 15`.
+        // A copy-paste typo in ONE constant (e.g. `V14: Self(15)`) would
+        // silently misnegotiate client connections onto the wrong NtN
+        // protocol semantics — catastrophic for mux-mini-protocol
+        // behaviour while the handshake itself succeeds.
+        assert_eq!(HandshakeVersion::V13.0, 13);
+        assert_eq!(HandshakeVersion::V14.0, 14);
+        assert_eq!(HandshakeVersion::V15.0, 15);
     }
 }
