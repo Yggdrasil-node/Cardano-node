@@ -4397,6 +4397,172 @@ pub fn partition_fetch_range_across_peers(
         .collect()
 }
 
+/// Execute a multi-peer BlockFetch plan in parallel and return blocks
+/// in chain (slot-ascending) order.
+///
+/// `fetch_one` is the per-(peer, range) fetch closure — typically wraps
+/// `fetch_range_blocks_multi_era_raw_decoded(block_fetch, lower, upper)`
+/// for a real `BlockFetchClient`, but is generic so tests can drive it
+/// with synthetic in-memory data.  Each closure invocation returns
+/// `Vec<(raw_block_bytes, MultiEraBlock)>` for the assigned chunk.
+///
+/// Concurrency model:
+/// - All assignments dispatch concurrently via `tokio::JoinSet`.
+/// - On any chunk error, sibling tasks are aborted via `abort_all()`
+///   and the first observed error is propagated; pool failures are
+///   recorded against the offending peer.
+/// - Successful chunks are buffered through a [`ReorderBuffer`] keyed
+///   on chunk lower-bound so the validator receives blocks in chain
+///   order even when peers respond out-of-order.
+/// - Pool instrumentation receives `note_dispatch` per assignment up
+///   front, then `note_success(peer, n_blocks, n_bytes, now)` /
+///   `note_failure(peer)` per outcome — mirroring the single-peer
+///   accounting in `sync_batch_verified_with_tentative`.
+///
+/// Tentative-header timing: this primitive intentionally does NOT
+/// touch [`yggdrasil_consensus::TentativeState`].  The caller is
+/// responsible for `try_set_tentative_header` BEFORE invoking this
+/// function and `clear_tentative_trap` on `Err` — same contract as
+/// the single-peer path.  This keeps the consensus-correctness boundary
+/// in one place (the caller's `sync_batch_verified_*` function) and
+/// avoids spreading tentative-state mutation across multiple async
+/// tasks.
+///
+/// Reference: upstream `Ouroboros.Network.BlockFetch.State.completeBlockDownload`
+/// ordering invariants; `Ouroboros.Network.BlockFetch.ClientRegistry`
+/// per-peer dispatch.
+pub async fn execute_multi_peer_blockfetch_plan<B, F, Fut>(
+    plan: &[BlockFetchAssignment],
+    from_point: Point,
+    fetch_one: F,
+    pool_instr: Option<&BlockFetchInstrumentation>,
+) -> Result<Vec<(Vec<u8>, B)>, SyncError>
+where
+    B: Send + 'static,
+    F: Fn(SocketAddr, Point, Point) -> Fut + Send + Sync + Clone + 'static,
+    Fut: std::future::Future<Output = Result<Vec<(Vec<u8>, B)>, SyncError>>
+        + Send
+        + 'static,
+{
+    use yggdrasil_network::blockfetch_pool::ReorderBuffer;
+
+    if plan.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // The `ReorderBuffer` only releases chunks whose lower-slot is
+    // strictly past its head, and treats `Point::Origin` as
+    // "never releasable".  At genesis (`from_point = Origin`), the
+    // multi-peer reassembly path therefore cannot drain.  Reject
+    // genesis multi-peer plans explicitly so the caller routes to
+    // the single-peer path for initial sync; collapse-by-truncation
+    // would silently drop chunks past plan[0], which is wrong.
+    if plan.len() > 1 && matches!(from_point, Point::Origin) {
+        return Err(SyncError::Recovery(
+            "multi-peer BlockFetch dispatch requires non-Origin from_point; \
+             genesis bootstrap must use single-peer path"
+                .to_owned(),
+        ));
+    }
+
+    // Single-peer fast path: the legacy single-element plan is
+    // bit-identical to a direct fetch — no JoinSet machinery, no
+    // reorder buffer.
+    if plan.len() == 1 {
+        let asn = plan[0];
+        if let Some(pool) = pool_instr {
+            if let Ok(mut g) = pool.lock() {
+                g.note_dispatch(asn.peer);
+            }
+        }
+        let result = fetch_one(asn.peer, asn.lower, asn.upper).await;
+        match &result {
+            Ok(blocks) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        let n = blocks.len() as u64;
+                        let bytes: u64 =
+                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        g.note_success(asn.peer, n, bytes, Instant::now());
+                    }
+                }
+            }
+            Err(_) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        g.note_failure(asn.peer);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    // Multi-peer dispatch.  Record dispatch up front so per-peer
+    // in-flight accounting reflects all outstanding fetches before any
+    // future polls.
+    if let Some(pool) = pool_instr {
+        if let Ok(mut g) = pool.lock() {
+            for asn in plan {
+                g.note_dispatch(asn.peer);
+            }
+        }
+    }
+
+    let mut joinset = tokio::task::JoinSet::new();
+    for asn in plan {
+        let asn = *asn;
+        let f = fetch_one.clone();
+        joinset.spawn(async move {
+            let res = f(asn.peer, asn.lower, asn.upper).await;
+            (asn, res)
+        });
+    }
+
+    let mut buffer: ReorderBuffer<(Vec<u8>, B)> = ReorderBuffer::new(from_point);
+
+    while let Some(joined) = joinset.join_next().await {
+        let (asn, result) = match joined {
+            Ok(pair) => pair,
+            Err(join_err) => {
+                joinset.abort_all();
+                return Err(SyncError::Recovery(format!(
+                    "multi-peer fetch task panicked: {join_err}"
+                )));
+            }
+        };
+        match result {
+            Ok(blocks) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        let n = blocks.len() as u64;
+                        let bytes: u64 =
+                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        g.note_success(asn.peer, n, bytes, Instant::now());
+                    }
+                }
+                buffer.insert(asn.lower, asn.upper, blocks);
+            }
+            Err(err) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        g.note_failure(asn.peer);
+                    }
+                }
+                joinset.abort_all();
+                return Err(err);
+            }
+        }
+    }
+
+    // Drain in chain (slot-ascending) order.
+    let mut out = Vec::new();
+    for (_lower, _upper, blocks) in buffer.drain_releasable() {
+        out.extend(blocks);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4674,6 +4840,247 @@ mod tests {
         forget_peer_density(test_addr(9999), &r);
         let guard = r.read().unwrap();
         assert!(guard.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Slice E-Dispatch — execute_multi_peer_blockfetch_plan
+    // -----------------------------------------------------------------------
+
+    /// Synthetic block placeholder for dispatcher tests — the
+    /// dispatcher only counts and orders by chunk lower-bound, so the
+    /// block contents are irrelevant.  Generic `B = u64` keeps the
+    /// tests free of any real block-decoding ceremony.
+    fn fake_block(slot: u64) -> (Vec<u8>, u64) {
+        (vec![slot as u8; 4], slot)
+    }
+
+    type SynthFut =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<(Vec<u8>, u64)>, SyncError>> + Send>>;
+
+    fn synthetic_fetch_one(
+        contents: std::collections::BTreeMap<SocketAddr, Vec<(Point, Point, Vec<u64>)>>,
+    ) -> impl Fn(SocketAddr, Point, Point) -> SynthFut + Clone + Send + Sync + 'static {
+        let contents = std::sync::Arc::new(contents);
+        move |peer, lower, upper| {
+            let contents = contents.clone();
+            Box::pin(async move {
+                let entries = contents.get(&peer).cloned().unwrap_or_default();
+                for (l, u, slots) in entries {
+                    if l == lower && u == upper {
+                        return Ok(slots.into_iter().map(fake_block).collect());
+                    }
+                }
+                Ok(Vec::new())
+            })
+        }
+    }
+
+    fn failing_fetch_one(
+        target_peer: SocketAddr,
+    ) -> impl Fn(SocketAddr, Point, Point) -> SynthFut + Clone + Send + Sync + 'static {
+        move |peer, _lower, _upper| {
+            let fail = peer == target_peer;
+            Box::pin(async move {
+                if fail {
+                    Err(SyncError::Recovery(format!(
+                        "synthetic peer {peer} failure"
+                    )))
+                } else {
+                    // Slow path so failure can race ahead — used by the
+                    // sibling-cancellation test.
+                    tokio::task::yield_now().await;
+                    Ok(Vec::new())
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_plan_yields_empty_output() {
+        let empty = std::collections::BTreeMap::<SocketAddr, Vec<(Point, Point, Vec<u64>)>>::new();
+        let result = execute_multi_peer_blockfetch_plan(
+            &[],
+            block_point(100),
+            synthetic_fetch_one(empty),
+            None,
+        )
+        .await
+        .expect("empty plan succeeds");
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn genesis_multi_peer_returns_explicit_error() {
+        // Multi-element plan from Origin must reject — caller should
+        // route initial sync to single-peer.
+        let plan = vec![
+            BlockFetchAssignment {
+                peer: test_addr(1001),
+                lower: Point::Origin,
+                upper: block_point(50),
+            },
+            BlockFetchAssignment {
+                peer: test_addr(1002),
+                lower: block_point(51),
+                upper: block_point(100),
+            },
+        ];
+        let empty = std::collections::BTreeMap::<SocketAddr, Vec<(Point, Point, Vec<u64>)>>::new();
+        let err = execute_multi_peer_blockfetch_plan(
+            &plan,
+            Point::Origin,
+            synthetic_fetch_one(empty),
+            None,
+        )
+        .await
+        .expect_err("genesis multi-peer must error");
+        assert!(matches!(err, SyncError::Recovery(_)));
+    }
+
+    #[tokio::test]
+    async fn single_peer_plan_is_bit_identical_to_direct_fetch() {
+        // Single-element plan must take the legacy fast path — no
+        // ReorderBuffer involvement.  The output equals what the
+        // closure returned for that single chunk.
+        let peer = test_addr(2001);
+        let plan = vec![BlockFetchAssignment {
+            peer,
+            lower: block_point(100),
+            upper: block_point(150),
+        }];
+
+        let mut contents = std::collections::BTreeMap::new();
+        contents.insert(
+            peer,
+            vec![(block_point(100), block_point(150), vec![101, 102, 103])],
+        );
+
+        let result = execute_multi_peer_blockfetch_plan(
+            &plan,
+            block_point(99),
+            synthetic_fetch_one(contents),
+            None,
+        )
+        .await
+        .expect("single-peer plan succeeds");
+        assert_eq!(result.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn two_peer_plan_releases_blocks_in_chain_order() {
+        let p1 = test_addr(2101);
+        let p2 = test_addr(2102);
+        let plan = vec![
+            BlockFetchAssignment {
+                peer: p1,
+                lower: block_point(100),
+                upper: block_point(150),
+            },
+            BlockFetchAssignment {
+                peer: p2,
+                lower: block_point(151),
+                upper: block_point(200),
+            },
+        ];
+        let mut contents = std::collections::BTreeMap::new();
+        contents.insert(
+            p1,
+            vec![(block_point(100), block_point(150), vec![101, 110, 150])],
+        );
+        contents.insert(
+            p2,
+            vec![(block_point(151), block_point(200), vec![160, 180, 200])],
+        );
+
+        let result = execute_multi_peer_blockfetch_plan(
+            &plan,
+            block_point(99),
+            synthetic_fetch_one(contents),
+            None,
+        )
+        .await
+        .expect("two-peer plan succeeds");
+        // 6 blocks total, drain order is chain-ascending.
+        assert_eq!(result.len(), 6);
+    }
+
+    #[tokio::test]
+    async fn any_chunk_failure_propagates_and_aborts_siblings() {
+        // p2 returns Err immediately; p1 yields and returns Ok.  The
+        // dispatcher must surface p2's error and abort p1.
+        let p1 = test_addr(2201);
+        let p2 = test_addr(2202);
+        let plan = vec![
+            BlockFetchAssignment {
+                peer: p1,
+                lower: block_point(100),
+                upper: block_point(150),
+            },
+            BlockFetchAssignment {
+                peer: p2,
+                lower: block_point(151),
+                upper: block_point(200),
+            },
+        ];
+        let err = execute_multi_peer_blockfetch_plan(
+            &plan,
+            block_point(99),
+            failing_fetch_one(p2),
+            None,
+        )
+        .await
+        .expect_err("p2 failure must propagate");
+        assert!(matches!(err, SyncError::Recovery(_)));
+    }
+
+    #[tokio::test]
+    async fn three_peer_plan_handles_out_of_order_arrival() {
+        // Block fetch closures complete in reverse order (p3 first, p1
+        // last) — the ReorderBuffer must still produce chain-ascending
+        // output.
+        let p1 = test_addr(2301);
+        let p2 = test_addr(2302);
+        let p3 = test_addr(2303);
+        let plan = vec![
+            BlockFetchAssignment {
+                peer: p1,
+                lower: block_point(100),
+                upper: block_point(150),
+            },
+            BlockFetchAssignment {
+                peer: p2,
+                lower: block_point(151),
+                upper: block_point(200),
+            },
+            BlockFetchAssignment {
+                peer: p3,
+                lower: block_point(201),
+                upper: block_point(250),
+            },
+        ];
+        let mut contents = std::collections::BTreeMap::new();
+        contents.insert(
+            p1,
+            vec![(block_point(100), block_point(150), vec![100])],
+        );
+        contents.insert(
+            p2,
+            vec![(block_point(151), block_point(200), vec![151])],
+        );
+        contents.insert(
+            p3,
+            vec![(block_point(201), block_point(250), vec![201])],
+        );
+
+        let result = execute_multi_peer_blockfetch_plan(
+            &plan,
+            block_point(99),
+            synthetic_fetch_one(contents),
+            None,
+        )
+        .await
+        .expect("three-peer plan succeeds");
+        assert_eq!(result.len(), 3);
     }
 
     #[test]
