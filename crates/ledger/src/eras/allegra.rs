@@ -757,4 +757,54 @@ mod tests {
         };
         assert_ne!(no_ttl.to_cbor_bytes(), with_ttl.to_cbor_bytes());
     }
+
+    /// Encoder-side drift guard for the `NativeScript` wire-tag space.
+    ///
+    /// Mirror of Round 110 (DCert) / Round 111 (GovAction) for the
+    /// timelock/multisig surface used by every native-asset minting
+    /// policy and Shelley-era multi-signature lock. 6 variants
+    /// (tags 0..=5) with mixed array lengths (2/2/2/3/2/2). A coupled
+    /// encoder/decoder typo would silently misinterpret every native
+    /// script — e.g. a tag-1 `ScriptAll` (require all sub-scripts)
+    /// mistakenly decoded as tag-2 `ScriptAny` (require any) would
+    /// turn a `2-of-2` multisig into a `1-of-2` and silently weaken
+    /// every multisig lock on chain.
+    ///
+    /// Pins per-variant array length AND tag, plus bidirectional
+    /// completeness (`cases.len() == 6`, sorted observed tags
+    /// `== 0..=5`). Reference: `Cardano.Ledger.Allegra.Scripts.Timelock`;
+    /// CDDL `native_script` rule.
+    #[test]
+    fn native_script_encoder_tag_and_arity_match_canonical_cddl() {
+        let leaf = NativeScript::ScriptPubkey([0x42; 28]);
+        let cases: Vec<(u64, u64, NativeScript)> = vec![
+            (0, 2, NativeScript::ScriptPubkey([0x11; 28])),
+            (1, 2, NativeScript::ScriptAll(vec![leaf.clone()])),
+            (2, 2, NativeScript::ScriptAny(vec![leaf.clone()])),
+            (3, 3, NativeScript::ScriptNOfK(1, vec![leaf])),
+            (4, 2, NativeScript::InvalidBefore(100)),
+            (5, 2, NativeScript::InvalidHereafter(200)),
+        ];
+        assert_eq!(cases.len(), 6, "NativeScript tag space must be 0..=5 (6 variants)");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(6);
+        for (canonical_tag, canonical_len, script) in cases {
+            let bytes = script.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("NativeScript encodes as a CBOR array");
+            assert_eq!(
+                len, canonical_len,
+                "NativeScript::{script:?} array length {len}, expected {canonical_len}",
+            );
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical_tag, "NativeScript::{script:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(
+            seen,
+            vec![0, 1, 2, 3, 4, 5],
+            "NativeScript tag set must be exactly 0..=5",
+        );
+    }
 }

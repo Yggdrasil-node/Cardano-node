@@ -1053,4 +1053,79 @@ mod tests {
             ])
         );
     }
+
+    /// Encoder-side drift guard for the `Script` wire-tag space.
+    ///
+    /// 4 variants (tags 0..=3) all length 2: `Native`/`PlutusV1`/
+    /// `PlutusV2`/`PlutusV3`. A typo swapping PlutusV2=2 and PlutusV3=3
+    /// would silently route every V2 script into the V3 evaluator (and
+    /// vice versa) — the worst-case Plutus bug because the evaluator
+    /// would apply the wrong cost model and wrong builtin set, producing
+    /// incorrect script-validity decisions on real on-chain transactions.
+    ///
+    /// Reference: `Cardano.Ledger.Core.Script`; CDDL `script` rule in
+    /// `cardano-ledger-conway/cddl-files/conway.cddl`.
+    #[test]
+    fn script_encoder_tag_and_arity_match_canonical_cddl() {
+        use crate::eras::allegra::NativeScript;
+
+        let cases: Vec<(u64, Script)> = vec![
+            (0, Script::Native(NativeScript::ScriptPubkey([0x33; 28]))),
+            (1, Script::PlutusV1(vec![0x01, 0x02, 0x03])),
+            (2, Script::PlutusV2(vec![0x04, 0x05, 0x06])),
+            (3, Script::PlutusV3(vec![0x07, 0x08, 0x09])),
+        ];
+        assert_eq!(cases.len(), 4, "Script tag space must be 0..=3 (4 variants)");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(4);
+        for (canonical, script) in cases {
+            let bytes = script.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("Script encodes as a CBOR array");
+            assert_eq!(
+                len, 2,
+                "Script::{script:?} array length {len}, expected 2 (all variants)",
+            );
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical, "Script::{script:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(seen, vec![0, 1, 2, 3], "Script tag set must be exactly 0..=3");
+    }
+
+    /// Encoder-side drift guard for `StakeCredential`.
+    ///
+    /// 2 variants (tags 0..=1): `AddrKeyHash` and `ScriptHash`, both
+    /// length 2 with 28-byte hash payload. A typo swapping the two
+    /// would silently misinterpret every staking credential — turning
+    /// every key-hash credential into a script-hash credential and
+    /// breaking every reward delegation, witness check, and script
+    /// witness obligation.
+    ///
+    /// Reference: `Cardano.Ledger.Credential.Credential`.
+    #[test]
+    fn stake_credential_encoder_tag_and_arity_match_canonical_cddl() {
+        use crate::types::StakeCredential;
+
+        let h = [0x99; 28];
+        let cases: Vec<(u64, StakeCredential)> = vec![
+            (0, StakeCredential::AddrKeyHash(h)),
+            (1, StakeCredential::ScriptHash(h)),
+        ];
+        assert_eq!(cases.len(), 2, "StakeCredential tag space must be 0..=1");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(2);
+        for (canonical, cred) in cases {
+            let bytes = cred.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("StakeCredential encodes as a CBOR array");
+            assert_eq!(len, 2, "StakeCredential::{cred:?} array length must be 2");
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical, "StakeCredential::{cred:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(seen, vec![0, 1], "StakeCredential tag set must be exactly 0..=1");
+    }
 }
