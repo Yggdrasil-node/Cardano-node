@@ -560,6 +560,57 @@ impl OutboundPeerManager {
     /// Returns `true` when the peer was found and its status changed.
     /// The underlying session remains alive so the peer continues to
     /// receive KeepAlive heartbeats while hot.
+    /// Borrow the per-peer `BlockFetchClient` for every currently-hot
+    /// peer, sliced as `&mut [(SocketAddr, &mut BlockFetchClient)]`.
+    ///
+    /// This is the runtime seam (Phase 6 of `docs/ARCHITECTURE.md`)
+    /// that exposes hot peers' BlockFetch handles to the sync loop's
+    /// multi-peer dispatcher (`crate::sync::dispatch_range_with_tentative`).
+    /// The closure-style API keeps borrow checking in the manager —
+    /// no `Arc<Mutex<BlockFetchClient>>` wrapper is required because
+    /// the closure runs synchronously while the mutable borrow is
+    /// held.
+    ///
+    /// Returns the closure's output.  When no peers are currently hot,
+    /// the closure receives an empty slice — callers should treat
+    /// that as "fall back to single-peer dispatch via the leader
+    /// session".
+    ///
+    /// Reference: upstream `Ouroboros.Network.BlockFetch.ClientRegistry`
+    /// holds long-lived per-peer `FetchClientStateVars` shared with the
+    /// fetch-decision policy via `TVar`; this accessor is the Rust-side
+    /// borrow-checked equivalent for the synchronous schedule step.
+    #[allow(dead_code)] // Phase 6 scaffolding — sync-loop consumer pending.
+    fn with_hot_block_fetch_clients<R>(
+        &mut self,
+        f: impl FnOnce(&mut [(SocketAddr, &mut BlockFetchClient)]) -> R,
+    ) -> R {
+        // Collect (addr, &mut BlockFetchClient) pairs for every hot
+        // peer.  Iteration order follows `BTreeMap`'s sort by
+        // `SocketAddr`, so the resulting slice is deterministic across
+        // ticks — matches the upstream invariant that the scheduler
+        // sees peers in a stable order.
+        let mut handles: Vec<(SocketAddr, &mut BlockFetchClient)> = self
+            .warm_peers
+            .iter_mut()
+            .filter(|(_, m)| m.is_hot)
+            .map(|(addr, m)| (*addr, &mut m.session.block_fetch))
+            .collect();
+        f(&mut handles)
+    }
+
+    /// Return the list of currently-hot peer addresses.  Cheap snapshot
+    /// used by the sync loop to size the dispatcher's effective
+    /// concurrency without holding a `&mut` borrow on the manager.
+    #[allow(dead_code)] // Phase 6 scaffolding — sync-loop consumer pending.
+    fn hot_peer_addrs(&self) -> Vec<SocketAddr> {
+        self.warm_peers
+            .iter()
+            .filter(|(_, m)| m.is_hot)
+            .map(|(addr, _)| *addr)
+            .collect()
+    }
+
     fn promote_to_hot(
         &mut self,
         peer: SocketAddr,
@@ -6921,6 +6972,93 @@ mod tests {
         // Set BlockFetch to a non-default 20 and verify it lands.
         assert!(mgr.promote_to_hot(addr, &scheduling));
         assert_eq!(weight_lookup[&MiniProtocolNum::BLOCK_FETCH].get(), 20);
+    }
+
+    #[test]
+    fn hot_peer_addrs_returns_only_hot_peers_in_sorted_order() {
+        // Phase 6 seam: the sync loop calls `hot_peer_addrs()` to size
+        // the dispatcher's effective concurrency without holding a
+        // `&mut` borrow on the manager.  Returns a deterministic
+        // BTreeMap-ordered slice so the dispatcher sees peers in
+        // stable order across ticks.
+        use super::OutboundPeerManager;
+
+        let a1: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let a2: std::net::SocketAddr = "1.2.3.4:3002".parse().unwrap();
+        let a3: std::net::SocketAddr = "1.2.3.4:3003".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        for a in [a1, a2, a3] {
+            let session = fake_peer_session(a);
+            mgr.warm_peers.insert(
+                a,
+                super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+            );
+        }
+        // Promote a1 and a3 only; a2 stays warm.
+        mgr.promote_to_hot(a1, &yggdrasil_network::HotPeerScheduling::new());
+        mgr.promote_to_hot(a3, &yggdrasil_network::HotPeerScheduling::new());
+
+        let hot = mgr.hot_peer_addrs();
+        assert_eq!(hot, vec![a1, a3]);
+    }
+
+    #[test]
+    fn hot_peer_addrs_empty_when_no_hot_peers() {
+        use super::OutboundPeerManager;
+        let a1: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session(a1);
+        mgr.warm_peers.insert(
+            a1,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+        // Warm but not hot — must not appear.
+        assert!(mgr.hot_peer_addrs().is_empty());
+    }
+
+    #[test]
+    fn with_hot_block_fetch_clients_yields_handles_for_hot_peers_only() {
+        // Phase 6 seam: the closure receives a sliced view of every
+        // hot peer's BlockFetchClient.  Warm-only peers are excluded.
+        use super::OutboundPeerManager;
+
+        let a1: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let a2: std::net::SocketAddr = "1.2.3.4:3002".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        for a in [a1, a2] {
+            let session = fake_peer_session(a);
+            mgr.warm_peers.insert(
+                a,
+                super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+            );
+        }
+        mgr.promote_to_hot(a1, &yggdrasil_network::HotPeerScheduling::new());
+
+        let count = mgr.with_hot_block_fetch_clients(|handles| {
+            // Pin the slice contents: only a1 (hot), in BTreeMap order.
+            assert_eq!(handles.len(), 1);
+            assert_eq!(handles[0].0, a1);
+            handles.len()
+        });
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn with_hot_block_fetch_clients_empty_slice_when_no_hot_peers() {
+        // Empty-slice contract: callers should treat this as "fall
+        // back to single-peer dispatch via the leader session".
+        use super::OutboundPeerManager;
+
+        let a1: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session(a1);
+        mgr.warm_peers.insert(
+            a1,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+
+        let was_empty = mgr.with_hot_block_fetch_clients(|handles| handles.is_empty());
+        assert!(was_empty);
     }
 
     #[test]
