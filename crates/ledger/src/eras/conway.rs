@@ -1812,4 +1812,135 @@ mod tests {
             "expected UpdateNotAllowedConway, got: {err:?}"
         );
     }
+
+    /// Encoder-side drift guard for the Conway `GovAction` wire-tag space.
+    ///
+    /// Mirror of `cbor::tests::dcert_encoder_tag_and_arity_match_canonical_cddl`
+    /// (Round 110) for the governance-action surface. `GovAction` carries
+    /// 7 variants (tags 0..=6) across two independent hand-coded sites
+    /// (the encode and decode cascades). A coupled encoder/decoder typo
+    /// would round-trip cleanly while silently breaking on-chain wire
+    /// compat with upstream — and because governance proposals drive
+    /// real treasury movements, a tag-misinterpretation regression is
+    /// equivalent to fund redirection.
+    ///
+    /// For every variant in 0..=6 this test constructs a representative
+    /// value, encodes via `to_cbor_bytes`, then INDEPENDENTLY decodes the
+    /// array header + first unsigned and asserts both the array length
+    /// AND the tag against the literal CDDL-specified values. The
+    /// per-variant lengths (4/3/3/2/5/3/1) come straight from upstream
+    /// `gov_action` CDDL constructor arities.
+    ///
+    /// Bidirectional completeness: pins `cases.len() == 7` so a future
+    /// tag-7 upstream variant added without extending this table fails
+    /// immediately, and asserts the sorted observed-tag set is exactly
+    /// `0..=6` so duplicate-tag and missing-tag regressions both surface
+    /// with a clear "drifted from canonical CDDL" diagnostic.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Governance.Procedures.GovAction`;
+    /// CDDL `gov_action` rule in `cardano-ledger-conway/cddl-files/conway.cddl`.
+    #[test]
+    fn gov_action_encoder_tag_and_arity_match_canonical_cddl() {
+        use crate::ProtocolParameterUpdate;
+        use crate::types::{Anchor, RewardAccount, UnitInterval};
+
+        let constitution = Constitution {
+            anchor: Anchor {
+                url: "ipfs://constitution".to_string(),
+                data_hash: [0xaa; 32],
+            },
+            guardrails_script_hash: None,
+        };
+
+        let mut withdrawals: BTreeMap<RewardAccount, u64> = BTreeMap::new();
+        withdrawals.insert(
+            RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0x11; 28]),
+            },
+            1_000_000_000,
+        );
+
+        // (canonical tag, canonical array length, variant)
+        let cases: Vec<(u64, u64, GovAction)> = vec![
+            (
+                0,
+                4,
+                GovAction::ParameterChange {
+                    prev_action_id: None,
+                    protocol_param_update: ProtocolParameterUpdate::default(),
+                    guardrails_script_hash: None,
+                },
+            ),
+            (
+                1,
+                3,
+                GovAction::HardForkInitiation {
+                    prev_action_id: None,
+                    protocol_version: (10, 1),
+                },
+            ),
+            (
+                2,
+                3,
+                GovAction::TreasuryWithdrawals {
+                    withdrawals,
+                    guardrails_script_hash: None,
+                },
+            ),
+            (3, 2, GovAction::NoConfidence { prev_action_id: None }),
+            (
+                4,
+                5,
+                GovAction::UpdateCommittee {
+                    prev_action_id: None,
+                    members_to_remove: vec![],
+                    members_to_add: BTreeMap::new(),
+                    quorum: UnitInterval { numerator: 1, denominator: 2 },
+                },
+            ),
+            (
+                5,
+                3,
+                GovAction::NewConstitution {
+                    prev_action_id: None,
+                    constitution,
+                },
+            ),
+            (6, 1, GovAction::InfoAction),
+        ];
+
+        // Pin: exactly 7 cases (tags 0..=6).
+        assert_eq!(
+            cases.len(),
+            7,
+            "GovAction tag space must be 0..=6 (7 variants)",
+        );
+
+        let mut seen_tags: Vec<u64> = Vec::with_capacity(7);
+        for (canonical_tag, canonical_len, action) in cases {
+            let bytes = action.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("GovAction encodes as a CBOR array");
+            assert_eq!(
+                len, canonical_len,
+                "GovAction::{:?} encoded with array length {len}, expected {canonical_len}",
+                action,
+            );
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(
+                tag, canonical_tag,
+                "GovAction::{:?} encoded with tag {tag}, expected {canonical_tag}",
+                action,
+            );
+            seen_tags.push(tag);
+        }
+
+        seen_tags.sort();
+        let expected_tags: Vec<u64> = (0..=6).collect();
+        assert_eq!(
+            seen_tags, expected_tags,
+            "encoded GovAction tag set must be exactly 0..=6 with no duplicates",
+        );
+    }
 }
