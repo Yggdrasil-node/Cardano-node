@@ -17,7 +17,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool};
+use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool_with_eviction};
 use crate::sync::recover_ledger_state_chaindb;
 use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
@@ -194,21 +194,31 @@ where
             .as_ref()
             .map(|e| e.as_ref() as &dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator);
 
-        match add_txs_to_shared_mempool(
+        // Eviction-aware inbound admission: when the mempool is full,
+        // displace the lowest-fee tail rather than rejecting the
+        // incoming tx outright. Mirrors upstream
+        // `Ouroboros.Consensus.Mempool.Impl.Update.makeRoomForTransaction`.
+        match add_txs_to_shared_mempool_with_eviction(
             &mut ledger_state,
             &self.mempool,
             decoded,
             current_slot,
             eval_ref,
         ) {
-            Ok(results) => {
+            Ok(outcomes) => {
                 let mut admitted = 0;
-                for result in &results {
-                    match result {
+                for outcome in &outcomes {
+                    match &outcome.result {
                         MempoolAddTxResult::MempoolTxAdded(_) => {
                             admitted += 1;
                             if let Some(m) = &self.metrics {
                                 m.inc_mempool_tx_added();
+                                // Each evicted tx is also tracked as a
+                                // mempool reject so operator dashboards
+                                // can see the displacement rate.
+                                for _ in &outcome.evicted {
+                                    m.inc_mempool_tx_rejected();
+                                }
                             }
                         }
                         MempoolAddTxResult::MempoolTxRejected(_, _) => {

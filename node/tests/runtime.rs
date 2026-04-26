@@ -20,8 +20,9 @@ use yggdrasil_node::{
     LedgerCheckpointPolicy, MempoolAddTxResult, NodeConfig, ReconnectingSyncServiceOutcome,
     ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
     ResumedSyncServiceOutcome, SyncError, TxSubmissionServiceOutcome, VerificationConfig,
-    VerifiedSyncServiceConfig, add_tx_to_mempool, add_tx_to_shared_mempool, add_txs_to_mempool,
-    add_txs_to_shared_mempool, bootstrap, bootstrap_with_fallbacks,
+    VerifiedSyncServiceConfig, add_tx_to_mempool, add_tx_to_shared_mempool,
+    add_tx_to_shared_mempool_with_eviction, add_txs_to_mempool, add_txs_to_shared_mempool,
+    add_txs_to_shared_mempool_with_eviction, bootstrap, bootstrap_with_fallbacks,
     resume_reconnecting_verified_sync_service_chaindb, run_reconnecting_verified_sync_service,
     run_reconnecting_verified_sync_service_chaindb, run_txsubmission_service,
     run_txsubmission_service_shared, serve_txsubmission_request_from_mempool,
@@ -1864,6 +1865,138 @@ fn runtime_add_txs_to_shared_mempool_matches_repeated_single_adds() {
     assert_eq!(batch_results, single_results);
     assert_eq!(batch_ledger, single_ledger);
     assert_eq!(batch_mempool.snapshot(), single_mempool.snapshot());
+}
+
+/// Pins the eviction-aware inbound admission path's no-op semantics:
+/// when the mempool has plenty of capacity, the new helper accepts the
+/// transaction without displacing anything and returns an empty
+/// `evicted` list. Mirrors the upstream
+/// `Ouroboros.Consensus.Mempool.Impl.Update.makeRoomForTransaction`
+/// fast path where no displacement is needed.
+#[test]
+fn runtime_add_tx_to_shared_mempool_with_eviction_no_op_when_under_capacity() {
+    let mut ledger = LedgerState::new(Era::Shelley);
+    seed_shelley_input(&mut ledger, 0xA1, 2_150_000);
+    let mempool = SharedMempool::with_capacity(1_000_000);
+
+    let tx = shelley_submitted_tx_spending(0xA1, 0xA2, 2_000_000, 150_000);
+    let tx_id = tx.tx_id();
+
+    let outcome = add_tx_to_shared_mempool_with_eviction(
+        &mut ledger,
+        &mempool,
+        tx,
+        SlotNo(500),
+        None,
+    )
+    .expect("admission");
+    assert_eq!(outcome.result, MempoolAddTxResult::MempoolTxAdded(tx_id));
+    assert!(outcome.evicted.is_empty());
+    assert!(mempool.contains(&tx_id));
+}
+
+/// Pre-load the shared mempool to capacity with a low-fee transaction
+/// (inserted directly via `Mempool::insert` to bypass the ledger
+/// validation that the runtime helper enforces), then submit a
+/// high-fee transaction through `add_tx_to_shared_mempool_with_eviction`
+/// and assert the low-fee tx is displaced.
+///
+/// Pins that the runtime inbound submission path actually routes
+/// through `Mempool::insert_checked_with_eviction` rather than the
+/// strict-rejection `insert_checked`. Without the wiring this slice
+/// landed, the high-fee tx would be rejected with
+/// `MempoolError::CapacityExceeded` and the network would be left in
+/// a worse cumulative-fee state.
+#[test]
+fn runtime_add_tx_to_shared_mempool_with_eviction_displaces_lowest_fee_entry() {
+    use yggdrasil_mempool::MempoolEntry;
+
+    let mut ledger = LedgerState::new(Era::Shelley);
+    seed_shelley_input(&mut ledger, 0xB1, 2_150_000);
+
+    // The capacity is sized so the pre-loaded synthetic entry fills it
+    // exactly AND a single freed-byte allowance leaves room for the
+    // incoming real Shelley tx. The synthetic Shelley submitted tx
+    // serialises to ~92 bytes via `MempoolEntry::from_multi_era_submitted_tx`,
+    // and we set the pre-loaded entry size to 100 so eviction frees
+    // 100 bytes (≥ 92 needed). Capacity 100 ensures the mempool starts
+    // at exactly capacity, so any incoming size > 0 forces eviction.
+    let mempool = SharedMempool::with_capacity(100);
+    let low_fee_tx_id = TxId([0xCC; 32]);
+    let low_fee_entry = MempoolEntry {
+        era: Era::Shelley,
+        tx_id: low_fee_tx_id,
+        fee: 1, // strictly less than the incoming high-fee tx
+        body: vec![0xCC; 100],
+        raw_tx: vec![0xCC; 100],
+        size_bytes: 100,
+        ttl: SlotNo(99_999),
+        inputs: vec![],
+    };
+    mempool
+        .insert(low_fee_entry)
+        .expect("pre-load low-fee entry");
+    assert_eq!(mempool.len(), 1);
+
+    // The runtime helper's `add_tx_with` calls `apply_submitted_tx`
+    // first (which we already seeded a UTxO for), then routes into
+    // `insert_checked_with_eviction`. The high-fee tx (fee = 150_000)
+    // is strictly higher than the synthetic low-fee entry's fee = 1,
+    // so the eviction commits.
+    let high_fee_tx = shelley_submitted_tx_spending(0xB1, 0xB2, 2_000_000, 150_000);
+    let high_fee_tx_id = high_fee_tx.tx_id();
+
+    let outcome = add_tx_to_shared_mempool_with_eviction(
+        &mut ledger,
+        &mempool,
+        high_fee_tx,
+        SlotNo(500),
+        None,
+    )
+    .expect("eviction-aware admission");
+
+    assert_eq!(
+        outcome.result,
+        MempoolAddTxResult::MempoolTxAdded(high_fee_tx_id),
+    );
+    assert_eq!(
+        outcome.evicted,
+        vec![low_fee_tx_id],
+        "low-fee entry must be displaced"
+    );
+    assert!(mempool.contains(&high_fee_tx_id));
+    assert!(!mempool.contains(&low_fee_tx_id));
+}
+
+/// Sequence variant: a batch where one transaction triggers eviction
+/// and another fits without displacement. Ensures the per-tx
+/// `MempoolAddTxOutcome` records evictions independently for each
+/// member of the batch (no cross-tx aggregation).
+#[test]
+fn runtime_add_txs_to_shared_mempool_with_eviction_records_per_tx_evictions() {
+    let mut ledger = LedgerState::new(Era::Shelley);
+    seed_shelley_input(&mut ledger, 0xD1, 2_150_000);
+    let parent = shelley_submitted_tx_spending(0xD1, 0xD2, 2_000_000, 150_000);
+    let parent_id = parent.tx_id();
+    let child = shelley_submitted_tx_dependent(parent_id, 0xD3, 1_900_000, 100_000);
+    let mempool = SharedMempool::with_capacity(1_000_000);
+
+    let outcomes = add_txs_to_shared_mempool_with_eviction(
+        &mut ledger,
+        &mempool,
+        vec![parent, child],
+        SlotNo(500),
+        None,
+    )
+    .expect("batch admission");
+    assert_eq!(outcomes.len(), 2);
+    for outcome in &outcomes {
+        assert!(matches!(
+            outcome.result,
+            MempoolAddTxResult::MempoolTxAdded(_)
+        ));
+        assert!(outcome.evicted.is_empty());
+    }
 }
 
 #[tokio::test]

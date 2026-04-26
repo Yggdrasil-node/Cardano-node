@@ -2613,6 +2613,84 @@ where
         .collect()
 }
 
+/// Outcome of an eviction-aware inbound submission attempt: the per-tx
+/// admission result plus the list of `TxId`s that were evicted from the
+/// mempool's lowest-fee tail to make room (possibly empty).
+///
+/// Mirrors upstream
+/// `Ouroboros.Consensus.Mempool.Impl.Update.makeRoomForTransaction` —
+/// each accepted transaction returns the set of displaced TxIds so the
+/// caller can prune downstream peer-relay state (e.g. trace
+/// observability, future cross-peer dedup invalidation).
+#[derive(Debug)]
+pub struct MempoolAddTxOutcome {
+    /// The admission result (added or rejected).
+    pub result: MempoolAddTxResult,
+    /// `TxId`s of mempool entries that were evicted to make room for the
+    /// admitted transaction. Empty when the new transaction fit without
+    /// displacement OR when the result is `MempoolTxRejected` (in which
+    /// case nothing was evicted).
+    pub evicted: Vec<TxId>,
+}
+
+/// Validate and add a single transaction to a shared mempool, falling
+/// back to lowest-fee eviction on capacity overflow.
+///
+/// Composes ledger validation (`apply_submitted_tx`) with
+/// `SharedMempool::insert_checked_with_eviction` so the same upstream-
+/// aligned `Ouroboros.Consensus.Mempool.Impl.Update.makeRoomForTransaction`
+/// semantics that protect cumulative pool revenue also apply at the
+/// inbound submission boundary (NtN TxSubmission, NtC LocalTxSubmission).
+/// Returns the displaced `TxId`s so the caller can attach them to a
+/// trace event for operator visibility.
+pub fn add_tx_to_shared_mempool_with_eviction(
+    ledger: &mut LedgerState,
+    mempool: &SharedMempool,
+    tx: MultiEraSubmittedTx,
+    current_slot: SlotNo,
+    evaluator: Option<&dyn PlutusEvaluator>,
+) -> Result<MempoolAddTxOutcome, MempoolAddTxError> {
+    let mut evicted: Vec<TxId> = Vec::new();
+    let evicted_ref = &mut evicted;
+    let result = add_tx_with(
+        ledger,
+        tx,
+        current_slot,
+        evaluator,
+        |entry, protocol_params| {
+            match mempool.insert_checked_with_eviction(entry, current_slot, protocol_params) {
+                Ok(displaced) => {
+                    *evicted_ref = displaced;
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        },
+    )?;
+    Ok(MempoolAddTxOutcome { result, evicted })
+}
+
+/// Sequence variant of [`add_tx_to_shared_mempool_with_eviction`]:
+/// validates each transaction against the ledger state produced by all
+/// previously accepted transactions in the same batch, and accumulates
+/// evicted TxIds across the whole batch.
+pub fn add_txs_to_shared_mempool_with_eviction<I>(
+    ledger: &mut LedgerState,
+    mempool: &SharedMempool,
+    txs: I,
+    current_slot: SlotNo,
+    evaluator: Option<&dyn PlutusEvaluator>,
+) -> Result<Vec<MempoolAddTxOutcome>, MempoolAddTxError>
+where
+    I: IntoIterator<Item = MultiEraSubmittedTx>,
+{
+    txs.into_iter()
+        .map(|tx| {
+            add_tx_to_shared_mempool_with_eviction(ledger, mempool, tx, current_slot, evaluator)
+        })
+        .collect()
+}
+
 /// Errors from serving TxSubmission requests out of a mempool snapshot.
 #[derive(Debug, thiserror::Error)]
 pub enum TxSubmissionServiceError {

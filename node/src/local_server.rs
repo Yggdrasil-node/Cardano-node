@@ -43,7 +43,7 @@ use yggdrasil_network::{
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
-use crate::runtime::{MempoolAddTxResult, add_tx_to_shared_mempool};
+use crate::runtime::{MempoolAddTxResult, add_tx_to_shared_mempool_with_eviction};
 use crate::sync::recover_ledger_state_chaindb;
 use crate::tracer::NodeMetrics;
 
@@ -177,30 +177,40 @@ where
                         }
                     };
 
-                // Attempt mempool admission.
+                // Attempt mempool admission with upstream-aligned
+                // capacity-overflow eviction. Mirrors
+                // `Ouroboros.Consensus.Mempool.Impl.Update.makeRoomForTransaction`
+                // — when the mempool is full, the lowest-fee tail is
+                // displaced rather than the incoming tx being rejected
+                // outright (provided cumulative-fee guards hold).
                 let eval_ref = evaluator.as_ref().map(|e| {
                     e.as_ref() as &dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator
                 });
-                match add_tx_to_shared_mempool(
+                match add_tx_to_shared_mempool_with_eviction(
                     &mut ledger_state,
                     &mempool,
                     submitted_tx,
                     current_slot,
                     eval_ref,
                 ) {
-                    Ok(MempoolAddTxResult::MempoolTxAdded(_)) => {
-                        if let Some(m) = &metrics {
-                            m.inc_mempool_tx_added();
+                    Ok(outcome) => match outcome.result {
+                        MempoolAddTxResult::MempoolTxAdded(_) => {
+                            if let Some(m) = &metrics {
+                                m.inc_mempool_tx_added();
+                                for _ in &outcome.evicted {
+                                    m.inc_mempool_tx_rejected();
+                                }
+                            }
+                            server.accept().await?;
                         }
-                        server.accept().await?;
-                    }
-                    Ok(MempoolAddTxResult::MempoolTxRejected(_, reason)) => {
-                        if let Some(m) = &metrics {
-                            m.inc_mempool_tx_rejected();
+                        MempoolAddTxResult::MempoolTxRejected(_, reason) => {
+                            if let Some(m) = &metrics {
+                                m.inc_mempool_tx_rejected();
+                            }
+                            let reason_bytes = encode_rejection_reason(&format!("{reason}"));
+                            server.reject(reason_bytes).await?;
                         }
-                        let reason_bytes = encode_rejection_reason(&format!("{reason}"));
-                        server.reject(reason_bytes).await?;
-                    }
+                    },
                     Err(e) => {
                         if let Some(m) = &metrics {
                             m.inc_mempool_tx_rejected();
