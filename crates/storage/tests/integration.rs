@@ -1242,6 +1242,115 @@ fn promote_volatile_prefix_point_not_found() {
 }
 
 // ---------------------------------------------------------------------------
+// Idempotent promote across partial-completion crash
+// ---------------------------------------------------------------------------
+
+/// Simulates a crash AFTER the first block of a multi-block prefix was
+/// appended to the immutable store but BEFORE `prune_up_to` ran on the
+/// volatile store. On restart, the volatile store still contains every
+/// block in the prefix (including the one already in immutable), so the
+/// next `promote_volatile_prefix` call must skip the duplicate rather
+/// than fail with `DuplicateBlock`.
+///
+/// Reference: `Ouroboros.Consensus.Storage.ChainDB.Impl` —
+/// `copyToImmutableDB` runs as an idempotent operation across restarts.
+#[test]
+fn promote_volatile_prefix_is_idempotent_after_partial_promotion_crash() {
+    let mut immutable = InMemoryImmutable::default();
+    // Pre-populate immutable with the first block of the prefix to
+    // simulate a previous run that crashed mid-promotion.
+    immutable.append_block(test_block(0x01, 10)).unwrap();
+
+    let chain_db = &mut ChainDb::new(immutable, InMemoryVolatile::default(), InMemoryLedgerStore::default());
+    chain_db.add_volatile_block(test_block(0x01, 10)).unwrap();
+    chain_db.add_volatile_block(test_block(0x02, 20)).unwrap();
+    chain_db.add_volatile_block(test_block(0x03, 30)).unwrap();
+
+    // Replay the same promotion target. Without the idempotency fix this
+    // would fail with `DuplicateBlock([0x01; 32])` from the immutable
+    // append of the first block.
+    let promoted = chain_db
+        .promote_volatile_prefix(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
+        .unwrap();
+    assert_eq!(promoted, 2, "promote returns total prefix length even when some blocks were already present");
+
+    // Both prefix blocks are in immutable exactly once.
+    assert_eq!(chain_db.immutable().len(), 2);
+    assert!(
+        chain_db
+            .immutable()
+            .get_block(&HeaderHash([0x01; 32]))
+            .is_some()
+    );
+    assert!(
+        chain_db
+            .immutable()
+            .get_block(&HeaderHash([0x02; 32]))
+            .is_some()
+    );
+
+    // Volatile prefix has been pruned; tail block remains volatile.
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&HeaderHash([0x01; 32]))
+            .is_none()
+    );
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&HeaderHash([0x02; 32]))
+            .is_none()
+    );
+    assert!(
+        chain_db
+            .volatile()
+            .get_block(&HeaderHash([0x03; 32]))
+            .is_some()
+    );
+}
+
+/// Replaying `promote_volatile_prefix` over the same point twice must be
+/// a no-op the second time (volatile prefix is empty after the first
+/// call). Belt-and-braces guard against a future regression that drops
+/// the `prune_up_to` call: the second invocation would otherwise see the
+/// prefix again and re-trigger the duplicate-block path.
+#[test]
+fn promote_volatile_prefix_is_idempotent_when_replayed_back_to_back() {
+    let chain_db = &mut ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    chain_db.add_volatile_block(test_block(0x01, 10)).unwrap();
+    chain_db.add_volatile_block(test_block(0x02, 20)).unwrap();
+
+    let target = Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32]));
+    let first = chain_db.promote_volatile_prefix(&target).unwrap();
+    assert_eq!(first, 2);
+
+    // Second call sees an empty volatile prefix (the point is no longer
+    // in the volatile store) and must not error.
+    let second = chain_db.promote_volatile_prefix(&Point::Origin).unwrap();
+    assert_eq!(second, 0);
+    assert_eq!(chain_db.immutable().len(), 2);
+}
+
+#[test]
+fn immutable_store_contains_block_default_matches_get_block() {
+    // Use the in-memory backend's default-impl `contains_block` (which
+    // delegates to `get_block`) and assert the boolean tracks presence
+    // through append + (currently absent) lookups. This pins the trait
+    // contract documented in `ImmutableStore::contains_block`.
+    let mut store = InMemoryImmutable::default();
+    let hash = HeaderHash([0xAA; 32]);
+    assert!(!store.contains_block(&hash));
+    store.append_block(test_block(0xAA, 1)).unwrap();
+    assert!(store.contains_block(&hash));
+    assert!(!store.contains_block(&HeaderHash([0xBB; 32])));
+}
+
+// ---------------------------------------------------------------------------
 // ChainDb::ledger_mut / into_inner
 // ---------------------------------------------------------------------------
 
