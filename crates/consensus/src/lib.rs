@@ -11,6 +11,12 @@ pub mod diffusion_pipelining;
 /// Epoch and slot modeling helpers.
 pub mod epoch;
 mod error;
+/// Genesis-density tracking (sliding-window header density per peer).
+///
+/// Used by the network governor as a chain-quality signal for hot-peer
+/// demotion decisions.  Mirrors upstream
+/// `Ouroboros.Consensus.Genesis.Governor` density math.
+pub mod genesis_density;
 /// Block header types and KES-based header signature verification.
 pub mod header;
 /// Blocks-from-the-future detection (ChainSync InFutureCheck).
@@ -33,6 +39,10 @@ pub use diffusion_pipelining::{
 };
 /// Epoch size and slot-to-epoch helpers.
 pub use epoch::{EpochSchedule, EpochSize, epoch_first_slot, is_new_epoch, slot_to_epoch};
+/// Genesis density window plus default-window and default-low-density-threshold constants.
+pub use genesis_density::{
+    DEFAULT_LOW_DENSITY_THRESHOLD, DEFAULT_SLOT_WINDOW, DensityWindow,
+};
 /// Consensus-facing error type.
 pub use error::ConsensusError;
 /// Block header types and verification entry point.
