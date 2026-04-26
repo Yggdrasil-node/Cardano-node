@@ -1076,4 +1076,40 @@ mod tests {
         };
         assert_ne!(base.to_cbor_bytes(), with_refs.to_cbor_bytes());
     }
+
+    /// Encoder-side drift guard for `DatumOption` (Babbage post-Alonzo
+    /// txout datum field).
+    ///
+    /// 2 variants (tags 0..=1, both length 2): `Hash` (32-byte digest
+    /// pointer) and `Inline` (CBOR-tag-24 wrapped inline `PlutusData`).
+    /// A typo swapping the two would silently misinterpret every
+    /// post-Alonzo output's datum — turning every inline datum into a
+    /// 32-byte hash reference (decode would fail because the inline
+    /// payload doesn't fit a 32-byte array, but a coupled
+    /// encoder/decoder typo would silently work and break wire compat
+    /// with upstream).
+    ///
+    /// Reference: `Cardano.Ledger.Babbage.TxBody.Datum`; CDDL
+    /// `datum_option` rule.
+    #[test]
+    fn datum_option_encoder_tag_and_arity_match_canonical_cddl() {
+        let cases: Vec<(u64, DatumOption)> = vec![
+            (0, DatumOption::Hash([0x55; 32])),
+            (1, DatumOption::Inline(PlutusData::Integer(42))),
+        ];
+        assert_eq!(cases.len(), 2, "DatumOption tag space must be 0..=1");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(2);
+        for (canonical, datum) in cases {
+            let bytes = datum.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("DatumOption encodes as a CBOR array");
+            assert_eq!(len, 2, "DatumOption::{datum:?} array length must be 2");
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical, "DatumOption::{datum:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(seen, vec![0, 1], "DatumOption tag set must be exactly 0..=1");
+    }
 }
