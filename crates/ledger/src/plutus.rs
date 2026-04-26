@@ -700,6 +700,58 @@ mod tests {
 
     // ── PlutusData: Constr ─────────────────────────────────────────────
 
+    /// Drift guard for the four `PlutusData` CBOR-tag constants.
+    ///
+    /// `CONSTR_TAG_BASE = 121`, `CONSTR_TAG_GENERAL = 102`,
+    /// `BIG_UINT_TAG = 2`, `BIG_NINT_TAG = 3` are upstream-defined
+    /// CBOR tag values from the `plutus_data` CDDL rule. These four
+    /// numbers are independently used in the encode cascade AND in
+    /// the decode-arm pattern matches (e.g. `121..=127 => alt = tag - CONSTR_TAG_BASE`,
+    /// `CONSTR_TAG_GENERAL => ...`, `BIG_UINT_TAG => bignum`, etc.).
+    /// Existing round-trip tests catch encoder/decoder asymmetry but
+    /// would not catch a coupled refactor where someone changes the
+    /// constant AND updates the decode-arm range in lockstep — e.g.
+    /// `CONSTR_TAG_BASE` accidentally bumped to 122 with
+    /// `122..=128` in the decode arm — which would round-trip fine
+    /// but break wire compat with upstream.
+    ///
+    /// Pinning the constants byte-for-byte against the literal
+    /// upstream values surfaces any such drift as a clearly-named
+    /// CI failure, with rustdoc citing upstream as the canonical source.
+    ///
+    /// Reference: `plutus_data` CDDL rule; tag values from
+    /// `Cardano.Ledger.Plutus.Data.Data` and the IETF CBOR registry
+    /// (tags 2/3 for big_uint/big_nint, 102/121-127 are Plutus-specific).
+    #[test]
+    fn plutus_data_cbor_tag_constants_match_canonical_cddl() {
+        assert_eq!(
+            CONSTR_TAG_BASE, 121,
+            "CONSTR_TAG_BASE drifted from upstream Plutus compact-constructor tag 121",
+        );
+        assert_eq!(
+            CONSTR_TAG_GENERAL, 102,
+            "CONSTR_TAG_GENERAL drifted from upstream Plutus general-constructor tag 102",
+        );
+        assert_eq!(
+            BIG_UINT_TAG, 2,
+            "BIG_UINT_TAG drifted from canonical IETF CBOR big_uint tag 2",
+        );
+        assert_eq!(
+            BIG_NINT_TAG, 3,
+            "BIG_NINT_TAG drifted from canonical IETF CBOR big_nint tag 3",
+        );
+
+        // Compact-constructor range pin: 121..=127 covers exactly 7
+        // alternatives (alts 0..=6) per upstream. Drift that bumps the
+        // base without updating the count would silently truncate the
+        // compact range or extend it beyond what upstream accepts.
+        let compact_range_size: u64 = 127 - CONSTR_TAG_BASE + 1;
+        assert_eq!(
+            compact_range_size, 7,
+            "compact-constructor range must cover exactly 7 alternatives (0..=6)",
+        );
+    }
+
     #[test]
     fn constr_compact_tag_121_round_trip() {
         // Alternative 0 → tag 121
