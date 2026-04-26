@@ -696,6 +696,20 @@ impl Mempool {
         current_slot: SlotNo,
         protocol_params: Option<&ProtocolParameters>,
     ) -> Result<(), MempoolError> {
+        Self::precheck_ttl_and_params(&entry, current_slot, protocol_params)?;
+        self.insert(entry)
+    }
+
+    /// TTL and protocol-parameter validation extracted from
+    /// [`Self::insert_checked`] so the same upstream-aligned admission
+    /// gates (fee / size / ExUnits per `Cardano.Ledger.Shelley.Rules.Utxo`
+    /// and TTL per `Cardano.Ledger.Allegra.Rules.Utxo`) can compose with
+    /// the eviction-aware queue helper [`Self::insert_with_eviction`].
+    fn precheck_ttl_and_params(
+        entry: &MempoolEntry,
+        current_slot: SlotNo,
+        protocol_params: Option<&ProtocolParameters>,
+    ) -> Result<(), MempoolError> {
         if current_slot > entry.ttl {
             return Err(MempoolError::TtlExpired {
                 ttl: entry.ttl,
@@ -703,9 +717,6 @@ impl Mempool {
             });
         }
         if let Some(params) = protocol_params {
-            // Best-effort decode for submitted transactions. Synthetic entries
-            // may not carry a full relay payload; in that case, keep existing
-            // linear fee + size checks.
             let total_ex_units = entry
                 .to_multi_era_submitted_tx()
                 .ok()
@@ -742,7 +753,23 @@ impl Mempool {
                 },
             )?;
         }
-        self.insert(entry)
+        Ok(())
+    }
+
+    /// Like [`Self::insert_checked`] but, on capacity overflow, attempts
+    /// to evict the lowest-fee tail to make room. Composes the same
+    /// TTL + protocol-parameter precheck as `insert_checked` with the
+    /// fee-aware eviction policy from [`Self::insert_with_eviction`].
+    /// Returns the list of evicted [`TxId`]s on success so inbound
+    /// admission paths can prune downstream peer-relay state if needed.
+    pub fn insert_checked_with_eviction(
+        &mut self,
+        entry: MempoolEntry,
+        current_slot: SlotNo,
+        protocol_params: Option<&ProtocolParameters>,
+    ) -> Result<Vec<TxId>, MempoolError> {
+        Self::precheck_ttl_and_params(&entry, current_slot, protocol_params)?;
+        self.insert_with_eviction(entry)
     }
 
     /// Remove all transactions whose TTL has passed at the given slot.
@@ -1004,6 +1031,28 @@ impl SharedMempool {
             .write()
             .expect("shared mempool poisoned")
             .insert_checked(entry, current_slot, protocol_params);
+        if result.is_ok() {
+            self.change_notify.notify_waiters();
+        }
+        result
+    }
+
+    /// Like [`Self::insert_checked`] but routes through
+    /// [`Mempool::insert_checked_with_eviction`] so capacity-overflow
+    /// failures fall back to evicting the lowest-fee tail rather than
+    /// rejecting the incoming transaction outright. Returns the list
+    /// of evicted `TxId`s on success.
+    pub fn insert_checked_with_eviction(
+        &self,
+        entry: MempoolEntry,
+        current_slot: SlotNo,
+        protocol_params: Option<&ProtocolParameters>,
+    ) -> Result<Vec<TxId>, MempoolError> {
+        let result = self
+            .inner
+            .write()
+            .expect("shared mempool poisoned")
+            .insert_checked_with_eviction(entry, current_slot, protocol_params);
         if result.is_ok() {
             self.change_notify.notify_waiters();
         }

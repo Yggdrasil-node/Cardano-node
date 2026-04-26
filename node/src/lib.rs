@@ -14,12 +14,14 @@ pub mod sync;
 pub mod tracer;
 
 pub use runtime::{
-    ChainTipNotify, MempoolAddTxError, MempoolAddTxResult, NodeConfig, PeerSession,
-    LedgerJudgementSettings, ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
-    ResumeReconnectingVerifiedSyncRequest, ResumedSyncServiceOutcome, RuntimeBlockProducerConfig,
-    RuntimeGovernorConfig, SharedBlockProducerState, TxSubmissionServiceError,
-    TxSubmissionServiceOutcome, add_tx_to_mempool, add_tx_to_shared_mempool, add_txs_to_mempool,
-    add_txs_to_shared_mempool, bootstrap, bootstrap_with_fallbacks, local_root_targets_from_config,
+    ChainTipNotify, LedgerJudgementSettings, MempoolAddTxError, MempoolAddTxOutcome,
+    MempoolAddTxResult, NodeConfig, PeerSession, ReconnectingSyncServiceOutcome,
+    ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
+    ResumedSyncServiceOutcome, RuntimeBlockProducerConfig, RuntimeGovernorConfig,
+    SharedBlockProducerState, TxSubmissionServiceError, TxSubmissionServiceOutcome,
+    add_tx_to_mempool, add_tx_to_shared_mempool, add_tx_to_shared_mempool_with_eviction,
+    add_txs_to_mempool, add_txs_to_shared_mempool, add_txs_to_shared_mempool_with_eviction,
+    bootstrap, bootstrap_with_fallbacks, local_root_targets_from_config,
     resume_reconnecting_verified_sync_service_chaindb,
     resume_reconnecting_verified_sync_service_chaindb_with_tracer,
     resume_reconnecting_verified_sync_service_shared_chaindb,
