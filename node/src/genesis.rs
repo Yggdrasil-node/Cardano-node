@@ -2286,6 +2286,75 @@ mod tests {
         ));
     }
 
+    /// Drift-pin for the Plomin-tail watch (Slice A of the audit/bring-up plan,
+    /// `docs/AUDIT_VERIFICATION_2026Q2.md`).
+    ///
+    /// Pins `CONWAY_V3_PARAM_NAMES.len()` to exactly 302. A future
+    /// contributor that extends `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS` to
+    /// accept a Plomin-shape array (say 320 entries) WITHOUT also
+    /// extending the named-parameter table would otherwise produce a
+    /// silent under-mapping where every name beyond index 301 is dropped.
+    /// `ensure_conway_v3_mapping_complete` does catch this at runtime,
+    /// but only when a real genesis is parsed — this test surfaces it
+    /// at CI time as a clear "extend the table" failure.
+    ///
+    /// When upstream actually ships a Plomin V3 array length, this test
+    /// is the canonical place to update: bump the pinned length AND
+    /// extend `CONWAY_V3_PARAM_NAMES` AND extend `SUPPORTED_CONWAY_V3
+    /// _ARRAY_LENGTHS` in lockstep.
+    ///
+    /// Reference: `crates/plutus/AGENTS.md:70`; upstream `cardano-node`
+    /// `cost-model.json` `plutusV3CostModel`.
+    #[test]
+    fn conway_v3_param_names_table_size_pinned_to_max_supported_length() {
+        // Current upstream maximum is 302 (Conway with bitwise / RIPEMD-160 /
+        // ExpModInteger tail). When upstream ships a Plomin V3+ tail, this
+        // pin must move in lockstep with `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS`
+        // and the table contents.
+        const EXPECTED_NAMES_LEN: usize = 302;
+        assert_eq!(
+            CONWAY_V3_PARAM_NAMES.len(),
+            EXPECTED_NAMES_LEN,
+            "CONWAY_V3_PARAM_NAMES drifted from the pinned upstream maximum length \
+             (currently 302 for the Conway bitwise/ripemd_160/expModInteger tail). \
+             A drift here means either: (a) the table was truncated by accident \
+             — restore the missing entries; or (b) upstream shipped a Plomin V3+ \
+             tail and this test must be bumped IN LOCKSTEP with extending \
+             SUPPORTED_CONWAY_V3_ARRAY_LENGTHS in genesis.rs and the named-table \
+             entries 302..N. See docs/AUDIT_VERIFICATION_2026Q2.md (Slice A).",
+        );
+    }
+
+    /// Cross-pin: every value in `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS` must
+    /// be `<= CONWAY_V3_PARAM_NAMES.len()`, so the named-parameter table
+    /// is always large enough to map every accepted array shape. A
+    /// regression that adds a new supported length without extending
+    /// the table fails this test rather than producing silent
+    /// under-mappings at runtime.
+    ///
+    /// `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS` is a function-local const inside
+    /// `build_plutus_cost_model`, so this test reproduces its canonical
+    /// values explicitly. If those values change, this test must change
+    /// in the same commit — that lockstep is the drift guard.
+    #[test]
+    fn supported_conway_v3_array_lengths_fit_within_param_names_table() {
+        // Mirror of the function-local const at line ~851. A drift between
+        // this list and the actual function-local const would surface as a
+        // failure in `build_plutus_cost_model_rejects_short_conway_v3_array`
+        // / `_rejects_partial_bitwise_tail_array` (which already pin the
+        // exact `&[251, 302]` literal in their `matches!` patterns).
+        const CANONICAL_SUPPORTED: &[usize] = &[251, 302];
+        for &n in CANONICAL_SUPPORTED {
+            assert!(
+                n <= CONWAY_V3_PARAM_NAMES.len(),
+                "supported Conway V3 array length {n} exceeds CONWAY_V3_PARAM_NAMES \
+                 table size {}; extend the names table IN LOCKSTEP with adding the \
+                 new supported length",
+                CONWAY_V3_PARAM_NAMES.len(),
+            );
+        }
+    }
+
     #[test]
     fn conway_v3_mapping_completeness_guard_rejects_truncation() {
         let err = ensure_conway_v3_mapping_complete(302, 300)
