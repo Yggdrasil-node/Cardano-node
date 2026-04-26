@@ -2626,6 +2626,90 @@ mod tests {
         );
     }
 
+    /// Encoder-side drift guard for the Shelley `Relay` wire-tag space.
+    ///
+    /// 3 variants (tags 0..=2) with mixed array lengths (4/3/2):
+    /// `SingleHostAddr` (port + ipv4 + ipv6, all optional, length 4),
+    /// `SingleHostName` (port + DNS, length 3), `MultiHostName`
+    /// (DNS only, length 2). A typo swapping tag-0 SingleHostAddr and
+    /// tag-1 SingleHostName would silently misinterpret every pool's
+    /// announced relay endpoints — every operator-published pool
+    /// metadata would point at garbage, breaking peer discovery.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.TxBody.StakePoolRelay`;
+    /// CDDL `relay` rule.
+    #[test]
+    fn relay_encoder_tag_and_arity_match_canonical_cddl() {
+        let cases: Vec<(u64, u64, Relay)> = vec![
+            (
+                0,
+                4,
+                Relay::SingleHostAddr(Some(3001), Some([192, 168, 1, 1]), None),
+            ),
+            (
+                1,
+                3,
+                Relay::SingleHostName(Some(3001), "relays.example.com".to_string()),
+            ),
+            (2, 2, Relay::MultiHostName("relays.example.com".to_string())),
+        ];
+        assert_eq!(cases.len(), 3, "Relay tag space must be 0..=2");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(3);
+        for (canonical_tag, canonical_len, relay) in cases {
+            let bytes = relay.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("Relay encodes as a CBOR array");
+            assert_eq!(
+                len, canonical_len,
+                "Relay::{relay:?} array length {len}, expected {canonical_len}",
+            );
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical_tag, "Relay::{relay:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(seen, vec![0, 1, 2], "Relay tag set must be exactly 0..=2");
+    }
+
+    /// Encoder-side drift guard for `MirPot` (the move-instantaneous-rewards
+    /// source-pot enum embedded inside DCert tag 6).
+    ///
+    /// 2 values: `Reserves = 0`, `Treasury = 1`. Encoded as bare unsigned
+    /// inside the inner MIR array. A typo swapping the two would silently
+    /// misinterpret every MIR certificate's source pot — turning a
+    /// reserves-funded reward into a treasury-funded one and vice versa,
+    /// silently misallocating epoch-boundary fund movement (Shelley-Babbage;
+    /// Conway no longer supports MIR).
+    ///
+    /// `MirPot` is encoded inline in the DCert tag-6 cascade rather than
+    /// having its own `CborEncode` impl, so this test exercises the
+    /// embedded encoding by constructing a full `DCert::MoveInstantaneous
+    /// Reward`, encoding it, and inspecting the inner array's pot byte.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.TxCert.MIRPot`;
+    /// `move_instantaneous_reward` CDDL rule.
+    #[test]
+    fn mir_pot_encoder_value_matches_canonical_cddl() {
+        for (canonical, pot) in [(0u64, MirPot::Reserves), (1u64, MirPot::Treasury)] {
+            let cert = DCert::MoveInstantaneousReward(pot, MirTarget::SendToOppositePot(0));
+            let bytes = cert.to_cbor_bytes();
+            // Outer DCert: [6, [pot, 0]] — array(2) tag(6) array(2) pot 0
+            let mut dec = Decoder::new(&bytes);
+            let outer_len = dec.array().expect("outer DCert array");
+            assert_eq!(outer_len, 2, "DCert MIR outer array must be length 2");
+            let dcert_tag = dec.unsigned().expect("DCert tag");
+            assert_eq!(dcert_tag, 6, "MIR DCert tag must be 6");
+            let inner_len = dec.array().expect("inner MIR array");
+            assert_eq!(inner_len, 2, "inner MIR array must be length 2 (pot, target)");
+            let pot_value = dec.unsigned().expect("inner pot value");
+            assert_eq!(
+                pot_value, canonical,
+                "MirPot::{pot:?} encoded as {pot_value}, expected {canonical}",
+            );
+        }
+    }
+
     /// Encoder-side drift guard for the Conway `DRep` wire-tag space.
     ///
     /// 4 variants with mixed array lengths: `KeyHash=0` and `ScriptHash=1`
