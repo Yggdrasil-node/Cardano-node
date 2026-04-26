@@ -331,7 +331,7 @@ async fn sync_step_rollforward_fetches_blocks() {
 
     let step = sync_step(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin.to_cbor_bytes(),
     )
     .await
@@ -407,7 +407,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
 
     let outcome = run_verified_sync_service_chaindb(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         &mut chain_db,
         LedgerState::new(Era::Byron),
         Point::Origin,
@@ -449,7 +449,7 @@ async fn sync_step_rollback_skips_blockfetch() {
 
     let step = sync_step(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin.to_cbor_bytes(),
     )
     .await
@@ -482,7 +482,7 @@ async fn sync_steps_tracks_progress_and_point() {
 
     let progress = sync_steps(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin.to_cbor_bytes(),
         2,
     )
@@ -854,7 +854,7 @@ async fn sync_step_decoded_rollforward_decodes_shelley_blocks() {
 
     let step = sync_step_decoded(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin.to_cbor_bytes(),
     )
     .await
@@ -894,7 +894,7 @@ async fn sync_step_decoded_reports_decode_error_on_invalid_block_bytes() {
 
     let err = sync_step_decoded(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin.to_cbor_bytes(),
     )
     .await
@@ -937,7 +937,7 @@ async fn sync_step_typed_rollforward_decodes_header_tip_and_blocks() {
 
     let step = sync_step_typed(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin,
     )
     .await
@@ -984,7 +984,7 @@ async fn sync_step_typed_rollback_decodes_points() {
 
     let step = sync_step_typed(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin,
     )
     .await
@@ -1027,7 +1027,7 @@ async fn sync_steps_typed_tracks_progress_and_rollbacks() {
 
     let progress = sync_steps_typed(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin,
         2,
     )
@@ -1082,7 +1082,7 @@ async fn sync_until_typed_stops_at_target_point() {
 
     let progress = sync_until_typed(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin,
         10,
         Some(first_tip),
@@ -1129,7 +1129,7 @@ async fn apply_typed_progress_to_volatile_applies_forwards_and_rollbacks() {
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let progress = sync_steps_typed(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin,
         2,
     )
@@ -1371,7 +1371,7 @@ async fn sync_batch_apply_updates_volatile_store() {
 
     let progress = sync_batch_apply(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         &mut store,
         Point::Origin,
         2,
@@ -1542,7 +1542,7 @@ async fn run_sync_service_shutdown_after_batches() {
 
     let outcome = run_sync_service(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         &mut store,
         Point::Origin,
         &svc_config,
@@ -1917,7 +1917,7 @@ async fn sync_step_multi_era_rollforward() {
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let step = sync_step_multi_era(
         &mut session.chain_sync,
-        &mut session.block_fetch,
+        session.block_fetch.as_mut().expect("block_fetch migrated"),
         Point::Origin,
     )
     .await

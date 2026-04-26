@@ -477,6 +477,21 @@ impl ManagedWarmPeer {
 
 struct OutboundPeerManager {
     warm_peers: BTreeMap<SocketAddr, ManagedWarmPeer>,
+    /// Per-peer BlockFetch workers populated when the operator opts
+    /// into multi-peer dispatch via
+    /// `max_concurrent_block_fetch_peers > 1`.  Empty by default —
+    /// the legacy single-peer path uses `session.block_fetch`
+    /// directly.  When non-empty, the sync loop's multi-peer branch
+    /// dispatches through this pool.
+    ///
+    /// Populated by [`OutboundPeerManager::migrate_session_to_worker`]
+    /// at promote time; entries are removed by
+    /// [`OutboundPeerManager::unregister_worker`] on disconnect.
+    ///
+    /// Mirrors upstream
+    /// `Ouroboros.Network.BlockFetch.ClientRegistry` per-peer
+    /// `FetchClientStateVars` map.
+    fetch_worker_pool: crate::blockfetch_worker::FetchWorkerPool<crate::sync::MultiEraBlock>,
 }
 
 struct RuntimeRootPeerSources {
@@ -490,7 +505,66 @@ impl OutboundPeerManager {
     fn new() -> Self {
         Self {
             warm_peers: BTreeMap::new(),
+            fetch_worker_pool: crate::blockfetch_worker::FetchWorkerPool::new(),
         }
+    }
+
+    /// Migrate the session's BlockFetch handle into a per-peer fetch
+    /// worker registered in [`Self::fetch_worker_pool`].  Returns
+    /// `true` on first migration, `false` if the peer is unknown or
+    /// the handle has already been migrated.
+    ///
+    /// The runtime calls this after promote-to-warm when operating
+    /// in multi-peer dispatch mode (knob > 1).  Once migrated, the
+    /// session's `block_fetch` field is `None` and the sync loop
+    /// reaches the peer through `fetch_worker_pool.dispatch_plan(...)`.
+    ///
+    /// Mirrors upstream `bracketSyncWithFetchClient` lifecycle: the
+    /// per-peer fetch state is owned by a dedicated thread/task for
+    /// the connection's lifetime.
+    #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
+    fn migrate_session_to_worker(&mut self, peer: SocketAddr) -> bool {
+        let Some(managed) = self.warm_peers.get_mut(&peer) else {
+            return false;
+        };
+        let Some(block_fetch) = managed.session.take_block_fetch() else {
+            return false;
+        };
+        let handle = crate::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client(
+            peer,
+            block_fetch,
+        );
+        // Replace any stale handle (e.g. from a prior session that was
+        // not cleanly unregistered).  The previous handle's drop
+        // closes its channel and exits its task.
+        let _previous = self.fetch_worker_pool.register(handle);
+        true
+    }
+
+    /// Remove and shut down the worker for `peer` (graceful exit).
+    /// Returns `true` if a worker was registered.  Used when a peer
+    /// disconnects: the runtime calls this before dropping the
+    /// session so the worker task exits cleanly without affecting
+    /// siblings.
+    #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
+    fn unregister_worker(&mut self, peer: &SocketAddr) -> bool {
+        match self.fetch_worker_pool.unregister(peer) {
+            Some(handle) => {
+                // Drop the handle to detach the task; the worker exits
+                // cleanly when its mpsc receiver observes channel close.
+                drop(handle);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Read-only view of the fetch worker pool.  The runtime sync
+    /// loop's multi-peer branch passes this to
+    /// [`crate::blockfetch_worker::FetchWorkerPool::dispatch_plan`].
+    #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
+    fn fetch_worker_pool(&self) -> &crate::blockfetch_worker::FetchWorkerPool<crate::sync::MultiEraBlock> {
+        &self.fetch_worker_pool
     }
 
     async fn promote_to_warm(
@@ -594,7 +668,7 @@ impl OutboundPeerManager {
             .warm_peers
             .iter_mut()
             .filter(|(_, m)| m.is_hot)
-            .map(|(addr, m)| (*addr, &mut m.session.block_fetch))
+            .map(|(addr, m)| (*addr, m.session.block_fetch.as_mut().expect("block_fetch migrated")))
             .collect();
         f(&mut handles)
     }
@@ -3061,7 +3135,18 @@ pub struct PeerSession {
     /// ChainSync client driver.
     pub chain_sync: ChainSyncClient,
     /// BlockFetch client driver.
-    pub block_fetch: BlockFetchClient,
+    ///
+    /// `Some` while the session retains direct ownership of the
+    /// BlockFetch wire handle (legacy single-peer path).  Becomes
+    /// `None` after [`PeerSession::take_block_fetch`] migrates the
+    /// handle into a per-peer
+    /// [`crate::blockfetch_worker::FetchWorkerHandle`] for the
+    /// multi-peer dispatch path.  Once migrated, the worker owns
+    /// the handle until disconnect; the sync loop reaches the
+    /// peer through the
+    /// [`crate::blockfetch_worker::FetchWorkerPool`] instead of
+    /// touching this field.
+    pub block_fetch: Option<BlockFetchClient>,
     /// KeepAlive client driver.
     pub keep_alive: KeepAliveClient,
     /// TxSubmission client driver.
@@ -3077,6 +3162,51 @@ pub struct PeerSession {
     /// Per-protocol egress weight handles for dynamic scheduling adjustment.
     /// Stored as `(MiniProtocolNum, WeightHandle)` tuples.
     pub protocol_weights: Vec<(MiniProtocolNum, yggdrasil_network::WeightHandle)>,
+}
+
+impl PeerSession {
+    /// Returns a mutable reference to the BlockFetch client, panicking
+    /// with a descriptive message if the handle has already been
+    /// migrated into a [`crate::blockfetch_worker::FetchWorkerHandle`].
+    /// Callers operating on the legacy single-peer path use this
+    /// helper rather than `block_fetch.as_mut().unwrap()` so the
+    /// failure message points at the design contract instead of an
+    /// opaque `unwrap` panic.
+    pub fn block_fetch_mut(&mut self) -> &mut BlockFetchClient {
+        self.block_fetch.as_mut().expect(
+            "PeerSession.block_fetch was migrated to a FetchWorkerHandle; \
+             callers on the legacy direct-fetch path must check `has_block_fetch()` first",
+        )
+    }
+
+    /// Returns `true` if the BlockFetch client is still owned directly
+    /// by the session (legacy single-peer path).  Returns `false`
+    /// after [`take_block_fetch`] has migrated the handle into a
+    /// per-peer worker.
+    pub fn has_block_fetch(&self) -> bool {
+        self.block_fetch.is_some()
+    }
+
+    /// Take ownership of the BlockFetch client from the session.
+    ///
+    /// The caller is expected to spawn a per-peer worker around the
+    /// returned handle via
+    /// [`crate::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client`]
+    /// and register the worker in a
+    /// [`crate::blockfetch_worker::FetchWorkerPool`].  Subsequent
+    /// fetches for this peer must go through the pool — the
+    /// `block_fetch` field is left as `None` and any direct
+    /// access via [`block_fetch_mut`] panics with a descriptive
+    /// message.
+    ///
+    /// Returns `None` if the handle has already been migrated.
+    /// Mirrors upstream `bracketSyncWithFetchClient` lifecycle from
+    /// `Ouroboros.Network.BlockFetch.ClientRegistry`: the per-peer
+    /// fetch state is owned by the fetch task for the connection's
+    /// lifetime.
+    pub fn take_block_fetch(&mut self) -> Option<BlockFetchClient> {
+        self.block_fetch.take()
+    }
 }
 
 /// Outcome returned when the reconnecting verified sync runner stops.
@@ -4473,7 +4603,7 @@ where
 
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
-                &mut session.block_fetch,
+                session.block_fetch.as_mut().expect("block_fetch migrated"),
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
@@ -4937,7 +5067,7 @@ where
 
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
-                &mut session.block_fetch,
+                session.block_fetch.as_mut().expect("block_fetch migrated"),
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
@@ -5362,7 +5492,7 @@ async fn bootstrap_with_attempt_state(
     Ok(PeerSession {
         connected_peer_addr,
         chain_sync: ChainSyncClient::new(cs),
-        block_fetch: BlockFetchClient::new(bf),
+        block_fetch: Some(BlockFetchClient::new(bf)),
         keep_alive: KeepAliveClient::new(ka),
         tx_submission: TxSubmissionClient::new(tx),
         peer_sharing,
@@ -5535,7 +5665,7 @@ where
 
             let batch_fut = sync_batch_apply_verified(
                 &mut session.chain_sync,
-                &mut session.block_fetch,
+                session.block_fetch.as_mut().expect("block_fetch migrated"),
                 store,
                 from_point,
                 config.batch_size,
@@ -7043,6 +7173,70 @@ mod tests {
         assert_eq!(count, 1);
     }
 
+    #[tokio::test]
+    async fn migrate_session_to_worker_takes_block_fetch_and_registers() {
+        // Phase 6 production wire: migrating a session's BlockFetch
+        // handle into the worker pool must (a) leave the session's
+        // block_fetch field as None, (b) register a worker in the
+        // pool keyed on the peer addr.
+        use super::OutboundPeerManager;
+
+        let a: std::net::SocketAddr = "1.2.3.4:3300".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session_async(a).await;
+        assert!(session.has_block_fetch());
+        mgr.warm_peers.insert(
+            a,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+
+        assert!(mgr.migrate_session_to_worker(a));
+        assert!(!mgr.warm_peers[&a].session.has_block_fetch());
+        assert!(mgr.fetch_worker_pool().worker(&a).is_some());
+    }
+
+    #[tokio::test]
+    async fn migrate_session_to_worker_returns_false_when_already_migrated() {
+        use super::OutboundPeerManager;
+        let a: std::net::SocketAddr = "1.2.3.4:3301".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session_async(a).await;
+        mgr.warm_peers.insert(
+            a,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+        assert!(mgr.migrate_session_to_worker(a));
+        // Second call: block_fetch is None, so migration cannot proceed.
+        assert!(!mgr.migrate_session_to_worker(a));
+    }
+
+    #[tokio::test]
+    async fn migrate_session_to_worker_returns_false_for_unknown_peer() {
+        use super::OutboundPeerManager;
+        let mgr_addr: std::net::SocketAddr = "9.9.9.9:9999".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        assert!(!mgr.migrate_session_to_worker(mgr_addr));
+        assert!(mgr.fetch_worker_pool().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unregister_worker_drops_handle_for_clean_shutdown() {
+        use super::OutboundPeerManager;
+        let a: std::net::SocketAddr = "1.2.3.4:3302".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session_async(a).await;
+        mgr.warm_peers.insert(
+            a,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+        mgr.migrate_session_to_worker(a);
+        assert!(mgr.fetch_worker_pool().worker(&a).is_some());
+        assert!(mgr.unregister_worker(&a));
+        assert!(mgr.fetch_worker_pool().worker(&a).is_none());
+        // Idempotent: a second unregister is a no-op.
+        assert!(!mgr.unregister_worker(&a));
+    }
+
     #[test]
     fn with_hot_block_fetch_clients_empty_slice_when_no_hot_peers() {
         // Empty-slice contract: callers should treat this as "fall
@@ -7383,22 +7577,24 @@ mod tests {
 
     /// Build a minimal `PeerSession` for unit tests that don't drive protocols.
     fn fake_peer_session(addr: std::net::SocketAddr) -> super::PeerSession {
-        use yggdrasil_network::multiplexer::MiniProtocolNum;
-        use yggdrasil_network::{HandshakeVersion, NodeToNodeVersionData};
-
-        // We need real protocol handles. Create a TCP loopback pair and mux it.
-        // However, that requires async. For pure unit tests we can use an
-        // abortable sentinel that panics if any protocol method is called.
-        //
-        // The simplest approach: create protocol handles from a mux that will
-        // never be driven (tests only inspect .is_hot / .promote_to_hot).
-        // We build a TcpStream pair synchronously via std and wrap in tokio.
+        // Sync entry point used by `#[test]` callers.  Creates its
+        // own current-thread runtime to drive the inner async setup.
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
+        rt.block_on(fake_peer_session_async(addr))
+    }
 
-        rt.block_on(async {
+    async fn fake_peer_session_async(addr: std::net::SocketAddr) -> super::PeerSession {
+        use yggdrasil_network::multiplexer::MiniProtocolNum;
+        use yggdrasil_network::{HandshakeVersion, NodeToNodeVersionData};
+
+        // Async entry point usable from `#[tokio::test]` callers.
+        // Reuses the surrounding runtime instead of nesting one.
+        // Build a TCP loopback pair and mux it; tests only construct
+        // a PeerSession with valid handles, never drive it.
+        async {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let listen_addr = listener.local_addr().unwrap();
             let client_stream = tokio::net::TcpStream::connect(listen_addr).await.unwrap();
@@ -7441,9 +7637,9 @@ mod tests {
                 chain_sync: yggdrasil_network::ChainSyncClient::new(
                     handles.remove(&MiniProtocolNum::CHAIN_SYNC).unwrap(),
                 ),
-                block_fetch: yggdrasil_network::BlockFetchClient::new(
+                block_fetch: Some(yggdrasil_network::BlockFetchClient::new(
                     handles.remove(&MiniProtocolNum::BLOCK_FETCH).unwrap(),
-                ),
+                )),
                 keep_alive: yggdrasil_network::KeepAliveClient::new(
                     handles.remove(&MiniProtocolNum::KEEP_ALIVE).unwrap(),
                 ),
@@ -7461,6 +7657,7 @@ mod tests {
                 },
                 protocol_weights,
             }
-        })
+        }
+        .await
     }
 }
