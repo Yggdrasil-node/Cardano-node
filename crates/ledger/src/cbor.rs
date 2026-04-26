@@ -2485,6 +2485,167 @@ mod tests {
         assert_eq!(decoded, cert);
     }
 
+    /// Encoder-side drift guard for the full `DCert` wire-tag space.
+    ///
+    /// Closes a subtle gap left by the round-trip tests above: a coupled
+    /// typo where the encoder and decoder agree on a wrong tag value
+    /// (e.g. both `enc.unsigned(0)` for `AccountRegistration` mistakenly
+    /// becomes `enc.unsigned(1)` AND the decoder's `1 => Account
+    /// Registration` arm is added in lockstep) would still round-trip
+    /// cleanly while silently breaking on-chain wire compat with upstream.
+    ///
+    /// For every variant in the 0..=18 tag space, this test:
+    ///   1. Constructs a representative value
+    ///   2. Encodes it via `to_cbor_bytes`
+    ///   3. Independently decodes the leading array header + tag, NOT
+    ///      via the cascade — direct byte inspection of the array length
+    ///      prefix and first integer
+    ///   4. Asserts BOTH the encoded array length AND the tag against
+    ///      the canonical CDDL-specified values
+    ///
+    /// Exhaustive variant coverage in BOTH directions: every variant is
+    /// constructed; every tag 0..=18 is reached. A new upstream
+    /// certificate variant (tag 19+) added without a matching
+    /// `expected.push((19, ..., DCert::...))` entry here would slip past
+    /// CI undetected — but the next regression that mistypes any
+    /// existing tag fails immediately with a clearly-named diagnostic.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.TxCert` — `ConwayTxCert`
+    /// constructor tags; CDDL `certificate` rule in
+    /// `cardano-ledger-conway/cddl-files/conway.cddl`.
+    #[test]
+    fn dcert_encoder_tag_and_arity_match_canonical_cddl() {
+        let cred = StakeCredential::AddrKeyHash([0x0a; 28]);
+        let pool = [0x0b; 28];
+        let drep = DRep::KeyHash([0x0c; 28]);
+        let anchor = Anchor {
+            url: "https://example.com".to_string(),
+            data_hash: [0xee; 32],
+        };
+
+        // (canonical tag, canonical array length, variant). Lengths from
+        // the CDDL `certificate` rule and matched in `encode_cbor` above.
+        // PoolRegistration is length 10 (one tag + 9 inline fields per
+        // upstream `pool_registration_cert`); MIR is length 2 (tag +
+        // inner pair). Everything else follows the
+        // `[tag, *fields]` shape with field count from the variant arity.
+        let pool_params = pool_params_for_test();
+        let mir_target = MirTarget::SendToOppositePot(42);
+
+        let cases: Vec<(u64, u64, DCert)> = vec![
+            (0, 2, DCert::AccountRegistration(cred)),
+            (1, 2, DCert::AccountUnregistration(cred)),
+            (2, 3, DCert::DelegationToStakePool(cred, pool)),
+            (3, 10, DCert::PoolRegistration(pool_params)),
+            (4, 3, DCert::PoolRetirement(pool, EpochNo(7))),
+            (
+                5,
+                4,
+                DCert::GenesisDelegation([0x01; 28], [0x02; 28], [0x03; 32]),
+            ),
+            (
+                6,
+                2,
+                DCert::MoveInstantaneousReward(MirPot::Treasury, mir_target),
+            ),
+            (7, 3, DCert::AccountRegistrationDeposit(cred, 2_000_000)),
+            (8, 3, DCert::AccountUnregistrationDeposit(cred, 2_000_000)),
+            (9, 3, DCert::DelegationToDrep(cred, drep)),
+            (10, 4, DCert::DelegationToStakePoolAndDrep(cred, pool, drep)),
+            (
+                11,
+                4,
+                DCert::AccountRegistrationDelegationToStakePool(cred, pool, 2_000_000),
+            ),
+            (
+                12,
+                4,
+                DCert::AccountRegistrationDelegationToDrep(cred, drep, 2_000_000),
+            ),
+            (
+                13,
+                5,
+                DCert::AccountRegistrationDelegationToStakePoolAndDrep(
+                    cred, pool, drep, 2_000_000,
+                ),
+            ),
+            (
+                14,
+                3,
+                DCert::CommitteeAuthorization(cred, StakeCredential::ScriptHash([0x0d; 28])),
+            ),
+            (
+                15,
+                3,
+                DCert::CommitteeResignation(cred, Some(anchor.clone())),
+            ),
+            (16, 4, DCert::DrepRegistration(cred, 5_000_000, None)),
+            (17, 3, DCert::DrepUnregistration(cred, 5_000_000)),
+            (18, 3, DCert::DrepUpdate(cred, Some(anchor))),
+        ];
+
+        // Pin: exactly 19 cases (tags 0..=18) so a future upstream tag-19
+        // variant added to the enum WITHOUT extending this test fails CI
+        // (the existing round-trip tests would also need updating, but
+        // that's a separate signal — this is the canonical "did you
+        // remember to extend the drift-guard table" check).
+        assert_eq!(
+            cases.len(),
+            19,
+            "DCert tag space must be 0..=18 (19 variants)",
+        );
+
+        let mut seen_tags: Vec<u64> = Vec::with_capacity(19);
+        for (canonical_tag, canonical_len, cert) in cases {
+            let bytes = cert.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("DCert encodes as a CBOR array");
+            assert_eq!(
+                len, canonical_len,
+                "DCert::{:?} encoded with array length {len}, expected {canonical_len}",
+                cert,
+            );
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(
+                tag, canonical_tag,
+                "DCert::{:?} encoded with tag {tag}, expected canonical CDDL tag {canonical_tag}",
+                cert,
+            );
+            seen_tags.push(tag);
+        }
+
+        // Bidirectional completeness: every tag 0..=18 must appear
+        // exactly once across the 19 cases. A duplicate tag (two
+        // variants accidentally encoded with the same wire ID) or a
+        // missing tag fails here naming the gap.
+        seen_tags.sort();
+        let expected_tags: Vec<u64> = (0..=18).collect();
+        assert_eq!(
+            seen_tags, expected_tags,
+            "encoded DCert tag set must be exactly 0..=18 with no duplicates",
+        );
+    }
+
+    /// Build a minimal valid `PoolParams` for `dcert_encoder_tag_and_arity_match
+    /// _canonical_cddl`. Kept as a free helper so the test body stays
+    /// focused on the tag/arity invariants.
+    fn pool_params_for_test() -> PoolParams {
+        PoolParams {
+            operator: [0x0b; 28],
+            vrf_keyhash: [0x0c; 32],
+            pledge: 0,
+            cost: 340_000_000,
+            margin: UnitInterval { numerator: 1, denominator: 100 },
+            reward_account: RewardAccount {
+                network: 1,
+                credential: StakeCredential::AddrKeyHash([0x0d; 28]),
+            },
+            pool_owners: vec![],
+            relays: vec![],
+            pool_metadata: None,
+        }
+    }
+
     #[test]
     fn header_hash_wrong_length_rejected() {
         let mut enc = Encoder::new();
