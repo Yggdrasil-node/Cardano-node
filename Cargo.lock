@@ -1247,9 +1247,11 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "tempfile",
  "thiserror",
  "yggdrasil-crypto",
  "yggdrasil-ledger",
+ "yggdrasil-storage",
 ]
 
 [[package]]

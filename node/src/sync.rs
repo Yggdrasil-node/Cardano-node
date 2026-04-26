@@ -10,6 +10,7 @@ use std::time::Duration;
 use std::collections::BTreeMap;
 use std::fs;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -1296,7 +1297,15 @@ pub(crate) struct LedgerCheckpointTracking {
     /// ratios (`blocks_produced / expected_blocks`) and passed to
     /// `apply_epoch_boundary`, then reset for the next epoch.
     pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
+    /// Storage directory under which the OpCert counter sidecar
+    /// (`ocert_counters.cbor`) is persisted whenever a ledger checkpoint
+    /// is written. When `None`, no sidecar persistence happens — the
+    /// counters remain process-local, matching pre-slice behavior.
+    /// Reference: `PraosState.csCounters` in
+    /// `Ouroboros.Consensus.Protocol.Praos`.
+    pub(crate) ocert_persist_dir: Option<PathBuf>,
 }
+
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum LedgerCheckpointUpdateOutcome {
@@ -1504,6 +1513,7 @@ pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
     progress: &MultiEraSyncProgress,
     policy: &LedgerCheckpointPolicy,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
+    ocert_counters: Option<&OcertCounters>,
 ) -> Result<(LedgerCheckpointUpdateOutcome, Vec<EpochBoundaryEvent>), SyncError>
 where
     I: ImmutableStore,
@@ -1569,6 +1579,20 @@ where
                     &tracking.ledger_state.checkpoint(),
                     policy.max_snapshots,
                 )?;
+                // Persist the OpCert counter sidecar atomically alongside
+                // the ledger checkpoint. Mirrors `PraosState.csCounters`
+                // durability in upstream `Ouroboros.Consensus.Protocol.Praos`,
+                // which is part of the persistent `ChainDepState`. Without
+                // this, a restart resets per-pool monotonicity high-water
+                // marks to zero and a peer can replay an old block whose
+                // OpCert sequence number is below the true on-chain value.
+                if let (Some(dir), Some(counters)) =
+                    (tracking.ocert_persist_dir.as_ref(), ocert_counters)
+                {
+                    let encoded = counters.to_cbor_bytes();
+                    yggdrasil_storage::save_ocert_counters(dir, &encoded)
+                        .map_err(SyncError::Storage)?;
+                }
                 tracking.last_persisted_point = current_point;
                 Ok((
                     LedgerCheckpointUpdateOutcome::Persisted {
@@ -1616,6 +1640,7 @@ where
         stake_snapshots: None,
         epoch_size: None,
         pool_block_counts: BTreeMap::new(),
+        ocert_persist_dir: None,
     })
 }
 
@@ -1831,6 +1856,7 @@ where
                     Some(&mut checkpoint_tracking),
                     &config.checkpoint_policy,
                     vrf_ctx.as_ref(),
+                    ocert_counters.as_ref(),
                 )?;
                 from_point = progress.current_point;
                 total_blocks += progress.fetched_blocks;
@@ -3546,6 +3572,7 @@ pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
     checkpoint_tracking: Option<&mut LedgerCheckpointTracking>,
     checkpoint_policy: &LedgerCheckpointPolicy,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
+    ocert_counters: Option<&OcertCounters>,
 ) -> Result<AppliedVerifiedProgress, SyncError>
 where
     I: ImmutableStore,
@@ -3580,6 +3607,7 @@ where
                 progress,
                 checkpoint_policy,
                 vrf_ctx,
+                ocert_counters,
             )
         })
         .transpose()?

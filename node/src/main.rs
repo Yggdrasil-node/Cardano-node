@@ -14,7 +14,7 @@ use yggdrasil_consensus::{
     NonceEvolutionState, OcertCounters, SecurityParam, TentativeState,
 };
 use yggdrasil_ledger::{
-    Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint,
+    CborDecode, Era, GenesisDelegationState, LedgerState, Nonce, Point, PoolRelayAccessPoint,
     StakeCredential,
 };
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
@@ -1023,6 +1023,39 @@ fn main() -> Result<()> {
                 .load_plutus_cost_model(config_base_dir.as_deref())
                 .wrap_err("failed to load genesis Plutus cost model")?;
 
+            // Resolve the storage directory and attempt to restore the
+            // OpCert counter sidecar before constructing the verification
+            // config. When present, the sidecar carries the per-pool
+            // `csCounters` high-water marks from the previous run so the
+            // monotonicity check (`stored ≤ new_seq ≤ stored + 1`) holds
+            // across restarts. Reference: `PraosState.csCounters` in
+            // `Ouroboros.Consensus.Protocol.Praos`.
+            let storage_dir =
+                resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
+            let restored_ocert_counters: OcertCounters =
+                match yggdrasil_storage::load_ocert_counters(&storage_dir) {
+                    Ok(Some(bytes)) => match OcertCounters::from_cbor_bytes(&bytes) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            eprintln!(
+                                "[startup] OpCert counter sidecar at {:?} failed to decode \
+                                 ({e}); starting with empty counters",
+                                storage_dir
+                            );
+                            OcertCounters::new()
+                        }
+                    },
+                    Ok(None) => OcertCounters::new(),
+                    Err(e) => {
+                        eprintln!(
+                            "[startup] could not read OpCert counter sidecar at {:?} \
+                             ({e}); starting with empty counters",
+                            storage_dir
+                        );
+                        OcertCounters::new()
+                    }
+                };
+
             // Load the slot length and system start from shelley genesis for the
             // block producer's slot clock and the blocks-from-the-future check.
             // Falls back to 1.0 s slot length when the genesis file is missing.
@@ -1069,7 +1102,7 @@ fn main() -> Result<()> {
                     verify_body_hash: true,
                     max_major_protocol_version: Some(file_cfg.max_major_protocol_version),
                     future_check,
-                    ocert_counters: Some(OcertCounters::new()),
+                    ocert_counters: Some(restored_ocert_counters.clone()),
                     pp_major_protocol_version: None,
                 })
             };
@@ -1117,7 +1150,7 @@ fn main() -> Result<()> {
                         verify_body_hash: false,
                         max_major_protocol_version: Some(file_cfg.max_major_protocol_version),
                         future_check,
-                        ocert_counters: Some(OcertCounters::new()),
+                        ocert_counters: Some(restored_ocert_counters.clone()),
                         pp_major_protocol_version: None,
                     },
                     nonce_config: Some(nonce_config),
@@ -1137,8 +1170,6 @@ fn main() -> Result<()> {
             };
 
             let tracer = NodeTracer::from_config(&file_cfg);
-            let storage_dir =
-                resolve_storage_dir(&file_cfg.storage_dir, config_base_dir.as_deref());
             let base_ledger_state =
                 strict_base_ledger_state(&file_cfg, config_base_dir.as_deref())?;
 
@@ -2797,7 +2828,8 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         bp_pool_key_hash.map(|_| std::sync::Arc::clone(&shared_bp_state)),
         bp_pool_key_hash,
     )
-    .with_inbound_tx_state(Some(inbound_tx_state));
+    .with_inbound_tx_state(Some(inbound_tx_state))
+    .with_ocert_persist_dir(Some(storage_dir.clone()));
 
     let mut sync_shutdown = shutdown_rx.clone();
     let outcome: ResumedSyncServiceOutcome =
