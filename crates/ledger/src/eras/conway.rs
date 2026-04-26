@@ -1943,4 +1943,71 @@ mod tests {
             "encoded GovAction tag set must be exactly 0..=6 with no duplicates",
         );
     }
+
+    /// Encoder-side drift guard for the Conway `Vote` wire-tag space.
+    ///
+    /// `Vote` is encoded as a bare CBOR unsigned (NOT array-wrapped) per
+    /// upstream `vote = 0..2`. A typo in the `as u64` cast (e.g.
+    /// `Vote::No = 0` accidentally encoded as 1) would silently flip
+    /// every No vote to a Yes — the worst-case governance bug. This
+    /// test pins each variant against its canonical wire integer.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Governance.Procedures.Vote`;
+    /// CDDL `vote` rule.
+    #[test]
+    fn vote_encoder_unsigned_value_matches_canonical_cddl() {
+        for (canonical, vote) in [(0u64, Vote::No), (1u64, Vote::Yes), (2u64, Vote::Abstain)] {
+            let bytes = {
+                let mut enc = Encoder::new();
+                vote.encode_cbor(&mut enc);
+                enc.into_bytes()
+            };
+            let mut dec = Decoder::new(&bytes);
+            let v = dec.unsigned().expect("Vote encodes as a bare unsigned");
+            assert_eq!(
+                v, canonical,
+                "Vote::{vote:?} encoded as {v}, expected canonical CDDL {canonical}",
+            );
+        }
+    }
+
+    /// Encoder-side drift guard for the Conway `Voter` wire-tag space.
+    ///
+    /// 5 variants (tags 0..=4), all encoded as `[tag, 28-byte-hash]`.
+    /// A typo (e.g. swapping `DRepKeyHash = 2` and `StakePool = 4`)
+    /// would route every DRep vote into the SPO tally bucket — silent
+    /// governance corruption. Pins both array length AND tag for every
+    /// variant.
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Governance.Procedures.Voter`;
+    /// CDDL `voter` rule.
+    #[test]
+    fn voter_encoder_tag_and_arity_match_canonical_cddl() {
+        let h = [0x77; 28];
+        let cases: Vec<(u64, Voter)> = vec![
+            (0, Voter::CommitteeKeyHash(h)),
+            (1, Voter::CommitteeScript(h)),
+            (2, Voter::DRepKeyHash(h)),
+            (3, Voter::DRepScript(h)),
+            (4, Voter::StakePool(h)),
+        ];
+        assert_eq!(cases.len(), 5, "Voter tag space must be 0..=4 (5 variants)");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(5);
+        for (canonical, voter) in cases {
+            let bytes = {
+                let mut enc = Encoder::new();
+                voter.encode_cbor(&mut enc);
+                enc.into_bytes()
+            };
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("Voter encodes as a CBOR array");
+            assert_eq!(len, 2, "Voter::{voter:?} array length must be 2 (tag + hash)");
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical, "Voter::{voter:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(seen, vec![0, 1, 2, 3, 4], "Voter tag set must be exactly 0..=4");
+    }
 }

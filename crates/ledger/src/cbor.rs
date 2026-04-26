@@ -2626,6 +2626,49 @@ mod tests {
         );
     }
 
+    /// Encoder-side drift guard for the Conway `DRep` wire-tag space.
+    ///
+    /// 4 variants with mixed array lengths: `KeyHash=0` and `ScriptHash=1`
+    /// are length 2 (tag + hash); `AlwaysAbstain=2` and `AlwaysNoConfidence=3`
+    /// are length 1 (tag only). A drift here would silently misinterpret
+    /// DRep delegation/vote credentials — e.g. a stake delegation pointing
+    /// at a real DRep key hash that decodes as `AlwaysAbstain` would
+    /// strip a real voter's voice and silently flip them to abstain.
+    ///
+    /// Pins per-variant array length AND tag, plus bidirectional
+    /// completeness (cases.len() == 4, sorted observed tags == 0..=3).
+    ///
+    /// Reference: `Cardano.Ledger.Conway.Governance.DRep`; CDDL `drep`
+    /// rule.
+    #[test]
+    fn drep_encoder_tag_and_arity_match_canonical_cddl() {
+        let h = [0x66; 28];
+        // (canonical tag, canonical array length, variant)
+        let cases: Vec<(u64, u64, DRep)> = vec![
+            (0, 2, DRep::KeyHash(h)),
+            (1, 2, DRep::ScriptHash(h)),
+            (2, 1, DRep::AlwaysAbstain),
+            (3, 1, DRep::AlwaysNoConfidence),
+        ];
+        assert_eq!(cases.len(), 4, "DRep tag space must be 0..=3 (4 variants)");
+
+        let mut seen: Vec<u64> = Vec::with_capacity(4);
+        for (canonical_tag, canonical_len, drep) in cases {
+            let bytes = drep.to_cbor_bytes();
+            let mut dec = Decoder::new(&bytes);
+            let len = dec.array().expect("DRep encodes as a CBOR array");
+            assert_eq!(
+                len, canonical_len,
+                "DRep::{drep:?} array length {len}, expected {canonical_len}",
+            );
+            let tag = dec.unsigned().expect("first array element is the tag");
+            assert_eq!(tag, canonical_tag, "DRep::{drep:?} tag drift");
+            seen.push(tag);
+        }
+        seen.sort();
+        assert_eq!(seen, vec![0, 1, 2, 3], "DRep tag set must be exactly 0..=3");
+    }
+
     /// Build a minimal valid `PoolParams` for `dcert_encoder_tag_and_arity_match
     /// _canonical_cddl`. Kept as a free helper so the test body stays
     /// focused on the tag/arity invariants.
