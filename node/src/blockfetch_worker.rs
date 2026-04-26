@@ -57,9 +57,9 @@ use std::time::Instant;
 
 use tokio::sync::{mpsc, oneshot};
 use yggdrasil_ledger::{Point, SlotNo};
-use yggdrasil_network::{BlockFetchInstrumentation, blockfetch_pool::ReorderBuffer};
+use yggdrasil_network::{BlockFetchClient, BlockFetchInstrumentation, blockfetch_pool::ReorderBuffer};
 
-use crate::sync::{BlockFetchAssignment, SyncError};
+use crate::sync::{BlockFetchAssignment, MultiEraBlock, SyncError};
 
 /// Result type for a fetched range — vector of `(raw_bytes, decoded_block)`
 /// tuples in chain order.  Aliased to keep generic signatures readable.
@@ -220,6 +220,74 @@ impl<B: Send + 'static> FetchWorkerHandle<B> {
     /// (worker has exited).  Cheap snapshot with no allocation.
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
+    }
+}
+
+impl FetchWorkerHandle<MultiEraBlock> {
+    /// Spawn a per-peer fetch worker that owns a real
+    /// [`BlockFetchClient`] and dispatches requests via the
+    /// `crate::sync::fetch_range_blocks_multi_era_raw_decoded` helper.
+    ///
+    /// This is the production wire: the runtime calls this when
+    /// promoting a peer to warm so the per-peer fetch task takes
+    /// ownership of the negotiated `BlockFetchClient` for the rest
+    /// of the connection's lifetime.  On disconnect, the runtime
+    /// calls [`FetchWorkerHandle::shutdown`] (or drops the handle)
+    /// to gracefully exit the task.
+    ///
+    /// The closure-based [`FetchWorkerHandle::spawn`] entry point
+    /// stays available for tests using synthetic fetch closures.
+    /// Both produce a [`FetchWorkerHandle`] with identical channel
+    /// semantics, so [`FetchWorkerPool`] can hold a mix.
+    ///
+    /// Reference: upstream
+    /// [`Ouroboros.Network.BlockFetch.Client.fetchClient`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/Client.hs)
+    /// — the per-peer fetch thread that owns the connection's fetch
+    /// state for the connection's lifetime.
+    pub fn spawn_with_block_fetch_client(
+        addr: SocketAddr,
+        block_fetch: BlockFetchClient,
+    ) -> Self {
+        Self::spawn_with_block_fetch_client_and_queue_depth(
+            addr,
+            block_fetch,
+            DEFAULT_WORKER_QUEUE_DEPTH,
+        )
+    }
+
+    /// Variant of [`FetchWorkerHandle::spawn_with_block_fetch_client`]
+    /// with explicit queue depth.  Use `2` to opt into upstream's
+    /// `bfcMaxConcurrencyBulkSync = 2` for syncing nodes.
+    pub fn spawn_with_block_fetch_client_and_queue_depth(
+        addr: SocketAddr,
+        mut block_fetch: BlockFetchClient,
+        queue_depth: usize,
+    ) -> Self {
+        let queue_depth = queue_depth.max(1);
+        let (sender, mut receiver) =
+            mpsc::channel::<FetchRequest<MultiEraBlock>>(queue_depth);
+        let join = tokio::spawn(async move {
+            // The async-block owns `block_fetch` by value; each loop
+            // iteration takes a fresh `&mut` borrow that lives only
+            // for the duration of the awaited
+            // `fetch_range_blocks_multi_era_raw_decoded` call.  No
+            // borrow crosses iterations, so the outer `'static`
+            // bound on the spawned task is satisfied.
+            while let Some(req) = receiver.recv().await {
+                let result = crate::sync::fetch_range_blocks_multi_era_raw_decoded(
+                    &mut block_fetch,
+                    req.lower,
+                    req.upper,
+                )
+                .await;
+                let _ = req.response.send(result);
+            }
+        });
+        Self {
+            addr,
+            sender,
+            join,
+        }
     }
 }
 
