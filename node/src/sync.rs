@@ -4580,6 +4580,146 @@ where
     Ok(out)
 }
 
+/// Sequential variant of [`execute_multi_peer_blockfetch_plan`] that
+/// dispatches assignments inline (no `tokio::spawn`).  Trades parallel
+/// throughput for borrow-checker simplicity: the closure may be
+/// `FnMut` and may capture mutable references into a borrowed peer
+/// slice, so callers can pass `&mut [(SocketAddr, &mut BlockFetchClient)]`
+/// directly without `Arc<tokio::sync::Mutex<BlockFetchClient>>` wrappers
+/// or per-peer worker tasks.
+///
+/// Behaviour matches the parallel dispatcher's contract:
+/// - Empty plan → `Ok(empty)`.
+/// - Multi-element plan with `from_point = Origin` → explicit error
+///   (genesis bootstrap must use the single-peer path; the
+///   `ReorderBuffer` cannot release with `head = Origin`).
+/// - On any chunk error: short-circuit, propagate the error, record
+///   `note_failure(peer)` against the offending peer.  Subsequent
+///   assignments are skipped — the inline variant has no spawned
+///   tasks to abort.
+/// - On success: returns blocks reassembled in chain order via
+///   [`yggdrasil_network::blockfetch_pool::ReorderBuffer`].
+///
+/// This is the runtime-friendly executor that Phase 6 step 2 of
+/// [`docs/ARCHITECTURE.md`] will consume from
+/// `sync_batch_verified_with_tentative` once the sync-loop branching
+/// lands.  Real parallelism (Phase 6 step 3) comes when the runtime
+/// adopts the per-peer worker-task pattern; the API surface here
+/// stays as the simpler-by-default path operators can opt into
+/// without restructuring connection lifecycle.
+///
+/// Reference: same `Ouroboros.Network.BlockFetch.State.completeBlockDownload`
+/// ordering invariants as the parallel dispatcher; the inline form
+/// mirrors upstream `BlockFetch.Client.fetchClient` running directly
+/// against per-peer `FetchClientStateVars` without an intermediate
+/// scheduler thread.
+pub async fn execute_multi_peer_blockfetch_plan_inline<B, F, Fut>(
+    plan: &[BlockFetchAssignment],
+    from_point: Point,
+    mut fetch_one: F,
+    pool_instr: Option<&BlockFetchInstrumentation>,
+) -> Result<Vec<(Vec<u8>, B)>, SyncError>
+where
+    F: FnMut(SocketAddr, Point, Point) -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<(Vec<u8>, B)>, SyncError>>,
+{
+    use yggdrasil_network::blockfetch_pool::ReorderBuffer;
+
+    if plan.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if plan.len() > 1 && matches!(from_point, Point::Origin) {
+        return Err(SyncError::Recovery(
+            "multi-peer BlockFetch dispatch requires non-Origin from_point; \
+             genesis bootstrap must use single-peer path"
+                .to_owned(),
+        ));
+    }
+
+    if plan.len() == 1 {
+        let asn = plan[0];
+        if let Some(pool) = pool_instr {
+            if let Ok(mut g) = pool.lock() {
+                g.note_dispatch(asn.peer);
+            }
+        }
+        let result = fetch_one(asn.peer, asn.lower, asn.upper).await;
+        match &result {
+            Ok(blocks) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        let n = blocks.len() as u64;
+                        let bytes: u64 =
+                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        g.note_success(asn.peer, n, bytes, Instant::now());
+                    }
+                }
+            }
+            Err(_) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        g.note_failure(asn.peer);
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+    // Sequential multi-peer dispatch.  Each chunk is awaited fully
+    // before moving to the next; the dispatcher remains correct in
+    // the face of borrowed-state closures and out-of-order arrival
+    // (the iteration order matches plan order, which matches chain
+    // order, so the buffer trivially releases each chunk on insert).
+    let head_seed = match from_point {
+        Point::Origin => Point::Origin,
+        Point::BlockPoint(slot, hash) => {
+            if slot.0 == 0 {
+                Point::BlockPoint(yggdrasil_ledger::SlotNo(0), hash)
+            } else {
+                Point::BlockPoint(yggdrasil_ledger::SlotNo(slot.0 - 1), hash)
+            }
+        }
+    };
+    let mut buffer: ReorderBuffer<(Vec<u8>, B)> = ReorderBuffer::new(head_seed);
+
+    for asn in plan {
+        if let Some(pool) = pool_instr {
+            if let Ok(mut g) = pool.lock() {
+                g.note_dispatch(asn.peer);
+            }
+        }
+        match fetch_one(asn.peer, asn.lower, asn.upper).await {
+            Ok(blocks) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        let n = blocks.len() as u64;
+                        let bytes: u64 =
+                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        g.note_success(asn.peer, n, bytes, Instant::now());
+                    }
+                }
+                buffer.insert(asn.lower, asn.upper, blocks);
+            }
+            Err(err) => {
+                if let Some(pool) = pool_instr {
+                    if let Ok(mut g) = pool.lock() {
+                        g.note_failure(asn.peer);
+                    }
+                }
+                return Err(err);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (_lower, _upper, blocks) in buffer.drain_releasable() {
+        out.extend(blocks);
+    }
+    Ok(out)
+}
+
 /// Per-RollForward integration helper that binds the dispatcher
 /// (`execute_multi_peer_blockfetch_plan`) to the consensus-correctness
 /// invariants of the legacy single-peer path
@@ -5256,6 +5396,152 @@ mod tests {
         .await
         .expect("single-peer no-state dispatch");
         assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn inline_dispatcher_empty_plan_yields_empty_output() {
+        let result: Result<Vec<(Vec<u8>, u64)>, SyncError> = execute_multi_peer_blockfetch_plan_inline(
+            &[],
+            block_point(100),
+            |_addr, _lower, _upper| async { Ok(Vec::new()) },
+            None,
+        )
+        .await;
+        assert!(matches!(result, Ok(blocks) if blocks.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn inline_dispatcher_single_peer_works() {
+        let p1 = test_addr(2801);
+        let plan = vec![BlockFetchAssignment {
+            peer: p1,
+            lower: block_point(100),
+            upper: block_point(200),
+        }];
+        let result = execute_multi_peer_blockfetch_plan_inline::<u64, _, _>(
+            &plan,
+            block_point(99),
+            |_addr, _lower, _upper| async { Ok(vec![fake_block(150), fake_block(180)]) },
+            None,
+        )
+        .await
+        .expect("single-peer inline succeeds");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn inline_dispatcher_multi_peer_releases_in_chain_order() {
+        let p1 = test_addr(2901);
+        let p2 = test_addr(2902);
+        let plan = vec![
+            BlockFetchAssignment {
+                peer: p1,
+                lower: block_point(50),
+                upper: block_point(125),
+            },
+            BlockFetchAssignment {
+                peer: p2,
+                lower: block_point(126),
+                upper: block_point(200),
+            },
+        ];
+
+        // FnMut closure: capture a counter to verify each call is
+        // distinct and the iteration is deterministic.
+        let mut call_count = 0u32;
+        let result = execute_multi_peer_blockfetch_plan_inline::<u64, _, _>(
+            &plan,
+            block_point(50),
+            |peer, _lower, _upper| {
+                call_count += 1;
+                let blocks = if peer == p1 {
+                    vec![fake_block(60), fake_block(100)]
+                } else {
+                    vec![fake_block(150), fake_block(200)]
+                };
+                async move { Ok(blocks) }
+            },
+            None,
+        )
+        .await
+        .expect("multi-peer inline succeeds");
+        assert_eq!(result.len(), 4);
+        assert_eq!(call_count, 2);
+    }
+
+    #[tokio::test]
+    async fn inline_dispatcher_short_circuits_on_error() {
+        // First peer succeeds, second fails — the inline variant must
+        // propagate the error without invoking subsequent peers.
+        let p1 = test_addr(2950);
+        let p2 = test_addr(2951);
+        let p3 = test_addr(2952);
+        let plan = vec![
+            BlockFetchAssignment {
+                peer: p1,
+                lower: block_point(50),
+                upper: block_point(100),
+            },
+            BlockFetchAssignment {
+                peer: p2,
+                lower: block_point(101),
+                upper: block_point(150),
+            },
+            BlockFetchAssignment {
+                peer: p3,
+                lower: block_point(151),
+                upper: block_point(200),
+            },
+        ];
+
+        let mut call_log: Vec<SocketAddr> = Vec::new();
+        let result: Result<Vec<(Vec<u8>, u64)>, SyncError> =
+            execute_multi_peer_blockfetch_plan_inline(
+                &plan,
+                block_point(50),
+                |peer, _lower, _upper| {
+                    call_log.push(peer);
+                    let fail = peer == p2;
+                    async move {
+                        if fail {
+                            Err(SyncError::Recovery(format!("peer {peer} failed")))
+                        } else {
+                            Ok(vec![fake_block(0)])
+                        }
+                    }
+                },
+                None,
+            )
+            .await;
+
+        assert!(matches!(result, Err(SyncError::Recovery(_))));
+        // p3 must NOT have been invoked — short-circuit on p2's error.
+        assert_eq!(call_log, vec![p1, p2]);
+    }
+
+    #[tokio::test]
+    async fn inline_dispatcher_genesis_multi_peer_returns_explicit_error() {
+        let plan = vec![
+            BlockFetchAssignment {
+                peer: test_addr(2980),
+                lower: Point::Origin,
+                upper: block_point(100),
+            },
+            BlockFetchAssignment {
+                peer: test_addr(2981),
+                lower: block_point(101),
+                upper: block_point(200),
+            },
+        ];
+        let err: Result<Vec<(Vec<u8>, u64)>, SyncError> =
+            execute_multi_peer_blockfetch_plan_inline(
+                &plan,
+                Point::Origin,
+                |_a, _l, _u| async { Ok(Vec::new()) },
+                None,
+            )
+            .await;
+        assert!(matches!(err, Err(SyncError::Recovery(_))));
     }
 
     #[tokio::test]
