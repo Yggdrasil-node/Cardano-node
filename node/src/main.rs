@@ -1273,7 +1273,21 @@ fn main() -> Result<()> {
                     ..Default::default()
                 },
             )
-            .with_block_fetch_pool(Some(block_fetch_pool.clone()));
+            .with_block_fetch_pool(Some(block_fetch_pool.clone()))
+            // Wire genesis-derived timing into the live LedgerStateJudgement
+            // so the governor's per-tick `fetch_mode_from_judgement(...)`
+            // signal actually reflects whether the recovered tip is fresh
+            // or stale, instead of always claiming `YoungEnough`. Mirrors
+            // upstream `mkLedgerStateJudgement` from
+            // `Cardano.Node.Diffusion.Configuration` whose threshold is
+            // `stabilityWindow * slotLength` ≈ `3 * k / f * slotLength`.
+            .with_ledger_judgement_settings(yggdrasil_node::runtime::LedgerJudgementSettings {
+                system_start_unix_secs: genesis_system_start_unix_secs,
+                slot_length_secs: genesis_slot_length,
+                max_ledger_state_age_secs: (3.0 * file_cfg.security_param_k as f64
+                    / file_cfg.active_slot_coeff)
+                    * genesis_slot_length.unwrap_or(1.0),
+            });
 
             let mut topology_config = file_cfg.topology_config();
             if let Some(peer_snapshot_path) = &peer_snapshot_path {

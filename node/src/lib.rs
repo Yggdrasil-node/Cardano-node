@@ -15,7 +15,7 @@ pub mod tracer;
 
 pub use runtime::{
     ChainTipNotify, MempoolAddTxError, MempoolAddTxResult, NodeConfig, PeerSession,
-    ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
+    LedgerJudgementSettings, ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
     ResumeReconnectingVerifiedSyncRequest, ResumedSyncServiceOutcome, RuntimeBlockProducerConfig,
     RuntimeGovernorConfig, SharedBlockProducerState, TxSubmissionServiceError,
     TxSubmissionServiceOutcome, add_tx_to_mempool, add_tx_to_shared_mempool, add_txs_to_mempool,

@@ -36,6 +36,72 @@ pub enum LedgerStateJudgement {
     Unavailable,
 }
 
+/// Inputs required to derive a [`LedgerStateJudgement`] from the current
+/// ledger tip's age relative to wall-clock time.
+///
+/// All fields are seconds since the Unix epoch except `tip_slot`, which is
+/// the absolute slot number of the most recently applied block. When any
+/// of `system_start_unix_secs`, `slot_length_secs`, or `tip_slot` is
+/// missing, the judgement falls back to [`LedgerStateJudgement::Unavailable`]
+/// — the same conservative behavior the runtime exhibits when ledger
+/// recovery itself fails.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LedgerStateAgeInputs {
+    /// Absolute slot of the latest applied block, or `None` when the
+    /// node has no recovered tip yet (genesis startup).
+    pub tip_slot: Option<u64>,
+    /// Seconds since the Unix epoch of the network genesis moment, parsed
+    /// from `ShelleyGenesis.system_start`. `None` disables wall-clock
+    /// derivation.
+    pub system_start_unix_secs: Option<f64>,
+    /// Slot duration in seconds from `ShelleyGenesis.slot_length`. `None`
+    /// disables wall-clock derivation.
+    pub slot_length_secs: Option<f64>,
+    /// Maximum acceptable age in seconds before the judgement flips to
+    /// [`LedgerStateJudgement::TooOld`]. Upstream uses `stabilityWindow *
+    /// slotLength` (≈ `3k/f * slotLength` for Praos), so on mainnet this
+    /// is ≈ `3 * 2160 / 0.05 * 1.0 ≈ 129 600 s` (36 h) by default.
+    pub max_age_secs: f64,
+    /// Wall-clock "now" as seconds since the Unix epoch. Passed in so the
+    /// helper stays pure / unit-testable.
+    pub now_unix_secs: f64,
+}
+
+/// Derives a [`LedgerStateJudgement`] by comparing the ledger tip's
+/// wall-clock arrival time to the current time.
+///
+/// Mirrors upstream `Cardano.Node.Diffusion.Configuration` `mkLedgerStateJudgement`,
+/// where the judgement is `TooOld` when `now - tipSlotTime > maxLedgerStateAge`
+/// and `YoungEnough` otherwise. Returns [`LedgerStateJudgement::Unavailable`]
+/// when any of the wall-clock inputs is missing or the inputs imply a
+/// negative or non-finite age.
+///
+/// References:
+/// * [`Cardano.Node.Diffusion.Configuration`](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node/Diffusion)
+/// * [`Ouroboros.Consensus.HardFork.Combinator.Ledger`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus)
+pub fn judge_ledger_state_age(inputs: LedgerStateAgeInputs) -> LedgerStateJudgement {
+    let (Some(tip_slot), Some(start), Some(slot_len)) = (
+        inputs.tip_slot,
+        inputs.system_start_unix_secs,
+        inputs.slot_length_secs,
+    ) else {
+        return LedgerStateJudgement::Unavailable;
+    };
+    if !slot_len.is_finite() || slot_len <= 0.0 || !inputs.max_age_secs.is_finite() {
+        return LedgerStateJudgement::Unavailable;
+    }
+    let tip_unix_secs = start + (tip_slot as f64) * slot_len;
+    let age_secs = inputs.now_unix_secs - tip_unix_secs;
+    if !age_secs.is_finite() {
+        return LedgerStateJudgement::Unavailable;
+    }
+    if age_secs > inputs.max_age_secs {
+        LedgerStateJudgement::TooOld
+    } else {
+        LedgerStateJudgement::YoungEnough
+    }
+}
+
 /// Freshness state for the optional peer snapshot input referenced by
 /// topology configuration.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1150,5 +1216,123 @@ mod tests {
             PeerSnapshotFreshness::NotConfigured
         );
         assert_eq!(observation.update.decision, LedgerPeerUseDecision::Eligible);
+    }
+
+    // ── judge_ledger_state_age ───────────────────────────────────────────
+
+    /// Pins the upstream `mkLedgerStateJudgement` boundary: when the tip's
+    /// wall-clock age is below `max_age_secs` the judgement is
+    /// `YoungEnough`, when it exceeds the threshold it flips to `TooOld`.
+    /// Reference: `Cardano.Node.Diffusion.Configuration.mkLedgerStateJudgement`.
+    #[test]
+    fn judge_ledger_state_age_flips_at_threshold() {
+        // tip at slot 100, slot length 1.0 s, system start at unix 0.0 →
+        // tipUnixSecs = 100. max_age = 60 s, now = 150 s → age = 50 s →
+        // YoungEnough.
+        let young = judge_ledger_state_age(LedgerStateAgeInputs {
+            tip_slot: Some(100),
+            system_start_unix_secs: Some(0.0),
+            slot_length_secs: Some(1.0),
+            max_age_secs: 60.0,
+            now_unix_secs: 150.0,
+        });
+        assert_eq!(young, LedgerStateJudgement::YoungEnough);
+
+        // Same tip, now = 200 → age = 100 s > 60 s → TooOld.
+        let old = judge_ledger_state_age(LedgerStateAgeInputs {
+            tip_slot: Some(100),
+            system_start_unix_secs: Some(0.0),
+            slot_length_secs: Some(1.0),
+            max_age_secs: 60.0,
+            now_unix_secs: 200.0,
+        });
+        assert_eq!(old, LedgerStateJudgement::TooOld);
+    }
+
+    /// Pins the inclusive `>=` boundary at exactly `now == tip + max_age`:
+    /// upstream uses strict `>` so equality stays `YoungEnough`. Without
+    /// this, a small refactor that flipped the comparator (`>` ↔ `>=`)
+    /// would silently break BlockFetch concurrency around the tip.
+    #[test]
+    fn judge_ledger_state_age_boundary_is_strict_greater_than() {
+        // age == max_age → still YoungEnough.
+        let exact = judge_ledger_state_age(LedgerStateAgeInputs {
+            tip_slot: Some(100),
+            system_start_unix_secs: Some(0.0),
+            slot_length_secs: Some(1.0),
+            max_age_secs: 60.0,
+            now_unix_secs: 160.0,
+        });
+        assert_eq!(exact, LedgerStateJudgement::YoungEnough);
+
+        // age == max_age + 1 → TooOld.
+        let just_over = judge_ledger_state_age(LedgerStateAgeInputs {
+            tip_slot: Some(100),
+            system_start_unix_secs: Some(0.0),
+            slot_length_secs: Some(1.0),
+            max_age_secs: 60.0,
+            now_unix_secs: 161.0,
+        });
+        assert_eq!(just_over, LedgerStateJudgement::TooOld);
+    }
+
+    /// Missing wall-clock inputs (no genesis configured, no tip recovered
+    /// yet) must return `Unavailable` so the governor falls back to
+    /// `BulkSync` rather than incorrectly claiming the node is caught up.
+    #[test]
+    fn judge_ledger_state_age_returns_unavailable_for_missing_inputs() {
+        let cases = [
+            LedgerStateAgeInputs {
+                tip_slot: None,
+                system_start_unix_secs: Some(0.0),
+                slot_length_secs: Some(1.0),
+                max_age_secs: 60.0,
+                now_unix_secs: 150.0,
+            },
+            LedgerStateAgeInputs {
+                tip_slot: Some(100),
+                system_start_unix_secs: None,
+                slot_length_secs: Some(1.0),
+                max_age_secs: 60.0,
+                now_unix_secs: 150.0,
+            },
+            LedgerStateAgeInputs {
+                tip_slot: Some(100),
+                system_start_unix_secs: Some(0.0),
+                slot_length_secs: None,
+                max_age_secs: 60.0,
+                now_unix_secs: 150.0,
+            },
+        ];
+        for inputs in cases {
+            assert_eq!(
+                judge_ledger_state_age(inputs),
+                LedgerStateJudgement::Unavailable
+            );
+        }
+    }
+
+    /// Pathological numeric inputs (NaN, ≤ 0 slot length, NaN max_age)
+    /// must return `Unavailable` rather than producing a garbage
+    /// `YoungEnough`/`TooOld` from arithmetic that does not make sense.
+    #[test]
+    fn judge_ledger_state_age_rejects_pathological_numerics() {
+        let nan_max = judge_ledger_state_age(LedgerStateAgeInputs {
+            tip_slot: Some(100),
+            system_start_unix_secs: Some(0.0),
+            slot_length_secs: Some(1.0),
+            max_age_secs: f64::NAN,
+            now_unix_secs: 150.0,
+        });
+        assert_eq!(nan_max, LedgerStateJudgement::Unavailable);
+
+        let zero_slot_length = judge_ledger_state_age(LedgerStateAgeInputs {
+            tip_slot: Some(100),
+            system_start_unix_secs: Some(0.0),
+            slot_length_secs: Some(0.0),
+            max_age_secs: 60.0,
+            now_unix_secs: 150.0,
+        });
+        assert_eq!(zero_slot_length, LedgerStateJudgement::Unavailable);
     }
 }
