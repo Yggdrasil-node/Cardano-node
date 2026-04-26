@@ -1159,6 +1159,7 @@ fn main() -> Result<()> {
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
                     block_fetch_pool: Some(block_fetch_pool.clone()),
                     max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
+                    density_registry: Some(yggdrasil_node::sync::new_density_registry()),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -1186,6 +1187,7 @@ fn main() -> Result<()> {
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
                     block_fetch_pool: Some(block_fetch_pool.clone()),
                     max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
+                    density_registry: Some(yggdrasil_node::sync::new_density_registry()),
                 }
             };
 

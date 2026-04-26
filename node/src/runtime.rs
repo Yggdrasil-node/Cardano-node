@@ -4389,6 +4389,10 @@ where
                     .block_fetch_pool
                     .as_ref()
                     .map(|p| (p, session.connected_peer_addr)),
+                config
+                    .density_registry
+                    .as_ref()
+                    .map(|r| (r, session.connected_peer_addr)),
             );
 
             tokio::select! {
@@ -4849,6 +4853,10 @@ where
                     .block_fetch_pool
                     .as_ref()
                     .map(|p| (p, session.connected_peer_addr)),
+                config
+                    .density_registry
+                    .as_ref()
+                    .map(|r| (r, session.connected_peer_addr)),
             );
 
             tokio::select! {
@@ -5925,6 +5933,7 @@ mod tests {
         epoch_schedule: None,
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
+        density_registry: None,
         }
     }
 

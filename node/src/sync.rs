@@ -1243,6 +1243,16 @@ pub struct VerifiedSyncServiceConfig {
     /// Reference: `Ouroboros.Network.BlockFetch.Decision` —
     /// `bfcMaxConcurrencyDeadline = 1`, `bfcMaxConcurrencyBulkSync = 2`.
     pub max_concurrent_block_fetch_peers: u8,
+    /// Optional shared per-peer ChainSync header-density registry
+    /// (`Slice GD-RT`).  When set, every observed RollForward header
+    /// pushes its slot into the peer's `DensityWindow` so the network
+    /// governor can read chain-quality density on its next tick.  When
+    /// `None`, density observation is a no-op and the runtime keeps
+    /// pre-Slice-GD behaviour.
+    ///
+    /// Reference: `Ouroboros.Consensus.Genesis.Governor` — density
+    /// updates per ChainSync `RollForward`.
+    pub density_registry: Option<DensityRegistry>,
 }
 
 impl VerifiedSyncServiceConfig {
@@ -3744,6 +3754,7 @@ pub(crate) async fn sync_batch_verified(
         None,
         ocert_counters,
         pool_instr,
+        None,
     )
     .await
 }
@@ -3758,6 +3769,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     tentative_state: Option<&Arc<RwLock<TentativeState>>>,
     ocert_counters: &mut Option<OcertCounters>,
     pool_instr: Option<(&BlockFetchInstrumentation, SocketAddr)>,
+    density_instr: Option<(&DensityRegistry, SocketAddr)>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
     let mut steps = Vec::new();
     let mut fetched_blocks = 0usize;
@@ -3773,6 +3785,15 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 let range_upper = header_point.unwrap_or(tip);
                 let effective_range = normalize_blockfetch_range_points(from_point, range_upper);
                 let skip_fetch = header_point.is_some() && effective_range.is_none();
+                // Slice GD-RT — Genesis density observation hook.
+                // Push the observed header slot into the per-peer
+                // `DensityWindow` so the governor can read chain-quality
+                // density on its next tick.  No-op when registry is None.
+                if let (Some(Point::BlockPoint(slot, _)), Some((registry, peer))) =
+                    (header_point, density_instr)
+                {
+                    let _ = observe_chain_sync_header_density(peer, slot, registry);
+                }
                 if sync_debug_enabled() {
                     let header_hex = bytes_to_hex(&header);
                     eprintln!(
@@ -4199,6 +4220,81 @@ pub fn collect_rolled_back_tx_ids<V: VolatileStore>(store: &V, target: &Point) -
 }
 
 // ---------------------------------------------------------------------------
+// Slice GD-RT — ChainSync header density observation runtime hook
+// ---------------------------------------------------------------------------
+//
+// Wires the consensus-side `DensityWindow` primitive (`Slice GD`,
+// `crates/consensus/src/genesis_density.rs`) into the runtime ChainSync
+// path so the network governor can read per-peer chain density as a
+// hot-demotion signal.  Mirrors upstream
+// `Ouroboros.Consensus.Genesis.Governor` density tracking — observed
+// header slots feed a per-peer sliding window, the governor consults
+// the resulting density when scoring hot peers.
+
+/// Per-peer ChainSync header-density registry.
+///
+/// Wraps a `BTreeMap<SocketAddr, DensityWindow>` in `Arc<RwLock<>>` so
+/// the runtime sync loops, the governor, and any future scheduler can
+/// share a single density view across peer sessions.  Construct with
+/// [`new_density_registry`]; consume read-only via the governor's
+/// hot-demotion bias.
+pub type DensityRegistry = Arc<RwLock<BTreeMap<SocketAddr, yggdrasil_consensus::DensityWindow>>>;
+
+/// Construct an empty [`DensityRegistry`] suitable for
+/// [`VerifiedSyncServiceConfig::density_registry`].
+pub fn new_density_registry() -> DensityRegistry {
+    Arc::new(RwLock::new(BTreeMap::new()))
+}
+
+/// Observe a ChainSync header at `slot` against `peer`'s density window.
+///
+/// Creates the per-peer window on first observation (using the upstream
+/// default [`yggdrasil_consensus::DEFAULT_SLOT_WINDOW`] = 6 480 slots).
+/// Returns `true` if the header was admitted, `false` if rejected as a
+/// slot regression (the runtime is responsible for not double-counting
+/// rolled-back headers; this guard is a defensive secondary).
+///
+/// Reference: `Ouroboros.Consensus.Genesis.Governor` density updates
+/// per ChainSync `RollForward`.
+pub fn observe_chain_sync_header_density(
+    peer: SocketAddr,
+    slot: SlotNo,
+    registry: &DensityRegistry,
+) -> bool {
+    let Ok(mut guard) = registry.write() else {
+        // Poisoned lock: skip observation rather than propagate panic
+        // up through the sync loop.  The governor will simply read a
+        // stale density on the next tick, which is the same fallback
+        // the upstream `bracketWithLock` pattern uses on contention.
+        return false;
+    };
+    let window = guard
+        .entry(peer)
+        .or_insert_with(yggdrasil_consensus::DensityWindow::new);
+    window.observe_header(slot)
+}
+
+/// Read the current density for `peer`, or `0.0` if no window exists.
+/// Read-only; intended for governor consumption during hot-demotion
+/// scoring (`density < DEFAULT_LOW_DENSITY_THRESHOLD` ⇒ bias demotion).
+pub fn read_peer_density(peer: SocketAddr, registry: &DensityRegistry) -> f64 {
+    let Ok(guard) = registry.read() else {
+        return 0.0;
+    };
+    guard.get(&peer).map_or(0.0, |w| w.density())
+}
+
+/// Forget a peer's density window.  Called by the runtime when a peer
+/// disconnects so stale density is not carried into a future
+/// connection.
+pub fn forget_peer_density(peer: SocketAddr, registry: &DensityRegistry) {
+    let Ok(mut guard) = registry.write() else {
+        return;
+    };
+    guard.remove(&peer);
+}
+
+// ---------------------------------------------------------------------------
 // Slice E — Multi-peer concurrent BlockFetch dispatch primitives
 // ---------------------------------------------------------------------------
 //
@@ -4475,6 +4571,109 @@ mod tests {
             "last upper preserved"
         );
         assert_eq!(assignments[1].peer, peers[1]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Slice GD-RT — ChainSync header density observation runtime hook
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn new_density_registry_starts_empty() {
+        let r = new_density_registry();
+        let guard = r.read().unwrap();
+        assert!(guard.is_empty());
+    }
+
+    #[test]
+    fn observe_creates_window_on_first_call() {
+        let r = new_density_registry();
+        let peer = test_addr(2001);
+        assert!(observe_chain_sync_header_density(peer, SlotNo(100), &r));
+        let guard = r.read().unwrap();
+        let w = guard.get(&peer).expect("window should be created");
+        assert_eq!(w.headers_seen(), 1);
+        assert_eq!(w.last_slot(), Some(SlotNo(100)));
+    }
+
+    #[test]
+    fn observe_accumulates_into_existing_window() {
+        let r = new_density_registry();
+        let peer = test_addr(2002);
+        observe_chain_sync_header_density(peer, SlotNo(10), &r);
+        observe_chain_sync_header_density(peer, SlotNo(20), &r);
+        observe_chain_sync_header_density(peer, SlotNo(30), &r);
+        let guard = r.read().unwrap();
+        let w = guard.get(&peer).expect("window present");
+        assert_eq!(w.headers_seen(), 3);
+        assert_eq!(w.last_slot(), Some(SlotNo(30)));
+    }
+
+    #[test]
+    fn observe_isolates_peers() {
+        // Independent peers must accumulate independently — chain density
+        // is a per-peer signal.
+        let r = new_density_registry();
+        let p1 = test_addr(2101);
+        let p2 = test_addr(2102);
+        observe_chain_sync_header_density(p1, SlotNo(5), &r);
+        observe_chain_sync_header_density(p2, SlotNo(7), &r);
+        observe_chain_sync_header_density(p2, SlotNo(8), &r);
+        let guard = r.read().unwrap();
+        assert_eq!(guard.get(&p1).unwrap().headers_seen(), 1);
+        assert_eq!(guard.get(&p2).unwrap().headers_seen(), 2);
+    }
+
+    #[test]
+    fn observe_rejects_slot_regression() {
+        let r = new_density_registry();
+        let peer = test_addr(2003);
+        observe_chain_sync_header_density(peer, SlotNo(50), &r);
+        // Lower slot must be rejected.
+        assert!(!observe_chain_sync_header_density(peer, SlotNo(40), &r));
+        let guard = r.read().unwrap();
+        let w = guard.get(&peer).unwrap();
+        assert_eq!(w.headers_seen(), 1);
+        assert_eq!(w.last_slot(), Some(SlotNo(50)));
+    }
+
+    #[test]
+    fn read_peer_density_returns_zero_for_unknown_peer() {
+        let r = new_density_registry();
+        assert_eq!(read_peer_density(test_addr(9999), &r), 0.0);
+    }
+
+    #[test]
+    fn read_peer_density_matches_window_density() {
+        let r = new_density_registry();
+        let peer = test_addr(2004);
+        // 100 observations against the default 6480-slot window:
+        // density = 100 / 6480 ≈ 0.0154.
+        for s in 0..100 {
+            observe_chain_sync_header_density(peer, SlotNo(s), &r);
+        }
+        let d = read_peer_density(peer, &r);
+        assert!(d > 0.0 && d < 0.05, "density should be roughly 100/6480");
+    }
+
+    #[test]
+    fn forget_peer_density_removes_window() {
+        let r = new_density_registry();
+        let peer = test_addr(2005);
+        observe_chain_sync_header_density(peer, SlotNo(10), &r);
+        forget_peer_density(peer, &r);
+        let guard = r.read().unwrap();
+        assert!(guard.get(&peer).is_none());
+    }
+
+    #[test]
+    fn forget_peer_density_unknown_peer_is_noop() {
+        // Forgetting a peer that never had a window must be a safe no-op
+        // — the runtime calls forget_peer_density on every disconnect,
+        // including ones that never produced any RollForward headers.
+        let r = new_density_registry();
+        forget_peer_density(test_addr(9999), &r);
+        let guard = r.read().unwrap();
+        assert!(guard.is_empty());
     }
 
     #[test]
