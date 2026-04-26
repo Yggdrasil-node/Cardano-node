@@ -1141,6 +1141,13 @@ fn main() -> Result<()> {
 
             let active_slot_coeff = ActiveSlotCoeff::new(file_cfg.active_slot_coeff).ok();
 
+            // Slice GD-Final — single density registry shared between
+            // the sync service (writer: ChainSync RollForward hook) and
+            // the governor loop (reader: density-aware hot-demotion
+            // scoring). Cloning the Arc keeps both ends pointing at the
+            // same `BTreeMap<SocketAddr, DensityWindow>`.
+            let density_registry = yggdrasil_node::sync::new_density_registry();
+
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
                     batch_size,
@@ -1159,7 +1166,7 @@ fn main() -> Result<()> {
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
                     block_fetch_pool: Some(block_fetch_pool.clone()),
                     max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
-                    density_registry: Some(yggdrasil_node::sync::new_density_registry()),
+                    density_registry: Some(density_registry.clone()),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -1187,7 +1194,7 @@ fn main() -> Result<()> {
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
                     block_fetch_pool: Some(block_fetch_pool.clone()),
                     max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
-                    density_registry: Some(yggdrasil_node::sync::new_density_registry()),
+                    density_registry: Some(density_registry.clone()),
                 }
             };
 
@@ -1278,6 +1285,7 @@ fn main() -> Result<()> {
                 },
             )
             .with_block_fetch_pool(Some(block_fetch_pool.clone()))
+            .with_density_registry(Some(density_registry.clone()))
             // Wire genesis-derived timing into the live LedgerStateJudgement
             // so the governor's per-tick `fetch_mode_from_judgement(...)`
             // signal actually reflects whether the recovered tip is fresh

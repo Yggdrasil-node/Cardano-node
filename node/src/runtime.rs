@@ -156,6 +156,15 @@ pub struct RuntimeGovernorConfig {
     /// fallback (no genesis timing → always `YoungEnough`) so existing
     /// test paths keep working.
     pub ledger_judgement_settings: LedgerJudgementSettings,
+    /// Optional shared per-peer ChainSync header-density registry
+    /// (Slice GD-Final).  When set, the governor loop reads density
+    /// values from the registry into [`PeerMetrics::density`] before
+    /// each tick so `combined_score` can apply the density-aware
+    /// hot-demotion bonus.  Wire to the same `DensityRegistry`
+    /// instance the sync service uses
+    /// (`VerifiedSyncServiceConfig::density_registry`) so writes from
+    /// the sync hook land where the governor reads.
+    pub density_registry: Option<crate::sync::DensityRegistry>,
 }
 
 impl RuntimeGovernorConfig {
@@ -175,7 +184,18 @@ impl RuntimeGovernorConfig {
             targets,
             block_fetch_pool: None,
             ledger_judgement_settings: LedgerJudgementSettings::default(),
+            density_registry: None,
         }
+    }
+
+    /// Attach a shared per-peer ChainSync density registry so the
+    /// governor's hot-demotion scoring receives the live chain-quality
+    /// signal.  Pass the same `DensityRegistry` instance as the sync
+    /// service is using (`VerifiedSyncServiceConfig::density_registry`)
+    /// so writes from the sync hook land where the governor reads.
+    pub fn with_density_registry(mut self, registry: Option<crate::sync::DensityRegistry>) -> Self {
+        self.density_registry = registry;
+        self
     }
 
     /// Attach a shared [`BlockFetchInstrumentation`] handle so the governor
@@ -2131,6 +2151,16 @@ pub async fn run_governor_loop<I, V, L, F>(
                 }
                 let actions = {
                     let registry = peer_registry.read().expect("peer registry lock poisoned");
+                    // Slice GD-Final — propagate per-peer ChainSync density
+                    // from the runtime registry into governor_state.metrics
+                    // so hot-demotion scoring applies the density-aware
+                    // bonus on this tick.  No-op when no registry is wired.
+                    if let Some(density_registry) = config.density_registry.as_ref() {
+                        for (addr, _) in registry.iter() {
+                            let d = crate::sync::read_peer_density(*addr, density_registry);
+                            governor_state.metrics.set_density(*addr, d);
+                        }
+                    }
                     let actions = governor_state.tick(
                         &registry,
                         &config.targets,
