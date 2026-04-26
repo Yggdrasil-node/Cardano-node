@@ -566,6 +566,129 @@ fn cbor_golden_conway_submitted_tx_round_trip() {
     assert_eq!(mst.fee(), 350_000);
 }
 
+/// Conway tx body with the full Conway-specific governance payload
+/// (voting_procedures, proposal_procedures, current_treasury_value,
+/// treasury_donation) round-trips byte-identically.
+///
+/// Closes the coverage gap left by `cbor_golden_conway_submitted_tx_round_trip`,
+/// which sets every Conway-specific field to `None` and therefore only
+/// exercises the Babbage-shape inheritance path. Because the four new
+/// governance keys (19/20/21/22) are independently optional, a regression
+/// in any single key's `encode_cbor` / `decode_cbor` pair would slip past
+/// the all-`None` test silently. This test populates ALL four with
+/// non-trivial values and pins exact byte-for-byte stability of the
+/// re-encode (the strongest possible CBOR-parity property short of an
+/// upstream-derived golden vector).
+///
+/// Reference: `Cardano.Ledger.Conway.TxBody` (CDDL keys 19–22).
+#[test]
+fn cbor_golden_conway_submitted_tx_round_trip_with_full_governance_payload() {
+    use std::collections::BTreeMap;
+
+    // --- Voting procedures (key 19) ---
+    // One DRep voting Yes on one governance action, with an anchor.
+    let voter = Voter::DRepKeyHash([0x11; 28]);
+    let action_id = GovActionId {
+        transaction_id: [0x22; 32],
+        gov_action_index: 7,
+    };
+    let procedure = VotingProcedure {
+        vote: Vote::Yes,
+        anchor: Some(Anchor {
+            url: "ipfs://vote".to_string(),
+            data_hash: [0x33; 32],
+        }),
+    };
+    let mut inner: BTreeMap<GovActionId, VotingProcedure> = BTreeMap::new();
+    inner.insert(action_id.clone(), procedure);
+    let mut outer: BTreeMap<Voter, BTreeMap<GovActionId, VotingProcedure>> = BTreeMap::new();
+    outer.insert(voter, inner);
+    let voting_procedures = VotingProcedures { procedures: outer };
+
+    // --- Proposal procedures (key 20) ---
+    // One TreasuryWithdrawals proposal with a guardrails script hash and
+    // a single non-trivial withdrawal entry (exercises the BTreeMap
+    // canonical-ordering encode path that production proposals use).
+    let mut withdrawals: BTreeMap<RewardAccount, u64> = BTreeMap::new();
+    withdrawals.insert(
+        RewardAccount {
+            network: 1,
+            credential: StakeCredential::AddrKeyHash([0x77; 28]),
+        },
+        1_500_000_000,
+    );
+    let proposal = ProposalProcedure {
+        deposit: 100_000_000_000,
+        reward_account: vec![0xE0; 29],
+        gov_action: GovAction::TreasuryWithdrawals {
+            withdrawals,
+            guardrails_script_hash: Some([0x44; 28]),
+        },
+        anchor: Anchor {
+            url: "ipfs://proposal".to_string(),
+            data_hash: [0x55; 32],
+        },
+    };
+
+    // --- Body ---
+    let body = ConwayTxBody {
+        inputs: vec![ShelleyTxIn {
+            transaction_id: [0x66; 32],
+            index: 0,
+        }],
+        outputs: vec![BabbageTxOut {
+            address: vec![0x61; 29],
+            amount: Value::Coin(4_000_000),
+            datum_option: None,
+            script_ref: None,
+        }],
+        fee: 350_000,
+        ttl: Some(1_000_000),
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: Some(voting_procedures),
+        proposal_procedures: Some(vec![proposal]),
+        current_treasury_value: Some(10_000_000_000),
+        treasury_donation: Some(500_000),
+    };
+
+    // --- Round-trip via SubmittedTx wrapper (the production decode path). ---
+    let tx = AlonzoCompatibleSubmittedTx::new(body, minimal_witness_set(), true, None);
+    let cbor = tx.to_cbor_bytes();
+    let decoded = AlonzoCompatibleSubmittedTx::<ConwayTxBody>::from_cbor_bytes(&cbor)
+        .expect("decode Conway with governance payload");
+
+    // Field-level equality first (better diagnostic on failure than raw bytes).
+    assert_eq!(decoded.body, tx.body);
+    assert!(decoded.body.voting_procedures.is_some(), "key 19 preserved");
+    assert!(decoded.body.proposal_procedures.is_some(), "key 20 preserved");
+    assert_eq!(decoded.body.current_treasury_value, Some(10_000_000_000));
+    assert_eq!(decoded.body.treasury_donation, Some(500_000));
+
+    // Byte-identical re-encode is the actual parity assertion.
+    let re_encoded = decoded.to_cbor_bytes();
+    assert_eq!(
+        cbor, re_encoded,
+        "Conway tx with full governance payload must round-trip byte-identically",
+    );
+
+    // Multi-era dispatch path also decodes cleanly.
+    let mst = MultiEraSubmittedTx::from_cbor_bytes_for_era(Era::Conway, &cbor)
+        .expect("decode Conway via multi-era");
+    assert_eq!(mst.era(), Era::Conway);
+    assert_eq!(mst.fee(), 350_000);
+}
+
 /// MultiEraSubmittedTx rejects Byron era.
 #[test]
 fn multi_era_submitted_tx_byron_unsupported() {
