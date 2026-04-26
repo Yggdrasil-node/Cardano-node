@@ -259,6 +259,30 @@ pub struct NodeConfigFile {
     /// Maximum number of persisted typed ledger checkpoints to retain.
     #[serde(default = "default_max_ledger_snapshots")]
     pub max_ledger_snapshots: usize,
+    /// Maximum number of warm peers the BlockFetch pool may concurrently
+    /// dispatch range requests to.
+    ///
+    /// Default `1` keeps the proven single-peer pipeline and is therefore
+    /// byte-for-byte equivalent to historical behaviour: ChainSync drives
+    /// a single leading peer, BlockFetch issues one range at a time, and
+    /// blocks are validated/applied in strict slot order.
+    ///
+    /// Operator opt-in for `> 1` is groundwork for the multi-peer
+    /// concurrent BlockFetch follow-up (Phase 3 item 5 of
+    /// `docs/PARITY_PLAN.md`). The pool foundation in
+    /// `crates/network/src/blockfetch_pool.rs` already exposes the
+    /// per-peer concurrency cap, range-splitter, and reorder buffer
+    /// needed to honour values `> 1`; the runtime wiring that actually
+    /// reads this knob and dispatches across N peers is the next slice.
+    /// Until that lands, values `> 1` parse but are effectively clamped
+    /// to single-peer behaviour at runtime — a non-default here is a
+    /// declaration of intent, not an immediate behaviour change.
+    ///
+    /// Reference: `Ouroboros.Network.BlockFetch.Decision` —
+    /// `bfcMaxConcurrencyDeadline = 1`, `bfcMaxConcurrencyBulkSync = 2`
+    /// (upstream typically caps at 2 per fetch-mode).
+    #[serde(default = "default_max_concurrent_block_fetch_peers")]
+    pub max_concurrent_block_fetch_peers: u8,
     /// The network magic for handshake (mainnet = 764824073).
     pub network_magic: u32,
     /// Whether on-the-wire Byron-era headers carry the network magic
@@ -1153,6 +1177,14 @@ fn default_max_kes_evolutions() -> u64 {
     62
 }
 
+/// Default for [`NodeConfigFile::max_concurrent_block_fetch_peers`].
+///
+/// `1` preserves the proven single-peer BlockFetch pipeline. See the
+/// field rustdoc for the multi-peer follow-up roadmap.
+fn default_max_concurrent_block_fetch_peers() -> u8 {
+    1
+}
+
 fn default_epoch_length() -> u64 {
     432_000
 }
@@ -1459,6 +1491,7 @@ pub fn mainnet_config() -> NodeConfigFile {
         storage_dir: PathBuf::from("data/mainnet"),
         checkpoint_interval_slots: default_checkpoint_interval_slots(),
         max_ledger_snapshots: default_max_ledger_snapshots(),
+        max_concurrent_block_fetch_peers: default_max_concurrent_block_fetch_peers(),
         network_magic: MAINNET_NETWORK_MAGIC,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -1543,6 +1576,7 @@ pub fn preprod_config() -> NodeConfigFile {
         storage_dir: PathBuf::from("data/preprod"),
         checkpoint_interval_slots: default_checkpoint_interval_slots(),
         max_ledger_snapshots: default_max_ledger_snapshots(),
+        max_concurrent_block_fetch_peers: default_max_concurrent_block_fetch_peers(),
         network_magic: PREPROD_NETWORK_MAGIC,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -1627,6 +1661,7 @@ pub fn preview_config() -> NodeConfigFile {
         storage_dir: PathBuf::from("data/preview"),
         checkpoint_interval_slots: default_checkpoint_interval_slots(),
         max_ledger_snapshots: default_max_ledger_snapshots(),
+        max_concurrent_block_fetch_peers: default_max_concurrent_block_fetch_peers(),
         network_magic: PREVIEW_NETWORK_MAGIC,
         protocol_versions: vec![13, 14],
         slots_per_kes_period: 129_600,
@@ -1834,6 +1869,44 @@ mod tests {
             preview_config().max_major_protocol_version,
             CONWAY_MAJOR_PROTOCOL_VERSION,
         );
+    }
+
+    /// Pin the canonical default for `max_concurrent_block_fetch_peers`
+    /// across every preset.
+    ///
+    /// The default `1` keeps the proven single-peer BlockFetch pipeline.
+    /// Drift here would silently switch a preset onto a code path that
+    /// doesn't yet exist (multi-peer dispatch is groundwork-only — see
+    /// the field rustdoc and `docs/PARITY_PLAN.md` Phase 3 item 5).
+    /// Iterates `NetworkPreset::all()` (slice 82) to catch the case
+    /// where someone bumps mainnet's default but forgets preprod/preview.
+    #[test]
+    fn preset_configs_share_canonical_max_concurrent_block_fetch_peers() {
+        for &preset in NetworkPreset::all() {
+            let cfg = preset.to_config();
+            assert_eq!(
+                cfg.max_concurrent_block_fetch_peers, 1,
+                "preset {preset:?}: max_concurrent_block_fetch_peers must default to 1 \
+                 (single-peer pipeline; multi-peer is Phase 3 item 5 follow-up)",
+            );
+        }
+    }
+
+    /// Pin that the `default_max_concurrent_block_fetch_peers()`
+    /// fallback used by serde matches the explicit per-preset default.
+    /// Drift between serde-default (parsed-from-disk path) and the
+    /// preset constructors (in-process default path) would silently
+    /// produce different runtime behaviour for the same nominal preset.
+    #[test]
+    fn default_max_concurrent_block_fetch_peers_matches_preset_value() {
+        assert_eq!(default_max_concurrent_block_fetch_peers(), 1);
+        for &preset in NetworkPreset::all() {
+            assert_eq!(
+                preset.to_config().max_concurrent_block_fetch_peers,
+                default_max_concurrent_block_fetch_peers(),
+                "preset {preset:?}: in-process default must match serde-default",
+            );
+        }
     }
 
     #[test]
