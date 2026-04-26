@@ -51,6 +51,32 @@ impl MiniProtocolNum {
     pub const NTC_LOCAL_STATE_QUERY: Self = Self(7);
     /// NtC LocalTxMonitor — protocol number 9.
     pub const NTC_LOCAL_TX_MONITOR: Self = Self(9);
+
+    /// Canonical, ascending slice of every named mini-protocol number.
+    ///
+    /// Returned in strictly-ascending wire-ID order so a copy-paste reorder
+    /// or a missing addition fails the drift-guard test in this module.
+    /// Adding a new mini-protocol upstream MUST extend this list AND its
+    /// matching `pub const`. Used by both the value-pin drift guard here
+    /// and (transitively) by the per-side `N2N_PROTOCOLS` / `NTC_PROTOCOLS`
+    /// content-pin tests in `peer.rs` / `ntc_peer.rs`.
+    ///
+    /// Reference: `network-mux/src/Network/Mux/Types.hs` —
+    /// `MiniProtocolNum`; `Ouroboros.Network.NodeToNode` and
+    /// `Ouroboros.Network.NodeToClient` for the per-side subsets.
+    pub const fn all_named() -> &'static [Self] {
+        &[
+            Self::HANDSHAKE,
+            Self::CHAIN_SYNC,
+            Self::BLOCK_FETCH,
+            Self::TX_SUBMISSION,
+            Self::NTC_LOCAL_TX_SUBMISSION,
+            Self::NTC_LOCAL_STATE_QUERY,
+            Self::KEEP_ALIVE,
+            Self::NTC_LOCAL_TX_MONITOR,
+            Self::PEER_SHARING,
+        ]
+    }
 }
 
 /// Direction of a multiplexed mini-protocol conversation.
@@ -152,3 +178,88 @@ impl SduHeader {
 /// for new code.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MuxChannel(pub u16);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pin every named `MiniProtocolNum` constant against its canonical
+    /// upstream wire ID. A typo in any single `pub const X: Self = Self(N)`
+    /// would otherwise cause silent mux misrouting (e.g. peer's BlockFetch
+    /// frames delivered to a TxSubmission handler) — the worst-case mux
+    /// bug, since both sides could "succeed" at the SDU level while
+    /// running entirely different conversations.
+    ///
+    /// References:
+    ///   - `network-mux/src/Network/Mux/Types.hs` — `MiniProtocolNum`
+    ///   - `Ouroboros.Network.NodeToNode.nodeToNodeProtocols` (NtN subset)
+    ///   - `Ouroboros.Network.NodeToClient.nodeToClientProtocols` (NtC subset)
+    #[test]
+    fn mini_protocol_num_constants_match_upstream_wire_ids() {
+        // NtN-side protocols (also includes the shared HANDSHAKE).
+        assert_eq!(MiniProtocolNum::HANDSHAKE.0, 0, "Handshake wire ID");
+        assert_eq!(MiniProtocolNum::CHAIN_SYNC.0, 2, "ChainSync wire ID");
+        assert_eq!(MiniProtocolNum::BLOCK_FETCH.0, 3, "BlockFetch wire ID");
+        assert_eq!(MiniProtocolNum::TX_SUBMISSION.0, 4, "TxSubmission2 wire ID");
+        assert_eq!(MiniProtocolNum::KEEP_ALIVE.0, 8, "KeepAlive wire ID");
+        assert_eq!(MiniProtocolNum::PEER_SHARING.0, 10, "PeerSharing wire ID");
+
+        // NtC-side protocols.
+        assert_eq!(
+            MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION.0,
+            5,
+            "NtC LocalTxSubmission wire ID",
+        );
+        assert_eq!(
+            MiniProtocolNum::NTC_LOCAL_STATE_QUERY.0,
+            7,
+            "NtC LocalStateQuery wire ID",
+        );
+        assert_eq!(
+            MiniProtocolNum::NTC_LOCAL_TX_MONITOR.0,
+            9,
+            "NtC LocalTxMonitor wire ID",
+        );
+    }
+
+    #[test]
+    fn mini_protocol_num_all_named_is_strictly_ascending_and_complete() {
+        let all = MiniProtocolNum::all_named();
+        assert_eq!(
+            all.len(),
+            9,
+            "MiniProtocolNum::all_named() must cover every named constant \
+             (6 NtN + 3 NtC; HANDSHAKE is shared and counted once)",
+        );
+
+        // Strictly-ascending invariant: each entry's wire ID is greater
+        // than the previous entry's. Catches a copy-paste reorder in
+        // `all_named()` that happens to leave the *set* unchanged but
+        // breaks any downstream code relying on ordered iteration.
+        for window in all.windows(2) {
+            assert!(
+                window[0].0 < window[1].0,
+                "all_named() must be strictly ascending: {} >= {}",
+                window[0].0,
+                window[1].0,
+            );
+        }
+
+        // Every named `pub const` must appear in `all_named()` exactly
+        // once. Pinning each entry by-value here turns a missing addition
+        // (someone defines a new constant but forgets to extend the
+        // slice) into a CI failure naming the offending position.
+        let expected = [
+            MiniProtocolNum::HANDSHAKE,
+            MiniProtocolNum::CHAIN_SYNC,
+            MiniProtocolNum::BLOCK_FETCH,
+            MiniProtocolNum::TX_SUBMISSION,
+            MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
+            MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
+            MiniProtocolNum::KEEP_ALIVE,
+            MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
+            MiniProtocolNum::PEER_SHARING,
+        ];
+        assert_eq!(all, &expected[..]);
+    }
+}

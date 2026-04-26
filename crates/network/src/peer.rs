@@ -249,4 +249,34 @@ mod tests {
     fn n2n_protocols_include_peer_sharing() {
         assert!(N2N_PROTOCOLS.contains(&MiniProtocolNum::PEER_SHARING));
     }
+
+    /// Pin the full `N2N_PROTOCOLS` array against its canonical upstream
+    /// content. Composes the per-constant value pin from
+    /// `multiplexer::tests::mini_protocol_num_constants_match_upstream_wire_ids`
+    /// with the per-side membership: a future regression that adds a new
+    /// NtN protocol upstream but forgets to extend this array would
+    /// silently drop the protocol from negotiation; conversely, an
+    /// accidental NtC-only protocol mixed in here would route NtC frames
+    /// over an NtN connection.
+    ///
+    /// The exact-content equality (vs `contains` checks) makes BOTH
+    /// failure modes surface as a single CI failure naming the entire
+    /// drifted array.
+    ///
+    /// Reference: `Ouroboros.Network.NodeToNode.nodeToNodeProtocols`.
+    #[test]
+    fn n2n_protocols_match_canonical_six() {
+        let expected = [
+            MiniProtocolNum::HANDSHAKE,
+            MiniProtocolNum::CHAIN_SYNC,
+            MiniProtocolNum::BLOCK_FETCH,
+            MiniProtocolNum::TX_SUBMISSION,
+            MiniProtocolNum::KEEP_ALIVE,
+            MiniProtocolNum::PEER_SHARING,
+        ];
+        assert_eq!(
+            N2N_PROTOCOLS, expected,
+            "N2N_PROTOCOLS drifted from the canonical NtN protocol set",
+        );
+    }
 }

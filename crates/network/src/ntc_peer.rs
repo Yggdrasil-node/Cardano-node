@@ -463,6 +463,32 @@ pub async fn ntc_accept(
 mod tests {
     use super::*;
 
+    /// Pin the full `NTC_PROTOCOLS` array against its canonical upstream
+    /// content. Mirror of `peer::tests::n2n_protocols_match_canonical_six`
+    /// for the NtC side — see that test's rustdoc for the failure-mode
+    /// rationale.
+    ///
+    /// HANDSHAKE is the only mini-protocol shared between N2N and NTC;
+    /// pinning both sides' arrays exactly preserves that disjointness
+    /// invariant by construction (no need for an explicit cross-array
+    /// intersection test, which would require exposing both private
+    /// constants to a third file).
+    ///
+    /// Reference: `Ouroboros.Network.NodeToClient.nodeToClientProtocols`.
+    #[test]
+    fn ntc_protocols_match_canonical_four() {
+        let expected = [
+            MiniProtocolNum::HANDSHAKE,
+            MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION,
+            MiniProtocolNum::NTC_LOCAL_STATE_QUERY,
+            MiniProtocolNum::NTC_LOCAL_TX_MONITOR,
+        ];
+        assert_eq!(
+            NTC_PROTOCOLS, expected,
+            "NTC_PROTOCOLS drifted from the canonical NtC protocol set",
+        );
+    }
+
     #[test]
     fn ntc_supported_versions_covers_v9_through_v16_descending() {
         // The NtC handshake selects "best common version" by iterating
