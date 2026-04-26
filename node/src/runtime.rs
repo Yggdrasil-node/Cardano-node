@@ -404,16 +404,23 @@ fn apply_control_close(bundle: &mut TemperatureBundle<ControlMessage>) {
 /// Upstream: `hotProtocol` scheduling allocates proportionally more egress
 /// bandwidth to data-intensive mini-protocols when a peer is hot, reducing
 /// fetch latency and improving chain sync throughput.
-const HOT_WEIGHT_CHAIN_SYNC: u8 = 3;
-const HOT_WEIGHT_BLOCK_FETCH: u8 = 2;
-
-fn apply_hot_weights(weights: &[(MiniProtocolNum, yggdrasil_network::WeightHandle)]) {
+///
+/// Slice D-Scheduler — these weights are now sourced from the governor's
+/// [`HotPeerScheduling`](yggdrasil_network::HotPeerScheduling) table
+/// rather than hardcoded here, so operators can tune the per-protocol
+/// share via `set_hot_protocol_weight` without touching this file. The
+/// upstream-default share comes from `defaultMiniProtocolParameters`
+/// (BlockFetch=10, ChainSync=3, TxSubmission=2, KeepAlive=1, PeerSharing=1).
+fn apply_hot_weights(
+    weights: &[(MiniProtocolNum, yggdrasil_network::WeightHandle)],
+    scheduling: &yggdrasil_network::HotPeerScheduling,
+) {
     for (proto, handle) in weights {
-        let w = match *proto {
-            MiniProtocolNum::CHAIN_SYNC => HOT_WEIGHT_CHAIN_SYNC,
-            MiniProtocolNum::BLOCK_FETCH => HOT_WEIGHT_BLOCK_FETCH,
-            _ => yggdrasil_network::DEFAULT_PROTOCOL_WEIGHT,
-        };
+        // `WeightHandle::set` floor-clamps to 1, but make the intent
+        // explicit here: a `0` weight in the scheduling table means
+        // "disable from scheduler share" and we don't want a zero
+        // round count to starve a protocol entirely.
+        let w = scheduling.hot_protocol_weight(*proto).max(1);
         handle.set(w);
     }
 }
@@ -553,14 +560,20 @@ impl OutboundPeerManager {
     /// Returns `true` when the peer was found and its status changed.
     /// The underlying session remains alive so the peer continues to
     /// receive KeepAlive heartbeats while hot.
-    fn promote_to_hot(&mut self, peer: SocketAddr) -> bool {
+    fn promote_to_hot(
+        &mut self,
+        peer: SocketAddr,
+        scheduling: &yggdrasil_network::HotPeerScheduling,
+    ) -> bool {
         match self.warm_peers.get_mut(&peer) {
             Some(managed) if !managed.is_hot => {
                 managed.is_hot = true;
                 apply_control_activate(&mut managed.control);
-                // Boost hot-tier protocol weights so ChainSync and BlockFetch
-                // get proportionally more egress bandwidth.
-                apply_hot_weights(&managed.session.protocol_weights);
+                // Boost hot-tier protocol weights from the governor's
+                // `HotPeerScheduling` table so per-protocol egress share
+                // matches upstream `defaultMiniProtocolParameters`
+                // (BlockFetch=10, ChainSync=3, TxSubmission=2, etc.).
+                apply_hot_weights(&managed.session.protocol_weights, scheduling);
                 true
             }
             _ => false,
@@ -2273,7 +2286,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             }
                             PeerStateAction::ActivateConnection(peer) => {
                                 governor_state.mark_in_flight_hot(peer);
-                                if peer_manager.promote_to_hot(peer) {
+                                if peer_manager.promote_to_hot(peer, &governor_state.hot_scheduling) {
                                     let mut registry = peer_registry
                                         .write()
                                         .expect("peer registry lock poisoned");
@@ -6831,7 +6844,7 @@ mod tests {
         let mut mgr = OutboundPeerManager::new();
 
         // Cannot promote unknown peer.
-        assert!(!mgr.promote_to_hot(addr));
+        assert!(!mgr.promote_to_hot(addr, &yggdrasil_network::HotPeerScheduling::new()));
 
         // Simulate adding a warm peer directly.
         let session = fake_peer_session(addr);
@@ -6841,13 +6854,73 @@ mod tests {
         );
 
         // First promotion succeeds.
-        assert!(mgr.promote_to_hot(addr));
+        assert!(mgr.promote_to_hot(addr, &yggdrasil_network::HotPeerScheduling::new()));
         assert!(mgr.warm_peers[&addr].is_hot);
         assert_eq!(mgr.warm_peers[&addr].control.hot, ControlMessage::Continue);
         assert_eq!(mgr.warm_peers[&addr].control.warm, ControlMessage::Quiesce);
 
         // Second promotion is idempotent.
-        assert!(!mgr.promote_to_hot(addr));
+        assert!(!mgr.promote_to_hot(addr, &yggdrasil_network::HotPeerScheduling::new()));
+    }
+
+    #[test]
+    fn promote_to_hot_applies_upstream_canonical_weights() {
+        // Slice D-Scheduler — `apply_hot_weights` must consult the
+        // `HotPeerScheduling` table rather than the previously-hardcoded
+        // constants.  The default `HotPeerScheduling::new()` carries the
+        // upstream `defaultMiniProtocolParameters` values
+        // (BlockFetch=10, ChainSync=3, TxSubmission=2, KeepAlive=1).
+        use super::OutboundPeerManager;
+        use yggdrasil_network::multiplexer::MiniProtocolNum;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3050".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session(addr);
+        let weight_lookup: std::collections::BTreeMap<MiniProtocolNum, yggdrasil_network::WeightHandle> =
+            session.protocol_weights.iter().cloned().collect();
+        mgr.warm_peers.insert(
+            addr,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+
+        let scheduling = yggdrasil_network::HotPeerScheduling::new();
+        assert!(mgr.promote_to_hot(addr, &scheduling));
+
+        // BlockFetch must now carry the upstream-canonical 10 (was 2 in
+        // the pre-Slice-D-Scheduler hardcoded path).
+        assert_eq!(
+            weight_lookup[&MiniProtocolNum::BLOCK_FETCH].get(),
+            10,
+            "BlockFetch weight must match HotPeerScheduling upstream default",
+        );
+        assert_eq!(weight_lookup[&MiniProtocolNum::CHAIN_SYNC].get(), 3);
+        assert_eq!(weight_lookup[&MiniProtocolNum::TX_SUBMISSION].get(), 2);
+        assert_eq!(weight_lookup[&MiniProtocolNum::KEEP_ALIVE].get(), 1);
+    }
+
+    #[test]
+    fn promote_to_hot_honours_runtime_weight_overrides() {
+        // Operators can override per-protocol weights via
+        // `set_hot_protocol_weight` — `apply_hot_weights` must read the
+        // overridden value, not fall back to the upstream default.
+        use super::OutboundPeerManager;
+        use yggdrasil_network::multiplexer::MiniProtocolNum;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3051".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session(addr);
+        let weight_lookup: std::collections::BTreeMap<MiniProtocolNum, yggdrasil_network::WeightHandle> =
+            session.protocol_weights.iter().cloned().collect();
+        mgr.warm_peers.insert(
+            addr,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+
+        let mut scheduling = yggdrasil_network::HotPeerScheduling::new();
+        scheduling.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 20);
+        // Set BlockFetch to a non-default 20 and verify it lands.
+        assert!(mgr.promote_to_hot(addr, &scheduling));
+        assert_eq!(weight_lookup[&MiniProtocolNum::BLOCK_FETCH].get(), 20);
     }
 
     #[test]
@@ -6863,7 +6936,7 @@ mod tests {
             super::ManagedWarmPeer::new(session, std::time::Instant::now()),
         );
 
-        mgr.promote_to_hot(addr);
+        mgr.promote_to_hot(addr, &yggdrasil_network::HotPeerScheduling::new());
         assert!(mgr.warm_peers[&addr].is_hot);
 
         assert!(mgr.demote_to_warm(addr));
@@ -6970,8 +7043,8 @@ mod tests {
         assert!(mgr.best_hot_peer().is_none());
 
         // Promote both to hot.
-        mgr.promote_to_hot(addr_a);
-        mgr.promote_to_hot(addr_b);
+        mgr.promote_to_hot(addr_a, &yggdrasil_network::HotPeerScheduling::new());
+        mgr.promote_to_hot(addr_b, &yggdrasil_network::HotPeerScheduling::new());
 
         // Still none — no tips cached yet.
         assert!(mgr.best_hot_peer().is_none());
