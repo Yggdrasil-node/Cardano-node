@@ -3286,7 +3286,17 @@ fn re_admit_rolled_back_tx_ids(
             Err(MempoolError::Duplicate(_)) => stats.duplicate += 1,
             Err(MempoolError::TtlExpired { .. }) => stats.expired += 1,
             Err(MempoolError::ConflictingInputs(_)) => stats.conflicting += 1,
-            Err(MempoolError::CapacityExceeded { .. }) => stats.capacity_exceeded += 1,
+            Err(MempoolError::CapacityExceeded { .. })
+            | Err(MempoolError::EvictionInsufficientSpace { .. })
+            | Err(MempoolError::EvictionNotWorthwhile { .. }) => {
+                // Eviction-policy variants are reachable only via
+                // `insert_with_eviction`. The rollback re-admission path
+                // uses `insert_checked` so only `CapacityExceeded` is
+                // produced today, but the wider arm keeps the match
+                // exhaustive against future call-graph changes that
+                // route re-admissions through the eviction-aware path.
+                stats.capacity_exceeded += 1;
+            }
             Err(MempoolError::FeeTooSmall { .. })
             | Err(MempoolError::TxTooLarge { .. })
             | Err(MempoolError::ExUnitsExceedTxLimit { .. })
