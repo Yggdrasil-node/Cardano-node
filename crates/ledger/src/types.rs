@@ -199,7 +199,7 @@ fn hex_short(bytes: &[u8; 32]) -> String {
 
 /// A nonce used in the Praos leader election lottery.
 ///
-/// The neutral nonce is an identity element for nonce combination (XOR):
+/// The neutral nonce is an identity element for nonce combination:
 /// combining any nonce with `Neutral` yields that nonce unchanged.
 ///
 /// Reference: `Cardano.Ledger.BaseTypes` — `Nonce` (`NeutralNonce` |
@@ -213,38 +213,32 @@ pub enum Nonce {
 }
 
 impl Nonce {
-    /// Combines two nonces by XOR-ing their bytes.
+    /// Combines two nonces by hashing the concatenation of their byte
+    /// representations: `Hash(a) ⭒ Hash(b) = Hash(Blake2b-256(a ‖ b))`.
     ///
-    /// **⚠ Known upstream-parity gap.** Upstream's `(⭒)` operator is
-    /// defined as `Nonce(Blake2b-256(bytesOf(a) ‖ bytesOf(b)))` — a
-    /// hash-concatenation, NOT a byte-wise XOR. The canonical reference
-    /// is the `Semigroup Nonce` instance in
-    /// `Cardano.Ledger.BaseTypes` (cardano-ledger), reused by
-    /// `Cardano.Protocol.TPraos.BHeader` as the nonce combinator across
-    /// UPDN and TICKN.
+    /// This is the upstream `Semigroup Nonce` instance from
+    /// `Cardano.Ledger.BaseTypes`, reused by
+    /// `Cardano.Protocol.TPraos.BHeader` (`combineNonces`) and the
+    /// Praos UPDN/TICKN rules. Bit-identical reproduction of mainnet
+    /// epoch nonces — and therefore VRF verification against real on-chain
+    /// blocks — requires this exact combinator.
     ///
-    /// The XOR implementation here is a historical simplification; many
-    /// downstream tests (e.g. `nonce_combine_is_xor` in
-    /// `crates/consensus/tests/integration.rs`) pin the XOR semantics
-    /// directly and would need to be rewritten alongside any switch to
-    /// the upstream form. Real-network VRF verification depends on the
-    /// epoch-nonce evolution being bit-identical to upstream's, so this
-    /// gap blocks mainnet-replay parity and is tracked for a dedicated
-    /// follow-up slice rather than squeezed into incremental work.
+    /// Rules:
+    /// * `Neutral ⭒ n = n`
+    /// * `n ⭒ Neutral = n`
+    /// * `Hash(a) ⭒ Hash(b) = Hash(Blake2b-256(a ‖ b))`
     ///
-    /// Current rules (XOR — local):
-    /// * `Neutral ⊕ n = n`
-    /// * `n ⊕ Neutral = n`
-    /// * `Hash(a) ⊕ Hash(b) = Hash(a XOR b)`
+    /// References:
+    /// * [`Semigroup Nonce`](https://github.com/IntersectMBO/cardano-ledger/blob/master/libs/cardano-ledger-core/src/Cardano/Ledger/BaseTypes.hs)
+    /// * [`combineNonces`](https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/shelley/impl/src/Cardano/Protocol/TPraos/BHeader.hs)
     pub fn combine(self, other: Self) -> Self {
         match (self, other) {
             (Self::Neutral, n) | (n, Self::Neutral) => n,
             (Self::Hash(a), Self::Hash(b)) => {
-                let mut out = [0u8; 32];
-                for i in 0..32 {
-                    out[i] = a[i] ^ b[i];
-                }
-                Self::Hash(out)
+                let mut preimage = [0u8; 64];
+                preimage[..32].copy_from_slice(&a);
+                preimage[32..].copy_from_slice(&b);
+                Self::Hash(yggdrasil_crypto::blake2b::hash_bytes_256(&preimage).0)
             }
         }
     }
@@ -1151,15 +1145,30 @@ mod tests {
     }
 
     #[test]
-    fn nonce_combine_xor() {
+    fn nonce_combine_is_blake2b_concat() {
+        // Upstream `Semigroup Nonce` (Cardano.Ledger.BaseTypes):
+        //     Hash(a) ⭒ Hash(b) = Hash(Blake2b-256(a ‖ b))
+        // The expected hex below is the Blake2b-256 of [0xFF; 32] ‖ [0x0F; 32]
+        // and is byte-identical to what the upstream Haskell `combineNonces`
+        // produces for the same inputs, pinning mainnet on-chain nonce parity.
         let a = Nonce::Hash([0xff; 32]);
         let b = Nonce::Hash([0x0f; 32]);
-        let c = a.combine(b);
-        if let Nonce::Hash(h) = c {
-            assert!(h.iter().all(|&byte| byte == 0xf0));
-        } else {
-            panic!("Expected Hash");
-        }
+        let expected: [u8; 32] = [
+            0x5c, 0xd6, 0x17, 0x17, 0xec, 0x07, 0xb4, 0xb5, 0xca, 0x8c, 0x6e, 0xb0, 0x4b, 0xd9,
+            0xad, 0xc6, 0xc9, 0x4b, 0x4d, 0x10, 0xf8, 0x35, 0x6c, 0x6f, 0x11, 0x38, 0x00, 0x77,
+            0xa0, 0x2a, 0x29, 0xc0,
+        ];
+        assert_eq!(a.combine(b), Nonce::Hash(expected));
+    }
+
+    #[test]
+    fn nonce_combine_is_not_commutative() {
+        // Hash-concatenation is order-sensitive (XOR was symmetric); guard
+        // against a future refactor that silently sorts or canonicalises the
+        // operands and would break upstream UPDN/TICKN evolution order.
+        let a = Nonce::Hash([0x01; 32]);
+        let b = Nonce::Hash([0x02; 32]);
+        assert_ne!(a.combine(b), b.combine(a));
     }
 
     #[test]

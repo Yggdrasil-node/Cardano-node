@@ -122,8 +122,9 @@ pub struct NonceEvolutionConfig {
 /// This tracks the five nonce components described in `ChainDepState` and
 /// `PrtclState` from the upstream Haskell implementation:
 ///
-/// - `evolving_nonce` (η_v): XOR of all VRF nonce outputs seen so far in the
-///   epoch; always updated per block.
+/// - `evolving_nonce` (η_v): cumulative `Semigroup Nonce`-combine
+///   (Blake2b-256(a ‖ b)) of all VRF nonce outputs seen so far in the epoch;
+///   always updated per block.
 /// - `candidate_nonce` (η_c): Same as `evolving_nonce` until the stability
 ///   window, then frozen.
 /// - `epoch_nonce`: The nonce used for VRF verification in the current epoch.
@@ -136,15 +137,16 @@ pub struct NonceEvolutionConfig {
 /// in `Cardano.Protocol.TPraos.API`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NonceEvolutionState {
-    /// Evolving nonce (η_v) — XOR'd with every block's VRF nonce output.
+    /// Evolving nonce (η_v) — combined (Blake2b-256(a ‖ b)) with every
+    /// block's VRF nonce output.
     pub evolving_nonce: Nonce,
     /// Candidate nonce (η_c) — tracks evolving nonce until stability window,
     /// then freezes.
     pub candidate_nonce: Nonce,
     /// Current epoch nonce used for VRF verification.
     pub epoch_nonce: Nonce,
-    /// Hash of the last block from the previous epoch, XOR'd into the epoch
-    /// nonce at the next epoch transition.
+    /// Hash of the last block from the previous epoch, combined into the
+    /// epoch nonce at the next epoch transition (Blake2b-256(a ‖ b)).
     pub prev_hash_nonce: Nonce,
     /// Nonce from the `prev_hash` field of the last applied block header.
     pub lab_nonce: Nonce,

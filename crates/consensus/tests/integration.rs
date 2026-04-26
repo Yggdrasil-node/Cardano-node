@@ -137,17 +137,33 @@ fn nonce_neutral_is_identity() {
 }
 
 #[test]
-fn nonce_combine_is_xor() {
+fn nonce_combine_is_blake2b_concat() {
+    // Upstream `combineNonces` from `Cardano.Protocol.TPraos.BHeader`:
+    //     Hash(a) ⭒ Hash(b) = Hash(Blake2b-256(a ‖ b))
+    // The expected bytes below are Blake2b-256 of [0xFF; 32] ‖ [0x0F; 32].
     let a = Nonce::Hash([0xFF; 32]);
     let b = Nonce::Hash([0x0F; 32]);
-    let combined = a.combine(b);
-    assert_eq!(combined, Nonce::Hash([0xF0; 32]));
+    let expected: [u8; 32] = [
+        0x5c, 0xd6, 0x17, 0x17, 0xec, 0x07, 0xb4, 0xb5, 0xca, 0x8c, 0x6e, 0xb0, 0x4b, 0xd9, 0xad,
+        0xc6, 0xc9, 0x4b, 0x4d, 0x10, 0xf8, 0x35, 0x6c, 0x6f, 0x11, 0x38, 0x00, 0x77, 0xa0, 0x2a,
+        0x29, 0xc0,
+    ];
+    assert_eq!(a.combine(b), Nonce::Hash(expected));
 }
 
 #[test]
-fn nonce_self_combine_yields_zero() {
+fn nonce_self_combine_is_deterministic_hash() {
+    // Self-combine is no longer the all-zero XOR identity; it is the
+    // Blake2b-256 of `n ‖ n`. The expected bytes below pin that for
+    // n = [0x42; 32], also asserting it differs from the input.
     let n = Nonce::Hash([0x42; 32]);
-    assert_eq!(n.combine(n), Nonce::Hash([0x00; 32]));
+    let expected: [u8; 32] = [
+        0xb4, 0xe0, 0x2e, 0xd6, 0x97, 0x7c, 0x5c, 0xd9, 0xac, 0x43, 0x98, 0xe9, 0x4e, 0x63, 0x76,
+        0xee, 0x2f, 0xcd, 0x60, 0x26, 0xf8, 0x83, 0x3b, 0x7e, 0x7d, 0x7d, 0xd6, 0xa3, 0x35, 0x72,
+        0xb3, 0xc4,
+    ];
+    assert_eq!(n.combine(n), Nonce::Hash(expected));
+    assert_ne!(n.combine(n), n);
 }
 
 // ---------------------------------------------------------------------------
@@ -1819,10 +1835,13 @@ fn nonce_evolution_stability_window_exact_boundary() {
 }
 
 #[test]
-fn nonce_evolution_neutral_extra_entropy() {
-    // Verify that Nonce::Neutral extra entropy produces the same epoch nonce
-    // as the default configuration. Neutral is the identity for combine(),
-    // so candidate ⭒ prev_hash ⭒ Neutral == candidate ⭒ prev_hash.
+fn nonce_evolution_neutral_vs_zero_extra_entropy() {
+    // Under upstream `Semigroup Nonce` (hash-concatenation), only
+    // `Nonce::Neutral` is an identity element — `Nonce::Hash([0; 32])` is
+    // NOT, because `Blake2b-256(x ‖ 0…0) ≠ x`. Two configurations that
+    // were equivalent under the historical XOR rule must therefore now
+    // produce different epoch nonces. This pins the upstream-parity
+    // behavior change so any future regression to XOR semantics fails CI.
     let config_neutral = NonceEvolutionConfig {
         epoch_size: EpochSize(10),
         stability_window: 3,
@@ -1870,12 +1889,9 @@ fn nonce_evolution_neutral_extra_entropy() {
         NonceDerivation::TPraos,
     );
 
-    // Both Nonce::Neutral and Nonce::Hash([0;32]) act as identity elements
-    // under combine (Neutral by definition, Hash([0;32]) because XOR with
-    // zeros is a no-op), so the resulting epoch nonces must be equal.
-    assert_eq!(
+    assert_ne!(
         state_neutral.epoch_nonce, state_zero.epoch_nonce,
-        "Neutral and Hash([0;32]) are both identity for XOR combine"
+        "Hash([0;32]) is not an identity under Blake2b-concat combine"
     );
 }
 
@@ -2157,7 +2173,7 @@ fn tickn_with_non_neutral_extra_entropy() {
     let expected = candidate.combine(Nonce::Neutral).combine(extra);
     assert_eq!(
         state.epoch_nonce, expected,
-        "extra_entropy XOR'd into epoch nonce"
+        "extra_entropy combined into epoch nonce"
     );
     // Verify it's different from what we'd get with neutral extra_entropy.
     assert_ne!(
