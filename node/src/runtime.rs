@@ -127,7 +127,7 @@ fn update_bp_state_sigma(
 }
 
 /// Runtime governor configuration derived from node configuration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RuntimeGovernorConfig {
     /// Period between governor evaluation ticks.
     pub tick_interval: Duration,
@@ -139,6 +139,23 @@ pub struct RuntimeGovernorConfig {
     pub consensus_mode: ConsensusMode,
     /// Target peer counts maintained by the governor.
     pub targets: GovernorTargets,
+    /// Optional shared [`BlockFetchInstrumentation`] handle. When set, the
+    /// governor tick propagates the per-tick `fetch_mode_from_judgement`
+    /// signal into the pool's per-peer concurrency cap, mirroring upstream
+    /// `Ouroboros.Network.BlockFetch.ConsensusInterface.mkReadFetchMode`
+    /// where `LedgerStateJudgement` drives `bfcMaxConcurrency{BulkSync,
+    /// Deadline}`. When `None`, the pool stays in whatever mode it was
+    /// constructed with — same behavior as before this slice.
+    pub block_fetch_pool: Option<yggdrasil_network::BlockFetchInstrumentation>,
+    /// Genesis-derived inputs feeding the live `LedgerStateJudgement`
+    /// computation in [`ChainDbConsensusLedgerSource`]. Mirrors upstream
+    /// `mkLedgerStateJudgement` from
+    /// `Cardano.Node.Diffusion.Configuration` — the judgement flips from
+    /// `YoungEnough` to `TooOld` when `now - tipSlotTime` exceeds
+    /// `max_ledger_state_age_secs`. Defaults to the conservative
+    /// fallback (no genesis timing → always `YoungEnough`) so existing
+    /// test paths keep working.
+    pub ledger_judgement_settings: LedgerJudgementSettings,
 }
 
 impl RuntimeGovernorConfig {
@@ -156,7 +173,32 @@ impl RuntimeGovernorConfig {
             peer_sharing,
             consensus_mode,
             targets,
+            block_fetch_pool: None,
+            ledger_judgement_settings: LedgerJudgementSettings::default(),
         }
+    }
+
+    /// Attach a shared [`BlockFetchInstrumentation`] handle so the governor
+    /// tick propagates `fetch_mode_from_judgement(...)` into the pool's
+    /// per-peer concurrency cap. Pass `None` (the default) to keep the
+    /// pool's mode pinned at construction time.
+    pub fn with_block_fetch_pool(mut self, pool: Option<yggdrasil_network::BlockFetchInstrumentation>) -> Self {
+        self.block_fetch_pool = pool;
+        self
+    }
+
+    /// Attach genesis-derived [`LedgerJudgementSettings`] so the
+    /// `ChainDbConsensusLedgerSource` returned by the governor's ledger-peer
+    /// refresh can compute a real wall-clock-based `LedgerStateJudgement`
+    /// instead of the legacy hardcoded `YoungEnough`. Pass the default
+    /// value (the constructor sets it) to keep the legacy fallback
+    /// behavior — useful for tests that don't configure genesis.
+    pub fn with_ledger_judgement_settings(
+        mut self,
+        settings: LedgerJudgementSettings,
+    ) -> Self {
+        self.ledger_judgement_settings = settings;
+        self
     }
 }
 
@@ -918,6 +960,14 @@ fn ledger_peer_snapshot_from_ledger_state(ledger_state: &LedgerState) -> LedgerP
 /// network-owned `live_refresh_ledger_peer_registry` orchestration can pull
 /// authoritative `(latest_slot, judgement, ledger_snapshot)` inputs from the
 /// node's storage layer without the network crate depending on storage types.
+///
+/// Carries the genesis timing inputs (`system_start_unix_secs`,
+/// `slot_length_secs`) plus the configured `max_ledger_state_age_secs`
+/// threshold so each `observe()` call can derive a real
+/// [`LedgerStateJudgement`] from the recovered tip's wall-clock age,
+/// matching upstream `mkLedgerStateJudgement` from
+/// `Cardano.Node.Diffusion.Configuration` instead of hardcoding
+/// `YoungEnough`.
 struct ChainDbConsensusLedgerSource<'a, I, V, L>
 where
     I: ImmutableStore,
@@ -927,6 +977,17 @@ where
     chain_db: &'a Arc<RwLock<ChainDb<I, V, L>>>,
     base_ledger_state: &'a LedgerState,
     tracer: &'a NodeTracer,
+    /// Seconds since the Unix epoch of `ShelleyGenesis.system_start`.
+    /// `None` falls back to the legacy `YoungEnough` behaviour to keep
+    /// no-genesis test paths working.
+    system_start_unix_secs: Option<f64>,
+    /// Slot duration in seconds from `ShelleyGenesis.slot_length`.
+    /// `None` falls back to the legacy `YoungEnough` behaviour.
+    slot_length_secs: Option<f64>,
+    /// Maximum tolerated tip age in seconds before the judgement flips to
+    /// `TooOld`. Upstream uses `stabilityWindow * slotLength` (≈
+    /// `3 * k / f * slotLength`).
+    max_ledger_state_age_secs: f64,
 }
 
 impl<I, V, L> ConsensusLedgerPeerSource for ChainDbConsensusLedgerSource<'_, I, V, L>
@@ -939,11 +1000,22 @@ where
         let chain_db = self.chain_db.read().expect("chain db lock poisoned");
         let tip = chain_db.recovery().tip;
         match recover_ledger_state_chaindb(&chain_db, self.base_ledger_state.clone()) {
-            Ok(recovery) => ConsensusLedgerPeerInputs {
-                latest_slot: point_slot(&recovery.point).or_else(|| point_slot(&tip)),
-                judgement: LedgerStateJudgement::YoungEnough,
-                ledger_snapshot: ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state),
-            },
+            Ok(recovery) => {
+                let latest_slot = point_slot(&recovery.point).or_else(|| point_slot(&tip));
+                let judgement = derive_judgement_for_observe(
+                    latest_slot,
+                    self.system_start_unix_secs,
+                    self.slot_length_secs,
+                    self.max_ledger_state_age_secs,
+                );
+                ConsensusLedgerPeerInputs {
+                    latest_slot,
+                    judgement,
+                    ledger_snapshot: ledger_peer_snapshot_from_ledger_state(
+                        &recovery.ledger_state,
+                    ),
+                }
+            }
             Err(err) => {
                 self.tracer.trace_runtime(
                     "Net.PeerSelection",
@@ -959,6 +1031,58 @@ where
             }
         }
     }
+}
+
+/// Derives a [`LedgerStateJudgement`] for [`ChainDbConsensusLedgerSource::observe`].
+///
+/// Falls back to `YoungEnough` (the historical pre-slice behaviour) when
+/// either of the genesis timing inputs is `None`, so tests and other
+/// non-production paths that don't configure genesis aren't disturbed.
+/// When both inputs are present, delegates to
+/// [`yggdrasil_network::judge_ledger_state_age`] for the upstream-aligned
+/// comparison.
+fn derive_judgement_for_observe(
+    tip_slot: Option<u64>,
+    system_start_unix_secs: Option<f64>,
+    slot_length_secs: Option<f64>,
+    max_age_secs: f64,
+) -> LedgerStateJudgement {
+    derive_judgement_at(
+        tip_slot,
+        system_start_unix_secs,
+        slot_length_secs,
+        max_age_secs,
+        wall_clock_unix_secs(),
+    )
+}
+
+/// Pure variant of [`derive_judgement_for_observe`] that takes an explicit
+/// `now_unix_secs` for deterministic testing. The production helper above
+/// is a thin wrapper that supplies the real wall-clock value.
+pub(crate) fn derive_judgement_at(
+    tip_slot: Option<u64>,
+    system_start_unix_secs: Option<f64>,
+    slot_length_secs: Option<f64>,
+    max_age_secs: f64,
+    now_unix_secs: f64,
+) -> LedgerStateJudgement {
+    if system_start_unix_secs.is_none() || slot_length_secs.is_none() {
+        return LedgerStateJudgement::YoungEnough;
+    }
+    yggdrasil_network::judge_ledger_state_age(yggdrasil_network::LedgerStateAgeInputs {
+        tip_slot,
+        system_start_unix_secs,
+        slot_length_secs,
+        max_age_secs,
+        now_unix_secs,
+    })
+}
+
+fn wall_clock_unix_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
 }
 
 /// Live `peerSnapshotFile` source that re-reads the configured snapshot path
@@ -994,12 +1118,42 @@ impl PeerSnapshotFileSource for FilePeerSnapshotSource<'_> {
     }
 }
 
+/// Genesis-derived inputs that drive the live `LedgerStateJudgement`
+/// computation in [`ChainDbConsensusLedgerSource`]. Bundled into a single
+/// struct so the three values stay cohesive across the
+/// [`refresh_ledger_peer_sources_from_chain_db`] call sites; defaults to
+/// the legacy `YoungEnough` fallback when both timing inputs are `None`.
+#[derive(Clone, Copy, Debug)]
+pub struct LedgerJudgementSettings {
+    /// Seconds since the Unix epoch of `ShelleyGenesis.system_start`.
+    pub system_start_unix_secs: Option<f64>,
+    /// Slot duration in seconds from `ShelleyGenesis.slot_length`.
+    pub slot_length_secs: Option<f64>,
+    /// Maximum tolerated tip age in seconds before the judgement flips
+    /// to `TooOld`. Upstream uses `stabilityWindow * slotLength`.
+    pub max_ledger_state_age_secs: f64,
+}
+
+impl Default for LedgerJudgementSettings {
+    fn default() -> Self {
+        Self {
+            system_start_unix_secs: None,
+            slot_length_secs: None,
+            // Conservative default ≈ mainnet `3 * k / f * slotLength`
+            // with k=2160, f=0.05, slotLength=1.0 → 129_600 s. The
+            // node-side production wiring overrides this from genesis.
+            max_ledger_state_age_secs: 129_600.0,
+        }
+    }
+}
+
 fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
     registry: &mut PeerRegistry,
     chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
     base_ledger_state: &LedgerState,
     topology: &TopologyConfig,
     tracer: &NodeTracer,
+    judgement_settings: LedgerJudgementSettings,
 ) -> LiveLedgerPeerRefreshObservation
 where
     I: ImmutableStore,
@@ -1022,6 +1176,9 @@ where
         chain_db,
         base_ledger_state,
         tracer,
+        system_start_unix_secs: judgement_settings.system_start_unix_secs,
+        slot_length_secs: judgement_settings.slot_length_secs,
+        max_ledger_state_age_secs: judgement_settings.max_ledger_state_age_secs,
     };
     let mut snapshot_source = FilePeerSnapshotSource {
         path: topology.peer_snapshot_file.as_deref(),
@@ -1701,6 +1858,7 @@ pub async fn run_governor_loop<I, V, L, F>(
             &base_ledger_state,
             &topology,
             &tracer,
+            config.ledger_judgement_settings,
         );
     }
 
@@ -1878,6 +2036,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                         &base_ledger_state,
                         &topology,
                         &tracer,
+                        config.ledger_judgement_settings,
                     )
                 };
 
@@ -1941,6 +2100,20 @@ pub async fn run_governor_loop<I, V, L, F>(
                 );
                 governor_state.fetch_mode =
                     fetch_mode_from_judgement(ledger_state_judgement);
+                // Propagate the unified `FetchMode` signal into the
+                // BlockFetch pool's per-peer concurrency cap. Mirrors
+                // upstream `mkReadFetchMode` from
+                // `Ouroboros.Network.BlockFetch.ConsensusInterface`,
+                // which feeds `LedgerStateJudgement` into the BlockFetch
+                // decision policy via `bfcMaxConcurrency{BulkSync,
+                // Deadline}`. Without this, the pool stayed in whatever
+                // mode it was constructed with regardless of how the
+                // node's ledger judgement evolved.
+                if let Some(pool) = config.block_fetch_pool.as_ref() {
+                    if let Ok(mut pool) = pool.lock() {
+                        pool.set_mode(governor_state.fetch_mode);
+                    }
+                }
                 governor_state.churn_regime = pick_churn_regime(
                     churn_mode_from_fetch_mode(governor_state.fetch_mode),
                     &topology.bootstrap_peers,
@@ -2249,6 +2422,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                                         &base_ledger_state,
                                         &topology,
                                         &tracer,
+                                        config.ledger_judgement_settings,
                                     )
                                 };
                                 let changed = observation.update.changed;
@@ -3112,7 +3286,17 @@ fn re_admit_rolled_back_tx_ids(
             Err(MempoolError::Duplicate(_)) => stats.duplicate += 1,
             Err(MempoolError::TtlExpired { .. }) => stats.expired += 1,
             Err(MempoolError::ConflictingInputs(_)) => stats.conflicting += 1,
-            Err(MempoolError::CapacityExceeded { .. }) => stats.capacity_exceeded += 1,
+            Err(MempoolError::CapacityExceeded { .. })
+            | Err(MempoolError::EvictionInsufficientSpace { .. })
+            | Err(MempoolError::EvictionNotWorthwhile { .. }) => {
+                // Eviction-policy variants are reachable only via
+                // `insert_with_eviction`. The rollback re-admission path
+                // uses `insert_checked` so only `CapacityExceeded` is
+                // produced today, but the wider arm keeps the match
+                // exhaustive against future call-graph changes that
+                // route re-admissions through the eviction-aware path.
+                stats.capacity_exceeded += 1;
+            }
             Err(MempoolError::FeeTooSmall { .. })
             | Err(MempoolError::TxTooLarge { .. })
             | Err(MempoolError::ExUnitsExceedTxLimit { .. })
@@ -5560,9 +5744,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome, NodeConfig,
-        ReconnectingRunState, ReconnectingVerifiedSyncRequest,
-        ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig, checkpoint_trace_fields,
+        BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
+        LedgerJudgementSettings, NodeConfig, ReconnectingRunState,
+        ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
+        VerifiedSyncServiceConfig, checkpoint_trace_fields, derive_judgement_at,
         handle_reconnect_batch_error, kes_expiry_warning_from_periods,
         local_root_targets_from_config, mempool_entries_for_forging,
         ordered_reconnect_fallback_peers, peer_share_request_amount,
@@ -6416,6 +6601,7 @@ mod tests {
             &base_ledger_state,
             &topology,
             &tracer,
+            LedgerJudgementSettings::default(),
         );
 
         assert!(observation.update.changed);
@@ -6424,6 +6610,62 @@ mod tests {
             .get(&relay_peer)
             .expect("ledger-derived relay peer should be present");
         assert!(entry.sources.contains(&PeerSource::PeerSourceLedger));
+    }
+
+    /// Pins the production-shaped legacy fallback: when the genesis
+    /// timing inputs aren't configured, the runtime helper must return
+    /// `YoungEnough` (matching pre-slice behaviour) so test paths and
+    /// no-genesis configurations don't suddenly start reporting `TooOld`
+    /// against an arbitrary wall-clock value.
+    #[test]
+    fn derive_judgement_at_falls_back_to_young_enough_without_genesis() {
+        // Missing system_start.
+        assert_eq!(
+            derive_judgement_at(Some(100), None, Some(1.0), 60.0, 1000.0),
+            yggdrasil_network::LedgerStateJudgement::YoungEnough
+        );
+        // Missing slot_length.
+        assert_eq!(
+            derive_judgement_at(Some(100), Some(0.0), None, 60.0, 1000.0),
+            yggdrasil_network::LedgerStateJudgement::YoungEnough
+        );
+    }
+
+    /// When BOTH genesis timing inputs are configured, the runtime helper
+    /// delegates to `judge_ledger_state_age` and produces a real wall-
+    /// clock-derived judgement: a 100-slot tip at 1 s slot length is 100 s
+    /// old at `now=200`, which exceeds a 60 s `max_age` → `TooOld`.
+    /// Without the wiring this slice introduced, this would still report
+    /// `YoungEnough` from the historical hardcoded constant — the assertion
+    /// `TooOld` here is the regression guard.
+    #[test]
+    fn derive_judgement_at_returns_too_old_when_genesis_present_and_tip_stale() {
+        let judgement = derive_judgement_at(
+            Some(100),
+            Some(0.0),
+            Some(1.0),
+            60.0,
+            200.0,
+        );
+        assert_eq!(judgement, yggdrasil_network::LedgerStateJudgement::TooOld);
+    }
+
+    /// Sibling of the previous test: same setup but `now=150` keeps the
+    /// tip's age under the threshold → `YoungEnough`. Pins both branches
+    /// of the runtime helper at the production-relevant boundary.
+    #[test]
+    fn derive_judgement_at_returns_young_enough_when_genesis_present_and_tip_fresh() {
+        let judgement = derive_judgement_at(
+            Some(100),
+            Some(0.0),
+            Some(1.0),
+            60.0,
+            150.0,
+        );
+        assert_eq!(
+            judgement,
+            yggdrasil_network::LedgerStateJudgement::YoungEnough
+        );
     }
 
     #[test]

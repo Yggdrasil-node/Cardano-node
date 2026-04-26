@@ -127,6 +127,36 @@ pub enum MempoolError {
         /// Maximum capacity in bytes.
         limit: usize,
     },
+    /// The incoming transaction would not fit even after evicting every
+    /// candidate that has a strictly lower fee — either because the
+    /// incoming size exceeds the mempool's total capacity, or because
+    /// the lowest-fee tail of the mempool is itself empty.
+    #[error(
+        "mempool eviction did not free enough space: incoming {incoming}, total capacity {limit}, freeable {freeable}"
+    )]
+    EvictionInsufficientSpace {
+        /// Size of the incoming transaction in bytes.
+        incoming: usize,
+        /// Maximum capacity in bytes.
+        limit: usize,
+        /// Total bytes that could be freed by evicting the lowest-fee
+        /// tail of strictly-lower-fee entries.
+        freeable: usize,
+    },
+    /// The incoming transaction's fee does not exceed the cumulative fee
+    /// of the entries that would need to be evicted to make room for it.
+    /// Mirrors upstream `Ouroboros.Consensus.Mempool.Impl.Update.makeRoomForTransaction`,
+    /// which only displaces lower-fee transactions when the incoming
+    /// transaction is unambiguously a better candidate.
+    #[error(
+        "mempool eviction not worthwhile: incoming fee {incoming_fee}, would-displace fee {evicted_fee}"
+    )]
+    EvictionNotWorthwhile {
+        /// Fee of the incoming transaction.
+        incoming_fee: u64,
+        /// Sum of fees of the entries that would be evicted.
+        evicted_fee: u64,
+    },
     /// The transaction has already expired at the given slot.
     #[error("transaction TTL expired: ttl {ttl:?} < current slot {current_slot:?}")]
     TtlExpired {
@@ -378,6 +408,116 @@ impl Mempool {
         self.entries
             .sort_by(|left, right| right.entry.fee.cmp(&left.entry.fee));
         Ok(())
+    }
+
+    /// Like [`Self::insert`] but, on capacity overflow, attempts to evict
+    /// the lowest-fee tail of the mempool until the incoming transaction
+    /// fits — mirroring upstream
+    /// `Ouroboros.Consensus.Mempool.Impl.Update.makeRoomForTransaction`.
+    ///
+    /// The eviction is gated by two upstream-aligned guards:
+    ///
+    /// * Only entries with **strictly lower** fee than `entry.fee` are
+    ///   considered for eviction, so a same-fee or higher-fee tail is
+    ///   never displaced (matches upstream's "is unambiguously a better
+    ///   candidate" semantic).
+    /// * After identifying the candidate eviction set, the cumulative fee
+    ///   of those candidates must be strictly less than `entry.fee` —
+    ///   otherwise the incoming transaction is rejected with
+    ///   [`MempoolError::EvictionNotWorthwhile`] because the network is
+    ///   better off keeping the existing higher-cumulative-fee set.
+    ///
+    /// Duplicate detection and conflicting-input checks fire BEFORE any
+    /// eviction is considered (same as [`Self::insert`]), so an incoming
+    /// transaction that conflicts with an existing entry is always
+    /// rejected outright rather than displacing the conflicting tx.
+    /// Returns the list of [`TxId`]s that were evicted on success
+    /// (possibly empty when the incoming tx fit without displacement) so
+    /// the caller can update downstream peer-relay state (e.g. clear
+    /// `SharedTxState` known-set entries for evicted txs).
+    pub fn insert_with_eviction(
+        &mut self,
+        entry: MempoolEntry,
+    ) -> Result<Vec<TxId>, MempoolError> {
+        // Duplicate check — same as `insert`.
+        if self.tx_ids.contains(&entry.tx_id) {
+            return Err(MempoolError::Duplicate(entry.tx_id));
+        }
+        // Conflicting-input check — same as `insert`.
+        for input in &entry.inputs {
+            if let Some(&existing_tx_id) = self.claimed_inputs.get(input) {
+                return Err(MempoolError::ConflictingInputs(existing_tx_id));
+            }
+        }
+        // Fast path: no capacity limit, or the incoming entry already fits.
+        if self.max_bytes == 0
+            || self.current_bytes + entry.size_bytes <= self.max_bytes
+        {
+            self.insert(entry)?;
+            return Ok(Vec::new());
+        }
+        // The incoming transaction can never fit if it exceeds the total
+        // mempool capacity on its own — no amount of eviction would help.
+        if entry.size_bytes > self.max_bytes {
+            return Err(MempoolError::EvictionInsufficientSpace {
+                incoming: entry.size_bytes,
+                limit: self.max_bytes,
+                freeable: 0,
+            });
+        }
+        let needed = (self.current_bytes + entry.size_bytes).saturating_sub(self.max_bytes);
+        // Walk the tail (lowest fee first) accumulating candidates.
+        // Entries are sorted by fee descending so the tail is the
+        // last `n` items.
+        let mut freeable_bytes: usize = 0;
+        let mut evicted_fee: u64 = 0;
+        let mut evict_indexes: Vec<usize> = Vec::new();
+        for (idx, indexed) in self.entries.iter().enumerate().rev() {
+            // Strictly-lower-fee guard: stop accumulating as soon as we
+            // hit an entry whose fee is greater than or equal to the
+            // incoming. The remaining (head) entries also have higher
+            // fees so further iteration is wasted.
+            if indexed.entry.fee >= entry.fee {
+                break;
+            }
+            evict_indexes.push(idx);
+            freeable_bytes = freeable_bytes.saturating_add(indexed.entry.size_bytes);
+            evicted_fee = evicted_fee.saturating_add(indexed.entry.fee);
+            if freeable_bytes >= needed {
+                break;
+            }
+        }
+        if freeable_bytes < needed {
+            return Err(MempoolError::EvictionInsufficientSpace {
+                incoming: entry.size_bytes,
+                limit: self.max_bytes,
+                freeable: freeable_bytes,
+            });
+        }
+        if entry.fee <= evicted_fee {
+            return Err(MempoolError::EvictionNotWorthwhile {
+                incoming_fee: entry.fee,
+                evicted_fee,
+            });
+        }
+        // Commit phase: evict the candidates (sorted descending so
+        // index removal is stable), then insert the new entry.
+        evict_indexes.sort_unstable_by(|a, b| b.cmp(a));
+        let mut evicted_ids: Vec<TxId> = Vec::with_capacity(evict_indexes.len());
+        for idx in evict_indexes {
+            let removed = self.entries.remove(idx);
+            self.current_bytes = self.current_bytes.saturating_sub(removed.entry.size_bytes);
+            self.tx_ids.remove(&removed.entry.tx_id);
+            for input in &removed.entry.inputs {
+                self.claimed_inputs.remove(input);
+            }
+            evicted_ids.push(removed.entry.tx_id);
+        }
+        // Now the regular insert path will succeed without further
+        // capacity gating, so we can reuse it for the membership /
+        // claimed-inputs / sort bookkeeping.
+        self.insert(entry)?;
+        Ok(evicted_ids)
     }
 
     /// Remove and return the highest-fee entry, if any.
@@ -826,6 +966,26 @@ impl SharedMempool {
             .write()
             .expect("shared mempool poisoned")
             .insert(entry);
+        if result.is_ok() {
+            self.change_notify.notify_waiters();
+        }
+        result
+    }
+
+    /// Like [`Self::insert`] but, on capacity overflow, evicts the
+    /// lowest-fee tail to make room — see
+    /// [`Mempool::insert_with_eviction`] for the upstream-aligned
+    /// semantics. Notifies snapshot waiters when ANY change occurred
+    /// (eviction or insertion).
+    pub fn insert_with_eviction(
+        &self,
+        entry: MempoolEntry,
+    ) -> Result<Vec<TxId>, MempoolError> {
+        let result = self
+            .inner
+            .write()
+            .expect("shared mempool poisoned")
+            .insert_with_eviction(entry);
         if result.is_ok() {
             self.change_notify.notify_waiters();
         }
@@ -1294,5 +1454,153 @@ mod tests {
         assert_eq!(updated_txids.len(), 2);
         assert_eq!(updated_txids[0].0, first.tx_id);
         assert_eq!(updated_txids[1].0, second.tx_id);
+    }
+
+    // ── insert_with_eviction ────────────────────────────────────────────
+
+    /// Helper that builds an entry with an explicit byte-size override
+    /// so the eviction tests can hit precise capacity boundaries.
+    fn sample_entry_with_size(seed: u8, fee: u64, size_bytes: usize) -> MempoolEntry {
+        let mut e = sample_entry(seed, fee);
+        e.size_bytes = size_bytes;
+        e
+    }
+
+    /// When the incoming entry already fits, `insert_with_eviction`
+    /// behaves identically to `insert`: no displacement, returns an
+    /// empty evicted list, mempool grows by exactly one entry.
+    #[test]
+    fn insert_with_eviction_no_op_when_under_capacity() {
+        let mut m = Mempool::with_capacity(100);
+        let evicted = m
+            .insert_with_eviction(sample_entry_with_size(1, 10, 20))
+            .unwrap();
+        assert!(evicted.is_empty());
+        assert_eq!(m.len(), 1);
+    }
+
+    /// When the incoming entry has a strictly higher fee than the
+    /// lowest-fee tail entry AND evicting that tail frees enough bytes,
+    /// the eviction succeeds and the displaced TxId is returned to the
+    /// caller. Pins the upstream `makeRoomForTransaction` happy path.
+    #[test]
+    fn insert_with_eviction_evicts_lowest_fee_when_higher_fee_arrives() {
+        let mut m = Mempool::with_capacity(100);
+        // Fill mempool to exactly capacity: 2 entries × 50 bytes each.
+        m.insert(sample_entry_with_size(0xAA, 5, 50)).unwrap(); // low fee
+        m.insert(sample_entry_with_size(0xBB, 50, 50)).unwrap(); // high fee
+        // Incoming: 50 bytes, fee 20 — strictly higher than low entry's 5,
+        // strictly lower than high entry's 50. Should displace ONLY the
+        // low-fee entry.
+        let evicted = m
+            .insert_with_eviction(sample_entry_with_size(0xCC, 20, 50))
+            .unwrap();
+        assert_eq!(evicted, vec![TxId([0xAA; 32])]);
+        assert_eq!(m.len(), 2);
+        // Confirm the high-fee entry survived.
+        assert!(m.iter().any(|e| e.tx_id == TxId([0xBB; 32])));
+        // Confirm the new entry was admitted.
+        assert!(m.iter().any(|e| e.tx_id == TxId([0xCC; 32])));
+    }
+
+    /// Even when the lowest-fee tail would mathematically free enough
+    /// bytes, the eviction is rejected if the cumulative evicted fee is
+    /// not strictly less than the incoming fee — upstream's
+    /// "unambiguously a better candidate" guard. Without this, an
+    /// attacker could grind out high-fee replacements that cumulatively
+    /// drop network revenue.
+    #[test]
+    fn insert_with_eviction_rejects_when_evicted_fee_meets_incoming_fee() {
+        let mut m = Mempool::with_capacity(100);
+        // Two low-fee entries, fee 10 each, summed = 20.
+        m.insert(sample_entry_with_size(0xAA, 10, 50)).unwrap();
+        m.insert(sample_entry_with_size(0xBB, 10, 50)).unwrap();
+        // Incoming: 100 bytes (would need to evict BOTH to fit), fee 20.
+        // Cumulative evicted fee = 20, incoming fee = 20 → reject.
+        let err = m
+            .insert_with_eviction(sample_entry_with_size(0xCC, 20, 100))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MempoolError::EvictionNotWorthwhile {
+                incoming_fee: 20,
+                evicted_fee: 20,
+            }
+        ));
+        // Mempool unchanged.
+        assert_eq!(m.len(), 2);
+    }
+
+    /// When the incoming entry is too large to fit in the mempool's
+    /// total capacity, eviction can never make room — return
+    /// `EvictionInsufficientSpace` rather than `CapacityExceeded` so
+    /// the caller can distinguish "bad input" from "transient overflow".
+    #[test]
+    fn insert_with_eviction_rejects_when_incoming_exceeds_total_capacity() {
+        let mut m = Mempool::with_capacity(50);
+        let err = m
+            .insert_with_eviction(sample_entry_with_size(0xAA, 100, 200))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            MempoolError::EvictionInsufficientSpace {
+                incoming: 200,
+                limit: 50,
+                ..
+            }
+        ));
+    }
+
+    /// All existing entries have higher fee than the incoming → nothing
+    /// is even considered for eviction → reject with insufficient-space
+    /// rather than silently dropping the head of the mempool. Pins the
+    /// strictly-lower-fee guard in the eviction-set selection loop.
+    #[test]
+    fn insert_with_eviction_does_not_displace_higher_or_equal_fee_entries() {
+        let mut m = Mempool::with_capacity(100);
+        // Mempool full of high-fee entries.
+        m.insert(sample_entry_with_size(0xAA, 100, 50)).unwrap();
+        m.insert(sample_entry_with_size(0xBB, 200, 50)).unwrap();
+        // Incoming: low fee — must not displace any of them.
+        let err = m
+            .insert_with_eviction(sample_entry_with_size(0xCC, 5, 50))
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::EvictionInsufficientSpace { .. }));
+        assert_eq!(m.len(), 2);
+    }
+
+    /// Duplicate detection short-circuits BEFORE eviction — same as
+    /// plain `insert`. Without this guard, a replay attack could
+    /// trigger displacement of unrelated low-fee entries by
+    /// re-submitting an existing high-fee tx.
+    #[test]
+    fn insert_with_eviction_rejects_duplicate_before_considering_eviction() {
+        let mut m = Mempool::with_capacity(50);
+        let dup = sample_entry_with_size(0xAA, 100, 50);
+        m.insert(dup.clone()).unwrap();
+        let err = m.insert_with_eviction(dup.clone()).unwrap_err();
+        assert!(matches!(err, MempoolError::Duplicate(_)));
+        assert_eq!(m.len(), 1);
+    }
+
+    /// `SharedMempool` wrapper threads `insert_with_eviction` through
+    /// the same shared lock as `insert`, returns the evicted TxIds to
+    /// the caller, and leaves the mempool in the expected end state
+    /// (one new entry, one displaced entry, total bytes unchanged).
+    /// The `change_notify` notification is exercised end-to-end by the
+    /// existing `shared_mempool_snapshot_reflects_updates` async test;
+    /// keeping this test synchronous avoids pulling extra tokio runtime
+    /// features into the mempool crate's dev-deps.
+    #[test]
+    fn shared_mempool_insert_with_eviction_displaces_lowest_fee_entry() {
+        let m = SharedMempool::with_capacity(100);
+        m.insert(sample_entry_with_size(0xAA, 5, 50)).unwrap();
+        m.insert(sample_entry_with_size(0xBB, 50, 50)).unwrap();
+        let evicted = m
+            .insert_with_eviction(sample_entry_with_size(0xCC, 100, 50))
+            .unwrap();
+        assert_eq!(evicted, vec![TxId([0xAA; 32])]);
+        assert_eq!(m.len(), 2);
+        assert_eq!(m.size_bytes(), 100);
     }
 }
