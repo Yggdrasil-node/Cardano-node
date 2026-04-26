@@ -1967,7 +1967,7 @@ async fn runtime_verified_sync_records_blockfetch_pool_per_peer_counters() {
     .await;
 
     let pool: Arc<Mutex<BlockFetchPool>> =
-        Arc::new(Mutex::new(BlockFetchPool::new(FetchMode::BulkSync)));
+        Arc::new(Mutex::new(BlockFetchPool::new(FetchMode::FetchModeBulkSync)));
 
     let node_config = NodeConfig {
         peer_addr: first_addr,

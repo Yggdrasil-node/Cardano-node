@@ -23,7 +23,7 @@
 //! The actual wiring into the node runtime / sync pipeline is deliberately
 //! deferred to a follow-up slice (see `docs/PARITY_PLAN.md` Phase 3 item 5)
 //! so that the proven single-peer pipeline is not regressed.  The default
-//! `BlockFetchPool::new(FetchMode::BulkSync)` with a single registered peer
+//! `BlockFetchPool::new(FetchMode::FetchModeBulkSync)` with a single registered peer
 //! is byte-for-byte equivalent to the existing single-peer fetch behaviour.
 
 use std::collections::{BTreeMap, VecDeque};
@@ -34,6 +34,23 @@ use yggdrasil_ledger::Point;
 
 #[cfg(test)]
 use yggdrasil_ledger::{HeaderHash, SlotNo};
+
+pub use crate::governor::FetchMode;
+
+/// Per-peer concurrency cap for the unified [`FetchMode`].
+///
+/// Mirrors the upstream `bfcMaxConcurrency{BulkSync,Deadline}` policy fields
+/// from `Ouroboros.Network.BlockFetch.Decision`. Lives here rather than on
+/// the enum itself because [`FetchMode`] is owned by the governor module
+/// (it is the same type the governor exposes via
+/// [`crate::governor::fetch_mode_from_judgement`]); the per-peer cap is a
+/// BlockFetch-specific policy and therefore belongs in this module.
+pub const fn max_concurrency_per_peer(mode: FetchMode) -> usize {
+    match mode {
+        FetchMode::FetchModeBulkSync => MAX_CONCURRENCY_BULK_SYNC,
+        FetchMode::FetchModeDeadline => MAX_CONCURRENCY_DEADLINE,
+    }
+}
 
 /// Upstream `bfcMaxConcurrencyDeadline` from
 /// `Ouroboros.Network.BlockFetch.Decision`.  In deadline mode (i.e. when the
@@ -51,32 +68,6 @@ pub const MAX_CONCURRENCY_BULK_SYNC: usize = 2;
 /// `Ouroboros.Network.BlockFetch.Decision`.  A safety cap on total in-flight
 /// fetch requests across all peers in the pool.
 pub const MAX_REQUESTS_IN_FLIGHT: usize = 10;
-
-/// Fetch mode mirroring upstream
-/// `Ouroboros.Network.BlockFetch.ConsensusInterface.FetchMode`.
-///
-/// Selects the per-peer concurrency cap.  The runtime should choose
-/// [`FetchMode::BulkSync`] while syncing historical chain and switch to
-/// [`FetchMode::Deadline`] once caught up to within the security parameter
-/// `k` of the chain tip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FetchMode {
-    /// Bulk historical sync — higher per-peer concurrency.
-    BulkSync,
-    /// Deadline (caught-up) mode — lower per-peer concurrency to keep
-    /// latency low for fresh blocks.
-    Deadline,
-}
-
-impl FetchMode {
-    /// Per-peer max concurrent fetch requests for this mode.
-    pub const fn max_concurrency_per_peer(self) -> usize {
-        match self {
-            FetchMode::BulkSync => MAX_CONCURRENCY_BULK_SYNC,
-            FetchMode::Deadline => MAX_CONCURRENCY_DEADLINE,
-        }
-    }
-}
 
 /// Per-peer fetch-client state.
 ///
@@ -133,7 +124,7 @@ impl PeerFetchState {
     /// Returns `true` when this peer is below the per-peer concurrency cap
     /// and may receive a new fetch request.
     pub fn has_capacity(&self, mode: FetchMode) -> bool {
-        self.in_flight < mode.max_concurrency_per_peer()
+        self.in_flight < max_concurrency_per_peer(mode)
     }
 
     /// Note that a fetch request has been dispatched to this peer.
@@ -565,11 +556,11 @@ mod tests {
     #[test]
     fn fetch_mode_concurrency_caps_match_upstream() {
         assert_eq!(
-            FetchMode::Deadline.max_concurrency_per_peer(),
+            max_concurrency_per_peer(FetchMode::FetchModeDeadline),
             MAX_CONCURRENCY_DEADLINE
         );
         assert_eq!(
-            FetchMode::BulkSync.max_concurrency_per_peer(),
+            max_concurrency_per_peer(FetchMode::FetchModeBulkSync),
             MAX_CONCURRENCY_BULK_SYNC
         );
     }
@@ -577,11 +568,11 @@ mod tests {
     #[test]
     fn peer_state_capacity_and_dispatch_accounting() {
         let mut s = PeerFetchState::new(addr(3001));
-        assert!(s.has_capacity(FetchMode::Deadline));
+        assert!(s.has_capacity(FetchMode::FetchModeDeadline));
         s.note_dispatch();
         assert_eq!(s.in_flight, 1);
-        assert!(!s.has_capacity(FetchMode::Deadline));
-        assert!(s.has_capacity(FetchMode::BulkSync));
+        assert!(!s.has_capacity(FetchMode::FetchModeDeadline));
+        assert!(s.has_capacity(FetchMode::FetchModeBulkSync));
         s.note_success(5, 1024, Instant::now());
         assert_eq!(s.in_flight, 0);
         assert_eq!(s.blocks_delivered, 5);
@@ -605,7 +596,7 @@ mod tests {
 
     #[test]
     fn pool_register_and_remove_preserves_state() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         pool.register_peer(addr(3001));
         pool.register_peer(addr(3001));
         assert_eq!(pool.peers.len(), 1);
@@ -616,7 +607,7 @@ mod tests {
 
     #[test]
     fn schedule_assigns_each_range_to_distinct_peer() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         pool.register_peer(addr(3001));
         pool.register_peer(addr(3002));
         let ranges = vec![(pt(100), pt(200)), (pt(201), pt(300))];
@@ -635,7 +626,7 @@ mod tests {
 
     #[test]
     fn schedule_returns_none_when_global_cap_reached() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         pool.register_peer(addr(3001));
         // Saturate the single peer beyond the global cap by faking
         // in-flight via repeated dispatch.
@@ -648,7 +639,7 @@ mod tests {
 
     #[test]
     fn schedule_skips_peer_whose_fragment_head_does_not_cover_upper() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         pool.register_peer(addr(3001));
         pool.set_peer_fragment_head(addr(3001), pt(100));
         // Peer's head is slot 100, so a range up to slot 200 should be
@@ -659,7 +650,7 @@ mod tests {
 
     #[test]
     fn schedule_unknown_fragment_head_is_best_effort() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         pool.register_peer(addr(3001));
         // No fragment_head configured → schedule proceeds.
         let result = pool.schedule(&[(pt(101), pt(200))]);
@@ -669,7 +660,7 @@ mod tests {
 
     #[test]
     fn schedule_deadline_mode_caps_at_one_per_peer() {
-        let mut pool = BlockFetchPool::new(FetchMode::Deadline);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeDeadline);
         pool.register_peer(addr(3001));
         let ranges = vec![(pt(1), pt(2)), (pt(3), pt(4))];
         let assignments = pool.schedule(&ranges);
@@ -815,7 +806,7 @@ mod tests {
 
     #[test]
     fn split_range_into_pool_schedules_to_distinct_peers() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         for port in 3001..=3004 {
             pool.register_peer(addr(port));
         }
@@ -835,7 +826,7 @@ mod tests {
 
     #[test]
     fn pool_note_dispatch_auto_registers_peer() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         let p = addr(4001);
         pool.note_dispatch(p);
         let s = pool.peer_state(p).expect("peer auto-registered");
@@ -845,7 +836,7 @@ mod tests {
 
     #[test]
     fn pool_note_success_clears_failures_and_increments_counters() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         let p = addr(4002);
         pool.note_dispatch(p);
         pool.note_failure(p);
@@ -862,7 +853,7 @@ mod tests {
 
     #[test]
     fn pool_note_failure_accumulates_until_demotion_threshold() {
-        let mut pool = BlockFetchPool::new(FetchMode::BulkSync);
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
         let p = addr(4003);
         for _ in 0..DEFAULT_FAILURE_DEMOTION_THRESHOLD {
             pool.note_dispatch(p);
@@ -870,5 +861,60 @@ mod tests {
         }
         let s = pool.peer_state(p).unwrap();
         assert!(peer_failure_should_demote(s, DEFAULT_FAILURE_DEMOTION_THRESHOLD));
+    }
+
+    /// Pins the upstream-aligned `FetchMode` enum unification: the pool's
+    /// `FetchMode` is the same type the governor exposes via
+    /// `fetch_mode_from_judgement`. A future regression that re-introduces
+    /// a duplicate local enum (the historical state before the unification
+    /// slice) would fail this `TypeId` cross-check.
+    #[test]
+    fn fetch_mode_is_unified_with_governor_module() {
+        use std::any::TypeId;
+        assert_eq!(
+            TypeId::of::<FetchMode>(),
+            TypeId::of::<crate::governor::FetchMode>(),
+            "blockfetch_pool::FetchMode and governor::FetchMode must be the same type"
+        );
+    }
+
+    /// Pins the per-peer concurrency cap as a property of the unified
+    /// [`FetchMode`] enum, not of any per-module duplicate. A future
+    /// regression that drifts either branch silently changes BlockFetch
+    /// throughput envelope.
+    #[test]
+    fn max_concurrency_per_peer_matches_upstream() {
+        assert_eq!(
+            max_concurrency_per_peer(FetchMode::FetchModeBulkSync),
+            MAX_CONCURRENCY_BULK_SYNC
+        );
+        assert_eq!(
+            max_concurrency_per_peer(FetchMode::FetchModeDeadline),
+            MAX_CONCURRENCY_DEADLINE
+        );
+    }
+
+    /// `BlockFetchPool::set_mode` is the seam the governor tick uses to
+    /// propagate `LedgerStateJudgement`-derived mode changes into the
+    /// per-peer concurrency cap. This pins that the cap actually flips
+    /// after a `set_mode(FetchModeDeadline)` call, mirroring upstream
+    /// `mkReadFetchMode` consumers in
+    /// `Ouroboros.Network.BlockFetch.ConsensusInterface`.
+    #[test]
+    fn pool_set_mode_flips_per_peer_capacity_cap() {
+        let mut pool = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
+        let p = addr(4099);
+        // Bulk-sync admits MAX_CONCURRENCY_BULK_SYNC requests per peer.
+        for _ in 0..MAX_CONCURRENCY_BULK_SYNC {
+            pool.note_dispatch(p);
+        }
+        let s = pool.peer_state(p).unwrap();
+        assert!(!s.has_capacity(FetchMode::FetchModeBulkSync));
+        // Deadline mode caps strictly lower; same in-flight count is over
+        // the deadline cap (since deadline cap = 1 < bulk cap = 2).
+        pool.set_mode(FetchMode::FetchModeDeadline);
+        assert_eq!(pool.mode(), FetchMode::FetchModeDeadline);
+        let s = pool.peer_state(p).unwrap();
+        assert!(!s.has_capacity(FetchMode::FetchModeDeadline));
     }
 }

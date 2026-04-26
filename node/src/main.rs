@@ -19,9 +19,10 @@ use yggdrasil_ledger::{
 };
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::{
-    ConnectionManagerState, GovernorState, GovernorTargets, HandshakeVersion, InboundGovernorState,
-    LedgerPeerSnapshot, LedgerStateJudgement, NodePeerSharing, PeerAccessPoint, PeerListener,
-    merge_ledger_peer_snapshots, resolve_peer_access_points,
+    BlockFetchInstrumentation, ConnectionManagerState, GovernorState, GovernorTargets,
+    HandshakeVersion, InboundGovernorState, LedgerPeerSnapshot, LedgerStateJudgement,
+    NodePeerSharing, PeerAccessPoint, PeerListener, blockfetch_pool::BlockFetchPool,
+    blockfetch_pool::FetchMode, merge_ledger_peer_snapshots, resolve_peer_access_points,
 };
 use yggdrasil_node::config::{
     NetworkPreset, NodeConfigFile, TraceNamespaceConfig, apply_topology_to_config, default_config,
@@ -1093,6 +1094,23 @@ fn main() -> Result<()> {
                     })
                 });
 
+            // Construct a single shared BlockFetch instrumentation pool
+            // that is observed by both the sync runtime (per-peer dispatch
+            // / success / failure counters) and the governor (per-peer
+            // concurrency cap driven by ledger-state judgement). Mirrors
+            // upstream `mkReadFetchMode` from
+            // `Ouroboros.Network.BlockFetch.ConsensusInterface`, which is
+            // the single source of truth for the BlockFetch decision
+            // policy's `bfcMaxConcurrency{BulkSync,Deadline}` selection.
+            // Initialised in `FetchModeBulkSync` (the upstream default at
+            // startup, before any judgement update); the governor tick
+            // overwrites it on every tick once the live `LedgerStateJudgement`
+            // is available.
+            let block_fetch_pool: BlockFetchInstrumentation =
+                Arc::new(std::sync::Mutex::new(BlockFetchPool::new(
+                    FetchMode::FetchModeBulkSync,
+                )));
+
             let verification = if no_verify {
                 None
             } else {
@@ -1139,7 +1157,7 @@ fn main() -> Result<()> {
                     slot_length_secs: genesis_slot_length,
                     system_start_unix_secs: genesis_system_start_unix_secs,
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
-                    block_fetch_pool: None,
+                    block_fetch_pool: Some(block_fetch_pool.clone()),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -1165,7 +1183,7 @@ fn main() -> Result<()> {
                     slot_length_secs: genesis_slot_length,
                     system_start_unix_secs: genesis_system_start_unix_secs,
                     epoch_schedule: Some(file_cfg.epoch_schedule()),
-                    block_fetch_pool: None,
+                    block_fetch_pool: Some(block_fetch_pool.clone()),
                 }
             };
 
@@ -1254,7 +1272,8 @@ fn main() -> Result<()> {
                     target_active_big_ledger: file_cfg.governor_target_active_big_ledger,
                     ..Default::default()
                 },
-            );
+            )
+            .with_block_fetch_pool(Some(block_fetch_pool.clone()));
 
             let mut topology_config = file_cfg.topology_config();
             if let Some(peer_snapshot_path) = &peer_snapshot_path {

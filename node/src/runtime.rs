@@ -127,7 +127,7 @@ fn update_bp_state_sigma(
 }
 
 /// Runtime governor configuration derived from node configuration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RuntimeGovernorConfig {
     /// Period between governor evaluation ticks.
     pub tick_interval: Duration,
@@ -139,6 +139,14 @@ pub struct RuntimeGovernorConfig {
     pub consensus_mode: ConsensusMode,
     /// Target peer counts maintained by the governor.
     pub targets: GovernorTargets,
+    /// Optional shared [`BlockFetchInstrumentation`] handle. When set, the
+    /// governor tick propagates the per-tick `fetch_mode_from_judgement`
+    /// signal into the pool's per-peer concurrency cap, mirroring upstream
+    /// `Ouroboros.Network.BlockFetch.ConsensusInterface.mkReadFetchMode`
+    /// where `LedgerStateJudgement` drives `bfcMaxConcurrency{BulkSync,
+    /// Deadline}`. When `None`, the pool stays in whatever mode it was
+    /// constructed with — same behavior as before this slice.
+    pub block_fetch_pool: Option<yggdrasil_network::BlockFetchInstrumentation>,
 }
 
 impl RuntimeGovernorConfig {
@@ -156,7 +164,17 @@ impl RuntimeGovernorConfig {
             peer_sharing,
             consensus_mode,
             targets,
+            block_fetch_pool: None,
         }
+    }
+
+    /// Attach a shared [`BlockFetchInstrumentation`] handle so the governor
+    /// tick propagates `fetch_mode_from_judgement(...)` into the pool's
+    /// per-peer concurrency cap. Pass `None` (the default) to keep the
+    /// pool's mode pinned at construction time.
+    pub fn with_block_fetch_pool(mut self, pool: Option<yggdrasil_network::BlockFetchInstrumentation>) -> Self {
+        self.block_fetch_pool = pool;
+        self
     }
 }
 
@@ -1941,6 +1959,20 @@ pub async fn run_governor_loop<I, V, L, F>(
                 );
                 governor_state.fetch_mode =
                     fetch_mode_from_judgement(ledger_state_judgement);
+                // Propagate the unified `FetchMode` signal into the
+                // BlockFetch pool's per-peer concurrency cap. Mirrors
+                // upstream `mkReadFetchMode` from
+                // `Ouroboros.Network.BlockFetch.ConsensusInterface`,
+                // which feeds `LedgerStateJudgement` into the BlockFetch
+                // decision policy via `bfcMaxConcurrency{BulkSync,
+                // Deadline}`. Without this, the pool stayed in whatever
+                // mode it was constructed with regardless of how the
+                // node's ledger judgement evolved.
+                if let Some(pool) = config.block_fetch_pool.as_ref() {
+                    if let Ok(mut pool) = pool.lock() {
+                        pool.set_mode(governor_state.fetch_mode);
+                    }
+                }
                 governor_state.churn_regime = pick_churn_regime(
                     churn_mode_from_fetch_mode(governor_state.fetch_mode),
                     &topology.bootstrap_peers,
