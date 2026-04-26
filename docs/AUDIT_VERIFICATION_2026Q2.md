@@ -61,3 +61,26 @@ find . -name "Cargo.toml" -not -path "./target/*" -exec grep -l "git = " {} \;
 ```
 
 Reference commits in this session correcting earlier stale AGENTS.md notes: `db355bf` (ParameterChange enactment), `fcca96b` (TxInfo construction).
+
+## Slice closure status (post-audit work)
+
+| Slice | Status | Commit | Notes |
+|---|---|---|---|
+| 0 (audit verification) | done | `497cf49` | This document + two stale-doc corrections |
+| A (Plomin V3 watch) | done | `c0f219a` | Two table-size invariant tests in `node/src/genesis.rs` |
+| B (CDDL parser ranges) | **deferred** | — | No current CDDL consumer in the workspace uses `N..M` / `.le N` constraints (only `specs/mini-ledger.cddl` exists and uses `.size`). Implementing speculative parser support without a fixture means the feature can't be validated end-to-end. Re-evaluate when upstream `cardano-ledger` ships a CDDL file that requires it. |
+| C (live ledger-peer refresh) | closed-already | `497cf49` | Doc correction only; code was already wired (4 call sites in `node/src/runtime.rs`). |
+| D (hot-peer scheduling) | **deferred** | — | Multi-slice work that does not block manual mainnet testing on the proven single-peer-leader pipeline. Track as follow-up. |
+| E (multi-peer BlockFetch wiring) | **deferred** | — | Multi-day item explicitly noted in the plan. The Round 119 config knob (`max_concurrent_block_fetch_peers`, default 1) is the entry point; the runtime dispatcher in `node/src/sync.rs::sync_batch_verified_with_tentative` is the next step. Track as follow-up. |
+| F+G+H (upstream pinning) | done | `7c3a04e` | 6 SHA constants in `node/src/upstream_pins.rs`, drift detector, `docs/UPSTREAM_PARITY.md` table |
+| L (mainnet rehearsal script) | done | `8e1dbbd` | `node/scripts/run_mainnet_real_pool_producer.sh` |
+| M (hash-comparison harness) | done | `8e1dbbd` | `node/scripts/compare_tip_to_haskell.sh` |
+| N (restart-resilience automation) | done | `8e1dbbd` | `node/scripts/restart_resilience.sh` |
+| O (manual-test runbook) | done | `0f2c7d1` | `docs/MANUAL_TEST_RUNBOOK.md` |
+
+## Deferred-slice rationale
+
+- **Slice B (CDDL ranges)**: speculative without a real fixture. The cost of implementing without a consumer is unvalidated parser code that may need to be rewritten when an actual upstream CDDL file lands. Better to wait for a concrete need.
+- **Slices D + E (multi-peer fetch)**: multi-day scope explicitly noted at plan time. The proven single-peer pipeline meets manual-testing needs. The infrastructure (`BlockFetchPool`, `ReorderBuffer`, `split_range`, `max_concurrent_block_fetch_peers` config knob) is in place; what's deferred is the runtime dispatcher that actually uses N peers.
+
+The user can begin manual real-life testing today — all prerequisites (rehearsal scripts, hash-comparison harness, restart-resilience automation, runbook, audit baseline pins) are in place at commit `7c3a04e` against the as-is 99% codebase.
