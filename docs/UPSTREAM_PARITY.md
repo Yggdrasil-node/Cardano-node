@@ -1,6 +1,6 @@
 # Upstream Parity Matrix
 
-Last updated: 2026-04-17
+Last updated: 2026-04-26
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.
 
@@ -38,6 +38,29 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 - ouroboros-network: https://github.com/IntersectMBO/ouroboros-network
 - cardano-base: https://github.com/IntersectMBO/cardano-base
 - plutus: https://github.com/IntersectMBO/plutus
+
+## Pinned commits (audit baseline 2026-Q2)
+
+Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinning is documentary. Each SHA below records the exact upstream commit at which the corresponding repository was last systematically audited against. The companion drift detector at `node/scripts/check_upstream_drift.sh` produces a JSON report comparing each pin to the live HEAD of the matching `main`/`master` branch.
+
+| Repository | Pinned commit | Source |
+|---|---|---|
+| `cardano-base` | `db52f43b38ba5d8927feb2199d4913fe6c0f974d` | `node/src/upstream_pins.rs` (mirrors vendored `specs/upstream-test-vectors/cardano-base/<sha>/` directory name) |
+| `cardano-ledger` | `9ae77d611ad86ae58add04b6042ab730272f2327` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
+| `ouroboros-consensus` | `91c8e1bb5d7fd9e1387755a0d539f8dce65737df` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
+| `ouroboros-network` | `0e84bced45c7fc64252d576fbce55864d75e722a` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
+| `plutus` | `187c3971a34e5ee4c42f4ea3b21eb61d1a7bad66` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
+| `cardano-node` | `60af1c23bc20e64827574540599de1db1be2393e` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
+
+**Format invariants** (drift-guarded by `crates/node::upstream_pins::tests`):
+
+- All SHAs are 40-character lowercase hexadecimal.
+- The set of pinned repositories is exactly the 6 listed above; adding/removing requires updating both `UPSTREAM_PINS` in source and this table.
+- The `cardano-base` pin must match the vendored test-vector directory name in `specs/upstream-test-vectors/cardano-base/<sha>/`.
+
+**To advance a pin**: edit `node/src/upstream_pins.rs`, run the full audit cadence (`cargo check-all`, `cargo test-all`, `cargo lint`, drift-guard tests, fixture cross-checks) against the new SHA, run `node/scripts/check_upstream_drift.sh` to confirm, then update this table with the rationale.
+
+**Drift is expected and informational**. The audit baseline is allowed to lag upstream — the drift report exists so the lag is visible, not so it triggers a build failure. `check_upstream_drift.sh` exits 0 on drift by default; pass `--fail-on-drift` for CI gating if/when desired.
 
 ## Update Rules
 

@@ -12,6 +12,7 @@ pub mod runtime;
 pub mod server;
 pub mod sync;
 pub mod tracer;
+pub mod upstream_pins;
 
 pub use runtime::{
     ChainTipNotify, LedgerJudgementSettings, MempoolAddTxError, MempoolAddTxOutcome,
