@@ -1827,7 +1827,9 @@ where
     let mut total_rollbacks = 0usize;
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
-    let mut chain_state = config.security_param.map(ChainState::new);
+    let mut chain_state = config
+        .security_param
+        .map(|k| seed_chain_state_from_volatile(store, k));
     let mut ocert_counters = config.verification.ocert_counters.clone();
 
     loop {
@@ -1911,7 +1913,9 @@ where
     let mut total_rollbacks = 0usize;
     let mut batches_completed = 0usize;
     let mut total_stable = 0usize;
-    let mut chain_state = config.security_param.map(ChainState::new);
+    let mut chain_state = config
+        .security_param
+        .map(|k| seed_chain_state_from_volatile(chain_db.volatile(), k));
     let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut checkpoint_tracking = default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
 
@@ -3559,6 +3563,48 @@ pub fn multi_era_block_to_chain_entry(block: &MultiEraBlock) -> Option<ChainEntr
             prev_hash: b.header.body.prev_hash.map(HeaderHash),
         }),
     }
+}
+
+/// Seed a fresh [`ChainState`] from the recovered volatile-store contents.
+///
+/// On node restart, [`ChainState::new`] returns an empty volatile window.
+/// Without seeding, the **next ChainSync session's
+/// `RollBackward(recovered_tip)` confirmation fails with
+/// `RollbackPointNotFound`** because the rollback target — the recovered
+/// tip — isn't present in `entries`.  This was observed in the operator
+/// restart-resilience rehearsal as a cycle-2 crash:
+///
+/// ```text
+/// Notice Node.Recovery recovered ledger state … point=BlockPoint(88840, …)
+/// Notice ConnectionManager verified sync session established fromPoint=BlockPoint(88840, …)
+/// Error  Node.Sync rollback point not found: slot 88840 …
+/// ```
+///
+/// Reading every volatile block via `suffix_after(&Point::Origin)` and
+/// seeding the chain state with `seed_from_entries` (which trims to `k`
+/// internally) closes the gap.  Reference: upstream
+/// `Ouroboros.Consensus.Storage.ChainDB.Init.getCurrentChain` rebuilds
+/// the in-memory chain fragment from the volatile DB on start-up.
+pub fn seed_chain_state_from_volatile(
+    volatile: &dyn VolatileStore,
+    k: SecurityParam,
+) -> ChainState {
+    let mut chain_state = ChainState::new(k);
+    let blocks = volatile.suffix_after(&Point::Origin);
+    if blocks.is_empty() {
+        return chain_state;
+    }
+    let entries: Vec<ChainEntry> = blocks
+        .iter()
+        .map(|b| ChainEntry {
+            hash: b.header.hash,
+            slot: b.header.slot_no,
+            block_no: b.header.block_no,
+            prev_hash: Some(b.header.prev_hash),
+        })
+        .collect();
+    chain_state.seed_from_entries(entries);
+    chain_state
 }
 
 /// Apply one multi-era sync step to a [`ChainState`].

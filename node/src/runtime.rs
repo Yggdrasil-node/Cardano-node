@@ -31,7 +31,8 @@ use serde_json::Value;
 use serde_json::json;
 use yggdrasil_consensus::praos::ActiveSlotCoeff;
 use yggdrasil_consensus::{
-    ChainState, NonceEvolutionConfig, NonceEvolutionState, TentativeState, kes_period_of_slot,
+    ChainState, NonceEvolutionConfig, NonceEvolutionState, SecurityParam, TentativeState,
+    kes_period_of_slot,
 };
 use yggdrasil_ledger::{
     BlockNo, Decoder, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
@@ -4574,7 +4575,51 @@ fn trace_epoch_boundary_events(tracer: &NodeTracer, events: &[EpochBoundaryEvent
     }
 }
 
+/// Polymorphic seed of the volatile-window `ChainState` that works whether
+/// the caller holds the chain DB as `&mut ChainDb<I, V, L>` (the
+/// non-shared variant) or `&Arc<RwLock<ChainDb<I, V, L>>>` (the shared
+/// variant).  Without this, the post-restart `ChainState` was always
+/// `ChainState::new(k)` — empty — and the next ChainSync session's
+/// `RollBackward(recovered_tip)` confirmation failed with
+/// `RollbackPointNotFound` (surfaced by §6 restart-resilience cycle 2).
+fn seed_chain_state_via_chain_db<S: ChainDbVolatileAccess>(
+    chain_db: &S,
+    security_param: Option<SecurityParam>,
+) -> Option<ChainState> {
+    security_param.map(|k| chain_db.with_volatile(|v| crate::sync::seed_chain_state_from_volatile(v, k)))
+}
+
+/// Trait abstracting "give me a borrow of the volatile store" across the
+/// two ChainDb access modes used by the reconnecting sync entry points.
+trait ChainDbVolatileAccess {
+    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R;
+}
+
+impl<I, V, L> ChainDbVolatileAccess for ChainDb<I, V, L>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
+        f(self.volatile())
+    }
+}
+
+impl<I, V, L> ChainDbVolatileAccess for std::sync::Arc<std::sync::RwLock<ChainDb<I, V, L>>>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
+        let guard = self.read().expect("chain db lock poisoned");
+        f(guard.volatile())
+    }
+}
+
 async fn run_reconnecting_verified_sync_service_chaindb_inner<I, V, L, F>(
+    // (Function with direct `&mut ChainDb` access — see seed_chain_state_from_volatile call below.)
     chain_db: &mut ChainDb<I, V, L>,
     context: ReconnectingVerifiedSyncContext<'_>,
     state: ReconnectingVerifiedSyncState,
@@ -4611,7 +4656,13 @@ where
     tokio::pin!(shutdown);
 
     let mut run_state = ReconnectingRunState::new();
-    let mut chain_state = config.security_param.map(ChainState::new);
+    // Seed the volatile chain window from storage on restart so the next
+    // ChainSync session's `RollBackward(recovered_tip)` confirmation finds
+    // the tip in `entries` instead of crashing with `RollbackPointNotFound`.
+    // Surfaced by the §6 restart-resilience operator rehearsal as a
+    // cycle-2 crash; see `seed_chain_state_from_volatile` for the
+    // upstream `Ouroboros.Consensus.Storage.ChainDB.Init` reference.
+    let mut chain_state = seed_chain_state_via_chain_db(chain_db, config.security_param);
     let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut had_session = false;
     let mut preferred_peer = None;
@@ -5087,7 +5138,13 @@ where
     tokio::pin!(shutdown);
 
     let mut run_state = ReconnectingRunState::new();
-    let mut chain_state = config.security_param.map(ChainState::new);
+    // Seed the volatile chain window from storage on restart so the next
+    // ChainSync session's `RollBackward(recovered_tip)` confirmation finds
+    // the tip in `entries` instead of crashing with `RollbackPointNotFound`.
+    // Surfaced by the §6 restart-resilience operator rehearsal as a
+    // cycle-2 crash; see `seed_chain_state_from_volatile` for the
+    // upstream `Ouroboros.Consensus.Storage.ChainDB.Init` reference.
+    let mut chain_state = seed_chain_state_via_chain_db(chain_db, config.security_param);
     let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut had_session = false;
     let mut preferred_peer = None;
@@ -5776,7 +5833,9 @@ where
     tokio::pin!(shutdown);
 
     let mut run_state = ReconnectingRunState::new();
-    let mut chain_state = config.security_param.map(ChainState::new);
+    let mut chain_state = config
+        .security_param
+        .map(|k| crate::sync::seed_chain_state_from_volatile(store, k));
     let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut had_session = false;
     let mut attempt_state = peer_attempt_state(node_config.peer_addr, fallback_peer_addrs);

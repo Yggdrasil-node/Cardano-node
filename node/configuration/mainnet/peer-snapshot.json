@@ -1,0 +1,20 @@
+{
+  "NodeToClientVersion": 23,
+  "Point": {
+    "slot": 0,
+    "hash": "00"
+  },
+  "NetworkMagic": 764824073,
+  "allLedgerPools": [
+    {
+      "relativeStake": 1.0,
+      "relays": [
+        {
+          "address": "backbone.cardano.iog.io",
+          "port": 3001
+        }
+      ]
+    }
+  ],
+  "bigLedgerPools": []
+}

@@ -70,6 +70,35 @@ impl ChainState {
         }
     }
 
+    /// Seed the volatile chain window from a recovered set of entries.
+    ///
+    /// Used at node restart to repopulate the `ChainState` with the
+    /// most-recent volatile blocks from storage.  Without this, a fresh
+    /// `ChainState::new` is empty, so the next ChainSync session's
+    /// `RollBackward(recovered_tip)` confirmation fails with
+    /// `RollbackPointNotFound` because `entries` doesn't contain the
+    /// tip — see the restart-resilience cycle-2 crash mode.
+    ///
+    /// Entries must be supplied in chain order (oldest first) and at most
+    /// `k` of them are retained — anything beyond `k` is dropped from the
+    /// front (those blocks are already stable / immutable).  No CHAINHEAD
+    /// prev-hash validation is performed; the storage layer is trusted to
+    /// have already linked them.
+    ///
+    /// Reference: upstream `Ouroboros.Consensus.Storage.ChainDB.Init` /
+    /// `getCurrentChain` rebuilds the in-memory chain fragment from the
+    /// volatile DB on start-up.
+    pub fn seed_from_entries(&mut self, entries: Vec<ChainEntry>) {
+        let len = entries.len() as u64;
+        if len > self.k.0 {
+            // Keep only the last k entries (the volatile window).
+            let drop = (len - self.k.0) as usize;
+            self.entries = entries.into_iter().skip(drop).collect();
+        } else {
+            self.entries = entries;
+        }
+    }
+
     /// The security parameter for this chain state.
     pub fn security_param(&self) -> SecurityParam {
         self.k
