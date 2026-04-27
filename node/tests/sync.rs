@@ -949,6 +949,7 @@ async fn sync_step_typed_rollforward_decodes_header_tip_and_blocks() {
             header: decoded_header,
             tip: decoded_tip,
             blocks,
+            raw_blocks: _,
         } => {
             assert_eq!(*decoded_header, header);
             assert_eq!(decoded_tip, tip);
@@ -1784,7 +1785,7 @@ fn multi_era_block_to_block_shelley() {
         transaction_metadata_set: std::collections::HashMap::new(),
     };
     let me = MultiEraBlock::Shelley(Box::new(block));
-    let generic = multi_era_block_to_block(&me);
+    let generic = multi_era_block_to_block(&me, &[]);
     assert_eq!(generic.era, yggdrasil_ledger::Era::Shelley);
     assert_eq!(generic.header.slot_no, SlotNo(500));
     assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
@@ -1804,7 +1805,7 @@ fn multi_era_block_to_block_byron() {
         block: byron,
         era_tag: 0,
     };
-    let generic = multi_era_block_to_block(&me);
+    let generic = multi_era_block_to_block(&me, &[]);
     assert_eq!(generic.era, yggdrasil_ledger::Era::Byron);
     assert_eq!(generic.header.hash, expected_hash);
     assert!(generic.transactions.is_empty());
@@ -2299,7 +2300,7 @@ fn multi_era_block_to_block_babbage() {
         invalid_transactions: vec![],
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
-    let generic = multi_era_block_to_block(&me);
+    let generic = multi_era_block_to_block(&me, &[]);
     assert_eq!(generic.era, yggdrasil_ledger::Era::Babbage);
     assert_eq!(generic.header.slot_no, SlotNo(500));
     assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
@@ -2319,7 +2320,7 @@ fn multi_era_block_to_block_conway() {
         invalid_transactions: vec![],
     };
     let me = MultiEraBlock::Conway(Box::new(block));
-    let generic = multi_era_block_to_block(&me);
+    let generic = multi_era_block_to_block(&me, &[]);
     assert_eq!(generic.era, yggdrasil_ledger::Era::Conway);
     assert_eq!(generic.header.slot_no, SlotNo(500));
     assert_eq!(generic.header.block_no, yggdrasil_ledger::BlockNo(1));
@@ -2541,7 +2542,7 @@ fn multi_era_block_to_block_babbage_with_txs() {
         invalid_transactions: vec![],
     };
     let me = MultiEraBlock::Babbage(Box::new(block));
-    let generic = multi_era_block_to_block(&me);
+    let generic = multi_era_block_to_block(&me, &[]);
     assert_eq!(generic.transactions.len(), 1);
     assert_eq!(generic.transactions[0].id, expected_id);
 }
@@ -2570,7 +2571,7 @@ fn multi_era_block_to_block_conway_with_txs() {
         invalid_transactions: vec![],
     };
     let me = MultiEraBlock::Conway(Box::new(block));
-    let generic = multi_era_block_to_block(&me);
+    let generic = multi_era_block_to_block(&me, &[]);
     assert_eq!(generic.transactions.len(), 1);
     assert_eq!(generic.transactions[0].id, expected_id);
 }
@@ -3331,7 +3332,7 @@ fn promote_stable_blocks_moves_to_immutable() {
     let blocks: Vec<_> = (1..=5)
         .map(|i| {
             let sb = make_shelley_block_with_number(i, i * 10);
-            multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(sb)))
+            multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(sb)), &[])
         })
         .collect();
 
@@ -3366,7 +3367,7 @@ fn chaindb_promote_volatile_prefix_moves_to_immutable_and_prunes_volatile() {
     let blocks: Vec<_> = (1..=5)
         .map(|i| {
             let sb = make_shelley_block_with_number(i, i * 10);
-            multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(sb)))
+            multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(sb)), &[])
         })
         .collect();
 
@@ -3516,24 +3517,28 @@ fn recover_ledger_state_chaindb_bootstraps_initial_funds_on_first_shelley_block(
 
     chain_db
         .immutable_mut()
-        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
-            block: ByronBlock::MainBlock {
-                epoch: 0,
-                slot_in_epoch: 1,
-                chain_difficulty: 1,
-                prev_hash: [0; 32],
-                issuer_vkey: [0u8; 32],
-                raw_header: vec![0xAA],
-                transactions: vec![],
+        .append_block(multi_era_block_to_block(
+            &MultiEraBlock::Byron {
+                block: ByronBlock::MainBlock {
+                    epoch: 0,
+                    slot_in_epoch: 1,
+                    chain_difficulty: 1,
+                    prev_hash: [0; 32],
+                    issuer_vkey: [0u8; 32],
+                    raw_header: vec![0xAA],
+                    transactions: vec![],
+                },
+                era_tag: 1,
             },
-            era_tag: 1,
-        }))
+            &[],
+        ))
         .expect("append byron block");
     chain_db
         .immutable_mut()
-        .append_block(multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(
-            make_shelley_block_with_number(2, 10),
-        ))))
+        .append_block(multi_era_block_to_block(
+            &MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(2, 10))),
+            &[],
+        ))
         .expect("append shelley block");
 
     let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
@@ -3565,18 +3570,21 @@ fn recover_ledger_state_chaindb_keeps_initial_funds_hidden_before_shelley() {
 
     chain_db
         .immutable_mut()
-        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
-            block: ByronBlock::MainBlock {
-                epoch: 0,
-                slot_in_epoch: 1,
-                chain_difficulty: 1,
-                prev_hash: [0; 32],
-                issuer_vkey: [0u8; 32],
-                raw_header: vec![0xAA],
-                transactions: vec![],
+        .append_block(multi_era_block_to_block(
+            &MultiEraBlock::Byron {
+                block: ByronBlock::MainBlock {
+                    epoch: 0,
+                    slot_in_epoch: 1,
+                    chain_difficulty: 1,
+                    prev_hash: [0; 32],
+                    issuer_vkey: [0u8; 32],
+                    raw_header: vec![0xAA],
+                    transactions: vec![],
+                },
+                era_tag: 1,
             },
-            era_tag: 1,
-        }))
+            &[],
+        ))
         .expect("append byron block");
 
     let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
@@ -3602,24 +3610,28 @@ fn recover_ledger_state_chaindb_bootstraps_genesis_stake_on_first_shelley_block(
 
     chain_db
         .immutable_mut()
-        .append_block(multi_era_block_to_block(&MultiEraBlock::Byron {
-            block: ByronBlock::MainBlock {
-                epoch: 0,
-                slot_in_epoch: 1,
-                chain_difficulty: 1,
-                prev_hash: [0; 32],
-                issuer_vkey: [0u8; 32],
-                raw_header: vec![0xAA],
-                transactions: vec![],
+        .append_block(multi_era_block_to_block(
+            &MultiEraBlock::Byron {
+                block: ByronBlock::MainBlock {
+                    epoch: 0,
+                    slot_in_epoch: 1,
+                    chain_difficulty: 1,
+                    prev_hash: [0; 32],
+                    issuer_vkey: [0u8; 32],
+                    raw_header: vec![0xAA],
+                    transactions: vec![],
+                },
+                era_tag: 1,
             },
-            era_tag: 1,
-        }))
+            &[],
+        ))
         .expect("append byron block");
     chain_db
         .immutable_mut()
-        .append_block(multi_era_block_to_block(&MultiEraBlock::Shelley(Box::new(
-            make_shelley_block_with_number(2, 10),
-        ))))
+        .append_block(multi_era_block_to_block(
+            &MultiEraBlock::Shelley(Box::new(make_shelley_block_with_number(2, 10))),
+            &[],
+        ))
         .expect("append shelley block");
 
     let recovered = recover_ledger_state_chaindb(&chain_db, base_state)

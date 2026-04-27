@@ -47,8 +47,9 @@ pub mod witnesses;
 // -- CBOR re-exports ----------------------------------------------------------
 /// CBOR encoding and decoding traits and primitives.
 pub use cbor::{
-    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, check_decoded_count,
-    hashmap_with_safe_capacity, vec_with_safe_capacity, vec_with_strict_capacity,
+    BLOCK_BODY_ELEMENTS_MAX, BlockTxRawSpans, CborDecode, CborEncode, Decoder, Encoder,
+    check_decoded_count, extract_block_tx_byte_spans, hashmap_with_safe_capacity,
+    vec_with_safe_capacity, vec_with_strict_capacity,
 };
 
 // -- Era re-exports -----------------------------------------------------------

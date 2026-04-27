@@ -335,7 +335,7 @@ fn self_validate_forged_block(forged: &ForgedBlock) -> Result<(), SyncError> {
     let raw_inner_block = extract_inner_block_bytes(&raw_envelope)?;
     validate_block_body_size(&decoded, raw_inner_block)?;
 
-    let decoded_block = multi_era_block_to_block(&decoded);
+    let decoded_block = multi_era_block_to_block(&decoded, &raw_envelope);
     if decoded_block.header.hash != forged.header_hash {
         return Err(SyncError::Recovery(
             "forged header hash mismatch".to_owned(),

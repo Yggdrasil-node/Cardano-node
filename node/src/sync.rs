@@ -263,6 +263,10 @@ pub enum TypedSyncStep {
         tip: Point,
         /// Decoded Shelley blocks fetched via BlockFetch.
         blocks: Vec<ShelleyBlock>,
+        /// Original on-wire CBOR bytes of each block, parallel-indexed with
+        /// `blocks`.  Required for byte-exact fee validation and tx-id
+        /// computation per upstream `Cardano.Ledger.Shelley.Tx.minfee`.
+        raw_blocks: Vec<Vec<u8>>,
     },
 
     /// Fully decoded roll-backward step.
@@ -297,10 +301,26 @@ fn compute_tx_id(body: &[u8]) -> TxId {
 
 /// Convert a typed Shelley block into the generic ledger `Block` wrapper used
 /// by storage traits.
-pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
+///
+/// `raw_block_bytes` is the original on-wire CBOR encoding of the block
+/// (as received from BlockFetch).  Each transaction's `body` and
+/// `witnesses` slots are populated with the **exact on-wire byte spans**
+/// extracted from this buffer rather than re-serialised from the typed
+/// `ShelleyTxBody` / `ShelleyWitnessSet` values.  Re-serialisation is
+/// byte-canonical CBOR but does not always agree byte-for-byte with the
+/// block author's original encoding (set vs array, definite vs
+/// indefinite length, integer-width canonicalisation), and the linear
+/// fee formula `min_fee = a · txSize + b` is sensitive to that
+/// difference.
+///
+/// Reference: `Cardano.Ledger.Shelley.Tx.minfee`,
+/// `Cardano.Ledger.Core.txIdTxBody`.
+pub fn shelley_block_to_block(block: &ShelleyBlock, raw_block_bytes: &[u8]) -> Block {
     let body = &block.header.body;
     let hash = block.header_hash();
     let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+
+    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
 
     let transactions: Vec<Tx> = block
         .transaction_bodies
@@ -314,11 +334,22 @@ pub fn shelley_block_to_block(block: &ShelleyBlock) -> Block {
                 .chain(std::iter::repeat(None)),
         )
         .map(|((idx, tx_body), ws)| {
-            let raw = tx_body.to_cbor_bytes();
+            // Prefer the on-wire byte span; fall back to a typed
+            // re-encoding only if span extraction failed (test paths).
+            let raw_body = spans
+                .bodies
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| tx_body.to_cbor_bytes());
+            let raw_witnesses = spans
+                .witness_sets
+                .get(idx)
+                .cloned()
+                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
             Tx {
-                id: compute_tx_id(&raw),
-                body: raw,
-                witnesses: ws.map(|w| w.to_cbor_bytes()),
+                id: compute_tx_id(&raw_body),
+                body: raw_body,
+                witnesses: raw_witnesses,
                 auxiliary_data: block.transaction_metadata_set.get(&(idx as u64)).cloned(),
                 is_valid: None,
             }
@@ -381,20 +412,9 @@ async fn fetch_range_blocks_typed(
     block_fetch: &mut BlockFetchClient,
     lower: Point,
     upper: Point,
-) -> Result<Vec<ShelleyBlock>, SyncError> {
+) -> Result<Vec<(Vec<u8>, ShelleyBlock)>, SyncError> {
     block_fetch
-        .request_range_collect_points_decoded::<ShelleyBlock>(lower, upper)
-        .await
-        .map_err(map_blockfetch_error)
-}
-
-async fn fetch_range_blocks_multi_era(
-    block_fetch: &mut BlockFetchClient,
-    lower: Point,
-    upper: Point,
-) -> Result<Vec<MultiEraBlock>, SyncError> {
-    block_fetch
-        .request_range_collect_points_with(lower, upper, decode_multi_era_block_ledger)
+        .request_range_collect_points_raw_with(lower, upper, ShelleyBlock::from_cbor_bytes)
         .await
         .map_err(map_blockfetch_error)
 }
@@ -778,17 +798,19 @@ pub async fn sync_step_typed(
         DecodedHeaderNextResponse::RollForward { header, tip }
         | DecodedHeaderNextResponse::AwaitRollForward { header, tip } => {
             let header_point = Point::BlockPoint(SlotNo(header.body.slot), header.header_hash());
-            let blocks = if let Some((lower, upper)) =
+            let pairs = if let Some((lower, upper)) =
                 normalize_blockfetch_range_points(from_point, header_point)
             {
                 fetch_range_blocks_typed(block_fetch, lower, upper).await?
             } else {
                 Vec::new()
             };
+            let (raw_blocks, blocks): (Vec<Vec<u8>>, Vec<ShelleyBlock>) = pairs.into_iter().unzip();
             Ok(TypedSyncStep::RollForward {
                 header: Box::new(header),
                 tip,
                 blocks,
+                raw_blocks,
             })
         }
         DecodedHeaderNextResponse::RollBackward { point, tip }
@@ -926,9 +948,11 @@ pub fn apply_typed_step_to_volatile<S: VolatileStore>(
     step: &TypedSyncStep,
 ) -> Result<(), SyncError> {
     match step {
-        TypedSyncStep::RollForward { blocks, .. } => {
-            for b in blocks {
-                store.add_block(shelley_block_to_block(b))?;
+        TypedSyncStep::RollForward {
+            blocks, raw_blocks, ..
+        } => {
+            for (b, raw) in blocks.iter().zip(raw_blocks.iter()) {
+                store.add_block(shelley_block_to_block(b, raw))?;
             }
         }
         TypedSyncStep::RollBackward { point, .. } => {
@@ -1385,12 +1409,21 @@ pub(crate) fn for_each_roll_forward_block<E, F>(
     mut f: F,
 ) -> Result<(), E>
 where
-    F: FnMut(&MultiEraBlock) -> Result<(), E>,
+    F: FnMut(&MultiEraBlock, &[u8]) -> Result<(), E>,
 {
     for step in &progress.steps {
-        if let MultiEraSyncStep::RollForward { blocks, .. } = step {
-            for block in blocks {
-                f(block)?;
+        if let MultiEraSyncStep::RollForward {
+            blocks, raw_blocks, ..
+        } = step
+        {
+            // When `raw_blocks` is missing (synthetic test progress) we
+            // pass an empty slice; the converters fall back to typed
+            // re-encoding which is byte-canonical CBOR.
+            let empty: Vec<Vec<u8>> = Vec::new();
+            let raws: &[Vec<u8>] = raw_blocks.as_deref().unwrap_or(&empty);
+            for (idx, block) in blocks.iter().enumerate() {
+                let raw: &[u8] = raws.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
+                f(block, raw)?;
             }
         }
     }
@@ -1402,8 +1435,8 @@ pub(crate) fn advance_ledger_state_with_progress(
     progress: &MultiEraSyncProgress,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
 ) -> Result<(), SyncError> {
-    for_each_roll_forward_block(progress, |block| {
-        ledger_state.apply_block_validated(&multi_era_block_to_block(block), evaluator)?;
+    for_each_roll_forward_block(progress, |block, raw| {
+        ledger_state.apply_block_validated(&multi_era_block_to_block(block, raw), evaluator)?;
         Ok(())
     })
 }
@@ -1486,8 +1519,8 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
     let shelley_epoch_size = epoch_schedule.shelley_epoch_size();
-    for_each_roll_forward_block(progress, |block| -> Result<(), SyncError> {
-        let converted = multi_era_block_to_block(block);
+    for_each_roll_forward_block(progress, |block, raw| -> Result<(), SyncError> {
+        let converted = multi_era_block_to_block(block, raw);
         let block_slot = converted.header.slot_no;
 
         // Detect epoch transition relative to the current ledger tip.
@@ -1554,7 +1587,7 @@ pub(crate) fn apply_nonce_evolution_to_progress(
     progress: &MultiEraSyncProgress,
     nonce_cfg: &NonceEvolutionConfig,
 ) {
-    let _ = for_each_roll_forward_block(progress, |block| {
+    let _ = for_each_roll_forward_block(progress, |block, _raw| {
         apply_nonce_evolution(nonce_state, block, nonce_cfg);
         Ok::<(), core::convert::Infallible>(())
     });
@@ -2351,6 +2384,13 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 
 /// Convert a `MultiEraBlock` into the generic ledger `Block` wrapper.
 ///
+/// `raw_block_bytes` is the original on-wire CBOR encoding (as received
+/// from BlockFetch).  The Shelley-family converters use it to capture
+/// each transaction's exact on-wire byte span for fee validation and
+/// tx-id computation; see [`shelley_block_to_block`] for the rationale.
+/// Byron blocks ignore the parameter because Byron block decode already
+/// preserves per-tx raw byte spans internally.
+///
 /// All Shelley-family eras (Shelley/Allegra/Mary/Alonzo, Babbage, Conway)
 /// are fully decoded using the common block envelope. Byron blocks
 /// populate real header fields from structural decode:
@@ -2361,12 +2401,12 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 /// - `issuer_vkey`: PBFT issuer key from consensus data (MainBlock) or
 ///   zeroed (EBB)
 /// - `transactions`: decoded from block body tx_payload
-pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
+pub fn multi_era_block_to_block(block: &MultiEraBlock, raw_block_bytes: &[u8]) -> Block {
     match block {
-        MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley),
-        MultiEraBlock::Alonzo(alonzo) => alonzo_block_to_block(alonzo),
-        MultiEraBlock::Babbage(babbage) => babbage_block_to_block(babbage),
-        MultiEraBlock::Conway(conway) => conway_block_to_block(conway),
+        MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley, raw_block_bytes),
+        MultiEraBlock::Alonzo(alonzo) => alonzo_block_to_block(alonzo, raw_block_bytes),
+        MultiEraBlock::Babbage(babbage) => babbage_block_to_block(babbage, raw_block_bytes),
+        MultiEraBlock::Conway(conway) => conway_block_to_block(conway, raw_block_bytes),
         MultiEraBlock::Byron { block: byron, .. } => {
             let transactions: Vec<Tx> = byron
                 .transactions()
@@ -2407,10 +2447,14 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock) -> Block {
 }
 
 /// Convert a typed Alonzo block into the generic ledger `Block` wrapper.
-pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
+///
+/// See [`shelley_block_to_block`] for the rationale on `raw_block_bytes`.
+pub fn alonzo_block_to_block(block: &AlonzoBlock, raw_block_bytes: &[u8]) -> Block {
     let body = &block.header.body;
     let hash = block.header_hash();
     let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+
+    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
 
     let transactions: Vec<Tx> = block
         .transaction_bodies
@@ -2424,12 +2468,21 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
                 .chain(std::iter::repeat(None)),
         )
         .map(|((idx, tx_body), ws)| {
-            let raw = tx_body.to_cbor_bytes();
+            let raw_body = spans
+                .bodies
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| tx_body.to_cbor_bytes());
+            let raw_witnesses = spans
+                .witness_sets
+                .get(idx)
+                .cloned()
+                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
             let valid = !block.invalid_transactions.contains(&(idx as u64));
             Tx {
-                id: compute_tx_id(&raw),
-                body: raw,
-                witnesses: ws.map(|w| w.to_cbor_bytes()),
+                id: compute_tx_id(&raw_body),
+                body: raw_body,
+                witnesses: raw_witnesses,
                 auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
                 is_valid: Some(valid),
             }
@@ -2452,10 +2505,14 @@ pub fn alonzo_block_to_block(block: &AlonzoBlock) -> Block {
 }
 
 /// Convert a typed Babbage block into the generic ledger `Block` wrapper.
-fn babbage_block_to_block(block: &BabbageBlock) -> Block {
+///
+/// See [`shelley_block_to_block`] for the rationale on `raw_block_bytes`.
+fn babbage_block_to_block(block: &BabbageBlock, raw_block_bytes: &[u8]) -> Block {
     let body = &block.header.body;
     let hash = block.header_hash();
     let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+
+    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
 
     let transactions: Vec<Tx> = block
         .transaction_bodies
@@ -2469,12 +2526,21 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
                 .chain(std::iter::repeat(None)),
         )
         .map(|((idx, tx_body), ws)| {
-            let raw = tx_body.to_cbor_bytes();
+            let raw_body = spans
+                .bodies
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| tx_body.to_cbor_bytes());
+            let raw_witnesses = spans
+                .witness_sets
+                .get(idx)
+                .cloned()
+                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
             let valid = !block.invalid_transactions.contains(&(idx as u64));
             Tx {
-                id: compute_tx_id(&raw),
-                body: raw,
-                witnesses: ws.map(|w| w.to_cbor_bytes()),
+                id: compute_tx_id(&raw_body),
+                body: raw_body,
+                witnesses: raw_witnesses,
                 auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
                 is_valid: Some(valid),
             }
@@ -2497,10 +2563,14 @@ fn babbage_block_to_block(block: &BabbageBlock) -> Block {
 }
 
 /// Convert a typed Conway block into the generic ledger `Block` wrapper.
-fn conway_block_to_block(block: &ConwayBlock) -> Block {
+///
+/// See [`shelley_block_to_block`] for the rationale on `raw_block_bytes`.
+fn conway_block_to_block(block: &ConwayBlock, raw_block_bytes: &[u8]) -> Block {
     let body = &block.header.body;
     let hash = block.header_hash();
     let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+
+    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
 
     let transactions: Vec<Tx> = block
         .transaction_bodies
@@ -2514,12 +2584,21 @@ fn conway_block_to_block(block: &ConwayBlock) -> Block {
                 .chain(std::iter::repeat(None)),
         )
         .map(|((idx, tx_body), ws)| {
-            let raw = tx_body.to_cbor_bytes();
+            let raw_body = spans
+                .bodies
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| tx_body.to_cbor_bytes());
+            let raw_witnesses = spans
+                .witness_sets
+                .get(idx)
+                .cloned()
+                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
             let valid = !block.invalid_transactions.contains(&(idx as u64));
             Tx {
-                id: compute_tx_id(&raw),
-                body: raw,
-                witnesses: ws.map(|w| w.to_cbor_bytes()),
+                id: compute_tx_id(&raw_body),
+                body: raw_body,
+                witnesses: raw_witnesses,
                 auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
                 is_valid: Some(valid),
             }
@@ -3440,18 +3519,20 @@ pub async fn sync_step_multi_era(
         TypedNextResponse::RollForward { header, tip }
         | TypedNextResponse::AwaitRollForward { header, tip } => {
             let range_upper = point_from_raw_header(&header).unwrap_or(tip);
-            let blocks = if let Some((lower, upper)) =
+            let pairs = if let Some((lower, upper)) =
                 normalize_blockfetch_range_points(from_point, range_upper)
             {
-                fetch_range_blocks_multi_era(block_fetch, lower, upper).await?
+                fetch_range_blocks_multi_era_raw_decoded(block_fetch, lower, upper).await?
             } else {
                 Vec::new()
             };
+            let (raw_blocks, blocks): (Vec<Vec<u8>>, Vec<MultiEraBlock>) =
+                pairs.into_iter().unzip();
             Ok(MultiEraSyncStep::RollForward {
                 raw_header: header,
                 tip,
                 blocks,
-                raw_blocks: None,
+                raw_blocks: Some(raw_blocks),
             })
         }
         TypedNextResponse::RollBackward { point, tip }
@@ -3594,7 +3675,11 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
         } => {
             let raws = raw_blocks.as_deref();
             for (i, b) in blocks.iter().enumerate() {
-                let mut block = multi_era_block_to_block(b);
+                let raw_slice: &[u8] = raws
+                    .and_then(|r| r.get(i))
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let mut block = multi_era_block_to_block(b, raw_slice);
                 block.raw_cbor = raws.and_then(|r| r.get(i)).cloned();
                 // BlockFetch ranges can overlap at boundaries across peers.
                 // Treat already-present hashes as idempotent replays.
@@ -3914,9 +3999,11 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                         if let (Point::BlockPoint(_, lower_hash), true) =
                                             (lower, matches!(from_point, Point::BlockPoint(_, _)))
                                         {
-                                            while let Some((_, first)) = blocks.first() {
+                                            while let Some((first_raw, first)) = blocks.first() {
                                                 let first_hash =
-                                                    multi_era_block_to_block(first).header.hash;
+                                                    multi_era_block_to_block(first, first_raw)
+                                                        .header
+                                                        .hash;
                                                 if first_hash == lower_hash {
                                                     blocks.remove(0);
                                                 } else {

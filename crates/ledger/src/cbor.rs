@@ -264,6 +264,91 @@ pub fn check_decoded_count(count: u64, max: usize) -> Result<usize, LedgerError>
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Block-level raw-byte span extraction
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Raw on-wire CBOR byte spans for the per-transaction fields of a block.
+///
+/// Cardano blocks are encoded as
+/// `[header, [* tx_body], [* witness_set], { idx => metadata }, …]` where
+/// the typed decoder produces high-level structs (`ShelleyTxBody`,
+/// `ShelleyWitnessSet`, etc.).  Re-serializing those typed values produces
+/// byte-canonical CBOR that does **not** always agree byte-for-byte with
+/// the original on-wire encoding (e.g. set vs array, definite vs
+/// indefinite length, integer-width canonicalization).
+///
+/// Several upstream Cardano invariants depend on the *exact* on-wire byte
+/// layout — most importantly the linear fee formula
+/// `min_fee = a · txSize + b` (`Cardano.Ledger.Shelley.Tx.minfee`) and the
+/// transaction-id hash (`Cardano.Ledger.Core.txIdTxBody`).  When syncing
+/// blocks from peers we **must** carry the original byte spans through to
+/// fee-validation and tx-id computation; this is what `BlockTxRawSpans`
+/// stores.
+///
+/// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `validateFeeTooSmallUTxO`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BlockTxRawSpans {
+    /// Raw CBOR bytes of each `transaction_body` as it appeared on the
+    /// wire (parallel-indexed with `ShelleyBlock::transaction_bodies`,
+    /// `ConwayBlock::transaction_bodies`, etc.).
+    pub bodies: Vec<Vec<u8>>,
+    /// Raw CBOR bytes of each `transaction_witness_set` as it appeared on
+    /// the wire (parallel-indexed with `…::transaction_witness_sets`).
+    pub witness_sets: Vec<Vec<u8>>,
+}
+
+/// Walk the outer block CBOR structure and capture the raw on-wire byte
+/// spans of every `transaction_body` and `transaction_witness_set` entry.
+///
+/// Works for every Cardano post-Byron era because all of them encode the
+/// block as `[header, [* tx_body], [* witness_set], …]` with the bodies
+/// and witness sets at fixed array indices 1 and 2 respectively.  The
+/// helper does NOT validate the typed contents; it just slices the raw
+/// CBOR bytes between `dec.position()` markers.  Use the typed decoder
+/// (`ShelleyBlock::decode_cbor`, etc.) for validation.
+///
+/// Returns `BlockTxRawSpans { bodies, witness_sets }` whose entries are
+/// byte-for-byte identical to what the block author serialized.
+///
+/// Reference: `Cardano.Ledger.Shelley.Block` — block CBOR layout.
+pub fn extract_block_tx_byte_spans(raw_block: &[u8]) -> Result<BlockTxRawSpans, LedgerError> {
+    let mut dec = Decoder::new(raw_block);
+    // Outer block array: at least 4 elements (header, bodies, witness_sets,
+    // metadata) for Shelley/Allegra/Mary; 5 for Alonzo+ (adds invalid_txs).
+    let outer_len = dec.array()?;
+    if outer_len < 3 {
+        return Err(LedgerError::CborInvalidLength {
+            expected: 3,
+            actual: outer_len as usize,
+        });
+    }
+    // Element 0: header — skip past it.
+    dec.skip()?;
+    // Element 1: array of transaction bodies.
+    let body_count = dec.array()?;
+    let mut bodies: Vec<Vec<u8>> = vec_with_safe_capacity(body_count, BLOCK_BODY_ELEMENTS_MAX);
+    for _ in 0..body_count {
+        let start = dec.position();
+        dec.skip()?;
+        let end = dec.position();
+        bodies.push(dec.slice(start, end)?.to_vec());
+    }
+    // Element 2: array of witness sets.
+    let ws_count = dec.array()?;
+    let mut witness_sets: Vec<Vec<u8>> = vec_with_safe_capacity(ws_count, BLOCK_BODY_ELEMENTS_MAX);
+    for _ in 0..ws_count {
+        let start = dec.position();
+        dec.skip()?;
+        let end = dec.position();
+        witness_sets.push(dec.slice(start, end)?.to_vec());
+    }
+    Ok(BlockTxRawSpans {
+        bodies,
+        witness_sets,
+    })
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Decoder
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -3058,5 +3143,101 @@ mod tests {
         let data = [0x05];
         let mut dec = Decoder::new(&data);
         assert!(dec.array_or_set().is_err());
+    }
+
+    // ── extract_block_tx_byte_spans ────────────────────────────────────
+
+    /// Synthesizes a minimal but structurally-correct block envelope:
+    /// `[header, [body0, body1], [ws0, ws1], { 0 => meta0 }]`.
+    /// Each "body" / "ws" / "header" is a single CBOR unsigned-int marker so
+    /// we can verify the helper sliced exactly the right bytes back.
+    #[test]
+    fn extract_block_tx_byte_spans_round_trip() {
+        let mut enc = Encoder::new();
+        enc.array(4);
+        // Header (tag 0xAA → unsigned 0x18 0xAA).
+        enc.unsigned(0xAA);
+        // Bodies array of 2.
+        enc.array(2);
+        let body0_start = enc.as_bytes().len();
+        enc.unsigned(0x10);
+        let body0_end = enc.as_bytes().len();
+        let body1_start = enc.as_bytes().len();
+        enc.unsigned(0x11);
+        let body1_end = enc.as_bytes().len();
+        // Witness sets array of 2.
+        enc.array(2);
+        let ws0_start = enc.as_bytes().len();
+        enc.unsigned(0x20);
+        let ws0_end = enc.as_bytes().len();
+        let ws1_start = enc.as_bytes().len();
+        enc.unsigned(0x21);
+        let ws1_end = enc.as_bytes().len();
+        // Metadata map (single entry).
+        enc.map(1).unsigned(0).unsigned(0xFF);
+
+        let raw = enc.into_bytes();
+        let spans = extract_block_tx_byte_spans(&raw).expect("extract spans");
+        assert_eq!(spans.bodies.len(), 2);
+        assert_eq!(spans.witness_sets.len(), 2);
+        assert_eq!(spans.bodies[0], &raw[body0_start..body0_end]);
+        assert_eq!(spans.bodies[1], &raw[body1_start..body1_end]);
+        assert_eq!(spans.witness_sets[0], &raw[ws0_start..ws0_end]);
+        assert_eq!(spans.witness_sets[1], &raw[ws1_start..ws1_end]);
+    }
+
+    /// Verifies the central parity invariant: when re-serialising a typed
+    /// value yields different bytes than the on-wire encoding (here, a
+    /// definite-length array vs an indefinite-length array), the helper
+    /// returns the **on-wire** bytes byte-for-byte.  This is what the
+    /// linear fee formula and tx-id hash both depend on.
+    ///
+    /// Reference: 2026-04-27 preprod sync rehearsal finding (440-lovelace
+    /// gap on the first transaction after the Byron→Shelley boundary,
+    /// preprod slot ≈ 518 460), captured in
+    /// docs/REAL_PREPROD_POOL_VERIFICATION.md.
+    #[test]
+    fn extract_block_tx_byte_spans_returns_on_wire_bytes_for_indefinite_encoding() {
+        // Hand-craft a block with an indefinite-length body so re-encoding
+        // (which always emits definite-length) would produce different
+        // bytes than what the helper extracts.
+        //
+        // Outer:  array(4)
+        //   header: unsigned(0)
+        //   bodies: array(1) [ indefinite_array(0xff_terminated) [unsigned(0x42)] ]
+        //   witnesses: array(1) [ unsigned(0x55) ]
+        //   metadata: map(0)
+        let raw: Vec<u8> = vec![
+            0x84, // array(4)
+            0x00, //   unsigned(0)            ← header
+            0x81, //   array(1)               ← bodies
+            0x9f, 0x18, 0x42, 0xff, //     indef-array [unsigned(0x42)]
+            0x81, //   array(1)               ← witnesses
+            0x18, 0x55, //     unsigned(0x55)
+            0xa0, //   map(0)                 ← metadata
+        ];
+        let spans = extract_block_tx_byte_spans(&raw).expect("extract spans");
+        assert_eq!(spans.bodies.len(), 1);
+        assert_eq!(spans.witness_sets.len(), 1);
+        // The body span MUST be the indefinite-length encoding 0x9f 0x18 0x42 0xff.
+        // Re-serialising via `to_cbor_bytes()` would emit 0x81 0x18 0x42 instead
+        // (definite-length, 3 bytes) — that 1-byte difference is exactly the
+        // class of mismatch that caused the 440-lovelace fee gap upstream.
+        assert_eq!(spans.bodies[0], &[0x9f, 0x18, 0x42, 0xff]);
+        assert_eq!(spans.witness_sets[0], &[0x18, 0x55]);
+    }
+
+    #[test]
+    fn extract_block_tx_byte_spans_rejects_truncated_header() {
+        // Just `array(4)` with no further data.
+        let raw = [0x84];
+        assert!(extract_block_tx_byte_spans(&raw).is_err());
+    }
+
+    #[test]
+    fn extract_block_tx_byte_spans_rejects_too_few_outer_elements() {
+        // array(2) — only two elements, missing bodies + witnesses.
+        let raw = [0x82, 0x00, 0x00];
+        assert!(extract_block_tx_byte_spans(&raw).is_err());
     }
 }
