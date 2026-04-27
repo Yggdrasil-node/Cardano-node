@@ -3352,22 +3352,27 @@ fn compute_actual_body_size(raw_inner_block: &[u8]) -> Result<u32, SyncError> {
 /// Validate that the protocol version in the block header is within the
 /// expected range for the block's era.
 ///
-/// Each Cardano era corresponds to one or more protocol major versions:
+/// Each Cardano era corresponds to its intra-era major versions PLUS
+/// the next era's transition major (the upstream hard-fork combinator
+/// bumps PV major *within* era N to signal that era N+1 will activate
+/// at the next epoch boundary, so the last block of era N and the
+/// first block of era N+1 both carry the same major):
 ///
-/// | Era     | Major version(s) |
-/// |---------|-----------------|
-/// | Shelley | 2               |
-/// | Allegra | 3               |
-/// | Mary    | 4               |
-/// | Alonzo  | 5, 6            |
-/// | Babbage | 7, 8            |
-/// | Conway  | 9, 10           |
+/// | Era     | Accepted major versions          |
+/// |---------|----------------------------------|
+/// | Shelley | 2 (intra), 3 (Allegra signal)    |
+/// | Allegra | 3 (intra), 4 (Mary signal)       |
+/// | Mary    | 4 (intra), 5 (Alonzo signal)     |
+/// | Alonzo  | 5, 6 (intra), 7 (Babbage signal) |
+/// | Babbage | 7, 8 (intra), 9 (Conway signal)  |
+/// | Conway  | 9+ (intra)                       |
 ///
 /// Byron blocks do not carry an in-header protocol version and are skipped.
 ///
-/// Reference: hard-fork combinator era transitions in
-/// `Ouroboros.Consensus.Cardano.Block` — each era defines its protocol
-/// version range.
+/// Reference: `shelleyTransition` / `allegraTransition` /
+/// `maryTransition` / `alonzoTransition` / `babbageTransition` /
+/// `conwayTransition` ProtVer values in
+/// `Ouroboros.Consensus.Cardano.CanHardFork`.
 pub fn validate_block_protocol_version(block: &MultiEraBlock) -> Result<(), SyncError> {
     validate_block_protocol_version_with_max(block, None)
 }
@@ -3420,13 +3425,28 @@ fn validate_protocol_version_for_era(
         }
     }
 
+    // Each era's CBOR codec admits its own intra-era major-version
+    // range PLUS the next era's "transition" major.  Upstream's
+    // hard-fork combinator bumps the protocol-version major via an
+    // in-band protocol-parameters update WITHIN era N to signal
+    // that era N+1 will activate at the next epoch boundary — so
+    // the LAST block of era N and the FIRST block of era N+1 both
+    // carry the same major.  Preview's `Test*HardForkAtEpoch=0`
+    // configuration produces this transition-state at chain
+    // genesis (Alonzo-codec block with PV major=7 = Babbage
+    // signal); rejecting it here was a yggdrasil-specific bug.
+    //
+    // Reference: `Ouroboros.Consensus.Cardano.CanHardFork`'s
+    // `shelleyTransition` / `allegraTransition` / `maryTransition`
+    // / `alonzoTransition` / `babbageTransition` / `conwayTransition`
+    // ProtVer values.
     let (valid, expected_range) = match era {
         Era::Byron => return Ok(()),
-        Era::Shelley => (major == 2, "2"),
-        Era::Allegra => (major == 3, "3"),
-        Era::Mary => (major == 4, "4"),
-        Era::Alonzo => (major == 5 || major == 6, "5..=6"),
-        Era::Babbage => (major == 7 || major == 8, "7..=8"),
+        Era::Shelley => (major == 2 || major == 3, "2..=3"),
+        Era::Allegra => (major == 3 || major == 4, "3..=4"),
+        Era::Mary => (major == 4 || major == 5, "4..=5"),
+        Era::Alonzo => ((5..=7).contains(&major), "5..=7"),
+        Era::Babbage => ((7..=9).contains(&major), "7..=9"),
         Era::Conway => (major >= 9, "9+"),
     };
 
@@ -6680,11 +6700,19 @@ mod tests {
 
     #[test]
     fn protocol_version_constraints_enforce_alonzo_era_gate() {
-        // Alonzo accepts major 5 and 6.
+        // Alonzo accepts intra-era major 5 and 6 PLUS the Babbage
+        // transition major 7 (per upstream's hard-fork combinator
+        // signalling — last block of Alonzo can carry the next
+        // era's transition major).
         assert!(validate_protocol_version_for_era(Era::Alonzo, 5, 0, None).is_ok());
         assert!(validate_protocol_version_for_era(Era::Alonzo, 6, 2, None).is_ok());
+        assert!(
+            validate_protocol_version_for_era(Era::Alonzo, 7, 0, None).is_ok(),
+            "Alonzo must accept PV major=7 — Babbage transition signal \
+             emitted by `Test*HardForkAtEpoch=0` testnets at chain genesis",
+        );
 
-        // Pre-Alonzo and post-Alonzo majors are rejected for the Alonzo era.
+        // Pre-Alonzo majors are still rejected.
         assert!(matches!(
             validate_protocol_version_for_era(Era::Alonzo, 4, 3, None),
             Err(SyncError::ProtocolVersionMismatch {
@@ -6693,11 +6721,41 @@ mod tests {
                 ..
             })
         ));
+        // Post-transition (Babbage's intra-era 8) is rejected for Alonzo.
         assert!(matches!(
-            validate_protocol_version_for_era(Era::Alonzo, 7, 0, None),
+            validate_protocol_version_for_era(Era::Alonzo, 8, 0, None),
             Err(SyncError::ProtocolVersionMismatch {
                 era: Era::Alonzo,
-                major: 7,
+                major: 8,
+                ..
+            })
+        ));
+    }
+
+    /// Round 154 — Babbage admits intra-era 7/8 PLUS the Conway
+    /// transition major 9.  Pre-Babbage and post-Conway-transition
+    /// majors are rejected.
+    #[test]
+    fn protocol_version_constraints_enforce_babbage_era_gate() {
+        assert!(validate_protocol_version_for_era(Era::Babbage, 7, 0, None).is_ok());
+        assert!(validate_protocol_version_for_era(Era::Babbage, 8, 0, None).is_ok());
+        assert!(
+            validate_protocol_version_for_era(Era::Babbage, 9, 0, None).is_ok(),
+            "Babbage must accept PV major=9 — Conway transition signal",
+        );
+        assert!(matches!(
+            validate_protocol_version_for_era(Era::Babbage, 6, 0, None),
+            Err(SyncError::ProtocolVersionMismatch {
+                era: Era::Babbage,
+                major: 6,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_protocol_version_for_era(Era::Babbage, 10, 0, None),
+            Err(SyncError::ProtocolVersionMismatch {
+                era: Era::Babbage,
+                major: 10,
                 ..
             })
         ));

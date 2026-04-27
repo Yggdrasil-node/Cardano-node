@@ -4609,7 +4609,7 @@ impl LedgerState {
                     validate_alonzo_plus_tx(
                         params,
                         &self.multi_era_utxo,
-                        tx.raw_cbor.len(),
+                        tx.size_for_fee_and_max(),
                         tx.body.fee,
                         &outputs,
                         tx.body.collateral.as_deref(),
@@ -4982,7 +4982,7 @@ impl LedgerState {
                     validate_alonzo_plus_tx(
                         params,
                         &self.multi_era_utxo,
-                        tx.raw_cbor.len(),
+                        tx.size_for_fee_and_max(),
                         tx.body.fee,
                         &outputs,
                         tx.body.collateral.as_deref(),
@@ -5391,7 +5391,7 @@ impl LedgerState {
                     validate_alonzo_plus_tx(
                         params,
                         &self.multi_era_utxo,
-                        tx.raw_cbor.len(),
+                        tx.size_for_fee_and_max(),
                         tx.body.fee,
                         &outputs,
                         tx.body.collateral.as_deref(),

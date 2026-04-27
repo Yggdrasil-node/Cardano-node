@@ -56,27 +56,35 @@ pub struct Tx {
 }
 
 impl Tx {
-    /// Compute the full serialized transaction size matching the on-wire CBOR
-    /// array encoding.
+    /// Compute the transaction size used by the linear fee formula
+    /// `min_fee = a × txSize + b` and the `validateMaxTxSizeUTxO`
+    /// rule, matching upstream `sizeAlonzoTxF` /
+    /// `toCBORForSizeComputation`.
     ///
-    /// Pre-Alonzo (Shelley/Allegra/Mary): `[body, witnesses, auxiliary_data / null]` (3 elements).
-    /// Alonzo+: `[body, witnesses, is_valid, auxiliary_data / null]` (4 elements).
+    /// Always a **3-element** CBOR list `[body, witnesses, auxData_or_null]`,
+    /// regardless of era.  Pre-Alonzo eras (Shelley/Allegra/Mary)
+    /// have no `is_valid` flag, so the wire form already matches.
+    /// Alonzo+ eras (Alonzo/Babbage/Conway) carry a 4th `is_valid`
+    /// element on the wire (`toCBORForMempoolSubmission` form), but
+    /// upstream deliberately **excludes** `is_valid` from the fee/size
+    /// computation for Mary-era compatibility — so the same fee math
+    /// applies to a tx whether it's submitted as Mary (3-element) or
+    /// Alonzo+ (4-element wire).  Without this exclusion, yggdrasil
+    /// computes a tx size 1 byte too large for every Alonzo+ tx and
+    /// rejects valid blocks with `FeeTooSmall` (the operator-visible
+    /// symptom captured during the Round 154 preview run, with
+    /// difference exactly `minFeeA × 1 byte`).
     ///
-    /// Upstream `validateMaxTxSizeUTxO` and the linear fee formula both use this
-    /// full serialized size, not just the body bytes.
-    ///
-    /// Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `validateMaxTxSizeUTxO`.
+    /// Reference: `Cardano.Ledger.Alonzo.Tx.toCBORForSizeComputation`
+    /// — `encodeListLen 3 <> encCBOR atBody <> encCBOR atWits <>
+    /// encodeNullStrictMaybe encCBOR atAuxData`.
     pub fn serialized_size(&self) -> usize {
-        let alonzo_plus = self.is_valid.is_some();
-        let n_elems: u8 = if alonzo_plus { 4 } else { 3 };
-        // CBOR array header: 1 byte for array(3) or array(4) (both < 24)
+        // 3-element CBOR array header (1 byte; len<24 inlined).
         let header_size: usize = 1;
         let body_size = self.body.len();
         let witness_size = self.witnesses.as_ref().map_or(1, |w| w.len()); // null = 1 byte
-        let is_valid_size: usize = if alonzo_plus { 1 } else { 0 }; // CBOR bool = 1 byte
         let aux_data_size = self.auxiliary_data.as_ref().map_or(1, |a| a.len()); // null = 1 byte
-        let _ = n_elems; // used conceptually for documentation
-        header_size + body_size + witness_size + is_valid_size + aux_data_size
+        header_size + body_size + witness_size + aux_data_size
     }
 }
 
@@ -275,6 +283,20 @@ where
     /// rationale.
     pub fn raw_body(&self) -> &[u8] {
         &self.raw_body
+    }
+
+    /// Return the transaction size used by the linear fee formula and
+    /// `validateMaxTxSizeUTxO`, matching upstream's `sizeAlonzoTxF` /
+    /// `toCBORForSizeComputation`.  This is the 3-element CBOR list
+    /// `[body, witness_set, auxData_or_null]` size — `is_valid` is
+    /// excluded for Mary-era compatibility.  See [`Tx::serialized_size`]
+    /// for the rationale.
+    pub fn size_for_fee_and_max(&self) -> usize {
+        // raw_cbor is the 4-element `[body, wits, isValid, aux]` form.
+        // Subtract 1 for the `is_valid` byte and add the array-header
+        // delta (which is 0 because both `array(3)` and `array(4)` use
+        // 1 byte of CBOR major-type prefix).
+        self.raw_cbor.len() - 1
     }
 
     /// Return the exact CBOR bytes of the entire submitted transaction
@@ -702,9 +724,18 @@ mod tests {
         assert_eq!(tx.serialized_size(), 8);
     }
 
+    /// Round 155 — `serialized_size` returns the upstream `sizeAlonzoTxF`
+    /// value (3-element CBOR list `[body, wits, auxData_or_null]`),
+    /// **excluding** `is_valid`, even for Alonzo+ txs.  This pins the
+    /// fix for the operator-visible `FeeTooSmall` rejection on
+    /// preview's bootstrap chain (Round 154 surfaced the bug;
+    /// Round 155 fixes it).
+    ///
+    /// Reference: `Cardano.Ledger.Alonzo.Tx.toCBORForSizeComputation`
+    /// — `encodeListLen 3 <> encCBOR atBody <> encCBOR atWits
+    /// <> encodeNullStrictMaybe encCBOR atAuxData`.
     #[test]
-    fn serialized_size_alonzo_plus() {
-        // Alonzo+: [body, witnesses, is_valid, aux_data/null] — 4-element array
+    fn serialized_size_alonzo_plus_excludes_is_valid() {
         let body = vec![0xa2, 0x00, 0x01, 0x01, 0x02]; // 5 bytes
         let witnesses = vec![0xa0]; // 1 byte
         let aux_data = vec![0xa1, 0x00, 0x01]; // 3 bytes
@@ -713,10 +744,38 @@ mod tests {
             body: body.clone(),
             witnesses: Some(witnesses.clone()),
             auxiliary_data: Some(aux_data.clone()),
-            is_valid: Some(true), // Alonzo+ has is_valid
+            is_valid: Some(true), // Alonzo+ flag — must NOT count toward size
         };
-        // 1 (header) + 5 (body) + 1 (witnesses) + 1 (is_valid bool) + 3 (aux_data) = 11
-        assert_eq!(tx.serialized_size(), 11);
+        // Upstream toCBORForSizeComputation: 3-element list
+        // 1 (header) + 5 (body) + 1 (witnesses) + 3 (aux_data) = 10
+        // Pre-fix bug: this returned 11 (4-element form including is_valid).
+        assert_eq!(tx.serialized_size(), 10);
+    }
+
+    /// Round 155 — pre-Alonzo and Alonzo+ txs with the same body /
+    /// witnesses / aux_data must compute identical fee/size values.
+    /// Upstream's Mary-era-compat mechanism (`toCBORForSizeComputation`
+    /// using 3-element list without is_valid) is what makes this true.
+    #[test]
+    fn serialized_size_invariant_across_eras_for_fee_math() {
+        let body = vec![0xa2, 0x00, 0x01, 0x01, 0x02];
+        let witnesses = vec![0xa0];
+        let aux_data = vec![0xa1, 0x00, 0x01];
+        let pre_alonzo = Tx {
+            id: compute_tx_id(&body),
+            body: body.clone(),
+            witnesses: Some(witnesses.clone()),
+            auxiliary_data: Some(aux_data.clone()),
+            is_valid: None,
+        };
+        let alonzo_plus = Tx {
+            id: compute_tx_id(&body),
+            body,
+            witnesses: Some(witnesses),
+            auxiliary_data: Some(aux_data),
+            is_valid: Some(true),
+        };
+        assert_eq!(pre_alonzo.serialized_size(), alonzo_plus.serialized_size());
     }
 
     #[test]
@@ -732,8 +791,9 @@ mod tests {
         };
         // Full size should be strictly larger than body-only
         assert!(tx.serialized_size() > body.len());
-        // 1 (header) + 3 (body) + 6 (witnesses) + 1 (is_valid) + 1 (null) = 12
-        assert_eq!(tx.serialized_size(), 12);
+        // 1 (header) + 3 (body) + 6 (witnesses) + 1 (null aux) = 11
+        // (NOT 12 — is_valid byte is excluded per upstream sizeAlonzoTxF)
+        assert_eq!(tx.serialized_size(), 11);
     }
 
     // ── ShelleyCompatibleSubmittedTx ───────────────────────────────────
