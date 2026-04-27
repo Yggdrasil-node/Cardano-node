@@ -173,6 +173,93 @@ Logs land at `$LOG_ROOT/cycle-NN.log` (default `/tmp/ygg-restart/`). Preserve th
 
 ---
 
+## 6.5 Parallel BlockFetch soak (multi-peer dispatch)
+
+Yggdrasil's runtime supports the upstream-faithful per-peer BlockFetch worker architecture (mirrors `Ouroboros.Network.BlockFetch.ClientRegistry`). When `max_concurrent_block_fetch_peers > 1`, the governor migrates each warm peer's `BlockFetchClient` into a per-peer worker task and the sync loop dispatches fetch ranges in parallel via the shared `FetchWorkerPool`. **Default ships at `1`** to keep the legacy single-peer path active until this rehearsal is complete.
+
+### 6.5a Two-peer parity check (preprod)
+
+Edit the preprod config to set:
+
+```json
+{
+  "max_concurrent_block_fetch_peers": 2,
+  ...
+}
+```
+
+Or pass via env-overridden CLI:
+
+```sh
+NODE_CONFIG_OVERRIDE_max_concurrent_block_fetch_peers=2 \
+  scripts/run_preprod_real_pool_producer.sh
+```
+
+Watch the tracer for the activation event:
+
+```
+[Net.BlockFetch.Worker] Info — BlockFetch migrated to per-peer worker
+  peer=<addr> maxConcurrent=2
+```
+
+This event must fire once per warm peer at promote time. If the event never appears, the migration path is not active — investigate `Net.Governor` warning lines first.
+
+### 6.5b Hash-compare under parallel fetch
+
+Run the existing tip-comparison harness from §5 against a Haskell node that's also fully synced on preprod:
+
+```sh
+scripts/compare_tip_to_haskell.sh \
+  --rust-socket /tmp/ygg.sock \
+  --haskell-socket /tmp/cardano.sock \
+  --watch 15
+```
+
+**Pass criterion:** the Yggdrasil tip `{slot, hash, block, epoch}` must match the Haskell tip at every check for at least 6 hours after the multi-peer mode is engaged. Any divergence under parallel fetch indicates a bug in the dispatch / reorder / tentative-header path that does not surface in the single-peer path.
+
+### 6.5c Sustained-rate measurement
+
+Compare slot-rate metrics between knob=1 and knob=2 over the same wall-clock window:
+
+```sh
+# Knob=1 baseline (record before opting in)
+curl -fsS http://127.0.0.1:9001/metrics \
+  | grep '^yggdrasil_blocks_applied_total\|^yggdrasil_chain_tip_slot'
+sleep 600
+curl -fsS http://127.0.0.1:9001/metrics \
+  | grep '^yggdrasil_blocks_applied_total\|^yggdrasil_chain_tip_slot'
+
+# Restart with knob=2, repeat the same 10-minute window
+```
+
+Expected: knob=2 throughput ≥ knob=1 throughput. Upstream typically observes a 1.5–2× speedup on bulk-sync periods.
+
+### 6.5d Knob=4 stress test
+
+After 6.5a–6.5c pass, repeat with `max_concurrent_block_fetch_peers=4` for at least 24 hours of preprod soak. Watch:
+
+- `yggdrasil_hot_peers_total` should reach 4 once the governor has promoted enough peers.
+- 4 distinct `Net.BlockFetch.Worker` migration events (one per warm peer).
+- No tracer lines containing `fetch worker channel closed` or `fetch worker dropped response` — these indicate worker task crashes.
+- `yggdrasil_reconnects_total` rate within the same band as the knob=1 baseline.
+
+### 6.5e Mainnet rehearsal at knob=2
+
+Only after preprod 6.5a–6.5d are clean: repeat 6.5a + 6.5b on mainnet relay-only mode for 24 hours.
+
+### 6.5f Sign-off
+
+Record in §9:
+
+- Preprod knob=2 6h hash compare: PASS / FAIL
+- Preprod knob=4 24h soak: PASS / FAIL
+- Mainnet knob=2 24h hash compare: PASS / FAIL
+- Throughput delta knob=2 vs knob=1 (target: ≥ 1.0×, expected: 1.5–2×)
+
+If all sign-offs pass, the team can flip the default in `node/src/config.rs::default_max_concurrent_block_fetch_peers` from `1` to `2` (matching upstream `bfcMaxConcurrencyBulkSync = 2`). Update preset constructors in lockstep — there's a drift-guard test (`preset_configs_share_canonical_max_concurrent_block_fetch_peers`) that pins all three presets to the same value, so changing the default in one place fails CI until all are updated.
+
+---
+
 ## 7. Metrics snapshot collection
 
 At each checkpoint of the long-running rehearsal (T+15min, T+60min, T+6h), capture a Prometheus snapshot for later trend analysis:
@@ -246,6 +333,11 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
   T+6h    compare_tip_to_haskell -> 0
 [restart-resilience]
   CYCLES=12 result=PASS final_tip=<slot>
+[parallel-blockfetch]   (only fill when knob > 1 was exercised)
+  preprod  knob=2  6h hash-compare       result=PASS|FAIL
+  preprod  knob=4  24h soak                result=PASS|FAIL
+  mainnet  knob=2  24h hash-compare       result=PASS|FAIL
+  throughput-delta knob=2/knob=1 = <N.NN>x  (target >= 1.0x)
 [metrics-snapshots]
   /tmp/ygg-metrics-snapshots/*.txt  N captured
 [evidence-summary]
