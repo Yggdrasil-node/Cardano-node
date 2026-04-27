@@ -1,0 +1,90 @@
+# cargo-deny configuration.
+#
+# Run locally:
+#   cargo install --locked cargo-deny
+#   cargo deny check
+#
+# CI runs `cargo deny check` on every push and pull request.
+#
+# Reference: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Default to the host triple. CI also exercises the aarch64 path via the
+# release matrix so platform-specific deps are surfaced.
+all-features = true
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+# -----------------------------------------------------------------------------
+# Advisory database — RustSec security advisories.
+# -----------------------------------------------------------------------------
+[advisories]
+db-path = "$CARGO_HOME/advisory-dbs"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+# -----------------------------------------------------------------------------
+# Licensing.
+#
+# Yggdrasil ships under Apache-2.0. Bundled deps must be one of the SPDX
+# identifiers below (all permissive, all compatible with Apache-2.0
+# distribution). A new dep introducing a copyleft license fails the gate.
+# -----------------------------------------------------------------------------
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "Zlib",
+    "0BSD",
+]
+confidence-threshold = 0.93
+exceptions = []
+
+# Crates that ship without a SPDX-formatted license — list them explicitly
+# with the source license here when the gate complains.
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+# -----------------------------------------------------------------------------
+# Banned crates.
+# -----------------------------------------------------------------------------
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+# Crates Yggdrasil refuses to depend on. Add justification in the comment.
+deny = [
+    # OpenSSL bindings — pure-Rust crypto only, per docs/DEPENDENCIES.md.
+    { crate = "openssl",     reason = "FFI to OpenSSL — Yggdrasil is pure Rust" },
+    { crate = "openssl-sys", reason = "FFI to OpenSSL — Yggdrasil is pure Rust" },
+    { crate = "native-tls",  reason = "Pulls in OpenSSL on Linux" },
+]
+
+# Skip duplicate-version warnings for crates where multiple major versions
+# are unavoidable (transitive dep mismatch we have no control over).
+skip = []
+skip-tree = []
+
+# -----------------------------------------------------------------------------
+# Sources — only crates.io and the official rust-lang index.
+# -----------------------------------------------------------------------------
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

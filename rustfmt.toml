@@ -1,0 +1,11 @@
+# Workspace rustfmt configuration.
+#
+# Yggdrasil uses default rustfmt settings (Rust 2024 edition, 100-char
+# max width). This file is a placeholder so contributors and CI agree on
+# *which* rustfmt produced the canonical formatting, and so editor
+# integrations pick up the project root rather than walking up.
+#
+# Pin only what is non-default. Anything we set here MUST be a stable
+# rustfmt option — nightly-only options would break `cargo fmt --check`
+# in CI on the pinned 1.85.0 toolchain.
+edition = "2024"
