@@ -167,11 +167,11 @@ h2 { letter-spacing: -0.018em; }
 .main-content figure.highlight pre {
   border: 1px solid var(--yg-line);
   border-radius: 8px;
-  background: #f8faf9 !important;
+  background: var(--yg-mist) !important;
   font-size: 0.875rem;
   line-height: 1.55;
   padding: 1rem 1.1rem;
-  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
 }
 
 .main-content code {
@@ -298,13 +298,14 @@ h4:hover .anchor-heading svg {
   }
 
   .yg-btn-secondary {
-    background: #fff;
-    color: var(--yg-teal-700) !important;
+    background: var(--yg-mist);
+    color: var(--yg-teal-500) !important;
     border-color: var(--yg-line);
 
     &:hover {
       border-color: var(--yg-teal-500);
-      color: var(--yg-teal-700) !important;
+      color: var(--yg-teal-500) !important;
+      background: var(--yg-teal-050);
       transform: translateY(-1px);
     }
   }
@@ -319,7 +320,7 @@ h4:hover .anchor-heading svg {
   margin: 0 0 2.4rem;
 
   .yg-stat {
-    background: #fff;
+    background: var(--yg-mist);
     border: 1px solid var(--yg-line);
     border-radius: 10px;
     padding: 1rem 1.1rem;
@@ -362,7 +363,7 @@ h4:hover .anchor-heading svg {
 
   a.yg-card {
     display: block;
-    background: #fff;
+    background: var(--yg-mist);
     border: 1px solid var(--yg-line);
     border-radius: 10px;
     padding: 1.05rem 1.15rem;
@@ -432,17 +433,17 @@ h4:hover .anchor-heading svg {
 
   &.callout-warning {
     border-color: var(--yg-rust-500);
-    background: #fdf2ec;
+    background: var(--yg-rust-100);
   }
 
   &.callout-tip {
     border-color: var(--yg-amber-500);
-    background: #fbf6e6;
+    background: var(--yg-amber-100);
   }
 
   &.callout-success {
-    border-color: #2ea66f;
-    background: #e8f6ee;
+    border-color: #4ec88c;
+    background: rgba(78, 200, 140, 0.12);
   }
 }
 

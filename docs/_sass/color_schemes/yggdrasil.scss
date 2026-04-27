@@ -3,6 +3,15 @@
 // Inspired by the world tree: deep night-sky background, copper-rust trunk,
 // teal canopy lights. Keeps long-form prose readable on dark while preserving
 // the brand identity of the YggdrasilNode logo.
+//
+// We inherit just-the-docs' built-in `dark` scheme first so every variable
+// that this file does not explicitly set already defaults to dark-friendly
+// values (search dropdown, table borders, focus rings, etc.).  Without
+// this import, the unset variables fall back to the light defaults and the
+// page renders with a half-light / half-dark mix.
+
+@import "./dark";
+
 
 // ────────────────────────────────────────────────────────────────────────
 // Brand
