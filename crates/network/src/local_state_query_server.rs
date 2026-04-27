@@ -120,8 +120,22 @@ impl LocalStateQueryServer {
         msg: &LocalStateQueryMessage,
     ) -> Result<(), LocalStateQueryServerError> {
         self.state = self.state.transition(msg)?;
+        let bytes = msg.to_cbor();
+        if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+            let preview_len = bytes.len().min(256);
+            let preview: String = bytes[..preview_len]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            eprintln!(
+                "[ygg-ntc-debug] LSQ send state={:?} raw_len={} preview={}",
+                self.state,
+                bytes.len(),
+                preview
+            );
+        }
         self.channel
-            .send(msg.to_cbor())
+            .send(bytes)
             .await
             .map_err(LocalStateQueryServerError::Mux)
     }

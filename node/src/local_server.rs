@@ -1301,15 +1301,14 @@ mod tests {
         let snapshot = state.snapshot();
 
         // [0, [2, [1]]] → GetCurrentEra → era_index of Conway = 6.
-        // Upstream `EraIndex xs` is encoded as a bare CBOR word8 per
-        // `Serialise (EraIndex xs) = encodeWord8 . eraIndexToInt`.
+        // NtC V_16 (the version yggdrasil negotiates with upstream
+        // cardano-cli) wraps `EraIndex` in a 1-element CBOR list.
         let get_current_era: &[u8] = &[0x82, 0x00, 0x82, 0x02, 0x81, 0x01];
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, get_current_era);
         assert_eq!(
             result,
-            vec![0x06],
-            "GetCurrentEra in Conway era must return bare CBOR word8 = 6 \
-             (upstream EraIndex shape, not [6])",
+            vec![0x81, 0x06],
+            "GetCurrentEra in Conway era must return [6] at NtC V_16",
         );
 
         // [0, [2, [0]]] → GetInterpreter → CBOR null (Phase-2 stub).

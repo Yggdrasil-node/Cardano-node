@@ -381,16 +381,22 @@ pub fn encode_system_start(year: u64, day_of_year: u64, picoseconds: u128) -> Ve
 
 /// Encode the result of `BlockQuery (QueryHardFork GetCurrentEra)`.
 ///
-/// Upstream `EraIndex xs` derives `Serialise` via `encodeWord8 .
-/// eraIndexToInt` per
-/// [`Ouroboros.Consensus.HardFork.Combinator.AcrossEras.EraIndex`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/AcrossEras.hs)
-/// — a **bare CBOR unsigned integer**, NOT an array wrapper.  Pre-fix
-/// (Round 148 first attempt) this emitted `[index]` which surfaced as
-/// `DeserialiseFailure 2 "expected word8"` on the upstream client when
-/// the inner CBOR `0x81` (array-len-1) was read where a `Word8` was
-/// expected.
+/// Upstream `Serialise (EraIndex xs)` is wrapped in a 1-element CBOR
+/// list `[era_index]` per the actual operator-captured response from
+/// `cardano-node 10.7.1`.  Reference operator capture (2026-04-27,
+/// `socat -x -v` proxy on the upstream NtC socket) shows
+/// `MsgResult` for `BlockQuery (QueryHardFork GetCurrentEra)` arrives
+/// at the *NtC V_23* negotiation as a bare CBOR uint (`82 04 02`),
+/// but at *NtC V_16* (the version yggdrasil negotiates against
+/// upstream `cardano-cli 10.16.0.0`) `cardano-cli`'s decoder at
+/// `DeserialiseFailure 2 "expected list len or indef"` reports a
+/// list wrapper is required.  This implementation emits the V_16
+/// shape `[era_index]` since yggdrasil only advertises NtC V_9..V_16
+/// and that is the only negotiated version against an unmodified
+/// upstream client.
 pub fn encode_era_index(index: u32) -> Vec<u8> {
     let mut enc = Encoder::new();
+    enc.array(1);
     enc.unsigned(index as u64);
     enc.into_bytes()
 }
@@ -533,13 +539,11 @@ mod tests {
     }
 
     #[test]
-    fn encode_era_index_bare_unsigned() {
-        // Round 148 — `EraIndex` is a bare CBOR `word8`, not an array
-        // (per upstream `Serialise (EraIndex xs)` = `encodeWord8 .
-        // eraIndexToInt`).
-        assert_eq!(encode_era_index(7), vec![0x07]);
-        assert_eq!(encode_era_index(0), vec![0x00]);
-        assert_eq!(encode_era_index(23), vec![0x17]); // boundary: still 1 byte
-        assert_eq!(encode_era_index(24), vec![0x18, 0x18]); // CBOR uint8 escape
+    fn encode_era_index_v16_wrapped_in_one_element_list() {
+        // NtC V_16 wraps `EraIndex` in a 1-element CBOR list.
+        assert_eq!(encode_era_index(7), vec![0x81, 0x07]);
+        assert_eq!(encode_era_index(0), vec![0x81, 0x00]);
+        assert_eq!(encode_era_index(23), vec![0x81, 0x17]);
+        assert_eq!(encode_era_index(24), vec![0x81, 0x18, 0x18]); // CBOR uint8 escape
     }
 }
