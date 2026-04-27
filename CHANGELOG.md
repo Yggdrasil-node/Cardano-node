@@ -18,6 +18,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Operator scripts: `install_from_release.sh`, systemd unit template.
 - `SECURITY.md` with vulnerability disclosure policy.
 
+### Fixed
+
+- Operator-facing Prometheus metric names corrected across the manual,
+  runbook, healthcheck, restart-resilience and pool-producer scripts. The
+  emitted names (`yggdrasil_current_block_number`, `yggdrasil_reconnects`,
+  `yggdrasil_rollbacks`, `yggdrasil_stable_blocks_promoted`,
+  `yggdrasil_batches_completed`, `yggdrasil_mempool_tx_added`,
+  `yggdrasil_mempool_tx_rejected`, `yggdrasil_inbound_connections_accepted`,
+  `yggdrasil_inbound_connections_rejected`, `yggdrasil_active_peers`,
+  `yggdrasil_blocks_synced`, `yggdrasil_current_slot`) are now what the
+  docs and scripts reference. Prior `*_total` / legacy aliases were stale
+  and would have returned no series on a real scrape.
+- `node/scripts/install_from_release.sh` now prints actionable
+  build-from-source instructions (instead of a bare error) when no
+  GitHub release has been published yet.
+- README install section reordered for the pre-1.0 window: source build
+  and Docker shown first, release tarball noted as gated on the first
+  `v*` tag.
+
 ### Changed
 
 - Per-crate `AGENTS.md` files refreshed for the closure-cycle runtime
