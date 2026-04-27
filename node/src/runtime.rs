@@ -1524,6 +1524,7 @@ async fn apply_cm_actions(
     actions: Vec<CmAction>,
     tracer: &NodeTracer,
     max_concurrent_block_fetch_peers: u8,
+    metrics: Option<&Arc<NodeMetrics>>,
 ) -> bool {
     let mut changed = false;
     for cm_action in actions {
@@ -1548,6 +1549,9 @@ async fn apply_cm_actions(
                     if max_concurrent_block_fetch_peers > 1 {
                         let migrated = peer_manager.migrate_session_to_worker(peer).await;
                         if migrated {
+                            if let Some(m) = metrics {
+                                m.inc_blockfetch_workers_migrated();
+                            }
                             tracer.trace_runtime(
                                 "Net.BlockFetch.Worker",
                                 "Info",
@@ -2211,6 +2215,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                         cm_actions,
                         &tracer,
                         config.max_concurrent_block_fetch_peers,
+                    metrics.as_ref(),
                     )
                     .await;
 
@@ -2287,6 +2292,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             applicable_actions,
                             &tracer,
                             config.max_concurrent_block_fetch_peers,
+                        metrics.as_ref(),
                         )
                         .await;
                         tracer.trace_runtime(
@@ -2478,6 +2484,18 @@ pub async fn run_governor_loop<I, V, L, F>(
                     actions
                 };
 
+                // Phase 6 — observe BlockFetch worker pool size each
+                // tick.  Done OUTSIDE the registry-read scope so the
+                // brief `tokio::sync::RwLock::read().await` doesn't
+                // hold a `std::sync::RwLockReadGuard<PeerRegistry>`
+                // across the await (which would break Send for the
+                // governor task).
+                if let Some(m) = metrics.as_ref() {
+                    let workers_registered =
+                        peer_manager.fetch_worker_pool.read().await.len() as u64;
+                    m.set_blockfetch_workers_registered(workers_registered);
+                }
+
                 if actions.is_empty() {
                     continue;
                 }
@@ -2524,6 +2542,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                                     cm_actions,
                                     &tracer,
                                     config.max_concurrent_block_fetch_peers,
+                                metrics.as_ref(),
                                 )
                                 .await;
 
@@ -2583,6 +2602,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                                     cm_actions,
                                     &tracer,
                                     config.max_concurrent_block_fetch_peers,
+                                metrics.as_ref(),
                                 )
                                 .await;
 

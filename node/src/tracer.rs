@@ -581,6 +581,16 @@ pub struct NodeMetrics {
     // network-magic mismatch vs. NtN rate-limit rejection).
     ntc_connections_accepted: AtomicU64,
     ntc_connections_rejected: AtomicU64,
+    // BlockFetch worker pool gauges (Phase 6 multi-peer dispatch).
+    // `blockfetch_workers_registered`: number of per-peer
+    // `FetchWorkerHandle` entries currently in the shared
+    // `FetchWorkerPool`.  Equals 0 in legacy single-peer mode (knob =
+    // 1).  Equal to the number of warm peers when knob > 1 and the
+    // governor has migrated their `BlockFetchClient`s to workers.
+    // `blockfetch_workers_migrated_total`: lifetime count of
+    // promote-time migrations.
+    blockfetch_workers_registered: AtomicU64,
+    blockfetch_workers_migrated_total: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -665,6 +675,15 @@ pub struct MetricsSnapshot {
     /// Total NtC connections whose handshake failed (e.g. network-magic
     /// mismatch, unsupported protocol version, early disconnect).
     pub ntc_connections_rejected: u64,
+    /// Number of per-peer BlockFetch workers currently registered in
+    /// the shared `FetchWorkerPool` (Phase 6).  `0` in legacy
+    /// single-peer mode; equal to the number of warm peers when
+    /// `max_concurrent_block_fetch_peers > 1`.
+    pub blockfetch_workers_registered: u64,
+    /// Lifetime total of per-peer BlockFetch worker migrations
+    /// (each `migrate_session_to_worker` call that takes the
+    /// `BlockFetchClient` out of a session and spawns a worker).
+    pub blockfetch_workers_migrated_total: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -709,6 +728,8 @@ impl NodeMetrics {
             inbound_connections_rejected: AtomicU64::new(0),
             ntc_connections_accepted: AtomicU64::new(0),
             ntc_connections_rejected: AtomicU64::new(0),
+            blockfetch_workers_registered: AtomicU64::new(0),
+            blockfetch_workers_migrated_total: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
     }
@@ -862,6 +883,23 @@ impl NodeMetrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Set the current count of registered BlockFetch workers in the
+    /// shared `FetchWorkerPool`.  Called by the runtime after each
+    /// register/unregister so the operator can observe activation in
+    /// `/metrics`.  `0` indicates legacy single-peer mode is active.
+    pub fn set_blockfetch_workers_registered(&self, count: u64) {
+        self.blockfetch_workers_registered
+            .store(count, Ordering::Relaxed);
+    }
+
+    /// Increment the lifetime BlockFetch worker migration count
+    /// (incremented once per successful
+    /// `OutboundPeerManager::migrate_session_to_worker` call).
+    pub fn inc_blockfetch_workers_migrated(&self) {
+        self.blockfetch_workers_migrated_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Read a consistent snapshot of all current metric values.
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
@@ -909,6 +947,12 @@ impl NodeMetrics {
             inbound_connections_rejected: self.inbound_connections_rejected.load(Ordering::Relaxed),
             ntc_connections_accepted: self.ntc_connections_accepted.load(Ordering::Relaxed),
             ntc_connections_rejected: self.ntc_connections_rejected.load(Ordering::Relaxed),
+            blockfetch_workers_registered: self
+                .blockfetch_workers_registered
+                .load(Ordering::Relaxed),
+            blockfetch_workers_migrated_total: self
+                .blockfetch_workers_migrated_total
+                .load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -1041,7 +1085,13 @@ yggdrasil_inbound_connections_rejected {}\n\
 yggdrasil_ntc_connections_accepted {}\n\
 # HELP yggdrasil_ntc_connections_rejected Total NtC (local socket) handshake failures (magic mismatch, unsupported version, early disconnect).\n\
 # TYPE yggdrasil_ntc_connections_rejected counter\n\
-yggdrasil_ntc_connections_rejected {}\n",
+yggdrasil_ntc_connections_rejected {}\n\
+# HELP yggdrasil_blockfetch_workers_registered Number of per-peer BlockFetch workers in the shared pool (Phase 6 multi-peer dispatch). 0 in legacy single-peer mode.\n\
+# TYPE yggdrasil_blockfetch_workers_registered gauge\n\
+yggdrasil_blockfetch_workers_registered {}\n\
+# HELP yggdrasil_blockfetch_workers_migrated_total Lifetime BlockFetch worker migrations (per successful promote-time migrate_session_to_worker call).\n\
+# TYPE yggdrasil_blockfetch_workers_migrated_total counter\n\
+yggdrasil_blockfetch_workers_migrated_total {}\n",
             self.blocks_synced,
             self.rollbacks,
             self.batches_completed,
@@ -1081,6 +1131,8 @@ yggdrasil_ntc_connections_rejected {}\n",
             self.inbound_connections_rejected,
             self.ntc_connections_accepted,
             self.ntc_connections_rejected,
+            self.blockfetch_workers_registered,
+            self.blockfetch_workers_migrated_total,
         )
     }
 }
@@ -1380,6 +1432,42 @@ mod tests {
         assert!(text.contains("# TYPE yggdrasil_current_slot gauge\n"));
         assert!(text.contains("# TYPE yggdrasil_target_known_peers gauge\n"));
         assert!(text.contains("yggdrasil_uptime_seconds"));
+    }
+
+    #[test]
+    fn node_metrics_tracks_blockfetch_worker_pool_size() {
+        // Phase 6 multi-peer dispatch observability: operators must
+        // be able to verify activation of the multi-peer path via
+        // `/metrics`.  `blockfetch_workers_registered` reports the
+        // current pool size; `blockfetch_workers_migrated_total`
+        // counts lifetime migrations.
+        let metrics = NodeMetrics::new();
+        // Default state: no workers, no migrations.
+        let snap = metrics.snapshot();
+        assert_eq!(snap.blockfetch_workers_registered, 0);
+        assert_eq!(snap.blockfetch_workers_migrated_total, 0);
+
+        // Simulate 2 peers being migrated.
+        metrics.inc_blockfetch_workers_migrated();
+        metrics.inc_blockfetch_workers_migrated();
+        metrics.set_blockfetch_workers_registered(2);
+        let snap = metrics.snapshot();
+        assert_eq!(snap.blockfetch_workers_registered, 2);
+        assert_eq!(snap.blockfetch_workers_migrated_total, 2);
+
+        // One peer disconnects; pool size shrinks but lifetime count
+        // is monotonic.
+        metrics.set_blockfetch_workers_registered(1);
+        let snap = metrics.snapshot();
+        assert_eq!(snap.blockfetch_workers_registered, 1);
+        assert_eq!(snap.blockfetch_workers_migrated_total, 2);
+
+        // Prometheus text contains both lines for scrape parity.
+        let text = metrics.snapshot().to_prometheus_text();
+        assert!(text.contains("yggdrasil_blockfetch_workers_registered 1\n"));
+        assert!(text.contains("yggdrasil_blockfetch_workers_migrated_total 2\n"));
+        assert!(text.contains("# TYPE yggdrasil_blockfetch_workers_registered gauge\n"));
+        assert!(text.contains("# TYPE yggdrasil_blockfetch_workers_migrated_total counter\n"));
     }
 
     #[test]

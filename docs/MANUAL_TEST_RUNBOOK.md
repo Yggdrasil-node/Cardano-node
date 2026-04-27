@@ -276,6 +276,10 @@ Key metrics to track:
 - `yggdrasil_mempool_tx_count` — varies; useful for relay-mode validation.
 - `yggdrasil_reconnects_total` — should stay low (<10/hour) on a stable peer set.
 
+For Phase 6 parallel-fetch validation (§6.5):
+- `yggdrasil_blockfetch_workers_registered` — current pool size. `0` in legacy single-peer mode (knob = 1); equal to the number of warm peers when knob > 1 and the governor has migrated their `BlockFetchClient`s. Watching this gauge climb to the configured knob value is the operator's primary signal that multi-peer dispatch has activated.
+- `yggdrasil_blockfetch_workers_migrated_total` — lifetime count of promote-time migrations. Should monotonically increase as warm peers are promoted; flat-lining while warm peers are being promoted indicates the migration call path is broken (check `Net.BlockFetch.Worker` tracer events).
+
 Quick health JSON:
 
 ```sh
