@@ -4689,6 +4689,37 @@ where
             }
         }
 
+        // Round-90 (Gap BM) fix: realign `from_point` and `chain_state`
+        // with the storage volatile tip BEFORE attempting the next
+        // session.  Without this, a session-handoff (`switching sync
+        // session to higher-tip hot peer`) can leave `from_point`
+        // pointing at a hash that's no longer in `chain_state.entries`
+        // (e.g., a deep rollback during the previous session truncated
+        // the volatile window past `from_point`), and the next peer's
+        // `RollBackward(from_point)` confirmation crashes the node
+        // with `RollbackPointNotFound`.  Re-seeding from the volatile
+        // store and snapping `from_point` to its tip makes the resume
+        // self-consistent regardless of what happened in the prior
+        // session.  Surfaced by §6.5a multi-peer rehearsal on 2026-04-27.
+        if let Some(new_chain_state) =
+            seed_chain_state_via_chain_db(chain_db, config.security_param)
+        {
+            let storage_tip = new_chain_state.tip();
+            if storage_tip != from_point {
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Info",
+                    "realigning from_point to volatile storage tip before reconnect",
+                    trace_fields([
+                        ("staleFromPoint", json!(format!("{from_point:?}"))),
+                        ("storageTip", json!(format!("{storage_tip:?}"))),
+                    ]),
+                );
+                from_point = storage_tip;
+            }
+            chain_state = Some(new_chain_state);
+        }
+
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(
             node_config.peer_addr,
             fallback_peer_addrs,
@@ -5169,6 +5200,37 @@ where
                 }
                 () = tokio::time::sleep(backoff) => {}
             }
+        }
+
+        // Round-90 (Gap BM) fix: realign `from_point` and `chain_state`
+        // with the storage volatile tip BEFORE attempting the next
+        // session.  Without this, a session-handoff (`switching sync
+        // session to higher-tip hot peer`) can leave `from_point`
+        // pointing at a hash that's no longer in `chain_state.entries`
+        // (e.g., a deep rollback during the previous session truncated
+        // the volatile window past `from_point`), and the next peer's
+        // `RollBackward(from_point)` confirmation crashes the node
+        // with `RollbackPointNotFound`.  Re-seeding from the volatile
+        // store and snapping `from_point` to its tip makes the resume
+        // self-consistent regardless of what happened in the prior
+        // session.  Surfaced by §6.5a multi-peer rehearsal on 2026-04-27.
+        if let Some(new_chain_state) =
+            seed_chain_state_via_chain_db(chain_db, config.security_param)
+        {
+            let storage_tip = new_chain_state.tip();
+            if storage_tip != from_point {
+                tracer.trace_runtime(
+                    "Net.PeerSelection",
+                    "Info",
+                    "realigning from_point to volatile storage tip before reconnect",
+                    trace_fields([
+                        ("staleFromPoint", json!(format!("{from_point:?}"))),
+                        ("storageTip", json!(format!("{storage_tip:?}"))),
+                    ]),
+                );
+                from_point = storage_tip;
+            }
+            chain_state = Some(new_chain_state);
         }
 
         let refreshed_fallback_peers = refresh_chain_db_reconnect_fallback_peers(

@@ -186,21 +186,57 @@ Yggdrasil's runtime supports the upstream-faithful per-peer BlockFetch worker ar
 
 ### 6.5a Two-peer parity check (preprod)
 
-Edit the preprod config to set:
+Two prerequisites combine to activate the multi-peer BlockFetch dispatch:
 
-```json
-{
-  "max_concurrent_block_fetch_peers": 2,
-  ...
-}
-```
+1. **Set the knob** to ≥ 2.  Either edit the config, or pass the CLI
+   override (preferred for one-off rehearsals — no config-file edit
+   needed):
 
-Or pass via env-overridden CLI:
+   ```sh
+   $YGG_BIN run --network preprod \
+     --max-concurrent-block-fetch-peers 2 \
+     --database-path /tmp/ygg-preprod-db \
+     --socket-path /tmp/ygg-preprod.sock \
+     --metrics-port 9201
+   ```
 
-```sh
-NODE_CONFIG_OVERRIDE_max_concurrent_block_fetch_peers=2 \
-  scripts/run_preprod_real_pool_producer.sh
-```
+2. **Make sure the governor has at least 2 peers to promote**, otherwise
+   the legacy single-peer ChainSync path stays active and the worker
+   pool stays empty.  The vendored preprod `topology.json` ships with a
+   single `bootstrapPeer`, and ledger-derived peers only kick in once
+   the chain crosses `useLedgerAfterSlot=112406400`.  Until then, edit
+   `node/configuration/preprod/topology.json` to add at least one
+   `localRoot`:
+
+   ```json
+   {
+     "bootstrapPeers": [{ "address": "preprod-node.play.dev.cardano.org", "port": 3001 }],
+     "localRoots": [
+       {
+         "accessPoints": [
+           { "address": "preprod-node.play.dev.cardano.org", "port": 3001 },
+           { "address": "<second-preprod-relay>", "port": 3001 }
+         ],
+         "advertise": false,
+         "trustable": false,
+         "valency": 2
+       }
+     ]
+   }
+   ```
+
+   (Sources for additional preprod relays: the [Cardano Operations
+   Book — env-preprod](https://book.world.dev.cardano.org/env-preprod.html)
+   page, or any preprod stake-pool's published relay.)
+
+**Activation criteria** — both must hold:
+
+- The Prometheus gauge `yggdrasil_blockfetch_workers_registered` must
+  rise from `0` to the warm-peer count (one worker per peer).  Capture
+  with: `curl -sS http://127.0.0.1:9201/metrics | grep
+  ^yggdrasil_blockfetch_workers_registered`.
+- `yggdrasil_blockfetch_workers_migrated_total` must be ≥ 1 (at least
+  one promote-time migration completed).
 
 Watch the tracer for the activation event:
 
@@ -209,7 +245,34 @@ Watch the tracer for the activation event:
   peer=<addr> maxConcurrent=2
 ```
 
-This event must fire once per warm peer at promote time. If the event never appears, the migration path is not active — investigate `Net.Governor` warning lines first.
+This event must fire once per warm peer at promote time. **If
+`yggdrasil_blockfetch_workers_registered` stays at 0 even after a
+multi-minute sync and the activation event never appears, the
+migration path is not active** — the rehearsal is testing the legacy
+single-peer path and not the multi-peer one.  Investigate
+`Net.Governor` warning lines first; common causes are (a) only one
+peer in the registry, (b) `useLedgerAfterSlot` not yet crossed and no
+`localRoots` configured.
+
+> **Known issues (2026-04-27 operator rehearsal)**:
+>
+> - **Round 90 Gap BM (CLOSED)** — the previous `RollbackPointNotFound`
+>   crash at session-handoff is fixed.  Look for
+>   `Net.PeerSelection: realigning from_point to volatile storage tip
+>   before reconnect` in the trace as confirmation that the runtime
+>   resync logic is engaging cleanly.  ~5 realignments / minute is
+>   normal during the §6.5a livelock window described next.
+> - **Round 91 Gap BN (OPEN)** — multi-peer dispatch advances
+>   `ChainState`'s in-memory tip but the per-peer `FetchWorkerPool`
+>   reassembly is not feeding the dispatched blocks into
+>   `apply_multi_era_step_to_volatile`.  The volatile / immutable
+>   / ledger directories stay empty during the rehearsal; the node
+>   re-syncs from Origin on every session handoff (no crash, just
+>   livelock).  §6.5a is **NOT yet operationally clean** — keep the
+>   production default `max_concurrent_block_fetch_peers = 1`.
+>   Storage-empty signal: `find $YGG_DB -type f | wc -l` stays at 0
+>   even after several minutes of `yggdrasil_batches_completed`
+>   counter advancement.
 
 ### 6.5b Hash-compare under parallel fetch
 

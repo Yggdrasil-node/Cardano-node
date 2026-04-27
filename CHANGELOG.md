@@ -123,6 +123,80 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - **Round 84 parity-audit-history entry.**  `docs/PARITY_SUMMARY.md`
   records the Q-1 / F-2 closure with anchored upstream references.
 
+### Known Issues
+
+- **§6.5a multi-peer dispatch — `ChainState` advances but `volatile`
+  storage stays empty (Round 91 Gap BN, OPEN).**  After Round 90
+  closed the hard-crash path, the same §6.5a rehearsal reveals that
+  multi-peer dispatch advances the in-memory chain (`from_point` at
+  ~slot 102 240) but **persists no blocks to `volatile/` /
+  `immutable/` / `ledger/`** — the per-peer `FetchWorkerPool`
+  reassembly is not feeding into `apply_multi_era_step_to_volatile`.
+  The Round 90 realignment now keeps the node alive across this
+  livelock (5 successful handoffs + 0 crashes confirmed on the
+  2026-04-27 90-second rehearsal), but the node re-syncs from Origin
+  on every session handoff, so it never reaches a stable steady-
+  state.  Investigation entry points:
+  `node/src/sync.rs::dispatch_range_with_tentative`,
+  `execute_multi_peer_blockfetch_plan`, the reorder-buffer →
+  apply-step seam.  Production default
+  `max_concurrent_block_fetch_peers = 1` MUST stay until this also
+  closes.
+
+### Fixed
+
+- **§6.5a multi-peer dispatch — session-handoff `RollbackPointNotFound`
+  crash (Round 90 Gap BM).**  With
+  `--max-concurrent-block-fetch-peers 2` and ≥ 3 `localRoots`, the
+  multi-peer BlockFetch worker pool activates correctly
+  (`yggdrasil_blockfetch_workers_registered = 3`,
+  `_migrated_total = 3`) but within ~30 s of preprod sync the
+  governor's `Net.PeerSelection: switching sync session to
+  higher-tip hot peer` path triggered a reconnect, the re-established
+  session resumed from `fromPoint=BlockPoint(N, H)`, and
+  `roll_backward` on the in-memory `ChainState` returned
+  `RollbackPointNotFound { slot: N, hash: H }` — crashing the node.
+  Not the Round 88 fresh-restart bug — `ChainState` was the same
+  in-memory object across the reconnect loop, but `from_point` had
+  advanced past whatever the volatile store actually held (e.g.,
+  `from_point` at slot 102 240 vs storage tip at Origin, observed
+  live).  Fix: at the top of every reconnect-loop iteration in both
+  `run_reconnecting_verified_sync_service_chaindb_inner` and
+  `run_reconnecting_verified_sync_service_shared_chaindb_inner`,
+  re-seed `chain_state` from the volatile DB AND realign
+  `from_point` to `chain_state.tip()` — emitting
+  `Net.PeerSelection: realigning from_point to volatile storage tip
+  before reconnect` whenever they differ.  This makes the resume
+  self-consistent regardless of what diverged in the prior session:
+  the next peer's `RollBackward(from_point)` confirmation always
+  finds the target.  Verified end-to-end on the 2026-04-27 §6.5a
+  rehearsal — 5 realignments handled cleanly + 0 crashes over
+  1 m 31 s, was crashing at 30 s pre-fix.  Forensic log:
+  `/tmp/ygg-multi-peer-rollback-crash-2026-04-27.log`.
+
+### Added
+
+- **CLI override for `max_concurrent_block_fetch_peers`.**  New
+  `--max-concurrent-block-fetch-peers <N>` flag on the `run` subcommand,
+  matching the existing override pattern for `--peer`, `--port`,
+  `--metrics-port`.  Lets the §6.5 multi-peer BlockFetch rehearsal
+  flip the knob without editing the vendored config files; replaces
+  the previously-documented (but unimplemented)
+  `NODE_CONFIG_OVERRIDE_max_concurrent_block_fetch_peers` env-var
+  pattern in the runbook.
+- **Devcontainer setup for the full operator-rehearsal toolchain.**
+  `.devcontainer/devcontainer.json` now declares the Rust 1.95.0
+  feature, common-utils feature, port forwards for `3001` (NtN) +
+  `9001/9099/9101` (metrics), VSCode extensions
+  (`rust-analyzer`, `vadimcn.vscode-lldb`,
+  `tamasfe.even-better-toml`), and a `postCreateCommand` that runs
+  `node/scripts/install_haskell_cardano_node.sh` to fetch the
+  upstream IntersectMBO Haskell `cardano-node` + `cardano-cli`
+  binaries (10.7.1+) into `~/.local/bin/`.  This unblocks the §5
+  hash-comparison and §6.5b parallel-fetch parity checks in a fresh
+  devcontainer with no manual operator setup.  The installer is
+  idempotent — subsequent rebuilds skip the ~217 MB download.
+
 ### Fixed
 
 - **Restart-resilience cycle-2 crash: `RollbackPointNotFound` after
