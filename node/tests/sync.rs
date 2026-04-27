@@ -1849,7 +1849,7 @@ fn apply_multi_era_step_rollforward_adds_block() {
         raw_header: vec![],
         tip: Point::BlockPoint(SlotNo(500), sample_header_hash()),
         blocks: vec![MultiEraBlock::Shelley(Box::new(block))],
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
     let mut store = InMemoryVolatile::default();
     apply_multi_era_step_to_volatile(&mut store, &step).expect("apply");
@@ -1874,7 +1874,7 @@ fn apply_multi_era_step_rollbackward_resets_tip() {
         raw_header: vec![],
         tip: Point::BlockPoint(SlotNo(500), sample_header_hash()),
         blocks: vec![MultiEraBlock::Shelley(Box::new(block))],
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
     let mut store = InMemoryVolatile::default();
     apply_multi_era_step_to_volatile(&mut store, &fwd_step).expect("apply fwd");
@@ -1966,7 +1966,7 @@ fn extract_tx_ids_from_shelley_block() {
     let id1 = tx_id_for(&body1);
     let id2 = tx_id_for(&body2);
 
-    let block = MultiEraBlock::Shelley(Box::new(ShelleyBlock {
+    let sb = ShelleyBlock {
         header: ShelleyHeader {
             body: sample_header_body(),
             signature: vec![0xDD; 448],
@@ -1995,9 +1995,11 @@ fn extract_tx_ids_from_shelley_block() {
             },
         ],
         transaction_metadata_set: std::collections::HashMap::new(),
-    }));
+    };
+    let raw = sb.to_cbor_bytes();
+    let block = MultiEraBlock::Shelley(Box::new(sb));
 
-    let ids = extract_tx_ids(&block);
+    let ids = extract_tx_ids(&block, &raw);
     assert_eq!(ids, vec![id1, id2]);
 }
 
@@ -2012,7 +2014,8 @@ fn extract_tx_ids_from_byron_ebb_is_empty() {
         },
         era_tag: 0,
     };
-    assert!(extract_tx_ids(&block).is_empty());
+    // Byron arm doesn't consult raw_block_bytes.
+    assert!(extract_tx_ids(&block, &[]).is_empty());
 }
 
 #[test]
@@ -2069,7 +2072,8 @@ fn extract_tx_ids_from_byron_main_block() {
         era_tag: 1,
     };
 
-    let ids = extract_tx_ids(&block);
+    // Byron arm doesn't consult raw_block_bytes.
+    let ids = extract_tx_ids(&block, &[]);
     assert_eq!(ids.len(), 2);
     assert_eq!(ids[0], expected_id1);
     assert_eq!(ids[1], expected_id2);
@@ -2115,7 +2119,7 @@ fn evict_confirmed_removes_matching_mempool_entries() {
             }],
             transaction_metadata_set: std::collections::HashMap::new(),
         }))],
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
 
     let evicted = evict_confirmed_from_mempool(&mut mempool, &step);
@@ -2171,7 +2175,7 @@ fn evict_confirmed_also_purges_expired() {
             transaction_witness_sets: vec![],
             transaction_metadata_set: std::collections::HashMap::new(),
         }))],
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
 
     let evicted = evict_confirmed_from_mempool(&mut mempool, &step);
@@ -2414,8 +2418,9 @@ fn extract_tx_ids_babbage() {
         auxiliary_data_set: std::collections::HashMap::new(),
         invalid_transactions: vec![],
     };
+    let raw = block.to_cbor_bytes();
     let me = MultiEraBlock::Babbage(Box::new(block));
-    let ids = extract_tx_ids(&me);
+    let ids = extract_tx_ids(&me, &raw);
     assert_eq!(ids.len(), 1);
     assert_eq!(ids[0], expected_id);
 }
@@ -2444,8 +2449,9 @@ fn extract_tx_ids_conway() {
         auxiliary_data_set: std::collections::HashMap::new(),
         invalid_transactions: vec![],
     };
+    let raw = block.to_cbor_bytes();
     let me = MultiEraBlock::Conway(Box::new(block));
-    let ids = extract_tx_ids(&me);
+    let ids = extract_tx_ids(&me, &raw);
     assert_eq!(ids.len(), 1);
     assert_eq!(ids[0], expected_id);
 }
@@ -3269,7 +3275,7 @@ fn track_chain_state_roll_forward() {
         raw_header: vec![],
         tip: Point::Origin,
         blocks,
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
     let stable = track_chain_state(&mut cs, &step).expect("roll forward");
     // 5 blocks, k=3 → 2 stable
@@ -3288,7 +3294,7 @@ fn track_chain_state_entries_returns_stable_prefix() {
         raw_header: vec![],
         tip: Point::Origin,
         blocks,
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
     let stable_entries = track_chain_state_entries(&mut cs, &step).expect("roll forward entries");
     assert_eq!(stable_entries.len(), 2);
@@ -3308,7 +3314,7 @@ fn track_chain_state_roll_backward() {
         raw_header: vec![],
         tip: Point::Origin,
         blocks,
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
     track_chain_state(&mut cs, &fwd).expect("roll forward");
     assert_eq!(cs.volatile_len(), 4);
@@ -3667,7 +3673,7 @@ fn track_chain_state_includes_byron_blocks() {
         raw_header: vec![],
         tip: Point::Origin,
         blocks,
-        raw_blocks: None,
+        raw_blocks: Vec::new(),
     };
     let stable = track_chain_state(&mut cs, &step).expect("roll forward with byron");
     assert_eq!(stable, 0);

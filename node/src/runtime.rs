@@ -3782,12 +3782,23 @@ fn re_admit_rolled_back_tx_ids(
 fn evict_mempool_after_roll_forward(
     mempool: &SharedMempool,
     blocks: &[crate::sync::MultiEraBlock],
+    raw_blocks: &[Vec<u8>],
     tip: &Point,
     recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,
     checkpoint_tracking: Option<&LedgerCheckpointTracking>,
     inbound_tx_state: Option<&SharedTxState>,
 ) -> (usize, usize, usize, usize, usize) {
-    let confirmed_ids: Vec<TxId> = blocks.iter().flat_map(extract_tx_ids).collect();
+    // Use the on-wire block bytes when present so the tx_id derivation
+    // matches what the wallet originally submitted (see
+    // `extract_tx_ids` for the rationale).
+    let confirmed_ids: Vec<TxId> = blocks
+        .iter()
+        .enumerate()
+        .flat_map(|(i, b)| {
+            let raw: &[u8] = raw_blocks.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
+            extract_tx_ids(b, raw)
+        })
+        .collect();
     if confirmed_ids.is_empty() {
         return (0, 0, 0, 0, 0);
     }
@@ -4884,10 +4895,16 @@ where
 
                             if let Some(ref mempool) = mempool {
                                 for step in &progress.steps {
-                                    if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
+                                    if let MultiEraSyncStep::RollForward {
+                                        blocks,
+                                        raw_blocks,
+                                        tip,
+                                        ..
+                                    } = step
+                                    {
                                         let (cached, removed, conflicting, purged, revalidated) =
                                             evict_mempool_after_roll_forward(
-                                                mempool, blocks, tip,
+                                                mempool, blocks, raw_blocks, tip,
                                                 &mut recently_confirmed,
                                                 checkpoint_tracking.as_ref(),
                                                 inbound_tx_state.as_ref(),
@@ -5356,10 +5373,16 @@ where
 
                             if let Some(ref mempool) = mempool {
                                 for step in &progress.steps {
-                                    if let MultiEraSyncStep::RollForward { blocks, tip, .. } = step {
+                                    if let MultiEraSyncStep::RollForward {
+                                        blocks,
+                                        raw_blocks,
+                                        tip,
+                                        ..
+                                    } = step
+                                    {
                                         let (cached, removed, conflicting, purged, revalidated) =
                                             evict_mempool_after_roll_forward(
-                                                mempool, blocks, tip,
+                                                mempool, blocks, raw_blocks, tip,
                                                 &mut recently_confirmed,
                                                 checkpoint_tracking.as_ref(),
                                                 inbound_tx_state.as_ref(),

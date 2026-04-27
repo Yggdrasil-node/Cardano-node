@@ -1,7 +1,7 @@
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::Era;
 use crate::eras::{
-    AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, ExUnits, MaryTxBody, ShelleyTx,
+    AllegraTxBody, AlonzoTxBody, BabbageTxBody, ConwayTxBody, ExUnits, MaryTxBody, ShelleyTxBody,
     ShelleyTxIn, ShelleyWitnessSet,
 };
 use crate::error::LedgerError;
@@ -294,7 +294,16 @@ where
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MultiEraSubmittedTx {
     /// Shelley-era submitted transaction.
-    Shelley(ShelleyTx),
+    ///
+    /// Uses `ShelleyCompatibleSubmittedTx<ShelleyTxBody>` (not the era-
+    /// internal `ShelleyTx`) so the on-wire `raw_body` / `raw_cbor`
+    /// byte spans are preserved through tx-id and fee validation,
+    /// matching every other era.  Re-encoding from the typed parts
+    /// produces byte-canonical CBOR that does not always match the
+    /// wallet's original encoding (definite vs indefinite length, set
+    /// vs array, integer-width canonicalisation), which would silently
+    /// drift the `min_fee = a · txSize + b` calculation.
+    Shelley(ShelleyCompatibleSubmittedTx<ShelleyTxBody>),
     /// Allegra-era submitted transaction.
     Allegra(ShelleyCompatibleSubmittedTx<AllegraTxBody>),
     /// Mary-era submitted transaction.
@@ -313,7 +322,8 @@ impl MultiEraSubmittedTx {
     pub fn from_cbor_bytes_for_era(era: Era, data: &[u8]) -> Result<Self, LedgerError> {
         match era {
             Era::Byron => Err(LedgerError::UnsupportedEra(Era::Byron)),
-            Era::Shelley => ShelleyTx::from_cbor_bytes(data).map(Self::Shelley),
+            Era::Shelley => ShelleyCompatibleSubmittedTx::<ShelleyTxBody>::from_cbor_bytes(data)
+                .map(Self::Shelley),
             Era::Allegra => ShelleyCompatibleSubmittedTx::<AllegraTxBody>::from_cbor_bytes(data)
                 .map(Self::Allegra),
             Era::Mary => {
@@ -343,9 +353,16 @@ impl MultiEraSubmittedTx {
     }
 
     /// Return the canonical transaction identifier derived from the CBOR body.
+    ///
+    /// Hashes the **on-wire** body bytes captured during decode (`raw_body`),
+    /// not a re-serialisation of the typed parts.  Upstream
+    /// `Cardano.Ledger.Core.txIdTxBody` hashes the original wire bytes; a
+    /// re-serialisation that disagrees byte-for-byte (e.g. indefinite-vs-
+    /// definite length, set vs array, integer-width canonicalisation) would
+    /// produce a different `TxId` than every other Cardano implementation.
     pub fn tx_id(&self) -> TxId {
         match self {
-            Self::Shelley(tx) => compute_tx_id(&tx.body.to_cbor_bytes()),
+            Self::Shelley(tx) => tx.tx_id(),
             Self::Allegra(tx) => tx.tx_id(),
             Self::Mary(tx) => tx.tx_id(),
             Self::Alonzo(tx) => tx.tx_id(),

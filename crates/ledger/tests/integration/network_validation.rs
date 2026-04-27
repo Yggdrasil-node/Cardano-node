@@ -694,11 +694,7 @@ fn submitted_shelley_tx_rejects_wrong_network_output() {
         auxiliary_data_hash: None,
     };
     let ws = empty_witness_set();
-    let submitted = MultiEraSubmittedTx::Shelley(yggdrasil_ledger::ShelleyTx {
-        body,
-        witness_set: ws,
-        auxiliary_data: None,
-    });
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(body, ws, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(

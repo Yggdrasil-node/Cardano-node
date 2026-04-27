@@ -720,11 +720,7 @@ fn submitted_tx_ids_are_deterministic() {
         auxiliary_data_hash: None,
     };
 
-    let tx = ShelleyTx {
-        body: body.clone(),
-        witness_set: minimal_witness_set(),
-        auxiliary_data: None,
-    };
+    let tx = ShelleyCompatibleSubmittedTx::new(body.clone(), minimal_witness_set(), None);
     let mst = MultiEraSubmittedTx::Shelley(tx.clone());
 
     let id1 = mst.tx_id();

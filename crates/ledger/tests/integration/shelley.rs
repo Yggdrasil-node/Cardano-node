@@ -569,6 +569,12 @@ fn shelley_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
 
     assert_eq!(decoded, tx);
     assert_eq!(decoded.raw_cbor, bytes);
+    // Authoritative: tx_id is the hash of the on-wire body bytes.
+    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.raw_body));
+    // For canonically-encoded input, re-encoding produces the same bytes,
+    // so the typed-fallback hash also matches.  See
+    // `shelley_submitted_tx_id_uses_on_wire_bytes_not_re_encoded` for the
+    // non-canonical case where these two diverge.
     assert_eq!(
         decoded.tx_id(),
         compute_tx_id(&decoded.body.to_cbor_bytes())
@@ -621,10 +627,133 @@ fn alonzo_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
 
     assert_eq!(decoded, tx);
     assert_eq!(decoded.raw_cbor, bytes);
+    // Authoritative: tx_id is the hash of the on-wire body bytes.
+    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.raw_body));
+    // For canonically-encoded input both hashes agree; see the Shelley
+    // non-canonical regression test for the divergent case.
     assert_eq!(
         decoded.tx_id(),
         compute_tx_id(&decoded.body.to_cbor_bytes())
     );
+}
+
+/// Regression guard: a wallet that submits a transaction whose CBOR body
+/// uses a non-canonical encoding (here: an over-long `uint` for `fee`)
+/// must still get the **same** `TxId` that any other Cardano implementation
+/// would compute for it — namely, `blake2b-256(on-wire body bytes)`.
+///
+/// If `MultiEraSubmittedTx::Shelley::tx_id()` ever regresses to hashing
+/// `body.to_cbor_bytes()` (the typed re-encode), this test fails because
+/// the typed encoder produces canonical bytes whose hash differs from
+/// the on-wire hash.  The mempool-eviction divergence motivated by this
+/// guard is captured in the `extract_tx_ids` doc comment in
+/// `node/src/sync.rs`.
+///
+/// Reference: `Cardano.Ledger.Core.txIdTxBody` — hashes the original wire
+/// bytes, not a re-serialisation.
+#[test]
+fn shelley_submitted_tx_id_uses_on_wire_bytes_not_re_encoded() {
+    // Canonical baseline.
+    let tx = ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x77; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 28],
+                amount: 1_500_000,
+            }],
+            fee: 175_000, // canonical CBOR uint32: 0x1A 00 02 AB 18
+            ttl: 5_000,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        },
+        ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        },
+        Some(vec![0x81, 0x01]),
+    );
+
+    let canonical_body = tx.body.to_cbor_bytes();
+    // Splice a longer-than-necessary `uint` encoding for the `fee` field.
+    // CBOR map entry: key 0x02 (fee) followed by value.
+    // 175_000 = 0x0002AB98, so canonical is 0x1A 00 02 AB 98 (uint32, 5 bytes
+    // payload).  Non-canonical equivalent: 0x1B 00 00 00 00 00 02 AB 98
+    // (uint64, 9 bytes payload).  Both decode to the same value.
+    let canonical_fee = [0x02_u8, 0x1A, 0x00, 0x02, 0xAB, 0x98];
+    let non_canonical_fee = [
+        0x02_u8, 0x1B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xAB, 0x98,
+    ];
+    let fee_pos = canonical_body
+        .windows(canonical_fee.len())
+        .position(|w| w == canonical_fee)
+        .expect("canonical fee bytes present in encoded body");
+    let mut non_canonical_body = canonical_body[..fee_pos].to_vec();
+    non_canonical_body.extend_from_slice(&non_canonical_fee);
+    non_canonical_body.extend_from_slice(&canonical_body[fee_pos + canonical_fee.len()..]);
+    assert_ne!(
+        non_canonical_body, canonical_body,
+        "splice must change the body bytes"
+    );
+
+    // Re-build the on-wire tx envelope manually:
+    //   [body, witness_set, aux_data] = 0x83 || body || ws || aux
+    let canonical_full = tx.to_cbor_bytes();
+    // Strip the canonical tx envelope down to its head + post-body suffix
+    // so we can swap the body in.  `raw_body` from a round-trip decode of
+    // the canonical bytes is a reliable way to find the body span.
+    let canonical_decoded =
+        ShelleyCompatibleSubmittedTx::<ShelleyTxBody>::from_cbor_bytes(&canonical_full)
+            .expect("canonical round-trip");
+    let body_start = canonical_full
+        .windows(canonical_decoded.raw_body.len())
+        .position(|w| w == canonical_decoded.raw_body.as_slice())
+        .expect("body span must appear in tx envelope");
+    let mut non_canonical_full = canonical_full[..body_start].to_vec();
+    non_canonical_full.extend_from_slice(&non_canonical_body);
+    non_canonical_full
+        .extend_from_slice(&canonical_full[body_start + canonical_decoded.raw_body.len()..]);
+
+    // Decode the non-canonical wire form.
+    let decoded =
+        ShelleyCompatibleSubmittedTx::<ShelleyTxBody>::from_cbor_bytes(&non_canonical_full)
+            .expect("non-canonical Shelley tx must still decode");
+    assert_eq!(
+        decoded.body.fee, 175_000,
+        "value preserved across encodings"
+    );
+
+    // The captured raw_body is the non-canonical bytes, NOT a re-encode.
+    assert_eq!(decoded.raw_body, non_canonical_body);
+    assert_ne!(
+        decoded.raw_body,
+        decoded.body.to_cbor_bytes(),
+        "raw_body must differ from typed re-encoding for non-canonical input"
+    );
+
+    // tx_id hashes the on-wire body bytes (authoritative).
+    assert_eq!(decoded.tx_id(), compute_tx_id(&non_canonical_body));
+    // …and is NOT equal to the hash of the typed re-encoding.
+    assert_ne!(
+        decoded.tx_id(),
+        compute_tx_id(&decoded.body.to_cbor_bytes()),
+        "tx_id must use on-wire bytes; re-encoded hash would diverge \
+         from every other Cardano implementation"
+    );
+
+    // The same property when accessed via MultiEraSubmittedTx.
+    let multi = MultiEraSubmittedTx::Shelley(decoded.clone());
+    assert_eq!(multi.tx_id(), compute_tx_id(&non_canonical_body));
 }
 
 #[test]

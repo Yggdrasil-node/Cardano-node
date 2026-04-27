@@ -16,8 +16,9 @@
 - `permissions:` blocks MUST be present and minimal. Pages
   deployment requires `pages: write` and `id-token: write`; nothing
   more.
-- The CI workflow (`ci.yml`) MUST keep running `cargo check-all`,
-  `cargo test-all`, and `cargo lint` as the canonical gates.
+- The CI workflow (`ci.yml`) MUST keep running `cargo fmt --all --
+  --check`, `cargo check-all`, `cargo test-all`, and `cargo lint`
+  as the canonical gates.
 - Always read the folder-specific `**/AGENTS.md` files. They MUST
   stay current and MUST remain operational rather than long-form
   documentation. If the folder context is outdated, missing, or

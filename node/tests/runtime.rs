@@ -7,9 +7,10 @@ use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo,
     ByronBlock, CborEncode, Encoder, Era, HeaderHash, LedgerError, LedgerState,
-    MultiEraSubmittedTx, Point, PoolParams, Relay, RewardAccount, ShelleyBlock, ShelleyHeader,
-    ShelleyHeaderBody, ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
-    ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, Tip, TxId, UnitInterval, Value,
+    MultiEraSubmittedTx, Point, PoolParams, Relay, RewardAccount, ShelleyBlock,
+    ShelleyCompatibleSubmittedTx, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody,
+    ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, Tip,
+    TxId, UnitInterval, Value,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_network::{
@@ -424,8 +425,8 @@ fn empty_witness_set() -> ShelleyWitnessSet {
 }
 
 fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
-    MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body: ShelleyTxBody {
+    MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
             inputs: vec![ShelleyTxIn {
                 transaction_id: [seed; 32],
                 index: 0,
@@ -441,9 +442,9 @@ fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
             update: None,
             auxiliary_data_hash: None,
         },
-        witness_set: empty_witness_set(),
-        auxiliary_data: None,
-    })
+        empty_witness_set(),
+        None,
+    ))
 }
 
 fn sample_pool_params_for_addr(addr: SocketAddr, operator: u8) -> PoolParams {
@@ -524,8 +525,8 @@ fn shelley_submitted_tx_spending(
     output_amount: u64,
     fee: u64,
 ) -> MultiEraSubmittedTx {
-    MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body: ShelleyTxBody {
+    MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
             inputs: vec![ShelleyTxIn {
                 transaction_id: [input_seed; 32],
                 index: 0,
@@ -541,9 +542,9 @@ fn shelley_submitted_tx_spending(
             update: None,
             auxiliary_data_hash: None,
         },
-        witness_set: empty_witness_set(),
-        auxiliary_data: None,
-    })
+        empty_witness_set(),
+        None,
+    ))
 }
 
 fn shelley_submitted_tx_dependent(
@@ -552,8 +553,8 @@ fn shelley_submitted_tx_dependent(
     output_amount: u64,
     fee: u64,
 ) -> MultiEraSubmittedTx {
-    MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body: ShelleyTxBody {
+    MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
             inputs: vec![ShelleyTxIn {
                 transaction_id: parent_tx_id.0,
                 index: 0,
@@ -569,9 +570,9 @@ fn shelley_submitted_tx_dependent(
             update: None,
             auxiliary_data_hash: None,
         },
-        witness_set: empty_witness_set(),
-        auxiliary_data: None,
-    })
+        empty_witness_set(),
+        None,
+    ))
 }
 
 fn seed_shelley_input(state: &mut LedgerState, seed: u8, amount: u64) {

@@ -276,11 +276,7 @@ fn shelley_submitted_tx_rejects_extraneous_native_script() {
     ws.native_scripts.push(unrequired_script);
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
 
-    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body,
-        witness_set: ws,
-        auxiliary_data: None,
-    });
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(body, ws, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -337,11 +333,7 @@ fn shelley_submitted_tx_accepts_required_native_script() {
     let mut ws = empty_witness_set();
     ws.native_scripts.push(required_script);
 
-    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body,
-        witness_set: ws,
-        auxiliary_data: None,
-    });
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(body, ws, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(

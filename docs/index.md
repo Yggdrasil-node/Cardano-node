@@ -23,7 +23,7 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
 </div>
 
 <div class="yg-stats" markdown="0">
-  <div class="yg-stat yg-stat-accent"><span class="yg-stat-value">4,634</span><span class="yg-stat-label">Tests passing</span></div>
+  <div class="yg-stat yg-stat-accent"><span class="yg-stat-value">4,635</span><span class="yg-stat-label">Tests passing</span></div>
   <div class="yg-stat"><span class="yg-stat-value">0</span><span class="yg-stat-label">Tests failing</span></div>
   <div class="yg-stat"><span class="yg-stat-value">Byron→Conway</span><span class="yg-stat-label">Era coverage</span></div>
   <div class="yg-stat"><span class="yg-stat-value">5 / 5</span><span class="yg-stat-label">Mini-protocols</span></div>

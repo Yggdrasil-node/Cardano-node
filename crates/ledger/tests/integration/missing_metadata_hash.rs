@@ -142,11 +142,8 @@ fn shelley_submitted_tx_rejects_aux_data_without_hash() {
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
 
-    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body,
-        witness_set: ws,
-        auxiliary_data: Some(aux_data),
-    });
+    let submitted =
+        MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(body, ws, Some(aux_data)));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -191,11 +188,7 @@ fn shelley_submitted_tx_accepts_no_aux_no_hash() {
     let tx_body_hash = compute_tx_id(&body.to_cbor_bytes()).0;
     let mut ws = empty_witness_set();
     ws.vkey_witnesses.push(signer.witness(&tx_body_hash));
-    let submitted = MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body,
-        witness_set: ws,
-        auxiliary_data: None,
-    });
+    let submitted = MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(body, ws, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(result.is_ok(), "expected OK, got: {:?}", result);

@@ -821,11 +821,7 @@ fn mir_genesis_quorum_submitted_path_rejects_insufficient_signatures() {
     };
 
     let ws = witness_set_with_signers(&[&delegate_a], &body);
-    let submitted = ShelleyTx {
-        body,
-        witness_set: ws,
-        auxiliary_data: None,
-    };
+    let submitted = ShelleyCompatibleSubmittedTx::new(body, ws, None);
     let err = state
         .apply_submitted_tx(&MultiEraSubmittedTx::Shelley(submitted), SlotNo(10), None)
         .expect_err("submitted tx should fail MIR quorum");

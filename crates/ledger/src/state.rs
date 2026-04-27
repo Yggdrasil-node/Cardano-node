@@ -4052,8 +4052,13 @@ impl LedgerState {
                         .iter()
                         .map(|o| MultiEraTxOut::Shelley(o.clone()))
                         .collect();
-                    let tx_size = tx.to_cbor_bytes().len();
-                    validate_pre_alonzo_tx(params, tx_size, tx.body.fee, &outputs)?;
+                    // Use the on-wire submitted bytes (`tx.raw_cbor`) rather
+                    // than `to_cbor_bytes()` — the latter re-encodes from the
+                    // typed parts and produces a byte-canonical envelope that
+                    // does not always match what the wallet/cardano-cli sent.
+                    // The linear fee formula is sensitive to that drift.
+                    // Matches the Allegra/Mary/Alonzo+ submitted-tx paths.
+                    validate_pre_alonzo_tx(params, tx.raw_cbor.len(), tx.body.fee, &outputs)?;
                 }
                 // Network validation (WrongNetwork / WrongNetworkWithdrawal)
                 if let Some(expected_net) = self.expected_network_id {
@@ -4095,7 +4100,13 @@ impl LedgerState {
                             &mut required,
                         );
                     }
-                    let tx_body_hash = crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0;
+                    // Hash the on-wire body bytes (`raw_body`), not a
+                    // re-encoding — see `MultiEraSubmittedTx::tx_id` for
+                    // the rationale.  A wallet that uses a non-canonical
+                    // CBOR encoding (e.g. indefinite-length collections)
+                    // must still get the same body hash that every other
+                    // Cardano implementation computes for it.
+                    let tx_body_hash = crate::tx::compute_tx_id(&tx.raw_body).0;
                     validate_witnesses_typed(&tx.witness_set, &required, &tx_body_hash)?;
                     crate::witnesses::validate_mir_genesis_quorum_typed(
                         tx.body.certificates.as_deref(),
@@ -4179,7 +4190,7 @@ impl LedgerState {
                     self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
                 staged.apply_tx_with_withdrawals(
-                    crate::tx::compute_tx_id(&tx.body.to_cbor_bytes()).0,
+                    crate::tx::compute_tx_id(&tx.raw_body).0,
                     &tx.body,
                     current_slot.0,
                     cert_adj.withdrawal_total,

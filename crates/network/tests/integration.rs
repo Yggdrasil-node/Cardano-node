@@ -1,9 +1,9 @@
 #![allow(clippy::unwrap_used)]
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, BlockNo, CborDecode, CborEncode,
-    HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert,
-    ShelleyWitnessSet, SlotNo, Tip, TxId, Value,
+    HeaderHash, MultiEraSubmittedTx, Point, ShelleyBlock, ShelleyCompatibleSubmittedTx,
+    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyVrfCert, ShelleyWitnessSet, SlotNo, Tip, TxId, Value,
 };
 use yggdrasil_network::{
     BatchResponse, Bearer, BearerError, BlockFetchClient, BlockFetchMessage, BlockFetchState,
@@ -68,8 +68,8 @@ fn sample_tx_id(seed: u8) -> TxId {
 }
 
 fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
-    MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body: ShelleyTxBody {
+    MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
             inputs: vec![ShelleyTxIn {
                 transaction_id: [seed; 32],
                 index: 0,
@@ -85,7 +85,7 @@ fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
             update: None,
             auxiliary_data_hash: None,
         },
-        witness_set: ShelleyWitnessSet {
+        ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
             bootstrap_witnesses: vec![],
@@ -95,8 +95,8 @@ fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         },
-        auxiliary_data: Some(vec![0x81, seed]),
-    })
+        Some(vec![0x81, seed]),
+    ))
 }
 
 fn sample_alonzo_submitted_tx(seed: u8) -> MultiEraSubmittedTx {

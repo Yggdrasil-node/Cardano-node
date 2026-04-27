@@ -3,8 +3,8 @@ use yggdrasil_ledger::PlutusData;
 use yggdrasil_ledger::eras::{ExUnits, Redeemer};
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Era, MultiEraSubmittedTx,
-    ProtocolParameters, ShelleyTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyWitnessSet,
-    SlotNo, TxId, Value, min_fee_linear,
+    ProtocolParameters, ShelleyCompatibleSubmittedTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut,
+    ShelleyWitnessSet, SlotNo, TxId, Value, min_fee_linear,
 };
 use yggdrasil_mempool::{
     MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, MempoolError, MempoolRelayError, SharedMempool,
@@ -37,8 +37,8 @@ fn empty_witness_set() -> ShelleyWitnessSet {
 }
 
 fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
-    MultiEraSubmittedTx::Shelley(ShelleyTx {
-        body: ShelleyTxBody {
+    MultiEraSubmittedTx::Shelley(ShelleyCompatibleSubmittedTx::new(
+        ShelleyTxBody {
             inputs: vec![ShelleyTxIn {
                 transaction_id: [seed; 32],
                 index: 0,
@@ -54,9 +54,9 @@ fn sample_shelley_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
             update: None,
             auxiliary_data_hash: None,
         },
-        witness_set: empty_witness_set(),
-        auxiliary_data: Some(vec![0x81, seed]),
-    })
+        empty_witness_set(),
+        Some(vec![0x81, seed]),
+    ))
 }
 
 fn sample_alonzo_submitted_tx(seed: u8) -> MultiEraSubmittedTx {
