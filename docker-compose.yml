@@ -1,0 +1,48 @@
+# docker-compose.yml — quick-start for a relay node.
+#
+#   docker compose up -d            # start a mainnet relay
+#   docker compose logs -f          # follow logs
+#   docker compose down             # graceful stop (SIGTERM forwarded by tini)
+#
+# Edit `command:` for preprod / preview / custom config. For block production
+# see docs/manual/docker.md.
+
+services:
+  yggdrasil:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yggdrasil-node:latest
+    container_name: yggdrasil-relay
+    restart: unless-stopped
+    ports:
+      - "3001:3001/tcp"
+      - "127.0.0.1:12798:12798/tcp"
+    volumes:
+      - yggdrasil-db:/var/lib/yggdrasil/db
+      # Uncomment if you supply a custom config / topology:
+      # - ./my-config.json:/etc/yggdrasil/config.json:ro
+      # - ./my-topology.json:/etc/yggdrasil/topology.json:ro
+    command:
+      - run
+      - --network=mainnet
+      - --database-path=/var/lib/yggdrasil/db
+      - --port=3001
+      - --host-addr=0.0.0.0
+      - --metrics-port=12798
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:12798/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 8G
+
+volumes:
+  yggdrasil-db:
+    driver: local

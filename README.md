@@ -4,15 +4,42 @@
 
 # Yggdrasil Cardano Node in Rust
 
+[![CI](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/ci.yml/badge.svg)](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/ci.yml)
+[![Pages](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/pages.yml/badge.svg)](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/pages.yml)
+[![Release](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml/badge.svg)](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/yggdrasil-node/Cardano-node?include_prereleases&sort=semver)](https://github.com/yggdrasil-node/Cardano-node/releases/latest)
+[![Rust 1.85.0](https://img.shields.io/badge/rust-1.85.0-orange)](rust-toolchain.toml)
+[![Tests](https://img.shields.io/badge/tests-4630%20passing-brightgreen)](#current-status)
+
 Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and serialization parity with the upstream Cardano node.
+
+**Documentation**: <https://yggdrasil-node.github.io/Cardano-node/> · [User Manual](https://yggdrasil-node.github.io/Cardano-node/manual/) · [Quick Start](https://yggdrasil-node.github.io/Cardano-node/manual/quick-start/) · [Releases](https://github.com/yggdrasil-node/Cardano-node/releases)
 
 ## Quick Navigation
 
 - [Current Status](#current-status)
+- [Install](#install)
 - [Workspace Layout](#workspace-layout)
 - [Commands](#commands)
 - [Documentation](#documentation)
 - [Next Development Phases](#next-development-phases)
+
+## Install
+
+**Latest release (Linux x86_64 / aarch64):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/node/scripts/install_from_release.sh | bash
+```
+
+**Docker:**
+
+```bash
+git clone https://github.com/yggdrasil-node/Cardano-node && cd Cardano-node
+docker compose up -d
+```
+
+**From source:** see [Installation](https://yggdrasil-node.github.io/Cardano-node/manual/installation/).
 
 ## Current Status
 

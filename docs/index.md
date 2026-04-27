@@ -34,16 +34,18 @@ The user manual is organised as a sequence — each chapter assumes the previous
 
 1. [Overview]({{ "/manual/overview/" | relative_url }}) — what Yggdrasil is and how it fits into the Cardano network
 2. [Installation]({{ "/manual/installation/" | relative_url }}) — prerequisites, building from source, verifying the binary
-3. [Quick Start]({{ "/manual/quick-start/" | relative_url }}) — sync a node to mainnet in five commands
-4. [Networks and Presets]({{ "/manual/networks/" | relative_url }}) — mainnet, preprod, preview
-5. [Configuration]({{ "/manual/configuration/" | relative_url }}) — every config key, CLI override, and topology option
-6. [Running a Node]({{ "/manual/running/" | relative_url }}) — daemonising, log management, graceful shutdown
-7. [Monitoring]({{ "/manual/monitoring/" | relative_url }}) — Prometheus, structured tracing, dashboards
-8. [Block Production]({{ "/manual/block-production/" | relative_url }}) — KES/VRF/OpCert credentials for stake pool operators
-9. [CLI Reference]({{ "/manual/cli-reference/" | relative_url }}) — every subcommand and flag
-10. [Maintenance]({{ "/manual/maintenance/" | relative_url }}) — backups, garbage collection, upgrades, log rotation
-11. [Troubleshooting]({{ "/manual/troubleshooting/" | relative_url }}) — common errors and their resolutions
-12. [Glossary]({{ "/manual/glossary/" | relative_url }}) — Cardano terminology
+3. [Installing from Releases]({{ "/manual/releases/" | relative_url }}) — pre-built Linux binaries with SHA256 verification
+4. [Quick Start]({{ "/manual/quick-start/" | relative_url }}) — sync a node to mainnet in five commands
+5. [Networks and Presets]({{ "/manual/networks/" | relative_url }}) — mainnet, preprod, preview
+6. [Configuration]({{ "/manual/configuration/" | relative_url }}) — every config key, CLI override, and topology option
+7. [Running a Node]({{ "/manual/running/" | relative_url }}) — daemonising, log management, graceful shutdown
+8. [Docker]({{ "/manual/docker/" | relative_url }}) — container deployment with `docker compose`
+9. [Monitoring]({{ "/manual/monitoring/" | relative_url }}) — Prometheus, structured tracing, dashboards
+10. [Block Production]({{ "/manual/block-production/" | relative_url }}) — KES/VRF/OpCert credentials for stake pool operators
+11. [CLI Reference]({{ "/manual/cli-reference/" | relative_url }}) — every subcommand and flag
+12. [Maintenance]({{ "/manual/maintenance/" | relative_url }}) — backups, garbage collection, upgrades, log rotation
+13. [Troubleshooting]({{ "/manual/troubleshooting/" | relative_url }}) — common errors and their resolutions
+14. [Glossary]({{ "/manual/glossary/" | relative_url }}) — Cardano terminology
 
 ## Getting help
 

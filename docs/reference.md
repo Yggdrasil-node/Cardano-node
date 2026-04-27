@@ -23,3 +23,4 @@ Technical reference material for developers and auditors. The user manual covers
 - [Real Preprod Pool Verification]({{ "/REAL_PREPROD_POOL_VERIFICATION/" | relative_url }}) — preprod block-production rehearsal record.
 - [Upstream Research]({{ "/UPSTREAM_RESEARCH/" | relative_url }}) — research notes on the Haskell node subsystems.
 - [Contributing]({{ "/CONTRIBUTING/" | relative_url }}) — coding style, AGENTS.md operational rules, PR workflow.
+- [Changelog]({{ "/CHANGELOG/" | relative_url }}) — release notes and release process.

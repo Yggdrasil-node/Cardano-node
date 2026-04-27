@@ -1,0 +1,61 @@
+# systemd unit template for Yggdrasil.
+#
+# Install:
+#   sudo cp node/scripts/yggdrasil-node.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now yggdrasil-node
+#
+# Customize the ExecStart line for your network / database path / inbound
+# port / metrics port. Most operators only need to change those four.
+#
+# For block production, add the four --shelley-* flags. See
+# docs/manual/block-production.md for credential setup.
+
+[Unit]
+Description=Yggdrasil Cardano Node
+Documentation=https://yggdrasil-node.github.io/Cardano-node/manual/
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=yggdrasil
+Group=yggdrasil
+WorkingDirectory=/var/lib/yggdrasil
+ExecStart=/usr/local/bin/yggdrasil-node run \
+    --network mainnet \
+    --database-path /var/lib/yggdrasil/db \
+    --port 3001 \
+    --host-addr 0.0.0.0 \
+    --metrics-port 12798
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+TimeoutStopSec=60
+KillSignal=SIGINT
+SuccessExitStatus=0 130
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/var/lib/yggdrasil
+
+# Logging — to systemd journal by default. For file-based logs, replace with
+# StandardOutput=append:/var/log/yggdrasil/node.log etc., and configure
+# logrotate per docs/manual/running.md.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=yggdrasil-node
+
+[Install]
+WantedBy=multi-user.target

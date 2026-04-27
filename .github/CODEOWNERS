@@ -1,0 +1,39 @@
+# CODEOWNERS for the Yggdrasil project.
+#
+# Owners listed here are auto-requested for review on PRs that touch the
+# corresponding files. They have no enforcement power without branch
+# protection rules — they only nudge the right reviewer to the PR.
+#
+# Syntax: <pattern> <user/team> <user/team> ...
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+# Default — every PR gets a review request from the project lead.
+* @FractionEstate
+
+# Workspace top-level
+/Cargo.toml @FractionEstate
+/rust-toolchain.toml @FractionEstate
+
+# Crates — per-area owners can be added here as the team grows.
+/crates/crypto/        @FractionEstate
+/crates/cddl-codegen/  @FractionEstate
+/crates/ledger/        @FractionEstate
+/crates/storage/       @FractionEstate
+/crates/consensus/     @FractionEstate
+/crates/mempool/       @FractionEstate
+/crates/network/       @FractionEstate
+/crates/plutus/        @FractionEstate
+
+# Node binary
+/node/                 @FractionEstate
+
+# Documentation site + reference docs
+/docs/                 @FractionEstate
+
+# CI and release infrastructure
+/.github/              @FractionEstate
+
+# Vendored data — must not be hand-edited; flag any change for review.
+/specs/upstream-test-vectors/      @FractionEstate
+/specs/upstream-cddl-fragments/    @FractionEstate
+/node/configuration/               @FractionEstate

@@ -27,6 +27,31 @@ Keep these documents synchronized with the implemented workspace, not with specu
   `parent: Reference` front matter so they appear under a separate
   navigation parent from the user manual.
 
+## Manual chapter inventory
+- `overview.md` — conceptual frame.
+- `installation.md` — build from source.
+- `releases.md` — install from pre-built release artifacts.
+- `quick-start.md` — five-command mainnet sync.
+- `networks.md` — mainnet / preprod / preview presets.
+- `configuration.md` — full config-key + CLI-flag reference.
+- `running.md` — systemd unit, graceful shutdown, log rotation.
+- `docker.md` — `docker compose` deployment.
+- `monitoring.md` — Prometheus metrics, tracing, health.
+- `block-production.md` — SPO setup, KES rotation procedure.
+- `cli-reference.md` — every subcommand and flag.
+- `maintenance.md` — backups, GC, upgrades.
+- `troubleshooting.md` — symptom-keyed error catalogue.
+- `glossary.md` — Cardano terminology.
+
+## Release-aligned docs
+- `docs/CHANGELOG.md` mirrors the root `CHANGELOG.md` for the docs
+  site reference section; both must be updated together when shipping
+  a release.
+- The `release.yml` workflow's release-notes generator pulls commit
+  log between consecutive tags. Commits that should land in release
+  notes MUST use clear conventional-commit prefixes
+  (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
+
 ##  Rules *Non-Negotiable*
 - Documentation in this directory MUST describe current behavior or explicitly labeled near-term policy, not aspirational features.
 - Dependency decisions MUST be recorded in `DEPENDENCIES.md` before a new crate is treated as accepted.

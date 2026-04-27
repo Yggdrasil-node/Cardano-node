@@ -1,0 +1,110 @@
+name: Bug report
+description: Something is broken or behaves incorrectly.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+        **Do not file security issues here** — see [SECURITY.md](https://github.com/yggdrasil-node/Cardano-node/blob/main/SECURITY.md).
+
+  - type: input
+    id: version
+    attributes:
+      label: Yggdrasil version
+      description: "Output of `yggdrasil-node --version`"
+      placeholder: "yggdrasil-node 0.1.0 (commit abc1234)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - mainnet
+        - preprod
+        - preview
+        - custom
+    validations:
+      required: true
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: Node role
+      options:
+        - relay
+        - block producer
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system + arch
+      placeholder: "Ubuntu 22.04 x86_64"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Concise description of the unexpected behavior.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Numbered steps that reliably trigger the bug. Include exact commands and config snippets.
+      placeholder: |
+        1. Start the node with `yggdrasil-node run --network preprod ...`
+        2. Wait for sync to reach slot 100000
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / traces
+      description: Paste relevant trace output. Use code fencing.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config
+      description: Sanitised excerpt of your `config.json` and `topology.json` (redact private endpoints, KES paths, etc.).
+      render: jsonc
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: gates
+    attributes:
+      label: Local verification (optional but appreciated)
+      options:
+        - label: I rebuilt from `main` and reproduced.
+          required: false
+        - label: "`cargo check-all` passes."
+          required: false
+        - label: "`cargo test-all` passes."
+          required: false
+        - label: "`cargo lint` clean."
+          required: false

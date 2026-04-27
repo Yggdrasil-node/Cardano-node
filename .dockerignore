@@ -1,0 +1,41 @@
+# Build artifacts
+target/
+**/target/
+
+# Git metadata
+.git/
+.github/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local dev / tooling
+tmp/
+*.log
+.cargo/registry-cache/
+
+# Docs site (not needed inside the runtime image)
+docs/_site/
+docs/.jekyll-cache/
+docs/.jekyll-metadata
+docs/.bundle/
+docs/vendor/
+docs/Gemfile.lock
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Mutation testing output
+**/mutants.out*/
+
+# Node / Ruby cruft (in case docs dirs grow more tooling)
+node_modules/
+*.gem
+
+# Local backups
+*.bak
+*.tmp

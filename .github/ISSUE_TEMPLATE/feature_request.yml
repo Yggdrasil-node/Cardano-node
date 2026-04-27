@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest a new feature or improvement.
+title: "[feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Yggdrasil targets parity with the upstream Haskell `cardano-node`. Features that
+        diverge from upstream behavior are unlikely to be accepted unless they are clearly
+        operator-quality-of-life additions (config keys, metrics, CLI ergonomics, scripts).
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve? Why is it worth doing?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What specifically should change?
+    validations:
+      required: true
+
+  - type: textarea
+    id: upstream
+    attributes:
+      label: Upstream parity reference
+      description: |
+        If this mirrors something in the upstream Haskell node, link to the relevant
+        upstream module / function / spec. Otherwise explain why this should still ship.
+      placeholder: "Mirrors `Ouroboros.Network.PeerSelection.Governor.X` from `IntersectMBO/ouroboros-network`."
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: false

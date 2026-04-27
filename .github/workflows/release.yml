@@ -1,0 +1,202 @@
+name: Release
+
+# Triggered on tags matching v* (e.g. v0.2.0, v1.0.0-rc1).
+# Builds release binaries for Linux x86_64 + aarch64, computes SHA256 sums,
+# generates auto-changelog notes, and publishes a GitHub Release.
+#
+# Manual dispatch is also available — runs the build but does NOT publish.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.2.0). Leave blank for dry-run."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            archive_suffix: linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            archive_suffix: linux-aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (pinned via rust-toolchain.toml)
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.target }}-
+
+      - name: Build release binary
+        run: cargo build --release --bin yggdrasil-node --target ${{ matrix.target }}
+
+      - name: Strip binary
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq binutils-aarch64-linux-gnu
+            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/yggdrasil-node
+          else
+            strip target/${{ matrix.target }}/release/yggdrasil-node
+          fi
+
+      - name: Stage release artifacts
+        id: stage
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            [ -z "$tag" ] && tag="dryrun-$(date +%Y%m%d-%H%M%S)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+          dir="yggdrasil-node-${tag}-${{ matrix.archive_suffix }}"
+          mkdir -p "$dir"
+
+          cp target/${{ matrix.target }}/release/yggdrasil-node "$dir/"
+          cp README.md LICENSE* "$dir/" 2>/dev/null || true
+          cp -r node/configuration "$dir/configuration"
+          cp -r node/scripts "$dir/scripts"
+
+          tar -czf "${dir}.tar.gz" "$dir"
+          sha256sum "${dir}.tar.gz" > "${dir}.tar.gz.sha256"
+
+          echo "archive=${dir}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum=${dir}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yggdrasil-node-${{ matrix.archive_suffix }}
+          path: |
+            ${{ steps.stage.outputs.archive }}
+            ${{ steps.stage.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (for changelog generation)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) -exec cp {} release-assets/ \;
+          ls -la release-assets/
+
+      - name: Aggregate SHA256 checksums
+        run: |
+          cd release-assets
+          cat *.sha256 > SHA256SUMS.txt
+          echo "Aggregated checksums:"
+          cat SHA256SUMS.txt
+
+      - name: Compute previous tag
+        id: prev_tag
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF}^" 2>/dev/null || echo "")
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          prev="${{ steps.prev_tag.outputs.prev }}"
+          {
+            echo "## Yggdrasil ${tag}"
+            echo ""
+            if [ -n "$prev" ]; then
+              echo "Changes since ${prev}:"
+              echo ""
+              echo "<details>"
+              echo "<summary>Commit log</summary>"
+              echo ""
+              git log --no-merges --pretty=format:"- %s (%h)" "${prev}..${tag}"
+              echo ""
+              echo "</details>"
+            else
+              echo "Initial release."
+            fi
+            echo ""
+            echo "## Binaries"
+            echo ""
+            echo "| Platform | Archive |"
+            echo "|---|---|"
+            for f in release-assets/*.tar.gz; do
+              base=$(basename "$f")
+              echo "| ${base#yggdrasil-node-${tag}-} | \`${base}\` |"
+            done
+            echo ""
+            echo "Verify integrity:"
+            echo ""
+            echo '```'
+            echo "sha256sum -c SHA256SUMS.txt"
+            echo '```'
+            echo ""
+            echo "## Documentation"
+            echo ""
+            echo "- [User Manual](https://yggdrasil-node.github.io/Cardano-node/manual/)"
+            echo "- [Installation](https://yggdrasil-node.github.io/Cardano-node/manual/installation/)"
+            echo "- [Quick Start](https://yggdrasil-node.github.io/Cardano-node/manual/quick-start/)"
+            echo "- [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${tag}/CHANGELOG.md)"
+          } > release-notes.md
+          echo "Generated release notes:"
+          cat release-notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.sha256
+            release-assets/SHA256SUMS.txt
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
+          generate_release_notes: false
+          token: ${{ secrets.GITHUB_TOKEN }}
