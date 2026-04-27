@@ -3,6 +3,7 @@
 /// storage, and mempool crates into a running Cardano node.
 pub mod block_producer;
 pub mod blockfetch_worker;
+pub mod chainsync_worker;
 pub mod trace_forwarder;
 
 pub mod config;
@@ -17,6 +18,11 @@ pub mod upstream_pins;
 
 pub use blockfetch_worker::{
     DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
+};
+pub use chainsync_worker::{
+    CandidateFragment, ChainSyncEvent, ChainSyncRequest, ChainSyncWorkerHandle,
+    ChainSyncWorkerPool, DEFAULT_CANDIDATE_FRAGMENT_CAPACITY, SharedChainSyncWorkerPool,
+    new_shared_chainsync_worker_pool,
 };
 pub use runtime::{
     ChainTipNotify, LedgerJudgementSettings, MempoolAddTxError, MempoolAddTxOutcome,

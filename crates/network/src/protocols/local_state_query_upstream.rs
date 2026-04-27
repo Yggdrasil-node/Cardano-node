@@ -447,20 +447,19 @@ pub fn encode_chain_block_no(block_no: Option<u64>) -> Vec<u8> {
 /// Encode the result of [`UpstreamQuery::GetSystemStart`] as a
 /// `SystemStart` (UTCTime) per upstream `Cardano.Slotting.Time`.
 ///
-/// Upstream's Serialise instance for UTCTime encodes as a 2-element
-/// CBOR list `[modifiedJulianDay, picosecondsSinceMidnight]`:
-///   - day count: integer Modified Julian Day number (e.g.
-///     2022-06-01 = MJD 59731)
-///   - picoseconds: integer in `[0, 86400*10^12)` for the time of
-///     day past midnight
-///
-/// `SystemStart` wraps this in another `newtype` but the serialisation
-/// is identity (no wrapper).
-pub fn encode_system_start(modified_julian_day: u64, picoseconds_since_midnight: u64) -> Vec<u8> {
+/// Upstream's Serialise instance for UTCTime is a 3-element CBOR
+/// list `[year, dayOfYear, picosecondsOfDay]` per the
+/// 2026-04-27 cardano-cli decoder error message
+/// `Size mismatch when decoding UTCTime. Expected 3, but found 2.`:
+///   - year: integer Gregorian year (e.g. 2022)
+///   - dayOfYear: integer day of year `[1, 366]`
+///   - picosecondsOfDay: integer in `[0, 86400*10^12)`
+pub fn encode_system_start(year: u64, day_of_year: u64, picoseconds_of_day: u64) -> Vec<u8> {
     let mut enc = Encoder::new();
-    enc.array(2);
-    enc.unsigned(modified_julian_day);
-    enc.unsigned(picoseconds_since_midnight);
+    enc.array(3);
+    enc.unsigned(year);
+    enc.unsigned(day_of_year);
+    enc.unsigned(picoseconds_of_day);
     enc.into_bytes()
 }
 

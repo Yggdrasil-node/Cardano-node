@@ -1220,12 +1220,12 @@ fn dispatch_upstream_query(
             }
         },
         UpstreamQuery::GetSystemStart => {
-            // Round 149 — emit synthetic SystemStart anchored at
-            // 2022-06-01T00:00:00Z (preprod genesis).  Phase-3
-            // follow-up: thread the genesis-derived SystemStart from
-            // ShelleyGenesis.systemStart through to the snapshot.
-            // Modified Julian Day for 2022-06-01 = 59731.
-            yggdrasil_network::protocols::encode_system_start(59_731, 0)
+            // Round 149 — emit SystemStart anchored at preprod genesis
+            // 2022-06-01T00:00:00Z = year=2022, dayOfYear=152.
+            // Phase-3 follow-up: thread the genesis-derived
+            // SystemStart from ShelleyGenesis.systemStart through to
+            // the snapshot.
+            yggdrasil_network::protocols::encode_system_start(2022, 152, 0)
         }
         UpstreamQuery::GetChainPoint => encode_chain_point(snapshot.tip()),
         UpstreamQuery::GetChainBlockNo => {

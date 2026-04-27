@@ -4715,6 +4715,72 @@ pub fn partition_fetch_range_across_peers(
         .collect()
 }
 
+/// Round 150 — Finding A foundation.  Multi-peer-aware variant of
+/// [`partition_fetch_range_across_peers`] that resolves
+/// `split_range`'s placeholder hashes against per-peer candidate
+/// fragments populated by the [`crate::chainsync_worker::ChainSyncWorkerPool`].
+///
+/// When `split_range` produces a multi-chunk plan, each intermediate
+/// boundary slot is looked up in the candidate-fragment registry; a
+/// successful lookup replaces the synthesised `[0; 32]` hash with the
+/// peer-announced real hash, allowing the upstream BlockFetch wire
+/// `MsgRequestRange` to be served by any peer whose chain includes
+/// that point (mirrors upstream
+/// `Ouroboros.Network.BlockFetch.Decision.fetchDecisions`).
+///
+/// Returns `Some(plan)` if every intermediate boundary was resolvable;
+/// returns `None` if any boundary remained a placeholder, signalling
+/// the caller to fall back to the single-chunk path
+/// (`partition_fetch_range_across_peers`).
+pub async fn partition_fetch_range_with_candidate_fragments(
+    lower: Point,
+    upper: Point,
+    peers: &[SocketAddr],
+    max_knob: u8,
+    chainsync_pool: &crate::chainsync_worker::SharedChainSyncWorkerPool,
+) -> Option<Vec<BlockFetchAssignment>> {
+    if peers.is_empty() {
+        return None;
+    }
+    let n = effective_block_fetch_concurrency(max_knob, peers.len());
+    let mut chunks = yggdrasil_network::blockfetch_pool::split_range(lower, upper, n);
+
+    // Walk every chunk endpoint; replace placeholder hashes with
+    // per-peer candidate-fragment lookups.
+    let pool_guard = chainsync_pool.read().await;
+    for (chunk_lower, chunk_upper) in chunks.iter_mut() {
+        if let Point::BlockPoint(slot, hash) = *chunk_lower {
+            if hash.0 == [0u8; 32] {
+                match pool_guard.resolve_slot_to_hash(slot).await {
+                    Some(real_hash) => *chunk_lower = Point::BlockPoint(slot, real_hash),
+                    None => return None,
+                }
+            }
+        }
+        if let Point::BlockPoint(slot, hash) = *chunk_upper {
+            if hash.0 == [0u8; 32] {
+                match pool_guard.resolve_slot_to_hash(slot).await {
+                    Some(real_hash) => *chunk_upper = Point::BlockPoint(slot, real_hash),
+                    None => return None,
+                }
+            }
+        }
+    }
+    drop(pool_guard);
+
+    Some(
+        chunks
+            .into_iter()
+            .zip(peers.iter().take(n))
+            .map(|((chunk_lower, chunk_upper), addr)| BlockFetchAssignment {
+                peer: *addr,
+                lower: chunk_lower,
+                upper: chunk_upper,
+            })
+            .collect(),
+    )
+}
+
 /// Returns `true` if `p` carries the all-zeros placeholder
 /// [`HeaderHash`] that `yggdrasil_network::blockfetch_pool::split_range`
 /// synthesises for intermediate chunk boundaries.  Used by
@@ -5361,6 +5427,92 @@ mod tests {
         assert!(
             !point_carries_placeholder_hash(&assignments[0].upper),
             "single-chunk upper must be the real input point",
+        );
+    }
+
+    /// Round 150 — `partition_fetch_range_with_candidate_fragments`
+    /// resolves `split_range`'s synthetic placeholder hashes against
+    /// per-peer candidate fragments from a
+    /// [`ChainSyncWorkerPool`](crate::chainsync_worker::ChainSyncWorkerPool).
+    /// When every intermediate boundary is announced by at least one
+    /// peer, the planner returns a real-hash multi-chunk plan that
+    /// the BlockFetch wire layer can dispatch in parallel.
+    #[tokio::test]
+    async fn partition_with_candidate_fragments_resolves_placeholder_hashes() {
+        use crate::chainsync_worker::{ChainSyncWorkerHandle, new_shared_chainsync_worker_pool};
+        use yggdrasil_ledger::HeaderHash;
+        let p1 = test_addr(1001);
+        let p2 = test_addr(1002);
+        let peers = vec![p1, p2];
+
+        // Build a pool where each peer has announced the would-be
+        // placeholder slots.
+        let pool = new_shared_chainsync_worker_pool();
+        {
+            let mut g = pool.write().await;
+            let h1 = ChainSyncWorkerHandle::spawn(p1, |_| async { None });
+            let h2 = ChainSyncWorkerHandle::spawn(p2, |_| async { None });
+            // Pre-seed candidate fragments with the slot 150 boundary
+            // that `split_range(100, 200, 2)` would synthesise as a
+            // placeholder.
+            h1.fragment()
+                .write()
+                .await
+                .push_announced(SlotNo(150), HeaderHash([0xaa; 32]));
+            h1.fragment()
+                .write()
+                .await
+                .push_announced(SlotNo(151), HeaderHash([0xbb; 32]));
+            h2.fragment()
+                .write()
+                .await
+                .push_announced(SlotNo(150), HeaderHash([0xaa; 32]));
+            g.register(h1);
+            g.register(h2);
+        }
+
+        let assignments = partition_fetch_range_with_candidate_fragments(
+            block_point(100),
+            block_point(200),
+            &peers,
+            2,
+            &pool,
+        )
+        .await
+        .expect("placeholder slots are resolvable");
+        assert_eq!(assignments.len(), 2);
+        // Every boundary in the resulting plan must have a real
+        // (non-zero) hash.
+        for asn in &assignments {
+            for endpoint in [asn.lower, asn.upper] {
+                if let yggdrasil_ledger::Point::BlockPoint(_, hash) = endpoint {
+                    assert_ne!(
+                        hash.0, [0u8; 32],
+                        "candidate-fragment lookup must replace placeholder hash"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn partition_with_candidate_fragments_falls_back_when_unresolvable() {
+        use crate::chainsync_worker::new_shared_chainsync_worker_pool;
+        let pool = new_shared_chainsync_worker_pool();
+        let peers = vec![test_addr(1001), test_addr(1002)];
+        // Empty pool — no peer has announced anything; placeholder
+        // slots cannot be resolved.
+        let result = partition_fetch_range_with_candidate_fragments(
+            block_point(100),
+            block_point(200),
+            &peers,
+            2,
+            &pool,
+        )
+        .await;
+        assert!(
+            result.is_none(),
+            "empty pool can't resolve placeholders → caller must use single-chunk fallback",
         );
     }
 
