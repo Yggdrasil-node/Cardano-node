@@ -281,7 +281,7 @@ impl NodePeerSharing {
 
     /// Encode this value for handshake transmission.
     ///
-    /// Strict inverse of [`from_wire`]: `PeerSharingDisabled → 0`,
+    /// Strict inverse of `from_wire`: `PeerSharingDisabled → 0`,
     /// `PeerSharingEnabled → 1`. Upstream's `NodeToNodeVersionData`
     /// encoder always emits these two exact values, so our transmit
     /// side does the same (rather than mirroring `from_wire`'s lenient

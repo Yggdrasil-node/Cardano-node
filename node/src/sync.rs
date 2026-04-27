@@ -4493,7 +4493,7 @@ pub fn partition_fetch_range_across_peers(
 /// - On any chunk error, sibling tasks are aborted via `abort_all()`
 ///   and the first observed error is propagated; pool failures are
 ///   recorded against the offending peer.
-/// - Successful chunks are buffered through a [`ReorderBuffer`] keyed
+/// - Successful chunks are buffered through a `ReorderBuffer` keyed
 ///   on chunk lower-bound so the validator receives blocks in chain
 ///   order even when peers respond out-of-order.
 /// - Pool instrumentation receives `note_dispatch` per assignment up
@@ -4804,7 +4804,7 @@ where
 
 /// Runtime-side dispatch context for the multi-peer BlockFetch path.
 ///
-/// When passed to [`sync_batch_verified_with_tentative`] as
+/// When passed to `sync_batch_verified_with_tentative` as
 /// `Some(...)`, AND the underlying [`crate::runtime::SharedFetchWorkerPool`]
 /// has at least two registered workers, AND
 /// `effective_block_fetch_concurrency(workers, max_knob) > 1`, the
@@ -4813,9 +4813,9 @@ where
 /// legacy single-peer path runs unchanged.
 ///
 /// This is the runtime-level wire of Phase 6 (see
-/// [`docs/ARCHITECTURE.md`]).  The pool is populated by the governor
-/// task via [`crate::runtime::OutboundPeerManager::migrate_session_to_worker`]
-/// and read here under a brief `tokio::sync::RwLock::read` guard.
+/// `docs/ARCHITECTURE.md`).  The pool is populated by the governor
+/// task via `OutboundPeerManager::migrate_session_to_worker` and
+/// read here under a brief `tokio::sync::RwLock::read` guard.
 pub struct MultiPeerDispatchContext<'a> {
     /// Shared per-peer worker pool.  Cloned `Arc` from runtime
     /// startup; both the governor (writer) and this context (reader)

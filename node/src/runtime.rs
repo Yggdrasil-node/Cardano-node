@@ -139,7 +139,7 @@ pub struct RuntimeGovernorConfig {
     pub consensus_mode: ConsensusMode,
     /// Target peer counts maintained by the governor.
     pub targets: GovernorTargets,
-    /// Optional shared [`BlockFetchInstrumentation`] handle. When set, the
+    /// Optional shared `BlockFetchInstrumentation` handle. When set, the
     /// governor tick propagates the per-tick `fetch_mode_from_judgement`
     /// signal into the pool's per-peer concurrency cap, mirroring upstream
     /// `Ouroboros.Network.BlockFetch.ConsensusInterface.mkReadFetchMode`
@@ -148,7 +148,7 @@ pub struct RuntimeGovernorConfig {
     /// constructed with — same behavior as before this slice.
     pub block_fetch_pool: Option<yggdrasil_network::BlockFetchInstrumentation>,
     /// Genesis-derived inputs feeding the live `LedgerStateJudgement`
-    /// computation in [`ChainDbConsensusLedgerSource`]. Mirrors upstream
+    /// computation in `ChainDbConsensusLedgerSource`. Mirrors upstream
     /// `mkLedgerStateJudgement` from
     /// `Cardano.Node.Diffusion.Configuration` — the judgement flips from
     /// `YoungEnough` to `TooOld` when `now - tipSlotTime` exceeds
@@ -158,7 +158,7 @@ pub struct RuntimeGovernorConfig {
     pub ledger_judgement_settings: LedgerJudgementSettings,
     /// Optional shared per-peer ChainSync header-density registry
     /// (Slice GD-Final).  When set, the governor loop reads density
-    /// values from the registry into [`PeerMetrics::density`] before
+    /// values from the registry into `PeerMetrics::density` before
     /// each tick so `combined_score` can apply the density-aware
     /// hot-demotion bonus.  Wire to the same `DensityRegistry`
     /// instance the sync service uses
@@ -180,8 +180,8 @@ pub struct RuntimeGovernorConfig {
     pub max_concurrent_block_fetch_peers: u8,
     /// Optional shared `FetchWorkerPool` cloned from runtime startup
     /// (see [`new_shared_fetch_worker_pool`]).  When `Some`, the
-    /// governor's [`OutboundPeerManager`] uses this pool so the sync
-    /// loop's [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`]
+    /// governor's `OutboundPeerManager` uses this pool so the sync
+    /// loop's `VerifiedSyncServiceConfig::shared_fetch_worker_pool`
     /// observes the registrations made here.  When `None`, the
     /// governor creates its own private pool — useful for tests
     /// that don't need cross-task sharing.
@@ -221,9 +221,9 @@ impl RuntimeGovernorConfig {
     }
 
     /// Attach a shared `FetchWorkerPool` so the governor's
-    /// [`OutboundPeerManager`] writes to the same pool the sync
+    /// `OutboundPeerManager` writes to the same pool the sync
     /// loop reads from via
-    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`].
+    /// `VerifiedSyncServiceConfig::shared_fetch_worker_pool`.
     pub fn with_shared_fetch_worker_pool(mut self, pool: Option<SharedFetchWorkerPool>) -> Self {
         self.shared_fetch_worker_pool = pool;
         self
@@ -239,7 +239,7 @@ impl RuntimeGovernorConfig {
         self
     }
 
-    /// Attach a shared [`BlockFetchInstrumentation`] handle so the governor
+    /// Attach a shared `BlockFetchInstrumentation` handle so the governor
     /// tick propagates `fetch_mode_from_judgement(...)` into the pool's
     /// per-peer concurrency cap. Pass `None` (the default) to keep the
     /// pool's mode pinned at construction time.
@@ -1365,9 +1365,9 @@ impl PeerSnapshotFileSource for FilePeerSnapshotSource<'_> {
 }
 
 /// Genesis-derived inputs that drive the live `LedgerStateJudgement`
-/// computation in [`ChainDbConsensusLedgerSource`]. Bundled into a single
+/// computation in `ChainDbConsensusLedgerSource`. Bundled into a single
 /// struct so the three values stay cohesive across the
-/// [`refresh_ledger_peer_sources_from_chain_db`] call sites; defaults to
+/// `refresh_ledger_peer_sources_from_chain_db` call sites; defaults to
 /// the legacy `YoungEnough` fallback when both timing inputs are `None`.
 #[derive(Clone, Copy, Debug)]
 pub struct LedgerJudgementSettings {
@@ -3332,7 +3332,7 @@ impl PeerSession {
 
     /// Returns `true` if the BlockFetch client is still owned directly
     /// by the session (legacy single-peer path).  Returns `false`
-    /// after [`take_block_fetch`] has migrated the handle into a
+    /// after `take_block_fetch` has migrated the handle into a
     /// per-peer worker.
     pub fn has_block_fetch(&self) -> bool {
         self.block_fetch.is_some()
@@ -3347,7 +3347,7 @@ impl PeerSession {
     /// [`crate::blockfetch_worker::FetchWorkerPool`].  Subsequent
     /// fetches for this peer must go through the pool — the
     /// `block_fetch` field is left as `None` and any direct
-    /// access via [`block_fetch_mut`] panics with a descriptive
+    /// access via `block_fetch_mut` panics with a descriptive
     /// message.
     ///
     /// Returns `None` if the handle has already been migrated.

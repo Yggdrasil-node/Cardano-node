@@ -9,7 +9,7 @@
 //!
 //! ## Determinism
 //!
-//! Density math intentionally uses [`SlotNo`] only — never wallclock —
+//! Density math intentionally uses `SlotNo` only — never wallclock —
 //! so behaviour is reproducible across replays.  The window slides
 //! purely on observed header slots: there is no `Instant` dependence.
 //!

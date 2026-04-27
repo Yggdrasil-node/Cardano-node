@@ -83,7 +83,7 @@ pub struct PeerFetchState {
     /// [`BlockFetchPool::peers`].
     pub peer: SocketAddr,
     /// Number of fetch requests currently outstanding to this peer.  Capped
-    /// by [`FetchMode::max_concurrency_per_peer`].
+    /// by `max_concurrency_per_peer(FetchMode)`.
     pub in_flight: usize,
     /// Total number of blocks successfully delivered by this peer over its
     /// lifetime in the pool.  Used by the fetch-decision policy in

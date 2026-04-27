@@ -1226,7 +1226,7 @@ fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, GenesisLo
 /// (`Cardano.Crypto.Hashing` round-trips the JSON through canonical CBOR
 /// before hashing); a future slice can extend this helper for the Byron
 /// case. For now Byron hash verification is a no-op via
-/// [`NodeConfigFile::verify_known_genesis_hashes`].
+/// `NodeConfigFile::verify_known_genesis_hashes`.
 pub fn compute_genesis_file_hash(path: &Path) -> Result<[u8; 32], GenesisLoadError> {
     let bytes = fs::read(path).map_err(|source| GenesisLoadError::Io {
         path: path.to_path_buf(),
