@@ -230,7 +230,7 @@
 - ✅ Collateral validation (all edge cases)
 - ✅ Reward calculation (upstream RUPD→SNAP ordering + reserves accounting)
 - ✅ Governance ratification tally (AlwaysNoConfidence auto-yes, deposit lifecycle, lineage subtree pruning complete)
-- 📊 **Validation**: Workspace test baseline currently at 4210 discovered tests (`cargo test-all -- --list`)
+- 📊 **Validation**: Workspace test baseline currently at 4630 discovered tests (`cargo test-all`), all passing
 - 📊 **Testnet**: Sync 50+ epochs without error
 
 ### Phase 2: Plutus (Weeks 3-5)
