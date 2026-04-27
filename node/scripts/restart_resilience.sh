@@ -74,9 +74,9 @@ mkdir -p "$LOG_ROOT" "$DB_DIR"
 rm -f "$SOCKET_PATH"
 
 read_tip_slot() {
-  # Read yggdrasil_chain_tip_slot from /metrics. Return empty on failure.
+  # Read yggdrasil_current_slot from /metrics. Return empty on failure.
   curl -fsS "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null \
-    | grep -E '^yggdrasil_chain_tip_slot\s' \
+    | grep -E '^yggdrasil_current_slot\s' \
     | awk '{print $2}' \
     | head -1 \
     | sed -e 's/\..*$//' || true
@@ -152,7 +152,7 @@ for ((cycle=1; cycle<=CYCLES; cycle++)); do
   fi
   current_tip="$(read_tip_slot)"
   if [[ -z "$current_tip" ]]; then
-    echo "ERROR: cycle $cycle: could not read yggdrasil_chain_tip_slot" >&2
+    echo "ERROR: cycle $cycle: could not read yggdrasil_current_slot" >&2
     exit 2
   fi
 

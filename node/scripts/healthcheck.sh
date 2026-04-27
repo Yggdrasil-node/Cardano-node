@@ -41,7 +41,7 @@ metrics_text="$(curl -fsS --max-time 5 "${ENDPOINT}/metrics" 2>/dev/null || true
 metric() { echo "$metrics_text" | awk -v m="$1" '$1 == m { print $2 }' | head -1; }
 mempool=$(metric yggdrasil_mempool_tx_count)
 outbound=$(metric yggdrasil_cm_outbound_conns)
-reconnects=$(metric yggdrasil_reconnects_total)
+reconnects=$(metric yggdrasil_reconnects)
 workers=$(metric yggdrasil_blockfetch_workers_registered)
 
 if [ "$QUIET" = "0" ]; then

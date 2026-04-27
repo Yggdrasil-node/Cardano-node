@@ -35,13 +35,13 @@ Yggdrasil emits 35+ counters and gauges. Selected highlights:
 | Metric                                    | Type    | Description |
 |-------------------------------------------|---------|-------------|
 | `yggdrasil_blocks_synced`                 | counter | Total blocks applied during this process lifetime. |
-| `yggdrasil_block_number`                  | gauge   | Latest block number applied. |
+| `yggdrasil_current_block_number`          | gauge   | Latest block number applied. |
 | `yggdrasil_current_slot`                  | gauge   | Slot of the latest applied block. |
 | `yggdrasil_checkpoint_slot`               | gauge   | Slot of the most recent ledger checkpoint. |
-| `yggdrasil_rollbacks_total`               | counter | RollBackward events received. |
-| `yggdrasil_stable_blocks_promoted_total`  | counter | Volatile → immutable promotions. |
-| `yggdrasil_reconnects_total`              | counter | Sync session reconnects. |
-| `yggdrasil_batches_total`                 | counter | Verified batches applied. |
+| `yggdrasil_rollbacks`                     | counter | RollBackward events received. |
+| `yggdrasil_stable_blocks_promoted`        | counter | Volatile → immutable promotions. |
+| `yggdrasil_reconnects`                    | counter | Sync session reconnects. |
+| `yggdrasil_batches_completed`             | counter | Verified batches applied. |
 
 #### Mempool
 
@@ -49,8 +49,8 @@ Yggdrasil emits 35+ counters and gauges. Selected highlights:
 |-----------------------------------------|---------|-------------|
 | `yggdrasil_mempool_tx_count`            | gauge   | Current transactions in the mempool. |
 | `yggdrasil_mempool_bytes`               | gauge   | Current mempool byte total. |
-| `yggdrasil_mempool_tx_added_total`      | counter | Successfully admitted transactions. |
-| `yggdrasil_mempool_tx_rejected_total`   | counter | Rejected transactions. |
+| `yggdrasil_mempool_tx_added`            | counter | Successfully admitted transactions. |
+| `yggdrasil_mempool_tx_rejected`         | counter | Rejected transactions. |
 
 #### Connection manager
 
@@ -61,8 +61,8 @@ Yggdrasil emits 35+ counters and gauges. Selected highlights:
 | `yggdrasil_cm_unidirectional_conns`         | gauge | One-way peer count. |
 | `yggdrasil_cm_inbound_conns`                | gauge | Currently accepted inbound. |
 | `yggdrasil_cm_outbound_conns`               | gauge | Currently established outbound. |
-| `yggdrasil_inbound_connections_accepted_total`| counter | Cumulative inbound accept count. |
-| `yggdrasil_inbound_connections_rejected_total`| counter | Inbound connections rejected by rate limit. |
+| `yggdrasil_inbound_connections_accepted`| counter | Cumulative inbound accept count. |
+| `yggdrasil_inbound_connections_rejected`| counter | Inbound connections rejected by rate limit. |
 
 #### BlockFetch workers (Phase 6)
 
@@ -186,11 +186,11 @@ A starting alerting baseline:
 | Node down                      | `up{job="yggdrasil"} == 0`                     | critical |
 | Slot lag > 600                 | `(time() - yggdrasil_current_slot * 1) > 600`  | warning  |
 | Slot lag > 3600                | as above, threshold 3600                       | critical |
-| Frequent reconnects            | `rate(yggdrasil_reconnects_total[5m]) > 1`     | warning  |
-| Excessive rollbacks            | `rate(yggdrasil_rollbacks_total[10m]) > 0.1`   | warning  |
+| Frequent reconnects            | `rate(yggdrasil_reconnects[5m]) > 1`           | warning  |
+| Excessive rollbacks            | `rate(yggdrasil_rollbacks[10m]) > 0.1`         | warning  |
 | Stuck migration                | `yggdrasil_blockfetch_workers_registered < hot_peer_count` | warning |
 | Mempool growing unbounded      | `yggdrasil_mempool_bytes > 10485760`           | warning  |
-| Inbound rate-limit hits        | `rate(yggdrasil_inbound_connections_rejected_total[5m]) > 0.5` | info |
+| Inbound rate-limit hits        | `rate(yggdrasil_inbound_connections_rejected[5m]) > 0.5` | info |
 
 Adjust thresholds based on your network and traffic profile.
 

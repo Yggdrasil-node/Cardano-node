@@ -57,7 +57,7 @@ $YGG_BIN run --network preprod \
   --metrics-port 9001
 ```
 
-Verify the node reaches `bootstrap peer connected` in the log and exposes `yggdrasil_chain_tip_slot` on `http://127.0.0.1:9001/metrics`.
+Verify the node reaches `bootstrap peer connected` in the log and exposes `yggdrasil_current_slot` on `http://127.0.0.1:9001/metrics`.
 
 ### 2b. Producer mode (requires real preprod pool credentials)
 
@@ -89,7 +89,7 @@ node/scripts/run_mainnet_real_pool_producer.sh
 
 Pass conditions (asserted by the script):
 - `bootstrap peer connected` observed in the log.
-- `yggdrasil_hot_peers_total >= EXPECT_HOT_PEERS` (default 2) at midpoint and at end.
+- `yggdrasil_active_peers >= EXPECT_HOT_PEERS` (default 2) at midpoint and at end.
 - No `invalid VRF proof` lines.
 - Process did not exit before `RUN_SECONDS` elapsed.
 
@@ -231,10 +231,10 @@ Compare slot-rate metrics between knob=1 and knob=2 over the same wall-clock win
 ```sh
 # Knob=1 baseline (record before opting in)
 curl -fsS http://127.0.0.1:9001/metrics \
-  | grep '^yggdrasil_blocks_applied_total\|^yggdrasil_chain_tip_slot'
+  | grep '^yggdrasil_blocks_synced\|^yggdrasil_current_slot'
 sleep 600
 curl -fsS http://127.0.0.1:9001/metrics \
-  | grep '^yggdrasil_blocks_applied_total\|^yggdrasil_chain_tip_slot'
+  | grep '^yggdrasil_blocks_synced\|^yggdrasil_current_slot'
 
 # Restart with knob=2, repeat the same 10-minute window
 ```
@@ -245,10 +245,10 @@ Expected: knob=2 throughput ≥ knob=1 throughput. Upstream typically observes a
 
 After 6.5a–6.5c pass, repeat with `max_concurrent_block_fetch_peers=4` for at least 24 hours of preprod soak. Watch:
 
-- `yggdrasil_hot_peers_total` should reach 4 once the governor has promoted enough peers.
+- `yggdrasil_active_peers` should reach 4 once the governor has promoted enough peers.
 - 4 distinct `Net.BlockFetch.Worker` migration events (one per warm peer).
 - No tracer lines containing `fetch worker channel closed` or `fetch worker dropped response` — these indicate worker task crashes.
-- `yggdrasil_reconnects_total` rate within the same band as the knob=1 baseline.
+- `yggdrasil_reconnects` rate within the same band as the knob=1 baseline.
 
 ### 6.5e Mainnet rehearsal at knob=2
 
@@ -277,11 +277,11 @@ curl -fsS http://127.0.0.1:9001/metrics > "/tmp/ygg-metrics-snapshots/snapshot-$
 ```
 
 Key metrics to track:
-- `yggdrasil_chain_tip_slot` — must advance monotonically.
-- `yggdrasil_hot_peers_total` — typically `>= 2` once settled.
-- `yggdrasil_blocks_applied_total` — strictly non-decreasing.
+- `yggdrasil_current_slot` — must advance monotonically.
+- `yggdrasil_active_peers` — typically `>= 2` once settled.
+- `yggdrasil_blocks_synced` — strictly non-decreasing.
 - `yggdrasil_mempool_tx_count` — varies; useful for relay-mode validation.
-- `yggdrasil_reconnects_total` — should stay low (<10/hour) on a stable peer set.
+- `yggdrasil_reconnects` — should stay low (<10/hour) on a stable peer set.
 
 For Phase 6 parallel-fetch validation (§6.5):
 - `yggdrasil_blockfetch_workers_registered` — current pool size. `0` in legacy single-peer mode (knob = 1); equal to the number of warm peers when knob > 1 and the governor has migrated their `BlockFetchClient`s. Watching this gauge climb to the configured knob value is the operator's primary signal that multi-peer dispatch has activated.
@@ -362,7 +362,7 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 | Symptom | First place to look |
 |---|---|
 | Process exits at startup | log file (last 60 lines via `tail -n 60`) — usually a config / genesis path resolution error |
-| Stuck at `bootstrap peer connected` with no further sync | `/metrics` `yggdrasil_hot_peers_total` (if 0, peer governor never promoted; check topology) |
+| Stuck at `bootstrap peer connected` with no further sync | `/metrics` `yggdrasil_active_peers` (if 0, peer governor never promoted; check topology) |
 | `invalid VRF proof` | header verification mismatch; capture log + a `cardano-cli query tip` snapshot from a known-good Haskell node and compare slot/hash |
 | Non-monotonic tip during restart | `restart_resilience.sh` exit 1; logs preserved in `$LOG_ROOT`. Likely a storage WAL recovery bug — file a parity-audit issue and attach all `cycle-NN.log` files |
 | Hash divergence persists | run `compare_tip_to_haskell.sh` 3× over 90s; if all three diverge with `slot equal, hash different`, capture both snapshot JSONs and report against `docs/PARITY_PLAN.md` |

@@ -61,10 +61,10 @@ This prints the on-disk sync position, block count, checkpoint state, and ledger
 Or, if you enabled `--metrics-port`:
 
 ```bash
-$ curl -s http://127.0.0.1:12798/metrics | grep -E "^yggdrasil_(blocks_synced|current_slot|block_number)"
+$ curl -s http://127.0.0.1:12798/metrics | grep -E "^yggdrasil_(blocks_synced|current_slot|current_block_number)"
 yggdrasil_blocks_synced 412987
 yggdrasil_current_slot 117425831
-yggdrasil_block_number 11293441
+yggdrasil_current_block_number 11293441
 ```
 
 The current mainnet tip slot is published at [pooltool.io](https://pooltool.io/) or [explorer.cardano.org](https://explorer.cardano.org/). When `yggdrasil_current_slot` reaches that value, your node is fully caught up.

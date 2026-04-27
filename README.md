@@ -26,10 +26,18 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 
 ## Install
 
-**Latest release (Linux x86_64 / aarch64):**
+> **Pre-1.0 status:** prebuilt release tarballs are published once the project
+> tags a `v*` release. Until then, the source build (under one minute on a
+> warm cache) and the Docker path are the supported install routes.
+
+**From source (recommended for testing):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/node/scripts/install_from_release.sh | bash
+git clone https://github.com/yggdrasil-node/Cardano-node.git yggdrasil
+cd yggdrasil
+cargo build --release --bin yggdrasil-node
+sudo install -m 0755 target/release/yggdrasil-node /usr/local/bin/
+yggdrasil-node validate-config --network mainnet --database-path /var/lib/yggdrasil/db
 ```
 
 **Docker:**
@@ -37,9 +45,17 @@ curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/no
 ```bash
 git clone https://github.com/yggdrasil-node/Cardano-node && cd Cardano-node
 docker compose up -d
+docker compose logs -f
 ```
 
-**From source:** see [Installation](https://yggdrasil-node.github.io/Cardano-node/manual/installation/).
+**From a published release tarball (Linux x86_64 / aarch64) — once tagged:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/node/scripts/install_from_release.sh | bash
+```
+
+The installer falls back to clear instructions when no release has been
+published yet. Full details: [Installation](https://yggdrasil-node.github.io/Cardano-node/manual/installation/).
 
 ## Current Status
 

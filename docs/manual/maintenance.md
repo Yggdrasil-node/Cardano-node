@@ -215,7 +215,7 @@ Monitor:
 
 - **Outbound connection count** (`yggdrasil_cm_outbound_conns`). Should be at or near `governor_target_active`.
 - **Hot peer count** (derived from governor traces). Should match the configured target.
-- **Reconnect rate** (`rate(yggdrasil_reconnects_total[10m])`). High values suggest peer churn or local connectivity issues.
+- **Reconnect rate** (`rate(yggdrasil_reconnects[10m])`). High values suggest peer churn or local connectivity issues.
 - **TCP retransmit rate** (`netstat -s | grep retransmit`). High values suggest packet loss.
 
 ## Time synchronisation

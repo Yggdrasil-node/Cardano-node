@@ -109,7 +109,7 @@ Look for:
 
 ### Inbound rate limiting hits
 
-**Symptom**: `yggdrasil_inbound_connections_rejected_total` increasing.
+**Symptom**: `yggdrasil_inbound_connections_rejected` increasing.
 
 **Cause**: Total inbound connections at `accepted_connections_limit_hard` (default 512).
 

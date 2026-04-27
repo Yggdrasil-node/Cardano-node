@@ -50,9 +50,27 @@ suffix="${os}-${arch}"
 # Resolve the version tag.
 if [ "$VERSION" = "latest" ]; then
   info "resolving latest release..."
-  VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+  VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null \
     | grep -oP '"tag_name":\s*"\K[^"]+' | head -1)
-  [ -n "$VERSION" ] || err "could not resolve latest tag; pass an explicit tag (e.g. v0.1.0)"
+  if [ -z "$VERSION" ]; then
+    cat >&2 <<EOF
+no published GitHub releases found for ${REPO}.
+
+This is expected during the pre-1.0 window — a release tarball will appear
+once the project tags v0.1.0. Until then, install from source:
+
+  git clone https://github.com/${REPO}.git yggdrasil
+  cd yggdrasil
+  cargo build --release --bin yggdrasil-node
+  sudo install -m 0755 target/release/yggdrasil-node /usr/local/bin/
+
+Full instructions: https://yggdrasil-node.github.io/Cardano-node/manual/installation/
+
+If a release does exist and this is a transient API failure, retry, or pass
+the tag explicitly: ./install_from_release.sh v0.1.0
+EOF
+    exit 1
+  fi
 fi
 info "installing ${BINARY_NAME} ${VERSION} (${suffix}) into ${PREFIX}"
 

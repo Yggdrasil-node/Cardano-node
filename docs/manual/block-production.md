@@ -171,7 +171,7 @@ The forge loop emits these per-slot trace events under the `Node.BlockProduction
 | `TraceForgedInvalidBlock`          | Critical | Self-validation rejected the locally forged block. **Investigate immediately**. |
 | `TraceAdoptedBlock` / `TraceDidntAdoptBlock` | Info | ChainDB add result. |
 
-In Prometheus, `yggdrasil_blocks_minted_total` (if your build exposes it; see `tracer.rs` for the canonical list) tracks successful forges.
+Forge counts are surfaced via the trace events above; a dedicated Prometheus counter for minted blocks is not yet emitted. Until it lands, scrape `TraceForgedBlock` events from the trace stream (or count adopted blocks via `yggdrasil_blocks_synced` cross-referenced with the forge log).
 
 ## Operational rhythm
 
@@ -204,7 +204,7 @@ If you are migrating from `cardano-node` (Haskell) to Yggdrasil:
 2. Verify the on-disk database is at a recent slot.
 3. Yggdrasil cannot reuse the Haskell ChainDB format directly — it has its own immutable+volatile format. Sync from genesis with Yggdrasil pointing at a fresh `--database-path`.
 4. Once Yggdrasil is at tip, set up the same key files (Yggdrasil reads the same upstream key envelope formats unchanged).
-5. Run both nodes in parallel for one or more KES periods. Compare `yggdrasil_current_slot`, `yggdrasil_block_number`, and forge events against the Haskell node.
+5. Run both nodes in parallel for one or more KES periods. Compare `yggdrasil_current_slot`, `yggdrasil_current_block_number`, and forge events against the Haskell node.
 6. Cut over by stopping the Haskell node.
 
 The chain hashes are byte-identical between implementations, so you can hash-compare blocks at the same slot using [`node/scripts/compare_tip_to_haskell.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/node/scripts/compare_tip_to_haskell.sh).

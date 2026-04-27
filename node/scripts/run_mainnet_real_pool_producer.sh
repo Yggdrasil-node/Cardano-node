@@ -104,18 +104,18 @@ assert_hot_peers() {
   fi
   local current
   current="$(curl -fsS "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null \
-    | grep -E '^yggdrasil_hot_peers_total\s' \
+    | grep -E '^yggdrasil_active_peers\s' \
     | awk '{print $2}' | head -1 || true)"
   if [[ -z "$current" ]]; then
-    echo "[warn] could not read yggdrasil_hot_peers_total from metrics endpoint" >&2
+    echo "[warn] could not read yggdrasil_active_peers from metrics endpoint" >&2
     return 0
   fi
   current="${current%.*}" # strip any decimal
   if [[ "$current" -lt "$expected" ]]; then
-    echo "ERROR: yggdrasil_hot_peers_total=$current < EXPECT_HOT_PEERS=$expected" >&2
+    echo "ERROR: yggdrasil_active_peers=$current < EXPECT_HOT_PEERS=$expected" >&2
     return 1
   fi
-  echo "[ok] yggdrasil_hot_peers_total=$current >= $expected"
+  echo "[ok] yggdrasil_active_peers=$current >= $expected"
 }
 
 main() {
