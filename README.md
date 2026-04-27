@@ -17,12 +17,12 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 
 ## Quick Navigation
 
-- [Current Status](#current-status)
 - [Install](#install)
+- [Current Status](#current-status)
 - [Workspace Layout](#workspace-layout)
-- [Commands](#commands)
+- [Verification](#verification)
 - [Documentation](#documentation)
-- [Next Development Phases](#next-development-phases)
+- [Roadmap (post-1.0)](#roadmap-post-10)
 
 ## Install
 
@@ -85,107 +85,54 @@ As of the 2026-Q2 audit closure, every confirmed-active parity slice tracked in 
 
 ## Workspace Layout
 
-```text
-.
-├── .cargo/
-│   └── config.toml
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── AGENTS.md
-├── Cargo.lock
-├── Cargo.toml
-├── LICENSE
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── CONTRIBUTING.md
-│   ├── DEPENDENCIES.md
-│   └── SPECS.md
-├── crates/
-│   ├── cddl-codegen/
-│   │   ├── AGENTS.md
-│   │   ├── Cargo.toml
-│   │   ├── src/
-│   │   └── tests/
-│   ├── consensus/
-│   │   ├── AGENTS.md
-│   │   ├── Cargo.toml
-│   │   ├── src/
-│   │   └── tests/
-│   ├── crypto/
-│   │   ├── AGENTS.md
-│   │   ├── Cargo.toml
-│   │   ├── src/
-│   │   └── tests/
-│   ├── ledger/
-│   │   ├── AGENTS.md
-│   │   ├── Cargo.toml
-│   │   ├── src/
-│   │   └── tests/
-│   ├── mempool/
-│   │   ├── AGENTS.md
-│   │   ├── Cargo.toml
-│   │   ├── src/
-│   │   └── tests/
-│   ├── network/
-│   │   ├── AGENTS.md
-│   │   ├── Cargo.toml
-│   │   ├── src/
-│   │   └── tests/
-│   └── storage/
-│       ├── AGENTS.md
-│       ├── Cargo.toml
-│       ├── src/
-│       └── tests/
-├── node/
-│   ├── AGENTS.md
-│   ├── Cargo.toml
-│   ├── src/
-│   │   ├── AGENTS.md
-│   │   ├── lib.rs
-│   │   ├── main.rs
-│   │   ├── runtime.rs
-│   │   └── sync.rs
-│   └── tests/
-│       ├── runtime.rs
-│       ├── smoke.rs
-│       └── sync.rs
-├── specs/
-│   ├── mini-ledger.cddl
-│   └── upstream-test-vectors/
-│       ├── AGENTS.md
-│       └── cardano-base/
-└── rust-toolchain.toml
-```
+The workspace is a strict bottom-up dependency stack — see [crates/AGENTS.md](crates/AGENTS.md) for direction rules.
 
-## Commands
+| Crate / path | Purpose |
+| --- | --- |
+| [crates/crypto](crates/crypto) | Blake2b, Ed25519, VRF (std + batchcompat), KES (Simple + Sum 0–6+), BLS12-381, secp256k1. |
+| [crates/cddl-codegen](crates/cddl-codegen) | Parses pinned Cardano CDDL, emits Rust + reproducible CBOR codecs. |
+| [crates/ledger](crates/ledger) | Era types Byron→Conway, multi-era UTxO, per-era apply rules, governance, PPUP, MIR, ratification. |
+| [crates/storage](crates/storage) | `ImmutableStore` / `VolatileStore` / `LedgerStore` traits + file-backed impls + `ChainDb` coordinator. |
+| [crates/consensus](crates/consensus) | Praos leader election, KES/OpCert checks, `ChainState`, nonce evolution. |
+| [crates/mempool](crates/mempool) | Fee-ordered queue with TTL, eviction, ledger revalidation. |
+| [crates/network](crates/network) | Mux, mini-protocols, governor, peer registry, root + ledger-peer providers, diffusion types. |
+| [crates/plutus](crates/plutus) | CEK machine, builtin semantics, cost model. |
+| [node](node) | `yggdrasil-node` binary — CLI, config, sync runtime, inbound server, governor loop, block producer, NtC. |
+| [docs](docs) | Architecture, dependency policy, specs, parity plan, manual test runbook, user manual. |
+| [specs](specs) | Pinned CDDL fixtures + vendored upstream test vectors. |
 
-Workspace aliases:
+## Verification
+
+The required gates before declaring work done are the same three workflow CI runs:
 
 ```bash
-cargo check-all
-cargo test-all
-cargo lint
+cargo check-all   # cargo check --workspace --all-targets
+cargo test-all    # cargo test --workspace --all-features
+cargo lint        # cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-Equivalent direct commands:
-
-```bash
-cargo check --workspace --all-targets
-cargo test --workspace --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-```
+All three must pass. The release build also runs `cargo doc --workspace --no-deps`. Aliases live in [.cargo/config.toml](.cargo/config.toml); CI lives in [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Documentation
 
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Dependency policy: [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)
-- Specification priority: [docs/SPECS.md](docs/SPECS.md)
-- Contribution workflow: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
+- [User Manual](https://yggdrasil-node.github.io/Cardano-node/manual/) — install, configure, run, monitor, troubleshoot, and produce blocks.
+- [Architecture](docs/ARCHITECTURE.md) — phase-by-phase implementation overview.
+- [Dependency policy](docs/DEPENDENCIES.md) — rules for adding/removing third-party crates.
+- [Specification priority](docs/SPECS.md) — where to anchor parity-sensitive changes.
+- [Contribution workflow](docs/CONTRIBUTING.md) — gates, AGENTS.md rules, commit conventions.
+- [Manual test runbook](docs/MANUAL_TEST_RUNBOOK.md) — operator rehearsal procedure for sync, hash compare, restart resilience, and parallel-fetch validation.
+- [Security policy](SECURITY.md) — supported versions, vulnerability disclosure.
+- [Changelog](CHANGELOG.md) — release-by-release record.
 
-## Next Development Phases
+## Roadmap (post-1.0)
 
-1. Implement consensus-network bridge for ledger peers to source peers from immutable ledger state.
-2. Add governor-style peer policy with promotion, demotion, and churn behavior.
-3. Expand upstream parity testing with vendored ledger and consensus test vectors.
-4. Documentation refresh to reflect current network provider and registry capabilities.
+Yggdrasil 1.0 closes the 2026-Q2 audit. Post-1.0 work tracked through GitHub Issues includes:
+
+- Sustained mainnet endurance soak (week-scale) with hash-compare against the Haskell node.
+- Extended `cardano-tracer` interoperability validation across both forwarder and stdout backends.
+- Default `max_concurrent_block_fetch_peers` flip from `1` to `2` once `MANUAL_TEST_RUNBOOK.md` §6.5 sign-off lands.
+- Future Conway tail-parameter cost-model entries beyond the vendored 251-name surface in `crates/plutus`.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
