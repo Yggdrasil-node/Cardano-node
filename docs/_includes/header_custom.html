@@ -1,22 +1,13 @@
 {%- comment -%}
-  Yggdrasil — landing-page hero banner.
+  No-op.
 
-  Activated by setting `hero: true` in a page's front matter, e.g.:
+  The Yggdrasil landing-page hero banner used to render here, but
+  just-the-docs injects `header_custom.html` into the fixed-height
+  `.main-header` strip — which clipped the banner image and made it
+  visually overlay the sidebar/content boundary on the rendered site.
+  The banner now lives inline in `index.md` above the `.yg-hero` card so
+  it stacks normally in the document flow.
 
-      ---
-      title: Yggdrasil
-      hero: true
-      ---
-
-  Renders the wide YggdrasilNode banner across the full content width.
-  Falls back gracefully if the asset is missing (the <img> alt text
-  describes what should be there).
+  Keep this file (rather than deleting it) so future hero or header
+  injections have an obvious home.
 {%- endcomment -%}
-{%- if page.hero -%}
-<figure class="yg-hero-banner">
-  <img src="{{ '/assets/images/Yggrasil_banner.png' | relative_url }}"
-       alt="YggdrasilNode — A Cardano Node Project Written In Rust"
-       loading="eager"
-       decoding="async">
-</figure>
-{%- endif -%}

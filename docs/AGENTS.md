@@ -18,10 +18,13 @@ Keep these documents synchronized with the implemented workspace, not with specu
     scheme (forest-teal primary, copper accent). Selected via
     `color_scheme: yggdrasil` in `_config.yml`.
   - `_sass/custom/custom.scss` — auto-imported by just-the-docs.
-    Provides hero blocks (`.yg-hero`), the stats banner (`.yg-stats`),
-    the navigation card grid (`.yg-cards` + `a.yg-card`), refined
-    typography, polished tables/code/blockquotes, and `.callout-*`
-    sidebar styling.
+    Provides hero blocks (`.yg-hero`), the hero-banner figure
+    (`.yg-hero-banner` — embedded inline in `docs/index.md`, **not**
+    via `header_custom.html`, because the theme injects custom-header
+    HTML into the fixed-height `.main-header` strip and clipped the
+    banner image), the stats banner (`.yg-stats`), the navigation card
+    grid (`.yg-cards` + `a.yg-card`), refined typography, polished
+    tables/code/blockquotes, and `.callout-*` sidebar styling.
   - When updating site styling, change Sass variables in the colour
     scheme for global tone and CSS variables (`--yg-*` defined in
     `:root`) inside `custom.scss` for component-level rules.

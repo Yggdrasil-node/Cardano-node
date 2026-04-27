@@ -316,11 +316,23 @@ fn compute_tx_id(body: &[u8]) -> TxId {
 /// Reference: `Cardano.Ledger.Shelley.Tx.minfee`,
 /// `Cardano.Ledger.Core.txIdTxBody`.
 pub fn shelley_block_to_block(block: &ShelleyBlock, raw_block_bytes: &[u8]) -> Block {
+    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
+    shelley_block_to_block_with_spans(block, &spans)
+}
+
+/// Variant of [`shelley_block_to_block`] that consumes pre-extracted
+/// `BlockTxRawSpans` instead of re-walking the block CBOR.
+///
+/// Use this on the sync hot path when spans are already cached on the
+/// `MultiEraSyncStep::RollForward.block_spans` field — saves one CBOR
+/// walk per block.
+pub fn shelley_block_to_block_with_spans(
+    block: &ShelleyBlock,
+    spans: &yggdrasil_ledger::BlockTxRawSpans,
+) -> Block {
     let body = &block.header.body;
     let hash = block.header_hash();
     let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
-
-    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
 
     let transactions: Vec<Tx> = block
         .transaction_bodies
@@ -1409,21 +1421,26 @@ pub(crate) fn for_each_roll_forward_block<E, F>(
     mut f: F,
 ) -> Result<(), E>
 where
-    F: FnMut(&MultiEraBlock, &[u8]) -> Result<(), E>,
+    F: FnMut(&MultiEraBlock, &[u8], &yggdrasil_ledger::BlockTxRawSpans) -> Result<(), E>,
 {
+    let empty_spans = yggdrasil_ledger::BlockTxRawSpans::default();
     for step in &progress.steps {
         if let MultiEraSyncStep::RollForward {
-            blocks, raw_blocks, ..
+            blocks,
+            raw_blocks,
+            block_spans,
+            ..
         } = step
         {
-            // `raw_blocks` is parallel to `blocks` in production; synthetic
-            // test progress may pass a shorter `raw_blocks` (e.g. empty),
-            // in which case the missing indices fall back to `&[]` and the
-            // typed converter re-encodes — see `extract_tx_ids` for the
-            // eprintln! warning that fires on the fallback branch.
+            // Both `raw_blocks` and `block_spans` are parallel to `blocks`
+            // in production; synthetic test progress may pass shorter
+            // slices, in which case the missing indices fall back to
+            // empty bytes / empty spans and the typed converter
+            // re-encodes (see `extract_tx_ids` for the fallback contract).
             for (idx, block) in blocks.iter().enumerate() {
                 let raw: &[u8] = raw_blocks.get(idx).map(|v| v.as_slice()).unwrap_or(&[]);
-                f(block, raw)?;
+                let spans = block_spans.get(idx).unwrap_or(&empty_spans);
+                f(block, raw, spans)?;
             }
         }
     }
@@ -1435,8 +1452,11 @@ pub(crate) fn advance_ledger_state_with_progress(
     progress: &MultiEraSyncProgress,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
 ) -> Result<(), SyncError> {
-    for_each_roll_forward_block(progress, |block, raw| {
-        ledger_state.apply_block_validated(&multi_era_block_to_block(block, raw), evaluator)?;
+    for_each_roll_forward_block(progress, |block, _raw, spans| {
+        ledger_state.apply_block_validated(
+            &multi_era_block_to_block_with_spans(block, spans),
+            evaluator,
+        )?;
         Ok(())
     })
 }
@@ -1519,8 +1539,8 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
     let shelley_epoch_size = epoch_schedule.shelley_epoch_size();
-    for_each_roll_forward_block(progress, |block, raw| -> Result<(), SyncError> {
-        let converted = multi_era_block_to_block(block, raw);
+    for_each_roll_forward_block(progress, |block, _raw, spans| -> Result<(), SyncError> {
+        let converted = multi_era_block_to_block_with_spans(block, spans);
         let block_slot = converted.header.slot_no;
 
         // Detect epoch transition relative to the current ledger tip.
@@ -1587,7 +1607,7 @@ pub(crate) fn apply_nonce_evolution_to_progress(
     progress: &MultiEraSyncProgress,
     nonce_cfg: &NonceEvolutionConfig,
 ) {
-    let _ = for_each_roll_forward_block(progress, |block, _raw| {
+    let _ = for_each_roll_forward_block(progress, |block, _raw, _spans| {
         apply_nonce_evolution(nonce_state, block, nonce_cfg);
         Ok::<(), core::convert::Infallible>(())
     });
@@ -2402,11 +2422,31 @@ pub fn decode_multi_era_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<MultiEraBlo
 ///   zeroed (EBB)
 /// - `transactions`: decoded from block body tx_payload
 pub fn multi_era_block_to_block(block: &MultiEraBlock, raw_block_bytes: &[u8]) -> Block {
+    let spans = match block {
+        MultiEraBlock::Byron { .. } => yggdrasil_ledger::BlockTxRawSpans::default(),
+        _ => yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default(),
+    };
+    multi_era_block_to_block_with_spans(block, &spans)
+}
+
+/// Variant of [`multi_era_block_to_block`] that consumes pre-extracted
+/// `BlockTxRawSpans` instead of re-walking the block CBOR.
+///
+/// On the sync hot path, the dispatcher caches one `BlockTxRawSpans` per
+/// block at step construction (`extract_spans_per_block`), and both the
+/// eviction path (`extract_tx_ids`) and the apply path
+/// (`apply_multi_era_step_to_volatile`) read from that cache via this
+/// entry point.  The Byron arm ignores `spans` (Byron tx-id derivation
+/// runs over per-tx `ByronTxAux::raw_tx_cbor`, not block-level spans).
+pub fn multi_era_block_to_block_with_spans(
+    block: &MultiEraBlock,
+    spans: &yggdrasil_ledger::BlockTxRawSpans,
+) -> Block {
     match block {
-        MultiEraBlock::Shelley(shelley) => shelley_block_to_block(shelley, raw_block_bytes),
-        MultiEraBlock::Alonzo(alonzo) => alonzo_block_to_block(alonzo, raw_block_bytes),
-        MultiEraBlock::Babbage(babbage) => babbage_block_to_block(babbage, raw_block_bytes),
-        MultiEraBlock::Conway(conway) => conway_block_to_block(conway, raw_block_bytes),
+        MultiEraBlock::Shelley(shelley) => shelley_block_to_block_with_spans(shelley, spans),
+        MultiEraBlock::Alonzo(alonzo) => alonzo_block_to_block_with_spans(alonzo, spans),
+        MultiEraBlock::Babbage(babbage) => babbage_block_to_block_with_spans(babbage, spans),
+        MultiEraBlock::Conway(conway) => conway_block_to_block_with_spans(conway, spans),
         MultiEraBlock::Byron { block: byron, .. } => {
             let transactions: Vec<Tx> = byron
                 .transactions()
@@ -2450,175 +2490,85 @@ pub fn multi_era_block_to_block(block: &MultiEraBlock, raw_block_bytes: &[u8]) -
 ///
 /// See [`shelley_block_to_block`] for the rationale on `raw_block_bytes`.
 pub fn alonzo_block_to_block(block: &AlonzoBlock, raw_block_bytes: &[u8]) -> Block {
-    let body = &block.header.body;
-    let hash = block.header_hash();
-    let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
-
     let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
-
-    let transactions: Vec<Tx> = block
-        .transaction_bodies
-        .iter()
-        .enumerate()
-        .zip(
-            block
-                .transaction_witness_sets
-                .iter()
-                .map(Some)
-                .chain(std::iter::repeat(None)),
-        )
-        .map(|((idx, tx_body), ws)| {
-            let raw_body = spans
-                .bodies
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| tx_body.to_cbor_bytes());
-            let raw_witnesses = spans
-                .witness_sets
-                .get(idx)
-                .cloned()
-                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
-            let valid = !block.invalid_transactions.contains(&(idx as u64));
-            Tx {
-                id: compute_tx_id(&raw_body),
-                body: raw_body,
-                witnesses: raw_witnesses,
-                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
-                is_valid: Some(valid),
-            }
-        })
-        .collect();
-
-    Block {
-        era: Era::Alonzo,
-        header: BlockHeader {
-            hash,
-            prev_hash,
-            slot_no: SlotNo(body.slot),
-            block_no: BlockNo(body.block_number),
-            issuer_vkey: body.issuer_vkey,
-        },
-        transactions,
-        raw_cbor: None,
-        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
-    }
+    alonzo_block_to_block_with_spans(block, &spans)
 }
 
-/// Convert a typed Babbage block into the generic ledger `Block` wrapper.
-///
-/// See [`shelley_block_to_block`] for the rationale on `raw_block_bytes`.
-fn babbage_block_to_block(block: &BabbageBlock, raw_block_bytes: &[u8]) -> Block {
-    let body = &block.header.body;
-    let hash = block.header_hash();
-    let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
+/// Generate a `*_block_to_block_with_spans` function for an Alonzo-family
+/// era (Alonzo / Babbage / Conway).  These three eras share the same wire
+/// shape (5-element block, `invalid_transactions` array, `auxiliary_data_set`
+/// map, per-tx `is_valid` flag); only the era tag and the typed block
+/// struct differ.  See [`shelley_block_to_block_with_spans`] for the
+/// Shelley-only variant (different metadata-set field, no `is_valid`).
+macro_rules! alonzo_family_block_to_block_with_spans {
+    ($vis:vis fn $name:ident, $block_ty:ty, $era:expr) => {
+        $vis fn $name(
+            block: &$block_ty,
+            spans: &yggdrasil_ledger::BlockTxRawSpans,
+        ) -> Block {
+            let body = &block.header.body;
+            let hash = block.header_hash();
+            let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
 
-    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
-
-    let transactions: Vec<Tx> = block
-        .transaction_bodies
-        .iter()
-        .enumerate()
-        .zip(
-            block
-                .transaction_witness_sets
+            let transactions: Vec<Tx> = block
+                .transaction_bodies
                 .iter()
-                .map(Some)
-                .chain(std::iter::repeat(None)),
-        )
-        .map(|((idx, tx_body), ws)| {
-            let raw_body = spans
-                .bodies
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| tx_body.to_cbor_bytes());
-            let raw_witnesses = spans
-                .witness_sets
-                .get(idx)
-                .cloned()
-                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
-            let valid = !block.invalid_transactions.contains(&(idx as u64));
-            Tx {
-                id: compute_tx_id(&raw_body),
-                body: raw_body,
-                witnesses: raw_witnesses,
-                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
-                is_valid: Some(valid),
-            }
-        })
-        .collect();
+                .enumerate()
+                .zip(
+                    block
+                        .transaction_witness_sets
+                        .iter()
+                        .map(Some)
+                        .chain(std::iter::repeat(None)),
+                )
+                .map(|((idx, tx_body), ws)| {
+                    let raw_body = spans
+                        .bodies
+                        .get(idx)
+                        .cloned()
+                        .unwrap_or_else(|| tx_body.to_cbor_bytes());
+                    let raw_witnesses = spans
+                        .witness_sets
+                        .get(idx)
+                        .cloned()
+                        .or_else(|| ws.map(|w| w.to_cbor_bytes()));
+                    let valid = !block.invalid_transactions.contains(&(idx as u64));
+                    Tx {
+                        id: compute_tx_id(&raw_body),
+                        body: raw_body,
+                        witnesses: raw_witnesses,
+                        auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
+                        is_valid: Some(valid),
+                    }
+                })
+                .collect();
 
-    Block {
-        era: Era::Babbage,
-        header: BlockHeader {
-            hash,
-            prev_hash,
-            slot_no: SlotNo(body.slot),
-            block_no: BlockNo(body.block_number),
-            issuer_vkey: body.issuer_vkey,
-        },
-        transactions,
-        raw_cbor: None,
-        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
-    }
+            Block {
+                era: $era,
+                header: BlockHeader {
+                    hash,
+                    prev_hash,
+                    slot_no: SlotNo(body.slot),
+                    block_no: BlockNo(body.block_number),
+                    issuer_vkey: body.issuer_vkey,
+                },
+                transactions,
+                raw_cbor: None,
+                header_cbor_size: Some(block.header.to_cbor_bytes().len()),
+            }
+        }
+    };
 }
 
-/// Convert a typed Conway block into the generic ledger `Block` wrapper.
-///
-/// See [`shelley_block_to_block`] for the rationale on `raw_block_bytes`.
-fn conway_block_to_block(block: &ConwayBlock, raw_block_bytes: &[u8]) -> Block {
-    let body = &block.header.body;
-    let hash = block.header_hash();
-    let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
-
-    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
-
-    let transactions: Vec<Tx> = block
-        .transaction_bodies
-        .iter()
-        .enumerate()
-        .zip(
-            block
-                .transaction_witness_sets
-                .iter()
-                .map(Some)
-                .chain(std::iter::repeat(None)),
-        )
-        .map(|((idx, tx_body), ws)| {
-            let raw_body = spans
-                .bodies
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| tx_body.to_cbor_bytes());
-            let raw_witnesses = spans
-                .witness_sets
-                .get(idx)
-                .cloned()
-                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
-            let valid = !block.invalid_transactions.contains(&(idx as u64));
-            Tx {
-                id: compute_tx_id(&raw_body),
-                body: raw_body,
-                witnesses: raw_witnesses,
-                auxiliary_data: block.auxiliary_data_set.get(&(idx as u64)).cloned(),
-                is_valid: Some(valid),
-            }
-        })
-        .collect();
-
-    Block {
-        era: Era::Conway,
-        header: BlockHeader {
-            hash,
-            prev_hash,
-            slot_no: SlotNo(body.slot),
-            block_no: BlockNo(body.block_number),
-            issuer_vkey: body.issuer_vkey,
-        },
-        transactions,
-        raw_cbor: None,
-        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
-    }
-}
+alonzo_family_block_to_block_with_spans!(
+    pub fn alonzo_block_to_block_with_spans, AlonzoBlock, Era::Alonzo
+);
+alonzo_family_block_to_block_with_spans!(
+    fn babbage_block_to_block_with_spans, BabbageBlock, Era::Babbage
+);
+alonzo_family_block_to_block_with_spans!(
+    fn conway_block_to_block_with_spans, ConwayBlock, Era::Conway
+);
 
 /// Verification parameters for Shelley-family header validation.
 ///
@@ -3494,16 +3444,23 @@ pub enum MultiEraSyncStep {
         /// (same length, same order).
         ///
         /// Stored alongside the decoded `Block` so the inbound server can
-        /// re-serve the block over BlockFetch byte-for-byte, and consulted
-        /// by tx-id extraction so confirmation eviction matches the on-wire
-        /// `txId = blake2b-256(body)` that every other Cardano implementation
-        /// computes (see `extract_tx_ids` for the rationale).
-        ///
-        /// Synthetic test fakes that don't exercise tx-id extraction may
-        /// pass `Vec::new()`; when shorter than `blocks`, the missing
-        /// indices fall back to typed re-encoding with an `eprintln!`
-        /// warning (see `extract_tx_ids`).
+        /// re-serve the block over BlockFetch byte-for-byte.  Synthetic
+        /// test fakes may pass `Vec::new()` when neither the eviction nor
+        /// apply paths are exercised.
         raw_blocks: Vec<Vec<u8>>,
+        /// Pre-extracted CBOR byte spans for each Shelley-family block,
+        /// parallel to `blocks` and `raw_blocks`.  Populated once at
+        /// construction so both the eviction path (`extract_tx_ids`) and
+        /// the apply path (`multi_era_block_to_block`) can read tx body
+        /// and witness spans without re-walking the block CBOR per
+        /// consumer.  Byron blocks store an empty `BlockTxRawSpans`
+        /// (Byron envelope is not understood by the span extractor and
+        /// has different tx-id derivation rules anyway).
+        ///
+        /// Synthetic test fakes may pass `Vec::new()` (or fewer entries
+        /// than `blocks`); the missing indices trigger the
+        /// `extract_tx_ids` typed-re-encode fallback.
+        block_spans: Vec<yggdrasil_ledger::BlockTxRawSpans>,
     },
     /// Roll backward to a given point.
     RollBackward {
@@ -3537,11 +3494,13 @@ pub async fn sync_step_multi_era(
             };
             let (raw_blocks, blocks): (Vec<Vec<u8>>, Vec<MultiEraBlock>) =
                 pairs.into_iter().unzip();
+            let block_spans = extract_spans_per_block(&blocks, &raw_blocks);
             Ok(MultiEraSyncStep::RollForward {
                 raw_header: header,
                 tip,
                 blocks,
                 raw_blocks,
+                block_spans,
             })
         }
         TypedNextResponse::RollBackward { point, tip }
@@ -3680,11 +3639,15 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
 ) -> Result<(), SyncError> {
     match step {
         MultiEraSyncStep::RollForward {
-            blocks, raw_blocks, ..
+            blocks,
+            raw_blocks,
+            block_spans,
+            ..
         } => {
+            let empty_spans = yggdrasil_ledger::BlockTxRawSpans::default();
             for (i, b) in blocks.iter().enumerate() {
-                let raw_slice: &[u8] = raw_blocks.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
-                let mut block = multi_era_block_to_block(b, raw_slice);
+                let spans = block_spans.get(i).unwrap_or(&empty_spans);
+                let mut block = multi_era_block_to_block_with_spans(b, spans);
                 block.raw_cbor = raw_blocks.get(i).cloned();
                 // BlockFetch ranges can overlap at boundaries across peers.
                 // Treat already-present hashes as idempotent replays.
@@ -4169,11 +4132,15 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 }
                 fetched_blocks += decoded_blocks.len();
 
-                MultiEraSyncStep::RollForward {
-                    raw_header: header,
-                    tip,
-                    blocks: decoded_blocks,
-                    raw_blocks: raw_bytes,
+                {
+                    let block_spans = extract_spans_per_block(&decoded_blocks, &raw_bytes);
+                    MultiEraSyncStep::RollForward {
+                        raw_header: header,
+                        tip,
+                        blocks: decoded_blocks,
+                        raw_blocks: raw_bytes,
+                        block_spans,
+                    }
                 }
             }
             TypedNextResponse::RollBackward { point, tip }
@@ -4272,23 +4239,52 @@ impl MultiEraSyncProgress {
 // Phase 40: Mempool sync eviction
 // ---------------------------------------------------------------------------
 
-/// Extract transaction IDs from a multi-era block.
+/// Pre-extract `BlockTxRawSpans` for every block in a roll-forward step.
 ///
-/// `raw_block_bytes` is the on-wire CBOR for the inner Shelley-family block
-/// (`[header, [* tx_body], [* witness_set], …]`, **not** the multi-era
-/// envelope) and **must** be parallel to `block` in production paths.  The
-/// returned `TxId`s are `blake2b-256(on-wire body)` per the upstream
-/// `Cardano.Ledger.Core.txIdTxBody` rule, so they match what wallets and
-/// every other Cardano implementation derive.  The Byron arm ignores
-/// `raw_block_bytes` (different envelope; `extract_block_tx_byte_spans`
-/// does not understand Byron).
+/// Run once at sync-step construction so the eviction path
+/// (`extract_tx_ids`) and the apply path (`multi_era_block_to_block`) can
+/// share the cached spans instead of each re-walking the block CBOR.
+/// Byron blocks and indexes whose `raw_blocks` slot is missing or fails
+/// span extraction get a `BlockTxRawSpans::default()` (empty bodies and
+/// witnesses) — consumers detect that as "no spans available" and fall
+/// back to typed re-encoding.
+pub fn extract_spans_per_block(
+    blocks: &[MultiEraBlock],
+    raw_blocks: &[Vec<u8>],
+) -> Vec<yggdrasil_ledger::BlockTxRawSpans> {
+    blocks
+        .iter()
+        .enumerate()
+        .map(|(idx, block)| {
+            if matches!(block, MultiEraBlock::Byron { .. }) {
+                return yggdrasil_ledger::BlockTxRawSpans::default();
+            }
+            let raw = match raw_blocks.get(idx) {
+                Some(b) if !b.is_empty() => b.as_slice(),
+                _ => return yggdrasil_ledger::BlockTxRawSpans::default(),
+            };
+            yggdrasil_ledger::extract_block_tx_byte_spans(raw).unwrap_or_default()
+        })
+        .collect()
+}
+
+/// Extract transaction IDs from a multi-era block, given pre-extracted
+/// `BlockTxRawSpans`.
 ///
-/// Empty `raw_block_bytes` is the test-fake path; a non-empty buffer that
-/// fails span extraction emits an `eprintln!` warning and falls back to
-/// typed re-encoding, which can diverge from the wallet's original bytes
-/// and silently miss mempool entries.  Production roll-forward must
-/// always supply real bytes so the warn never fires.
-pub fn extract_tx_ids(block: &MultiEraBlock, raw_block_bytes: &[u8]) -> Vec<TxId> {
+/// Pass `Some(spans)` for Shelley-family blocks where the cached spans are
+/// available (the production sync path computes them once at step
+/// construction, see [`extract_spans_per_block`]).  Pass `None` to fall
+/// back to typed re-encoding of each tx body — which can diverge from the
+/// wallet's original on-wire bytes and silently miss mempool entries, so
+/// production paths must never use the fallback.
+///
+/// Returned `TxId`s are `blake2b-256(on-wire body)` per upstream
+/// `Cardano.Ledger.Core.txIdTxBody`.  The Byron arm ignores `spans`
+/// (different envelope; tx-id derivation runs over the typed `ByronTx`).
+pub fn extract_tx_ids(
+    block: &MultiEraBlock,
+    spans: Option<&yggdrasil_ledger::BlockTxRawSpans>,
+) -> Vec<TxId> {
     fn id_at<B: CborEncode>(
         spans: Option<&yggdrasil_ledger::BlockTxRawSpans>,
         idx: usize,
@@ -4307,24 +4303,10 @@ pub fn extract_tx_ids(block: &MultiEraBlock, raw_block_bytes: &[u8]) -> Vec<TxId
                 .collect()
         };
     }
-    let spans = match block {
-        MultiEraBlock::Byron { .. } => None,
-        _ if raw_block_bytes.is_empty() => None,
-        _ => match yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes) {
-            Ok(s) => Some(s),
-            Err(err) => {
-                eprintln!(
-                    "extract_tx_ids: span extraction failed (error={:?}, raw_len={}); \
-                     falling back to re-encoded body bytes — tx_ids may diverge from \
-                     on-wire wallet submissions and mempool eviction may miss entries",
-                    err,
-                    raw_block_bytes.len()
-                );
-                None
-            }
-        },
-    };
-    let s = spans.as_ref();
+    // A `Default::default()` BlockTxRawSpans (empty bodies/witnesses) is
+    // semantically the same as None for our purposes — span lookup
+    // misses, fallback fires.  Treat it as None.
+    let s = spans.filter(|s| !s.bodies.is_empty());
     match block {
         MultiEraBlock::Shelley(b) => shelley_family_ids!(b.transaction_bodies, s),
         MultiEraBlock::Alonzo(b) => shelley_family_ids!(b.transaction_bodies, s),
@@ -4391,17 +4373,14 @@ pub fn evict_confirmed_from_mempool(mempool: &mut Mempool, step: &MultiEraSyncSt
     match step {
         MultiEraSyncStep::RollForward {
             blocks,
-            raw_blocks,
+            block_spans,
             tip,
             ..
         } => {
             let confirmed_ids: Vec<TxId> = blocks
                 .iter()
                 .enumerate()
-                .flat_map(|(i, b)| {
-                    let raw: &[u8] = raw_blocks.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
-                    extract_tx_ids(b, raw)
-                })
+                .flat_map(|(i, b)| extract_tx_ids(b, block_spans.get(i)))
                 .collect();
             let removed = mempool.remove_confirmed(&confirmed_ids);
             let tip_slot = tip.slot().unwrap_or(SlotNo(0));

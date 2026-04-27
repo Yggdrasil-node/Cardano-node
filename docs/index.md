@@ -2,9 +2,15 @@
 title: Home
 layout: default
 nav_order: 1
-hero: true
 description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, configure, run, monitor, and produce blocks."
 ---
+
+<figure class="yg-hero-banner" markdown="0">
+  <img src="{{ '/assets/images/Yggrasil_banner.png' | relative_url }}"
+       alt="YggdrasilNode — A Cardano Node Project Written In Rust"
+       loading="eager"
+       decoding="async">
+</figure>
 
 <div class="yg-hero" markdown="0">
   <span class="yg-eyebrow">Yggdrasil v0.1.0 · Pure Rust</span>
