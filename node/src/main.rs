@@ -107,6 +107,16 @@ enum Command {
         /// Port for Prometheus metrics HTTP endpoint. Disabled when not set.
         #[arg(long)]
         metrics_port: Option<u16>,
+        /// Override `max_concurrent_block_fetch_peers` from the config
+        /// file.  When `> 1`, the runtime promotes each warm peer's
+        /// `BlockFetchClient` into a per-peer worker task and the sync
+        /// loop dispatches fetch ranges in parallel via the shared
+        /// `FetchWorkerPool` (mirrors upstream
+        /// `Ouroboros.Network.BlockFetch.ClientRegistry`).  Default
+        /// ships at `1`; the §6.5 runbook rehearsal raises this to
+        /// `2` (then `4`) once parity is established.
+        #[arg(long)]
+        max_concurrent_block_fetch_peers: Option<u8>,
         /// Path to the NtC Unix domain socket for local client connections.
         #[arg(long)]
         socket_path: Option<PathBuf>,
@@ -954,6 +964,7 @@ fn main() -> Result<()> {
             checkpoint_trace_severity,
             checkpoint_trace_backend,
             metrics_port,
+            max_concurrent_block_fetch_peers,
             socket_path,
             shelley_kes_key,
             shelley_vrf_key,
@@ -961,6 +972,13 @@ fn main() -> Result<()> {
             shelley_operational_certificate_issuer_vkey,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
+            // CLI --max-concurrent-block-fetch-peers overrides the config
+            // file value.  Used by the §6.5 runbook rehearsal to flip the
+            // multi-peer BlockFetch dispatch on without editing the
+            // vendored config files.
+            if let Some(knob) = max_concurrent_block_fetch_peers {
+                file_cfg.max_concurrent_block_fetch_peers = knob;
+            }
             apply_topology_override(
                 &mut file_cfg,
                 topology.as_deref(),

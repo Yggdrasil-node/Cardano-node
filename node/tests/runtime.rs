@@ -1478,10 +1478,10 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
 
     // Mock peer's next block must be contiguous with the recovered tip
     // that the runtime now seeds into ChainState from the volatile DB at
-    // restart (operator-rehearsal cycle-2 fix).  Recovered seed:
-    // (block_no=0, hash=[0x11;32]); next block: (block_no=1,
-    // prev_hash=[0x11;32]).
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 1, &[0x11; 32]));
+    // restart (operator-rehearsal cycle-2 fix).  This test variant uses
+    // a [0x22;32] recovered hash, so the next block's prev_hash must
+    // match that.
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 1, &[0x22; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..])

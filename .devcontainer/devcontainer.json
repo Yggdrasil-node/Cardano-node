@@ -1,22 +1,55 @@
-// For format details, see https://aka.ms/devcontainer.json. For config options, see the
-// README at: https://github.com/devcontainers/templates/tree/main/src/ubuntu
+// Yggdrasil Cardano-node devcontainer.
+//
+// Provides the full toolchain to run every operational rehearsal in
+// docs/MANUAL_TEST_RUNBOOK.md (§§1–8) in addition to the standard
+// build/test/lint workspace gates:
+//
+//   • Rust 1.95.0 (pinned via rust-toolchain.toml) for `cargo {check,test,lint,fmt}-all`
+//   • jq + curl + standard build tools for the operator scripts
+//   • Upstream IntersectMBO Haskell `cardano-node` + `cardano-cli`
+//     binaries pre-installed under ~/.local/bin/ so the §5 hash-comparison
+//     and §6.5b parallel-fetch parity checks can run end-to-end.
+//
+// For format details, see https://aka.ms/devcontainer.json.
 {
 	"name": "Cardano-node",
-	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "mcr.microsoft.com/devcontainers/base:noble"
+	"image": "mcr.microsoft.com/devcontainers/base:noble",
 
-	// Features to add to the dev container. More info: https://containers.dev/features.
-	// "features": {},
+	"features": {
+		"ghcr.io/devcontainers/features/rust:1": {
+			"version": "1.95.0",
+			"profile": "default"
+		},
+		"ghcr.io/devcontainers/features/common-utils:2": {
+			"installZsh": false,
+			"upgradePackages": false,
+			"username": "vscode"
+		}
+	},
 
-	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
+	// Forward yggdrasil's default Prometheus + NtN + NtC ports for local
+	// browsing / metrics scraping during operator rehearsals.
+	"forwardPorts": [3001, 9001, 9099, 9101],
+	"portsAttributes": {
+		"3001": { "label": "yggdrasil NtN (peer port)" },
+		"9001": { "label": "yggdrasil /metrics (relay-only smoke)" },
+		"9099": { "label": "yggdrasil /metrics (restart-resilience)" },
+		"9101": { "label": "yggdrasil /metrics (preprod rehearsal)" }
+	},
 
-	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "uname -a",
+	// Install the Haskell cardano-node + cardano-cli once at container
+	// creation time so the operator runbook's §5 / §6.5b paths work
+	// without an additional manual step.  The script is idempotent —
+	// subsequent rebuilds skip the download.
+	"postCreateCommand": "node/scripts/install_haskell_cardano_node.sh || echo '[devcontainer] install_haskell_cardano_node failed; re-run manually'",
 
-	// Configure tool-specific properties.
-	// "customizations": {},
-
-	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"rust-lang.rust-analyzer",
+				"vadimcn.vscode-lldb",
+				"tamasfe.even-better-toml"
+			]
+		}
+	}
 }
