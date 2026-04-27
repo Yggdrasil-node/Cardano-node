@@ -570,22 +570,12 @@ async fn demux_loop_inner<R: tokio::io::AsyncRead + Unpin>(
             SduHeader::decode(&hdr_buf).expect("SDU header decode cannot fail on 8-byte buffer");
 
         let len = header.payload_length as usize;
-
-        // Read payload bytes.
-        let mut payload = vec![0u8; len];
-        if len > 0 {
-            match reader.read_exact(&mut payload).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    return Err(MuxError::ConnectionClosed);
-                }
-                Err(e) => return Err(MuxError::Io(e)),
-            }
-        }
-
         let proto = header.protocol_num;
 
-        // Ingress byte-limit check (upstream maximumIngressQueue).
+        // Ingress byte-limit check (upstream `maximumIngressQueue`) is
+        // performed BEFORE allocating the payload buffer, so that a peer
+        // who has already filled this protocol's queue cannot keep
+        // forcing per-frame allocations at line rate (audit finding M-1).
         if let Some(counter) = ingress_bytes.get(&proto) {
             let limit = ingress_limits
                 .get(&proto)
@@ -600,6 +590,18 @@ async fn demux_loop_inner<R: tokio::io::AsyncRead + Unpin>(
                 });
             }
             counter.fetch_add(len, Ordering::Relaxed);
+        }
+
+        // Read payload bytes.
+        let mut payload = vec![0u8; len];
+        if len > 0 {
+            match reader.read_exact(&mut payload).await {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Err(MuxError::ConnectionClosed);
+                }
+                Err(e) => return Err(MuxError::Io(e)),
+            }
         }
 
         // Dispatch by mini-protocol number.

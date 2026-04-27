@@ -21,10 +21,12 @@ impl TraceForwarder {
     }
 
     pub fn send(&self, event: &serde_json::Value) {
-        let encoded = match serde_cbor::to_vec(event) {
-            Ok(bytes) => bytes,
-            Err(_) => return,
-        };
+        // CBOR encoding via ciborium (RFC 8949). Replaces unmaintained
+        // serde_cbor (RUSTSEC-2021-0127). Audit finding M-4.
+        let mut encoded = Vec::new();
+        if ciborium::ser::into_writer(event, &mut encoded).is_err() {
+            return;
+        }
         let mut sock_guard = self
             .socket
             .lock()

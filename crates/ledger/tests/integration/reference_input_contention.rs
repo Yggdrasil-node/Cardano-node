@@ -524,7 +524,10 @@ fn disjointness_check_rejects_overlap_at_same_index() {
         transaction_id: [0xAA; 32],
         index: 3,
     };
-    let result = MultiEraUtxo::validate_reference_input_disjointness(&[input.clone()], &[input]);
+    let result = MultiEraUtxo::validate_reference_input_disjointness(
+        std::slice::from_ref(&input),
+        std::slice::from_ref(&input),
+    );
     assert!(matches!(result, Err(LedgerError::ReferenceInputContention)));
 }
 

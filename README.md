@@ -8,7 +8,7 @@
 [![Pages](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/pages.yml/badge.svg)](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/pages.yml)
 [![Release](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml/badge.svg)](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/yggdrasil-node/Cardano-node?include_prereleases&sort=semver)](https://github.com/yggdrasil-node/Cardano-node/releases/latest)
-[![Rust 1.85.0](https://img.shields.io/badge/rust-1.85.0-orange)](rust-toolchain.toml)
+[![Rust 1.95.0](https://img.shields.io/badge/rust-1.95.0-orange)](rust-toolchain.toml)
 [![Tests](https://img.shields.io/badge/tests-4630%20passing-brightgreen)](#current-status)
 
 Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and serialization parity with the upstream Cardano node.

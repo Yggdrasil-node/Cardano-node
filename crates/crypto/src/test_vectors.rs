@@ -580,7 +580,10 @@ fn decode_hex_array<const N: usize>(hex: &str) -> [u8; N] {
 
 fn decode_hex_vec(hex: &str) -> Vec<u8> {
     let compact: String = hex.chars().filter(|ch| !ch.is_whitespace()).collect();
-    assert!(compact.len() % 2 == 0, "hex input must have even length");
+    assert!(
+        compact.len().is_multiple_of(2),
+        "hex input must have even length"
+    );
 
     compact
         .as_bytes()

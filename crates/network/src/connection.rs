@@ -1592,7 +1592,7 @@ mod tests {
     fn sum_counters_across_multiple_states() {
         use super::super::governor::ConnectionManagerCounters;
 
-        let states = vec![
+        let states = [
             ConnectionState::OutboundUniState {
                 conn_id: conn_id(1000, 2000),
             },

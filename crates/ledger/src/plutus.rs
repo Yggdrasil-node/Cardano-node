@@ -630,7 +630,7 @@ mod tests {
         let d = PlutusData::Integer(big);
         let bytes = d.to_cbor_bytes();
         // Should contain tag 2
-        assert!(bytes.iter().any(|&b| b == 0xc2)); // tag(2) = 0xc2
+        assert!(bytes.contains(&0xc2)); // tag(2) = 0xc2
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
     }
@@ -643,7 +643,7 @@ mod tests {
         let d = PlutusData::Integer(val);
         let bytes = d.to_cbor_bytes();
         // Should contain tag 3
-        assert!(bytes.iter().any(|&b| b == 0xc3)); // tag(3) = 0xc3
+        assert!(bytes.contains(&0xc3)); // tag(3) = 0xc3
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
     }

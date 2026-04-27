@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) and other AI assistants when working w
 
 ## Project
 
-**Yggdrasil** is a pure Rust Cardano node targeting long-term protocol and serialization parity with the upstream Haskell node ([IntersectMBO](https://github.com/orgs/IntersectMBO/repositories/)). No FFI-backed cryptography; everything is native Rust. Edition 2024, toolchain pinned to `1.85.0` (see [rust-toolchain.toml](rust-toolchain.toml)).
+**Yggdrasil** is a pure Rust Cardano node targeting long-term protocol and serialization parity with the upstream Haskell node ([IntersectMBO](https://github.com/orgs/IntersectMBO/repositories/)). No FFI-backed cryptography; everything is native Rust. Edition 2024, toolchain pinned to `1.95.0` (see [rust-toolchain.toml](rust-toolchain.toml)).
 
 For the architectural picture see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the running implementation journal and operational rules see [AGENTS.md](AGENTS.md).
 

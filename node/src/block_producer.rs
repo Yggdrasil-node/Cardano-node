@@ -88,6 +88,14 @@ pub enum BlockProducerError {
     /// The node is not a leader for the requested slot.
     #[error("not elected leader for slot {0}")]
     NotLeader(u64),
+    /// A secret-key file is readable by group or world.  Refuse to load
+    /// it; cold/KES/VRF secrets must be `chmod 0400` (owner-read-only).
+    /// Audit finding L-6.
+    #[error(
+        "insecure permissions on secret key file {path}: mode 0o{mode:04o} grants group/world access \
+         (run `chmod 0400 {path}`)"
+    )]
+    InsecureKeyFileMode { path: String, mode: u32 },
 }
 
 // ---------------------------------------------------------------------------
@@ -126,6 +134,36 @@ fn read_text_envelope(path: &Path) -> Result<(String, Vec<u8>), BlockProducerErr
     Ok((envelope.type_tag, raw))
 }
 
+/// Reject the secret-key file when group or world bits are set in its
+/// mode. Mirrors the discipline upstream `cardano-cli` and the SPO
+/// runbook documented in the Cardano Operations Book apply: cold, VRF
+/// and KES signing keys must be `0o400`. Symbolic links to the secret
+/// are also rejected (`metadata` follows the link, but the rejection
+/// message names the configured path so the operator can audit it).
+///
+/// This is a no-op on non-Unix targets.  Audit finding L-6.
+#[cfg(unix)]
+fn ensure_secret_file_mode(path: &Path) -> Result<(), BlockProducerError> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).map_err(|source| BlockProducerError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let mode = meta.mode() & 0o7777;
+    if mode & 0o077 != 0 {
+        return Err(BlockProducerError::InsecureKeyFileMode {
+            path: path.display().to_string(),
+            mode,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_secret_file_mode(_path: &Path) -> Result<(), BlockProducerError> {
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // VRF key loading
 // ---------------------------------------------------------------------------
@@ -138,6 +176,7 @@ const VRF_SIGNING_KEY_TYPE: &str = "VrfSigningKey_PraosVRF";
 /// The CBOR payload is expected to be a CBOR `bytes` item containing
 /// the 64-byte VRF secret key (32-byte seed ‖ 32-byte verification key).
 pub fn load_vrf_signing_key(path: &Path) -> Result<VrfSecretKey, BlockProducerError> {
+    ensure_secret_file_mode(path)?;
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
     if type_tag != VRF_SIGNING_KEY_TYPE {
         return Err(BlockProducerError::TypeMismatch {
@@ -182,6 +221,7 @@ const STAKE_POOL_VERIFICATION_KEY_TYPE: &str = "StakePoolVerificationKey_ed25519
 /// The CBOR payload is a `bstr` containing the 32-byte seed from which
 /// the full SumKES key tree is generated.
 pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProducerError> {
+    ensure_secret_file_mode(path)?;
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
     if !type_tag.starts_with(KES_SIGNING_KEY_TYPE_PREFIX) {
         return Err(BlockProducerError::TypeMismatch {
@@ -1398,6 +1438,14 @@ mod tests {
         let path = dir.path().join(name);
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
+        // Match the production-mode requirement (0o400) so the
+        // ensure_secret_file_mode gate is satisfied for `.skey` fixtures.
+        // Audit finding L-6.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+        }
         path
     }
 

@@ -194,10 +194,10 @@ fn map_cddl_builtin(ty: &str) -> String {
 /// If the first field is a named field, use its name in PascalCase. Otherwise
 /// fall back to `Variant{index}`.
 fn group_choice_variant_name(index: usize, fields: &[ArrayItem]) -> String {
-    if let Some(first) = fields.first() {
-        if let Some(name) = &first.name {
-            return to_rust_type_name(name);
-        }
+    if let Some(first) = fields.first()
+        && let Some(name) = &first.name
+    {
+        return to_rust_type_name(name);
     }
     format!("Variant{index}")
 }
@@ -675,8 +675,12 @@ fn emit_decode_expr(expr: &TypeExpr, indent: &str) -> String {
         TypeExpr::ValueRange(base, bound) => emit_value_range_decode(base, *bound, indent),
         TypeExpr::VarArray(inner) => {
             let inner_decode = emit_decode_expr(inner, &format!("{indent}    "));
+            // Generated decoder uses the workspace-shared bounded
+            // allocator so a malformed CBOR `count` field cannot abort
+            // the process via a giant `Vec::with_capacity` (audit C-1 /
+            // H-1).  The cap is a soft delay, not a protocol limit.
             format!(
-                "{{\n{indent}    let count = dec.array()?;\n{indent}    let mut v = Vec::with_capacity(count as usize);\n{indent}    for _ in 0..count {{\n{indent}        v.push({inner_decode});\n{indent}    }}\n{indent}    v\n{indent}}}"
+                "{{\n{indent}    let count = dec.array()?;\n{indent}    let mut v = ::yggdrasil_ledger::vec_with_safe_capacity(count, ::yggdrasil_ledger::BLOCK_BODY_ELEMENTS_MAX);\n{indent}    for _ in 0..count {{\n{indent}        v.push({inner_decode});\n{indent}    }}\n{indent}    v\n{indent}}}"
             )
         }
         TypeExpr::Optional(inner) => {

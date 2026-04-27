@@ -1478,10 +1478,16 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                     );
                 }
             }
-            result = listener.accept_peer() => {
-                let (conn, addr) = result?;
+            result = listener.accept_tcp() => {
+                let (stream, addr) = result?;
 
-                // -- Rate-limit check (upstream `runConnectionRateLimits`) --
+                // -- Rate-limit check BEFORE handshake (upstream
+                // `runConnectionRateLimits`).  Performing this check on the
+                // bare TCP stream — not a fully handshaked connection —
+                // means a hard-limit rejection costs only a TCP accept,
+                // never a CBOR decode.  Combined with the bounded handshake
+                // deadline in `PeerListener::handshake_on`, this closes the
+                // unauth-remote DoS path documented in audit finding H-2.
                 if let (Some(shared_cm), Some(limits)) =
                     (connection_manager.as_ref(), accepted_connections_limit.as_ref())
                 {
@@ -1521,12 +1527,38 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                             if let Some(m) = metrics {
                                 m.inc_inbound_rejected();
                             }
-                            // At hard limit — close immediately without registering.
-                            conn.mux.abort();
+                            // At hard limit — drop the TCP stream before
+                            // any handshake bytes are exchanged.  No mux
+                            // tasks are spawned; no allocation occurs.
+                            drop(stream);
                             continue;
                         }
                     }
                 }
+
+                // Now run the handshake with a hard outer deadline so a
+                // stalled or slowloris peer cannot occupy the accept loop
+                // indefinitely (audit finding H-2).
+                let conn = match listener.handshake_on(stream, addr).await {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        if let Some(t) = tracer {
+                            t.trace_runtime(
+                                "Net.Inbound",
+                                "Warning",
+                                "inbound handshake failed",
+                                crate::tracer::trace_fields([
+                                    ("peer", serde_json::json!(addr.to_string())),
+                                    ("error", serde_json::json!(e.to_string())),
+                                ]),
+                            );
+                        }
+                        if let Some(m) = metrics {
+                            m.inc_inbound_rejected();
+                        }
+                        continue;
+                    }
+                };
 
                 let data_flow = if conn.version_data.initiator_only_diffusion_mode {
                     DataFlow::Unidirectional

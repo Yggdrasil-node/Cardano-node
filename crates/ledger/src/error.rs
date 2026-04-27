@@ -30,6 +30,12 @@ pub enum LedgerError {
     #[error("CBOR: nesting depth exceeds maximum of {max}")]
     CborNestingTooDeep { max: usize },
 
+    #[error("CBOR: decoded count {count} exceeds per-message bound {max}")]
+    DecodedCountTooLarge { count: u64, max: usize },
+
+    #[error("ledger arithmetic overflow at {site}")]
+    ValueOverflow { site: &'static str },
+
     // -- UTxO validation errors ---------------------------------------------
     #[error("block slot {block_slot} does not advance past current tip slot {tip_slot}")]
     SlotNotIncreasing { tip_slot: u64, block_slot: u64 },

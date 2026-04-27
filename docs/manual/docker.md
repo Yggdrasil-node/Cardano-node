@@ -38,7 +38,7 @@ The container builds from source on first run (5–15 minutes). Subsequent `dock
 
 Two stages:
 
-1. **Builder** (`rust:1.85-bookworm`) — compiles `yggdrasil-node` with `--release --locked`.
+1. **Builder** (`rust:1.95-bookworm`) — compiles `yggdrasil-node` with `--release --locked`.
 2. **Runtime** (`debian:bookworm-slim`) — copies the binary, vendored presets, and operator scripts. Runs as a non-root user (`yggdrasil`, UID 1000) under `tini` for proper signal forwarding.
 
 The runtime image weighs in around 100 MB. The builder image is discarded after build (it carries the full Rust toolchain).

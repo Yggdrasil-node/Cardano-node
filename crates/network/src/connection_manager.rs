@@ -1303,7 +1303,7 @@ impl ConnectionManagerState {
 
         // Sort by ConnStateId descending (prune most recently added first,
         // matching upstream default PrunePolicy).
-        prunable.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+        prunable.sort_by_key(|p| std::cmp::Reverse(p.1.0));
 
         let to_prune: Vec<SocketAddr> = prunable.into_iter().take(excess).map(|(a, _)| a).collect();
 

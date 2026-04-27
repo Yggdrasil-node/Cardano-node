@@ -13,7 +13,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::cbor::{
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, vec_with_safe_capacity,
+};
 use crate::eras::alonzo::ExUnits;
 use crate::error::LedgerError;
 use crate::types::Nonce;
@@ -801,7 +803,7 @@ impl CborDecode for ProtocolParameters {
                     for _ in 0..map_len {
                         let lang = dec.unsigned()? as u8;
                         let arr_len = dec.array()?;
-                        let mut vals = Vec::with_capacity(arr_len as usize);
+                        let mut vals = vec_with_safe_capacity(arr_len, BLOCK_BODY_ELEMENTS_MAX);
                         for _ in 0..arr_len {
                             vals.push(dec.signed()?);
                         }
@@ -1395,7 +1397,7 @@ impl CborDecode for ProtocolParameterUpdate {
                     for _ in 0..cm_len {
                         let lang = dec.unsigned()? as u8;
                         let arr_len = dec.array()?;
-                        let mut vals = Vec::with_capacity(arr_len as usize);
+                        let mut vals = vec_with_safe_capacity(arr_len, BLOCK_BODY_ELEMENTS_MAX);
                         for _ in 0..arr_len {
                             vals.push(dec.signed()?);
                         }

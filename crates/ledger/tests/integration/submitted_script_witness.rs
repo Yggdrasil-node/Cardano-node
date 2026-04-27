@@ -173,7 +173,7 @@ fn babbage_submitted_tx_accepts_required_script_from_reference_input() {
         state.protocol_params(),
         false,
         Some(state.multi_era_utxo()),
-        Some(&[reference_input.clone()]),
+        Some(std::slice::from_ref(&reference_input)),
         None,
         None,
     )

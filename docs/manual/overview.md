@@ -28,7 +28,7 @@ A relay node does jobs 1–3. A block producer does all four. Yggdrasil supports
 ## What Yggdrasil offers
 
 - **No native dependencies.** Pure Rust. No FFI for cryptography, no system libraries beyond `libc`. Easy to build, easy to audit, easy to cross-compile.
-- **Edition 2024, toolchain 1.85.0.** Fixed and reproducible.
+- **Edition 2024, toolchain 1.95.0.** Fixed and reproducible.
 - **Five mini-protocols implemented end-to-end.** ChainSync, BlockFetch, KeepAlive, TxSubmission2, PeerSharing — both client and server sides.
 - **All eight eras supported.** Byron, Shelley, Allegra, Mary, Alonzo, Babbage, Conway. Era boundaries are handled by the same multi-era apply pipeline used in upstream.
 - **Plutus V1, V2, and V3.** Native CEK machine, calibrated cost model from genesis, V3 Conway script context.

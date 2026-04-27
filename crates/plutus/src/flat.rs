@@ -1059,34 +1059,49 @@ mod tests {
     #[test]
     fn test_decode_term_rejects_pathologically_deep_lambda_chain() {
         // A chain of `LamAbs` (term tag 2 = `0010`) terms, then a final
-        // `Error` (term tag 6 = `0110`) at the bottom. Each LamAbs adds one
-        // level of recursion; building `MAX_TERM_DECODE_DEPTH + 16` of them
-        // must trigger the depth-bound check rather than overflow the
-        // runtime stack.
-        let depth = MAX_TERM_DECODE_DEPTH + 16;
-        // Each `LamAbs` is a 4-bit tag `0010`. We pack two tags per byte:
-        // `0010_0010 = 0x22` → two LamAbs prefixes.
-        // Final `Error` is `0110`. If `depth` is even, the trailing nibble
-        // for Error follows alone in the next byte's high nibble; we encode
-        // explicitly using the bit reader's MSB-first scheme.
+        // `Error` (term tag 6 = `0110`) at the bottom. Each LamAbs adds
+        // one level of recursion; building `MAX_TERM_DECODE_DEPTH + 16`
+        // of them must trigger the depth-bound check rather than
+        // overflow the runtime stack.
         //
-        // Use the FlatDecoder bit reader's expected byte order: first bit
-        // read is MSB of byte 0. So the first 4-bit nibble decoded is the
-        // high nibble of byte 0.
-        let mut bytes = Vec::with_capacity(depth / 2 + 4);
-        let mut nibbles: Vec<u8> = vec![0b0010; depth]; // LamAbs tag chain
-        nibbles.push(0b0110); // Error tag
-        for chunk in nibbles.chunks(2) {
-            let hi = chunk[0] << 4;
-            let lo = chunk.get(1).copied().unwrap_or(0);
-            bytes.push(hi | lo);
-        }
-        let mut dec = FlatDecoder::new(&bytes);
-        let res = dec.decode_term();
-        assert!(
-            matches!(&res, Err(MachineError::FlatDecodeError(msg)) if msg.contains("depth budget")),
-            "expected depth-budget FlatDecodeError, got {res:?}"
-        );
+        // Run on a generously-sized thread stack (8 MB) because debug
+        // builds on Rust 1.95+ use larger per-frame storage than the
+        // default 2 MB cargo-test stack can safely accommodate at the
+        // depth budget.  Release builds (which is what production runs)
+        // have frames small enough to stay under 2 MB at the same
+        // budget; this is purely a test-harness allowance.
+        std::thread::Builder::new()
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let depth = MAX_TERM_DECODE_DEPTH + 16;
+                // Each `LamAbs` is a 4-bit tag `0010`. We pack two tags
+                // per byte: `0010_0010 = 0x22` → two LamAbs prefixes.
+                // Final `Error` is `0110`. If `depth` is even, the
+                // trailing nibble for Error follows alone in the next
+                // byte's high nibble; we encode explicitly using the
+                // bit reader's MSB-first scheme.
+                //
+                // Use the FlatDecoder bit reader's expected byte order:
+                // first bit read is MSB of byte 0. So the first 4-bit
+                // nibble decoded is the high nibble of byte 0.
+                let mut bytes = Vec::with_capacity(depth / 2 + 4);
+                let mut nibbles: Vec<u8> = vec![0b0010; depth]; // LamAbs chain
+                nibbles.push(0b0110); // Error tag
+                for chunk in nibbles.chunks(2) {
+                    let hi = chunk[0] << 4;
+                    let lo = chunk.get(1).copied().unwrap_or(0);
+                    bytes.push(hi | lo);
+                }
+                let mut dec = FlatDecoder::new(&bytes);
+                let res = dec.decode_term();
+                assert!(
+                    matches!(&res, Err(MachineError::FlatDecodeError(msg)) if msg.contains("depth budget")),
+                    "expected depth-budget FlatDecodeError, got {res:?}"
+                );
+            })
+            .expect("spawn deep-decode test thread")
+            .join()
+            .expect("deep-decode test thread completed");
     }
 
     // -- decode_script_bytes with CBOR wrapping -------------------------

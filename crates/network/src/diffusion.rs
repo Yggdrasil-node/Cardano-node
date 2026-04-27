@@ -301,9 +301,10 @@ pub fn ntc_ouroboros_bundle() -> OuroborosBundle {
 ///
 /// The `Quiesce` variant is used during churn: it tells in-progress
 /// protocols to finish their current exchange and then stop.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ControlMessage {
     /// Protocols should continue running normally.
+    #[default]
     Continue,
     /// Protocols should finish their current exchange gracefully and
     /// not start another.
@@ -313,12 +314,6 @@ pub enum ControlMessage {
     Quiesce,
     /// Protocols should stop as soon as possible.
     Terminate,
-}
-
-impl Default for ControlMessage {
-    fn default() -> Self {
-        Self::Continue
-    }
 }
 
 // ---------------------------------------------------------------------------

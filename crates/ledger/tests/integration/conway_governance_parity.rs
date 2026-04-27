@@ -462,11 +462,8 @@ fn unelected_committee_voter_allowed_at_pv9() {
     let err = state.apply_block(&block).unwrap_err();
     // Should fail with a DIFFERENT error (voter not found), NOT
     // UnelectedCommitteeVoters — proves the PV ≤ 10 gate works.
-    match err {
-        LedgerError::UnelectedCommitteeVoters(_) => {
-            panic!("should not get UnelectedCommitteeVoters at PV 9");
-        }
-        _ => {} // any other error is fine
+    if let LedgerError::UnelectedCommitteeVoters(_) = err {
+        panic!("should not get UnelectedCommitteeVoters at PV 9");
     }
 }
 
@@ -521,11 +518,8 @@ fn unelected_committee_voter_allowed_at_pv10() {
     let err = state.apply_block(&block).unwrap_err();
     // At PV 10 the unelected-committee check is skipped — we should NOT
     // see UnelectedCommitteeVoters.
-    match err {
-        LedgerError::UnelectedCommitteeVoters(_) => {
-            panic!("should not get UnelectedCommitteeVoters at PV 10");
-        }
-        _ => {} // any other error is fine
+    if let LedgerError::UnelectedCommitteeVoters(_) = err {
+        panic!("should not get UnelectedCommitteeVoters at PV 10");
     }
 }
 

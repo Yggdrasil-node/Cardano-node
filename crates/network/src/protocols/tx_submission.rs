@@ -198,7 +198,8 @@ impl TxSubmissionMessage {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use crate::protocol_size_limits::txsubmission as txsubmission_limits;
+use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 use yggdrasil_ledger::{LedgerError, TxId};
 
 impl TxSubmissionMessage {
@@ -269,7 +270,7 @@ impl TxSubmissionMessage {
             }
             (1, 2) => {
                 let count = dec.array()?;
-                let mut txids = Vec::with_capacity(count as usize);
+                let mut txids = vec_with_strict_capacity(count, txsubmission_limits::TXIDS_MAX)?;
                 for _ in 0..count {
                     let inner_len = dec.array()?;
                     if inner_len != 2 {
@@ -286,7 +287,7 @@ impl TxSubmissionMessage {
             }
             (2, 2) => {
                 let count = dec.array()?;
-                let mut txids = Vec::with_capacity(count as usize);
+                let mut txids = vec_with_strict_capacity(count, txsubmission_limits::TXIDS_MAX)?;
                 for _ in 0..count {
                     txids.push(decode_txid(dec.bytes()?)?);
                 }
@@ -294,7 +295,7 @@ impl TxSubmissionMessage {
             }
             (3, 2) => {
                 let count = dec.array()?;
-                let mut txs = Vec::with_capacity(count as usize);
+                let mut txs = vec_with_strict_capacity(count, txsubmission_limits::TXS_MAX)?;
                 for _ in 0..count {
                     txs.push(dec.bytes()?.to_vec());
                 }

@@ -13,7 +13,9 @@
 
 use std::collections::BTreeMap;
 
-use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::cbor::{
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, vec_with_safe_capacity,
+};
 use crate::eras::shelley::{ShelleyTxIn, ShelleyUpdate};
 use crate::error::LedgerError;
 use crate::types::{DCert, RewardAccount};
@@ -534,7 +536,7 @@ impl CborDecode for MaryTxBody {
             match key {
                 0 => {
                     let count = dec.array_or_set()?;
-                    let mut ins = Vec::with_capacity(count as usize);
+                    let mut ins = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
                     }
@@ -542,7 +544,7 @@ impl CborDecode for MaryTxBody {
                 }
                 1 => {
                     let count = dec.array()?;
-                    let mut outs = Vec::with_capacity(count as usize);
+                    let mut outs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         outs.push(MaryTxOut::decode_cbor(dec)?);
                     }
@@ -556,7 +558,7 @@ impl CborDecode for MaryTxBody {
                 }
                 4 => {
                     let count = dec.array_or_set()?;
-                    let mut certs = Vec::with_capacity(count as usize);
+                    let mut certs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);
                     }

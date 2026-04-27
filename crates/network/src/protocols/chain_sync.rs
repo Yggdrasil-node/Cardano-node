@@ -239,7 +239,8 @@ impl ChainSyncMessage {
 
     /// Decode a message from CBOR bytes.
     pub fn from_cbor(data: &[u8]) -> Result<Self, yggdrasil_ledger::LedgerError> {
-        use yggdrasil_ledger::cbor::Decoder;
+        use crate::protocol_size_limits::chainsync as chainsync_limits;
+        use yggdrasil_ledger::cbor::{Decoder, vec_with_strict_capacity};
 
         let mut dec = Decoder::new(data);
         let arr_len = dec.array()?;
@@ -257,7 +258,8 @@ impl ChainSyncMessage {
             },
             (4, 2) => {
                 let count = dec.array()?;
-                let mut points = Vec::with_capacity(count as usize);
+                let mut points =
+                    vec_with_strict_capacity(count, chainsync_limits::INTERSECT_POINTS_MAX)?;
                 for _ in 0..count {
                     points.push(dec.raw_value()?.to_vec());
                 }

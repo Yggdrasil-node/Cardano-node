@@ -7,5 +7,5 @@
 #
 # Pin only what is non-default. Anything we set here MUST be a stable
 # rustfmt option — nightly-only options would break `cargo fmt --check`
-# in CI on the pinned 1.85.0 toolchain.
+# in CI on the pinned 1.95.0 toolchain.
 edition = "2024"

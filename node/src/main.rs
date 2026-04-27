@@ -1597,7 +1597,7 @@ fn load_effective_config(
                 .wrap_err_with(|| format!("failed to read config file {}", path.display()))?;
             let parsed: NodeConfigFile = match serde_json::from_str(&contents) {
                 Ok(parsed) => parsed,
-                Err(json_err) => serde_yaml::from_str(&contents).map_err(|yaml_err| {
+                Err(json_err) => serde_norway::from_str(&contents).map_err(|yaml_err| {
                     eyre::eyre!(
                         "failed to parse config file {} as JSON ({json_err}) or YAML ({yaml_err})",
                         path.display()

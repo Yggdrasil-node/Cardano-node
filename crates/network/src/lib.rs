@@ -43,6 +43,9 @@ pub mod peer_registry;
 pub mod peer_selection;
 /// Per-protocol per-state time limits matching upstream `ProtocolTimeLimits`.
 pub mod protocol_limits;
+/// Per-protocol upper bounds on peer-supplied count fields, used to gate
+/// CBOR decoder pre-allocations against attacker-controlled values.
+pub mod protocol_size_limits;
 /// Mini-protocol state machine modules.
 pub mod protocols;
 /// Topology root-peer domain types and resolved provider snapshots.

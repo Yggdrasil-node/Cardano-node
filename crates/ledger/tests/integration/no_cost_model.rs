@@ -458,11 +458,8 @@ fn alonzo_block_accepts_v1_when_v1_cost_model_present() {
     // (e.g. script_data_hash mismatch, evaluator errors) but NoCostModel
     // specifically should NOT be the error.
     let result = state.apply_block(&block);
-    match &result {
-        Err(LedgerError::NoCostModel { .. }) => {
-            panic!("should NOT get NoCostModel when V1 cost model is present");
-        }
-        _ => {} // any other result is fine for this test's purpose
+    if let Err(LedgerError::NoCostModel { .. }) = &result {
+        panic!("should NOT get NoCostModel when V1 cost model is present");
     }
 }
 
@@ -741,11 +738,8 @@ fn no_cost_model_skipped_when_cost_models_field_absent() {
 
     // Should NOT produce NoCostModel when PP has no cost_models at all.
     let result = state.apply_block(&block);
-    match &result {
-        Err(LedgerError::NoCostModel { .. }) => {
-            panic!("NoCostModel should not fire when cost_models field is absent");
-        }
-        _ => {} // any other result is fine
+    if let Err(LedgerError::NoCostModel { .. }) = &result {
+        panic!("NoCostModel should not fire when cost_models field is absent");
     }
 }
 

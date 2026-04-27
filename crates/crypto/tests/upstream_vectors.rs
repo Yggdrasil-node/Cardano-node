@@ -917,7 +917,9 @@ fn assert_hex_lines(path: &Path, expected_line_count: usize) {
 }
 
 fn is_hex(value: &str) -> bool {
-    !value.is_empty() && value.len() % 2 == 0 && value.chars().all(|c| c.is_ascii_hexdigit())
+    !value.is_empty()
+        && value.len().is_multiple_of(2)
+        && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn decode_hex_vec(value: &str) -> Vec<u8> {

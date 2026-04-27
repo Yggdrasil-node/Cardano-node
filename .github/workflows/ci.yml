@@ -29,3 +29,16 @@ jobs:
 
       - name: Lint workspace
         run: cargo lint
+
+  # cargo-deny gate — supply-chain hygiene.  Surfaces unmaintained,
+  # vulnerable, or copyleft transitive dependencies as a CI failure.
+  # Audit finding L-4.
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources

@@ -20,7 +20,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::cbor::{
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, hashmap_with_safe_capacity,
+    vec_with_safe_capacity,
+};
 use crate::eras::babbage::BabbageTxOut;
 use crate::eras::mary::{MintAsset, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::{PraosHeader, ShelleyTxIn, ShelleyWitnessSet};
@@ -567,7 +570,8 @@ impl CborDecode for GovAction {
                 let prev_action_id = decode_optional_gov_action_id(dec)?;
                 // set<committee_cold_credential>
                 let remove_count = dec.array()?;
-                let mut members_to_remove = Vec::with_capacity(remove_count as usize);
+                let mut members_to_remove =
+                    vec_with_safe_capacity(remove_count, BLOCK_BODY_ELEMENTS_MAX);
                 for _ in 0..remove_count {
                     members_to_remove.push(StakeCredential::decode_cbor(dec)?);
                 }
@@ -1078,7 +1082,7 @@ impl CborDecode for ConwayTxBody {
             match key {
                 0 => {
                     let count = dec.array_or_set()?;
-                    let mut ins = Vec::with_capacity(count as usize);
+                    let mut ins = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
                     }
@@ -1086,7 +1090,7 @@ impl CborDecode for ConwayTxBody {
                 }
                 1 => {
                     let count = dec.array()?;
-                    let mut outs = Vec::with_capacity(count as usize);
+                    let mut outs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         outs.push(BabbageTxOut::decode_cbor(dec)?);
                     }
@@ -1100,7 +1104,7 @@ impl CborDecode for ConwayTxBody {
                 }
                 4 => {
                     let count = dec.array_or_set()?;
-                    let mut certs = Vec::with_capacity(count as usize);
+                    let mut certs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);
                     }
@@ -1142,7 +1146,7 @@ impl CborDecode for ConwayTxBody {
                 }
                 13 => {
                     let count = dec.array_or_set()?;
-                    let mut cols = Vec::with_capacity(count as usize);
+                    let mut cols = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         cols.push(ShelleyTxIn::decode_cbor(dec)?);
                     }
@@ -1150,7 +1154,7 @@ impl CborDecode for ConwayTxBody {
                 }
                 14 => {
                     let count = dec.array_or_set()?;
-                    let mut sigs = Vec::with_capacity(count as usize);
+                    let mut sigs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         let raw = dec.bytes()?;
                         let hash: [u8; 28] =
@@ -1173,7 +1177,7 @@ impl CborDecode for ConwayTxBody {
                 }
                 18 => {
                     let count = dec.array_or_set()?;
-                    let mut refs = Vec::with_capacity(count as usize);
+                    let mut refs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         refs.push(ShelleyTxIn::decode_cbor(dec)?);
                     }
@@ -1184,7 +1188,7 @@ impl CborDecode for ConwayTxBody {
                 }
                 20 => {
                     let count = dec.array_or_set()?;
-                    let mut props = Vec::with_capacity(count as usize);
+                    let mut props = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         props.push(ProposalProcedure::decode_cbor(dec)?);
                     }
@@ -1327,19 +1331,20 @@ impl CborDecode for ConwayBlock {
         let header = PraosHeader::decode_cbor(dec)?;
 
         let tb_count = dec.array()?;
-        let mut transaction_bodies = Vec::with_capacity(tb_count as usize);
+        let mut transaction_bodies = vec_with_safe_capacity(tb_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..tb_count {
             transaction_bodies.push(ConwayTxBody::decode_cbor(dec)?);
         }
 
         let ws_count = dec.array()?;
-        let mut witness_sets = Vec::with_capacity(ws_count as usize);
+        let mut witness_sets = vec_with_safe_capacity(ws_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..ws_count {
             witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
         }
 
         let meta_count = dec.map()?;
-        let mut transaction_metadata = HashMap::with_capacity(meta_count as usize);
+        let mut transaction_metadata: HashMap<u64, Vec<u8>> =
+            hashmap_with_safe_capacity(meta_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..meta_count {
             let idx = dec.unsigned()?;
             let start = dec.position();
@@ -1350,7 +1355,7 @@ impl CborDecode for ConwayBlock {
         }
 
         let inv_count = dec.array()?;
-        let mut invalid_transactions = Vec::with_capacity(inv_count as usize);
+        let mut invalid_transactions = vec_with_safe_capacity(inv_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..inv_count {
             invalid_transactions.push(dec.unsigned()?);
         }

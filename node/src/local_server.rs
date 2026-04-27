@@ -101,6 +101,14 @@ pub enum LocalServerError {
     /// Unix socket bind or accept I/O error.
     #[error("local server I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// Failed to set the NtC socket file permissions to 0o660 after bind.
+    #[error("failed to set local socket permissions on {path:?}: {source}")]
+    SetPermissions {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -643,6 +651,21 @@ where
     }
 
     let listener = UnixListener::bind(socket_path)?;
+    // Restrict the NtC socket to owner+group access (0o660). Without this
+    // step the socket inherits the process umask (typically 0o022 →
+    // world-readable+writable 0o755), which on a multi-user host lets any
+    // local user submit transactions or query ledger state.  Operators
+    // should put the node user and any client user (cardano-cli shim,
+    // monitoring agent) in a shared group.  Audit finding M-3.
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660)).map_err(
+            |e| LocalServerError::SetPermissions {
+                path: socket_path.to_path_buf(),
+                source: e,
+            },
+        )?;
+    }
     tokio::pin!(shutdown);
 
     loop {

@@ -309,8 +309,8 @@ fn mempool_entries_for_forging(mempool: &SharedMempool) -> Vec<MempoolEntry> {
         .into_iter()
         .filter_map(|(_, idx, _)| snapshot.mempool_lookup_tx(idx).cloned())
         .collect::<Vec<_>>();
-    // Keep forge-body assembly deterministic and fee-ordered.
-    entries.sort_by(|left, right| right.fee.cmp(&left.fee));
+    // Keep forge-body assembly deterministic and fee-ordered (descending).
+    entries.sort_by_key(|e| std::cmp::Reverse(e.fee));
     entries
 }
 

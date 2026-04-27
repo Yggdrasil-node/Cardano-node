@@ -270,10 +270,10 @@ fn parse_type_expr(expr: &str) -> Result<TypeExpr, ParseError> {
     }
 
     // Nil alternative: type / nil
-    if let Some((left, right)) = split_nil_alternative(expr) {
-        if right == "nil" {
-            return Ok(TypeExpr::Optional(Box::new(parse_type_expr(left)?)));
-        }
+    if let Some((left, right)) = split_nil_alternative(expr)
+        && right == "nil"
+    {
+        return Ok(TypeExpr::Optional(Box::new(parse_type_expr(left)?)));
     }
 
     // Generalized constraint dispatch: .size N, .size N..M, .le N, .ge N,

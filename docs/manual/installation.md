@@ -26,7 +26,7 @@ Software:
 
 ## Install Rust
 
-Yggdrasil pins the Rust toolchain version in [`rust-toolchain.toml`](https://github.com/yggdrasil-node/Cardano-node/blob/main/rust-toolchain.toml). Currently `1.85.0` (Edition 2024).
+Yggdrasil pins the Rust toolchain version in [`rust-toolchain.toml`](https://github.com/yggdrasil-node/Cardano-node/blob/main/rust-toolchain.toml). Currently `1.95.0` (Edition 2024).
 
 If you do not have `rustup`:
 
@@ -41,7 +41,7 @@ Verify:
 
 ```bash
 $ rustc --version
-rustc 1.85.0 (...)
+rustc 1.95.0 (...)
 ```
 
 ## Clone the repository

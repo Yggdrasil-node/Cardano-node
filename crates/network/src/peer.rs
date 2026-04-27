@@ -212,7 +212,7 @@ pub async fn accept(
     // Select the highest version that we support and whose network magic
     // matches.  Iterate our supported versions from highest to lowest.
     let mut sorted_supported: Vec<HandshakeVersion> = supported_versions.to_vec();
-    sorted_supported.sort_unstable_by(|a, b| b.0.cmp(&a.0)); // descending
+    sorted_supported.sort_unstable_by_key(|v| std::cmp::Reverse(v.0)); // descending
 
     for &our_ver in &sorted_supported {
         if let Some((_, vdata)) = proposed

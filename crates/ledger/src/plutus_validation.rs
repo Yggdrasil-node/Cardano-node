@@ -1785,9 +1785,16 @@ mod tests {
             },
         };
 
-        let purpose =
-            resolve_script_purpose(&redeemer, &[], &[], &[certificate.clone()], &[], &[], &[])
-                .unwrap();
+        let purpose = resolve_script_purpose(
+            &redeemer,
+            &[],
+            &[],
+            std::slice::from_ref(&certificate),
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
 
         assert!(matches!(
             purpose,
@@ -1809,8 +1816,16 @@ mod tests {
             },
         };
 
-        let purpose =
-            resolve_script_purpose(&redeemer, &[], &[], &[], &[], &[voter.clone()], &[]).unwrap();
+        let purpose = resolve_script_purpose(
+            &redeemer,
+            &[],
+            &[],
+            &[],
+            &[],
+            std::slice::from_ref(&voter),
+            &[],
+        )
+        .unwrap();
 
         assert!(matches!(purpose, ScriptPurpose::Voting { voter: carried } if carried == voter));
     }
@@ -1841,9 +1856,16 @@ mod tests {
             },
         };
 
-        let purpose =
-            resolve_script_purpose(&redeemer, &[], &[], &[], &[], &[], &[proposal.clone()])
-                .unwrap();
+        let purpose = resolve_script_purpose(
+            &redeemer,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            std::slice::from_ref(&proposal),
+        )
+        .unwrap();
 
         assert!(matches!(
             purpose,

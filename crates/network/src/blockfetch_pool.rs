@@ -523,15 +523,11 @@ impl<B> ReorderBuffer<B> {
     }
 
     fn advance(&mut self) {
-        loop {
-            let Some((&key, _)) = self.pending.iter().next() else {
+        while let Some((&key, _)) = self.pending.iter().next() {
+            let Point::BlockPoint(slot, _) = self.head else {
                 break;
             };
-            let head_slot = match self.head {
-                Point::Origin => break,
-                Point::BlockPoint(slot, _) => slot.0,
-            };
-            if key <= head_slot {
+            if key <= slot.0 {
                 break;
             }
             let (lower, upper, blocks) = self.pending.remove(&key).expect("just peeked");

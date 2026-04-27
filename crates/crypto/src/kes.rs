@@ -267,7 +267,7 @@ impl SimpleKesSigningKey {
         if bytes.is_empty() {
             return Err(CryptoError::InvalidKesDepth(0));
         }
-        if bytes.len() % KES_SIGNING_KEY_SIZE != 0 {
+        if !bytes.len().is_multiple_of(KES_SIGNING_KEY_SIZE) {
             return Err(CryptoError::InvalidKesKeyMaterialLength(bytes.len()));
         }
 
@@ -352,7 +352,7 @@ impl SimpleKesVerificationKey {
         if bytes.is_empty() {
             return Err(CryptoError::InvalidKesDepth(0));
         }
-        if bytes.len() % KES_VERIFICATION_KEY_SIZE != 0 {
+        if !bytes.len().is_multiple_of(KES_VERIFICATION_KEY_SIZE) {
             return Err(CryptoError::InvalidKesKeyMaterialLength(bytes.len()));
         }
 

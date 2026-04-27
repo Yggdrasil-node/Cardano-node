@@ -25,7 +25,9 @@
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron>
 
-use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::cbor::{
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, vec_with_safe_capacity,
+};
 use crate::error::LedgerError;
 use crate::types::HeaderHash;
 
@@ -191,14 +193,14 @@ impl CborDecode for ByronTx {
 
         // inputs: [+ TxIn]
         let n_inputs = dec.array()?;
-        let mut inputs = Vec::with_capacity(n_inputs as usize);
+        let mut inputs = vec_with_safe_capacity(n_inputs, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..n_inputs {
             inputs.push(ByronTxIn::decode_cbor(dec)?);
         }
 
         // outputs: [+ TxOut]
         let n_outputs = dec.array()?;
-        let mut outputs = Vec::with_capacity(n_outputs as usize);
+        let mut outputs = vec_with_safe_capacity(n_outputs, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..n_outputs {
             outputs.push(ByronTxOut::decode_cbor(dec)?);
         }
@@ -349,7 +351,7 @@ impl CborDecode for ByronTxAux {
         let tx_end = dec.position();
         let raw_tx_cbor = dec.slice(tx_start, tx_end)?.to_vec();
         let n_witnesses = dec.array()?;
-        let mut witnesses = Vec::with_capacity(n_witnesses as usize);
+        let mut witnesses = vec_with_safe_capacity(n_witnesses, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..n_witnesses {
             witnesses.push(ByronTxWitness::decode_cbor(dec)?);
         }

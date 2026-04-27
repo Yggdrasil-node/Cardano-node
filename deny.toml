@@ -24,7 +24,17 @@ feature-depth = 1
 db-path = "$CARGO_HOME/advisory-dbs"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# Unmaintained advisories surface RUSTSEC-2021-0127 (`serde_cbor`) and
+# advisory-db #2132 (`serde_yaml`) — both intentionally retained for now
+# (storage on-disk format and bootstrap) and explicitly ignored below
+# pending the migrations tracked in CHANGELOG and AGENTS notes.  Audit
+# findings M-4 / M-5 (partial).
+ignore = [
+    # Retained transitionally for the on-disk Block CBOR format only.
+    # Migration plan: switch storage to in-house cbor.rs codec and
+    # bump the on-disk format version; tracked separately.
+    "RUSTSEC-2021-0127",
+]
 
 # -----------------------------------------------------------------------------
 # Licensing.
@@ -65,6 +75,11 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Internal workspace `path = "..."` deps are inherently wildcards (no
+# version constraint); they are safe because they resolve to a sibling
+# crate inside the same Cargo.lock.  Only external wildcard deps fail
+# this gate.
+allow-wildcard-paths = true
 highlight = "all"
 
 # Crates Yggdrasil refuses to depend on. Add justification in the comment.

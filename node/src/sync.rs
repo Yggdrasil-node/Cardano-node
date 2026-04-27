@@ -2306,10 +2306,7 @@ fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerErro
             if sync_debug_enabled() {
                 let era_tag = {
                     let mut d = yggdrasil_ledger::cbor::Decoder::new(raw);
-                    match d.array_begin().and_then(|_| d.unsigned()) {
-                        Ok(tag) => Some(tag),
-                        Err(_) => None,
-                    }
+                    d.array_begin().and_then(|_| d.unsigned()).ok()
                 };
                 let preview_len = raw.len().min(64);
                 let preview = bytes_to_hex(&raw[..preview_len]);
@@ -2917,20 +2914,15 @@ pub fn verify_block_vrf_with_stake(
     //   when vrfHKStake /= vrfHKBlock → VRFKeyBadNonce / VRFKeyBadLeaderValue
     if let Some(vrf_vkey_bytes) = block_vrf_vkey(block) {
         let vrf_hash_block = yggdrasil_crypto::blake2b::hash_bytes_256(&vrf_vkey_bytes).0;
-        match stake_dist.pool_vrf_key_hash(&pool_hash) {
-            Some(registered_vrf_hash) => {
-                if vrf_hash_block != *registered_vrf_hash {
-                    return Err(SyncError::Consensus(ConsensusError::VrfKeyMismatch {
-                        expected: *registered_vrf_hash,
-                        actual: vrf_hash_block,
-                    }));
-                }
-            }
-            None => {
-                // Pool not in stake distribution — VRF key cross-check
-                // cannot be performed.  The leader threshold check below
-                // will reject anyway (sigma = 0/1).
-            }
+        // Pool not in stake distribution → no VRF cross-check possible;
+        // the leader threshold check below will reject anyway (sigma = 0).
+        if let Some(registered_vrf_hash) = stake_dist.pool_vrf_key_hash(&pool_hash)
+            && vrf_hash_block != *registered_vrf_hash
+        {
+            return Err(SyncError::Consensus(ConsensusError::VrfKeyMismatch {
+                expected: *registered_vrf_hash,
+                actual: vrf_hash_block,
+            }));
         }
     }
 

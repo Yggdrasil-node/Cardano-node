@@ -29,7 +29,7 @@ use std::path::Path;
 
 use tokio::net::UnixStream;
 use yggdrasil_ledger::LedgerError;
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
 use crate::handshake::HandshakeVersion;
 use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum};
@@ -188,7 +188,11 @@ fn decode_ntc_propose_versions(
     }
     // versionTable is a map { versionNumber => versionData }
     let map_len = dec.map().map_err(cbor_err)?;
-    let mut proposals = Vec::with_capacity(map_len as usize);
+    let mut proposals = vec_with_strict_capacity(
+        map_len,
+        crate::protocol_size_limits::handshake::NTC_VERSION_TABLE_MAX,
+    )
+    .map_err(cbor_err)?;
     for _ in 0..map_len {
         let ver_num = dec.unsigned().map_err(cbor_err)? as u16;
         // Version data is encoded inline as a CBOR array.

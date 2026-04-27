@@ -50,10 +50,8 @@ pub struct ChainCandidate {
 ///
 /// 1. Higher `block_no` wins (longer chain preferred).
 /// 2. On equal `block_no`:
-///    a. If both candidates have the **same issuer** at the **same slot**,
-///       the higher `ocert_issue_no` wins.
-///    b. Otherwise, VRF tiebreaker: lower value wins, subject to
-///       `VrfTiebreakerFlavor` slot-distance restriction.
+///    a. If both candidates have the **same issuer** at the **same slot**, the higher `ocert_issue_no` wins.
+///    b. Otherwise, VRF tiebreaker: lower value wins, subject to `VrfTiebreakerFlavor` slot-distance restriction.
 /// 3. If no tiebreaker applies, the left (incumbent) candidate wins.
 ///
 /// Reference: `comparePraos` in
@@ -87,9 +85,7 @@ pub fn select_preferred(
     let vrf_armed = match flavor {
         VrfTiebreakerFlavor::UnrestrictedVrfTiebreaker => true,
         VrfTiebreakerFlavor::RestrictedVrfTiebreaker { max_dist } => {
-            let l = left.slot_no.0;
-            let r = right.slot_no.0;
-            let dist = if l >= r { l - r } else { r - l };
+            let dist = left.slot_no.0.abs_diff(right.slot_no.0);
             dist <= max_dist
         }
     };

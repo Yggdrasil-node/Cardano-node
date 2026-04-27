@@ -208,8 +208,9 @@ impl HandshakeMessage {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
+use crate::protocol_size_limits::handshake as handshake_limits;
 use yggdrasil_ledger::LedgerError;
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
 /// Encode a version data value as a CBOR array:
 /// `[networkMagic, initiatorOnlyDiffusionMode, peerSharing, query]`.
@@ -263,7 +264,7 @@ fn decode_version_table(
     dec: &mut Decoder<'_>,
 ) -> Result<Vec<(HandshakeVersion, NodeToNodeVersionData)>, LedgerError> {
     let count = dec.map()?;
-    let mut versions = Vec::with_capacity(count as usize);
+    let mut versions = vec_with_strict_capacity(count, handshake_limits::VERSION_TABLE_MAX)?;
     for _ in 0..count {
         let ver_num = dec.unsigned()? as u16;
         let vd = decode_version_data(dec)?;
@@ -344,7 +345,10 @@ impl HandshakeMessage {
                 let reason = match (reason_tag, reason_len) {
                     (0, 2) => {
                         let count = dec.array()?;
-                        let mut vs = Vec::with_capacity(count as usize);
+                        let mut vs = vec_with_strict_capacity(
+                            count,
+                            handshake_limits::REFUSE_VERSION_LIST_MAX,
+                        )?;
                         for _ in 0..count {
                             vs.push(HandshakeVersion(dec.unsigned()? as u16));
                         }

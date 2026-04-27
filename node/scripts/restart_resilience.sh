@@ -26,10 +26,26 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 YGG_BIN="${YGG_BIN:-$ROOT_DIR/target/debug/yggdrasil-node}"
 NETWORK="${NETWORK:-preprod}"
 CYCLES="${CYCLES:-12}"
-DB_DIR="${DB_DIR:-/tmp/ygg-restart-db}"
-SOCKET_PATH="${SOCKET_PATH:-/tmp/ygg-restart.sock}"
-METRICS_PORT="${METRICS_PORT:-9099}"
-LOG_ROOT="${LOG_ROOT:-/tmp/ygg-restart}"
+
+# Per-run private working directory.  Avoids cross-tenant clobbering on a
+# shared host (CI runner, dev box) where two operators might invoke the
+# script concurrently.  Audit finding L-7.
+RUN_DIR="$(mktemp -d -t ygg-restart-XXXXXX)"
+DB_DIR="${DB_DIR:-$RUN_DIR/db}"
+SOCKET_PATH="${SOCKET_PATH:-$RUN_DIR/ygg.sock}"
+LOG_ROOT="${LOG_ROOT:-$RUN_DIR/logs}"
+
+# Metrics port: respect the env override; otherwise grab a free
+# ephemeral port via Python so two concurrent runs cannot collide on
+# 9099.  Falls back to 9099 if Python is unavailable.
+if [[ -z "${METRICS_PORT:-}" ]]; then
+  if command -v python3 >/dev/null 2>&1; then
+    METRICS_PORT="$(python3 -c \
+      "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1])")"
+  else
+    METRICS_PORT=9099
+  fi
+fi
 INTERVAL_BASE_S="${INTERVAL_BASE_S:-300}"  # 5 min
 INTERVAL_JITTER_S="${INTERVAL_JITTER_S:-30}"
 SETTLE_S="${SETTLE_S:-30}"                  # post-restart settle window

@@ -638,9 +638,24 @@ impl ExBudget {
     }
 
     /// Spend some budget. Returns an error if the budget is exceeded.
+    ///
+    /// Uses `checked_sub` so a malformed cost-model constant carrying
+    /// `i64::MIN` cannot wrap-around past zero in release mode.
     pub fn spend(&mut self, cost: ExBudget) -> Result<(), MachineError> {
-        self.cpu -= cost.cpu;
-        self.mem -= cost.mem;
+        let cpu_after = self.cpu.checked_sub(cost.cpu).ok_or_else(|| {
+            MachineError::OutOfBudget(format!(
+                "cpu subtract overflow: {} - {}",
+                self.cpu, cost.cpu
+            ))
+        })?;
+        let mem_after = self.mem.checked_sub(cost.mem).ok_or_else(|| {
+            MachineError::OutOfBudget(format!(
+                "mem subtract overflow: {} - {}",
+                self.mem, cost.mem
+            ))
+        })?;
+        self.cpu = cpu_after;
+        self.mem = mem_after;
         if self.cpu < 0 || self.mem < 0 {
             Err(MachineError::OutOfBudget(format!(
                 "remaining cpu={}, mem={}",

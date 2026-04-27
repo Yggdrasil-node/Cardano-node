@@ -5,7 +5,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::cbor::{
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, hashmap_with_safe_capacity,
+    vec_with_safe_capacity,
+};
 use crate::eras::allegra::NativeScript;
 use crate::eras::alonzo::{ExUnits, Redeemer};
 use crate::error::LedgerError;
@@ -289,7 +292,7 @@ impl CborDecode for ShelleyTxBody {
             match key {
                 0 => {
                     let count = dec.array_or_set()?;
-                    let mut ins = Vec::with_capacity(count as usize);
+                    let mut ins = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
                     }
@@ -297,7 +300,7 @@ impl CborDecode for ShelleyTxBody {
                 }
                 1 => {
                     let count = dec.array()?;
-                    let mut outs = Vec::with_capacity(count as usize);
+                    let mut outs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         outs.push(ShelleyTxOut::decode_cbor(dec)?);
                     }
@@ -311,7 +314,7 @@ impl CborDecode for ShelleyTxBody {
                 }
                 4 => {
                     let count = dec.array_or_set()?;
-                    let mut certs = Vec::with_capacity(count as usize);
+                    let mut certs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);
                     }
@@ -967,7 +970,7 @@ pub struct ShelleyUtxo {
 impl CborEncode for ShelleyUtxo {
     fn encode_cbor(&self, enc: &mut Encoder) {
         let mut entries: Vec<_> = self.entries.iter().collect();
-        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries.sort_by_key(|(k, _)| *k);
 
         enc.array(entries.len() as u64);
         for (txin, txout) in entries {
@@ -981,7 +984,7 @@ impl CborEncode for ShelleyUtxo {
 impl CborDecode for ShelleyUtxo {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        let mut entries = HashMap::with_capacity(len as usize);
+        let mut entries = hashmap_with_safe_capacity(len, BLOCK_BODY_ELEMENTS_MAX);
 
         for _ in 0..len {
             let pair_len = dec.array()?;
@@ -1825,21 +1828,22 @@ impl CborDecode for ShelleyBlock {
 
         // transaction_bodies
         let tb_count = dec.array()?;
-        let mut transaction_bodies = Vec::with_capacity(tb_count as usize);
+        let mut transaction_bodies = vec_with_safe_capacity(tb_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..tb_count {
             transaction_bodies.push(ShelleyTxBody::decode_cbor(dec)?);
         }
 
         // transaction_witness_sets
         let ws_count = dec.array()?;
-        let mut witness_sets = Vec::with_capacity(ws_count as usize);
+        let mut witness_sets = vec_with_safe_capacity(ws_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..ws_count {
             witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
         }
 
         // transaction_metadata_set
         let meta_count = dec.map()?;
-        let mut transaction_metadata = HashMap::with_capacity(meta_count as usize);
+        let mut transaction_metadata =
+            hashmap_with_safe_capacity(meta_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..meta_count {
             let idx = dec.unsigned()?;
             let start = dec.position();

@@ -937,8 +937,23 @@ impl NodeConfigFile {
         ];
 
         for (file, expected, field) in pairs {
-            if let (Some(file), Some(expected)) = (file, expected) {
-                verify_genesis_file_hash(&resolve(file), expected, field)?;
+            // Hard-fail on unpaired (file, hash). A configured genesis file
+            // without a matching `*GenesisHash` would otherwise be loaded
+            // unverified — that is the path that lets an operator silently
+            // substitute a tampered or wrong-network genesis file.  Audit
+            // finding M-8.  The Byron path is handled separately because
+            // canonical-CBOR hashing is not yet ported.
+            match (file, expected) {
+                (Some(file), Some(expected)) => {
+                    verify_genesis_file_hash(&resolve(file), expected, field)?;
+                }
+                (Some(_), None) => {
+                    return Err(crate::genesis::GenesisLoadError::MissingHash { field });
+                }
+                (None, Some(_)) => {
+                    return Err(crate::genesis::GenesisLoadError::MissingFile { field });
+                }
+                (None, None) => {} // optional era genesis (e.g. Conway pre-Conway)
             }
         }
         Ok(())

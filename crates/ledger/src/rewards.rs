@@ -162,7 +162,7 @@ fn u256_div_floor(num: U256, den: U256) -> u64 {
     let mut lo_q: u64 = 1;
     let mut hi_q: u64 = u64::MAX;
     while lo_q < hi_q {
-        let mid = lo_q + (hi_q - lo_q + 1) / 2;
+        let mid = lo_q + (hi_q - lo_q).div_ceil(2);
         let prod = den.mul_u128(mid as u128);
         if prod.le(num) {
             lo_q = mid;

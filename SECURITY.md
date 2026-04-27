@@ -85,3 +85,27 @@ gratitude payments case by case for material findings.
 
 Once a fix ships, the issue is published as a [GitHub Security Advisory](https://github.com/yggdrasil-node/Cardano-node/security/advisories)
 and recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Operator verification of releases
+
+Each release publishes a `SHA256SUMS.txt` aggregating the per-architecture
+tarball digests.  Before installing a release on a production node:
+
+1. Download the tarball **and** `SHA256SUMS.txt` from the same release.
+2. Verify with `sha256sum -c SHA256SUMS.txt` (or `shasum -a 256 -c`).
+3. **Cross-check** the digest against an independent channel — e.g. the
+   git tag's verified GPG/SSH signature, the GitHub release page commit
+   SHA, or an out-of-band attestation from a maintainer you trust.  This
+   protects against a release-pipeline compromise that would otherwise be
+   able to publish a tampered tarball alongside a matching checksum file.
+4. Avoid `curl … | bash` install patterns on systems where unattended
+   compromise of the release artefacts would be load-bearing; use the
+   step-by-step verification above instead.
+
+## Maintainer commit signing
+
+Maintainers MUST sign all merge commits to `main` with GPG or SSH.  The
+canonical maintainer key fingerprints will be published in this file
+once they are rotated to long-lived keys.  Operators are encouraged to
+verify that the tag for any release they install is GPG-verified on the
+GitHub release page.

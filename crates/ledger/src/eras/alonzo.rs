@@ -18,7 +18,10 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
-use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::cbor::{
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, hashmap_with_safe_capacity,
+    vec_with_safe_capacity,
+};
 use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::ShelleyUpdate;
 use crate::eras::shelley::{ShelleyHeader, ShelleyTxIn, ShelleyWitnessSet};
@@ -395,7 +398,7 @@ impl CborDecode for AlonzoTxBody {
             match key {
                 0 => {
                     let count = dec.array_or_set()?;
-                    let mut ins = Vec::with_capacity(count as usize);
+                    let mut ins = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         ins.push(ShelleyTxIn::decode_cbor(dec)?);
                     }
@@ -403,7 +406,7 @@ impl CborDecode for AlonzoTxBody {
                 }
                 1 => {
                     let count = dec.array()?;
-                    let mut outs = Vec::with_capacity(count as usize);
+                    let mut outs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         outs.push(AlonzoTxOut::decode_cbor(dec)?);
                     }
@@ -417,7 +420,7 @@ impl CborDecode for AlonzoTxBody {
                 }
                 4 => {
                     let count = dec.array_or_set()?;
-                    let mut certs = Vec::with_capacity(count as usize);
+                    let mut certs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         certs.push(DCert::decode_cbor(dec)?);
                     }
@@ -462,7 +465,7 @@ impl CborDecode for AlonzoTxBody {
                 }
                 13 => {
                     let count = dec.array_or_set()?;
-                    let mut cols = Vec::with_capacity(count as usize);
+                    let mut cols = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         cols.push(ShelleyTxIn::decode_cbor(dec)?);
                     }
@@ -470,7 +473,7 @@ impl CborDecode for AlonzoTxBody {
                 }
                 14 => {
                     let count = dec.array_or_set()?;
-                    let mut sigs = Vec::with_capacity(count as usize);
+                    let mut sigs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
                     for _ in 0..count {
                         let raw = dec.bytes()?;
                         let hash: [u8; 28] =
@@ -606,19 +609,20 @@ impl CborDecode for AlonzoBlock {
         let header = ShelleyHeader::decode_cbor(dec)?;
 
         let tb_count = dec.array()?;
-        let mut transaction_bodies = Vec::with_capacity(tb_count as usize);
+        let mut transaction_bodies = vec_with_safe_capacity(tb_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..tb_count {
             transaction_bodies.push(AlonzoTxBody::decode_cbor(dec)?);
         }
 
         let ws_count = dec.array()?;
-        let mut witness_sets = Vec::with_capacity(ws_count as usize);
+        let mut witness_sets = vec_with_safe_capacity(ws_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..ws_count {
             witness_sets.push(ShelleyWitnessSet::decode_cbor(dec)?);
         }
 
         let meta_count = dec.map()?;
-        let mut auxiliary_data_set = HashMap::with_capacity(meta_count as usize);
+        let mut auxiliary_data_set: HashMap<u64, Vec<u8>> =
+            hashmap_with_safe_capacity(meta_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..meta_count {
             let idx = dec.unsigned()?;
             let start = dec.position();
@@ -629,7 +633,7 @@ impl CborDecode for AlonzoBlock {
         }
 
         let inv_count = dec.array()?;
-        let mut invalid_transactions = Vec::with_capacity(inv_count as usize);
+        let mut invalid_transactions = vec_with_safe_capacity(inv_count, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..inv_count {
             invalid_transactions.push(dec.unsigned()?);
         }

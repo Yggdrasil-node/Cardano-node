@@ -77,6 +77,21 @@ pub enum GenesisLoadError {
     /// 64-character lowercase hex Blake2b-256 digest.
     #[error("invalid genesis hash hex string for {field}: {value}")]
     InvalidHashHex { field: &'static str, value: String },
+    /// A genesis file path was configured but the matching `*GenesisHash`
+    /// field was not. We refuse to load a genesis file without a paired
+    /// expected hash because doing so would let an operator silently
+    /// substitute a tampered or wrong-network genesis file.  Audit
+    /// finding M-8.
+    #[error(
+        "genesis hash field {field} was not configured but a paired genesis file path was supplied"
+    )]
+    MissingHash { field: &'static str },
+    /// A `*GenesisHash` field was configured but the matching genesis file
+    /// path was not. The hash is meaningless without the file to verify.
+    #[error(
+        "genesis hash field {field} was configured but no paired genesis file path was supplied"
+    )]
+    MissingFile { field: &'static str },
 }
 
 /// Error returned while deriving the node's simplified CEK cost model from
@@ -1708,7 +1723,7 @@ fn default_max_collateral_inputs() -> u32 {
 }
 
 fn decode_hex_bytes(value: &str, field: &'static str) -> Result<Vec<u8>, GenesisLoadError> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(GenesisLoadError::InvalidField {
             field,
             value: value.to_owned(),

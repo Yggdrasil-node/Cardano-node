@@ -198,6 +198,72 @@ impl Encoder {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Bounded-allocation helpers (defensive against attacker-controlled counts)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Default soft cap for block-body element vectors (inputs, outputs,
+/// certs, withdrawals, etc.) when decoding CBOR arrays of unknown
+/// upstream maximum.  An honest block is bounded by the ledger
+/// `max_block_body_size` parameter (≤ 90 112 bytes on mainnet); this
+/// constant only delays allocation, never rejects a valid block.
+pub const BLOCK_BODY_ELEMENTS_MAX: usize = 1_048_576;
+
+/// Allocates a `Vec` with capacity capped at `safe_max` regardless of the
+/// peer-supplied `count`. The surrounding decoder loop is still free to
+/// `push` beyond `safe_max` (the `Vec` grows naturally) — the cap merely
+/// delays allocation so that a malformed `count` field cannot abort the
+/// process via the global allocator's OOM handler.
+///
+/// Use this for fields where upstream Haskell does not enforce a hard
+/// element-count limit (e.g. block-body inputs/outputs, which are
+/// implicitly bounded by `max_block_body_size`).
+///
+/// Reference: RFC 8949 § 5.3 (CBOR decoders MUST NOT pre-allocate based
+/// on a length field without bounds-checking).
+#[inline]
+pub fn vec_with_safe_capacity<T>(count: u64, safe_max: usize) -> Vec<T> {
+    let cap = usize::try_from(count).unwrap_or(safe_max).min(safe_max);
+    Vec::with_capacity(cap)
+}
+
+/// Strict variant of [`vec_with_safe_capacity`] — rejects the message
+/// when `count` exceeds the per-protocol bound `max`.
+///
+/// Use this for fields where upstream Haskell enforces a hard count
+/// limit (e.g. handshake version table, ChainSync intersect points,
+/// TxSubmission txid batches).
+#[inline]
+pub fn vec_with_strict_capacity<T>(count: u64, max: usize) -> Result<Vec<T>, LedgerError> {
+    let n = usize::try_from(count).map_err(|_| LedgerError::DecodedCountTooLarge { count, max })?;
+    if n > max {
+        return Err(LedgerError::DecodedCountTooLarge { count, max });
+    }
+    Ok(Vec::with_capacity(n))
+}
+
+/// `HashMap` analogue of [`vec_with_safe_capacity`].
+#[inline]
+pub fn hashmap_with_safe_capacity<K, V>(
+    count: u64,
+    safe_max: usize,
+) -> std::collections::HashMap<K, V> {
+    let cap = usize::try_from(count).unwrap_or(safe_max).min(safe_max);
+    std::collections::HashMap::with_capacity(cap)
+}
+
+/// `BTreeMap` does not pre-allocate, but a strict-bound check is still
+/// useful for its decoders. Returns the validated `usize` count or an
+/// error.
+#[inline]
+pub fn check_decoded_count(count: u64, max: usize) -> Result<usize, LedgerError> {
+    let n = usize::try_from(count).map_err(|_| LedgerError::DecodedCountTooLarge { count, max })?;
+    if n > max {
+        return Err(LedgerError::DecodedCountTooLarge { count, max });
+    }
+    Ok(n)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Decoder
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -1362,7 +1428,7 @@ impl PoolParams {
         let reward_account = RewardAccount::decode_cbor(dec)?;
         // pool_owners
         let n_owners = dec.array()?;
-        let mut pool_owners = Vec::with_capacity(n_owners as usize);
+        let mut pool_owners = vec_with_safe_capacity(n_owners, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..n_owners {
             let raw = dec.bytes()?;
             let h: [u8; 28] = raw.try_into().map_err(|_| LedgerError::CborInvalidLength {
@@ -1373,7 +1439,7 @@ impl PoolParams {
         }
         // relays
         let n_relays = dec.array()?;
-        let mut relays = Vec::with_capacity(n_relays as usize);
+        let mut relays = vec_with_safe_capacity(n_relays, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..n_relays {
             relays.push(Relay::decode_cbor(dec)?);
         }

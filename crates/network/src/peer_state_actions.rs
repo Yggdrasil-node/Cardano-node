@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn maps_action_sequence_preserving_order() {
-        let input = vec![
+        let input = [
             GovernorAction::PromoteToWarm(addr(10)),
             GovernorAction::RequestPublicRoots,
             GovernorAction::PromoteToHot(addr(11)),

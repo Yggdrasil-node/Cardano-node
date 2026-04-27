@@ -212,7 +212,7 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_reference_script(
         state.protocol_params(),
         false,
         Some(state.multi_era_utxo()),
-        Some(&[reference_input.clone()]),
+        Some(std::slice::from_ref(&reference_input)),
         None,
         Some(&required_scripts([policy_hash])),
     )
@@ -319,7 +319,7 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_unused_reference_
         state.protocol_params(),
         false,
         Some(state.multi_era_utxo()),
-        Some(&[reference_input.clone()]),
+        Some(std::slice::from_ref(&reference_input)),
         None,
         Some(&required),
     )

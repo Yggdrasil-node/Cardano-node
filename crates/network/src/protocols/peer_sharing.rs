@@ -120,8 +120,9 @@ impl PeerSharingState {
 // CBOR wire codec
 // ---------------------------------------------------------------------------
 
+use crate::protocol_size_limits::peersharing as peersharing_limits;
 use yggdrasil_ledger::LedgerError;
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
 impl SharedPeerAddress {
     /// Encode a single peer address: `[ip_type, ip_bytes, port]`.
@@ -223,7 +224,8 @@ impl PeerSharingMessage {
             }
             (1, 2) => {
                 let peer_count = dec.array()?;
-                let mut peers = Vec::with_capacity(peer_count as usize);
+                let mut peers =
+                    vec_with_strict_capacity(peer_count, peersharing_limits::PEERS_MAX)?;
                 for _ in 0..peer_count {
                     peers.push(SharedPeerAddress::decode(&mut dec)?);
                 }

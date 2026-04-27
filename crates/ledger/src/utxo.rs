@@ -31,7 +31,9 @@ use crate::eras::mary::{MaryTxBody, MaryTxOut, MintAsset, MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyUtxo};
 use crate::error::LedgerError;
 use crate::plutus::ScriptRef;
-use crate::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::{
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, hashmap_with_safe_capacity,
+};
 
 /// A transaction output that can represent any Cardano era.
 ///
@@ -185,7 +187,7 @@ pub struct MultiEraUtxo {
 impl CborEncode for MultiEraUtxo {
     fn encode_cbor(&self, enc: &mut Encoder) {
         let mut entries: Vec<_> = self.entries.iter().collect();
-        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries.sort_by_key(|(k, _)| *k);
 
         enc.array(entries.len() as u64);
         for (txin, txout) in entries {
@@ -199,7 +201,7 @@ impl CborEncode for MultiEraUtxo {
 impl CborDecode for MultiEraUtxo {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        let mut entries = HashMap::with_capacity(len as usize);
+        let mut entries = hashmap_with_safe_capacity(len, BLOCK_BODY_ELEMENTS_MAX);
 
         for _ in 0..len {
             let pair_len = dec.array()?;
@@ -337,11 +339,8 @@ impl MultiEraUtxo {
             .collect();
 
         let consumed = self.sum_consumed_coin(&shelley_inputs)?;
-        let produced: u64 = tx
-            .outputs
-            .iter()
-            .map(|o| o.amount)
-            .fold(0u64, u64::saturating_add);
+        let produced: u64 =
+            checked_sum_coins(tx.outputs.iter().map(|o| o.amount), "byron produced sum")?;
 
         // Byron fee is implicit: consumed - produced.  Must be non-negative.
         if consumed < produced {
@@ -410,17 +409,19 @@ impl MultiEraUtxo {
 
         // Value preservation (coin only).
         // consumed + withdrawals + refunds = produced + fee + deposits
-        let produced: u64 = body
-            .outputs
-            .iter()
-            .map(|o| o.amount)
-            .fold(0u64, u64::saturating_add);
+        let produced: u64 = checked_sum_coins(
+            body.outputs.iter().map(|o| o.amount),
+            "shelley produced sum",
+        )?;
         check_coin_preservation(
-            consumed
-                .saturating_add(withdrawal_total)
-                .saturating_add(refunds),
+            checked_add3(
+                consumed,
+                withdrawal_total,
+                refunds,
+                "shelley consumed+wdrl+refunds",
+            )?,
             produced,
-            body.fee.saturating_add(deposits),
+            checked_add2(body.fee, deposits, "shelley fee+deposits")?,
         )?;
 
         // State update.
@@ -484,17 +485,19 @@ impl MultiEraUtxo {
         }
 
         let consumed = self.sum_consumed_coin(&body.inputs)?;
-        let produced: u64 = body
-            .outputs
-            .iter()
-            .map(|o| o.amount)
-            .fold(0u64, u64::saturating_add);
+        let produced: u64 = checked_sum_coins(
+            body.outputs.iter().map(|o| o.amount),
+            "allegra produced sum",
+        )?;
         check_coin_preservation(
-            consumed
-                .saturating_add(withdrawal_total)
-                .saturating_add(refunds),
+            checked_add3(
+                consumed,
+                withdrawal_total,
+                refunds,
+                "allegra consumed+wdrl+refunds",
+            )?,
             produced,
-            body.fee.saturating_add(deposits),
+            checked_add2(body.fee, deposits, "allegra fee+deposits")?,
         )?;
 
         self.remove_inputs(&body.inputs);
@@ -555,17 +558,19 @@ impl MultiEraUtxo {
         }
 
         let consumed = self.sum_consumed_coin(&body.inputs)?;
-        let produced: u64 = body
-            .outputs
-            .iter()
-            .map(|o| o.amount.coin())
-            .fold(0u64, u64::saturating_add);
+        let produced: u64 = checked_sum_coins(
+            body.outputs.iter().map(|o| o.amount.coin()),
+            "mary produced sum",
+        )?;
         check_coin_preservation(
-            consumed
-                .saturating_add(withdrawal_total)
-                .saturating_add(refunds),
+            checked_add3(
+                consumed,
+                withdrawal_total,
+                refunds,
+                "mary consumed+wdrl+refunds",
+            )?,
             produced,
-            body.fee.saturating_add(deposits),
+            checked_add2(body.fee, deposits, "mary fee+deposits")?,
         )?;
 
         // Multi-asset preservation.
@@ -628,17 +633,19 @@ impl MultiEraUtxo {
         }
 
         let consumed = self.sum_consumed_coin(&body.inputs)?;
-        let produced: u64 = body
-            .outputs
-            .iter()
-            .map(|o| o.amount.coin())
-            .fold(0u64, u64::saturating_add);
+        let produced: u64 = checked_sum_coins(
+            body.outputs.iter().map(|o| o.amount.coin()),
+            "alonzo produced sum",
+        )?;
         check_coin_preservation(
-            consumed
-                .saturating_add(withdrawal_total)
-                .saturating_add(refunds),
+            checked_add3(
+                consumed,
+                withdrawal_total,
+                refunds,
+                "alonzo consumed+wdrl+refunds",
+            )?,
             produced,
-            body.fee.saturating_add(deposits),
+            checked_add2(body.fee, deposits, "alonzo fee+deposits")?,
         )?;
 
         validate_no_ada_in_mint(&body.mint)?;
@@ -700,17 +707,19 @@ impl MultiEraUtxo {
         }
 
         let consumed = self.sum_consumed_coin(&body.inputs)?;
-        let produced: u64 = body
-            .outputs
-            .iter()
-            .map(|o| o.amount.coin())
-            .fold(0u64, u64::saturating_add);
+        let produced: u64 = checked_sum_coins(
+            body.outputs.iter().map(|o| o.amount.coin()),
+            "babbage produced sum",
+        )?;
         check_coin_preservation(
-            consumed
-                .saturating_add(withdrawal_total)
-                .saturating_add(refunds),
+            checked_add3(
+                consumed,
+                withdrawal_total,
+                refunds,
+                "babbage consumed+wdrl+refunds",
+            )?,
             produced,
-            body.fee.saturating_add(deposits),
+            checked_add2(body.fee, deposits, "babbage fee+deposits")?,
         )?;
 
         validate_no_ada_in_mint(&body.mint)?;
@@ -774,24 +783,28 @@ impl MultiEraUtxo {
         }
 
         let consumed = self.sum_consumed_coin(&body.inputs)?;
-        let produced: u64 = body
-            .outputs
-            .iter()
-            .map(|o| o.amount.coin())
-            .fold(0u64, u64::saturating_add);
+        let produced: u64 = checked_sum_coins(
+            body.outputs.iter().map(|o| o.amount.coin()),
+            "conway produced sum",
+        )?;
         // Conway UTXO rule: treasury_donation is on the "produced" side of
         // the value preservation equation.
         //
         // Reference: `Cardano.Ledger.Conway.Rules.Utxo` — produced:
         //   `balance (outs txb) + txfee txb + deposits + txDonation txb`
-        let fee_plus_deposits_donation = body
-            .fee
-            .saturating_add(deposits)
-            .saturating_add(body.treasury_donation.unwrap_or(0));
+        let fee_plus_deposits_donation = checked_add3(
+            body.fee,
+            deposits,
+            body.treasury_donation.unwrap_or(0),
+            "conway fee+deposits+donation",
+        )?;
         check_coin_preservation(
-            consumed
-                .saturating_add(withdrawal_total)
-                .saturating_add(refunds),
+            checked_add3(
+                consumed,
+                withdrawal_total,
+                refunds,
+                "conway consumed+wdrl+refunds",
+            )?,
             produced,
             fee_plus_deposits_donation,
         )?;
@@ -821,7 +834,11 @@ impl MultiEraUtxo {
         let mut total: u64 = 0;
         for input in inputs {
             let entry = self.entries.get(input).ok_or(LedgerError::InputNotInUtxo)?;
-            total = total.saturating_add(entry.coin());
+            total = total
+                .checked_add(entry.coin())
+                .ok_or(LedgerError::ValueOverflow {
+                    site: "sum_consumed_coin",
+                })?;
         }
         Ok(total)
     }
@@ -1034,8 +1051,19 @@ pub(crate) fn apply_collateral_only(
 }
 
 /// Checks coin-level value preservation: `consumed == produced + fee`.
+///
+/// Uses checked arithmetic so an overflow in `produced + fee` surfaces as
+/// [`LedgerError::ValueOverflow`] rather than silently saturating to
+/// `u64::MAX`. Upstream Haskell uses arbitrary-precision `Integer` here;
+/// `checked_add` matches Haskell's reject-on-overflow behavior under our
+/// `u64` representation.
 fn check_coin_preservation(consumed: u64, produced: u64, fee: u64) -> Result<(), LedgerError> {
-    if consumed != produced.saturating_add(fee) {
+    let produced_plus_fee = produced
+        .checked_add(fee)
+        .ok_or(LedgerError::ValueOverflow {
+            site: "produced + fee",
+        })?;
+    if consumed != produced_plus_fee {
         return Err(LedgerError::ValueNotPreserved {
             consumed,
             produced,
@@ -1043,6 +1071,31 @@ fn check_coin_preservation(consumed: u64, produced: u64, fee: u64) -> Result<(),
         });
     }
     Ok(())
+}
+
+/// Sum a coin iterator with checked arithmetic.
+#[inline]
+fn checked_sum_coins(
+    iter: impl IntoIterator<Item = u64>,
+    site: &'static str,
+) -> Result<u64, LedgerError> {
+    iter.into_iter()
+        .try_fold(0u64, |acc, v| acc.checked_add(v))
+        .ok_or(LedgerError::ValueOverflow { site })
+}
+
+/// Add three `u64` coin values with overflow detection.
+#[inline]
+fn checked_add3(a: u64, b: u64, c: u64, site: &'static str) -> Result<u64, LedgerError> {
+    a.checked_add(b)
+        .and_then(|x| x.checked_add(c))
+        .ok_or(LedgerError::ValueOverflow { site })
+}
+
+/// Add two `u64` coin values with overflow detection.
+#[inline]
+fn checked_add2(a: u64, b: u64, site: &'static str) -> Result<u64, LedgerError> {
+    a.checked_add(b).ok_or(LedgerError::ValueOverflow { site })
 }
 
 /// Sums the multi-asset bundle across Mary-era outputs.
@@ -1610,7 +1663,7 @@ mod tests {
         let new_txout = sample_multi_era_out(900);
         let outputs = vec![(new_txin.clone(), new_txout.clone())];
 
-        let (consumed, produced) = utxo.utxo_delta_for_tx(&[txin.clone()], &outputs);
+        let (consumed, produced) = utxo.utxo_delta_for_tx(std::slice::from_ref(&txin), &outputs);
         assert_eq!(consumed.len(), 1);
         assert_eq!(consumed[0].0, &txin);
         assert_eq!(produced.len(), 1);

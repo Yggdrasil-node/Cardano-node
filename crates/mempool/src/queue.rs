@@ -386,7 +386,14 @@ impl Mempool {
                 return Err(MempoolError::ConflictingInputs(existing_tx_id));
             }
         }
-        if self.max_bytes > 0 && self.current_bytes + entry.size_bytes > self.max_bytes {
+        let next_bytes = self.current_bytes.checked_add(entry.size_bytes).ok_or(
+            MempoolError::CapacityExceeded {
+                current: self.current_bytes,
+                incoming: entry.size_bytes,
+                limit: self.max_bytes,
+            },
+        )?;
+        if self.max_bytes > 0 && next_bytes > self.max_bytes {
             return Err(MempoolError::CapacityExceeded {
                 current: self.current_bytes,
                 incoming: entry.size_bytes,
@@ -394,7 +401,7 @@ impl Mempool {
             });
         }
         let tx_id = entry.tx_id;
-        self.current_bytes += entry.size_bytes;
+        self.current_bytes = next_bytes;
         // Claim all inputs before pushing so the set is consistent.
         for input in &entry.inputs {
             self.claimed_inputs.insert(input.clone(), tx_id);
@@ -405,8 +412,9 @@ impl Mempool {
             entry,
         });
         self.next_idx += 1;
-        self.entries
-            .sort_by(|left, right| right.entry.fee.cmp(&left.entry.fee));
+        // Descending fee: negate via Reverse-style key (`u64::MAX - fee`
+        // would alias) — use sort_by_key on `Reverse(fee)`.
+        self.entries.sort_by_key(|e| std::cmp::Reverse(e.entry.fee));
         Ok(())
     }
 
@@ -447,7 +455,14 @@ impl Mempool {
             }
         }
         // Fast path: no capacity limit, or the incoming entry already fits.
-        if self.max_bytes == 0 || self.current_bytes + entry.size_bytes <= self.max_bytes {
+        let projected = self.current_bytes.checked_add(entry.size_bytes).ok_or(
+            MempoolError::CapacityExceeded {
+                current: self.current_bytes,
+                incoming: entry.size_bytes,
+                limit: self.max_bytes,
+            },
+        )?;
+        if self.max_bytes == 0 || projected <= self.max_bytes {
             self.insert(entry)?;
             return Ok(Vec::new());
         }

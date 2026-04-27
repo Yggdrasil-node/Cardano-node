@@ -15,8 +15,14 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.95"
 version = "0.1.0"
+# Workspace crates are not published to crates.io. The release artefact
+# is the `yggdrasil-node` binary tarball published from .github/workflows/release.yml.
+# Marking every crate `publish = false` lets `cargo deny`'s
+# `allow-wildcard-paths = true` apply (crates.io rejects path-only deps
+# in published crates, so the gate only ever exempts private crates).
+publish = false
 
 [workspace.dependencies]
 blake2 = "0.10.6"
@@ -28,7 +34,18 @@ clap = { version = "4.6", features = ["derive", "env"] }
 eyre = "0.6.12"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
+# `serde_yaml` (advisory-db #2132) and the original drop-in `serde_yml`
+# (RUSTSEC-2025-0068, archived for unsoundness) are both unmaintained.
+# `serde_norway` is the actively-maintained fork of `serde_yaml`,
+# tracking the same Serde-compatible API. Audit M-5.
+serde_norway = "0.9"
+# Replaces unmaintained `serde_cbor` (RUSTSEC-2021-0127) for the
+# trace-forwarder Unix-socket egress.  `ciborium` is the upstream-
+# recommended successor (Serde-compatible, RFC 8949).  Audit M-4.
+ciborium = "0.2"
+# Retained transitionally for the on-disk storage block format only.
+# Replacement requires a byte-equivalence migration of existing nodes'
+# volatile/immutable DBs and is tracked separately. Audit M-4 (partial).
 serde_cbor = "0.11"
 k256 = { version = "0.13", default-features = false, features = ["ecdsa", "schnorr", "std"] }
 num-bigint = "0.4"
@@ -55,6 +72,22 @@ yggdrasil-storage = { path = "crates/storage" }
 dbg_macro = "deny"
 todo = "deny"
 unwrap_used = "deny"
+# --- Lints introduced in Rust 1.95 that we explicitly carry forward as
+# `allow` rather than fix in this toolchain-bump PR.  Each is tracked
+# in CHANGELOG / AGENTS as deferred work; revisit when the let-chain
+# refactor and the LedgerError boxing are scheduled.
+#
+# `collapsible_if`: 1.95 added let-chains; rewriting ~78 nested `if let
+# Some(x) = … { if y { … } }` into `if let Some(x) = … && y { … }` is
+# pure style churn against the audit-validated baseline.  Defer.
+collapsible_if = "allow"
+# `result_large_err` + `large_enum_variant`: `LedgerError` carries
+# ~100 variants reflecting upstream `cardano-ledger`'s `PredicateFailure`
+# zoo.  Boxing the largest variants would touch ~180 call sites in
+# production and tests.  Worth doing as a focused PR with parity
+# verification, not as a side effect of a toolchain bump.
+result_large_err = "allow"
+large_enum_variant = "allow"
 
 [profile.dev.package.yggdrasil-crypto]
 opt-level = 3

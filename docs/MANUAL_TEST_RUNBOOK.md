@@ -17,7 +17,7 @@ nav_order: 8
 
 ## 1. Prerequisites
 
-- Rust toolchain pinned to `1.85.0` (per `rust-toolchain.toml`); confirm with `cargo --version`.
+- Rust toolchain pinned to `1.95.0` (per `rust-toolchain.toml`); confirm with `cargo --version`.
 - Build the binary in release mode for any rehearsal that runs longer than ~5 minutes:
   ```sh
   cargo build --release -p yggdrasil-node

@@ -8,6 +8,18 @@
 //! Reference: `Cardano.Ledger.Shelley.Rules.Utxo` — `validateFeeTooSmallUTxO`,
 //! `Cardano.Ledger.Alonzo.Rules.Utxo` — `validateExUnitsTooBigUTxO`, and
 //! `Cardano.Ledger.Conway.Tx` — `getConwayMinFeeTx` / `tierRefScriptFee`.
+//!
+//! ## Arithmetic discipline
+//!
+//! Saturating arithmetic is intentionally retained in the linear-fee /
+//! script-fee / ref-script-fee paths because every input is bounded by
+//! validated protocol parameters (`max_tx_size ≤ 16 384 B`, `min_fee_a`
+//! ≤ ~50, `price_mem` / `price_step` are small ratios, `max_tx_ex_units`
+//! is enforced by [`validate_tx_ex_units`]) and the products are
+//! guaranteed to fit comfortably in `u64`.  The value-preservation paths
+//! in [`crate::utxo`] use `checked_*` and surface
+//! [`LedgerError::ValueOverflow`] because their inputs include
+//! peer-supplied UTxO coin values which lack such guarantees.
 
 use crate::eras::alonzo::ExUnits;
 use crate::error::LedgerError;
