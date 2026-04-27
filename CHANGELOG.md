@@ -7,6 +7,29 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+(No entries yet — next slice opens here.)
+
+## [0.2.0] - 2026-04-27
+
+Operational-parity, byzantine-path, and recovery-correctness release on
+top of v0.1.0.  Highlights: full byzantine-path audit closure
+(Rounds 87 / 88 / 89), multi-peer BlockFetch dispatch wiring (with
+Round 90 closing the session-handoff `RollbackPointNotFound` crash),
+zero-copy `Block.raw_cbor` clone via `Arc<[u8]>` (F-2), single-shot
+`BlockTxRawSpans` cache shared by the eviction + apply + ledger-advance
+consumers (F-1), sealed `ShelleyCompatibleSubmittedTx` /
+`AlonzoCompatibleSubmittedTx` invariants (Q-1), `cargo fmt --check`
+enforcement in CI, and a self-contained devcontainer that pre-installs
+the upstream IntersectMBO Haskell `cardano-cli` + `cardano-node`
+binaries for the §5 / §6.5b operator rehearsals.
+
+Workspace tests: 4 210 (v0.1.0) → **4 640 passing, 0 failing**.
+
+The Round 91 multi-peer storage-persistence livelock (Gap BN) remains
+open and is documented as a Known Issue below.  The production default
+`max_concurrent_block_fetch_peers = 1` keeps the legacy single-peer
+path active until that closes.
+
 ### Fixed
 
 - **Fee-validation parity bug at the preprod Byron→Shelley boundary
