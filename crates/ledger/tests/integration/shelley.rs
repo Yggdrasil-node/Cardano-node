@@ -568,9 +568,9 @@ fn shelley_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
         .expect("Shelley-compatible submitted tx round-trip");
 
     assert_eq!(decoded, tx);
-    assert_eq!(decoded.raw_cbor, bytes);
+    assert_eq!(decoded.raw_cbor(), bytes.as_slice());
     // Authoritative: tx_id is the hash of the on-wire body bytes.
-    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.raw_body));
+    assert_eq!(decoded.tx_id(), compute_tx_id(decoded.raw_body()));
     // For canonically-encoded input, re-encoding produces the same bytes,
     // so the typed-fallback hash also matches.  See
     // `shelley_submitted_tx_id_uses_on_wire_bytes_not_re_encoded` for the
@@ -626,9 +626,9 @@ fn alonzo_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
         .expect("Alonzo-compatible submitted tx round-trip");
 
     assert_eq!(decoded, tx);
-    assert_eq!(decoded.raw_cbor, bytes);
+    assert_eq!(decoded.raw_cbor(), bytes.as_slice());
     // Authoritative: tx_id is the hash of the on-wire body bytes.
-    assert_eq!(decoded.tx_id(), compute_tx_id(&decoded.raw_body));
+    assert_eq!(decoded.tx_id(), compute_tx_id(decoded.raw_body()));
     // For canonically-encoded input both hashes agree; see the Shelley
     // non-canonical regression test for the divergent case.
     assert_eq!(
@@ -715,14 +715,14 @@ fn shelley_submitted_tx_id_uses_on_wire_bytes_not_re_encoded() {
     let canonical_decoded =
         ShelleyCompatibleSubmittedTx::<ShelleyTxBody>::from_cbor_bytes(&canonical_full)
             .expect("canonical round-trip");
+    let canonical_body_span = canonical_decoded.raw_body();
     let body_start = canonical_full
-        .windows(canonical_decoded.raw_body.len())
-        .position(|w| w == canonical_decoded.raw_body.as_slice())
+        .windows(canonical_body_span.len())
+        .position(|w| w == canonical_body_span)
         .expect("body span must appear in tx envelope");
     let mut non_canonical_full = canonical_full[..body_start].to_vec();
     non_canonical_full.extend_from_slice(&non_canonical_body);
-    non_canonical_full
-        .extend_from_slice(&canonical_full[body_start + canonical_decoded.raw_body.len()..]);
+    non_canonical_full.extend_from_slice(&canonical_full[body_start + canonical_body_span.len()..]);
 
     // Decode the non-canonical wire form.
     let decoded =
@@ -734,10 +734,10 @@ fn shelley_submitted_tx_id_uses_on_wire_bytes_not_re_encoded() {
     );
 
     // The captured raw_body is the non-canonical bytes, NOT a re-encode.
-    assert_eq!(decoded.raw_body, non_canonical_body);
+    assert_eq!(decoded.raw_body(), non_canonical_body.as_slice());
     assert_ne!(
-        decoded.raw_body,
-        decoded.body.to_cbor_bytes(),
+        decoded.raw_body(),
+        decoded.body.to_cbor_bytes().as_slice(),
         "raw_body must differ from typed re-encoding for non-canonical input"
     );
 

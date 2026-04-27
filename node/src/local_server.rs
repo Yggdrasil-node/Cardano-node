@@ -142,10 +142,32 @@ where
     V: VolatileStore + Send + Sync,
     L: LedgerStore + Send + Sync,
 {
+    // Hard ceiling on a single LocalTxSubmission CBOR payload.  The
+    // ledger-side `validate_max_tx_size` (see `crates/ledger/src/fees.rs`)
+    // would reject anything past `params.max_tx_size`, but that check
+    // runs AFTER full CBOR decode — a malicious local client could
+    // submit a multi-megabyte well-formed-but-oversized CBOR blob and
+    // force us to allocate it before rejection.  Cap the wire-side
+    // first.  Mainnet `max_tx_size` is 16 384 B (Conway PV 10);
+    // 64 KiB gives ~4× headroom for any future protocol-param raise
+    // while still bounding the allocation.
+    const LOCAL_TX_SUBMIT_MAX_BYTES: usize = 64 * 1024;
     loop {
         match server.recv_request().await? {
             LocalTxRequest::Done => return Ok(()),
             LocalTxRequest::SubmitTx { tx: tx_bytes } => {
+                if tx_bytes.len() > LOCAL_TX_SUBMIT_MAX_BYTES {
+                    if let Some(m) = &metrics {
+                        m.inc_mempool_tx_rejected();
+                    }
+                    let reason = encode_rejection_reason(&format!(
+                        "tx payload {} bytes exceeds LocalTxSubmission ceiling of {} bytes",
+                        tx_bytes.len(),
+                        LOCAL_TX_SUBMIT_MAX_BYTES
+                    ));
+                    server.reject(reason).await?;
+                    continue;
+                }
                 // Recover a current ledger state for decoding and validation.
                 // The RwLockReadGuard (and its originating Result) must be
                 // fully dropped before any .await to keep the future Send.

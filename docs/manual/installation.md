@@ -71,7 +71,7 @@ Run the test suite:
 $ cargo test-all
 ```
 
-The full workspace runs about **4,635 tests** across all crates. Failure-free output is the green-gates baseline.
+The full workspace runs about **4,637 tests** across all crates. Failure-free output is the green-gates baseline.
 
 For a faster smoke check before shipping the binary:
 

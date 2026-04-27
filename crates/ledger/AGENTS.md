@@ -15,6 +15,40 @@ Focus on reusable state-transition interfaces and explicit era boundaries.
 - Ledger behavior MUST be explained by reference to the official node, the ledger repository, and the formal ledger specifications rather than only local interpretation.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
+## Arithmetic conventions
+
+Upstream `Cardano.Ledger.*` rules operate over Haskell `Integer` (unbounded
+precision); our Rust port uses fixed-width integers, which forces a
+choice between **saturating** and **checked** arithmetic at every
+addition/subtraction/multiplication site.  The convention is:
+
+- **`checked_*` (returning `LedgerError::ValueOverflow`)** in
+  *value-preservation paths* — anywhere the inputs can include
+  peer-supplied UTxO coin values, mint/burn quantities, or aggregate
+  sums that lack an upstream-enforced upper bound.  The canonical
+  examples are in [`utxo.rs`](src/utxo.rs) — `check_coin_preservation`,
+  `checked_sum_coins`, `checked_add2`, `checked_add3`.  Plutus
+  `ExBudget::spend` ([crates/plutus/src/types.rs](../plutus/src/types.rs))
+  and `mempool/queue` capacity arithmetic follow the same rule.
+
+- **`saturating_*`** where every input is bounded by validated protocol
+  parameters or fixed protocol-level constants — e.g. `min_fee_a`,
+  `max_tx_size`, `max_tx_ex_units`, the 45 B ADA total-supply cap, or
+  parser-enforced recursion depth.  See
+  [`fees.rs`](src/fees.rs) lines 12–22 for the canonical rationale; the
+  same discipline applies to `rewards.rs`, `utxo.rs`'s ref-script-size
+  / mint-quantity paths, `epoch_boundary.rs`, `stake.rs`, `tx.rs`'s
+  `ExUnits` accumulation, `plutus.rs` / `eras/allegra.rs` parser
+  depth counters, `collateral.rs` input-coin sums, and the per-era
+  modules under `eras/`.
+
+When introducing new arithmetic in a ledger path, default to `checked_*`
+unless you can name the upstream-enforced bound and (where the bound
+isn't immediately obvious to a reader) cite it in a one-line comment at
+the call site or in the file's module-level docs.  When in doubt prefer
+the safer route — overflow is the more dangerous failure mode than a
+clamp.
+
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Ledger repository root:](https://github.com/IntersectMBO/cardano-ledger/)
 - [Era-specific sources:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/) — each era has `impl/`, `formal-spec/`, `test-suite/`, and `cddl/` subdirectories

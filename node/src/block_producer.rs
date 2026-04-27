@@ -1392,7 +1392,7 @@ pub fn forged_block_to_storage_block(forged: &ForgedBlock) -> yggdrasil_ledger::
             issuer_vkey: forged.header.header_body.issuer_vkey.0,
         },
         transactions: txs,
-        raw_cbor: Some(raw_cbor),
+        raw_cbor: Some(std::sync::Arc::from(raw_cbor)),
         header_cbor_size: None,
     }
 }

@@ -1966,3 +1966,45 @@ fn chain_db_gc_volatile_before_slot() {
     assert_eq!(removed, 2);
     assert_eq!(chain_db.volatile().block_count(), 1);
 }
+
+/// On-disk format compatibility: `Block.raw_cbor: Option<Arc<[u8]>>` must
+/// serialize/deserialize byte-for-byte the same as the legacy
+/// `Option<Vec<u8>>` shape via `serde_cbor`.
+///
+/// This locks in the F-2 invariant that switching to `Arc<[u8]>` (with
+/// the workspace-level `serde/rc` feature) keeps the storage on-disk
+/// format unchanged — both encode as a CBOR byte-string (RFC 8949 major
+/// type 2).
+#[test]
+fn block_raw_cbor_arc_serde_round_trip() {
+    use std::sync::Arc;
+
+    let bytes: Vec<u8> = (0..200u32).map(|i| (i & 0xff) as u8).collect();
+    let block = Block {
+        era: Era::Shelley,
+        header: BlockHeader {
+            hash: HeaderHash([0xAB; 32]),
+            prev_hash: HeaderHash([0; 32]),
+            slot_no: SlotNo(10),
+            block_no: BlockNo(10),
+            issuer_vkey: [0; 32],
+        },
+        transactions: Vec::new(),
+        raw_cbor: Some(Arc::from(bytes.clone())),
+        header_cbor_size: Some(bytes.len()),
+    };
+
+    // Serialize via serde_cbor (the storage on-disk codec) and read back.
+    let serialised = serde_cbor::to_vec(&block).expect("serialize block");
+    let decoded: Block = serde_cbor::from_slice(&serialised).expect("deserialize block");
+
+    assert_eq!(decoded.era, block.era);
+    assert_eq!(decoded.header.hash, block.header.hash);
+    let decoded_raw = decoded.raw_cbor.expect("raw_cbor preserved");
+    assert_eq!(
+        decoded_raw.as_ref(),
+        bytes.as_slice(),
+        "Arc<[u8]> must round-trip byte-for-byte through serde_cbor"
+    );
+    assert_eq!(decoded.header_cbor_size, block.header_cbor_size);
+}

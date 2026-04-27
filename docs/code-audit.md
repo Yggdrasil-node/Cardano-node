@@ -96,7 +96,7 @@ Cardano-node/
 
 - **Edition 2024**, toolchain pinned `1.85.0`.
 - Workspace-level lints: `dbg_macro = deny`, `todo = deny`, `unwrap_used = deny`.
-- CI on `main` push and PR runs `cargo check-all`, `cargo test-all`, `cargo lint`.
+- CI on `main` push and PR runs `cargo fmt --all -- --check`, `cargo check-all`, `cargo test-all`, `cargo lint`.  *(Audit-time snapshot: `cargo fmt --check` was added post-audit as part of the M-2 follow-up; see iteration 1 of the 2026-Q3 quality pass.)*
 - Release workflow builds Linux x86_64 + aarch64, strips, computes SHA-256, publishes GitHub Releases with aggregated `SHA256SUMS.txt` and auto-generated changelog.
 - Dependabot configured for cargo (weekly), GitHub Actions (weekly), Docker (weekly), Bundler/Jekyll (monthly).
 - `deny.toml` bans `openssl`, `openssl-sys`, `native-tls`; license allowlist permissive-only.
@@ -334,7 +334,7 @@ The line `curl -fsSL https://.../install_from_release.sh | bash` is industry-sta
 
 - **Severity:** Low
 
-The repo ships a thoughtful `deny.toml` but CI (`.github/workflows/ci.yml`) only runs `cargo check-all`, `cargo test-all`, `cargo lint`. Findings M-4 and M-5 would be caught automatically by `cargo deny check advisories`. Add a `cargo-deny` step.
+The repo ships a thoughtful `deny.toml` but at audit time CI (`.github/workflows/ci.yml`) only ran `cargo check-all`, `cargo test-all`, `cargo lint`. Findings M-4 and M-5 would be caught automatically by `cargo deny check advisories`. Add a `cargo-deny` step.  *(Post-audit: a `cargo-deny check advisories bans licenses sources` job was added as part of the L-4 remediation, and `cargo fmt --all -- --check` was added in the iteration-1 follow-up under finding M-2.)*
 
 #### L-5 — Author email `daniel@example.com` on two early commits
 

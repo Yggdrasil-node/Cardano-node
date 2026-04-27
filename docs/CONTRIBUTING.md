@@ -8,9 +8,12 @@ nav_order: 11
 # Contributing
 
 ## Required Checks
+- `cargo fmt --all -- --check`
 - `cargo check-all`
 - `cargo test-all`
 - `cargo lint`
+
+CI ([.github/workflows/ci.yml](https://github.com/yggdrasil-node/Cardano-node/blob/main/.github/workflows/ci.yml)) runs all four; format drift is now a hard gate.
 
 ## Expectations
 - Preserve crate boundaries and avoid reaching across them casually.

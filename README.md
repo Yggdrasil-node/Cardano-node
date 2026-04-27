@@ -9,7 +9,7 @@
 [![Release](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml/badge.svg)](https://github.com/yggdrasil-node/Cardano-node/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/yggdrasil-node/Cardano-node?include_prereleases&sort=semver)](https://github.com/yggdrasil-node/Cardano-node/releases/latest)
 [![Rust 1.95.0](https://img.shields.io/badge/rust-1.95.0-orange)](rust-toolchain.toml)
-[![Tests](https://img.shields.io/badge/tests-4635%20passing-brightgreen)](#current-status)
+[![Tests](https://img.shields.io/badge/tests-4637%20passing-brightgreen)](#current-status)
 
 Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and serialization parity with the upstream Cardano node.
 
@@ -71,7 +71,7 @@ published yet. Full details: [Installation](https://yggdrasil-node.github.io/Car
 - **Node CLI**: `clap`-based binary with `run` (connect to peer and sync), `validate-config` (operator preflight for config, peer-snapshot inputs, and any existing storage recovery state), `status` (inspect on-disk storage and report sync position, block counts, and checkpoint state), and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides, topology/config parsing that feeds reusable network-crate topology and peer-ordering helpers, and upstream-aligned tracing fields (`TurnOnLogging`, `UseTraceDispatcher`, `TraceOptions`, `TraceOptionNodeName`, `TraceOptionForwarder`). `NodeMetrics` provides atomic operational counters wired into the hot sync loops, with `--metrics-port` exposing a Prometheus-compatible HTTP `/metrics` endpoint and a JSON `/metrics/json` endpoint on `127.0.0.1`.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Ordered bootstrap relay fallback plus reconnecting verified sync on ChainSync or BlockFetch connectivity loss. Graceful shutdown via Ctrl-C signal handling. A local `NodeTracer` now emits human- or machine-formatted runtime trace objects for bootstrap, reconnect, sync progress, and shutdown/failure paths. Live sync now evicts confirmed and expired transactions from the shared mempool, and epoch-boundary reward math uses tracked per-pool performance instead of an always-perfect stub.
 - **Upstream parity**: CBOR golden round-trip tests, cross-subsystem integration tests, and wire-format field naming aligned with official Cardano CDDL specifications.
-- **Validation baseline**: `cargo test-all` discovers 4,635 tests across the workspace, all passing at every slice boundary.
+- **Validation baseline**: `cargo test-all` discovers 4,637 tests across the workspace, all passing at every slice boundary.
 - CI workflow and workspace cargo aliases for check/test/lint.
 
 ### Status: 100% feature-complete

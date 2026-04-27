@@ -272,8 +272,19 @@ impl SharedPeerSharingProvider {
     }
 }
 
+/// Hard cap on the number of peers a single PeerSharing request may
+/// return.  Mirrors upstream `Ouroboros.Network.PeerSelection.PeerSharing`
+/// which transports the requested amount as `Word8` (max 255) — we accept
+/// `u16` on the wire (`HandshakeVersion`-bound) but cap the work the
+/// provider performs at the upstream maximum to keep a malicious peer
+/// from forcing a full-registry walk per request.
+pub const PEER_SHARING_MAX_AMOUNT: u16 = 255;
+
 impl PeerSharingProvider for SharedPeerSharingProvider {
     fn shareable_peers(&self, amount: u16) -> Vec<SharedPeerAddress> {
+        // Clamp to the upstream Word8 maximum; a peer requesting
+        // u16::MAX must not get more work than the protocol intends.
+        let amount = amount.min(PEER_SHARING_MAX_AMOUNT);
         let registry = match self.peer_registry.read() {
             Ok(guard) => guard,
             Err(_) => return Vec::new(),
@@ -282,6 +293,7 @@ impl PeerSharingProvider for SharedPeerSharingProvider {
         let mut peers = registry
             .iter()
             .filter(|(_, entry)| matches!(entry.status, PeerStatus::PeerWarm | PeerStatus::PeerHot))
+            .take(amount as usize)
             .map(|(addr, _)| SharedPeerAddress { addr: *addr })
             .collect::<Vec<_>>();
 
@@ -1174,7 +1186,10 @@ where
 
         if let Some(pos) = blocks.iter().position(|b| b.header.hash == to_hash) {
             blocks.truncate(pos + 1);
-            return blocks.into_iter().filter_map(|b| b.raw_cbor).collect();
+            return blocks
+                .into_iter()
+                .filter_map(|b| b.raw_cbor.map(|arc| arc.to_vec()))
+                .collect();
         }
 
         if let Ok(vol_prefix) = db.volatile().prefix_up_to(&to_point) {
@@ -1206,7 +1221,10 @@ where
 
         if let Some(pos) = blocks.iter().position(|b| b.header.hash == to_hash) {
             blocks.truncate(pos + 1);
-            blocks.into_iter().filter_map(|b| b.raw_cbor).collect()
+            blocks
+                .into_iter()
+                .filter_map(|b| b.raw_cbor.map(|arc| arc.to_vec()))
+                .collect()
         } else {
             Vec::new()
         }
@@ -2017,9 +2035,9 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
 #[cfg(test)]
 mod tests {
     use super::{
-        BlockProvider, ChainProvider, InboundSessionAborts, PeerSharingProvider, SharedChainDb,
-        SharedPeerSharingProvider, TxSubmissionConsumer, process_connection_manager_timeouts,
-        run_inbound_accept_loop,
+        BlockProvider, ChainProvider, InboundSessionAborts, PEER_SHARING_MAX_AMOUNT,
+        PeerSharingProvider, SharedChainDb, SharedPeerSharingProvider, TxSubmissionConsumer,
+        process_connection_manager_timeouts, run_inbound_accept_loop,
     };
     use crate::NodeConfig;
     use crate::runtime::bootstrap;
@@ -2355,7 +2373,7 @@ mod tests {
                     issuer_vkey: header.body.issuer_vkey,
                 },
                 transactions: Vec::new(),
-                raw_cbor: Some(raw_cbor),
+                raw_cbor: Some(std::sync::Arc::from(raw_cbor)),
                 header_cbor_size: None,
             },
             header,
@@ -2365,7 +2383,7 @@ mod tests {
     #[test]
     fn block_provider_uses_exclusive_lower_bound_from_origin() {
         let (block, _) = make_shelley_block(10, 1, Some([0xAA; 32]));
-        let expected_raw = block.raw_cbor.clone().expect("raw block");
+        let expected_raw: Vec<u8> = block.raw_cbor.clone().expect("raw block").to_vec();
         let upper = Point::BlockPoint(block.header.slot_no, block.header.hash).to_cbor_bytes();
 
         let mut immutable = InMemoryImmutable::default();
@@ -2388,7 +2406,7 @@ mod tests {
         let (first_block, first_header) = make_shelley_block(10, 1, Some([0xAA; 32]));
         let first_point = Point::BlockPoint(first_block.header.slot_no, first_block.header.hash);
         let (second_block, _) = make_shelley_block(20, 2, Some(first_header.header_hash().0));
-        let expected_raw = second_block.raw_cbor.clone().expect("raw block");
+        let expected_raw: Vec<u8> = second_block.raw_cbor.clone().expect("raw block").to_vec();
         let upper = Point::BlockPoint(second_block.header.slot_no, second_block.header.hash)
             .to_cbor_bytes();
 
@@ -2640,6 +2658,39 @@ mod tests {
         let provider = SharedPeerSharingProvider::new(Arc::new(RwLock::new(registry)));
         let peers = provider.shareable_peers(2);
         assert_eq!(peers.len(), 2, "should return at most the requested amount");
+    }
+
+    /// Byzantine peer sends `MsgShareRequest { amount: u16::MAX }` to force
+    /// a full-registry walk every request.  The server must clamp to
+    /// `PEER_SHARING_MAX_AMOUNT` (255, matching upstream `Word8`).
+    #[test]
+    fn shared_peer_sharing_provider_clamps_to_upstream_word8_max() {
+        use std::net::SocketAddr;
+        use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus};
+
+        let mut registry = PeerRegistry::default();
+        // Populate enough peers that the request would otherwise return
+        // many; populating 300 peers exceeds the 255 cap, so the cap is
+        // observable via `peers.len() == 255` not `== 300`.
+        for i in 0..300u32 {
+            let addr: SocketAddr = format!("10.0.{}.{}:3001", (i / 256) % 256, i % 256)
+                .parse()
+                .unwrap();
+            registry.insert_source(addr, PeerSource::PeerSourceBootstrap);
+            registry.set_status(addr, PeerStatus::PeerWarm);
+        }
+
+        let provider = SharedPeerSharingProvider::new(Arc::new(RwLock::new(registry)));
+        let peers = provider.shareable_peers(u16::MAX);
+        assert_eq!(
+            peers.len(),
+            PEER_SHARING_MAX_AMOUNT as usize,
+            "u16::MAX request must be clamped to the upstream Word8 ceiling"
+        );
+
+        // Smaller-than-cap requests still work.
+        let peers_small = provider.shareable_peers(10);
+        assert_eq!(peers_small.len(), 10);
     }
 
     type RawChainSyncTip = (Vec<u8>, Vec<u8>, Vec<u8>);

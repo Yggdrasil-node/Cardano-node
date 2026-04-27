@@ -3648,7 +3648,7 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
             for (i, b) in blocks.iter().enumerate() {
                 let spans = block_spans.get(i).unwrap_or(&empty_spans);
                 let mut block = multi_era_block_to_block_with_spans(b, spans);
-                block.raw_cbor = raw_blocks.get(i).cloned();
+                block.raw_cbor = raw_blocks.get(i).cloned().map(std::sync::Arc::from);
                 // BlockFetch ranges can overlap at boundaries across peers.
                 // Treat already-present hashes as idempotent replays.
                 if store.get_block(&block.header.hash).is_some() {

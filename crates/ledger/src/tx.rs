@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::Era;
 use crate::eras::{
@@ -92,14 +94,20 @@ pub struct ShelleyCompatibleSubmittedTx<TxBody> {
     pub auxiliary_data: Option<Vec<u8>>,
     /// Exact CBOR bytes of the submitted transaction when built via the
     /// provided constructors or decoder.
-    pub raw_cbor: Vec<u8>,
+    ///
+    /// Sealed to `pub(crate)` so external code cannot replace `body` and
+    /// silently desync the on-wire bytes.  Read via [`Self::raw_cbor`].
+    pub(crate) raw_cbor: Vec<u8>,
     /// Original wire CBOR bytes of the transaction body.
     ///
     /// Upstream `Cardano.Ledger.Core.txIdTxBody` hashes the on-wire body
     /// bytes, not a re-serialized representation.  Preserving the original
     /// bytes ensures that TxId computation is correct even for
     /// non-canonically encoded transactions.
-    pub raw_body: Vec<u8>,
+    ///
+    /// Sealed to `pub(crate)` so external code cannot replace `body` and
+    /// silently desync the on-wire bytes.  Read via [`Self::raw_body`].
+    pub(crate) raw_body: Vec<u8>,
 }
 
 impl<TxBody> ShelleyCompatibleSubmittedTx<TxBody>
@@ -130,6 +138,27 @@ where
     /// `originalBytes` of the body, not a re-serialized form.
     pub fn tx_id(&self) -> TxId {
         compute_tx_id(&self.raw_body)
+    }
+
+    /// Return the original on-wire CBOR body bytes captured during decode
+    /// (or computed from the typed body when the constructor is used).
+    ///
+    /// Authoritative for `tx_id` derivation per
+    /// `Cardano.Ledger.Core.txIdTxBody`; the typed `body` field can be
+    /// re-serialized with `to_cbor_bytes()` but that is byte-canonical
+    /// CBOR which does not always match what the wallet originally sent
+    /// (definite vs indefinite length, set vs array, integer-width
+    /// canonicalisation).
+    pub fn raw_body(&self) -> &[u8] {
+        &self.raw_body
+    }
+
+    /// Return the exact CBOR bytes of the entire submitted transaction
+    /// (`[body, witness_set, ?aux]`) as captured during decode (or
+    /// constructed via [`Self::new`]).  Used for fee-formula `tx_size`
+    /// calculations that must match the wallet's original encoding.
+    pub fn raw_cbor(&self) -> &[u8] {
+        &self.raw_cbor
     }
 }
 
@@ -195,14 +224,18 @@ pub struct AlonzoCompatibleSubmittedTx<TxBody> {
     pub auxiliary_data: Option<Vec<u8>>,
     /// Exact CBOR bytes of the submitted transaction when built via the
     /// provided constructors or decoder.
-    pub raw_cbor: Vec<u8>,
+    ///
+    /// Sealed to `pub(crate)` — read via [`Self::raw_cbor`].
+    pub(crate) raw_cbor: Vec<u8>,
     /// Original wire CBOR bytes of the transaction body.
     ///
     /// Upstream `Cardano.Ledger.Core.txIdTxBody` hashes the on-wire body
     /// bytes, not a re-serialized representation.  Preserving the original
     /// bytes ensures that TxId computation is correct even for
     /// non-canonically encoded transactions.
-    pub raw_body: Vec<u8>,
+    ///
+    /// Sealed to `pub(crate)` — read via [`Self::raw_body`].
+    pub(crate) raw_body: Vec<u8>,
 }
 
 impl<TxBody> AlonzoCompatibleSubmittedTx<TxBody>
@@ -235,6 +268,20 @@ where
     /// `originalBytes` of the body, not a re-serialized form.
     pub fn tx_id(&self) -> TxId {
         compute_tx_id(&self.raw_body)
+    }
+
+    /// Return the original on-wire CBOR body bytes.  See
+    /// [`ShelleyCompatibleSubmittedTx::raw_body`] for the authoritativeness
+    /// rationale.
+    pub fn raw_body(&self) -> &[u8] {
+        &self.raw_body
+    }
+
+    /// Return the exact CBOR bytes of the entire submitted transaction
+    /// (`[body, witness_set, is_valid, ?aux]`).  See
+    /// [`ShelleyCompatibleSubmittedTx::raw_cbor`].
+    pub fn raw_cbor(&self) -> &[u8] {
+        &self.raw_cbor
     }
 }
 
@@ -553,8 +600,16 @@ pub struct Block {
     /// without re-encoding. Populated during sync when blocks arrive
     /// from the network; absent for blocks constructed programmatically
     /// or recovered from legacy storage.
+    ///
+    /// Stored as `Arc<[u8]>` so the storage layer can cheaply hand a
+    /// refcounted handle to BlockFetch re-serve and the apply pipeline
+    /// without per-block heap copies — for full Conway blocks
+    /// (~80 KB typical) `clone()` is now an atomic refcount bump
+    /// instead of a `memcpy`.  On-disk CBOR encoding is unchanged
+    /// (serde's `rc` feature serializes `Arc<[u8]>` as a CBOR
+    /// byte-string, identical to `Vec<u8>`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub raw_cbor: Option<Vec<u8>>,
+    pub raw_cbor: Option<Arc<[u8]>>,
     /// Serialized size of the block header in bytes (CBOR wire format).
     ///
     /// When present, `apply_block()` checks this against the

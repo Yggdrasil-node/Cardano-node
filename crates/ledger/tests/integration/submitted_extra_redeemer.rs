@@ -121,15 +121,8 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         network_id: None,
     };
 
-    let raw_cbor = body.to_cbor_bytes();
-    let submitted = MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx {
-        raw_body: body.to_cbor_bytes(),
-        body,
-        witness_set: ws,
-        is_valid: true,
-        auxiliary_data: None,
-        raw_cbor,
-    });
+    let submitted =
+        MultiEraSubmittedTx::Alonzo(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -274,15 +267,8 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         reference_inputs: None,
     };
 
-    let raw_cbor = body.to_cbor_bytes();
-    let submitted = MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx {
-        raw_body: body.to_cbor_bytes(),
-        body,
-        witness_set: ws,
-        is_valid: true,
-        auxiliary_data: None,
-        raw_cbor,
-    });
+    let submitted =
+        MultiEraSubmittedTx::Babbage(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(
@@ -374,15 +360,8 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
         treasury_donation: None,
     };
 
-    let raw_cbor = body.to_cbor_bytes();
-    let submitted = MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx {
-        raw_body: body.to_cbor_bytes(),
-        body,
-        witness_set: ws,
-        is_valid: true,
-        auxiliary_data: None,
-        raw_cbor,
-    });
+    let submitted =
+        MultiEraSubmittedTx::Conway(AlonzoCompatibleSubmittedTx::new(body, ws, true, None));
 
     let result = state.apply_submitted_tx(&submitted, SlotNo(10), None);
     assert!(

@@ -41,7 +41,7 @@ cargo test-all    # cargo test --workspace --all-features
 cargo lint        # cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-All three (`check-all`, `test-all`, `lint`) are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same trio.
+All four (`fmt --all -- --check`, `check-all`, `test-all`, `lint`) are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
 
 Running a single test:
 

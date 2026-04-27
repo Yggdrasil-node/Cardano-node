@@ -7,16 +7,17 @@ nav_order: 5
 
 # Upstream Parity Matrix
 
-Last updated: 2026-04-26
+Last updated: 2026-04-27
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.
 
 ## Verification Baseline
 
+- `cargo fmt --all -- --check`: clean (zero diff; CI gate added under audit M-2 follow-up)
 - `cargo check-all`: passing
-- `cargo test-all`: passing (0 failures)
-- `cargo test-all -- --list`: 4210 discovered tests
+- `cargo test-all`: passing (0 failures, 4 637 discovered tests)
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
+- `cargo deny check advisories bans licenses sources`: passing (one intentional ignore: `RUSTSEC-2021-0127` for the `serde_cbor` storage carve-out, tracked separately for migration)
 
 ## Subsystem Status
 
@@ -68,6 +69,21 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 **To advance a pin**: edit `node/src/upstream_pins.rs`, run the full audit cadence (`cargo check-all`, `cargo test-all`, `cargo lint`, drift-guard tests, fixture cross-checks) against the new SHA, run `node/scripts/check_upstream_drift.sh` to confirm, then update this table with the rationale.
 
 **Drift is expected and informational**. The audit baseline is allowed to lag upstream — the drift report exists so the lag is visible, not so it triggers a build failure. `check_upstream_drift.sh` exits 0 on drift by default; pass `--fail-on-drift` for CI gating if/when desired.
+
+### Drift snapshot — 2026-04-27
+
+`node/scripts/check_upstream_drift.sh` against live `git ls-remote HEAD`:
+
+| Repository | Pinned (audit baseline) | Live HEAD (2026-04-27) | Status |
+|---|---|---|---|
+| `cardano-base` | `db52f43b38ba…` | `9965336f769d…` | drifted |
+| `cardano-ledger` | `9ae77d611ad8…` | `20652eea24c5…` | drifted |
+| `ouroboros-consensus` | `91c8e1bb5d7f…` | `c368c2529f2f…` | drifted |
+| `ouroboros-network` | `0e84bced45c7…` | (same) | **in-sync** |
+| `plutus` | `187c3971a34e…` | `2a0502463eb4…` | drifted |
+| `cardano-node` | `60af1c23bc20…` | `e8c2a722bf8a…` | drifted |
+
+5 of 6 upstream repos have advanced since the 2026-Q2 baseline. Each pin advance is a separate slice (refresh the corresponding vendored test vectors / fixtures, re-run the full audit cadence against the new SHA, surface any rule changes that landed upstream in the interim). The Yggdrasil code surface remains tested against the audit-baseline behavior — it does not silently track upstream `main`.
 
 ## Update Rules
 
