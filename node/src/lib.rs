@@ -15,6 +15,9 @@ pub mod sync;
 pub mod tracer;
 pub mod upstream_pins;
 
+pub use blockfetch_worker::{
+    DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
+};
 pub use runtime::{
     ChainTipNotify, LedgerJudgementSettings, MempoolAddTxError, MempoolAddTxOutcome,
     MempoolAddTxResult, NodeConfig, PeerSession, ReconnectingSyncServiceOutcome,
@@ -50,10 +53,9 @@ pub use sync::{
     evict_confirmed_from_mempool, execute_multi_peer_blockfetch_plan,
     execute_multi_peer_blockfetch_plan_inline, extract_tx_ids, forget_peer_density,
     keepalive_heartbeat, multi_era_block_to_block, multi_era_block_to_chain_entry,
-    new_density_registry, observe_chain_sync_header_density,
-    partition_fetch_range_across_peers, praos_header_body_to_consensus,
-    praos_header_to_consensus, promote_stable_blocks, read_peer_density,
-    recover_ledger_state_chaindb, run_sync_service, run_verified_sync_service,
+    new_density_registry, observe_chain_sync_header_density, partition_fetch_range_across_peers,
+    praos_header_body_to_consensus, praos_header_to_consensus, promote_stable_blocks,
+    read_peer_density, recover_ledger_state_chaindb, run_sync_service, run_verified_sync_service,
     run_verified_sync_service_chaindb, shelley_block_to_block, shelley_header_body_to_consensus,
     shelley_header_to_consensus, shelley_opcert_to_consensus, sync_batch_apply,
     sync_batch_apply_verified, sync_step, sync_step_decoded, sync_step_multi_era, sync_step_typed,
@@ -62,9 +64,6 @@ pub use sync::{
     validate_block_protocol_version, verify_block_body_hash, verify_block_vrf,
     verify_block_vrf_with_stake, verify_multi_era_block, verify_praos_header,
     verify_shelley_header,
-};
-pub use blockfetch_worker::{
-    DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
 };
 pub use tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};
 

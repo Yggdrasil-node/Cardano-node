@@ -803,8 +803,8 @@ fn parses_value_gt() {
 
 #[test]
 fn rejects_size_range_with_lower_above_upper() {
-    let err = parse_schema("v = bytes .size 10..5\n")
-        .expect_err("inverted range should be rejected");
+    let err =
+        parse_schema("v = bytes .size 10..5\n").expect_err("inverted range should be rejected");
     assert!(matches!(err, ParseError::InvalidSize(_)));
 }
 
@@ -823,8 +823,9 @@ fn rejects_completely_open_range() {
 
 #[test]
 fn parses_vendored_conway_ranges_fixture() {
-    let fixture = std::fs::read_to_string("../../specs/upstream-cddl-fragments/conway-ranges-min.cddl")
-        .expect("vendored Conway ranges fixture should exist");
+    let fixture =
+        std::fs::read_to_string("../../specs/upstream-cddl-fragments/conway-ranges-min.cddl")
+            .expect("vendored Conway ranges fixture should exist");
     let parsed = parse_schema(&fixture).expect("fixture parses cleanly");
 
     let by_name: std::collections::BTreeMap<&str, &TypeDefinition> = parsed

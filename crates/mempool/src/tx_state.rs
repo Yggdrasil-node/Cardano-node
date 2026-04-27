@@ -180,11 +180,7 @@ impl TxState {
     ///
     /// Mirrors upstream `acknowledgedTxs`/`requestedTxsInflightSize` updates
     /// in `Ouroboros.Network.TxSubmission.Inbound.V2.Decision`.
-    pub fn mark_in_flight_sized(
-        &mut self,
-        peer: &SocketAddr,
-        sized_txids: &[(TxId, SizeInBytes)],
-    ) {
+    pub fn mark_in_flight_sized(&mut self, peer: &SocketAddr, sized_txids: &[(TxId, SizeInBytes)]) {
         if let Some(peer_state) = self.peers.get_mut(peer) {
             for (txid, size) in sized_txids {
                 if peer_state.in_flight.insert(*txid) {
@@ -319,10 +315,7 @@ impl TxState {
     /// Mirrors upstream `requestedTxsInflight` set size in
     /// `Ouroboros.Network.TxSubmission.Inbound.V2.State.PeerTxState`.
     pub fn peer_inflight_count(&self, peer: &SocketAddr) -> usize {
-        self.peers
-            .get(peer)
-            .map(|s| s.in_flight.len())
-            .unwrap_or(0)
+        self.peers.get(peer).map(|s| s.in_flight.len()).unwrap_or(0)
     }
 
     /// Number of tracked peers.
@@ -746,10 +739,7 @@ mod tests {
         assert_eq!(state.peer_inflight_count(&p), 0);
 
         let _ = state.filter_advertised(&p, &[txid(1), txid(2), txid(3)]);
-        state.mark_in_flight_sized(
-            &p,
-            &[(txid(1), 100), (txid(2), 200), (txid(3), 300)],
-        );
+        state.mark_in_flight_sized(&p, &[(txid(1), 100), (txid(2), 200), (txid(3), 300)]);
         assert_eq!(state.peer_inflight_count(&p), 3);
 
         state.mark_received(&p, &[txid(1)]);

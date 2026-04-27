@@ -1586,7 +1586,9 @@ mod tests {
         state.deposit_pot_mut().add_key_deposit(2_000_000);
         state.deposit_pot_mut().add_pool_deposit(500_000_000);
         state.deposit_pot_mut().add_drep_deposit(500_000_000);
-        state.deposit_pot_mut().add_proposal_deposit(100_000_000_000);
+        state
+            .deposit_pot_mut()
+            .add_proposal_deposit(100_000_000_000);
         let snapshot = state.snapshot();
 
         let mut enc = Encoder::new();

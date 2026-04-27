@@ -355,7 +355,9 @@ impl InboundSessionAborts {
 impl std::fmt::Debug for InboundSessionAborts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let len = self.inner.read().map(|m| m.len()).unwrap_or(0);
-        f.debug_struct("InboundSessionAborts").field("len", &len).finish()
+        f.debug_struct("InboundSessionAborts")
+            .field("len", &len)
+            .finish()
     }
 }
 
@@ -957,8 +959,7 @@ pub async fn run_txsubmission_server(
                     // queued for re-advertisement once prior fetches
                     // drain.
                     let count_current = tx_state.peer_inflight_count(peer_addr);
-                    let count_remaining =
-                        MAX_TXS_REQUESTED_PER_PEER.saturating_sub(count_current);
+                    let count_remaining = MAX_TXS_REQUESTED_PER_PEER.saturating_sub(count_current);
                     let (count_admitted, count_deferred) =
                         clamp_to_count_budget(&outcome.to_fetch, count_remaining);
                     let per_peer_current = tx_state.peer_inflight_bytes(peer_addr);
@@ -1993,13 +1994,13 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::{Arc, Mutex, RwLock};
-    use yggdrasil_ledger::TxId;
-    use yggdrasil_mempool::SharedTxState;
     use std::time::{Duration, Instant};
+    use yggdrasil_ledger::TxId;
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
         ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo,
     };
+    use yggdrasil_mempool::SharedTxState;
     use yggdrasil_network::{
         ConnStateId, ConnectionEntry, ConnectionId, ConnectionManagerState, ConnectionState,
         HandshakeVersion, MuxError, MuxHandle, NextResponse, PeerListener, TxIdAndSize,
@@ -2034,8 +2035,7 @@ mod tests {
         let big = TxId([0x11; 32]);
         let mut sizes = HashMap::new();
         sizes.insert(big, 100_000u32);
-        let (admitted, deferred) =
-            super::select_within_byte_budget(&[big], &sizes, 64 * 1024);
+        let (admitted, deferred) = super::select_within_byte_budget(&[big], &sizes, 64 * 1024);
         assert_eq!(admitted, vec![big]);
         assert_eq!(deferred, 0);
     }
@@ -2055,8 +2055,7 @@ mod tests {
         sizes.insert(b, 500u32);
         sizes.insert(c, 600u32);
         sizes.insert(d, 100u32);
-        let (admitted, deferred) =
-            super::select_within_byte_budget(&[a, b, c, d], &sizes, 1500);
+        let (admitted, deferred) = super::select_within_byte_budget(&[a, b, c, d], &sizes, 1500);
         assert_eq!(admitted, vec![a, b]);
         assert_eq!(deferred, 2);
     }
@@ -2070,8 +2069,7 @@ mod tests {
         let mut sizes = HashMap::new();
         sizes.insert(a, 50u32);
         sizes.insert(b, 50u32);
-        let (admitted, deferred) =
-            super::select_within_byte_budget(&[a, b], &sizes, 0);
+        let (admitted, deferred) = super::select_within_byte_budget(&[a, b], &sizes, 0);
         assert_eq!(admitted, vec![a]);
         assert_eq!(deferred, 1);
     }
@@ -2083,8 +2081,7 @@ mod tests {
         let a = TxId([1; 32]);
         let b = TxId([2; 32]);
         let sizes = HashMap::new();
-        let (admitted, deferred) =
-            super::select_within_byte_budget(&[a, b], &sizes, 0);
+        let (admitted, deferred) = super::select_within_byte_budget(&[a, b], &sizes, 0);
         // Both admitted: a admitted as first (forward progress), b
         // admitted because its size lookup is 0 which fits in budget 0.
         assert_eq!(admitted, vec![a, b]);

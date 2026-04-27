@@ -94,7 +94,8 @@ mod tests {
                 "upstream pin for {repo} must be a 40-character SHA, got {sha:?}",
             );
             assert!(
-                sha.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                sha.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                 "upstream pin for {repo} must be lowercase hex only, got {sha:?}",
             );
         }

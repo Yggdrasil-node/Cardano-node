@@ -2565,9 +2565,7 @@ mod tests {
             (
                 13,
                 5,
-                DCert::AccountRegistrationDelegationToStakePoolAndDrep(
-                    cred, pool, drep, 2_000_000,
-                ),
+                DCert::AccountRegistrationDelegationToStakePoolAndDrep(cred, pool, drep, 2_000_000),
             ),
             (
                 14,
@@ -2701,7 +2699,10 @@ mod tests {
             let dcert_tag = dec.unsigned().expect("DCert tag");
             assert_eq!(dcert_tag, 6, "MIR DCert tag must be 6");
             let inner_len = dec.array().expect("inner MIR array");
-            assert_eq!(inner_len, 2, "inner MIR array must be length 2 (pot, target)");
+            assert_eq!(
+                inner_len, 2,
+                "inner MIR array must be length 2 (pot, target)"
+            );
             let pot_value = dec.unsigned().expect("inner pot value");
             assert_eq!(
                 pot_value, canonical,
@@ -2762,7 +2763,10 @@ mod tests {
             vrf_keyhash: [0x0c; 32],
             pledge: 0,
             cost: 340_000_000,
-            margin: UnitInterval { numerator: 1, denominator: 100 },
+            margin: UnitInterval {
+                numerator: 1,
+                denominator: 100,
+            },
             reward_account: RewardAccount {
                 network: 1,
                 credential: StakeCredential::AddrKeyHash([0x0d; 28]),

@@ -2235,7 +2235,9 @@ fn ocert_counters_persist_across_simulated_restart() {
     // what the previous session already accepted — exactly the security
     // property the persistence is meant to preserve.
     assert!(
-        session_two.validate_and_update([0xa1; 28], 0, true).is_err(),
+        session_two
+            .validate_and_update([0xa1; 28], 0, true)
+            .is_err(),
         "post-restart counters must reject replayed lower sequence numbers"
     );
 

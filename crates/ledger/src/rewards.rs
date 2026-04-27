@@ -253,16 +253,15 @@ pub struct EpochRewardPot {
 /// `deltaR1 = rationalToCoinViaFloor (min 1 eta * rho * reserves)`.
 pub fn compute_epoch_reward_pot(params: &RewardParams) -> EpochRewardPot {
     // η clamped to 1: min(1, eta).
-    let eta_clamped = if params.eta.denominator == 0
-        || params.eta.numerator >= params.eta.denominator
-    {
-        UnitInterval {
-            numerator: 1,
-            denominator: 1,
-        }
-    } else {
-        params.eta
-    };
+    let eta_clamped =
+        if params.eta.denominator == 0 || params.eta.numerator >= params.eta.denominator {
+            UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            }
+        } else {
+            params.eta
+        };
     // Upstream: `deltaR1 = rationalToCoinViaFloor (min 1 eta * rho * reserves)`
     // — a single exact rational expression floored once.
     //

@@ -313,11 +313,7 @@ pub struct NodeConfigFile {
     /// Parsed for byte-for-byte compatibility with vendored upstream
     /// `config.json` files; semantically Yggdrasil only implements the
     /// Cardano protocol, so the value is documentation-only.
-    #[serde(
-        rename = "Protocol",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(rename = "Protocol", default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<String>,
     /// Optional path to an upstream `checkpoints.json` file.  Matches
     /// `CheckpointsFile` in the official Cardano node configuration.
@@ -429,10 +425,7 @@ pub struct NodeConfigFile {
     #[serde(default = "default_peer_sharing", alias = "PeerSharing")]
     pub peer_sharing: u8,
     /// Runtime consensus mode used for peer-governor churn regime selection.
-    #[serde(
-        default = "default_consensus_mode",
-        alias = "ConsensusMode"
-    )]
+    #[serde(default = "default_consensus_mode", alias = "ConsensusMode")]
     pub consensus_mode: ConsensusModeConfig,
     /// Governor tick interval in seconds. Defaults to 5.
     #[serde(default = "default_governor_tick_interval_secs")]
@@ -874,8 +867,7 @@ impl NodeConfigFile {
     pub fn load_byron_genesis_utxo(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Vec<crate::genesis::ByronGenesisUtxoEntry>, crate::genesis::GenesisLoadError>
-    {
+    ) -> Result<Vec<crate::genesis::ByronGenesisUtxoEntry>, crate::genesis::GenesisLoadError> {
         use crate::genesis::load_byron_genesis_utxo;
 
         let Some(path) = self.byron_genesis_file.as_deref() else {
@@ -1850,7 +1842,10 @@ mod tests {
         // `default_max_major_protocol_version()` so a refactor that
         // inlines the value in one place but not the other fails CI.
         assert_eq!(CONWAY_MAJOR_PROTOCOL_VERSION, 10);
-        assert_eq!(default_max_major_protocol_version(), CONWAY_MAJOR_PROTOCOL_VERSION);
+        assert_eq!(
+            default_max_major_protocol_version(),
+            CONWAY_MAJOR_PROTOCOL_VERSION
+        );
     }
 
     #[test]
@@ -1952,7 +1947,10 @@ mod tests {
         // already exist.
         use yggdrasil_network::HandshakeVersion;
 
-        let expected: Vec<u32> = vec![HandshakeVersion::V13.0 as u32, HandshakeVersion::V14.0 as u32];
+        let expected: Vec<u32> = vec![
+            HandshakeVersion::V13.0 as u32,
+            HandshakeVersion::V14.0 as u32,
+        ];
         assert_eq!(
             expected,
             vec![13_u32, 14_u32],
@@ -1996,9 +1994,18 @@ mod tests {
         // Pin the cheap accessor's output to the named constants so a
         // refactor that inlines the literal in one branch (and not the
         // others) fails CI.
-        assert_eq!(NetworkPreset::Mainnet.network_magic(), MAINNET_NETWORK_MAGIC);
-        assert_eq!(NetworkPreset::Preprod.network_magic(), PREPROD_NETWORK_MAGIC);
-        assert_eq!(NetworkPreset::Preview.network_magic(), PREVIEW_NETWORK_MAGIC);
+        assert_eq!(
+            NetworkPreset::Mainnet.network_magic(),
+            MAINNET_NETWORK_MAGIC
+        );
+        assert_eq!(
+            NetworkPreset::Preprod.network_magic(),
+            PREPROD_NETWORK_MAGIC
+        );
+        assert_eq!(
+            NetworkPreset::Preview.network_magic(),
+            PREVIEW_NETWORK_MAGIC
+        );
     }
 
     #[test]

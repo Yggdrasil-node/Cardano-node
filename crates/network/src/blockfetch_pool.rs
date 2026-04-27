@@ -860,7 +860,10 @@ mod tests {
             pool.note_failure(p);
         }
         let s = pool.peer_state(p).unwrap();
-        assert!(peer_failure_should_demote(s, DEFAULT_FAILURE_DEMOTION_THRESHOLD));
+        assert!(peer_failure_should_demote(
+            s,
+            DEFAULT_FAILURE_DEMOTION_THRESHOLD
+        ));
     }
 
     /// Pins the upstream-aligned `FetchMode` enum unification: the pool's

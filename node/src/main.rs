@@ -360,9 +360,7 @@ struct StorageValidationReport {
 /// `ouroboros-network-protocols` LocalStateQuery.
 #[cfg(unix)]
 async fn run_query(socket_path: PathBuf, network_magic: u32, query: QueryCommand) -> Result<()> {
-    use yggdrasil_network::{
-        AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect,
-    };
+    use yggdrasil_network::{AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect};
 
     let mut conn = ntc_connect(&socket_path, network_magic, true)
         .await
@@ -777,7 +775,8 @@ fn resolve_upstream_reference_paths(
         NetworkPreset::Preview => "preview",
     };
 
-    let mut root = upstream_config_root.unwrap_or_else(|| PathBuf::from("/tmp/cardano-tooling/share"));
+    let mut root =
+        upstream_config_root.unwrap_or_else(|| PathBuf::from("/tmp/cardano-tooling/share"));
     if !root.join(network_dir).is_dir() {
         root = PathBuf::from("node/configuration");
     }
@@ -824,7 +823,12 @@ fn extract_reference_network_magic(config_path: &std::path::Path, network: Netwo
         .as_ref()
         .and_then(|v| v.get("ShelleyGenesisFile"))
         .and_then(|v| v.as_str())
-        .map(|name| config_path.parent().unwrap_or_else(|| std::path::Path::new(".")).join(name));
+        .map(|name| {
+            config_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(name)
+        });
 
     if let Some(path) = genesis_path {
         if let Ok(bytes) = std::fs::read(path) {
@@ -845,12 +849,16 @@ fn run_cardano_cli_command(
     upstream_config_root: Option<PathBuf>,
     action: CardanoCliCommand,
 ) -> Result<()> {
-    let (config_path, topology_path) = resolve_upstream_reference_paths(network, upstream_config_root)?;
+    let (config_path, topology_path) =
+        resolve_upstream_reference_paths(network, upstream_config_root)?;
     let reference_network_magic = extract_reference_network_magic(&config_path, network);
 
     match action {
         CardanoCliCommand::Version => {
-            println!("yggdrasil-cardano-cli (pure-rust) {}", env!("CARGO_PKG_VERSION"));
+            println!(
+                "yggdrasil-cardano-cli (pure-rust) {}",
+                env!("CARGO_PKG_VERSION")
+            );
             println!("network preset default: {}", network);
             Ok(())
         }
@@ -1106,10 +1114,9 @@ fn main() -> Result<()> {
             // startup, before any judgement update); the governor tick
             // overwrites it on every tick once the live `LedgerStateJudgement`
             // is available.
-            let block_fetch_pool: BlockFetchInstrumentation =
-                Arc::new(std::sync::Mutex::new(BlockFetchPool::new(
-                    FetchMode::FetchModeBulkSync,
-                )));
+            let block_fetch_pool: BlockFetchInstrumentation = Arc::new(std::sync::Mutex::new(
+                BlockFetchPool::new(FetchMode::FetchModeBulkSync),
+            ));
 
             let verification = if no_verify {
                 None
@@ -1154,8 +1161,7 @@ fn main() -> Result<()> {
             // governor-side wiring (writer path).  Default knob = 1
             // keeps the pool empty and the legacy single-peer path
             // active; opting into knob > 1 activates registration.
-            let shared_fetch_worker_pool =
-                yggdrasil_node::runtime::new_shared_fetch_worker_pool();
+            let shared_fetch_worker_pool = yggdrasil_node::runtime::new_shared_fetch_worker_pool();
 
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
@@ -1306,13 +1312,15 @@ fn main() -> Result<()> {
             // upstream `mkLedgerStateJudgement` from
             // `Cardano.Node.Diffusion.Configuration` whose threshold is
             // `stabilityWindow * slotLength` ≈ `3 * k / f * slotLength`.
-            .with_ledger_judgement_settings(yggdrasil_node::runtime::LedgerJudgementSettings {
-                system_start_unix_secs: genesis_system_start_unix_secs,
-                slot_length_secs: genesis_slot_length,
-                max_ledger_state_age_secs: (3.0 * file_cfg.security_param_k as f64
-                    / file_cfg.active_slot_coeff)
-                    * genesis_slot_length.unwrap_or(1.0),
-            });
+            .with_ledger_judgement_settings(
+                yggdrasil_node::runtime::LedgerJudgementSettings {
+                    system_start_unix_secs: genesis_system_start_unix_secs,
+                    slot_length_secs: genesis_slot_length,
+                    max_ledger_state_age_secs: (3.0 * file_cfg.security_param_k as f64
+                        / file_cfg.active_slot_coeff)
+                        * genesis_slot_length.unwrap_or(1.0),
+                },
+            );
 
             let mut topology_config = file_cfg.topology_config();
             if let Some(peer_snapshot_path) = &peer_snapshot_path {
@@ -1446,17 +1454,16 @@ fn main() -> Result<()> {
 /// (requires canonical CBOR), so a present expectation is currently a
 /// "declared but not yet verified" nuance we surface separately.
 fn trace_genesis_hashes_verified(tracer: &NodeTracer, file_cfg: &NodeConfigFile) {
-    let shelley_verified = file_cfg.shelley_genesis_file.is_some()
-        && file_cfg.shelley_genesis_hash.is_some();
-    let alonzo_verified = file_cfg.alonzo_genesis_file.is_some()
-        && file_cfg.alonzo_genesis_hash.is_some();
-    let conway_verified = file_cfg.conway_genesis_file.is_some()
-        && file_cfg.conway_genesis_hash.is_some();
-    let byron_declared = file_cfg.byron_genesis_file.is_some()
-        && file_cfg.byron_genesis_hash.is_some();
-    let verified_count = u64::from(shelley_verified)
-        + u64::from(alonzo_verified)
-        + u64::from(conway_verified);
+    let shelley_verified =
+        file_cfg.shelley_genesis_file.is_some() && file_cfg.shelley_genesis_hash.is_some();
+    let alonzo_verified =
+        file_cfg.alonzo_genesis_file.is_some() && file_cfg.alonzo_genesis_hash.is_some();
+    let conway_verified =
+        file_cfg.conway_genesis_file.is_some() && file_cfg.conway_genesis_hash.is_some();
+    let byron_declared =
+        file_cfg.byron_genesis_file.is_some() && file_cfg.byron_genesis_hash.is_some();
+    let verified_count =
+        u64::from(shelley_verified) + u64::from(alonzo_verified) + u64::from(conway_verified);
 
     tracer.trace_runtime(
         "Node.GenesisHash.Verified",
@@ -2258,7 +2265,10 @@ fn status_report(
         .as_ref()
         .ok()
         .map(|r| format!("{:?}", r.ledger_state.current_era()));
-    let current_epoch = recovery.as_ref().ok().map(|r| r.ledger_state.current_epoch().0);
+    let current_epoch = recovery
+        .as_ref()
+        .ok()
+        .map(|r| r.ledger_state.current_epoch().0);
 
     Ok(StatusReport {
         network_magic: file_cfg.network_magic,
@@ -3075,7 +3085,10 @@ async fn serve_metrics(port: u16, metrics: std::sync::Arc<NodeMetrics>) -> std::
     }
 }
 
-fn metrics_http_response(request: &str, metrics: &NodeMetrics) -> (&'static str, &'static str, String) {
+fn metrics_http_response(
+    request: &str,
+    metrics: &NodeMetrics,
+) -> (&'static str, &'static str, String) {
     // Route order matters: more-specific prefixes MUST be tested before
     // less-specific ones.  Before the fix, `GET /metrics` was checked
     // before `GET /metrics/json`, so every JSON request matched the
@@ -3204,14 +3217,20 @@ mod tests {
 
     #[test]
     fn decode_optional_prefixed_hex_accepts_plain_hex() {
-        assert_eq!(decode_optional_prefixed_hex("deadbeef"), vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(
+            decode_optional_prefixed_hex("deadbeef"),
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
     }
 
     #[test]
     fn decode_optional_prefixed_hex_strips_0x_prefix() {
         // The new ergonomic — a user pasting `0x1234…` from a block
         // explorer now gets the same result as plain hex.
-        assert_eq!(decode_optional_prefixed_hex("0xdeadbeef"), vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(
+            decode_optional_prefixed_hex("0xdeadbeef"),
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
     }
 
     #[test]
@@ -3247,8 +3266,8 @@ mod tests {
         // to render the actual help text, so a future refactor that
         // replaces rustdoc-derived help with hand-written help would also
         // catch the missing note. A failing test names the offending flag.
-        use clap::CommandFactory;
         use super::Cli;
+        use clap::CommandFactory;
 
         let mut cmd = Cli::command();
         let rendered = cmd.render_long_help().to_string();
@@ -3597,8 +3616,8 @@ mod tests {
     fn validate_config_report_rejects_zero_slots_per_kes_period() {
         let mut cfg = default_config();
         cfg.slots_per_kes_period = 0;
-        let err = validate_config_report(&cfg, None)
-            .expect_err("zero slots_per_kes_period must fail");
+        let err =
+            validate_config_report(&cfg, None).expect_err("zero slots_per_kes_period must fail");
         assert!(
             err.to_string().contains("slots_per_kes_period"),
             "error should mention slots_per_kes_period: {err}",
@@ -3609,8 +3628,8 @@ mod tests {
     fn validate_config_report_rejects_zero_max_kes_evolutions() {
         let mut cfg = default_config();
         cfg.max_kes_evolutions = 0;
-        let err = validate_config_report(&cfg, None)
-            .expect_err("zero max_kes_evolutions must fail");
+        let err =
+            validate_config_report(&cfg, None).expect_err("zero max_kes_evolutions must fail");
         assert!(
             err.to_string().contains("max_kes_evolutions"),
             "error should mention max_kes_evolutions: {err}",
@@ -3902,10 +3921,8 @@ mod tests {
         assert!(body.trim_start().starts_with('{'));
 
         // /debug/metrics/prometheus is the explicit Prometheus-text alias.
-        let (_, ctype, body) = super::metrics_http_response(
-            "GET /debug/metrics/prometheus HTTP/1.1\r\n",
-            &metrics,
-        );
+        let (_, ctype, body) =
+            super::metrics_http_response("GET /debug/metrics/prometheus HTTP/1.1\r\n", &metrics);
         assert!(ctype.starts_with("text/plain"));
         assert!(body.contains("# HELP"));
     }
@@ -3954,10 +3971,7 @@ mod tests {
 
         let report = validate_config_report(&cfg, Some(&dir)).expect("report");
         assert!(
-            report
-                .warnings
-                .iter()
-                .any(|w| w.contains("soft floor")),
+            report.warnings.iter().any(|w| w.contains("soft floor")),
             "expected soft-floor warning, got: {:?}",
             report.warnings,
         );
@@ -4112,9 +4126,7 @@ mod tests {
         let report = validate_config_report(&cfg, Some(&dir)).expect("report");
         assert!(
             report.warnings.iter().any(|w| {
-                w.contains("peer_sharing")
-                    && w.contains("outside")
-                    && w.contains('2')
+                w.contains("peer_sharing") && w.contains("outside") && w.contains('2')
             }),
             "expected peer_sharing range warning, got: {:?}",
             report.warnings,
@@ -4771,8 +4783,7 @@ mod tests {
     fn validate_config_report_rejects_zero_epoch_length() {
         let mut cfg = default_config();
         cfg.epoch_length = 0;
-        let err =
-            validate_config_report(&cfg, None).expect_err("zero epoch_length must fail");
+        let err = validate_config_report(&cfg, None).expect_err("zero epoch_length must fail");
         assert!(
             err.to_string().contains("epoch_length"),
             "error should mention epoch_length: {err}",

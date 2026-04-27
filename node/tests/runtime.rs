@@ -129,7 +129,9 @@ async fn spawn_verified_batch_responder(
                             tip: tip_obj.to_cbor_bytes(),
                         }
                     } else {
-                        ChainSyncMessage::MsgIntersectNotFound { tip: tip_obj.to_cbor_bytes() }
+                        ChainSyncMessage::MsgIntersectNotFound {
+                            tip: tip_obj.to_cbor_bytes(),
+                        }
                     };
                     cs.send(resp.to_cbor()).await.expect("send intersect");
                     continue;
@@ -208,7 +210,9 @@ async fn spawn_verified_batch_responder_with_header(
                             tip: tip_obj.to_cbor_bytes(),
                         }
                     } else {
-                        ChainSyncMessage::MsgIntersectNotFound { tip: tip_obj.to_cbor_bytes() }
+                        ChainSyncMessage::MsgIntersectNotFound {
+                            tip: tip_obj.to_cbor_bytes(),
+                        }
                     };
                     cs.send(resp.to_cbor()).await.expect("send intersect");
                     continue;
@@ -338,7 +342,9 @@ async fn spawn_verified_batch_responder_from_point(
                             tip: tip_obj.to_cbor_bytes(),
                         }
                     } else {
-                        ChainSyncMessage::MsgIntersectNotFound { tip: tip_obj.to_cbor_bytes() }
+                        ChainSyncMessage::MsgIntersectNotFound {
+                            tip: tip_obj.to_cbor_bytes(),
+                        }
                     };
                     cs.send(resp.to_cbor()).await.expect("send intersect");
                     continue;
@@ -1903,14 +1909,9 @@ fn runtime_add_tx_to_shared_mempool_with_eviction_no_op_when_under_capacity() {
     let tx = shelley_submitted_tx_spending(0xA1, 0xA2, 2_000_000, 150_000);
     let tx_id = tx.tx_id();
 
-    let outcome = add_tx_to_shared_mempool_with_eviction(
-        &mut ledger,
-        &mempool,
-        tx,
-        SlotNo(500),
-        None,
-    )
-    .expect("admission");
+    let outcome =
+        add_tx_to_shared_mempool_with_eviction(&mut ledger, &mempool, tx, SlotNo(500), None)
+            .expect("admission");
     assert_eq!(outcome.result, MempoolAddTxResult::MempoolTxAdded(tx_id));
     assert!(outcome.evicted.is_empty());
     assert!(mempool.contains(&tx_id));
@@ -2120,8 +2121,9 @@ async fn runtime_verified_sync_records_blockfetch_pool_per_peer_counters() {
     )
     .await;
 
-    let pool: Arc<Mutex<BlockFetchPool>> =
-        Arc::new(Mutex::new(BlockFetchPool::new(FetchMode::FetchModeBulkSync)));
+    let pool: Arc<Mutex<BlockFetchPool>> = Arc::new(Mutex::new(BlockFetchPool::new(
+        FetchMode::FetchModeBulkSync,
+    )));
 
     let node_config = NodeConfig {
         peer_addr: first_addr,

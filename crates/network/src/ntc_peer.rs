@@ -698,9 +698,8 @@ mod tests {
         let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
         let magic = 1;
         let server = tokio::spawn(async move { ntc_accept(server_stream, magic).await });
-        let client = tokio::spawn(async move {
-            ntc_connect_stream(client_stream, magic, true).await
-        });
+        let client =
+            tokio::spawn(async move { ntc_connect_stream(client_stream, magic, true).await });
 
         let server_conn = server.await.unwrap().expect("server handshake");
         let client_conn = client.await.unwrap().expect("client handshake");
@@ -716,16 +715,12 @@ mod tests {
     async fn ntc_connect_rejects_wrong_magic() {
         let (client_stream, server_stream) = tokio::net::UnixStream::pair().unwrap();
         let server = tokio::spawn(async move { ntc_accept(server_stream, 1).await });
-        let client = tokio::spawn(async move {
-            ntc_connect_stream(client_stream, 999, false).await
-        });
+        let client =
+            tokio::spawn(async move { ntc_connect_stream(client_stream, 999, false).await });
 
         let server_res = server.await.unwrap();
         let client_res = client.await.unwrap();
         assert!(matches!(server_res, Err(NtcPeerError::VersionMismatch)));
-        assert!(matches!(
-            client_res,
-            Err(NtcPeerError::HandshakeRefused(_))
-        ));
+        assert!(matches!(client_res, Err(NtcPeerError::HandshakeRefused(_))));
     }
 }

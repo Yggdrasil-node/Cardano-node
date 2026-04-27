@@ -845,16 +845,31 @@ fn embedded_ver13_vrf_vectors_match_full_vendored_corpus() {
             "{}: ver must be ietfdraft13",
             vector.name,
         );
-        assert_eq!(hex(&vector.secret_key[..32]), kv["sk"], "{}: sk drift", vector.name);
+        assert_eq!(
+            hex(&vector.secret_key[..32]),
+            kv["sk"],
+            "{}: sk drift",
+            vector.name
+        );
         assert_eq!(
             hex(&vector.secret_key[32..]),
             kv["pk"],
             "{}: pk-half of secret_key drift",
             vector.name,
         );
-        assert_eq!(hex(&vector.public_key), kv["pk"], "{}: pk drift", vector.name);
+        assert_eq!(
+            hex(&vector.public_key),
+            kv["pk"],
+            "{}: pk drift",
+            vector.name
+        );
         assert_eq!(hex(&vector.proof), kv["pi"], "{}: proof drift", vector.name);
-        assert_eq!(hex(&vector.output), kv["beta"], "{}: output drift", vector.name);
+        assert_eq!(
+            hex(&vector.output),
+            kv["beta"],
+            "{}: output drift",
+            vector.name
+        );
         let expected_message: Vec<u8> = match kv["alpha"].as_str() {
             "empty" => Vec::new(),
             hex_value => decode_hex_vec(hex_value),

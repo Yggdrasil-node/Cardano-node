@@ -398,8 +398,7 @@ fn split_constraint(expr: &str) -> Option<(&str, ConstraintKind, &str)> {
             let end = idx + op.len();
             // Operator must be followed by whitespace or end-of-string,
             // otherwise it's part of an identifier (e.g. `.size` vs `.sized`).
-            let next_ok =
-                end == bytes.len() || bytes[end].is_ascii_whitespace();
+            let next_ok = end == bytes.len() || bytes[end].is_ascii_whitespace();
             // And must start at the beginning or after whitespace, so it
             // can't be embedded mid-identifier (e.g. `foo.size` where `foo.`
             // is not actually allowed CDDL but we guard for safety).

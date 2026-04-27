@@ -401,10 +401,7 @@ mod tests {
 
     #[test]
     fn refuse_reason_display_version_mismatch() {
-        let r = RefuseReason::VersionMismatch(vec![
-            HandshakeVersion(13),
-            HandshakeVersion(14),
-        ]);
+        let r = RefuseReason::VersionMismatch(vec![HandshakeVersion(13), HandshakeVersion(14)]);
         let s = format!("{r}");
         assert!(
             s.contains("version mismatch"),
@@ -421,14 +418,14 @@ mod tests {
 
     #[test]
     fn refuse_reason_display_handshake_decode_error() {
-        let r = RefuseReason::HandshakeDecodeError(
-            HandshakeVersion(14),
-            "expected map".to_owned(),
-        );
+        let r = RefuseReason::HandshakeDecodeError(HandshakeVersion(14), "expected map".to_owned());
         let s = format!("{r}");
         assert!(s.contains("handshake version data"), "rule name: {s}");
         assert!(s.contains("14"), "must name the version: {s}");
-        assert!(s.contains("expected map"), "must surface the inner reason: {s}");
+        assert!(
+            s.contains("expected map"),
+            "must surface the inner reason: {s}"
+        );
     }
 
     #[test]
@@ -436,7 +433,10 @@ mod tests {
         let r = RefuseReason::Refused(HandshakeVersion(13), "wrong magic".to_owned());
         let s = format!("{r}");
         assert!(s.contains("refused version 13"), "rule + version: {s}");
-        assert!(s.contains("wrong magic"), "must surface the inner reason: {s}");
+        assert!(
+            s.contains("wrong magic"),
+            "must surface the inner reason: {s}"
+        );
     }
 
     #[test]
@@ -490,7 +490,10 @@ mod tests {
         let decoded = decode_version_data(&mut Decoder::new(&legacy2)).expect("decode 2-elem");
         assert_eq!(decoded.network_magic, 42);
         assert!(decoded.initiator_only_diffusion_mode);
-        assert_eq!(decoded.peer_sharing, 0, "missing field defaults to disabled");
+        assert_eq!(
+            decoded.peer_sharing, 0,
+            "missing field defaults to disabled"
+        );
         assert!(!decoded.query, "missing field defaults to non-query");
 
         // Legacy 3-element form decodes with default for `query` only.
@@ -505,7 +508,12 @@ mod tests {
 
         // Lengths outside [2, 4] are rejected.
         let mut enc = Encoder::new();
-        enc.array(5).unsigned(1).bool(false).unsigned(0).bool(false).unsigned(99);
+        enc.array(5)
+            .unsigned(1)
+            .bool(false)
+            .unsigned(0)
+            .bool(false)
+            .unsigned(99);
         assert!(
             decode_version_data(&mut Decoder::new(&enc.into_bytes())).is_err(),
             "5-element array must be rejected",
@@ -543,8 +551,16 @@ mod tests {
             query: false,
         };
         let cases: Vec<(u64, u64, HandshakeMessage)> = vec![
-            (0, 2, HandshakeMessage::ProposeVersions(vec![(HandshakeVersion(13), vd.clone())])),
-            (1, 3, HandshakeMessage::AcceptVersion(HandshakeVersion(14), vd.clone())),
+            (
+                0,
+                2,
+                HandshakeMessage::ProposeVersions(vec![(HandshakeVersion(13), vd.clone())]),
+            ),
+            (
+                1,
+                3,
+                HandshakeMessage::AcceptVersion(HandshakeVersion(14), vd.clone()),
+            ),
             (
                 2,
                 2,
@@ -553,7 +569,11 @@ mod tests {
                     "wrong magic".to_owned(),
                 )),
             ),
-            (3, 2, HandshakeMessage::QueryReply(vec![(HandshakeVersion(15), vd)])),
+            (
+                3,
+                2,
+                HandshakeMessage::QueryReply(vec![(HandshakeVersion(15), vd)]),
+            ),
         ];
         assert_eq!(cases.len(), 4, "HandshakeMessage tag space must be 0..=3");
 
@@ -561,7 +581,9 @@ mod tests {
         for (canonical_tag, canonical_len, msg) in cases {
             let bytes = msg.to_cbor();
             let mut dec = Decoder::new(&bytes);
-            let len = dec.array().expect("HandshakeMessage encodes as a CBOR array");
+            let len = dec
+                .array()
+                .expect("HandshakeMessage encodes as a CBOR array");
             assert_eq!(
                 len, canonical_len,
                 "HandshakeMessage::{msg:?} array length {len}, expected {canonical_len}",
@@ -603,10 +625,7 @@ mod tests {
             (
                 1,
                 3,
-                RefuseReason::HandshakeDecodeError(
-                    HandshakeVersion(14),
-                    "expected map".to_owned(),
-                ),
+                RefuseReason::HandshakeDecodeError(HandshakeVersion(14), "expected map".to_owned()),
             ),
             (
                 2,

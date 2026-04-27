@@ -1110,6 +1110,10 @@ mod tests {
             seen.push(tag);
         }
         seen.sort();
-        assert_eq!(seen, vec![0, 1], "DatumOption tag set must be exactly 0..=1");
+        assert_eq!(
+            seen,
+            vec![0, 1],
+            "DatumOption tag set must be exactly 0..=1"
+        );
     }
 }

@@ -1064,9 +1064,7 @@ pub fn forge_block(
         for _ in 0..4 {
             let seg_start = dec.position();
             dec.skip().map_err(|err| {
-                BlockProducerError::Crypto(format!(
-                    "forged body payload skip failed: {err}"
-                ))
+                BlockProducerError::Crypto(format!("forged body payload skip failed: {err}"))
             })?;
             let seg_end = dec.position();
             let seg_hash = hash_bytes_256(&body_payload[seg_start..seg_end]).0;

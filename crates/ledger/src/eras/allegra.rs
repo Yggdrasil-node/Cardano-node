@@ -785,7 +785,11 @@ mod tests {
             (4, 2, NativeScript::InvalidBefore(100)),
             (5, 2, NativeScript::InvalidHereafter(200)),
         ];
-        assert_eq!(cases.len(), 6, "NativeScript tag space must be 0..=5 (6 variants)");
+        assert_eq!(
+            cases.len(),
+            6,
+            "NativeScript tag space must be 0..=5 (6 variants)"
+        );
 
         let mut seen: Vec<u64> = Vec::with_capacity(6);
         for (canonical_tag, canonical_len, script) in cases {

@@ -599,8 +599,10 @@ where
     let consensus_inputs = consensus_source.observe();
     let snapshot_observation = snapshot_source.observe();
 
-    let merged_snapshot =
-        merge_ledger_peer_snapshots(&consensus_inputs.ledger_snapshot, snapshot_observation.overlay);
+    let merged_snapshot = merge_ledger_peer_snapshots(
+        &consensus_inputs.ledger_snapshot,
+        snapshot_observation.overlay,
+    );
 
     let peer_snapshot_freshness = derive_peer_snapshot_freshness(
         use_ledger_peers,
@@ -1125,10 +1127,7 @@ mod tests {
             observations: VecDeque::from([ConsensusLedgerPeerInputs {
                 latest_slot: Some(200),
                 judgement: LedgerStateJudgement::YoungEnough,
-                ledger_snapshot: LedgerPeerSnapshot::new(
-                    [ledger_peer],
-                    [big_ledger_peer],
-                ),
+                ledger_snapshot: LedgerPeerSnapshot::new([ledger_peer], [big_ledger_peer]),
             }]),
             last: ConsensusLedgerPeerInputs::default(),
         };

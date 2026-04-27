@@ -1444,7 +1444,10 @@ mod tests {
 
         let actions = cm.timeout_tick(Instant::now());
 
-        assert_eq!(cm.abstract_state_of(&p2), AbstractState::UnknownConnectionSt);
+        assert_eq!(
+            cm.abstract_state_of(&p2),
+            AbstractState::UnknownConnectionSt
+        );
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             CmAction::PruneConnections(addrs) => {

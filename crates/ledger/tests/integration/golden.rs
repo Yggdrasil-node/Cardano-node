@@ -671,7 +671,10 @@ fn cbor_golden_conway_submitted_tx_round_trip_with_full_governance_payload() {
     // Field-level equality first (better diagnostic on failure than raw bytes).
     assert_eq!(decoded.body, tx.body);
     assert!(decoded.body.voting_procedures.is_some(), "key 19 preserved");
-    assert!(decoded.body.proposal_procedures.is_some(), "key 20 preserved");
+    assert!(
+        decoded.body.proposal_procedures.is_some(),
+        "key 20 preserved"
+    );
     assert_eq!(decoded.body.current_treasury_value, Some(10_000_000_000));
     assert_eq!(decoded.body.treasury_donation, Some(500_000));
 

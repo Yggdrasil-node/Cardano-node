@@ -1646,7 +1646,10 @@ mod tests {
             s.contains("addInteger-cpu-arguments-intercept"),
             "must name the parameter: {s}",
         );
-        assert!(s.contains("-1234") || s.contains("-1_234"), "must show value: {s}");
+        assert!(
+            s.contains("-1234") || s.contains("-1_234"),
+            "must show value: {s}"
+        );
     }
 
     fn sample_params() -> BTreeMap<String, i64> {
@@ -1910,10 +1913,7 @@ mod tests {
         let err = model
             .builtin_cost(DefaultFun::AddInteger, &[])
             .expect_err("strict mode must reject missing builtin entry");
-        assert!(matches!(
-            err,
-            crate::MachineError::MissingBuiltinCost(_)
-        ));
+        assert!(matches!(err, crate::MachineError::MissingBuiltinCost(_)));
     }
 
     #[test]

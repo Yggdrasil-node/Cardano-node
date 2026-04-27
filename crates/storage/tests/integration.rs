@@ -1261,7 +1261,11 @@ fn promote_volatile_prefix_is_idempotent_after_partial_promotion_crash() {
     // simulate a previous run that crashed mid-promotion.
     immutable.append_block(test_block(0x01, 10)).unwrap();
 
-    let chain_db = &mut ChainDb::new(immutable, InMemoryVolatile::default(), InMemoryLedgerStore::default());
+    let chain_db = &mut ChainDb::new(
+        immutable,
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
     chain_db.add_volatile_block(test_block(0x01, 10)).unwrap();
     chain_db.add_volatile_block(test_block(0x02, 20)).unwrap();
     chain_db.add_volatile_block(test_block(0x03, 30)).unwrap();
@@ -1272,7 +1276,10 @@ fn promote_volatile_prefix_is_idempotent_after_partial_promotion_crash() {
     let promoted = chain_db
         .promote_volatile_prefix(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
         .unwrap();
-    assert_eq!(promoted, 2, "promote returns total prefix length even when some blocks were already present");
+    assert_eq!(
+        promoted, 2,
+        "promote returns total prefix length even when some blocks were already present"
+    );
 
     // Both prefix blocks are in immutable exactly once.
     assert_eq!(chain_db.immutable().len(), 2);

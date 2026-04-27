@@ -1642,8 +1642,8 @@ mod tests {
         assert_eq!(next, 88, "next-unused tag should be one past last variant");
 
         for bogus in [next, 100, 200, u8::MAX] {
-            let err = DefaultFun::from_tag(bogus)
-                .expect_err(&format!("tag {bogus} must be rejected"));
+            let err =
+                DefaultFun::from_tag(bogus).expect_err(&format!("tag {bogus} must be rejected"));
             match err {
                 MachineError::FlatDecodeError(msg) => assert!(
                     msg.contains(&format!("unknown builtin tag {bogus}")),

@@ -172,10 +172,7 @@ impl BlockFetchMessage {
         let mut enc = Encoder::new();
         match self {
             Self::MsgRequestRange(range) => {
-                enc.array(3)
-                    .unsigned(0)
-                    .raw(&range.lower)
-                    .raw(&range.upper);
+                enc.array(3).unsigned(0).raw(&range.lower).raw(&range.upper);
             }
             Self::MsgClientDone => {
                 enc.array(1).unsigned(1);

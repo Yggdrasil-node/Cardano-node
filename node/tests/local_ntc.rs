@@ -21,7 +21,9 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tempfile::tempdir;
-use yggdrasil_ledger::{CborDecode, CborEncode, Decoder, Encoder, Era, HeaderHash, LedgerState, Point, SlotNo};
+use yggdrasil_ledger::{
+    CborDecode, CborEncode, Decoder, Encoder, Era, HeaderHash, LedgerState, Point, SlotNo,
+};
 use yggdrasil_mempool::{Mempool, SharedMempool};
 use yggdrasil_network::{
     AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
@@ -47,8 +49,7 @@ fn build_empty_chain_db() -> Arc<RwLock<TestChainDb>> {
 
 /// Bind a local accept loop on a temp Unix socket and return
 /// (`socket_path`, `shutdown_tx`, `join_handle`) for test cleanup.
-async fn spawn_local_server()
--> (
+async fn spawn_local_server() -> (
     std::path::PathBuf,
     tokio::sync::oneshot::Sender<()>,
     tokio::task::JoinHandle<()>,
@@ -94,8 +95,7 @@ async fn spawn_local_server()
 /// Variant of [`spawn_local_server`] that attaches a shared [`NodeMetrics`]
 /// handle so tests can observe the `mempool_tx_added` / `mempool_tx_rejected`
 /// counters bumped by `run_local_tx_submission_session`.
-async fn spawn_local_server_with_metrics()
--> (
+async fn spawn_local_server_with_metrics() -> (
     std::path::PathBuf,
     tokio::sync::oneshot::Sender<()>,
     tokio::task::JoinHandle<()>,
@@ -301,11 +301,7 @@ async fn ntc_local_state_query_chain_tip_round_trip() {
 
     // Result is a raw CBOR-encoded Point; decode it.
     let point = Point::from_cbor_bytes(&result).expect("ChainTip CBOR must decode as Point");
-    assert_eq!(
-        point,
-        Point::Origin,
-        "empty ChainDb must report Origin tip"
-    );
+    assert_eq!(point, Point::Origin, "empty ChainDb must report Origin tip");
 
     let _ = client.release().await;
     let _ = client.done().await;

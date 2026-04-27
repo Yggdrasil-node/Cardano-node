@@ -67,9 +67,7 @@ pub enum GenesisLoadError {
     /// Reference: `cardano-node` `Cardano.Node.Configuration.POM` —
     /// `parseGenesisHash` rejects mismatches at startup so a wrong genesis
     /// file cannot silently corrupt subsequent ledger state.
-    #[error(
-        "genesis hash mismatch for {path}: expected {expected}, computed {actual}"
-    )]
+    #[error("genesis hash mismatch for {path}: expected {expected}, computed {actual}")]
     HashMismatch {
         path: std::path::PathBuf,
         expected: String,
@@ -78,10 +76,7 @@ pub enum GenesisLoadError {
     /// The expected hash value supplied by the operator was not a valid
     /// 64-character lowercase hex Blake2b-256 digest.
     #[error("invalid genesis hash hex string for {field}: {value}")]
-    InvalidHashHex {
-        field: &'static str,
-        value: String,
-    },
+    InvalidHashHex { field: &'static str, value: String },
 }
 
 /// Error returned while deriving the node's simplified CEK cost model from
@@ -96,9 +91,7 @@ pub enum GenesisCostModelError {
     #[error(transparent)]
     CostModel(#[from] CostModelError),
     /// Conway `plutusV3CostModel` array length is not a known upstream shape.
-    #[error(
-        "unsupported Conway plutusV3CostModel length {actual}; expected one of: {supported:?}"
-    )]
+    #[error("unsupported Conway plutusV3CostModel length {actual}; expected one of: {supported:?}")]
     UnsupportedConwayV3ArrayLength {
         /// Actual number of entries found in `plutusV3CostModel`.
         actual: usize,
@@ -1272,12 +1265,11 @@ pub fn parse_blake2b_256_hex(
     expected_hex: &str,
     field: &'static str,
 ) -> Result<[u8; 32], GenesisLoadError> {
-    let expected_bytes = hex::decode(expected_hex.trim()).map_err(|_| {
-        GenesisLoadError::InvalidHashHex {
+    let expected_bytes =
+        hex::decode(expected_hex.trim()).map_err(|_| GenesisLoadError::InvalidHashHex {
             field,
             value: expected_hex.to_string(),
-        }
-    })?;
+        })?;
     let bytes: [u8; 32] =
         expected_bytes
             .try_into()
@@ -1350,8 +1342,7 @@ pub struct ByronGenesisUtxoEntry {
 /// implementation that `cardano-base` and `cardano-ledger` use to
 /// (de)serialise legacy Byron addresses.
 fn base58_decode(input: &str) -> Result<Vec<u8>, String> {
-    const ALPHABET: &[u8; 58] =
-        b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     let mut map = [255u8; 128];
     for (i, &c) in ALPHABET.iter().enumerate() {
         map[c as usize] = i as u8;
@@ -1415,13 +1406,13 @@ pub fn load_byron_genesis_utxo(
 
     let mut entries = Vec::with_capacity(parsed.non_avvm_balances.len());
     for (addr_b58, amount_str) in &parsed.non_avvm_balances {
-        let amount = amount_str.parse::<u64>().map_err(|err| {
-            GenesisLoadError::InvalidField {
+        let amount = amount_str
+            .parse::<u64>()
+            .map_err(|err| GenesisLoadError::InvalidField {
                 field: "nonAvvmBalances",
                 value: amount_str.clone(),
                 message: format!("invalid lovelace amount: {err}"),
-            }
-        })?;
+            })?;
         let address = base58_decode(addr_b58).map_err(|err| GenesisLoadError::InvalidField {
             field: "nonAvvmBalances",
             value: addr_b58.clone(),
@@ -1437,20 +1428,20 @@ pub fn load_byron_genesis_utxo(
         // Byron canonical CBOR encoder.  Construction from the raw key
         // is implemented inline rather than pulling in extra crates.
         for (key_b64, amount_str) in &parsed.avvm_distr {
-            let amount = amount_str.parse::<u64>().map_err(|err| {
-                GenesisLoadError::InvalidField {
-                    field: "avvmDistr",
-                    value: amount_str.clone(),
-                    message: format!("invalid lovelace amount: {err}"),
-                }
-            })?;
-            let key_bytes = base64url_decode(key_b64).map_err(|err| {
-                GenesisLoadError::InvalidField {
+            let amount =
+                amount_str
+                    .parse::<u64>()
+                    .map_err(|err| GenesisLoadError::InvalidField {
+                        field: "avvmDistr",
+                        value: amount_str.clone(),
+                        message: format!("invalid lovelace amount: {err}"),
+                    })?;
+            let key_bytes =
+                base64url_decode(key_b64).map_err(|err| GenesisLoadError::InvalidField {
                     field: "avvmDistr",
                     value: key_b64.clone(),
                     message: format!("invalid Base64URL redeem key: {err}"),
-                }
-            })?;
+                })?;
             let address = build_avvm_address(&key_bytes);
             entries.push(ByronGenesisUtxoEntry { address, amount });
         }
@@ -1518,11 +1509,7 @@ fn build_avvm_address(redeem_pk: &[u8]) -> Vec<u8> {
     let addr_root = yggdrasil_crypto::blake2b::hash_bytes_224(&pre_bytes).0;
     // payload = [addr_root, attrs={}, type=2]
     let mut payload = Encoder::new();
-    payload
-        .array(3)
-        .bytes(&addr_root)
-        .map(0)
-        .unsigned(2);
+    payload.array(3).bytes(&addr_root).map(0).unsigned(2);
     let payload_bytes = payload.into_bytes();
     // CRC32 (IEEE polynomial) over the payload bytes.
     let crc = crc32_ieee(&payload_bytes);
@@ -2657,10 +2644,7 @@ mod tests {
     fn display_io_error_names_path_and_inner() {
         let e = GenesisLoadError::Io {
             path: std::path::PathBuf::from("/does/not/exist.json"),
-            source: std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "No such file or directory",
-            ),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "No such file or directory"),
         };
         let s = format!("{e}");
         assert!(

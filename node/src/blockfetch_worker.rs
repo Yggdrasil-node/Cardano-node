@@ -57,7 +57,9 @@ use std::time::Instant;
 
 use tokio::sync::{mpsc, oneshot};
 use yggdrasil_ledger::{Point, SlotNo};
-use yggdrasil_network::{BlockFetchClient, BlockFetchInstrumentation, blockfetch_pool::ReorderBuffer};
+use yggdrasil_network::{
+    BlockFetchClient, BlockFetchInstrumentation, blockfetch_pool::ReorderBuffer,
+};
 
 use crate::sync::{BlockFetchAssignment, MultiEraBlock, SyncError};
 
@@ -244,10 +246,7 @@ impl FetchWorkerHandle<MultiEraBlock> {
     /// [`Ouroboros.Network.BlockFetch.Client.fetchClient`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/Client.hs)
     /// — the per-peer fetch thread that owns the connection's fetch
     /// state for the connection's lifetime.
-    pub fn spawn_with_block_fetch_client(
-        addr: SocketAddr,
-        block_fetch: BlockFetchClient,
-    ) -> Self {
+    pub fn spawn_with_block_fetch_client(addr: SocketAddr, block_fetch: BlockFetchClient) -> Self {
         Self::spawn_with_block_fetch_client_and_queue_depth(
             addr,
             block_fetch,
@@ -264,8 +263,7 @@ impl FetchWorkerHandle<MultiEraBlock> {
         queue_depth: usize,
     ) -> Self {
         let queue_depth = queue_depth.max(1);
-        let (sender, mut receiver) =
-            mpsc::channel::<FetchRequest<MultiEraBlock>>(queue_depth);
+        let (sender, mut receiver) = mpsc::channel::<FetchRequest<MultiEraBlock>>(queue_depth);
         let join = tokio::spawn(async move {
             // The async-block owns `block_fetch` by value; each loop
             // iteration takes a fresh `&mut` borrow that lives only
@@ -283,11 +281,7 @@ impl FetchWorkerHandle<MultiEraBlock> {
                 let _ = req.response.send(result);
             }
         });
-        Self {
-            addr,
-            sender,
-            join,
-        }
+        Self { addr, sender, join }
     }
 }
 
@@ -330,10 +324,7 @@ impl<B: Send + 'static> FetchWorkerPool<B> {
     /// can shut it down deterministically.  Mirrors upstream
     /// behaviour where `bracketSyncWithFetchClient` always exits
     /// the previous registration before re-entering.
-    pub fn register(
-        &mut self,
-        handle: FetchWorkerHandle<B>,
-    ) -> Option<FetchWorkerHandle<B>> {
+    pub fn register(&mut self, handle: FetchWorkerHandle<B>) -> Option<FetchWorkerHandle<B>> {
         self.workers.insert(handle.addr, handle)
     }
 
@@ -472,8 +463,7 @@ impl<B: Send + 'static> FetchWorkerPool<B> {
                     if let Some(instr) = pool_instr {
                         if let Ok(mut g) = instr.lock() {
                             let n = blocks.len() as u64;
-                            let bytes: u64 =
-                                blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                            let bytes: u64 = blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
                             g.note_success(asn.peer, n, bytes, Instant::now());
                         }
                     }
@@ -536,8 +526,7 @@ mod tests {
     /// Closure returning a fixed result for any (peer, lower, upper)
     /// triple.  Used by tests that don't care about the request
     /// shape, only that the worker round-trips.
-    type EchoFut =
-        std::pin::Pin<Box<dyn std::future::Future<Output = FetchOutcome<u64>> + Send>>;
+    type EchoFut = std::pin::Pin<Box<dyn std::future::Future<Output = FetchOutcome<u64>> + Send>>;
 
     fn echo_closure(
         result: FetchOutcome<u64>,
@@ -763,14 +752,12 @@ mod tests {
         let mut pool: FetchWorkerPool<u64> = FetchWorkerPool::new();
 
         // Per-peer closures return distinct slot ranges.
-        pool.register(FetchWorkerHandle::spawn(
-            p1,
-            |_a, _l, _u| async { Ok(vec![fake_block(60), fake_block(100)]) },
-        ));
-        pool.register(FetchWorkerHandle::spawn(
-            p2,
-            |_a, _l, _u| async { Ok(vec![fake_block(150), fake_block(200)]) },
-        ));
+        pool.register(FetchWorkerHandle::spawn(p1, |_a, _l, _u| async {
+            Ok(vec![fake_block(60), fake_block(100)])
+        }));
+        pool.register(FetchWorkerHandle::spawn(p2, |_a, _l, _u| async {
+            Ok(vec![fake_block(150), fake_block(200)])
+        }));
 
         // Plan covers (50, 200) split between the two peers.
         let plan = vec![

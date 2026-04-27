@@ -286,7 +286,10 @@ mod tests {
         let e = MachineError::MissingBuiltinCost("bls12_381_G1_neg".into());
         let msg = format!("{e}");
         assert!(msg.contains("cost model"), "rule name: {msg}");
-        assert!(msg.contains("bls12_381_G1_neg"), "must name the builtin: {msg}");
+        assert!(
+            msg.contains("bls12_381_G1_neg"),
+            "must name the builtin: {msg}"
+        );
     }
 
     #[test]

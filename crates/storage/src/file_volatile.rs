@@ -122,14 +122,12 @@ impl FileVolatile {
                     Ok(plan) => {
                         for hash_hex in plan.hashes {
                             if let Some(hash) = hex_decode_hash(&hash_hex) {
-                                let _ = fs::remove_file(data_dir.join(format!(
-                                    "{}.cbor",
-                                    hex_encode(&hash.0)
-                                )));
-                                let _ = fs::remove_file(data_dir.join(format!(
-                                    "{}.json",
-                                    hex_encode(&hash.0)
-                                )));
+                                let _ = fs::remove_file(
+                                    data_dir.join(format!("{}.cbor", hex_encode(&hash.0))),
+                                );
+                                let _ = fs::remove_file(
+                                    data_dir.join(format!("{}.json", hex_encode(&hash.0))),
+                                );
                                 recovered += 1;
                             } else {
                                 invalid += 1;

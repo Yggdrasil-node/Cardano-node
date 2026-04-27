@@ -3416,10 +3416,7 @@ mod tests {
         t.target_known_big_ledger = 5;
         t.target_established_big_ledger = 6;
         t.target_active_big_ledger = 0;
-        assert!(
-            !t.is_sane(),
-            "established_big > known_big must be rejected",
-        );
+        assert!(!t.is_sane(), "established_big > known_big must be rejected",);
     }
 
     #[test]
@@ -3475,10 +3472,7 @@ mod tests {
         let mut t = sane_baseline();
         t.target_established_big_ledger = 1_001;
         t.target_known_big_ledger = 1_001;
-        assert!(
-            !t.is_sane(),
-            "established_big > 1000 must be rejected",
-        );
+        assert!(!t.is_sane(), "established_big > 1000 must be rejected",);
     }
 
     #[test]
@@ -7029,8 +7023,7 @@ mod tests {
         let scheduling = HotPeerScheduling::new();
 
         let direct = evaluate_warm_to_hot_promotions(&reg, &targets, &mut test_pick());
-        let via_facade =
-            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &scheduling);
+        let via_facade = evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &scheduling);
         assert_eq!(direct, via_facade);
     }
 
@@ -7055,10 +7048,8 @@ mod tests {
         let mut s_high = HotPeerScheduling::new();
         s_high.set_hot_protocol_weight(MiniProtocolNum::BLOCK_FETCH, 255);
 
-        let r_low =
-            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &s_low);
-        let r_high =
-            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &s_high);
+        let r_low = evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &s_low);
+        let r_high = evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &s_high);
         assert_eq!(r_low, r_high);
     }
 
@@ -7077,12 +7068,8 @@ mod tests {
             target_active: 3,
             ..Default::default()
         };
-        let actions = evaluate_hot_promotions(
-            &reg,
-            &targets,
-            &mut test_pick(),
-            &HotPeerScheduling::new(),
-        );
+        let actions =
+            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &HotPeerScheduling::new());
         assert_eq!(actions.len(), 3);
         for a in &actions {
             assert!(matches!(a, GovernorAction::PromoteToHot(_)));
@@ -7101,12 +7088,8 @@ mod tests {
             target_active: 2,
             ..Default::default()
         };
-        let actions = evaluate_hot_promotions(
-            &reg,
-            &targets,
-            &mut test_pick(),
-            &HotPeerScheduling::new(),
-        );
+        let actions =
+            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &HotPeerScheduling::new());
         assert!(actions.is_empty());
     }
 
@@ -7124,12 +7107,8 @@ mod tests {
             target_active: 5,
             ..Default::default()
         };
-        let actions = evaluate_hot_promotions(
-            &reg,
-            &targets,
-            &mut test_pick(),
-            &HotPeerScheduling::new(),
-        );
+        let actions =
+            evaluate_hot_promotions(&reg, &targets, &mut test_pick(), &HotPeerScheduling::new());
         assert!(actions.is_empty());
     }
 

@@ -18,8 +18,8 @@ use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule, EpochSize,
     FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
     NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters,
-    OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode,
-    judge_header_slot, verify_header, verify_leader_proof, verify_nonce_proof,
+    OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, judge_header_slot,
+    verify_header, verify_leader_proof, verify_nonce_proof,
 };
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
@@ -555,11 +555,17 @@ fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
 
     fn decode_header_point_bytes(bytes: &[u8]) -> Option<Point> {
         if let Ok(header) = ShelleyHeader::from_cbor_bytes(bytes) {
-            return Some(Point::BlockPoint(SlotNo(header.body.slot), header.header_hash()));
+            return Some(Point::BlockPoint(
+                SlotNo(header.body.slot),
+                header.header_hash(),
+            ));
         }
 
         if let Ok(header) = PraosHeader::from_cbor_bytes(bytes) {
-            return Some(Point::BlockPoint(SlotNo(header.body.slot), header.header_hash()));
+            return Some(Point::BlockPoint(
+                SlotNo(header.body.slot),
+                header.header_hash(),
+            ));
         }
 
         None
@@ -1357,7 +1363,6 @@ pub(crate) struct LedgerCheckpointTracking {
     pub(crate) ocert_persist_dir: Option<PathBuf>,
 }
 
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum LedgerCheckpointUpdateOutcome {
     ClearedDisabled,
@@ -1497,11 +1502,8 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
             // expected_blocks ≈ σ_pool * epoch_size * f.  When the set
             // snapshot has stake data we use it; otherwise fall back to
             // the previous behavior of treating all pools as perfect.
-            let pool_performance = compute_pool_performance(
-                pool_block_counts,
-                &snapshots.set,
-                shelley_epoch_size,
-            );
+            let pool_performance =
+                compute_pool_performance(pool_block_counts, &snapshots.set, shelley_epoch_size);
             apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
@@ -1649,9 +1651,10 @@ where
                 // this, a restart resets per-pool monotonicity high-water
                 // marks to zero and a peer can replay an old block whose
                 // OpCert sequence number is below the true on-chain value.
-                if let (Some(dir), Some(counters)) =
-                    (tracking.ocert_persist_dir.as_ref(), ocert_counters.as_deref())
-                {
+                if let (Some(dir), Some(counters)) = (
+                    tracking.ocert_persist_dir.as_ref(),
+                    ocert_counters.as_deref(),
+                ) {
                     let encoded = counters.to_cbor_bytes();
                     yggdrasil_storage::save_ocert_counters(dir, &encoded)
                         .map_err(SyncError::Storage)?;
@@ -2222,77 +2225,77 @@ mod era_tag {
 /// block codecs with era-appropriate transaction body types.
 fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
     fn decode_impl(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
-    // Peek at the structure: expect a 2-element array [tag, body].
-    use yggdrasil_ledger::cbor::Decoder;
-    let mut dec = Decoder::new(raw);
-    let arr_len = dec.array_begin()?;
-    if let Some(len) = arr_len {
-        if len != 2 {
-            return Err(LedgerError::CborInvalidLength {
-                expected: 2,
-                actual: len as usize,
-            });
+        // Peek at the structure: expect a 2-element array [tag, body].
+        use yggdrasil_ledger::cbor::Decoder;
+        let mut dec = Decoder::new(raw);
+        let arr_len = dec.array_begin()?;
+        if let Some(len) = arr_len {
+            if len != 2 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 2,
+                    actual: len as usize,
+                });
+            }
         }
-    }
 
-    let tag = dec.unsigned()?;
+        let tag = dec.unsigned()?;
 
-    let decoded = match tag {
-        era_tag::BYRON_EBB | era_tag::BYRON_MAIN => {
-            let body_start = dec.position();
-            dec.skip()?;
-            let body_bytes = &raw[body_start..dec.position()];
-            let byron = if tag == era_tag::BYRON_EBB {
-                ByronBlock::decode_ebb(body_bytes)?
-            } else {
-                ByronBlock::decode_main(body_bytes)?
-            };
-            Ok(MultiEraBlock::Byron {
-                block: byron,
-                era_tag: tag,
-            })
-        }
-        era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => {
-            // Shelley/Allegra/Mary blocks are 4-element CBOR arrays.
-            let body_start = dec.position();
-            dec.skip()?;
-            let body_bytes = &raw[body_start..dec.position()];
-            let block = ShelleyBlock::from_cbor_bytes(body_bytes)?;
-            Ok(MultiEraBlock::Shelley(Box::new(block)))
-        }
-        era_tag::ALONZO => {
-            // Alonzo blocks are 5-element CBOR arrays (added invalid_transactions).
-            let body_start = dec.position();
-            dec.skip()?;
-            let body_bytes = &raw[body_start..dec.position()];
-            let block = AlonzoBlock::from_cbor_bytes(body_bytes)?;
-            Ok(MultiEraBlock::Alonzo(Box::new(block)))
-        }
-        era_tag::BABBAGE => {
-            let body_start = dec.position();
-            dec.skip()?;
-            let body_bytes = &raw[body_start..dec.position()];
-            let block = BabbageBlock::from_cbor_bytes(body_bytes)?;
-            Ok(MultiEraBlock::Babbage(Box::new(block)))
-        }
-        era_tag::CONWAY => {
-            let body_start = dec.position();
-            dec.skip()?;
-            let body_bytes = &raw[body_start..dec.position()];
-            let block = ConwayBlock::from_cbor_bytes(body_bytes)?;
-            Ok(MultiEraBlock::Conway(Box::new(block)))
-        }
-        unsupported => {
-            Err(LedgerError::CborTypeMismatch {
-                expected: 2, // Shelley era tag
-                actual: unsupported as u8,
-            })
-        }
-    };
+        let decoded = match tag {
+            era_tag::BYRON_EBB | era_tag::BYRON_MAIN => {
+                let body_start = dec.position();
+                dec.skip()?;
+                let body_bytes = &raw[body_start..dec.position()];
+                let byron = if tag == era_tag::BYRON_EBB {
+                    ByronBlock::decode_ebb(body_bytes)?
+                } else {
+                    ByronBlock::decode_main(body_bytes)?
+                };
+                Ok(MultiEraBlock::Byron {
+                    block: byron,
+                    era_tag: tag,
+                })
+            }
+            era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => {
+                // Shelley/Allegra/Mary blocks are 4-element CBOR arrays.
+                let body_start = dec.position();
+                dec.skip()?;
+                let body_bytes = &raw[body_start..dec.position()];
+                let block = ShelleyBlock::from_cbor_bytes(body_bytes)?;
+                Ok(MultiEraBlock::Shelley(Box::new(block)))
+            }
+            era_tag::ALONZO => {
+                // Alonzo blocks are 5-element CBOR arrays (added invalid_transactions).
+                let body_start = dec.position();
+                dec.skip()?;
+                let body_bytes = &raw[body_start..dec.position()];
+                let block = AlonzoBlock::from_cbor_bytes(body_bytes)?;
+                Ok(MultiEraBlock::Alonzo(Box::new(block)))
+            }
+            era_tag::BABBAGE => {
+                let body_start = dec.position();
+                dec.skip()?;
+                let body_bytes = &raw[body_start..dec.position()];
+                let block = BabbageBlock::from_cbor_bytes(body_bytes)?;
+                Ok(MultiEraBlock::Babbage(Box::new(block)))
+            }
+            era_tag::CONWAY => {
+                let body_start = dec.position();
+                dec.skip()?;
+                let body_bytes = &raw[body_start..dec.position()];
+                let block = ConwayBlock::from_cbor_bytes(body_bytes)?;
+                Ok(MultiEraBlock::Conway(Box::new(block)))
+            }
+            unsupported => {
+                Err(LedgerError::CborTypeMismatch {
+                    expected: 2, // Shelley era tag
+                    actual: unsupported as u8,
+                })
+            }
+        };
 
-    if arr_len.is_none() {
-        dec.consume_break()?;
-    }
+        if arr_len.is_none() {
+            dec.consume_break()?;
+        }
 
         decoded
     }
@@ -3142,8 +3145,8 @@ pub fn verify_multi_era_block_with_raw(
 
     // Extract the canonical signed CBOR bytes for the header body, when
     // we have the raw block to slice from.
-    let body_cbor: Option<Vec<u8>> = raw_block
-        .and_then(|raw| extract_header_body_cbor_from_raw_block(raw).ok().flatten());
+    let body_cbor: Option<Vec<u8>> =
+        raw_block.and_then(|raw| extract_header_body_cbor_from_raw_block(raw).ok().flatten());
 
     match block {
         MultiEraBlock::Shelley(shelley) => verify_shelley_header_with_body_cbor(
@@ -3186,9 +3189,7 @@ pub fn verify_multi_era_block_with_raw(
 /// Returns `Ok(None)` for Byron-era blocks (no Shelley-style header body)
 /// or any era tag we do not recognise; returns `Err` if the structure does
 /// not match the expected envelope.
-pub fn extract_header_body_cbor_from_raw_block(
-    raw: &[u8],
-) -> Result<Option<Vec<u8>>, SyncError> {
+pub fn extract_header_body_cbor_from_raw_block(raw: &[u8]) -> Result<Option<Vec<u8>>, SyncError> {
     use yggdrasil_ledger::cbor::Decoder;
     let mut dec = Decoder::new(raw);
     let outer_len = dec.array_begin().map_err(SyncError::LedgerDecode)?;
@@ -3892,60 +3893,61 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                     }
                                 }
                             } else {
-                            // Pool instrumentation: record dispatch synchronously
-                            // so per-peer in-flight accounting reflects the
-                            // outstanding fetch.  Mirrors upstream
-                            // `bumpFetchClientStateVars` in
-                            // `Ouroboros.Network.BlockFetch.ClientState`.
-                            if let Some((pool, peer)) = pool_instr {
-                                if let Ok(mut g) = pool.lock() {
-                                    g.note_dispatch(peer);
+                                // Pool instrumentation: record dispatch synchronously
+                                // so per-peer in-flight accounting reflects the
+                                // outstanding fetch.  Mirrors upstream
+                                // `bumpFetchClientStateVars` in
+                                // `Ouroboros.Network.BlockFetch.ClientState`.
+                                if let Some((pool, peer)) = pool_instr {
+                                    if let Ok(mut g) = pool.lock() {
+                                        g.note_dispatch(peer);
+                                    }
                                 }
-                            }
-                            let bf = block_fetch.as_deref_mut().expect(
+                                let bf = block_fetch.as_deref_mut().expect(
                                 "legacy single-peer fetch path requires Some(BlockFetchClient); \
                                  caller must provide the leader's BlockFetch handle when no \
                                  multi-peer dispatch context is active",
                             );
-                            match fetch_range_blocks_multi_era_raw_decoded(bf, lower, upper)
-                                .await
-                            {
-                                Ok(mut blocks) => {
-                                    // Only deduplicate against `lower_hash` when the
-                                    // caller actually had a known prior tip
-                                    // (`from_point` was a BlockPoint).  When syncing
-                                    // from Origin, `normalize_blockfetch_range_points`
-                                    // sets `lower = upper`, and dropping blocks that
-                                    // match `lower_hash` would erase the very first
-                                    // block we just fetched.
-                                    if let (Point::BlockPoint(_, lower_hash), true) =
-                                        (lower, matches!(from_point, Point::BlockPoint(_, _)))
-                                    {
-                                        while let Some((_, first)) = blocks.first() {
-                                            let first_hash = multi_era_block_to_block(first).header.hash;
-                                            if first_hash == lower_hash {
-                                                blocks.remove(0);
-                                            } else {
-                                                break;
+                                match fetch_range_blocks_multi_era_raw_decoded(bf, lower, upper)
+                                    .await
+                                {
+                                    Ok(mut blocks) => {
+                                        // Only deduplicate against `lower_hash` when the
+                                        // caller actually had a known prior tip
+                                        // (`from_point` was a BlockPoint).  When syncing
+                                        // from Origin, `normalize_blockfetch_range_points`
+                                        // sets `lower = upper`, and dropping blocks that
+                                        // match `lower_hash` would erase the very first
+                                        // block we just fetched.
+                                        if let (Point::BlockPoint(_, lower_hash), true) =
+                                            (lower, matches!(from_point, Point::BlockPoint(_, _)))
+                                        {
+                                            while let Some((_, first)) = blocks.first() {
+                                                let first_hash =
+                                                    multi_era_block_to_block(first).header.hash;
+                                                if first_hash == lower_hash {
+                                                    blocks.remove(0);
+                                                } else {
+                                                    break;
+                                                }
                                             }
                                         }
+                                        blocks
                                     }
-                                    blocks
-                                }
-                                Err(err) => {
-                                    if let Some((pool, peer)) = pool_instr {
-                                        if let Ok(mut g) = pool.lock() {
-                                            g.note_failure(peer);
+                                    Err(err) => {
+                                        if let Some((pool, peer)) = pool_instr {
+                                            if let Ok(mut g) = pool.lock() {
+                                                g.note_failure(peer);
+                                            }
                                         }
-                                    }
-                                    if tentative_set {
-                                        if let Some(state) = tentative_state {
-                                            clear_tentative_trap(state);
+                                        if tentative_set {
+                                            if let Some(state) = tentative_state {
+                                                clear_tentative_trap(state);
+                                            }
                                         }
+                                        return Err(err);
                                     }
-                                    return Err(err);
                                 }
-                            }
                             }
                         }
                         None => Vec::new(),
@@ -3957,8 +3959,10 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 if let Some((pool, peer)) = pool_instr {
                     if let Ok(mut g) = pool.lock() {
                         let n_blocks = raw_and_decoded.len() as u64;
-                        let n_bytes: u64 =
-                            raw_and_decoded.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        let n_bytes: u64 = raw_and_decoded
+                            .iter()
+                            .map(|(raw, _)| raw.len() as u64)
+                            .sum();
                         g.note_success(peer, n_blocks, n_bytes, Instant::now());
                     }
                 }
@@ -4014,8 +4018,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                         let mut max_near_future_slot: Option<SlotNo> = None;
                         for block in &decoded_blocks {
                             let block_slot = block.slot();
-                            match judge_header_slot(block_slot, current_wall_slot, fc.clock_skew)
-                            {
+                            match judge_header_slot(block_slot, current_wall_slot, fc.clock_skew) {
                                 FutureSlotJudgement::NotFuture => {}
                                 FutureSlotJudgement::NearFuture { .. } => {
                                     max_near_future_slot = Some(
@@ -4522,9 +4525,7 @@ pub async fn execute_multi_peer_blockfetch_plan<B, F, Fut>(
 where
     B: Send + 'static,
     F: Fn(SocketAddr, Point, Point) -> Fut + Send + Sync + Clone + 'static,
-    Fut: std::future::Future<Output = Result<Vec<(Vec<u8>, B)>, SyncError>>
-        + Send
-        + 'static,
+    Fut: std::future::Future<Output = Result<Vec<(Vec<u8>, B)>, SyncError>> + Send + 'static,
 {
     use yggdrasil_network::blockfetch_pool::ReorderBuffer;
 
@@ -4563,8 +4564,7 @@ where
                 if let Some(pool) = pool_instr {
                     if let Ok(mut g) = pool.lock() {
                         let n = blocks.len() as u64;
-                        let bytes: u64 =
-                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        let bytes: u64 = blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
                         g.note_success(asn.peer, n, bytes, Instant::now());
                     }
                 }
@@ -4635,8 +4635,7 @@ where
                 if let Some(pool) = pool_instr {
                     if let Ok(mut g) = pool.lock() {
                         let n = blocks.len() as u64;
-                        let bytes: u64 =
-                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        let bytes: u64 = blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
                         g.note_success(asn.peer, n, bytes, Instant::now());
                     }
                 }
@@ -4732,8 +4731,7 @@ where
                 if let Some(pool) = pool_instr {
                     if let Ok(mut g) = pool.lock() {
                         let n = blocks.len() as u64;
-                        let bytes: u64 =
-                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        let bytes: u64 = blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
                         g.note_success(asn.peer, n, bytes, Instant::now());
                     }
                 }
@@ -4777,8 +4775,7 @@ where
                 if let Some(pool) = pool_instr {
                     if let Ok(mut g) = pool.lock() {
                         let n = blocks.len() as u64;
-                        let bytes: u64 =
-                            blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                        let bytes: u64 = blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
                         g.note_success(asn.peer, n, bytes, Instant::now());
                     }
                 }
@@ -4870,9 +4867,7 @@ pub async fn dispatch_range_with_tentative<B, F, Fut>(
 where
     B: Send + 'static,
     F: Fn(SocketAddr, Point, Point) -> Fut + Send + Sync + Clone + 'static,
-    Fut: std::future::Future<Output = Result<Vec<(Vec<u8>, B)>, SyncError>>
-        + Send
-        + 'static,
+    Fut: std::future::Future<Output = Result<Vec<(Vec<u8>, B)>, SyncError>> + Send + 'static,
 {
     // Resolve the upper-bound point: prefer the decoded header point,
     // fall back to the ChainSync `tip` if the header doesn't carry one
@@ -4896,8 +4891,7 @@ where
     };
 
     let plan = partition_fetch_range_across_peers(lower, upper, peers, max_concurrent_knob);
-    let result =
-        execute_multi_peer_blockfetch_plan(&plan, from_point, fetch_one, pool_instr).await;
+    let result = execute_multi_peer_blockfetch_plan(&plan, from_point, fetch_one, pool_instr).await;
 
     if result.is_err() && tentative_set {
         if let Some(state) = tentative_state {
@@ -5019,24 +5013,16 @@ mod tests {
 
     #[test]
     fn partition_with_no_peers_is_empty() {
-        let assignments = partition_fetch_range_across_peers(
-            block_point(100),
-            block_point(200),
-            &[],
-            5,
-        );
+        let assignments =
+            partition_fetch_range_across_peers(block_point(100), block_point(200), &[], 5);
         assert!(assignments.is_empty());
     }
 
     #[test]
     fn partition_with_single_peer_returns_one_assignment() {
         let peers = vec![test_addr(1001)];
-        let assignments = partition_fetch_range_across_peers(
-            block_point(100),
-            block_point(200),
-            &peers,
-            5,
-        );
+        let assignments =
+            partition_fetch_range_across_peers(block_point(100), block_point(200), &peers, 5);
         assert_eq!(assignments.len(), 1);
         assert_eq!(assignments[0].peer, peers[0]);
         assert_eq!(assignments[0].lower, block_point(100));
@@ -5049,12 +5035,8 @@ mod tests {
         // assignment to the *first* peer carrying the full range —
         // matches the legacy single-peer code path bit-for-bit.
         let peers = vec![test_addr(1001), test_addr(1002), test_addr(1003)];
-        let assignments = partition_fetch_range_across_peers(
-            block_point(100),
-            block_point(200),
-            &peers,
-            1,
-        );
+        let assignments =
+            partition_fetch_range_across_peers(block_point(100), block_point(200), &peers, 1);
         assert_eq!(assignments.len(), 1);
         assert_eq!(assignments[0].peer, peers[0]);
         assert_eq!(assignments[0].lower, block_point(100));
@@ -5067,15 +5049,15 @@ mod tests {
         // begins at `lower`, last chunk ends at `upper` (the upstream
         // `selectForkSuffixes` invariant).
         let peers = vec![test_addr(1001), test_addr(1002)];
-        let assignments = partition_fetch_range_across_peers(
-            block_point(100),
-            block_point(200),
-            &peers,
-            2,
-        );
+        let assignments =
+            partition_fetch_range_across_peers(block_point(100), block_point(200), &peers, 2);
         assert_eq!(assignments.len(), 2);
         assert_eq!(assignments[0].peer, peers[0]);
-        assert_eq!(assignments[0].lower, block_point(100), "first lower preserved");
+        assert_eq!(
+            assignments[0].lower,
+            block_point(100),
+            "first lower preserved"
+        );
         assert_eq!(
             assignments[1].upper,
             block_point(200),
@@ -5199,8 +5181,9 @@ mod tests {
         (vec![slot as u8; 4], slot)
     }
 
-    type SynthFut =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<(Vec<u8>, u64)>, SyncError>> + Send>>;
+    type SynthFut = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<(Vec<u8>, u64)>, SyncError>> + Send>,
+    >;
 
     fn synthetic_fetch_one(
         contents: std::collections::BTreeMap<SocketAddr, Vec<(Point, Point, Vec<u64>)>>,
@@ -5367,14 +5350,10 @@ mod tests {
                 upper: block_point(200),
             },
         ];
-        let err = execute_multi_peer_blockfetch_plan(
-            &plan,
-            block_point(99),
-            failing_fetch_one(p2),
-            None,
-        )
-        .await
-        .expect_err("p2 failure must propagate");
+        let err =
+            execute_multi_peer_blockfetch_plan(&plan, block_point(99), failing_fetch_one(p2), None)
+                .await
+                .expect_err("p2 failure must propagate");
         assert!(matches!(err, SyncError::Recovery(_)));
     }
 
@@ -5448,10 +5427,7 @@ mod tests {
         //   chunk0: (block_point(50), block_point(125))
         //   chunk1: (block_point(126), block_point(200))
         let mut contents = std::collections::BTreeMap::new();
-        contents.insert(
-            p1,
-            vec![(block_point(50), block_point(125), vec![60, 100])],
-        );
+        contents.insert(p1, vec![(block_point(50), block_point(125), vec![60, 100])]);
         contents.insert(
             p2,
             vec![(block_point(126), block_point(200), vec![150, 200])],
@@ -5508,13 +5484,14 @@ mod tests {
 
     #[tokio::test]
     async fn inline_dispatcher_empty_plan_yields_empty_output() {
-        let result: Result<Vec<(Vec<u8>, u64)>, SyncError> = execute_multi_peer_blockfetch_plan_inline(
-            &[],
-            block_point(100),
-            |_addr, _lower, _upper| async { Ok(Vec::new()) },
-            None,
-        )
-        .await;
+        let result: Result<Vec<(Vec<u8>, u64)>, SyncError> =
+            execute_multi_peer_blockfetch_plan_inline(
+                &[],
+                block_point(100),
+                |_addr, _lower, _upper| async { Ok(Vec::new()) },
+                None,
+            )
+            .await;
         assert!(matches!(result, Ok(blocks) if blocks.is_empty()));
     }
 
@@ -5673,10 +5650,7 @@ mod tests {
             },
         ];
         let mut contents = std::collections::BTreeMap::new();
-        contents.insert(
-            p1,
-            vec![(block_point(50), block_point(125), vec![60, 100])],
-        );
+        contents.insert(p1, vec![(block_point(50), block_point(125), vec![60, 100])]);
         contents.insert(
             p2,
             vec![(block_point(126), block_point(200), vec![150, 200])],
@@ -5740,18 +5714,9 @@ mod tests {
             },
         ];
         let mut contents = std::collections::BTreeMap::new();
-        contents.insert(
-            p1,
-            vec![(block_point(100), block_point(150), vec![100])],
-        );
-        contents.insert(
-            p2,
-            vec![(block_point(151), block_point(200), vec![151])],
-        );
-        contents.insert(
-            p3,
-            vec![(block_point(201), block_point(250), vec![201])],
-        );
+        contents.insert(p1, vec![(block_point(100), block_point(150), vec![100])]);
+        contents.insert(p2, vec![(block_point(151), block_point(200), vec![151])]);
+        contents.insert(p3, vec![(block_point(201), block_point(250), vec![201])]);
 
         let result = execute_multi_peer_blockfetch_plan(
             &plan,
@@ -5769,12 +5734,8 @@ mod tests {
         // knob=10, peers.len()=2 must produce exactly 2 assignments
         // (peers.len() wins over knob).
         let peers = vec![test_addr(1001), test_addr(1002)];
-        let assignments = partition_fetch_range_across_peers(
-            block_point(100),
-            block_point(200),
-            &peers,
-            10,
-        );
+        let assignments =
+            partition_fetch_range_across_peers(block_point(100), block_point(200), &peers, 10);
         assert_eq!(assignments.len(), 2);
     }
 
@@ -6005,10 +5966,7 @@ mod tests {
         let s = format!("{e}");
         assert!(s.contains("Alonzo"), "must name the offending era: {s}");
         assert!(s.contains('4'), "must name the declared major: {s}");
-        assert!(
-            s.contains("5..=6"),
-            "must name the expected range: {s}",
-        );
+        assert!(s.contains("5..=6"), "must name the expected range: {s}",);
     }
 
     #[test]
@@ -6063,9 +6021,7 @@ mod tests {
             }
             .is_peer_attributable()
         );
-        assert!(
-            SyncError::ProtocolVersionTooHigh { major: 99, max: 10 }.is_peer_attributable()
-        );
+        assert!(SyncError::ProtocolVersionTooHigh { major: 99, max: 10 }.is_peer_attributable());
         assert!(
             SyncError::HeaderProtVerTooHigh {
                 header_major: 15,
@@ -6258,19 +6214,21 @@ mod tests {
         ];
 
         let expected_hash = HeaderHash(
-            hash_bytes_256(&[
-                [0x82, 0x01].as_slice(),
+            hash_bytes_256(
                 &[
-                    0x85, 0x01, 0x58, 0x20, 0xd4, 0xb8, 0xde, 0x7a, 0x11, 0xd9, 0x29, 0xa3,
-                    0x23, 0x37, 0x3c, 0xba, 0xb6, 0xc1, 0xa9, 0xbd, 0xc9, 0x31, 0xbe, 0xff,
-                    0xff, 0x11, 0xdb, 0x11, 0x1c, 0xf9, 0xd5, 0x73, 0x56, 0xee, 0x19, 0x37,
-                    0x58, 0x20, 0xaf, 0xc0, 0xda, 0x64, 0x18, 0x3b, 0xf2, 0x66, 0x4f, 0x3d,
-                    0x4e, 0xec, 0x72, 0x38, 0xd5, 0x24, 0xba, 0x60, 0x7f, 0xae, 0xea, 0xb2,
-                    0x4f, 0xc1, 0x00, 0xeb, 0x86, 0x1d, 0xba, 0x69, 0x97, 0x1b, 0x82, 0x00,
-                    0x81, 0x00, 0x81, 0xa0,
-                ],
-            ]
-            .concat())
+                    [0x82, 0x01].as_slice(),
+                    &[
+                        0x85, 0x01, 0x58, 0x20, 0xd4, 0xb8, 0xde, 0x7a, 0x11, 0xd9, 0x29, 0xa3,
+                        0x23, 0x37, 0x3c, 0xba, 0xb6, 0xc1, 0xa9, 0xbd, 0xc9, 0x31, 0xbe, 0xff,
+                        0xff, 0x11, 0xdb, 0x11, 0x1c, 0xf9, 0xd5, 0x73, 0x56, 0xee, 0x19, 0x37,
+                        0x58, 0x20, 0xaf, 0xc0, 0xda, 0x64, 0x18, 0x3b, 0xf2, 0x66, 0x4f, 0x3d,
+                        0x4e, 0xec, 0x72, 0x38, 0xd5, 0x24, 0xba, 0x60, 0x7f, 0xae, 0xea, 0xb2,
+                        0x4f, 0xc1, 0x00, 0xeb, 0x86, 0x1d, 0xba, 0x69, 0x97, 0x1b, 0x82, 0x00,
+                        0x81, 0x00, 0x81, 0xa0,
+                    ],
+                ]
+                .concat(),
+            )
             .0,
         );
 

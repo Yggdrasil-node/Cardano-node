@@ -39,12 +39,10 @@ pub use diffusion_pipelining::{
 };
 /// Epoch size and slot-to-epoch helpers.
 pub use epoch::{EpochSchedule, EpochSize, epoch_first_slot, is_new_epoch, slot_to_epoch};
-/// Genesis density window plus default-window and default-low-density-threshold constants.
-pub use genesis_density::{
-    DEFAULT_LOW_DENSITY_THRESHOLD, DEFAULT_SLOT_WINDOW, DensityWindow,
-};
 /// Consensus-facing error type.
 pub use error::ConsensusError;
+/// Genesis density window plus default-window and default-low-density-threshold constants.
+pub use genesis_density::{DEFAULT_LOW_DENSITY_THRESHOLD, DEFAULT_SLOT_WINDOW, DensityWindow};
 /// Block header types and verification entry point.
 pub use header::{
     Header, HeaderBody, check_header_protocol_version, verify_header,

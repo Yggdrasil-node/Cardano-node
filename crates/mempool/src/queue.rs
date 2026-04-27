@@ -435,10 +435,7 @@ impl Mempool {
     /// (possibly empty when the incoming tx fit without displacement) so
     /// the caller can update downstream peer-relay state (e.g. clear
     /// `SharedTxState` known-set entries for evicted txs).
-    pub fn insert_with_eviction(
-        &mut self,
-        entry: MempoolEntry,
-    ) -> Result<Vec<TxId>, MempoolError> {
+    pub fn insert_with_eviction(&mut self, entry: MempoolEntry) -> Result<Vec<TxId>, MempoolError> {
         // Duplicate check — same as `insert`.
         if self.tx_ids.contains(&entry.tx_id) {
             return Err(MempoolError::Duplicate(entry.tx_id));
@@ -450,9 +447,7 @@ impl Mempool {
             }
         }
         // Fast path: no capacity limit, or the incoming entry already fits.
-        if self.max_bytes == 0
-            || self.current_bytes + entry.size_bytes <= self.max_bytes
-        {
+        if self.max_bytes == 0 || self.current_bytes + entry.size_bytes <= self.max_bytes {
             self.insert(entry)?;
             return Ok(Vec::new());
         }
@@ -1004,10 +999,7 @@ impl SharedMempool {
     /// [`Mempool::insert_with_eviction`] for the upstream-aligned
     /// semantics. Notifies snapshot waiters when ANY change occurred
     /// (eviction or insertion).
-    pub fn insert_with_eviction(
-        &self,
-        entry: MempoolEntry,
-    ) -> Result<Vec<TxId>, MempoolError> {
+    pub fn insert_with_eviction(&self, entry: MempoolEntry) -> Result<Vec<TxId>, MempoolError> {
         let result = self
             .inner
             .write()
@@ -1614,7 +1606,10 @@ mod tests {
         let err = m
             .insert_with_eviction(sample_entry_with_size(0xCC, 5, 50))
             .unwrap_err();
-        assert!(matches!(err, MempoolError::EvictionInsufficientSpace { .. }));
+        assert!(matches!(
+            err,
+            MempoolError::EvictionInsufficientSpace { .. }
+        ));
         assert_eq!(m.len(), 2);
     }
 

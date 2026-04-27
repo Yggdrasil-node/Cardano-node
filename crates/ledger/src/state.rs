@@ -3174,10 +3174,7 @@ impl LedgerState {
     ///
     /// Reference: `Cardano.Chain.Genesis.UTxO.genesisUtxo` in
     /// `cardano-ledger/eras/byron/ledger/impl/src/Cardano/Chain/Genesis/UTxO.hs`.
-    pub fn seed_byron_genesis_utxo(
-        &mut self,
-        entries: impl IntoIterator<Item = (Vec<u8>, u64)>,
-    ) {
+    pub fn seed_byron_genesis_utxo(&mut self, entries: impl IntoIterator<Item = (Vec<u8>, u64)>) {
         use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut};
         use crate::utxo::MultiEraTxOut;
 
@@ -3974,7 +3971,11 @@ impl LedgerState {
         // Reference: `Cardano.Ledger.Shelley.Rules.Bbody` —
         // `validateMaxBlockBodySize`.
         if let Some(params) = &self.protocol_params {
-            let body_size: usize = block.transactions.iter().map(|tx| tx.serialized_size()).sum();
+            let body_size: usize = block
+                .transactions
+                .iter()
+                .map(|tx| tx.serialized_size())
+                .sum();
             if body_size > params.max_block_body_size as usize {
                 return Err(LedgerError::BlockTooLarge {
                     actual: body_size,
@@ -5958,9 +5959,7 @@ impl LedgerState {
             .multi_era_utxo
             .iter()
             .filter_map(|(txin, txout)| match txout {
-                crate::utxo::MultiEraTxOut::Shelley(out) => {
-                    Some((txin.clone(), out.clone()))
-                }
+                crate::utxo::MultiEraTxOut::Shelley(out) => Some((txin.clone(), out.clone())),
                 _ => None,
             })
             .collect();
@@ -15044,7 +15043,10 @@ mod tests {
         let mut action = test_hf_action();
         let mut drep_state = DrepState::new();
         let drep_regular = DRep::KeyHash([1; 28]);
-        drep_state.register(drep_regular, RegisteredDrep::new_active(0, None, EpochNo(1)));
+        drep_state.register(
+            drep_regular,
+            RegisteredDrep::new_active(0, None, EpochNo(1)),
+        );
 
         let mut stake = BTreeMap::new();
         // A registered DRep that votes Yes with stake 100.

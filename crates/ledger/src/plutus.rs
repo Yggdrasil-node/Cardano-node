@@ -182,10 +182,7 @@ impl PlutusData {
     /// nesting up to [`Self::MAX_DECODE_DEPTH`] runs in constant native stack
     /// regardless of the input shape; exceeding the depth bound returns
     /// [`crate::error::LedgerError::CborNestingTooDeep`].
-    fn decode_with_depth(
-        dec: &mut Decoder<'_>,
-        max_depth: usize,
-    ) -> Result<Self, LedgerError> {
+    fn decode_with_depth(dec: &mut Decoder<'_>, max_depth: usize) -> Result<Self, LedgerError> {
         // Frame describes one in-progress container.  `remaining = None`
         // marks an indefinite-length container terminated by a CBOR break
         // marker; `Some(0)` is interpreted by the fold logic as "no more
@@ -255,7 +252,9 @@ impl PlutusData {
                 match stack.last_mut() {
                     None => return Ok(v),
                     Some(Frame::Seq {
-                        children, remaining, ..
+                        children,
+                        remaining,
+                        ..
                     }) => {
                         children.push(v);
                         if let Some(r) = remaining {
@@ -291,7 +290,13 @@ impl PlutusData {
             if let Some(top) = stack.last() {
                 let is_indef = matches!(
                     top,
-                    Frame::Seq { remaining: None, .. } | Frame::Map { remaining: None, .. }
+                    Frame::Seq {
+                        remaining: None,
+                        ..
+                    } | Frame::Map {
+                        remaining: None,
+                        ..
+                    }
                 );
                 if is_indef && dec.is_break() {
                     dec.consume_break()?;
@@ -1127,7 +1132,11 @@ mod tests {
             (2, Script::PlutusV2(vec![0x04, 0x05, 0x06])),
             (3, Script::PlutusV3(vec![0x07, 0x08, 0x09])),
         ];
-        assert_eq!(cases.len(), 4, "Script tag space must be 0..=3 (4 variants)");
+        assert_eq!(
+            cases.len(),
+            4,
+            "Script tag space must be 0..=3 (4 variants)"
+        );
 
         let mut seen: Vec<u64> = Vec::with_capacity(4);
         for (canonical, script) in cases {
@@ -1143,7 +1152,11 @@ mod tests {
             seen.push(tag);
         }
         seen.sort();
-        assert_eq!(seen, vec![0, 1, 2, 3], "Script tag set must be exactly 0..=3");
+        assert_eq!(
+            seen,
+            vec![0, 1, 2, 3],
+            "Script tag set must be exactly 0..=3"
+        );
     }
 
     /// Encoder-side drift guard for `StakeCredential`.
@@ -1171,13 +1184,19 @@ mod tests {
         for (canonical, cred) in cases {
             let bytes = cred.to_cbor_bytes();
             let mut dec = Decoder::new(&bytes);
-            let len = dec.array().expect("StakeCredential encodes as a CBOR array");
+            let len = dec
+                .array()
+                .expect("StakeCredential encodes as a CBOR array");
             assert_eq!(len, 2, "StakeCredential::{cred:?} array length must be 2");
             let tag = dec.unsigned().expect("first array element is the tag");
             assert_eq!(tag, canonical, "StakeCredential::{cred:?} tag drift");
             seen.push(tag);
         }
         seen.sort();
-        assert_eq!(seen, vec![0, 1], "StakeCredential tag set must be exactly 0..=1");
+        assert_eq!(
+            seen,
+            vec![0, 1],
+            "StakeCredential tag set must be exactly 0..=1"
+        );
     }
 }

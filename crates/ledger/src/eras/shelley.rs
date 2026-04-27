@@ -368,7 +368,9 @@ impl CborDecode for ShelleyTxBody {
             })?,
             // Allegra/Mary allow TTL to be absent. Decode as an open upper
             // bound so Shelley-family block parsing remains interoperable.
-            ttl: ttl.or_else(|| validity_interval_start_seen.then_some(u64::MAX)).unwrap_or(u64::MAX),
+            ttl: ttl
+                .or_else(|| validity_interval_start_seen.then_some(u64::MAX))
+                .unwrap_or(u64::MAX),
             certificates,
             withdrawals,
             update,
@@ -681,81 +683,71 @@ impl CborDecode for ShelleyWitnessSet {
 
             let key = dec.unsigned()?;
             match key {
-                0 => {
-                    match begin_array_or_set(dec)? {
-                        Some(count) => {
-                            for _ in 0..count {
-                                vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
-                            }
-                        }
-                        None => {
-                            while !dec.is_break() {
-                                vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
-                            }
-                            dec.consume_break()?;
+                0 => match begin_array_or_set(dec)? {
+                    Some(count) => {
+                        for _ in 0..count {
+                            vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
                         }
                     }
-                }
-                1 => {
-                    match begin_array_or_set(dec)? {
-                        Some(count) => {
-                            for _ in 0..count {
-                                native_scripts.push(NativeScript::decode_cbor(dec)?);
-                            }
+                    None => {
+                        while !dec.is_break() {
+                            vkey_witnesses.push(ShelleyVkeyWitness::decode_cbor(dec)?);
                         }
-                        None => {
-                            while !dec.is_break() {
-                                native_scripts.push(NativeScript::decode_cbor(dec)?);
-                            }
-                            dec.consume_break()?;
+                        dec.consume_break()?;
+                    }
+                },
+                1 => match begin_array_or_set(dec)? {
+                    Some(count) => {
+                        for _ in 0..count {
+                            native_scripts.push(NativeScript::decode_cbor(dec)?);
                         }
                     }
-                }
-                2 => {
-                    match begin_array_or_set(dec)? {
-                        Some(count) => {
-                            for _ in 0..count {
-                                bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
-                            }
+                    None => {
+                        while !dec.is_break() {
+                            native_scripts.push(NativeScript::decode_cbor(dec)?);
                         }
-                        None => {
-                            while !dec.is_break() {
-                                bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
-                            }
-                            dec.consume_break()?;
+                        dec.consume_break()?;
+                    }
+                },
+                2 => match begin_array_or_set(dec)? {
+                    Some(count) => {
+                        for _ in 0..count {
+                            bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
                         }
                     }
-                }
-                3 => {
-                    match begin_array_or_set(dec)? {
-                        Some(count) => {
-                            for _ in 0..count {
-                                plutus_v1_scripts.push(dec.bytes()?.to_vec());
-                            }
+                    None => {
+                        while !dec.is_break() {
+                            bootstrap_witnesses.push(BootstrapWitness::decode_cbor(dec)?);
                         }
-                        None => {
-                            while !dec.is_break() {
-                                plutus_v1_scripts.push(dec.bytes()?.to_vec());
-                            }
-                            dec.consume_break()?;
+                        dec.consume_break()?;
+                    }
+                },
+                3 => match begin_array_or_set(dec)? {
+                    Some(count) => {
+                        for _ in 0..count {
+                            plutus_v1_scripts.push(dec.bytes()?.to_vec());
                         }
                     }
-                }
-                4 => {
-                    match dec.array_begin()? {
-                        Some(count) => {
-                            for _ in 0..count {
-                                plutus_data.push(PlutusData::decode_cbor(dec)?);
-                            }
+                    None => {
+                        while !dec.is_break() {
+                            plutus_v1_scripts.push(dec.bytes()?.to_vec());
                         }
-                        None => {
-                            while !dec.is_break() {
-                                plutus_data.push(PlutusData::decode_cbor(dec)?);
-                            }
-                            dec.consume_break()?;
+                        dec.consume_break()?;
+                    }
+                },
+                4 => match dec.array_begin()? {
+                    Some(count) => {
+                        for _ in 0..count {
+                            plutus_data.push(PlutusData::decode_cbor(dec)?);
                         }
                     }
-                }
+                    None => {
+                        while !dec.is_break() {
+                            plutus_data.push(PlutusData::decode_cbor(dec)?);
+                        }
+                        dec.consume_break()?;
+                    }
+                },
                 5 => {
                     // Redeemers: array format [* redeemer] (Alonzo/Babbage) or
                     // map format { [tag, index] => [data, ex_units] } (Conway).
@@ -841,36 +833,32 @@ impl CborDecode for ShelleyWitnessSet {
                         });
                     }
                 }
-                6 => {
-                    match begin_array_or_set(dec)? {
-                        Some(count) => {
-                            for _ in 0..count {
-                                plutus_v2_scripts.push(dec.bytes()?.to_vec());
-                            }
-                        }
-                        None => {
-                            while !dec.is_break() {
-                                plutus_v2_scripts.push(dec.bytes()?.to_vec());
-                            }
-                            dec.consume_break()?;
+                6 => match begin_array_or_set(dec)? {
+                    Some(count) => {
+                        for _ in 0..count {
+                            plutus_v2_scripts.push(dec.bytes()?.to_vec());
                         }
                     }
-                }
-                7 => {
-                    match begin_array_or_set(dec)? {
-                        Some(count) => {
-                            for _ in 0..count {
-                                plutus_v3_scripts.push(dec.bytes()?.to_vec());
-                            }
+                    None => {
+                        while !dec.is_break() {
+                            plutus_v2_scripts.push(dec.bytes()?.to_vec());
                         }
-                        None => {
-                            while !dec.is_break() {
-                                plutus_v3_scripts.push(dec.bytes()?.to_vec());
-                            }
-                            dec.consume_break()?;
+                        dec.consume_break()?;
+                    }
+                },
+                7 => match begin_array_or_set(dec)? {
+                    Some(count) => {
+                        for _ in 0..count {
+                            plutus_v3_scripts.push(dec.bytes()?.to_vec());
                         }
                     }
-                }
+                    None => {
+                        while !dec.is_break() {
+                            plutus_v3_scripts.push(dec.bytes()?.to_vec());
+                        }
+                        dec.consume_break()?;
+                    }
+                },
                 _ => {
                     dec.skip()?;
                 }

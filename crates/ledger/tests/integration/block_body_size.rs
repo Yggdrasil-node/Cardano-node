@@ -6,7 +6,12 @@
 
 use super::*;
 
-fn make_tx_with_sizes(body_len: usize, witness_len: usize, aux_len: Option<usize>, is_valid: bool) -> Tx {
+fn make_tx_with_sizes(
+    body_len: usize,
+    witness_len: usize,
+    aux_len: Option<usize>,
+    is_valid: bool,
+) -> Tx {
     let body = vec![0u8; body_len];
     let witnesses = Some(vec![0u8; witness_len]);
     let auxiliary_data = aux_len.map(|len| vec![0u8; len]);
@@ -50,7 +55,9 @@ fn block_body_size_counts_witnesses_and_aux_data() {
     state.set_protocol_params(params);
 
     let block = make_block(10, 1, vec![tx]);
-    let err = state.apply_block(&block).expect_err("expected BBODY size rejection");
+    let err = state
+        .apply_block(&block)
+        .expect_err("expected BBODY size rejection");
     match err {
         LedgerError::BlockTooLarge { actual, max } => {
             assert_eq!(actual, full_size);
@@ -76,7 +83,9 @@ fn block_body_size_sums_full_serialized_size_across_transactions() {
     state.set_protocol_params(params);
 
     let block = make_block(11, 2, vec![tx1, tx2]);
-    let err = state.apply_block(&block).expect_err("expected BBODY size rejection");
+    let err = state
+        .apply_block(&block)
+        .expect_err("expected BBODY size rejection");
     match err {
         LedgerError::BlockTooLarge { actual, max } => {
             assert_eq!(actual, expected_total);

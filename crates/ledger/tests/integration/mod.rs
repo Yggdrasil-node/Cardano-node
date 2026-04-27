@@ -77,8 +77,8 @@ fn compute_test_script_data_hash(
     .expect("compute test script_data_hash")
 }
 
-mod block_ex_units;
 mod block_body_size;
+mod block_ex_units;
 mod conway_cert_deposit_validation;
 mod conway_governance_parity;
 mod core_cbor;

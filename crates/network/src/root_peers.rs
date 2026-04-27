@@ -642,10 +642,10 @@ mod tests {
                 env!("CARGO_MANIFEST_DIR").replace("crates/network", "node"),
                 net
             );
-            let bytes = std::fs::read_to_string(&path)
-                .unwrap_or_else(|err| panic!("read {path}: {err}"));
-            let parsed: TopologyConfig = serde_json::from_str(&bytes)
-                .unwrap_or_else(|err| panic!("parse {path}: {err}"));
+            let bytes =
+                std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {path}: {err}"));
+            let parsed: TopologyConfig =
+                serde_json::from_str(&bytes).unwrap_or_else(|err| panic!("parse {path}: {err}"));
             // Real upstream topology files always set useLedgerAfterSlot to a
             // concrete network-specific slot so ledger-peer onboarding is
             // gated until after that slot.
@@ -664,8 +664,7 @@ mod tests {
             // Round-trip: re-serialize and re-parse to catch any field-name
             // mismatch that would lose data on persistence.
             let json = serde_json::to_string(&parsed).expect("re-serialize");
-            let reparsed: TopologyConfig =
-                serde_json::from_str(&json).expect("reparse round-trip");
+            let reparsed: TopologyConfig = serde_json::from_str(&json).expect("reparse round-trip");
             assert_eq!(parsed, reparsed, "round-trip mismatch for {net}");
         }
     }

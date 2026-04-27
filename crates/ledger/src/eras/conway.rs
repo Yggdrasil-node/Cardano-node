@@ -1888,7 +1888,13 @@ mod tests {
                     guardrails_script_hash: None,
                 },
             ),
-            (3, 2, GovAction::NoConfidence { prev_action_id: None }),
+            (
+                3,
+                2,
+                GovAction::NoConfidence {
+                    prev_action_id: None,
+                },
+            ),
             (
                 4,
                 5,
@@ -1896,7 +1902,10 @@ mod tests {
                     prev_action_id: None,
                     members_to_remove: vec![],
                     members_to_add: BTreeMap::new(),
-                    quorum: UnitInterval { numerator: 1, denominator: 2 },
+                    quorum: UnitInterval {
+                        numerator: 1,
+                        denominator: 2,
+                    },
                 },
             ),
             (
@@ -2002,12 +2011,19 @@ mod tests {
             };
             let mut dec = Decoder::new(&bytes);
             let len = dec.array().expect("Voter encodes as a CBOR array");
-            assert_eq!(len, 2, "Voter::{voter:?} array length must be 2 (tag + hash)");
+            assert_eq!(
+                len, 2,
+                "Voter::{voter:?} array length must be 2 (tag + hash)"
+            );
             let tag = dec.unsigned().expect("first array element is the tag");
             assert_eq!(tag, canonical, "Voter::{voter:?} tag drift");
             seen.push(tag);
         }
         seen.sort();
-        assert_eq!(seen, vec![0, 1, 2, 3, 4], "Voter tag set must be exactly 0..=4");
+        assert_eq!(
+            seen,
+            vec![0, 1, 2, 3, 4],
+            "Voter tag set must be exactly 0..=4"
+        );
     }
 }

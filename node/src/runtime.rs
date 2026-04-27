@@ -45,21 +45,20 @@ use yggdrasil_mempool::{
 use yggdrasil_network::{
     AbstractState, AcquireOutboundResult, AfterSlot, BlockFetchClient, ChainSyncClient, CmAction,
     ConnectionManagerState, ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, ConsensusMode,
-    ControlMessage, DataFlow, DnsRefreshPolicy, DnsRootPeerProvider, GovernorAction,
-    GovernorState, GovernorTargets, HandshakeVersion, KeepAliveClient, KeepAliveClientError,
-    LedgerPeerSnapshot,
-    LedgerPeerUseDecision, LedgerStateJudgement, LiveLedgerPeerRefreshObservation,
-    LocalRootConfig, LocalRootTargets,
-    MiniProtocolNum, NodePeerSharing, NodeToNodeVersionData, PeerAccessPoint, PeerAttemptState,
-    PeerConnection, PeerError, PeerRegistry, PeerSelectionCounters, PeerSelectionTimeouts,
-    PeerSharingClient, PeerSnapshotFileObservation, PeerSnapshotFileSource, PeerSnapshotFreshness,
-    PeerSource, PeerStateAction, PeerStatus, ReleaseOutboundResult, RootPeerProviderState,
-    TemperatureBundle, TopologyConfig, TxIdAndSize, TxServerRequest, TxSubmissionClient,
-    TxSubmissionClientError, UseLedgerPeers, churn_mode_from_fetch_mode, compute_association_mode,
-    derive_peer_snapshot_freshness, eligible_ledger_peer_candidates, fetch_mode_from_judgement,
-    governor_action_to_peer_state_action, live_refresh_ledger_peer_registry_observed,
-    merge_ledger_peer_snapshots, peer_attempt_state, peer_selection_mode, pick_churn_regime,
-    refresh_root_peer_state_and_registry, resolve_peer_access_points,
+    ControlMessage, DataFlow, DnsRefreshPolicy, DnsRootPeerProvider, GovernorAction, GovernorState,
+    GovernorTargets, HandshakeVersion, KeepAliveClient, KeepAliveClientError, LedgerPeerSnapshot,
+    LedgerPeerUseDecision, LedgerStateJudgement, LiveLedgerPeerRefreshObservation, LocalRootConfig,
+    LocalRootTargets, MiniProtocolNum, NodePeerSharing, NodeToNodeVersionData, PeerAccessPoint,
+    PeerAttemptState, PeerConnection, PeerError, PeerRegistry, PeerSelectionCounters,
+    PeerSelectionTimeouts, PeerSharingClient, PeerSnapshotFileObservation, PeerSnapshotFileSource,
+    PeerSnapshotFreshness, PeerSource, PeerStateAction, PeerStatus, ReleaseOutboundResult,
+    RootPeerProviderState, TemperatureBundle, TopologyConfig, TxIdAndSize, TxServerRequest,
+    TxSubmissionClient, TxSubmissionClientError, UseLedgerPeers, churn_mode_from_fetch_mode,
+    compute_association_mode, derive_peer_snapshot_freshness, eligible_ledger_peer_candidates,
+    fetch_mode_from_judgement, governor_action_to_peer_state_action,
+    live_refresh_ledger_peer_registry_observed, merge_ledger_peer_snapshots, peer_attempt_state,
+    peer_selection_mode, pick_churn_regime, refresh_root_peer_state_and_registry,
+    resolve_peer_access_points,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
@@ -243,7 +242,10 @@ impl RuntimeGovernorConfig {
     /// tick propagates `fetch_mode_from_judgement(...)` into the pool's
     /// per-peer concurrency cap. Pass `None` (the default) to keep the
     /// pool's mode pinned at construction time.
-    pub fn with_block_fetch_pool(mut self, pool: Option<yggdrasil_network::BlockFetchInstrumentation>) -> Self {
+    pub fn with_block_fetch_pool(
+        mut self,
+        pool: Option<yggdrasil_network::BlockFetchInstrumentation>,
+    ) -> Self {
         self.block_fetch_pool = pool;
         self
     }
@@ -254,10 +256,7 @@ impl RuntimeGovernorConfig {
     /// instead of the legacy hardcoded `YoungEnough`. Pass the default
     /// value (the constructor sets it) to keep the legacy fallback
     /// behavior — useful for tests that don't configure genesis.
-    pub fn with_ledger_judgement_settings(
-        mut self,
-        settings: LedgerJudgementSettings,
-    ) -> Self {
+    pub fn with_ledger_judgement_settings(mut self, settings: LedgerJudgementSettings) -> Self {
         self.ledger_judgement_settings = settings;
         self
     }
@@ -756,7 +755,15 @@ impl OutboundPeerManager {
             .warm_peers
             .iter_mut()
             .filter(|(_, m)| m.is_hot)
-            .map(|(addr, m)| (*addr, m.session.block_fetch.as_mut().expect("block_fetch migrated")))
+            .map(|(addr, m)| {
+                (
+                    *addr,
+                    m.session
+                        .block_fetch
+                        .as_mut()
+                        .expect("block_fetch migrated"),
+                )
+            })
             .collect();
         f(&mut handles)
     }
@@ -1257,9 +1264,7 @@ where
                 ConsensusLedgerPeerInputs {
                     latest_slot,
                     judgement,
-                    ledger_snapshot: ledger_peer_snapshot_from_ledger_state(
-                        &recovery.ledger_state,
-                    ),
+                    ledger_snapshot: ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state),
                 }
             }
             Err(err) => {
@@ -1443,7 +1448,10 @@ where
             "Net.PeerSelection",
             "Info",
             "ledger peer registry refreshed",
-            trace_fields([("decision", json!(format!("{:?}", observation.update.decision)))]),
+            trace_fields([(
+                "decision",
+                json!(format!("{:?}", observation.update.decision)),
+            )]),
         );
     }
 
@@ -1558,10 +1566,7 @@ async fn apply_cm_actions(
                                 "BlockFetch migrated to per-peer worker",
                                 trace_fields([
                                     ("peer", json!(peer.to_string())),
-                                    (
-                                        "maxConcurrent",
-                                        json!(max_concurrent_block_fetch_peers),
-                                    ),
+                                    ("maxConcurrent", json!(max_concurrent_block_fetch_peers)),
                                 ]),
                             );
                         }
@@ -2976,14 +2981,16 @@ pub fn add_tx_to_shared_mempool_with_eviction(
         tx,
         current_slot,
         evaluator,
-        |entry, protocol_params| {
-            match mempool.insert_checked_with_eviction(entry, current_slot, protocol_params) {
-                Ok(displaced) => {
-                    *evicted_ref = displaced;
-                    Ok(())
-                }
-                Err(e) => Err(e),
+        |entry, protocol_params| match mempool.insert_checked_with_eviction(
+            entry,
+            current_slot,
+            protocol_params,
+        ) {
+            Ok(displaced) => {
+                *evicted_ref = displaced;
+                Ok(())
             }
+            Err(e) => Err(e),
         },
     )?;
     Ok(MempoolAddTxOutcome { result, evicted })
@@ -3634,10 +3641,7 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
     /// confirmed roll-forward batch.  Mirrors upstream
     /// `Ouroboros.Network.TxSubmission.Inbound.V2.State` `bufferedTxs`
     /// population on confirmation.
-    pub fn with_inbound_tx_state(
-        mut self,
-        inbound_tx_state: Option<SharedTxState>,
-    ) -> Self {
+    pub fn with_inbound_tx_state(mut self, inbound_tx_state: Option<SharedTxState>) -> Self {
         self.inbound_tx_state = inbound_tx_state;
         self
     }
@@ -3919,7 +3923,6 @@ mod _runstate_impl_marker {
 }
 
 impl ReconnectingRunState {
-
     fn record_progress(&mut self, progress: &MultiEraSyncProgress) {
         self.total_blocks += progress.fetched_blocks;
         self.total_rollbacks += progress.rollback_count;
@@ -4222,10 +4225,7 @@ impl KeepAliveScheduler {
     /// `Ok(false)` when no heartbeat was due, and propagates the
     /// underlying [`KeepAliveClient`] error otherwise so the caller can
     /// abort the mux and record a reconnect.
-    async fn tick(
-        &mut self,
-        client: &mut KeepAliveClient,
-    ) -> Result<bool, KeepAliveClientError> {
+    async fn tick(&mut self, client: &mut KeepAliveClient) -> Result<bool, KeepAliveClientError> {
         if self.last_sent_at.elapsed() < KEEPALIVE_HEARTBEAT_INTERVAL {
             return Ok(false);
         }
@@ -4768,13 +4768,12 @@ where
                     .density_registry
                     .as_ref()
                     .map(|r| (r, session.connected_peer_addr)),
-                config
-                    .shared_fetch_worker_pool
-                    .as_ref()
-                    .map(|pool| crate::sync::MultiPeerDispatchContext {
+                config.shared_fetch_worker_pool.as_ref().map(|pool| {
+                    crate::sync::MultiPeerDispatchContext {
                         pool,
                         max_concurrent_knob: config.max_concurrent_block_fetch_peers,
-                    }),
+                    }
+                }),
             );
 
             tokio::select! {
@@ -5239,13 +5238,12 @@ where
                     .density_registry
                     .as_ref()
                     .map(|r| (r, session.connected_peer_addr)),
-                config
-                    .shared_fetch_worker_pool
-                    .as_ref()
-                    .map(|pool| crate::sync::MultiPeerDispatchContext {
+                config.shared_fetch_worker_pool.as_ref().map(|pool| {
+                    crate::sync::MultiPeerDispatchContext {
                         pool,
                         max_concurrent_knob: config.max_concurrent_block_fetch_peers,
-                    }),
+                    }
+                }),
             );
 
             tokio::select! {
@@ -6193,11 +6191,9 @@ where
         let mut ct = crate::sync::default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
         if let Some(ref nonce_cfg) = config.nonce_config {
             ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
-            ct.epoch_size = Some(
-                config
-                    .epoch_schedule
-                    .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nonce_cfg.epoch_size)),
-            );
+            ct.epoch_size = Some(config.epoch_schedule.unwrap_or_else(|| {
+                yggdrasil_consensus::EpochSchedule::fixed(nonce_cfg.epoch_size)
+            }));
         }
         Some(ct)
     };
@@ -6234,10 +6230,9 @@ where
 mod tests {
     use super::{
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
-        LedgerJudgementSettings, NodeConfig, ReconnectingRunState,
-        ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
-        VerifiedSyncServiceConfig, checkpoint_trace_fields, derive_judgement_at,
-        handle_reconnect_batch_error, kes_expiry_warning_from_periods,
+        LedgerJudgementSettings, NodeConfig, ReconnectingRunState, ReconnectingVerifiedSyncRequest,
+        ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig, checkpoint_trace_fields,
+        derive_judgement_at, handle_reconnect_batch_error, kes_expiry_warning_from_periods,
         local_root_targets_from_config, mempool_entries_for_forging,
         ordered_reconnect_fallback_peers, peer_share_request_amount,
         preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
@@ -6319,11 +6314,11 @@ mod tests {
             active_slot_coeff: None,
             slot_length_secs: None,
             system_start_unix_secs: None,
-        epoch_schedule: None,
-        block_fetch_pool: None,
-        max_concurrent_block_fetch_peers: 1,
-        density_registry: None,
-        shared_fetch_worker_pool: None,
+            epoch_schedule: None,
+            block_fetch_pool: None,
+            max_concurrent_block_fetch_peers: 1,
+            density_registry: None,
+            shared_fetch_worker_pool: None,
         }
     }
 
@@ -7132,13 +7127,7 @@ mod tests {
     /// `TooOld` here is the regression guard.
     #[test]
     fn derive_judgement_at_returns_too_old_when_genesis_present_and_tip_stale() {
-        let judgement = derive_judgement_at(
-            Some(100),
-            Some(0.0),
-            Some(1.0),
-            60.0,
-            200.0,
-        );
+        let judgement = derive_judgement_at(Some(100), Some(0.0), Some(1.0), 60.0, 200.0);
         assert_eq!(judgement, yggdrasil_network::LedgerStateJudgement::TooOld);
     }
 
@@ -7147,13 +7136,7 @@ mod tests {
     /// of the runtime helper at the production-relevant boundary.
     #[test]
     fn derive_judgement_at_returns_young_enough_when_genesis_present_and_tip_fresh() {
-        let judgement = derive_judgement_at(
-            Some(100),
-            Some(0.0),
-            Some(1.0),
-            60.0,
-            150.0,
-        );
+        let judgement = derive_judgement_at(Some(100), Some(0.0), Some(1.0), 60.0, 150.0);
         assert_eq!(
             judgement,
             yggdrasil_network::LedgerStateJudgement::YoungEnough
@@ -7223,8 +7206,10 @@ mod tests {
         let addr: std::net::SocketAddr = "1.2.3.4:3050".parse().unwrap();
         let mut mgr = OutboundPeerManager::new();
         let session = fake_peer_session(addr);
-        let weight_lookup: std::collections::BTreeMap<MiniProtocolNum, yggdrasil_network::WeightHandle> =
-            session.protocol_weights.iter().cloned().collect();
+        let weight_lookup: std::collections::BTreeMap<
+            MiniProtocolNum,
+            yggdrasil_network::WeightHandle,
+        > = session.protocol_weights.iter().cloned().collect();
         mgr.warm_peers.insert(
             addr,
             super::ManagedWarmPeer::new(session, std::time::Instant::now()),
@@ -7256,8 +7241,10 @@ mod tests {
         let addr: std::net::SocketAddr = "1.2.3.4:3051".parse().unwrap();
         let mut mgr = OutboundPeerManager::new();
         let session = fake_peer_session(addr);
-        let weight_lookup: std::collections::BTreeMap<MiniProtocolNum, yggdrasil_network::WeightHandle> =
-            session.protocol_weights.iter().cloned().collect();
+        let weight_lookup: std::collections::BTreeMap<
+            MiniProtocolNum,
+            yggdrasil_network::WeightHandle,
+        > = session.protocol_weights.iter().cloned().collect();
         mgr.warm_peers.insert(
             addr,
             super::ManagedWarmPeer::new(session, std::time::Instant::now()),
@@ -7532,8 +7519,7 @@ mod tests {
             yggdrasil_network::CmAction::TerminateConnection(warm_conn_id),
         ];
 
-        let (applicable, deferred) =
-            super::split_timeout_cm_actions_for_governor(&mgr, actions);
+        let (applicable, deferred) = super::split_timeout_cm_actions_for_governor(&mgr, actions);
 
         assert_eq!(deferred, 3);
         assert_eq!(applicable.len(), 1);
