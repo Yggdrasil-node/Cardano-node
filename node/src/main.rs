@@ -1148,6 +1148,15 @@ fn main() -> Result<()> {
             // same `BTreeMap<SocketAddr, DensityWindow>`.
             let density_registry = yggdrasil_node::sync::new_density_registry();
 
+            // Phase 6 — shared FetchWorkerPool for upstream-faithful
+            // multi-peer BlockFetch dispatch.  Cloned into both the
+            // sync-service config (reader path) and any future
+            // governor-side wiring (writer path).  Default knob = 1
+            // keeps the pool empty and the legacy single-peer path
+            // active; opting into knob > 1 activates registration.
+            let shared_fetch_worker_pool =
+                yggdrasil_node::runtime::new_shared_fetch_worker_pool();
+
             let sync_config = if let Some(verification) = verification {
                 VerifiedSyncServiceConfig {
                     batch_size,
@@ -1167,6 +1176,7 @@ fn main() -> Result<()> {
                     block_fetch_pool: Some(block_fetch_pool.clone()),
                     max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
                     density_registry: Some(density_registry.clone()),
+                    shared_fetch_worker_pool: Some(shared_fetch_worker_pool.clone()),
                 }
             } else {
                 VerifiedSyncServiceConfig {
@@ -1195,6 +1205,7 @@ fn main() -> Result<()> {
                     block_fetch_pool: Some(block_fetch_pool.clone()),
                     max_concurrent_block_fetch_peers: file_cfg.max_concurrent_block_fetch_peers,
                     density_registry: Some(density_registry.clone()),
+                    shared_fetch_worker_pool: Some(shared_fetch_worker_pool.clone()),
                 }
             };
 

@@ -306,6 +306,17 @@ pub struct FetchWorkerPool<B> {
     workers: BTreeMap<SocketAddr, FetchWorkerHandle<B>>,
 }
 
+impl<B> std::fmt::Debug for FetchWorkerPool<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Render only the registered peer addresses + count; the
+        // worker handles themselves contain non-Debug runtime
+        // resources (mpsc::Sender, JoinHandle).
+        f.debug_struct("FetchWorkerPool")
+            .field("registered_peers", &self.workers.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 impl<B: Send + 'static> FetchWorkerPool<B> {
     /// Construct an empty pool.
     pub fn new() -> Self {

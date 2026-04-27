@@ -1253,6 +1253,23 @@ pub struct VerifiedSyncServiceConfig {
     /// Reference: `Ouroboros.Consensus.Genesis.Governor` — density
     /// updates per ChainSync `RollForward`.
     pub density_registry: Option<DensityRegistry>,
+    /// Optional shared per-peer BlockFetch worker pool reachable
+    /// from both the governor (writer: register on promote,
+    /// unregister on demote) and the sync loop (reader: dispatch
+    /// fetch plans).  When populated and
+    /// `effective_block_fetch_concurrency(pool.len()) > 1`, the
+    /// sync loop's BlockFetch path goes through the pool's
+    /// `dispatch_plan` instead of the direct `block_fetch_mut()`
+    /// call — matching upstream
+    /// `Ouroboros.Network.BlockFetch.ClientRegistry` semantics.
+    ///
+    /// Cloned at runtime startup from
+    /// [`crate::runtime::new_shared_fetch_worker_pool`] and threaded
+    /// into both [`crate::runtime::RuntimeGovernorConfig`] (governor
+    /// side) and this config (sync side) so register/unregister
+    /// from the governor task is visible to the sync task on the
+    /// next read.
+    pub shared_fetch_worker_pool: Option<crate::runtime::SharedFetchWorkerPool>,
 }
 
 impl VerifiedSyncServiceConfig {
@@ -3747,13 +3764,14 @@ pub(crate) async fn sync_batch_verified(
 ) -> Result<MultiEraSyncProgress, SyncError> {
     sync_batch_verified_with_tentative(
         chain_sync,
-        block_fetch,
+        Some(block_fetch),
         from_point,
         batch_size,
         verification,
         None,
         ocert_counters,
         pool_instr,
+        None,
         None,
     )
     .await
@@ -3762,7 +3780,7 @@ pub(crate) async fn sync_batch_verified(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn sync_batch_verified_with_tentative(
     chain_sync: &mut ChainSyncClient,
-    block_fetch: &mut BlockFetchClient,
+    block_fetch: Option<&mut BlockFetchClient>,
     mut from_point: Point,
     batch_size: usize,
     verification: Option<&VerificationConfig>,
@@ -3770,7 +3788,9 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     ocert_counters: &mut Option<OcertCounters>,
     pool_instr: Option<(&BlockFetchInstrumentation, SocketAddr)>,
     density_instr: Option<(&DensityRegistry, SocketAddr)>,
+    multi_peer_dispatch: Option<MultiPeerDispatchContext<'_>>,
 ) -> Result<MultiEraSyncProgress, SyncError> {
+    let mut block_fetch = block_fetch;
     let mut steps = Vec::new();
     let mut fetched_blocks = 0usize;
     let mut rollback_count = 0usize;
@@ -3816,6 +3836,62 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 } else {
                     match effective_range {
                         Some((lower, upper)) => {
+                            // Phase 6 — multi-peer dispatch branch.
+                            // Active when the runtime opted in via
+                            // `max_concurrent_block_fetch_peers > 1`
+                            // AND the shared worker pool has registered
+                            // at least one worker.  Reads the pool under
+                            // a brief read-lock; dispatches through the
+                            // upstream-style per-peer worker tasks
+                            // (mirrors `BlockFetch.ClientRegistry`
+                            // semantics).
+                            let multi_peer_result = if let Some(ctx) = &multi_peer_dispatch {
+                                let pool_guard = ctx.pool.read().await;
+                                let n_workers = pool_guard.len();
+                                let effective = effective_block_fetch_concurrency(
+                                    ctx.max_concurrent_knob,
+                                    n_workers,
+                                );
+                                if effective > 1 {
+                                    let peer_addrs = pool_guard.peer_addrs();
+                                    let plan = partition_fetch_range_across_peers(
+                                        lower,
+                                        upper,
+                                        &peer_addrs,
+                                        ctx.max_concurrent_knob,
+                                    );
+                                    Some(
+                                        pool_guard
+                                            .dispatch_plan(
+                                                &plan,
+                                                from_point,
+                                                pool_instr.map(|(p, _)| p),
+                                            )
+                                            .await,
+                                    )
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            // If the multi-peer branch was taken, use
+                            // its result.  Otherwise fall through to
+                            // the legacy single-peer fetch.
+                            if let Some(result) = multi_peer_result {
+                                match result {
+                                    Ok(blocks) => blocks,
+                                    Err(err) => {
+                                        if tentative_set {
+                                            if let Some(state) = tentative_state {
+                                                clear_tentative_trap(state);
+                                            }
+                                        }
+                                        return Err(err);
+                                    }
+                                }
+                            } else {
                             // Pool instrumentation: record dispatch synchronously
                             // so per-peer in-flight accounting reflects the
                             // outstanding fetch.  Mirrors upstream
@@ -3826,7 +3902,12 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                     g.note_dispatch(peer);
                                 }
                             }
-                            match fetch_range_blocks_multi_era_raw_decoded(block_fetch, lower, upper)
+                            let bf = block_fetch.as_deref_mut().expect(
+                                "legacy single-peer fetch path requires Some(BlockFetchClient); \
+                                 caller must provide the leader's BlockFetch handle when no \
+                                 multi-peer dispatch context is active",
+                            );
+                            match fetch_range_blocks_multi_era_raw_decoded(bf, lower, upper)
                                 .await
                             {
                                 Ok(mut blocks) => {
@@ -3864,6 +3945,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                     }
                                     return Err(err);
                                 }
+                            }
                             }
                         }
                         None => Vec::new(),
@@ -4718,6 +4800,32 @@ where
         out.extend(blocks);
     }
     Ok(out)
+}
+
+/// Runtime-side dispatch context for the multi-peer BlockFetch path.
+///
+/// When passed to [`sync_batch_verified_with_tentative`] as
+/// `Some(...)`, AND the underlying [`crate::runtime::SharedFetchWorkerPool`]
+/// has at least two registered workers, AND
+/// `effective_block_fetch_concurrency(workers, max_knob) > 1`, the
+/// per-RollForward fetch dispatches through the pool's `dispatch_plan`
+/// instead of the direct `block_fetch` reference.  Otherwise the
+/// legacy single-peer path runs unchanged.
+///
+/// This is the runtime-level wire of Phase 6 (see
+/// [`docs/ARCHITECTURE.md`]).  The pool is populated by the governor
+/// task via [`crate::runtime::OutboundPeerManager::migrate_session_to_worker`]
+/// and read here under a brief `tokio::sync::RwLock::read` guard.
+pub struct MultiPeerDispatchContext<'a> {
+    /// Shared per-peer worker pool.  Cloned `Arc` from runtime
+    /// startup; both the governor (writer) and this context (reader)
+    /// hold their own clones.
+    pub pool: &'a crate::runtime::SharedFetchWorkerPool,
+    /// Operator-configured upper bound on concurrent BlockFetch
+    /// peers (`max_concurrent_block_fetch_peers` from
+    /// `NodeConfigFile`).  When `<= 1`, the multi-peer branch is
+    /// not taken even if the pool has multiple workers.
+    pub max_concurrent_knob: u8,
 }
 
 /// Per-RollForward integration helper that binds the dispatcher

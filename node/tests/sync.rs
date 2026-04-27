@@ -391,6 +391,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
     let mut session = bootstrap(&config).await.expect("bootstrap");
     let mut chain_db = ChainDb::new(

@@ -915,6 +915,7 @@ async fn runtime_reconnecting_verified_sync_service_rotates_peers() {
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
     let mut store = InMemoryVolatile::default();
 
@@ -1008,6 +1009,7 @@ async fn runtime_reconnecting_verified_sync_service_chaindb_rotates_peers() {
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -1095,6 +1097,7 @@ async fn runtime_reconnecting_sync_traps_tentative_header_on_validation_failure(
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
 
     let tentative_state = Arc::new(RwLock::new(TentativeState::initial()));
@@ -1178,6 +1181,7 @@ async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
 
     let mut chain_db = ChainDb::new(
@@ -1276,6 +1280,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
     let mut chain_db = ChainDb::new(
         InMemoryImmutable::default(),
@@ -1387,6 +1392,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);
@@ -1516,6 +1522,7 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
 
     let mut checkpoint_state = LedgerState::new(Era::Byron);
@@ -2145,6 +2152,7 @@ async fn runtime_verified_sync_records_blockfetch_pool_per_peer_counters() {
         block_fetch_pool: Some(Arc::clone(&pool)),
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
     };
     let mut store = InMemoryVolatile::default();
 

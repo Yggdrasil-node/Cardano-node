@@ -475,6 +475,30 @@ impl ManagedWarmPeer {
     }
 }
 
+/// Shared per-peer BlockFetch worker pool reachable from both the
+/// governor task (writer: register on promote, unregister on
+/// demote) and the sync-loop task (reader: dispatch fetch plans).
+///
+/// Wraps a [`crate::blockfetch_worker::FetchWorkerPool`] in
+/// `Arc<tokio::sync::RwLock<>>` so multiple readers can dispatch
+/// concurrently while writes (register / unregister) take a brief
+/// exclusive lock.  Mirrors upstream
+/// `Ouroboros.Network.BlockFetch.ClientRegistry` shared across the
+/// fetch-decision policy thread and the per-peer fetch threads via
+/// STM.
+pub type SharedFetchWorkerPool = std::sync::Arc<
+    tokio::sync::RwLock<crate::blockfetch_worker::FetchWorkerPool<crate::sync::MultiEraBlock>>,
+>;
+
+/// Construct a fresh shared fetch-worker pool.  Cloning the returned
+/// `Arc` is cheap; both governor and sync-loop configs hold their
+/// own clones.
+pub fn new_shared_fetch_worker_pool() -> SharedFetchWorkerPool {
+    std::sync::Arc::new(tokio::sync::RwLock::new(
+        crate::blockfetch_worker::FetchWorkerPool::new(),
+    ))
+}
+
 struct OutboundPeerManager {
     warm_peers: BTreeMap<SocketAddr, ManagedWarmPeer>,
     /// Per-peer BlockFetch workers populated when the operator opts
@@ -484,14 +508,22 @@ struct OutboundPeerManager {
     /// directly.  When non-empty, the sync loop's multi-peer branch
     /// dispatches through this pool.
     ///
+    /// The pool is shared (Arc<tokio::sync::RwLock<>>) so the sync
+    /// loop in a separate task can read it for dispatch while the
+    /// governor task writes to it on promote/demote.  Constructed
+    /// at runtime startup via
+    /// [`new_shared_fetch_worker_pool`] and cloned into both the
+    /// governor's [`OutboundPeerManager`] and the sync service's
+    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`].
+    ///
     /// Populated by [`OutboundPeerManager::migrate_session_to_worker`]
     /// at promote time; entries are removed by
     /// [`OutboundPeerManager::unregister_worker`] on disconnect.
     ///
     /// Mirrors upstream
     /// `Ouroboros.Network.BlockFetch.ClientRegistry` per-peer
-    /// `FetchClientStateVars` map.
-    fetch_worker_pool: crate::blockfetch_worker::FetchWorkerPool<crate::sync::MultiEraBlock>,
+    /// `FetchClientStateVars` map shared across threads via STM.
+    fetch_worker_pool: SharedFetchWorkerPool,
 }
 
 struct RuntimeRootPeerSources {
@@ -503,16 +535,25 @@ struct RuntimeRootPeerSources {
 
 impl OutboundPeerManager {
     fn new() -> Self {
+        Self::with_fetch_worker_pool(new_shared_fetch_worker_pool())
+    }
+
+    /// Construct an `OutboundPeerManager` that shares its fetch
+    /// worker pool with another runtime task (typically the sync
+    /// loop).  Use [`new_shared_fetch_worker_pool`] to construct
+    /// the shared pool at runtime startup, then clone the `Arc`
+    /// into the sync service config.
+    fn with_fetch_worker_pool(pool: SharedFetchWorkerPool) -> Self {
         Self {
             warm_peers: BTreeMap::new(),
-            fetch_worker_pool: crate::blockfetch_worker::FetchWorkerPool::new(),
+            fetch_worker_pool: pool,
         }
     }
 
     /// Migrate the session's BlockFetch handle into a per-peer fetch
-    /// worker registered in [`Self::fetch_worker_pool`].  Returns
-    /// `true` on first migration, `false` if the peer is unknown or
-    /// the handle has already been migrated.
+    /// worker registered in the shared [`Self::fetch_worker_pool`].
+    /// Returns `true` on first migration, `false` if the peer is
+    /// unknown or the handle has already been migrated.
     ///
     /// The runtime calls this after promote-to-warm when operating
     /// in multi-peer dispatch mode (knob > 1).  Once migrated, the
@@ -523,7 +564,7 @@ impl OutboundPeerManager {
     /// per-peer fetch state is owned by a dedicated thread/task for
     /// the connection's lifetime.
     #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
-    fn migrate_session_to_worker(&mut self, peer: SocketAddr) -> bool {
+    async fn migrate_session_to_worker(&mut self, peer: SocketAddr) -> bool {
         let Some(managed) = self.warm_peers.get_mut(&peer) else {
             return false;
         };
@@ -536,8 +577,9 @@ impl OutboundPeerManager {
         );
         // Replace any stale handle (e.g. from a prior session that was
         // not cleanly unregistered).  The previous handle's drop
-        // closes its channel and exits its task.
-        let _previous = self.fetch_worker_pool.register(handle);
+        // closes its channel and exits its task.  Brief write-lock
+        // hold; readers (sync-loop dispatchers) may transiently wait.
+        let _previous = self.fetch_worker_pool.write().await.register(handle);
         true
     }
 
@@ -547,11 +589,9 @@ impl OutboundPeerManager {
     /// session so the worker task exits cleanly without affecting
     /// siblings.
     #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
-    fn unregister_worker(&mut self, peer: &SocketAddr) -> bool {
-        match self.fetch_worker_pool.unregister(peer) {
+    async fn unregister_worker(&mut self, peer: &SocketAddr) -> bool {
+        match self.fetch_worker_pool.write().await.unregister(peer) {
             Some(handle) => {
-                // Drop the handle to detach the task; the worker exits
-                // cleanly when its mpsc receiver observes channel close.
                 drop(handle);
                 true
             }
@@ -559,12 +599,14 @@ impl OutboundPeerManager {
         }
     }
 
-    /// Read-only view of the fetch worker pool.  The runtime sync
-    /// loop's multi-peer branch passes this to
-    /// [`crate::blockfetch_worker::FetchWorkerPool::dispatch_plan`].
-    #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
-    fn fetch_worker_pool(&self) -> &crate::blockfetch_worker::FetchWorkerPool<crate::sync::MultiEraBlock> {
-        &self.fetch_worker_pool
+    /// Clone of the shared fetch-worker pool handle.  Runtime
+    /// startup calls this once and threads the clone into
+    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`]
+    /// so the sync loop can dispatch through the same pool the
+    /// governor populates.
+    #[allow(dead_code)] // Phase 6 scaffolding — runtime startup wiring pending.
+    fn shared_fetch_worker_pool(&self) -> SharedFetchWorkerPool {
+        self.fetch_worker_pool.clone()
     }
 
     async fn promote_to_warm(
@@ -618,7 +660,7 @@ impl OutboundPeerManager {
         }
     }
 
-    fn demote_to_cold(&mut self, peer: SocketAddr) -> bool {
+    async fn demote_to_cold(&mut self, peer: SocketAddr) -> bool {
         match self.warm_peers.remove(&peer) {
             Some(mut session) => {
                 apply_control_close(&mut session.control);
@@ -627,7 +669,7 @@ impl OutboundPeerManager {
                 // task exits cleanly without affecting siblings.  No-op
                 // when no worker was migrated for this peer.  Mirrors
                 // upstream `bracketSyncWithFetchClient` exit path.
-                let _ = self.fetch_worker_pool.unregister(&peer);
+                let _ = self.fetch_worker_pool.write().await.unregister(&peer);
                 true
             }
             None => false,
@@ -1470,7 +1512,7 @@ async fn apply_cm_actions(
                             );
                         }
                         Err(err) => {
-                            let _ = peer_manager.demote_to_cold(peer);
+                            let _ = peer_manager.demote_to_cold(peer).await;
                             let mut cm = connection_manager
                                 .write()
                                 .expect("connection manager lock poisoned");
@@ -1496,7 +1538,7 @@ async fn apply_cm_actions(
             }
             CmAction::TerminateConnection(conn_id) => {
                 let peer = conn_id.remote;
-                let connection_changed = peer_manager.demote_to_cold(peer);
+                let connection_changed = peer_manager.demote_to_cold(peer).await;
                 let status_changed = {
                     let mut registry = peer_registry.write().expect("peer registry lock poisoned");
                     registry.set_status(peer, PeerStatus::PeerCold)
@@ -1513,7 +1555,7 @@ async fn apply_cm_actions(
             }
             CmAction::PruneConnections(peers) => {
                 for peer in peers {
-                    let connection_changed = peer_manager.demote_to_cold(peer);
+                    let connection_changed = peer_manager.demote_to_cold(peer).await;
                     let status_changed = {
                         let mut registry =
                             peer_registry.write().expect("peer registry lock poisoned");
@@ -2493,7 +2535,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             GovernorAction::ForgetPeer(peer) => {
                                 governor_state.clear_in_flight_warm(&peer);
                                 governor_state.clear_in_flight_hot(&peer);
-                                let _ = peer_manager.demote_to_cold(peer);
+                                let _ = peer_manager.demote_to_cold(peer).await;
                                 {
                                     let mut cm = connection_manager
                                         .write()
@@ -4608,7 +4650,7 @@ where
 
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
-                session.block_fetch.as_mut().expect("block_fetch migrated"),
+                session.block_fetch.as_mut(),
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
@@ -4622,6 +4664,13 @@ where
                     .density_registry
                     .as_ref()
                     .map(|r| (r, session.connected_peer_addr)),
+                config
+                    .shared_fetch_worker_pool
+                    .as_ref()
+                    .map(|pool| crate::sync::MultiPeerDispatchContext {
+                        pool,
+                        max_concurrent_knob: config.max_concurrent_block_fetch_peers,
+                    }),
             );
 
             tokio::select! {
@@ -5072,7 +5121,7 @@ where
 
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
-                session.block_fetch.as_mut().expect("block_fetch migrated"),
+                session.block_fetch.as_mut(),
                 from_point,
                 config.batch_size,
                 Some(&config.verification),
@@ -5086,6 +5135,13 @@ where
                     .density_registry
                     .as_ref()
                     .map(|r| (r, session.connected_peer_addr)),
+                config
+                    .shared_fetch_worker_pool
+                    .as_ref()
+                    .map(|pool| crate::sync::MultiPeerDispatchContext {
+                        pool,
+                        max_concurrent_knob: config.max_concurrent_block_fetch_peers,
+                    }),
             );
 
             tokio::select! {
@@ -6163,6 +6219,7 @@ mod tests {
         block_fetch_pool: None,
         max_concurrent_block_fetch_peers: 1,
         density_registry: None,
+        shared_fetch_worker_pool: None,
         }
     }
 
@@ -7195,9 +7252,10 @@ mod tests {
             super::ManagedWarmPeer::new(session, std::time::Instant::now()),
         );
 
-        assert!(mgr.migrate_session_to_worker(a));
+        assert!(mgr.migrate_session_to_worker(a).await);
         assert!(!mgr.warm_peers[&a].session.has_block_fetch());
-        assert!(mgr.fetch_worker_pool().worker(&a).is_some());
+        let pool = mgr.shared_fetch_worker_pool();
+        assert!(pool.read().await.worker(&a).is_some());
     }
 
     #[tokio::test]
@@ -7210,9 +7268,9 @@ mod tests {
             a,
             super::ManagedWarmPeer::new(session, std::time::Instant::now()),
         );
-        assert!(mgr.migrate_session_to_worker(a));
+        assert!(mgr.migrate_session_to_worker(a).await);
         // Second call: block_fetch is None, so migration cannot proceed.
-        assert!(!mgr.migrate_session_to_worker(a));
+        assert!(!mgr.migrate_session_to_worker(a).await);
     }
 
     #[tokio::test]
@@ -7220,8 +7278,9 @@ mod tests {
         use super::OutboundPeerManager;
         let mgr_addr: std::net::SocketAddr = "9.9.9.9:9999".parse().unwrap();
         let mut mgr = OutboundPeerManager::new();
-        assert!(!mgr.migrate_session_to_worker(mgr_addr));
-        assert!(mgr.fetch_worker_pool().is_empty());
+        assert!(!mgr.migrate_session_to_worker(mgr_addr).await);
+        let pool = mgr.shared_fetch_worker_pool();
+        assert!(pool.read().await.is_empty());
     }
 
     #[tokio::test]
@@ -7234,12 +7293,37 @@ mod tests {
             a,
             super::ManagedWarmPeer::new(session, std::time::Instant::now()),
         );
-        mgr.migrate_session_to_worker(a);
-        assert!(mgr.fetch_worker_pool().worker(&a).is_some());
-        assert!(mgr.unregister_worker(&a));
-        assert!(mgr.fetch_worker_pool().worker(&a).is_none());
+        mgr.migrate_session_to_worker(a).await;
+        let pool = mgr.shared_fetch_worker_pool();
+        assert!(pool.read().await.worker(&a).is_some());
+        assert!(mgr.unregister_worker(&a).await);
+        assert!(pool.read().await.worker(&a).is_none());
         // Idempotent: a second unregister is a no-op.
-        assert!(!mgr.unregister_worker(&a));
+        assert!(!mgr.unregister_worker(&a).await);
+    }
+
+    #[tokio::test]
+    async fn shared_fetch_worker_pool_is_visible_across_arc_clones() {
+        // The whole point of the shared pool: governor task
+        // populates, sync task reads, both via Arc<RwLock<>>.
+        // Validate that a clone of the Arc handle observes
+        // registrations made through the original.
+        use super::OutboundPeerManager;
+        let a: std::net::SocketAddr = "1.2.3.4:3303".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session_async(a).await;
+        mgr.warm_peers.insert(
+            a,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+        // Clone the shared handle BEFORE migrating to model the
+        // runtime-startup wiring path: clone into both configs at
+        // startup, register later from the governor task.
+        let sync_side_view = mgr.shared_fetch_worker_pool();
+        assert!(sync_side_view.read().await.worker(&a).is_none());
+        mgr.migrate_session_to_worker(a).await;
+        // The sync-side clone observes the registration.
+        assert!(sync_side_view.read().await.worker(&a).is_some());
     }
 
     #[test]
@@ -7285,20 +7369,20 @@ mod tests {
         assert!(!mgr.demote_to_warm(addr));
     }
 
-    #[test]
-    fn demote_to_cold_terminates_temperature_bundle() {
+    #[tokio::test]
+    async fn demote_to_cold_terminates_temperature_bundle() {
         use super::OutboundPeerManager;
         use yggdrasil_network::ControlMessage;
 
         let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
         let mut mgr = OutboundPeerManager::new();
-        let session = fake_peer_session(addr);
+        let session = fake_peer_session_async(addr).await;
         mgr.warm_peers.insert(
             addr,
             super::ManagedWarmPeer::new(session, std::time::Instant::now()),
         );
 
-        assert!(mgr.demote_to_cold(addr));
+        assert!(mgr.demote_to_cold(addr).await);
 
         // Internal peer entry is removed after close. This verifies the
         // close path is reachable and does not panic while applying
