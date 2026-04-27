@@ -1,3 +1,10 @@
+---
+title: Parity Summary
+layout: default
+parent: Reference
+nav_order: 3
+---
+
 # PARITY & FUNCTION SUMMARY FOR MANAGEMENT
 
 **Prepared**: April 2, 2026 (updated April 2026)  

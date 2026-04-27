@@ -1,0 +1,36 @@
+title: Yggdrasil — Pure Rust Cardano Node
+description: Installation, configuration, operation, and maintenance manual for the Yggdrasil Cardano node.
+remote_theme: just-the-docs/just-the-docs
+
+# Site URL — set by GitHub Pages automatically; explicit baseurl helps when hosting under /docs.
+baseurl: ""
+
+# Use the docs/ folder as the site root.
+# (Repository setting: Pages source = `main` branch, `/docs` folder.)
+
+permalink: pretty
+
+# Theme settings
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+
+# Show the toggle between light/dark.
+# Just-the-Docs supports an in-page color toggle.
+enable_copy_code_button: true
+
+# Footer
+footer_content: "Yggdrasil is a pure-Rust port of the Cardano node, targeting upstream IntersectMBO Haskell parity. Released under the same terms as the upstream node."
+
+# Aux links shown in the top-right.
+aux_links:
+  "GitHub":
+    - "https://github.com/FractionEstate/Cardano-node"
+
+# Files to exclude from the rendered site.
+exclude:
+  - AGENTS.md
+  - "*/AGENTS.md"
+  - Gemfile
+  - Gemfile.lock
+  - vendor/

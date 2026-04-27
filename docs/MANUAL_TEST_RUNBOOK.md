@@ -1,3 +1,10 @@
+---
+title: Manual Test Runbook
+layout: default
+parent: Reference
+nav_order: 8
+---
+
 # Manual Test Runbook — Yggdrasil Real-Life Operations
 
 **Purpose**: ordered checklist for the operator running `yggdrasil-node` against real Cardano networks (preprod first, then mainnet) with the supporting scripts created in Slices L–N. This is the document referenced as the bring-up runbook in `docs/AUDIT_VERIFICATION_2026Q2.md`.

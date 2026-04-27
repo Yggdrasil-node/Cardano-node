@@ -1,3 +1,10 @@
+---
+title: Audit Verification 2026-Q2
+layout: default
+parent: Reference
+nav_order: 4
+---
+
 # Audit Verification — 2026-Q2
 
 **Purpose**: read-only sanity check of every gap currently flagged in the project's parity documentation, before spending effort closing imaginary items. Triggered by a recurring observation in this session that AGENTS.md notes can drift from code reality (two stale notes were corrected as commits `db355bf` and `fcca96b` in this same audit cycle).

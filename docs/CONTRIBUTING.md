@@ -1,3 +1,10 @@
+---
+title: Contributing
+layout: default
+parent: Reference
+nav_order: 11
+---
+
 # Contributing
 
 ## Required Checks

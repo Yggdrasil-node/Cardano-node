@@ -1,0 +1,27 @@
+source "https://rubygems.org"
+
+# Jekyll + just-the-docs theme.
+# This Gemfile is for local previewing of the docs site.
+# GitHub Pages builds via the workflow at .github/workflows/pages.yml.
+#
+# Local preview:
+#   cd docs
+#   bundle install
+#   bundle exec jekyll serve
+# Then open http://127.0.0.1:4000
+
+gem "jekyll", "~> 4.3"
+gem "just-the-docs", "~> 0.10"
+gem "jekyll-remote-theme", "~> 0.4"
+
+group :jekyll_plugins do
+  gem "jekyll-feed"
+  gem "jekyll-seo-tag"
+end
+
+# Windows / JRuby support
+platforms :mingw, :x64_mingw, :mswin, :jruby do
+  gem "tzinfo", "~> 2.0"
+  gem "tzinfo-data"
+  gem "wdm", "~> 0.1.1", :platforms => [:mingw, :x64_mingw, :mswin]
+end

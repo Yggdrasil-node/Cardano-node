@@ -1,3 +1,10 @@
+---
+title: Upstream Parity Matrix
+layout: default
+parent: Reference
+nav_order: 5
+---
+
 # Upstream Parity Matrix
 
 Last updated: 2026-04-26

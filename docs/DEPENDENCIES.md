@@ -1,3 +1,10 @@
+---
+title: Dependencies
+layout: default
+parent: Reference
+nav_order: 7
+---
+
 # Dependency Policy
 
 This file defines how dependencies are introduced into Yggdrasil.

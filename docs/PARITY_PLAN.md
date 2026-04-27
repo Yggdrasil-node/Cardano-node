@@ -1,3 +1,10 @@
+---
+title: Parity Plan
+layout: default
+parent: Reference
+nav_order: 2
+---
+
 # Full Parity Plan: Rust Cardano Node vs. Official Haskell Implementation
 
 **Prepared**: March 26, 2026  

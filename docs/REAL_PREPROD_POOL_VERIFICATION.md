@@ -1,3 +1,10 @@
+---
+title: Real Preprod Pool Verification
+layout: default
+parent: Reference
+nav_order: 9
+---
+
 # Real Preprod Pool Verification
 
 This workflow verifies yggdrasil block-producer runtime behavior against the real preprod network using operator-provided pool credentials.

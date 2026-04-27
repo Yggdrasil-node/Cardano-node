@@ -1,3 +1,10 @@
+---
+title: Architecture
+layout: default
+parent: Reference
+nav_order: 1
+---
+
 # Architecture
 
 Yggdrasil is organized as a Rust workspace with explicit crate boundaries so protocol, ledger, storage, and integration work can evolve independently.

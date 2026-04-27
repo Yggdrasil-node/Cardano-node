@@ -1,3 +1,10 @@
+---
+title: Specifications
+layout: default
+parent: Reference
+nav_order: 6
+---
+
 # Specification Sources
 
 Yggdrasil is specification-driven. When sources disagree, use them in this order.

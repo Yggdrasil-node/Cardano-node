@@ -1,3 +1,10 @@
+---
+title: Upstream Research
+layout: default
+parent: Reference
+nav_order: 10
+---
+
 # Comprehensive Upstream Research: Cardano Haskell Implementation
 
 **Last Updated**: March 26, 2026  
