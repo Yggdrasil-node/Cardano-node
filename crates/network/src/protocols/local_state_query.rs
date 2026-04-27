@@ -97,7 +97,7 @@ impl std::fmt::Display for AcquireFailure {
 /// |  5  | `MsgRelease`             |
 /// |  6  | `MsgReAcquire(point)`    |
 /// |  7  | `MsgDone`                |
-/// |  9  | `MsgAcquireVolatileTip`  |
+/// |  8  | `MsgAcquireVolatileTip`  |
 /// | 10  | `MsgReAcquireVolatileTip`|
 ///
 /// Query and result payloads remain opaque bytes at this layer; the node
@@ -265,8 +265,19 @@ impl LocalStateQueryMessage {
             Self::MsgAcquire {
                 target: AcquireTarget::VolatileTip,
             } => {
+                // Round 146 — `MsgAcquireVolatileTip` is wire tag 8 per
+                // upstream `Ouroboros.Network.Protocol.LocalStateQuery.Codec`
+                // (`encodeMsg ... MsgAcquireVolatileTip = encodeListLen 1
+                // <> encodeWord 8`).  Pre-fix yggdrasil emitted tag 9,
+                // which upstream `cardano-cli query tip` would never
+                // send and yggdrasil's own server happened to round-trip
+                // with itself but rejected real cardano-cli traffic with
+                // `unknown LocalStateQuery message tag: 8`, tearing
+                // down the bearer.  2026-04-27 operational rehearsal
+                // captured the upstream `81 08` payload via
+                // `YGG_NTC_DEBUG=1`.
                 enc.array(1);
-                enc.unsigned(9);
+                enc.unsigned(8);
             }
             Self::MsgAcquired => {
                 enc.array(1);
@@ -359,7 +370,9 @@ impl LocalStateQueryMessage {
                 })
             }
             7 => Ok(Self::MsgDone),
-            9 => Ok(Self::MsgAcquire {
+            // Upstream tag 8 = `MsgAcquireVolatileTip`.  See encode-side
+            // comment for the wire-format reference.
+            8 => Ok(Self::MsgAcquire {
                 target: AcquireTarget::VolatileTip,
             }),
             10 => Ok(Self::MsgReAcquire {
@@ -485,6 +498,35 @@ mod tests {
                 result: result_bytes
             }
         );
+    }
+
+    /// Round 146 — operator-captured wire bytes from upstream
+    /// `cardano-cli 10.16.0.0 query tip --testnet-magic 1`: a single
+    /// 2-byte `[8]` payload (`81 08`) representing
+    /// `MsgAcquireVolatileTip`.  Pre-fix yggdrasil mapped this variant
+    /// to tag 9 (encode AND decode), so the upstream `81 08` payload
+    /// failed yggdrasil's decoder as
+    /// `unknown LocalStateQuery message tag: 8`, the server tore down
+    /// the bearer, and operators saw
+    /// `BearerClosed "<socket: 11> closed when reading data, waiting on next header True"`.
+    /// This test pins the wire bytes of the encode side AND that the
+    /// captured upstream payload decodes into the expected variant.
+    /// A future drift in either direction fails clean.
+    #[test]
+    fn acquire_volatile_tip_wire_tag_matches_upstream_canonical_tag_8() {
+        let msg = LocalStateQueryMessage::MsgAcquire {
+            target: AcquireTarget::VolatileTip,
+        };
+        let wire = msg.to_cbor();
+        assert_eq!(
+            wire,
+            vec![0x81, 0x08],
+            "MsgAcquireVolatileTip must encode as `[8]` per upstream \
+             `Ouroboros.Network.Protocol.LocalStateQuery.Codec`",
+        );
+        // The upstream-captured payload must decode into the same variant.
+        let decoded = LocalStateQueryMessage::from_cbor(&[0x81, 0x08]).unwrap();
+        assert_eq!(decoded, msg);
     }
 
     /// Round 146 wire-format pin: the `point` argument is encoded
