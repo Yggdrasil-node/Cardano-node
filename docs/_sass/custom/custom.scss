@@ -101,6 +101,56 @@ h2 { letter-spacing: -0.018em; }
   border-radius: 6px;
 }
 
+// Sidebar logo: enlarged + centered.  just-the-docs renders the logo
+// inside `.side-bar > .site-header > .site-title.site-button` either as
+// a `<span class="site-logo">` (background-image) or an `<img>` element
+// depending on theme version; both are styled here.
+//
+// We give the side-bar's site-header more vertical room than the
+// theme's compact default so a larger logo can breathe, and centre the
+// logo button across the sidebar's full width.
+.side-bar .site-header {
+  min-height: 9rem;
+  padding: 1rem 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.side-bar .site-header .site-title,
+.side-bar .site-header .site-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+}
+
+.side-bar .site-header .site-logo {
+  width: 7rem;
+  height: 7rem;
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.side-bar .site-header .site-title img {
+  width: auto;
+  height: 7rem;
+  max-width: 90%;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto;
+}
+
+@media (max-width: 50rem) {
+  // Compact mobile sidebar: keep the logo visible but smaller so it
+  // doesn't dominate the collapsible drawer.
+  .side-bar .site-header { min-height: 5rem; padding: 0.5rem; }
+  .side-bar .site-header .site-logo,
+  .side-bar .site-header .site-title img { width: 3.5rem; height: 3.5rem; }
+}
+
 // Refined sidebar nav: bigger click targets, accent on active.
 .nav-list .nav-list-item .nav-list-link {
   border-radius: 6px;
