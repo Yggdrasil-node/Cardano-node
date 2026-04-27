@@ -4,13 +4,17 @@
 // teal canopy lights. Keeps long-form prose readable on dark while preserving
 // the brand identity of the YggdrasilNode logo.
 //
-// We inherit just-the-docs' built-in `dark` scheme first so every variable
-// that this file does not explicitly set already defaults to dark-friendly
-// values (search dropdown, table borders, focus rings, etc.).  Without
-// this import, the unset variables fall back to the light defaults and the
-// page renders with a half-light / half-dark mix.
-
-@import "./dark";
+// We replicate every variable just-the-docs' built-in `dark` scheme sets,
+// then override with our brand teal/copper accents.  The key insight is
+// that just-the-docs ships dark+light grey scales (`$grey-dk-*` and
+// `$grey-lt-*`) as global defaults — we just need to bind the per-area
+// colour variables to those dark greys rather than the light defaults.
+//
+// We do NOT use `@import "./dark";` because that path is unreliable under
+// the `remote_theme:` configuration (Jekyll-Sass cannot always resolve a
+// relative @import into the remotely-fetched theme tree, which surfaces
+// as a Pages-build failure).  Setting every relevant variable explicitly
+// makes the scheme self-contained.
 
 
 // ────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,87 @@
+
+---
+
+## 2026-04-27 — 28-minute preprod sync rehearsal finding
+
+A 30-minute preprod sync rehearsal was launched against canonical relay
+`3.126.235.206:3001` (preprod ledger peer) on commit `121f6c4`. The node
+ran for ~28 minutes and crashed in ledger validation immediately after
+the **epoch-5 boundary transition** (preprod slot ≈ 518 460).
+
+### Progress before crash
+
+| t (min) | tip slot | blocks | epoch boundary |
+|---:|---:|---:|---|
+| 0:30 | 96 840 | 566 | — |
+| 5:00 | 181 040 | 4 776 | epoch 1, 2, 3, 4 (Byron) |
+| 10:00 | 280 240 | 9 736 | — |
+| 15:00 | 398 640 | 15 656 | — |
+| 25:00 | 518 460 | (~20 000) | epoch 5 (`treasuryDelta=128860 unclaimedRewards=515442`) |
+| ≈25:30 | (after epoch-5 boundary) | — | crash |
+
+Five epoch-boundary transitions applied cleanly. The crash hit on the
+first transaction after the boundary.
+
+### Crash detail
+
+```
+Error: ledger decode error: fee too small: minimum 208269 lovelace,
+       declared 207829
+Caused by: fee too small: minimum 208269 lovelace, declared 207829
+Location:  node/src/main.rs:2943:32
+```
+
+A 440-lovelace (~0.2%) discrepancy between Yggdrasil's computed
+`min_fee` and the actual fee declared on a real preprod transaction the
+upstream Haskell node accepted. Block-validation in
+[`crates/ledger/src/fees.rs`](../crates/ledger/src/fees.rs) computed
+`min_fee_linear(params, tx_size_bytes) = 208 269` (or
+`total_min_fee` with script units) when upstream computed a smaller
+value matching the on-chain declared fee.
+
+### Likely root causes (to investigate)
+
+1. **`tx_size_bytes` mismatch**: we may be measuring the serialised
+   transaction with witnesses included, while upstream's `getMinFeeTx`
+   uses the body-only size (or vice-versa).
+2. **`min_fee_a` / `min_fee_b` parameter values** carried into Shelley
+   from the protocol-parameter update pipeline at the Byron→Shelley
+   boundary may differ from upstream after `epoch_boundary` /
+   `pparam_updates_applied=0`.
+3. **Witness-set-overhead constant**: upstream applies a fixed
+   per-witness byte-count constant when computing `min_fee`; ours may
+   be slightly off.
+4. **Cost-model ↔ script-fee timing**: we may be applying the Alonzo
+   script-fee path on what should still be a Shelley transaction.
+
+### Reproduction
+
+```bash
+WORK=$(mktemp -d -t ygg-fee-XXXXXX)
+./target/release/yggdrasil-node run \
+  --network preprod \
+  --database-path "$WORK/db" \
+  --port $(awk 'BEGIN { srand(); print 30200 + int(rand()*100) }') \
+  --host-addr 127.0.0.1 \
+  --metrics-port $(awk 'BEGIN { srand(); print 31200 + int(rand()*100) }') \
+  --socket-path "$WORK/ygg.sock"
+# wait ~25 min; the node will crash on the first tx after the
+# Byron→Shelley boundary (preprod slot ~518 460)
+```
+
+### Status
+
+- **Discovered:** 2026-04-27 during operational quality-check Op A.
+- **Severity:** High — blocks any unattended preprod sync past epoch 5.
+  Mainnet sync would hit the equivalent boundary later but the bug is
+  the same.
+- **Audit linkage:** Not in
+  [`docs/code-audit.md`](code-audit.md). The audit's M-6 covered
+  saturating→checked arithmetic on value preservation; this bug is in
+  the parallel `min_fee` computation path which the audit did not
+  exercise against live preprod.
+- **Next step:** capture the failing transaction's CBOR (via mux
+  trace), diff our `min_fee_linear` calculation against the upstream
+  Haskell `getShelleyMinFeeTx` for the same input, fix, and add the
+  block as an integration test fixture under
+  `crates/ledger/tests/integration/`.
