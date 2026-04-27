@@ -22,7 +22,7 @@
 # -----------------------------------------------------------------------------
 
 # ---------- Stage 1: build ----------
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.95-bookworm AS builder
 
 ENV CARGO_TERM_COLOR=always \
     RUSTFLAGS="-C target-cpu=x86-64-v2" \
