@@ -294,4 +294,4 @@ Reload (restart node). Capture for the duration needed, then revert to avoid log
 
 - [Maintenance]({{ "/manual/maintenance/" | relative_url }}) — preventative procedures.
 - [Glossary]({{ "/manual/glossary/" | relative_url }}) — term definitions.
-- File issues at the [GitHub repository](https://github.com/FractionEstate/Cardano-node/issues).
+- File issues at the [GitHub repository](https://github.com/yggdrasil-node/Cardano-node/issues).

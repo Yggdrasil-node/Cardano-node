@@ -1,36 +1,64 @@
 title: Yggdrasil — Pure Rust Cardano Node
 description: Installation, configuration, operation, and maintenance manual for the Yggdrasil Cardano node.
+
+# Theme — Just-the-Docs via remote theme so GitHub Pages doesn't need
+# the gem in its build path. The matching plugin must be enabled below.
 remote_theme: just-the-docs/just-the-docs
 
-# Site URL — set by GitHub Pages automatically; explicit baseurl helps when hosting under /docs.
-baseurl: ""
+# Plugins required for `remote_theme:` to take effect on GitHub Pages.
+# `jekyll-include-cache` is needed by just-the-docs internally.
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+  - jekyll-include-cache
 
-# Use the docs/ folder as the site root.
-# (Repository setting: Pages source = `main` branch, `/docs` folder.)
+# Site URL is set by the workflow at deploy time via --baseurl;
+# explicit defaults here keep `bundle exec jekyll serve` working
+# locally too. For a GitHub Project Pages site at
+# https://<org>.github.io/<repo>/ the baseurl is "/<repo>".
+url: ""
+baseurl: "/Cardano-node"
 
 permalink: pretty
+
+# Repository attribution displayed by the just-the-docs footer + edit-this-page link.
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub"
+gh_edit_repository: "https://github.com/yggdrasil-node/Cardano-node"
+gh_edit_branch: "main"
+gh_edit_source: docs
+gh_edit_view_mode: "tree"
 
 # Theme settings
 color_scheme: light
 search_enabled: true
-heading_anchors: true
+search:
+  heading_level: 3
+  previews: 3
+  preview_words_before: 5
+  preview_words_after: 10
+  tokenizer_separator: /[\s\-/]+/
+  rel_url: true
+  button: false
 
-# Show the toggle between light/dark.
-# Just-the-Docs supports an in-page color toggle.
+heading_anchors: true
 enable_copy_code_button: true
 
-# Footer
-footer_content: "Yggdrasil is a pure-Rust port of the Cardano node, targeting upstream IntersectMBO Haskell parity. Released under the same terms as the upstream node."
+# Footer.
+footer_content: 'Yggdrasil is a pure-Rust port of the Cardano node, targeting upstream IntersectMBO Haskell parity.'
 
-# Aux links shown in the top-right.
+# Top-right auxiliary links.
 aux_links:
   "GitHub":
-    - "https://github.com/FractionEstate/Cardano-node"
+    - "https://github.com/yggdrasil-node/Cardano-node"
+aux_links_new_tab: true
 
-# Files to exclude from the rendered site.
+# Files and directories to exclude from the rendered site.
 exclude:
   - AGENTS.md
   - "*/AGENTS.md"
   - Gemfile
   - Gemfile.lock
   - vendor/
+  - .bundle/
+  - .jekyll-cache/

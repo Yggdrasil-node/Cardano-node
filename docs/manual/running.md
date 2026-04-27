@@ -148,7 +148,7 @@ After a clean or unclean shutdown, restarting from the same `--database-path`:
 
 Total restart-to-syncing time on mainnet is typically under 60 seconds.
 
-For an automated restart-resilience verification, see [`node/scripts/restart_resilience.sh`](https://github.com/FractionEstate/Cardano-node/blob/main/node/scripts/restart_resilience.sh) and runbook §4.
+For an automated restart-resilience verification, see [`node/scripts/restart_resilience.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/node/scripts/restart_resilience.sh) and runbook §4.
 
 ## Updating the binary
 

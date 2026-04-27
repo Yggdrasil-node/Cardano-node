@@ -1,14 +1,18 @@
 source "https://rubygems.org"
 
-# Jekyll + just-the-docs theme.
-# This Gemfile is for local previewing of the docs site.
-# GitHub Pages builds via the workflow at .github/workflows/pages.yml.
+# Local-preview Gemfile for the Yggdrasil documentation site.
+#
+# GitHub Pages builds via .github/workflows/pages.yml which runs
+# `bundle install` against this file in CI. Keep gem versions
+# compatible with the runner's Ruby version (3.2) and with
+# just-the-docs' published constraints.
 #
 # Local preview:
 #   cd docs
 #   bundle install
 #   bundle exec jekyll serve
-# Then open http://127.0.0.1:4000
+# Then open http://127.0.0.1:4000/Cardano-node/
+# (the trailing /Cardano-node/ matches the production baseurl).
 
 gem "jekyll", "~> 4.3"
 gem "just-the-docs", "~> 0.10"
@@ -17,9 +21,14 @@ gem "jekyll-remote-theme", "~> 0.4"
 group :jekyll_plugins do
   gem "jekyll-feed"
   gem "jekyll-seo-tag"
+  gem "jekyll-include-cache"
 end
 
-# Windows / JRuby support
+# Required on Ruby 3.x where webrick is no longer bundled by default.
+gem "webrick", "~> 1.8"
+
+# Windows / JRuby support (no-op on Linux runners but kept for parity
+# with operators previewing on those platforms).
 platforms :mingw, :x64_mingw, :mswin, :jruby do
   gem "tzinfo", "~> 2.0"
   gem "tzinfo-data"

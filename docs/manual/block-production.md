@@ -207,7 +207,7 @@ If you are migrating from `cardano-node` (Haskell) to Yggdrasil:
 5. Run both nodes in parallel for one or more KES periods. Compare `yggdrasil_current_slot`, `yggdrasil_block_number`, and forge events against the Haskell node.
 6. Cut over by stopping the Haskell node.
 
-The chain hashes are byte-identical between implementations, so you can hash-compare blocks at the same slot using [`node/scripts/compare_tip_to_haskell.sh`](https://github.com/FractionEstate/Cardano-node/blob/main/node/scripts/compare_tip_to_haskell.sh).
+The chain hashes are byte-identical between implementations, so you can hash-compare blocks at the same slot using [`node/scripts/compare_tip_to_haskell.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/node/scripts/compare_tip_to_haskell.sh).
 
 ## Where to go next
 

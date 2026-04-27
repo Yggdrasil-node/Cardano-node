@@ -25,7 +25,7 @@ $ yggdrasil-node run --network preview ...
 
 The preset selects:
 
-- The genesis files (`byron-genesis.json`, `shelley-genesis.json`, `alonzo-genesis.json`, `conway-genesis.json`) — vendored under [`node/configuration/<preset>/`](https://github.com/FractionEstate/Cardano-node/tree/main/node/configuration).
+- The genesis files (`byron-genesis.json`, `shelley-genesis.json`, `alonzo-genesis.json`, `conway-genesis.json`) — vendored under [`node/configuration/<preset>/`](https://github.com/yggdrasil-node/Cardano-node/tree/main/node/configuration).
 - The network magic — the integer that identifies the network in NtN handshake `version_data`.
 - Bootstrap peers — IOG-operated entry points specific to each network.
 - Topology defaults — relays curated for each network.

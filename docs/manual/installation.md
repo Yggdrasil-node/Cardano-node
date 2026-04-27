@@ -26,7 +26,7 @@ Software:
 
 ## Install Rust
 
-Yggdrasil pins the Rust toolchain version in [`rust-toolchain.toml`](https://github.com/FractionEstate/Cardano-node/blob/main/rust-toolchain.toml). Currently `1.85.0` (Edition 2024).
+Yggdrasil pins the Rust toolchain version in [`rust-toolchain.toml`](https://github.com/yggdrasil-node/Cardano-node/blob/main/rust-toolchain.toml). Currently `1.85.0` (Edition 2024).
 
 If you do not have `rustup`:
 
@@ -47,7 +47,7 @@ rustc 1.85.0 (...)
 ## Clone the repository
 
 ```bash
-$ git clone https://github.com/FractionEstate/Cardano-node.git yggdrasil
+$ git clone https://github.com/yggdrasil-node/Cardano-node.git yggdrasil
 $ cd yggdrasil
 ```
 
