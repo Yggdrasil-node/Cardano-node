@@ -3937,6 +3937,16 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                             // upstream-style per-peer worker tasks
                             // (mirrors `BlockFetch.ClientRegistry`
                             // semantics).
+                            //
+                            // Genesis bootstrap (`from_point = Origin`)
+                            // is handled inside [`FetchWorkerPool::dispatch_plan`]
+                            // — `split_range` already returns a single
+                            // chunk for Origin lower, and the dispatcher
+                            // seeds its `ReorderBuffer` so the chunk
+                            // releases cleanly.  Multi-chunk Origin
+                            // plans (programmer error) are rejected
+                            // upfront.  Reference: `docs/MANUAL_TEST_RUNBOOK.md`
+                            // §6.5a "Round 91 Gap BN" closure (Round 144).
                             let multi_peer_result = if let Some(ctx) = &multi_peer_dispatch {
                                 let pool_guard = ctx.pool.read().await;
                                 let n_workers = pool_guard.len();
@@ -3973,7 +3983,49 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                             // the legacy single-peer fetch.
                             if let Some(result) = multi_peer_result {
                                 match result {
-                                    Ok(blocks) => blocks,
+                                    Ok(mut blocks) => {
+                                        // Symmetric `lower_hash` dedup with the
+                                        // legacy single-peer branch below.  The
+                                        // BlockFetch wire protocol returns the
+                                        // closed interval `[lower, upper]`; when
+                                        // the caller already has the block at
+                                        // `lower` applied (from the previous
+                                        // batch's `from_point` advancement), the
+                                        // returned vector starts with a
+                                        // duplicate.  `apply_multi_era_step_to_volatile`
+                                        // tolerates a hash-already-present
+                                        // replay idempotently, but
+                                        // `track_chain_state_entries` enforces a
+                                        // strict block_number contiguity check
+                                        // (`expected N, got N-1`) that fires when
+                                        // the duplicate is fed in — so the dedup
+                                        // must run on both paths.  Missing this
+                                        // branch was the second half of Round
+                                        // 91 Gap BN: with my placeholder-hash
+                                        // collapse the worker now delivers blocks
+                                        // correctly, but the un-deduped front
+                                        // entry caused
+                                        // `consensus error: non-contiguous
+                                        // block` on every batch after the first.
+                                        // Reference: `docs/MANUAL_TEST_RUNBOOK.md`
+                                        // §6.5a Round 144 closure.
+                                        if let (Point::BlockPoint(_, lower_hash), true) =
+                                            (lower, matches!(from_point, Point::BlockPoint(_, _)))
+                                        {
+                                            while let Some((first_raw, first)) = blocks.first() {
+                                                let first_hash =
+                                                    multi_era_block_to_block(first, first_raw)
+                                                        .header
+                                                        .hash;
+                                                if first_hash == lower_hash {
+                                                    blocks.remove(0);
+                                                } else {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        blocks
+                                    }
                                     Err(err) => {
                                         if tentative_set {
                                             if let Some(state) = tentative_state {
@@ -4611,6 +4663,26 @@ pub struct BlockFetchAssignment {
 /// rounds for fair distribution.
 ///
 /// Returns an empty `Vec` only when `peers` is empty.
+///
+/// **Placeholder-hash guard (Round 144 follow-up — closes the runtime
+/// half of Round 91 Gap BN):** when `split_range` produces multi-chunk
+/// output, intermediate boundaries carry a synthesised
+/// `HeaderHash([0; 32])` placeholder.  The runtime currently has no
+/// candidate-fragment lookup to resolve those placeholders to real
+/// chain points before issuing `MsgRequestRange`, so peers receive a
+/// fetch request with an unknown upper-bound hash and respond with
+/// `NoBlocks` — every batch returns zero blocks, volatile storage
+/// stays empty, and the node livelocks re-syncing from Origin.  Until
+/// multi-peer ChainSync candidate fragments land (`Ouroboros.Network.BlockFetch.Decision.fetchDecisions`
+/// equivalent), collapse any plan containing a placeholder boundary
+/// to a single-chunk plan against `peers[0]`.  The single-chunk plan
+/// hits `FetchWorkerPool::dispatch_plan`'s fast path which bypasses
+/// the `ReorderBuffer` entirely, so storage populates correctly on
+/// the multi-peer path even when the worker pool has multiple peers.
+/// Cross-batch peer rotation is preserved because successive batches
+/// see a fresh `peer_addrs()` snapshot from the pool's BTreeMap and
+/// the runtime advances `from_point` regardless of which peer served
+/// each batch.  Reference: `docs/MANUAL_TEST_RUNBOOK.md` §6.5a.
 pub fn partition_fetch_range_across_peers(
     lower: Point,
     upper: Point,
@@ -4622,6 +4694,16 @@ pub fn partition_fetch_range_across_peers(
     }
     let n = effective_block_fetch_concurrency(max_knob, peers.len());
     let chunks = yggdrasil_network::blockfetch_pool::split_range(lower, upper, n);
+    if chunks
+        .iter()
+        .any(|(l, u)| point_carries_placeholder_hash(l) || point_carries_placeholder_hash(u))
+    {
+        return vec![BlockFetchAssignment {
+            peer: peers[0],
+            lower,
+            upper,
+        }];
+    }
     chunks
         .into_iter()
         .zip(peers.iter().take(n))
@@ -4631,6 +4713,17 @@ pub fn partition_fetch_range_across_peers(
             upper: chunk_upper,
         })
         .collect()
+}
+
+/// Returns `true` if `p` carries the all-zeros placeholder
+/// [`HeaderHash`] that `yggdrasil_network::blockfetch_pool::split_range`
+/// synthesises for intermediate chunk boundaries.  Used by
+/// [`partition_fetch_range_across_peers`] to detect plans that the
+/// runtime cannot dispatch on the wire (peers respond with `NoBlocks`
+/// for unknown-hash bounds, producing the operational livelock
+/// described in `docs/MANUAL_TEST_RUNBOOK.md` §6.5a).
+fn point_carries_placeholder_hash(p: &Point) -> bool {
+    matches!(p, Point::BlockPoint(_, hash) if hash.0 == [0u8; 32])
 }
 
 /// Execute a multi-peer BlockFetch plan in parallel and return blocks
@@ -5122,7 +5215,19 @@ mod tests {
     }
 
     fn block_point(slot: u64) -> Point {
-        Point::BlockPoint(SlotNo(slot), HeaderHash([0u8; 32]))
+        // Non-zero placeholder so the point can never be confused with
+        // the all-zeros sentinel that
+        // `yggdrasil_network::blockfetch_pool::split_range` synthesises
+        // for intermediate chunk boundaries (see
+        // `point_carries_placeholder_hash`).  Derived deterministically
+        // from `slot` so distinct slots produce distinct hashes; the
+        // first byte is forced non-zero to guarantee `hash != [0; 32]`
+        // even at slot 0.
+        let mut hash = [0u8; 32];
+        let bytes = slot.to_le_bytes();
+        hash[..bytes.len()].copy_from_slice(&bytes);
+        hash[31] = 0xff;
+        Point::BlockPoint(SlotNo(slot), HeaderHash(hash))
     }
 
     #[test]
@@ -5195,26 +5300,82 @@ mod tests {
     }
 
     #[test]
-    fn partition_with_two_peers_splits_range_endpoints_preserved() {
-        // knob=2, peers.len()=2: range splits in half; first chunk
-        // begins at `lower`, last chunk ends at `upper` (the upstream
-        // `selectForkSuffixes` invariant).
+    fn partition_with_two_peers_collapses_to_single_chunk_when_split_produces_placeholder_hashes() {
+        // Round 144 follow-up — closes the runtime half of Round 91
+        // Gap BN.  `split_range(BlockPoint(100), BlockPoint(200), 2)`
+        // returns two chunks with synthesised `[0; 32]` placeholder
+        // hashes on the intermediate boundary; the runtime cannot
+        // resolve them to real chain points, and peers respond
+        // `NoBlocks` for unknown-hash bounds, so the multi-peer
+        // dispatch path silently drops every block.  The guard in
+        // `partition_fetch_range_across_peers` collapses the plan to
+        // a single chunk against `peers[0]` whenever any chunk
+        // boundary carries the placeholder hash; the original
+        // endpoints are preserved exactly so `MsgRequestRange` still
+        // requests the full range from one peer.
+        //
+        // Reference: `docs/MANUAL_TEST_RUNBOOK.md` §6.5a operational
+        // confirmation that the wire-level request body
+        // `8300821853...821904635820 0000...` (placeholder upper
+        // hash) was returning `NoBlocks` and silently producing
+        // empty volatile storage.
         let peers = vec![test_addr(1001), test_addr(1002)];
         let assignments =
             partition_fetch_range_across_peers(block_point(100), block_point(200), &peers, 2);
-        assert_eq!(assignments.len(), 2);
+        assert_eq!(
+            assignments.len(),
+            1,
+            "split_range produces a placeholder boundary hash for any \
+             multi-chunk plan whose intermediate slot is not a real chain \
+             point — the runtime collapses to a single chunk so peers see \
+             only known-hash bounds",
+        );
         assert_eq!(assignments[0].peer, peers[0]);
         assert_eq!(
             assignments[0].lower,
             block_point(100),
-            "first lower preserved"
+            "lower endpoint preserved exactly",
         );
         assert_eq!(
-            assignments[1].upper,
+            assignments[0].upper,
             block_point(200),
-            "last upper preserved"
+            "upper endpoint preserved exactly",
         );
-        assert_eq!(assignments[1].peer, peers[1]);
+    }
+
+    #[test]
+    fn partition_collapses_only_when_chunks_actually_carry_placeholders() {
+        // Sanity pin: when `n_chunks == 1` the helper does NOT trigger
+        // (single-chunk output uses real lower/upper from the input,
+        // no placeholder synthesis).  This guards against an
+        // overzealous future refactor that always collapses.
+        let peers = vec![test_addr(1001), test_addr(1002)];
+        let assignments =
+            partition_fetch_range_across_peers(block_point(100), block_point(200), &peers, 1);
+        assert_eq!(assignments.len(), 1);
+        assert_eq!(assignments[0].peer, peers[0]);
+        assert!(
+            !point_carries_placeholder_hash(&assignments[0].lower),
+            "single-chunk lower must be the real input point",
+        );
+        assert!(
+            !point_carries_placeholder_hash(&assignments[0].upper),
+            "single-chunk upper must be the real input point",
+        );
+    }
+
+    #[test]
+    fn point_carries_placeholder_hash_recognises_split_range_synthetic_boundary() {
+        // The placeholder is the exact hash that
+        // `yggdrasil_network::blockfetch_pool::split_range` produces
+        // for intermediate chunk boundaries.  Real chain hashes
+        // (Origin or BlockPoint with non-zero hash) must never match.
+        use yggdrasil_ledger::HeaderHash;
+        let placeholder = Point::BlockPoint(SlotNo(1234), HeaderHash([0u8; 32]));
+        let real = Point::BlockPoint(SlotNo(1234), HeaderHash([0xab; 32]));
+        assert!(point_carries_placeholder_hash(&placeholder));
+        assert!(!point_carries_placeholder_hash(&real));
+        assert!(!point_carries_placeholder_hash(&Point::Origin));
     }
 
     // -----------------------------------------------------------------------
@@ -5544,6 +5705,12 @@ mod tests {
         // existing single-peer path behaviour for un-decodable
         // headers.  We verify that the dispatch error still
         // propagates.
+        //
+        // After the Round 144 follow-up, the two-peer plan collapses
+        // to a single chunk against `peers[0]` because `split_range`
+        // would otherwise produce placeholder hashes; target p1 (the
+        // peer that actually receives the dispatch) so the failing
+        // closure trips.
         let header = fake_byron_header_with_slot(150);
         let result: Result<Vec<(Vec<u8>, u64)>, SyncError> = dispatch_range_with_tentative(
             &header,
@@ -5553,7 +5720,7 @@ mod tests {
             2,
             Some(&state),
             None,
-            failing_fetch_one(p2),
+            failing_fetch_one(p1),
         )
         .await;
 
@@ -5562,26 +5729,21 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_range_returns_blocks_in_order_on_success() {
-        // Verify the integration: dispatch_range_with_tentative calls
-        // partition + execute correctly and threads the synthetic
-        // content through.  Use a from_point at slot 50 so the first
-        // chunk's lower (slot 50) is strictly past the seeded head
-        // (slot 49) — independent of split_range's chunk-boundary
-        // semantics.
+        // After the Round 144 follow-up, two-peer plans whose
+        // intermediate `split_range` boundary would carry a placeholder
+        // hash collapse to a single-chunk plan against `peers[0]`
+        // covering the full `(lower, upper)` range.  Verify the
+        // integration: dispatch_range_with_tentative routes the full
+        // range to peers[0]'s synthetic closure and returns every
+        // delivered block.
         let p1 = test_addr(2501);
         let p2 = test_addr(2502);
         let peers = vec![p1, p2];
 
-        // partition_fetch_range_across_peers(50, 200, &[p1,p2], 2)
-        // produces chunks via split_range:
-        //   span=150, chunk=75
-        //   chunk0: (block_point(50), block_point(125))
-        //   chunk1: (block_point(126), block_point(200))
         let mut contents = std::collections::BTreeMap::new();
-        contents.insert(p1, vec![(block_point(50), block_point(125), vec![60, 100])]);
         contents.insert(
-            p2,
-            vec![(block_point(126), block_point(200), vec![150, 200])],
+            p1,
+            vec![(block_point(50), block_point(200), vec![60, 100, 150, 200])],
         );
 
         let header = fake_byron_header_with_slot(200);
@@ -5596,7 +5758,7 @@ mod tests {
             synthetic_fetch_one(contents),
         )
         .await
-        .expect("two-peer dispatch succeeds");
+        .expect("two-peer collapsed-to-single-chunk dispatch succeeds");
         assert_eq!(result.len(), 4);
     }
 
@@ -5882,12 +6044,16 @@ mod tests {
 
     #[test]
     fn partition_clamps_to_available_peers() {
-        // knob=10, peers.len()=2 must produce exactly 2 assignments
-        // (peers.len() wins over knob).
-        let peers = vec![test_addr(1001), test_addr(1002)];
-        let assignments =
-            partition_fetch_range_across_peers(block_point(100), block_point(200), &peers, 10);
-        assert_eq!(assignments.len(), 2);
+        // `effective_block_fetch_concurrency(10, 2) == 2` — peer count
+        // wins over knob.  After the Round 144 follow-up that guards
+        // against `split_range` placeholder hashes, two-peer multi-chunk
+        // plans collapse to a single chunk targeting `peers[0]`; assert
+        // the effective concurrency cap directly so this test still
+        // covers the clamp logic without depending on the
+        // placeholder-aware partition collapse.
+        assert_eq!(effective_block_fetch_concurrency(10, 2), 2);
+        assert_eq!(effective_block_fetch_concurrency(10, 3), 3);
+        assert_eq!(effective_block_fetch_concurrency(2, 5), 2);
     }
 
     #[test]

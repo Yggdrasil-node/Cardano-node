@@ -392,9 +392,15 @@ impl<B: Send + 'static> FetchWorkerPool<B> {
     /// (no leaks, just wasted bandwidth).  Workers stay registered
     /// for subsequent iterations.
     ///
-    /// Genesis multi-peer plans return `Err(SyncError::Recovery)`
-    /// — the `ReorderBuffer` cannot release with `head = Origin`,
-    /// so genesis bootstrap must use the single-peer path.
+    /// Multi-chunk plans against `from_point = Origin` are rejected
+    /// upfront — a from-genesis sync cannot anchor intermediate chunk
+    /// boundaries (their hashes are placeholder), and out-of-order
+    /// release would violate the validator's chain-extension check.
+    /// Single-chunk plans from Origin are accepted: the post-fetch
+    /// drain seeds the [`ReorderBuffer`] head from the chunk's lower
+    /// before draining so the delivered blocks release cleanly.
+    /// Reference: `docs/MANUAL_TEST_RUNBOOK.md` §6.5a "Round 91 Gap BN"
+    /// closure (Round 144).
     pub async fn dispatch_plan(
         &self,
         plan: &[BlockFetchAssignment],
@@ -406,10 +412,75 @@ impl<B: Send + 'static> FetchWorkerPool<B> {
         }
         if plan.len() > 1 && matches!(from_point, Point::Origin) {
             return Err(SyncError::Recovery(
-                "multi-peer BlockFetch dispatch requires non-Origin from_point; \
-                 genesis bootstrap must use single-peer path"
+                "multi-chunk BlockFetch dispatch requires non-Origin from_point; \
+                 from-genesis sync cannot anchor intermediate chunk boundaries"
                     .to_owned(),
             ));
+        }
+
+        // Single-chunk fast path (Round 144 — closes Round 91 Gap BN).
+        // A single-chunk plan has no reordering concern: the worker
+        // returns blocks in the same chain order the peer delivered
+        // them.  Routing through the [`ReorderBuffer`] in this case is
+        // pure overhead, AND silently breaks genesis bootstrap because
+        // `peek_releasable` short-circuits on Origin head whenever the
+        // head_seed is `Origin` (or whenever the chunk's lower-slot is
+        // `0`, which produces buffer key `0` ≤ any non-Origin head
+        // slot).  Bypass the buffer for single-chunk plans entirely;
+        // the multi-peer / out-of-order case still routes through the
+        // buffer below.  Reference: `docs/MANUAL_TEST_RUNBOOK.md`
+        // §6.5a "Round 91 Gap BN" notice.
+        if plan.len() == 1 {
+            let asn = plan[0];
+            let worker = self.workers.get(&asn.peer).ok_or_else(|| {
+                SyncError::Recovery(format!(
+                    "fetch worker not registered for peer {} (caller must register before dispatch)",
+                    asn.peer
+                ))
+            })?;
+            let (response_tx, response_rx) = oneshot::channel();
+            let req = FetchRequest {
+                lower: asn.lower,
+                upper: asn.upper,
+                response: response_tx,
+            };
+            worker.sender.send(req).await.map_err(|_| {
+                SyncError::Recovery(format!(
+                    "fetch worker channel closed for peer {} during dispatch",
+                    asn.peer
+                ))
+            })?;
+            if let Some(instr) = pool_instr {
+                if let Ok(mut g) = instr.lock() {
+                    g.note_dispatch(asn.peer);
+                }
+            }
+            let result = response_rx.await.map_err(|_| {
+                SyncError::Recovery(format!(
+                    "fetch worker dropped response for peer {} mid-dispatch",
+                    asn.peer
+                ))
+            })?;
+            return match result {
+                Ok(blocks) => {
+                    if let Some(instr) = pool_instr {
+                        if let Ok(mut g) = instr.lock() {
+                            let n = blocks.len() as u64;
+                            let bytes: u64 = blocks.iter().map(|(raw, _)| raw.len() as u64).sum();
+                            g.note_success(asn.peer, n, bytes, Instant::now());
+                        }
+                    }
+                    Ok(blocks)
+                }
+                Err(err) => {
+                    if let Some(instr) = pool_instr {
+                        if let Ok(mut g) = instr.lock() {
+                            g.note_failure(asn.peer);
+                        }
+                    }
+                    Err(err)
+                }
+            };
         }
 
         // Phase 1 — dispatch.  Each `worker.sender.send()` may briefly
@@ -719,6 +790,84 @@ mod tests {
             .await
             .expect_err("genesis multi-peer must error");
         assert!(matches!(err, SyncError::Recovery(_)));
+    }
+
+    #[tokio::test]
+    async fn pool_dispatch_plan_releases_single_chunk_genesis() {
+        // Round 144 fix for Round 91 Gap BN.  Pre-fix, a single-chunk
+        // plan dispatched with `from_point = Origin` slipped past the
+        // `plan.len() > 1` guard, the worker fetched blocks correctly,
+        // but the ReorderBuffer silently dropped them at drain time
+        // because `peek_releasable` short-circuits on Origin head —
+        // dispatch_plan returned `Ok(vec![])`, the runtime advanced
+        // `from_point` past the upper bound without ever writing the
+        // blocks to volatile storage, and the node livelocked
+        // re-syncing from Origin on every session handoff.
+        //
+        // After the fix, single-chunk plans bypass the ReorderBuffer
+        // entirely (no reorder concern with one chunk), so the worker's
+        // delivered blocks pass through directly.  Exercises the
+        // production shape `partition_fetch_range_across_peers` produces
+        // for from-genesis sync: `split_range(Origin, upper, n)` returns
+        // `[(Origin, upper)]` so the assignment carries `lower = Origin`.
+        let mut pool: FetchWorkerPool<u64> = FetchWorkerPool::new();
+        let p = addr(3032);
+        pool.register(FetchWorkerHandle::spawn(
+            p,
+            echo_closure(Ok(vec![fake_block(1), fake_block(50)])),
+        ));
+        let plan = vec![BlockFetchAssignment {
+            peer: p,
+            lower: Point::Origin,
+            upper: block_point(50),
+        }];
+        let result = pool
+            .dispatch_plan(&plan, Point::Origin, None)
+            .await
+            .expect("single-chunk genesis dispatch must release");
+        let slots: Vec<u64> = result.iter().map(|(_, s)| *s).collect();
+        assert_eq!(
+            slots,
+            vec![1, 50],
+            "single-chunk genesis plan must deliver every fetched block in chain order — \
+             pre-fix this returned an empty Vec because the ReorderBuffer dropped the chunk"
+        );
+    }
+
+    #[tokio::test]
+    async fn pool_dispatch_plan_single_chunk_records_pool_instrumentation() {
+        // The single-chunk fast path must still record dispatch /
+        // success / failure on the pool instrumentation so the
+        // governor's per-peer accounting (consecutive_failures,
+        // blocks_delivered, bytes_delivered) stays accurate.  Without
+        // this, a peer serving every batch via the genesis fast path
+        // would never count toward the demote-on-failure threshold.
+        use std::sync::Arc;
+        use std::sync::Mutex;
+        use yggdrasil_network::blockfetch_pool::{BlockFetchPool, FetchMode};
+        let mut pool: FetchWorkerPool<u64> = FetchWorkerPool::new();
+        let p = addr(3033);
+        pool.register(FetchWorkerHandle::spawn(
+            p,
+            echo_closure(Ok(vec![fake_block(7)])),
+        ));
+        let mut bp = BlockFetchPool::new(FetchMode::FetchModeBulkSync);
+        bp.register_peer(p);
+        let instr: BlockFetchInstrumentation = Arc::new(Mutex::new(bp));
+        let plan = vec![BlockFetchAssignment {
+            peer: p,
+            lower: Point::Origin,
+            upper: block_point(7),
+        }];
+        let _ = pool
+            .dispatch_plan(&plan, Point::Origin, Some(&instr))
+            .await
+            .expect("single-chunk dispatch must succeed");
+        let guard = instr.lock().expect("instrumentation lock");
+        let state = guard.peer_state(p).expect("peer must be registered");
+        assert_eq!(state.blocks_delivered, 1);
+        assert_eq!(state.consecutive_failures, 0);
+        assert!(state.last_success.is_some());
     }
 
     #[tokio::test]

@@ -260,19 +260,40 @@ peer in the registry, (b) `useLedgerAfterSlot` not yet crossed and no
 >   crash at session-handoff is fixed.  Look for
 >   `Net.PeerSelection: realigning from_point to volatile storage tip
 >   before reconnect` in the trace as confirmation that the runtime
->   resync logic is engaging cleanly.  ~5 realignments / minute is
->   normal during the §6.5a livelock window described next.
-> - **Round 91 Gap BN (OPEN)** — multi-peer dispatch advances
->   `ChainState`'s in-memory tip but the per-peer `FetchWorkerPool`
->   reassembly is not feeding the dispatched blocks into
->   `apply_multi_era_step_to_volatile`.  The volatile / immutable
->   / ledger directories stay empty during the rehearsal; the node
->   re-syncs from Origin on every session handoff (no crash, just
->   livelock).  §6.5a is **NOT yet operationally clean** — keep the
->   production default `max_concurrent_block_fetch_peers = 1`.
->   Storage-empty signal: `find $YGG_DB -type f | wc -l` stays at 0
->   even after several minutes of `yggdrasil_batches_completed`
->   counter advancement.
+>   resync logic is engaging cleanly.
+> - **Round 91 Gap BN (CLOSED — Round 144)** — the from-genesis
+>   livelock under `max_concurrent_block_fetch_peers > 1` is fixed.
+>   Root cause: `partition_fetch_range_across_peers` was producing
+>   multi-chunk plans whose intermediate boundaries carried the
+>   all-zeros `HeaderHash` placeholder synthesised by `split_range`
+>   for boundaries the runtime cannot anchor (it has no candidate
+>   fragment to resolve them).  Each batch dispatched
+>   `MsgRequestRange { lower: BlockPoint(N, real), upper: BlockPoint(M, [0;32]) }`
+>   on the wire — peers respond with `NoBlocks` for unknown-hash
+>   bounds, every batch returned zero blocks, volatile storage stayed
+>   empty, and the node livelocked re-syncing from Origin on every
+>   handoff.  In-session debug capture `[ygg-sync-debug]
+>   blockfetch-request-cbor=83008218535820152bf9...821904635820 0000…`
+>   confirmed the placeholder upper-hash being sent.  Fix in two
+>   layers: (1) a placeholder-hash guard in
+>   `partition_fetch_range_across_peers` collapses any multi-chunk
+>   plan containing a synthesised boundary to a single-chunk plan
+>   targeting `peers[0]` with the original `(lower, upper)` preserved
+>   exactly; (2) the multi-peer dispatch branch in
+>   `sync_batch_verified_with_tentative` performs the same
+>   `lower_hash` dedup as the legacy single-peer branch (the
+>   BlockFetch wire returns the closed interval `[lower, upper]`, and
+>   the consensus `track_chain_state_entries` block-number contiguity
+>   check rejected the duplicate front entry as `expected N, got
+>   N-1`).  Verification: with the knob set to 2 and a 2-localRoot
+>   topology, `find $YGG_DB -type f | wc -l` climbs steadily past
+>   zero, `yggdrasil_blocks_synced` advances monotonically, and 0
+>   reconnects / 0 consensus errors are observed.  Throughput delta
+>   knob=2 vs knob=1 is currently ~0.54× because the placeholder
+>   collapse forces single-chunk dispatch even when N peers are
+>   migrated; the path is correctness-only at this stage and
+>   throughput parity tracks the multi-peer ChainSync candidate
+>   fragments work needed to remove the collapse.
 
 ### 6.5b Hash-compare under parallel fetch
 
