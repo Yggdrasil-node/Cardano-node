@@ -165,6 +165,27 @@ pub struct RuntimeGovernorConfig {
     /// (`VerifiedSyncServiceConfig::density_registry`) so writes from
     /// the sync hook land where the governor reads.
     pub density_registry: Option<crate::sync::DensityRegistry>,
+    /// Operator-configured upper bound on concurrent BlockFetch
+    /// peers.  When `> 1`, the governor migrates each warm peer's
+    /// `BlockFetchClient` into a per-peer
+    /// [`crate::blockfetch_worker::FetchWorkerHandle`] at promote
+    /// time, populating the shared
+    /// [`SharedFetchWorkerPool`] held by `OutboundPeerManager`.
+    /// The sync loop's multi-peer dispatch branch then activates.
+    /// Default `1` keeps the pool empty and the legacy single-peer
+    /// path active.
+    ///
+    /// Mirrors upstream `bfcMaxConcurrencyDeadline = 1` /
+    /// `bfcMaxConcurrencyBulkSync = 2`.
+    pub max_concurrent_block_fetch_peers: u8,
+    /// Optional shared `FetchWorkerPool` cloned from runtime startup
+    /// (see [`new_shared_fetch_worker_pool`]).  When `Some`, the
+    /// governor's [`OutboundPeerManager`] uses this pool so the sync
+    /// loop's [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`]
+    /// observes the registrations made here.  When `None`, the
+    /// governor creates its own private pool — useful for tests
+    /// that don't need cross-task sharing.
+    pub shared_fetch_worker_pool: Option<SharedFetchWorkerPool>,
 }
 
 impl RuntimeGovernorConfig {
@@ -185,7 +206,27 @@ impl RuntimeGovernorConfig {
             block_fetch_pool: None,
             ledger_judgement_settings: LedgerJudgementSettings::default(),
             density_registry: None,
+            max_concurrent_block_fetch_peers: 1,
+            shared_fetch_worker_pool: None,
         }
+    }
+
+    /// Set the operator-configured `max_concurrent_block_fetch_peers`
+    /// knob.  Values `> 1` activate the upstream-faithful multi-peer
+    /// BlockFetch path: the governor migrates each warm peer's
+    /// `BlockFetchClient` into a worker at promote time.
+    pub fn with_max_concurrent_block_fetch_peers(mut self, knob: u8) -> Self {
+        self.max_concurrent_block_fetch_peers = knob;
+        self
+    }
+
+    /// Attach a shared `FetchWorkerPool` so the governor's
+    /// [`OutboundPeerManager`] writes to the same pool the sync
+    /// loop reads from via
+    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`].
+    pub fn with_shared_fetch_worker_pool(mut self, pool: Option<SharedFetchWorkerPool>) -> Self {
+        self.shared_fetch_worker_pool = pool;
+        self
     }
 
     /// Attach a shared per-peer ChainSync density registry so the
@@ -1473,6 +1514,7 @@ fn update_registry_status_from_cm(
     registry.set_status(peer, peer_status_from_cm_state(state))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn apply_cm_actions(
     peer_manager: &mut OutboundPeerManager,
     peer_registry: &Arc<RwLock<PeerRegistry>>,
@@ -1481,6 +1523,7 @@ async fn apply_cm_actions(
     node_config: &NodeConfig,
     actions: Vec<CmAction>,
     tracer: &NodeTracer,
+    max_concurrent_block_fetch_peers: u8,
 ) -> bool {
     let mut changed = false;
     for cm_action in actions {
@@ -1490,6 +1533,36 @@ async fn apply_cm_actions(
                     .promote_to_warm(node_config, peer, governor_state, tracer)
                     .await
                 {
+                    // Phase 6 — operator opt-in: when
+                    // `max_concurrent_block_fetch_peers > 1`, migrate
+                    // the freshly-promoted session's BlockFetchClient
+                    // into a per-peer worker so the sync loop's
+                    // multi-peer branch can dispatch through the
+                    // shared `FetchWorkerPool`.  At knob == 1 the
+                    // session keeps direct ownership of its
+                    // BlockFetchClient (legacy single-peer path).
+                    //
+                    // Mirrors upstream `bracketSyncWithFetchClient`:
+                    // the per-peer fetch state is owned by a dedicated
+                    // task for the connection's lifetime.
+                    if max_concurrent_block_fetch_peers > 1 {
+                        let migrated = peer_manager.migrate_session_to_worker(peer).await;
+                        if migrated {
+                            tracer.trace_runtime(
+                                "Net.BlockFetch.Worker",
+                                "Info",
+                                "BlockFetch migrated to per-peer worker",
+                                trace_fields([
+                                    ("peer", json!(peer.to_string())),
+                                    (
+                                        "maxConcurrent",
+                                        json!(max_concurrent_block_fetch_peers),
+                                    ),
+                                ]),
+                            );
+                        }
+                    }
+
                     let data_flow = peer_manager
                         .warm_peers
                         .get(&peer)
@@ -2046,7 +2119,14 @@ pub async fn run_governor_loop<I, V, L, F>(
     F: Future<Output = ()>,
 {
     let mut interval = tokio::time::interval(config.tick_interval);
-    let mut peer_manager = OutboundPeerManager::new();
+    // Phase 6 — when the runtime caller has provided a shared
+    // `FetchWorkerPool`, use it so the sync loop observes peer
+    // worker registrations made by promote_to_warm/migrate.
+    // Otherwise fall back to a private per-governor pool.
+    let mut peer_manager = match &config.shared_fetch_worker_pool {
+        Some(pool) => OutboundPeerManager::with_fetch_worker_pool(pool.clone()),
+        None => OutboundPeerManager::new(),
+    };
     let mut root_sources = RuntimeRootPeerSources::new(&topology);
     let timeouts = PeerSelectionTimeouts::default();
     governor_state.enable_root_big_ledger_requests = true;
@@ -2130,6 +2210,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                         &node_config,
                         cm_actions,
                         &tracer,
+                        config.max_concurrent_block_fetch_peers,
                     )
                     .await;
 
@@ -2205,6 +2286,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             &node_config,
                             applicable_actions,
                             &tracer,
+                            config.max_concurrent_block_fetch_peers,
                         )
                         .await;
                         tracer.trace_runtime(
@@ -2441,6 +2523,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                                     &node_config,
                                     cm_actions,
                                     &tracer,
+                                    config.max_concurrent_block_fetch_peers,
                                 )
                                 .await;
 
@@ -2499,6 +2582,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                                     &node_config,
                                     cm_actions,
                                     &tracer,
+                                    config.max_concurrent_block_fetch_peers,
                                 )
                                 .await;
 
