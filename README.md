@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/images/yggdrasil-banner.png" alt="YggdrasilNode — A Cardano Node Project Written In Rust" width="100%"/>
+  <img src="docs/assets/images/Yggrasil_banner.png" alt="YggdrasilNode — A Cardano Node Project Written In Rust" width="100%"/>
 </p>
 
 # Yggdrasil Cardano Node in Rust
