@@ -673,6 +673,7 @@ async fn mux_loop_inner<W: tokio::io::AsyncWrite + Unpin>(
     notify: &tokio::sync::Notify,
     cancel_rx: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), MuxError> {
+    let bearer_start = std::time::Instant::now();
     loop {
         // Remove fully-disconnected slots.
         slots.retain(|s| !s.closed);
@@ -688,7 +689,7 @@ async fn mux_loop_inner<W: tokio::io::AsyncWrite + Unpin>(
                 match slot.receiver.try_recv() {
                     Ok(payload) => {
                         let len = payload.len();
-                        write_sdu(writer, slot.protocol_num, role, &payload).await?;
+                        write_sdu(writer, slot.protocol_num, role, &payload, bearer_start).await?;
                         slot.pending_bytes.fetch_sub(len, Ordering::Relaxed);
                         any_written = true;
                         written += 1;
@@ -723,17 +724,35 @@ async fn mux_loop_inner<W: tokio::io::AsyncWrite + Unpin>(
     }
 }
 
+/// Compute the monotonic SDU timestamp per upstream
+/// `Network.Mux.Bearer.Pipe.makeBearer` — lower 32 bits of microseconds
+/// elapsed since `start`.  Each frame on the bearer carries this so
+/// the peer can monitor relative timing for back-pressure / liveness.
+/// Pre-fix yggdrasil sent literal `0` for the timestamp; upstream
+/// `cardano-cli`'s mux layer rejects all-zero timestamps which is why
+/// `BlockQuery (QueryHardFork GetCurrentEra)` MsgResults arrived at the
+/// CLI with `DeserialiseFailure 2 "expected list len or indef"` — the
+/// ENVELOPE was malformed before the result content was even examined.
+/// Reference: 2026-04-27 socat capture comparing yggdrasil's
+/// `00 00 00 00 80 07 00 03 82 04 01` against the upstream Haskell
+/// node's `56 8b ae ed 80 07 00 03 82 04 02` — only difference is the
+/// SDU timestamp being non-zero on the upstream side.
+fn sdu_timestamp_micros(start: std::time::Instant) -> u32 {
+    start.elapsed().as_micros() as u32
+}
+
 /// Write one payload as one or more SDU frames on the transport.
 async fn write_sdu<W: tokio::io::AsyncWrite + Unpin>(
     writer: &mut W,
     proto: MiniProtocolNum,
     role: MiniProtocolDir,
     payload: &[u8],
+    bearer_start: std::time::Instant,
 ) -> Result<(), MuxError> {
     if payload.len() <= MAX_SEGMENT_SIZE {
         // Common fast path: single SDU.
         let header = SduHeader {
-            timestamp: 0,
+            timestamp: sdu_timestamp_micros(bearer_start),
             protocol_num: proto,
             direction: role,
             payload_length: payload.len() as u16,
@@ -744,7 +763,7 @@ async fn write_sdu<W: tokio::io::AsyncWrite + Unpin>(
         // Large payload: segment into MAX_SEGMENT_SIZE chunks.
         for chunk in payload.chunks(MAX_SEGMENT_SIZE) {
             let header = SduHeader {
-                timestamp: 0,
+                timestamp: sdu_timestamp_micros(bearer_start),
                 protocol_num: proto,
                 direction: role,
                 payload_length: chunk.len() as u16,

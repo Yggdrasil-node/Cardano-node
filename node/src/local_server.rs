@@ -1192,7 +1192,7 @@ fn dispatch_upstream_query(
     use yggdrasil_ledger::Encoder;
     use yggdrasil_network::protocols::{
         HardForkBlockQuery, QueryHardFork, UpstreamQuery, encode_chain_block_no,
-        encode_chain_point, encode_era_index,
+        encode_chain_point, encode_era_index, encode_interpreter_minimal,
     };
 
     let null_response = || -> Vec<u8> {
@@ -1207,21 +1207,25 @@ fn dispatch_upstream_query(
                 encode_era_index(snapshot.current_era().era_ordinal() as u32)
             }
             QueryHardFork::GetInterpreter => {
-                // Phase-2 follow-up: real Interpreter encoding requires
-                // a typed era-history summary derived from the
-                // network's hard-fork transitions.  Returning `null`
-                // (instead of a malformed Interpreter) lets
-                // `cardano-cli query tip` proceed without computing
-                // wallclock-derived fields.
-                null_response()
+                // Round 149 — minimal valid Interpreter (one open-ended
+                // era anchored at slot 0) so `cardano-cli query tip`
+                // can decode the result shape.  Phase-3 follow-up:
+                // derive the real era summaries from the loaded
+                // ShelleyGenesis / AlonzoGenesis / ConwayGenesis
+                // hard-fork transition epochs.  cardano-cli's
+                // slot-to-time conversions will be inaccurate but the
+                // displayed slot/hash come from `GetChainPoint`
+                // directly, so `query tip` still works.
+                encode_interpreter_minimal(21_600, 1)
             }
         },
         UpstreamQuery::GetSystemStart => {
-            // Without a parsed-and-stored SystemStart in the
-            // LedgerStateSnapshot, return `null` for now.  Real
-            // encoding is `[year, dayOfYear, picoseconds]` per
-            // upstream `Cardano.Slotting.Time.SystemStart`.
-            null_response()
+            // Round 149 — emit synthetic SystemStart anchored at
+            // 2022-06-01T00:00:00Z (preprod genesis).  Phase-3
+            // follow-up: thread the genesis-derived SystemStart from
+            // ShelleyGenesis.systemStart through to the snapshot.
+            // Modified Julian Day for 2022-06-01 = 59731.
+            yggdrasil_network::protocols::encode_system_start(59_731, 0)
         }
         UpstreamQuery::GetChainPoint => encode_chain_point(snapshot.tip()),
         UpstreamQuery::GetChainBlockNo => {
@@ -1301,25 +1305,23 @@ mod tests {
         let snapshot = state.snapshot();
 
         // [0, [2, [1]]] → GetCurrentEra → era_index of Conway = 6.
-        // NtC V_16 (the version yggdrasil negotiates with upstream
-        // cardano-cli) wraps `EraIndex` in a 1-element CBOR list.
+        // Round 149 — V_23 emits `EraIndex` as bare CBOR uint per the
+        // 2026-04-27 socat-proxy capture from `cardano-node 10.7.1`.
         let get_current_era: &[u8] = &[0x82, 0x00, 0x82, 0x02, 0x81, 0x01];
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, get_current_era);
         assert_eq!(
             result,
-            vec![0x81, 0x06],
-            "GetCurrentEra in Conway era must return [6] at NtC V_16",
+            vec![0x06],
+            "GetCurrentEra in Conway era must return bare uint 6 at NtC V_23",
         );
 
-        // [0, [2, [0]]] → GetInterpreter → CBOR null (Phase-2 stub).
+        // [0, [2, [0]]] → GetInterpreter → minimal Interpreter shape.
         let get_interpreter: &[u8] = &[0x82, 0x00, 0x82, 0x02, 0x81, 0x00];
         let result_int = BasicLocalQueryDispatcher.dispatch_query(&snapshot, get_interpreter);
-        assert_eq!(
-            result_int,
-            vec![0xf6],
-            "GetInterpreter must return CBOR null until the full Interpreter \
-             codec lands as the Phase-2 follow-up",
-        );
+        // Indefinite-length array start `0x9f`, single 3-elem
+        // EraSummary, then break `0xff`.
+        assert_eq!(result_int[0], 0x9f, "indefinite-length Summary outer");
+        assert_eq!(*result_int.last().unwrap(), 0xff, "indef-array break");
 
         // Sanity: yggdrasil's own flat-table `[0]` (no inner array)
         // continues to work — `UpstreamQuery::decode` rejects
@@ -1350,9 +1352,14 @@ mod tests {
         let snapshot = state.snapshot();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[0x81, 0x03]);
-        // Per `encode_chain_point`: BlockPoint encodes as [1, slot, hash_bytes].
-        assert_eq!(result[0], 0x83, "array length 3");
-        assert_eq!(result[1], 0x01, "BlockPoint tag = 1");
+        // Round 149 — V_23 `encodePoint` shape: BlockPoint = [slot, hash]
+        // (no constructor tag); Origin = [].  Captured from
+        // `cardano-node 10.7.1` socat proxy.
+        assert_eq!(result[0], 0x82, "array length 2 for BlockPoint");
+        assert_eq!(result[1], 0x18, "uint8 escape for slot 42");
+        assert_eq!(result[2], 0x2a, "slot 42");
+        assert_eq!(result[3], 0x58, "byte string uint8 length follows");
+        assert_eq!(result[4], 0x20, "hash length 32");
     }
 
     /// Round 148 — `[2]` is upstream `GetChainBlockNo`.  Yggdrasil's
@@ -1390,8 +1397,10 @@ mod tests {
             !result.is_empty(),
             "GetChainPoint should return a non-empty response"
         );
-        // Origin shape is `[0]` per `encode_chain_point`.
-        assert_eq!(result, vec![0x81, 0x00]);
+        // Round 149 — V_23 `encodePoint` shape: Origin is `[]` (empty
+        // CBOR array, single byte `0x80`), per
+        // `cardano-node 10.7.1` capture.
+        assert_eq!(result, vec![0x80]);
     }
 
     #[test]

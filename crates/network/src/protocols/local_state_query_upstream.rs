@@ -318,23 +318,109 @@ impl QueryHardFork {
 /// Encode the result of [`UpstreamQuery::GetChainPoint`] in upstream
 /// `encodePoint` shape.
 ///
-/// Upstream `encodePoint` for Cardano:
-///   - `Origin`        = `[0]`
-///   - `BlockPoint(s,h)` = `[1, slot, hash_bytes]`
+/// Upstream `encodePoint` per `Cardano.Slotting.Block`:
+///   - `Origin`         = `[]`             (empty CBOR array)
+///   - `BlockPoint(s,h)` = `[slot, hash]`   (length-2 array)
+///
+/// 2026-04-27 operator capture confirms: upstream `cardano-node 10.7.1`
+/// at NtC V_23 sent `82 04 82 1a 00 09 4e f8 58 20 ec 4a ...` —
+/// MsgResult `[4, [610040, h'ec4a...']]` for `GetChainPoint`.  No
+/// leading constructor tag; the `[slot, hash]` array IS the Point
+/// itself.
 pub fn encode_chain_point(point: &Point) -> Vec<u8> {
     let mut enc = Encoder::new();
     match point {
         Point::Origin => {
-            enc.array(1);
-            enc.unsigned(0);
+            enc.array(0);
         }
         Point::BlockPoint(slot, hash) => {
-            enc.array(3);
-            enc.unsigned(1);
+            enc.array(2);
             enc.unsigned(slot.0);
             enc.bytes(&hash.0);
         }
     }
+    enc.into_bytes()
+}
+
+/// Encode a minimal valid `Interpreter` (era-history summary) result
+/// for `BlockQuery (QueryHardFork GetInterpreter)`.
+///
+/// Upstream `Interpreter xs = Interpreter (Summary xs)` encodes the
+/// `Summary` as an indefinite-length CBOR array of `EraSummary`
+/// records — non-empty (at least one era).  Each EraSummary is
+/// `[eraStart :: Bound, eraEnd :: EraEnd, eraParams :: EraParams]`
+/// where:
+///
+///   - `Bound = [relativeTime :: Word64, slot :: Word64, epoch :: Word64]`
+///     (3-element array — `relativeTime` is whole + fractional
+///     picoseconds packed as a single bignum).
+///   - `EraEnd = EraUnbounded | EraEnd Bound` — represented as a
+///     1-tuple.  An unbounded era is just `[Bound{...}]` per the
+///     2026-04-27 operator capture.
+///   - `EraParams = [epochSize, slotLength, safeZone, genesisWindow]`
+///     where `slotLength` is encoded as picoseconds and `safeZone`
+///     is `[0]` (StandardSafeZone) or `[1, slots]` (UnsafeIndefiniteSafeZone).
+///
+/// This encoder emits a SINGLE open-ended era anchored at slot 0 with
+/// preprod-shape parameters (epochSize=21600 slots, slotLength=1
+/// second, safeZone=129600 slots).  cardano-cli's slot-to-time
+/// conversion will be wrong for non-Byron slots, but `query tip` only
+/// needs the Interpreter to deserialise — the displayed `slot`/`hash`
+/// come from `GetChainPoint` directly.  Phase-3 follow-up: derive
+/// the real era summaries from the loaded `ShelleyGenesis`/`AlonzoGenesis`/
+/// `ConwayGenesis` hard-fork transition epochs threaded through the
+/// `LedgerStateSnapshot`.
+pub fn encode_interpreter_minimal(_epoch_size: u64, _slot_length_secs: u64) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    // Summary outer: indefinite-length array start (CBOR major type 4
+    // with additional info 31 = `0x9f`).
+    enc.raw(&[0x9f]);
+
+    // Single EraSummary: [eraStart, eraEnd, eraParams].
+    enc.array(3);
+
+    // eraStart Bound: relativeTime=0, slot=0, epoch=0 — preprod genesis.
+    enc.array(3);
+    enc.unsigned(0); // relativeTime (picoseconds)
+    enc.unsigned(0); // slot
+    enc.unsigned(0); // epoch
+
+    // eraEnd encoded as a Bound directly per the Haskell capture
+    // (upstream serialises `EraEnd Bound` as the Bound's CBOR
+    // structure; `EraUnbounded` is rare on the wire — even open eras
+    // get a synthetic far-future bound).  Use a large Bound value to
+    // avoid the active-era boundary falling within the era we
+    // describe.  These values mimic Byron's end on preprod
+    // (slot 86400, epoch 4) so cardano-cli's parser sees the same
+    // shape it observed from real upstream.
+    enc.array(3);
+    // relativeTime picoseconds — 0x17fb16d83be00000 ≈ 1.728e15
+    enc.unsigned(0x17fb16d83be00000);
+    enc.unsigned(86400); // slot
+    enc.unsigned(4); // epoch
+
+    // eraParams shape captured from `cardano-node 10.7.1` at NtC V_23
+    // for preprod Byron era:
+    //   `84 19 54 60 19 4e 20 83 00 19 10 e0 81 00 19 10 e0`
+    // Decoded:
+    //   [21600,                          -- epochSize
+    //    20000,                          -- slotLength (ms)
+    //    [0, 4320, [0]],                 -- safeZone (StandardSafeZone)
+    //    4320]                           -- genesisWindow
+    enc.array(4);
+    enc.unsigned(21600); // epochSize
+    enc.unsigned(20000); // slotLength (Byron uses ms encoding)
+    // safeZone: 3-elem [tag=0 (StandardSafeZone), slots=4320, lowerBound=[0]]
+    enc.array(3);
+    enc.unsigned(0);
+    enc.unsigned(4320);
+    enc.array(1);
+    enc.unsigned(0);
+    // genesisWindow
+    enc.unsigned(4320);
+
+    // Break code for indefinite-length array.
+    enc.raw(&[0xff]);
     enc.into_bytes()
 }
 
@@ -361,42 +447,35 @@ pub fn encode_chain_block_no(block_no: Option<u64>) -> Vec<u8> {
 /// Encode the result of [`UpstreamQuery::GetSystemStart`] as a
 /// `SystemStart` (UTCTime) per upstream `Cardano.Slotting.Time`.
 ///
-/// Encoded as a 3-tuple `[year, dayOfYear, picosecondsOfDay]`.
-pub fn encode_system_start(year: u64, day_of_year: u64, picoseconds: u128) -> Vec<u8> {
+/// Upstream's Serialise instance for UTCTime encodes as a 2-element
+/// CBOR list `[modifiedJulianDay, picosecondsSinceMidnight]`:
+///   - day count: integer Modified Julian Day number (e.g.
+///     2022-06-01 = MJD 59731)
+///   - picoseconds: integer in `[0, 86400*10^12)` for the time of
+///     day past midnight
+///
+/// `SystemStart` wraps this in another `newtype` but the serialisation
+/// is identity (no wrapper).
+pub fn encode_system_start(modified_julian_day: u64, picoseconds_since_midnight: u64) -> Vec<u8> {
     let mut enc = Encoder::new();
-    enc.array(3);
-    enc.unsigned(year);
-    enc.unsigned(day_of_year);
-    // Picoseconds may exceed 2^64 (range up to 86_400 * 10^12 = 8.64×10^16 fits in u64,
-    // but upstream uses Integer so encode as bignum if needed).
-    if picoseconds <= u64::MAX as u128 {
-        enc.unsigned(picoseconds as u64);
-    } else {
-        // Upstream uses CBOR bignum tag 2 for big positive integers.
-        // 86400e12 fits easily in u64, but be defensive.
-        enc.unsigned(picoseconds as u64);
-    }
+    enc.array(2);
+    enc.unsigned(modified_julian_day);
+    enc.unsigned(picoseconds_since_midnight);
     enc.into_bytes()
 }
 
 /// Encode the result of `BlockQuery (QueryHardFork GetCurrentEra)`.
 ///
-/// Upstream `Serialise (EraIndex xs)` is wrapped in a 1-element CBOR
-/// list `[era_index]` per the actual operator-captured response from
-/// `cardano-node 10.7.1`.  Reference operator capture (2026-04-27,
-/// `socat -x -v` proxy on the upstream NtC socket) shows
-/// `MsgResult` for `BlockQuery (QueryHardFork GetCurrentEra)` arrives
-/// at the *NtC V_23* negotiation as a bare CBOR uint (`82 04 02`),
-/// but at *NtC V_16* (the version yggdrasil negotiates against
-/// upstream `cardano-cli 10.16.0.0`) `cardano-cli`'s decoder at
-/// `DeserialiseFailure 2 "expected list len or indef"` reports a
-/// list wrapper is required.  This implementation emits the V_16
-/// shape `[era_index]` since yggdrasil only advertises NtC V_9..V_16
-/// and that is the only negotiated version against an unmodified
-/// upstream client.
+/// Upstream NtC V_23 emits `EraIndex` as a bare CBOR unsigned per the
+/// 2026-04-27 operator capture (`socat -x -v` proxy on
+/// `cardano-node 10.7.1`'s NtC socket): `MsgResult` for
+/// `BlockQuery (QueryHardFork GetCurrentEra)` is `82 04 02` —
+/// `[4, 2]` with `2` (Allegra ordinal) as a bare uint.  Round 149
+/// extends yggdrasil to advertise NtC V_17..V_23 so the negotiated
+/// version against upstream `cardano-cli 10.16.0.0` is V_23, matching
+/// the canonical V_23 wire format.
 pub fn encode_era_index(index: u32) -> Vec<u8> {
     let mut enc = Encoder::new();
-    enc.array(1);
     enc.unsigned(index as u64);
     enc.into_bytes()
 }
@@ -511,21 +590,45 @@ mod tests {
     }
 
     #[test]
-    fn encode_chain_point_origin() {
+    fn encode_chain_point_origin_is_empty_array() {
         let bytes = encode_chain_point(&Point::Origin);
-        assert_eq!(bytes, vec![0x81, 0x00]);
+        assert_eq!(bytes, vec![0x80]);
     }
 
     #[test]
-    fn encode_chain_point_block_point() {
+    fn encode_chain_point_block_point_is_slot_hash_pair() {
         use yggdrasil_ledger::{HeaderHash, SlotNo};
         let p = Point::BlockPoint(SlotNo(42), HeaderHash([0xab; 32]));
         let bytes = encode_chain_point(&p);
-        // [1, 42, h'<32 bytes>']
-        assert_eq!(bytes[0], 0x83); // array len 3
-        assert_eq!(bytes[1], 0x01); // tag 1
-        assert_eq!(bytes[2], 0x18); // CBOR uint8
-        assert_eq!(bytes[3], 0x2a); // 42
+        // [42, h'<32 bytes>'] — length 2, no constructor tag.
+        assert_eq!(bytes[0], 0x82); // array len 2
+        assert_eq!(bytes[1], 0x18); // CBOR uint8 escape
+        assert_eq!(bytes[2], 0x2a); // 42
+        assert_eq!(bytes[3], 0x58); // bytes uint8 length follows
+        assert_eq!(bytes[4], 0x20); // length 32
+        // Remaining 32 bytes are the hash payload.
+    }
+
+    /// Operator capture from `cardano-node 10.7.1` at NtC V_23 — Allegra era,
+    /// slot 610040, hash `ec4a816d...12`.  Inner MsgResult after the [4, ...]
+    /// wrapper is `82 1a 00 09 4e f8 58 20 ec 4a 81 6d ...` =
+    /// `[610040, h'<32-byte hash>']`.
+    #[test]
+    fn encode_chain_point_matches_real_haskell_capture_block_point() {
+        use yggdrasil_ledger::{HeaderHash, SlotNo};
+        let mut hash_bytes = [0u8; 32];
+        hash_bytes.copy_from_slice(
+            &hex::decode("ec4a816d939b1999386ffcda5d0df3d96a535c282c59edefdec20a9cd841cf12")
+                .expect("valid hex"),
+        );
+        let p = Point::BlockPoint(SlotNo(610040), HeaderHash(hash_bytes));
+        let bytes = encode_chain_point(&p);
+        let expected = hex::decode(
+            "821a00094ef85820\
+             ec4a816d939b1999386ffcda5d0df3d96a535c282c59edefdec20a9cd841cf12",
+        )
+        .expect("valid hex");
+        assert_eq!(bytes, expected);
     }
 
     #[test]
@@ -539,11 +642,22 @@ mod tests {
     }
 
     #[test]
-    fn encode_era_index_v16_wrapped_in_one_element_list() {
-        // NtC V_16 wraps `EraIndex` in a 1-element CBOR list.
-        assert_eq!(encode_era_index(7), vec![0x81, 0x07]);
-        assert_eq!(encode_era_index(0), vec![0x81, 0x00]);
-        assert_eq!(encode_era_index(23), vec![0x81, 0x17]);
-        assert_eq!(encode_era_index(24), vec![0x81, 0x18, 0x18]); // CBOR uint8 escape
+    fn encode_era_index_bare_unsigned_v23_shape() {
+        // NtC V_23 (negotiated against modern upstream cardano-cli)
+        // emits EraIndex as bare CBOR uint, per the 2026-04-27
+        // socat-proxy capture from `cardano-node 10.7.1`.
+        assert_eq!(encode_era_index(7), vec![0x07]);
+        assert_eq!(encode_era_index(0), vec![0x00]);
+        assert_eq!(encode_era_index(23), vec![0x17]); // boundary: still 1 byte
+        assert_eq!(encode_era_index(24), vec![0x18, 0x18]); // CBOR uint8 escape
+    }
+
+    /// The exact bytes captured from `cardano-node 10.7.1` at NtC V_23 in
+    /// response to `BlockQuery (QueryHardFork GetCurrentEra)` while in
+    /// Allegra era — `MsgResult [4, 2]` = `82 04 02`.  `encode_era_index(2)`
+    /// must match the inner result `02`.
+    #[test]
+    fn encode_era_index_matches_real_haskell_capture() {
+        assert_eq!(encode_era_index(2), vec![0x02]);
     }
 }

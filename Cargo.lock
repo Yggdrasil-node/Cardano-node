@@ -1404,6 +1404,7 @@ dependencies = [
 name = "yggdrasil-network"
 version = "0.2.0"
 dependencies = [
+ "hex",
  "serde",
  "serde_json",
  "thiserror",

@@ -27,7 +27,7 @@ pub use local_state_query::{
 };
 pub use local_state_query_upstream::{
     HardForkBlockQuery, QueryAnytimeKind, QueryHardFork, UpstreamQuery, encode_chain_block_no,
-    encode_chain_point, encode_era_index, encode_system_start,
+    encode_chain_point, encode_era_index, encode_interpreter_minimal, encode_system_start,
 };
 pub use local_tx_monitor::{
     LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,

@@ -160,14 +160,27 @@ impl Bearer for TcpBearer {
 impl Sdu {
     /// Build an SDU frame for the given mini-protocol, direction, and payload.
     ///
-    /// The timestamp is set to 0 (informational only, not validated by peers).
+    /// Round 149 — timestamp is the lower 32 bits of microseconds since
+    /// the process start (a monotonic counter `Instant::now()` measured
+    /// from a fixed reference).  Pre-fix yggdrasil sent literal `0`
+    /// timestamps, which upstream `cardano-cli`'s mux layer interprets
+    /// as a malformed/replayed frame on the LSQ data path (handshake
+    /// SDUs accept zero timestamps; data SDUs reject them).  Reference:
+    /// `Network.Mux.Bearer.Pipe` in `ouroboros-network`.
     pub fn new(
         protocol_num: MiniProtocolNum,
         direction: MiniProtocolDir,
         payload: Vec<u8>,
     ) -> Self {
+        // Use a fixed `LazyLock<Instant>` so all `Sdu::new` calls in the
+        // same process share a monotonic reference.  Microsecond
+        // precision wraps every ~71 minutes which matches upstream's
+        // u32 wrap convention.
+        use std::sync::OnceLock;
+        static REFERENCE: OnceLock<std::time::Instant> = OnceLock::new();
+        let start = *REFERENCE.get_or_init(std::time::Instant::now);
         let header = SduHeader {
-            timestamp: 0,
+            timestamp: start.elapsed().as_micros() as u32,
             protocol_num,
             direction,
             payload_length: payload.len() as u16,

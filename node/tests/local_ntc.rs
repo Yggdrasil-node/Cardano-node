@@ -21,9 +21,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tempfile::tempdir;
-use yggdrasil_ledger::{
-    CborDecode, CborEncode, Decoder, Encoder, Era, HeaderHash, LedgerState, Point, SlotNo,
-};
+use yggdrasil_ledger::{CborEncode, Decoder, Encoder, Era, HeaderHash, LedgerState, Point, SlotNo};
 use yggdrasil_mempool::{Mempool, SharedMempool};
 use yggdrasil_network::{
     AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
@@ -303,12 +301,12 @@ async fn ntc_local_state_query_chain_tip_round_trip() {
         .await
         .expect("GetChainPoint query round-trip");
 
-    // Result is upstream-shaped `[0]` for Origin: 2 bytes,
-    // `[0x81, 0x00]`.
+    // Round 149 — V_23 `encodePoint` for Origin is `[]` (empty CBOR
+    // array, single byte `0x80`).
     assert_eq!(
         result,
-        vec![0x81, 0x00],
-        "empty ChainDb must report `Origin` in upstream encodePoint shape `[0]`",
+        vec![0x80],
+        "empty ChainDb must report `Origin` in upstream V_23 encodePoint shape `[]`",
     );
 
     let _ = client.release().await;

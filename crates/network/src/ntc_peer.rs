@@ -98,8 +98,22 @@ impl HandshakeVersion {
     pub const NTC_V14: Self = Self(NTC_VERSION_BIT | 14);
     /// NtC v15.
     pub const NTC_V15: Self = Self(NTC_VERSION_BIT | 15);
-    /// NtC v16 (Conway era, current).
+    /// NtC v16 (Conway era).
     pub const NTC_V16: Self = Self(NTC_VERSION_BIT | 16);
+    /// NtC v17 (post-Conway compatibility).
+    pub const NTC_V17: Self = Self(NTC_VERSION_BIT | 17);
+    /// NtC v18.
+    pub const NTC_V18: Self = Self(NTC_VERSION_BIT | 18);
+    /// NtC v19.
+    pub const NTC_V19: Self = Self(NTC_VERSION_BIT | 19);
+    /// NtC v20.
+    pub const NTC_V20: Self = Self(NTC_VERSION_BIT | 20);
+    /// NtC v21.
+    pub const NTC_V21: Self = Self(NTC_VERSION_BIT | 21);
+    /// NtC v22.
+    pub const NTC_V22: Self = Self(NTC_VERSION_BIT | 22);
+    /// NtC v23 (current upstream `cardano-node 10.7.1` ceiling).
+    pub const NTC_V23: Self = Self(NTC_VERSION_BIT | 23);
 }
 
 /// Upstream `nodeToClientVersionBit` (`Ouroboros.Network.NodeToClient.Version`)
@@ -190,7 +204,24 @@ fn decode_ntc_version_data(data: &[u8]) -> Result<NodeToClientVersionData, NtcPe
 // ---------------------------------------------------------------------------
 
 /// Supported NtC versions (sorted descending for selection).
-const NTC_SUPPORTED_VERSIONS: [HandshakeVersion; 8] = [
+///
+/// Round 149 — extended to V_23 to match upstream `cardano-node 10.7.1`'s
+/// NtC version ceiling.  Operator capture (2026-04-27 `socat -x -v` proxy)
+/// shows upstream `cardano-cli 10.16.0.0` proposes V_16..V_23 and Haskell
+/// negotiates V_23 (highest mutual).  yggdrasil now ALSO negotiates
+/// V_23 against modern upstream clients, matching the canonical V_23
+/// result-encoding observed in the upstream wire capture.  All NtC
+/// versions in the V_9..V_23 range share the same `[network_magic,
+/// query]` `NodeToClientVersionData` shape per upstream
+/// `Ouroboros.Network.NodeToClient.Version`.
+const NTC_SUPPORTED_VERSIONS: [HandshakeVersion; 15] = [
+    HandshakeVersion::NTC_V23,
+    HandshakeVersion::NTC_V22,
+    HandshakeVersion::NTC_V21,
+    HandshakeVersion::NTC_V20,
+    HandshakeVersion::NTC_V19,
+    HandshakeVersion::NTC_V18,
+    HandshakeVersion::NTC_V17,
     HandshakeVersion::NTC_V16,
     HandshakeVersion::NTC_V15,
     HandshakeVersion::NTC_V14,
@@ -571,19 +602,27 @@ mod tests {
     }
 
     #[test]
-    fn ntc_supported_versions_covers_v9_through_v16_descending() {
-        // The NtC handshake selects "best common version" by iterating
-        // `NTC_SUPPORTED_VERSIONS` in declared order. Upstream convention
-        // is to list newest first so the first match wins the negotiation.
-        // Pin: (1) every V9..=V16 constant is present, (2) the list is
-        // strictly descending, (3) length matches the 8-variant range.
-        // Drift on any of these would silently change which version a
-        // client gets negotiated to (e.g. accidentally picking V9 against
-        // a V16-speaking CLI would downgrade NtC features without error).
-        assert_eq!(NTC_SUPPORTED_VERSIONS.len(), 8);
+    fn ntc_supported_versions_covers_v9_through_v23_descending() {
+        // Round 149 — extended to V_23 to match upstream
+        // `cardano-node 10.7.1`'s NtC version ceiling.  The NtC
+        // handshake selects "best common version" by iterating
+        // `NTC_SUPPORTED_VERSIONS` in declared order.  Upstream
+        // convention is to list newest first so the first match wins
+        // the negotiation (V_23 against modern upstream cardano-cli).
+        // Pin: (1) every V9..=V23 constant is present, (2) the list
+        // is strictly descending, (3) length matches the 15-variant
+        // range.
+        assert_eq!(NTC_SUPPORTED_VERSIONS.len(), 15);
 
         // Every declared constant must appear exactly once.
         let expected = [
+            HandshakeVersion::NTC_V23,
+            HandshakeVersion::NTC_V22,
+            HandshakeVersion::NTC_V21,
+            HandshakeVersion::NTC_V20,
+            HandshakeVersion::NTC_V19,
+            HandshakeVersion::NTC_V18,
+            HandshakeVersion::NTC_V17,
             HandshakeVersion::NTC_V16,
             HandshakeVersion::NTC_V15,
             HandshakeVersion::NTC_V14,
@@ -909,8 +948,10 @@ mod tests {
         let server_conn = server.await.unwrap().expect("server handshake");
         let client_conn = client.await.unwrap().expect("client handshake");
 
-        assert_eq!(server_conn.version, HandshakeVersion::NTC_V16);
-        assert_eq!(client_conn.version, HandshakeVersion::NTC_V16);
+        // Round 149 — yggdrasil now negotiates V_23 (newest) when both
+        // peers speak it.
+        assert_eq!(server_conn.version, HandshakeVersion::NTC_V23);
+        assert_eq!(client_conn.version, HandshakeVersion::NTC_V23);
         assert_eq!(server_conn.version_data.network_magic, magic);
         assert_eq!(client_conn.version_data.network_magic, magic);
         assert!(client_conn.version_data.query);

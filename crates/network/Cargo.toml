@@ -14,5 +14,8 @@ tokio.workspace = true
 yggdrasil-consensus.workspace = true
 yggdrasil-ledger.workspace = true
 
+[dev-dependencies]
+hex.workspace = true
+
 [lints]
 workspace = true
