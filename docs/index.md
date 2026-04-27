@@ -2,6 +2,7 @@
 title: Home
 layout: default
 nav_order: 1
+hero: true
 description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, configure, run, monitor, and produce blocks."
 ---
 

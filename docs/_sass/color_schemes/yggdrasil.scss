@@ -1,35 +1,59 @@
-// Yggdrasil colour scheme for just-the-docs.
+// Yggdrasil dark colour scheme for just-the-docs.
 //
-// Inspired by the world tree: deep forest teal as the primary, warm copper
-// as the accent (echoing Rust), and a warm-white background that keeps
-// long-form prose comfortable to read.
+// Inspired by the world tree: deep night-sky background, copper-rust trunk,
+// teal canopy lights. Keeps long-form prose readable on dark while preserving
+// the brand identity of the YggdrasilNode logo.
 
+// ────────────────────────────────────────────────────────────────────────
 // Brand
-$link-color:        #0f6e6e; // deep teal
-$btn-primary-color: #0f6e6e;
-$base-button-color: #fafaf8;
+// ────────────────────────────────────────────────────────────────────────
+$link-color:        #5fd3cc; // canopy teal
+$btn-primary-color: #5fd3cc;
+$base-button-color: #1a2025;
 
-// Body
-$body-background-color:        #fafaf8;
-$body-text-color:              #1c2025;
-$body-heading-color:           #0c1219;
-$body-quote-color:              #4a5568;
-$nav-child-link-color:          #2d3748;
-$search-background-color:      #fafaf8;
-$search-result-preview-color:  #4a5568;
-$table-background-color:       #fafaf8;
-$feedback-color:               darken($body-background-color, 3%);
+// ────────────────────────────────────────────────────────────────────────
+// Body — night-sky base
+// ────────────────────────────────────────────────────────────────────────
+$body-background-color:        #0a1014; // deep ink, matches banner backdrop
+$body-text-color:              #d8e0e8;
+$body-heading-color:           #ffffff;
+$body-quote-color:              #9aa6b3;
+$nav-child-link-color:          #c2cdda;
+$search-background-color:      #111921;
+$search-result-preview-color:  #9aa6b3;
+$table-background-color:       #111921;
+$feedback-color:               lighten($body-background-color, 4%);
 
-// Sidebar
-$sidebar-color:                #f1f3f1; // subtle warm grey-green
-$border-color:                 #e2e6e2;
+// ────────────────────────────────────────────────────────────────────────
+// Sidebar — slightly lifted from the body so navigation is distinguishable
+// ────────────────────────────────────────────────────────────────────────
+$sidebar-color:                #0d141a;
+$border-color:                 #1f2a33;
 
-// Code
-$code-background-color:        #f1f4f4;
-$code-linenumber-color:        #94a3b8;
+// ────────────────────────────────────────────────────────────────────────
+// Code — terminal-ish
+// ────────────────────────────────────────────────────────────────────────
+$code-background-color:        #111921;
+$code-linenumber-color:        #5b6b7a;
 
-// State
-$blue-000:  #e6f1f2;
-$blue-100:  #bcd6da;
-$blue-200:  #87b3b8;
-$blue-300:  #4d8e94;
+// ────────────────────────────────────────────────────────────────────────
+// State / callout greys
+// ────────────────────────────────────────────────────────────────────────
+$blue-000:  #16242b;
+$blue-100:  #233740;
+$blue-200:  #2d4856;
+$blue-300:  #3b5e6d;
+
+// ────────────────────────────────────────────────────────────────────────
+// Just-the-docs grey overrides — keep mid-tones legible on dark
+// ────────────────────────────────────────────────────────────────────────
+$grey-dk-000:   #c2cdda; // text
+$grey-dk-100:   #9aa6b3;
+$grey-dk-200:   #75828f;
+$grey-dk-250:   #5b6b7a;
+$grey-dk-300:   #3a4754;
+
+$grey-lt-000:   #1a232c;
+$grey-lt-100:   #1f2a33;
+$grey-lt-200:   #2a3640;
+$grey-lt-300:   #36444f;

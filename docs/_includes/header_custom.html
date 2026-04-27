@@ -1,0 +1,22 @@
+{%- comment -%}
+  Yggdrasil — landing-page hero banner.
+
+  Activated by setting `hero: true` in a page's front matter, e.g.:
+
+      ---
+      title: Yggdrasil
+      hero: true
+      ---
+
+  Renders the wide YggdrasilNode banner across the full content width.
+  Falls back gracefully if the asset is missing (the <img> alt text
+  describes what should be there).
+{%- endcomment -%}
+{%- if page.hero -%}
+<figure class="yg-hero-banner">
+  <img src="{{ '/assets/images/yggdrasil-banner.png' | relative_url }}"
+       alt="YggdrasilNode — A Cardano Node Project Written In Rust"
+       loading="eager"
+       decoding="async">
+</figure>
+{%- endif -%}

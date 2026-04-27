@@ -60,10 +60,10 @@ Usage:
   node/scripts/restart_resilience.sh
 
 Optional env:
-  DB_DIR              Default: /tmp/ygg-restart-db
-  SOCKET_PATH         Default: /tmp/ygg-restart.sock
-  METRICS_PORT        Default: 9099
-  LOG_ROOT            Default: /tmp/ygg-restart
+  DB_DIR              Default: $RUN_DIR/db (mktemp -d -t ygg-restart-XXXXXX)
+  SOCKET_PATH         Default: $RUN_DIR/ygg.sock
+  METRICS_PORT        Default: an unused ephemeral port (or 9099 if python3 absent)
+  LOG_ROOT            Default: $RUN_DIR/logs
   INTERVAL_BASE_S     Default: 300 (5 min between kills)
   INTERVAL_JITTER_S   Default: 30 (±jitter on each interval)
   SETTLE_S            Default: 30 (post-restart settle before tip read)

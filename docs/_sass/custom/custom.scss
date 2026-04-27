@@ -2,38 +2,41 @@
 //
 // Adds:
 //   - Refined typography (system stack with subtle letter-spacing on headings)
-//   - Hero sections (.yg-hero)
+//   - Hero sections (.yg-hero, .yg-hero-banner)
 //   - Stats banner (.yg-stats)
 //   - Card grid for navigation tiles (.yg-cards)
 //   - Polished callouts (.callout-info, .callout-warning, .callout-tip)
 //   - Subtle transitions and slightly improved code blocks
 
-// ---------- design tokens ----------
+// ---------- design tokens (dark theme) ----------
 
 :root {
-  --yg-teal-700:  #0c5a5a;
-  --yg-teal-600:  #0f6e6e;
-  --yg-teal-500:  #1a8585;
-  --yg-teal-100:  #d6e9e9;
-  --yg-teal-050:  #e6f1f1;
+  // Teal canopy lights from the YggdrasilNode logo
+  --yg-teal-700:  #2a9b95;
+  --yg-teal-600:  #3eb8b1;
+  --yg-teal-500:  #5fd3cc;
+  --yg-teal-100:  #1c2f31;
+  --yg-teal-050:  #14242a;
 
-  --yg-rust-700:  #a44b32;
-  --yg-rust-600:  #c95e3f;
-  --yg-rust-500:  #d97757;
-  --yg-rust-100:  #f5d8cd;
+  // Copper-rust trunk from the logo
+  --yg-rust-700:  #c87c4f;
+  --yg-rust-600:  #d8895a;
+  --yg-rust-500:  #e89c70;
+  --yg-rust-100:  #2c1f17;
 
-  --yg-amber-500: #c19a3e;
-  --yg-amber-100: #f3e7c1;
+  --yg-amber-500: #d4b061;
+  --yg-amber-100: #2a2418;
 
-  --yg-ink-900:   #0c1219;
-  --yg-ink-700:   #1c2025;
-  --yg-ink-500:   #4a5568;
-  --yg-ink-400:   #6b7280;
-  --yg-ink-300:   #94a3b8;
+  // Night-sky ink (page background to surface chrome)
+  --yg-ink-900:   #ffffff;
+  --yg-ink-700:   #d8e0e8;
+  --yg-ink-500:   #9aa6b3;
+  --yg-ink-400:   #75828f;
+  --yg-ink-300:   #5b6b7a;
 
-  --yg-paper:     #fafaf8;
-  --yg-mist:      #f1f3f1;
-  --yg-line:      #e2e6e2;
+  --yg-paper:     #0a1014;
+  --yg-mist:      #111921;
+  --yg-line:      #1f2a33;
 }
 
 // ---------- typography ----------
@@ -451,13 +454,47 @@ h4:hover .anchor-heading svg {
   font-size: 0.85rem;
 }
 
+// ---------- hero banner (landing page) ----------
+//
+// Activated by setting `hero: true` in a page's front matter; rendered by
+// `_includes/header_custom.html`.  Spans the full content width above the
+// page heading and shows the YggdrasilNode banner asset.
+
+.yg-hero-banner {
+  margin: 0 0 2rem 0;
+  padding: 0;
+  display: block;
+
+  img {
+    width: 100%;
+    height: auto;
+    max-height: 380px;
+    object-fit: cover;
+    border-radius: 0.6rem;
+    border: 1px solid var(--yg-line);
+    box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+    background: linear-gradient(180deg, #0a1014 0%, #111921 100%);
+  }
+
+  // If the banner asset is missing, the broken-image space still renders
+  // with the gradient + border so layout doesn't collapse.
+  img:not([src]),
+  img[src=""] {
+    aspect-ratio: 1428 / 590;
+    width: 100%;
+    display: block;
+  }
+}
+
 // ---------- print + small refinements ----------
 
 @media print {
   .yg-hero { background: none; border: none; }
+  .yg-hero-banner { display: none; }
 }
 
 @media (max-width: 50rem) {
   .yg-hero { padding: 1.6rem 1.2rem; h1 { font-size: 1.8rem; } }
   .yg-stats { grid-template-columns: repeat(2, 1fr); }
+  .yg-hero-banner img { max-height: 220px; }
 }

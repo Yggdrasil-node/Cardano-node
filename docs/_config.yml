@@ -30,7 +30,18 @@ gh_edit_source: docs
 gh_edit_view_mode: "tree"
 
 # Theme settings
+#
+# `color_scheme: yggdrasil` is our dark brand scheme defined in
+# `_sass/color_schemes/yggdrasil.scss`.  It does not toggle to light;
+# the site is dark-only by design (matches the YggdrasilNode logo).
 color_scheme: yggdrasil
+
+# Sidebar / page-header logo — shown above the site title in the
+# just-the-docs sidebar.  Wide banner shipped separately for the
+# landing page hero (see `_includes/header_custom.html` once present
+# on a page that opts in via `hero: true` in front matter).
+logo: "/assets/images/Yggrasil_logo.png"
+
 search_enabled: true
 search:
   heading_level: 3

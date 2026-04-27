@@ -1,0 +1,21 @@
+{%- comment -%}
+  Yggdrasil — extra <head> injection for the docs site.
+
+  - Favicon (cropped from the square logo).
+  - System dark colour-scheme hint so browsers (Safari/Chromium) match
+    the page chrome to the dark theme.
+  - Open Graph / Twitter Card image so external link previews show the
+    full hero banner.
+{%- endcomment -%}
+
+<link rel="icon"
+      type="image/png"
+      href="{{ '/assets/images/favicon.png' | relative_url }}">
+
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a1014">
+
+{%- assign og_image = '/assets/images/yggdrasil-banner.png' | relative_url -%}
+<meta property="og:image" content="{{ site.url }}{{ og_image }}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="{{ site.url }}{{ og_image }}">
