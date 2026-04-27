@@ -186,6 +186,13 @@ pub struct RuntimeGovernorConfig {
     /// governor creates its own private pool — useful for tests
     /// that don't need cross-task sharing.
     pub shared_fetch_worker_pool: Option<SharedFetchWorkerPool>,
+    /// Optional shared `ChainSyncWorkerPool` cloned from runtime
+    /// startup (see
+    /// [`crate::chainsync_worker::new_shared_chainsync_worker_pool`]).
+    /// When `Some`, the governor exports the live registered-worker
+    /// count to `/metrics` each tick.  When `None`, the
+    /// `chainsync_workers_registered` gauge stays at 0.
+    pub shared_chainsync_worker_pool: Option<crate::chainsync_worker::SharedChainSyncWorkerPool>,
 }
 
 impl RuntimeGovernorConfig {
@@ -208,7 +215,20 @@ impl RuntimeGovernorConfig {
             density_registry: None,
             max_concurrent_block_fetch_peers: 1,
             shared_fetch_worker_pool: None,
+            shared_chainsync_worker_pool: None,
         }
+    }
+
+    /// Attach a shared `ChainSyncWorkerPool` so the governor's
+    /// metrics tick exports the registered-worker count.  Wire to
+    /// the same instance the sync service uses via
+    /// `VerifiedSyncServiceConfig::shared_chainsync_worker_pool`.
+    pub fn with_shared_chainsync_worker_pool(
+        mut self,
+        pool: Option<crate::chainsync_worker::SharedChainSyncWorkerPool>,
+    ) -> Self {
+        self.shared_chainsync_worker_pool = pool;
+        self
     }
 
     /// Set the operator-configured `max_concurrent_block_fetch_peers`
@@ -2500,6 +2520,10 @@ pub async fn run_governor_loop<I, V, L, F>(
                     let workers_registered =
                         peer_manager.fetch_worker_pool.read().await.len() as u64;
                     m.set_blockfetch_workers_registered(workers_registered);
+                    if let Some(cs_pool) = config.shared_chainsync_worker_pool.as_ref() {
+                        let chainsync_registered = cs_pool.read().await.len() as u64;
+                        m.set_chainsync_workers_registered(chainsync_registered);
+                    }
                 }
 
                 if actions.is_empty() {
@@ -4863,6 +4887,7 @@ where
                     crate::sync::MultiPeerDispatchContext {
                         pool,
                         max_concurrent_knob: config.max_concurrent_block_fetch_peers,
+                        chainsync_pool: config.shared_chainsync_worker_pool.as_ref(),
                     }
                 }),
             );
@@ -5376,6 +5401,7 @@ where
                     crate::sync::MultiPeerDispatchContext {
                         pool,
                         max_concurrent_knob: config.max_concurrent_block_fetch_peers,
+                        chainsync_pool: config.shared_chainsync_worker_pool.as_ref(),
                     }
                 }),
             );
@@ -6461,6 +6487,7 @@ mod tests {
             max_concurrent_block_fetch_peers: 1,
             density_registry: None,
             shared_fetch_worker_pool: None,
+            shared_chainsync_worker_pool: None,
         }
     }
 

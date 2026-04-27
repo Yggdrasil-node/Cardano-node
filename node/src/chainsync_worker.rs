@@ -290,6 +290,17 @@ pub struct ChainSyncWorkerPool {
     workers: BTreeMap<SocketAddr, ChainSyncWorkerHandle>,
 }
 
+impl std::fmt::Debug for ChainSyncWorkerPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Don't try to render the worker handles (they own JoinHandles
+        // and channels — none of those are usefully Debug).  Surface
+        // the registered peer set instead.
+        f.debug_struct("ChainSyncWorkerPool")
+            .field("registered_peers", &self.workers.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 impl ChainSyncWorkerPool {
     /// Construct an empty pool.
     pub fn new() -> Self {
@@ -352,6 +363,61 @@ impl ChainSyncWorkerPool {
             }
         }
         None
+    }
+}
+
+/// Round 151 — runtime-driven candidate-fragment population helper.
+///
+/// Yggdrasil's verified-sync session observes RollForward headers
+/// directly via its session's `chain_sync`.  Rather than refactor
+/// `PeerSession.chain_sync` into an `Option<ChainSyncClient>` and
+/// migrate ownership to a worker (a multi-call-site change), the
+/// runtime publishes each observed `(slot, hash)` to the shared
+/// [`SharedChainSyncWorkerPool`] via this helper.  The pool entry is
+/// auto-created with an inert worker (`poll_one` returns `None`
+/// immediately so no extra task work happens) the first time a peer
+/// is observed; subsequent observations append to the same fragment.
+///
+/// This keeps the multi-peer-ChainSync candidate-fragment surface
+/// usable from the verified-sync code path WITHOUT requiring full
+/// session ownership refactor.  When per-peer ChainSync workers are
+/// added in a follow-up, they'll register through the same
+/// pool.register API and this helper becomes optional.
+pub async fn publish_announced_header(
+    pool: &SharedChainSyncWorkerPool,
+    peer: SocketAddr,
+    slot: SlotNo,
+    hash: HeaderHash,
+) {
+    // Fast path: peer already has a fragment.
+    {
+        let pool_guard = pool.read().await;
+        if let Some(fragment) = pool_guard.fragment(&peer) {
+            fragment.write().await.push_announced(slot, hash);
+            return;
+        }
+    }
+    // Slow path: register a new inert worker for this peer, then write.
+    let mut pool_guard = pool.write().await;
+    if pool_guard.fragment(&peer).is_none() {
+        let handle = ChainSyncWorkerHandle::spawn(peer, |_| async { None });
+        pool_guard.register(handle);
+    }
+    let fragment = pool_guard
+        .fragment(&peer)
+        .expect("just-registered handle must have a fragment");
+    drop(pool_guard);
+    fragment.write().await.push_announced(slot, hash);
+}
+
+/// Round 151 — companion to [`publish_announced_header`] for
+/// `MsgRollBackward` events.  Truncates the per-peer fragment to
+/// drop entries past the rolled-back point.  No-op when the peer is
+/// not registered.
+pub async fn publish_rollback(pool: &SharedChainSyncWorkerPool, peer: SocketAddr, point: Point) {
+    let pool_guard = pool.read().await;
+    if let Some(fragment) = pool_guard.fragment(&peer) {
+        fragment.write().await.rollback_to(point);
     }
 }
 
@@ -532,6 +598,44 @@ mod tests {
             Some(hash(0xbb))
         );
         assert_eq!(pool.resolve_slot_to_hash(SlotNo(999)).await, None);
+    }
+
+    #[tokio::test]
+    async fn publish_announced_header_auto_registers_peer_and_appends() {
+        let pool = new_shared_chainsync_worker_pool();
+        let p = addr(4001);
+        publish_announced_header(&pool, p, SlotNo(100), hash(1)).await;
+        publish_announced_header(&pool, p, SlotNo(101), hash(2)).await;
+        let g = pool.read().await;
+        let fragment = g.fragment(&p).expect("peer auto-registered");
+        let f = fragment.read().await;
+        assert_eq!(f.len(), 2);
+        assert_eq!(f.tip(), Some(Point::BlockPoint(SlotNo(101), hash(2))));
+    }
+
+    #[tokio::test]
+    async fn publish_rollback_truncates_per_peer_fragment() {
+        let pool = new_shared_chainsync_worker_pool();
+        let p = addr(4002);
+        for slot in [10, 20, 30, 40, 50] {
+            publish_announced_header(&pool, p, SlotNo(slot), hash(slot as u8)).await;
+        }
+        // Rollback to slot 25 — keeps slots 10, 20; drops 30, 40, 50.
+        publish_rollback(&pool, p, Point::BlockPoint(SlotNo(25), hash(99))).await;
+        let g = pool.read().await;
+        let f = g.fragment(&p).unwrap();
+        let f = f.read().await;
+        assert_eq!(f.len(), 2);
+        assert_eq!(f.tip(), Some(Point::BlockPoint(SlotNo(20), hash(20))));
+    }
+
+    #[tokio::test]
+    async fn publish_rollback_for_unregistered_peer_is_a_no_op() {
+        let pool = new_shared_chainsync_worker_pool();
+        let p = addr(4003);
+        publish_rollback(&pool, p, Point::Origin).await;
+        // Pool stays empty; no panic, no side effects.
+        assert!(pool.read().await.is_empty());
     }
 
     #[test]

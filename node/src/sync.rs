@@ -1312,6 +1312,17 @@ pub struct VerifiedSyncServiceConfig {
     /// from the governor task is visible to the sync task on the
     /// next read.
     pub shared_fetch_worker_pool: Option<crate::runtime::SharedFetchWorkerPool>,
+    /// Round 151 — shared candidate-fragment registry that the
+    /// verified-sync loop populates on each `MsgRollForward` and
+    /// the BlockFetch dispatcher reads to resolve `split_range`'s
+    /// placeholder hashes.  When `Some`, multi-peer dispatch issues
+    /// real-hash `MsgRequestRange` plans (the upstream
+    /// `Ouroboros.Network.BlockFetch.Decision.fetchDecisions`
+    /// analogue); when `None`, the placeholder-collapse fallback
+    /// runs so single-chunk dispatch stays correct.  Cloned at
+    /// runtime startup from
+    /// [`crate::chainsync_worker::new_shared_chainsync_worker_pool`].
+    pub shared_chainsync_worker_pool: Option<crate::chainsync_worker::SharedChainSyncWorkerPool>,
 }
 
 impl VerifiedSyncServiceConfig {
@@ -3906,6 +3917,32 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 {
                     let _ = observe_chain_sync_header_density(peer, slot, registry);
                 }
+                // Round 151 — publish the observed RollForward `(slot,
+                // hash)` to the shared `ChainSyncWorkerPool` candidate
+                // fragment for the verified-sync session's peer.  This
+                // gives `partition_fetch_range_with_candidate_fragments`
+                // real intermediate-boundary hashes for multi-peer
+                // BlockFetch dispatch.  No-op when the pool isn't
+                // wired through.  Reference: Finding A foundation in
+                // `node/src/chainsync_worker.rs`.
+                if let (Some(Point::BlockPoint(slot, hash)), Some(ctx)) =
+                    (header_point, multi_peer_dispatch.as_ref())
+                {
+                    if let Some(chainsync_pool) = ctx.chainsync_pool.as_ref() {
+                        let peer = pool_instr.map(|(_, p)| p).unwrap_or_else(|| {
+                            // Fallback synthetic addr — never reached in
+                            // production where pool_instr is wired.
+                            std::net::SocketAddr::from(([0, 0, 0, 0], 0))
+                        });
+                        crate::chainsync_worker::publish_announced_header(
+                            chainsync_pool,
+                            peer,
+                            slot,
+                            hash,
+                        )
+                        .await;
+                    }
+                }
                 if sync_debug_enabled() {
                     let header_hex = bytes_to_hex(&header);
                     eprintln!(
@@ -3956,12 +3993,46 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                                 );
                                 if effective > 1 {
                                     let peer_addrs = pool_guard.peer_addrs();
-                                    let plan = partition_fetch_range_across_peers(
-                                        lower,
-                                        upper,
-                                        &peer_addrs,
-                                        ctx.max_concurrent_knob,
-                                    );
+                                    // Round 151 — when a candidate-fragment
+                                    // pool is wired through, attempt to
+                                    // resolve `split_range`'s placeholder
+                                    // hashes against per-peer announcements
+                                    // for a real-hash multi-chunk plan.
+                                    // Falls back to the placeholder-collapse
+                                    // single-chunk path when fragments don't
+                                    // have the required hashes.
+                                    let plan = if let Some(cs_pool) = ctx.chainsync_pool.as_ref() {
+                                        // Drop the BlockFetch read-lock
+                                        // before awaiting on the
+                                        // ChainSync pool to avoid lock
+                                        // ordering issues.
+                                        drop(pool_guard);
+                                        let resolved =
+                                            partition_fetch_range_with_candidate_fragments(
+                                                lower,
+                                                upper,
+                                                &peer_addrs,
+                                                ctx.max_concurrent_knob,
+                                                cs_pool,
+                                            )
+                                            .await;
+                                        resolved.unwrap_or_else(|| {
+                                            partition_fetch_range_across_peers(
+                                                lower,
+                                                upper,
+                                                &peer_addrs,
+                                                ctx.max_concurrent_knob,
+                                            )
+                                        })
+                                    } else {
+                                        partition_fetch_range_across_peers(
+                                            lower,
+                                            upper,
+                                            &peer_addrs,
+                                            ctx.max_concurrent_knob,
+                                        )
+                                    };
+                                    let pool_guard = ctx.pool.read().await;
                                     Some(
                                         pool_guard
                                             .dispatch_plan(
@@ -5133,6 +5204,16 @@ pub struct MultiPeerDispatchContext<'a> {
     /// `NodeConfigFile`).  When `<= 1`, the multi-peer branch is
     /// not taken even if the pool has multiple workers.
     pub max_concurrent_knob: u8,
+    /// Round 151 — shared candidate-fragment registry populated by
+    /// the verified-sync loop's RollForward observations.  When
+    /// `Some`, `partition_fetch_range_with_candidate_fragments`
+    /// resolves `split_range`'s placeholder hashes against
+    /// per-peer announced points before issuing
+    /// `MsgRequestRange` — the upstream
+    /// `Ouroboros.Network.BlockFetch.Decision.fetchDecisions`
+    /// analogue.  When `None`, the existing placeholder-collapse
+    /// fallback in `partition_fetch_range_across_peers` runs.
+    pub chainsync_pool: Option<&'a crate::chainsync_worker::SharedChainSyncWorkerPool>,
 }
 
 /// Per-RollForward integration helper that binds the dispatcher

@@ -591,6 +591,13 @@ pub struct NodeMetrics {
     // promote-time migrations.
     blockfetch_workers_registered: AtomicU64,
     blockfetch_workers_migrated_total: AtomicU64,
+    // ChainSync worker pool gauges (Round 151 multi-peer dispatch).
+    // `chainsync_workers_registered`: number of per-peer
+    // `ChainSyncWorkerHandle` entries currently in the shared
+    // `ChainSyncWorkerPool`.  Auto-grown as RollForward observations
+    // arrive, so >0 implies candidate-fragment partitioning is feeding
+    // real header hashes into BlockFetch dispatch.
+    chainsync_workers_registered: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -684,6 +691,12 @@ pub struct MetricsSnapshot {
     /// (each `migrate_session_to_worker` call that takes the
     /// `BlockFetchClient` out of a session and spawns a worker).
     pub blockfetch_workers_migrated_total: u64,
+    /// Number of per-peer ChainSync workers currently registered in
+    /// the shared `ChainSyncWorkerPool` (Round 151).  Grows
+    /// monotonically as RollForward observations arrive from each
+    /// peer; 0 implies candidate-fragment partitioning is inactive
+    /// and dispatch falls back to placeholder-hash collapse.
+    pub chainsync_workers_registered: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -730,6 +743,7 @@ impl NodeMetrics {
             ntc_connections_rejected: AtomicU64::new(0),
             blockfetch_workers_registered: AtomicU64::new(0),
             blockfetch_workers_migrated_total: AtomicU64::new(0),
+            chainsync_workers_registered: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
     }
@@ -900,6 +914,16 @@ impl NodeMetrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Set the current count of registered ChainSync workers in the
+    /// shared `ChainSyncWorkerPool`.  Called by the runtime tick so
+    /// the operator can observe candidate-fragment partitioning in
+    /// `/metrics`.  `0` implies dispatch is falling back to
+    /// placeholder-hash collapse.
+    pub fn set_chainsync_workers_registered(&self, count: u64) {
+        self.chainsync_workers_registered
+            .store(count, Ordering::Relaxed);
+    }
+
     /// Read a consistent snapshot of all current metric values.
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
@@ -953,6 +977,7 @@ impl NodeMetrics {
             blockfetch_workers_migrated_total: self
                 .blockfetch_workers_migrated_total
                 .load(Ordering::Relaxed),
+            chainsync_workers_registered: self.chainsync_workers_registered.load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -1091,7 +1116,10 @@ yggdrasil_ntc_connections_rejected {}\n\
 yggdrasil_blockfetch_workers_registered {}\n\
 # HELP yggdrasil_blockfetch_workers_migrated_total Lifetime BlockFetch worker migrations (per successful promote-time migrate_session_to_worker call).\n\
 # TYPE yggdrasil_blockfetch_workers_migrated_total counter\n\
-yggdrasil_blockfetch_workers_migrated_total {}\n",
+yggdrasil_blockfetch_workers_migrated_total {}\n\
+# HELP yggdrasil_chainsync_workers_registered Number of per-peer ChainSync workers in the shared pool (Round 151 candidate-fragment dispatch). 0 implies dispatch falls back to placeholder-hash collapse.\n\
+# TYPE yggdrasil_chainsync_workers_registered gauge\n\
+yggdrasil_chainsync_workers_registered {}\n",
             self.blocks_synced,
             self.rollbacks,
             self.batches_completed,
@@ -1133,6 +1161,7 @@ yggdrasil_blockfetch_workers_migrated_total {}\n",
             self.ntc_connections_rejected,
             self.blockfetch_workers_registered,
             self.blockfetch_workers_migrated_total,
+            self.chainsync_workers_registered,
         )
     }
 }

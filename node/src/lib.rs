@@ -22,7 +22,7 @@ pub use blockfetch_worker::{
 pub use chainsync_worker::{
     CandidateFragment, ChainSyncEvent, ChainSyncRequest, ChainSyncWorkerHandle,
     ChainSyncWorkerPool, DEFAULT_CANDIDATE_FRAGMENT_CAPACITY, SharedChainSyncWorkerPool,
-    new_shared_chainsync_worker_pool,
+    new_shared_chainsync_worker_pool, publish_announced_header, publish_rollback,
 };
 pub use runtime::{
     ChainTipNotify, LedgerJudgementSettings, MempoolAddTxError, MempoolAddTxOutcome,
