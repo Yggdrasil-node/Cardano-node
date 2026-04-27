@@ -1242,7 +1242,12 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_uses_recovere
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x11; 32]));
     checkpoint_state.tip = recovered_point;
 
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
+    // Mock peer's next block must be contiguous with the recovered tip
+    // that the runtime now seeds into ChainState from the volatile DB at
+    // restart (operator-rehearsal cycle-2 fix).  Recovered seed:
+    // (block_no=0, hash=[0x11;32]); next block: (block_no=1,
+    // prev_hash=[0x11;32]).
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 1, &[0x11; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..])
@@ -1354,7 +1359,12 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_led
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x11; 32]));
     let first_addr = spawn_disconnect_after_handshake_responder(magic).await;
 
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
+    // Mock peer's next block must be contiguous with the recovered tip
+    // that the runtime now seeds into ChainState from the volatile DB at
+    // restart (operator-rehearsal cycle-2 fix).  Recovered seed:
+    // (block_no=0, hash=[0x11;32]); next block: (block_no=1,
+    // prev_hash=[0x11;32]).
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 1, &[0x11; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..])
@@ -1466,7 +1476,12 @@ async fn runtime_resume_reconnecting_verified_sync_service_chaindb_refreshes_sna
     let recovered_point = Point::BlockPoint(SlotNo(0), HeaderHash([0x22; 32]));
     let first_addr = spawn_disconnect_after_handshake_responder(magic).await;
 
-    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 2, &[0; 32]));
+    // Mock peer's next block must be contiguous with the recovered tip
+    // that the runtime now seeds into ChainState from the volatile DB at
+    // restart (operator-rehearsal cycle-2 fix).  Recovered seed:
+    // (block_no=0, hash=[0x11;32]); next block: (block_no=1,
+    // prev_hash=[0x11;32]).
+    let block_two = build_multi_era_envelope(0, &build_byron_ebb_body(1, 1, &[0x11; 32]));
     let tip_two = Point::BlockPoint(
         SlotNo(21600),
         ByronBlock::decode_ebb(&block_two[2..])

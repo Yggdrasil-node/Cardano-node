@@ -4970,9 +4970,16 @@ mod tests {
 
     #[test]
     fn validate_config_report_warns_when_peer_snapshot_file_is_missing() {
-        let (cfg, config_base_dir) =
+        // Vendored mainnet/preprod/preview configs all ship a placeholder
+        // `peer-snapshot.json` so the §1 operator preflight succeeds out
+        // of the box (verified end-to-end via `validate-config --network *`).
+        // This test instead points the config at a deliberately-missing
+        // file so the "configured peer snapshot file could not be loaded"
+        // warning path is still exercised.
+        let (mut cfg, config_base_dir) =
             load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
                 .expect("preset config");
+        cfg.peer_snapshot_file = Some("does-not-exist-peer-snapshot.json".to_owned());
 
         let report =
             validate_config_report(&cfg, config_base_dir.as_deref()).expect("validation report");

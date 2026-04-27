@@ -123,6 +123,58 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - **Round 84 parity-audit-history entry.**  `docs/PARITY_SUMMARY.md`
   records the Q-1 / F-2 closure with anchored upstream references.
 
+### Fixed
+
+- **Restart-resilience cycle-2 crash: `RollbackPointNotFound` after
+  recovery (Round 88 operational parity).**  On node restart,
+  `ChainState` was always constructed via `ChainState::new(k)` —
+  empty.  The next ChainSync session immediately received
+  `RollBackward(recovered_tip)` (the peer's confirmation of the
+  resume point) and our `roll_backward` searched the empty `entries`
+  vec, returning `RollbackPointNotFound` and crashing the node:
+
+  ```text
+  Notice  Node.Recovery       point=BlockPoint(SlotNo(88840), …)
+  Notice  ConnectionManager   verified sync session established fromPoint=BlockPoint(SlotNo(88840), …)
+  Error   Node.Sync           rollback point not found: slot 88840 …
+  ```
+
+  Surfaced by §6 restart-resilience operator rehearsal as a cycle-2
+  failure on a real preprod sync.  Fix: new
+  `ChainState::seed_from_entries` API + new node-side helper
+  `crate::sync::seed_chain_state_from_volatile` that reads the
+  volatile DB at restart and seeds the `ChainState` window with the
+  most-recent k entries.  Wired into all 5 sync entry points
+  (chaindb, shared-chaindb, with-tracer, run_verified_sync_service,
+  run_verified_sync_service_chaindb) via a small
+  `ChainDbVolatileAccess` trait so both `&mut ChainDb<I, V, L>` and
+  `&Arc<RwLock<ChainDb<I, V, L>>>` access modes get the same seed.
+  3 unit tests in `crates/consensus/src/chain_state.rs` lock the
+  invariant; 3 integration tests in `node/tests/runtime.rs` were
+  updated to provide chain-contiguous block-number / prev-hash
+  fixtures (they previously relied on the empty-`ChainState` bug to
+  bypass the chain validation).
+
+  Reference: upstream `Ouroboros.Consensus.Storage.ChainDB.Init` /
+  `getCurrentChain` rebuilds the in-memory chain fragment from the
+  volatile DB on start-up.
+
+  End-to-end verification: `node/scripts/restart_resilience.sh`
+  with `CYCLES=2` against a real preprod peer now reports
+  `[ok] all 2 cycles + final recovery completed monotonic tip
+  progression`.
+
+- **Vendored `peer-snapshot.json` placeholders for mainnet + preview
+  (operator preflight).**  Both `node/configuration/mainnet/topology.json`
+  and `node/configuration/preview/topology.json` referenced
+  `peerSnapshotFile: "peer-snapshot.json"` but the actual files were
+  missing, so `validate-config --network mainnet|preview` reported
+  `peer_snapshot.status = "unavailable"` with a "could not be loaded"
+  warning out of the box.  Vendored placeholder files matching the
+  preprod skeleton (slot=0, single bootstrap-pool entry per network);
+  preflight now reports `peer_snapshot.status = "loaded"` for all
+  three networks.
+
 ### Security
 
 - **Byzantine-path closures (Round 87 parity audit).**  Two upstream

@@ -4586,7 +4586,8 @@ fn seed_chain_state_via_chain_db<S: ChainDbVolatileAccess>(
     chain_db: &S,
     security_param: Option<SecurityParam>,
 ) -> Option<ChainState> {
-    security_param.map(|k| chain_db.with_volatile(|v| crate::sync::seed_chain_state_from_volatile(v, k)))
+    security_param
+        .map(|k| chain_db.with_volatile(|v| crate::sync::seed_chain_state_from_volatile(v, k)))
 }
 
 /// Trait abstracting "give me a borrow of the volatile store" across the

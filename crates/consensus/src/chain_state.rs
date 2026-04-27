@@ -263,6 +263,58 @@ mod tests {
         assert_eq!(cs.security_param(), SecurityParam(10));
     }
 
+    // ── seed_from_entries (restart recovery) ─────────────────────────
+
+    /// After a restart the runtime reads the most-recent volatile blocks
+    /// from storage and seeds the ChainState; the next ChainSync session
+    /// must be able to resolve `RollBackward(recovered_tip)`.
+    ///
+    /// Without seeding, an empty `entries` vec failed the rollback search
+    /// at `chain_state.rs:175` with `RollbackPointNotFound`, observed in
+    /// the §6 restart-resilience operator rehearsal as a cycle-2 crash.
+    #[test]
+    fn seed_from_entries_populates_volatile_window_for_rollback_resolution() {
+        let entries: Vec<ChainEntry> = (0..5).map(|i| mk_entry(i, i * 20)).collect();
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.seed_from_entries(entries.clone());
+        assert_eq!(cs.volatile_len(), 5);
+        assert_eq!(
+            cs.tip(),
+            Point::BlockPoint(entries[4].slot, entries[4].hash)
+        );
+        // The seeded tip is recognised by `roll_backward`, the failure
+        // mode the runtime restart fix targets.
+        cs.roll_backward(&Point::BlockPoint(entries[4].slot, entries[4].hash))
+            .expect("rollback to seeded tip resolves");
+    }
+
+    /// Seeding more than `k` entries truncates from the front (older
+    /// entries are already stable / immutable per upstream
+    /// `Ouroboros.Consensus.Storage.ChainDB.Init`).
+    #[test]
+    fn seed_from_entries_trims_to_k_when_oversupplied() {
+        let entries: Vec<ChainEntry> = (0..20).map(|i| mk_entry(i, i * 20)).collect();
+        let mut cs = ChainState::new(SecurityParam(5));
+        cs.seed_from_entries(entries.clone());
+        assert_eq!(
+            cs.volatile_len(),
+            5,
+            "must keep only the last k entries; older ones are immutable"
+        );
+        assert_eq!(
+            cs.tip(),
+            Point::BlockPoint(entries[19].slot, entries[19].hash)
+        );
+    }
+
+    #[test]
+    fn seed_from_entries_with_empty_input_is_noop() {
+        let mut cs = ChainState::new(SecurityParam(10));
+        cs.seed_from_entries(Vec::new());
+        assert!(cs.is_empty());
+        assert_eq!(cs.tip(), Point::Origin);
+    }
+
     // ── roll_forward ─────────────────────────────────────────────────
 
     #[test]
