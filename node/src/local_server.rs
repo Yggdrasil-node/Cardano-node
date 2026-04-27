@@ -760,20 +760,67 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
         use yggdrasil_ledger::{CborEncode, Decoder, Encoder};
 
         // Decode query as [tag, ...] CBOR array.
-        let (tag, param_start) = {
+        let (tag, param_start, arg_kind) = {
             let mut dec = Decoder::new(query);
             if let Ok(len) = dec.array() {
                 if len >= 1 {
                     let t = dec.unsigned().ok();
                     let pos = dec.position();
-                    (t, pos)
+                    // Peek the next CBOR major type to distinguish
+                    // yggdrasil-flat-table queries (which take either
+                    // no arguments or a `bytes`/`array` of bytes-args)
+                    // from upstream HardForkBlock-shaped queries
+                    // (which carry a structured array sub-query as the
+                    // second element).  Pre-fix, an upstream
+                    // `[0, [2, [1]]]` query matched
+                    // `Some(0) => CurrentEra` because the dispatcher
+                    // only inspected the leading tag — yggdrasil then
+                    // returned a 1-byte era ordinal where upstream
+                    // expected an `EraMismatch` envelope, surfacing as
+                    // `DeserialiseFailure 2 "expected list len or
+                    // indef"` in cardano-cli's HardForkBlock decoder
+                    // and tearing down the bearer.  See Finding E in
+                    // `docs/operational-runs/2026-04-27-runbook-pass.md`
+                    // — the real upstream codec is a follow-up slice;
+                    // this guard prevents misleading responses in the
+                    // meantime.
+                    let kind = if pos < query.len() {
+                        Some(query[pos] >> 5)
+                    } else {
+                        None
+                    };
+                    (t, pos, kind)
                 } else {
-                    (None, dec.position())
+                    (None, dec.position(), None)
                 }
             } else {
-                (None, 0)
+                (None, 0, None)
             }
         };
+
+        // Catch the upstream-HardForkBlock-query-shape: `[0, <array>]`
+        // where the inner element is a CBOR array (major type 4 = 0x80
+        // header range).  yggdrasil's flat-table tag 0 (`CurrentEra`)
+        // takes no arguments, so any query whose tag-0 carries an
+        // inner array is the upstream era-aware shape we cannot yet
+        // serve.  Return an empty response (CBOR null) so the LSQ
+        // session continues cleanly until the client sends
+        // `MsgRelease`/`MsgDone`; pre-fix the dispatcher returned a
+        // 1-byte era ordinal that upstream cardano-cli misparsed as
+        // `EraMismatch` and aborted the bearer.
+        //
+        // The same guard is applied for tag 2 (yggdrasil's
+        // `CurrentEpoch`), which `cardano-cli` cannot reach via the
+        // upstream codec at all but where a future drift in the
+        // capture format could surface a similar misleading-response
+        // bug.
+        // CBOR major type 4 (array) = 0b100_xxxxx, so `byte >> 5 == 4`.
+        if matches!(tag, Some(0) | Some(2)) && matches!(arg_kind, Some(4)) {
+            let mut e = Encoder::new();
+            e.null();
+            return e.into_bytes();
+        }
+        let _ = arg_kind; // silence unused on the success paths below
 
         let mut enc = Encoder::new();
 
@@ -1134,6 +1181,56 @@ mod tests {
         assert!(
             !result.is_empty(),
             "QueryCurrentEra should return a non-empty response"
+        );
+    }
+
+    /// Operator-captured upstream `cardano-cli query tip --testnet-magic 1`
+    /// queries are HardForkBlock-shape `[0, [2, [N]]]` payloads — the
+    /// outer `0` collides with yggdrasil's flat-table CurrentEra opcode
+    /// but the trailing array-shaped argument distinguishes the upstream
+    /// shape.  Pre-fix, the dispatcher returned a 1-byte era ordinal
+    /// against an upstream client expecting an `EraMismatch` envelope,
+    /// surfacing as `DeserialiseFailure 2 "expected list len or indef"`
+    /// in cardano-cli's HardForkBlock decoder and tearing down the
+    /// bearer.  After the guard, upstream-shaped queries return CBOR
+    /// `null` (1 byte: `0xf6`) so the LSQ session continues cleanly
+    /// until `MsgRelease`/`MsgDone`.  The full upstream HardForkBlock
+    /// query/result codec is the open Finding E follow-up; this guard
+    /// is the defensive bridge that prevents misleading responses
+    /// without claiming codec parity.
+    #[test]
+    fn upstream_hardforkblock_shape_query_returns_clean_null_not_misleading_era_ordinal() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Upstream-captured payloads from the 2026-04-27 rehearsal:
+        // [0, [2, [1]]]  → BlockQuery (QueryHardFork GetCurrentEra)
+        // [0, [2, [0]]]  → BlockQuery (QueryHardFork GetInterpreter)
+        let upstream_queries: &[&[u8]] = &[
+            &[0x82, 0x00, 0x82, 0x02, 0x81, 0x01],
+            &[0x82, 0x00, 0x82, 0x02, 0x81, 0x00],
+        ];
+        for (idx, q) in upstream_queries.iter().enumerate() {
+            let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, q);
+            assert_eq!(
+                result,
+                vec![0xf6],
+                "upstream-shape query {idx} (`{:?}`) must return CBOR null, \
+                 not the misleading era ordinal pre-fix dispatcher emitted",
+                q,
+            );
+        }
+
+        // Sanity: yggdrasil's own flat-table `[0]` (no inner array)
+        // continues to work — the guard only triggers on the
+        // structured-argument shape.
+        let yggdrasil_native = [0x81, 0x00];
+        let native_result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &yggdrasil_native);
+        assert_ne!(
+            native_result,
+            vec![0xf6],
+            "yggdrasil's native `[0]` CurrentEra query must continue to \
+             return the era ordinal — guard must not interfere",
         );
     }
 

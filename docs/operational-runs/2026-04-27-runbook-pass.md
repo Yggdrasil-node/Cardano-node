@@ -164,17 +164,82 @@ behaviour:
    test.  Post-fix, the same handshake against an out-of-range client
    would reply with `[V_9..V_16]` instead of `[]`, giving operators a
    real diagnosis.
-2. **V16 selection mismatch** (open, requires deeper investigation):
-   yggdrasil advertises NtC V9..V16; cardano-cli 10.16.0.0 advertises
-   V16..V23.  The set-intersection is `{V16}` but yggdrasil's matching
-   loop in `ntc_accept` does not select V16 — likely a per-version
-   `decode_ntc_version_data` shape mismatch where modern cardano-cli
-   encodes V16's version-data with a non-2-element CBOR shape that
-   yggdrasil rejects in the strict-length decoder.  Documented as a
-   follow-up; `decode_ntc_version_data` and the V16 decode path against
-   `cardano-node 10.7.1`'s `Ouroboros.Network.NodeToClient` need a
-   per-version codec table rather than a one-size-fits-all 2-element
-   form.
+2. **V16 high-bit encoding** (fixed this run, Round 146):
+   captured via `YGG_NTC_DEBUG=1` from a real upstream `cardano-cli`
+   handshake — `ProposeVersions raw_len=51 preview=8200a8 19 8010 …`
+   showed cardano-cli proposing V16-V23 as `0x8010..=0x8017`.  Per
+   upstream `Ouroboros.Network.NodeToClient.Version`, every NtC
+   version on the wire carries the `nodeToClientVersionBit = 0x8000`
+   high-bit flag to distinguish from NtN versions sharing the same
+   handshake table.  yggdrasil's `HandshakeVersion::NTC_V9..=NTC_V16`
+   were defined as the logical values `9..=16`, so the matcher in
+   `ntc_accept` saw the bit-flagged numbers as foreign and refused.
+   Fixed by redefining all 8 constants as `NTC_VERSION_BIT | n` plus a
+   new `pub const NTC_VERSION_BIT: u16 = 0x8000` and three regression
+   tests pinning the high-bit invariant, the literal `0x8010` for
+   V16, and the on-wire decode of cardano-cli's actual 51-byte
+   `[0, {0x8010..=0x8017 -> [1, false]}]` payload.
+
+### Finding D: LocalStateQuery wire-format parity (fixed this run, Round 146)
+
+After the V16 handshake fix, upstream `cardano-cli query tip` reached
+yggdrasil's LocalStateQuery server but immediately tore down the bearer
+with `BearerClosed "<socket: 11> closed when reading data"`.
+`YGG_NTC_DEBUG=1` traced two further parity bugs in
+`crates/network/src/protocols/local_state_query.rs`:
+
+1. **Bytes-string-wrapped point/query/result payloads.**  yggdrasil
+   encoded the `point` argument of `MsgAcquire` / `MsgReAcquire` and
+   the payloads of `MsgQuery` / `MsgResult` via `enc.bytes(...)`,
+   wrapping the inner CBOR in a CBOR major-type-2 byte string.
+   Upstream `Ouroboros.Network.Protocol.LocalStateQuery.Codec` writes
+   them as INLINE structured CBOR (no wrapper).  yggdrasil's
+   `dec.bytes()` decode of cardano-cli's inline-encoded acquire then
+   returned a type-mismatch error and tore down the bearer.  Fixed
+   by switching encode to `enc.raw(point_cbor)` and decode to
+   `dec.raw_value()`; new
+   `acquire_point_wire_bytes_are_inline_not_byte_string_wrapped`
+   regression test pins the exact wire bytes (`0x82 0x00 <inline>`
+   vs the pre-fix `0x82 0x00 0x58 <len> <bytes>`).
+
+2. **`MsgAcquireVolatileTip` tag mismatch.**  yggdrasil mapped this
+   variant to wire tag 9 (encode AND decode); upstream uses tag 8.
+   `cardano-cli` sends `[8]` (`0x81 0x08`); yggdrasil rejected it as
+   `unknown LocalStateQuery message tag: 8` and tore down the
+   connection.  yggdrasil's own client+server happened to round-trip
+   with each other on tag 9, masking the bug until upstream traffic
+   exposed it.  Fixed; new
+   `acquire_volatile_tip_wire_tag_matches_upstream_canonical_tag_8`
+   regression test pins the exact 2-byte wire payload `[0x81, 0x08]`.
+
+After both fixes, the handshake + acquire + query round-trip
+succeeds end-to-end; upstream `cardano-cli` reaches the result-decode
+phase before failing with `DeserialiseFailure 2 "expected list len or
+indef"`.  That last error reflects the next layer of parity work
+(upstream HardForkBlock query/result codec — see Finding E below).
+
+### Finding E: HardForkBlock query/result codec (open)
+
+After the Round 146 wire-level fixes, upstream `cardano-cli query tip`
+sends yggdrasil a query payload `82 03 82 00 82 02 81 01` —
+`[3, [0, [2, [1]]]]` — which is the upstream era-aware
+`HardForkQuery (QueryIfCurrent ConwayEra (BlockQuery GetTip))` shape.
+yggdrasil's `BasicLocalQueryDispatcher` services queries via a
+flat tag-table (0..=23) and returns a simple result envelope.
+Upstream `cardano-cli` then fails to decode the result as
+`HardForkBlock ... ServerHasAgency (SingQuerying)
+(DeserialiseFailure 2 "expected list len or indef")` because the
+result is missing the era-wrapper structure.
+
+Closing this gap requires implementing the full upstream
+`Ouroboros.Consensus.HardFork.Combinator.Ledger.Query` codec —
+roughly 1000+ lines of structured codec including era selection,
+`BlockQuery` vs `QueryAnytime` opcode dispatch, and per-era result
+envelopes.  Documented as a major follow-up slice; the building
+blocks (`MultiEraBlock`, `Era::all()`, era-specific ledger snapshots)
+are already in place.
+
+
 
 ### Finding C: `compare_tip_to_haskell.sh` silently exits 1 on missing JSON keys
 

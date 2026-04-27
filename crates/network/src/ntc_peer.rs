@@ -17,8 +17,20 @@
 //!
 //! ## NtC Version Numbers
 //!
-//! Supported versions (from upstream `Ouroboros.Network.NodeToClient.Version`):
-//! - V9 = 9, V10 = 10, V11 = 11, V12 = 12, V13 = 13, V14 = 14, V15 = 15, V16 = 16
+//! Supported versions (from upstream `Ouroboros.Network.NodeToClient.Version`).
+//! Wire-format numbers carry the upstream `nodeToClientVersionBit`
+//! (`0x8000`) high-bit flag; logical numbers are 9..=16.
+//!
+//! | Logical | Wire    |
+//! |---------|---------|
+//! | V9      | 0x8009  |
+//! | V10     | 0x800a  |
+//! | V11     | 0x800b  |
+//! | V12     | 0x800c  |
+//! | V13     | 0x800d  |
+//! | V14     | 0x800e  |
+//! | V15     | 0x800f  |
+//! | V16     | 0x8010  |
 //!
 //! Version data carries `{network_magic: u32, query: bool}`.
 //!
@@ -229,8 +241,7 @@ fn decode_ntc_propose_versions(
             Ok(vd) => proposals.push((HandshakeVersion(ver_num), vd)),
             Err(err) => {
                 if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
-                    let preview: String =
-                        vd_bytes.iter().map(|b| format!("{b:02x}")).collect();
+                    let preview: String = vd_bytes.iter().map(|b| format!("{b:02x}")).collect();
                     eprintln!(
                         "[ygg-ntc-debug] decode fail for V{ver_num}: err={err} \
                          vd_bytes_len={} preview={preview}",
@@ -770,8 +781,14 @@ mod tests {
              `HandshakeError (VersionMismatch [V_16..V_23] [])`",
         );
         for (_, vd) in &proposals {
-            assert_eq!(vd.network_magic, 1, "captured payload was --testnet-magic 1");
-            assert!(!vd.query, "cardano-cli query tip uses query=false handshake");
+            assert_eq!(
+                vd.network_magic, 1,
+                "captured payload was --testnet-magic 1"
+            );
+            assert!(
+                !vd.query,
+                "cardano-cli query tip uses query=false handshake"
+            );
         }
     }
 

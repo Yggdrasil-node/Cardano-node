@@ -529,6 +529,75 @@ mod tests {
         assert_eq!(decoded, msg);
     }
 
+    /// Operator-captured `MsgQuery` payloads from upstream
+    /// `cardano-cli 10.16.0.0 query tip --testnet-magic 1` against the
+    /// 2026-04-27 rehearsal yggdrasil node (`YGG_NTC_DEBUG=1` trace).
+    /// Both queries decode cleanly through the wire-level codec — the
+    /// 8-byte payloads `82 03 82 00 82 02 81 01` and `82 03 82 00 82 02
+    /// 81 00` round-trip into `MsgQuery` carrying the inline-CBOR
+    /// `[0, [2, [1]]]` / `[0, [2, [0]]]` shapes.  Pinned here so any
+    /// future regression of the inline-CBOR encoding (Round 146 fix)
+    /// would resurface as a clearly-named decode failure on the
+    /// captured upstream traffic, AND so the future
+    /// HardForkBlock-query-codec slice (Finding E in
+    /// `docs/operational-runs/2026-04-27-runbook-pass.md`) has a
+    /// concrete starting fixture.  The query *content* layer
+    /// (decoding `[0, [2, [1]]]` into a typed era-aware
+    /// `BlockQuery`) is the open follow-up and explicitly out of
+    /// scope for the wire-level codec tested here.
+    #[test]
+    fn msg_query_wire_payload_round_trips_real_cardano_cli_capture() {
+        let captured_payloads: &[&[u8]] = &[
+            // [3, [0, [2, [1]]]] — first MsgQuery from cardano-cli
+            &[0x82, 0x03, 0x82, 0x00, 0x82, 0x02, 0x81, 0x01],
+            // [3, [0, [2, [0]]]] — second MsgQuery from cardano-cli
+            &[0x82, 0x03, 0x82, 0x00, 0x82, 0x02, 0x81, 0x00],
+        ];
+        for (idx, captured) in captured_payloads.iter().enumerate() {
+            let decoded = LocalStateQueryMessage::from_cbor(captured).unwrap_or_else(|err| {
+                panic!(
+                    "captured cardano-cli MsgQuery payload {idx} (\
+                     len={}) must decode through the wire-level \
+                     codec; got {err}",
+                    captured.len(),
+                )
+            });
+            match &decoded {
+                LocalStateQueryMessage::MsgQuery { query } => {
+                    assert!(
+                        !query.is_empty(),
+                        "captured query payload {idx} must carry a non-empty \
+                         inline-CBOR query body",
+                    );
+                    // The captured bodies start with `82 00` — outer
+                    // wrapper of the upstream HardForkBlock query layer.
+                    assert_eq!(
+                        &query[..2],
+                        &[0x82, 0x00],
+                        "captured query payload {idx} body must start with the \
+                         upstream HardForkBlock outer-wrapper bytes \
+                         (0x82 0x00); decoding into a typed era-aware \
+                         BlockQuery is the open Finding E follow-up",
+                    );
+                }
+                other => panic!("captured payload {idx} must decode as MsgQuery; got {other:?}"),
+            }
+            // Inverse: re-encoding the decoded value must reproduce the
+            // exact captured bytes (the inline-CBOR codec preserves
+            // payload bytes verbatim, so this is a strong byte-level
+            // wire-format pin).
+            let re_encoded = decoded.to_cbor();
+            assert_eq!(
+                &re_encoded[..],
+                *captured,
+                "round-trip of cardano-cli MsgQuery payload {idx} must \
+                 reproduce the exact wire bytes — drift here means the \
+                 wire-level codec stopped preserving the inline-CBOR \
+                 shape",
+            );
+        }
+    }
+
     /// Round 146 wire-format pin: the `point` argument is encoded
     /// as INLINE CBOR, not wrapped in a byte-string.  Pre-fix bytes
     /// would have been `[0, h'<point>']` (`0x82 0x00 0x58 <len>
