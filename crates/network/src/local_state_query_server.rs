@@ -132,8 +132,25 @@ impl LocalStateQueryServer {
             .recv()
             .await
             .ok_or(LocalStateQueryServerError::ConnectionClosed)?;
-        let msg = LocalStateQueryMessage::from_cbor(&raw)
-            .map_err(|e| LocalStateQueryServerError::Decode(e.to_string()))?;
+        if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+            let preview_len = raw.len().min(256);
+            let preview: String = raw[..preview_len]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            eprintln!(
+                "[ygg-ntc-debug] LSQ recv state={:?} raw_len={} preview={}",
+                self.state,
+                raw.len(),
+                preview
+            );
+        }
+        let msg = LocalStateQueryMessage::from_cbor(&raw).map_err(|e| {
+            if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+                eprintln!("[ygg-ntc-debug] LSQ decode failed: {e}");
+            }
+            LocalStateQueryServerError::Decode(e.to_string())
+        })?;
         self.state = self.state.transition(&msg)?;
         Ok(msg)
     }

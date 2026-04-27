@@ -118,13 +118,24 @@ if [[ -z "$haskell_tip_json" ]]; then
   exit 2
 fi
 
-# Extract canonical fields. Both yggdrasil-node and cardano-cli emit JSON
-# with at least {slot, hash, block, epoch}; we normalize via a tiny
-# python-free awk extraction (avoids jq dependency).
+# Extract canonical fields. cardano-cli emits {slot, hash, block, epoch};
+# yggdrasil-node's `cardano-cli query-tip` emits {tip: {slot, hash}} and
+# does NOT carry block/epoch.  We tolerate missing keys cleanly under
+# `set -o pipefail` by short-circuiting the pipeline with `|| true`
+# whenever `grep` finds no match — without this guard, the comparator
+# silently exits 1 with no output (the `[info]` summary print never
+# fires because the missing-key extraction trips pipefail before it).
+# Reference: 2026-04-27 operational rehearsal in
+# `docs/operational-runs/2026-04-27-runbook-pass.md`.
 extract_field() {
   local key="$1"
   local json="$2"
-  echo "$json" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"?[A-Za-z0-9_-]+\"?" \
+  local raw
+  raw="$(echo "$json" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"?[A-Za-z0-9_-]+\"?" || true)"
+  if [[ -z "$raw" ]]; then
+    return 0
+  fi
+  echo "$raw" \
     | head -1 \
     | sed -E "s/\"$key\"[[:space:]]*:[[:space:]]*//" \
     | tr -d '"' \

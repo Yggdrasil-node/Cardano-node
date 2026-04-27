@@ -55,25 +55,49 @@ pub struct NodeToClientVersionData {
 
 /// NtC protocol version numbers.
 ///
-/// Reference: `Ouroboros.Network.NodeToClient.Version`.
+/// Per upstream `Ouroboros.Network.NodeToClient.Version`, every NtC
+/// version on the wire has bit 15 ([`NTC_VERSION_BIT`] = `0x8000`) set
+/// to distinguish from NtN versions sharing the same handshake table.
+/// `NodeToClientV_16` is encoded as the unsigned integer `32784`
+/// (`0x8000 | 16`), not as `16`.  The pre-fix definitions used the
+/// logical values `9..=16` directly, so cardano-cli's
+/// `[V_16..V_23]` proposal (encoded `[32784..=32791]`) never matched
+/// — yggdrasil's matcher saw the bit-flagged numbers as
+/// "unrecognised versions" and responded `Refuse VersionMismatch`,
+/// blocking every upstream `cardano-cli query tip` invocation.
+/// 2026-04-27 operational rehearsal captured the on-wire bytes via
+/// `YGG_NTC_DEBUG=1`; see
+/// `docs/operational-runs/2026-04-27-runbook-pass.md` "Finding B".
+///
+/// Reference: `Ouroboros.Network.NodeToClient.Version` —
+/// `nodeToClientVersionCodec`.
 impl HandshakeVersion {
     /// NtC v9 (Alonzo era onwards).
-    pub const NTC_V9: Self = Self(9);
+    pub const NTC_V9: Self = Self(NTC_VERSION_BIT | 9);
     /// NtC v10.
-    pub const NTC_V10: Self = Self(10);
+    pub const NTC_V10: Self = Self(NTC_VERSION_BIT | 10);
     /// NtC v11.
-    pub const NTC_V11: Self = Self(11);
+    pub const NTC_V11: Self = Self(NTC_VERSION_BIT | 11);
     /// NtC v12.
-    pub const NTC_V12: Self = Self(12);
+    pub const NTC_V12: Self = Self(NTC_VERSION_BIT | 12);
     /// NtC v13.
-    pub const NTC_V13: Self = Self(13);
+    pub const NTC_V13: Self = Self(NTC_VERSION_BIT | 13);
     /// NtC v14.
-    pub const NTC_V14: Self = Self(14);
+    pub const NTC_V14: Self = Self(NTC_VERSION_BIT | 14);
     /// NtC v15.
-    pub const NTC_V15: Self = Self(15);
+    pub const NTC_V15: Self = Self(NTC_VERSION_BIT | 15);
     /// NtC v16 (Conway era, current).
-    pub const NTC_V16: Self = Self(16);
+    pub const NTC_V16: Self = Self(NTC_VERSION_BIT | 16);
 }
+
+/// Upstream `nodeToClientVersionBit` (`Ouroboros.Network.NodeToClient.Version`)
+/// — high bit (bit 15) flagging every NtC version on the wire.  Pinned
+/// here as a `pub const` so the encoding scheme is operator-visible
+/// (operators reading the wire bytes can decode the version number
+/// against this mask) and so a future drift in the bit convention is
+/// caught by the `ntc_version_constants_have_high_bit_set` regression
+/// test.
+pub const NTC_VERSION_BIT: u16 = 0x8000;
 
 /// NtC mini-protocol set including the handshake (protocol 0).
 const NTC_PROTOCOLS: [MiniProtocolNum; 4] = [
@@ -203,7 +227,16 @@ fn decode_ntc_propose_versions(
         let vd_bytes = &bytes[vd_start..vd_end];
         match decode_ntc_version_data(vd_bytes) {
             Ok(vd) => proposals.push((HandshakeVersion(ver_num), vd)),
-            Err(_) => {
+            Err(err) => {
+                if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+                    let preview: String =
+                        vd_bytes.iter().map(|b| format!("{b:02x}")).collect();
+                    eprintln!(
+                        "[ygg-ntc-debug] decode fail for V{ver_num}: err={err} \
+                         vd_bytes_len={} preview={preview}",
+                        vd_bytes.len()
+                    );
+                }
                 // Skip undecodable version data — server just won't select
                 // this version, matching upstream behavior.
                 continue;
@@ -430,7 +463,31 @@ pub async fn ntc_accept(
         ))
     })?;
 
+    if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+        let preview_len = propose_bytes.len().min(256);
+        let preview: String = propose_bytes[..preview_len]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        eprintln!(
+            "[ygg-ntc-debug] ProposeVersions raw_len={} preview={}",
+            propose_bytes.len(),
+            preview
+        );
+    }
+
     let proposed = decode_ntc_propose_versions(&propose_bytes)?;
+
+    if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+        eprintln!(
+            "[ygg-ntc-debug] decoded {} version(s): {:?}",
+            proposed.len(),
+            proposed
+                .iter()
+                .map(|(v, vd)| (v.0, vd.network_magic, vd.query))
+                .collect::<Vec<_>>()
+        );
+    }
 
     // Select the highest version that we support and whose network magic matches.
     for &our_ver in &NTC_SUPPORTED_VERSIONS {
@@ -455,9 +512,18 @@ pub async fn ntc_accept(
         }
     }
 
-    // No compatible version — refuse.
-    let refuse_bytes =
-        encode_ntc_refuse_version_mismatch(&proposed.iter().map(|(v, _)| *v).collect::<Vec<_>>());
+    // No compatible version — refuse.  Per upstream
+    // `Ouroboros.Network.Protocol.Handshake.Codec` the `Refuse
+    // VersionMismatch` reply must carry the *server's* supported version
+    // table so the client can see what to renegotiate against.  The
+    // pre-fix version echoed the client's `proposed` list back, which
+    // upstream `cardano-cli` parses as "the server supports nothing of
+    // mine", surfacing as `HandshakeError (VersionMismatch [client] [])`
+    // — the empty right-hand list is the operator-observable symptom.
+    // 2026-04-27 operational rehearsal in
+    // `docs/operational-runs/2026-04-27-runbook-pass.md` captured this
+    // against `cardano-cli 10.16.0.0`.
+    let refuse_bytes = encode_ntc_refuse_version_mismatch(&NTC_SUPPORTED_VERSIONS);
     let _ = hs.send(refuse_bytes).await;
 
     Err(NtcPeerError::VersionMismatch)
@@ -531,20 +597,48 @@ mod tests {
     }
 
     #[test]
-    fn ntc_handshake_version_constants_are_sequential() {
-        // The 8 V9..=V16 `const`s must map to their literal u16 values
-        // one-to-one. Drift (e.g. `NTC_V14: Self(15)` from a copy-paste
-        // error) would silently renegotiate clients onto the wrong
-        // protocol — handshakes succeed but subsequent mini-protocol
-        // behavior diverges from what the peer expects.
-        assert_eq!(HandshakeVersion::NTC_V9.0, 9);
-        assert_eq!(HandshakeVersion::NTC_V10.0, 10);
-        assert_eq!(HandshakeVersion::NTC_V11.0, 11);
-        assert_eq!(HandshakeVersion::NTC_V12.0, 12);
-        assert_eq!(HandshakeVersion::NTC_V13.0, 13);
-        assert_eq!(HandshakeVersion::NTC_V14.0, 14);
-        assert_eq!(HandshakeVersion::NTC_V15.0, 15);
-        assert_eq!(HandshakeVersion::NTC_V16.0, 16);
+    fn ntc_handshake_version_constants_have_high_bit_set() {
+        // Every NtC version on the wire is `NTC_VERSION_BIT | n` per
+        // upstream `nodeToClientVersionCodec`.  Pin both the high-bit
+        // invariant AND the literal `0x8000 | logical` value so a
+        // future drift (e.g. forgetting the bit on a V17 addition)
+        // fails CI cleanly with a clearly-named diagnostic.
+        for (vc, logical) in [
+            (HandshakeVersion::NTC_V9, 9u16),
+            (HandshakeVersion::NTC_V10, 10),
+            (HandshakeVersion::NTC_V11, 11),
+            (HandshakeVersion::NTC_V12, 12),
+            (HandshakeVersion::NTC_V13, 13),
+            (HandshakeVersion::NTC_V14, 14),
+            (HandshakeVersion::NTC_V15, 15),
+            (HandshakeVersion::NTC_V16, 16),
+        ] {
+            assert_eq!(
+                vc.0 & NTC_VERSION_BIT,
+                NTC_VERSION_BIT,
+                "NTC_V{logical} ({0:#06x}) must carry the upstream node-to-client \
+                 high-bit flag (0x8000)",
+                vc.0,
+            );
+            assert_eq!(
+                vc.0 & !NTC_VERSION_BIT,
+                logical,
+                "NTC_V{logical} ({0:#06x}) low bits must be {logical}",
+                vc.0,
+            );
+        }
+        // Concrete pin against the upstream-canonical wire numbers.
+        assert_eq!(HandshakeVersion::NTC_V16.0, 0x8010); // 32784
+        assert_eq!(HandshakeVersion::NTC_V9.0, 0x8009); // 32777
+    }
+
+    #[test]
+    fn ntc_version_bit_matches_upstream_constant() {
+        // `NTC_VERSION_BIT` is `nodeToClientVersionBit` from
+        // `Ouroboros.Network.NodeToClient.Version`.  Pinned literal
+        // 0x8000 — drift here would silently change the entire NtC
+        // version space and break every operator-tooling handshake.
+        assert_eq!(NTC_VERSION_BIT, 0x8000);
     }
 
     #[test]
@@ -583,10 +677,16 @@ mod tests {
 
     #[test]
     fn decode_ntc_propose_versions_roundtrip() {
+        // Wire-format version numbers carry the upstream
+        // `nodeToClientVersionBit` (0x8000); decoded versions must
+        // round-trip to their canonical `HandshakeVersion::NTC_V*`
+        // constants.  Using literal `0x8010` etc. here pins the
+        // wire-format expectation explicitly so a future drift
+        // (forgetting the bit somewhere in the codec) fails CI.
         let bytes = build_propose_versions(&[
-            (16, 764_824_073, false),
-            (15, 764_824_073, false),
-            (9, 764_824_073, true),
+            (0x8010, 764_824_073, false), // V16
+            (0x800f, 764_824_073, false), // V15
+            (0x8009, 764_824_073, true),  // V9
         ]);
         let proposals = decode_ntc_propose_versions(&bytes).unwrap();
         assert_eq!(proposals.len(), 3);
@@ -600,7 +700,7 @@ mod tests {
     #[test]
     fn decode_ntc_propose_versions_wrong_magic_skipped_gracefully() {
         // All proposed versions have matching format but different magic.
-        let bytes = build_propose_versions(&[(16, 1, false), (15, 2, false)]);
+        let bytes = build_propose_versions(&[(0x8010, 1, false), (0x800f, 2, false)]);
         let proposals = decode_ntc_propose_versions(&bytes).unwrap();
         assert_eq!(proposals.len(), 2);
         assert_eq!(proposals[0].1.network_magic, 1);
@@ -614,20 +714,65 @@ mod tests {
             query: true,
         };
         let bytes = encode_ntc_accept_version(HandshakeVersion::NTC_V16, &vd);
-        // Decode: [1, 16, [1, true]]
+        // Decode: [1, 0x8010, [1, true]] — V16 with high-bit flag set.
         let mut dec = Decoder::new(&bytes);
         let len = dec.array().unwrap();
         assert_eq!(len, 3);
         let tag = dec.unsigned().unwrap();
         assert_eq!(tag, 1);
         let ver = dec.unsigned().unwrap() as u16;
-        assert_eq!(ver, 16);
+        assert_eq!(
+            ver, 0x8010,
+            "AcceptVersion must echo the wire-format V16 (0x8010), not the logical 16",
+        );
         let vd_len = dec.array().unwrap();
         assert_eq!(vd_len, 2);
         let magic = dec.unsigned().unwrap() as u32;
         assert_eq!(magic, 1);
         let query = dec.bool().unwrap();
         assert!(query);
+    }
+
+    /// Operational regression for the upstream-`cardano-cli`-interop bug
+    /// captured during the 2026-04-27 rehearsal — the EXACT bytes
+    /// captured by `YGG_NTC_DEBUG=1` from `cardano-cli 10.16.0.0
+    /// query tip --testnet-magic 1`.  A future drift in the version-bit
+    /// handling (e.g. dropping the high bit, or shifting the supported
+    /// set so V16 falls out) fails this test cleanly with an
+    /// "expected version V16 in proposed list" diagnostic.
+    #[test]
+    fn decode_ntc_propose_versions_accepts_real_cardano_cli_payload() {
+        // Captured wire bytes (51 bytes total):
+        //   8200a8 19 8010 82 01 f4 19 8011 82 01 f4 19 8012 82 01 f4 ...
+        // Decoded structure:
+        //   [0,                                   // tag 0 = ProposeVersions
+        //    {0x8010 -> [1, false],               // V16
+        //     0x8011 -> [1, false],               // V17
+        //     ...
+        //     0x8017 -> [1, false]}]              // V23
+        let bytes: [u8; 51] = [
+            0x82, 0x00, 0xa8, 0x19, 0x80, 0x10, 0x82, 0x01, 0xf4, 0x19, 0x80, 0x11, 0x82, 0x01,
+            0xf4, 0x19, 0x80, 0x12, 0x82, 0x01, 0xf4, 0x19, 0x80, 0x13, 0x82, 0x01, 0xf4, 0x19,
+            0x80, 0x14, 0x82, 0x01, 0xf4, 0x19, 0x80, 0x15, 0x82, 0x01, 0xf4, 0x19, 0x80, 0x16,
+            0x82, 0x01, 0xf4, 0x19, 0x80, 0x17, 0x82, 0x01, 0xf4,
+        ];
+        let proposals = decode_ntc_propose_versions(&bytes).unwrap();
+        assert_eq!(
+            proposals.len(),
+            8,
+            "cardano-cli proposes V_16..V_23 — yggdrasil must decode all 8 entries",
+        );
+        let versions: Vec<u16> = proposals.iter().map(|(v, _)| v.0).collect();
+        assert!(
+            versions.contains(&HandshakeVersion::NTC_V16.0),
+            "cardano-cli's V_16 (0x8010) must round-trip to NTC_V16 — \
+             pre-fix this was the empty-overlap bug surfacing as \
+             `HandshakeError (VersionMismatch [V_16..V_23] [])`",
+        );
+        for (_, vd) in &proposals {
+            assert_eq!(vd.network_magic, 1, "captured payload was --testnet-magic 1");
+            assert!(!vd.query, "cardano-cli query tip uses query=false handshake");
+        }
     }
 
     #[test]
@@ -647,6 +792,45 @@ mod tests {
         assert_eq!(reason_tag, 0); // VersionMismatch
         let versions_len = dec.array().unwrap();
         assert_eq!(versions_len, 2);
+    }
+
+    /// Round 145 regression — the `Refuse VersionMismatch` reply must
+    /// carry the *server's* supported version table, not echo back the
+    /// client's proposed list.  Pre-fix, `ntc_accept` called
+    /// `encode_ntc_refuse_version_mismatch` with `proposed.iter().map(|(v, _)| *v)`
+    /// which produced the symptom captured during the 2026-04-27
+    /// operational rehearsal: upstream `cardano-cli 10.16.0.0` parsed
+    /// the reply and surfaced
+    /// `HandshakeError (VersionMismatch [V_16..V_23] [])` — empty
+    /// right-hand list because the encoded versions were ALL outside
+    /// the client's supported range.  After the fix, the reply
+    /// contains `NTC_SUPPORTED_VERSIONS` (V9..V16) and a client whose
+    /// own supported range is V17..V23 sees a meaningful
+    /// "no overlap; server supports up to V16" diagnosis.
+    #[test]
+    fn ntc_accept_refuse_payload_carries_server_supported_versions() {
+        let bytes = encode_ntc_refuse_version_mismatch(&NTC_SUPPORTED_VERSIONS);
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.array().unwrap(), 2);
+        assert_eq!(dec.unsigned().unwrap(), 2); // Refuse
+        assert_eq!(dec.array().unwrap(), 2);
+        assert_eq!(dec.unsigned().unwrap(), 0); // VersionMismatch
+        let versions_len = dec.array().unwrap();
+        assert_eq!(
+            versions_len as usize,
+            NTC_SUPPORTED_VERSIONS.len(),
+            "Refuse VersionMismatch must list every server-supported version, \
+             not echo the client's proposed list",
+        );
+        let mut server_versions = Vec::with_capacity(versions_len as usize);
+        for _ in 0..versions_len {
+            server_versions.push(HandshakeVersion(dec.unsigned().unwrap() as u16));
+        }
+        assert_eq!(
+            server_versions,
+            NTC_SUPPORTED_VERSIONS.to_vec(),
+            "encoded versions must match NTC_SUPPORTED_VERSIONS in declared order",
+        );
     }
 
     #[test]

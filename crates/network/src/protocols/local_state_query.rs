@@ -230,12 +230,28 @@ impl LocalStateQueryMessage {
     /// - `MsgAcquired`              → `[1]`
     /// - `MsgFailure(PointTooOld)`  → `[2, 0]`
     /// - `MsgFailure(PointNotOnChain)` → `[2, 1]`
-    /// - `MsgQuery(bytes)`          → `[3, bytes]`
-    /// - `MsgResult(bytes)`         → `[4, bytes]`
+    /// - `MsgQuery(query)`          → `[3, <inline-cbor query>]`
+    /// - `MsgResult(result)`        → `[4, <inline-cbor result>]`
     /// - `MsgRelease`               → `[5]`
-    /// - `MsgReAcquire(point)`      → `[6, point_cbor]`
+    /// - `MsgReAcquire(point)`      → `[6, <inline-cbor point>]`
     /// - `MsgReAcquireVolatileTip`  → `[10]`
     /// - `MsgDone`                  → `[7]`
+    ///
+    /// **Wire-format parity (Round 146)**: `point`, `query`, and `result`
+    /// are encoded as INLINE CBOR data items — NOT wrapped in CBOR
+    /// byte-string major type 2.  The pre-fix codec called
+    /// `enc.bytes(point_cbor)` which prepended a `0x58 <len>` byte-string
+    /// header, so wire frames carried `[0, h'<bytes>']` instead of
+    /// upstream's `[0, <point>]`.  Upstream `cardano-cli 10.16.0.0`
+    /// sends the inline shape; yggdrasil's `dec.bytes()` decode then
+    /// returned a type-mismatch error and tore down the bearer
+    /// (operator-observable as
+    /// `BearerClosed "<socket: 11> closed when reading data"`).
+    /// Reference: `Ouroboros.Network.Protocol.LocalStateQuery.Codec`
+    /// — `encodeMsg` / `decodeMsg`.  The `Acquire`/`ReAcquire` `point`
+    /// argument is `encodePoint`; the `Query`/`Result` payload is
+    /// `encodeQuery`/`encodeResult` from the application's query
+    /// codec.  None of these emit a byte-string wrapper.
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut enc = Encoder::new();
         match self {
@@ -244,7 +260,7 @@ impl LocalStateQueryMessage {
             } => {
                 enc.array(2);
                 enc.unsigned(0);
-                enc.bytes(point_cbor);
+                enc.raw(point_cbor);
             }
             Self::MsgAcquire {
                 target: AcquireTarget::VolatileTip,
@@ -267,12 +283,12 @@ impl LocalStateQueryMessage {
             Self::MsgQuery { query } => {
                 enc.array(2);
                 enc.unsigned(3);
-                enc.bytes(query);
+                enc.raw(query);
             }
             Self::MsgResult { result } => {
                 enc.array(2);
                 enc.unsigned(4);
-                enc.bytes(result);
+                enc.raw(result);
             }
             Self::MsgRelease => {
                 enc.array(1);
@@ -283,7 +299,7 @@ impl LocalStateQueryMessage {
             } => {
                 enc.array(2);
                 enc.unsigned(6);
-                enc.bytes(point_cbor);
+                enc.raw(point_cbor);
             }
             Self::MsgReAcquire {
                 target: AcquireTarget::VolatileTip,
@@ -306,7 +322,9 @@ impl LocalStateQueryMessage {
         let tag = dec.unsigned()?;
         match tag {
             0 => {
-                let point_cbor = dec.bytes()?.to_vec();
+                // `point` is INLINE CBOR (no byte-string wrapper) — see
+                // wire-format note on `to_cbor`.
+                let point_cbor = dec.raw_value()?.to_vec();
                 Ok(Self::MsgAcquire {
                     target: AcquireTarget::Point(point_cbor),
                 })
@@ -326,16 +344,16 @@ impl LocalStateQueryMessage {
                 Ok(Self::MsgFailure { reason })
             }
             3 => {
-                let query = dec.bytes()?.to_vec();
+                let query = dec.raw_value()?.to_vec();
                 Ok(Self::MsgQuery { query })
             }
             4 => {
-                let result = dec.bytes()?.to_vec();
+                let result = dec.raw_value()?.to_vec();
                 Ok(Self::MsgResult { result })
             }
             5 => Ok(Self::MsgRelease),
             6 => {
-                let point_cbor = dec.bytes()?.to_vec();
+                let point_cbor = dec.raw_value()?.to_vec();
                 Ok(Self::MsgReAcquire {
                     target: AcquireTarget::Point(point_cbor),
                 })
@@ -443,8 +461,14 @@ mod tests {
 
     #[test]
     fn query_result_roundtrip() {
-        let query_bytes = vec![0xDE, 0xAD];
-        let result_bytes = vec![0xBE, 0xEF];
+        // Round 146 — query/result payloads are now inline CBOR (no
+        // byte-string wrapper), so the test bytes must themselves be
+        // valid CBOR.  Use minimal-but-real CBOR shapes that exercise
+        // the roundtrip without depending on the application query
+        // codec: a 1-element array `[5]` for the query, a 2-element
+        // array `[1, 0x42]` for the result.
+        let query_bytes = vec![0x81, 0x05]; // CBOR: [5]
+        let result_bytes = vec![0x82, 0x01, 0x18, 0x42]; // CBOR: [1, 66]
         let q_msg = LocalStateQueryMessage::MsgQuery {
             query: query_bytes.clone(),
         };
@@ -461,6 +485,41 @@ mod tests {
                 result: result_bytes
             }
         );
+    }
+
+    /// Round 146 wire-format pin: the `point` argument is encoded
+    /// as INLINE CBOR, not wrapped in a byte-string.  Pre-fix bytes
+    /// would have been `[0, h'<point>']` (`0x82 0x00 0x58 <len>
+    /// <point>`); post-fix bytes must be `[0, <point>]` directly.
+    /// A future drift back to `enc.bytes(...)` fails this test
+    /// cleanly with the captured byte-by-byte diagnostic.
+    #[test]
+    fn acquire_point_wire_bytes_are_inline_not_byte_string_wrapped() {
+        // A minimal valid Point CBOR: `[42, h'aa..aa']` (BlockPoint
+        // shape used by upstream codec).  Inline-encoded inside
+        // MsgAcquire we expect the array header + tag + Point bytes
+        // verbatim.
+        let mut point_enc = Encoder::new();
+        point_enc.array(2);
+        point_enc.unsigned(42);
+        point_enc.bytes(&[0xaa; 8]);
+        let point_cbor = point_enc.into_bytes();
+        let msg = LocalStateQueryMessage::MsgAcquire {
+            target: AcquireTarget::Point(point_cbor.clone()),
+        };
+        let wire = msg.to_cbor();
+        // Expected: [0x82, 0x00] envelope + raw point bytes.
+        assert_eq!(wire[0], 0x82, "outer array header (length 2)");
+        assert_eq!(wire[1], 0x00, "MsgAcquire tag = 0");
+        assert_eq!(
+            &wire[2..],
+            point_cbor.as_slice(),
+            "point must be inline-encoded; pre-fix this carried a 0x58 \
+             byte-string header followed by the point bytes",
+        );
+        // And the round-trip must succeed (decoder uses raw_value).
+        let decoded = LocalStateQueryMessage::from_cbor(&wire).unwrap();
+        assert_eq!(decoded, msg);
     }
 
     #[test]
