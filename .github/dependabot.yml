@@ -21,6 +21,25 @@ updates:
         update-types:
           - minor
           - patch
+      rust-crypto-digest:
+        # The RustCrypto digest ecosystem (digest, sha2, sha3, ripemd,
+        # blake2, etc.) moves in lockstep on major bumps — splitting them
+        # across separate PRs would leave duplicate digest crate versions
+        # in Cargo.lock until every PR lands. Group major-version bumps
+        # for these crates so dependabot opens one PR per ecosystem cycle.
+        applies-to: version-updates
+        patterns:
+          - "digest"
+          - "sha2"
+          - "sha3"
+          - "ripemd"
+          - "blake2"
+          - "blake2b_simd"
+          - "blake3"
+        update-types:
+          - major
+          - minor
+          - patch
 
   # GitHub Actions — keep workflow action versions current.
   - package-ecosystem: github-actions
