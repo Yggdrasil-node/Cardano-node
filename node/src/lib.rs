@@ -82,8 +82,8 @@ pub use server::{
 
 pub use local_server::{
     BasicLocalQueryDispatcher, LocalQueryDispatcher, LocalServerError, LocalStateQuerySessionError,
-    LocalTxMonitorSessionError, LocalTxSubmissionSessionError, run_local_state_query_session,
-    run_local_tx_monitor_session, run_local_tx_submission_session,
+    LocalTxMonitorSessionError, LocalTxSubmissionSessionError, NetworkPreset,
+    run_local_state_query_session, run_local_tx_monitor_session, run_local_tx_submission_session,
 };
 #[cfg(unix)]
 pub use local_server::{run_local_accept_loop, run_local_client_session};

@@ -753,7 +753,66 @@ where
 /// |  21 | GetExpectedNetworkId   | none                             | CBOR unsigned (network id 0 or 1) or null       |
 /// |  22 | GetDepositPot          | none                             | CBOR array [key, pool, drep, proposal]          |
 /// |  23 | GetLedgerCounts        | none                             | CBOR array of 6 cardinalities                   |
-pub struct BasicLocalQueryDispatcher;
+/// Operator-configured network preset selecting the era-history
+/// shape returned by `GetInterpreter` and the `SystemStart` epoch
+/// anchor.  Preview/preprod/mainnet have distinct genesis system
+/// starts and Shelley `epochLength` values; emitting the wrong
+/// shape causes upstream `cardano-cli query tip` to display the
+/// wrong epoch boundaries.
+///
+/// Reference: per-network `shelley-genesis.json` in
+/// [`node/configuration/`](../../node/configuration/).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkPreset {
+    /// `network_magic = 1`, Shelley `epochLength=432_000` (5-day
+    /// epochs), Byron→Shelley at slot 86_400 / epoch 4, system
+    /// start 2022-06-01.
+    Preprod,
+    /// `network_magic = 2`, Shelley `epochLength=86_400` (1-day
+    /// epochs), all hard forks at epoch 0 (no Byron blocks),
+    /// system start 2022-10-25.
+    Preview,
+    /// `network_magic = 764824073`, Shelley `epochLength=432_000`,
+    /// Byron→Shelley at slot 4_492_800 / epoch 208, system start
+    /// 2017-09-23.
+    Mainnet,
+}
+
+impl NetworkPreset {
+    /// Resolve a [`NetworkPreset`] from the operator-configured
+    /// `network_magic`.  Falls back to [`NetworkPreset::Preprod`]
+    /// when the magic doesn't match a known testnet (preserves
+    /// existing behaviour for custom magics).
+    pub fn from_network_magic(magic: u32) -> Self {
+        match magic {
+            2 => Self::Preview,
+            764_824_073 => Self::Mainnet,
+            _ => Self::Preprod,
+        }
+    }
+}
+
+/// Default [`LocalQueryDispatcher`] implementation.  Carries the
+/// operator-configured [`NetworkPreset`] so `GetInterpreter` and
+/// `GetSystemStart` results match the live network's genesis
+/// timing.  Construct via `BasicLocalQueryDispatcher::new(preset)`
+/// or use the `Default` impl (preprod) for tests.
+pub struct BasicLocalQueryDispatcher {
+    network_preset: NetworkPreset,
+}
+
+impl Default for BasicLocalQueryDispatcher {
+    fn default() -> Self {
+        Self::new(NetworkPreset::Preprod)
+    }
+}
+
+impl BasicLocalQueryDispatcher {
+    /// Construct a dispatcher pinned to the supplied [`NetworkPreset`].
+    pub fn new(network_preset: NetworkPreset) -> Self {
+        Self { network_preset }
+    }
+}
 
 impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
     fn dispatch_query(&self, snapshot: &LedgerStateSnapshot, query: &[u8]) -> Vec<u8> {
@@ -793,7 +852,7 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
         // migrated to issue upstream-shaped queries in lockstep with
         // this slice.
         if let Ok(upstream) = UpstreamQuery::decode(query) {
-            return dispatch_upstream_query(snapshot, upstream);
+            return dispatch_upstream_query(snapshot, upstream, self.network_preset);
         }
 
         // Yggdrasil flat-table fallback for queries that aren't
@@ -1188,22 +1247,14 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
 fn dispatch_upstream_query(
     snapshot: &LedgerStateSnapshot,
     query: yggdrasil_network::protocols::UpstreamQuery,
+    network_preset: NetworkPreset,
 ) -> Vec<u8> {
     use yggdrasil_ledger::Encoder;
     use yggdrasil_network::protocols::{
         HardForkBlockQuery, QueryHardFork, UpstreamQuery, encode_chain_block_no,
-        encode_chain_point, encode_era_index, encode_interpreter_minimal,
+        encode_chain_point, encode_era_index, encode_interpreter_for_network,
+        encode_system_start_for_network,
     };
-
-    let debug_enabled = std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0");
-    if debug_enabled {
-        eprintln!(
-            "[YGG_NTC_DEBUG] dispatch_upstream_query: snapshot.tip={:?} \
-             snapshot.current_era={:?}",
-            snapshot.tip(),
-            snapshot.current_era()
-        );
-    }
 
     let null_response = || -> Vec<u8> {
         let mut enc = Encoder::new();
@@ -1217,40 +1268,52 @@ fn dispatch_upstream_query(
                 encode_era_index(snapshot.current_era().era_ordinal() as u32)
             }
             QueryHardFork::GetInterpreter => {
-                // Round 149 — minimal valid Interpreter (one open-ended
-                // era anchored at slot 0) so `cardano-cli query tip`
-                // can decode the result shape.  Phase-3 follow-up:
-                // derive the real era summaries from the loaded
-                // ShelleyGenesis / AlonzoGenesis / ConwayGenesis
-                // hard-fork transition epochs.  cardano-cli's
-                // slot-to-time conversions will be inaccurate but the
-                // displayed slot/hash come from `GetChainPoint`
-                // directly, so `query tip` still works.
-                encode_interpreter_minimal(21_600, 1)
+                // Round 153 — emit a network-specific Interpreter.
+                // Preview/preprod/mainnet have distinct
+                // Byron→Shelley hard-fork slots and Shelley
+                // `epochLength` values; emitting the wrong shape
+                // makes cardano-cli's slot↔epoch conversion
+                // produce nonsense (or silently fall back to
+                // origin display when slot exceeds the era list).
+                encode_interpreter_for_network(network_preset_to_network_kind(network_preset))
             }
         },
         UpstreamQuery::GetSystemStart => {
-            // Round 149 — emit SystemStart anchored at preprod genesis
-            // 2022-06-01T00:00:00Z = year=2022, dayOfYear=152.
-            // Phase-3 follow-up: thread the genesis-derived
-            // SystemStart from ShelleyGenesis.systemStart through to
-            // the snapshot.
-            yggdrasil_network::protocols::encode_system_start(2022, 152, 0)
+            // Round 153 — emit a network-specific SystemStart.
+            encode_system_start_for_network(network_preset_to_network_kind(network_preset))
         }
         UpstreamQuery::GetChainPoint => encode_chain_point(snapshot.tip()),
         UpstreamQuery::GetChainBlockNo => {
-            // The snapshot carries the tip Point (slot + hash) but not
-            // the block number — that's tracked by the consensus
-            // `ChainState`, not the ledger.  Return `Origin` for now;
-            // wiring the chain-tracker block number through to the
-            // snapshot is a small follow-up.  cardano-cli's `query
-            // tip` falls back to slot-based reporting when block-no
-            // is `Origin`.
-            encode_chain_block_no(None)
+            // Round 152 — derive a synthetic BlockNo from the snapshot's
+            // tip slot.  Cardano-cli's `query tip` displays `block` and
+            // `slot` fields only when GetChainBlockNo returns `At n`
+            // (Origin causes silent fallback to genesis-shape display).
+            // Until the consensus chain-tracker block-number is threaded
+            // through `LedgerStateSnapshot`, approximating block-no from
+            // tip slot keeps the JSON output structurally complete and
+            // the rendered (epoch, slotInEpoch) values consistent with
+            // GetChainPoint's slot.  Phase-3 follow-up: thread
+            // `chain_block_number` from `ChainState` into the snapshot.
+            let block_no = match snapshot.tip() {
+                yggdrasil_ledger::Point::Origin => None,
+                yggdrasil_ledger::Point::BlockPoint(slot, _) => Some(slot.0),
+            };
+            encode_chain_block_no(block_no)
         }
         UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent { .. })
         | UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryAnytime { .. })
         | UpstreamQuery::DebugLedgerConfig => null_response(),
+    }
+}
+
+fn network_preset_to_network_kind(
+    preset: NetworkPreset,
+) -> yggdrasil_network::protocols::NetworkKind {
+    use yggdrasil_network::protocols::NetworkKind;
+    match preset {
+        NetworkPreset::Preprod => NetworkKind::Preprod,
+        NetworkPreset::Preview => NetworkKind::Preview,
+        NetworkPreset::Mainnet => NetworkKind::Mainnet,
     }
 }
 
@@ -1289,7 +1352,7 @@ mod tests {
         enc.array(1).unsigned(0u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
             "QueryCurrentEra should return a non-empty response"
@@ -1318,7 +1381,8 @@ mod tests {
         // Round 149 — V_23 emits `EraIndex` as bare CBOR uint per the
         // 2026-04-27 socat-proxy capture from `cardano-node 10.7.1`.
         let get_current_era: &[u8] = &[0x82, 0x00, 0x82, 0x02, 0x81, 0x01];
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, get_current_era);
+        let result =
+            BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, get_current_era);
         assert_eq!(
             result,
             vec![0x06],
@@ -1327,7 +1391,8 @@ mod tests {
 
         // [0, [2, [0]]] → GetInterpreter → minimal Interpreter shape.
         let get_interpreter: &[u8] = &[0x82, 0x00, 0x82, 0x02, 0x81, 0x00];
-        let result_int = BasicLocalQueryDispatcher.dispatch_query(&snapshot, get_interpreter);
+        let result_int =
+            BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, get_interpreter);
         // Indefinite-length array start `0x9f`, single 3-elem
         // EraSummary, then break `0xff`.
         assert_eq!(result_int[0], 0x9f, "indefinite-length Summary outer");
@@ -1340,7 +1405,8 @@ mod tests {
         // CurrentEra` branch and returns the era ordinal as a bare
         // unsigned (different shape from the upstream `[era_index]`).
         let yggdrasil_native = [0x81, 0x00];
-        let native_result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &yggdrasil_native);
+        let native_result =
+            BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &yggdrasil_native);
         assert_eq!(
             native_result,
             vec![0x06],
@@ -1361,7 +1427,7 @@ mod tests {
         state.tip = yggdrasil_ledger::Point::BlockPoint(SlotNo(42), HeaderHash([0xab; 32]));
         let snapshot = state.snapshot();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[0x81, 0x03]);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &[0x81, 0x03]);
         // Round 149 — V_23 `encodePoint` shape: BlockPoint = [slot, hash]
         // (no constructor tag); Origin = [].  Captured from
         // `cardano-node 10.7.1` socat proxy.
@@ -1381,7 +1447,7 @@ mod tests {
     fn upstream_get_chain_block_no_returns_origin_until_chain_tracker_wired() {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[0x81, 0x02]);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &[0x81, 0x02]);
         assert_eq!(
             result,
             vec![0x81, 0x00],
@@ -1402,7 +1468,7 @@ mod tests {
         enc.array(1).unsigned(3u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
             "GetChainPoint should return a non-empty response"
@@ -1426,7 +1492,7 @@ mod tests {
         enc.array(1).unsigned(101u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
             "yggdrasil CurrentEpoch ([101]) should return a non-empty response"
@@ -1445,7 +1511,7 @@ mod tests {
         enc.array(1).unsigned(99u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(
             result.is_empty(),
             "unknown query tag should return empty bytes"
@@ -1457,7 +1523,7 @@ mod tests {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[]);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &[]);
         assert!(
             result.is_empty(),
             "empty query bytes should return empty bytes"
@@ -1477,7 +1543,7 @@ mod tests {
         enc.array(1).unsigned(102u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
             "yggdrasil ProtocolParameters ([102]) should return CBOR null"
@@ -1501,7 +1567,7 @@ mod tests {
         enc.array(2).unsigned(4u64).bytes(&addr);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Should return empty CBOR map: 0xa0
         assert_eq!(result, vec![0xa0]);
     }
@@ -1517,7 +1583,7 @@ mod tests {
         enc.array(1).unsigned(5u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Should return empty CBOR map: 0xa0
         assert_eq!(result, vec![0xa0]);
     }
@@ -1536,7 +1602,7 @@ mod tests {
         enc.array(2).unsigned(6u64).bytes(&acct);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Should return CBOR unsigned 0: 0x00
         assert_eq!(result, vec![0x00]);
     }
@@ -1552,7 +1618,7 @@ mod tests {
         enc.array(1).unsigned(7u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Should return [treasury, reserves] = [0, 0] on fresh state.
         assert!(!result.is_empty());
         // CBOR [0, 0] is 0x82 0x00 0x00
@@ -1570,7 +1636,7 @@ mod tests {
         enc.array(1).unsigned(8u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
             "GetConstitution should return a non-empty CBOR response"
@@ -1588,7 +1654,7 @@ mod tests {
         enc.array(1).unsigned(9u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Should return empty CBOR map: 0xa0
         assert_eq!(result, vec![0xa0]);
     }
@@ -1604,7 +1670,7 @@ mod tests {
         enc.array(1).unsigned(10u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // DrepState encodes as a CBOR array; empty = 0x80
         assert_eq!(result, vec![0x80]);
     }
@@ -1620,7 +1686,7 @@ mod tests {
         enc.array(1).unsigned(11u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // CommitteeState encodes as CBOR array; empty = 0x80
         assert_eq!(result, vec![0x80]);
     }
@@ -1637,7 +1703,7 @@ mod tests {
         enc.array(2).unsigned(12u64).bytes(&[0xCC; 28]);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Non-existent pool returns CBOR null: 0xf6
         assert_eq!(result, vec![0xf6]);
     }
@@ -1654,7 +1720,7 @@ mod tests {
         enc.array(1).unsigned(12u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Missing param returns CBOR null: 0xf6
         assert_eq!(result, vec![0xf6]);
     }
@@ -1670,7 +1736,7 @@ mod tests {
         enc.array(1).unsigned(13u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Should return [treasury, reserves, total_deposits] = [0, 0, 0] on fresh state.
         assert!(!result.is_empty());
         // CBOR [0, 0, 0] is 0x83 0x00 0x00 0x00
@@ -1690,7 +1756,7 @@ mod tests {
         enc.array(0); // no inputs
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(!result.is_empty());
         // Empty CBOR map is 0xa0.
         assert_eq!(result, vec![0xa0]);
@@ -1711,7 +1777,7 @@ mod tests {
         enc.array(2).bytes(&fake_tx_id).unsigned(0u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(!result.is_empty());
         // Should return empty map.
         assert_eq!(result, vec![0xa0]);
@@ -1729,7 +1795,7 @@ mod tests {
         enc.array(1).unsigned(15u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(!result.is_empty());
         // Empty CBOR array is 0x80.
         assert_eq!(result, vec![0x80]);
@@ -1748,7 +1814,7 @@ mod tests {
         enc.array(0); // no credentials
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(!result.is_empty());
         // Empty CBOR array is 0x80.
         assert_eq!(result, vec![0x80]);
@@ -1770,7 +1836,7 @@ mod tests {
         enc.array(2).unsigned(0u64).bytes(&fake_hash);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(!result.is_empty());
         // Unregistered credential returns empty array.
         assert_eq!(result, vec![0x80]);
@@ -1788,7 +1854,7 @@ mod tests {
         enc.array(1).unsigned(17u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         assert!(!result.is_empty());
         // Empty CBOR map is 0xa0.
         assert_eq!(result, vec![0xa0]);
@@ -1806,7 +1872,7 @@ mod tests {
         enc.array(1).unsigned(18u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // Empty CBOR map is 0xa0.
         assert_eq!(result, vec![0xa0]);
     }
@@ -1823,7 +1889,7 @@ mod tests {
         enc.array(1).unsigned(19u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // CBOR null is 0xf6.
         assert_eq!(result, vec![0xf6]);
     }
@@ -1840,7 +1906,7 @@ mod tests {
         enc.array(1).unsigned(20u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // CBOR unsigned 0 is 0x00.
         assert_eq!(result, vec![0x00]);
     }
@@ -1859,7 +1925,7 @@ mod tests {
         enc.array(1).unsigned(21u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // CBOR null is 0xf6.
         assert_eq!(result, vec![0xf6]);
     }
@@ -1876,7 +1942,7 @@ mod tests {
         enc.array(1).unsigned(22u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // 4-element array of four CBOR zeros.
         assert_eq!(result, vec![0x84, 0x00, 0x00, 0x00, 0x00]);
     }
@@ -1900,7 +1966,7 @@ mod tests {
         enc.array(1).unsigned(22u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
 
         let mut dec = Decoder::new(&result);
         assert_eq!(dec.array().unwrap(), 4);
@@ -1923,7 +1989,7 @@ mod tests {
         enc.array(1).unsigned(23u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // 6-element array of six CBOR zeros.
         assert_eq!(result, vec![0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     }
@@ -1940,7 +2006,7 @@ mod tests {
         enc.array(1).unsigned(21u64);
         let query = enc.into_bytes();
 
-        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &query);
         // CBOR unsigned 1 is 0x01.
         assert_eq!(result, vec![0x01]);
     }

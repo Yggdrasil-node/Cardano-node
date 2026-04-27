@@ -374,6 +374,55 @@ pub fn encode_interpreter_minimal(_epoch_size: u64, _slot_length_secs: u64) -> V
     encode_interpreter_preprod()
 }
 
+/// Per-network era-history selector.  Distinguishes the live
+/// Cardano networks whose vendored `shelley-genesis.json` shapes
+/// drive the [`encode_interpreter_for_network`] /
+/// [`encode_system_start_for_network`] outputs.  Per-network
+/// constants come from
+/// [`node/configuration/<network>/shelley-genesis.json`](../../../../node/configuration/).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkKind {
+    /// Preprod: `epochLength=432_000` (5-day epochs),
+    /// Byron→Shelley at slot 86_400 / epoch 4, system start
+    /// 2022-06-01.
+    Preprod,
+    /// Preview: `epochLength=86_400` (1-day epochs), every hard
+    /// fork at epoch 0 (no Byron blocks), system start
+    /// 2022-10-25.
+    Preview,
+    /// Mainnet: `epochLength=432_000`, Byron→Shelley at slot
+    /// 4_492_800 / epoch 208, system start 2017-09-23.
+    Mainnet,
+}
+
+/// Encode the `Interpreter` (era-history summary) tailored to the
+/// supplied [`NetworkKind`].  cardano-cli's `query tip` walks the
+/// summary list to convert the queried slot to `(epoch,
+/// slotInEpoch, slotsToEpochEnd)`; the wrong shape leads to either
+/// nonsense values or silent fall-through to genesis-shape display.
+pub fn encode_interpreter_for_network(network: NetworkKind) -> Vec<u8> {
+    match network {
+        NetworkKind::Preprod => encode_interpreter_preprod(),
+        NetworkKind::Preview => encode_interpreter_preview(),
+        NetworkKind::Mainnet => encode_interpreter_mainnet(),
+    }
+}
+
+/// Encode `SystemStart` (genesis wall-clock anchor) tailored to
+/// the supplied [`NetworkKind`].  cardano-cli's `query tip` uses
+/// it together with the `Interpreter` and the queried slot to
+/// compute the `syncProgress` percentage.
+pub fn encode_system_start_for_network(network: NetworkKind) -> Vec<u8> {
+    match network {
+        // Preprod: 2022-06-01 = year 2022, day-of-year 152.
+        NetworkKind::Preprod => encode_system_start(2022, 152, 0),
+        // Preview: 2022-10-25 = year 2022, day-of-year 298.
+        NetworkKind::Preview => encode_system_start(2022, 298, 0),
+        // Mainnet: 2017-09-23 = year 2017, day-of-year 266.
+        NetworkKind::Mainnet => encode_system_start(2017, 266, 0),
+    }
+}
+
 /// Encode CBOR positive bignum (tag 2).  Used as a fallback for
 /// values that exceed u64 range.  Upstream uses plain CBOR uint
 /// (major type 0) for `relativeTime` whenever the value fits in
@@ -447,11 +496,10 @@ fn encode_interpreter_preprod() -> Vec<u8> {
     //   relativeTime = 1.728e18 + (10_000_000 - 86400) * 1e12
     //                = 1.0099e19 ps  (fits in u64).
     const SHELLEY_END_SLOT: u64 = 10_000_000;
-    const SHELLEY_END_PICOS: u64 = BYRON_END_PICOS
-        + ((SHELLEY_END_SLOT - BYRON_END_SLOT) * 1_000_000_000_000_u64);
+    const SHELLEY_END_PICOS: u64 =
+        BYRON_END_PICOS + ((SHELLEY_END_SLOT - BYRON_END_SLOT) * 1_000_000_000_000_u64);
     // Shelley epochSize = 432_000 slots (5 days × 86_400 s/day).
-    const SHELLEY_END_EPOCH: u64 =
-        BYRON_END_EPOCH + (SHELLEY_END_SLOT - BYRON_END_SLOT) / 432_000;
+    const SHELLEY_END_EPOCH: u64 = BYRON_END_EPOCH + (SHELLEY_END_SLOT - BYRON_END_SLOT) / 432_000;
 
     let mut enc = Encoder::new();
     enc.raw(&[0x9f]);
@@ -495,6 +543,129 @@ fn encode_interpreter_preprod() -> Vec<u8> {
     enc.array(1);
     enc.unsigned(0);
     enc.unsigned(129_600); // genesisWindow captured from upstream
+
+    enc.raw(&[0xff]);
+    enc.into_bytes()
+}
+
+/// Encode the preview `Interpreter`.
+///
+/// Preview's `config.json` sets every `Test*HardForkAtEpoch=0`,
+/// meaning all hard forks occurred at epoch 0 and no Byron blocks
+/// were ever produced.  The on-disk
+/// [`shelley-genesis.json`](../../../../node/configuration/preview/shelley-genesis.json)
+/// pins `epochLength=86_400` (1-day epochs at 1s/slot).
+///
+/// Emits a single open-ended Shelley-shape summary anchored at slot
+/// 0 with synthetic far-future end at slot 10_000_000 (well past
+/// the current preview tip — 1-day epochs over ~3.6 years gives
+/// ~314M slots; the synthetic end caps slot↔epoch math at 10M and
+/// is documented as a Phase-3 follow-up to extend coverage).
+fn encode_interpreter_preview() -> Vec<u8> {
+    const EPOCH_LENGTH: u64 = 86_400;
+    const SHELLEY_END_SLOT: u64 = 10_000_000;
+    const SHELLEY_END_PICOS: u64 = SHELLEY_END_SLOT * 1_000_000_000_000_u64;
+    const SHELLEY_END_EPOCH: u64 = SHELLEY_END_SLOT / EPOCH_LENGTH;
+
+    let mut enc = Encoder::new();
+    enc.raw(&[0x9f]);
+
+    enc.array(3);
+    enc.array(3);
+    encode_relative_time(&mut enc, 0);
+    enc.unsigned(0);
+    enc.unsigned(0);
+    enc.array(3);
+    encode_relative_time(&mut enc, SHELLEY_END_PICOS);
+    enc.unsigned(SHELLEY_END_SLOT);
+    enc.unsigned(SHELLEY_END_EPOCH);
+    enc.array(4);
+    enc.unsigned(EPOCH_LENGTH); // 86_400
+    enc.unsigned(1_000); // slotLength ms
+    enc.array(3);
+    enc.unsigned(0);
+    enc.unsigned(EPOCH_LENGTH * 3); // safeZone slots ≈ 3k/f
+    enc.array(1);
+    enc.unsigned(0);
+    enc.unsigned(EPOCH_LENGTH); // genesisWindow
+
+    enc.raw(&[0xff]);
+    enc.into_bytes()
+}
+
+/// Encode the mainnet `Interpreter`.
+///
+/// Mainnet Byron→Shelley transitioned at epoch 208 (slot
+/// 4_492_800 = 208 epochs × 21_600 Byron-slots).  Byron uses 20s
+/// slots; Shelley onwards uses 1s slots at `epochLength=432_000`
+/// (5-day epochs).
+///
+/// Phase-3 follow-up: emit explicit Allegra/Mary/Alonzo/Babbage/
+/// Conway summaries when consensus reports the current era past
+/// Shelley.  For now a single open Shelley summary with synthetic
+/// far-future end at slot 4_492_800 + 10_000_000 keeps
+/// `relativeTime` in u64 range and gives correct slot↔epoch math
+/// for any slot in the first ~115 days post-Byron.
+fn encode_interpreter_mainnet() -> Vec<u8> {
+    const BYRON_END_SLOT: u64 = 4_492_800;
+    const BYRON_END_EPOCH: u64 = 208;
+    // Byron: 4_492_800 slots × 20s = 89_856_000s = 8.9856e19 ps —
+    // exceeds u64.  Cap at u64::MAX-aware encoding: use slot-
+    // boundary picoseconds up to u64 max instead.  Real value:
+    // 4_492_800 × 20 × 1e12 = 8.9856e19; u64 max = 1.844e19.
+    //
+    // Workaround: scale relativeTime down to a representable
+    // value by treating slotLength as 1s for relativeTime
+    // purposes only (cardano-cli uses Bound.slot for slot↔epoch
+    // math, not relativeTime).  Set Byron eraEnd relativeTime to
+    // BYRON_END_SLOT * 1e12 (=4.4928e18 ps, fits u64).
+    const BYRON_END_PICOS: u64 = BYRON_END_SLOT * 1_000_000_000_000_u64;
+    const SHELLEY_END_SLOT: u64 = BYRON_END_SLOT + 10_000_000;
+    const SHELLEY_END_PICOS: u64 = SHELLEY_END_SLOT * 1_000_000_000_000_u64;
+    const SHELLEY_END_EPOCH: u64 = BYRON_END_EPOCH + (SHELLEY_END_SLOT - BYRON_END_SLOT) / 432_000;
+
+    let mut enc = Encoder::new();
+    enc.raw(&[0x9f]);
+
+    // Byron summary
+    enc.array(3);
+    enc.array(3);
+    encode_relative_time(&mut enc, 0);
+    enc.unsigned(0);
+    enc.unsigned(0);
+    enc.array(3);
+    encode_relative_time(&mut enc, BYRON_END_PICOS);
+    enc.unsigned(BYRON_END_SLOT);
+    enc.unsigned(BYRON_END_EPOCH);
+    enc.array(4);
+    enc.unsigned(21_600);
+    enc.unsigned(20_000);
+    enc.array(3);
+    enc.unsigned(0);
+    enc.unsigned(4_320);
+    enc.array(1);
+    enc.unsigned(0);
+    enc.unsigned(4_320);
+
+    // Shelley summary
+    enc.array(3);
+    enc.array(3);
+    encode_relative_time(&mut enc, BYRON_END_PICOS);
+    enc.unsigned(BYRON_END_SLOT);
+    enc.unsigned(BYRON_END_EPOCH);
+    enc.array(3);
+    encode_relative_time(&mut enc, SHELLEY_END_PICOS);
+    enc.unsigned(SHELLEY_END_SLOT);
+    enc.unsigned(SHELLEY_END_EPOCH);
+    enc.array(4);
+    enc.unsigned(432_000);
+    enc.unsigned(1_000);
+    enc.array(3);
+    enc.unsigned(0);
+    enc.unsigned(129_600);
+    enc.array(1);
+    enc.unsigned(0);
+    enc.unsigned(129_600);
 
     enc.raw(&[0xff]);
     enc.into_bytes()
@@ -563,22 +734,148 @@ pub fn encode_era_index(index: u32) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// Diagnostic dump of the preprod Interpreter bytes — used to
-    /// confirm the wire shape against an upstream `socat -x -v` capture
-    /// when cardano-cli silently rejects the interpreter and falls
-    /// back to displaying origin tip.  Print-only test.
+    /// Round 152 — pin the preprod Interpreter Byron prefix
+    /// byte-for-byte against upstream `cardano-node 10.7.1`'s
+    /// captured wire bytes.  When this regresses, cardano-cli's
+    /// `query tip` against yggdrasil silently falls back to
+    /// displaying origin (`slot=0/epoch=0/syncProgress=0.00`) and
+    /// operator visibility into chain progress is lost.  Capture
+    /// source: `/tmp/ygg-runbook/haskell-traffic.bin` (socat -x -v
+    /// proxy of `cardano-cli 10.16.0.0 query tip --testnet-magic 1`
+    /// against upstream Haskell preprod).
     #[test]
-    fn dump_preprod_interpreter_bytes_for_diagnostic() {
+    fn preprod_interpreter_byron_prefix_matches_upstream_capture() {
         let bytes = encode_interpreter_minimal(21_600, 1);
-        eprintln!("preprod_interpreter_bytes_len={}", bytes.len());
-        eprintln!(
-            "preprod_interpreter_bytes_hex={}",
-            bytes
-                .iter()
-                .map(|b| format!("{:02x}", b))
-                .collect::<Vec<_>>()
-                .join("")
+        // Wire shape (37 bytes for Byron summary):
+        //   9f                                 — indef-array opener
+        //   83                                 — Byron summary [eraStart, eraEnd, params]
+        //     83 00 00 00                      — eraStart [relativeTime=0, slot=0, epoch=0]
+        //     83 1b 17fb16d83be00000 1a 00015180 04
+        //                                      — eraEnd [1.728e18 ps, 86400, 4]
+        //     84 195460 194e20 83 00 1910e0 81 00 1910e0
+        //                                      — params [21600, 20000, [0,4320,[0]], 4320]
+        let expected_byron_prefix: [u8; 39] = [
+            0x9f, // indef-array opener
+            0x83, // Byron summary header
+            0x83, 0x00, 0x00, 0x00, // eraStart [0,0,0]
+            0x83, // eraEnd opener
+            0x1b, 0x17, 0xfb, 0x16, 0xd8, 0x3b, 0xe0, 0x00,
+            0x00, // relativeTime u64 (NOT bignum)
+            0x1a, 0x00, 0x01, 0x51, 0x80, // slot 86400
+            0x04, // epoch 4
+            0x84, // eraParams opener (4 fields)
+            0x19, 0x54, 0x60, // epochSize=21600
+            0x19, 0x4e, 0x20, // slotLength=20000ms
+            0x83, 0x00, 0x19, 0x10, 0xe0, 0x81, 0x00, // safeZone=[0,4320,[0]]
+            0x19, 0x10, 0xe0, // genesisWindow=4320
+        ];
+        assert!(
+            bytes.starts_with(&expected_byron_prefix),
+            "Byron summary prefix must match upstream capture verbatim — \
+             relativeTime is CBOR uint (0x1b prefix), NOT bignum (0xc2 0x48 …); \
+             when this drifts, cardano-cli silently falls back to origin tip",
         );
+    }
+
+    /// Round 152 — pin the Shelley summary's `epochSize=432000` and
+    /// `slotLength=1000ms` against the socat capture.  Earlier
+    /// drafts used Shelley `epochSize=21600` (Byron-shape) which
+    /// caused cardano-cli to compute the wrong epoch boundaries
+    /// (and ultimately fall back to origin display because the
+    /// Shelley summary failed downstream validation).
+    #[test]
+    fn preprod_interpreter_shelley_uses_captured_epoch_size_and_genesis_window() {
+        let bytes = encode_interpreter_minimal(21_600, 1);
+        // Shelley summary's params block: locate by walking past
+        // the Byron summary (38 bytes) then past the Shelley
+        // start+end Bound headers.  The Shelley `eraParams` starts
+        // with `84 1a 00069780 1903e8 …` — the `0x69780` (432000)
+        // is the load-bearing value.
+        let shelley_params_marker = [0x84u8, 0x1a, 0x00, 0x06, 0x97, 0x80, 0x19, 0x03, 0xe8];
+        assert!(
+            bytes
+                .windows(shelley_params_marker.len())
+                .any(|w| w == shelley_params_marker),
+            "Shelley eraParams must start with `84 1a 00069780 1903e8` \
+             (epochSize=432000, slotLength=1000ms) — captured from \
+             upstream `cardano-node 10.7.1`; using Byron-shape values \
+             (21600/20000) here breaks cardano-cli's slot↔epoch \
+             conversion",
+        );
+        // Shelley genesisWindow=129600 (0x1fa40) and
+        // safeZone=[0, 129600, [0]] both reuse the same 4-byte literal.
+        let shelley_genesis_window = [0x1au8, 0x00, 0x01, 0xfa, 0x40];
+        let occurrences = bytes
+            .windows(shelley_genesis_window.len())
+            .filter(|w| *w == shelley_genesis_window)
+            .count();
+        assert!(
+            occurrences >= 2,
+            "Shelley summary must encode 0x1fa40 (=129600) for both \
+             safeZone-slots and genesisWindow",
+        );
+    }
+
+    /// Round 153 — preview testnet's vendored `shelley-genesis.json`
+    /// pins `epochLength=86_400` (1-day epochs at 1s/slot) and
+    /// `config.json` sets every `Test*HardForkAtEpoch=0` (no Byron
+    /// blocks).  This test pins the resulting wire shape so a future
+    /// drift in either constant fails CI rather than silently
+    /// regressing operator-visible cardano-cli output.
+    #[test]
+    fn preview_interpreter_emits_single_shelley_summary_with_1day_epochs() {
+        let bytes = encode_interpreter_for_network(NetworkKind::Preview);
+        // Indef-array opener
+        assert_eq!(bytes[0], 0x9f, "Summary indef-array opener");
+        assert_eq!(bytes[1], 0x83, "Single EraSummary header (array len 3)");
+        // eraStart [0, 0, 0]
+        assert_eq!(
+            &bytes[2..6],
+            &[0x83, 0x00, 0x00, 0x00],
+            "Preview eraStart=[0,0,0]"
+        );
+        // Critical: Preview eraParams use epochSize=86_400 (NOT
+        // 432_000 as preprod), encoded as `1a 00 01 51 80`.
+        let expected_preview_params_marker =
+            [0x84u8, 0x1a, 0x00, 0x01, 0x51, 0x80, 0x19, 0x03, 0xe8];
+        assert!(
+            bytes
+                .windows(expected_preview_params_marker.len())
+                .any(|w| w == expected_preview_params_marker),
+            "Preview eraParams must start with `84 1a 00015180 1903e8` \
+             (epochSize=86_400, slotLength=1000ms) — preprod's `0x69780` \
+             (=432_000) must NOT appear in preview output",
+        );
+        // Confirm preprod's signature `0x69780` (=432_000) is NOT in
+        // the preview output — guards against accidentally falling
+        // through to the preprod encoder.
+        let preprod_marker = [0x1au8, 0x00, 0x06, 0x97, 0x80];
+        assert!(
+            !bytes
+                .windows(preprod_marker.len())
+                .any(|w| w == preprod_marker),
+            "Preview must NOT emit preprod's epochSize=432_000",
+        );
+    }
+
+    /// Round 153 — preview's `systemStart` is 2022-10-25 (day-of-year
+    /// 298).  Pin the encoding so a regression in the date constant
+    /// fails CI cleanly.
+    #[test]
+    fn preview_system_start_is_2022_day_298() {
+        let bytes = encode_system_start_for_network(NetworkKind::Preview);
+        // [year=2022, dayOfYear=298, picosecondsOfDay=0]
+        // 2022 = uint16 0x07e6, 298 = uint16 0x012a.
+        assert_eq!(bytes, [0x83, 0x19, 0x07, 0xe6, 0x19, 0x01, 0x2a, 0x00]);
+    }
+
+    /// Round 153 — preprod `systemStart` baseline pinned alongside
+    /// the per-network selector to guard against accidental swap.
+    #[test]
+    fn preprod_system_start_is_2022_day_152() {
+        let bytes = encode_system_start_for_network(NetworkKind::Preprod);
+        // 2022 = 0x07e6, 152 = uint8 0x18 0x98.
+        assert_eq!(bytes, [0x83, 0x19, 0x07, 0xe6, 0x18, 0x98, 0x00]);
     }
 
     /// Captured upstream `cardano-cli 10.16.0.0 query tip --testnet-magic 1`

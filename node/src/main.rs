@@ -2885,7 +2885,9 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
 
         Some(tokio::spawn(async move {
             let dispatcher: Arc<dyn yggdrasil_node::LocalQueryDispatcher> =
-                Arc::new(yggdrasil_node::BasicLocalQueryDispatcher);
+                Arc::new(yggdrasil_node::BasicLocalQueryDispatcher::new(
+                    yggdrasil_node::NetworkPreset::from_network_magic(ntc_network_magic),
+                ));
             let shutdown = async move {
                 if *ntc_shutdown.borrow() {
                     return;
@@ -3846,7 +3848,7 @@ mod tests {
         use yggdrasil_ledger::{Era, LedgerState};
         use yggdrasil_node::{BasicLocalQueryDispatcher, LocalQueryDispatcher};
 
-        let dispatcher = BasicLocalQueryDispatcher;
+        let dispatcher = BasicLocalQueryDispatcher::default();
         let snapshot = LedgerState::new(Era::Conway).snapshot();
 
         // Placeholders for the parametric variants. Values do not need

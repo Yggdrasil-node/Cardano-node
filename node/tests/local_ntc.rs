@@ -58,7 +58,7 @@ async fn spawn_local_server() -> (
 
     let chain_db = build_empty_chain_db();
     let mempool = SharedMempool::new(Mempool::with_capacity(1 << 20));
-    let dispatcher = Arc::new(BasicLocalQueryDispatcher);
+    let dispatcher = Arc::new(BasicLocalQueryDispatcher::default());
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     let socket_path_server = socket_path.clone();
@@ -105,7 +105,7 @@ async fn spawn_local_server_with_metrics() -> (
 
     let chain_db = build_empty_chain_db();
     let mempool = SharedMempool::new(Mempool::with_capacity(1 << 20));
-    let dispatcher = Arc::new(BasicLocalQueryDispatcher);
+    let dispatcher = Arc::new(BasicLocalQueryDispatcher::default());
     let metrics = Arc::new(NodeMetrics::new());
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
