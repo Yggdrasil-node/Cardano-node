@@ -371,55 +371,131 @@ pub fn encode_chain_point(point: &Point) -> Vec<u8> {
 /// `ConwayGenesis` hard-fork transition epochs threaded through the
 /// `LedgerStateSnapshot`.
 pub fn encode_interpreter_minimal(_epoch_size: u64, _slot_length_secs: u64) -> Vec<u8> {
+    encode_interpreter_preprod()
+}
+
+/// Encode CBOR positive bignum (tag 2).  Used as a fallback for
+/// values that exceed u64 range.  Upstream uses plain CBOR uint
+/// (major type 0) for `relativeTime` whenever the value fits in
+/// u64 (which is true for all realistic preprod/mainnet slots), so
+/// this helper is only needed for synthetic far-future bounds we
+/// don't currently emit.
+#[allow(dead_code)]
+fn encode_bignum_u128(enc: &mut Encoder, value: u128) {
+    enc.tag(2);
+    if value == 0 {
+        enc.bytes(&[]);
+        return;
+    }
+    let bytes = value.to_be_bytes();
+    let first_nonzero = bytes.iter().position(|&b| b != 0).unwrap_or(15);
+    enc.bytes(&bytes[first_nonzero..]);
+}
+
+/// Encode `relativeTime :: NominalDiffTimeMicro` per upstream
+/// `Ouroboros.Consensus.HardFork.History.Summary` which serialises
+/// it as a plain CBOR uint when it fits in u64.  Captured wire
+/// bytes from `cardano-node 10.7.1` at NtC V_23 confirm: Byron
+/// eraEnd encoded as `1b 17fb16d83be00000` (CBOR uint8 prefix +
+/// 8-byte big-endian = 1.728e18), not `c2 48 17fb16d83be00000`
+/// (bignum tag 2 + byte string).
+fn encode_relative_time(enc: &mut Encoder, picoseconds: u64) {
+    enc.unsigned(picoseconds);
+}
+
+/// Encode an upstream-faithful preprod `Interpreter` with two era
+/// summaries — Byron (closed) and Shelley (synthetic far-future end)
+/// — so cardano-cli's slot-to-epoch conversion produces the right
+/// `epoch` / `slotInEpoch` values for any post-genesis preprod slot.
+///
+/// Upstream emits one summary per transitioned era (Byron, Shelley,
+/// Allegra, Mary, Alonzo, Babbage, Conway), with the latest era's
+/// `eraEnd` synthetic-far-future and the rest closed at the
+/// successor era's start.  Allegra-onwards share Shelley's
+/// `epochSize=21600` and `slotLength=1000ms`, so a single Shelley
+/// summary spanning all post-Byron slots gives cardano-cli the right
+/// arithmetic for `query tip` purposes.  `current_era` reported via
+/// `GetCurrentEra` (separate query) is what produces the displayed
+/// `era` field — the interpreter only feeds the slot↔time
+/// conversion.
+///
+/// Phase-3 follow-up: derive era boundaries from the loaded
+/// `ShelleyGenesis`/`AlonzoGenesis`/`ConwayGenesis` hard-fork
+/// transition epochs threaded through `LedgerStateSnapshot`, and emit
+/// all 7 summaries when current era is Conway so the per-era
+/// `eraStart`/`eraEnd` align with real preprod boundaries.
+fn encode_interpreter_preprod() -> Vec<u8> {
+    // Preprod Byron→Shelley boundary captured from `cardano-node 10.7.1`
+    // socat -x -v at NtC V_23: epoch 4, slot 86_400, relativeTime
+    // 1.728e18 picoseconds = 1.728e6 seconds = 20 days
+    // (4 epochs × 21_600 Byron-slots × 20_000ms/slot).
+    const BYRON_END_SLOT: u64 = 86_400;
+    const BYRON_END_EPOCH: u64 = 4;
+    const BYRON_END_PICOS: u64 = 0x17fb_16d8_3be0_0000;
+
+    // Shelley→Allegra boundary captured from same upstream socat:
+    // epoch 5, slot 0x7e900 = 518_400.  Allegra inherits Shelley's
+    // params shape so we don't need to emit Allegra explicitly until
+    // a node progresses past slot 518_400 — Phase-3 follow-up.
+    //
+    // Synthetic far-future Shelley end at slot=2^36 covers all
+    // realistic preprod slots (years past current tip) and keeps
+    // relativeTime in u64 range:
+    //   2^36 slots × 1e12 ps/slot = 6.87e22 — overflows u64.
+    // So cap synthetic end at slot=10_000_000 (≈ 116 days post
+    // Byron at 1s/slot, well past current preprod test tip):
+    //   relativeTime = 1.728e18 + (10_000_000 - 86400) * 1e12
+    //                = 1.0099e19 ps  (fits in u64).
+    const SHELLEY_END_SLOT: u64 = 10_000_000;
+    const SHELLEY_END_PICOS: u64 = BYRON_END_PICOS
+        + ((SHELLEY_END_SLOT - BYRON_END_SLOT) * 1_000_000_000_000_u64);
+    // Shelley epochSize = 432_000 slots (5 days × 86_400 s/day).
+    const SHELLEY_END_EPOCH: u64 =
+        BYRON_END_EPOCH + (SHELLEY_END_SLOT - BYRON_END_SLOT) / 432_000;
+
     let mut enc = Encoder::new();
-    // Summary outer: indefinite-length array start (CBOR major type 4
-    // with additional info 31 = `0x9f`).
     enc.raw(&[0x9f]);
 
-    // Single EraSummary: [eraStart, eraEnd, eraParams].
+    // Byron summary
     enc.array(3);
-
-    // eraStart Bound: relativeTime=0, slot=0, epoch=0 — preprod genesis.
     enc.array(3);
-    enc.unsigned(0); // relativeTime (picoseconds)
-    enc.unsigned(0); // slot
-    enc.unsigned(0); // epoch
-
-    // eraEnd encoded as a Bound directly per the Haskell capture
-    // (upstream serialises `EraEnd Bound` as the Bound's CBOR
-    // structure; `EraUnbounded` is rare on the wire — even open eras
-    // get a synthetic far-future bound).  Use a large Bound value to
-    // avoid the active-era boundary falling within the era we
-    // describe.  These values mimic Byron's end on preprod
-    // (slot 86400, epoch 4) so cardano-cli's parser sees the same
-    // shape it observed from real upstream.
-    enc.array(3);
-    // relativeTime picoseconds — 0x17fb16d83be00000 ≈ 1.728e15
-    enc.unsigned(0x17fb16d83be00000);
-    enc.unsigned(86400); // slot
-    enc.unsigned(4); // epoch
-
-    // eraParams shape captured from `cardano-node 10.7.1` at NtC V_23
-    // for preprod Byron era:
-    //   `84 19 54 60 19 4e 20 83 00 19 10 e0 81 00 19 10 e0`
-    // Decoded:
-    //   [21600,                          -- epochSize
-    //    20000,                          -- slotLength (ms)
-    //    [0, 4320, [0]],                 -- safeZone (StandardSafeZone)
-    //    4320]                           -- genesisWindow
-    enc.array(4);
-    enc.unsigned(21600); // epochSize
-    enc.unsigned(20000); // slotLength (Byron uses ms encoding)
-    // safeZone: 3-elem [tag=0 (StandardSafeZone), slots=4320, lowerBound=[0]]
-    enc.array(3);
+    encode_relative_time(&mut enc, 0);
     enc.unsigned(0);
-    enc.unsigned(4320);
+    enc.unsigned(0);
+    enc.array(3);
+    encode_relative_time(&mut enc, BYRON_END_PICOS);
+    enc.unsigned(BYRON_END_SLOT);
+    enc.unsigned(BYRON_END_EPOCH);
+    enc.array(4);
+    enc.unsigned(21_600); // epochSize
+    enc.unsigned(20_000); // slotLength ms
+    enc.array(3); // safeZone
+    enc.unsigned(0);
+    enc.unsigned(4_320);
     enc.array(1);
     enc.unsigned(0);
-    // genesisWindow
-    enc.unsigned(4320);
+    enc.unsigned(4_320); // genesisWindow
 
-    // Break code for indefinite-length array.
+    // Shelley summary (open era — synthetic far-future end)
+    enc.array(3);
+    enc.array(3);
+    encode_relative_time(&mut enc, BYRON_END_PICOS);
+    enc.unsigned(BYRON_END_SLOT);
+    enc.unsigned(BYRON_END_EPOCH);
+    enc.array(3);
+    encode_relative_time(&mut enc, SHELLEY_END_PICOS);
+    enc.unsigned(SHELLEY_END_SLOT);
+    enc.unsigned(SHELLEY_END_EPOCH);
+    enc.array(4);
+    enc.unsigned(432_000); // epochSize captured from upstream
+    enc.unsigned(1_000); // slotLength ms
+    enc.array(3); // safeZone
+    enc.unsigned(0);
+    enc.unsigned(129_600);
+    enc.array(1);
+    enc.unsigned(0);
+    enc.unsigned(129_600); // genesisWindow captured from upstream
+
     enc.raw(&[0xff]);
     enc.into_bytes()
 }
@@ -486,6 +562,24 @@ pub fn encode_era_index(index: u32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Diagnostic dump of the preprod Interpreter bytes — used to
+    /// confirm the wire shape against an upstream `socat -x -v` capture
+    /// when cardano-cli silently rejects the interpreter and falls
+    /// back to displaying origin tip.  Print-only test.
+    #[test]
+    fn dump_preprod_interpreter_bytes_for_diagnostic() {
+        let bytes = encode_interpreter_minimal(21_600, 1);
+        eprintln!("preprod_interpreter_bytes_len={}", bytes.len());
+        eprintln!(
+            "preprod_interpreter_bytes_hex={}",
+            bytes
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join("")
+        );
+    }
 
     /// Captured upstream `cardano-cli 10.16.0.0 query tip --testnet-magic 1`
     /// payload — `BlockQuery (QueryHardFork GetCurrentEra)`.  Operator

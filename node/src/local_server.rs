@@ -1195,6 +1195,16 @@ fn dispatch_upstream_query(
         encode_chain_point, encode_era_index, encode_interpreter_minimal,
     };
 
+    let debug_enabled = std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0");
+    if debug_enabled {
+        eprintln!(
+            "[YGG_NTC_DEBUG] dispatch_upstream_query: snapshot.tip={:?} \
+             snapshot.current_era={:?}",
+            snapshot.tip(),
+            snapshot.current_era()
+        );
+    }
+
     let null_response = || -> Vec<u8> {
         let mut enc = Encoder::new();
         enc.null();
