@@ -6,18 +6,16 @@ This directory holds the image assets referenced by the docs site
 
 | File | Purpose | Where it shows up |
 | --- | --- | --- |
-| `Yggrasil_banner.png` | Wide hero banner with the "YggdrasilNode — A Cardano Node Project Written In Rust" title | Top of [docs/index.md](../../index.md) and [README.md](../../../README.md) |
-| `Yggrasil_logo.png` | Square tree-of-life mark, no text | just-the-docs sidebar `logo:`, used by `gh_edit_link` and `aux_links` icon |
-| `favicon.png` | 32×32 PNG (or 64×64 retina) cropped from `Yggrasil_logo.png` | `<link rel="icon">` injected by `_includes/head_custom.html` |
+| `Yggrasil_banner.png` | Wide hero banner with the "YggdrasilNode — A Cardano Node Project Written In Rust" title | Top of [docs/index.md](../../index.md) (gated by `hero: true` front-matter) and [README.md](../../../README.md). Also the Open Graph / Twitter Card image set in [`_includes/head_custom.html`](../../_includes/head_custom.html). |
+| `Yggrasil_logo.png` | Square tree-of-life mark, no text | just-the-docs sidebar `logo:` in [`_config.yml`](../../_config.yml) AND the `<link rel="icon">` favicon (set in [`_includes/head_custom.html`](../../_includes/head_custom.html)). One asset, two roles. |
 
 ## Dropping the files in
 
-Save the assets the maintainer uploaded to:
+Both files are committed to the repo:
 
 ```
-docs/assets/images/Yggrasil_banner.png   # ~1428×590 wide hero, transparent or dark background
-docs/assets/images/Yggrasil_logo.png     # ~512×512 square, transparent background
-docs/assets/images/favicon.png            # 64×64 or 32×32 square, transparent background
+docs/assets/images/Yggrasil_banner.png   # 1428×590 wide hero, dark background
+docs/assets/images/Yggrasil_logo.png     # 512×512 square, transparent background
 ```
 
 The `gh-pages` workflow (`.github/workflows/pages.yml`) bundles

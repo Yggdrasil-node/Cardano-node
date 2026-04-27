@@ -7,7 +7,105 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-_No changes yet — post-v0.1.0 work will land here._
+### Fixed
+
+- **Fee-validation parity bug at the preprod Byron→Shelley boundary
+  (slot ~518 460).** Previously `*_block_to_block` in
+  `node/src/sync.rs` re-serialised typed `ShelleyTxBody` /
+  `ShelleyWitnessSet` to compute `tx_size`, which produced
+  byte-canonical CBOR that did not always match the on-wire encoding
+  the block author chose (definite vs indefinite length, set vs
+  array, integer-width canonicalisation).  The 10-byte drift was
+  enough to shift `min_fee = 44 · txSize + 155 381` past the declared
+  fee on a real preprod transaction (440 lovelace gap; ~0.2 %).  Fix:
+  new helper `yggdrasil_ledger::extract_block_tx_byte_spans` walks
+  the outer block CBOR and returns the on-wire byte spans for every
+  `transaction_body` / `transaction_witness_set`; the four era
+  converters (`shelley`/`alonzo`/`babbage`/`conway`) now take
+  `raw_block_bytes: &[u8]` and use those spans for `tx.body`,
+  `tx.witnesses`, and `tx_id` hashing.  `TypedSyncStep::RollForward`
+  and `MultiEraSyncStep::RollForward` thread raw bytes alongside the
+  typed values, sourced from the existing
+  `BlockFetchClient::request_range_collect_points_raw_with` API.
+  4 new regression tests in `crates/ledger/src/cbor.rs` exercise the
+  helper, including a deliberately mismatched indefinite-length-array
+  case that proves on-wire byte preservation.  Surfaced in the
+  2026-04-27 operational quality-check pass; details in
+  [`docs/REAL_PREPROD_POOL_VERIFICATION.md`](docs/REAL_PREPROD_POOL_VERIFICATION.md).
+
+### Security
+
+- **Code audit C-1/H-1/H-2 + M-1..M-8 + L-1..L-9 closed.**  See
+  [`docs/code-audit.md`](docs/code-audit.md) for the source audit;
+  remediation summary:
+  - **C-1 / H-1** — every CBOR decoder that allocates from a
+    peer-supplied `count` field now goes through
+    `vec_with_safe_capacity` (soft cap) or `vec_with_strict_capacity`
+    (hard cap) defined in [`crates/ledger/src/cbor.rs`](crates/ledger/src/cbor.rs);
+    per-protocol bounds live in
+    [`crates/network/src/protocol_size_limits.rs`](crates/network/src/protocol_size_limits.rs).
+    Fixes a pre-auth remote DoS via `Vec::with_capacity(u64::MAX)`.
+  - **H-2** — `PeerListener::accept_peer` split into `accept_tcp` +
+    `handshake_on` with a 5 s `HANDSHAKE_DEADLINE`.  Inbound rate-
+    limit decision now runs **before** the handshake, so a hard-limit
+    rejection costs only a TCP accept.
+  - **M-1** — mux ingress-queue limit checked **before** the per-frame
+    payload allocation in [`crates/network/src/mux.rs`](crates/network/src/mux.rs).
+  - **M-3** — NtC Unix socket bound at `0o660` (was `0o755` from
+    default umask) in [`node/src/local_server.rs`](node/src/local_server.rs).
+  - **M-6 / L-8 / L-9** — value-preservation arithmetic in
+    [`crates/ledger/src/utxo.rs`](crates/ledger/src/utxo.rs) now uses
+    `checked_add` (new `LedgerError::ValueOverflow`); plutus
+    `ExBudget::spend` uses `checked_sub`; mempool capacity arithmetic
+    uses `checked_add`.  Closes the silent saturating-on-overflow
+    path that diverged from upstream Haskell `Integer` arithmetic.
+  - **M-8** — genesis-hash gate hard-fails on unpaired
+    `(genesis-file, declared-hash)` in
+    [`node/src/config.rs`](node/src/config.rs); previously a missing
+    `*GenesisHash` skipped verification silently.
+  - **L-6** — KES/VRF/cold key files rejected unless
+    `mode & 0o077 == 0` in [`node/src/block_producer.rs`](node/src/block_producer.rs).
+  - **M-4 / M-5** — `serde_yaml` (advisory-db #2132) and `serde_yml`
+    (RUSTSEC-2025-0068) replaced with `serde_norway = "0.9"`;
+    trace-forwarder migrated from `serde_cbor 0.11` (RUSTSEC-2021-0127)
+    to `ciborium 0.2`.  `serde_cbor` retained transitionally for
+    storage on-disk format only, ignored in `deny.toml` with rationale.
+  - **L-4** — `cargo deny check` runs in CI on every push and PR.
+  - **L-1 / L-2 / L-7** — release verification + maintainer signing
+    sections in [`SECURITY.md`](SECURITY.md); `restart_resilience.sh`
+    now uses `mktemp -d` + ephemeral ports so concurrent runs don't
+    collide.
+
+### Changed
+
+- **Toolchain bumped from Rust 1.85.0 → 1.95.0** ([rust-toolchain.toml](rust-toolchain.toml),
+  workspace `rust-version`).  All new 1.95 clippy lints are clean
+  (`manual_is_multiple_of`, `manual_div_ceil`, `manual_abs_diff`,
+  `manual_contains`, `manual_ok`, `cloned_ref_to_slice_refs`,
+  `unnecessary_sort_by`, `useless_vec`, `single_match_else`,
+  `manual_while_let_some`, `derivable_impls`, `doc_overindented_list_items`,
+  `doc_list_items_indentation`).  Stylistic-bulk lints
+  (`collapsible_if`, `result_large_err`, `large_enum_variant`)
+  explicitly carried forward as `allow` in
+  [`Cargo.toml`](Cargo.toml) `[workspace.lints.clippy]` with
+  documented rationale.
+
+- **Docs site converted to dark-only mode** with the YggdrasilNode
+  branding.  `docs/_sass/color_schemes/yggdrasil.scss` is a
+  self-contained dark scheme (no fragile `@import "./dark"` that
+  broke under `remote_theme:`); `docs/_sass/custom/custom.scss`
+  design tokens and per-component backgrounds rebound to
+  dark-friendly values; the YggdrasilNode banner appears as a
+  landing-page hero via `docs/_includes/header_custom.html` (gated
+  by `hero: true` front-matter).  Sidebar logo wired via
+  `_config.yml` `logo:`; favicon and Open Graph image set in
+  `docs/_includes/head_custom.html`.
+
+### Tests
+
+- **4 634 passing, 0 failing** (was 4 630).  `+4` from the new
+  `extract_block_tx_byte_spans_*` regression tests in
+  [`crates/ledger/src/cbor.rs`](crates/ledger/src/cbor.rs).
 
 ## [0.1.0] — 2026-04-27
 
@@ -90,7 +188,9 @@ originally tracked as a follow-up has landed.
 
 ### Test count
 
-- 4,630 tests passing across the workspace, 0 failing.
+- 4,630 tests passing across the workspace, 0 failing (post-v0.1.0
+  the count rose to 4,634 with the fee-validation regression tests
+  added in the next cycle).
 - All four gates clean: `cargo check-all`, `cargo test-all`,
   `cargo lint`, `cargo doc --workspace --no-deps`.
 
