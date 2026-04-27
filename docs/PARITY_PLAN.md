@@ -312,7 +312,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 | Connection pooling | Max connection limits | ✅ | ✅ | Complete | AcceptedConnectionsLimit (512 hard/384 soft/5s delay), prune_for_inbound eviction, inbound duplex reuse for outbound
 | Graceful shutdown | In-flight message draining | ✅ | ✅ | Complete | Outbound CM-drain with ControlMessage::Terminate + bounded timeout; inbound JoinSet drain
 
-**Network Summary**: 100% feature complete. All mini-protocols, mux with weighted fair scheduling, peer governor (now including `HotPeerScheduling` per-mini-protocol weight surface from Slice D, commit `b1ec7cd`), connection manager with rate limiting and pruning, graceful shutdown, and per-protocol recv deadlines (server-side PROTOCOL_RECV_TIMEOUT 60 s + client-side per-state ProtocolTimeLimits from protocol_limits.rs) all implemented. Genesis-density primitive lives in `crates/consensus/` (Slice GD); the ChainSync observation hook that pushes `observe_header(slot)` per-peer is a follow-up runtime integration.
+**Network Summary**: 100% feature complete. All mini-protocols, mux with weighted fair scheduling, peer governor (including `HotPeerScheduling` per-mini-protocol weight surface from Slice D, commit `b1ec7cd`, and density-biased demotion through `PeerMetrics.density`), connection manager with rate limiting and pruning, graceful shutdown, and per-protocol recv deadlines (server-side PROTOCOL_RECV_TIMEOUT 60 s + client-side per-state ProtocolTimeLimits from protocol_limits.rs) all implemented. Genesis-density primitive lives in `crates/consensus/` (Slice GD); the ChainSync `observe_header(slot)` runtime hook (commit `36bdbef`) feeds per-peer `DensityWindow` instances consumed by the governor.
 
 ---
 
@@ -603,7 +603,7 @@ The Rust Cardano node (Yggdrasil) has achieved:
 - **Hot-peer scheduling**: ChainSync weight 3, BlockFetch weight 2 on promote; reset on demote
 
 **What's Missing**:
-- _(no remaining gaps)_ — Genesis density tracking primitive landed in Slice GD (`crates/consensus/src/genesis_density.rs`, commit `682dfa8`).  ChainSync observation hook + governor-side density-biased demotion are tracked as a follow-up runtime integration outside this slice.
+- _(no remaining gaps)_ — Genesis density tracking primitive landed in Slice GD (`crates/consensus/src/genesis_density.rs`, commit `682dfa8`); ChainSync observation hook + governor-side density-biased demotion are wired in (commit `36bdbef`).
 
 **Parity Status**: **100% feature-complete** — All protocols, mux, governor, connection lifecycle, per-protocol server + client timeouts, peer management, and genesis-density primitive fully implemented and tested.
 
@@ -782,17 +782,24 @@ The Rust Cardano node (Yggdrasil) has achieved:
    - Scope: Inbound/outbound connection limits
    - Tests: Pool exhaustion scenarios
 
-5. **Multi-peer concurrent BlockFetch** (`node/src/sync.rs`, `node/src/runtime.rs`)
-   - **Status**: foundation complete as of Slice E (commit `55b66d1`). The
-     `max_concurrent_block_fetch_peers` config knob is now read by a
-     production code path (`config.effective_block_fetch_concurrency(...)`
-     called per session in `run_reconnecting_verified_sync_service_chaindb_inner`),
-     and the `partition_fetch_range_across_peers` primitive applies
-     `split_range` from the existing `BlockFetchPool` foundation to fan a
-     fetch range across N peer assignments. The runtime currently keeps
-     one session per call, so the effective concurrency stays at 1 by
-     default; multi-session orchestration is a follow-up that will
-     consume the existing primitive without further config plumbing.
+5. **Multi-peer concurrent BlockFetch** (`node/src/sync.rs`, `node/src/runtime.rs`,
+   `node/src/blockfetch_worker.rs`)
+   - **Status**: complete (Slice E foundation `55b66d1` → workers
+     `E-Workers` → production spawn `900ce3e` → governor migration
+     `1249f7f` → sync-loop dispatch branch `9f87447` → metrics
+     `b3a6080`). The runtime now maintains a shared
+     `Arc<tokio::sync::RwLock<FetchWorkerPool<MultiEraBlock>>>` mirroring
+     upstream `Ouroboros.Network.BlockFetch.ClientRegistry`. On
+     warm-to-hot promotion, `OutboundPeerManager::migrate_session_to_worker`
+     hands the per-peer `BlockFetchClient` to a dedicated worker task
+     (`FetchWorkerHandle::spawn_with_block_fetch_client`); on demotion
+     the worker is unregistered and the client dropped. The verified
+     sync loop calls `effective_block_fetch_concurrency` per batch and,
+     when ≥2, routes through `execute_multi_peer_blockfetch_plan`
+     (per-peer `tokio::spawn` + `mpsc`/`oneshot` channels +
+     `ReorderBuffer<MultiEraBlock>` for chain-order delivery).
+     Tentative-header timing is locked in `dispatch_range_with_tentative`
+     (announce before dispatch, clear trap on any chunk failure).
    - Foundation in place (`crates/network/src/blockfetch_pool.rs`):
      `BlockFetchPool` (per-peer in-flight + bytes/blocks accounting),
      `split_range(lower, upper, n)`, `ReorderBuffer<B>` keyed by lower
@@ -801,23 +808,30 @@ The Rust Cardano node (Yggdrasil) has achieved:
      `effective_block_fetch_concurrency(max_knob, n_peers)`,
      `BlockFetchAssignment { peer, lower, upper }`,
      `partition_fetch_range_across_peers(lower, upper, peers, max_knob)`,
+     `execute_multi_peer_blockfetch_plan{,_inline}`,
+     `dispatch_range_with_tentative`,
      `VerifiedSyncServiceConfig.max_concurrent_block_fetch_peers` field
-     + `effective_block_fetch_concurrency(n_peers)` method.
+     + `shared_fetch_worker_pool` handle.
+   - Worker primitive (`node/src/blockfetch_worker.rs`):
+     `FetchWorkerHandle<B>::spawn_with_block_fetch_client`,
+     `FetchWorkerPool<B>::{register, unregister, dispatch_plan,
+     prune_closed}`. Prometheus metrics
+     (`yggdrasil_blockfetch_workers_registered`,
+     `yggdrasil_blockfetch_workers_migrated_total`) exposed via
+     `NodeMetrics`.
    - Upstream references:
      - [`Ouroboros.Network.BlockFetch.Decision`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision.hs)
      - [`Ouroboros.Network.BlockFetch.ClientRegistry`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/ClientRegistry.hs)
-   - Remaining (out of scope for Slice E, tracked as future runtime work):
-     multi-session orchestration that maintains N≥2 concurrent
-     `PeerSession`s and dispatches `partition_fetch_range_across_peers`
-     output via `tokio::JoinSet`, with `ReorderBuffer` ahead of validator
-     and consensus-correctness review of the tentative-header timing
-     change in `sync_batch_verified_with_tentative`.
+   - Operator rehearsal: `MANUAL_TEST_RUNBOOK.md` §6.5 (parallel-fetch
+     rehearsal across 6.5a–6.5f) covers the operator wallclock validation;
+     the default knob ships at 1 and is operator-flippable to ≥2 once
+     sign-off is recorded.
 
 **Success Criteria**:
 - ✅ Stable mainnet peer set without thrashing
 - ✅ Connection limits enforced
 - ✅ Failed peers properly demoted
-- ⏳ Concurrent BlockFetch from N warm peers with reorder + rebalance
+- ✅ Concurrent BlockFetch from N warm peers with reorder + rebalance (commits `55b66d1` → `b3a6080`)
 
 ---
 
