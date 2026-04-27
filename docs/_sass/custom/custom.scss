@@ -1,0 +1,463 @@
+// Yggdrasil — custom CSS overrides.
+//
+// Adds:
+//   - Refined typography (system stack with subtle letter-spacing on headings)
+//   - Hero sections (.yg-hero)
+//   - Stats banner (.yg-stats)
+//   - Card grid for navigation tiles (.yg-cards)
+//   - Polished callouts (.callout-info, .callout-warning, .callout-tip)
+//   - Subtle transitions and slightly improved code blocks
+
+// ---------- design tokens ----------
+
+:root {
+  --yg-teal-700:  #0c5a5a;
+  --yg-teal-600:  #0f6e6e;
+  --yg-teal-500:  #1a8585;
+  --yg-teal-100:  #d6e9e9;
+  --yg-teal-050:  #e6f1f1;
+
+  --yg-rust-700:  #a44b32;
+  --yg-rust-600:  #c95e3f;
+  --yg-rust-500:  #d97757;
+  --yg-rust-100:  #f5d8cd;
+
+  --yg-amber-500: #c19a3e;
+  --yg-amber-100: #f3e7c1;
+
+  --yg-ink-900:   #0c1219;
+  --yg-ink-700:   #1c2025;
+  --yg-ink-500:   #4a5568;
+  --yg-ink-400:   #6b7280;
+  --yg-ink-300:   #94a3b8;
+
+  --yg-paper:     #fafaf8;
+  --yg-mist:      #f1f3f1;
+  --yg-line:      #e2e6e2;
+}
+
+// ---------- typography ----------
+
+body {
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  font-feature-settings: "kern", "liga", "calt", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.65;
+}
+
+code,
+pre,
+.text-mono,
+kbd {
+  font-family:
+    "JetBrains Mono",
+    "Fira Code",
+    "SF Mono",
+    "SFMono-Regular",
+    Consolas,
+    "Liberation Mono",
+    Menlo,
+    monospace;
+  font-feature-settings: "calt", "ss01";
+}
+
+h1, h2, h3, h4, h5, h6,
+.text-delta {
+  letter-spacing: -0.01em;
+  color: var(--yg-ink-900);
+}
+
+h1 { letter-spacing: -0.025em; }
+h2 { letter-spacing: -0.018em; }
+
+// ---------- top nav / site header polish ----------
+
+.site-title {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--yg-ink-900);
+}
+
+.site-header {
+  border-bottom: 1px solid var(--yg-line);
+  background: var(--yg-paper);
+}
+
+.aux-nav-list-item .site-button:hover {
+  color: var(--yg-teal-600);
+  background: var(--yg-teal-050);
+  border-radius: 6px;
+}
+
+// Refined sidebar nav: bigger click targets, accent on active.
+.nav-list .nav-list-item .nav-list-link {
+  border-radius: 6px;
+  transition: background-color 0.12s ease, color 0.12s ease;
+
+  &:hover {
+    background: var(--yg-teal-050);
+    color: var(--yg-teal-700);
+  }
+
+  &.active {
+    background: var(--yg-teal-600);
+    color: #fff;
+    font-weight: 600;
+  }
+}
+
+// ---------- main content ----------
+
+.main-content {
+  max-width: 78ch;
+}
+
+.main-content a:not(.btn) {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(15, 110, 110, 0.35);
+  transition: color 0.12s ease, text-decoration-color 0.12s ease;
+
+  &:hover {
+    text-decoration-color: var(--yg-teal-600);
+  }
+}
+
+// Polished tables.
+.main-content table {
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--yg-line);
+  border-radius: 8px;
+  overflow: hidden;
+
+  th {
+    background: var(--yg-mist);
+    color: var(--yg-ink-900);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  td, th {
+    border: none;
+    border-bottom: 1px solid var(--yg-line);
+    padding: 0.6rem 0.85rem;
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+// Code blocks: tighter padding, subtle border, monospace tuning.
+.main-content pre.highlight,
+.main-content figure.highlight pre {
+  border: 1px solid var(--yg-line);
+  border-radius: 8px;
+  background: #f8faf9 !important;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  padding: 1rem 1.1rem;
+  box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+}
+
+.main-content code {
+  font-size: 0.88em;
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: var(--yg-mist);
+  border: 1px solid var(--yg-line);
+}
+
+.main-content pre code {
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+
+// Block quotes look like sidenotes.
+.main-content blockquote {
+  border-left: 3px solid var(--yg-teal-500);
+  background: var(--yg-teal-050);
+  color: var(--yg-ink-700);
+  padding: 0.75rem 1rem;
+  border-radius: 0 6px 6px 0;
+  margin: 1.25rem 0;
+}
+
+// Heading anchor hover affordance.
+.anchor-heading svg {
+  fill: var(--yg-teal-500);
+  opacity: 0.4;
+  transition: opacity 0.12s ease;
+}
+
+h1:hover .anchor-heading svg,
+h2:hover .anchor-heading svg,
+h3:hover .anchor-heading svg,
+h4:hover .anchor-heading svg {
+  opacity: 1;
+}
+
+// ---------- hero ----------
+
+.yg-hero {
+  margin: 0 0 2.5rem;
+  padding: 2.4rem 2rem;
+  background:
+    linear-gradient(135deg, var(--yg-teal-050) 0%, var(--yg-paper) 100%);
+  border: 1px solid var(--yg-line);
+  border-radius: 14px;
+  position: relative;
+  overflow: hidden;
+
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(
+        circle at top right,
+        rgba(15, 110, 110, 0.10) 0%,
+        transparent 55%
+      );
+    pointer-events: none;
+  }
+
+  .yg-eyebrow {
+    display: inline-block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--yg-teal-700);
+    margin-bottom: 0.6rem;
+  }
+
+  h1 {
+    margin: 0 0 0.8rem;
+    font-size: 2.4rem;
+    line-height: 1.15;
+    color: var(--yg-ink-900);
+  }
+
+  p.yg-lead {
+    font-size: 1.1rem;
+    color: var(--yg-ink-500);
+    max-width: 60ch;
+    margin: 0 0 1.4rem;
+  }
+
+  .yg-hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+    margin-top: 0.4rem;
+  }
+
+  .yg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 600;
+    padding: 0.55rem 1.05rem;
+    border-radius: 8px;
+    font-size: 0.92rem;
+    text-decoration: none !important;
+    border: 1px solid transparent;
+    transition:
+      background-color 0.12s ease,
+      color 0.12s ease,
+      border-color 0.12s ease,
+      transform 0.12s ease;
+  }
+
+  .yg-btn-primary {
+    background: var(--yg-teal-600);
+    color: #fff !important;
+    border-color: var(--yg-teal-600);
+
+    &:hover {
+      background: var(--yg-teal-700);
+      border-color: var(--yg-teal-700);
+      transform: translateY(-1px);
+    }
+  }
+
+  .yg-btn-secondary {
+    background: #fff;
+    color: var(--yg-teal-700) !important;
+    border-color: var(--yg-line);
+
+    &:hover {
+      border-color: var(--yg-teal-500);
+      color: var(--yg-teal-700) !important;
+      transform: translateY(-1px);
+    }
+  }
+}
+
+// ---------- stats banner ----------
+
+.yg-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.9rem;
+  margin: 0 0 2.4rem;
+
+  .yg-stat {
+    background: #fff;
+    border: 1px solid var(--yg-line);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+
+    .yg-stat-value {
+      font-size: 1.45rem;
+      font-weight: 700;
+      color: var(--yg-ink-900);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      display: block;
+    }
+
+    .yg-stat-label {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--yg-ink-400);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 0.35rem;
+    }
+
+    &.yg-stat-accent .yg-stat-value {
+      color: var(--yg-teal-700);
+    }
+  }
+}
+
+// ---------- card grid ----------
+
+.yg-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+  margin: 1.2rem 0 2.2rem;
+  padding: 0;
+  list-style: none;
+
+  li { list-style: none; margin: 0; }
+
+  a.yg-card {
+    display: block;
+    background: #fff;
+    border: 1px solid var(--yg-line);
+    border-radius: 10px;
+    padding: 1.05rem 1.15rem;
+    color: var(--yg-ink-700) !important;
+    text-decoration: none !important;
+    transition:
+      border-color 0.14s ease,
+      box-shadow 0.14s ease,
+      transform 0.14s ease;
+    position: relative;
+
+    .yg-card-title {
+      display: block;
+      font-weight: 600;
+      color: var(--yg-ink-900);
+      margin-bottom: 0.3rem;
+      font-size: 1rem;
+      letter-spacing: -0.01em;
+    }
+
+    .yg-card-desc {
+      display: block;
+      color: var(--yg-ink-500);
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+
+    .yg-card-arrow {
+      position: absolute;
+      top: 1.05rem;
+      right: 1.1rem;
+      color: var(--yg-ink-300);
+      transition: color 0.14s ease, transform 0.14s ease;
+      font-weight: 600;
+    }
+
+    &:hover {
+      border-color: var(--yg-teal-500);
+      box-shadow:
+        0 1px 0 rgba(15, 110, 110, 0.04),
+        0 6px 18px -8px rgba(15, 110, 110, 0.18);
+      transform: translateY(-1px);
+
+      .yg-card-arrow {
+        color: var(--yg-teal-600);
+        transform: translateX(2px);
+      }
+
+      .yg-card-title {
+        color: var(--yg-teal-700);
+      }
+    }
+  }
+}
+
+// ---------- callouts (manual + content) ----------
+
+.callout {
+  border-left: 4px solid var(--yg-teal-500);
+  background: var(--yg-teal-050);
+  padding: 0.85rem 1rem 0.85rem 1.1rem;
+  border-radius: 0 8px 8px 0;
+  margin: 1.4rem 0;
+
+  > p:first-child { margin-top: 0; }
+  > p:last-child { margin-bottom: 0; }
+
+  &.callout-warning {
+    border-color: var(--yg-rust-500);
+    background: #fdf2ec;
+  }
+
+  &.callout-tip {
+    border-color: var(--yg-amber-500);
+    background: #fbf6e6;
+  }
+
+  &.callout-success {
+    border-color: #2ea66f;
+    background: #e8f6ee;
+  }
+}
+
+// ---------- footer polish ----------
+
+.site-footer {
+  border-top: 1px solid var(--yg-line);
+  color: var(--yg-ink-400);
+  font-size: 0.85rem;
+}
+
+// ---------- print + small refinements ----------
+
+@media print {
+  .yg-hero { background: none; border: none; }
+}
+
+@media (max-width: 50rem) {
+  .yg-hero { padding: 1.6rem 1.2rem; h1 { font-size: 1.8rem; } }
+  .yg-stats { grid-template-columns: repeat(2, 1fr); }
+}

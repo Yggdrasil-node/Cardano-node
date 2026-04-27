@@ -1,0 +1,35 @@
+// Yggdrasil colour scheme for just-the-docs.
+//
+// Inspired by the world tree: deep forest teal as the primary, warm copper
+// as the accent (echoing Rust), and a warm-white background that keeps
+// long-form prose comfortable to read.
+
+// Brand
+$link-color:        #0f6e6e; // deep teal
+$btn-primary-color: #0f6e6e;
+$base-button-color: #fafaf8;
+
+// Body
+$body-background-color:        #fafaf8;
+$body-text-color:              #1c2025;
+$body-heading-color:           #0c1219;
+$body-quote-color:              #4a5568;
+$nav-child-link-color:          #2d3748;
+$search-background-color:      #fafaf8;
+$search-result-preview-color:  #4a5568;
+$table-background-color:       #fafaf8;
+$feedback-color:               darken($body-background-color, 3%);
+
+// Sidebar
+$sidebar-color:                #f1f3f1; // subtle warm grey-green
+$border-color:                 #e2e6e2;
+
+// Code
+$code-background-color:        #f1f4f4;
+$code-linenumber-color:        #94a3b8;
+
+// State
+$blue-000:  #e6f1f2;
+$blue-100:  #bcd6da;
+$blue-200:  #87b3b8;
+$blue-300:  #4d8e94;

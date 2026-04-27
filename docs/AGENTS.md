@@ -13,6 +13,18 @@ Keep these documents synchronized with the implemented workspace, not with specu
   `.github/workflows/pages.yml`).
 - Site infrastructure: `docs/_config.yml`, `docs/Gemfile`,
   `docs/index.md`, `docs/reference.md`, `docs/manual/index.md`.
+- Site theming under `docs/_sass/`:
+  - `_sass/color_schemes/yggdrasil.scss` — custom Sass-variable colour
+    scheme (forest-teal primary, copper accent). Selected via
+    `color_scheme: yggdrasil` in `_config.yml`.
+  - `_sass/custom/custom.scss` — auto-imported by just-the-docs.
+    Provides hero blocks (`.yg-hero`), the stats banner (`.yg-stats`),
+    the navigation card grid (`.yg-cards` + `a.yg-card`), refined
+    typography, polished tables/code/blockquotes, and `.callout-*`
+    sidebar styling.
+  - When updating site styling, change Sass variables in the colour
+    scheme for global tone and CSS variables (`--yg-*` defined in
+    `:root`) inside `custom.scss` for component-level rules.
 - Project-wide workflow, dependency policy, specification provenance, and architecture updates.
 - Documentation changes that reflect implemented behavior or accepted policy.
 

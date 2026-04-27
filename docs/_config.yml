@@ -30,7 +30,7 @@ gh_edit_source: docs
 gh_edit_view_mode: "tree"
 
 # Theme settings
-color_scheme: light
+color_scheme: yggdrasil
 search_enabled: true
 search:
   heading_level: 3
@@ -44,8 +44,25 @@ search:
 heading_anchors: true
 enable_copy_code_button: true
 
+# Just-the-Docs callouts — referenced as `{: .callout-info }` etc. on
+# block paragraphs.
+callouts_level: quiet
+callouts:
+  info:
+    title: Note
+    color: blue
+  tip:
+    title: Tip
+    color: yellow
+  warning:
+    title: Warning
+    color: red
+  success:
+    title: Verified
+    color: green
+
 # Footer.
-footer_content: 'Yggdrasil is a pure-Rust port of the Cardano node, targeting upstream IntersectMBO Haskell parity.'
+footer_content: 'Yggdrasil — a pure-Rust Cardano node, targeting upstream IntersectMBO Haskell parity. Source: <a href="https://github.com/yggdrasil-node/Cardano-node">github.com/yggdrasil-node/Cardano-node</a>.'
 
 # Top-right auxiliary links.
 aux_links:
