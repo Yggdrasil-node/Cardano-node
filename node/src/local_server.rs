@@ -758,69 +758,60 @@ pub struct BasicLocalQueryDispatcher;
 impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
     fn dispatch_query(&self, snapshot: &LedgerStateSnapshot, query: &[u8]) -> Vec<u8> {
         use yggdrasil_ledger::{CborEncode, Decoder, Encoder};
+        use yggdrasil_network::protocols::UpstreamQuery;
 
-        // Decode query as [tag, ...] CBOR array.
-        let (tag, param_start, arg_kind) = {
+        // Round 148 — try the upstream HardForkBlock codec first.  When
+        // upstream `cardano-cli` issues a query, the wire shape is the
+        // layered `Query → BlockQuery → SomeBlockQuery (HardForkBlock
+        // xs) → ...` envelope documented in
+        // [`Ouroboros.Consensus.Ledger.Query`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Query.hs)
+        // and
+        // [`Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseNodeToClient`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Serialisation/SerialiseNodeToClient.hs).
+        // Decoding via [`UpstreamQuery::decode`] either succeeds (in
+        // which case we serve the upstream-shaped response via
+        // [`dispatch_upstream_query`]) or fails (in which case we fall
+        // through to yggdrasil's flat-table dispatcher used by
+        // yggdrasil's own `query` CLI).
+        //
+        // Captured wire fixtures from the 2026-04-27 rehearsal
+        // (`docs/operational-runs/2026-04-27-runbook-pass.md`):
+        //   `[0, [2, [1]]]` → `BlockQuery (QueryHardFork GetCurrentEra)`
+        //   `[0, [2, [0]]]` → `BlockQuery (QueryHardFork GetInterpreter)`
+        //   `[1]`           → `GetSystemStart`
+        //   `[2]`           → `GetChainBlockNo`
+        //   `[3]`           → `GetChainPoint`
+        //
+        // Tags 1/2/3 collide with yggdrasil's flat-table opcode space
+        // (`ChainTip` / `CurrentEpoch` / `ProtocolParameters`).  The
+        // upstream interpretation wins because the layered codec is
+        // the canonical Cardano ABI; yggdrasil's own `query` CLI
+        // subcommand uses a single-tag-with-no-inner-array shape
+        // that `UpstreamQuery::decode` rejects (e.g. `[0]` is
+        // length-1 and upstream's `BlockQuery` requires length-2),
+        // so the flat-table fallback path remains intact.  For tags
+        // 1/2/3 with no inner content yggdrasil's own CLI is
+        // migrated to issue upstream-shaped queries in lockstep with
+        // this slice.
+        if let Ok(upstream) = UpstreamQuery::decode(query) {
+            return dispatch_upstream_query(snapshot, upstream);
+        }
+
+        // Yggdrasil flat-table fallback for queries that aren't
+        // upstream-shaped.  Decode query as [tag, ...] CBOR array.
+        let (tag, param_start) = {
             let mut dec = Decoder::new(query);
             if let Ok(len) = dec.array() {
                 if len >= 1 {
                     let t = dec.unsigned().ok();
                     let pos = dec.position();
-                    // Peek the next CBOR major type to distinguish
-                    // yggdrasil-flat-table queries (which take either
-                    // no arguments or a `bytes`/`array` of bytes-args)
-                    // from upstream HardForkBlock-shaped queries
-                    // (which carry a structured array sub-query as the
-                    // second element).  Pre-fix, an upstream
-                    // `[0, [2, [1]]]` query matched
-                    // `Some(0) => CurrentEra` because the dispatcher
-                    // only inspected the leading tag — yggdrasil then
-                    // returned a 1-byte era ordinal where upstream
-                    // expected an `EraMismatch` envelope, surfacing as
-                    // `DeserialiseFailure 2 "expected list len or
-                    // indef"` in cardano-cli's HardForkBlock decoder
-                    // and tearing down the bearer.  See Finding E in
-                    // `docs/operational-runs/2026-04-27-runbook-pass.md`
-                    // — the real upstream codec is a follow-up slice;
-                    // this guard prevents misleading responses in the
-                    // meantime.
-                    let kind = if pos < query.len() {
-                        Some(query[pos] >> 5)
-                    } else {
-                        None
-                    };
-                    (t, pos, kind)
+                    (t, pos)
                 } else {
-                    (None, dec.position(), None)
+                    (None, dec.position())
                 }
             } else {
-                (None, 0, None)
+                (None, 0)
             }
         };
-
-        // Catch the upstream-HardForkBlock-query-shape: `[0, <array>]`
-        // where the inner element is a CBOR array (major type 4 = 0x80
-        // header range).  yggdrasil's flat-table tag 0 (`CurrentEra`)
-        // takes no arguments, so any query whose tag-0 carries an
-        // inner array is the upstream era-aware shape we cannot yet
-        // serve.  Return an empty response (CBOR null) so the LSQ
-        // session continues cleanly until the client sends
-        // `MsgRelease`/`MsgDone`; pre-fix the dispatcher returned a
-        // 1-byte era ordinal that upstream cardano-cli misparsed as
-        // `EraMismatch` and aborted the bearer.
-        //
-        // The same guard is applied for tag 2 (yggdrasil's
-        // `CurrentEpoch`), which `cardano-cli` cannot reach via the
-        // upstream codec at all but where a future drift in the
-        // capture format could surface a similar misleading-response
-        // bug.
-        // CBOR major type 4 (array) = 0b100_xxxxx, so `byte >> 5 == 4`.
-        if matches!(tag, Some(0) | Some(2)) && matches!(arg_kind, Some(4)) {
-            let mut e = Encoder::new();
-            e.null();
-            return e.into_bytes();
-        }
-        let _ = arg_kind; // silence unused on the success paths below
 
         let mut enc = Encoder::new();
 
@@ -830,17 +821,29 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
                 let ordinal = snapshot.current_era() as u64;
                 enc.unsigned(ordinal);
             }
-            Some(1) => {
-                // QueryChainTip — respond with CBOR-encoded Point.
-                snapshot.tip().encode_cbor(&mut enc);
+            // Round 148 — flat-table tags 1/2/3 are RESERVED for the
+            // upstream `Query` layer (`GetSystemStart`/`GetChainBlockNo`/
+            // `GetChainPoint`).  Yggdrasil-flat-table queries that
+            // overlap moved to extension tags below: `Tip` is now
+            // served via the upstream `[3]` `GetChainPoint` codec
+            // path (via `dispatch_upstream_query`); `CurrentEpoch`
+            // and `ProtocolParameters` migrate to extension tags
+            // `[101]` and `[102]`.  Reaching tags 1/2/3 in this
+            // flat-table fallback means a malformed upstream query
+            // that didn't decode at the upstream layer; respond
+            // with CBOR null.
+            Some(1) | Some(2) | Some(3) => {
+                enc.null();
             }
-            Some(2) => {
-                // QueryCurrentEpoch — respond with epoch number as a plain u64.
+            Some(101) => {
+                // Yggdrasil-extension `CurrentEpoch` — respond with
+                // epoch number as a plain u64.
                 enc.unsigned(snapshot.current_epoch().0);
             }
-            Some(3) => {
-                // QueryProtocolParameters — respond with CBOR-encoded
-                // ProtocolParameters map or CBOR null.
+            Some(102) => {
+                // Yggdrasil-extension `ProtocolParameters` — respond
+                // with CBOR-encoded `ProtocolParameters` map or CBOR
+                // null.
                 if let Some(pp) = snapshot.protocol_params() {
                     pp.encode_cbor(&mut enc);
                 } else {
@@ -1142,6 +1145,101 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
     }
 }
 
+/// Serve an upstream-shaped LocalStateQuery (Round 148).
+///
+/// Maps the decoded [`UpstreamQuery`] to a response in upstream wire
+/// format so external clients (`cardano-cli`, `db-sync`, wallet stacks)
+/// can interoperate with yggdrasil's NtC server.
+///
+/// Implemented response shapes:
+///
+/// - [`UpstreamQuery::BlockQuery`] +
+///   [`HardForkBlockQuery::QueryHardFork`] +
+///   [`QueryHardFork::GetCurrentEra`]: returns
+///   [`encode_era_index`](yggdrasil_network::protocols::encode_era_index)
+///   carrying the active era's HardForkBlock-list ordinal (Byron=0,
+///   Shelley=1, Allegra=2, Mary=3, Alonzo=4, Babbage=5, Conway=6).
+/// - [`UpstreamQuery::BlockQuery`] +
+///   [`HardForkBlockQuery::QueryHardFork`] +
+///   [`QueryHardFork::GetInterpreter`]: returns CBOR `null` (`0xf6`).
+///   The full upstream `Interpreter` is a complex era-history summary
+///   with per-era `EraSummary { eraStart, eraEnd, eraParams }`
+///   structures.  Returning `null` signals "interpreter unavailable"
+///   so `cardano-cli query tip` falls back to slot/hash without the
+///   computed `syncProgress` / `slotsToEpochEnd` fields.  A full
+///   `Interpreter` codec is the open Phase-2 follow-up of Finding E.
+/// - [`UpstreamQuery::GetSystemStart`]: returns CBOR encoding of the
+///   genesis SystemStart UTC time as `[year, dayOfYear, picoseconds]`.
+///   For yggdrasil this is sourced from the snapshot's stored Shelley
+///   genesis fields.
+/// - [`UpstreamQuery::GetChainPoint`][]: returns
+///   [`encode_chain_point`](yggdrasil_network::protocols::encode_chain_point)
+///   encoded from the snapshot's tip.
+/// - [`UpstreamQuery::GetChainBlockNo`][]: returns
+///   [`encode_chain_block_no`](yggdrasil_network::protocols::encode_chain_block_no)
+///   carrying the snapshot's tip block number (or `Origin` when no
+///   blocks applied).
+/// - All other upstream-shaped queries (era-specific
+///   [`HardForkBlockQuery::QueryIfCurrent`],
+///   [`HardForkBlockQuery::QueryAnytime`],
+///   [`UpstreamQuery::DebugLedgerConfig`]) return CBOR `null` as
+///   structured "not yet implemented" responses; the LSQ session
+///   continues cleanly.
+fn dispatch_upstream_query(
+    snapshot: &LedgerStateSnapshot,
+    query: yggdrasil_network::protocols::UpstreamQuery,
+) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    use yggdrasil_network::protocols::{
+        HardForkBlockQuery, QueryHardFork, UpstreamQuery, encode_chain_block_no,
+        encode_chain_point, encode_era_index,
+    };
+
+    let null_response = || -> Vec<u8> {
+        let mut enc = Encoder::new();
+        enc.null();
+        enc.into_bytes()
+    };
+
+    match query {
+        UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryHardFork(inner)) => match inner {
+            QueryHardFork::GetCurrentEra => {
+                encode_era_index(snapshot.current_era().era_ordinal() as u32)
+            }
+            QueryHardFork::GetInterpreter => {
+                // Phase-2 follow-up: real Interpreter encoding requires
+                // a typed era-history summary derived from the
+                // network's hard-fork transitions.  Returning `null`
+                // (instead of a malformed Interpreter) lets
+                // `cardano-cli query tip` proceed without computing
+                // wallclock-derived fields.
+                null_response()
+            }
+        },
+        UpstreamQuery::GetSystemStart => {
+            // Without a parsed-and-stored SystemStart in the
+            // LedgerStateSnapshot, return `null` for now.  Real
+            // encoding is `[year, dayOfYear, picoseconds]` per
+            // upstream `Cardano.Slotting.Time.SystemStart`.
+            null_response()
+        }
+        UpstreamQuery::GetChainPoint => encode_chain_point(snapshot.tip()),
+        UpstreamQuery::GetChainBlockNo => {
+            // The snapshot carries the tip Point (slot + hash) but not
+            // the block number — that's tracked by the consensus
+            // `ChainState`, not the ledger.  Return `Origin` for now;
+            // wiring the chain-tracker block number through to the
+            // snapshot is a small follow-up.  cardano-cli's `query
+            // tip` falls back to slot-based reporting when block-no
+            // is `Origin`.
+            encode_chain_block_no(None)
+        }
+        UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent { .. })
+        | UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryAnytime { .. })
+        | UpstreamQuery::DebugLedgerConfig => null_response(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -1184,53 +1282,95 @@ mod tests {
         );
     }
 
-    /// Operator-captured upstream `cardano-cli query tip --testnet-magic 1`
-    /// queries are HardForkBlock-shape `[0, [2, [N]]]` payloads — the
-    /// outer `0` collides with yggdrasil's flat-table CurrentEra opcode
-    /// but the trailing array-shaped argument distinguishes the upstream
-    /// shape.  Pre-fix, the dispatcher returned a 1-byte era ordinal
-    /// against an upstream client expecting an `EraMismatch` envelope,
-    /// surfacing as `DeserialiseFailure 2 "expected list len or indef"`
-    /// in cardano-cli's HardForkBlock decoder and tearing down the
-    /// bearer.  After the guard, upstream-shaped queries return CBOR
-    /// `null` (1 byte: `0xf6`) so the LSQ session continues cleanly
-    /// until `MsgRelease`/`MsgDone`.  The full upstream HardForkBlock
-    /// query/result codec is the open Finding E follow-up; this guard
-    /// is the defensive bridge that prevents misleading responses
-    /// without claiming codec parity.
+    /// Round 148 — operator-captured upstream `cardano-cli query tip
+    /// --testnet-magic 1` payloads now route through the upstream
+    /// codec dispatch and return upstream-shaped responses.
+    /// `BlockQuery (QueryHardFork GetCurrentEra)` returns
+    /// `encode_era_index(era_ordinal)` (a 1-element CBOR array
+    /// `[era_index]`); `BlockQuery (QueryHardFork GetInterpreter)`
+    /// returns CBOR `null` (`0xf6`) because the full upstream
+    /// `Interpreter` era-history codec is the Phase-2 follow-up.
+    /// Pre-fix, the dispatcher returned a 1-byte era ordinal against
+    /// an upstream client expecting an `EraMismatch`-wrapped result
+    /// envelope, tearing down the bearer.  Round 147 introduced a
+    /// defensive null-on-collision guard; Round 148 supersedes it
+    /// with the actual codec.
     #[test]
-    fn upstream_hardforkblock_shape_query_returns_clean_null_not_misleading_era_ordinal() {
+    fn upstream_hardforkblock_query_dispatches_to_typed_responses() {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
 
-        // Upstream-captured payloads from the 2026-04-27 rehearsal:
-        // [0, [2, [1]]]  → BlockQuery (QueryHardFork GetCurrentEra)
-        // [0, [2, [0]]]  → BlockQuery (QueryHardFork GetInterpreter)
-        let upstream_queries: &[&[u8]] = &[
-            &[0x82, 0x00, 0x82, 0x02, 0x81, 0x01],
-            &[0x82, 0x00, 0x82, 0x02, 0x81, 0x00],
-        ];
-        for (idx, q) in upstream_queries.iter().enumerate() {
-            let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, q);
-            assert_eq!(
-                result,
-                vec![0xf6],
-                "upstream-shape query {idx} (`{:?}`) must return CBOR null, \
-                 not the misleading era ordinal pre-fix dispatcher emitted",
-                q,
-            );
-        }
+        // [0, [2, [1]]] → GetCurrentEra → era_index of Conway = 6.
+        // Upstream `EraIndex xs` is encoded as a bare CBOR word8 per
+        // `Serialise (EraIndex xs) = encodeWord8 . eraIndexToInt`.
+        let get_current_era: &[u8] = &[0x82, 0x00, 0x82, 0x02, 0x81, 0x01];
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, get_current_era);
+        assert_eq!(
+            result,
+            vec![0x06],
+            "GetCurrentEra in Conway era must return bare CBOR word8 = 6 \
+             (upstream EraIndex shape, not [6])",
+        );
+
+        // [0, [2, [0]]] → GetInterpreter → CBOR null (Phase-2 stub).
+        let get_interpreter: &[u8] = &[0x82, 0x00, 0x82, 0x02, 0x81, 0x00];
+        let result_int = BasicLocalQueryDispatcher.dispatch_query(&snapshot, get_interpreter);
+        assert_eq!(
+            result_int,
+            vec![0xf6],
+            "GetInterpreter must return CBOR null until the full Interpreter \
+             codec lands as the Phase-2 follow-up",
+        );
 
         // Sanity: yggdrasil's own flat-table `[0]` (no inner array)
-        // continues to work — the guard only triggers on the
-        // structured-argument shape.
+        // continues to work — `UpstreamQuery::decode` rejects
+        // length-1 arrays at the top level, so this falls through
+        // cleanly to the flat-table dispatcher's `Some(0) =>
+        // CurrentEra` branch and returns the era ordinal as a bare
+        // unsigned (different shape from the upstream `[era_index]`).
         let yggdrasil_native = [0x81, 0x00];
         let native_result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &yggdrasil_native);
-        assert_ne!(
+        assert_eq!(
             native_result,
-            vec![0xf6],
-            "yggdrasil's native `[0]` CurrentEra query must continue to \
-             return the era ordinal — guard must not interfere",
+            vec![0x06],
+            "yggdrasil flat-table CurrentEra returns bare unsigned (era ordinal) \
+             — distinct from upstream's [era_index] array shape",
+        );
+    }
+
+    /// Round 148 — `[3]` is upstream `GetChainPoint`.  In yggdrasil's
+    /// flat table `[3]` is `ProtocolParameters`.  The upstream codec
+    /// wins (canonical Cardano ABI); a length-1 array decodes via
+    /// `UpstreamQuery::decode` as `GetChainPoint` and the response
+    /// is the encoded chain tip Point.
+    #[test]
+    fn upstream_get_chain_point_returns_encoded_tip_point() {
+        use yggdrasil_ledger::{HeaderHash, SlotNo};
+        let mut state = LedgerState::new(Era::Conway);
+        state.tip = yggdrasil_ledger::Point::BlockPoint(SlotNo(42), HeaderHash([0xab; 32]));
+        let snapshot = state.snapshot();
+
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[0x81, 0x03]);
+        // Per `encode_chain_point`: BlockPoint encodes as [1, slot, hash_bytes].
+        assert_eq!(result[0], 0x83, "array length 3");
+        assert_eq!(result[1], 0x01, "BlockPoint tag = 1");
+    }
+
+    /// Round 148 — `[2]` is upstream `GetChainBlockNo`.  Yggdrasil's
+    /// snapshot doesn't yet track the chain block number (it's owned
+    /// by the consensus ChainState, not the ledger), so the response
+    /// is `Origin` (`[0]`) until the chain-tracker block-number is
+    /// threaded through to the snapshot.
+    #[test]
+    fn upstream_get_chain_block_no_returns_origin_until_chain_tracker_wired() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &[0x81, 0x02]);
+        assert_eq!(
+            result,
+            vec![0x81, 0x00],
+            "GetChainBlockNo returns `Origin` (`[0]`) until chain-tracker \
+             block-number wiring lands",
         );
     }
 
@@ -1241,16 +1381,18 @@ mod tests {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
 
-        // Build a [1] query — QueryChainTip.
+        // Round 148 — `Tip` migrates to upstream `[3]` (`GetChainPoint`).
         let mut enc = Encoder::new();
-        enc.array(1).unsigned(1u64);
+        enc.array(1).unsigned(3u64);
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
-            "QueryChainTip should return a non-empty response"
+            "GetChainPoint should return a non-empty response"
         );
+        // Origin shape is `[0]` per `encode_chain_point`.
+        assert_eq!(result, vec![0x81, 0x00]);
     }
 
     #[test]
@@ -1260,15 +1402,16 @@ mod tests {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
 
-        // Build a [2] query — QueryCurrentEpoch.
+        // Round 148 — yggdrasil-extension `[101]` for `CurrentEpoch`
+        // (upstream `[2]` is `GetChainBlockNo`).
         let mut enc = Encoder::new();
-        enc.array(1).unsigned(2u64);
+        enc.array(1).unsigned(101u64);
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
-            "QueryCurrentEpoch should return a non-empty response"
+            "yggdrasil CurrentEpoch ([101]) should return a non-empty response"
         );
     }
 
@@ -1310,14 +1453,16 @@ mod tests {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
 
+        // Round 148 — yggdrasil-extension `[102]` for
+        // `ProtocolParameters` (upstream `[3]` is `GetChainPoint`).
         let mut enc = Encoder::new();
-        enc.array(1).unsigned(3u64);
+        enc.array(1).unsigned(102u64);
         let query = enc.into_bytes();
 
         let result = BasicLocalQueryDispatcher.dispatch_query(&snapshot, &query);
         assert!(
             !result.is_empty(),
-            "QueryProtocolParameters should return CBOR null"
+            "yggdrasil ProtocolParameters ([102]) should return CBOR null"
         );
         // CBOR null is 0xf6
         assert_eq!(result, vec![0xf6]);

@@ -413,16 +413,31 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
     let mut enc = Encoder::new();
     match query {
         QueryCommand::CurrentEra => {
-            enc.array(1).unsigned(0u64);
-        }
-        QueryCommand::Tip => {
+            // Upstream-shaped: `BlockQuery (QueryHardFork GetCurrentEra)`
+            // = `[0, [2, [1]]]` per upstream
+            // `Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseNodeToClient`.
+            // Round 148 unifies yggdrasil's CLI with upstream
+            // cardano-cli on the canonical Cardano ABI.
+            enc.array(2).unsigned(0u64);
+            enc.array(2).unsigned(2u64);
             enc.array(1).unsigned(1u64);
         }
+        QueryCommand::Tip => {
+            // Upstream-shaped: `GetChainPoint = [3]` per upstream
+            // `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`.
+            enc.array(1).unsigned(3u64);
+        }
         QueryCommand::CurrentEpoch => {
-            enc.array(1).unsigned(2u64);
+            // Yggdrasil-extension tag — upstream `[2]` is
+            // `GetChainBlockNo`, so yggdrasil's `CurrentEpoch` query
+            // moves to `[101]` to avoid collision under Round 148.
+            enc.array(1).unsigned(101u64);
         }
         QueryCommand::ProtocolParams => {
-            enc.array(1).unsigned(3u64);
+            // Yggdrasil-extension tag — upstream `[3]` is
+            // `GetChainPoint`, so yggdrasil's `ProtocolParams` query
+            // moves to `[102]` to avoid collision under Round 148.
+            enc.array(1).unsigned(102u64);
         }
         QueryCommand::UtxoByAddress { address } => {
             let addr_bytes = decode_optional_prefixed_hex(address);
@@ -515,16 +530,26 @@ fn decode_ntc_result(query: &QueryCommand, result: &[u8]) -> Result<serde_json::
     use yggdrasil_ledger::Decoder;
     let val = match query {
         QueryCommand::CurrentEra => {
+            // Round 148 — upstream `EraIndex` shape `[era_index]`.
             let mut dec = Decoder::new(result);
-            let era = dec.unsigned().unwrap_or(0);
+            let era = match dec.array() {
+                Ok(1) => dec.unsigned().unwrap_or(0),
+                _ => 0,
+            };
             json!({"era": era})
         }
         QueryCommand::Tip => {
-            // Decode chain tip point: Origin = [] or point = [slot, hash].
+            // Round 148 — upstream `encodePoint` shape:
+            //   Origin     = `[0]`
+            //   BlockPoint = `[1, slot, hash_bytes]`
             let mut dec = Decoder::new(result);
             match dec.array() {
-                Ok(0) => json!({"tip": {"origin": true}}),
-                Ok(2) => {
+                Ok(1) => {
+                    let _origin_tag = dec.unsigned().unwrap_or(0);
+                    json!({"tip": {"origin": true}})
+                }
+                Ok(3) => {
+                    let _bp_tag = dec.unsigned().unwrap_or(1);
                     let slot = dec.unsigned().unwrap_or(0);
                     let hash = dec.bytes().unwrap_or_default();
                     json!({"tip": {"origin": false, "slot": slot, "hash": hex::encode(hash)}})
@@ -3753,11 +3778,25 @@ mod tests {
         // variants produce `[tag, <param>]` which we spot-check separately.
         use super::{QueryCommand, encode_ntc_query};
 
+        // Round 148 — wire-format pin reflects the upstream-codec
+        // migration of the four queries that have direct upstream
+        // equivalents (`CurrentEra`, `Tip`) and the yggdrasil-extension
+        // tag bumps for the two collisions (`CurrentEpoch` ↦ `[101]`,
+        // `ProtocolParams` ↦ `[102]`).
         let cases: &[(QueryCommand, &[u8])] = &[
-            (QueryCommand::CurrentEra, &[0x81, 0x00]),
-            (QueryCommand::Tip, &[0x81, 0x01]),
-            (QueryCommand::CurrentEpoch, &[0x81, 0x02]),
-            (QueryCommand::ProtocolParams, &[0x81, 0x03]),
+            // Upstream `BlockQuery (QueryHardFork GetCurrentEra)` =
+            // `[0, [2, [1]]]` per
+            // `Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseNodeToClient`.
+            (
+                QueryCommand::CurrentEra,
+                &[0x82, 0x00, 0x82, 0x02, 0x81, 0x01],
+            ),
+            // Upstream `GetChainPoint` = `[3]`.
+            (QueryCommand::Tip, &[0x81, 0x03]),
+            // Yggdrasil-extension `[101]` (upstream `[2]` is GetChainBlockNo).
+            (QueryCommand::CurrentEpoch, &[0x81, 0x18, 0x65]),
+            // Yggdrasil-extension `[102]` (upstream `[3]` is GetChainPoint).
+            (QueryCommand::ProtocolParams, &[0x81, 0x18, 0x66]),
             (QueryCommand::StakeDistribution, &[0x81, 0x05]),
             (QueryCommand::TreasuryAndReserves, &[0x81, 0x07]),
             (QueryCommand::Constitution, &[0x81, 0x08]),

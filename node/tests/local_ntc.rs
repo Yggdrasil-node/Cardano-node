@@ -291,17 +291,25 @@ async fn ntc_local_state_query_chain_tip_round_trip() {
         .await
         .expect("acquire volatile tip");
 
-    // ChainTip query: [1u64].
+    // Round 148 — upstream `GetChainPoint = [3]` per
+    // `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`.
+    // The response is upstream `encode_chain_point` shape:
+    //   Origin     = `[0]`
+    //   BlockPoint = `[1, slot, hash]`
     let mut enc = Encoder::new();
-    enc.array(1).unsigned(1u64);
+    enc.array(1).unsigned(3u64);
     let result = client
         .query(enc.into_bytes())
         .await
-        .expect("ChainTip query round-trip");
+        .expect("GetChainPoint query round-trip");
 
-    // Result is a raw CBOR-encoded Point; decode it.
-    let point = Point::from_cbor_bytes(&result).expect("ChainTip CBOR must decode as Point");
-    assert_eq!(point, Point::Origin, "empty ChainDb must report Origin tip");
+    // Result is upstream-shaped `[0]` for Origin: 2 bytes,
+    // `[0x81, 0x00]`.
+    assert_eq!(
+        result,
+        vec![0x81, 0x00],
+        "empty ChainDb must report `Origin` in upstream encodePoint shape `[0]`",
+    );
 
     let _ = client.release().await;
     let _ = client.done().await;
