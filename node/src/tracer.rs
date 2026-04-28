@@ -554,6 +554,16 @@ pub struct NodeMetrics {
     ///
     /// Reference: `Cardano.Ledger.Core.Era` ordering.
     current_era: AtomicU64,
+    /// Round 170 — per-era applied-block counters.
+    ///
+    /// Indexed parallel to `Era::era_ordinal()`: `[0]=Byron, [1]=Shelley,
+    /// [2]=Allegra, [3]=Mary, [4]=Alonzo, [5]=Babbage, [6]=Conway`.
+    /// Combined with R169's `current_era` gauge, dashboards can graph
+    /// the share of blocks applied per era during a long sync without
+    /// scraping `cardano-cli query tip` history.
+    ///
+    /// Reference: `Cardano.Ledger.Core.Era` ordering.
+    blocks_per_era: [AtomicU64; 7],
     checkpoint_slot: AtomicU64,
     target_known_peers: AtomicU64,
     target_established_peers: AtomicU64,
@@ -632,6 +642,9 @@ pub struct MetricsSnapshot {
     /// (`0=Byron, 1=Shelley, 2=Allegra, 3=Mary, 4=Alonzo, 5=Babbage,
     /// 6=Conway`).
     pub current_era: u64,
+    /// Round 170 — per-era applied-block counters, indexed parallel
+    /// to `Era::era_ordinal()`.
+    pub blocks_per_era: [u64; 7],
     /// Slot of the latest persisted ledger checkpoint.
     pub checkpoint_slot: u64,
     /// Governor target known peers.
@@ -727,6 +740,7 @@ impl NodeMetrics {
             current_slot: AtomicU64::new(0),
             current_block_number: AtomicU64::new(0),
             current_era: AtomicU64::new(0),
+            blocks_per_era: std::array::from_fn(|_| AtomicU64::new(0)),
             checkpoint_slot: AtomicU64::new(0),
             target_known_peers: AtomicU64::new(0),
             target_established_peers: AtomicU64::new(0),
@@ -810,6 +824,17 @@ impl NodeMetrics {
     /// 5=Babbage, 6=Conway` to match `Era::era_ordinal()`.
     pub fn set_current_era(&self, era_ordinal: u64) {
         self.current_era.store(era_ordinal, Ordering::Relaxed);
+    }
+
+    /// Round 170 — increment the applied-block count for the given era.
+    ///
+    /// Out-of-range ordinals (≥ 7) silently no-op so future era additions
+    /// upstream don't crash this metric path; the `current_era` gauge
+    /// will still reflect the actual era ordinal.
+    pub fn add_blocks_for_era(&self, era_ordinal: u8, n: u64) {
+        if (era_ordinal as usize) < self.blocks_per_era.len() {
+            self.blocks_per_era[era_ordinal as usize].fetch_add(n, Ordering::Relaxed);
+        }
     }
 
     /// Update current governor peer-selection targets and registry counters.
@@ -958,6 +983,7 @@ impl NodeMetrics {
             current_slot: self.current_slot.load(Ordering::Relaxed),
             current_block_number: self.current_block_number.load(Ordering::Relaxed),
             current_era: self.current_era.load(Ordering::Relaxed),
+            blocks_per_era: std::array::from_fn(|i| self.blocks_per_era[i].load(Ordering::Relaxed)),
             checkpoint_slot: self.checkpoint_slot.load(Ordering::Relaxed),
             target_known_peers: self.target_known_peers.load(Ordering::Relaxed),
             target_established_peers: self.target_established_peers.load(Ordering::Relaxed),
@@ -1146,7 +1172,28 @@ yggdrasil_blockfetch_workers_registered {}\n\
 yggdrasil_blockfetch_workers_migrated_total {}\n\
 # HELP yggdrasil_chainsync_workers_registered Number of per-peer ChainSync workers in the shared pool (Round 151 candidate-fragment dispatch). 0 implies dispatch falls back to placeholder-hash collapse.\n\
 # TYPE yggdrasil_chainsync_workers_registered gauge\n\
-yggdrasil_chainsync_workers_registered {}\n",
+yggdrasil_chainsync_workers_registered {}\n\
+# HELP yggdrasil_blocks_byron Total Byron-era blocks applied.\n\
+# TYPE yggdrasil_blocks_byron counter\n\
+yggdrasil_blocks_byron {}\n\
+# HELP yggdrasil_blocks_shelley Total Shelley-era blocks applied.\n\
+# TYPE yggdrasil_blocks_shelley counter\n\
+yggdrasil_blocks_shelley {}\n\
+# HELP yggdrasil_blocks_allegra Total Allegra-era blocks applied.\n\
+# TYPE yggdrasil_blocks_allegra counter\n\
+yggdrasil_blocks_allegra {}\n\
+# HELP yggdrasil_blocks_mary Total Mary-era blocks applied.\n\
+# TYPE yggdrasil_blocks_mary counter\n\
+yggdrasil_blocks_mary {}\n\
+# HELP yggdrasil_blocks_alonzo Total Alonzo-era blocks applied.\n\
+# TYPE yggdrasil_blocks_alonzo counter\n\
+yggdrasil_blocks_alonzo {}\n\
+# HELP yggdrasil_blocks_babbage Total Babbage-era blocks applied.\n\
+# TYPE yggdrasil_blocks_babbage counter\n\
+yggdrasil_blocks_babbage {}\n\
+# HELP yggdrasil_blocks_conway Total Conway-era blocks applied.\n\
+# TYPE yggdrasil_blocks_conway counter\n\
+yggdrasil_blocks_conway {}\n",
             self.blocks_synced,
             self.rollbacks,
             self.batches_completed,
@@ -1190,6 +1237,13 @@ yggdrasil_chainsync_workers_registered {}\n",
             self.blockfetch_workers_registered,
             self.blockfetch_workers_migrated_total,
             self.chainsync_workers_registered,
+            self.blocks_per_era[0],
+            self.blocks_per_era[1],
+            self.blocks_per_era[2],
+            self.blocks_per_era[3],
+            self.blocks_per_era[4],
+            self.blocks_per_era[5],
+            self.blocks_per_era[6],
         )
     }
 }
@@ -1460,8 +1514,24 @@ mod tests {
             // every current field is u64 or u128.
             let metric_canonical = format!("yggdrasil_{field_name} ");
             // Accept the documented rename for the one non-verbatim field.
+            // Round 170 — `blocks_per_era` is exploded into seven
+            // explicitly-named counters (`yggdrasil_blocks_byron` …
+            // `yggdrasil_blocks_conway`) per Prometheus convention; check
+            // each named counter is present.
             let accepts = text.contains(&metric_canonical)
-                || (field_name == "uptime_ms" && text.contains("yggdrasil_uptime_seconds"));
+                || (field_name == "uptime_ms" && text.contains("yggdrasil_uptime_seconds"))
+                || (field_name == "blocks_per_era"
+                    && [
+                        "yggdrasil_blocks_byron ",
+                        "yggdrasil_blocks_shelley ",
+                        "yggdrasil_blocks_allegra ",
+                        "yggdrasil_blocks_mary ",
+                        "yggdrasil_blocks_alonzo ",
+                        "yggdrasil_blocks_babbage ",
+                        "yggdrasil_blocks_conway ",
+                    ]
+                    .iter()
+                    .all(|name| text.contains(name)));
             if !accepts {
                 missing.push(field_name);
             }

@@ -285,6 +285,29 @@ pub enum EraSpecificQuery {
     /// pool key hashes.  Used by `cardano-cli query stake-pools`
     /// (era-blocked client-side until Babbage+).
     GetStakePools,
+    /// `[14, pool_hash_set]` — `GetStakePoolParams` (Round 171).
+    /// Returns a `Map (KeyHash 'StakePool) PoolParams` filtered by
+    /// the supplied set of pool key hashes (`tag(258) [* bytes(28)]`
+    /// per CIP-21 set tag).  Used by `cardano-cli query pool-state
+    /// --stake-pool-id <id>` (era-blocked client-side until Babbage+).
+    /// Carries the raw CBOR-encoded pool-hash set.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerStateQuery` —
+    /// `GetStakePoolParams`.
+    GetStakePoolParams { pool_hash_set_cbor: Vec<u8> },
+    /// `[17, maybe_pool_hash_set]` — `GetPoolState` (Round 172).
+    /// Returns the full `PState` 4-tuple of maps (current params,
+    /// future params, retiring epochs, deposits) optionally filtered
+    /// to a subset of pool key hashes.  Used by
+    /// `cardano-cli query pool-state --all-stake-pools` and
+    /// `query pool-state --stake-pool-id <id>` (era-blocked
+    /// client-side until Babbage+).  Carries the raw CBOR-encoded
+    /// `Maybe (Set PoolKeyHash)` payload — `Nothing` means "all
+    /// pools", `Just <set>` filters to the given subset.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerStateQuery` —
+    /// `GetPoolState`; `Cardano.Ledger.Shelley.LedgerState.PState`.
+    GetPoolState { maybe_pool_hash_set_cbor: Vec<u8> },
     /// Any era-specific query whose tag this codec doesn't yet
     /// recognise.  Carries the raw inner CBOR so the dispatcher can
     /// fall through to `null_response()` without losing the bytes.
@@ -340,8 +363,14 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
         (2, 10) => EraSpecificQuery::GetFilteredDelegationsAndRewardAccounts {
             credential_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
+        (2, 14) => EraSpecificQuery::GetStakePoolParams {
+            pool_hash_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
         (2, 15) => EraSpecificQuery::GetUTxOByTxIn {
             txin_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        (2, 17) => EraSpecificQuery::GetPoolState {
+            maybe_pool_hash_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
         _ => EraSpecificQuery::Unknown {
             tag: q_tag,
@@ -1516,6 +1545,62 @@ mod tests {
             era_query,
             EraSpecificQuery::GetUTxOByAddress { .. }
         ));
+    }
+
+    /// Round 172 — pin the era-specific tag table addition for
+    /// `GetPoolState` (17) with `Just <set>` payload.
+    #[test]
+    fn decode_recognises_pool_state_tag_with_just_filter() {
+        // [1, [17, [1, tag(258)[bytes(28)]]]] = era 1, GetPoolState
+        // (Just {single_pool_keyhash})
+        // Wire form: 82 01 82 11 82 01 d9 0102 81 581c <28 bytes>
+        let mut payload = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x11, // [tag=17, maybe_payload]
+            0x82, 0x01, // [discriminator=1 (Just), set]
+            0xd9, 0x01, 0x02, // tag 258
+            0x81, // 1-element array
+            0x58, 0x1c, // bytes(28)
+        ];
+        payload.extend_from_slice(&[0x55; 28]);
+        let (era_idx, q) = decode_query_if_current(&payload).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetPoolState { .. }));
+    }
+
+    /// Round 172 — pin the `Nothing` shape for `GetPoolState` (17).
+    #[test]
+    fn decode_recognises_pool_state_tag_with_nothing_filter() {
+        // [1, [17, [0]]] = era 1, GetPoolState Nothing
+        // Wire form: 82 01 82 11 81 00
+        let payload = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x11, // [tag=17, maybe_payload]
+            0x81, 0x00, // [0] = Nothing
+        ];
+        let (era_idx, q) = decode_query_if_current(&payload).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetPoolState { .. }));
+    }
+
+    /// Round 171 — pin the era-specific tag table addition for
+    /// `GetStakePoolParams` (14).
+    #[test]
+    fn decode_recognises_stake_pool_params_tag() {
+        // [1, [14, tag(258)[bytes(28)]]] = era 1, GetStakePoolParams
+        // with a single 28-byte pool keyhash in a CIP-21 tagged set.
+        // Wire form: 82 01 82 0e d9 0102 81 581c <28 bytes>
+        let mut payload = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x0e, // [tag=14, set]
+            0xd9, 0x01, 0x02, // tag 258
+            0x81, // 1-element array
+            0x58, 0x1c, // bytes(28)
+        ];
+        payload.extend_from_slice(&[0xcd; 28]);
+        let (era_idx, q) = decode_query_if_current(&payload).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetStakePoolParams { .. }));
     }
 
     /// Round 163 — pin the era-specific tag table additions for

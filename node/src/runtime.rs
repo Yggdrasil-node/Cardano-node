@@ -4100,6 +4100,25 @@ fn record_verified_batch_progress(
         if let Some(block_no) = progress.latest_block_number() {
             m.set_current_block_number(block_no);
         }
+        // Round 170 — accumulate per-era counters across this batch's
+        // RollForward blocks for `/metrics`.  Tally locally so we make
+        // one fetch_add per era rather than per block.
+        let mut tally = [0u64; 7];
+        for step in &progress.steps {
+            if let MultiEraSyncStep::RollForward { blocks, .. } = step {
+                for block in blocks {
+                    let ord = block.era().era_ordinal() as usize;
+                    if ord < tally.len() {
+                        tally[ord] += 1;
+                    }
+                }
+            }
+        }
+        for (ord, count) in tally.iter().enumerate() {
+            if *count > 0 {
+                m.add_blocks_for_era(ord as u8, *count);
+            }
+        }
     }
 }
 

@@ -1351,6 +1351,36 @@ fn dispatch_upstream_query(
                                 let pools_cbor = encode_stake_pools_set(snapshot);
                                 encode_query_if_current_match(&pools_cbor)
                             }
+                            EraSpecificQuery::GetStakePoolParams { pool_hash_set_cbor } => {
+                                // Round 171 — upstream `GetStakePoolParams`.
+                                // Decode the CBOR set of 28-byte pool key hashes,
+                                // look up each in the snapshot's `pool_state`,
+                                // and emit `Map (PoolHash → PoolParams)` filtered
+                                // by the requested set.  Pools absent from the
+                                // snapshot are silently dropped (matching upstream
+                                // `Map.intersection` semantics).
+                                let pool_hashes =
+                                    decode_pool_hash_set(&pool_hash_set_cbor).unwrap_or_default();
+                                let body =
+                                    encode_filtered_stake_pool_params(snapshot, &pool_hashes);
+                                encode_query_if_current_match(&body)
+                            }
+                            EraSpecificQuery::GetPoolState {
+                                maybe_pool_hash_set_cbor,
+                            } => {
+                                // Round 172 — upstream `GetPoolState`.
+                                // Decode the optional pool-hash filter (`Nothing`
+                                // = all pools, `Just <set>` = filter), then emit
+                                // the full PState 4-tuple `[psStakePoolParams,
+                                // psFutureStakePoolParams, psRetiring,
+                                // psDeposits]`, each map filtered by the
+                                // optional set.
+                                let maybe_filter =
+                                    decode_maybe_pool_hash_set(&maybe_pool_hash_set_cbor)
+                                        .unwrap_or(None);
+                                let body = encode_pool_state(snapshot, maybe_filter.as_ref());
+                                encode_query_if_current_match(&body)
+                            }
                             EraSpecificQuery::GetStakeDistribution => {
                                 let dist_cbor = encode_stake_distribution_map(snapshot);
                                 encode_query_if_current_match(&dist_cbor)
@@ -1727,6 +1757,209 @@ fn encode_stake_credential(
     }
 }
 
+/// Round 171 — decode a CBOR set/array of 28-byte pool key hashes
+/// (the payload of `GetStakePoolParams { pool_hash_set_cbor }`).
+///
+/// Tolerates the optional CBOR tag 258 ("set" per CIP-21) wrapper —
+/// upstream cardano-cli sends the canonical `258 [* bytes(28)]`
+/// shape for tagged sets, but earlier-style untagged arrays are
+/// accepted for forward-compatibility.
+fn decode_pool_hash_set(
+    bytes: &[u8],
+) -> Result<std::collections::HashSet<[u8; 28]>, yggdrasil_ledger::LedgerError> {
+    use yggdrasil_ledger::cbor::Decoder;
+    let mut dec = Decoder::new(bytes);
+    if dec.peek_major().ok() == Some(6) {
+        dec.tag()?;
+    }
+    let count = dec.array()?;
+    let mut set = std::collections::HashSet::with_capacity(count as usize);
+    for _ in 0..count {
+        let hash_bytes = dec.bytes()?;
+        if hash_bytes.len() != 28 {
+            return Err(yggdrasil_ledger::LedgerError::CborInvalidLength {
+                expected: 28,
+                actual: hash_bytes.len(),
+            });
+        }
+        let mut h = [0u8; 28];
+        h.copy_from_slice(hash_bytes);
+        set.insert(h);
+    }
+    Ok(set)
+}
+
+/// Round 171 — encode `GetStakePoolParams` result: a CBOR map of
+/// `pool_keyhash → PoolParams` filtered by the supplied set of pool
+/// key hashes per upstream
+/// `Cardano.Ledger.Shelley.LedgerStateQuery.GetStakePoolParams`.
+///
+/// Pools absent from the snapshot's `pool_state` are silently
+/// dropped (matching upstream `Map.intersection` semantics — only
+/// pools that are both requested AND registered land in the
+/// response).  When the resulting intersection is empty (typical
+/// on pre-Babbage snapshots where no pools are registered yet),
+/// emits the canonical empty-map form `0xa0`.
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerStateQuery` —
+/// `getStakePoolParams`.
+fn encode_filtered_stake_pool_params(
+    snapshot: &LedgerStateSnapshot,
+    pool_hashes: &std::collections::HashSet<[u8; 28]>,
+) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let mut enc = Encoder::new();
+    let pool_state = snapshot.pool_state();
+    let mut matched: Vec<(&[u8; 28], &yggdrasil_ledger::RegisteredPool)> = pool_hashes
+        .iter()
+        .filter_map(|h| pool_state.get(h).map(|p| (h, p)))
+        .collect();
+    // Sort by pool keyhash for deterministic CBOR output (matches
+    // upstream's `Map.toAscList` ordering).
+    matched.sort_by(|a, b| a.0.cmp(b.0));
+    enc.map(matched.len() as u64);
+    for (hash, pool) in matched {
+        enc.bytes(hash);
+        pool.params().encode_cbor(&mut enc);
+    }
+    enc.into_bytes()
+}
+
+/// Round 172 — decode an optional CBOR set of pool key hashes (the
+/// payload of `GetPoolState { maybe_pool_hash_set_cbor }`).
+///
+/// Upstream encodes `Maybe (Set PoolKeyHash)` for this query as a
+/// 1-or-2-element CBOR list with a leading discriminator:
+/// `[0]` = `Nothing` (no filter; return all pools),
+/// `[1, set]` = `Just set` (filter to the given pool hashes).
+/// Tolerates the alternate `null` shape upstream sometimes emits
+/// for `Nothing` (treated identically).
+///
+/// Returns `Ok(None)` when the payload encodes `Nothing`, or
+/// `Ok(Some(<set>))` when it encodes `Just`.  Decoding errors
+/// propagate via `Err`.
+fn decode_maybe_pool_hash_set(
+    bytes: &[u8],
+) -> Result<Option<std::collections::HashSet<[u8; 28]>>, yggdrasil_ledger::LedgerError> {
+    use yggdrasil_ledger::cbor::Decoder;
+    let mut dec = Decoder::new(bytes);
+    // Accept the `null` shape some upstream encoders emit for `Nothing`.
+    if dec.peek_major().ok() == Some(7) {
+        // Major 7 covers null/undefined.  Treat as Nothing.
+        return Ok(None);
+    }
+    let outer = dec.array()?;
+    if outer == 0 {
+        return Ok(None);
+    }
+    let discriminator = dec.unsigned()?;
+    match (outer, discriminator) {
+        (1, 0) => Ok(None),
+        (2, 1) => {
+            let inner_start = dec.position();
+            // Inner payload is a `Set PoolKeyHash` per `decode_pool_hash_set`.
+            let inner_bytes = &bytes[inner_start..];
+            decode_pool_hash_set(inner_bytes).map(Some)
+        }
+        _ => Err(yggdrasil_ledger::LedgerError::CborDecodeError(format!(
+            "GetPoolState Maybe payload: unexpected shape (outer_len={outer}, \
+             discriminator={discriminator}); expected [0] or [1, set]"
+        ))),
+    }
+}
+
+/// Round 172 — encode `GetPoolState` result: a 4-element CBOR list
+/// holding the upstream `PState` record per
+/// `Cardano.Ledger.Shelley.LedgerState`:
+///
+/// ```text
+/// [
+///   psStakePoolParams       :: Map PoolKeyHash PoolParams,
+///   psFutureStakePoolParams :: Map PoolKeyHash PoolParams,
+///   psRetiring              :: Map PoolKeyHash EpochNo,
+///   psDeposits              :: Map PoolKeyHash Coin,
+/// ]
+/// ```
+///
+/// When `filter` is `Some(<set>)`, every map is intersected with
+/// the supplied pool-hash set (matches upstream `Map.restrictKeys`
+/// semantics).  When `filter` is `None`, every registered pool
+/// appears.  Each map is sorted ascending by pool keyhash for
+/// deterministic CBOR (matches upstream `Map.toAscList`).
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerState.PState`,
+/// `Cardano.Ledger.Shelley.LedgerStateQuery.getPoolState`.
+fn encode_pool_state(
+    snapshot: &LedgerStateSnapshot,
+    filter: Option<&std::collections::HashSet<[u8; 28]>>,
+) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let mut enc = Encoder::new();
+    let pool_state = snapshot.pool_state();
+
+    // Inclusion predicate: with no filter, accept every key; with a
+    // filter, accept only keys in the set.  Matches upstream's
+    // `maybe id Map.restrictKeys` for the optional filter.
+    let include = |k: &[u8; 28]| -> bool { filter.is_none_or(|f| f.contains(k)) };
+
+    // 4-element PState list.
+    enc.array(4);
+
+    // 1: psStakePoolParams
+    let mut current: Vec<(&[u8; 28], &yggdrasil_ledger::PoolParams)> = pool_state
+        .iter()
+        .filter(|(k, _)| include(k))
+        .map(|(k, p)| (k, p.params()))
+        .collect();
+    current.sort_by(|a, b| a.0.cmp(b.0));
+    enc.map(current.len() as u64);
+    for (k, params) in current {
+        enc.bytes(k);
+        params.encode_cbor(&mut enc);
+    }
+
+    // 2: psFutureStakePoolParams
+    let mut future: Vec<(&[u8; 28], &yggdrasil_ledger::PoolParams)> = pool_state
+        .future_params()
+        .iter()
+        .filter(|(k, _)| include(k))
+        .collect();
+    future.sort_by(|a, b| a.0.cmp(b.0));
+    enc.map(future.len() as u64);
+    for (k, params) in future {
+        enc.bytes(k);
+        params.encode_cbor(&mut enc);
+    }
+
+    // 3: psRetiring (Map PoolKeyHash EpochNo)
+    let mut retiring: Vec<(&[u8; 28], u64)> = pool_state
+        .iter()
+        .filter(|(k, _)| include(k))
+        .filter_map(|(k, p)| p.retiring_epoch().map(|e| (k, e.0)))
+        .collect();
+    retiring.sort_by(|a, b| a.0.cmp(b.0));
+    enc.map(retiring.len() as u64);
+    for (k, epoch) in retiring {
+        enc.bytes(k);
+        enc.unsigned(epoch);
+    }
+
+    // 4: psDeposits (Map PoolKeyHash Coin)
+    let mut deposits: Vec<(&[u8; 28], u64)> = pool_state
+        .iter()
+        .filter(|(k, _)| include(k))
+        .map(|(k, p)| (k, p.deposit()))
+        .collect();
+    deposits.sort_by(|a, b| a.0.cmp(b.0));
+    enc.map(deposits.len() as u64);
+    for (k, deposit) in deposits {
+        enc.bytes(k);
+        enc.unsigned(deposit);
+    }
+
+    enc.into_bytes()
+}
+
 /// Decode a CBOR set/array of `TxIn` (the payload of
 /// `GetUTxOByTxIn { txin_set_cbor }`).  Each TxIn is `[txid_bytes,
 /// output_index]`.
@@ -1868,6 +2101,117 @@ mod tests {
         let creds = std::collections::HashSet::new();
         let bytes = encode_filtered_delegations_and_rewards(&snapshot, &creds);
         assert_eq!(bytes, [0x82, 0xa0, 0xa0]);
+    }
+
+    /// Round 171 — `GetStakePoolParams` against an empty snapshot or
+    /// an empty hash-filter set returns the empty CBOR map `0xa0`,
+    /// matching upstream `Map.intersection` of an empty registered
+    /// set with any filter.
+    #[test]
+    fn get_stake_pool_params_empty_filter_emits_empty_map() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let filter = std::collections::HashSet::new();
+        let bytes = encode_filtered_stake_pool_params(&snapshot, &filter);
+        assert_eq!(bytes, [0xa0]);
+    }
+
+    /// Round 171 — `GetStakePoolParams` filter for a non-existent
+    /// pool against a populated snapshot still returns the empty CBOR
+    /// map (intersection drops unknown pools).
+    #[test]
+    fn get_stake_pool_params_unknown_filter_emits_empty_map() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let mut filter = std::collections::HashSet::new();
+        filter.insert([0xff; 28]);
+        let bytes = encode_filtered_stake_pool_params(&snapshot, &filter);
+        assert_eq!(bytes, [0xa0]);
+    }
+
+    /// Round 171 — `decode_pool_hash_set` accepts the canonical
+    /// `tag(258) [* bytes(28)]` shape upstream cardano-cli sends.
+    #[test]
+    fn decode_pool_hash_set_accepts_tagged_set_form() {
+        // tag 258 + array(2) + 2 × bytes(28)
+        let mut payload = vec![0xd9, 0x01, 0x02, 0x82];
+        payload.extend_from_slice(&[0x58, 0x1c]);
+        payload.extend_from_slice(&[0xaa; 28]);
+        payload.extend_from_slice(&[0x58, 0x1c]);
+        payload.extend_from_slice(&[0xbb; 28]);
+        let set = decode_pool_hash_set(&payload).expect("decode");
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&[0xaa; 28]));
+        assert!(set.contains(&[0xbb; 28]));
+    }
+
+    /// Round 171 — `decode_pool_hash_set` also accepts the legacy
+    /// untagged-array shape for forward-compatibility.
+    #[test]
+    fn decode_pool_hash_set_accepts_untagged_array_form() {
+        let mut payload = vec![0x81]; // 1-element array, no tag
+        payload.extend_from_slice(&[0x58, 0x1c]);
+        payload.extend_from_slice(&[0x33; 28]);
+        let set = decode_pool_hash_set(&payload).expect("decode");
+        assert_eq!(set.len(), 1);
+        assert!(set.contains(&[0x33; 28]));
+    }
+
+    /// Round 172 — `GetPoolState` against an empty snapshot with no
+    /// filter emits the canonical 4-element PState list of empty
+    /// maps `0x84 0xa0 0xa0 0xa0 0xa0`.
+    #[test]
+    fn get_pool_state_empty_snapshot_no_filter_emits_four_empty_maps() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let bytes = encode_pool_state(&snapshot, None);
+        assert_eq!(bytes, [0x84, 0xa0, 0xa0, 0xa0, 0xa0]);
+    }
+
+    /// Round 172 — `GetPoolState` against an empty snapshot with a
+    /// non-matching filter still emits four empty maps (filter
+    /// applies to every component).
+    #[test]
+    fn get_pool_state_empty_snapshot_with_filter_emits_four_empty_maps() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let mut filter = std::collections::HashSet::new();
+        filter.insert([0x77; 28]);
+        let bytes = encode_pool_state(&snapshot, Some(&filter));
+        assert_eq!(bytes, [0x84, 0xa0, 0xa0, 0xa0, 0xa0]);
+    }
+
+    /// Round 172 — `decode_maybe_pool_hash_set` accepts the
+    /// canonical `[0]` shape for `Nothing`.
+    #[test]
+    fn decode_maybe_pool_hash_set_accepts_zero_discriminator() {
+        let payload = vec![0x81, 0x00];
+        let result = decode_maybe_pool_hash_set(&payload).expect("decode");
+        assert!(result.is_none());
+    }
+
+    /// Round 172 — `decode_maybe_pool_hash_set` accepts the
+    /// `[1, set]` shape for `Just <set>`.
+    #[test]
+    fn decode_maybe_pool_hash_set_accepts_one_discriminator_with_set() {
+        // [1, tag(258)[bytes(28)]]
+        let mut payload = vec![0x82, 0x01, 0xd9, 0x01, 0x02, 0x81, 0x58, 0x1c];
+        payload.extend_from_slice(&[0x99; 28]);
+        let result = decode_maybe_pool_hash_set(&payload).expect("decode");
+        let set = result.expect("Just");
+        assert_eq!(set.len(), 1);
+        assert!(set.contains(&[0x99; 28]));
+    }
+
+    /// Round 172 — `decode_maybe_pool_hash_set` also accepts a bare
+    /// `null` (CBOR major 7 / value 22) as `Nothing` for
+    /// forward-compatibility with upstream encoders that skip the
+    /// list wrapper.
+    #[test]
+    fn decode_maybe_pool_hash_set_accepts_null_as_nothing() {
+        let payload = vec![0xf6]; // CBOR null
+        let result = decode_maybe_pool_hash_set(&payload).expect("decode");
+        assert!(result.is_none());
     }
 
     /// Round 161 — yggdrasil never DEMOTES the era.  When the wire
