@@ -18,6 +18,7 @@ fn test_block(hash_byte: u8, slot: u64) -> Block {
             slot_no: SlotNo(slot),
             block_no: BlockNo(slot),
             issuer_vkey: [0; 32],
+            protocol_version: None,
         },
         transactions: Vec::new(),
         raw_cbor: None,
@@ -297,6 +298,7 @@ fn cross_store_block_flow() {
             slot_no: SlotNo(42),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: TxId([0xFF; 32]),
@@ -778,6 +780,7 @@ fn file_cross_store_block_flow() {
             slot_no: SlotNo(42),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: TxId([0xFF; 32]),
@@ -1988,6 +1991,7 @@ fn block_raw_cbor_arc_serde_round_trip() {
             slot_no: SlotNo(10),
             block_no: BlockNo(10),
             issuer_vkey: [0; 32],
+            protocol_version: None,
         },
         transactions: Vec::new(),
         raw_cbor: Some(Arc::from(bytes.clone())),

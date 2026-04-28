@@ -301,6 +301,7 @@ fn conway_block_rejects_duplicate_inputs() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![yggdrasil_ledger::Tx {
             id: tx_id,

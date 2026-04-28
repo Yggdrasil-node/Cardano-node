@@ -55,6 +55,7 @@ fn make_conway_block(txs: Vec<(ConwayTxBody, Option<bool>)>, slot: u64) -> Block
             slot_no: SlotNo(slot),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions,
         raw_cbor: None,

@@ -47,6 +47,7 @@ fn make_conway_block_hf(slot: u64, block_no: u64, hash_seed: u8, txs: Vec<Conway
             slot_no: SlotNo(slot),
             block_no: BlockNo(block_no),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: tx_list,
         raw_cbor: None,

@@ -251,6 +251,7 @@ fn alonzo_block_is_valid_false_applies_collateral_only() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![yggdrasil_ledger::Tx {
             id: tx_id,
@@ -352,6 +353,7 @@ fn conway_block_is_valid_false_skips_treasury_value_check() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: tx_id,
@@ -434,6 +436,7 @@ fn conway_block_is_valid_true_rejects_wrong_treasury_value() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: tx_id,
@@ -539,6 +542,7 @@ fn alonzo_block_is_valid_false_skips_ppup_collection() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: tx_id,
@@ -641,6 +645,7 @@ fn babbage_block_is_valid_false_skips_mir_collection() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: tx_id,
@@ -740,6 +745,7 @@ fn babbage_collateral_return_index_equals_outputs_len() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: tx_id,

@@ -1252,10 +1252,11 @@ fn dispatch_upstream_query(
     use yggdrasil_ledger::Encoder;
     use yggdrasil_network::protocols::{
         EraSpecificQuery, HardForkBlockQuery, QueryHardFork, UpstreamQuery,
-        decode_query_if_current, encode_alonzo_pparams_for_lsq, encode_chain_block_no,
-        encode_chain_point, encode_era_index, encode_interpreter_for_network,
-        encode_query_if_current_match, encode_query_if_current_mismatch,
-        encode_shelley_pparams_for_lsq, encode_system_start_for_network,
+        decode_query_if_current, encode_alonzo_pparams_for_lsq, encode_babbage_pparams_for_lsq,
+        encode_chain_block_no, encode_chain_point, encode_era_index,
+        encode_interpreter_for_network, encode_query_if_current_match,
+        encode_query_if_current_mismatch, encode_shelley_pparams_for_lsq,
+        encode_system_start_for_network,
     };
 
     let null_response = || -> Vec<u8> {
@@ -1266,9 +1267,7 @@ fn dispatch_upstream_query(
 
     match query {
         UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryHardFork(inner)) => match inner {
-            QueryHardFork::GetCurrentEra => {
-                encode_era_index(snapshot.current_era().era_ordinal() as u32)
-            }
+            QueryHardFork::GetCurrentEra => encode_era_index(effective_era_index_for_lsq(snapshot)),
             QueryHardFork::GetInterpreter => {
                 encode_interpreter_for_network(network_preset_to_network_kind(network_preset))
             }
@@ -1281,7 +1280,7 @@ fn dispatch_upstream_query(
             // still print `DeserialiseFailure` for those — TODO follow-ups).
             match decode_query_if_current(&inner_cbor) {
                 Ok((era_index, era_q)) => {
-                    let snapshot_era_ordinal = snapshot.current_era().era_ordinal() as u32;
+                    let snapshot_era_ordinal = effective_era_index_for_lsq(snapshot);
                     if era_index != snapshot_era_ordinal {
                         // EraMismatch: cardano-cli will surface this
                         // as a typed mismatch error.
@@ -1294,16 +1293,21 @@ fn dispatch_upstream_query(
                                         // Shelley/Allegra/Mary share the
                                         // 17-element Shelley PP shape.
                                         1..=3 => encode_shelley_pparams_for_lsq(params),
-                                        // Alonzo uses a 24-element PP shape
-                                        // adding cost models, ex-unit prices,
+                                        // Alonzo: 24-element list adding
+                                        // cost models, ex-unit prices,
                                         // ex-unit limits, max-val-size,
                                         // collateral percentage, max
                                         // collateral inputs.
                                         4 => encode_alonzo_pparams_for_lsq(params),
-                                        // Babbage/Conway PP shapes are
-                                        // Phase-3 follow-ups; fall back to
-                                        // null for now (cardano-cli surfaces
-                                        // it as a structured error).
+                                        // Babbage: 22-element list dropping
+                                        // `d` and `extraEntropy`, renaming
+                                        // `coinsPerUtxoWord` to
+                                        // `coinsPerUtxoByte`.
+                                        5 => encode_babbage_pparams_for_lsq(params),
+                                        // Conway PP shape adds DRep /
+                                        // governance / committee fields and
+                                        // tiered ref-script fees — Phase-3
+                                        // follow-up.
                                         _ => return null_response(),
                                     };
                                     encode_query_if_current_match(&pp)
@@ -1361,6 +1365,67 @@ fn dispatch_upstream_query(
         UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryAnytime { .. })
         | UpstreamQuery::DebugLedgerConfig => null_response(),
     }
+}
+
+/// Compute the era_index to report to LSQ clients, advancing
+/// past the snapshot's wire-era_tag-derived era when the
+/// protocol version's major has bumped to the next era's
+/// transition threshold.
+///
+/// Upstream Cardano's hard-fork combinator uses the protocol
+/// version major as the canonical era marker — the chain enters
+/// era N+1 when the active protocol-parameters update bumps
+/// `protocolVersion.major` to era N+1's transition value.  The
+/// block's wire-format era_tag and the snapshot's "active era"
+/// can briefly diverge across a hard-fork epoch boundary; for
+/// LSQ purposes upstream reports the PV-derived era so that
+/// cardano-cli's per-era query gating (e.g. `query stake-pools`
+/// requires Babbage+) reflects the chain's *active* protocol,
+/// not its on-wire encoding.
+///
+/// For `Test*HardForkAtEpoch=0` testnets like preview, this
+/// surfaces immediately at chain genesis: blocks are wire-tagged
+/// as Alonzo (era_tag=5) but carry PV major=7 (Babbage), so
+/// yggdrasil reports era_index=5 (Babbage) and cardano-cli's
+/// per-era gating unblocks all Babbage-required queries.
+///
+/// PV major → era mapping (per
+/// `Ouroboros.Consensus.Cardano.CanHardFork`'s `*Transition`
+/// `ProtVer` constants):
+///
+/// | PV major | Era (era_index) |
+/// |----------|-----------------|
+/// | 1        | Byron (0)       |
+/// | 2        | Shelley (1)     |
+/// | 3        | Allegra (2)     |
+/// | 4        | Mary (3)        |
+/// | 5–6      | Alonzo (4)      |
+/// | 7–8      | Babbage (5)     |
+/// | 9+       | Conway (6)      |
+fn effective_era_index_for_lsq(snapshot: &LedgerStateSnapshot) -> u32 {
+    let wire_era_ordinal = snapshot.current_era().era_ordinal() as u32;
+    let block_pv = snapshot.latest_block_protocol_version();
+    let params_pv = snapshot.protocol_params().and_then(|p| p.protocol_version);
+    let pv_major = block_pv.or(params_pv).map(|(maj, _)| maj).unwrap_or(0);
+    if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+        eprintln!(
+            "[YGG_NTC_DEBUG] effective_era: wire_era={} block_pv={:?} params_pv={:?} pv_major={}",
+            wire_era_ordinal, block_pv, params_pv, pv_major,
+        );
+    }
+    let pv_era_index: u32 = match pv_major {
+        0..=1 => 0, // Byron
+        2 => 1,     // Shelley
+        3 => 2,     // Allegra
+        4 => 3,     // Mary
+        5..=6 => 4, // Alonzo
+        7..=8 => 5, // Babbage
+        _ => 6,     // Conway+
+    };
+    // Always promote to the higher of the two (wire-tag vs PV-derived).
+    // Never demote, which would confuse cardano-cli's era-progression
+    // expectations.
+    wire_era_ordinal.max(pv_era_index)
 }
 
 fn network_preset_to_network_kind(
@@ -1516,6 +1581,63 @@ mod tests {
     fn test_encode_rejection_reason_is_non_empty() {
         let bytes = encode_rejection_reason("tx too large");
         assert!(!bytes.is_empty());
+    }
+
+    /// Round 161 — pin `effective_era_index_for_lsq`'s PV major →
+    /// era_index mapping per upstream
+    /// `Ouroboros.Consensus.Cardano.CanHardFork`'s `*Transition`
+    /// `ProtVer` table.  When this drifts, cardano-cli's per-era
+    /// query gating misclassifies the chain's active era and
+    /// queries silently fail or run against the wrong codec.
+    #[test]
+    fn effective_era_index_pv_table_matches_upstream() {
+        use yggdrasil_ledger::ProtocolParameters;
+
+        let cases = [
+            // (block_pv, expected_era_index)
+            (None, 0),                  // no PV → Byron default
+            (Some((1u64, 0u64)), 0),    // Byron
+            (Some((2, 0)), 1),          // Shelley
+            (Some((3, 0)), 2),          // Allegra (signal in Shelley codec)
+            (Some((4, 0)), 3),          // Mary
+            (Some((5, 0)), 4),          // Alonzo intra-era
+            (Some((6, 0)), 4),          // Alonzo intra-era (post-bump)
+            (Some((7, 0)), 5),          // Babbage transition signal
+            (Some((8, 0)), 5),          // Babbage intra-era
+            (Some((9, 0)), 6),          // Conway transition signal
+            (Some((10, 0)), 6),         // Conway intra-era
+            (Some((100, 0)), 6),        // Future PV bumps stay at Conway
+        ];
+
+        for (pv, expected) in cases {
+            let mut state = LedgerState::new(Era::Byron);
+            state.latest_block_protocol_version = pv;
+            *state.protocol_params_mut() = Some(ProtocolParameters::default());
+            let snapshot = state.snapshot();
+            let actual = effective_era_index_for_lsq(&snapshot);
+            assert_eq!(
+                actual, expected,
+                "PV {pv:?} should map to era_index {expected}, got {actual}",
+            );
+        }
+    }
+
+    /// Round 161 — yggdrasil never DEMOTES the era.  When the wire
+    /// era_tag (e.g. block came in as Conway-codec, era_tag=6) is
+    /// higher than the PV-derived era (e.g. PV major=5 = Alonzo),
+    /// we keep the wire era to avoid confusing cardano-cli with
+    /// regressing era progression.
+    #[test]
+    fn effective_era_index_never_demotes_below_wire_era() {
+        let mut state = LedgerState::new(Era::Conway);
+        state.latest_block_protocol_version = Some((5, 0));
+        let snapshot = state.snapshot();
+        let actual = effective_era_index_for_lsq(&snapshot);
+        assert_eq!(
+            actual,
+            Era::Conway.era_ordinal() as u32,
+            "must keep wire era_tag (Conway=6) when PV-derived would demote",
+        );
     }
 
     #[test]

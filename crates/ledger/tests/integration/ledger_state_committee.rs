@@ -30,6 +30,7 @@ fn make_conway_committee_block(
             slot_no: SlotNo(slot),
             block_no: BlockNo(block_no),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: tx_list,
         raw_cbor: None,

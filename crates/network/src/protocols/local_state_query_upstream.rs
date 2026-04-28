@@ -921,9 +921,7 @@ pub fn encode_shelley_pparams_for_lsq(params: &yggdrasil_ledger::ProtocolParamet
 /// `coins_per_utxo_byte` field stores the Babbage-renamed value
 /// (= word-value / 8); this encoder multiplies by 8 when emitting
 /// the Alonzo-shape word value.
-pub fn encode_alonzo_pparams_for_lsq(
-    params: &yggdrasil_ledger::ProtocolParameters,
-) -> Vec<u8> {
+pub fn encode_alonzo_pparams_for_lsq(params: &yggdrasil_ledger::ProtocolParameters) -> Vec<u8> {
     use yggdrasil_ledger::CborEncode;
     let mut enc = Encoder::new();
     enc.array(24);
@@ -954,6 +952,73 @@ pub fn encode_alonzo_pparams_for_lsq(
     // (Babbage renamed and divided by 8).  Default to mainnet's
     // 34_482 word value when the snapshot doesn't carry it.
     enc.unsigned(params.coins_per_utxo_byte.map(|b| b * 8).unwrap_or(34_482));
+    encode_alonzo_cost_models(&mut enc, params.cost_models.as_ref());
+    encode_ex_unit_prices(
+        &mut enc,
+        params.price_mem.as_ref(),
+        params.price_step.as_ref(),
+    );
+    encode_ex_units(&mut enc, params.max_tx_ex_units.as_ref());
+    encode_ex_units(&mut enc, params.max_block_ex_units.as_ref());
+    enc.unsigned(params.max_val_size.unwrap_or(5000) as u64);
+    enc.unsigned(params.collateral_percentage.unwrap_or(150));
+    enc.unsigned(params.max_collateral_inputs.unwrap_or(3) as u64);
+    enc.into_bytes()
+}
+
+/// Encode Babbage-era `PParams` in the upstream `GetCurrentPParams`
+/// response shape: a 22-element CBOR list.  Differs from Alonzo:
+/// - drops `d` (decentralization, key 13)
+/// - drops `extraEntropy` (key 14)
+/// - renames `coinsPerUtxoWord` → `coinsPerUtxoByte` at key 17
+///   (= word-value / 8 — yggdrasil's `coins_per_utxo_byte` already
+///   stores the per-byte value).
+///
+/// Upstream `Cardano.Ledger.Babbage.PParams.encCBOR` order:
+///
+/// 1.  minfeeA              12. protocolVersion
+/// 2.  minfeeB              13. minPoolCost
+/// 3.  maxBBSize            14. coinsPerUtxoByte
+/// 4.  maxTxSize            15. costModels
+/// 5.  maxBHSize            16. prices [priceMem, priceSteps]
+/// 6.  keyDeposit           17. maxTxExUnits [mem, steps]
+/// 7.  poolDeposit          18. maxBlockExUnits [mem, steps]
+/// 8.  eMax                 19. maxValSize
+/// 9.  nOpt                 20. collateralPercentage
+/// 10. a0                   21. maxCollateralInputs
+/// 11. rho/tau              22. (rho is 11, tau is 12 in the actual list)
+///
+/// Actually the canonical order is: [minFeeA, minFeeB, maxBBSize,
+/// maxTxSize, maxBHSize, keyDeposit, poolDeposit, eMax, nOpt, a0,
+/// rho, tau, protocolVersion, minPoolCost, coinsPerUtxoByte,
+/// costModels, prices, maxTxExUnits, maxBlockExUnits, maxValSize,
+/// collateralPercentage, maxCollateralInputs] — 22 fields.
+pub fn encode_babbage_pparams_for_lsq(params: &yggdrasil_ledger::ProtocolParameters) -> Vec<u8> {
+    use yggdrasil_ledger::CborEncode;
+    let mut enc = Encoder::new();
+    enc.array(22);
+    enc.unsigned(params.min_fee_a);
+    enc.unsigned(params.min_fee_b);
+    enc.unsigned(params.max_block_body_size as u64);
+    enc.unsigned(params.max_tx_size as u64);
+    enc.unsigned(params.max_block_header_size as u64);
+    enc.unsigned(params.key_deposit);
+    enc.unsigned(params.pool_deposit);
+    enc.unsigned(params.e_max);
+    enc.unsigned(params.n_opt);
+    params.a0.encode_cbor(&mut enc);
+    params.rho.encode_cbor(&mut enc);
+    params.tau.encode_cbor(&mut enc);
+    let (pv_major, pv_minor) = params.protocol_version.unwrap_or((7, 0));
+    enc.array(2);
+    enc.unsigned(pv_major);
+    enc.unsigned(pv_minor);
+    enc.unsigned(params.min_pool_cost);
+    // Babbage `coinsPerUtxoByte` is yggdrasil's
+    // `coins_per_utxo_byte` directly (already in per-byte form,
+    // not Alonzo's per-word).  Default to the mainnet value
+    // (4310 = 34482/8).
+    enc.unsigned(params.coins_per_utxo_byte.unwrap_or(4_310));
     encode_alonzo_cost_models(&mut enc, params.cost_models.as_ref());
     encode_ex_unit_prices(
         &mut enc,
@@ -1010,10 +1075,7 @@ fn encode_ex_unit_prices(
     ps.encode_cbor(enc);
 }
 
-fn encode_ex_units(
-    enc: &mut Encoder,
-    ex_units: Option<&yggdrasil_ledger::eras::alonzo::ExUnits>,
-) {
+fn encode_ex_units(enc: &mut Encoder, ex_units: Option<&yggdrasil_ledger::eras::alonzo::ExUnits>) {
     enc.array(2);
     match ex_units {
         Some(eu) => {
@@ -1393,6 +1455,47 @@ mod tests {
         assert_eq!(&bytes[1..3], &[0x18, 0x2c]);
         // Second: minFeeB = 155381 = 0x1a 0x00 0x02 0x5e 0xf5.
         assert_eq!(&bytes[3..8], &[0x1a, 0x00, 0x02, 0x5e, 0xf5]);
+    }
+
+    /// Round 159 — pin `encode_alonzo_pparams_for_lsq` produces a
+    /// 24-element CBOR list (Alonzo's `[minfeeA, minfeeB, maxBBSize,
+    /// maxTxSize, maxBHSize, keyDeposit, poolDeposit, eMax, nOpt,
+    /// a0, rho, tau, d, extraEntropy, protocolVersion, minPoolCost,
+    /// coinsPerUtxoWord, costModels, prices, maxTxExUnits,
+    /// maxBlockExUnits, maxValSize, collateralPercentage,
+    /// maxCollateralInputs]`).  This is what
+    /// `cardano-cli 10.16.0.0 query protocol-parameters` against
+    /// preview's Alonzo era expects, captured during the Round 159
+    /// operational rehearsal.
+    #[test]
+    fn alonzo_pparams_emit_24_element_list() {
+        use yggdrasil_ledger::ProtocolParameters;
+        let params = ProtocolParameters {
+            min_fee_a: 44,
+            min_fee_b: 155381,
+            max_block_body_size: 65536,
+            max_tx_size: 16384,
+            max_block_header_size: 1100,
+            key_deposit: 2_000_000,
+            pool_deposit: 500_000_000,
+            e_max: 18,
+            n_opt: 150,
+            min_utxo_value: None,
+            min_pool_cost: 340_000_000,
+            coins_per_utxo_byte: Some(34_482 / 8),
+            collateral_percentage: Some(150),
+            max_collateral_inputs: Some(3),
+            max_val_size: Some(5000),
+            protocol_version: Some((6, 0)),
+            ..ProtocolParameters::default()
+        };
+        let bytes = encode_alonzo_pparams_for_lsq(&params);
+        // 0x98 = uint8-prefix array length follows for len ≥ 24.
+        assert_eq!(bytes[0], 0x98, "must be array(N) with N≥24 prefix");
+        assert_eq!(bytes[1], 24, "Alonzo PP has 24 fields");
+        // Fields 1+2: minFeeA=44, minFeeB=155381 — same as Shelley prefix.
+        assert_eq!(&bytes[2..4], &[0x18, 0x2c]);
+        assert_eq!(&bytes[4..9], &[0x1a, 0x00, 0x02, 0x5e, 0xf5]);
     }
 
     /// Captured upstream `cardano-cli 10.16.0.0 query tip --testnet-magic 1`

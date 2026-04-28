@@ -6684,6 +6684,7 @@ mod tests {
                 slot_no: SlotNo(42),
                 block_no: yggdrasil_ledger::BlockNo(7),
                 issuer_vkey: [1; 32],
+                protocol_version: None,
             },
             transactions: Vec::new(),
             raw_cbor: None,

@@ -110,6 +110,7 @@ fn alonzo_block_rejects_missing_minting_redeemer_for_plutus_policy() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x31; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: compute_tx_id(&body_bytes),
@@ -316,6 +317,7 @@ fn alonzo_block_rejects_missing_redeemer_phase1_with_valid_hash() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x31; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: compute_tx_id(&body_bytes),
@@ -536,6 +538,7 @@ fn conway_block_rejects_missing_redeemer_even_when_is_valid_false() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x31; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: compute_tx_id(&body_bytes),

@@ -201,6 +201,7 @@ fn alonzo_block_with_plutus_v1_mint(
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: TxId(tx_hash.0),
@@ -303,6 +304,7 @@ fn babbage_block_with_plutus_v2_mint(
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: TxId(tx_hash.0),
@@ -842,6 +844,7 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0x11; 32],
+            protocol_version: None,
         },
         transactions: vec![Tx {
             id: TxId(tx_hash.0),

@@ -2020,6 +2020,7 @@ fn enact_gov_action_at_epoch(
 pub struct LedgerStateSnapshot {
     current_era: Era,
     tip: Point,
+    latest_block_protocol_version: Option<(u64, u64)>,
     current_epoch: EpochNo,
     expected_network_id: Option<u8>,
     governance_actions: BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
@@ -2053,6 +2054,13 @@ impl LedgerStateSnapshot {
     /// Returns the current epoch captured in this snapshot.
     pub fn current_epoch(&self) -> EpochNo {
         self.current_epoch
+    }
+
+    /// Returns the protocol version `(major, minor)` declared in the
+    /// most recently applied block's header.  See
+    /// [`LedgerState::latest_block_protocol_version`] for rationale.
+    pub fn latest_block_protocol_version(&self) -> Option<(u64, u64)> {
+        self.latest_block_protocol_version
     }
 
     /// Returns the expected reward-account network id, if configured.
@@ -2605,6 +2613,22 @@ pub struct LedgerState {
     pub current_era: Era,
     /// Chain tip as a point (slot + header hash).
     pub tip: Point,
+    /// Protocol version `(major, minor)` declared in the most
+    /// recently applied block's header.
+    ///
+    /// This tracks the chain's *active* protocol — distinct from
+    /// `protocol_params.protocol_version` (which is the
+    /// genesis/PPUP-managed PP field).  When the chain is in a
+    /// hard-fork transition state (e.g. Alonzo era with PV major
+    /// bumped to 7 to signal Babbage), the header PV is the
+    /// canonical source for "what era is this chain effectively
+    /// in", used by upstream's hard-fork combinator and surfaced
+    /// to LSQ clients via the era-promotion logic in the local
+    /// server.
+    ///
+    /// `None` until the first non-Byron block is applied (Byron
+    /// blocks have no header PV).
+    pub latest_block_protocol_version: Option<(u64, u64)>,
     /// Current epoch known to the ledger state.
     pub current_epoch: EpochNo,
     /// Expected network id for reward-account validation.
@@ -3014,6 +3038,7 @@ impl CborDecode for LedgerState {
         Ok(Self {
             current_era,
             tip,
+            latest_block_protocol_version: None,
             current_epoch,
             expected_network_id,
             governance_actions,
@@ -3098,6 +3123,7 @@ impl LedgerState {
         Self {
             current_era,
             tip: Point::Origin,
+            latest_block_protocol_version: None,
             current_epoch: EpochNo(0),
             expected_network_id: None,
             governance_actions: BTreeMap::new(),
@@ -3855,6 +3881,7 @@ impl LedgerState {
         LedgerStateSnapshot {
             current_era: self.current_era,
             tip: self.tip,
+            latest_block_protocol_version: self.latest_block_protocol_version,
             current_epoch: self.current_epoch,
             expected_network_id: self.expected_network_id,
             governance_actions: self.governance_actions.clone(),
@@ -4020,6 +4047,9 @@ impl LedgerState {
 
         self.current_era = block.era;
         self.tip = Point::BlockPoint(block.header.slot_no, block.header.hash);
+        if let Some(pv) = block.header.protocol_version {
+            self.latest_block_protocol_version = Some(pv);
+        }
         Ok(())
     }
 

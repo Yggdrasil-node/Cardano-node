@@ -2371,6 +2371,7 @@ mod tests {
                     slot_no: SlotNo(slot),
                     block_no: BlockNo(block_number),
                     issuer_vkey: header.body.issuer_vkey,
+                    protocol_version: Some(header.body.protocol_version),
                 },
                 transactions: Vec::new(),
                 raw_cbor: Some(std::sync::Arc::from(raw_cbor)),

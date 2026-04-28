@@ -91,6 +91,7 @@ fn shelley_block_rejects_aux_data_without_hash() {
             slot_no: SlotNo(10),
             block_no: BlockNo(1),
             issuer_vkey: [0; 32],
+            protocol_version: None,
         },
         transactions: vec![tx],
         raw_cbor: None,

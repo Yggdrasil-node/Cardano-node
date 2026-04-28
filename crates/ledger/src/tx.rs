@@ -603,6 +603,19 @@ pub struct BlockHeader {
     pub block_no: BlockNo,
     /// Issuer verification key (opaque bytes, 32-byte Ed25519 vkey).
     pub issuer_vkey: [u8; 32],
+    /// Protocol version `(major, minor)` declared in the block header.
+    ///
+    /// Used by upstream's hard-fork combinator to track the chain's
+    /// effective era — the active PV major can advance via in-band
+    /// PPUP within era N to signal the era-N+1 transition, so the
+    /// header PV is the canonical source of truth for "what era is
+    /// this chain actually in" (independent of the wire-format
+    /// era_tag which only tracks the codec used to encode the block).
+    ///
+    /// `None` for Byron blocks (no in-header PV) and for any block
+    /// constructed programmatically without a PV source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_version: Option<(u64, u64)>,
 }
 
 /// A block carrying its header and a body of transactions.
@@ -1080,6 +1093,7 @@ mod tests {
             slot_no: SlotNo(42),
             block_no: BlockNo(1),
             issuer_vkey: [0xab; 32],
+            protocol_version: None,
         };
         assert_eq!(header.slot_no, SlotNo(42));
         assert_eq!(header.block_no, BlockNo(1));
@@ -1095,6 +1109,7 @@ mod tests {
                 slot_no: SlotNo(1),
                 block_no: BlockNo(1),
                 issuer_vkey: [0x00; 32],
+                protocol_version: None,
             },
             transactions: vec![],
             raw_cbor: None,
