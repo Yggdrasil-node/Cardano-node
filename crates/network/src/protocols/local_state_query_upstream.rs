@@ -524,13 +524,11 @@ pub fn encode_system_start_for_network(network: NetworkKind) -> Vec<u8> {
     }
 }
 
-/// Encode CBOR positive bignum (tag 2).  Used as a fallback for
-/// values that exceed u64 range.  Upstream uses plain CBOR uint
-/// (major type 0) for `relativeTime` whenever the value fits in
-/// u64 (which is true for all realistic preprod/mainnet slots), so
-/// this helper is only needed for synthetic far-future bounds we
-/// don't currently emit.
-#[allow(dead_code)]
+/// Encode CBOR positive bignum (tag 2) for picosecond values that
+/// exceed u64 range.  Round 162 — used by `encode_relative_time`
+/// when `picoseconds > u64::MAX` (i.e. for synthetic far-future
+/// bounds past slot 1.8e7 at 1s/slot which would overflow
+/// u64-as-picoseconds).
 fn encode_bignum_u128(enc: &mut Encoder, value: u128) {
     enc.tag(2);
     if value == 0 {
@@ -543,14 +541,22 @@ fn encode_bignum_u128(enc: &mut Encoder, value: u128) {
 }
 
 /// Encode `relativeTime :: NominalDiffTimeMicro` per upstream
-/// `Ouroboros.Consensus.HardFork.History.Summary` which serialises
-/// it as a plain CBOR uint when it fits in u64.  Captured wire
-/// bytes from `cardano-node 10.7.1` at NtC V_23 confirm: Byron
-/// eraEnd encoded as `1b 17fb16d83be00000` (CBOR uint8 prefix +
-/// 8-byte big-endian = 1.728e18), not `c2 48 17fb16d83be00000`
-/// (bignum tag 2 + byte string).
-fn encode_relative_time(enc: &mut Encoder, picoseconds: u64) {
-    enc.unsigned(picoseconds);
+/// `Ouroboros.Consensus.HardFork.History.Summary`.  Serialises as
+/// a plain CBOR uint when the value fits in u64 (matches captured
+/// wire bytes for real era boundaries) and falls through to a
+/// CBOR positive-bignum (tag 2) when the value exceeds u64 — used
+/// by Round 162's bumped synthetic far-future end.
+///
+/// Captured wire bytes from `cardano-node 10.7.1` at NtC V_23
+/// confirm: Byron eraEnd at 1.728e18 ps encoded as
+/// `1b 17fb16d83be00000` (CBOR uint8 prefix + 8-byte big-endian),
+/// not `c2 48 17fb16d83be00000` (bignum-wrapped).
+fn encode_relative_time(enc: &mut Encoder, picoseconds: u128) {
+    if picoseconds <= u64::MAX as u128 {
+        enc.unsigned(picoseconds as u64);
+    } else {
+        encode_bignum_u128(enc, picoseconds);
+    }
 }
 
 /// Encode an upstream-faithful preprod `Interpreter` with two era
@@ -596,9 +602,19 @@ fn encode_interpreter_preprod() -> Vec<u8> {
     // Byron at 1s/slot, well past current preprod test tip):
     //   relativeTime = 1.728e18 + (10_000_000 - 86400) * 1e12
     //                = 1.0099e19 ps  (fits in u64).
-    const SHELLEY_END_SLOT: u64 = 10_000_000;
-    const SHELLEY_END_PICOS: u64 =
-        BYRON_END_PICOS + ((SHELLEY_END_SLOT - BYRON_END_SLOT) * 1_000_000_000_000_u64);
+    // Round 162 — bump synthetic far-future end to slot 2^48 to
+    // cover all realistic preprod slots indefinitely.  At 1s/slot
+    // that's 281 trillion slots ≈ 8.9 million years from genesis;
+    // relativeTime in picoseconds = 2^48 * 1e12 ≈ 2.81e26, which
+    // overflows u64 and triggers the bignum path in
+    // `encode_relative_time`.  This unblocks `query slot-number`
+    // and `query era-history` for any timestamp the user could
+    // realistically pass (the prior 10M slot end forced
+    // `Past horizon` rejections for timestamps past ~116 days
+    // post-Byron at 1s/slot).
+    const SHELLEY_END_SLOT: u64 = 1u64 << 48;
+    const SHELLEY_END_PICOS: u128 = (BYRON_END_PICOS as u128)
+        + ((SHELLEY_END_SLOT as u128 - BYRON_END_SLOT as u128) * 1_000_000_000_000_u128);
     // Shelley epochSize = 432_000 slots (5 days × 86_400 s/day).
     const SHELLEY_END_EPOCH: u64 = BYRON_END_EPOCH + (SHELLEY_END_SLOT - BYRON_END_SLOT) / 432_000;
 
@@ -612,7 +628,7 @@ fn encode_interpreter_preprod() -> Vec<u8> {
     enc.unsigned(0);
     enc.unsigned(0);
     enc.array(3);
-    encode_relative_time(&mut enc, BYRON_END_PICOS);
+    encode_relative_time(&mut enc, BYRON_END_PICOS as u128);
     enc.unsigned(BYRON_END_SLOT);
     enc.unsigned(BYRON_END_EPOCH);
     enc.array(4);
@@ -628,7 +644,7 @@ fn encode_interpreter_preprod() -> Vec<u8> {
     // Shelley summary (open era — synthetic far-future end)
     enc.array(3);
     enc.array(3);
-    encode_relative_time(&mut enc, BYRON_END_PICOS);
+    encode_relative_time(&mut enc, BYRON_END_PICOS as u128);
     enc.unsigned(BYRON_END_SLOT);
     enc.unsigned(BYRON_END_EPOCH);
     enc.array(3);
@@ -664,8 +680,11 @@ fn encode_interpreter_preprod() -> Vec<u8> {
 /// is documented as a Phase-3 follow-up to extend coverage).
 fn encode_interpreter_preview() -> Vec<u8> {
     const EPOCH_LENGTH: u64 = 86_400;
-    const SHELLEY_END_SLOT: u64 = 10_000_000;
-    const SHELLEY_END_PICOS: u64 = SHELLEY_END_SLOT * 1_000_000_000_000_u64;
+    // Round 162 — synthetic far-future end at 2^48 covers all
+    // realistic preview slots indefinitely; relativeTime overflows
+    // u64 and triggers the bignum path.
+    const SHELLEY_END_SLOT: u64 = 1u64 << 48;
+    const SHELLEY_END_PICOS: u128 = SHELLEY_END_SLOT as u128 * 1_000_000_000_000_u128;
     const SHELLEY_END_EPOCH: u64 = SHELLEY_END_SLOT / EPOCH_LENGTH;
 
     let mut enc = Encoder::new();
@@ -710,19 +729,17 @@ fn encode_interpreter_preview() -> Vec<u8> {
 fn encode_interpreter_mainnet() -> Vec<u8> {
     const BYRON_END_SLOT: u64 = 4_492_800;
     const BYRON_END_EPOCH: u64 = 208;
-    // Byron: 4_492_800 slots × 20s = 89_856_000s = 8.9856e19 ps —
-    // exceeds u64.  Cap at u64::MAX-aware encoding: use slot-
-    // boundary picoseconds up to u64 max instead.  Real value:
-    // 4_492_800 × 20 × 1e12 = 8.9856e19; u64 max = 1.844e19.
-    //
-    // Workaround: scale relativeTime down to a representable
-    // value by treating slotLength as 1s for relativeTime
-    // purposes only (cardano-cli uses Bound.slot for slot↔epoch
-    // math, not relativeTime).  Set Byron eraEnd relativeTime to
-    // BYRON_END_SLOT * 1e12 (=4.4928e18 ps, fits u64).
-    const BYRON_END_PICOS: u64 = BYRON_END_SLOT * 1_000_000_000_000_u64;
-    const SHELLEY_END_SLOT: u64 = BYRON_END_SLOT + 10_000_000;
-    const SHELLEY_END_PICOS: u64 = SHELLEY_END_SLOT * 1_000_000_000_000_u64;
+    // Byron eraEnd relativeTime: 4_492_800 × 20 × 1e12 = 8.9856e19 ps,
+    // which exceeds u64 (1.844e19).  Round 162's bignum-aware
+    // `encode_relative_time` handles values past u64 via CBOR
+    // tag-2 bignum, so we now use the real picosecond value.
+    const BYRON_END_PICOS: u128 =
+        BYRON_END_SLOT as u128 * 20_000 * 1_000_000_000_u128;
+    // Round 162 — synthetic far-future Shelley end at slot 2^48
+    // covers all realistic mainnet slots indefinitely.
+    const SHELLEY_END_SLOT: u64 = 1u64 << 48;
+    const SHELLEY_END_PICOS: u128 = BYRON_END_PICOS
+        + (SHELLEY_END_SLOT as u128 - BYRON_END_SLOT as u128) * 1_000_000_000_000_u128;
     const SHELLEY_END_EPOCH: u64 = BYRON_END_EPOCH + (SHELLEY_END_SLOT - BYRON_END_SLOT) / 432_000;
 
     let mut enc = Encoder::new();
@@ -1087,6 +1104,88 @@ fn encode_ex_units(enc: &mut Encoder, ex_units: Option<&yggdrasil_ledger::eras::
             enc.unsigned(0);
         }
     }
+}
+
+/// Encode Conway-era `PParams` in the upstream `GetCurrentPParams`
+/// response shape — a 31-element CBOR list.  Conway extends Babbage
+/// with 9 governance fields:
+/// - `poolVotingThresholds` (5-element list of UnitInterval)
+/// - `drepVotingThresholds` (10-element list of UnitInterval)
+/// - `minCommitteeSize` (u64)
+/// - `committeeTermLimit` (u64 epoch interval)
+/// - `govActionLifetime` (u64 epoch interval)
+/// - `govActionDeposit` (u64 lovelace)
+/// - `drepDeposit` (u64 lovelace)
+/// - `drepActivity` (u64 epoch interval)
+/// - `minFeeRefScriptCostPerByte` (UnitInterval, used for the
+///   tiered ref-script fee per upstream `tierRefScriptFee`)
+///
+/// Field order per `Cardano.Ledger.Conway.PParams.encCBOR`: the
+/// 22 Babbage fields followed by 9 governance fields.  Defaults
+/// for missing optional fields match the Conway-genesis values
+/// for mainnet.
+pub fn encode_conway_pparams_for_lsq(params: &yggdrasil_ledger::ProtocolParameters) -> Vec<u8> {
+    use yggdrasil_ledger::CborEncode;
+    let mut enc = Encoder::new();
+    enc.array(31);
+    // 1-12: Same as Babbage prefix.
+    enc.unsigned(params.min_fee_a);
+    enc.unsigned(params.min_fee_b);
+    enc.unsigned(params.max_block_body_size as u64);
+    enc.unsigned(params.max_tx_size as u64);
+    enc.unsigned(params.max_block_header_size as u64);
+    enc.unsigned(params.key_deposit);
+    enc.unsigned(params.pool_deposit);
+    enc.unsigned(params.e_max);
+    enc.unsigned(params.n_opt);
+    params.a0.encode_cbor(&mut enc);
+    params.rho.encode_cbor(&mut enc);
+    params.tau.encode_cbor(&mut enc);
+    // 13: protocolVersion `[major, minor]` — default to (9, 0)
+    // (Conway transition) when missing.
+    let (pv_major, pv_minor) = params.protocol_version.unwrap_or((9, 0));
+    enc.array(2);
+    enc.unsigned(pv_major);
+    enc.unsigned(pv_minor);
+    // 14-16: minPoolCost, coinsPerUtxoByte, costModels.
+    enc.unsigned(params.min_pool_cost);
+    enc.unsigned(params.coins_per_utxo_byte.unwrap_or(4_310));
+    encode_alonzo_cost_models(&mut enc, params.cost_models.as_ref());
+    // 17-21: prices, maxTx/Block ExUnits, maxValSize.
+    encode_ex_unit_prices(
+        &mut enc,
+        params.price_mem.as_ref(),
+        params.price_step.as_ref(),
+    );
+    encode_ex_units(&mut enc, params.max_tx_ex_units.as_ref());
+    encode_ex_units(&mut enc, params.max_block_ex_units.as_ref());
+    enc.unsigned(params.max_val_size.unwrap_or(5000) as u64);
+    // 22-23: collateralPercentage, maxCollateralInputs.
+    enc.unsigned(params.collateral_percentage.unwrap_or(150));
+    enc.unsigned(params.max_collateral_inputs.unwrap_or(3) as u64);
+    // 24-25: governance voting thresholds.
+    let pool_thresh = params.pool_voting_thresholds.clone().unwrap_or_default();
+    pool_thresh.encode_cbor(&mut enc);
+    let drep_thresh = params.drep_voting_thresholds.clone().unwrap_or_default();
+    drep_thresh.encode_cbor(&mut enc);
+    // 26-30: committee + governance-action params (Conway-genesis defaults).
+    enc.unsigned(params.min_committee_size.unwrap_or(7));
+    enc.unsigned(params.committee_term_limit.unwrap_or(146));
+    enc.unsigned(params.gov_action_lifetime.unwrap_or(6));
+    enc.unsigned(params.gov_action_deposit.unwrap_or(100_000_000_000));
+    enc.unsigned(params.drep_deposit.unwrap_or(500_000_000));
+    // 31: drepActivity, minFeeRefScriptCostPerByte.
+    enc.unsigned(params.drep_activity.unwrap_or(20));
+    let ref_script_default = yggdrasil_ledger::types::UnitInterval {
+        numerator: 15,
+        denominator: 1,
+    };
+    let ref_script_cost = params
+        .min_fee_ref_script_cost_per_byte
+        .as_ref()
+        .unwrap_or(&ref_script_default);
+    ref_script_cost.encode_cbor(&mut enc);
+    enc.into_bytes()
 }
 
 /// Encode upstream's `Nonce` per
@@ -1495,6 +1594,76 @@ mod tests {
         assert_eq!(bytes[1], 24, "Alonzo PP has 24 fields");
         // Fields 1+2: minFeeA=44, minFeeB=155381 — same as Shelley prefix.
         assert_eq!(&bytes[2..4], &[0x18, 0x2c]);
+        assert_eq!(&bytes[4..9], &[0x1a, 0x00, 0x02, 0x5e, 0xf5]);
+    }
+
+    /// Round 160 — pin Babbage PP shape: 22-element list (drops
+    /// `d` and `extraEntropy` from Alonzo, renames
+    /// `coinsPerUtxoWord` → `coinsPerUtxoByte`).
+    #[test]
+    fn babbage_pparams_emit_22_element_list() {
+        use yggdrasil_ledger::ProtocolParameters;
+        let params = ProtocolParameters {
+            min_fee_a: 44,
+            min_fee_b: 155381,
+            max_block_body_size: 90112,
+            max_tx_size: 16384,
+            max_block_header_size: 1100,
+            key_deposit: 2_000_000,
+            pool_deposit: 500_000_000,
+            e_max: 18,
+            n_opt: 500,
+            min_pool_cost: 340_000_000,
+            coins_per_utxo_byte: Some(4_310),
+            collateral_percentage: Some(150),
+            max_collateral_inputs: Some(3),
+            max_val_size: Some(5000),
+            protocol_version: Some((8, 0)),
+            ..ProtocolParameters::default()
+        };
+        let bytes = encode_babbage_pparams_for_lsq(&params);
+        // 0x96 = array(22) (uint5-inlined since 22 < 24).
+        assert_eq!(bytes[0], 0x96, "Babbage PP has 22 fields");
+        assert_eq!(&bytes[1..3], &[0x18, 0x2c], "minFeeA=44");
+        assert_eq!(
+            &bytes[3..8],
+            &[0x1a, 0x00, 0x02, 0x5e, 0xf5],
+            "minFeeB=155381",
+        );
+    }
+
+    /// Round 161 — pin Conway PP shape: 31-element list adding
+    /// governance fields (pool/DRep voting thresholds, committee
+    /// params, gov-action lifetime/deposit, DRep deposit/activity,
+    /// minFeeRefScriptCostPerByte).
+    #[test]
+    fn conway_pparams_emit_31_element_list() {
+        use yggdrasil_ledger::ProtocolParameters;
+        let params = ProtocolParameters {
+            min_fee_a: 44,
+            min_fee_b: 155381,
+            max_block_body_size: 90112,
+            max_tx_size: 16384,
+            max_block_header_size: 1100,
+            key_deposit: 2_000_000,
+            pool_deposit: 500_000_000,
+            e_max: 18,
+            n_opt: 500,
+            min_pool_cost: 340_000_000,
+            coins_per_utxo_byte: Some(4_310),
+            collateral_percentage: Some(150),
+            max_collateral_inputs: Some(3),
+            max_val_size: Some(5000),
+            protocol_version: Some((10, 0)),
+            ..ProtocolParameters::default()
+        };
+        let bytes = encode_conway_pparams_for_lsq(&params);
+        // 0x98 = uint8-len-prefix array, 0x1f = 31.
+        assert_eq!(bytes[0], 0x98, "must be array(N) with N≥24 prefix");
+        assert_eq!(bytes[1], 0x1f, "Conway PP has 31 fields");
+        // Field 1: minFeeA=44 = 0x18 0x2c.
+        assert_eq!(&bytes[2..4], &[0x18, 0x2c]);
+        // Field 2: minFeeB=155381.
         assert_eq!(&bytes[4..9], &[0x1a, 0x00, 0x02, 0x5e, 0xf5]);
     }
 

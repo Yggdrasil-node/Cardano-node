@@ -1253,7 +1253,7 @@ fn dispatch_upstream_query(
     use yggdrasil_network::protocols::{
         EraSpecificQuery, HardForkBlockQuery, QueryHardFork, UpstreamQuery,
         decode_query_if_current, encode_alonzo_pparams_for_lsq, encode_babbage_pparams_for_lsq,
-        encode_chain_block_no, encode_chain_point, encode_era_index,
+        encode_chain_block_no, encode_chain_point, encode_conway_pparams_for_lsq, encode_era_index,
         encode_interpreter_for_network, encode_query_if_current_match,
         encode_query_if_current_mismatch, encode_shelley_pparams_for_lsq,
         encode_system_start_for_network,
@@ -1304,10 +1304,13 @@ fn dispatch_upstream_query(
                                         // `coinsPerUtxoWord` to
                                         // `coinsPerUtxoByte`.
                                         5 => encode_babbage_pparams_for_lsq(params),
-                                        // Conway PP shape adds DRep /
-                                        // governance / committee fields and
-                                        // tiered ref-script fees — Phase-3
-                                        // follow-up.
+                                        // Conway: 31-element list adding
+                                        // governance fields (DRep / pool
+                                        // voting thresholds, committee
+                                        // params, gov-action lifetime/deposit,
+                                        // DRep deposit/activity, tiered
+                                        // ref-script fee constant).
+                                        6 => encode_conway_pparams_for_lsq(params),
                                         _ => return null_response(),
                                     };
                                     encode_query_if_current_match(&pp)
@@ -1595,24 +1598,25 @@ mod tests {
 
         let cases = [
             // (block_pv, expected_era_index)
-            (None, 0),                  // no PV → Byron default
-            (Some((1u64, 0u64)), 0),    // Byron
-            (Some((2, 0)), 1),          // Shelley
-            (Some((3, 0)), 2),          // Allegra (signal in Shelley codec)
-            (Some((4, 0)), 3),          // Mary
-            (Some((5, 0)), 4),          // Alonzo intra-era
-            (Some((6, 0)), 4),          // Alonzo intra-era (post-bump)
-            (Some((7, 0)), 5),          // Babbage transition signal
-            (Some((8, 0)), 5),          // Babbage intra-era
-            (Some((9, 0)), 6),          // Conway transition signal
-            (Some((10, 0)), 6),         // Conway intra-era
-            (Some((100, 0)), 6),        // Future PV bumps stay at Conway
+            (Some((1u64, 0u64)), 0), // Byron
+            (Some((2, 0)), 1),       // Shelley
+            (Some((3, 0)), 2),       // Allegra (signal in Shelley codec)
+            (Some((4, 0)), 3),       // Mary
+            (Some((5, 0)), 4),       // Alonzo intra-era
+            (Some((6, 0)), 4),       // Alonzo intra-era (post-bump)
+            (Some((7, 0)), 5),       // Babbage transition signal
+            (Some((8, 0)), 5),       // Babbage intra-era
+            (Some((9, 0)), 6),       // Conway transition signal
+            (Some((10, 0)), 6),      // Conway intra-era
+            (Some((100, 0)), 6),     // Future PV bumps stay at Conway
         ];
 
         for (pv, expected) in cases {
             let mut state = LedgerState::new(Era::Byron);
             state.latest_block_protocol_version = pv;
-            *state.protocol_params_mut() = Some(ProtocolParameters::default());
+            // Leave protocol_params=None so the test exercises the
+            // block_pv path exclusively, not the params fallback.
+            let _ = ProtocolParameters::default;
             let snapshot = state.snapshot();
             let actual = effective_era_index_for_lsq(&snapshot);
             assert_eq!(
@@ -1620,6 +1624,26 @@ mod tests {
                 "PV {pv:?} should map to era_index {expected}, got {actual}",
             );
         }
+    }
+
+    /// Round 161 — when block_pv is `None` (no block applied yet)
+    /// the helper falls back to `protocol_params.protocol_version`.
+    #[test]
+    fn effective_era_index_falls_back_to_params_pv_when_no_block() {
+        use yggdrasil_ledger::ProtocolParameters;
+        let mut state = LedgerState::new(Era::Byron);
+        state.latest_block_protocol_version = None;
+        let pp = ProtocolParameters {
+            protocol_version: Some((9, 0)),
+            ..ProtocolParameters::default()
+        };
+        *state.protocol_params_mut() = Some(pp);
+        let snapshot = state.snapshot();
+        assert_eq!(
+            effective_era_index_for_lsq(&snapshot),
+            6,
+            "params_pv major=9 should map to Conway (6) when no block PV is set",
+        );
     }
 
     /// Round 161 — yggdrasil never DEMOTES the era.  When the wire
