@@ -1381,6 +1381,28 @@ fn dispatch_upstream_query(
                                 let body = encode_pool_state(snapshot, maybe_filter.as_ref());
                                 encode_query_if_current_match(&body)
                             }
+                            EraSpecificQuery::GetStakeSnapshots {
+                                maybe_pool_hash_set_cbor,
+                            } => {
+                                // Round 173 — upstream `GetStakeSnapshots`.
+                                // Decode the optional pool-hash filter and emit
+                                // the 4-element response `[per_pool_map,
+                                // mark_total, set_total, go_total]`.  Until the
+                                // live mark/set/go rotation from
+                                // `LedgerCheckpointTracking::stake_snapshots`
+                                // is plumbed into `LedgerStateSnapshot`, every
+                                // pool's per-snapshot stake is reported as zero
+                                // and the totals are zero (consistent with
+                                // R163's `GetStakeDistribution` empty-map
+                                // behaviour).  The wire protocol is correct;
+                                // the data populates once the snapshot is
+                                // threaded through.
+                                let maybe_filter =
+                                    decode_maybe_pool_hash_set(&maybe_pool_hash_set_cbor)
+                                        .unwrap_or(None);
+                                let body = encode_stake_snapshots(snapshot, maybe_filter.as_ref());
+                                encode_query_if_current_match(&body)
+                            }
                             EraSpecificQuery::GetStakeDistribution => {
                                 let dist_cbor = encode_stake_distribution_map(snapshot);
                                 encode_query_if_current_match(&dist_cbor)
@@ -1578,13 +1600,25 @@ fn txout_address_bytes(out: &yggdrasil_ledger::MultiEraTxOut) -> Vec<u8> {
 /// `GetUTxOByAddress { address_set_cbor }`).  Upstream Cardano
 /// represents `Set Addr` either as a CBOR set (tag 258 + array) or
 /// a plain array; this helper accepts both.
+///
+/// Round 176 — tightened the optional tag check to specifically
+/// require tag 258 when present (parity with R174's tightening of
+/// `decode_pool_hash_set` and `decode_stake_credential_set`).
+/// Pre-fix the helper consumed any arbitrary tag and silently
+/// continued, masking malformed inputs.
 fn decode_address_set(bytes: &[u8]) -> Result<Vec<Vec<u8>>, yggdrasil_ledger::LedgerError> {
     use yggdrasil_ledger::cbor::Decoder;
     let mut dec = Decoder::new(bytes);
     // Optionally consume tag 258 ("set" tag, defined in CIP-21 + RFC 9090).
     // Major type 6 = tag.
     if dec.peek_major().ok() == Some(6) {
-        dec.tag()?;
+        let tag_number = dec.tag()?;
+        if tag_number != 258 {
+            return Err(yggdrasil_ledger::LedgerError::CborDecodeError(format!(
+                "Set Addr payload: expected tag 258 (CIP-21 set), \
+                 got tag {tag_number}"
+            )));
+        }
     }
     let count = dec.array()?;
     let mut addrs = Vec::with_capacity(count as usize);
@@ -1646,6 +1680,9 @@ fn encode_stake_distribution_map(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
 /// Decode a CBOR set/array of stake credentials (the payload of
 /// `GetFilteredDelegationsAndRewardAccounts`).  Each credential is
 /// `[0, keyhash]` (key hash) or `[1, scripthash]` (script hash).
+///
+/// Round 174 — tightened the optional tag check to specifically
+/// require tag 258 when present (parity with `decode_pool_hash_set`).
 fn decode_stake_credential_set(
     bytes: &[u8],
 ) -> Result<
@@ -1655,7 +1692,13 @@ fn decode_stake_credential_set(
     use yggdrasil_ledger::cbor::Decoder;
     let mut dec = Decoder::new(bytes);
     if dec.peek_major().ok() == Some(6) {
-        dec.tag()?;
+        let tag_number = dec.tag()?;
+        if tag_number != 258 {
+            return Err(yggdrasil_ledger::LedgerError::CborDecodeError(format!(
+                "Set StakeCredential payload: expected tag 258 (CIP-21 set), \
+                 got tag {tag_number}"
+            )));
+        }
     }
     let count = dec.array()?;
     let mut set = std::collections::HashSet::with_capacity(count as usize);
@@ -1764,13 +1807,25 @@ fn encode_stake_credential(
 /// upstream cardano-cli sends the canonical `258 [* bytes(28)]`
 /// shape for tagged sets, but earlier-style untagged arrays are
 /// accepted for forward-compatibility.
+///
+/// Round 174 — tightened the optional tag check to specifically
+/// require tag 258 when present (rather than consuming any
+/// arbitrary tag).  A non-258 tag in this position indicates a
+/// malformed payload and now surfaces as a decode error rather
+/// than a silent strip-and-continue.
 fn decode_pool_hash_set(
     bytes: &[u8],
 ) -> Result<std::collections::HashSet<[u8; 28]>, yggdrasil_ledger::LedgerError> {
     use yggdrasil_ledger::cbor::Decoder;
     let mut dec = Decoder::new(bytes);
     if dec.peek_major().ok() == Some(6) {
-        dec.tag()?;
+        let tag_number = dec.tag()?;
+        if tag_number != 258 {
+            return Err(yggdrasil_ledger::LedgerError::CborDecodeError(format!(
+                "Set PoolKeyHash payload: expected tag 258 (CIP-21 set), \
+                 got tag {tag_number}"
+            )));
+        }
     }
     let count = dec.array()?;
     let mut set = std::collections::HashSet::with_capacity(count as usize);
@@ -1826,26 +1881,31 @@ fn encode_filtered_stake_pool_params(
 }
 
 /// Round 172 — decode an optional CBOR set of pool key hashes (the
-/// payload of `GetPoolState { maybe_pool_hash_set_cbor }`).
+/// payload of `GetPoolState { maybe_pool_hash_set_cbor }` and
+/// R173's `GetStakeSnapshots`).
 ///
-/// Upstream encodes `Maybe (Set PoolKeyHash)` for this query as a
-/// 1-or-2-element CBOR list with a leading discriminator:
+/// Upstream encodes `Maybe (Set PoolKeyHash)` for these queries as
+/// a 1-or-2-element CBOR list with a leading discriminator:
 /// `[0]` = `Nothing` (no filter; return all pools),
 /// `[1, set]` = `Just set` (filter to the given pool hashes).
-/// Tolerates the alternate `null` shape upstream sometimes emits
-/// for `Nothing` (treated identically).
+/// Tolerates a bare CBOR `null` (`0xf6`) for `Nothing` —
+/// upstream emits this shape in some code paths that skip the
+/// list wrapper.
 ///
 /// Returns `Ok(None)` when the payload encodes `Nothing`, or
 /// `Ok(Some(<set>))` when it encodes `Just`.  Decoding errors
 /// propagate via `Err`.
+///
+/// Round 174 — tightened the `Nothing` shortcut to use
+/// `peek_is_null()` (only `0xf6`) instead of `peek_major == 7`
+/// which over-matched undefined/floats/break.
 fn decode_maybe_pool_hash_set(
     bytes: &[u8],
 ) -> Result<Option<std::collections::HashSet<[u8; 28]>>, yggdrasil_ledger::LedgerError> {
     use yggdrasil_ledger::cbor::Decoder;
     let mut dec = Decoder::new(bytes);
-    // Accept the `null` shape some upstream encoders emit for `Nothing`.
-    if dec.peek_major().ok() == Some(7) {
-        // Major 7 covers null/undefined.  Treat as Nothing.
+    // Accept the bare `null` shape upstream sometimes emits for `Nothing`.
+    if dec.peek_is_null() {
         return Ok(None);
     }
     let outer = dec.array()?;
@@ -1862,7 +1922,7 @@ fn decode_maybe_pool_hash_set(
             decode_pool_hash_set(inner_bytes).map(Some)
         }
         _ => Err(yggdrasil_ledger::LedgerError::CborDecodeError(format!(
-            "GetPoolState Maybe payload: unexpected shape (outer_len={outer}, \
+            "Maybe (Set PoolKeyHash) payload: unexpected shape (outer_len={outer}, \
              discriminator={discriminator}); expected [0] or [1, set]"
         ))),
     }
@@ -1960,9 +2020,82 @@ fn encode_pool_state(
     enc.into_bytes()
 }
 
+/// Round 173 — encode `GetStakeSnapshots` result: a 4-element CBOR
+/// list holding the upstream `StakeSnapshots era` record per
+/// `Cardano.Ledger.Shelley.LedgerStateQuery`:
+///
+/// ```text
+/// [
+///   ssStakeSnapshots :: Map PoolKeyHash [mark_pool, set_pool, go_pool],
+///   ssStakeMarkTotal :: Coin,
+///   ssStakeSetTotal  :: Coin,
+///   ssStakeGoTotal   :: Coin,
+/// ]
+/// ```
+///
+/// When `filter` is `Some(<set>)`, the per-pool map is intersected
+/// with the supplied pool-hash set (matches upstream
+/// `Map.restrictKeys`).  When `filter` is `None`, every registered
+/// pool appears.  Each map entry is sorted ascending by pool
+/// keyhash for deterministic CBOR (matches upstream
+/// `Map.toAscList`).
+///
+/// **Limitation**: until the live mark/set/go rotation from
+/// `LedgerCheckpointTracking::stake_snapshots` is plumbed into
+/// `LedgerStateSnapshot`, every per-pool entry reports `[0, 0, 0]`
+/// and the three totals are zero.  The wire protocol is correct;
+/// the data populates once the snapshot is threaded through.
+/// Tracked by R163's outstanding live-stake-distribution work.
+///
+/// Reference: `Cardano.Ledger.Shelley.LedgerStateQuery
+/// .GetStakeSnapshots` and the `StakeSnapshots era` record.
+fn encode_stake_snapshots(
+    snapshot: &LedgerStateSnapshot,
+    filter: Option<&std::collections::HashSet<[u8; 28]>>,
+) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    let mut enc = Encoder::new();
+    let pool_state = snapshot.pool_state();
+
+    let include = |k: &[u8; 28]| -> bool { filter.is_none_or(|f| f.contains(k)) };
+
+    // 4-element StakeSnapshots envelope.
+    enc.array(4);
+
+    // 1: per-pool map (Map PoolKeyHash [mark, set, go]).
+    let mut keys: Vec<&[u8; 28]> = pool_state
+        .iter()
+        .map(|(k, _)| k)
+        .filter(|k| include(k))
+        .collect();
+    keys.sort();
+    enc.map(keys.len() as u64);
+    for k in keys {
+        enc.bytes(k);
+        // Per-pool [mark, set, go] — placeholders until the live
+        // snapshot rotation is plumbed; stays consistent with R163
+        // `GetStakeDistribution`'s empty-map behaviour.
+        enc.array(3);
+        enc.unsigned(0);
+        enc.unsigned(0);
+        enc.unsigned(0);
+    }
+
+    // 2-4: ssStakeMarkTotal, ssStakeSetTotal, ssStakeGoTotal.
+    enc.unsigned(0);
+    enc.unsigned(0);
+    enc.unsigned(0);
+
+    enc.into_bytes()
+}
+
 /// Decode a CBOR set/array of `TxIn` (the payload of
 /// `GetUTxOByTxIn { txin_set_cbor }`).  Each TxIn is `[txid_bytes,
 /// output_index]`.
+///
+/// Round 176 — tightened the optional tag check to specifically
+/// require tag 258 when present (parity with the rest of the
+/// CIP-21 set decoders).
 fn decode_txin_set(
     bytes: &[u8],
 ) -> Result<
@@ -1974,7 +2107,13 @@ fn decode_txin_set(
     use yggdrasil_ledger::eras::shelley::ShelleyTxIn;
     let mut dec = Decoder::new(bytes);
     if dec.peek_major().ok() == Some(6) {
-        dec.tag()?;
+        let tag_number = dec.tag()?;
+        if tag_number != 258 {
+            return Err(yggdrasil_ledger::LedgerError::CborDecodeError(format!(
+                "Set TxIn payload: expected tag 258 (CIP-21 set), \
+                 got tag {tag_number}"
+            )));
+        }
     }
     let count = dec.array()?;
     let mut set = std::collections::HashSet::with_capacity(count as usize);
@@ -2212,6 +2351,130 @@ mod tests {
         let payload = vec![0xf6]; // CBOR null
         let result = decode_maybe_pool_hash_set(&payload).expect("decode");
         assert!(result.is_none());
+    }
+
+    /// Round 173 — `GetStakeSnapshots` against an empty snapshot
+    /// with no filter emits the canonical 4-element envelope
+    /// `[empty_map, 0, 0, 0]` = `0x84 0xa0 0x00 0x00 0x00`.
+    #[test]
+    fn get_stake_snapshots_empty_snapshot_no_filter_emits_envelope() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let bytes = encode_stake_snapshots(&snapshot, None);
+        assert_eq!(bytes, [0x84, 0xa0, 0x00, 0x00, 0x00]);
+    }
+
+    /// Round 173 — `GetStakeSnapshots` against an empty snapshot
+    /// with a non-matching filter still emits four-element envelope
+    /// (per-pool map empty, totals zero).
+    #[test]
+    fn get_stake_snapshots_empty_snapshot_with_filter_emits_envelope() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let mut filter = std::collections::HashSet::new();
+        filter.insert([0xee; 28]);
+        let bytes = encode_stake_snapshots(&snapshot, Some(&filter));
+        assert_eq!(bytes, [0x84, 0xa0, 0x00, 0x00, 0x00]);
+    }
+
+    /// Round 174 — `decode_pool_hash_set` rejects a non-258 tag
+    /// (e.g. tag 30 = UnitInterval) instead of silently stripping
+    /// it.  Pre-R174 the decoder consumed any tag, then tried to
+    /// parse the next byte as an array length — masking malformed
+    /// payloads.
+    #[test]
+    fn decode_pool_hash_set_rejects_non_258_tag() {
+        // tag 30 (UnitInterval) + 0 (the rational num)
+        let payload = vec![0xd8, 0x1e, 0x00];
+        let result = decode_pool_hash_set(&payload);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("expected tag 258"),
+            "expected error to mention tag 258, got: {msg}"
+        );
+    }
+
+    /// Round 174 — `decode_stake_credential_set` rejects a non-258
+    /// tag for parity with `decode_pool_hash_set`.
+    #[test]
+    fn decode_stake_credential_set_rejects_non_258_tag() {
+        // tag 30 + 0
+        let payload = vec![0xd8, 0x1e, 0x00];
+        let result = decode_stake_credential_set(&payload);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("expected tag 258"),
+            "expected error to mention tag 258, got: {msg}"
+        );
+    }
+
+    /// Round 174 — `decode_maybe_pool_hash_set` no longer
+    /// accidentally accepts CBOR `undefined` (`0xf7`) as `Nothing`.
+    /// Pre-R174 the major-7 check matched undefined/floats/break;
+    /// post-R174 only `0xf6` (null) shortcuts to `Nothing`.
+    #[test]
+    fn decode_maybe_pool_hash_set_rejects_undefined() {
+        let payload = vec![0xf7]; // CBOR undefined
+        let result = decode_maybe_pool_hash_set(&payload);
+        // Should now error rather than silently treating as Nothing.
+        assert!(
+            result.is_err(),
+            "expected err on CBOR undefined, got: {result:?}"
+        );
+    }
+
+    /// Round 176 — `decode_address_set` rejects a non-258 tag
+    /// (parity with R174's tightening of pool/credential set
+    /// decoders).
+    #[test]
+    fn decode_address_set_rejects_non_258_tag() {
+        // tag 30 (UnitInterval) + 0
+        let payload = vec![0xd8, 0x1e, 0x00];
+        let result = decode_address_set(&payload);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("expected tag 258"),
+            "expected error to mention tag 258, got: {msg}"
+        );
+    }
+
+    /// Round 176 — `decode_address_set` accepts the canonical
+    /// `tag(258) [* bytes]` shape (positive case stays working).
+    #[test]
+    fn decode_address_set_accepts_tagged_set_form() {
+        // tag 258 + array(1) + bytes(3) "abc"
+        let payload = vec![0xd9, 0x01, 0x02, 0x81, 0x43, b'a', b'b', b'c'];
+        let result = decode_address_set(&payload).expect("decode");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], b"abc");
+    }
+
+    /// Round 176 — `decode_address_set` also accepts the legacy
+    /// untagged-array shape for forward-compatibility.
+    #[test]
+    fn decode_address_set_accepts_untagged_array_form() {
+        let payload = vec![0x81, 0x43, b'a', b'b', b'c'];
+        let result = decode_address_set(&payload).expect("decode");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], b"abc");
+    }
+
+    /// Round 176 — `decode_txin_set` rejects a non-258 tag
+    /// (parity with R174's tightening).
+    #[test]
+    fn decode_txin_set_rejects_non_258_tag() {
+        // tag 30 + 0
+        let payload = vec![0xd8, 0x1e, 0x00];
+        let result = decode_txin_set(&payload);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("expected tag 258"),
+            "expected error to mention tag 258, got: {msg}"
+        );
     }
 
     /// Round 161 — yggdrasil never DEMOTES the era.  When the wire

@@ -4934,6 +4934,15 @@ where
                     from_point,
                 );
                 session.mux.abort();
+                // Round 175 — companion teardown for R168's bootstrap-Hot
+                // promotion.  Without this, a KeepAlive timeout left the
+                // bootstrap peer marked `PeerHot` until the next session
+                // re-promotion, briefly over-reporting active peers in
+                // `/metrics` during the reconnect window.
+                registry_mark_bootstrap_cooling(
+                    peer_registry.as_ref(),
+                    session.connected_peer_addr,
+                );
                 run_state.record_reconnect_failure();
                 break;
             }
@@ -5185,6 +5194,16 @@ where
                                 );
                                 preferred_peer = Some(next_hot_peer);
                                 session.mux.abort();
+                                // Round 175 — the previous bootstrap peer
+                                // is no longer the active sync target;
+                                // demote in registry so `/metrics` reflects
+                                // the handoff.  The next iteration's
+                                // bootstrap to `next_hot_peer` will
+                                // re-promote whichever peer it lands on.
+                                registry_mark_bootstrap_cooling(
+                                    peer_registry.as_ref(),
+                                    session.connected_peer_addr,
+                                );
                                 break;
                             }
                         }
@@ -5465,6 +5484,15 @@ where
                     from_point,
                 );
                 session.mux.abort();
+                // Round 175 — companion teardown for R168's bootstrap-Hot
+                // promotion.  Without this, a KeepAlive timeout left the
+                // bootstrap peer marked `PeerHot` until the next session
+                // re-promotion, briefly over-reporting active peers in
+                // `/metrics` during the reconnect window.
+                registry_mark_bootstrap_cooling(
+                    peer_registry.as_ref(),
+                    session.connected_peer_addr,
+                );
                 run_state.record_reconnect_failure();
                 break;
             }
@@ -5718,6 +5746,16 @@ where
                                 );
                                 preferred_peer = Some(next_hot_peer);
                                 session.mux.abort();
+                                // Round 175 — the previous bootstrap peer
+                                // is no longer the active sync target;
+                                // demote in registry so `/metrics` reflects
+                                // the handoff.  The next iteration's
+                                // bootstrap to `next_hot_peer` will
+                                // re-promote whichever peer it lands on.
+                                registry_mark_bootstrap_cooling(
+                                    peer_registry.as_ref(),
+                                    session.connected_peer_addr,
+                                );
                                 break;
                             }
                         }
@@ -6099,6 +6137,10 @@ where
                     from_point,
                 );
                 session.mux.abort();
+                // No registry cooling here — `with_tracer` doesn't
+                // carry a peer_registry and never registers a Hot
+                // bootstrap peer (R168 wired the registry hooks only
+                // for the chaindb / shared_chaindb inner functions).
                 run_state.record_reconnect_failure();
                 break;
             }
