@@ -26,9 +26,11 @@ pub use local_state_query::{
     LocalStateQueryTransitionError,
 };
 pub use local_state_query_upstream::{
-    HardForkBlockQuery, NetworkKind, QueryAnytimeKind, QueryHardFork, UpstreamQuery,
-    encode_chain_block_no, encode_chain_point, encode_era_index, encode_interpreter_for_network,
-    encode_interpreter_minimal, encode_system_start, encode_system_start_for_network,
+    EraSpecificQuery, HardForkBlockQuery, NetworkKind, QueryAnytimeKind, QueryHardFork,
+    UpstreamQuery, decode_query_if_current, encode_chain_block_no, encode_chain_point,
+    encode_era_index, encode_interpreter_for_network, encode_interpreter_minimal,
+    encode_query_if_current_match, encode_query_if_current_mismatch,
+    encode_shelley_pparams_for_lsq, encode_system_start, encode_system_start_for_network,
 };
 pub use local_tx_monitor::{
     LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError,

@@ -224,6 +224,107 @@ impl HardForkBlockQuery {
     }
 }
 
+/// Era-specific inner query under [`HardForkBlockQuery::QueryIfCurrent`].
+///
+/// Each Cardano era exposes its own `BlockQuery era` sum type; the
+/// HFC layer wraps this in `[era_index, era_specific_query]` per
+/// upstream `Cardano.Consensus.HardFork.Combinator.Ledger.Query`.
+///
+/// This enum recognises the era_index plus a small, frequently-used
+/// subset of era-specific query tags shared across the Shelley
+/// family (Shelley/Allegra/Mary/Alonzo/Babbage/Conway).  Other tags
+/// remain opaque via [`Self::Unknown`].
+///
+/// Reference: tag values from
+/// `Cardano.Ledger.Shelley.LedgerStateQuery` and successor era
+/// modules.  Tags are stable across the Shelley family — newer
+/// eras add tags but don't renumber existing ones.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EraSpecificQuery {
+    /// `[1]` — `GetEpochNo`.  Returns the current epoch number
+    /// (CBOR uint).  Used by `cardano-cli query slot-number /
+    /// utxo --epoch`.
+    GetEpochNo,
+    /// `[3]` — `GetCurrentPParams`.  Returns the active protocol
+    /// parameters in the era's native PP shape (a 17-element CBOR
+    /// list for Shelley).  Used by every wallet, tx-builder, and
+    /// `cardano-cli query protocol-parameters` invocation.
+    GetCurrentPParams,
+    /// `[6, addresses]` — `GetUTxOByAddress`.  Returns the UTxO
+    /// entries for the supplied set of addresses.  Used by
+    /// `cardano-cli query utxo --address`.  Carries the raw
+    /// CBOR-encoded address-set (a CBOR set/array of address
+    /// bytestrings) so the dispatcher can filter without
+    /// re-decoding.
+    GetUTxOByAddress { address_set_cbor: Vec<u8> },
+    /// `[7]` — `GetWholeUTxO`.  Returns the entire UTxO map.
+    /// Used by `cardano-cli query utxo --whole-utxo`.
+    GetWholeUTxO,
+    /// `[15, txin_set]` — `GetUTxOByTxIn`.  Returns the UTxO
+    /// entries for the supplied set of TxIns.  Used by
+    /// `cardano-cli query utxo --tx-in`.  Captured wire tag 15
+    /// from the 2026-04-28 cardano-cli rehearsal.
+    GetUTxOByTxIn { txin_set_cbor: Vec<u8> },
+    /// Any era-specific query whose tag this codec doesn't yet
+    /// recognise.  Carries the raw inner CBOR so the dispatcher can
+    /// fall through to `null_response()` without losing the bytes.
+    Unknown { tag: u64, raw_inner: Vec<u8> },
+}
+
+/// Decode the `[era_index, era_specific_query]` inner payload of a
+/// [`HardForkBlockQuery::QueryIfCurrent`].  Returns the era_index
+/// (0=Byron, 1=Shelley, 2=Allegra, 3=Mary, 4=Alonzo, 5=Babbage,
+/// 6=Conway) plus the recognised [`EraSpecificQuery`] variant.
+///
+/// Reference: `Cardano.Consensus.HardFork.Combinator.Ledger.Query`
+/// — `decodeQueryIfCurrent`.
+pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQuery), LedgerError> {
+    let mut dec = Decoder::new(inner_cbor);
+    let outer_len = dec.array()?;
+    if outer_len != 2 {
+        return Err(LedgerError::CborDecodeError(format!(
+            "QueryIfCurrent inner must be a 2-element list \
+             [era_index, era_query]; got len={outer_len}"
+        )));
+    }
+    let era_index = dec.unsigned()? as u32;
+    // Era-specific query: a singleton (`[tag]`) for tag-only queries
+    // like GetCurrentPParams, or a multi-element list for queries
+    // with parameters.  We capture the whole sub-list as raw bytes
+    // and inspect the leading tag to classify.
+    let q_start = dec.position();
+    let q_len = dec.array()?;
+    let q_tag = dec.unsigned()?;
+    let q_end_after_tag = dec.position();
+    // Skip remaining elements (if any) so the slice is the full
+    // era-specific query CBOR.
+    for _ in 1..q_len {
+        dec.skip()?;
+    }
+    let q_end = dec.position();
+    let raw_inner = inner_cbor[q_start..q_end].to_vec();
+    let kind = match (q_len, q_tag) {
+        (1, 1) => EraSpecificQuery::GetEpochNo,
+        (1, 3) => EraSpecificQuery::GetCurrentPParams,
+        (1, 7) => EraSpecificQuery::GetWholeUTxO,
+        (2, 6) => {
+            // `[6, address_set_cbor]` — captured the address-set
+            // payload between `q_end_after_tag` and `q_end`.
+            EraSpecificQuery::GetUTxOByAddress {
+                address_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+            }
+        }
+        (2, 15) => EraSpecificQuery::GetUTxOByTxIn {
+            txin_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        _ => EraSpecificQuery::Unknown {
+            tag: q_tag,
+            raw_inner,
+        },
+    };
+    Ok((era_index, kind))
+}
+
 // ---------------------------------------------------------------------------
 // QueryAnytime
 // ---------------------------------------------------------------------------
@@ -671,6 +772,147 @@ fn encode_interpreter_mainnet() -> Vec<u8> {
     enc.into_bytes()
 }
 
+/// Wrap an era-specific `QueryIfCurrent` result in the upstream
+/// `Either (MismatchEraInfo xs) r` envelope per
+/// `Cardano.Consensus.HardFork.Combinator.Serialisation.Common.encodeEitherMismatch`.
+///
+/// HFC NodeToClient uses **list-length discrimination** between
+/// `Right` and `Left` — there's no leading variant tag:
+/// - `Right a` (era matches): `[encoded_a]` — **1-element list**.
+/// - `Left mismatch`: `[era1_ns, era2_ns]` — 2-element list of
+///   `NS`-encoded era names.
+///
+/// This helper emits the `Right` (matching) form.  Source:
+///
+/// ```text
+/// (HardForkNodeToClientEnabled{}, Right a) ->
+///   mconcat [ Enc.encodeListLen 1, enc a ]
+/// ```
+pub fn encode_query_if_current_match(result_cbor: &[u8]) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(1);
+    enc.raw(result_cbor);
+    enc.into_bytes()
+}
+
+/// Encode `MismatchEraInfo` for the `Left` case when the requested
+/// era doesn't match the snapshot's active era.
+///
+/// Per `encodeEitherMismatch`:
+///
+/// ```text
+/// (HardForkNodeToClientEnabled{}, Left (MismatchEraInfo err)) ->
+///   mconcat [ Enc.encodeListLen 2
+///           , encodeNS (hpure (fn encodeName)) era1
+///           , encodeNS (hpure (fn (encodeName . getLedgerEraInfo))) era2
+///           ]
+/// ```
+///
+/// `encodeNS` for a non-empty era list emits `[ns_index, payload]`
+/// where `ns_index` selects the era and `payload` is the era's
+/// `SingleEraInfo`/`LedgerEraInfo` (a text-string era name).
+pub fn encode_query_if_current_mismatch(ledger_era_idx: u32, query_era_idx: u32) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(2);
+    encode_ns_era_name(&mut enc, query_era_idx);
+    encode_ns_era_name(&mut enc, ledger_era_idx);
+    enc.into_bytes()
+}
+
+fn encode_ns_era_name(enc: &mut Encoder, era_idx: u32) {
+    // NS-encoded era: `[ns_index, era_name_text]` per
+    // `Cardano.Consensus.HardFork.Combinator.Util.SOP.encodeNS`.
+    enc.array(2);
+    enc.unsigned(era_idx as u64);
+    enc.text(era_ordinal_to_upstream_name(era_idx));
+}
+
+fn era_ordinal_to_upstream_name(ordinal: u32) -> &'static str {
+    match ordinal {
+        0 => "Byron",
+        1 => "Shelley",
+        2 => "Allegra",
+        3 => "Mary",
+        4 => "Alonzo",
+        5 => "Babbage",
+        6 => "Conway",
+        _ => "Unknown",
+    }
+}
+
+/// Encode Shelley-era `PParams` in the upstream `GetCurrentPParams`
+/// response shape: a 17-element CBOR list (NOT the map-based
+/// update-proposal shape).
+///
+/// Upstream `Cardano.Ledger.Shelley.PParams.encCBOR`:
+///
+/// ```text
+/// encodeListLen 17
+///   <> minfeeA <> minfeeB <> maxBBSize <> maxTxSize <> maxBHSize
+///   <> keyDeposit <> poolDeposit <> eMax <> nOpt
+///   <> a0 <> rho <> tau <> d <> extraEntropy
+///   <> protocolVersion <> minUTxOValue <> minPoolCost
+/// ```
+///
+/// Field types:
+/// - `a0`: `NonNegativeInterval` = CBOR tag 30 + `[num, den]`.
+/// - `rho`/`tau`/`d`: `UnitInterval` = CBOR tag 30 + `[num, den]`.
+/// - `extraEntropy`: `Nonce` = `[0]` (Neutral) or `[1, hash]` (Hash).
+/// - `protocolVersion`: `[major, minor]`.
+///
+/// Defaults applied when the snapshot's optional Shelley fields are
+/// `None`: `d = 1.0` (fully decentralised), `extraEntropy = Neutral`,
+/// `protocolVersion = (2, 0)` (Shelley genesis), `minUTxOValue = 0`.
+pub fn encode_shelley_pparams_for_lsq(params: &yggdrasil_ledger::ProtocolParameters) -> Vec<u8> {
+    use yggdrasil_ledger::CborEncode;
+    let mut enc = Encoder::new();
+    enc.array(17);
+    enc.unsigned(params.min_fee_a);
+    enc.unsigned(params.min_fee_b);
+    enc.unsigned(params.max_block_body_size as u64);
+    enc.unsigned(params.max_tx_size as u64);
+    enc.unsigned(params.max_block_header_size as u64);
+    enc.unsigned(params.key_deposit);
+    enc.unsigned(params.pool_deposit);
+    enc.unsigned(params.e_max);
+    enc.unsigned(params.n_opt);
+    params.a0.encode_cbor(&mut enc);
+    params.rho.encode_cbor(&mut enc);
+    params.tau.encode_cbor(&mut enc);
+    let d = params.d.unwrap_or(yggdrasil_ledger::types::UnitInterval {
+        numerator: 1,
+        denominator: 1,
+    });
+    d.encode_cbor(&mut enc);
+    encode_shelley_nonce(&mut enc, params.extra_entropy.as_ref());
+    let (pv_major, pv_minor) = params.protocol_version.unwrap_or((2, 0));
+    enc.array(2);
+    enc.unsigned(pv_major);
+    enc.unsigned(pv_minor);
+    enc.unsigned(params.min_utxo_value.unwrap_or(0));
+    enc.unsigned(params.min_pool_cost);
+    enc.into_bytes()
+}
+
+/// Encode upstream's `Nonce` per
+/// `Cardano.Ledger.BaseTypes.Nonce.encCBOR`:
+/// - `NeutralNonce` → `[0]` (1-element list with value 0)
+/// - `Nonce h` → `[1, h]` (2-element list)
+fn encode_shelley_nonce(enc: &mut Encoder, nonce: Option<&yggdrasil_ledger::types::Nonce>) {
+    use yggdrasil_ledger::types::Nonce;
+    match nonce {
+        Some(Nonce::Hash(h)) => {
+            enc.array(2);
+            enc.unsigned(1);
+            enc.bytes(h);
+        }
+        _ => {
+            enc.array(1);
+            enc.unsigned(0);
+        }
+    }
+}
+
 /// Encode the result of [`UpstreamQuery::GetChainBlockNo`].
 ///
 /// Upstream `BlockNo` is `WithOrigin BlockNo` encoded as either
@@ -876,6 +1118,148 @@ mod tests {
         let bytes = encode_system_start_for_network(NetworkKind::Preprod);
         // 2022 = 0x07e6, 152 = uint8 0x18 0x98.
         assert_eq!(bytes, [0x83, 0x19, 0x07, 0xe6, 0x18, 0x98, 0x00]);
+    }
+
+    /// Round 156 — captured upstream `cardano-cli 10.16.0.0 query
+    /// protocol-parameters --testnet-magic 1` payload:
+    /// `82 03 82 00 82 00 82 01 81 03` =
+    /// `MsgQuery [BlockQuery [QueryIfCurrent [era_index=1, [GetCurrentPParams=3]]]]`.
+    /// Pin the decoder so a future drift in any layer fails CI cleanly.
+    #[test]
+    fn decode_real_cardano_cli_get_current_pparams_payload() {
+        // The full MsgQuery wraps the UpstreamQuery; extract the
+        // UpstreamQuery payload (skip the leading `82 03` MsgQuery
+        // wrapper which is the LSQ codec's responsibility).
+        let upstream_query_bytes = [0x82, 0x00, 0x82, 0x00, 0x82, 0x01, 0x81, 0x03];
+        let q = UpstreamQuery::decode(&upstream_query_bytes).expect("must decode");
+        let inner = match q {
+            UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent { inner_cbor }) => {
+                inner_cbor
+            }
+            other => panic!("expected QueryIfCurrent, got {other:?}"),
+        };
+        let (era_idx, era_query) =
+            decode_query_if_current(&inner).expect("inner decode must succeed");
+        assert_eq!(era_idx, 1, "era_index must be Shelley=1");
+        assert!(matches!(era_query, EraSpecificQuery::GetCurrentPParams));
+    }
+
+    /// Round 157 — pin the captured `query utxo --whole-utxo`
+    /// payload `82 00 82 00 82 01 81 07` so a future drift in
+    /// QueryIfCurrent or `GetWholeUTxO` (era-specific tag 7)
+    /// fails CI cleanly.
+    #[test]
+    fn decode_real_cardano_cli_get_whole_utxo_payload() {
+        let bytes = [0x82, 0x00, 0x82, 0x00, 0x82, 0x01, 0x81, 0x07];
+        let q = UpstreamQuery::decode(&bytes).expect("must decode");
+        let inner = match q {
+            UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent { inner_cbor }) => {
+                inner_cbor
+            }
+            other => panic!("expected QueryIfCurrent, got {other:?}"),
+        };
+        let (era_idx, era_query) = decode_query_if_current(&inner).expect("decode");
+        assert_eq!(era_idx, 1);
+        assert!(matches!(era_query, EraSpecificQuery::GetWholeUTxO));
+    }
+
+    /// Round 157 — pin the captured `query utxo --tx-in` payload
+    /// shape: `[era_idx=1, [15, txin_set]]`.  Tag **15** (NOT 14) is
+    /// the load-bearing fact captured from the 2026-04-28
+    /// cardano-cli rehearsal.
+    #[test]
+    fn decode_real_cardano_cli_get_utxo_by_tx_in_payload() {
+        // Inner: `82 01 82 0f 81 82 58 20 <32 bytes txid> 00`.
+        let mut inner = vec![0x82, 0x01, 0x82, 0x0f, 0x81, 0x82, 0x58, 0x20];
+        inner.extend_from_slice(&[0xa0u8; 32]);
+        inner.push(0x00); // index 0
+        let (era_idx, era_query) = decode_query_if_current(&inner).expect("decode");
+        assert_eq!(era_idx, 1);
+        match era_query {
+            EraSpecificQuery::GetUTxOByTxIn { txin_set_cbor } => {
+                // First byte must be the array length-1 marker (0x81).
+                assert_eq!(txin_set_cbor[0], 0x81, "txin_set is array len 1");
+            }
+            other => panic!("expected GetUTxOByTxIn, got {other:?}"),
+        }
+    }
+
+    /// Round 157 — `GetUTxOByAddress` is era-specific tag 6.  Pin
+    /// the decoder so a future drift in tag assignment fails CI.
+    #[test]
+    fn decode_get_utxo_by_address_recognises_tag_6() {
+        // Inner: `[1, [6, [<addr_bytes>]]]`.
+        let mut inner = vec![0x82, 0x01, 0x82, 0x06, 0x81, 0x58, 0x1d];
+        inner.extend_from_slice(&[0xab; 29]); // 29-byte addr
+        let (era_idx, era_query) = decode_query_if_current(&inner).expect("decode");
+        assert_eq!(era_idx, 1);
+        assert!(matches!(
+            era_query,
+            EraSpecificQuery::GetUTxOByAddress { .. }
+        ));
+    }
+
+    /// Round 156 — encode_query_if_current_match must produce a
+    /// **1-element** CBOR list (not 2-element with tag) per upstream
+    /// `encodeEitherMismatch`.  This is the load-bearing wire-shape
+    /// fact: cardano-cli's decoder uses list-len discrimination
+    /// between Right (len=1) and Left (len=2) — there is NO leading
+    /// variant tag for Right.
+    #[test]
+    fn encode_query_if_current_match_is_one_element_list_no_tag() {
+        let result_payload = [0x91u8, 0x01]; // sentinel inner result
+        let envelope = encode_query_if_current_match(&result_payload);
+        // 0x81 = array(1), then the inner result bytes verbatim.
+        assert_eq!(envelope, [0x81, 0x91, 0x01]);
+        assert_ne!(
+            envelope[0], 0x82,
+            "must NOT be 2-element list — that's the Left/mismatch shape, \
+             not Right/match",
+        );
+    }
+
+    /// Round 156 — encode_query_if_current_mismatch must produce a
+    /// 2-element CBOR list of NS-encoded era names per upstream
+    /// `encodeEitherMismatch` `Left` case.  The order matches
+    /// upstream: `era1` (the query's requested era) first, then
+    /// `era2` (the ledger's actual era).
+    #[test]
+    fn encode_query_if_current_mismatch_is_two_element_ns_list() {
+        // ledger=Shelley(1), query=Babbage(5)
+        let bytes = encode_query_if_current_mismatch(1, 5);
+        // 0x82 array(2), then `[5, "Babbage"]`, then `[1, "Shelley"]`.
+        assert_eq!(bytes[0], 0x82, "outer list len 2");
+        assert_eq!(bytes[1], 0x82, "first NS-era is a 2-element list");
+        assert_eq!(bytes[2], 0x05, "first NS-era index = 5 (Babbage)");
+    }
+
+    /// Round 156 — encode_shelley_pparams_for_lsq emits the upstream
+    /// 17-element PParams list with preprod-genesis-shape values.
+    #[test]
+    fn shelley_pparams_emit_17_element_list_with_preprod_values() {
+        use yggdrasil_ledger::ProtocolParameters;
+        let params = ProtocolParameters {
+            min_fee_a: 44,
+            min_fee_b: 155381,
+            max_block_body_size: 65536,
+            max_tx_size: 16384,
+            max_block_header_size: 1100,
+            key_deposit: 2_000_000,
+            pool_deposit: 500_000_000,
+            e_max: 18,
+            n_opt: 150,
+            min_utxo_value: Some(1_000_000),
+            min_pool_cost: 340_000_000,
+            protocol_version: Some((2, 0)),
+            ..ProtocolParameters::default()
+        };
+        let bytes = encode_shelley_pparams_for_lsq(&params);
+        // 0x91 = array(17).
+        assert_eq!(bytes[0], 0x91, "must be 17-element list");
+        // First element: minFeeA = 44 = 0x18 0x2c.
+        assert_eq!(&bytes[1..3], &[0x18, 0x2c]);
+        // Second: minFeeB = 155381 = 0x1a 0x00 0x02 0x5e 0xf5.
+        assert_eq!(&bytes[3..8], &[0x1a, 0x00, 0x02, 0x5e, 0xf5]);
     }
 
     /// Captured upstream `cardano-cli 10.16.0.0 query tip --testnet-magic 1`

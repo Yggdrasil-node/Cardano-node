@@ -1251,8 +1251,10 @@ fn dispatch_upstream_query(
 ) -> Vec<u8> {
     use yggdrasil_ledger::Encoder;
     use yggdrasil_network::protocols::{
-        HardForkBlockQuery, QueryHardFork, UpstreamQuery, encode_chain_block_no,
-        encode_chain_point, encode_era_index, encode_interpreter_for_network,
+        EraSpecificQuery, HardForkBlockQuery, QueryHardFork, UpstreamQuery,
+        decode_query_if_current, encode_chain_block_no, encode_chain_point, encode_era_index,
+        encode_interpreter_for_network, encode_query_if_current_match,
+        encode_query_if_current_mismatch, encode_shelley_pparams_for_lsq,
         encode_system_start_for_network,
     };
 
@@ -1268,40 +1270,84 @@ fn dispatch_upstream_query(
                 encode_era_index(snapshot.current_era().era_ordinal() as u32)
             }
             QueryHardFork::GetInterpreter => {
-                // Round 153 — emit a network-specific Interpreter.
-                // Preview/preprod/mainnet have distinct
-                // Byron→Shelley hard-fork slots and Shelley
-                // `epochLength` values; emitting the wrong shape
-                // makes cardano-cli's slot↔epoch conversion
-                // produce nonsense (or silently fall back to
-                // origin display when slot exceeds the era list).
                 encode_interpreter_for_network(network_preset_to_network_kind(network_preset))
             }
         },
+        UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent { inner_cbor }) => {
+            // Round 156 — decode `[era_index, era_specific_query]` and
+            // dispatch the recognised subset.  Falls through to
+            // `null_response()` for queries we don't yet handle, which
+            // produces the same behaviour as before (cardano-cli will
+            // still print `DeserialiseFailure` for those — TODO follow-ups).
+            match decode_query_if_current(&inner_cbor) {
+                Ok((era_index, era_q)) => {
+                    let snapshot_era_ordinal = snapshot.current_era().era_ordinal() as u32;
+                    if era_index != snapshot_era_ordinal {
+                        // EraMismatch: cardano-cli will surface this
+                        // as a typed mismatch error.
+                        encode_query_if_current_mismatch(snapshot_era_ordinal, era_index)
+                    } else {
+                        match era_q {
+                            EraSpecificQuery::GetCurrentPParams => {
+                                if let Some(params) = snapshot.protocol_params() {
+                                    if (1..=3).contains(&era_index) {
+                                        let pp = encode_shelley_pparams_for_lsq(params);
+                                        encode_query_if_current_match(&pp)
+                                    } else {
+                                        null_response()
+                                    }
+                                } else {
+                                    null_response()
+                                }
+                            }
+                            EraSpecificQuery::GetEpochNo => {
+                                let epoch = snapshot.current_epoch().0;
+                                let mut e = Encoder::new();
+                                e.unsigned(epoch);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetWholeUTxO => {
+                                let utxo_cbor = encode_utxo_map(snapshot, |_| true);
+                                encode_query_if_current_match(&utxo_cbor)
+                            }
+                            EraSpecificQuery::GetUTxOByAddress { address_set_cbor } => {
+                                // Decode the CBOR set/array of address bytes
+                                // and filter the snapshot's UTxO.  Falls back
+                                // to empty map on decode failure (cardano-cli
+                                // displays "no UTxOs").
+                                let addresses =
+                                    decode_address_set(&address_set_cbor).unwrap_or_default();
+                                let addresses: std::collections::HashSet<Vec<u8>> =
+                                    addresses.into_iter().collect();
+                                let utxo_cbor = encode_utxo_map(snapshot, |out| {
+                                    addresses.contains(&txout_address_bytes(out))
+                                });
+                                encode_query_if_current_match(&utxo_cbor)
+                            }
+                            EraSpecificQuery::GetUTxOByTxIn { txin_set_cbor } => {
+                                let txins = decode_txin_set(&txin_set_cbor).unwrap_or_default();
+                                let utxo_cbor = encode_utxo_map_for_txins(snapshot, &txins);
+                                encode_query_if_current_match(&utxo_cbor)
+                            }
+                            EraSpecificQuery::Unknown { .. } => null_response(),
+                        }
+                    }
+                }
+                Err(_) => null_response(),
+            }
+        }
         UpstreamQuery::GetSystemStart => {
-            // Round 153 — emit a network-specific SystemStart.
             encode_system_start_for_network(network_preset_to_network_kind(network_preset))
         }
         UpstreamQuery::GetChainPoint => encode_chain_point(snapshot.tip()),
         UpstreamQuery::GetChainBlockNo => {
-            // Round 152 — derive a synthetic BlockNo from the snapshot's
-            // tip slot.  Cardano-cli's `query tip` displays `block` and
-            // `slot` fields only when GetChainBlockNo returns `At n`
-            // (Origin causes silent fallback to genesis-shape display).
-            // Until the consensus chain-tracker block-number is threaded
-            // through `LedgerStateSnapshot`, approximating block-no from
-            // tip slot keeps the JSON output structurally complete and
-            // the rendered (epoch, slotInEpoch) values consistent with
-            // GetChainPoint's slot.  Phase-3 follow-up: thread
-            // `chain_block_number` from `ChainState` into the snapshot.
             let block_no = match snapshot.tip() {
                 yggdrasil_ledger::Point::Origin => None,
                 yggdrasil_ledger::Point::BlockPoint(slot, _) => Some(slot.0),
             };
             encode_chain_block_no(block_no)
         }
-        UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent { .. })
-        | UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryAnytime { .. })
+        UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryAnytime { .. })
         | UpstreamQuery::DebugLedgerConfig => null_response(),
     }
 }
@@ -1315,6 +1361,127 @@ fn network_preset_to_network_kind(
         NetworkPreset::Preview => NetworkKind::Preview,
         NetworkPreset::Mainnet => NetworkKind::Mainnet,
     }
+}
+
+/// Encode the snapshot's UTxO as a CBOR map of `TxIn → TxOut` in
+/// upstream's per-era `Map TxIn TxOut` shape.  Only entries
+/// matching `predicate` are included.  TxOuts are encoded in their
+/// era-specific shape (NOT yggdrasil's internal `[era_tag, txout]`
+/// envelope) so cardano-cli's per-era decoder accepts them.
+///
+/// Reference: `Cardano.Ledger.Shelley.UTxO.UTxO` `EncCBOR` instance
+/// — `encCBOR (UTxO m) = encCBOR m` (a bare CBOR map).
+fn encode_utxo_map<F>(snapshot: &LedgerStateSnapshot, predicate: F) -> Vec<u8>
+where
+    F: Fn(&yggdrasil_ledger::MultiEraTxOut) -> bool,
+{
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let entries: Vec<_> = snapshot
+        .multi_era_utxo()
+        .iter()
+        .filter(|(_, out)| predicate(out))
+        .collect();
+    let mut enc = Encoder::new();
+    enc.map(entries.len() as u64);
+    for (txin, txout) in entries {
+        txin.encode_cbor(&mut enc);
+        encode_txout_era_specific(&mut enc, txout);
+    }
+    enc.into_bytes()
+}
+
+fn encode_utxo_map_for_txins(
+    snapshot: &LedgerStateSnapshot,
+    txins: &std::collections::HashSet<yggdrasil_ledger::eras::shelley::ShelleyTxIn>,
+) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let entries: Vec<_> = snapshot
+        .multi_era_utxo()
+        .iter()
+        .filter(|(txin, _)| txins.contains(*txin))
+        .collect();
+    let mut enc = Encoder::new();
+    enc.map(entries.len() as u64);
+    for (txin, txout) in entries {
+        txin.encode_cbor(&mut enc);
+        encode_txout_era_specific(&mut enc, txout);
+    }
+    enc.into_bytes()
+}
+
+/// Encode a `MultiEraTxOut` in its bare era-specific shape
+/// (without yggdrasil's `[era_tag, inner]` envelope) so the
+/// upstream LSQ `Map TxIn TxOut` shape matches cardano-cli's
+/// per-era decoder.
+fn encode_txout_era_specific(
+    enc: &mut yggdrasil_ledger::Encoder,
+    out: &yggdrasil_ledger::MultiEraTxOut,
+) {
+    use yggdrasil_ledger::{CborEncode, MultiEraTxOut};
+    match out {
+        MultiEraTxOut::Shelley(o) => o.encode_cbor(enc),
+        MultiEraTxOut::Mary(o) => o.encode_cbor(enc),
+        MultiEraTxOut::Alonzo(o) => o.encode_cbor(enc),
+        MultiEraTxOut::Babbage(o) => o.encode_cbor(enc),
+    }
+}
+
+/// Extract the address bytes from a `MultiEraTxOut` for filtering
+/// against a `GetUTxOByAddress` request set.  Each era's TxOut
+/// stores the address as `Vec<u8>` (raw Cardano address bytes).
+fn txout_address_bytes(out: &yggdrasil_ledger::MultiEraTxOut) -> Vec<u8> {
+    use yggdrasil_ledger::MultiEraTxOut;
+    match out {
+        MultiEraTxOut::Shelley(o) => o.address.clone(),
+        MultiEraTxOut::Mary(o) => o.address.clone(),
+        MultiEraTxOut::Alonzo(o) => o.address.clone(),
+        MultiEraTxOut::Babbage(o) => o.address.clone(),
+    }
+}
+
+/// Decode a CBOR set/array of address bytestrings (the payload of
+/// `GetUTxOByAddress { address_set_cbor }`).  Upstream Cardano
+/// represents `Set Addr` either as a CBOR set (tag 258 + array) or
+/// a plain array; this helper accepts both.
+fn decode_address_set(bytes: &[u8]) -> Result<Vec<Vec<u8>>, yggdrasil_ledger::LedgerError> {
+    use yggdrasil_ledger::cbor::Decoder;
+    let mut dec = Decoder::new(bytes);
+    // Optionally consume tag 258 ("set" tag, defined in CIP-21 + RFC 9090).
+    // Major type 6 = tag.
+    if dec.peek_major().ok() == Some(6) {
+        dec.tag()?;
+    }
+    let count = dec.array()?;
+    let mut addrs = Vec::with_capacity(count as usize);
+    for _ in 0..count {
+        addrs.push(dec.bytes()?.to_vec());
+    }
+    Ok(addrs)
+}
+
+/// Decode a CBOR set/array of `TxIn` (the payload of
+/// `GetUTxOByTxIn { txin_set_cbor }`).  Each TxIn is `[txid_bytes,
+/// output_index]`.
+fn decode_txin_set(
+    bytes: &[u8],
+) -> Result<
+    std::collections::HashSet<yggdrasil_ledger::eras::shelley::ShelleyTxIn>,
+    yggdrasil_ledger::LedgerError,
+> {
+    use yggdrasil_ledger::CborDecode;
+    use yggdrasil_ledger::cbor::Decoder;
+    use yggdrasil_ledger::eras::shelley::ShelleyTxIn;
+    let mut dec = Decoder::new(bytes);
+    if dec.peek_major().ok() == Some(6) {
+        dec.tag()?;
+    }
+    let count = dec.array()?;
+    let mut set = std::collections::HashSet::with_capacity(count as usize);
+    for _ in 0..count {
+        let txin = ShelleyTxIn::decode_cbor(&mut dec)?;
+        set.insert(txin);
+    }
+    Ok(set)
 }
 
 // ---------------------------------------------------------------------------
