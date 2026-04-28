@@ -1252,10 +1252,10 @@ fn dispatch_upstream_query(
     use yggdrasil_ledger::Encoder;
     use yggdrasil_network::protocols::{
         EraSpecificQuery, HardForkBlockQuery, QueryHardFork, UpstreamQuery,
-        decode_query_if_current, encode_chain_block_no, encode_chain_point, encode_era_index,
-        encode_interpreter_for_network, encode_query_if_current_match,
-        encode_query_if_current_mismatch, encode_shelley_pparams_for_lsq,
-        encode_system_start_for_network,
+        decode_query_if_current, encode_alonzo_pparams_for_lsq, encode_chain_block_no,
+        encode_chain_point, encode_era_index, encode_interpreter_for_network,
+        encode_query_if_current_match, encode_query_if_current_mismatch,
+        encode_shelley_pparams_for_lsq, encode_system_start_for_network,
     };
 
     let null_response = || -> Vec<u8> {
@@ -1290,12 +1290,23 @@ fn dispatch_upstream_query(
                         match era_q {
                             EraSpecificQuery::GetCurrentPParams => {
                                 if let Some(params) = snapshot.protocol_params() {
-                                    if (1..=3).contains(&era_index) {
-                                        let pp = encode_shelley_pparams_for_lsq(params);
-                                        encode_query_if_current_match(&pp)
-                                    } else {
-                                        null_response()
-                                    }
+                                    let pp = match era_index {
+                                        // Shelley/Allegra/Mary share the
+                                        // 17-element Shelley PP shape.
+                                        1..=3 => encode_shelley_pparams_for_lsq(params),
+                                        // Alonzo uses a 24-element PP shape
+                                        // adding cost models, ex-unit prices,
+                                        // ex-unit limits, max-val-size,
+                                        // collateral percentage, max
+                                        // collateral inputs.
+                                        4 => encode_alonzo_pparams_for_lsq(params),
+                                        // Babbage/Conway PP shapes are
+                                        // Phase-3 follow-ups; fall back to
+                                        // null for now (cardano-cli surfaces
+                                        // it as a structured error).
+                                        _ => return null_response(),
+                                    };
+                                    encode_query_if_current_match(&pp)
                                 } else {
                                     null_response()
                                 }

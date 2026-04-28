@@ -894,6 +894,139 @@ pub fn encode_shelley_pparams_for_lsq(params: &yggdrasil_ledger::ProtocolParamet
     enc.into_bytes()
 }
 
+/// Encode Alonzo-era `PParams` in the upstream `GetCurrentPParams`
+/// response shape: a 24-element CBOR list adding 7 fields beyond
+/// Shelley plus replacing `minUTxOValue` with `coinsPerUtxoWord`.
+///
+/// Upstream `Cardano.Ledger.Alonzo.PParams.encCBOR` order (per
+/// `Cardano.Ledger.Alonzo.PParams` source — verified via Round 159
+/// operational rehearsal against `cardano-cli query
+/// protocol-parameters` on preview at era_index=4):
+///
+/// 1.  minfeeA              13. d
+/// 2.  minfeeB              14. extraEntropy
+/// 3.  maxBBSize            15. protocolVersion
+/// 4.  maxTxSize            16. minPoolCost
+/// 5.  maxBHSize            17. coinsPerUtxoWord
+/// 6.  keyDeposit           18. costModels
+/// 7.  poolDeposit          19. prices [priceMem, priceSteps]
+/// 8.  eMax                 20. maxTxExUnits [mem, steps]
+/// 9.  nOpt                 21. maxBlockExUnits [mem, steps]
+/// 10. a0                   22. maxValSize
+/// 11. rho                  23. collateralPercentage
+/// 12. tau                  24. maxCollateralInputs
+///
+/// Differences from Shelley PP (key 16 `minUTxOValue`): replaced
+/// by `coinsPerUtxoWord` at key 17.  Note: yggdrasil's
+/// `coins_per_utxo_byte` field stores the Babbage-renamed value
+/// (= word-value / 8); this encoder multiplies by 8 when emitting
+/// the Alonzo-shape word value.
+pub fn encode_alonzo_pparams_for_lsq(
+    params: &yggdrasil_ledger::ProtocolParameters,
+) -> Vec<u8> {
+    use yggdrasil_ledger::CborEncode;
+    let mut enc = Encoder::new();
+    enc.array(24);
+    enc.unsigned(params.min_fee_a);
+    enc.unsigned(params.min_fee_b);
+    enc.unsigned(params.max_block_body_size as u64);
+    enc.unsigned(params.max_tx_size as u64);
+    enc.unsigned(params.max_block_header_size as u64);
+    enc.unsigned(params.key_deposit);
+    enc.unsigned(params.pool_deposit);
+    enc.unsigned(params.e_max);
+    enc.unsigned(params.n_opt);
+    params.a0.encode_cbor(&mut enc);
+    params.rho.encode_cbor(&mut enc);
+    params.tau.encode_cbor(&mut enc);
+    let d = params.d.unwrap_or(yggdrasil_ledger::types::UnitInterval {
+        numerator: 1,
+        denominator: 1,
+    });
+    d.encode_cbor(&mut enc);
+    encode_shelley_nonce(&mut enc, params.extra_entropy.as_ref());
+    let (pv_major, pv_minor) = params.protocol_version.unwrap_or((5, 0));
+    enc.array(2);
+    enc.unsigned(pv_major);
+    enc.unsigned(pv_minor);
+    enc.unsigned(params.min_pool_cost);
+    // Alonzo `coinsPerUtxoWord` = `coinsPerUtxoByte * 8`
+    // (Babbage renamed and divided by 8).  Default to mainnet's
+    // 34_482 word value when the snapshot doesn't carry it.
+    enc.unsigned(params.coins_per_utxo_byte.map(|b| b * 8).unwrap_or(34_482));
+    encode_alonzo_cost_models(&mut enc, params.cost_models.as_ref());
+    encode_ex_unit_prices(
+        &mut enc,
+        params.price_mem.as_ref(),
+        params.price_step.as_ref(),
+    );
+    encode_ex_units(&mut enc, params.max_tx_ex_units.as_ref());
+    encode_ex_units(&mut enc, params.max_block_ex_units.as_ref());
+    enc.unsigned(params.max_val_size.unwrap_or(5000) as u64);
+    enc.unsigned(params.collateral_percentage.unwrap_or(150));
+    enc.unsigned(params.max_collateral_inputs.unwrap_or(3) as u64);
+    enc.into_bytes()
+}
+
+fn encode_alonzo_cost_models(
+    enc: &mut Encoder,
+    cost_models: Option<&yggdrasil_ledger::protocol_params::CostModels>,
+) {
+    match cost_models {
+        Some(map) => {
+            enc.map(map.len() as u64);
+            for (lang, ops) in map {
+                enc.unsigned(*lang as u64);
+                enc.array(ops.len() as u64);
+                for op in ops {
+                    if *op >= 0 {
+                        enc.unsigned(*op as u64);
+                    } else {
+                        enc.negative((-(*op + 1)) as u64);
+                    }
+                }
+            }
+        }
+        None => {
+            enc.map(0);
+        }
+    }
+}
+
+fn encode_ex_unit_prices(
+    enc: &mut Encoder,
+    price_mem: Option<&yggdrasil_ledger::types::UnitInterval>,
+    price_step: Option<&yggdrasil_ledger::types::UnitInterval>,
+) {
+    use yggdrasil_ledger::CborEncode;
+    let default_price = yggdrasil_ledger::types::UnitInterval {
+        numerator: 0,
+        denominator: 1,
+    };
+    let pm = price_mem.unwrap_or(&default_price);
+    let ps = price_step.unwrap_or(&default_price);
+    enc.array(2);
+    pm.encode_cbor(enc);
+    ps.encode_cbor(enc);
+}
+
+fn encode_ex_units(
+    enc: &mut Encoder,
+    ex_units: Option<&yggdrasil_ledger::eras::alonzo::ExUnits>,
+) {
+    enc.array(2);
+    match ex_units {
+        Some(eu) => {
+            enc.unsigned(eu.mem);
+            enc.unsigned(eu.steps);
+        }
+        None => {
+            enc.unsigned(0);
+            enc.unsigned(0);
+        }
+    }
+}
+
 /// Encode upstream's `Nonce` per
 /// `Cardano.Ledger.BaseTypes.Nonce.encCBOR`:
 /// - `NeutralNonce` → `[0]` (1-element list with value 0)

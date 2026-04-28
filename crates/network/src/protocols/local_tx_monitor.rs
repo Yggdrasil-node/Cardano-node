@@ -43,8 +43,9 @@ pub enum LocalTxMonitorState {
 ///
 /// | Tag | Message              |
 /// |-----|----------------------|
-/// |  0  | `MsgAcquire`         |
-/// |  1  | `MsgAcquired`        |
+/// |  0  | `MsgDone`            |
+/// |  1  | `MsgAcquire` / `MsgAwaitAcquire` |
+/// |  2  | `MsgAcquired`        |
 /// |  2  | `MsgNextTx`          |
 /// |  3  | `MsgReplyNextTx`     |
 /// |  4  | `MsgHasTx`           |
@@ -217,57 +218,79 @@ use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 impl LocalTxMonitorMessage {
-    /// Encode this message to CBOR bytes.
+    /// Encode this message to CBOR bytes per upstream
+    /// `Ouroboros.Network.Protocol.LocalTxMonitor.Codec`:
     ///
-    /// Wire format (matching upstream CDDL):
-    /// - `MsgAcquire`          → `[0]`
-    /// - `MsgAcquired`         → `[1, slot_no]`
-    /// - `MsgNextTx`           → `[2]`
-    /// - `MsgReplyNextTx`      → `[3, [era, tx]]` or `[3]`
-    /// - `MsgHasTx`            → `[4, tx_id]`
-    /// - `MsgReplyHasTx`       → `[5, bool]`
-    /// - `MsgGetSizes`         → `[6]`
-    /// - `MsgReplyGetSizes`    → `[7, [cap, size, n]]`
-    /// - `MsgRelease`          → `[8]`
-    /// - `MsgDone`             → `[9]`
+    /// | Tag | Message              | Direction | Wire format             |
+    /// |-----|----------------------|-----------|-------------------------|
+    /// |  0  | `MsgDone`            | client→s  | `[0]`                   |
+    /// |  1  | `MsgAcquire`         | client→s  | `[1]`                   |
+    /// |  2  | `MsgAcquired`        | server→c  | `[2, slot_no]`          |
+    /// |  3  | `MsgRelease`         | client→s  | `[3]`                   |
+    /// |  5  | `MsgNextTx`          | client→s  | `[5]`                   |
+    /// |  6  | `MsgReplyNextTx`     | server→c  | `[6, tx]` or `[6]`      |
+    /// |  7  | `MsgHasTx`           | client→s  | `[7, tx_id]`            |
+    /// |  8  | `MsgReplyHasTx`      | server→c  | `[8, bool]`             |
+    /// |  9  | `MsgGetSizes`        | client→s  | `[9]`                   |
+    /// | 10  | `MsgReplyGetSizes`   | server→c  | `[10, [cap, size, n]]`  |
+    ///
+    /// Pre-Round-158 yggdrasil used a non-upstream tag scheme
+    /// (MsgAcquire=0, MsgAcquired=1, …, MsgDone=9) — the codec
+    /// roundtripped against itself but failed against real
+    /// cardano-cli wire bytes.  Round 158 captured `81 01 = [1]`
+    /// from `cardano-cli query tx-mempool info` (= MsgAcquire) and
+    /// fetched the canonical tag table from upstream Haddock.
+    ///
+    /// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Codec`.
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut enc = Encoder::new();
         match self {
             Self::MsgAcquire => {
                 enc.array(1);
-                enc.unsigned(0);
+                enc.unsigned(1);
             }
             Self::MsgAcquired { slot_no } => {
                 enc.array(2);
-                enc.unsigned(1);
+                enc.unsigned(2);
                 enc.unsigned(*slot_no);
             }
             Self::MsgNextTx => {
                 enc.array(1);
-                enc.unsigned(2);
+                enc.unsigned(5);
             }
             Self::MsgReplyNextTx { tx: Some(tx_bytes) } => {
                 enc.array(2);
-                enc.unsigned(3);
+                enc.unsigned(6);
                 enc.bytes(tx_bytes);
             }
             Self::MsgReplyNextTx { tx: None } => {
                 enc.array(1);
-                enc.unsigned(3);
+                enc.unsigned(6);
             }
             Self::MsgHasTx { tx_id } => {
+                // Upstream `LocalTxMonitor` is parameterised on the
+                // block's `TxId`.  For Cardano's `HardForkBlock`, the
+                // `OneEraTxId` envelope is `[era_idx, hash_bytes]`,
+                // matching the Round 158 wire capture
+                // `82 07 82 01 58 20 <32 bytes>`.  We default
+                // era_idx=1 (Shelley) on the encoder side; the
+                // decoder accepts any era_idx and stores only the
+                // hash bytes (the lookup against
+                // `SharedMempool::has_tx` is era-independent).
                 enc.array(2);
-                enc.unsigned(4);
+                enc.unsigned(7);
+                enc.array(2);
+                enc.unsigned(1);
                 enc.bytes(tx_id);
             }
             Self::MsgReplyHasTx { has_tx } => {
                 enc.array(2);
-                enc.unsigned(5);
+                enc.unsigned(8);
                 enc.bool(*has_tx);
             }
             Self::MsgGetSizes => {
                 enc.array(1);
-                enc.unsigned(6);
+                enc.unsigned(9);
             }
             Self::MsgReplyGetSizes {
                 capacity_in_bytes,
@@ -275,7 +298,7 @@ impl LocalTxMonitorMessage {
                 num_txs,
             } => {
                 enc.array(2);
-                enc.unsigned(7);
+                enc.unsigned(10);
                 enc.array(3);
                 enc.unsigned(*capacity_in_bytes as u64);
                 enc.unsigned(*size_in_bytes as u64);
@@ -283,29 +306,33 @@ impl LocalTxMonitorMessage {
             }
             Self::MsgRelease => {
                 enc.array(1);
-                enc.unsigned(8);
+                enc.unsigned(3);
             }
             Self::MsgDone => {
                 enc.array(1);
-                enc.unsigned(9);
+                enc.unsigned(0);
             }
         }
         enc.into_bytes()
     }
 
-    /// Decode a CBOR-encoded message from wire bytes.
+    /// Decode a CBOR-encoded message from wire bytes per upstream
+    /// `Ouroboros.Network.Protocol.LocalTxMonitor.Codec`.  See
+    /// [`Self::to_cbor`] for the tag table.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, LedgerError> {
         let mut dec = Decoder::new(bytes);
         let len = dec.array()?;
         let tag = dec.unsigned()?;
         match tag {
-            0 => Ok(Self::MsgAcquire),
-            1 => {
+            0 => Ok(Self::MsgDone),
+            1 => Ok(Self::MsgAcquire),
+            2 => {
                 let slot_no = dec.unsigned()?;
                 Ok(Self::MsgAcquired { slot_no })
             }
-            2 => Ok(Self::MsgNextTx),
-            3 => {
+            3 => Ok(Self::MsgRelease),
+            5 => Ok(Self::MsgNextTx),
+            6 => {
                 if len > 1 {
                     let tx_bytes = dec.bytes()?.to_vec();
                     Ok(Self::MsgReplyNextTx { tx: Some(tx_bytes) })
@@ -313,16 +340,21 @@ impl LocalTxMonitorMessage {
                     Ok(Self::MsgReplyNextTx { tx: None })
                 }
             }
-            4 => {
+            7 => {
+                // Decode the `OneEraTxId` envelope `[era_idx, hash]`
+                // and discard the era_idx — the mempool lookup is
+                // era-independent.  See encoder for the wire shape.
+                let _inner_len = dec.array()?;
+                let _era_idx = dec.unsigned()?;
                 let tx_id = dec.bytes()?.to_vec();
                 Ok(Self::MsgHasTx { tx_id })
             }
-            5 => {
+            8 => {
                 let has_tx = dec.bool()?;
                 Ok(Self::MsgReplyHasTx { has_tx })
             }
-            6 => Ok(Self::MsgGetSizes),
-            7 => {
+            9 => Ok(Self::MsgGetSizes),
+            10 => {
                 let _inner_len = dec.array()?;
                 let capacity_in_bytes = dec.unsigned()? as u32;
                 let size_in_bytes = dec.unsigned()? as u32;
@@ -333,8 +365,6 @@ impl LocalTxMonitorMessage {
                     num_txs,
                 })
             }
-            8 => Ok(Self::MsgRelease),
-            9 => Ok(Self::MsgDone),
             tag => Err(LedgerError::CborDecodeError(format!(
                 "unknown LocalTxMonitor message tag: {tag}"
             ))),
@@ -448,6 +478,59 @@ mod tests {
         let encoded = msg.to_cbor();
         let decoded = LocalTxMonitorMessage::from_cbor(&encoded).unwrap();
         assert_eq!(decoded, msg);
+    }
+
+    /// Round 158 — captured `cardano-cli 10.16.0.0 query tx-mempool
+    /// info` wire payload `81 01` = `[1]` = `MsgAcquire` (NOT
+    /// `[0]` as yggdrasil's pre-fix codec assumed).  This pins the
+    /// upstream tag mapping per
+    /// `Ouroboros.Network.Protocol.LocalTxMonitor.Codec`.
+    #[test]
+    fn decode_real_cardano_cli_msg_acquire_payload() {
+        let bytes = [0x81, 0x01];
+        let decoded = LocalTxMonitorMessage::from_cbor(&bytes).unwrap();
+        assert!(matches!(decoded, LocalTxMonitorMessage::MsgAcquire));
+        assert_eq!(LocalTxMonitorMessage::MsgAcquire.to_cbor(), bytes);
+    }
+
+    /// Round 158 — captured server response `82 02 1a 00 01 65 30`
+    /// = `[2, 91440]` = `MsgAcquired { slot_no: 91440 }`.
+    #[test]
+    fn encode_msg_acquired_uses_tag_2() {
+        let msg = LocalTxMonitorMessage::MsgAcquired { slot_no: 91440 };
+        let bytes = msg.to_cbor();
+        // 0x82 array(2), 0x02 tag, 0x1a uint32 prefix, 0x00 0x01 0x65 0x30 = 91440
+        assert_eq!(bytes, [0x82, 0x02, 0x1a, 0x00, 0x01, 0x65, 0x30]);
+    }
+
+    /// Round 158 — captured `cardano-cli query tx-mempool tx-exists
+    /// 0123…` wire payload `82 07 82 01 58 20 <32 bytes>` —
+    /// `MsgHasTx` carries `OneEraTxId` envelope `[era_idx, hash]`,
+    /// NOT bare hash bytes.  Pre-fix yggdrasil expected bare bytes
+    /// and the connection hung waiting for more data.
+    #[test]
+    fn decode_real_cardano_cli_has_tx_payload() {
+        let mut bytes = vec![0x82, 0x07, 0x82, 0x01, 0x58, 0x20];
+        bytes.extend_from_slice(&[0x01u8; 32]);
+        let decoded = LocalTxMonitorMessage::from_cbor(&bytes).unwrap();
+        match decoded {
+            LocalTxMonitorMessage::MsgHasTx { tx_id } => {
+                assert_eq!(tx_id, vec![0x01u8; 32]);
+            }
+            other => panic!("expected MsgHasTx, got {other:?}"),
+        }
+    }
+
+    /// Round 158 — encoder must emit the era-tagged `OneEraTxId`
+    /// wrapper for `MsgHasTx`, defaulting to era_idx=1 (Shelley).
+    #[test]
+    fn encode_msg_has_tx_emits_one_era_tx_id_envelope() {
+        let tx_id = vec![0xab; 32];
+        let bytes = LocalTxMonitorMessage::MsgHasTx { tx_id }.to_cbor();
+        // 0x82 array(2), 0x07 tag, 0x82 array(2), 0x01 era_idx=1,
+        // 0x58 0x20 byte-string-len-32, then 32 bytes.
+        assert_eq!(&bytes[0..6], &[0x82, 0x07, 0x82, 0x01, 0x58, 0x20]);
+        assert_eq!(&bytes[6..38], &[0xab; 32]);
     }
 
     // -- State machine transition tests --
