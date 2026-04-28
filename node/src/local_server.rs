@@ -1347,6 +1347,32 @@ fn dispatch_upstream_query(
                                 let utxo_cbor = encode_utxo_map_for_txins(snapshot, &txins);
                                 encode_query_if_current_match(&utxo_cbor)
                             }
+                            EraSpecificQuery::GetStakePools => {
+                                let pools_cbor = encode_stake_pools_set(snapshot);
+                                encode_query_if_current_match(&pools_cbor)
+                            }
+                            EraSpecificQuery::GetStakeDistribution => {
+                                let dist_cbor = encode_stake_distribution_map(snapshot);
+                                encode_query_if_current_match(&dist_cbor)
+                            }
+                            EraSpecificQuery::GetFilteredDelegationsAndRewardAccounts {
+                                credential_set_cbor,
+                            } => {
+                                let creds = decode_stake_credential_set(&credential_set_cbor)
+                                    .unwrap_or_default();
+                                let body =
+                                    encode_filtered_delegations_and_rewards(snapshot, &creds);
+                                encode_query_if_current_match(&body)
+                            }
+                            EraSpecificQuery::GetGenesisConfig => {
+                                // Genesis config is era-specific and
+                                // requires the loaded ShelleyGenesis to
+                                // serialise.  Until that's plumbed
+                                // through to the snapshot, return null
+                                // (cardano-cli surfaces it as "no
+                                // genesis config available").
+                                null_response()
+                            }
                             EraSpecificQuery::Unknown { .. } => null_response(),
                         }
                     }
@@ -1538,6 +1564,169 @@ fn decode_address_set(bytes: &[u8]) -> Result<Vec<Vec<u8>>, yggdrasil_ledger::Le
     Ok(addrs)
 }
 
+/// Encode `GetStakePools` result: a CBOR set of registered pool
+/// keyhashes per upstream `Cardano.Ledger.Shelley.LedgerStateQuery
+/// .GetStakePools`.
+///
+/// Upstream encodes as a CBOR set (tag 258) of 28-byte keyhashes:
+/// `258 [* bytes(28)]`.  When the pool set is empty (chain hasn't
+/// registered any pools yet — common on pre-Shelley snapshots),
+/// emits the canonical empty-set form `c2 80`-equivalent (tag 258
+/// over an empty array).
+fn encode_stake_pools_set(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    let mut enc = Encoder::new();
+    let pool_keys: Vec<&[u8; 28]> = snapshot
+        .pool_state()
+        .iter()
+        .map(|(keyhash, _)| keyhash)
+        .collect();
+    // CBOR tag 258 ("set" per CIP-21) wraps the array of keyhashes.
+    enc.tag(258);
+    enc.array(pool_keys.len() as u64);
+    for k in pool_keys {
+        enc.bytes(k);
+    }
+    enc.into_bytes()
+}
+
+/// Encode `GetStakeDistribution` result: a CBOR map of
+/// `pool_keyhash → relative_stake` per upstream
+/// `Cardano.Ledger.Shelley.LedgerStateQuery.GetStakeDistribution`.
+///
+/// `relative_stake` is a `UnitInterval` (tag 30 + `[num, den]`)
+/// representing the pool's fraction of total stake.  Until
+/// yggdrasil tracks the live stake distribution snapshot via
+/// `mark`/`set`/`go` rotation, this returns an empty map (every
+/// pool has zero relative stake until the first epoch boundary
+/// snapshot).
+fn encode_stake_distribution_map(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    let mut enc = Encoder::new();
+    // Empty map for now.  Phase-3 follow-up: thread the
+    // `set`-snapshot stake distribution from
+    // `Cardano.Ledger.Shelley.LedgerState.PState` /
+    // `instantaneous_rewards` into the snapshot so we can compute
+    // each pool's relative stake.
+    let _ = snapshot;
+    enc.map(0);
+    enc.into_bytes()
+}
+
+/// Decode a CBOR set/array of stake credentials (the payload of
+/// `GetFilteredDelegationsAndRewardAccounts`).  Each credential is
+/// `[0, keyhash]` (key hash) or `[1, scripthash]` (script hash).
+fn decode_stake_credential_set(
+    bytes: &[u8],
+) -> Result<
+    std::collections::HashSet<yggdrasil_ledger::StakeCredential>,
+    yggdrasil_ledger::LedgerError,
+> {
+    use yggdrasil_ledger::cbor::Decoder;
+    let mut dec = Decoder::new(bytes);
+    if dec.peek_major().ok() == Some(6) {
+        dec.tag()?;
+    }
+    let count = dec.array()?;
+    let mut set = std::collections::HashSet::with_capacity(count as usize);
+    for _ in 0..count {
+        let inner_len = dec.array()?;
+        if inner_len != 2 {
+            return Err(yggdrasil_ledger::LedgerError::CborInvalidLength {
+                expected: 2,
+                actual: inner_len as usize,
+            });
+        }
+        let kind = dec.unsigned()?;
+        let hash_bytes = dec.bytes()?;
+        let mut h = [0u8; 28];
+        if hash_bytes.len() != 28 {
+            return Err(yggdrasil_ledger::LedgerError::CborInvalidLength {
+                expected: 28,
+                actual: hash_bytes.len(),
+            });
+        }
+        h.copy_from_slice(hash_bytes);
+        let cred = match kind {
+            0 => yggdrasil_ledger::StakeCredential::AddrKeyHash(h),
+            1 => yggdrasil_ledger::StakeCredential::ScriptHash(h),
+            _ => continue,
+        };
+        set.insert(cred);
+    }
+    Ok(set)
+}
+
+/// Encode `GetFilteredDelegationsAndRewardAccounts` result: a
+/// 2-element CBOR list `[delegations_map, rewards_map]` per
+/// upstream
+/// `Cardano.Ledger.Shelley.LedgerStateQuery.GetFilteredDelegationsAndRewardAccounts`.
+/// Returns the matching subset of the snapshot's stake delegations
+/// and reward balances; entries for credentials not registered are
+/// silently omitted.
+fn encode_filtered_delegations_and_rewards(
+    snapshot: &LedgerStateSnapshot,
+    credentials: &std::collections::HashSet<yggdrasil_ledger::StakeCredential>,
+) -> Vec<u8> {
+    use yggdrasil_ledger::{Encoder, StakeCredential};
+    let mut enc = Encoder::new();
+    enc.array(2);
+
+    // 1: delegations: Map StakeCredential PoolKeyHash
+    let stake_creds = snapshot.stake_credentials();
+    let delegations: Vec<(StakeCredential, [u8; 28])> = credentials
+        .iter()
+        .filter_map(|cred| {
+            stake_creds
+                .iter()
+                .find(|(c, _)| *c == cred)
+                .and_then(|(_, state)| state.delegated_pool().map(|p| (*cred, p)))
+        })
+        .collect();
+    enc.map(delegations.len() as u64);
+    for (cred, pool) in &delegations {
+        encode_stake_credential(&mut enc, cred);
+        enc.bytes(pool.as_slice());
+    }
+
+    // 2: reward balances: Map StakeCredential Coin
+    let reward_accounts = snapshot.reward_accounts();
+    let rewards: Vec<(StakeCredential, u64)> = credentials
+        .iter()
+        .filter_map(|cred| {
+            reward_accounts
+                .iter()
+                .find(|(addr, _)| addr.credential.hash() == cred.hash())
+                .map(|(_, state)| (*cred, state.balance()))
+        })
+        .collect();
+    enc.map(rewards.len() as u64);
+    for (cred, balance) in &rewards {
+        encode_stake_credential(&mut enc, cred);
+        enc.unsigned(*balance);
+    }
+
+    enc.into_bytes()
+}
+
+fn encode_stake_credential(
+    enc: &mut yggdrasil_ledger::Encoder,
+    cred: &yggdrasil_ledger::StakeCredential,
+) {
+    use yggdrasil_ledger::StakeCredential;
+    enc.array(2);
+    match cred {
+        StakeCredential::AddrKeyHash(h) => {
+            enc.unsigned(0);
+            enc.bytes(h);
+        }
+        StakeCredential::ScriptHash(h) => {
+            enc.unsigned(1);
+            enc.bytes(h);
+        }
+    }
+}
+
 /// Decode a CBOR set/array of `TxIn` (the payload of
 /// `GetUTxOByTxIn { txin_set_cbor }`).  Each TxIn is `[txid_bytes,
 /// output_index]`.
@@ -1644,6 +1833,41 @@ mod tests {
             6,
             "params_pv major=9 should map to Conway (6) when no block PV is set",
         );
+    }
+
+    /// Round 163 — `GetStakePools` against an empty snapshot
+    /// returns the empty CBOR set `tag(258) [<>]` which cardano-cli
+    /// renders as `[]`.  Pins the upstream-faithful encoding shape
+    /// for the empty case.
+    #[test]
+    fn get_stake_pools_empty_snapshot_emits_tag_258_empty_set() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let bytes = encode_stake_pools_set(&snapshot);
+        // CBOR tag 258 = `0xd9 0x01 0x02`, then `0x80` (empty array).
+        assert_eq!(bytes, [0xd9, 0x01, 0x02, 0x80]);
+    }
+
+    /// Round 163 — `GetStakeDistribution` against an empty
+    /// snapshot returns an empty CBOR map `0xa0`.
+    #[test]
+    fn get_stake_distribution_empty_snapshot_emits_empty_map() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let bytes = encode_stake_distribution_map(&snapshot);
+        assert_eq!(bytes, [0xa0]);
+    }
+
+    /// Round 163 — `GetFilteredDelegationsAndRewardAccounts` against
+    /// an empty snapshot returns `[empty_map, empty_map]` = the
+    /// 2-element list `0x82 0xa0 0xa0`.
+    #[test]
+    fn get_filtered_delegations_empty_snapshot_emits_two_empty_maps() {
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let creds = std::collections::HashSet::new();
+        let bytes = encode_filtered_delegations_and_rewards(&snapshot, &creds);
+        assert_eq!(bytes, [0x82, 0xa0, 0xa0]);
     }
 
     /// Round 161 — yggdrasil never DEMOTES the era.  When the wire

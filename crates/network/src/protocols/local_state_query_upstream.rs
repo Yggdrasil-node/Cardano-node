@@ -265,6 +265,26 @@ pub enum EraSpecificQuery {
     /// `cardano-cli query utxo --tx-in`.  Captured wire tag 15
     /// from the 2026-04-28 cardano-cli rehearsal.
     GetUTxOByTxIn { txin_set_cbor: Vec<u8> },
+    /// `[5]` — `GetStakeDistribution`.  Returns a CBOR map of
+    /// `pool_keyhash → relative_stake` (UnitInterval).  Used by
+    /// `cardano-cli query stake-distribution` (era-blocked
+    /// client-side until Babbage+).
+    GetStakeDistribution,
+    /// `[10, stake_credential_set]` —
+    /// `GetFilteredDelegationsAndRewardAccounts`.  Returns the
+    /// delegations and reward balances for the supplied set of
+    /// stake credentials.  Used by `cardano-cli query
+    /// stake-address-info` (era-blocked client-side until
+    /// Babbage+).  Carries the raw CBOR-encoded credential set.
+    GetFilteredDelegationsAndRewardAccounts { credential_set_cbor: Vec<u8> },
+    /// `[11]` — `GetGenesisConfig`.  Returns the genesis config
+    /// for the active era.  Used internally by some cardano-cli
+    /// flows (e.g. `query leadership-schedule`).
+    GetGenesisConfig,
+    /// `[13]` — `GetStakePools`.  Returns a CBOR set of registered
+    /// pool key hashes.  Used by `cardano-cli query stake-pools`
+    /// (era-blocked client-side until Babbage+).
+    GetStakePools,
     /// Any era-specific query whose tag this codec doesn't yet
     /// recognise.  Carries the raw inner CBOR so the dispatcher can
     /// fall through to `null_response()` without losing the bytes.
@@ -306,7 +326,10 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
     let kind = match (q_len, q_tag) {
         (1, 1) => EraSpecificQuery::GetEpochNo,
         (1, 3) => EraSpecificQuery::GetCurrentPParams,
+        (1, 5) => EraSpecificQuery::GetStakeDistribution,
         (1, 7) => EraSpecificQuery::GetWholeUTxO,
+        (1, 11) => EraSpecificQuery::GetGenesisConfig,
+        (1, 13) => EraSpecificQuery::GetStakePools,
         (2, 6) => {
             // `[6, address_set_cbor]` — captured the address-set
             // payload between `q_end_after_tag` and `q_end`.
@@ -314,6 +337,9 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
                 address_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
             }
         }
+        (2, 10) => EraSpecificQuery::GetFilteredDelegationsAndRewardAccounts {
+            credential_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
         (2, 15) => EraSpecificQuery::GetUTxOByTxIn {
             txin_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
@@ -733,8 +759,7 @@ fn encode_interpreter_mainnet() -> Vec<u8> {
     // which exceeds u64 (1.844e19).  Round 162's bignum-aware
     // `encode_relative_time` handles values past u64 via CBOR
     // tag-2 bignum, so we now use the real picosecond value.
-    const BYRON_END_PICOS: u128 =
-        BYRON_END_SLOT as u128 * 20_000 * 1_000_000_000_u128;
+    const BYRON_END_PICOS: u128 = BYRON_END_SLOT as u128 * 20_000 * 1_000_000_000_u128;
     // Round 162 — synthetic far-future Shelley end at slot 2^48
     // covers all realistic mainnet slots indefinitely.
     const SHELLEY_END_SLOT: u64 = 1u64 << 48;
@@ -1490,6 +1515,36 @@ mod tests {
         assert!(matches!(
             era_query,
             EraSpecificQuery::GetUTxOByAddress { .. }
+        ));
+    }
+
+    /// Round 163 — pin the era-specific tag table additions for
+    /// `GetStakeDistribution` (5), `GetFilteredDelegationsAndRewardAccounts`
+    /// (10), `GetGenesisConfig` (11), `GetStakePools` (13).
+    #[test]
+    fn decode_recognises_stake_pool_distribution_genesis_tags() {
+        // [1, [5]] = era 1, GetStakeDistribution
+        let stake_dist = vec![0x82, 0x01, 0x81, 0x05];
+        let (_, q) = decode_query_if_current(&stake_dist).unwrap();
+        assert!(matches!(q, EraSpecificQuery::GetStakeDistribution));
+
+        // [1, [11]] = era 1, GetGenesisConfig
+        let gen_cfg = vec![0x82, 0x01, 0x81, 0x0b];
+        let (_, q) = decode_query_if_current(&gen_cfg).unwrap();
+        assert!(matches!(q, EraSpecificQuery::GetGenesisConfig));
+
+        // [1, [13]] = era 1, GetStakePools
+        let stake_pools = vec![0x82, 0x01, 0x81, 0x0d];
+        let (_, q) = decode_query_if_current(&stake_pools).unwrap();
+        assert!(matches!(q, EraSpecificQuery::GetStakePools));
+
+        // [1, [10, [<credentials>]]] = GetFilteredDelegationsAndRewardAccounts
+        let mut delegs = vec![0x82, 0x01, 0x82, 0x0a, 0x81, 0x82, 0x00, 0x58, 0x1c];
+        delegs.extend_from_slice(&[0xab; 28]);
+        let (_, q) = decode_query_if_current(&delegs).unwrap();
+        assert!(matches!(
+            q,
+            EraSpecificQuery::GetFilteredDelegationsAndRewardAccounts { .. }
         ));
     }
 

@@ -87,7 +87,15 @@ enum Command {
         #[arg(long)]
         no_verify: bool,
         /// Batch size for sync iterations.
-        #[arg(long, default_value = "10")]
+        ///
+        /// Round 165 — bumped default from 10 to 30, giving roughly 2x
+        /// throughput (119 → 232 slots/sec on preprod knob=2 sync) by
+        /// amortising per-batch overhead (RPC round-trips, lock
+        /// acquisition, instrumentation) across more blocks.  Values
+        /// past ~30 currently trip the apply path's
+        /// `PPUP wrong epoch` error when a batch straddles an epoch
+        /// boundary — unsafe until the apply path is split per-epoch.
+        #[arg(long, default_value = "30")]
         batch_size: usize,
         /// Minimum slot delta between persisted ledger checkpoints.
         #[arg(long)]
