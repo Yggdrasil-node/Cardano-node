@@ -1643,9 +1643,66 @@ where
     if progress.rollback_count > 0 {
         chain_db.truncate_ledger_checkpoints_after_point(&progress.current_point)?;
 
-        tracking.ledger_state =
-            recover_ledger_state_chaindb(chain_db, tracking.base_ledger_state.clone())?
-                .ledger_state;
+        // Round 166 — initial-sync rollback fast path.
+        //
+        // Every fresh ChainSync session begins with the server confirming the
+        // requested intersect by sending `MsgRollBackward` to that point.  When
+        // the requested intersect is `Origin`, the resulting batch progress
+        // looks like `[RollBackward(Origin), RollForward(blocks)]` and reports
+        // `rollback_count = 1` even though the chain has not actually
+        // rewound.  Detect this case and skip the heavy
+        // `recover_ledger_state_chaindb` call (which replays the volatile
+        // suffix via `apply_block` without epoch-boundary detection — leading
+        // to `PPUP wrong epoch` failures whenever a single batch crosses a
+        // Byron→Shelley or any per-epoch boundary).  Instead, reset to the
+        // base state and let the boundary-aware forward path apply the
+        // RollForward portion of progress.
+        //
+        // Reference: `Ouroboros.Network.Protocol.ChainSync.Server` —
+        // `RollBackward` confirmation behaviour at session start.
+        let initial_sync_rollback_to_origin = matches!(
+            progress.steps.iter().find_map(|step| match step {
+                MultiEraSyncStep::RollBackward { point, .. } => Some(*point),
+                _ => None,
+            }),
+            Some(Point::Origin)
+        ) && tracking.base_ledger_state.tip == Point::Origin;
+
+        if initial_sync_rollback_to_origin {
+            tracking.ledger_state = tracking.base_ledger_state.clone();
+        } else {
+            tracking.ledger_state =
+                recover_ledger_state_chaindb(chain_db, tracking.base_ledger_state.clone())?
+                    .ledger_state;
+
+            // Round 167 — post-recovery epoch fixup for mid-sync rollback.
+            //
+            // `recover_ledger_state` replays the volatile/immutable suffix
+            // via `LedgerState::apply_block` without firing epoch-boundary
+            // processing.  When the rollback target sits in a later epoch
+            // than the latest restored checkpoint (e.g. a deep rollback
+            // crossing an epoch boundary), `current_epoch` would otherwise
+            // remain at the checkpoint's epoch — breaking PPUP validation
+            // for any subsequent block whose proposal targets the actual
+            // tip's epoch.  Fix this by forcing `current_epoch` to match
+            // the recovered tip's slot.  Reward distribution is **not**
+            // redone (it already happened during the original live sync,
+            // and re-firing `apply_epoch_boundary` here would require
+            // reconstructing the historical stake snapshots) — the
+            // recovered ledger state stays as it was at the checkpoint
+            // for everything except `current_epoch`.
+            //
+            // Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` —
+            // `current_epoch` is the only field PPUP validation reads.
+            if let (Some(epoch_schedule), Point::BlockPoint(slot, _)) =
+                (tracking.epoch_size, tracking.ledger_state.tip)
+            {
+                let actual_epoch = epoch_schedule.slot_to_epoch(slot);
+                if actual_epoch.0 > tracking.ledger_state.current_epoch().0 {
+                    tracking.ledger_state.set_current_epoch(actual_epoch);
+                }
+            }
+        }
         // After rollback recovery, stake snapshots are stale — reset them
         // so epoch boundary processing restarts cleanly.
         if tracking.stake_snapshots.is_some() {
@@ -1664,6 +1721,31 @@ where
         // map at the next checkpoint persistence below.
         if let Some(counters) = ocert_counters.as_mut() {
             counters.clear();
+        }
+
+        // For initial-sync rollback to Origin, the heavy recovery was
+        // skipped — apply the forward portion of progress now via the
+        // boundary-aware path so PPUP / NEWEPOCH transitions fire correctly.
+        if initial_sync_rollback_to_origin {
+            if let (Some(snapshots), Some(epoch_size)) =
+                (tracking.stake_snapshots.as_mut(), tracking.epoch_size)
+            {
+                epoch_events = advance_ledger_with_epoch_boundary(
+                    &mut tracking.ledger_state,
+                    snapshots,
+                    epoch_size,
+                    progress,
+                    Some(&tracking.plutus_evaluator),
+                    vrf_ctx,
+                    &mut tracking.pool_block_counts,
+                )?;
+            } else {
+                advance_ledger_state_with_progress(
+                    &mut tracking.ledger_state,
+                    progress,
+                    Some(&tracking.plutus_evaluator),
+                )?;
+            }
         }
     } else if let (Some(snapshots), Some(epoch_size)) =
         (tracking.stake_snapshots.as_mut(), tracking.epoch_size)

@@ -544,6 +544,16 @@ pub struct NodeMetrics {
     reconnects: AtomicU64,
     current_slot: AtomicU64,
     current_block_number: AtomicU64,
+    /// Round 169 — current ledger era as a Prometheus gauge.
+    ///
+    /// Encoded as the wire era ordinal: `0=Byron, 1=Shelley, 2=Allegra,
+    /// 3=Mary, 4=Alonzo, 5=Babbage, 6=Conway`.  Tracks the snapshot's
+    /// applied-block era; the PV-aware promotion that cardano-cli sees
+    /// (R160) is not reflected here — operators consult this gauge for
+    /// raw on-disk era progression.
+    ///
+    /// Reference: `Cardano.Ledger.Core.Era` ordering.
+    current_era: AtomicU64,
     checkpoint_slot: AtomicU64,
     target_known_peers: AtomicU64,
     target_established_peers: AtomicU64,
@@ -618,6 +628,10 @@ pub struct MetricsSnapshot {
     pub current_slot: u64,
     /// Latest block number seen by the sync pipeline.
     pub current_block_number: u64,
+    /// Round 169 — wire era ordinal of the latest applied block
+    /// (`0=Byron, 1=Shelley, 2=Allegra, 3=Mary, 4=Alonzo, 5=Babbage,
+    /// 6=Conway`).
+    pub current_era: u64,
     /// Slot of the latest persisted ledger checkpoint.
     pub checkpoint_slot: u64,
     /// Governor target known peers.
@@ -712,6 +726,7 @@ impl NodeMetrics {
             reconnects: AtomicU64::new(0),
             current_slot: AtomicU64::new(0),
             current_block_number: AtomicU64::new(0),
+            current_era: AtomicU64::new(0),
             checkpoint_slot: AtomicU64::new(0),
             target_known_peers: AtomicU64::new(0),
             target_established_peers: AtomicU64::new(0),
@@ -787,6 +802,14 @@ impl NodeMetrics {
     /// Update the latest persisted checkpoint slot.
     pub fn set_checkpoint_slot(&self, slot: u64) {
         self.checkpoint_slot.store(slot, Ordering::Relaxed);
+    }
+
+    /// Round 169 — update the wire era ordinal of the latest applied block.
+    ///
+    /// Encoded as `0=Byron, 1=Shelley, 2=Allegra, 3=Mary, 4=Alonzo,
+    /// 5=Babbage, 6=Conway` to match `Era::era_ordinal()`.
+    pub fn set_current_era(&self, era_ordinal: u64) {
+        self.current_era.store(era_ordinal, Ordering::Relaxed);
     }
 
     /// Update current governor peer-selection targets and registry counters.
@@ -934,6 +957,7 @@ impl NodeMetrics {
             reconnects: self.reconnects.load(Ordering::Relaxed),
             current_slot: self.current_slot.load(Ordering::Relaxed),
             current_block_number: self.current_block_number.load(Ordering::Relaxed),
+            current_era: self.current_era.load(Ordering::Relaxed),
             checkpoint_slot: self.checkpoint_slot.load(Ordering::Relaxed),
             target_known_peers: self.target_known_peers.load(Ordering::Relaxed),
             target_established_peers: self.target_established_peers.load(Ordering::Relaxed),
@@ -1015,6 +1039,9 @@ yggdrasil_current_slot {}\n\
 # HELP yggdrasil_current_block_number Latest block number.\n\
 # TYPE yggdrasil_current_block_number gauge\n\
 yggdrasil_current_block_number {}\n\
+# HELP yggdrasil_current_era Wire era ordinal of the latest applied block (0=Byron, 1=Shelley, 2=Allegra, 3=Mary, 4=Alonzo, 5=Babbage, 6=Conway).\n\
+# TYPE yggdrasil_current_era gauge\n\
+yggdrasil_current_era {}\n\
 # HELP yggdrasil_checkpoint_slot Slot of latest persisted ledger checkpoint.\n\
 # TYPE yggdrasil_checkpoint_slot gauge\n\
 yggdrasil_checkpoint_slot {}\n\
@@ -1127,6 +1154,7 @@ yggdrasil_chainsync_workers_registered {}\n",
             self.reconnects,
             self.current_slot,
             self.current_block_number,
+            self.current_era,
             self.checkpoint_slot,
             self.target_known_peers,
             self.target_established_peers,

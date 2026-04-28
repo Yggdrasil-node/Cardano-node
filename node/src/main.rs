@@ -88,14 +88,19 @@ enum Command {
         no_verify: bool,
         /// Batch size for sync iterations.
         ///
-        /// Round 165 — bumped default from 10 to 30, giving roughly 2x
-        /// throughput (119 → 232 slots/sec on preprod knob=2 sync) by
-        /// amortising per-batch overhead (RPC round-trips, lock
-        /// acquisition, instrumentation) across more blocks.  Values
-        /// past ~30 currently trip the apply path's
-        /// `PPUP wrong epoch` error when a batch straddles an epoch
-        /// boundary — unsafe until the apply path is split per-epoch.
-        #[arg(long, default_value = "30")]
+        /// Round 166 — bumped default from 30 to 50 after the initial-sync
+        /// rollback fix in `update_ledger_checkpoint_after_progress`
+        /// (`node/src/sync.rs`).  The fix detects the
+        /// `[RollBackward(Origin), RollForward(...)]` shape every fresh
+        /// ChainSync session opens with and bypasses the heavy
+        /// `recover_ledger_state_chaindb` call (which replays the volatile
+        /// suffix without firing epoch boundaries), running the
+        /// boundary-aware forward path directly — so a single batch can now
+        /// straddle Byron→Shelley without triggering `PPUP wrong epoch`.
+        /// Empirically: 50 → ~14 blocks/sec on preprod (vs ~9 at 30, ~5 at
+        /// the original 10).  Values >50 plateau and start hitting upstream
+        /// fetch latency.
+        #[arg(long, default_value = "50")]
         batch_size: usize,
         /// Minimum slot delta between persisted ledger checkpoints.
         #[arg(long)]

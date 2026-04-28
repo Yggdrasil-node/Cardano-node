@@ -3948,6 +3948,53 @@ fn pool_unregister_peer(
     }
 }
 
+/// Round 168 — register the bootstrap sync peer in the shared `PeerRegistry`
+/// as a hot peer for the duration of the verified-sync session.
+///
+/// The bootstrap connection (`bootstrap_with_attempt_state`) is a direct
+/// outbound that bypasses the governor's normal warm→hot promotion flow,
+/// so without this hook the registry never reflects the active sync peer
+/// — `PeerSelectionCounters::from_registry` then reports
+/// `known/established/active = 0` while sync is fully running, which
+/// shows up as misleading `yggdrasil_active_peers 0` in
+/// `/metrics`.  Inserting `PeerSourceBootstrap` and setting status
+/// `PeerHot` mirrors upstream behaviour where every active ChainSync
+/// session-bearing peer appears in the registry as hot for the duration
+/// of the session.
+///
+/// Reference: `Ouroboros.Network.PeerSelection.Governor` —
+/// `KnownPeerInfo` carries `PeerStatus = PeerHot` for in-session peers.
+fn registry_mark_bootstrap_hot(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    peer_addr: SocketAddr,
+) {
+    if let Some(reg) = peer_registry {
+        if let Ok(mut guard) = reg.write() {
+            guard.insert_source(peer_addr, PeerSource::PeerSourceBootstrap);
+            guard.set_status(peer_addr, PeerStatus::PeerHot);
+        }
+    }
+}
+
+/// Round 168 — companion teardown for [`registry_mark_bootstrap_hot`].
+///
+/// Demote the bootstrap peer from `PeerHot` to `PeerCooling` when its
+/// session ends so the registry no longer reports it as active in
+/// `/metrics`.  We keep the entry (with `PeerSourceBootstrap`) instead of
+/// removing it so a subsequent reconnect attempt can resume from the same
+/// status row — matching upstream's `cooldownPeerInfo` semantics for
+/// post-session bookkeeping.
+fn registry_mark_bootstrap_cooling(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    peer_addr: SocketAddr,
+) {
+    if let Some(reg) = peer_registry {
+        if let Ok(mut guard) = reg.write() {
+            guard.set_status(peer_addr, PeerStatus::PeerCooling);
+        }
+    }
+}
+
 #[allow(dead_code)]
 mod _runstate_impl_marker {
     // Marker module — keeps the split impl-block boundary visible and
@@ -4806,6 +4853,10 @@ where
             config.block_fetch_pool.as_ref(),
             session.connected_peer_addr,
         );
+        // Round 168 — mirror the BlockFetch-pool registration into the
+        // shared `PeerRegistry` so the bootstrap sync peer surfaces in
+        // `/metrics`.  See `registry_mark_bootstrap_hot` for the rationale.
+        registry_mark_bootstrap_hot(peer_registry.as_ref(), session.connected_peer_addr);
         // Slice E — exercise the `max_concurrent_block_fetch_peers` knob
         // from a production code path so the audit gap "config knob read
         // by no production path" is closed.  Currently the runtime
@@ -4844,6 +4895,7 @@ where
                 from_point,
             );
             session.mux.abort();
+            registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
             run_state.record_reconnect_failure();
             continue;
         }
@@ -4929,6 +4981,18 @@ where
                             )?;
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
+
+                            // Round 169 — surface the wire-era ordinal to
+                            // `/metrics` so dashboards observe Byron→…→Conway
+                            // progression directly without parsing
+                            // `cardano-cli query tip`.
+                            if let (Some(m), Some(tracking)) =
+                                (metrics, checkpoint_tracking.as_ref())
+                            {
+                                m.set_current_era(
+                                    tracking.ledger_state.current_era.era_ordinal() as u64,
+                                );
+                            }
 
                             // Update shared block-producer state with live sigma after
                             // epoch boundary events (stake snapshot rotation).
@@ -5320,6 +5384,10 @@ where
             config.block_fetch_pool.as_ref(),
             session.connected_peer_addr,
         );
+        // Round 168 — mirror the BlockFetch-pool registration into the
+        // shared `PeerRegistry` so the bootstrap sync peer surfaces in
+        // `/metrics`.  See `registry_mark_bootstrap_hot` for the rationale.
+        registry_mark_bootstrap_hot(peer_registry.as_ref(), session.connected_peer_addr);
         // Slice E — exercise the `max_concurrent_block_fetch_peers` knob
         // from a production code path so the audit gap "config knob read
         // by no production path" is closed.  Currently the runtime
@@ -5358,6 +5426,7 @@ where
                 from_point,
             );
             session.mux.abort();
+            registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
             run_state.record_reconnect_failure();
             continue;
         }
@@ -5446,6 +5515,18 @@ where
                             };
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
+
+                            // Round 169 — surface the wire-era ordinal to
+                            // `/metrics` so dashboards observe Byron→…→Conway
+                            // progression directly without parsing
+                            // `cardano-cli query tip`.
+                            if let (Some(m), Some(tracking)) =
+                                (metrics, checkpoint_tracking.as_ref())
+                            {
+                                m.set_current_era(
+                                    tracking.ledger_state.current_era.era_ordinal() as u64,
+                                );
+                            }
 
                             // Push updated pool sigma to block producer on epoch boundary.
                             if !applied.epoch_boundary_events.is_empty() {
@@ -5644,6 +5725,15 @@ where
                             }
                             pool_unregister_peer(
                                 config.block_fetch_pool.as_ref(),
+                                session.connected_peer_addr,
+                            );
+                            // Round 168 — companion teardown for the
+                            // bootstrap-Hot promotion above.  Demote to
+                            // Cooling so `/metrics` no longer reports the
+                            // peer as active; the punish branch below may
+                            // override to Cold.
+                            registry_mark_bootstrap_cooling(
+                                peer_registry.as_ref(),
                                 session.connected_peer_addr,
                             );
                             session.mux.abort();
