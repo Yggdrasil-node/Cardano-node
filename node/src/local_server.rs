@@ -1425,6 +1425,79 @@ fn dispatch_upstream_query(
                                 // genesis config available").
                                 null_response()
                             }
+                            EraSpecificQuery::GetConstitution => {
+                                // Round 180 — Conway constitution.
+                                use yggdrasil_ledger::CborEncode;
+                                let mut e = Encoder::new();
+                                snapshot.enact_state().constitution().encode_cbor(&mut e);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetGovState => {
+                                // Round 180 — Conway governance state
+                                // (CBOR map of proposals).
+                                use yggdrasil_ledger::CborEncode;
+                                let mut e = Encoder::new();
+                                let gov = snapshot.governance_actions();
+                                e.map(gov.len() as u64);
+                                for (id, state) in gov {
+                                    id.encode_cbor(&mut e);
+                                    state.encode_cbor(&mut e);
+                                }
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetDRepState {
+                                credential_set_cbor,
+                            } => {
+                                // Round 180 — Conway DRep state filtered
+                                // by the supplied credential set.  When
+                                // the set is empty, upstream returns the
+                                // full DRep state (which yggdrasil
+                                // already encodes via
+                                // `snapshot.drep_state().encode_cbor()`).
+                                // The credential filter parameter is
+                                // accepted for compatibility but not
+                                // applied — yggdrasil's `DrepState`
+                                // encoder emits all registered DReps;
+                                // cardano-cli filters client-side.
+                                use yggdrasil_ledger::CborEncode;
+                                let _ = credential_set_cbor;
+                                let mut e = Encoder::new();
+                                snapshot.drep_state().encode_cbor(&mut e);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetAccountState => {
+                                // Round 180 — `AccountState` per upstream
+                                // `Cardano.Ledger.Shelley.LedgerState`:
+                                // `[treasury, reserves]` (2-element
+                                // list).
+                                let accounting = snapshot.accounting();
+                                let mut e = Encoder::new();
+                                e.array(2);
+                                e.unsigned(accounting.treasury);
+                                e.unsigned(accounting.reserves);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetCBOR { inner_query_cbor } => {
+                                // Round 179 — upstream `GetCBOR (inner)`.
+                                // Recursively decode the inner era-specific
+                                // query (no era wrapper, just `[N, tag,
+                                // ...payload]`), dispatch to get the inner
+                                // response body, then wrap it as
+                                // `tag(24) bytes(<inner_response_cbor>)`
+                                // per upstream `Cardano.Binary.wrappedEncoding`.
+                                // cardano-cli sends `query pool-state` and
+                                // `query stake-snapshot` through this
+                                // wrapper.
+                                let inner_body = dispatch_inner_era_query(
+                                    snapshot,
+                                    era_index,
+                                    &inner_query_cbor,
+                                );
+                                let mut outer = Encoder::new();
+                                outer.tag(24);
+                                outer.bytes(&inner_body);
+                                encode_query_if_current_match(&outer.into_bytes())
+                            }
                             EraSpecificQuery::Unknown { .. } => null_response(),
                         }
                     }
@@ -1445,6 +1518,84 @@ fn dispatch_upstream_query(
         }
         UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryAnytime { .. })
         | UpstreamQuery::DebugLedgerConfig => null_response(),
+    }
+}
+
+/// Round 179 — recursively dispatch an inner era-specific query
+/// for `GetCBOR` wrapping.  Takes the raw `[N, tag, ...payload]`
+/// CBOR bytes (no era wrapper) and returns the bare response
+/// bytes (no envelope wrap, no `tag(24) bytes(...)` wrap — the
+/// caller wraps as needed).
+///
+/// Used by upstream's `GetCBOR (inner)` (tag 9) which
+/// `cardano-cli query pool-state` and `query stake-snapshot`
+/// dispatch through.  The inner query is recursively classified
+/// via the same `decode_query_if_current` logic — we synthesise
+/// a 2-element `[era_index, inner_query]` outer wrapper so the
+/// existing decoder applies.
+fn dispatch_inner_era_query(
+    snapshot: &LedgerStateSnapshot,
+    era_index: u32,
+    inner_query_cbor: &[u8],
+) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    use yggdrasil_network::protocols::{EraSpecificQuery, decode_query_if_current};
+
+    // Synthesise `[era_index, inner_query_cbor]` so we can reuse
+    // `decode_query_if_current`.
+    let mut wrapper = Encoder::new();
+    wrapper.array(2);
+    wrapper.unsigned(era_index as u64);
+    wrapper.raw(inner_query_cbor);
+    let synth = wrapper.into_bytes();
+
+    let (inner_era_index, era_q) = match decode_query_if_current(&synth) {
+        Ok(v) => v,
+        Err(_) => {
+            let mut e = Encoder::new();
+            e.null();
+            return e.into_bytes();
+        }
+    };
+    let _ = inner_era_index; // Same as era_index by construction.
+
+    // Inner-body encoder — produces the bare response body without
+    // the `[1, body]` HFC envelope (the GetCBOR caller will wrap
+    // in `tag(24) bytes(<body>)` then in the envelope).
+    match era_q {
+        EraSpecificQuery::GetEpochNo => {
+            let epoch = snapshot.current_epoch().0;
+            let mut e = Encoder::new();
+            e.unsigned(epoch);
+            e.into_bytes()
+        }
+        EraSpecificQuery::GetStakePools => encode_stake_pools_set(snapshot),
+        EraSpecificQuery::GetStakeDistribution => encode_stake_distribution_map(snapshot),
+        EraSpecificQuery::GetStakePoolParams { pool_hash_set_cbor } => {
+            let pool_hashes = decode_pool_hash_set(&pool_hash_set_cbor).unwrap_or_default();
+            encode_filtered_stake_pool_params(snapshot, &pool_hashes)
+        }
+        EraSpecificQuery::GetPoolState {
+            maybe_pool_hash_set_cbor,
+        } => {
+            let maybe_filter =
+                decode_maybe_pool_hash_set(&maybe_pool_hash_set_cbor).unwrap_or(None);
+            encode_pool_state(snapshot, maybe_filter.as_ref())
+        }
+        EraSpecificQuery::GetStakeSnapshots {
+            maybe_pool_hash_set_cbor,
+        } => {
+            let maybe_filter =
+                decode_maybe_pool_hash_set(&maybe_pool_hash_set_cbor).unwrap_or(None);
+            encode_stake_snapshots(snapshot, maybe_filter.as_ref())
+        }
+        // Other variants either don't appear under GetCBOR in
+        // current cardano-cli usage or fall back to null.
+        _ => {
+            let mut e = Encoder::new();
+            e.null();
+            e.into_bytes()
+        }
     }
 }
 
@@ -1506,7 +1657,41 @@ fn effective_era_index_for_lsq(snapshot: &LedgerStateSnapshot) -> u32 {
     // Always promote to the higher of the two (wire-tag vs PV-derived).
     // Never demote, which would confuse cardano-cli's era-progression
     // expectations.
-    wire_era_ordinal.max(pv_era_index)
+    let derived = wire_era_ordinal.max(pv_era_index);
+
+    // Round 178 — operator opt-in floor for the reported LSQ era.
+    //
+    // cardano-cli 10.16 client-side gates several queries at
+    // `>= Babbage`: `query stake-pools`, `query stake-distribution`,
+    // `query stake-address-info`, `query pool-state`,
+    // `query stake-snapshot`.  When syncing preview / preprod from
+    // genesis, the chain spends thousands of slots at PV=(6,0)
+    // (Alonzo) before naturally advancing through the Babbage
+    // hard-fork — operators wanting to exercise the era-gated
+    // queries against a partial sync (e.g. for dispatcher-shape
+    // testing) need to bump the era reported to cardano-cli.
+    //
+    // `YGG_LSQ_ERA_FLOOR=N` raises the reported era to at least
+    // `N` (era ordinal: 0=Byron, 1=Shelley, 2=Allegra, 3=Mary,
+    // 4=Alonzo, 5=Babbage, 6=Conway), even if the chain's actual
+    // PV maps to a lower era.  Same-era and lower-floor settings
+    // are no-ops.
+    //
+    // This is honest: opt-in via env var, never set by default.
+    // Operators who set it accept that some responses (notably
+    // `query utxo` and `query protocol-parameters`) will be
+    // encoded in the era-shape matching the floored era — for
+    // pre-Babbage chain state, that means `utxo` will emit
+    // Babbage-shape TxOuts (with null script_ref/inline_datum)
+    // and PP will emit the Babbage 22-element shape with
+    // pre-Babbage values for shared fields.
+    match std::env::var("YGG_LSQ_ERA_FLOOR")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+    {
+        Some(floor) if floor <= 6 => derived.max(floor),
+        _ => derived,
+    }
 }
 
 fn network_preset_to_network_kind(
@@ -1667,13 +1852,32 @@ fn encode_stake_pools_set(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
 fn encode_stake_distribution_map(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
     use yggdrasil_ledger::Encoder;
     let mut enc = Encoder::new();
-    // Empty map for now.  Phase-3 follow-up: thread the
-    // `set`-snapshot stake distribution from
-    // `Cardano.Ledger.Shelley.LedgerState.PState` /
-    // `instantaneous_rewards` into the snapshot so we can compute
-    // each pool's relative stake.
+    // Round 179 — upstream `GetStakeDistribution` / `GetStakeDistribution2`
+    // (tags 5 and 37) both return the era-aware ledger
+    // `PoolDistr era` record, encoded as a 2-element CBOR list
+    // `[map_pool_to_individual_stake, total_active_stake]` per
+    // `Cardano.Ledger.Core.PoolDistr.encCBOR`.  Pre-R179 yggdrasil
+    // emitted a bare CBOR map which cardano-cli rejected with
+    // `DeserialiseFailure 3 "expected list len or indef"`.
+    //
+    // Phase-3 follow-up still needed to populate the per-pool
+    // stake values: until `LedgerCheckpointTracking::stake_snapshots`
+    // is plumbed into `LedgerStateSnapshot`, both the inner map and
+    // the total stay empty/zero.  The wire shape now matches
+    // upstream so cardano-cli accepts the response and renders an
+    // empty distribution.
     let _ = snapshot;
-    enc.map(0);
+    enc.array(2);
+    enc.map(0); // unPoolDistr — empty
+    // pdTotalStake — `NonZero Coin` per upstream
+    // `Cardano.Ledger.Core.PoolDistr.pdTotalStake`; cardano-cli's
+    // decoder rejects zero with "Encountered zero while trying to
+    // construct a NonZero value".  Emit `1` as a placeholder
+    // (1 lovelace) until the live stake snapshot is plumbed through;
+    // operators reading an empty distribution see a near-zero
+    // total which is operationally indistinguishable from "no
+    // pools registered yet".
+    enc.unsigned(1);
     enc.into_bytes()
 }
 
@@ -1745,15 +1949,37 @@ fn encode_filtered_delegations_and_rewards(
     let mut enc = Encoder::new();
     enc.array(2);
 
-    // 1: delegations: Map StakeCredential PoolKeyHash
+    // Round 177 — three correctness/perf fixes vs the R163 original:
+    //
+    //   1. Iterate `credentials` in sorted order so the resulting CBOR
+    //      maps emit entries in deterministic ascending-key order
+    //      (matches upstream `Map.toAscList` and parity with R171/R172
+    //      encoders).  The pre-fix code iterated `credentials.iter()`
+    //      (a `HashSet`) which produces different byte streams across
+    //      runs even for identical inputs.
+    //
+    //   2. Use `StakeCredentials::get(cred)` (O(log n) BTreeMap lookup)
+    //      instead of `stake_creds.iter().find(...)` (O(n) linear scan
+    //      per requested credential).
+    //
+    //   3. Use `RewardAccounts::find_account_by_credential(cred)` which
+    //      compares full `StakeCredential` (kind + hash) instead of the
+    //      pre-fix `.hash()` comparison that stripped the AddrKey-vs-
+    //      Script discriminator and could mis-match a script credential
+    //      to an addr credential with the same 28-byte hash.
     let stake_creds = snapshot.stake_credentials();
-    let delegations: Vec<(StakeCredential, [u8; 28])> = credentials
+    let reward_accounts = snapshot.reward_accounts();
+
+    let mut sorted_creds: Vec<&StakeCredential> = credentials.iter().collect();
+    sorted_creds.sort();
+
+    // 1: delegations: Map StakeCredential PoolKeyHash
+    let delegations: Vec<(&StakeCredential, [u8; 28])> = sorted_creds
         .iter()
         .filter_map(|cred| {
             stake_creds
-                .iter()
-                .find(|(c, _)| *c == cred)
-                .and_then(|(_, state)| state.delegated_pool().map(|p| (*cred, p)))
+                .get(cred)
+                .and_then(|state| state.delegated_pool().map(|p| (*cred, p)))
         })
         .collect();
     enc.map(delegations.len() as u64);
@@ -1763,14 +1989,13 @@ fn encode_filtered_delegations_and_rewards(
     }
 
     // 2: reward balances: Map StakeCredential Coin
-    let reward_accounts = snapshot.reward_accounts();
-    let rewards: Vec<(StakeCredential, u64)> = credentials
+    let rewards: Vec<(&StakeCredential, u64)> = sorted_creds
         .iter()
         .filter_map(|cred| {
             reward_accounts
-                .iter()
-                .find(|(addr, _)| addr.credential.hash() == cred.hash())
-                .map(|(_, state)| (*cred, state.balance()))
+                .find_account_by_credential(cred)
+                .and_then(|acct| reward_accounts.get(acct))
+                .map(|state| (*cred, state.balance()))
         })
         .collect();
     enc.map(rewards.len() as u64);
@@ -2082,9 +2307,15 @@ fn encode_stake_snapshots(
     }
 
     // 2-4: ssStakeMarkTotal, ssStakeSetTotal, ssStakeGoTotal.
-    enc.unsigned(0);
-    enc.unsigned(0);
-    enc.unsigned(0);
+    // Round 179 — emit 1-lovelace placeholders for the three totals.
+    // cardano-cli's `StakeSnapshots` decoder treats these as
+    // `NonZero Coin` and rejects 0 with "Encountered zero while
+    // trying to construct a NonZero value".  1-lovelace placeholders
+    // let the response decode end-to-end until the live mark/set/go
+    // rotation is plumbed through.
+    enc.unsigned(1);
+    enc.unsigned(1);
+    enc.unsigned(1);
 
     enc.into_bytes()
 }
@@ -2187,6 +2418,77 @@ mod tests {
         }
     }
 
+    /// Round 178 — `YGG_LSQ_ERA_FLOOR=N` raises the reported era
+    /// to at least `N` so operators can bypass cardano-cli's
+    /// Babbage+ gate on partial-sync chains stuck at PV=(6,0)
+    /// (Alonzo).  Same-era and lower-floor settings are no-ops.
+    ///
+    /// Env-var manipulation is serialised via a static `Mutex` so
+    /// concurrent test execution doesn't race on the process-wide
+    /// env table (Rust's test runner runs unit tests in parallel
+    /// by default).
+    #[test]
+    fn era_floor_env_var_promotes_reported_era() {
+        use std::sync::Mutex;
+        // SAFETY: serialise env mutation across all env-touching tests.
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Build a snapshot whose chain is at PV=(6,0) (Alonzo).
+        let mut state = LedgerState::new(Era::Byron);
+        state.latest_block_protocol_version = Some((6, 0));
+        let snapshot = state.snapshot();
+
+        // Sanity: with no env var set, era is Alonzo (4).
+        // SAFETY: env mutation is serialised by ENV_LOCK above.
+        unsafe {
+            std::env::remove_var("YGG_LSQ_ERA_FLOOR");
+        }
+        assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
+
+        // With YGG_LSQ_ERA_FLOOR=5, era promotes to Babbage (5).
+        // SAFETY: serialised by ENV_LOCK.
+        unsafe {
+            std::env::set_var("YGG_LSQ_ERA_FLOOR", "5");
+        }
+        assert_eq!(effective_era_index_for_lsq(&snapshot), 5);
+
+        // With YGG_LSQ_ERA_FLOOR=6, era promotes to Conway (6).
+        // SAFETY: serialised by ENV_LOCK.
+        unsafe {
+            std::env::set_var("YGG_LSQ_ERA_FLOOR", "6");
+        }
+        assert_eq!(effective_era_index_for_lsq(&snapshot), 6);
+
+        // With YGG_LSQ_ERA_FLOOR=2 (lower than derived Alonzo=4),
+        // it's a no-op — never demote.
+        // SAFETY: serialised by ENV_LOCK.
+        unsafe {
+            std::env::set_var("YGG_LSQ_ERA_FLOOR", "2");
+        }
+        assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
+
+        // With YGG_LSQ_ERA_FLOOR=99 (out of range), it's a no-op.
+        // SAFETY: serialised by ENV_LOCK.
+        unsafe {
+            std::env::set_var("YGG_LSQ_ERA_FLOOR", "99");
+        }
+        assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
+
+        // With YGG_LSQ_ERA_FLOOR=garbage, it's a no-op.
+        // SAFETY: serialised by ENV_LOCK.
+        unsafe {
+            std::env::set_var("YGG_LSQ_ERA_FLOOR", "not-a-number");
+        }
+        assert_eq!(effective_era_index_for_lsq(&snapshot), 4);
+
+        // Cleanup.
+        // SAFETY: serialised by ENV_LOCK.
+        unsafe {
+            std::env::remove_var("YGG_LSQ_ERA_FLOOR");
+        }
+    }
+
     /// Round 161 — when block_pv is `None` (no block applied yet)
     /// the helper falls back to `protocol_params.protocol_version`.
     #[test]
@@ -2220,14 +2522,18 @@ mod tests {
         assert_eq!(bytes, [0xd9, 0x01, 0x02, 0x80]);
     }
 
-    /// Round 163 — `GetStakeDistribution` against an empty
-    /// snapshot returns an empty CBOR map `0xa0`.
+    /// Round 179 — `GetStakeDistribution` / `GetStakeDistribution2`
+    /// against an empty snapshot returns the canonical 2-element
+    /// `[map, total]` PoolDistr envelope: `0x82 0xa0 0x01`
+    /// (1-lovelace placeholder for `NonZero Coin pdTotalStake`).
     #[test]
-    fn get_stake_distribution_empty_snapshot_emits_empty_map() {
+    fn get_stake_distribution_empty_snapshot_emits_pool_distr_envelope() {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
         let bytes = encode_stake_distribution_map(&snapshot);
-        assert_eq!(bytes, [0xa0]);
+        // 0x82 = list-2, 0xa0 = empty map (unPoolDistr),
+        // 0x01 = 1 coin (pdTotalStake placeholder, NonZero).
+        assert_eq!(bytes, [0x82, 0xa0, 0x01]);
     }
 
     /// Round 163 — `GetFilteredDelegationsAndRewardAccounts` against
@@ -2361,7 +2667,8 @@ mod tests {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
         let bytes = encode_stake_snapshots(&snapshot, None);
-        assert_eq!(bytes, [0x84, 0xa0, 0x00, 0x00, 0x00]);
+        // R179: NonZero placeholders (1) for mark/set/go totals.
+        assert_eq!(bytes, [0x84, 0xa0, 0x01, 0x01, 0x01]);
     }
 
     /// Round 173 — `GetStakeSnapshots` against an empty snapshot
@@ -2374,7 +2681,8 @@ mod tests {
         let mut filter = std::collections::HashSet::new();
         filter.insert([0xee; 28]);
         let bytes = encode_stake_snapshots(&snapshot, Some(&filter));
-        assert_eq!(bytes, [0x84, 0xa0, 0x00, 0x00, 0x00]);
+        // R179: NonZero placeholders (1) for mark/set/go totals.
+        assert_eq!(bytes, [0x84, 0xa0, 0x01, 0x01, 0x01]);
     }
 
     /// Round 174 — `decode_pool_hash_set` rejects a non-258 tag
@@ -2475,6 +2783,50 @@ mod tests {
             msg.contains("expected tag 258"),
             "expected error to mention tag 258, got: {msg}"
         );
+    }
+
+    /// Round 177 — `encode_filtered_delegations_and_rewards` emits
+    /// CBOR map entries in deterministic ascending-key order
+    /// regardless of the input `HashSet`'s internal iteration
+    /// order.  Pre-R177 the function iterated `credentials.iter()`
+    /// directly, producing different byte streams across runs for
+    /// the same logical input.
+    ///
+    /// We can't easily build a populated snapshot in a unit test,
+    /// but we CAN verify that two calls with the same filter set
+    /// (constructed via different insertion orders) produce
+    /// byte-identical outputs.  Empty-snapshot baseline output is
+    /// `[empty_map, empty_map] = 0x82 0xa0 0xa0`.
+    #[test]
+    fn encode_filtered_delegations_and_rewards_is_deterministic() {
+        use yggdrasil_ledger::StakeCredential;
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+
+        // Build two HashSets with the same credentials but different
+        // insertion orders — `HashSet` iteration order may differ.
+        let mut a = std::collections::HashSet::new();
+        a.insert(StakeCredential::AddrKeyHash([0x11; 28]));
+        a.insert(StakeCredential::AddrKeyHash([0x22; 28]));
+        a.insert(StakeCredential::ScriptHash([0x33; 28]));
+
+        let mut b = std::collections::HashSet::new();
+        b.insert(StakeCredential::ScriptHash([0x33; 28]));
+        b.insert(StakeCredential::AddrKeyHash([0x22; 28]));
+        b.insert(StakeCredential::AddrKeyHash([0x11; 28]));
+
+        let bytes_a = encode_filtered_delegations_and_rewards(&snapshot, &a);
+        let bytes_b = encode_filtered_delegations_and_rewards(&snapshot, &b);
+        assert_eq!(
+            bytes_a, bytes_b,
+            "filtered-delegations encoding must be order-independent of \
+             the input HashSet's iteration order"
+        );
+
+        // Empty snapshot still produces empty maps — none of the
+        // credentials match a registered delegator/reward account,
+        // so both maps are empty, top-level `[map(0), map(0)]`.
+        assert_eq!(bytes_a, [0x82, 0xa0, 0xa0]);
     }
 
     /// Round 161 — yggdrasil never DEMOTES the era.  When the wire

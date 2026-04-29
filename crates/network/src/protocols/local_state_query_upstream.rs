@@ -281,11 +281,13 @@ pub enum EraSpecificQuery {
     /// for the active era.  Used internally by some cardano-cli
     /// flows (e.g. `query leadership-schedule`).
     GetGenesisConfig,
-    /// `[13]` — `GetStakePools`.  Returns a CBOR set of registered
-    /// pool key hashes.  Used by `cardano-cli query stake-pools`
-    /// (era-blocked client-side until Babbage+).
+    /// `[16]` — `GetStakePools` (corrected tag in R179; was 13 in
+    /// R163).  Returns a CBOR set of registered pool key hashes.
+    /// Used by `cardano-cli query stake-pools` (era-blocked
+    /// client-side until Babbage+).
     GetStakePools,
-    /// `[14, pool_hash_set]` — `GetStakePoolParams` (Round 171).
+    /// `[17, pool_hash_set]` — `GetStakePoolParams` (Round 171,
+    /// corrected tag in R179; was 14 in R171).
     /// Returns a `Map (KeyHash 'StakePool) PoolParams` filtered by
     /// the supplied set of pool key hashes (`tag(258) [* bytes(28)]`
     /// per CIP-21 set tag).  Used by `cardano-cli query pool-state
@@ -295,7 +297,8 @@ pub enum EraSpecificQuery {
     /// Reference: `Cardano.Ledger.Shelley.LedgerStateQuery` —
     /// `GetStakePoolParams`.
     GetStakePoolParams { pool_hash_set_cbor: Vec<u8> },
-    /// `[17, maybe_pool_hash_set]` — `GetPoolState` (Round 172).
+    /// `[19, maybe_pool_hash_set]` — `GetPoolState` (Round 172,
+    /// corrected tag in R179; was 17 in R172).
     /// Returns the full `PState` 4-tuple of maps (current params,
     /// future params, retiring epochs, deposits) optionally filtered
     /// to a subset of pool key hashes.  Used by
@@ -308,7 +311,8 @@ pub enum EraSpecificQuery {
     /// Reference: `Cardano.Ledger.Shelley.LedgerStateQuery` —
     /// `GetPoolState`; `Cardano.Ledger.Shelley.LedgerState.PState`.
     GetPoolState { maybe_pool_hash_set_cbor: Vec<u8> },
-    /// `[18, maybe_pool_hash_set]` — `GetStakeSnapshots` (Round 173).
+    /// `[20, maybe_pool_hash_set]` — `GetStakeSnapshots` (Round 173,
+    /// corrected tag in R179; was 18 in R173).
     /// Returns the per-pool mark/set/go stake amounts plus the three
     /// totals as a 4-element CBOR list, optionally filtered to a
     /// subset of pool key hashes.  Used by
@@ -322,6 +326,42 @@ pub enum EraSpecificQuery {
     /// `StakeSnapshots era` record (per-pool map + ssStakeMarkTotal
     /// + ssStakeSetTotal + ssStakeGoTotal).
     GetStakeSnapshots { maybe_pool_hash_set_cbor: Vec<u8> },
+    /// `[9, inner_query_cbor]` — `GetCBOR` (Round 179).  Wraps an
+    /// inner era-specific query and asks the server to respond with
+    /// the inner result encoded as raw CBOR-in-CBOR (`tag(24)
+    /// bytes(inner_response)`).  cardano-cli 10.x sends this for
+    /// `query pool-state` and `query stake-snapshot`, recursively
+    /// nesting tag 19 / 20 inside.
+    ///
+    /// Reference: `Ouroboros.Consensus.Shelley.Ledger.Query` —
+    /// `encodeShelleyQuery (GetCBOR q')`.
+    GetCBOR { inner_query_cbor: Vec<u8> },
+    /// `[23]` — `GetConstitution` (Round 180, Conway-only).
+    /// Returns the active Conway `Constitution` (`anchor` +
+    /// `guardrails_script_hash` option) per upstream
+    /// `Cardano.Ledger.Conway.Governance.Constitution`.  Used by
+    /// `cardano-cli query constitution`.
+    GetConstitution,
+    /// `[24]` — `GetGovState` (Round 180, Conway-only).  Returns
+    /// the full `ConwayGovState` (proposals, vote tallies,
+    /// committee state, etc.) per upstream
+    /// `Cardano.Ledger.Conway.Governance`.  Used by
+    /// `cardano-cli query gov-state`.
+    GetGovState,
+    /// `[25, drep_credential_set]` — `GetDRepState` (Round 180,
+    /// Conway-only).  Returns a map of registered DReps filtered
+    /// by the supplied set of credentials per upstream
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetDRepState`.
+    /// Used by `cardano-cli query drep-state`.  Carries the raw
+    /// CBOR-encoded credential set.
+    GetDRepState { credential_set_cbor: Vec<u8> },
+    /// `[29]` — `GetAccountState` (Round 180, Conway-only).
+    /// Returns `[treasury, reserves]` (the consensus-side
+    /// `AccountState`) per upstream
+    /// `Cardano.Ledger.Shelley.LedgerState.AccountState`.  Used
+    /// by `cardano-cli query treasury` / `query reserves` (and
+    /// any operator-authored query reading the accounting pots).
+    GetAccountState,
     /// Any era-specific query whose tag this codec doesn't yet
     /// recognise.  Carries the raw inner CBOR so the dispatcher can
     /// fall through to `null_response()` without losing the bytes.
@@ -360,13 +400,38 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
     }
     let q_end = dec.position();
     let raw_inner = inner_cbor[q_start..q_end].to_vec();
+    // Round 179 — corrected tag table to match upstream
+    // cardano-node 10.7.x's `Ouroboros.Consensus.Shelley.Ledger.Query
+    // .encodeShelleyQuery` (verified against
+    // ouroboros-consensus@main).  R163's tag numbers (13/14/17/18 for
+    // GetStakePools/GetStakePoolParams/GetPoolState/GetStakeSnapshots)
+    // were off by 3 — those slots in upstream are
+    // DebugChainDepState/GetRewardProvenance/GetStakePoolParams/
+    // GetRewardInfoPools.  Correct upstream tags:
+    //
+    // | Tag | Query                                    |
+    // |-----|------------------------------------------|
+    // |  1  | GetEpochNo                               |
+    // |  3  | GetCurrentPParams                        |
+    // |  5  | GetStakeDistribution (PoolDistr w/ VRF)  |
+    // |  6  | GetUTxOByAddress                         |
+    // |  7  | GetUTxOWhole                             |
+    // | 10  | GetFilteredDelegationsAndRewardAccounts  |
+    // | 11  | GetGenesisConfig                         |
+    // | 15  | GetUTxOByTxIn                            |
+    // | 16  | GetStakePools                            | ← was 13
+    // | 17  | GetStakePoolParams                       | ← was 14
+    // | 19  | GetPoolState                             | ← was 17
+    // | 20  | GetStakeSnapshots                        | ← was 18
+    // | 37  | GetStakeDistribution2 (no-VRF PoolDistr) | ← new
     let kind = match (q_len, q_tag) {
         (1, 1) => EraSpecificQuery::GetEpochNo,
         (1, 3) => EraSpecificQuery::GetCurrentPParams,
         (1, 5) => EraSpecificQuery::GetStakeDistribution,
         (1, 7) => EraSpecificQuery::GetWholeUTxO,
         (1, 11) => EraSpecificQuery::GetGenesisConfig,
-        (1, 13) => EraSpecificQuery::GetStakePools,
+        (1, 16) => EraSpecificQuery::GetStakePools,
+        (1, 37) => EraSpecificQuery::GetStakeDistribution,
         (2, 6) => {
             // `[6, address_set_cbor]` — captured the address-set
             // payload between `q_end_after_tag` and `q_end`.
@@ -374,21 +439,30 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
                 address_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
             }
         }
+        (2, 9) => EraSpecificQuery::GetCBOR {
+            inner_query_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
         (2, 10) => EraSpecificQuery::GetFilteredDelegationsAndRewardAccounts {
             credential_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
-        (2, 14) => EraSpecificQuery::GetStakePoolParams {
+        (2, 17) => EraSpecificQuery::GetStakePoolParams {
             pool_hash_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
         (2, 15) => EraSpecificQuery::GetUTxOByTxIn {
             txin_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
-        (2, 17) => EraSpecificQuery::GetPoolState {
+        (2, 19) => EraSpecificQuery::GetPoolState {
             maybe_pool_hash_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
-        (2, 18) => EraSpecificQuery::GetStakeSnapshots {
+        (2, 20) => EraSpecificQuery::GetStakeSnapshots {
             maybe_pool_hash_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
+        (1, 23) => EraSpecificQuery::GetConstitution,
+        (1, 24) => EraSpecificQuery::GetGovState,
+        (2, 25) => EraSpecificQuery::GetDRepState {
+            credential_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        (1, 29) => EraSpecificQuery::GetAccountState,
         _ => EraSpecificQuery::Unknown {
             tag: q_tag,
             raw_inner,
@@ -1564,16 +1638,17 @@ mod tests {
         ));
     }
 
-    /// Round 173 — pin the era-specific tag table addition for
-    /// `GetStakeSnapshots` (18).  Wire form mirrors `GetPoolState`
-    /// (Maybe payload) but with tag 18.
+    /// Round 173 (corrected R179) — pin the era-specific tag table
+    /// addition for `GetStakeSnapshots` (tag 20 per upstream).
+    /// Wire form mirrors `GetPoolState` (Maybe payload) but with
+    /// tag 20.
     #[test]
     fn decode_recognises_stake_snapshots_tag_with_just_filter() {
-        // [1, [18, [1, tag(258)[bytes(28)]]]] = era 1, GetStakeSnapshots
+        // [1, [20, [1, tag(258)[bytes(28)]]]] = era 1, GetStakeSnapshots
         // (Just {single_pool_keyhash})
         let mut payload = vec![
             0x82, 0x01, // [era=1, ...]
-            0x82, 0x12, // [tag=18, maybe_payload]
+            0x82, 0x14, // [tag=20, maybe_payload]
             0x82, 0x01, // [discriminator=1 (Just), set]
             0xd9, 0x01, 0x02, // tag 258
             0x81, // 1-element array
@@ -1585,13 +1660,14 @@ mod tests {
         assert!(matches!(q, EraSpecificQuery::GetStakeSnapshots { .. }));
     }
 
-    /// Round 173 — pin the `Nothing` shape for `GetStakeSnapshots`.
+    /// Round 173 (corrected R179) — pin the `Nothing` shape for
+    /// `GetStakeSnapshots` at tag 20.
     #[test]
     fn decode_recognises_stake_snapshots_tag_with_nothing_filter() {
-        // [1, [18, [0]]] = era 1, GetStakeSnapshots Nothing
+        // [1, [20, [0]]] = era 1, GetStakeSnapshots Nothing
         let payload = vec![
             0x82, 0x01, // [era=1, ...]
-            0x82, 0x12, // [tag=18, maybe_payload]
+            0x82, 0x14, // [tag=20, maybe_payload]
             0x81, 0x00, // [0] = Nothing
         ];
         let (era_idx, q) = decode_query_if_current(&payload).unwrap();
@@ -1599,16 +1675,17 @@ mod tests {
         assert!(matches!(q, EraSpecificQuery::GetStakeSnapshots { .. }));
     }
 
-    /// Round 172 — pin the era-specific tag table addition for
-    /// `GetPoolState` (17) with `Just <set>` payload.
+    /// Round 172 (corrected R179) — pin the era-specific tag table
+    /// addition for `GetPoolState` (tag 19 per upstream) with
+    /// `Just <set>` payload.
     #[test]
     fn decode_recognises_pool_state_tag_with_just_filter() {
-        // [1, [17, [1, tag(258)[bytes(28)]]]] = era 1, GetPoolState
+        // [1, [19, [1, tag(258)[bytes(28)]]]] = era 1, GetPoolState
         // (Just {single_pool_keyhash})
-        // Wire form: 82 01 82 11 82 01 d9 0102 81 581c <28 bytes>
+        // Wire form: 82 01 82 13 82 01 d9 0102 81 581c <28 bytes>
         let mut payload = vec![
             0x82, 0x01, // [era=1, ...]
-            0x82, 0x11, // [tag=17, maybe_payload]
+            0x82, 0x13, // [tag=19, maybe_payload]
             0x82, 0x01, // [discriminator=1 (Just), set]
             0xd9, 0x01, 0x02, // tag 258
             0x81, // 1-element array
@@ -1620,14 +1697,15 @@ mod tests {
         assert!(matches!(q, EraSpecificQuery::GetPoolState { .. }));
     }
 
-    /// Round 172 — pin the `Nothing` shape for `GetPoolState` (17).
+    /// Round 172 (corrected R179) — pin the `Nothing` shape for
+    /// `GetPoolState` at tag 19.
     #[test]
     fn decode_recognises_pool_state_tag_with_nothing_filter() {
-        // [1, [17, [0]]] = era 1, GetPoolState Nothing
-        // Wire form: 82 01 82 11 81 00
+        // [1, [19, [0]]] = era 1, GetPoolState Nothing
+        // Wire form: 82 01 82 13 81 00
         let payload = vec![
             0x82, 0x01, // [era=1, ...]
-            0x82, 0x11, // [tag=17, maybe_payload]
+            0x82, 0x13, // [tag=19, maybe_payload]
             0x81, 0x00, // [0] = Nothing
         ];
         let (era_idx, q) = decode_query_if_current(&payload).unwrap();
@@ -1635,16 +1713,16 @@ mod tests {
         assert!(matches!(q, EraSpecificQuery::GetPoolState { .. }));
     }
 
-    /// Round 171 — pin the era-specific tag table addition for
-    /// `GetStakePoolParams` (14).
+    /// Round 171 (corrected R179) — pin the era-specific tag table
+    /// addition for `GetStakePoolParams` (tag 17 per upstream).
     #[test]
     fn decode_recognises_stake_pool_params_tag() {
-        // [1, [14, tag(258)[bytes(28)]]] = era 1, GetStakePoolParams
+        // [1, [17, tag(258)[bytes(28)]]] = era 1, GetStakePoolParams
         // with a single 28-byte pool keyhash in a CIP-21 tagged set.
-        // Wire form: 82 01 82 0e d9 0102 81 581c <28 bytes>
+        // Wire form: 82 01 82 11 d9 0102 81 581c <28 bytes>
         let mut payload = vec![
             0x82, 0x01, // [era=1, ...]
-            0x82, 0x0e, // [tag=14, set]
+            0x82, 0x11, // [tag=17, set]
             0xd9, 0x01, 0x02, // tag 258
             0x81, // 1-element array
             0x58, 0x1c, // bytes(28)
@@ -1655,9 +1733,22 @@ mod tests {
         assert!(matches!(q, EraSpecificQuery::GetStakePoolParams { .. }));
     }
 
-    /// Round 163 — pin the era-specific tag table additions for
-    /// `GetStakeDistribution` (5), `GetFilteredDelegationsAndRewardAccounts`
-    /// (10), `GetGenesisConfig` (11), `GetStakePools` (13).
+    /// Round 179 — pin upstream tag 37 (`GetStakeDistribution2`,
+    /// post-Conway no-VRF variant) decoded as `GetStakeDistribution`.
+    /// `cardano-cli query stake-distribution` sends tag 37 since
+    /// cardano-node 10.x.
+    #[test]
+    fn decode_recognises_stake_distribution2_tag_37() {
+        let payload = vec![0x82, 0x01, 0x81, 0x18, 0x25]; // [1, [37]]
+        let (era_idx, q) = decode_query_if_current(&payload).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetStakeDistribution));
+    }
+
+    /// Round 163 (corrected R179) — pin the era-specific tag table
+    /// for `GetStakeDistribution` (5), `GetFilteredDelegationsAndRewardAccounts`
+    /// (10), `GetGenesisConfig` (11), `GetStakePools` (tag 16 per
+    /// upstream — was 13 in R163, off by 3).
     #[test]
     fn decode_recognises_stake_pool_distribution_genesis_tags() {
         // [1, [5]] = era 1, GetStakeDistribution
@@ -1670,8 +1761,8 @@ mod tests {
         let (_, q) = decode_query_if_current(&gen_cfg).unwrap();
         assert!(matches!(q, EraSpecificQuery::GetGenesisConfig));
 
-        // [1, [13]] = era 1, GetStakePools
-        let stake_pools = vec![0x82, 0x01, 0x81, 0x0d];
+        // [1, [16]] = era 1, GetStakePools
+        let stake_pools = vec![0x82, 0x01, 0x81, 0x10];
         let (_, q) = decode_query_if_current(&stake_pools).unwrap();
         assert!(matches!(q, EraSpecificQuery::GetStakePools));
 
