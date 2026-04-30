@@ -32,16 +32,23 @@ pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "db52f43b38ba5d8927feb2199d4913fe
 /// `cardano-ledger` — era-specific rules and CDDL schemas ported into
 /// `crates/ledger/` and `crates/cddl-codegen/`.
 ///
+/// R201 audit baseline (2026-04-30) — advanced from
+/// `9ae77d611ad8…` to live HEAD reported by
+/// `node/scripts/check_upstream_drift.sh`.
+///
 /// Reference: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "9ae77d611ad86ae58add04b6042ab730272f2327";
+pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "42d088ed84b799d6d980f9be6f14ad953a3c957d";
 
 /// `ouroboros-consensus` — Praos protocol, ChainDB, mempool, and storage
 /// design rationale ported into `crates/consensus/`, `crates/storage/`,
 /// `crates/mempool/`.
 ///
+/// R201 audit baseline (2026-04-30) — advanced from
+/// `91c8e1bb5d7f…` to live HEAD.
+///
 /// Reference: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/>
 #[rustfmt::skip]
-pub const UPSTREAM_OUROBOROS_CONSENSUS_COMMIT: &str = "91c8e1bb5d7fd9e1387755a0d539f8dce65737df";
+pub const UPSTREAM_OUROBOROS_CONSENSUS_COMMIT: &str = "c368c2529f2f41196461883013f749b7ac7aa58e";
 
 /// `ouroboros-network` — multiplexer, handshake, mini-protocols, peer
 /// governor ported into `crates/network/`.
@@ -52,14 +59,20 @@ pub const UPSTREAM_OUROBOROS_NETWORK_COMMIT: &str = "0e84bced45c7fc64252d576fbce
 /// `plutus` — CEK machine, builtins, cost model, Flat codec ported into
 /// `crates/plutus/`.
 ///
+/// R201 audit baseline (2026-04-30) — advanced from
+/// `187c3971a34e…` to live HEAD.
+///
 /// Reference: <https://github.com/IntersectMBO/plutus/tree/master/>
-pub const UPSTREAM_PLUTUS_COMMIT: &str = "187c3971a34e5ee4c42f4ea3b21eb61d1a7bad66";
+pub const UPSTREAM_PLUTUS_COMMIT: &str = "e3eb4c76ea20cf4f90231a25bdfaab998346b406";
 
 /// `cardano-node` — node runtime, CLI, configuration patterns ported into
 /// `node/`.
 ///
+/// R201 audit baseline (2026-04-30) — advanced from
+/// `60af1c23bc20…` to live HEAD.
+///
 /// Reference: <https://github.com/IntersectMBO/cardano-node/tree/master/>
-pub const UPSTREAM_CARDANO_NODE_COMMIT: &str = "60af1c23bc20e64827574540599de1db1be2393e";
+pub const UPSTREAM_CARDANO_NODE_COMMIT: &str = "799325937a4598899c8cab61f4c957662a0aeb53";
 
 /// All pinned upstream commits, keyed by repository name.
 ///

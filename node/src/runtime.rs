@@ -4998,6 +4998,7 @@ where
                             } else {
                                 None
                             };
+                            let apply_start = std::time::Instant::now();
                             let applied = apply_verified_progress_to_chaindb(
                                 chain_db,
                                 &progress,
@@ -5007,6 +5008,14 @@ where
                                 vrf_ctx.as_ref(),
                                 ocert_counters.as_mut(),
                             )?;
+                            // R200 — apply-batch duration histogram
+                            // (Phase C.1).  Excludes block fetch but
+                            // includes ledger advance, checkpoint
+                            // persist, and ChainState topology
+                            // tracking.
+                            if let Some(m) = metrics {
+                                m.record_apply_batch_duration(apply_start.elapsed());
+                            }
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
 
@@ -5132,6 +5141,32 @@ where
                                 config.nonce_config.as_ref(),
                                 metrics,
                             );
+
+                            // R198 — persist evolved nonce_state to
+                            // sidecar so LSQ `query protocol-state`
+                            // surfaces live nonces across restarts.
+                            if let (
+                                Some(state),
+                                Some(LedgerCheckpointUpdateOutcome::Persisted { .. }),
+                                Some(tracking),
+                            ) = (
+                                nonce_state.as_ref(),
+                                applied.checkpoint_outcome.as_ref(),
+                                checkpoint_tracking.as_ref(),
+                            ) && let Some(dir) = tracking.ocert_persist_dir.as_deref()
+                            {
+                                let encoded = {
+                                    use yggdrasil_ledger::cbor::{CborEncode, Encoder};
+                                    let mut enc = Encoder::new();
+                                    state.encode_cbor(&mut enc);
+                                    enc.into_bytes()
+                                };
+                                if let Err(err) =
+                                    yggdrasil_storage::save_nonce_state(dir, &encoded)
+                                {
+                                    return Err(SyncError::Storage(err));
+                                }
+                            }
 
                             // Update pool fragment-head tracking with the
                             // live current_point so the multi-peer scheduler
@@ -5548,6 +5583,7 @@ where
                             } else {
                                 None
                             };
+                            let apply_start = std::time::Instant::now();
                             let applied = {
                                 let mut chain_db = chain_db.write().map_err(|_| shared_chaindb_lock_error())?;
                                 apply_verified_progress_to_chaindb(
@@ -5560,6 +5596,11 @@ where
                                     ocert_counters.as_mut(),
                                 )?
                             };
+                            // R200 — apply-batch duration histogram
+                            // (Phase C.1).
+                            if let Some(m) = metrics {
+                                m.record_apply_batch_duration(apply_start.elapsed());
+                            }
 
                             trace_epoch_boundary_events(tracer, &applied.epoch_boundary_events);
 
@@ -5684,6 +5725,32 @@ where
                                 config.nonce_config.as_ref(),
                                 metrics,
                             );
+
+                            // R198 — persist evolved nonce_state to
+                            // sidecar so LSQ `query protocol-state`
+                            // surfaces live nonces across restarts.
+                            if let (
+                                Some(state),
+                                Some(LedgerCheckpointUpdateOutcome::Persisted { .. }),
+                                Some(tracking),
+                            ) = (
+                                nonce_state.as_ref(),
+                                applied.checkpoint_outcome.as_ref(),
+                                checkpoint_tracking.as_ref(),
+                            ) && let Some(dir) = tracking.ocert_persist_dir.as_deref()
+                            {
+                                let encoded = {
+                                    use yggdrasil_ledger::cbor::{CborEncode, Encoder};
+                                    let mut enc = Encoder::new();
+                                    state.encode_cbor(&mut enc);
+                                    enc.into_bytes()
+                                };
+                                if let Err(err) =
+                                    yggdrasil_storage::save_nonce_state(dir, &encoded)
+                                {
+                                    return Err(SyncError::Storage(err));
+                                }
+                            }
 
                             // Update pool fragment-head tracking with the
                             // live current_point so the multi-peer scheduler

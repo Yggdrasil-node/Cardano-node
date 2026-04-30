@@ -24,8 +24,15 @@ use crate::error::StorageError;
 /// Filename used for the OpCert counter sidecar inside the storage dir.
 pub const OCERT_COUNTERS_FILENAME: &str = "ocert_counters.cbor";
 
+/// Filename used for the Praos nonce-evolution sidecar (R197).
+pub const NONCE_STATE_FILENAME: &str = "nonce_state.cbor";
+
 fn sidecar_path(dir: &Path) -> PathBuf {
     dir.join(OCERT_COUNTERS_FILENAME)
+}
+
+fn nonce_sidecar_path(dir: &Path) -> PathBuf {
+    dir.join(NONCE_STATE_FILENAME)
 }
 
 fn sync_dir(dir: Option<&Path>) -> std::io::Result<()> {
@@ -71,6 +78,27 @@ pub fn save_ocert_counters(dir: &Path, encoded: &[u8]) -> Result<(), StorageErro
 /// [`StorageError::Io`].
 pub fn load_ocert_counters(dir: &Path) -> Result<Option<Vec<u8>>, StorageError> {
     let path = sidecar_path(dir);
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// R197 — atomically writes the encoded `NonceEvolutionState`
+/// sidecar to `<dir>/nonce_state.cbor`.  Same atomic-write
+/// contract as [`save_ocert_counters`].
+pub fn save_nonce_state(dir: &Path, encoded: &[u8]) -> Result<(), StorageError> {
+    fs::create_dir_all(dir)?;
+    atomic_write_file(&nonce_sidecar_path(dir), encoded)?;
+    Ok(())
+}
+
+/// R197 — loads the `NonceEvolutionState` sidecar from
+/// `<dir>/nonce_state.cbor`.  Returns `Ok(None)` when the file
+/// does not exist (fresh node, never persisted).
+pub fn load_nonce_state(dir: &Path) -> Result<Option<Vec<u8>>, StorageError> {
+    let path = nonce_sidecar_path(dir);
     match fs::read(&path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),

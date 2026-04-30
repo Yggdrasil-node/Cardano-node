@@ -265,6 +265,97 @@ impl NonceEvolutionState {
     }
 }
 
+/// Round 197 — CBOR codec for `NonceEvolutionState` enabling
+/// sidecar persistence (`nonce_state.cbor`) under the storage
+/// directory.  Encoded as a 6-element CBOR list in field-order:
+///
+/// ```text
+/// [evolving, candidate, epoch, prev_hash, lab, current_epoch]
+/// ```
+///
+/// Each `Nonce` uses upstream `Cardano.Ledger.Crypto.Nonce` wire
+/// shape (`NeutralNonce → [0]`, `Nonce h → [1, h]`).  Mirrors
+/// `Ouroboros.Consensus.Protocol.Praos.PraosState`'s persistent
+/// nonce sub-record so the LSQ `query protocol-state` response
+/// can surface the live values across node restarts.
+impl yggdrasil_ledger::cbor::CborEncode for NonceEvolutionState {
+    fn encode_cbor(&self, enc: &mut yggdrasil_ledger::cbor::Encoder) {
+        enc.array(6);
+        encode_nonce(enc, &self.evolving_nonce);
+        encode_nonce(enc, &self.candidate_nonce);
+        encode_nonce(enc, &self.epoch_nonce);
+        encode_nonce(enc, &self.prev_hash_nonce);
+        encode_nonce(enc, &self.lab_nonce);
+        enc.unsigned(self.current_epoch.0);
+    }
+}
+
+impl yggdrasil_ledger::cbor::CborDecode for NonceEvolutionState {
+    fn decode_cbor(
+        dec: &mut yggdrasil_ledger::cbor::Decoder<'_>,
+    ) -> Result<Self, yggdrasil_ledger::LedgerError> {
+        let len = dec.array()?;
+        if len != 6 {
+            return Err(yggdrasil_ledger::LedgerError::CborInvalidLength {
+                expected: 6,
+                actual: len as usize,
+            });
+        }
+        let evolving_nonce = decode_nonce(dec)?;
+        let candidate_nonce = decode_nonce(dec)?;
+        let epoch_nonce = decode_nonce(dec)?;
+        let prev_hash_nonce = decode_nonce(dec)?;
+        let lab_nonce = decode_nonce(dec)?;
+        let current_epoch = EpochNo(dec.unsigned()?);
+        Ok(Self {
+            evolving_nonce,
+            candidate_nonce,
+            epoch_nonce,
+            prev_hash_nonce,
+            lab_nonce,
+            current_epoch,
+        })
+    }
+}
+
+fn encode_nonce(enc: &mut yggdrasil_ledger::cbor::Encoder, nonce: &Nonce) {
+    match nonce {
+        Nonce::Neutral => {
+            enc.array(1);
+            enc.unsigned(0);
+        }
+        Nonce::Hash(h) => {
+            enc.array(2);
+            enc.unsigned(1);
+            enc.bytes(h);
+        }
+    }
+}
+
+fn decode_nonce(
+    dec: &mut yggdrasil_ledger::cbor::Decoder<'_>,
+) -> Result<Nonce, yggdrasil_ledger::LedgerError> {
+    let len = dec.array()?;
+    let tag = dec.unsigned()?;
+    match (len, tag) {
+        (1, 0) => Ok(Nonce::Neutral),
+        (2, 1) => {
+            let bytes = dec.bytes()?;
+            let arr: [u8; 32] =
+                bytes
+                    .try_into()
+                    .map_err(|_| yggdrasil_ledger::LedgerError::CborInvalidLength {
+                        expected: 32,
+                        actual: bytes.len(),
+                    })?;
+            Ok(Nonce::Hash(arr))
+        }
+        _ => Err(yggdrasil_ledger::LedgerError::CborDecodeError(format!(
+            "Nonce: unrecognised (len={len}, tag={tag})"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

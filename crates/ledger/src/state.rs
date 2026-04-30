@@ -7,7 +7,7 @@ use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyUtxo};
 use crate::types::{
     Address, Anchor, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, MirPot, MirTarget,
-    Point, PoolKeyHash, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
+    Nonce, Point, PoolKeyHash, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
     VrfKeyHash,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
@@ -2009,6 +2009,58 @@ fn enact_gov_action_at_epoch(
     }
 }
 
+/// Round 192 — Companion `ChainDepState` snapshot data attached to
+/// [`LedgerStateSnapshot`] so LSQ dispatchers can serve live nonces
+/// and OCert counters in `query protocol-state`.
+///
+/// `crates/consensus` owns the canonical
+/// `NonceEvolutionState`/`OcertCounters` types but cannot be imported
+/// here without inverting the dependency direction. The runtime
+/// translates from those types into this snapshot-side mirror at
+/// snapshot capture time.
+///
+/// Reference: `Ouroboros.Consensus.Protocol.Praos.PraosState`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChainDepStateContext {
+    /// `praosStateEvolvingNonce` (η_v) — combines every block's VRF
+    /// nonce contribution within an epoch.
+    pub evolving_nonce: Nonce,
+    /// `praosStateCandidateNonce` (η_c) — frozen at the stability
+    /// window inside an epoch.
+    pub candidate_nonce: Nonce,
+    /// `praosStateEpochNonce` — the active epoch nonce used for VRF
+    /// verification.
+    pub epoch_nonce: Nonce,
+    /// `praosStatePreviousEpochNonce` — previous epoch's nonce.
+    /// Yggdrasil does not yet track this distinctly from the epoch
+    /// nonce; emits Neutral until plumbed.
+    pub previous_epoch_nonce: Nonce,
+    /// `praosStateLabNonce` — the "last applied block" nonce derived
+    /// from the most recent block's prev-hash.
+    pub lab_nonce: Nonce,
+    /// `praosStateLastEpochBlockNonce` — the nonce derived from the
+    /// last block of the previous epoch (yggdrasil's
+    /// `NonceEvolutionState::prev_hash_nonce`).
+    pub last_epoch_block_nonce: Nonce,
+    /// `praosStateOCertCounters` — per-pool monotonic OpCert
+    /// sequence-number tracker keyed by 28-byte cold-key hash.
+    pub opcert_counters: BTreeMap<[u8; 28], u64>,
+}
+
+impl Default for ChainDepStateContext {
+    fn default() -> Self {
+        Self {
+            evolving_nonce: Nonce::Neutral,
+            candidate_nonce: Nonce::Neutral,
+            epoch_nonce: Nonce::Neutral,
+            previous_epoch_nonce: Nonce::Neutral,
+            lab_nonce: Nonce::Neutral,
+            last_epoch_block_nonce: Nonce::Neutral,
+            opcert_counters: BTreeMap::new(),
+        }
+    }
+}
+
 /// Read-only snapshot of ledger-visible state.
 ///
 /// This snapshot preserves the current era, tip, stake-pool state,
@@ -2038,12 +2090,55 @@ pub struct LedgerStateSnapshot {
     gen_delegs: BTreeMap<GenesisHash, GenesisDelegationState>,
     stability_window: Option<u64>,
     num_dormant_epochs: u64,
+    /// Round 192 — optional consensus-side `ChainDepState` mirror
+    /// for serving `query protocol-state` with live nonces + OCert
+    /// counters.  `None` when the runtime hasn't populated it yet
+    /// (test fakes, very early bootstrap); LSQ dispatchers fall back
+    /// to neutral placeholders in that case.
+    chain_dep_state: Option<ChainDepStateContext>,
+    /// Round 202 — optional active stake-snapshot rotation
+    /// (`mark`/`set`/`go`) for serving `query stake-snapshot` and
+    /// stake-distribution queries with live per-pool totals.
+    /// `None` when the runtime hasn't populated it (test fakes,
+    /// pre-epoch-boundary bootstrap, or sync paths without a
+    /// stake-snapshot tracker).
+    stake_snapshots: Option<crate::stake::StakeSnapshots>,
 }
 
 impl LedgerStateSnapshot {
     /// Returns the era active at the time this snapshot was captured.
     pub fn current_era(&self) -> Era {
         self.current_era
+    }
+
+    /// Round 192 — attach a [`ChainDepStateContext`] from the consensus
+    /// runtime so LSQ `query protocol-state` can serve live nonces +
+    /// OCert counters.
+    pub fn with_chain_dep_state(mut self, ctx: ChainDepStateContext) -> Self {
+        self.chain_dep_state = Some(ctx);
+        self
+    }
+
+    /// Round 192 — read-only access to the attached
+    /// [`ChainDepStateContext`].  `None` until the runtime calls
+    /// [`Self::with_chain_dep_state`] (e.g. during early bootstrap or
+    /// in test fakes).
+    pub fn chain_dep_state(&self) -> Option<&ChainDepStateContext> {
+        self.chain_dep_state.as_ref()
+    }
+
+    /// Round 202 — attach the active mark/set/go stake snapshot
+    /// rotation from the consensus runtime so LSQ stake-related
+    /// queries can serve live per-pool totals.
+    pub fn with_stake_snapshots(mut self, snapshots: crate::stake::StakeSnapshots) -> Self {
+        self.stake_snapshots = Some(snapshots);
+        self
+    }
+
+    /// Round 202 — read-only access to the attached active stake
+    /// snapshots.
+    pub fn stake_snapshots(&self) -> Option<&crate::stake::StakeSnapshots> {
+        self.stake_snapshots.as_ref()
     }
 
     /// Returns the chain tip captured in this snapshot.
@@ -3899,6 +3994,12 @@ impl LedgerState {
             gen_delegs: self.gen_delegs.clone(),
             stability_window: self.stability_window,
             num_dormant_epochs: self.num_dormant_epochs,
+            // Round 192 — runtime attaches consensus-side ChainDepState
+            // via `with_chain_dep_state(...)` after construction.
+            chain_dep_state: None,
+            // Round 202 — runtime attaches active stake snapshots via
+            // `with_stake_snapshots(...)` after construction.
+            stake_snapshots: None,
         }
     }
 

@@ -56,12 +56,12 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 
 | Repository | Pinned commit | Source |
 |---|---|---|
-| `cardano-base` | `db52f43b38ba5d8927feb2199d4913fe6c0f974d` | `node/src/upstream_pins.rs` (mirrors vendored `specs/upstream-test-vectors/cardano-base/<sha>/` directory name) |
-| `cardano-ledger` | `9ae77d611ad86ae58add04b6042ab730272f2327` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
-| `ouroboros-consensus` | `91c8e1bb5d7fd9e1387755a0d539f8dce65737df` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
-| `ouroboros-network` | `0e84bced45c7fc64252d576fbce55864d75e722a` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
-| `plutus` | `187c3971a34e5ee4c42f4ea3b21eb61d1a7bad66` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
-| `cardano-node` | `60af1c23bc20e64827574540599de1db1be2393e` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26) |
+| `cardano-base` | `db52f43b38ba5d8927feb2199d4913fe6c0f974d` | `node/src/upstream_pins.rs` (mirrors vendored `specs/upstream-test-vectors/cardano-base/<sha>/` directory name; pin advance gated on vendored fixture refresh) |
+| `cardano-ledger` | `42d088ed84b799d6d980f9be6f14ad953a3c957d` | `node/src/upstream_pins.rs` (audit baseline 2026-04-30, R201 advance) |
+| `ouroboros-consensus` | `c368c2529f2f41196461883013f749b7ac7aa58e` | `node/src/upstream_pins.rs` (audit baseline 2026-04-30, R201 advance) |
+| `ouroboros-network` | `0e84bced45c7fc64252d576fbce55864d75e722a` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26, in-sync with HEAD) |
+| `plutus` | `e3eb4c76ea20cf4f90231a25bdfaab998346b406` | `node/src/upstream_pins.rs` (audit baseline 2026-04-30, R201 advance) |
+| `cardano-node` | `799325937a4598899c8cab61f4c957662a0aeb53` | `node/src/upstream_pins.rs` (audit baseline 2026-04-30, R201 advance) |
 
 **Format invariants** (drift-guarded by `crates/node::upstream_pins::tests`):
 
@@ -73,20 +73,22 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 
 **Drift is expected and informational**. The audit baseline is allowed to lag upstream — the drift report exists so the lag is visible, not so it triggers a build failure. `check_upstream_drift.sh` exits 0 on drift by default; pass `--fail-on-drift` for CI gating if/when desired.
 
-### Drift snapshot — 2026-04-27
+### Drift snapshot — 2026-04-30 (post-R201 advance)
 
 `node/scripts/check_upstream_drift.sh` against live `git ls-remote HEAD`:
 
-| Repository | Pinned (audit baseline) | Live HEAD (2026-04-27) | Status |
+| Repository | Pinned (audit baseline) | Live HEAD (2026-04-30) | Status |
 |---|---|---|---|
-| `cardano-base` | `db52f43b38ba…` | `9965336f769d…` | drifted |
-| `cardano-ledger` | `9ae77d611ad8…` | `20652eea24c5…` | drifted |
-| `ouroboros-consensus` | `91c8e1bb5d7f…` | `c368c2529f2f…` | drifted |
+| `cardano-base` | `db52f43b38ba…` | `9965336f769d…` | drifted (vendored-fixture coupled — see below) |
+| `cardano-ledger` | `42d088ed84b7…` | (same) | **in-sync** |
+| `ouroboros-consensus` | `c368c2529f2f…` | (same) | **in-sync** |
 | `ouroboros-network` | `0e84bced45c7…` | (same) | **in-sync** |
-| `plutus` | `187c3971a34e…` | `2a0502463eb4…` | drifted |
-| `cardano-node` | `60af1c23bc20…` | `e8c2a722bf8a…` | drifted |
+| `plutus` | `e3eb4c76ea20…` | (same) | **in-sync** |
+| `cardano-node` | `799325937a45…` | (same) | **in-sync** |
 
-5 of 6 upstream repos have advanced since the 2026-Q2 baseline. Each pin advance is a separate slice (refresh the corresponding vendored test vectors / fixtures, re-run the full audit cadence against the new SHA, surface any rule changes that landed upstream in the interim). The Yggdrasil code surface remains tested against the audit-baseline behavior — it does not silently track upstream `main`.
+R201 (2026-04-30) advanced 4 of the 5 drifted documentary pins to live HEAD: `cardano-ledger`, `ouroboros-consensus`, `plutus`, `cardano-node`.  Five of six pins are now in-sync.  `cardano-base` remains pinned at the original 2026-Q2 baseline because its SHA is mirrored by the vendored test-vector directory name (`specs/upstream-test-vectors/cardano-base/<sha>/`) consumed by `crates/crypto/tests/upstream_vectors.rs::CARDANO_BASE_SHA`; advancing it requires a coordinated refresh of the vendored fixtures and re-running the full corpus drift-guard tests, which is intentionally a separate audit slice.
+
+The Yggdrasil code surface remains tested against the audit-baseline behavior; the documentary pins record which upstream commit the audit cadence (`cargo check-all`, `cargo test-all`, `cargo lint`, drift-guard tests) was last run against.
 
 ## Update Rules
 

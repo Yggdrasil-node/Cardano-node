@@ -2881,6 +2881,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         let ntc_chain_db = Arc::clone(&chain_db);
         let ntc_mempool = shared_mempool.clone();
         let ntc_path = ntc_path.clone();
+        let ntc_storage_dir = Some(storage_dir.clone());
         let ntc_tracer = tracer.clone();
         let mut ntc_shutdown = shutdown_rx.clone();
         let ntc_evaluator: Option<
@@ -2919,6 +2920,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
                 dispatcher,
                 ntc_evaluator,
                 ntc_metrics,
+                ntc_storage_dir,
                 shutdown,
             )
             .await

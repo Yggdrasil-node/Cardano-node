@@ -10,7 +10,7 @@ use std::time::Duration;
 use std::collections::BTreeMap;
 use std::fs;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -2085,10 +2085,45 @@ where
                     nonce_state.as_mut().zip(config.nonce_config.as_ref())
                 {
                     apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
+                    persist_nonce_state_sidecar(
+                        &applied.checkpoint_outcome,
+                        checkpoint_tracking.ocert_persist_dir.as_deref(),
+                        state,
+                    )?;
                 }
             }
         }
     }
+}
+
+/// R198 — persist the post-evolution `NonceEvolutionState` to
+/// `<storage_dir>/nonce_state.cbor` whenever a checkpoint just
+/// landed.  The cadence matches the OCert sidecar pattern
+/// (R196): one sidecar write per ledger-checkpoint persistence.
+/// The LSQ `query protocol-state` read path
+/// (`attach_chain_dep_state_from_sidecar`) surfaces these
+/// live values across LSQ acquires.
+fn persist_nonce_state_sidecar(
+    checkpoint_outcome: &Option<LedgerCheckpointUpdateOutcome>,
+    storage_dir: Option<&Path>,
+    state: &NonceEvolutionState,
+) -> Result<(), SyncError> {
+    if !matches!(
+        checkpoint_outcome,
+        Some(LedgerCheckpointUpdateOutcome::Persisted { .. })
+    ) {
+        return Ok(());
+    }
+    let Some(dir) = storage_dir else {
+        return Ok(());
+    };
+    let encoded = {
+        use yggdrasil_ledger::cbor::{CborEncode, Encoder};
+        let mut enc = Encoder::new();
+        state.encode_cbor(&mut enc);
+        enc.into_bytes()
+    };
+    yggdrasil_storage::save_nonce_state(dir, &encoded).map_err(SyncError::Storage)
 }
 
 // ---------------------------------------------------------------------------

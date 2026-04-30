@@ -74,11 +74,11 @@ pub use error::LedgerError;
 // -- State re-exports ---------------------------------------------------------
 /// Top-level ledger state wrapper.
 pub use state::{
-    AccountingState, CommitteeAuthorization, CommitteeMemberState, CommitteeState, DepositPot,
-    DrepState, EnactOutcome, EnactState, GenesisDelegationState, GovernanceActionState,
-    InstantaneousRewards, LedgerState, LedgerStateCheckpoint, LedgerStateSnapshot,
-    PoolRelayAccessPoint, PoolState, PpupSlotContext, RegisteredDrep, RegisteredPool,
-    RewardAccountState, RewardAccounts, StakeCredentialState, StakeCredentials,
+    AccountingState, ChainDepStateContext, CommitteeAuthorization, CommitteeMemberState,
+    CommitteeState, DepositPot, DrepState, EnactOutcome, EnactState, GenesisDelegationState,
+    GovernanceActionState, InstantaneousRewards, LedgerState, LedgerStateCheckpoint,
+    LedgerStateSnapshot, PoolRelayAccessPoint, PoolState, PpupSlotContext, RegisteredDrep,
+    RegisteredPool, RewardAccountState, RewardAccounts, StakeCredentialState, StakeCredentials,
     accumulate_mir_from_certs, pv_can_follow,
 };
 

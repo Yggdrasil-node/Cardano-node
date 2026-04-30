@@ -72,6 +72,7 @@ async fn spawn_local_server() -> (
             dispatcher,
             None,
             None,
+            None, // R196: no storage_dir for in-memory test fixtures
             async move {
                 let _ = rx.await;
             },
@@ -121,6 +122,7 @@ async fn spawn_local_server_with_metrics() -> (
             dispatcher,
             None,
             Some(server_metrics),
+            None, // R196: no storage_dir for in-memory test fixtures
             async move {
                 let _ = rx.await;
             },

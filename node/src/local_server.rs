@@ -30,7 +30,7 @@
 //! and `LocalTxMonitor`.
 
 #[cfg(unix)]
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use yggdrasil_ledger::{CborDecode, Era, LedgerStateSnapshot, MultiEraSubmittedTx, Point, SlotNo};
@@ -271,6 +271,7 @@ pub async fn run_local_state_query_session<I, V, L>(
     mut server: LocalStateQueryServer,
     chain_db: Arc<RwLock<ChainDb<I, V, L>>>,
     dispatcher: Arc<dyn LocalQueryDispatcher>,
+    storage_dir: Option<PathBuf>,
 ) -> Result<(), LocalStateQuerySessionError>
 where
     I: ImmutableStore + Send + Sync,
@@ -281,7 +282,7 @@ where
         match server.recv_idle_request().await? {
             LocalStateQueryIdleRequest::Done => return Ok(()),
             LocalStateQueryIdleRequest::Acquire(target) => {
-                let snapshot_opt = acquire_snapshot(&chain_db, &target);
+                let snapshot_opt = acquire_snapshot(&chain_db, &target, storage_dir.as_deref());
 
                 match snapshot_opt {
                     Some(snapshot) => {
@@ -300,7 +301,11 @@ where
                                     break;
                                 }
                                 LocalStateQueryAcquiredRequest::ReAcquire(new_target) => {
-                                    match acquire_snapshot(&chain_db, &new_target) {
+                                    match acquire_snapshot(
+                                        &chain_db,
+                                        &new_target,
+                                        storage_dir.as_deref(),
+                                    ) {
                                         Some(new_snapshot) => {
                                             current_snapshot = new_snapshot;
                                             server.acquired().await?;
@@ -444,6 +449,7 @@ where
 fn acquire_snapshot<I, V, L>(
     chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
     target: &AcquireTarget,
+    storage_dir: Option<&Path>,
 ) -> Option<LedgerStateSnapshot>
 where
     I: ImmutableStore + Send + Sync,
@@ -452,19 +458,81 @@ where
 {
     let db = chain_db.read().ok()?;
 
-    match target {
+    let snapshot = match target {
         AcquireTarget::VolatileTip => {
-            // Acquire at the current chain tip — always available.
             let recovery =
                 recover_ledger_state_chaindb(&db, yggdrasil_ledger::LedgerState::new(Era::Byron))
                     .ok()?;
-            Some(recovery.ledger_state.snapshot())
+            recovery.ledger_state.snapshot()
         }
         AcquireTarget::Point(point) => {
             let mut dec = yggdrasil_ledger::cbor::Decoder::new(point);
             let requested = Point::decode_cbor(&mut dec).ok()?;
-            recover_snapshot_at_point(&db, &requested)
+            recover_snapshot_at_point(&db, &requested)?
         }
+    };
+
+    // R196 — attach `ChainDepStateContext` from on-disk sidecars
+    // (currently OCert counters; nonces tracked as Phase A.2
+    // follow-up).
+    Some(attach_chain_dep_state_from_sidecar(snapshot, storage_dir))
+}
+
+/// R196 / R197 — load `ChainDepStateContext` data from on-disk
+/// sidecars produced by the sync runtime and attach to the
+/// snapshot.
+///
+/// - `ocert_counters.cbor` (R196) — `PraosState.csCounters`
+/// - `nonce_state.cbor`    (R197) — `NonceEvolutionState`
+///   (`Cardano.Ledger.Crypto.Nonce` × 5 + current epoch)
+///
+/// Each sidecar is independently optional; a missing or
+/// undecodeable file is silently skipped (the corresponding
+/// `ChainDepStateContext` field stays at the neutral default).
+fn attach_chain_dep_state_from_sidecar(
+    snapshot: LedgerStateSnapshot,
+    storage_dir: Option<&Path>,
+) -> LedgerStateSnapshot {
+    use yggdrasil_consensus::{NonceEvolutionState, OcertCounters};
+    use yggdrasil_ledger::{CborDecode, ChainDepStateContext, Decoder};
+
+    let Some(dir) = storage_dir else {
+        return snapshot;
+    };
+
+    let mut ctx = ChainDepStateContext::default();
+    let mut populated = false;
+
+    // OCert counters (R196).
+    if let Ok(Some(counters_bytes)) = yggdrasil_storage::load_ocert_counters(dir) {
+        let mut dec = Decoder::new(&counters_bytes);
+        if let Ok(counters) = OcertCounters::decode_cbor(&mut dec) {
+            for (hash, counter) in counters.iter() {
+                ctx.opcert_counters.insert(*hash, *counter);
+            }
+            populated = true;
+        }
+    }
+
+    // Nonce evolution state (R197).
+    if let Ok(Some(nonce_bytes)) = yggdrasil_storage::load_nonce_state(dir) {
+        let mut dec = Decoder::new(&nonce_bytes);
+        if let Ok(nonces) = NonceEvolutionState::decode_cbor(&mut dec) {
+            ctx.evolving_nonce = nonces.evolving_nonce;
+            ctx.candidate_nonce = nonces.candidate_nonce;
+            ctx.epoch_nonce = nonces.epoch_nonce;
+            ctx.lab_nonce = nonces.lab_nonce;
+            ctx.last_epoch_block_nonce = nonces.prev_hash_nonce;
+            // `previous_epoch_nonce` not tracked separately by yggdrasil
+            // — leaves the `ChainDepStateContext::default()` Neutral.
+            populated = true;
+        }
+    }
+
+    if populated {
+        snapshot.with_chain_dep_state(ctx)
+    } else {
+        snapshot
     }
 }
 
@@ -545,6 +613,7 @@ fn encode_rejection_reason(reason: &str) -> Vec<u8> {
 ///
 /// Reference: `Ouroboros.Network.NodeToClient` — server-side accept path.
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)] // thin orchestration entry-point; each parameter is a shared handle wired from the node bootstrap
 pub async fn run_local_client_session<I, V, L>(
     stream: tokio::net::UnixStream,
     network_magic: u32,
@@ -553,6 +622,7 @@ pub async fn run_local_client_session<I, V, L>(
     dispatcher: Arc<dyn LocalQueryDispatcher>,
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
     metrics: Option<Arc<NodeMetrics>>,
+    storage_dir: Option<PathBuf>,
 ) -> Option<yggdrasil_network::MuxHandle>
 where
     I: ImmutableStore + Send + Sync + 'static,
@@ -613,8 +683,10 @@ where
 
     // Spawn LocalStateQuery task.
     let sq_chain_db = Arc::clone(&chain_db);
+    let sq_storage_dir = storage_dir.clone();
     tokio::spawn(async move {
-        let _ = run_local_state_query_session(sq_server, sq_chain_db, dispatcher).await;
+        let _ =
+            run_local_state_query_session(sq_server, sq_chain_db, dispatcher, sq_storage_dir).await;
     });
 
     // Spawn LocalTxMonitor task.
@@ -657,6 +729,7 @@ pub async fn run_local_accept_loop<I, V, L, F>(
     dispatcher: Arc<dyn LocalQueryDispatcher>,
     evaluator: Option<Arc<dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator + Send + Sync>>,
     metrics: Option<Arc<NodeMetrics>>,
+    storage_dir: Option<PathBuf>,
     shutdown: F,
 ) -> Result<(), LocalServerError>
 where
@@ -702,9 +775,12 @@ where
                 let disp = Arc::clone(&dispatcher);
                 let eval = evaluator.clone();
                 let met = metrics.clone();
+                let sd = storage_dir.clone();
 
                 tokio::spawn(async move {
-                    let mux = run_local_client_session(stream, network_magic, db, mp, disp, eval, met).await;
+                    let mux =
+                        run_local_client_session(stream, network_magic, db, mp, disp, eval, met, sd)
+                            .await;
                     // Mux runs until either protocol task finishes or the
                     // connection drops; we do not abort here since each task
                     // terminates cleanly on `MsgDone` or socket close.
@@ -1532,30 +1608,8 @@ fn dispatch_upstream_query(
                                 // peer_kind (the V2 shape is
                                 // compatible with both kinds).
                                 let _ = peer_kind;
-                                let mut e = Encoder::new();
-                                e.array(2);
-                                e.unsigned(1); // V2 discriminator
-                                e.array(2);
-                                // R191: WithOrigin SlotNo from
-                                // snapshot tip — Origin only at chain
-                                // start.
-                                match snapshot.tip().slot() {
-                                    Some(slot) => {
-                                        e.array(2);
-                                        e.unsigned(1);
-                                        e.unsigned(slot.0);
-                                    }
-                                    None => {
-                                        e.array(1);
-                                        e.unsigned(0);
-                                    }
-                                }
-                                // Empty pool list — indefinite-length
-                                // CBOR list (`0x9f` start, `0xff`
-                                // break) per upstream's `toCBOR @[a]`
-                                // for the pool list field.
-                                e.raw(&[0x9f, 0xff]);
-                                encode_query_if_current_match(&e.into_bytes())
+                                let body = encode_ledger_peer_snapshot_v2_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetRatifyState => {
                                 // Round 187 — Conway `GetRatifyState`
@@ -1621,31 +1675,37 @@ fn dispatch_upstream_query(
                                 encode_query_if_current_match(&e.into_bytes())
                             }
                             EraSpecificQuery::GetDRepStakeDistr { drep_set_cbor } => {
-                                // Round 184 — Conway `GetDRepStakeDistr`
-                                // returns `Map (DRep StandardCrypto) Coin`.
-                                // Until yggdrasil tracks per-DRep active
-                                // stake, emit an empty CBOR map (`0xa0`).
-                                // Filter parameter accepted for protocol
-                                // compatibility but not applied.
+                                // R184 dispatcher / R194 live data —
+                                // Conway `GetDRepStakeDistr` returns
+                                // `Map (DRep StandardCrypto) Coin`.
+                                // Yggdrasil's snapshot exposes
+                                // `query_drep_stake_distribution()`
+                                // which sums each DRep delegator's
+                                // reward balance.  Filter parameter
+                                // accepted for protocol compatibility
+                                // but not applied — cardano-cli
+                                // filters client-side after decoding
+                                // the full map.
                                 let _ = drep_set_cbor;
-                                let mut e = Encoder::new();
-                                e.map(0);
-                                encode_query_if_current_match(&e.into_bytes())
+                                let body = encode_drep_stake_distribution_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetStakeDelegDeposits {
                                 stake_cred_set_cbor,
                             } => {
-                                // Round 186 — Conway
-                                // `GetStakeDelegDeposits` returns
+                                // R186 dispatcher / R194 live data —
+                                // Conway `GetStakeDelegDeposits`
+                                // returns
                                 // `Map (Credential 'Staking) Coin`.
-                                // Until yggdrasil tracks per-credential
-                                // delegation deposits, emit empty CBOR
-                                // map (`0xa0`).  Filter parameter
-                                // accepted but not applied.
+                                // Yggdrasil's snapshot tracks the
+                                // registration deposit on each stake
+                                // credential (`StakeCredentialState
+                                // ::deposit`); emit one entry per
+                                // registered credential.  Filter
+                                // parameter accepted but not applied.
                                 let _ = stake_cred_set_cbor;
-                                let mut e = Encoder::new();
-                                e.map(0);
-                                encode_query_if_current_match(&e.into_bytes())
+                                let body = encode_stake_deleg_deposits_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetPoolDistr2 {
                                 maybe_pool_hash_set_cbor,
@@ -1697,12 +1757,19 @@ fn dispatch_upstream_query(
                                 encode_query_if_current_match(&e.into_bytes())
                             }
                             EraSpecificQuery::GetSPOStakeDistr { spo_set_cbor } => {
-                                // Round 184 — Conway `GetSPOStakeDistr`.
-                                // Probing wire shape — try bare empty map.
+                                // R184 dispatcher / R194 live data —
+                                // Conway `GetSPOStakeDistr` returns
+                                // `Map (KeyHash 'StakePool) Coin`.
+                                // Yggdrasil's snapshot tracks
+                                // `delegated_pool` per stake credential
+                                // and reward balances per reward
+                                // account; sum balances per pool to
+                                // produce the live distribution.
+                                // Filter parameter accepted but not
+                                // applied.
                                 let _ = spo_set_cbor;
-                                let mut e = Encoder::new();
-                                e.map(0);
-                                encode_query_if_current_match(&e.into_bytes())
+                                let body = encode_spo_stake_distribution_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetCBOR { inner_query_cbor } => {
                                 // Round 179 — upstream `GetCBOR (inner)`.
@@ -2510,6 +2577,198 @@ fn encode_drep_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
     enc.into_bytes()
 }
 
+/// Round 195 — encode upstream `LedgerPeerSnapshotV2` with live
+/// registered pool relays from yggdrasil's snapshot.
+///
+/// Wire shape per
+/// `Ouroboros.Network.PeerSelection.LedgerPeers.Type.encodeLedgerPeerSnapshot
+///   (LedgerPeerSnapshotV2 (wOrigin, pools))`:
+///
+/// ```text
+/// [outer 2-elem]
+///   0: discriminator (Word8) = 1
+///   1: [inner 2-elem]
+///        0: WithOrigin SlotNo
+///        1: pools (indef-length CBOR list of)
+///             [AccPoolStake, [PoolStake, NonEmpty LedgerRelayAccessPoint]]
+/// ```
+///
+/// `AccPoolStake` and `PoolStake` are newtypes wrapping `Rational`,
+/// CBOR-encoded as 2-element `[numerator, denominator]` lists.
+/// Yggdrasil's chain doesn't yet track active stake distribution
+/// snapshot-side, so each entry uses 0/1 placeholders for stake;
+/// the real-time pool registration data (pool key hash + relay
+/// access points) is live from `snapshot.pool_state()`.
+///
+/// `LedgerRelayAccessPoint` per
+/// `Ouroboros.Network.PeerSelection.RelayAccessPoint`:
+///
+///   - Domain: `[3, 0, port_int, domain_bstr]`
+///   - IPv4:   `[3, 1, port_int, ipv4_word32]`
+///   - IPv6:   `[3, 2, port_int, ipv6_bytes]`
+///   - SRV:    `[2, 3, domain_bstr]`
+///
+/// For yggdrasil's `PoolRelayAccessPoint { address, port }` we
+/// detect IPv4 / IPv6 via parse; otherwise emit Domain.
+fn encode_ledger_peer_snapshot_v2_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use std::net::IpAddr;
+    use yggdrasil_ledger::Encoder;
+
+    let mut enc = Encoder::new();
+    enc.array(2);
+    enc.unsigned(1); // V2 discriminator
+
+    enc.array(2);
+    // WithOrigin SlotNo from snapshot tip.
+    match snapshot.tip().slot() {
+        Some(slot) => {
+            enc.array(2);
+            enc.unsigned(1);
+            enc.unsigned(slot.0);
+        }
+        None => {
+            enc.array(1);
+            enc.unsigned(0);
+        }
+    }
+
+    // Pools — indefinite-length CBOR list.
+    enc.raw(&[0x9f]);
+
+    for (_pool_hash, pool) in snapshot.pool_state().iter() {
+        let relays = pool.relay_access_points();
+        if relays.is_empty() {
+            continue; // Skip pools without dialable relays.
+        }
+
+        // Each entry: [AccPoolStake, [PoolStake, NonEmpty Relays]].
+        enc.array(2);
+
+        // AccPoolStake — Rational 0/1 (live stake unavailable
+        // without active stake distribution snapshot).
+        enc.array(2);
+        enc.unsigned(0);
+        enc.unsigned(1);
+
+        // [PoolStake, NonEmpty Relays] (2-elem).
+        enc.array(2);
+        // PoolStake — Rational 0/1.
+        enc.array(2);
+        enc.unsigned(0);
+        enc.unsigned(1);
+        // NonEmpty Relays — upstream emits indef-length list
+        // (cardano-cli's decoder rejected definite-length here at
+        // depth 20).
+        enc.raw(&[0x9f]);
+        for relay in &relays {
+            match relay.address.parse::<IpAddr>() {
+                Ok(IpAddr::V4(v4)) => {
+                    // [3, 1, port, ipv4_word32]
+                    enc.array(3);
+                    enc.unsigned(1);
+                    enc.unsigned(relay.port as u64);
+                    enc.unsigned(u32::from(v4) as u64);
+                }
+                Ok(IpAddr::V6(v6)) => {
+                    // [3, 2, port, ipv6_bytes]
+                    enc.array(3);
+                    enc.unsigned(2);
+                    enc.unsigned(relay.port as u64);
+                    enc.bytes(&v6.octets());
+                }
+                Err(_) => {
+                    // Domain: [3, 0, port, domain_bstr]
+                    enc.array(3);
+                    enc.unsigned(0);
+                    enc.unsigned(relay.port as u64);
+                    enc.bytes(relay.address.as_bytes());
+                }
+            }
+        }
+        enc.raw(&[0xff]); // close NonEmpty Relays indef list
+    }
+
+    enc.raw(&[0xff]); // close pool list indef
+
+    enc.into_bytes()
+}
+
+/// Round 194 — encode `GetDRepStakeDistr` result: a CBOR map
+/// `Map (DRep StandardCrypto) Coin` keyed in upstream
+/// canonical order (`BTreeMap::iter` ascending).
+///
+/// Yggdrasil computes the distribution by iterating
+/// stake credentials, looking up each one's delegated DRep, and
+/// summing the credential's reward balance into the DRep's
+/// running total.  Mirrors upstream
+/// `Cardano.Ledger.Conway.LedgerStateQuery.queryDRepStakeDistr`.
+fn encode_drep_stake_distribution_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let drep_stake = snapshot.query_drep_stake_distribution();
+    let mut enc = Encoder::new();
+    enc.map(drep_stake.len() as u64);
+    for (drep, balance) in &drep_stake {
+        drep.encode_cbor(&mut enc);
+        enc.unsigned(*balance);
+    }
+    enc.into_bytes()
+}
+
+/// Round 194 — encode `GetSPOStakeDistr` result: a CBOR map
+/// `Map (KeyHash 'StakePool) Coin` keyed by 28-byte cold-key
+/// hash in `BTreeMap` ascending order.
+///
+/// Computed by iterating stake credentials, looking up each
+/// `delegated_pool`, finding the credential's reward balance,
+/// and summing per pool.  Mirrors upstream
+/// `Cardano.Ledger.Conway.LedgerStateQuery.querySPOStakeDistr`.
+fn encode_spo_stake_distribution_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use std::collections::BTreeMap;
+    use yggdrasil_ledger::Encoder;
+
+    let mut spo_stake: BTreeMap<[u8; 28], u64> = BTreeMap::new();
+    for (cred, cred_state) in snapshot.stake_credentials().iter() {
+        if let Some(pool) = cred_state.delegated_pool() {
+            let mut balance: u64 = 0;
+            for (account, account_state) in snapshot.reward_accounts().iter() {
+                if &account.credential == cred {
+                    balance = account_state.balance();
+                    break;
+                }
+            }
+            *spo_stake.entry(pool).or_insert(0) += balance;
+        }
+    }
+
+    let mut enc = Encoder::new();
+    enc.map(spo_stake.len() as u64);
+    for (pool_hash, balance) in &spo_stake {
+        enc.bytes(pool_hash);
+        enc.unsigned(*balance);
+    }
+    enc.into_bytes()
+}
+
+/// Round 194 — encode `GetStakeDelegDeposits` result: a CBOR
+/// map `Map (Credential 'Staking) Coin` keyed in `BTreeMap`
+/// ascending order.
+///
+/// Yggdrasil tracks the registration deposit per stake
+/// credential in `StakeCredentialState::deposit` (R67's
+/// rdDeposit per upstream `UMap`).  Mirrors upstream
+/// `Cardano.Ledger.Shelley.LedgerStateQuery.queryStakeDelegDeposits`.
+fn encode_stake_deleg_deposits_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let mut enc = Encoder::new();
+    let creds: Vec<_> = snapshot.stake_credentials().iter().collect();
+    enc.map(creds.len() as u64);
+    for (cred, state) in creds {
+        cred.encode_cbor(&mut enc);
+        enc.unsigned(state.deposit());
+    }
+    enc.into_bytes()
+}
+
 /// Round 182 — encode `GetCommitteeMembersState` result as a
 /// 3-element CBOR list per upstream
 /// `Cardano.Ledger.Conway.Governance.CommitteeMembersState`:
@@ -2600,14 +2859,53 @@ fn encode_praos_state_versioned(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
         }
     }
 
-    // 2: praosStateOCertCounters — empty Map placeholder.
-    enc.map(0);
+    // 2: praosStateOCertCounters — `Map (KeyHash 'BlockIssuer)
+    //    Word64`.  R192 plumbing: emit live counters from the
+    //    attached `ChainDepStateContext` when present; fall back to
+    //    empty map placeholder otherwise.
+    if let Some(ctx) = snapshot.chain_dep_state() {
+        enc.map(ctx.opcert_counters.len() as u64);
+        for (hash, counter) in &ctx.opcert_counters {
+            enc.bytes(hash);
+            enc.unsigned(*counter);
+        }
+    } else {
+        enc.map(0);
+    }
 
-    // 3-8: six NeutralNonce = [0] placeholders (evolving,
-    //      candidate, epoch, previous-epoch, lab, last-epoch-block).
-    for _ in 0..6 {
-        enc.array(1);
-        enc.unsigned(0);
+    // 3-8: six Nonce fields per upstream `PraosState`.
+    //      Wire encoding (`Cardano.Ledger.Crypto.Nonce`):
+    //        NeutralNonce → [0]
+    //        Nonce h      → [1, h]
+    //      R192 plumbing: emit live nonces from the attached
+    //      `ChainDepStateContext` when present; fall back to neutral
+    //      placeholders otherwise.
+    let nonces: [&yggdrasil_ledger::types::Nonce; 6] = match snapshot.chain_dep_state() {
+        Some(ctx) => [
+            &ctx.evolving_nonce,
+            &ctx.candidate_nonce,
+            &ctx.epoch_nonce,
+            &ctx.previous_epoch_nonce,
+            &ctx.lab_nonce,
+            &ctx.last_epoch_block_nonce,
+        ],
+        None => {
+            let n = &yggdrasil_ledger::types::Nonce::Neutral;
+            [n, n, n, n, n, n]
+        }
+    };
+    for nonce in nonces {
+        match nonce {
+            yggdrasil_ledger::types::Nonce::Neutral => {
+                enc.array(1);
+                enc.unsigned(0);
+            }
+            yggdrasil_ledger::types::Nonce::Hash(h) => {
+                enc.array(2);
+                enc.unsigned(1);
+                enc.bytes(h);
+            }
+        }
     }
 
     enc.into_bytes()
@@ -2652,14 +2950,21 @@ fn encode_conway_gov_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
     enc.array(7);
 
     // 1: cgsProposals = (GovRelation StrictMaybe, OMap GovActionId
-    //    GovActionState).  Empty case: [GovRelation 4-SNothing, OMap
-    //    empty list].
+    //    GovActionState).
+    //    R193: emit live GovRelation from `EnactState`'s prev-action
+    //    fields (yggdrasil's lineage tracking).  OMap remains empty
+    //    until the runtime exposes proposal entries in the
+    //    upstream-faithful `GovActionState era` shape (currently
+    //    yggdrasil's `GovernanceActionState` is structurally reduced
+    //    from upstream's 7-field record — see R193 follow-up).
+    let es = snapshot.enact_state();
     enc.array(2);
     enc.array(4);
-    for _ in 0..4 {
-        enc.array(0); // each StrictMaybe SNothing = []
-    }
-    enc.array(0); // empty OMap encoded as empty list
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_pparams_update.as_ref());
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_hard_fork.as_ref());
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_committee.as_ref());
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_constitution.as_ref());
+    enc.array(0); // OMap empty — pending upstream-shape encoder
 
     // 2: cgsCommittee = SNothing.
     enc.array(0);
@@ -2748,14 +3053,39 @@ fn encode_enact_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
     enc.map(0);
 
     // 7: ensPrevGovActionIds — GovRelation StrictMaybe is a 4-element
-    //    list `[ppup, hardfork, committee, constitution]`.  Each
-    //    SNothing = `[]` (empty 0-element list).
+    //    list `[ppup, hardfork, committee, constitution]`.
+    //    R193: emit live values from `EnactState`'s prev-action
+    //    fields (already public on `EnactState`); SNothing → `[]`,
+    //    SJust id → `[id_cbor]`.  Yggdrasil's lineage tracking is
+    //    upstream-faithful (R67: `enact_gov_action` updates these on
+    //    enactment).
+    let es = snapshot.enact_state();
     enc.array(4);
-    for _ in 0..4 {
-        enc.array(0);
-    }
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_pparams_update.as_ref());
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_hard_fork.as_ref());
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_committee.as_ref());
+    encode_strict_maybe_gov_action_id(&mut enc, es.prev_constitution.as_ref());
 
     enc.into_bytes()
+}
+
+/// Round 193 — encode `StrictMaybe (GovActionId)` per upstream
+/// `Cardano.Ledger.Conway.Governance.GovRelation` field shape:
+/// `SNothing → []` (empty list), `SJust id → [id_cbor]` (1-element).
+fn encode_strict_maybe_gov_action_id(
+    enc: &mut yggdrasil_ledger::Encoder,
+    id: Option<&yggdrasil_ledger::eras::conway::GovActionId>,
+) {
+    use yggdrasil_ledger::CborEncode;
+    match id {
+        Some(id) => {
+            enc.array(1);
+            id.encode_cbor(enc);
+        }
+        None => {
+            enc.array(0);
+        }
+    }
 }
 
 /// Round 187 — encode upstream `RatifyState era` as a 4-element CBOR
@@ -2838,6 +3168,12 @@ fn encode_stake_snapshots(
     enc.array(4);
 
     // 1: per-pool map (Map PoolKeyHash [mark, set, go]).
+    //
+    // R202 — when the runtime has attached live stake snapshots
+    // via `with_stake_snapshots`, sum each credential's stake into
+    // the credential's delegated pool, per snapshot generation.
+    // Otherwise fall back to the R163 placeholder of three zeros
+    // per pool.
     let mut keys: Vec<&[u8; 28]> = pool_state
         .iter()
         .map(|(k, _)| k)
@@ -2845,27 +3181,57 @@ fn encode_stake_snapshots(
         .collect();
     keys.sort();
     enc.map(keys.len() as u64);
+
+    let stake_snapshots = snapshot.stake_snapshots();
+    let pool_total =
+        |snap: Option<&yggdrasil_ledger::stake::StakeSnapshot>, pool_hash: &[u8; 28]| -> u64 {
+            let Some(s) = snap else {
+                return 0;
+            };
+            let mut total: u64 = 0;
+            for (cred, delegated_pool) in s.delegations.iter() {
+                if delegated_pool == pool_hash {
+                    total = total.saturating_add(s.stake.get(cred));
+                }
+            }
+            total
+        };
+
+    let total_for_snap = |snap: Option<&yggdrasil_ledger::stake::StakeSnapshot>| -> u64 {
+        let Some(s) = snap else {
+            return 0;
+        };
+        let mut total: u64 = 0;
+        for (_cred, coin) in s.stake.iter() {
+            total = total.saturating_add(*coin);
+        }
+        total
+    };
+
+    let mark = stake_snapshots.map(|s| &s.mark);
+    let set = stake_snapshots.map(|s| &s.set);
+    let go = stake_snapshots.map(|s| &s.go);
+
     for k in keys {
         enc.bytes(k);
-        // Per-pool [mark, set, go] — placeholders until the live
-        // snapshot rotation is plumbed; stays consistent with R163
-        // `GetStakeDistribution`'s empty-map behaviour.
         enc.array(3);
-        enc.unsigned(0);
-        enc.unsigned(0);
-        enc.unsigned(0);
+        enc.unsigned(pool_total(mark, k));
+        enc.unsigned(pool_total(set, k));
+        enc.unsigned(pool_total(go, k));
     }
 
     // 2-4: ssStakeMarkTotal, ssStakeSetTotal, ssStakeGoTotal.
-    // Round 179 — emit 1-lovelace placeholders for the three totals.
-    // cardano-cli's `StakeSnapshots` decoder treats these as
-    // `NonZero Coin` and rejects 0 with "Encountered zero while
-    // trying to construct a NonZero value".  1-lovelace placeholders
-    // let the response decode end-to-end until the live mark/set/go
-    // rotation is plumbed through.
-    enc.unsigned(1);
-    enc.unsigned(1);
-    enc.unsigned(1);
+    // R202: live totals when snapshots attached, else 1-lovelace
+    // `NonZero Coin` placeholders (R179).  cardano-cli's decoder
+    // rejects 0 with "Encountered zero while trying to construct
+    // a NonZero value", so when totals are 0 (pre-rewards) we
+    // still emit 1 to keep the response decoding.
+    let mark_total = total_for_snap(mark).max(1);
+    let set_total = total_for_snap(set).max(1);
+    let go_total = total_for_snap(go).max(1);
+    enc.unsigned(mark_total);
+    enc.unsigned(set_total);
+    enc.unsigned(go_total);
 
     enc.into_bytes()
 }

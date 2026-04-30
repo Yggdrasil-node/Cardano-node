@@ -29,7 +29,10 @@ pub mod volatile_db;
 pub use error::StorageError;
 
 // -- Sidecar re-exports -------------------------------------------------------
-pub use ocert_sidecar::{OCERT_COUNTERS_FILENAME, load_ocert_counters, save_ocert_counters};
+pub use ocert_sidecar::{
+    NONCE_STATE_FILENAME, OCERT_COUNTERS_FILENAME, load_nonce_state, load_ocert_counters,
+    save_nonce_state, save_ocert_counters,
+};
 
 // -- Coordination re-exports --------------------------------------------------
 pub use chain_db::{ChainDb, ChainDbRecovery, LedgerCheckpointRetention, LedgerRecoveryOutcome};

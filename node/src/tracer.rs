@@ -618,6 +618,15 @@ pub struct NodeMetrics {
     // arrive, so >0 implies candidate-fragment partitioning is feeding
     // real header hashes into BlockFetch dispatch.
     chainsync_workers_registered: AtomicU64,
+    /// Round 200 — apply-batch duration histogram.  Bucket
+    /// boundaries are [`NodeMetrics::APPLY_BATCH_BUCKETS_SECONDS`];
+    /// each observation increments cumulative buckets `<=` the
+    /// observed duration.  Pairs with `_sum` (microseconds) and
+    /// `_count` to produce the standard Prometheus histogram
+    /// rendering in [`MetricsSnapshot::to_prometheus_text`].
+    apply_batch_duration_buckets: [AtomicU64; 10],
+    apply_batch_duration_sum_micros: AtomicU64,
+    apply_batch_duration_count: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -724,6 +733,18 @@ pub struct MetricsSnapshot {
     /// peer; 0 implies candidate-fragment partitioning is inactive
     /// and dispatch falls back to placeholder-hash collapse.
     pub chainsync_workers_registered: u64,
+    /// Round 200 — apply-batch duration histogram bucket counters.
+    /// Each entry is the cumulative count of observations whose
+    /// duration was `<=` the corresponding bucket boundary in
+    /// [`NodeMetrics::APPLY_BATCH_BUCKETS_SECONDS`].
+    pub apply_batch_duration_buckets: [u64; 10],
+    /// Round 200 — sum of all observed apply-batch durations
+    /// (microseconds).  Rendered as the Prometheus histogram
+    /// `_sum` field after dividing by 1e6 for seconds.
+    pub apply_batch_duration_sum_micros: u64,
+    /// Round 200 — total number of apply-batch duration
+    /// observations.  Rendered as the histogram `_count` field.
+    pub apply_batch_duration_count: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -773,8 +794,56 @@ impl NodeMetrics {
             blockfetch_workers_registered: AtomicU64::new(0),
             blockfetch_workers_migrated_total: AtomicU64::new(0),
             chainsync_workers_registered: AtomicU64::new(0),
+            apply_batch_duration_buckets: [
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ],
+            apply_batch_duration_sum_micros: AtomicU64::new(0),
+            apply_batch_duration_count: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
+    }
+
+    /// R200 — Bucket boundaries (in seconds) for the apply-batch
+    /// duration histogram, ascending.  Mirrors typical Prometheus
+    /// HTTP latency bucket conventions and covers ~1ms to ~10s
+    /// (with `+Inf` implicit as the final cumulative bucket).
+    pub const APPLY_BATCH_BUCKETS_SECONDS: [f64; 10] = [
+        0.001,
+        0.005,
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1.0,
+        5.0,
+        10.0,
+        f64::INFINITY,
+    ];
+
+    /// R200 — Record an apply-batch duration into the histogram.
+    /// Cumulative buckets: each observation increments every bucket
+    /// whose `le` is ≥ the observed duration.
+    pub fn record_apply_batch_duration(&self, duration: std::time::Duration) {
+        let secs = duration.as_secs_f64();
+        let micros = duration.as_micros() as u64;
+        for (i, le) in Self::APPLY_BATCH_BUCKETS_SECONDS.iter().enumerate() {
+            if secs <= *le {
+                self.apply_batch_duration_buckets[i].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.apply_batch_duration_sum_micros
+            .fetch_add(micros, Ordering::Relaxed);
+        self.apply_batch_duration_count
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Add `n` to the blocks-synced counter.
@@ -1028,6 +1097,17 @@ impl NodeMetrics {
                 .blockfetch_workers_migrated_total
                 .load(Ordering::Relaxed),
             chainsync_workers_registered: self.chainsync_workers_registered.load(Ordering::Relaxed),
+            apply_batch_duration_buckets: {
+                let mut buckets = [0u64; 10];
+                for (i, b) in self.apply_batch_duration_buckets.iter().enumerate() {
+                    buckets[i] = b.load(Ordering::Relaxed);
+                }
+                buckets
+            },
+            apply_batch_duration_sum_micros: self
+                .apply_batch_duration_sum_micros
+                .load(Ordering::Relaxed),
+            apply_batch_duration_count: self.apply_batch_duration_count.load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -1042,7 +1122,7 @@ impl Default for NodeMetrics {
 impl MetricsSnapshot {
     /// Render the snapshot in Prometheus text exposition format.
     pub fn to_prometheus_text(&self) -> String {
-        format!(
+        let mut out = format!(
             "\
 # HELP yggdrasil_blocks_synced Total blocks fetched and applied.\n\
 # TYPE yggdrasil_blocks_synced counter\n\
@@ -1244,7 +1324,36 @@ yggdrasil_blocks_conway {}\n",
             self.blocks_per_era[4],
             self.blocks_per_era[5],
             self.blocks_per_era[6],
-        )
+        );
+
+        // R200 — Append apply-batch duration histogram in the
+        // standard Prometheus histogram exposition format.
+        out.push_str(
+            "# HELP yggdrasil_apply_batch_duration_seconds Time spent applying a batch of fetched blocks to ledger state.\n",
+        );
+        out.push_str("# TYPE yggdrasil_apply_batch_duration_seconds histogram\n");
+        for (i, le) in NodeMetrics::APPLY_BATCH_BUCKETS_SECONDS.iter().enumerate() {
+            let le_str = if le.is_infinite() {
+                "+Inf".to_string()
+            } else {
+                format!("{le}")
+            };
+            out.push_str(&format!(
+                "yggdrasil_apply_batch_duration_seconds_bucket{{le=\"{le_str}\"}} {}\n",
+                self.apply_batch_duration_buckets[i]
+            ));
+        }
+        let sum_secs = (self.apply_batch_duration_sum_micros as f64) / 1_000_000.0;
+        out.push_str(&format!(
+            "yggdrasil_apply_batch_duration_seconds_sum {}\n",
+            sum_secs
+        ));
+        out.push_str(&format!(
+            "yggdrasil_apply_batch_duration_seconds_count {}\n",
+            self.apply_batch_duration_count
+        ));
+
+        out
     }
 }
 
@@ -1531,7 +1640,16 @@ mod tests {
                         "yggdrasil_blocks_conway ",
                     ]
                     .iter()
-                    .all(|name| text.contains(name)));
+                    .all(|name| text.contains(name)))
+                // Round 200 — apply-batch histogram is rendered with
+                // standard Prometheus histogram suffixes (`_bucket`,
+                // `_sum`, `_count`) under one shared metric name.
+                || (field_name == "apply_batch_duration_buckets"
+                    && text.contains("yggdrasil_apply_batch_duration_seconds_bucket"))
+                || (field_name == "apply_batch_duration_sum_micros"
+                    && text.contains("yggdrasil_apply_batch_duration_seconds_sum "))
+                || (field_name == "apply_batch_duration_count"
+                    && text.contains("yggdrasil_apply_batch_duration_seconds_count "));
             if !accepts {
                 missing.push(field_name);
             }
