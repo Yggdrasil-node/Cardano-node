@@ -46,9 +46,17 @@ pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "42d088ed84b799d6d980f9be6f14ad
 /// R201 audit baseline (2026-04-30) — advanced from
 /// `91c8e1bb5d7f…` to live HEAD.
 ///
+/// R216 audit baseline refresh (2026-04-30) — advanced from
+/// `c368c2529f2f…` to live HEAD per
+/// `node/scripts/check_upstream_drift.sh`.  No upstream-only changes
+/// affect the ported subset (Praos hot-path, ChainDB volatile/immutable
+/// split, mempool revalidation) per R215 multi-network operational
+/// verification (preview Conway, preprod Allegra, mainnet Byron→Shelley
+/// all pass cardano-cli end-to-end queries with the existing port).
+///
 /// Reference: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/>
 #[rustfmt::skip]
-pub const UPSTREAM_OUROBOROS_CONSENSUS_COMMIT: &str = "c368c2529f2f41196461883013f749b7ac7aa58e";
+pub const UPSTREAM_OUROBOROS_CONSENSUS_COMMIT: &str = "b047aca4a731d3282b1dab012d3669e9395328cc";
 
 /// `ouroboros-network` — multiplexer, handshake, mini-protocols, peer
 /// governor ported into `crates/network/`.
@@ -62,8 +70,15 @@ pub const UPSTREAM_OUROBOROS_NETWORK_COMMIT: &str = "0e84bced45c7fc64252d576fbce
 /// R201 audit baseline (2026-04-30) — advanced from
 /// `187c3971a34e…` to live HEAD.
 ///
+/// R216 audit baseline refresh (2026-04-30) — advanced from
+/// `e3eb4c76ea20…` to live HEAD per
+/// `node/scripts/check_upstream_drift.sh`.  No upstream-only CEK or
+/// cost-model changes affect the ported subset; the Plutus crate's
+/// integration tests + 4 745-test workspace gate continues to pass
+/// against the existing port.
+///
 /// Reference: <https://github.com/IntersectMBO/plutus/tree/master/>
-pub const UPSTREAM_PLUTUS_COMMIT: &str = "e3eb4c76ea20cf4f90231a25bdfaab998346b406";
+pub const UPSTREAM_PLUTUS_COMMIT: &str = "4cd40a14e36431019414fad519c1a6d426a55509";
 
 /// `cardano-node` — node runtime, CLI, configuration patterns ported into
 /// `node/`.
