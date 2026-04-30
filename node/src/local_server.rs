@@ -1537,9 +1537,7 @@ fn dispatch_upstream_query(
                                 // for the upstream-aligned 15-element
                                 // list shape.
                                 match genesis_config_cbor {
-                                    Some(bytes) => {
-                                        encode_query_if_current_match(bytes.as_slice())
-                                    }
+                                    Some(bytes) => encode_query_if_current_match(bytes.as_slice()),
                                     None => null_response(),
                                 }
                             }
@@ -3604,6 +3602,114 @@ mod tests {
     fn test_encode_rejection_reason_is_non_empty() {
         let bytes = encode_rejection_reason("tx too large");
         assert!(!bytes.is_empty());
+    }
+
+    /// R214 — pin upstream's 15-element shape for
+    /// `Cardano.Ledger.Shelley.Genesis.encCBOR`.  Drift here means
+    /// `cardano-cli`-side decoders that consume `GetGenesisConfig`
+    /// (era-specific tag 11) silently mis-parse or reject the
+    /// response.  See `crates/network/src/protocols/local_state_query_upstream.rs`
+    /// for the Shelley PP `encode_shelley_pparams_for_lsq` 17-element
+    /// shape that field 12 reuses.
+    #[test]
+    fn shelley_genesis_encoder_emits_15_element_list() {
+        use crate::genesis::{
+            GenesisProtocolVersion, GenesisRational, ShelleyGenesis, ShelleyGenesisDelegation,
+            ShelleyGenesisProtocolParams,
+        };
+        use std::collections::BTreeMap;
+        use yggdrasil_ledger::{Decoder, ProtocolParameters};
+
+        // Mainnet-like genesis (subset; any non-default value would do).
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert(
+            // 28-byte hex string → 28 bytes after decode
+            "ad5463153dc3d24b9ff133e46136028bdc1edbb897f5a7cf1b37950c".to_string(),
+            ShelleyGenesisDelegation {
+                delegate: "d9e5c76ad5ee778960804094a389f0b546b5c2b140a62f8ec43ea54d".to_string(),
+                vrf: "64fa87e8b29a5b7bfbd6795677e3e878c505bc4a3649485d366b50abadec92d7".to_string(),
+            },
+        );
+
+        let mut initial_funds = BTreeMap::new();
+        initial_funds.insert(
+            "82d818582183581ce6e08c8c6e1aa9a40b7e15bdb5dac739b1c10f5d6a9203a8b3a3aaa0a0021af3afdfba"
+                .to_string(),
+            462_146_000_000u64,
+        );
+
+        let genesis = ShelleyGenesis {
+            active_slots_coeff: 0.05,
+            epoch_length: 432_000,
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            security_param: 2160,
+            slot_length: 1.0,
+            network_id: Some("Mainnet".to_string()),
+            network_magic: Some(764_824_073),
+            gen_delegs,
+            initial_funds,
+            staking: Default::default(),
+            protocol_params: ShelleyGenesisProtocolParams {
+                min_fee_a: 44,
+                min_fee_b: 155_381,
+                max_block_body_size: 65_536,
+                max_tx_size: 16_384,
+                max_block_header_size: 1_100,
+                key_deposit: 2_000_000,
+                pool_deposit: 500_000_000,
+                e_max: 18,
+                n_opt: 150,
+                a0: GenesisRational {
+                    numerator: 3,
+                    denominator: 10,
+                },
+                rho: GenesisRational {
+                    numerator: 3,
+                    denominator: 1_000,
+                },
+                tau: GenesisRational {
+                    numerator: 1,
+                    denominator: 5,
+                },
+                decentralisation_param: Some(1.0),
+                extra_entropy: None,
+                protocol_version: GenesisProtocolVersion { major: 2, minor: 0 },
+                min_utxo_value: 1_000_000,
+                min_pool_cost: 340_000_000,
+            },
+            update_quorum: 5,
+            system_start: Some("2017-09-23T21:44:51Z".to_string()),
+            max_lovelace_supply: 45_000_000_000_000_000,
+        };
+
+        let pp = ProtocolParameters::default();
+        let bytes = encode_shelley_genesis_for_lsq(&genesis, &pp, 1_506_203_091.0);
+
+        // Top-level must be a 15-element CBOR list.
+        let mut dec = Decoder::new(&bytes);
+        let len = dec.array().expect("expected outer array");
+        assert_eq!(len, 15, "ShelleyGenesis must encode as a 15-element list");
+
+        // Field 1 (systemStart) is itself a 3-element list `[mjd, picos, 0]`.
+        let mjd_arr_len = dec.array().expect("systemStart array");
+        assert_eq!(
+            mjd_arr_len, 3,
+            "systemStart must be 3-element [mjd, picos, attos]"
+        );
+        let mjd = dec.unsigned().expect("systemStart MJD");
+        let picos = dec.unsigned().expect("systemStart picos-of-day");
+        let attos = dec.unsigned().expect("systemStart attoseconds (always 0)");
+        // 2017-09-23 ↔ MJD 58019; pin within ±2 days against floating-point drift.
+        assert!(
+            (58_017..=58_021).contains(&mjd),
+            "MJD for 2017-09-23 must be ~58019, got {mjd}"
+        );
+        assert!(
+            picos < 86_400u64 * 1_000_000_000_000,
+            "picos < 1 day in picos"
+        );
+        assert_eq!(attos, 0, "attoseconds must be 0 per upstream convention");
     }
 
     /// Round 161 — pin `effective_era_index_for_lsq`'s PV major →

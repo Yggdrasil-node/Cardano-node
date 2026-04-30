@@ -35,7 +35,7 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved (post-R213 status):
+The Rust Cardano node (Yggdrasil) has achieved (post-R214 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
 - ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
@@ -60,6 +60,7 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R213 status):
 7. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
 
 **Recently completed parity items**:
+- ✅ **Phase A.6 — GetGenesisConfig ShelleyGenesis serialiser (Round 214, final Phase A item, Phase A now 7/7)** — new `encode_shelley_genesis_for_lsq` helper emits upstream's 15-element `Cardano.Ledger.Shelley.Genesis.encCBOR` shape (systemStart UTCTime 3-tuple, networkMagic/networkId, activeSlotsCoeff PositiveUnitInterval, Word64 scalars, 17-element Shelley PP, genDelegs/initialFunds maps, staking record).  Bytes are pre-encoded once at startup and threaded through `BasicLocalQueryDispatcher` via a new `with_genesis_config_cbor` builder.  Mainnet verification: dispatcher reports `genesisConfigCborBytes=833` of real genesis CBOR available; `query tip` continues to work.  Test count 4744 → 4745.
 - ✅ **Mux egress: allow single payloads larger than EGRESS_SOFT_LIMIT (Round 213, R212 known-limitation closure)** — closes R212's BearerClosed gap.  Diagnosis via `YGG_NTC_DEBUG=1` showed the LSQ response was 1.3 MB; the per-protocol egress check `current + len > egress_limit` rejected the send even with `current=0`.  Fix: relax to `current > egress_limit` (back-pressure semantic, matches upstream `network-mux`).  Verification: `cardano-cli query utxo --whole-utxo --mainnet` now returns the complete mainnet AVVM bootstrap UTxO — 14 505 entries totaling **31.1 billion ADA**, matching the genesis distribution exactly.  Latent ~200-round bug; testnet bootstrap UTxOs were too small to trip the limit.
 - ✅ **Mainnet operational verification with cardano-cli + sidecars (Round 212, multi-network parity matrix completion)** — third-network end-to-end verification.  Started fresh mainnet sync; cardano-cli `query tip / era-history / slot-number / protocol-parameters / tx-mempool info` all decode correctly.  All 3 consensus-side sidecars persist on mainnet (12B + 1B + 14B).  Combined with R205 (preview) + R207 (preprod), yggdrasil now demonstrates working operational LSQ surface + sidecars on **all three official Cardano networks**.  The R211 mainnet sync fix is validated end-to-end through the cardano-cli wire stack, not just direct sync metrics.  **Known limitation**: `query utxo --whole-utxo --mainnet` BearerClosed during concurrent socket teardown — separate follow-up.  No code changes.
 - ✅ **Mainnet sync unblocked — Byron EBB hash + same-slot tolerance (Round 211, Phase E.2 critical-path closure)** — closes the Phase E.2 critical path.  Two-bug cascade fixed: (1) Byron EBB hash prefix `[0x82, 0x00]` (was using main-block prefix `[0x82, 0x01]`) — root cause of the BlockFetch peer-closes-mux R210 surfaced; (2) consensus `ChainState::roll_forward` slot monotonicity relaxed from `<=` to `<` to allow Byron EBB→main_block at shared slot 0 (mirrors existing ledger-side Byron exemption).  R210's `YGG_SYNC_DEBUG=1` instrumentation also mirrored to shared-chaindb apply call site (the production NtN+NtC path).  **Verification — mainnet syncs end-to-end**: 60s window advances tip past Origin to slot 197, `volatile/` 1.5 MB, `ledger/` 1.4 MB, checkpoint at slot 47 persists.  R210→R211 deltas: apply 0→6, volatile 0B→1.5MB, ledger 0B→1.4MB, cleared-origin 12→0.  Test count stable at 4 744.
@@ -1259,13 +1260,15 @@ TX expires (TTL):
 **Document prepared by**: Research & Planning Agent
 **Target Review Date**: Week of March 31, 2026 (original projection)
 **Expected Final Delivery (original)**: Mid-June 2026 (13-week roadmap)
-**Actual delivery status (R213, 2026-04-30)**: **all 3 official
+**Actual delivery status (R214, 2026-04-30)**: **all 3 official
 Cardano networks** (preview, preprod, mainnet) demonstrate working
-operational LSQ surface + consensus-side sidecars, **including
-heavyweight queries** like mainnet `query utxo --whole-utxo` (14 505
-AVVM entries / 31.1B ADA).  R211 closed the sync gap, R212 verified
+operational LSQ surface + consensus-side sidecars, including
+heavyweight queries like mainnet `query utxo --whole-utxo` (14 505
+AVVM entries / 31.1B ADA), and **`GetGenesisConfig` returns real
+upstream-shape ShelleyGenesis bytes** (R214 closes Phase A — final
+item, 7/7 complete).  R211 closed the sync gap, R212 verified
 baseline cardano-cli queries on mainnet, R213 closed the BearerClosed
-limitation on large LSQ responses by fixing the mux egress
-back-pressure semantic.  Long-running 24h+ rehearsal pending
-separately.  See [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) §8e for
-canonical R212/R213 mainnet operational evidence.
+limitation on large LSQ responses, R214 closes the final Phase A
+encoder item.  Long-running 24h+ rehearsal pending separately.  See
+[`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for canonical operational
+evidence.

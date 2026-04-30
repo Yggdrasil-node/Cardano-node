@@ -1457,6 +1457,66 @@ fn main() -> Result<()> {
                 None
             };
 
+            // R214 — pre-encode `ShelleyGenesis` once at startup so
+            // the `GetGenesisConfig` (era-specific tag 11) LSQ
+            // response can return real genesis bytes instead of the
+            // legacy `null_response()` placeholder.  See
+            // [`yggdrasil_node::encode_shelley_genesis_for_lsq`] for
+            // the upstream-aligned 15-element list shape per
+            // `Cardano.Ledger.Shelley.Genesis.encCBOR`.
+            let genesis_config_cbor: Option<std::sync::Arc<Vec<u8>>> =
+                shelley_genesis.as_ref().map(|g| {
+                    let chain_start_unix_secs = g
+                        .system_start
+                        .as_deref()
+                        .and_then(genesis::chrono_parse_system_start)
+                        .unwrap_or(0.0);
+                    let pp = yggdrasil_ledger::ProtocolParameters {
+                        min_fee_a: g.protocol_params.min_fee_a,
+                        min_fee_b: g.protocol_params.min_fee_b,
+                        max_block_body_size: g.protocol_params.max_block_body_size,
+                        max_tx_size: g.protocol_params.max_tx_size,
+                        max_block_header_size: g.protocol_params.max_block_header_size,
+                        key_deposit: g.protocol_params.key_deposit,
+                        pool_deposit: g.protocol_params.pool_deposit,
+                        e_max: g.protocol_params.e_max,
+                        n_opt: g.protocol_params.n_opt,
+                        a0: yggdrasil_ledger::types::UnitInterval {
+                            numerator: g.protocol_params.a0.numerator,
+                            denominator: g.protocol_params.a0.denominator,
+                        },
+                        rho: yggdrasil_ledger::types::UnitInterval {
+                            numerator: g.protocol_params.rho.numerator,
+                            denominator: g.protocol_params.rho.denominator,
+                        },
+                        tau: yggdrasil_ledger::types::UnitInterval {
+                            numerator: g.protocol_params.tau.numerator,
+                            denominator: g.protocol_params.tau.denominator,
+                        },
+                        d: g.protocol_params.decentralisation_param.map(|f| {
+                            let denom = 1_000_000u64;
+                            yggdrasil_ledger::types::UnitInterval {
+                                numerator: (f * denom as f64).round() as u64,
+                                denominator: denom,
+                            }
+                        }),
+                        extra_entropy: None,
+                        protocol_version: Some((
+                            g.protocol_params.protocol_version.major,
+                            g.protocol_params.protocol_version.minor,
+                        )),
+                        min_utxo_value: Some(g.protocol_params.min_utxo_value),
+                        min_pool_cost: g.protocol_params.min_pool_cost,
+                        ..Default::default()
+                    };
+                    let bytes = yggdrasil_node::encode_shelley_genesis_for_lsq(
+                        g,
+                        &pp,
+                        chain_start_unix_secs,
+                    );
+                    std::sync::Arc::new(bytes)
+                });
+
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(run_node(RunNodeRequest {
                 node_config,
@@ -1475,6 +1535,7 @@ fn main() -> Result<()> {
                 socket_path: file_cfg.socket_path.map(PathBuf::from),
                 block_producer_credentials,
                 max_major_protocol_version: file_cfg.max_major_protocol_version,
+                genesis_config_cbor,
             }))
         }
         #[cfg(unix)]
@@ -2534,6 +2595,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         socket_path,
         block_producer_credentials,
         max_major_protocol_version,
+        genesis_config_cbor,
     } = request;
 
     // Log block producer mode availability.
@@ -2890,18 +2952,34 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         let ntc_metrics = Some(Arc::clone(&metrics));
         let ntc_network_magic = node_config.network_magic;
 
+        // R214 — pre-encoded `ShelleyGenesis` CBOR bytes pulled from
+        // the run request (computed at the CLI call site where
+        // `file_cfg` + `config_base_dir` are in scope).
+        let ntc_genesis_cbor = genesis_config_cbor.clone();
+
         tracer.trace_runtime(
             "Net.NtC",
             "Notice",
             "starting NtC local server",
-            trace_fields([("socketPath", json!(ntc_path.display().to_string()))]),
+            trace_fields([
+                ("socketPath", json!(ntc_path.display().to_string())),
+                (
+                    "genesisConfigCborBytes",
+                    json!(ntc_genesis_cbor.as_ref().map(|b| b.len()).unwrap_or(0)),
+                ),
+            ]),
         );
 
         Some(tokio::spawn(async move {
-            let dispatcher: Arc<dyn yggdrasil_node::LocalQueryDispatcher> =
-                Arc::new(yggdrasil_node::BasicLocalQueryDispatcher::new(
+            let dispatcher: Arc<dyn yggdrasil_node::LocalQueryDispatcher> = {
+                let mut d = yggdrasil_node::BasicLocalQueryDispatcher::new(
                     yggdrasil_node::NetworkPreset::from_network_magic(ntc_network_magic),
-                ));
+                );
+                if let Some(bytes) = ntc_genesis_cbor.as_ref() {
+                    d = d.with_genesis_config_cbor(std::sync::Arc::clone(bytes));
+                }
+                Arc::new(d)
+            };
             let shutdown = async move {
                 if *ntc_shutdown.borrow() {
                     return;
@@ -3107,6 +3185,12 @@ struct RunNodeRequest {
     block_producer_credentials: Option<yggdrasil_node::block_producer::BlockProducerCredentials>,
     /// Maximum protocol-version major this node supports for forged headers.
     max_major_protocol_version: u64,
+    /// R214 — pre-encoded `ShelleyGenesis` CBOR bytes for the
+    /// `GetGenesisConfig` (era-specific tag 11) LSQ response.  See
+    /// [`yggdrasil_node::encode_shelley_genesis_for_lsq`].  When
+    /// `None` the dispatcher falls back to `null_response()` (legacy
+    /// pre-R214 behaviour).
+    genesis_config_cbor: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 // ---------------------------------------------------------------------------
