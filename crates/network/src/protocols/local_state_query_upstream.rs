@@ -362,6 +362,33 @@ pub enum EraSpecificQuery {
     /// by `cardano-cli query treasury` / `query reserves` (and
     /// any operator-authored query reading the accounting pots).
     GetAccountState,
+    /// `[33]` — `GetFuturePParams` (Round 183, Conway-only).
+    /// Returns the next-epoch `FuturePParams era` ADT (`[0]` =
+    /// `NoPParamsUpdate`, `[1, pp]` = `DefinitePParamsUpdate`,
+    /// `[2, pp]` = `PotentialPParamsUpdate`).  Used by
+    /// `cardano-cli conway query future-pparams`.  Until
+    /// yggdrasil tracks pending PPUP enactment as a queued
+    /// `PParams` ready for next-epoch adoption, this responds
+    /// `NoPParamsUpdate` (no pending update — correct on chains
+    /// with no successful PPUP proposals waiting to enact).
+    GetFuturePParams,
+    /// `[27, cold_creds_set, hot_creds_set, statuses_set]` —
+    /// `GetCommitteeMembersState` (Round 182, Conway-only).
+    /// Returns the active `CommitteeMembersState`
+    /// (3-element record `[committee_map, threshold,
+    /// epoch_no]`) optionally filtered by the supplied cold-key,
+    /// hot-key, and status sets.  Used by `cardano-cli conway
+    /// query committee-state`.  Filter parameters carried but
+    /// not applied — yggdrasil's encoder emits the full
+    /// committee state and cardano-cli filters client-side.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetCommitteeMembersState`.
+    GetCommitteeMembersState {
+        cold_creds_cbor: Vec<u8>,
+        hot_creds_cbor: Vec<u8>,
+        statuses_cbor: Vec<u8>,
+    },
     /// Any era-specific query whose tag this codec doesn't yet
     /// recognise.  Carries the raw inner CBOR so the dispatcher can
     /// fall through to `null_response()` without losing the bytes.
@@ -392,6 +419,12 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
     let q_start = dec.position();
     let q_len = dec.array()?;
     let q_tag = dec.unsigned()?;
+    if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
+        eprintln!(
+            "[YGG_NTC_DEBUG] decode_query_if_current: era_index={} q_len={} q_tag={}",
+            era_index, q_len, q_tag,
+        );
+    }
     let q_end_after_tag = dec.position();
     // Skip remaining elements (if any) so the slice is the full
     // era-specific query CBOR.
@@ -463,6 +496,32 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
             credential_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
         (1, 29) => EraSpecificQuery::GetAccountState,
+        (1, 33) => EraSpecificQuery::GetFuturePParams,
+        (4, 27) => {
+            // [27, cold_creds, hot_creds, statuses]: re-decode the
+            // three CBOR items individually so we can carry each
+            // raw payload.  The outer skip-loop above advanced the
+            // cursor past all three, so reset and re-decode them.
+            let mut sub = Decoder::new(inner_cbor);
+            let _outer_len = sub.array()?;
+            let _era = sub.unsigned()?;
+            let _q_len = sub.array()?;
+            let _q_tag = sub.unsigned()?;
+            let s1_start = sub.position();
+            sub.skip()?;
+            let s1_end = sub.position();
+            let s2_start = s1_end;
+            sub.skip()?;
+            let s2_end = sub.position();
+            let s3_start = s2_end;
+            sub.skip()?;
+            let s3_end = sub.position();
+            EraSpecificQuery::GetCommitteeMembersState {
+                cold_creds_cbor: inner_cbor[s1_start..s1_end].to_vec(),
+                hot_creds_cbor: inner_cbor[s2_start..s2_end].to_vec(),
+                statuses_cbor: inner_cbor[s3_start..s3_end].to_vec(),
+            }
+        }
         _ => EraSpecificQuery::Unknown {
             tag: q_tag,
             raw_inner,
@@ -1743,6 +1802,28 @@ mod tests {
         let (era_idx, q) = decode_query_if_current(&payload).unwrap();
         assert_eq!(era_idx, 1);
         assert!(matches!(q, EraSpecificQuery::GetStakeDistribution));
+    }
+
+    /// Round 182 — pin upstream tag 27 `GetCommitteeMembersState`
+    /// (4-element query with cold creds + hot creds + statuses
+    /// filter sets).
+    #[test]
+    fn decode_recognises_committee_members_state_tag_27() {
+        // [1, [27, set_cold, set_hot, set_status]]
+        // = [1, [4-elem [27, tag(258)[empty], tag(258)[empty], tag(258)[empty]]]]
+        let payload = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x84, 0x18, 0x1b, // 4-elem list, tag 27
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array (cold)
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array (hot)
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array (statuses)
+        ];
+        let (era_idx, q) = decode_query_if_current(&payload).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(
+            q,
+            EraSpecificQuery::GetCommitteeMembersState { .. }
+        ));
     }
 
     /// Round 180 — pin upstream Conway-only governance query tags:

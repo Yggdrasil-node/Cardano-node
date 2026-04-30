@@ -7,7 +7,129 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-(No entries yet — next slice opens here.)
+Operational-parity arc on top of v0.2.0 — Rounds 144 → 182.
+Highlights: full cardano-cli 10.16 query parity at preprod (Shelley
+era) and preview (Alonzo era), Conway governance LSQ queries
+working end-to-end, multi-round sync-speed and apply-correctness
+fixes.  Workspace tests: 4 640 (v0.2.0) → **4 738 passing,
+0 failing**.
+
+### Added
+
+- **`cardano-cli query` end-to-end parity at preprod (Shelley)
+  and preview (Alonzo)**.  All 11 working cardano-cli
+  operations — `tip`, `protocol-parameters` (Shelley/Alonzo/
+  Babbage/Conway shapes), `era-history`, `slot-number`,
+  `utxo --whole-utxo`, `utxo --address X`, `utxo --tx-in T#i`,
+  `tx-mempool info` / `next-tx` / `tx-exists`, `submit-tx` —
+  decode end-to-end against yggdrasil's NtC socket.
+  Verified Rounds 144–164.
+- **`YGG_LSQ_ERA_FLOOR=N` env var (Round 178).**  Operator
+  opt-in floor on the LSQ-reported era so cardano-cli's
+  client-side Babbage+ gate can be bypassed on partial-sync
+  chains.  With `YGG_LSQ_ERA_FLOOR=6` the era-gated queries
+  (`stake-pools`, `stake-distribution`, `pool-state`,
+  `stake-snapshot`, `stake-address-info`) become reachable
+  without waiting for the natural Babbage hard-fork.
+- **Conway governance LSQ queries (Rounds 180–182).**
+  `cardano-cli conway query constitution`,
+  `query drep-state --all-dreps`,
+  `query treasury` (via `GetAccountState`), and
+  `query committee-state` decode end-to-end against
+  yggdrasil.  Constitution returns real Conway data from the
+  chain; the rest return correct empty/placeholder shapes
+  for fresh-sync chains with no DReps / committee yet.
+  `query gov-state` dispatcher routes; full `ConwayGovState`
+  body shape is a remaining follow-up (substantial —
+  7-element record with `Proposals` tree + `DRepPulsingState`
+  cache).
+- **`yggdrasil_current_era` Prometheus gauge (Round 169)**
+  reports the wire era ordinal (`0=Byron, 1=Shelley, …,
+  6=Conway`) of the latest applied block.
+- **Per-era applied-block counters (Round 170)** —
+  `yggdrasil_blocks_byron`, `…_shelley`, `…_allegra`, `…_mary`,
+  `…_alonzo`, `…_babbage`, `…_conway` Prometheus counters
+  let dashboards graph the share of blocks applied per era
+  during a long sync.
+
+### Changed
+
+- **Default `--batch-size` 10 → 30 → 50** (Rounds 165, 166).
+  Out-of-the-box preprod sync improves from ~5 blocks/sec at
+  the original default to ~14 blocks/sec at the new default
+  by amortising per-batch overhead and unblocking the
+  initial-sync rollback fast path.  Past 50 the throughput
+  plateaus on peer-side fetch latency.
+- **Initial-sync rollback fast path** (Round 166) skips the
+  heavy `recover_ledger_state_chaindb` replay when the
+  rollback target is `Origin` and the base ledger state is
+  empty, letting the boundary-aware forward-apply path fire
+  epoch transitions correctly.
+- **LSQ era-specific tag table re-corrected (Round 179)** —
+  R163's tag numbers for `GetStakePools` (was 13, upstream
+  is 16), `GetStakePoolParams` (was 14, upstream is 17),
+  `GetPoolState` (was 17, upstream is 19), `GetStakeSnapshots`
+  (was 18, upstream is 20) are now aligned with cardano-node
+  10.7.x's `Ouroboros.Consensus.Shelley.Ledger.Query
+  .encodeShelleyQuery`.  Bug masked R163-R178 because
+  cardano-cli's client-side era gate refused to send these
+  queries.
+
+### Fixed
+
+- **Mid-sync rollback epoch fixup (Round 167)** — when
+  `recover_ledger_state` replays the volatile suffix via
+  `apply_block` (no boundary detection), `current_epoch` is
+  now patched post-recovery to match the recovered tip's
+  slot.  Prevents PPUP validation errors on cross-epoch
+  rollback.
+- **`yggdrasil_active_peers` metric reported 0 during active
+  sync** (Round 168).  Bootstrap sync peer is now marked
+  `PeerHot` in the registry at session establishment and
+  demoted at teardown so `/metrics` reflects the actual
+  active session.  Round 175 added cooling at the missed
+  `KeepAlive`-failure and session-switching mux-abort sites.
+- **Era blockage end-to-end fix (Round 179)**.  Three
+  independent bugs unblocked: (1) wrong tag numbers
+  (R163-R178); (2) `cardano-cli query stake-distribution`
+  uses tag 37 `GetStakeDistribution2` (post-Conway no-VRF
+  variant) returning `[map, NonZero Coin]` not bare map;
+  (3) `query pool-state` and `query stake-snapshot` use tag
+  9 `GetCBOR` wrapper.  All five era-gated queries now
+  decode end-to-end against cardano-cli 10.16 with
+  `YGG_LSQ_ERA_FLOOR=6`.
+- **Decoder strictness (Rounds 174, 176)** — five CBOR
+  set-decoder helpers (`decode_pool_hash_set`,
+  `decode_stake_credential_set`, `decode_address_set`,
+  `decode_txin_set`, `decode_maybe_pool_hash_set`) now
+  enforce CIP-21 tag 258 strictly and `Maybe Nothing`
+  shortcut requires bare `null` (`0xf6`) rather than any
+  CBOR major-7 byte.  Pre-fix malformed payloads were
+  silently mis-parsed.
+- **`encode_filtered_delegations_and_rewards` correctness
+  (Round 177)** — three independent bugs: non-deterministic
+  HashSet iteration order, O(N·M) inner search per
+  credential, and reward-account lookup mis-matched on hash
+  bytes alone (stripping AddrKey-vs-Script discriminator).
+  Fixed via sort-then-iterate, `BTreeMap::get`, and
+  `find_account_by_credential` (full credential match).
+- **`DrepState` LSQ map shape (Round 181)** —
+  `GetDRepState` now emits a CBOR map (`encCBOR @(Map a b)`)
+  instead of the storage-format array-of-pairs.  cardano-cli
+  no longer rejects with `expected map len or indef`.
+
+### Operational notes
+
+- The R178 `YGG_LSQ_ERA_FLOOR` env var is opt-in and
+  documented; default behaviour is unchanged.
+- The R179 tag-table correction is the major user-visible
+  unblocker.  Operators on partial-sync chains (preprod /
+  preview before reaching natural Babbage) can now exercise
+  the full Conway governance query surface.
+- Sync default `--batch-size 50` is safe (boundary-aware
+  apply path); legacy operators wanting the old behaviour
+  can pass `--batch-size 10` explicitly.
+
 
 ## [0.2.0] - 2026-04-27
 

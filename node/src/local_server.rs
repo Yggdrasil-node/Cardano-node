@@ -1475,6 +1475,38 @@ fn dispatch_upstream_query(
                                 e.unsigned(accounting.reserves);
                                 encode_query_if_current_match(&e.into_bytes())
                             }
+                            EraSpecificQuery::GetFuturePParams => {
+                                // Round 183 — Conway `FuturePParams era`
+                                // ADT.  Encoder emits `[0]` for the
+                                // `NoPParamsUpdate` case (default for
+                                // chains with no PPUP pending enactment).
+                                // When yggdrasil starts tracking queued
+                                // PParams updates ready for next-epoch
+                                // adoption, the dispatcher will switch to
+                                // `[1, pp]` (DefinitePParamsUpdate).
+                                let mut e = Encoder::new();
+                                e.array(1);
+                                e.unsigned(0); // NoPParamsUpdate
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetCommitteeMembersState {
+                                cold_creds_cbor,
+                                hot_creds_cbor,
+                                statuses_cbor,
+                            } => {
+                                // Round 182 — Conway committee members
+                                // state.  Upstream `CommitteeMembersState`
+                                // is a 3-element record
+                                // `[committee_map, threshold, epoch_no]`.
+                                // Filter parameters are accepted for
+                                // protocol compatibility but not applied;
+                                // cardano-cli filters client-side.
+                                let _ = cold_creds_cbor;
+                                let _ = hot_creds_cbor;
+                                let _ = statuses_cbor;
+                                let body = encode_committee_members_state_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
+                            }
                             EraSpecificQuery::GetCBOR { inner_query_cbor } => {
                                 // Round 179 — upstream `GetCBOR (inner)`.
                                 // Recursively decode the inner era-specific
@@ -2266,6 +2298,45 @@ fn encode_drep_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
         drep.encode_cbor(&mut enc);
         state.encode_cbor(&mut enc);
     }
+    enc.into_bytes()
+}
+
+/// Round 182 — encode `GetCommitteeMembersState` result as a
+/// 3-element CBOR list per upstream
+/// `Cardano.Ledger.Conway.Governance.CommitteeMembersState`:
+///
+/// ```text
+/// [
+///   csCommittee :: Map Credential CommitteeMemberState,
+///   csThreshold :: StrictMaybe UnitInterval,
+///   csEpochNo   :: EpochNo,
+/// ]
+/// ```
+///
+/// `StrictMaybe Nothing` encodes as `0x80` (zero-element list);
+/// `SJust x` as `0x81 <encoded x>`.  yggdrasil's snapshot
+/// doesn't carry the Conway committee threshold or epoch
+/// directly in `CommitteeState`, so we emit `SNothing` for the
+/// threshold and the snapshot's current epoch.
+fn encode_committee_members_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let mut enc = Encoder::new();
+    enc.array(3);
+
+    // 1: csCommittee (Map Credential CommitteeMemberState).
+    let members: Vec<_> = snapshot.committee_state().iter().collect();
+    enc.map(members.len() as u64);
+    for (cred, state) in members {
+        cred.encode_cbor(&mut enc);
+        state.encode_cbor(&mut enc);
+    }
+
+    // 2: csThreshold (StrictMaybe UnitInterval) — SNothing.
+    enc.array(0);
+
+    // 3: csEpochNo (current epoch).
+    enc.unsigned(snapshot.current_epoch().0);
+
     enc.into_bytes()
 }
 

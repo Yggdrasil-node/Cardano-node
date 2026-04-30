@@ -411,6 +411,79 @@ $YGG_BIN submit-tx \
 
 (Or `--tx-hex 0x...` if you have the hex-encoded body.)
 
+### 8d. Upstream `cardano-cli` parity sweep (R164 / R179 / R180–R182)
+
+Yggdrasil's NtC socket speaks the canonical
+`Ouroboros.Network.NodeToClient` wire protocol so the upstream
+`cardano-cli` binary can drive it directly.  Required: a recent
+`cardano-cli` (≥ 10.16) on `$PATH` and yggdrasil's socket from
+§3 (`/tmp/ygg-preprod.sock`).  Set
+`CARDANO_NODE_SOCKET_PATH=/tmp/ygg-preprod.sock` once and run:
+
+```sh
+# Always-available Shelley-and-later queries (R157–R164):
+cardano-cli query tip --testnet-magic 1
+cardano-cli query protocol-parameters --testnet-magic 1
+cardano-cli query era-history --testnet-magic 1
+cardano-cli query slot-number --testnet-magic 1 2030-01-01T00:00:00Z
+cardano-cli query utxo --whole-utxo --testnet-magic 1
+cardano-cli query utxo --address addr_test1... --testnet-magic 1
+cardano-cli query utxo --tx-in <txid>#<ix> --testnet-magic 1
+cardano-cli query tx-mempool info --testnet-magic 1
+cardano-cli query tx-mempool next-tx --testnet-magic 1
+cardano-cli query tx-mempool tx-exists <hex64> --testnet-magic 1
+```
+
+All ten must return well-formed JSON.
+
+### 8e. Era-gated queries via `YGG_LSQ_ERA_FLOOR` (R178 / R179 / R180–R182)
+
+cardano-cli 10.16 client-side gates several queries at Babbage+
+era; on a fresh-sync chain stuck at PV=(6,0) Alonzo, set the
+opt-in env var to bypass the gate **on the yggdrasil node**
+before starting it (not on cardano-cli):
+
+```sh
+YGG_LSQ_ERA_FLOOR=6 \
+  $YGG_BIN run --network preprod \
+    --database-path /tmp/ygg-preprod-db \
+    --socket-path /tmp/ygg-preprod.sock \
+    --metrics-port 12345
+```
+
+Then exercise the previously-gated queries via the
+`cardano-cli conway query` subcommand path:
+
+```sh
+cardano-cli conway query stake-pools --testnet-magic 1
+cardano-cli conway query stake-distribution --testnet-magic 1
+cardano-cli conway query pool-state --all-stake-pools --testnet-magic 1
+cardano-cli conway query stake-snapshot --all-stake-pools --testnet-magic 1
+cardano-cli conway query constitution --testnet-magic 1
+cardano-cli conway query drep-state --all-dreps --testnet-magic 1
+cardano-cli conway query treasury --testnet-magic 1
+cardano-cli conway query committee-state --testnet-magic 1
+```
+
+Expected outputs on a fresh-sync chain (no pools / DReps yet
+registered): `[]`, `{}`, `{}`, `{ "pools": {}, "total": ... }`,
+real Conway constitution data, `[]`, `0`, and
+`{ "committee": {}, "epoch": 0, "threshold": null }`
+respectively.
+
+> **Note**: the env var floors what the LSQ dispatcher reports
+> as the active era — it does **not** affect block production
+> or ledger validation.  Set it only when you intentionally need
+> to exercise the era-gated query surface against a partial sync.
+> Default behaviour (env var unset) is unchanged.
+
+`cardano-cli conway query gov-state` is currently the one
+remaining gap on the conway-query surface — yggdrasil's
+dispatcher routes correctly (tag 24) but the body shape
+(7-element `ConwayGovState` record with `Proposals` tree +
+`DRepPulsingState` cache) is not yet aligned with cardano-cli
+10.16's decoder.  Tracked as a follow-up.
+
 ---
 
 ## 9. Pass / fail summary template
