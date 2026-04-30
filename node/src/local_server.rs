@@ -1448,22 +1448,20 @@ fn dispatch_upstream_query(
                             EraSpecificQuery::GetDRepState {
                                 credential_set_cbor,
                             } => {
-                                // Round 180 — Conway DRep state filtered
-                                // by the supplied credential set.  When
-                                // the set is empty, upstream returns the
-                                // full DRep state (which yggdrasil
-                                // already encodes via
-                                // `snapshot.drep_state().encode_cbor()`).
-                                // The credential filter parameter is
-                                // accepted for compatibility but not
-                                // applied — yggdrasil's `DrepState`
-                                // encoder emits all registered DReps;
+                                // Round 181 — Conway DRep state filtered
+                                // by the supplied credential set.
+                                // Upstream `GetDRepState` returns a CBOR
+                                // map `Map Credential DRepState`; emit
+                                // that shape (R180's
+                                // `DrepState::encode_cbor` emits an
+                                // array-of-pairs, which cardano-cli
+                                // rejected with `expected map len or
+                                // indef`).  `credential_set_cbor` is
+                                // currently accepted but not applied —
                                 // cardano-cli filters client-side.
-                                use yggdrasil_ledger::CborEncode;
                                 let _ = credential_set_cbor;
-                                let mut e = Encoder::new();
-                                snapshot.drep_state().encode_cbor(&mut e);
-                                encode_query_if_current_match(&e.into_bytes())
+                                let body = encode_drep_state_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetAccountState => {
                                 // Round 180 — `AccountState` per upstream
@@ -2242,6 +2240,32 @@ fn encode_pool_state(
         enc.unsigned(deposit);
     }
 
+    enc.into_bytes()
+}
+
+/// Round 181 — encode `GetDRepState` result as a CBOR map of
+/// `DRep → DRepState` per upstream
+/// `Cardano.Ledger.Conway.LedgerStateQuery.GetDRepState`.
+///
+/// yggdrasil's `DrepState::encode_cbor` (used for ledger-state
+/// CBOR persistence) emits an array-of-pairs shape — appropriate
+/// for the storage format but NOT for the upstream query
+/// response, which is a CBOR map (`encCBOR @(Map a b)`).
+/// cardano-cli rejects the array form with `expected map len or
+/// indef` at depth 3.
+///
+/// Each map entry is sorted ascending by `DRep` for deterministic
+/// CBOR (matches upstream `Map.toAscList`); the underlying
+/// `BTreeMap` already iterates in this order.
+fn encode_drep_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    let mut enc = Encoder::new();
+    let dreps: Vec<_> = snapshot.drep_state().iter().collect();
+    enc.map(dreps.len() as u64);
+    for (drep, state) in dreps {
+        drep.encode_cbor(&mut enc);
+        state.encode_cbor(&mut enc);
+    }
     enc.into_bytes()
 }
 

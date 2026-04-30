@@ -1745,6 +1745,36 @@ mod tests {
         assert!(matches!(q, EraSpecificQuery::GetStakeDistribution));
     }
 
+    /// Round 180 — pin upstream Conway-only governance query tags:
+    /// 23 GetConstitution, 24 GetGovState, 25 GetDRepState (with
+    /// credential-set parameter), 29 GetAccountState.
+    #[test]
+    fn decode_recognises_conway_governance_tags() {
+        // [1, [23]] = GetConstitution
+        let constitution = vec![0x82, 0x01, 0x81, 0x17];
+        let (_, q) = decode_query_if_current(&constitution).unwrap();
+        assert!(matches!(q, EraSpecificQuery::GetConstitution));
+
+        // [1, [24]] = GetGovState
+        let gov_state = vec![0x82, 0x01, 0x81, 0x18, 0x18];
+        let (_, q) = decode_query_if_current(&gov_state).unwrap();
+        assert!(matches!(q, EraSpecificQuery::GetGovState));
+
+        // [1, [25, <credential_set>]] = GetDRepState
+        let drep_state = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x18, 0x19, // [tag=25, set]
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array
+        ];
+        let (_, q) = decode_query_if_current(&drep_state).unwrap();
+        assert!(matches!(q, EraSpecificQuery::GetDRepState { .. }));
+
+        // [1, [29]] = GetAccountState
+        let account_state = vec![0x82, 0x01, 0x81, 0x18, 0x1d];
+        let (_, q) = decode_query_if_current(&account_state).unwrap();
+        assert!(matches!(q, EraSpecificQuery::GetAccountState));
+    }
+
     /// Round 163 (corrected R179) — pin the era-specific tag table
     /// for `GetStakeDistribution` (5), `GetFilteredDelegationsAndRewardAccounts`
     /// (10), `GetGenesisConfig` (11), `GetStakePools` (tag 16 per
