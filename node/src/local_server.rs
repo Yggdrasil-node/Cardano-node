@@ -1471,6 +1471,92 @@ fn dispatch_upstream_query(
                                 e.unsigned(accounting.reserves);
                                 encode_query_if_current_match(&e.into_bytes())
                             }
+                            EraSpecificQuery::DebugNewEpochState => {
+                                // Round 190 — `DebugNewEpochState`
+                                // (tag 12) returns full
+                                // `NewEpochState era`.  cardano-cli's
+                                // `query ledger-state` is a
+                                // debug-level dump that accepts
+                                // `null` as a valid response (just
+                                // shows `f6 # null` in the CLI
+                                // output).  Constructing a complete
+                                // upstream-faithful NewEpochState
+                                // is out of scope for the
+                                // wire-protocol parity arc; emit
+                                // null to mark the query as
+                                // explicitly recognised.
+                                let mut e = Encoder::new();
+                                e.null();
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::DebugChainDepState => {
+                                // Round 190 — `DebugChainDepState`
+                                // (tag 13) returns `ChainDepState
+                                // proto`.  For Praos eras (Babbage+)
+                                // this is `PraosState` wrapped in
+                                // `Versioned` — a 2-element outer
+                                // list `[version, payload]` where
+                                // payload is the 8-element PraosState
+                                // record per upstream
+                                // `Ouroboros.Consensus.Protocol.Praos
+                                //   .PraosState`.
+                                let body = encode_praos_state_versioned(snapshot);
+                                encode_query_if_current_match(&body)
+                            }
+                            EraSpecificQuery::GetLedgerPeerSnapshot { peer_kind } => {
+                                // Round 189 — Conway
+                                // `GetLedgerPeerSnapshot'` returns
+                                // `LedgerPeerSnapshot`.  cardano-cli
+                                // 10.16's decoder for this query (per
+                                // capture) only recognises V2 form
+                                // (discriminator 1) — the V23 forms
+                                // (discriminators 2/3 from `LedgerPeers
+                                // .Type`) trigger "no decoder could be
+                                // found for version 3" even when the
+                                // client requested AllLedgerPeers.
+                                //
+                                // V2 wire shape per upstream
+                                // `encodeLedgerPeerSnapshot
+                                //   (LedgerPeerSnapshotV2 (wOrigin, pools))`:
+                                //
+                                //   [outer 2-elem]
+                                //     0: discriminator (Word8) = 1
+                                //     1: [inner 2-elem]
+                                //          0: WithOrigin SlotNo —
+                                //             Origin = [0]
+                                //          1: pools (definite list)
+                                //
+                                // For an empty fresh-sync chain we
+                                // emit Origin + empty pool list
+                                // regardless of the requested
+                                // peer_kind (the V2 shape is
+                                // compatible with both kinds).
+                                let _ = peer_kind;
+                                let mut e = Encoder::new();
+                                e.array(2);
+                                e.unsigned(1); // V2 discriminator
+                                e.array(2);
+                                // R191: WithOrigin SlotNo from
+                                // snapshot tip — Origin only at chain
+                                // start.
+                                match snapshot.tip().slot() {
+                                    Some(slot) => {
+                                        e.array(2);
+                                        e.unsigned(1);
+                                        e.unsigned(slot.0);
+                                    }
+                                    None => {
+                                        e.array(1);
+                                        e.unsigned(0);
+                                    }
+                                }
+                                // Empty pool list — indefinite-length
+                                // CBOR list (`0x9f` start, `0xff`
+                                // break) per upstream's `toCBOR @[a]`
+                                // for the pool list field.
+                                e.raw(&[0x9f, 0xff]);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
                             EraSpecificQuery::GetRatifyState => {
                                 // Round 187 — Conway `GetRatifyState`
                                 // returns `RatifyState era` (4-field
@@ -1729,6 +1815,18 @@ fn dispatch_inner_era_query(
             let maybe_filter =
                 decode_maybe_pool_hash_set(&maybe_pool_hash_set_cbor).unwrap_or(None);
             encode_stake_snapshots(snapshot, maybe_filter.as_ref())
+        }
+        EraSpecificQuery::DebugNewEpochState => {
+            // Round 190 — `query ledger-state` GetCBOR-wrapped form.
+            // cardano-cli accepts null and shows `f6 # null`.
+            let mut e = Encoder::new();
+            e.null();
+            e.into_bytes()
+        }
+        EraSpecificQuery::DebugChainDepState => {
+            // Round 190 — `query protocol-state` GetCBOR-wrapped form.
+            // Versioned-wrapped PraosState placeholder.
+            encode_praos_state_versioned(snapshot)
         }
         // Other variants either don't appear under GetCBOR in
         // current cardano-cli usage or fall back to null.
@@ -2447,6 +2545,70 @@ fn encode_committee_members_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec
 
     // 3: csEpochNo (current epoch).
     enc.unsigned(snapshot.current_epoch().0);
+
+    enc.into_bytes()
+}
+
+/// Round 190/191 — encode Praos `ChainDepState` per upstream
+/// `Ouroboros.Consensus.Protocol.Praos.PraosState`, wrapped in
+/// `Versioned` (2-element outer `[version, payload]`) per the
+/// `query protocol-state` decoder requirement (`DeserialiseFailure
+/// 1 "Size mismatch when decoding Versioned. Expected 2, but
+/// found 8."` confirmed the outer wrapper).
+///
+/// Inner PraosState is an 8-element record:
+///
+/// ```text
+/// [
+///   praosStateLastSlot               :: WithOrigin SlotNo,
+///   praosStateOCertCounters          :: Map (KeyHash 'BlockIssuer) Word64,
+///   praosStateEvolvingNonce          :: Nonce,
+///   praosStateCandidateNonce         :: Nonce,
+///   praosStateEpochNonce             :: Nonce,
+///   praosStatePreviousEpochNonce     :: Nonce,
+///   praosStateLabNonce               :: Nonce,
+///   praosStateLastEpochBlockNonce    :: Nonce,
+/// ]
+/// ```
+///
+/// **Round 191 live data plumbing**: `praosStateLastSlot` now
+/// reflects the snapshot's chain tip slot (`At slot` when the
+/// snapshot has a non-Origin tip, `Origin` only at chain start).
+/// The remaining seven fields (OCert counters + 6 nonces)
+/// require threading `NonceEvolutionState` and `OcertCounters`
+/// from the consensus runtime into the LSQ snapshot — tracked
+/// as a separate plumbing follow-up.  Until then, those emit
+/// upstream-default empty-map / NeutralNonce values.
+fn encode_praos_state_versioned(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    let mut enc = Encoder::new();
+    enc.array(2);
+    enc.unsigned(0); // Versioned version 0
+    enc.array(8);
+
+    // 1: praosStateLastSlot — `WithOrigin SlotNo`.
+    //    Origin = [0]; At slot = [1, slot].
+    match snapshot.tip().slot() {
+        Some(slot) => {
+            enc.array(2);
+            enc.unsigned(1);
+            enc.unsigned(slot.0);
+        }
+        None => {
+            enc.array(1);
+            enc.unsigned(0);
+        }
+    }
+
+    // 2: praosStateOCertCounters — empty Map placeholder.
+    enc.map(0);
+
+    // 3-8: six NeutralNonce = [0] placeholders (evolving,
+    //      candidate, epoch, previous-epoch, lab, last-epoch-block).
+    for _ in 0..6 {
+        enc.array(1);
+        enc.unsigned(0);
+    }
 
     enc.into_bytes()
 }

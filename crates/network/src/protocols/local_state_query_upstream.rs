@@ -375,6 +375,41 @@ pub enum EraSpecificQuery {
     /// ADT in `Cardano.Ledger.Core.PParams`; the wire-facing
     /// query result uses `Maybe`.
     GetFuturePParams,
+    /// `[12]` — `DebugNewEpochState` (Round 190).  Returns
+    /// the full `NewEpochState era` per upstream
+    /// `Cardano.Ledger.Shelley.LedgerState.NewEpochState`.
+    /// Used by `cardano-cli conway query ledger-state` (a
+    /// debug-level query that dumps the raw CBOR; cardano-cli
+    /// accepts `null` as a valid response).  Yggdrasil emits
+    /// CBOR `null` since constructing a complete NewEpochState
+    /// matching upstream's substantial multi-field record is
+    /// out of scope for the wire-protocol parity arc.
+    DebugNewEpochState,
+    /// `[13]` — `DebugChainDepState` (Round 190).  Returns
+    /// the protocol's `ChainDepState` (for Praos eras: a
+    /// `PraosState` 8-element record).  Used by
+    /// `cardano-cli conway query protocol-state`.  Yggdrasil
+    /// emits a minimal valid `PraosState` placeholder
+    /// `[Origin, empty_map, neutral×6]` until live Praos
+    /// chain-state is plumbed into the LSQ snapshot.
+    DebugChainDepState,
+    /// `[34, peer_kind]` (v15+) or `[34]` (pre-v15) —
+    /// `GetLedgerPeerSnapshot'` (Round 189).  Returns the
+    /// `LedgerPeerSnapshot` for ledger-derived peer
+    /// discovery.  cardano-cli 10.16 sends the v15+ form
+    /// with `peer_kind` selecting `BigLedgerPeers (0)` or
+    /// `AllLedgerPeers (1)`.  Used by `cardano-cli conway
+    /// query ledger-peer-snapshot`.
+    ///
+    /// Reference:
+    /// `Ouroboros.Consensus.Shelley.Ledger.Query.GetLedgerPeerSnapshot'`;
+    /// `Ouroboros.Network.PeerSelection.LedgerPeers.Type`
+    /// (`encodeLedgerPeerSnapshot`).
+    GetLedgerPeerSnapshot {
+        /// `Some(0)` for BigLedgerPeers, `Some(1)` for
+        /// AllLedgerPeers, `None` for the pre-v15 singleton form.
+        peer_kind: Option<u8>,
+    },
     /// `[32]` — `GetRatifyState` (Round 187, Conway-only).
     /// Singleton query; returns `RatifyState era` (4-field
     /// record `[EnactState era, Seq GovActionState, Set
@@ -614,7 +649,22 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
             maybe_pool_hash_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
         (1, 29) => EraSpecificQuery::GetAccountState,
+        (1, 12) => EraSpecificQuery::DebugNewEpochState,
+        (1, 13) => EraSpecificQuery::DebugChainDepState,
         (1, 32) => EraSpecificQuery::GetRatifyState,
+        (1, 34) => EraSpecificQuery::GetLedgerPeerSnapshot { peer_kind: None },
+        (2, 34) => {
+            // Re-decode to extract peer_kind byte after the tag.
+            let mut sub = Decoder::new(inner_cbor);
+            let _outer_len = sub.array()?;
+            let _era = sub.unsigned()?;
+            let _q_len = sub.array()?;
+            let _q_tag = sub.unsigned()?;
+            let kind = sub.unsigned()? as u8;
+            EraSpecificQuery::GetLedgerPeerSnapshot {
+                peer_kind: Some(kind),
+            }
+        }
         (1, 33) => EraSpecificQuery::GetFuturePParams,
         (4, 27) => {
             // [27, cold_creds, hot_creds, statuses]: re-decode the
@@ -1921,6 +1971,32 @@ mod tests {
         let (era_idx, q) = decode_query_if_current(&payload).unwrap();
         assert_eq!(era_idx, 1);
         assert!(matches!(q, EraSpecificQuery::GetStakeDistribution));
+    }
+
+    /// Round 189 — pin upstream tag 34 `GetLedgerPeerSnapshot'`.
+    /// cardano-cli 10.16 sends the v15+ 2-element form with a
+    /// `peer_kind` byte (`0` = BigLedgerPeers, `1` =
+    /// AllLedgerPeers).  Older clients may send the 1-element
+    /// singleton form.
+    #[test]
+    fn decode_recognises_ledger_peer_snapshot_tag_34() {
+        // [1, [34, 1]] = era 1, GetLedgerPeerSnapshot AllLedgerPeers
+        let payload_v15 = vec![0x82, 0x01, 0x82, 0x18, 0x22, 0x01];
+        let (era_idx, q) = decode_query_if_current(&payload_v15).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(
+            q,
+            EraSpecificQuery::GetLedgerPeerSnapshot { peer_kind: Some(1) }
+        ));
+
+        // [1, [34]] = era 1, GetLedgerPeerSnapshot pre-v15
+        let payload_legacy = vec![0x82, 0x01, 0x81, 0x18, 0x22];
+        let (era_idx, q) = decode_query_if_current(&payload_legacy).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(
+            q,
+            EraSpecificQuery::GetLedgerPeerSnapshot { peer_kind: None }
+        ));
     }
 
     /// Round 187 — pin upstream tag 32 `GetRatifyState`

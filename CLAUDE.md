@@ -10,7 +10,7 @@ For the architectural picture see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). 
 
 ## AGENTS.md Files Are Primary Context
 
-Every meaningful subdirectory has an `AGENTS.md`. They are operational, kept current, and take precedence over this file for local details. **Read them before changing code in a given area, and update them after changes.** The root [AGENTS.md](AGENTS.md) is very long — prefer targeted reads with `offset`/`limit` over full reads.
+Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept current, and take precedence over this file for local details. **Read them before changing code in a given area, and update them after changes.** The root [AGENTS.md](AGENTS.md) is very long — prefer targeted reads with `offset`/`limit` over full reads.
 
 | Path | Purpose |
 | --- | --- |
