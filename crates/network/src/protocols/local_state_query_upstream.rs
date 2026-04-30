@@ -363,15 +363,55 @@ pub enum EraSpecificQuery {
     /// any operator-authored query reading the accounting pots).
     GetAccountState,
     /// `[33]` — `GetFuturePParams` (Round 183, Conway-only).
-    /// Returns the next-epoch `FuturePParams era` ADT (`[0]` =
-    /// `NoPParamsUpdate`, `[1, pp]` = `DefinitePParamsUpdate`,
-    /// `[2, pp]` = `PotentialPParamsUpdate`).  Used by
-    /// `cardano-cli conway query future-pparams`.  Until
-    /// yggdrasil tracks pending PPUP enactment as a queued
+    /// LSQ-facing result type is `Maybe (PParams era)` (CBOR
+    /// `Nothing = 0x80` empty list, `Just pp = [pp]` 1-element
+    /// list).  Used by `cardano-cli conway query future-pparams`.
+    /// Until yggdrasil tracks pending PPUP enactment as a queued
     /// `PParams` ready for next-epoch adoption, this responds
-    /// `NoPParamsUpdate` (no pending update — correct on chains
-    /// with no successful PPUP proposals waiting to enact).
+    /// `Nothing` — cardano-cli renders that as
+    /// `"No protocol parameter changes will be enacted at the
+    /// next epoch boundary."`.  NB: the LSQ-facing `Maybe (PParams
+    /// era)` is distinct from the internal `FuturePParams era`
+    /// ADT in `Cardano.Ledger.Core.PParams`; the wire-facing
+    /// query result uses `Maybe`.
     GetFuturePParams,
+    /// `[28, stake_cred_set]` — `GetFilteredVoteDelegatees`
+    /// (Round 184, Conway-only).  Returns a CBOR map of
+    /// `(Credential 'Staking) → DRep` (which DRep each stake
+    /// credential delegates its votes to) filtered by the
+    /// supplied set of stake credentials.  Used internally by
+    /// `cardano-cli conway query spo-stake-distribution` to
+    /// resolve SPO vote delegations.  Filter parameter
+    /// accepted but not applied.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetFilteredVoteDelegatees`
+    /// (`type VoteDelegatees = Map (Credential 'Staking) DRep`).
+    GetFilteredVoteDelegatees { stake_cred_set_cbor: Vec<u8> },
+    /// `[26, drep_set]` — `GetDRepStakeDistr` (Round 184,
+    /// Conway-only).  Returns a CBOR map of `DRep → Coin`
+    /// (delegated stake per DRep) filtered by the supplied set
+    /// of DReps.  Used by `cardano-cli conway query
+    /// drep-stake-distribution`.  Filter parameter carried for
+    /// protocol compatibility but not applied — yggdrasil
+    /// emits the full map and cardano-cli filters client-side.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetDRepStakeDistr`
+    /// (result type `Map (DRep StandardCrypto) Coin`).
+    GetDRepStakeDistr { drep_set_cbor: Vec<u8> },
+    /// `[30, spo_set]` — `GetSPOStakeDistr` (Round 184,
+    /// Conway-only).  Returns a CBOR map of
+    /// `KeyHash 'StakePool → Coin` (Conway-era SPO stake by
+    /// active stake distribution).  Used by
+    /// `cardano-cli conway query spo-stake-distribution`.
+    /// Filter parameter carried for protocol compatibility
+    /// but not applied — yggdrasil emits the full map and
+    /// cardano-cli filters client-side.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetSPOStakeDistr`.
+    GetSPOStakeDistr { spo_set_cbor: Vec<u8> },
     /// `[27, cold_creds_set, hot_creds_set, statuses_set]` —
     /// `GetCommitteeMembersState` (Round 182, Conway-only).
     /// Returns the active `CommitteeMembersState`
@@ -488,6 +528,15 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
         (1, 24) => EraSpecificQuery::GetGovState,
         (2, 25) => EraSpecificQuery::GetDRepState {
             credential_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        (2, 26) => EraSpecificQuery::GetDRepStakeDistr {
+            drep_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        (2, 28) => EraSpecificQuery::GetFilteredVoteDelegatees {
+            stake_cred_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        (2, 30) => EraSpecificQuery::GetSPOStakeDistr {
+            spo_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
         (1, 29) => EraSpecificQuery::GetAccountState,
         (1, 33) => EraSpecificQuery::GetFuturePParams,
@@ -1807,6 +1856,45 @@ mod tests {
         let (era_idx, q) = decode_query_if_current(&payload).unwrap();
         assert_eq!(era_idx, 1);
         assert!(matches!(q, EraSpecificQuery::GetFuturePParams));
+    }
+
+    /// Round 184 — pin upstream tags 26 `GetDRepStakeDistr`,
+    /// 28 `GetFilteredVoteDelegatees`, and 30 `GetSPOStakeDistr`
+    /// (each 2-element query carrying a filter set).
+    #[test]
+    fn decode_recognises_drep_and_spo_stake_distr_tags() {
+        // [1, [26, tag(258) [empty]]] = GetDRepStakeDistr
+        let drep_stake = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x18, 0x1a, // 2-elem list, tag 26
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array
+        ];
+        let (era_idx, q) = decode_query_if_current(&drep_stake).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetDRepStakeDistr { .. }));
+
+        // [1, [28, tag(258) [empty]]] = GetFilteredVoteDelegatees
+        let vote_delegatees = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x18, 0x1c, // 2-elem list, tag 28
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array
+        ];
+        let (era_idx, q) = decode_query_if_current(&vote_delegatees).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(
+            q,
+            EraSpecificQuery::GetFilteredVoteDelegatees { .. }
+        ));
+
+        // [1, [30, tag(258) [empty]]] = GetSPOStakeDistr
+        let spo_stake = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x18, 0x1e, // 2-elem list, tag 30
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array
+        ];
+        let (era_idx, q) = decode_query_if_current(&spo_stake).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetSPOStakeDistr { .. }));
     }
 
     /// Round 182 — pin upstream tag 27 `GetCommitteeMembersState`

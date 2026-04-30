@@ -15,10 +15,10 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - `cargo fmt --all -- --check`: clean (zero diff; CI gate added under audit M-2 follow-up)
 - `cargo check-all`: passing
-- `cargo test-all`: passing (0 failures, **4 739** discovered tests, 1 ignored — count current at R183)
+- `cargo test-all`: passing (0 failures, **4 740** discovered tests, 1 ignored — count current at R184)
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 - `cargo deny check advisories bans licenses sources`: passing (one intentional ignore: `RUSTSEC-2021-0127` for the `serde_cbor` storage carve-out, tracked separately for migration)
-- **`cardano-cli 10.16` LSQ parity** (R164–R183): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preprod (Shelley) and preview (Alonzo).  With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries (`stake-pools`, `stake-distribution`, `pool-state`, `stake-snapshot`, `stake-address-info`) plus the Conway-governance queries (`constitution`, `drep-state`, `treasury`, `committee-state`, `future-pparams`) also decode end-to-end.  Only `cardano-cli conway query gov-state` remains as an open shape gap (substantial 7-element `ConwayGovState` record with `Proposals` tree + `DRepPulsingState` cache).
+- **`cardano-cli 10.16` LSQ parity** (R164–R184): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preprod (Shelley) and preview (Alonzo).  With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries (`stake-pools`, `stake-distribution`, `pool-state`, `stake-snapshot`, `stake-address-info`) plus the Conway-governance queries (`constitution`, `drep-state`, `treasury`, `committee-state`, `future-pparams`, `drep-stake-distribution`, `spo-stake-distribution`) also decode end-to-end.  Only `cardano-cli conway query gov-state` remains as an open shape gap (substantial 7-element `ConwayGovState` record with `Proposals` tree + `DRepPulsingState` cache).
 
 ## Subsystem Status
 

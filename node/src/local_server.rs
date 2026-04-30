@@ -1508,6 +1508,44 @@ fn dispatch_upstream_query(
                                 let body = encode_committee_members_state_for_lsq(snapshot);
                                 encode_query_if_current_match(&body)
                             }
+                            EraSpecificQuery::GetFilteredVoteDelegatees {
+                                stake_cred_set_cbor,
+                            } => {
+                                // Round 184 — Conway
+                                // `GetFilteredVoteDelegatees` returns
+                                // `Map (Credential 'Staking) DRep`.
+                                // Used internally by cardano-cli's
+                                // `query spo-stake-distribution` flow
+                                // to look up vote delegations.  Until
+                                // yggdrasil tracks per-credential vote
+                                // delegations, emit an empty CBOR map
+                                // (`0xa0`).  Filter parameter accepted
+                                // but not applied.
+                                let _ = stake_cred_set_cbor;
+                                let mut e = Encoder::new();
+                                e.map(0);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetDRepStakeDistr { drep_set_cbor } => {
+                                // Round 184 — Conway `GetDRepStakeDistr`
+                                // returns `Map (DRep StandardCrypto) Coin`.
+                                // Until yggdrasil tracks per-DRep active
+                                // stake, emit an empty CBOR map (`0xa0`).
+                                // Filter parameter accepted for protocol
+                                // compatibility but not applied.
+                                let _ = drep_set_cbor;
+                                let mut e = Encoder::new();
+                                e.map(0);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetSPOStakeDistr { spo_set_cbor } => {
+                                // Round 184 — Conway `GetSPOStakeDistr`.
+                                // Probing wire shape — try bare empty map.
+                                let _ = spo_set_cbor;
+                                let mut e = Encoder::new();
+                                e.map(0);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
                             EraSpecificQuery::GetCBOR { inner_query_cbor } => {
                                 // Round 179 — upstream `GetCBOR (inner)`.
                                 // Recursively decode the inner era-specific
