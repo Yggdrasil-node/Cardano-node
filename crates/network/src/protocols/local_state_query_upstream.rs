@@ -375,6 +375,69 @@ pub enum EraSpecificQuery {
     /// ADT in `Cardano.Ledger.Core.PParams`; the wire-facing
     /// query result uses `Maybe`.
     GetFuturePParams,
+    /// `[32]` — `GetRatifyState` (Round 187, Conway-only).
+    /// Singleton query; returns `RatifyState era` (4-field
+    /// record `[EnactState era, Seq GovActionState, Set
+    /// GovActionId, Bool]`).  Used by `cardano-cli conway
+    /// query ratify-state`.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetRatifyState`;
+    /// `Cardano.Ledger.Conway.Governance.Internal.RatifyState`.
+    GetRatifyState,
+    /// `[22, stake_cred_set]` — `GetStakeDelegDeposits`
+    /// (Round 186, Conway-only).  Returns
+    /// `Map (Credential 'Staking) Coin` (per-credential
+    /// delegation deposits) filtered by the supplied set of
+    /// stake credentials.  Filter parameter accepted but not
+    /// applied — cardano-cli filters client-side.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetStakeDelegDeposits`.
+    GetStakeDelegDeposits { stake_cred_set_cbor: Vec<u8> },
+    /// `[36, maybe_pool_hash_set]` — `GetPoolDistr2` (Round
+    /// 186, Conway-only).  Returns `PoolDistr` (2-element
+    /// record `[map, NonZero Coin]`) — same shape as
+    /// `GetStakeDistribution2` (tag 37, R179) but with an
+    /// optional pool-id filter.  Parameter is
+    /// `Maybe (Set PoolKeyHash)` (Nothing = all pools).
+    /// Filter accepted but not applied — yggdrasil emits the
+    /// full distribution.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetPoolDistr2`;
+    /// `Cardano.Ledger.Core.PoolDistr` (2-tuple of
+    /// `[Map PoolKeyHash IndividualPoolStake, NonZero Coin
+    /// pdTotalStake]`).
+    GetPoolDistr2 { maybe_pool_hash_set_cbor: Vec<u8> },
+    /// `[31, gov_action_id_set]` — `GetProposals` (Round 185,
+    /// Conway-only).  Returns a `Seq (GovActionState era)`
+    /// (CBOR list) of currently-pending governance action
+    /// states, optionally filtered to the supplied set of
+    /// gov-action IDs.  Used by `cardano-cli conway query
+    /// proposals --all-proposals` and the targeted variant
+    /// `--governance-action-tx-id ... --governance-action-index N`.
+    /// Filter parameter accepted but not applied — cardano-cli
+    /// filters client-side.
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.GetProposals`.
+    GetProposals { gov_action_id_set_cbor: Vec<u8> },
+    /// `[35, pool_key_hash]` — `QueryStakePoolDefaultVote`
+    /// (Round 185, Conway-only).  Returns the SPO's default
+    /// vote choice (`DefaultVote = DefaultNo (0) | DefaultAbstain
+    /// (1) | DefaultNoConfidence (2)`, encoded as a single CBOR
+    /// uint).  Used by `cardano-cli conway query
+    /// stake-pool-default-vote --spo-key-hash <hash>`.  Until
+    /// yggdrasil tracks per-pool default-vote registrations,
+    /// emit `DefaultNo (0)` as the placeholder.  Pool key hash
+    /// parameter carried for protocol compatibility but not
+    /// applied (the response is the same for any pool).
+    ///
+    /// Reference:
+    /// `Cardano.Ledger.Conway.LedgerStateQuery.QueryStakePoolDefaultVote`;
+    /// `Cardano.Ledger.Conway.Governance.DefaultVote`.
+    QueryStakePoolDefaultVote { pool_key_hash_cbor: Vec<u8> },
     /// `[28, stake_cred_set]` — `GetFilteredVoteDelegatees`
     /// (Round 184, Conway-only).  Returns a CBOR map of
     /// `(Credential 'Staking) → DRep` (which DRep each stake
@@ -529,6 +592,9 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
         (2, 25) => EraSpecificQuery::GetDRepState {
             credential_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
+        (2, 22) => EraSpecificQuery::GetStakeDelegDeposits {
+            stake_cred_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
         (2, 26) => EraSpecificQuery::GetDRepStakeDistr {
             drep_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
@@ -538,7 +604,17 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
         (2, 30) => EraSpecificQuery::GetSPOStakeDistr {
             spo_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
         },
+        (2, 31) => EraSpecificQuery::GetProposals {
+            gov_action_id_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        (2, 35) => EraSpecificQuery::QueryStakePoolDefaultVote {
+            pool_key_hash_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
+        (2, 36) => EraSpecificQuery::GetPoolDistr2 {
+            maybe_pool_hash_set_cbor: inner_cbor[q_end_after_tag..q_end].to_vec(),
+        },
         (1, 29) => EraSpecificQuery::GetAccountState,
+        (1, 32) => EraSpecificQuery::GetRatifyState,
         (1, 33) => EraSpecificQuery::GetFuturePParams,
         (4, 27) => {
             // [27, cold_creds, hot_creds, statuses]: re-decode the
@@ -1847,6 +1923,17 @@ mod tests {
         assert!(matches!(q, EraSpecificQuery::GetStakeDistribution));
     }
 
+    /// Round 187 — pin upstream tag 32 `GetRatifyState`
+    /// (singleton query — no parameters).
+    #[test]
+    fn decode_recognises_ratify_state_tag_32() {
+        // [1, [32]] = era 1, GetRatifyState
+        let payload = vec![0x82, 0x01, 0x81, 0x18, 0x20];
+        let (era_idx, q) = decode_query_if_current(&payload).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetRatifyState));
+    }
+
     /// Round 183 — pin upstream tag 33 `GetFuturePParams`
     /// (singleton, no parameters).
     #[test]
@@ -1895,6 +1982,63 @@ mod tests {
         let (era_idx, q) = decode_query_if_current(&spo_stake).unwrap();
         assert_eq!(era_idx, 1);
         assert!(matches!(q, EraSpecificQuery::GetSPOStakeDistr { .. }));
+    }
+
+    /// Round 186 — pin upstream tags 22 `GetStakeDelegDeposits`
+    /// (Map Credential Coin) and 36 `GetPoolDistr2` (PoolDistr
+    /// with optional pool-id filter).
+    #[test]
+    fn decode_recognises_stake_deleg_deposits_and_pool_distr2_tags() {
+        // [1, [22, tag(258) [empty]]] = GetStakeDelegDeposits
+        let stake_deleg_deposits = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x16, // 2-elem list, tag 22
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array
+        ];
+        let (era_idx, q) = decode_query_if_current(&stake_deleg_deposits).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetStakeDelegDeposits { .. }));
+
+        // [1, [36, []]] = GetPoolDistr2 with `Nothing` filter
+        let pool_distr2 = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x18, 0x24, // 2-elem list, tag 36
+            0x80, // empty list (Maybe Nothing)
+        ];
+        let (era_idx, q) = decode_query_if_current(&pool_distr2).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetPoolDistr2 { .. }));
+    }
+
+    /// Round 185 — pin upstream tags 31 `GetProposals` (Seq
+    /// of GovActionState filtered by gov-action-id set) and
+    /// 35 `QueryStakePoolDefaultVote` (per-pool default-vote
+    /// query).
+    #[test]
+    fn decode_recognises_proposals_and_default_vote_tags() {
+        // [1, [31, tag(258) [empty]]] = GetProposals
+        let proposals = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x18, 0x1f, // 2-elem list, tag 31
+            0xd9, 0x01, 0x02, 0x80, // tag 258 + empty array
+        ];
+        let (era_idx, q) = decode_query_if_current(&proposals).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetProposals { .. }));
+
+        // [1, [35, bytes(28)]] = QueryStakePoolDefaultVote
+        let mut default_vote = vec![
+            0x82, 0x01, // [era=1, ...]
+            0x82, 0x18, 0x23, // 2-elem list, tag 35
+            0x58, 0x1c, // bytes(28)
+        ];
+        default_vote.extend_from_slice(&[0u8; 28]);
+        let (era_idx, q) = decode_query_if_current(&default_vote).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(
+            q,
+            EraSpecificQuery::QueryStakePoolDefaultVote { .. }
+        ));
     }
 
     /// Round 182 — pin upstream tag 27 `GetCommitteeMembersState`

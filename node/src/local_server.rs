@@ -1433,17 +1433,13 @@ fn dispatch_upstream_query(
                                 encode_query_if_current_match(&e.into_bytes())
                             }
                             EraSpecificQuery::GetGovState => {
-                                // Round 180 — Conway governance state
-                                // (CBOR map of proposals).
-                                use yggdrasil_ledger::CborEncode;
-                                let mut e = Encoder::new();
-                                let gov = snapshot.governance_actions();
-                                e.map(gov.len() as u64);
-                                for (id, state) in gov {
-                                    id.encode_cbor(&mut e);
-                                    state.encode_cbor(&mut e);
-                                }
-                                encode_query_if_current_match(&e.into_bytes())
+                                // Round 188 — Conway `GetGovState`
+                                // returns `ConwayGovState era` (7-field
+                                // record).  Composes R187's EnactState
+                                // / RatifyState helpers plus minimal
+                                // Proposals/PulsingSnapshot stubs.
+                                let body = encode_conway_gov_state_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetDRepState {
                                 credential_set_cbor,
@@ -1474,6 +1470,18 @@ fn dispatch_upstream_query(
                                 e.unsigned(accounting.treasury);
                                 e.unsigned(accounting.reserves);
                                 encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetRatifyState => {
+                                // Round 187 — Conway `GetRatifyState`
+                                // returns `RatifyState era` (4-field
+                                // record).  Yggdrasil emits a real
+                                // EnactState (constitution + Conway
+                                // PParams + treasury from snapshot)
+                                // and empty Seq / Set / Bool=false
+                                // placeholders for the other three
+                                // fields.
+                                let body = encode_ratify_state_for_lsq(snapshot);
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetFuturePParams => {
                                 // Round 183 — Conway `GetFuturePParams`
@@ -1536,6 +1544,70 @@ fn dispatch_upstream_query(
                                 let _ = drep_set_cbor;
                                 let mut e = Encoder::new();
                                 e.map(0);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetStakeDelegDeposits {
+                                stake_cred_set_cbor,
+                            } => {
+                                // Round 186 — Conway
+                                // `GetStakeDelegDeposits` returns
+                                // `Map (Credential 'Staking) Coin`.
+                                // Until yggdrasil tracks per-credential
+                                // delegation deposits, emit empty CBOR
+                                // map (`0xa0`).  Filter parameter
+                                // accepted but not applied.
+                                let _ = stake_cred_set_cbor;
+                                let mut e = Encoder::new();
+                                e.map(0);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetPoolDistr2 {
+                                maybe_pool_hash_set_cbor,
+                            } => {
+                                // Round 186 — Conway `GetPoolDistr2`
+                                // returns `PoolDistr` (2-element record
+                                // `[map, NonZero Coin]`).  Same shape as
+                                // `GetStakeDistribution2` (tag 37, R179)
+                                // — emit empty distribution with
+                                // 1-lovelace `pdTotalStake` placeholder
+                                // (NonZero requirement).  Filter
+                                // parameter accepted but not applied.
+                                let _ = maybe_pool_hash_set_cbor;
+                                let mut e = Encoder::new();
+                                e.array(2);
+                                e.map(0);
+                                e.unsigned(1);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::GetProposals {
+                                gov_action_id_set_cbor,
+                            } => {
+                                // Round 185 — Conway `GetProposals`
+                                // returns `Seq (GovActionState era)`
+                                // (CBOR list).  Until yggdrasil exposes
+                                // pending governance action states via
+                                // the LSQ snapshot in cardano-cli's
+                                // expected wire shape, emit an empty
+                                // CBOR list (`0x80`).  Filter parameter
+                                // accepted but not applied.
+                                let _ = gov_action_id_set_cbor;
+                                let mut e = Encoder::new();
+                                e.array(0);
+                                encode_query_if_current_match(&e.into_bytes())
+                            }
+                            EraSpecificQuery::QueryStakePoolDefaultVote { pool_key_hash_cbor } => {
+                                // Round 185 — Conway
+                                // `QueryStakePoolDefaultVote` returns
+                                // `DefaultVote` enum (single CBOR uint
+                                // 0=DefaultNo, 1=DefaultAbstain,
+                                // 2=DefaultNoConfidence).  Until
+                                // yggdrasil tracks per-pool default-vote
+                                // registrations, emit `DefaultNo (0)`.
+                                // Pool key hash parameter accepted but
+                                // not applied.
+                                let _ = pool_key_hash_cbor;
+                                let mut e = Encoder::new();
+                                e.unsigned(0);
                                 encode_query_if_current_match(&e.into_bytes())
                             }
                             EraSpecificQuery::GetSPOStakeDistr { spo_set_cbor } => {
@@ -2375,6 +2447,188 @@ fn encode_committee_members_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec
 
     // 3: csEpochNo (current epoch).
     enc.unsigned(snapshot.current_epoch().0);
+
+    enc.into_bytes()
+}
+
+/// Round 188 — encode upstream `ConwayGovState era` as a 7-element
+/// CBOR list per `Cardano.Ledger.Conway.Governance.ConwayGovState`:
+///
+/// ```text
+/// [
+///   cgsProposals        :: Proposals era,            -- 2-tuple
+///                                                    -- (GovRelation StrictMaybe,
+///                                                    --  OMap GovActionId GovActionState)
+///   cgsCommittee        :: StrictMaybe (Committee era),
+///   cgsConstitution     :: Constitution era,
+///   cgsCurPParams       :: PParams era,              -- Conway 31-elem
+///   cgsPrevPParams      :: PParams era,
+///   cgsFuturePParams    :: FuturePParams era,        -- internal ADT
+///                                                    -- (Sum NoPParamsUpdate=0,
+///                                                    --  DefinitePParamsUpdate=1,
+///                                                    --  PotentialPParamsUpdate=2)
+///   cgsDRepPulsingState :: DRepPulsingState era,     -- DRComplete encoded as
+///                                                    -- 2-elem [PulsingSnapshot,
+///                                                    --        RatifyState]
+/// ]
+/// ```
+///
+/// **NB**: `cgsFuturePParams` here uses the *internal* ADT shape,
+/// distinct from R183's wire-facing `Maybe (PParams era)` for the
+/// LSQ tag-33 query.  Internal `NoPParamsUpdate = [0]`,
+/// `DefinitePParamsUpdate = [1, pp]`, `PotentialPParamsUpdate =
+/// [2, pp]`.
+///
+/// Yggdrasil emits real Conway constitution and 31-element PParams;
+/// stubs the rest with upstream-default empty/SNothing values until
+/// the proposals/committee/pulser pipelines populate them.
+fn encode_conway_gov_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    use yggdrasil_network::protocols::local_state_query_upstream::encode_conway_pparams_for_lsq;
+
+    let mut enc = Encoder::new();
+    enc.array(7);
+
+    // 1: cgsProposals = (GovRelation StrictMaybe, OMap GovActionId
+    //    GovActionState).  Empty case: [GovRelation 4-SNothing, OMap
+    //    empty list].
+    enc.array(2);
+    enc.array(4);
+    for _ in 0..4 {
+        enc.array(0); // each StrictMaybe SNothing = []
+    }
+    enc.array(0); // empty OMap encoded as empty list
+
+    // 2: cgsCommittee = SNothing.
+    enc.array(0);
+
+    // 3: cgsConstitution.
+    snapshot.enact_state().constitution().encode_cbor(&mut enc);
+
+    // 4: cgsCurPParams (Conway 31-element).
+    let params_default = yggdrasil_ledger::ProtocolParameters::default();
+    let params = snapshot.protocol_params().unwrap_or(&params_default);
+    let pp_cbor = encode_conway_pparams_for_lsq(params);
+    enc.raw(&pp_cbor);
+
+    // 5: cgsPrevPParams — same as cur until separate prev-epoch
+    //    tracker is plumbed.
+    enc.raw(&pp_cbor);
+
+    // 6: cgsFuturePParams (internal ADT) — NoPParamsUpdate = [0].
+    enc.array(1);
+    enc.unsigned(0);
+
+    // 7: cgsDRepPulsingState = DRComplete (PulsingSnapshot, RatifyState).
+    //    PulsingSnapshot empty = 4-element list
+    //    [empty StrictSeq, empty Map, empty Map, empty Map].
+    enc.array(2);
+    enc.array(4);
+    enc.array(0); // psProposals (StrictSeq)
+    enc.map(0); // psDRepDistr
+    enc.map(0); // psDRepState
+    enc.map(0); // psPoolDistr
+    let ratify_cbor = encode_ratify_state_for_lsq(snapshot);
+    enc.raw(&ratify_cbor);
+
+    enc.into_bytes()
+}
+
+/// Round 187 — encode upstream `EnactState era` as a 7-element CBOR
+/// list per `Cardano.Ledger.Conway.Governance.Internal.EnactState`:
+///
+/// ```text
+/// [
+///   ensCommittee         :: StrictMaybe (Committee era),
+///   ensConstitution      :: Constitution era,
+///   ensCurPParams        :: PParams era,         -- Conway 31-elem
+///   ensPrevPParams       :: PParams era,
+///   ensTreasury          :: Coin,
+///   ensWithdrawals       :: Map (Credential 'Staking) Coin,
+///   ensPrevGovActionIds  :: GovRelation StrictMaybe,  -- 4-elem list
+/// ]
+/// ```
+///
+/// Yggdrasil's snapshot exposes constitution, current PParams, and
+/// treasury; the rest fall back to upstream defaults
+/// (SNothing / empty / GovRelation of all-SNothing).
+fn encode_enact_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::{CborEncode, Encoder};
+    use yggdrasil_network::protocols::local_state_query_upstream::encode_conway_pparams_for_lsq;
+
+    let mut enc = Encoder::new();
+    enc.array(7);
+
+    // 1: ensCommittee — SNothing (yggdrasil's CommitteeState doesn't
+    //    yet expose a ratified-committee placeholder distinct from the
+    //    runtime committee map).
+    enc.array(0);
+
+    // 2: ensConstitution — real Conway constitution from the snapshot.
+    snapshot.enact_state().constitution().encode_cbor(&mut enc);
+
+    // 3: ensCurPParams (Conway 31-element PParams shape).  Falls back
+    //    to defaults if no PParams are tracked yet.
+    let params_default = yggdrasil_ledger::ProtocolParameters::default();
+    let params = snapshot.protocol_params().unwrap_or(&params_default);
+    let pp_cbor = encode_conway_pparams_for_lsq(params);
+    enc.raw(&pp_cbor);
+
+    // 4: ensPrevPParams — same as cur until yggdrasil tracks the
+    //    previous-epoch PParams snapshot separately.
+    enc.raw(&pp_cbor);
+
+    // 5: ensTreasury (Coin uint).
+    enc.unsigned(snapshot.accounting().treasury);
+
+    // 6: ensWithdrawals — empty Map (yggdrasil applies withdrawals at
+    //    enactment time so the field is empty between epochs).
+    enc.map(0);
+
+    // 7: ensPrevGovActionIds — GovRelation StrictMaybe is a 4-element
+    //    list `[ppup, hardfork, committee, constitution]`.  Each
+    //    SNothing = `[]` (empty 0-element list).
+    enc.array(4);
+    for _ in 0..4 {
+        enc.array(0);
+    }
+
+    enc.into_bytes()
+}
+
+/// Round 187 — encode upstream `RatifyState era` as a 4-element CBOR
+/// list per `Cardano.Ledger.Conway.Governance.Internal.RatifyState`:
+///
+/// ```text
+/// [
+///   rsEnactState  :: EnactState era,
+///   rsEnacted     :: Seq (GovActionState era),  -- empty list 0x80
+///   rsExpired     :: Set GovActionId,           -- empty list 0x80
+///   rsDelayed     :: Bool,                       -- false 0xf4
+/// ]
+/// ```
+///
+/// Yggdrasil emits an upstream-faithful EnactState (R187 helper) and
+/// empty placeholders for the other three fields until the ratify
+/// pipeline tracks pending/expired actions and delayed flags.
+fn encode_ratify_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    let mut enc = Encoder::new();
+    enc.array(4);
+
+    // 1: rsEnactState (7-element CBOR list).
+    let enact_state_cbor = encode_enact_state_for_lsq(snapshot);
+    enc.raw(&enact_state_cbor);
+
+    // 2: rsEnacted (Seq GovActionState) — empty list.
+    enc.array(0);
+
+    // 3: rsExpired (Set GovActionId) — empty list.  Sets in upstream
+    //    Conway-era encoding may use the bare list form (no tag 258).
+    enc.array(0);
+
+    // 4: rsDelayed (Bool) — false.
+    enc.bool(false);
 
     enc.into_bytes()
 }

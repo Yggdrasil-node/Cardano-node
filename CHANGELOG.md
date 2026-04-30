@@ -7,12 +7,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-Operational-parity arc on top of v0.2.0 — Rounds 144 → 184.
+Operational-parity arc on top of v0.2.0 — Rounds 144 → 188.
 Highlights: full cardano-cli 10.16 query parity at preprod (Shelley
-era) and preview (Alonzo era), Conway governance LSQ queries
-working end-to-end, multi-round sync-speed and apply-correctness
-fixes.  Workspace tests: 4 640 (v0.2.0) → **4 740 passing,
-0 failing**.
+era) and preview (Alonzo era), **every Conway-governance LSQ
+subcommand** (constitution, gov-state, drep-state,
+drep-stake-distribution, committee-state, treasury,
+spo-stake-distribution, proposals, ratify-state, future-pparams,
+stake-pool-default-vote) decoding end-to-end, multi-round
+sync-speed and apply-correctness fixes.  Workspace tests:
+4 640 (v0.2.0) → **4 743 passing, 0 failing**.
 
 ### Added
 
@@ -31,28 +34,33 @@ fixes.  Workspace tests: 4 640 (v0.2.0) → **4 740 passing,
   (`stake-pools`, `stake-distribution`, `pool-state`,
   `stake-snapshot`, `stake-address-info`) become reachable
   without waiting for the natural Babbage hard-fork.
-- **Conway governance LSQ queries (Rounds 180–184).**
-  `cardano-cli conway query constitution`,
-  `query drep-state --all-dreps`,
-  `query treasury` (via `GetAccountState`),
-  `query committee-state`,
-  `query future-pparams`,
-  `query drep-stake-distribution --all-dreps`, and
-  `query spo-stake-distribution --all-spos` decode
-  end-to-end against yggdrasil.  Constitution returns real
-  Conway data from the chain; the rest return correct
-  empty/placeholder shapes for fresh-sync chains
+- **Conway governance LSQ queries (Rounds 180–188) — complete
+  on the user-facing cli surface.**
+  Every `cardano-cli conway query` subcommand decodes
+  end-to-end against yggdrasil (other than the operational
+  `ledger-peer-snapshot` which is peer-discovery, not
+  governance):
+  `constitution`, `gov-state` (R188, full 7-element
+  `ConwayGovState`),
+  `drep-state --all-dreps`, `drep-stake-distribution`,
+  `committee-state`, `treasury` (via `GetAccountState`),
+  `spo-stake-distribution`, `proposals`, `ratify-state` (R187,
+  real EnactState with constitution + 31-element PParams +
+  treasury), `future-pparams` (R183, `Maybe Nothing`),
+  `stake-pool-default-vote`.  Constitution
+  returns real Conway data from the chain; the rest return
+  correct empty/placeholder shapes for fresh-sync chains
   (`future-pparams` returns `Maybe (PParams era) = Nothing`,
   rendered by cardano-cli as `"No protocol parameter changes
-  will be enacted at the next epoch boundary."`).  R184
+  will be enacted at the next epoch boundary."`;
+  `stake-pool-default-vote` returns `"DefaultNo"`).  R184
   surfaced a 3-call flow inside `query
   spo-stake-distribution`: SPOStakeDistr (tag 30) →
   GetCBOR(GetPoolState) (9→19) → GetFilteredVoteDelegatees
   (tag 28); all three dispatchers added in one round.
-  `query gov-state` dispatcher routes; full `ConwayGovState`
-  body shape is a remaining follow-up (substantial —
-  7-element record with `Proposals` tree + `DRepPulsingState`
-  cache).
+  `query gov-state` and `query ratify-state` dispatchers
+  remain as open shape gaps (both substantial records with
+  nested governance state).
 - **`yggdrasil_current_era` Prometheus gauge (Round 169)**
   reports the wire era ordinal (`0=Byron, 1=Shelley, …,
   6=Conway`) of the latest applied block.
