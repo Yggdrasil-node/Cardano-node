@@ -52,9 +52,16 @@ pub const DEFAULT_INGRESS_LIMIT: usize = 2_000_000;
 /// Per-protocol egress soft buffer limit.
 ///
 /// Upstream: `egressSoftBufferLimit = 0x3ffff` (~262 KB) from
-/// `network-mux`.  If a protocol's pending egress bytes exceed this,
-/// [`ProtocolHandle::send`] returns [`MuxError::EgressBufferOverflow`]
-/// and the runtime should tear down the connection.
+/// `network-mux`.  This is a **back-pressure** threshold on
+/// accumulated pending egress bytes — when the protocol's egress
+/// queue has already accumulated more than this, [`ProtocolHandle::send`]
+/// returns [`MuxError::EgressBufferOverflow`] and the runtime should
+/// tear down the connection.  R213 — single payloads larger than the
+/// limit are *not* rejected when the buffer is empty (e.g. mainnet's
+/// `query utxo --whole-utxo` LSQ response is ~1.3 MB; rejecting it
+/// at send time would prevent any operator from running this query).
+/// Matches upstream `network-mux`'s semantic: the limit gates buffer
+/// accumulation under writer back-pressure, not single-message size.
 pub const EGRESS_SOFT_LIMIT: usize = 0x3ffff; // 262_143 bytes
 
 /// SDU read timeout on the bearer connection.
@@ -244,18 +251,27 @@ pub struct ProtocolHandle {
 impl ProtocolHandle {
     /// Send a complete protocol message payload to the remote peer.
     ///
-    /// Returns [`MuxError::EgressBufferOverflow`] if the pending egress
-    /// bytes for this protocol would exceed the soft limit.
+    /// Returns [`MuxError::EgressBufferOverflow`] when the protocol's
+    /// already-pending egress bytes exceed the soft limit — i.e. when
+    /// the writer has fallen behind and the buffer is accumulating
+    /// faster than the bearer can drain it.  R213 — single large
+    /// payloads are *always* allowed through (the check guards against
+    /// buffer accumulation, not single-message size); without this,
+    /// LSQ responses larger than `EGRESS_SOFT_LIMIT` (~262 KB) such as
+    /// mainnet's `query utxo --whole-utxo` (~1.3 MB) trip the limit
+    /// even when the buffer is empty.  Upstream `network-mux` uses the
+    /// same back-pressure semantic (the limit gates accumulated
+    /// bytes, not new sends).
     ///
-    /// The multiplexer will frame the payload as an SDU with the correct
-    /// protocol number and direction.
+    /// The multiplexer will frame the payload as an SDU with the
+    /// correct protocol number and direction.
     pub async fn send(&self, payload: Vec<u8>) -> Result<(), MuxError> {
         let len = payload.len();
         let current = self.egress_bytes.load(Ordering::Relaxed);
-        if current + len > self.egress_limit {
+        if current > self.egress_limit {
             return Err(MuxError::EgressBufferOverflow {
                 protocol: self.protocol_num.0,
-                bytes: current + len,
+                bytes: current,
                 limit: self.egress_limit,
             });
         }

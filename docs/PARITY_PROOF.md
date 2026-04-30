@@ -413,6 +413,203 @@ under Phase E.2 follow-ups.
 
 ---
 
+## 8e. Mainnet operational verification with cardano-cli (R212, 2026-04-30)
+
+R212 validates R211's mainnet sync fix through the full LSQ wire
+stack — cardano-cli queries decode end-to-end against an actively
+syncing mainnet yggdrasil node.
+
+**Setup**:
+```
+$ ./target/release/yggdrasil-node run \
+    --network mainnet \
+    --database-path /tmp/ygg-r212-mainnet-db \
+    --socket-path /tmp/ygg-r212-mainnet.sock \
+    --peer 3.135.125.51:3001 \
+    --metrics-port 12412 &
+$ sleep 45
+```
+
+**Sync after 45 s**:
+```
+volatile/  1 455 234 bytes
+ledger/    1 363 702 bytes
+checkpoint persisted slot=47 retainedSnapshots=1
+checkpoint skipped   slot=97 / 147 (interval=2160)
+```
+
+**cardano-cli query results** (all against the active mainnet
+sync):
+
+| Query                        | Result                                               |
+| ---------------------------- | ---------------------------------------------------- |
+| `query tip`                  | `{block: 197 → 397, era: "Shelley", hash: cf29…/a15b…}` |
+| `query era-history`          | indef-length 2-era CBOR summary (Byron + Shelley)    |
+| `query slot-number 2024-06-01T00:00:00Z` | `125712000`                              |
+| `query protocol-parameters`  | 17-element Shelley shape, full PP JSON               |
+| `query tx-mempool info`      | `{capacity: 0, count: 0, size: 0, slot: 397}`        |
+
+**Sidecars** (post-test mainnet `<storage_dir>/`):
+```
+nonce_state.cbor      12 B
+ocert_counters.cbor    1 B
+stake_snapshots.cbor  14 B
+```
+
+Smaller than testnets because mainnet at slot 397 is pre-Shelley
+(post-Byron consensus state mostly empty — same shape as the
+pre-Shelley testnet behaviour observed in R207).
+
+**Multi-network parity matrix** (closed by R212):
+
+| Network          | Operational verification | LSQ subcommands              | Sidecars | Round    |
+| ---------------- | ------------------------ | ---------------------------- | -------- | -------- |
+| Preview          | ✅ (Conway era)           | 25/25 with `YGG_LSQ_ERA_FLOOR=6` | ✅       | R205     |
+| Preprod          | ✅ (Allegra era)          | 6/6 baseline                 | ✅       | R207     |
+| Mainnet          | ✅ (Byron at slot 397)    | 5/5 baseline (utxo TBD)      | ✅       | **R212** |
+
+**Known limitation** (closed in R213, 2026-04-30): `query utxo
+--whole-utxo --mainnet` initially failed with `BearerClosed`.  Root
+cause was a 10-line semantic miscoding in the mux back-pressure
+check (`current + len > limit` rejected single large payloads even
+with empty buffer; should be `current > limit` per upstream
+`network-mux::egressSoftBufferLimit`).  After R213's fix the query
+returns the **full mainnet AVVM bootstrap UTxO**: 14 505 entries
+totaling 31 112 484 745 ADA — matching `byron-genesis.json::avvmDistr`
+exactly.  See R213 in `docs/operational-runs/`.
+
+---
+
+## 8d. Mainnet sync unblocked — Byron EBB hash + same-slot tolerance (R211, 2026-04-30)
+
+R211 closed the Phase E.2 critical path with a two-bug cascade fix:
+
+**Bug 1 — wrong hash prefix for Byron EBB headers**.  yggdrasil's
+[`node/src/sync.rs::point_from_raw_header`](../node/src/sync.rs)
+helper used `byron_main_header_hash` (prefix `[0x82, 0x01]`) for
+EBB-shape headers.  Byron EBBs require `[0x82, 0x00]` per
+`Cardano.Chain.Block.Header.boundaryHeaderHashAnnotated`.  Wrong
+prefix → wrong hash → upstream BlockFetch can't resolve the
+upper-bound point → IOG peer closes mux mid-request.
+
+**Bug 2 — strict slot-monotonicity rejects Byron EBB→main_block at
+same slot**.  Consensus `ChainState::roll_forward` rejected the
+legitimate Byron transition where the genesis EBB at slot 0 is
+followed by the first main block of epoch 0 also at slot 0 (Byron
+EBBs are virtual epoch-boundary markers).  The ledger-side check
+already had Byron exemption; consensus-side was missing it.
+
+**Verification — mainnet now syncs**:
+
+```
+$ rm -rf /tmp/ygg-r211e-mainnet-db
+$ YGG_SYNC_DEBUG=1 timeout 60 ./target/release/yggdrasil-node run \
+    --network mainnet \
+    --database-path /tmp/ygg-r211e-mainnet-db \
+    --peer 3.135.125.51:3001 \
+    --max-concurrent-block-fetch-peers 1
+
+[YGG_SYNC_DEBUG] shared applied
+    stable_block_count=0 epoch_events=0 rolled_back_tx_ids=0
+    tracking.tip=BlockPoint(SlotNo(197), HeaderHash(cf298afbb9eae55d…))
+
+volatile/  1 532 832 bytes  ← non-zero
+ledger/    1 363 702 bytes  ← checkpoint snapshots accumulating
+```
+
+Comparison R210 → R211:
+
+| Signal                         |   R210  |   R211e |
+| ------------------------------ | ------- | ------- |
+| `[YGG_SYNC_DEBUG] applied`     |     0   |     6   |
+| `volatile/` size               |   0 B   | 1.5 MB  |
+| `ledger/` size                 |   0 B   | 1.4 MB  |
+| Final tip                      | Origin  | slot 197|
+| `cleared-origin` recoveries    |    12   |     0   |
+
+**Code changes** (4 files):
+- `node/src/sync.rs` — new `byron_ebb_header_hash` helper;
+  `decode_point_from_byron_raw_header` returns `Some(Point)` for
+  EBBs (slot from inner `epoch * BYRON_SLOTS_PER_EPOCH`, hash via
+  EBB prefix).
+- `crates/consensus/src/chain_state.rs` — slot check relaxed from
+  `<=` to `<`.  Block-number contiguity check above catches
+  re-application; Praos guarantees ≤ 1 block/slot post-Byron.
+- `node/src/runtime.rs` — R210's `YGG_SYNC_DEBUG=1` trace mirrored
+  to shared-chaindb apply call site (the production NtN+NtC path).
+- Test updates: `roll_forward_accepts_same_slot_byron_ebb_main_pair`,
+  `point_from_raw_header_decodes_observed_byron_serialised_header_envelope`
+  updated to expect EBB hash + slot=0 from inner header (the
+  original test pinned the wrong slot 83 from outer envelope + main
+  hash, masking the bug for ~200 rounds).
+
+**Strategic significance**: yggdrasil now syncs mainnet end-to-end
+(subject to long-running stability + performance, separately
+tracked).  The two-step diagnosis (R210 narrows to BlockFetch wire
+layer → R211 source-level diff identifies the encoding bug) is the
+canonical pattern for operational-parity work.
+
+---
+
+## 8c. Mainnet stall narrowed to BlockFetch wire layer (R210, 2026-04-30)
+
+R210 added an opt-in `YGG_SYNC_DEBUG=1` apply-side trace at the
+`apply_verified_progress_to_chaindb` call site in
+[`node/src/runtime.rs`](../node/src/runtime.rs) (~line 5008) to
+answer R208's open question: is the stall at BlockFetch (zero
+blocks fetched per batch) or at apply (blocks fetched but
+silently rejected)?
+
+90 s mainnet run findings:
+
+```
+YGG_SYNC_DEBUG=1 timeout 90 ./target/release/yggdrasil-node run \
+    --network mainnet \
+    --database-path /tmp/ygg-r210-mainnet-db \
+    --peer 3.135.125.51:3001 \
+    --max-concurrent-block-fetch-peers 1
+
+| Signal                                     |   Count |
+| ------------------------------------------ | ------- |
+| [YGG_SYNC_DEBUG] apply_verified_progress   |     0   |
+| [ygg-sync-debug] blockfetch-range          |   634   |
+| [ygg-sync-debug] demux-exit                |     2   |
+| Node.Recovery.Checkpoint cleared-origin    |    12   |
+| volatile/, immutable/, ledger/             |  0 B ea |
+```
+
+ChainSync header decodes cleanly (`header_point_decoded=true
+raw_header_len=94`) for the first Byron-era range
+`Origin → SlotNo(648087)`, but the IOG backbone peer **closes the
+mux during the BlockFetch request**, so `apply_verified_progress`
+is never invoked and no checkpoint, sidecar, volatile, or
+immutable file lands.
+
+**Conclusion**: the R208 mainnet sync gap is at the
+**BlockFetch wire layer**, NOT at apply / ledger / storage.
+Every R208 hypothesis pointing at apply-path silent rejection
+or storage hand-off is now ruled out.
+
+**Narrowed root-cause candidates**:
+1. Byron BlockFetch `MsgRequestRange` CBOR shape divergence on
+   the request side (most likely).
+2. NtN handshake version negotiation rejecting BlockFetch but
+   accepting ChainSync.
+3. Byron EBB hash indirection upstream expects in the upper
+   bound.
+
+**R211+ follow-up scope**: capture `MsgRequestRange` bytes via
+`tcpdump`/socat-relay against the same peer; run upstream
+`cardano-node 10.7.x` for byte-comparison; fix in
+[`crates/network/src/protocols/blockfetch_pool.rs`](../crates/network/src/protocols/blockfetch_pool.rs)
+or the `MsgRequestRange` encoder.
+
+The R210 instrumentation is permanent in the runtime, env-gated,
+zero-overhead when unset, and ready for use during the wire-byte
+diagnosis follow-up.
+
+---
+
 ## 8a. Multi-network verification (R207, 2026-04-30)
 
 R207 verified the same gates work on preprod (Shelley-era):

@@ -145,7 +145,17 @@ impl ChainState {
                     got: entry.block_no.0,
                 });
             }
-            if entry.slot.0 <= last.slot.0 {
+            // R211 — non-strict slot ordering.  Byron EBBs share their
+            // epoch-start slot with the first main block of that epoch
+            // (genesis EBB at slot 0 + first mainnet main block also at
+            // slot 0), so strict `<=` rejects the legitimate EBB→main
+            // transition on Byron mainnet.  The block-number contiguity
+            // check above already catches re-application; in Shelley+
+            // slots are strictly monotonic by construction (Praos
+            // produces at most one block per slot).  Mirrors the
+            // ledger-side exemption in `LedgerState::apply_block` per
+            // `crates/ledger/src/state.rs:4062`.
+            if entry.slot.0 < last.slot.0 {
                 return Err(ConsensusError::SlotNotIncreasing {
                     tip_slot: last.slot.0,
                     block_slot: entry.slot.0,
@@ -367,18 +377,16 @@ mod tests {
     }
 
     #[test]
-    fn roll_forward_rejects_non_increasing_slot() {
+    fn roll_forward_accepts_same_slot_byron_ebb_main_pair() {
+        // R211 — Byron EBBs share their epoch-start slot with the first
+        // main block of that epoch (mainnet genesis EBB at slot 0 + first
+        // mainnet main block also at slot 0).  ChainState now allows
+        // same-slot transitions; the block-number contiguity check above
+        // catches re-application bugs.  Mirrors the ledger-side exemption
+        // in `LedgerState::apply_block`.
         let mut cs = ChainState::new(SecurityParam(10));
         cs.roll_forward(mk_entry(0, 10)).unwrap();
-        // same slot
-        let err = cs.roll_forward(mk_entry(1, 10)).unwrap_err();
-        assert_eq!(
-            err,
-            ConsensusError::SlotNotIncreasing {
-                tip_slot: 10,
-                block_slot: 10,
-            }
-        );
+        cs.roll_forward(mk_entry(1, 10)).unwrap();
     }
 
     #[test]

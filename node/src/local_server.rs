@@ -883,8 +883,16 @@ impl NetworkPreset {
 /// `GetSystemStart` results match the live network's genesis
 /// timing.  Construct via `BasicLocalQueryDispatcher::new(preset)`
 /// or use the `Default` impl (preprod) for tests.
+///
+/// R214 — also carries an optional pre-encoded `ShelleyGenesis` CBOR
+/// blob so `GetGenesisConfig` (era-specific tag 11) can return real
+/// genesis data instead of `null`.  Pre-encoding at startup is
+/// the cheapest approach because the genesis is immutable for the
+/// lifetime of the node — the dispatcher only needs to clone the
+/// bytes for each response.
 pub struct BasicLocalQueryDispatcher {
     network_preset: NetworkPreset,
+    genesis_config_cbor: Option<Arc<Vec<u8>>>,
 }
 
 impl Default for BasicLocalQueryDispatcher {
@@ -896,7 +904,18 @@ impl Default for BasicLocalQueryDispatcher {
 impl BasicLocalQueryDispatcher {
     /// Construct a dispatcher pinned to the supplied [`NetworkPreset`].
     pub fn new(network_preset: NetworkPreset) -> Self {
-        Self { network_preset }
+        Self {
+            network_preset,
+            genesis_config_cbor: None,
+        }
+    }
+
+    /// Attach pre-encoded `ShelleyGenesis` CBOR bytes for the
+    /// `GetGenesisConfig` (era-specific tag 11) response.  See
+    /// [`encode_shelley_genesis_for_lsq`] for the encoder.
+    pub fn with_genesis_config_cbor(mut self, bytes: Arc<Vec<u8>>) -> Self {
+        self.genesis_config_cbor = Some(bytes);
+        self
     }
 }
 
@@ -938,7 +957,12 @@ impl LocalQueryDispatcher for BasicLocalQueryDispatcher {
         // migrated to issue upstream-shaped queries in lockstep with
         // this slice.
         if let Ok(upstream) = UpstreamQuery::decode(query) {
-            return dispatch_upstream_query(snapshot, upstream, self.network_preset);
+            return dispatch_upstream_query(
+                snapshot,
+                upstream,
+                self.network_preset,
+                self.genesis_config_cbor.as_ref(),
+            );
         }
 
         // Yggdrasil flat-table fallback for queries that aren't
@@ -1334,6 +1358,7 @@ fn dispatch_upstream_query(
     snapshot: &LedgerStateSnapshot,
     query: yggdrasil_network::protocols::UpstreamQuery,
     network_preset: NetworkPreset,
+    genesis_config_cbor: Option<&Arc<Vec<u8>>>,
 ) -> Vec<u8> {
     use yggdrasil_ledger::Encoder;
     use yggdrasil_network::protocols::{
@@ -1503,13 +1528,20 @@ fn dispatch_upstream_query(
                                 encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetGenesisConfig => {
-                                // Genesis config is era-specific and
-                                // requires the loaded ShelleyGenesis to
-                                // serialise.  Until that's plumbed
-                                // through to the snapshot, return null
-                                // (cardano-cli surfaces it as "no
-                                // genesis config available").
-                                null_response()
+                                // R214 — return the pre-encoded
+                                // `ShelleyGenesis` CBOR bytes if the
+                                // operator wired one through at
+                                // startup, else fall back to the
+                                // legacy `null` response.  See
+                                // [`encode_shelley_genesis_for_lsq`]
+                                // for the upstream-aligned 15-element
+                                // list shape.
+                                match genesis_config_cbor {
+                                    Some(bytes) => {
+                                        encode_query_if_current_match(bytes.as_slice())
+                                    }
+                                    None => null_response(),
+                                }
                             }
                             EraSpecificQuery::GetConstitution => {
                                 // Round 180 — Conway constitution.
@@ -2814,6 +2846,166 @@ fn encode_committee_members_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec
 
     // 3: csEpochNo (current epoch).
     enc.unsigned(snapshot.current_epoch().0);
+
+    enc.into_bytes()
+}
+
+/// R214 — encode `ShelleyGenesis` for the upstream `GetGenesisConfig`
+/// (era-specific tag 11) LSQ response.  Produces the 15-element CBOR
+/// list per `Cardano.Ledger.Shelley.Genesis.encCBOR`.  Reference:
+/// `cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/Genesis.hs`.
+///
+/// Field order:
+///
+/// ```text
+///  1.  sgSystemStart       :: UTCTime [mjd, picosOfDay, attos=0]
+///  2.  sgNetworkMagic      :: Word32
+///  3.  sgNetworkId         :: Network (0=Testnet, 1=Mainnet)
+///  4.  sgActiveSlotsCoeff  :: PositiveUnitInterval
+///  5.  sgSecurityParam     :: Word64
+///  6.  sgEpochLength       :: Word64 (newtype EpochSize)
+///  7.  sgSlotsPerKESPeriod :: Word64
+///  8.  sgMaxKESEvolutions  :: Word64
+///  9.  sgSlotLength        :: NominalDiffTimeMicro (picoseconds u64)
+/// 10.  sgUpdateQuorum      :: Word64
+/// 11.  sgMaxLovelaceSupply :: Word64
+/// 12.  sgProtocolParams    :: PParams ShelleyEra (17-element list)
+/// 13.  sgGenDelegs         :: Map (KeyHash 'Genesis) GenDelegPair
+/// 14.  sgInitialFunds      :: ListMap Addr Coin
+/// 15.  sgStaking           :: ShelleyGenesisStaking [pools, stake]
+/// ```
+///
+/// `genDelegs` keys are 28-byte Blake2b genesis-key hashes; values are
+/// 2-element `[delegateKeyHash, vrfKeyHash]` pairs (each 28/32 bytes
+/// respectively).
+///
+/// `initialFunds` keys are raw Byron/Shelley address bytes; values are
+/// `Coin` (Word64).
+///
+/// `staking` is a 2-element `[pools_map, stake_map]` record.  Empty
+/// maps are valid for testnets without static genesis staking.
+pub fn encode_shelley_genesis_for_lsq(
+    genesis: &crate::genesis::ShelleyGenesis,
+    full_protocol_params: &yggdrasil_ledger::ProtocolParameters,
+    chain_start_unix_secs: f64,
+) -> Vec<u8> {
+    use yggdrasil_ledger::Encoder;
+    use yggdrasil_network::protocols::local_state_query_upstream::encode_shelley_pparams_for_lsq;
+
+    let mut enc = Encoder::new();
+    enc.array(15);
+
+    // 1. systemStart UTCTime — `[modifiedJulianDay, picosOfDay, 0]`.
+    //    MJD epoch is 1858-11-17; Unix epoch is 1970-01-01; offset is
+    //    40 587 days.  picosOfDay = (unix_secs % 86400) * 1e12.
+    let unix_secs = if genesis.system_start.is_some() {
+        chain_start_unix_secs
+    } else {
+        0.0
+    };
+    let total_secs = unix_secs as i64;
+    let days = total_secs.div_euclid(86_400);
+    let secs_of_day = total_secs.rem_euclid(86_400);
+    let mjd = (days + 40_587).max(0) as u64;
+    let picos_of_day = (secs_of_day as u64).saturating_mul(1_000_000_000_000);
+    enc.array(3);
+    enc.unsigned(mjd);
+    enc.unsigned(picos_of_day);
+    enc.unsigned(0);
+
+    // 2. networkMagic (Word32).
+    enc.unsigned(genesis.network_magic.unwrap_or(0) as u64);
+
+    // 3. networkId — upstream `Cardano.Ledger.BaseTypes.Network`:
+    //    encodes `Testnet` as 0 and `Mainnet` as 1.  The genesis JSON
+    //    spells these as the strings "Testnet" / "Mainnet".
+    let network_id = match genesis.network_id.as_deref() {
+        Some("Mainnet") | Some("mainnet") => 1u64,
+        _ => 0u64,
+    };
+    enc.unsigned(network_id);
+
+    // 4. activeSlotsCoeff — `PositiveUnitInterval` is encoded as
+    //    `tag(30) + [num, den]`.  Convert the f64 Praos `f` to a
+    //    rational with denominator 10^6 (matches mainnet's exact 0.05
+    //    via 50_000 / 1_000_000).
+    let asc_denom: u64 = 1_000_000;
+    let asc_numer: u64 = (genesis.active_slots_coeff * asc_denom as f64).round() as u64;
+    enc.tag(30);
+    enc.array(2);
+    enc.unsigned(asc_numer);
+    enc.unsigned(asc_denom);
+
+    // 5. securityParam (Word64).
+    enc.unsigned(genesis.security_param);
+
+    // 6. epochLength (Word64).
+    enc.unsigned(genesis.epoch_length);
+
+    // 7. slotsPerKESPeriod (Word64).
+    enc.unsigned(genesis.slots_per_kes_period);
+
+    // 8. maxKESEvolutions (Word64).
+    enc.unsigned(genesis.max_kes_evolutions);
+
+    // 9. slotLength `NominalDiffTimeMicro` — picoseconds (Word64).
+    let slot_length_picos = (genesis.slot_length * 1_000_000_000_000.0) as u64;
+    enc.unsigned(slot_length_picos);
+
+    // 10. updateQuorum (Word64).
+    enc.unsigned(genesis.update_quorum);
+
+    // 11. maxLovelaceSupply (Word64).
+    enc.unsigned(genesis.max_lovelace_supply);
+
+    // 12. protocolParams — 17-element Shelley PP shape (R156 encoder).
+    let pp_bytes = encode_shelley_pparams_for_lsq(full_protocol_params);
+    enc.raw(&pp_bytes);
+
+    // 13. genDelegs `Map (KeyHash 'Genesis) GenDelegPair`.
+    //     Each entry: key = 28-byte hash, value = [delegate_28b, vrf_32b].
+    let gd_entries: Vec<_> = genesis
+        .gen_delegs
+        .iter()
+        .filter_map(|(k_hex, deleg)| {
+            let key = hex::decode(k_hex).ok()?;
+            let delegate = hex::decode(&deleg.delegate).ok()?;
+            let vrf = hex::decode(&deleg.vrf).ok()?;
+            Some((key, delegate, vrf))
+        })
+        .collect();
+    enc.map(gd_entries.len() as u64);
+    for (key, delegate, vrf) in &gd_entries {
+        enc.bytes(key);
+        enc.array(2);
+        enc.bytes(delegate);
+        enc.bytes(vrf);
+    }
+
+    // 14. initialFunds `ListMap Addr Coin`.  Encoded as a CBOR map
+    //     keyed by the raw address bytes (no envelope; ListMap's
+    //     encoding is the standard map).
+    let if_entries: Vec<_> = genesis
+        .initial_funds
+        .iter()
+        .filter_map(|(addr_hex, amount)| {
+            let addr = hex::decode(addr_hex).ok()?;
+            Some((addr, *amount))
+        })
+        .collect();
+    enc.map(if_entries.len() as u64);
+    for (addr, amount) in &if_entries {
+        enc.bytes(addr);
+        enc.unsigned(*amount);
+    }
+
+    // 15. staking `ShelleyGenesisStaking` — 2-element record
+    //     `[pools_listmap, stake_listmap]`.  Empty maps are
+    //     wire-valid for chains without static genesis staking
+    //     (preview, preprod, mainnet all use `staking = {pools={}, stake={}}`).
+    enc.array(2);
+    enc.map(0);
+    enc.map(0);
 
     enc.into_bytes()
 }

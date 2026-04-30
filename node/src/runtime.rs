@@ -4999,6 +4999,21 @@ where
                                 None
                             };
                             let apply_start = std::time::Instant::now();
+                            // R210 — opt-in diagnostic: dump per-batch
+                            // `fetched_blocks` / `rollback_count` /
+                            // `current_point` so operators can identify
+                            // where the apply pipeline stalls (e.g. mainnet
+                            // sync gap surfaced by R208).  Set
+                            // `YGG_SYNC_DEBUG=1` to enable.
+                            if std::env::var("YGG_SYNC_DEBUG").is_ok() {
+                                eprintln!(
+                                    "[YGG_SYNC_DEBUG] apply_verified_progress fetched_blocks={} rollback_count={} steps={} current_point={:?}",
+                                    progress.fetched_blocks,
+                                    progress.rollback_count,
+                                    progress.steps.len(),
+                                    progress.current_point,
+                                );
+                            }
                             let applied = apply_verified_progress_to_chaindb(
                                 chain_db,
                                 &progress,
@@ -5008,6 +5023,19 @@ where
                                 vrf_ctx.as_ref(),
                                 ocert_counters.as_mut(),
                             )?;
+                            if std::env::var("YGG_SYNC_DEBUG").is_ok() {
+                                let tip_str = checkpoint_tracking
+                                    .as_ref()
+                                    .map(|t| format!("{:?}", t.ledger_state.tip))
+                                    .unwrap_or_else(|| "no-tracking".into());
+                                eprintln!(
+                                    "[YGG_SYNC_DEBUG] applied stable_block_count={} epoch_events={} rolled_back_tx_ids={} tracking.tip={}",
+                                    applied.stable_block_count,
+                                    applied.epoch_boundary_events.len(),
+                                    applied.rolled_back_tx_ids.len(),
+                                    tip_str,
+                                );
+                            }
                             // R200 — apply-batch duration histogram
                             // (Phase C.1).  Excludes block fetch but
                             // includes ledger advance, checkpoint
@@ -5584,6 +5612,20 @@ where
                                 None
                             };
                             let apply_start = std::time::Instant::now();
+                            // R210 — opt-in diagnostic on the shared-chaindb
+                            // path (the variant used by production mainnet
+                            // because NtN sync + NtC server share one
+                            // ChainDb).  Mirrors the non-shared path's
+                            // diagnostic at the start of this match arm.
+                            if std::env::var("YGG_SYNC_DEBUG").is_ok() {
+                                eprintln!(
+                                    "[YGG_SYNC_DEBUG] shared apply_verified_progress fetched_blocks={} rollback_count={} steps={} current_point={:?}",
+                                    progress.fetched_blocks,
+                                    progress.rollback_count,
+                                    progress.steps.len(),
+                                    progress.current_point,
+                                );
+                            }
                             let applied = {
                                 let mut chain_db = chain_db.write().map_err(|_| shared_chaindb_lock_error())?;
                                 apply_verified_progress_to_chaindb(
@@ -5596,6 +5638,19 @@ where
                                     ocert_counters.as_mut(),
                                 )?
                             };
+                            if std::env::var("YGG_SYNC_DEBUG").is_ok() {
+                                let tip_str = checkpoint_tracking
+                                    .as_ref()
+                                    .map(|t| format!("{:?}", t.ledger_state.tip))
+                                    .unwrap_or_else(|| "no-tracking".into());
+                                eprintln!(
+                                    "[YGG_SYNC_DEBUG] shared applied stable_block_count={} epoch_events={} rolled_back_tx_ids={} tracking.tip={}",
+                                    applied.stable_block_count,
+                                    applied.epoch_boundary_events.len(),
+                                    applied.rolled_back_tx_ids.len(),
+                                    tip_str,
+                                );
+                            }
                             // R200 — apply-batch duration histogram
                             // (Phase C.1).
                             if let Some(m) = metrics {

@@ -7,9 +7,18 @@ nav_order: 2
 
 # Full Parity Plan: Rust Cardano Node vs. Official Haskell Implementation
 
-**Prepared**: March 26, 2026  
-**Status**: Comprehensive planning document for achieving feature-parity with IntersectMBO Haskell Cardano node  
+**Prepared**: March 26, 2026 (original planning document)
+**Status**: Comprehensive planning document for achieving feature-parity with IntersectMBO Haskell Cardano node
 **Scope**: All subsystems from crypto through orchestration, covering all 7 eras (Byron → Conway)
+
+> **Current operational status**: see [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for the
+> R206 cumulative reference (208 rounds completed; 8 plan items closed,
+> 1 verified, 7 deferred; multi-network operational evidence on preview +
+> preprod; mainnet boot-path verified with sync-pipeline gap deferred to
+> Phase E.2 proper).  The "Recently completed parity items" list below
+> tracks per-round changes; see also [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
+> per-round summary table and [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md)
+> live parity matrix.
 
 ---
 
@@ -26,24 +35,35 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved:
+The Rust Cardano node (Yggdrasil) has achieved (post-R213 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
-- ✅ **Fundamental consensus structures** (Praos validation, nonce evolution)
+- ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
 - ✅ **Ledger state transitions** (multi-era UTxO, certificates, governance)
 - ✅ **CLI & configuration** (JSON + YAML config, genesis loading, query/submit)
-- ✅ **Local query & submission APIs** (LocalStateQuery, LocalTxSubmission, LocalTxMonitor)
-- ✅ **File-backed storage** (Immutable/Volatile with rollback + crash recovery)
+- ✅ **Local query & submission APIs** (LocalStateQuery + 25/25 cardano-cli `conway query` subcommands working end-to-end on preview, 6/6 baseline on preprod; full Conway-era LSQ surface complete)
+- ✅ **Consensus-side state persistence** (`ocert_counters.cbor` + `nonce_state.cbor` + `stake_snapshots.cbor` sidecars survive node restart)
+- ✅ **File-backed storage** (Immutable/Volatile with rollback + crash recovery; multi-peer dispatch verified)
 - ⚠️ **Partial Plutus** (CEK machine framework, V1/V2/V3 support wired)
 - ✅ **Peer management** (governor with dual churn, big-ledger, backoff, inbound)
-- ✅ **Monitoring** (35+ metrics, Prometheus/JSON endpoints, coloured stdout, detail levels, upstream backend recognition)
+- ✅ **Monitoring** (35+ metrics including R200's apply-batch duration histogram, Prometheus/JSON endpoints, coloured stdout, detail levels, upstream backend recognition)
 - ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting, post-forge adoption check)
+- ✅ **Mainnet sync** (R211 closed the operational Phase E.2 critical path — Byron EBB hash + same-slot consensus check fixed; mainnet now syncs end-to-end with non-zero volatile/ledger persistence; long-running 24h+ rehearsal still pending separately)
 
-**To achieve full parity**, the remaining work focuses on:
-1. **Plutus CEK drift monitoring** (keep Conway/Plomin cost-model key mapping in sync with upstream changes)
-2. **Integration testing** (mainnet-like end-to-end scenarios)
+**To achieve full parity** (per the plan at `/home/vscode/.claude/plans/clever-shimmying-quokka.md`), the remaining deferred items are:
+1. **Phase E.2 long-running mainnet rehearsal** — R211 unblocked sync; verify 24h+ continuous run, block-by-block hash comparison vs upstream `cardano-node 10.7.x`
+2. **Phase A.6** — `GetGenesisConfig` ShelleyGenesis serialiser (no direct cli consumer; ~2-3 days)
+3. **Phase C.2** — pipelined fetch+apply (~3-4 days, deadlock-risk)
+4. **Phase D.1** — deep cross-epoch rollback recovery (~4-5 days)
+5. **Phase D.2** — multi-session peer accounting (~3-4 days, architectural refactor)
+6. **Phase E.1 cardano-base** — coordinated vendored fixture refresh (network-dependent)
+7. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
 
 **Recently completed parity items**:
+- ✅ **Mux egress: allow single payloads larger than EGRESS_SOFT_LIMIT (Round 213, R212 known-limitation closure)** — closes R212's BearerClosed gap.  Diagnosis via `YGG_NTC_DEBUG=1` showed the LSQ response was 1.3 MB; the per-protocol egress check `current + len > egress_limit` rejected the send even with `current=0`.  Fix: relax to `current > egress_limit` (back-pressure semantic, matches upstream `network-mux`).  Verification: `cardano-cli query utxo --whole-utxo --mainnet` now returns the complete mainnet AVVM bootstrap UTxO — 14 505 entries totaling **31.1 billion ADA**, matching the genesis distribution exactly.  Latent ~200-round bug; testnet bootstrap UTxOs were too small to trip the limit.
+- ✅ **Mainnet operational verification with cardano-cli + sidecars (Round 212, multi-network parity matrix completion)** — third-network end-to-end verification.  Started fresh mainnet sync; cardano-cli `query tip / era-history / slot-number / protocol-parameters / tx-mempool info` all decode correctly.  All 3 consensus-side sidecars persist on mainnet (12B + 1B + 14B).  Combined with R205 (preview) + R207 (preprod), yggdrasil now demonstrates working operational LSQ surface + sidecars on **all three official Cardano networks**.  The R211 mainnet sync fix is validated end-to-end through the cardano-cli wire stack, not just direct sync metrics.  **Known limitation**: `query utxo --whole-utxo --mainnet` BearerClosed during concurrent socket teardown — separate follow-up.  No code changes.
+- ✅ **Mainnet sync unblocked — Byron EBB hash + same-slot tolerance (Round 211, Phase E.2 critical-path closure)** — closes the Phase E.2 critical path.  Two-bug cascade fixed: (1) Byron EBB hash prefix `[0x82, 0x00]` (was using main-block prefix `[0x82, 0x01]`) — root cause of the BlockFetch peer-closes-mux R210 surfaced; (2) consensus `ChainState::roll_forward` slot monotonicity relaxed from `<=` to `<` to allow Byron EBB→main_block at shared slot 0 (mirrors existing ledger-side Byron exemption).  R210's `YGG_SYNC_DEBUG=1` instrumentation also mirrored to shared-chaindb apply call site (the production NtN+NtC path).  **Verification — mainnet syncs end-to-end**: 60s window advances tip past Origin to slot 197, `volatile/` 1.5 MB, `ledger/` 1.4 MB, checkpoint at slot 47 persists.  R210→R211 deltas: apply 0→6, volatile 0B→1.5MB, ledger 0B→1.4MB, cleared-origin 12→0.  Test count stable at 4 744.
+- ⚠️ **Mainnet stall diagnostic — apply-side ruled out (Round 210, Phase E.2 narrowing)** — adds env-gated `YGG_SYNC_DEBUG=1` apply-side trace at `apply_verified_progress_to_chaindb` call site.  90 s mainnet run shows 0 apply-side calls vs 634 blockfetch-range computations + 2 demux-exit "connection closed by remote peer" — IOG backbone peer accepts ChainSync (header decodes cleanly) but closes the mux during BlockFetch.  R208 hypothesis space narrowed: NOT apply-path silent rejection, NOT storage hand-off — gap is at BlockFetch wire layer.  R211+ scope: byte-compare `MsgRequestRange` against upstream cardano-node on the same peer.
 - ⚠️ **Mainnet boot smoke test (Round 208, Phase E.2 partial)** — yggdrasil's `--network mainnet` flag boots cleanly (NtC server, peer connection, verified-sync session establish) but block fetch+apply does NOT advance past Origin in 2-min window.  Likely Byron-era ChainSync/BlockFetch shape mismatch specific to mainnet's ancient first blocks (preview skips Byron entirely; preprod's Byron is shorter).  Phase E.2 full diagnosis with wire-byte capture deferred to follow-up round.  Bar to close: identify why blocks aren't fetched from established session.
 - ✅ **Multi-network verification — preprod (Round 207)** — preprod sync verified: 87K blocks in 35s, era progression Byron → Shelley → Allegra by slot 87440; all 3 consensus-side sidecars persist; 6/6 baseline cardano-cli queries pass.  Combined with R205's preview verification, both networks demonstrate consistent yggdrasil parity end-to-end.
 - ✅ **Parity proof report (Round 206, Phase E.3 closed)** — new [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) cumulative reference covering 205 rounds.  Documents: 25/25 cardano-cli subcommand verification table with round attributions, 3 consensus-side sidecar persistence flows with restart-resilience evidence, Phase B verified resolution, Phase C.1 baseline metric, Phase E.1 pin status, full closed/verified/deferred matrix (8/1/7), reproduction commands, deferral rationale per remaining item.  Canonical "what works today" reference document.
@@ -1236,6 +1256,16 @@ TX expires (TTL):
 
 ---
 
-**Document prepared by**: Research & Planning Agent  
-**Target Review Date**: Week of March 31, 2026  
-**Expected Final Delivery**: Mid-June 2026 (13-week roadmap)
+**Document prepared by**: Research & Planning Agent
+**Target Review Date**: Week of March 31, 2026 (original projection)
+**Expected Final Delivery (original)**: Mid-June 2026 (13-week roadmap)
+**Actual delivery status (R213, 2026-04-30)**: **all 3 official
+Cardano networks** (preview, preprod, mainnet) demonstrate working
+operational LSQ surface + consensus-side sidecars, **including
+heavyweight queries** like mainnet `query utxo --whole-utxo` (14 505
+AVVM entries / 31.1B ADA).  R211 closed the sync gap, R212 verified
+baseline cardano-cli queries on mainnet, R213 closed the BearerClosed
+limitation on large LSQ responses by fixing the mux egress
+back-pressure semantic.  Long-running 24h+ rehearsal pending
+separately.  See [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) §8e for
+canonical R212/R213 mainnet operational evidence.

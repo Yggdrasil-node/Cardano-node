@@ -540,9 +540,25 @@ fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
 
     fn byron_main_header_hash(raw_header: &[u8]) -> HeaderHash {
         // Byron main header hash uses prefix ++ raw annotated header bytes.
+        // Reference: `Cardano.Chain.Block.Header.headerHashAnnotated` —
+        // `wrapHeader = encodeListLen 2 <> encodeWord 1 <> annotation`.
         const MAIN_HASH_PREFIX: [u8; 2] = [0x82, 0x01];
         let mut bytes = Vec::with_capacity(MAIN_HASH_PREFIX.len() + raw_header.len());
         bytes.extend_from_slice(&MAIN_HASH_PREFIX);
+        bytes.extend_from_slice(raw_header);
+        HeaderHash(hash_bytes_256(&bytes).0)
+    }
+
+    fn byron_ebb_header_hash(raw_header: &[u8]) -> HeaderHash {
+        // Byron EBB header hash uses prefix ++ raw annotated header bytes.
+        // Reference: `Cardano.Chain.Block.Header.boundaryHeaderHashAnnotated`
+        // — `wrapBoundaryBytes = encodeListLen 2 <> encodeWord 0 <>
+        // annotation`.  R211 — was previously fallback-routed through
+        // `byron_main_header_hash`, which produced a wrong hash for EBBs
+        // and broke BlockFetch on mainnet's first epoch boundary block.
+        const EBB_HASH_PREFIX: [u8; 2] = [0x82, 0x00];
+        let mut bytes = Vec::with_capacity(EBB_HASH_PREFIX.len() + raw_header.len());
+        bytes.extend_from_slice(&EBB_HASH_PREFIX);
         bytes.extend_from_slice(raw_header);
         HeaderHash(hash_bytes_256(&bytes).0)
     }
@@ -578,9 +594,29 @@ fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
         }
 
         if consensus_len >= 2 {
-            // EBB headers don't carry slot-in-epoch in the same way as main
-            // headers; prefer the outer with-origin slot for those envelopes.
-            return None;
+            // R211 — Byron EBB consensus_data is `[epoch, [difficulty]]`
+            // (2 elements; second is a 1-element array wrapping the
+            // difficulty value).  EBB header doesn't carry slot directly:
+            // its slot equals `epoch * BYRON_SLOTS_PER_EPOCH` (the start
+            // of the epoch).  Critically, the *hash* must be computed
+            // with `EBB_HASH_PREFIX` (0x82 0x00), not the main-block
+            // prefix (0x82 0x01) — using the wrong prefix produces a
+            // hash the upstream BlockFetch server can't resolve, which
+            // is exactly the mainnet stall surfaced by R208 + narrowed
+            // by R210.  The outer chain-sync envelope sometimes carries
+            // a `[?, ?]` 2-tuple where the second element looks like a
+            // slot but is actually a different value (block number /
+            // chain difficulty / similar) — empirically the inner
+            // `epoch * BYRON_SLOTS_PER_EPOCH` derivation yields the
+            // hash the upstream peer accepts in `MsgRequestRange`.
+            // Reference: `Cardano.Chain.Block.Header.Boundary
+            // .ConsensusData`.
+            let epoch = dec.unsigned().ok()?;
+            let slot = epoch.checked_mul(BYRON_SLOTS_PER_EPOCH)?;
+            return Some(Point::BlockPoint(
+                SlotNo(slot),
+                byron_ebb_header_hash(raw_header),
+            ));
         }
 
         None
@@ -644,8 +680,14 @@ fn point_from_raw_header(raw_header: &[u8]) -> Option<Point> {
                 return Some(point);
             }
 
-            // Last-resort fallback for envelope variants where only slot is
-            // recoverable from the outer with-origin field.
+            // Last-resort fallback for envelope variants where only slot
+            // is recoverable from the outer with-origin field.  EBB and
+            // main Byron headers are handled by the explicit byron-raw
+            // decoder above (which selects the correct hash prefix
+            // based on consensus_data length).  This path applies only
+            // to opaque envelope variants whose inner header doesn't
+            // match the standard Byron 5-tuple shape, in which case
+            // assuming a main-style hash is the safe default.
             let slot = decode_slot_from_with_origin(first)?;
             Some(Point::BlockPoint(
                 SlotNo(slot),
@@ -6958,10 +7000,17 @@ mod tests {
             0x00, 0x81, 0xa0,
         ];
 
+        // R211 — captured header is an EBB shape (consensus_data has
+        // 2 elements: `[epoch, [difficulty]]`), so the hash prefix is
+        // `[0x82, 0x00]` (boundary discriminator), not `[0x82, 0x01]`
+        // (main discriminator).  Pre-R211 the test pinned the wrong
+        // prefix and produced a hash the upstream BlockFetch server
+        // could not resolve — the root cause of the mainnet sync
+        // stall surfaced by R208 + narrowed by R210.
         let expected_hash = HeaderHash(
             hash_bytes_256(
                 &[
-                    [0x82, 0x01].as_slice(),
+                    [0x82, 0x00].as_slice(),
                     &[
                         0x85, 0x01, 0x58, 0x20, 0xd4, 0xb8, 0xde, 0x7a, 0x11, 0xd9, 0x29, 0xa3,
                         0x23, 0x37, 0x3c, 0xba, 0xb6, 0xc1, 0xa9, 0xbd, 0xc9, 0x31, 0xbe, 0xff,
@@ -6978,6 +7027,14 @@ mod tests {
         );
 
         let point = point_from_raw_header(&raw_header);
-        assert_eq!(point, Some(Point::BlockPoint(SlotNo(83), expected_hash)));
+        // R211 — captured header is an EBB shape (consensus_data has 2
+        // elements: `[epoch=0, [difficulty]]`).  Pre-R211 the test
+        // pinned slot=83 from the outer envelope and used the main
+        // block hash prefix — both wrong.  The correct behaviour is to
+        // derive slot from `epoch * BYRON_SLOTS_PER_EPOCH = 0` and use
+        // the EBB hash prefix.  This is what the upstream BlockFetch
+        // server resolves correctly, unblocking the mainnet sync gap
+        // surfaced by R208 + narrowed by R210.
+        assert_eq!(point, Some(Point::BlockPoint(SlotNo(0), expected_hash)));
     }
 }
