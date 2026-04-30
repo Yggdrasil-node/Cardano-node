@@ -7,11 +7,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-Operational-parity arc on top of v0.2.0 — Rounds 144 → 182.
+Operational-parity arc on top of v0.2.0 — Rounds 144 → 183.
 Highlights: full cardano-cli 10.16 query parity at preprod (Shelley
 era) and preview (Alonzo era), Conway governance LSQ queries
 working end-to-end, multi-round sync-speed and apply-correctness
-fixes.  Workspace tests: 4 640 (v0.2.0) → **4 738 passing,
+fixes.  Workspace tests: 4 640 (v0.2.0) → **4 739 passing,
 0 failing**.
 
 ### Added
@@ -31,18 +31,21 @@ fixes.  Workspace tests: 4 640 (v0.2.0) → **4 738 passing,
   (`stake-pools`, `stake-distribution`, `pool-state`,
   `stake-snapshot`, `stake-address-info`) become reachable
   without waiting for the natural Babbage hard-fork.
-- **Conway governance LSQ queries (Rounds 180–182).**
+- **Conway governance LSQ queries (Rounds 180–183).**
   `cardano-cli conway query constitution`,
   `query drep-state --all-dreps`,
-  `query treasury` (via `GetAccountState`), and
-  `query committee-state` decode end-to-end against
+  `query treasury` (via `GetAccountState`),
+  `query committee-state`, and
+  `query future-pparams` decode end-to-end against
   yggdrasil.  Constitution returns real Conway data from the
   chain; the rest return correct empty/placeholder shapes
-  for fresh-sync chains with no DReps / committee yet.
-  `query gov-state` dispatcher routes; full `ConwayGovState`
-  body shape is a remaining follow-up (substantial —
-  7-element record with `Proposals` tree + `DRepPulsingState`
-  cache).
+  for fresh-sync chains (`future-pparams` returns
+  `Maybe (PParams era) = Nothing`, rendered by cardano-cli
+  as `"No protocol parameter changes will be enacted at the
+  next epoch boundary."`).  `query gov-state` dispatcher
+  routes; full `ConwayGovState` body shape is a remaining
+  follow-up (substantial — 7-element record with `Proposals`
+  tree + `DRepPulsingState` cache).
 - **`yggdrasil_current_era` Prometheus gauge (Round 169)**
   reports the wire era ordinal (`0=Byron, 1=Shelley, …,
   6=Conway`) of the latest applied block.

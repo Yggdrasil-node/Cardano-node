@@ -419,12 +419,6 @@ pub fn decode_query_if_current(inner_cbor: &[u8]) -> Result<(u32, EraSpecificQue
     let q_start = dec.position();
     let q_len = dec.array()?;
     let q_tag = dec.unsigned()?;
-    if std::env::var("YGG_NTC_DEBUG").is_ok_and(|v| v != "0") {
-        eprintln!(
-            "[YGG_NTC_DEBUG] decode_query_if_current: era_index={} q_len={} q_tag={}",
-            era_index, q_len, q_tag,
-        );
-    }
     let q_end_after_tag = dec.position();
     // Skip remaining elements (if any) so the slice is the full
     // era-specific query CBOR.
@@ -1802,6 +1796,17 @@ mod tests {
         let (era_idx, q) = decode_query_if_current(&payload).unwrap();
         assert_eq!(era_idx, 1);
         assert!(matches!(q, EraSpecificQuery::GetStakeDistribution));
+    }
+
+    /// Round 183 — pin upstream tag 33 `GetFuturePParams`
+    /// (singleton, no parameters).
+    #[test]
+    fn decode_recognises_future_pparams_tag_33() {
+        // [1, [33]] = era 1, GetFuturePParams
+        let payload = vec![0x82, 0x01, 0x81, 0x18, 0x21];
+        let (era_idx, q) = decode_query_if_current(&payload).unwrap();
+        assert_eq!(era_idx, 1);
+        assert!(matches!(q, EraSpecificQuery::GetFuturePParams));
     }
 
     /// Round 182 — pin upstream tag 27 `GetCommitteeMembersState`

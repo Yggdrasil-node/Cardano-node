@@ -1476,17 +1476,18 @@ fn dispatch_upstream_query(
                                 encode_query_if_current_match(&e.into_bytes())
                             }
                             EraSpecificQuery::GetFuturePParams => {
-                                // Round 183 — Conway `FuturePParams era`
-                                // ADT.  Encoder emits `[0]` for the
-                                // `NoPParamsUpdate` case (default for
-                                // chains with no PPUP pending enactment).
-                                // When yggdrasil starts tracking queued
-                                // PParams updates ready for next-epoch
-                                // adoption, the dispatcher will switch to
-                                // `[1, pp]` (DefinitePParamsUpdate).
+                                // Round 183 — Conway `GetFuturePParams`
+                                // result type is `Maybe (PParams era)`
+                                // per upstream
+                                // `Cardano.Ledger.Conway.LedgerStateQuery
+                                // .GetFuturePParams`, encoded as
+                                // `Maybe`-shaped CBOR list:
+                                // `Nothing` → `[]` (`0x80`, empty list);
+                                // `Just pp` → `[pp]` (`0x81 <pp>`).
+                                // Without a queued PParams update,
+                                // emit `Nothing`.
                                 let mut e = Encoder::new();
-                                e.array(1);
-                                e.unsigned(0); // NoPParamsUpdate
+                                e.array(0); // Nothing
                                 encode_query_if_current_match(&e.into_bytes())
                             }
                             EraSpecificQuery::GetCommitteeMembersState {
