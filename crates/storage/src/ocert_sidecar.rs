@@ -27,12 +27,19 @@ pub const OCERT_COUNTERS_FILENAME: &str = "ocert_counters.cbor";
 /// Filename used for the Praos nonce-evolution sidecar (R197).
 pub const NONCE_STATE_FILENAME: &str = "nonce_state.cbor";
 
+/// Filename used for the active stake-snapshot rotation sidecar (R203).
+pub const STAKE_SNAPSHOTS_FILENAME: &str = "stake_snapshots.cbor";
+
 fn sidecar_path(dir: &Path) -> PathBuf {
     dir.join(OCERT_COUNTERS_FILENAME)
 }
 
 fn nonce_sidecar_path(dir: &Path) -> PathBuf {
     dir.join(NONCE_STATE_FILENAME)
+}
+
+fn stake_snapshots_sidecar_path(dir: &Path) -> PathBuf {
+    dir.join(STAKE_SNAPSHOTS_FILENAME)
 }
 
 fn sync_dir(dir: Option<&Path>) -> std::io::Result<()> {
@@ -99,6 +106,28 @@ pub fn save_nonce_state(dir: &Path, encoded: &[u8]) -> Result<(), StorageError> 
 /// does not exist (fresh node, never persisted).
 pub fn load_nonce_state(dir: &Path) -> Result<Option<Vec<u8>>, StorageError> {
     let path = nonce_sidecar_path(dir);
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// R203 — atomically writes the encoded `StakeSnapshots`
+/// sidecar to `<dir>/stake_snapshots.cbor`.  Same atomic-write
+/// contract as [`save_ocert_counters`].
+pub fn save_stake_snapshots(dir: &Path, encoded: &[u8]) -> Result<(), StorageError> {
+    fs::create_dir_all(dir)?;
+    atomic_write_file(&stake_snapshots_sidecar_path(dir), encoded)?;
+    Ok(())
+}
+
+/// R203 — loads the `StakeSnapshots` sidecar from
+/// `<dir>/stake_snapshots.cbor`.  Returns `Ok(None)` when the
+/// file does not exist (fresh node, pre-epoch-boundary, or
+/// path without stake-snapshot tracking).
+pub fn load_stake_snapshots(dir: &Path) -> Result<Option<Vec<u8>>, StorageError> {
+    let path = stake_snapshots_sidecar_path(dir);
     match fs::read(&path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),

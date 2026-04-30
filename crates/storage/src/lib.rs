@@ -30,8 +30,9 @@ pub use error::StorageError;
 
 // -- Sidecar re-exports -------------------------------------------------------
 pub use ocert_sidecar::{
-    NONCE_STATE_FILENAME, OCERT_COUNTERS_FILENAME, load_nonce_state, load_ocert_counters,
-    save_nonce_state, save_ocert_counters,
+    NONCE_STATE_FILENAME, OCERT_COUNTERS_FILENAME, STAKE_SNAPSHOTS_FILENAME, load_nonce_state,
+    load_ocert_counters, load_stake_snapshots, save_nonce_state, save_ocert_counters,
+    save_stake_snapshots,
 };
 
 // -- Coordination re-exports --------------------------------------------------

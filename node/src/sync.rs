@@ -1806,6 +1806,23 @@ where
                     yggdrasil_storage::save_ocert_counters(dir, &encoded)
                         .map_err(SyncError::Storage)?;
                 }
+                // R203 — persist active stake-snapshot rotation
+                // alongside the OCert sidecar so LSQ
+                // `query stake-snapshot` can serve live per-pool
+                // mark/set/go totals across restarts.
+                if let (Some(dir), Some(snapshots)) = (
+                    tracking.ocert_persist_dir.as_ref(),
+                    tracking.stake_snapshots.as_ref(),
+                ) {
+                    let encoded = {
+                        use yggdrasil_ledger::cbor::{CborEncode, Encoder};
+                        let mut enc = Encoder::new();
+                        snapshots.encode_cbor(&mut enc);
+                        enc.into_bytes()
+                    };
+                    yggdrasil_storage::save_stake_snapshots(dir, &encoded)
+                        .map_err(SyncError::Storage)?;
+                }
                 tracking.last_persisted_point = current_point;
                 Ok((
                     LedgerCheckpointUpdateOutcome::Persisted {

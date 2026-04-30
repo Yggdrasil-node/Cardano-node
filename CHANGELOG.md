@@ -7,7 +7,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-Operational-parity arc on top of v0.2.0 — Rounds 144 → 201.
+Operational-parity arc on top of v0.2.0 — Rounds 144 → 208.
 Highlights: full cardano-cli 10.16 query parity at preprod (Shelley
 era) and preview (Alonzo era), **every Conway-era LSQ subcommand**
 (constitution, gov-state, drep-state, drep-stake-distribution,

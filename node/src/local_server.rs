@@ -494,14 +494,16 @@ fn attach_chain_dep_state_from_sidecar(
     storage_dir: Option<&Path>,
 ) -> LedgerStateSnapshot {
     use yggdrasil_consensus::{NonceEvolutionState, OcertCounters};
+    use yggdrasil_ledger::stake::StakeSnapshots;
     use yggdrasil_ledger::{CborDecode, ChainDepStateContext, Decoder};
 
     let Some(dir) = storage_dir else {
         return snapshot;
     };
 
+    let mut snap = snapshot;
     let mut ctx = ChainDepStateContext::default();
-    let mut populated = false;
+    let mut chain_dep_populated = false;
 
     // OCert counters (R196).
     if let Ok(Some(counters_bytes)) = yggdrasil_storage::load_ocert_counters(dir) {
@@ -510,7 +512,7 @@ fn attach_chain_dep_state_from_sidecar(
             for (hash, counter) in counters.iter() {
                 ctx.opcert_counters.insert(*hash, *counter);
             }
-            populated = true;
+            chain_dep_populated = true;
         }
     }
 
@@ -525,15 +527,23 @@ fn attach_chain_dep_state_from_sidecar(
             ctx.last_epoch_block_nonce = nonces.prev_hash_nonce;
             // `previous_epoch_nonce` not tracked separately by yggdrasil
             // — leaves the `ChainDepStateContext::default()` Neutral.
-            populated = true;
+            chain_dep_populated = true;
         }
     }
 
-    if populated {
-        snapshot.with_chain_dep_state(ctx)
-    } else {
-        snapshot
+    if chain_dep_populated {
+        snap = snap.with_chain_dep_state(ctx);
     }
+
+    // Active stake-snapshot rotation (R203).
+    if let Ok(Some(stake_bytes)) = yggdrasil_storage::load_stake_snapshots(dir) {
+        let mut dec = Decoder::new(&stake_bytes);
+        if let Ok(snapshots) = StakeSnapshots::decode_cbor(&mut dec) {
+            snap = snap.with_stake_snapshots(snapshots);
+        }
+    }
+
+    snap
 }
 
 /// Recover a ledger snapshot at an explicit chain point.
@@ -2964,7 +2974,18 @@ fn encode_conway_gov_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
     encode_strict_maybe_gov_action_id(&mut enc, es.prev_hard_fork.as_ref());
     encode_strict_maybe_gov_action_id(&mut enc, es.prev_committee.as_ref());
     encode_strict_maybe_gov_action_id(&mut enc, es.prev_constitution.as_ref());
-    enc.array(0); // OMap empty — pending upstream-shape encoder
+    // R204 — OMap of governance actions per upstream
+    // `OMap GovActionId GovActionState` encoding (`encodeStrictSeq
+    // encCBOR (toStrictSeq omap)` — a CBOR list of values, where
+    // each value is the upstream-shape `GovActionState era` 7-tuple
+    // including `gasId` from the map key).  For preview at slot
+    // ~5K with no governance proposals submitted, this list is
+    // empty and `enc.array(0)` is emitted.
+    let gov_actions = snapshot.governance_actions();
+    enc.array(gov_actions.len() as u64);
+    for (gov_action_id, gas) in gov_actions {
+        encode_gov_action_state_upstream(&mut enc, gov_action_id, gas);
+    }
 
     // 2: cgsCommittee = SNothing.
     enc.array(0);
@@ -3086,6 +3107,105 @@ fn encode_strict_maybe_gov_action_id(
             enc.array(0);
         }
     }
+}
+
+/// Round 204 — adapt yggdrasil's reduced `GovernanceActionState`
+/// (4-field: proposal/votes/proposed_in/expires_after) to upstream's
+/// 7-field `GovActionState era` wire shape per
+/// `Cardano.Ledger.Conway.Governance.Procedures.GovActionState`:
+///
+/// ```text
+/// [
+///   gasId                 :: GovActionId,
+///   gasCommitteeVotes     :: Map (Credential 'HotCommitteeRole) Vote,
+///   gasDRepVotes          :: Map (Credential 'DRepRole) Vote,
+///   gasStakePoolVotes     :: Map (KeyHash 'StakePool) Vote,
+///   gasProposalProcedure  :: ProposalProcedure era,
+///   gasProposedIn         :: EpochNo,
+///   gasExpiresAfter       :: EpochNo,
+/// ]
+/// ```
+///
+/// Yggdrasil's `votes: BTreeMap<Voter, Vote>` is split into the
+/// three upstream-shape maps by voter type:
+///
+///   - `Voter::CommitteeKeyHash(h)` / `CommitteeScript(h)` → committee
+///     votes keyed by `Credential` (`[0, h]` for AddrKey, `[1, h]`
+///     for Script).
+///   - `Voter::DRepKeyHash(h)` / `DRepScript(h)` → DRep votes keyed
+///     by `Credential`.
+///   - `Voter::StakePool(h)` → SPO votes keyed by 28-byte pool key
+///     hash (bare bytes).
+///
+/// `proposed_in` / `expires_after` are `Option<EpochNo>` in
+/// yggdrasil; emit `0` for `None` to satisfy upstream's
+/// non-optional `EpochNo` type.
+fn encode_gov_action_state_upstream(
+    enc: &mut yggdrasil_ledger::Encoder,
+    gov_action_id: &yggdrasil_ledger::eras::conway::GovActionId,
+    state: &yggdrasil_ledger::GovernanceActionState,
+) {
+    use std::collections::BTreeMap;
+    use yggdrasil_ledger::CborEncode;
+    use yggdrasil_ledger::eras::conway::{Vote, Voter};
+
+    enc.array(7);
+
+    // 1: gasId — re-emit the GovActionId from the map key.
+    gov_action_id.encode_cbor(enc);
+
+    // 2-4: split votes into committee / drep / spo maps,
+    //      sorting keys for deterministic CBOR.
+    let mut committee_votes: BTreeMap<(u8, [u8; 28]), Vote> = BTreeMap::new();
+    let mut drep_votes: BTreeMap<(u8, [u8; 28]), Vote> = BTreeMap::new();
+    let mut spo_votes: BTreeMap<[u8; 28], Vote> = BTreeMap::new();
+    for (voter, vote) in state.votes().iter() {
+        match voter {
+            Voter::CommitteeKeyHash(h) => {
+                committee_votes.insert((0, *h), *vote);
+            }
+            Voter::CommitteeScript(h) => {
+                committee_votes.insert((1, *h), *vote);
+            }
+            Voter::DRepKeyHash(h) => {
+                drep_votes.insert((0, *h), *vote);
+            }
+            Voter::DRepScript(h) => {
+                drep_votes.insert((1, *h), *vote);
+            }
+            Voter::StakePool(h) => {
+                spo_votes.insert(*h, *vote);
+            }
+        }
+    }
+
+    let encode_credential_map =
+        |enc: &mut yggdrasil_ledger::Encoder, votes: &BTreeMap<(u8, [u8; 28]), Vote>| {
+            enc.map(votes.len() as u64);
+            for ((kind, hash), vote) in votes {
+                enc.array(2);
+                enc.unsigned(*kind as u64);
+                enc.bytes(hash);
+                vote.encode_cbor(enc);
+            }
+        };
+
+    encode_credential_map(enc, &committee_votes);
+    encode_credential_map(enc, &drep_votes);
+    enc.map(spo_votes.len() as u64);
+    for (pool_hash, vote) in &spo_votes {
+        enc.bytes(pool_hash);
+        vote.encode_cbor(enc);
+    }
+
+    // 5: gasProposalProcedure.
+    state.proposal().encode_cbor(enc);
+
+    // 6-7: gasProposedIn / gasExpiresAfter.  Yggdrasil tracks
+    //      these as Option<EpochNo>; upstream's record is
+    //      non-optional EpochNo.  Emit 0 for None.
+    enc.unsigned(state.proposed_in().map(|e| e.0).unwrap_or(0));
+    enc.unsigned(state.expires_after().map(|e| e.0).unwrap_or(0));
 }
 
 /// Round 187 — encode upstream `RatifyState era` as a 4-element CBOR
