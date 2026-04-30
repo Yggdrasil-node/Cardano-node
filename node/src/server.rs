@@ -2591,6 +2591,20 @@ mod tests {
             Some((second_point.to_cbor_bytes(), expected_tip.clone()))
         );
         assert_eq!(provider.chain_tip(), expected_tip);
+
+        // R221 — `chain_tip_point()` MUST return bare `Point` shape
+        // (`[slot, hash]`), distinct from `chain_tip()`'s upstream
+        // `Tip` envelope shape (`[point, blockNo]`).  These two
+        // shapes are the canonical contract — `MsgRollBackward
+        // { point, tip }` carries them in distinct argument
+        // positions.  See `ChainProvider` rustdoc for the per-method
+        // wire-protocol use-site mapping.
+        assert_eq!(provider.chain_tip_point(), second_point.to_cbor_bytes());
+        assert_ne!(
+            provider.chain_tip_point(),
+            provider.chain_tip(),
+            "chain_tip_point (bare Point) and chain_tip (Tip envelope) MUST be distinct shapes",
+        );
     }
 
     #[derive(Default)]

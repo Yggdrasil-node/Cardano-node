@@ -1087,6 +1087,61 @@ pub struct GovernorState {
     ///
     /// Upstream: `Ouroboros.Network.PeerSelection.Governor.HotPeers`.
     pub hot_scheduling: HotPeerScheduling,
+    /// R222 — Phase D.2 first slice.  Per-peer **lifetime** statistics
+    /// keyed by `SocketAddr` that survive across reconnects, providing
+    /// stable observability about peer churn.
+    ///
+    /// Distinct from the existing session-keyed state (`failures`,
+    /// `in_flight_*`, peer-registry status) which resets per
+    /// reconnect.  When a peer disconnects and reconnects, the
+    /// session-keyed counters reset to mirror the live session, but
+    /// `lifetime_stats` accumulates monotonically — letting an
+    /// operator distinguish "this peer has had 5 reconnects in the
+    /// last hour" (churn) from "we just connected to this peer for
+    /// the first time" (initial bootstrap).
+    ///
+    /// Upstream parallel: the long-lived
+    /// `KnownPeers.knownPeerInfo` map keyed by `PeerAddr` from
+    /// `Ouroboros.Network.PeerSelection.State.KnownPeers`, which
+    /// also persists across hot/warm/cold cycle transitions.
+    pub lifetime_stats: BTreeMap<SocketAddr, PeerLifetimeStats>,
+}
+
+/// R222 — Phase D.2 lifetime peer-statistics record.  Persists
+/// across reconnects (unlike session-keyed governor state), keyed
+/// by `SocketAddr` (peer identity), and accumulates monotonically.
+///
+/// Upstream parallel: per-peer `KnownPeerInfo` carried in
+/// `Ouroboros.Network.PeerSelection.State.KnownPeers`'s
+/// `knownPeerInfo` map.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PeerLifetimeStats {
+    /// Total number of successful sessions established with this
+    /// peer (handshake completed + at least one mini-protocol
+    /// message exchanged).  Monotonic; never resets.
+    pub sessions: u32,
+    /// Cumulative bytes received from this peer across all
+    /// sessions (header + body bytes per BlockFetch + ChainSync +
+    /// TxSubmission2 + KeepAlive + PeerSharing).  Updated on a
+    /// best-effort basis from mini-protocol metrics.
+    pub bytes_in: u64,
+    /// Cumulative bytes sent to this peer across all sessions.
+    pub bytes_out: u64,
+    /// Cumulative number of successful handshake completions
+    /// (NtN handshake "AcceptVersion" reached) with this peer.
+    /// May exceed `sessions` if a session disconnects after
+    /// handshake but before any mini-protocol traffic.
+    pub successful_handshakes: u32,
+    /// Cumulative number of session failures (handshake failure,
+    /// mux abort, mini-protocol error).  Distinct from the
+    /// session-keyed `failures` map which decays.
+    pub failures_total: u32,
+    /// Wall-clock instant of the first observation of this peer
+    /// (typically the first handshake attempt).
+    pub first_seen: Option<Instant>,
+    /// Wall-clock instant of the most recent observation of this
+    /// peer (last status update / handshake / message).
+    pub last_seen: Option<Instant>,
 }
 
 impl Default for GovernorState {
@@ -1119,6 +1174,7 @@ impl Default for GovernorState {
             max_inbound_peers: 10,
             enable_root_big_ledger_requests: false,
             hot_scheduling: HotPeerScheduling::new(),
+            lifetime_stats: BTreeMap::new(),
         }
     }
 }
@@ -1141,6 +1197,65 @@ impl GovernorState {
     /// Record a successful connection to `peer`, resetting its failure count.
     pub fn record_success(&mut self, peer: SocketAddr) {
         self.failures.remove(&peer);
+    }
+
+    /// R222 — Record the start of a new session with `peer`.  Bumps
+    /// the lifetime `sessions` counter and the
+    /// `successful_handshakes` counter; updates `first_seen` /
+    /// `last_seen`.  Call this from the runtime when the NtN
+    /// handshake completes and the per-peer mux is wired through
+    /// (i.e., the peer transitions from `PeerCold/PeerCooling` to
+    /// `PeerWarm` or higher).
+    ///
+    /// Idempotent in the sense that repeated calls accumulate
+    /// monotonically; callers should ensure the state machine
+    /// only fires the event once per actual session.
+    pub fn record_lifetime_session_started(&mut self, peer: SocketAddr) {
+        let entry = self.lifetime_stats.entry(peer).or_default();
+        let now = Instant::now();
+        entry.sessions = entry.sessions.saturating_add(1);
+        entry.successful_handshakes = entry.successful_handshakes.saturating_add(1);
+        if entry.first_seen.is_none() {
+            entry.first_seen = Some(now);
+        }
+        entry.last_seen = Some(now);
+    }
+
+    /// R222 — Record a session-level failure for `peer`.  Bumps
+    /// the lifetime `failures_total` counter and updates
+    /// `last_seen`.  Distinct from
+    /// [`Self::record_failure`] which manipulates the
+    /// session-keyed `failures` map (used for backoff
+    /// computation); the lifetime counter is observability-only.
+    pub fn record_lifetime_session_failure(&mut self, peer: SocketAddr) {
+        let entry = self.lifetime_stats.entry(peer).or_default();
+        let now = Instant::now();
+        entry.failures_total = entry.failures_total.saturating_add(1);
+        if entry.first_seen.is_none() {
+            entry.first_seen = Some(now);
+        }
+        entry.last_seen = Some(now);
+    }
+
+    /// R222 — Accumulate `bytes_in` / `bytes_out` for `peer`.
+    /// Best-effort: callers feed in the per-message byte counts
+    /// from mini-protocol drivers (BlockFetch served bytes,
+    /// ChainSync header/tip bytes, TxSubmission2 reply bytes,
+    /// etc.).  No-op if the peer has no lifetime entry yet
+    /// (require [`Self::record_lifetime_session_started`] to be
+    /// called first).  Updates `last_seen` on every call.
+    pub fn record_lifetime_traffic(&mut self, peer: SocketAddr, bytes_in: u64, bytes_out: u64) {
+        if let Some(entry) = self.lifetime_stats.get_mut(&peer) {
+            entry.bytes_in = entry.bytes_in.saturating_add(bytes_in);
+            entry.bytes_out = entry.bytes_out.saturating_add(bytes_out);
+            entry.last_seen = Some(Instant::now());
+        }
+    }
+
+    /// R222 — Read-only accessor for a peer's lifetime stats, or
+    /// `None` if the peer has never connected.
+    pub fn lifetime_stats_for(&self, peer: &SocketAddr) -> Option<&PeerLifetimeStats> {
+        self.lifetime_stats.get(peer)
     }
 
     /// Record a connection failure for `peer`.
@@ -3375,6 +3490,71 @@ mod tests {
     #[test]
     fn is_sane_accepts_default_targets() {
         assert!(GovernorTargets::default().is_sane());
+    }
+
+    /// R222 — Pin the Phase D.2 lifetime-stats accumulation contract:
+    /// counters are monotonic across "reconnects", `last_seen` updates
+    /// on every event, and lifetime_stats[peer] survives session
+    /// boundaries.  Distinct from session-keyed `failures` which
+    /// resets via `record_success` — verified by the second assertion
+    /// that lifetime `failures_total` survives `record_success`.
+    #[test]
+    fn lifetime_stats_accumulate_across_simulated_reconnects() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 3001);
+        let mut state = GovernorState::default();
+
+        // Initial state: no stats record.
+        assert!(state.lifetime_stats_for(&peer).is_none());
+
+        // Simulate first session: handshake → traffic → failure.
+        state.record_lifetime_session_started(peer);
+        state.record_lifetime_traffic(peer, 1024, 256);
+        state.record_lifetime_session_failure(peer);
+
+        let s1 = *state
+            .lifetime_stats_for(&peer)
+            .expect("entry after session 1");
+        assert_eq!(s1.sessions, 1);
+        assert_eq!(s1.successful_handshakes, 1);
+        assert_eq!(s1.bytes_in, 1024);
+        assert_eq!(s1.bytes_out, 256);
+        assert_eq!(s1.failures_total, 1);
+        assert!(s1.first_seen.is_some());
+        assert!(s1.last_seen.is_some());
+
+        // Simulate session-keyed reset (the existing record_success
+        // resets `failures` map but MUST NOT touch lifetime_stats).
+        state.record_failure(peer);
+        state.record_success(peer);
+        let s_after_reset = *state
+            .lifetime_stats_for(&peer)
+            .expect("lifetime stats survive record_success");
+        assert_eq!(
+            s_after_reset, s1,
+            "lifetime stats unchanged by session-keyed reset"
+        );
+
+        // Simulate second session: handshake → traffic.  Sessions /
+        // handshakes / bytes accumulate; failures_total stays at 1
+        // (no new failures); last_seen advances.
+        state.record_lifetime_session_started(peer);
+        state.record_lifetime_traffic(peer, 2048, 512);
+
+        let s2 = *state
+            .lifetime_stats_for(&peer)
+            .expect("entry after session 2");
+        assert_eq!(s2.sessions, 2);
+        assert_eq!(s2.successful_handshakes, 2);
+        assert_eq!(s2.bytes_in, 1024 + 2048);
+        assert_eq!(s2.bytes_out, 256 + 512);
+        assert_eq!(s2.failures_total, 1);
+        assert_eq!(s2.first_seen, s1.first_seen, "first_seen never moves");
+        assert!(
+            s2.last_seen >= s1.last_seen,
+            "last_seen advances on each event"
+        );
     }
 
     #[test]
