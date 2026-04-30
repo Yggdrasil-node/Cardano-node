@@ -627,6 +627,20 @@ pub struct NodeMetrics {
     apply_batch_duration_buckets: [AtomicU64; 10],
     apply_batch_duration_sum_micros: AtomicU64,
     apply_batch_duration_count: AtomicU64,
+    /// R217 — fetch-batch duration histogram.  Mirrors the R200
+    /// apply-batch histogram (same bucket boundaries) so an operator
+    /// can compare fetch time vs apply time per batch.  Baseline
+    /// observability for Phase C.2 (pipelined fetch+apply): the
+    /// gap between `fetch_batch_duration_sum / count` and
+    /// `apply_batch_duration_sum / count` quantifies the headroom
+    /// available for overlap.  Instrumented around the
+    /// `fetch_range_blocks_multi_era_raw_decoded` call site in the
+    /// legacy single-peer path (which is the dominant production
+    /// code path on mainnet, where multi-peer dispatch is gated
+    /// behind `--max-concurrent-block-fetch-peers > 1`).
+    fetch_batch_duration_buckets: [AtomicU64; 10],
+    fetch_batch_duration_sum_micros: AtomicU64,
+    fetch_batch_duration_count: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -745,6 +759,17 @@ pub struct MetricsSnapshot {
     /// Round 200 — total number of apply-batch duration
     /// observations.  Rendered as the histogram `_count` field.
     pub apply_batch_duration_count: u64,
+    /// R217 — fetch-batch duration histogram bucket counters.
+    /// Mirrors `apply_batch_duration_buckets`; same bucket
+    /// boundaries.  See `NodeMetrics::fetch_batch_duration_buckets`
+    /// rustdoc for the Phase C.2 (pipelined fetch+apply)
+    /// rationale.
+    pub fetch_batch_duration_buckets: [u64; 10],
+    /// R217 — sum of all observed fetch-batch durations
+    /// (microseconds).
+    pub fetch_batch_duration_sum_micros: u64,
+    /// R217 — total number of fetch-batch duration observations.
+    pub fetch_batch_duration_count: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -808,6 +833,20 @@ impl NodeMetrics {
             ],
             apply_batch_duration_sum_micros: AtomicU64::new(0),
             apply_batch_duration_count: AtomicU64::new(0),
+            fetch_batch_duration_buckets: [
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ],
+            fetch_batch_duration_sum_micros: AtomicU64::new(0),
+            fetch_batch_duration_count: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
     }
@@ -843,6 +882,25 @@ impl NodeMetrics {
         self.apply_batch_duration_sum_micros
             .fetch_add(micros, Ordering::Relaxed);
         self.apply_batch_duration_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// R217 — Record a fetch-batch duration into the histogram.
+    /// Same cumulative-bucket semantics as the apply histogram.
+    /// Reuses [`Self::APPLY_BATCH_BUCKETS_SECONDS`] so operators can
+    /// compare fetch vs apply on identical bucket boundaries —
+    /// baseline observability for Phase C.2 (pipelined fetch+apply).
+    pub fn record_fetch_batch_duration(&self, duration: std::time::Duration) {
+        let secs = duration.as_secs_f64();
+        let micros = duration.as_micros() as u64;
+        for (i, le) in Self::APPLY_BATCH_BUCKETS_SECONDS.iter().enumerate() {
+            if secs <= *le {
+                self.fetch_batch_duration_buckets[i].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.fetch_batch_duration_sum_micros
+            .fetch_add(micros, Ordering::Relaxed);
+        self.fetch_batch_duration_count
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -1108,6 +1166,17 @@ impl NodeMetrics {
                 .apply_batch_duration_sum_micros
                 .load(Ordering::Relaxed),
             apply_batch_duration_count: self.apply_batch_duration_count.load(Ordering::Relaxed),
+            fetch_batch_duration_buckets: {
+                let mut buckets = [0u64; 10];
+                for (i, b) in self.fetch_batch_duration_buckets.iter().enumerate() {
+                    buckets[i] = b.load(Ordering::Relaxed);
+                }
+                buckets
+            },
+            fetch_batch_duration_sum_micros: self
+                .fetch_batch_duration_sum_micros
+                .load(Ordering::Relaxed),
+            fetch_batch_duration_count: self.fetch_batch_duration_count.load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -1351,6 +1420,36 @@ yggdrasil_blocks_conway {}\n",
         out.push_str(&format!(
             "yggdrasil_apply_batch_duration_seconds_count {}\n",
             self.apply_batch_duration_count
+        ));
+
+        // R217 — Append fetch-batch duration histogram with the same
+        // shape as apply-batch.  Operators can compare `*_apply_*` and
+        // `*_fetch_*` rates side-by-side to baseline how much overlap
+        // a Phase C.2 pipelined fetch+apply implementation could
+        // recover.
+        out.push_str(
+            "# HELP yggdrasil_fetch_batch_duration_seconds Time spent fetching a batch of blocks from the upstream peer (legacy single-peer path).\n",
+        );
+        out.push_str("# TYPE yggdrasil_fetch_batch_duration_seconds histogram\n");
+        for (i, le) in NodeMetrics::APPLY_BATCH_BUCKETS_SECONDS.iter().enumerate() {
+            let le_str = if le.is_infinite() {
+                "+Inf".to_string()
+            } else {
+                format!("{le}")
+            };
+            out.push_str(&format!(
+                "yggdrasil_fetch_batch_duration_seconds_bucket{{le=\"{le_str}\"}} {}\n",
+                self.fetch_batch_duration_buckets[i]
+            ));
+        }
+        let fetch_sum_secs = (self.fetch_batch_duration_sum_micros as f64) / 1_000_000.0;
+        out.push_str(&format!(
+            "yggdrasil_fetch_batch_duration_seconds_sum {}\n",
+            fetch_sum_secs
+        ));
+        out.push_str(&format!(
+            "yggdrasil_fetch_batch_duration_seconds_count {}\n",
+            self.fetch_batch_duration_count
         ));
 
         out
@@ -1649,7 +1748,14 @@ mod tests {
                 || (field_name == "apply_batch_duration_sum_micros"
                     && text.contains("yggdrasil_apply_batch_duration_seconds_sum "))
                 || (field_name == "apply_batch_duration_count"
-                    && text.contains("yggdrasil_apply_batch_duration_seconds_count "));
+                    && text.contains("yggdrasil_apply_batch_duration_seconds_count "))
+                // R217 — fetch-batch histogram (same shape as apply).
+                || (field_name == "fetch_batch_duration_buckets"
+                    && text.contains("yggdrasil_fetch_batch_duration_seconds_bucket"))
+                || (field_name == "fetch_batch_duration_sum_micros"
+                    && text.contains("yggdrasil_fetch_batch_duration_seconds_sum "))
+                || (field_name == "fetch_batch_duration_count"
+                    && text.contains("yggdrasil_fetch_batch_duration_seconds_count "));
             if !accepts {
                 missing.push(field_name);
             }

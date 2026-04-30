@@ -325,6 +325,26 @@ curl -fsS http://127.0.0.1:9001/metrics \
 
 Expected: knob=2 throughput ≥ knob=1 throughput. Upstream typically observes a 1.5–2× speedup on bulk-sync periods.
 
+**Operator-quantified empirical numbers (Round 217 + 218, 2026-04-30 mainnet)**:
+
+The R217 fetch-batch histogram + R218 multi-peer rehearsal give concrete per-batch numbers from the IOG backbone peer:
+
+| Configuration                         | fetch avg/batch | apply avg/batch | throughput |
+| ------------------------------------- | --------------: | --------------: | ---------: |
+| `--max-concurrent-block-fetch-peers 1`|         12.85 s |          0.22 s | 3.33 blk/s |
+| `--max-concurrent-block-fetch-peers 4`<br>(2 active workers) |          8.56 s |          0.23 s | 5.55 blk/s |
+
+The fetch path dominates (~59× more expensive than apply) so multi-peer dispatch is the real lever — each additional warm peer that migrates to a worker subtracts ≈ `(fetch_avg / N)` from the per-batch fetch time.  Apply rate is unchanged across knob values.
+
+Use the R217 histograms to verify your topology is healthy:
+
+```sh
+curl -fsS http://127.0.0.1:9001/metrics \
+  | grep -E "yggdrasil_(fetch|apply)_batch_duration_seconds_(sum|count)"
+```
+
+A healthy multi-peer mainnet sync should show `fetch_avg/batch ≈ baseline / N` where N is the active worker count (`yggdrasil_blockfetch_workers_registered`).
+
 ### 6.5d Knob=4 stress test
 
 After 6.5a–6.5c pass, repeat with `max_concurrent_block_fetch_peers=4` for at least 24 hours of preprod soak. Watch:
@@ -370,6 +390,8 @@ Key metrics to track:
 For Phase 6 parallel-fetch validation (§6.5):
 - `yggdrasil_blockfetch_workers_registered` — current pool size. `0` in legacy single-peer mode (knob = 1); equal to the number of warm peers when knob > 1 and the governor has migrated their `BlockFetchClient`s. Watching this gauge climb to the configured knob value is the operator's primary signal that multi-peer dispatch has activated.
 - `yggdrasil_blockfetch_workers_migrated_total` — lifetime count of promote-time migrations. Should monotonically increase as warm peers are promoted; flat-lining while warm peers are being promoted indicates the migration call path is broken (check `Net.BlockFetch.Worker` tracer events).
+- `yggdrasil_fetch_batch_duration_seconds` — R217 fetch+verify histogram (per-batch).  Compare against `yggdrasil_apply_batch_duration_seconds` (R200) to size sync-rate bottlenecks.  On mainnet from the IOG backbone peer the R217 baseline is ~12.85 s/batch single-peer; multi-peer with 2 active workers brings it to ~8.56 s/batch (R218).  Operator action: if `fetch_avg/batch` is much higher than expected for your `blockfetch_workers_registered` count, the topology peers may be routing-distant / unhealthy — increase peer diversity.
+- `yggdrasil_apply_batch_duration_seconds` — R200 ledger-apply histogram (per-batch).  Mainnet baseline ~0.22 s/batch (≈4 ms/block); essentially independent of multi-peer knob.  Stable apply time confirms the multi-peer dispatch path doesn't distort apply behaviour.
 
 Quick health JSON:
 

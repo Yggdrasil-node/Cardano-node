@@ -4947,6 +4947,8 @@ where
                 break;
             }
 
+            // R217 — fetch+verify timing baseline.
+            let fetch_start = std::time::Instant::now();
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
                 session.block_fetch.as_mut(),
@@ -4986,6 +4988,11 @@ where
                 }
 
                 result = batch_fut => {
+                    // R217 — record fetch+verify duration regardless
+                    // of result (timing the path even on error).
+                    if let Some(m) = metrics {
+                        m.record_fetch_batch_duration(fetch_start.elapsed());
+                    }
                     match result {
                         Ok(progress) => {
                             let vrf_ctx = if config.verify_vrf {
@@ -5560,6 +5567,8 @@ where
                 break;
             }
 
+            // R217 — fetch+verify timing baseline.
+            let fetch_start = std::time::Instant::now();
             let batch_fut = sync_batch_verified_with_tentative(
                 &mut session.chain_sync,
                 session.block_fetch.as_mut(),
@@ -5599,6 +5608,10 @@ where
                 }
 
                 result = batch_fut => {
+                    // R217 — fetch+verify duration on shared-chaindb path.
+                    if let Some(m) = metrics {
+                        m.record_fetch_batch_duration(fetch_start.elapsed());
+                    }
                     match result {
                         Ok(progress) => {
                             let vrf_ctx = if config.verify_vrf {

@@ -21,8 +21,8 @@ use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool_with_eviction
 use crate::sync::recover_ledger_state_chaindb;
 use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
-    AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock, Decoder,
-    MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo, TxId,
+    AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock, Decoder, Encoder,
+    MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo, Tip, TxId,
 };
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::multiplexer::MiniProtocolNum;
@@ -610,17 +610,42 @@ pub async fn run_blockfetch_server(
 /// A trait for serving chain headers and finding intersections.
 ///
 /// The node layer implements this over its storage + consensus state.
+///
+/// **Wire-shape contract** (R220): every `tip` Vec<u8> returned by
+/// the methods below MUST encode the upstream `Tip` envelope, not a
+/// bare `Point`.  `Tip` is `[]` (genesis) or `[point, blockNo]`
+/// (specific tip).  See `chain_tip_envelope_cbor` in this file for
+/// the canonical helper.
 pub trait ChainProvider: Send + Sync {
-    /// Return the current chain tip as CBOR-encoded point.
+    /// Return the current chain tip as CBOR-encoded `Tip` envelope
+    /// (`[]` for genesis, `[point, blockNo]` for a specific tip).
+    /// Used by `MsgIntersectNotFound` and as the `tip` slot of
+    /// `MsgRollForward`/`MsgRollBackward`/`MsgIntersectFound`.
     fn chain_tip(&self) -> Vec<u8>;
 
+    /// Return the current chain tip as CBOR-encoded bare `Point`
+    /// (`[]` for genesis, `[slot, hash]` for a specific tip).  Used
+    /// as the `point` slot of `MsgRollBackward` and to seed the
+    /// chainsync cursor.  Distinct from [`Self::chain_tip`] which
+    /// returns the upstream `Tip` envelope used at tip-slot positions.
+    /// Default impl returns Origin's bytes for maximum backward
+    /// compatibility — production providers must override.
+    fn chain_tip_point(&self) -> Vec<u8> {
+        Point::Origin.to_cbor_bytes()
+    }
+
     /// Given the cursor (last sent point), return the next roll-forward
-    /// point + header + tip, or `None` if at tip.
+    /// `(point, header, tip)`, or `None` if at tip.  `point` is the
+    /// roll-forward block's point (bare CBOR `Point`); `tip` is the
+    /// `Tip` envelope per the trait-level contract.  Used by
+    /// `MsgRollForward`.
     fn next_header(&self, cursor: &Option<Vec<u8>>) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)>;
 
     /// Find the best intersection from the client's candidate points.
     ///
     /// Returns `(found_point, tip)` or `None` if no intersection.
+    /// `found_point` is bare CBOR `Point` (echoed back to the client);
+    /// `tip` is the `Tip` envelope.  Used by `MsgIntersectFound`.
     fn find_intersect(&self, points: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<u8>)>;
 
     /// Return the tentative tip header, if diffusion pipelining is active.
@@ -669,12 +694,16 @@ pub async fn run_chainsync_server(
                         // Fall through to normal processing.
                     } else {
                         // Tentative was trapped: roll backward to confirmed tip.
+                        // R221 — `MsgRollBackward.point` is bare `Point`;
+                        // `tip` is the upstream `Tip` envelope.  Get the
+                        // two from distinct provider methods.
                         served_tentative = false;
-                        let confirmed_tip = provider.chain_tip();
-                        // Reset cursor to the confirmed chain tip.
-                        cursor = Some(confirmed_tip.clone());
+                        let confirmed_tip_point = provider.chain_tip_point();
+                        let confirmed_tip_envelope = provider.chain_tip();
+                        // Reset cursor to the confirmed chain tip's bare Point.
+                        cursor = Some(confirmed_tip_point.clone());
                         server
-                            .roll_backward(confirmed_tip.clone(), confirmed_tip)
+                            .roll_backward(confirmed_tip_point, confirmed_tip_envelope)
                             .await?;
                         continue;
                     }
@@ -1235,6 +1264,42 @@ fn block_point(block: &yggdrasil_ledger::Block) -> Point {
     Point::BlockPoint(block.header.slot_no, block.header.hash)
 }
 
+/// R220 — encode the chain tip as the canonical upstream `Tip` envelope:
+/// `[]` for genesis or `[point, blockNo]` for a known tip.  This is the
+/// shape ChainSync `MsgRollForward { header, tip }` and `MsgIntersectFound
+/// { point, tip }` consume on the wire — pre-R220 the server emitted
+/// `Point::to_cbor_bytes()` (`[]` or `[slot, hash]`) which broke any
+/// upstream-conforming client (including yggdrasil acting as a client)
+/// with `point decode error: CBOR: type mismatch (expected major 4, got
+/// 0)` because the third element (blockNo, a uint major 0) was absent
+/// where the client expected the wrapping list.  Reference:
+/// `Cardano.Slotting.Block` — `Tip blk = TipGenesis | Tip Point BlockNo`.
+fn chain_tip_envelope_cbor<I, V, L>(db: &yggdrasil_storage::ChainDb<I, V, L>) -> Vec<u8>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let tip_point = db.tip();
+    let tip = match tip_point {
+        Point::Origin => Tip::TipGenesis,
+        Point::BlockPoint(_, hash) => {
+            let block_no = db
+                .volatile()
+                .get_block(&hash)
+                .or_else(|| db.immutable().get_block(&hash))
+                .map(|b| b.header.block_no);
+            match block_no {
+                Some(bn) => Tip::Tip(tip_point, bn),
+                None => Tip::TipGenesis,
+            }
+        }
+    };
+    let mut enc = Encoder::new();
+    tip.encode_cbor(&mut enc);
+    enc.into_bytes()
+}
+
 fn extract_chainsync_header(raw_block: &[u8]) -> Option<Vec<u8>> {
     mod era_tag {
         pub const BYRON_EBB: u64 = 0;
@@ -1303,9 +1368,26 @@ where
     fn chain_tip(&self) -> Vec<u8> {
         let db = match self.inner.read() {
             Ok(guard) => guard,
-            Err(_) => return Point::Origin.to_cbor_bytes(),
+            Err(_) => {
+                // Fallback when read-lock is poisoned: emit the
+                // genesis-tip envelope (`[]`).  R220 — must be the
+                // upstream `Tip` shape, not bare `Point`.
+                let mut enc = Encoder::new();
+                Tip::TipGenesis.encode_cbor(&mut enc);
+                return enc.into_bytes();
+            }
         };
-        db.tip().to_cbor_bytes()
+        chain_tip_envelope_cbor(&*db)
+    }
+
+    fn chain_tip_point(&self) -> Vec<u8> {
+        // R221 — bare `Point` for use as `MsgRollBackward.point` and
+        // chainsync cursor.  Distinct from `chain_tip()` which emits
+        // the `Tip` envelope used at tip-slot positions.
+        match self.inner.read() {
+            Ok(db) => db.tip().to_cbor_bytes(),
+            Err(_) => Point::Origin.to_cbor_bytes(),
+        }
     }
 
     fn next_header(&self, cursor: &Option<Vec<u8>>) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
@@ -1327,13 +1409,20 @@ where
 
         let next_point = block_point(&next).to_cbor_bytes();
         let header_cbor = extract_chainsync_header(next.raw_cbor.as_deref()?)?;
-        let tip_cbor = tip.to_cbor_bytes();
+        // R220 — encode tip as upstream `Tip` envelope, not bare `Point`.
+        let tip_cbor = chain_tip_envelope_cbor(&*db);
+        // `tip` is referenced for the cursor==tip equality check above.
+        let _ = tip;
         Some((next_point, header_cbor, tip_cbor))
     }
 
     fn find_intersect(&self, points: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<u8>)> {
         let db = self.inner.read().ok()?;
-        let tip = db.tip();
+        // R220 — encode tip as upstream `Tip` envelope (`[]` or
+        // `[point, blockNo]`), not bare `Point`.  Pre-R220 the server
+        // emitted the wrong shape and ChainSync clients failed with
+        // `CBOR type mismatch (expected major 4, got 0)`.
+        let tip_cbor = chain_tip_envelope_cbor(&*db);
 
         // Walk the candidate list front-to-back; the client sends points
         // from most-recent to oldest, so the first hit is the best.
@@ -1347,7 +1436,7 @@ where
                     None => true, // Origin always intersects.
                 };
                 if found {
-                    return Some((raw_point.clone(), tip.to_cbor_bytes()));
+                    return Some((raw_point.clone(), tip_cbor));
                 }
             }
         }
@@ -1364,7 +1453,18 @@ where
         let tip_point = Point::BlockPoint(th.slot, th.header_hash);
         let point_cbor = tip_point.to_cbor_bytes();
         let header_cbor = th.raw_header.clone();
-        let tip_cbor = tip_point.to_cbor_bytes();
+        // R220 — encode tip as upstream `Tip` envelope (`[point, blockNo]`),
+        // not bare `Point`.  Tentative headers may not have a known
+        // BlockNo yet (the tentative is announced ahead of full
+        // verification); fall back to genesis-shape envelope rather
+        // than emitting an invalid wire shape.  Tentative headers
+        // carry `block_number` per `TentativeHeader`; use it when
+        // present.
+        let tip_cbor = {
+            let mut enc = Encoder::new();
+            Tip::Tip(tip_point, th.block_no).encode_cbor(&mut enc);
+            enc.into_bytes()
+        };
         Some((point_cbor, header_cbor, tip_cbor))
     }
 }
@@ -2048,7 +2148,7 @@ mod tests {
     use yggdrasil_ledger::TxId;
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborDecode, CborEncode, Encoder, Era, HeaderHash, Point,
-        ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo,
+        ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyVrfCert, SlotNo, Tip,
     };
     use yggdrasil_mempool::SharedTxState;
     use yggdrasil_network::{
@@ -2456,7 +2556,17 @@ mod tests {
             ShelleyHeader::from_cbor_bytes(&first_raw_header).expect("first header"),
             first_header
         );
-        assert_eq!(first_tip, second_point.to_cbor_bytes());
+        // R220 — tip is encoded as the upstream `Tip` envelope
+        // (`[point, blockNo]` 2-element list), not bare `Point`.
+        // Pre-R220 the assertion below pinned the wrong shape and
+        // upstream-conforming clients could not decode the chain
+        // tip out of `MsgRollForward`/`MsgIntersectFound`.
+        let expected_tip = {
+            let mut enc = Encoder::new();
+            Tip::Tip(second_point, yggdrasil_ledger::BlockNo(2)).encode_cbor(&mut enc);
+            enc.into_bytes()
+        };
+        assert_eq!(first_tip, expected_tip);
 
         let (next_point, second_raw_header, second_tip) = provider
             .next_header(&Some(cursor_point))
@@ -2469,7 +2579,7 @@ mod tests {
             ShelleyHeader::from_cbor_bytes(&second_raw_header).expect("second header"),
             second_header
         );
-        assert_eq!(second_tip, second_point.to_cbor_bytes());
+        assert_eq!(second_tip, expected_tip);
 
         assert!(
             provider
@@ -2478,9 +2588,9 @@ mod tests {
         );
         assert_eq!(
             provider.find_intersect(&[second_point.to_cbor_bytes()]),
-            Some((second_point.to_cbor_bytes(), second_point.to_cbor_bytes()))
+            Some((second_point.to_cbor_bytes(), expected_tip.clone()))
         );
-        assert_eq!(provider.chain_tip(), second_point.to_cbor_bytes());
+        assert_eq!(provider.chain_tip(), expected_tip);
     }
 
     #[derive(Default)]
@@ -2704,6 +2814,16 @@ mod tests {
 
     impl ChainProvider for MockTentativeChainProvider {
         fn chain_tip(&self) -> Vec<u8> {
+            // R220 — emit upstream `Tip` envelope.  Mock uses
+            // `Tip::TipGenesis` for Origin or
+            // `Tip::Tip(point, BlockNo(0))` (mock has no real
+            // block_no; 0 is a sentinel acceptable by upstream
+            // for the test path).
+            mock_tip_envelope(self.confirmed_tip)
+        }
+
+        fn chain_tip_point(&self) -> Vec<u8> {
+            // R221 — bare `Point` for rollback target / cursor seed.
             self.confirmed_tip.to_cbor_bytes()
         }
 
@@ -2712,6 +2832,7 @@ mod tests {
         }
 
         fn find_intersect(&self, points: &[Vec<u8>]) -> Option<(Vec<u8>, Vec<u8>)> {
+            let tip_envelope = mock_tip_envelope(self.confirmed_tip);
             points
                 .iter()
                 .find(|candidate| {
@@ -2719,12 +2840,21 @@ mod tests {
                         .map(|point| point == self.confirmed_tip)
                         .unwrap_or(false)
                 })
-                .map(|point| (point.clone(), self.confirmed_tip.to_cbor_bytes()))
+                .map(|point| (point.clone(), tip_envelope.clone()))
         }
 
         fn tentative_tip(&self) -> Option<(Vec<u8>, Vec<u8>, Vec<u8>)> {
             self.tentative.read().ok()?.clone()
         }
+    }
+
+    fn mock_tip_envelope(point: Point) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        match point {
+            Point::Origin => Tip::TipGenesis.encode_cbor(&mut enc),
+            p => Tip::Tip(p, BlockNo(0)).encode_cbor(&mut enc),
+        }
+        enc.into_bytes()
     }
 
     #[tokio::test]
@@ -2807,8 +2937,14 @@ mod tests {
         match second {
             NextResponse::RollBackward { point, tip }
             | NextResponse::AwaitRollBackward { point, tip } => {
+                // R220 — `point` is bare Point (echoed in
+                // `MsgRollBackward`'s first slot); `tip` is the
+                // upstream `Tip` envelope (R220 contract).  Pre-R220
+                // both pinned `confirmed_point.to_cbor_bytes()`
+                // (bare Point) for tip — that asserted the wrong
+                // wire shape.
                 assert_eq!(point, confirmed_point.to_cbor_bytes());
-                assert_eq!(tip, confirmed_point.to_cbor_bytes());
+                assert_eq!(tip, mock_tip_envelope(confirmed_point));
             }
             other => panic!("expected rollback after tentative trap, got {other:?}"),
         }

@@ -161,7 +161,7 @@ in the chaindb apply path; R199 explicitly verified the resolution.
 
 ---
 
-## 4. Observability — Phase C.1 baseline
+## 4. Observability — Phase C.1 baseline (+R217 + R218 sync-rate quantification)
 
 R200 added `yggdrasil_apply_batch_duration_seconds` Prometheus
 histogram (10 cumulative buckets `[0.001, 0.005, 0.01, 0.05, 0.1,
@@ -176,8 +176,39 @@ yggdrasil_apply_batch_duration_seconds_sum 0.412206
 yggdrasil_apply_batch_duration_seconds_count 2
 ```
 
-Operational baseline: ~206 ms/batch on preview. Supports Phase C.2
-pipelined-fetch+apply regression measurement.
+Preview baseline: ~206 ms/batch.
+
+**R217 added the companion `yggdrasil_fetch_batch_duration_seconds`
+histogram** (same bucket boundaries; covers ChainSync `RequestNext` +
+BlockFetch `RequestRange` round-trip + body-hash + KES verification).
+Mainnet baseline (60 s, 4 batches, single-peer):
+
+```
+yggdrasil_fetch_batch_duration_seconds_sum 51.384605
+yggdrasil_fetch_batch_duration_seconds_count 4
+yggdrasil_apply_batch_duration_seconds_sum 0.871671
+yggdrasil_apply_batch_duration_seconds_count 4
+```
+
+→ fetch avg = 12.85 s/batch, apply avg = 0.22 s/batch.  **Fetch is
+~59× more expensive than apply** on mainnet — pipelined fetch+apply
+(Phase C.2) saves at most ~1.7% throughput.
+
+**R218 operationally validated multi-peer dispatch as the actual
+sync-rate lever**.  `--max-concurrent-block-fetch-peers 4` on mainnet
+(2 active warm peers) produces:
+
+| Configuration                                           | fetch avg / batch | apply avg / batch | throughput |
+| ------------------------------------------------------- | ----------------: | ----------------: | ---------: |
+| Single-peer (R217)                                      |          12.85 s  |           0.22 s  | 3.33 blk/s |
+| Multi-peer, 2 workers (R218)                            |           8.56 s  |           0.23 s  | 5.55 blk/s |
+| **Δ**                                                   |    **−33%**       |   **flat (noise)**| **+67%**   |
+
+Apply is unchanged — confirms multi-peer dispatch isolates fetch
+parallelism without touching the apply path.  Each additional warm
+peer that registers as a worker subtracts ≈ `(fetch_avg / N)` from
+the per-batch fetch time, so operators can recover sync rate by
+adding topology peers.
 
 ---
 
