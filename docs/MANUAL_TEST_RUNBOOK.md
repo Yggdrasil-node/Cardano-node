@@ -556,6 +556,43 @@ that run; treat it as a regression, not as expected incompleteness.
 
 ---
 
+## 8.5 Upstream `cardano-node-tests` E2E harness
+
+Use the official IntersectMBO [`cardano-node-tests`](https://github.com/IntersectMBO/cardano-node-tests) suite as an external parity harness, not as a default `cargo test` dependency. The upstream documentation at <https://tests.cardano.intersectmbo.org/> describes the suite as system/E2E coverage for `cardano-node`, with `runner/runc.sh` for containerized runs and a `.bin` custom-binary path for alternate `cardano-node` / `cardano-cli` executables.
+
+Recommended flow:
+
+1. Run the selected pytest slice unchanged against upstream Haskell `cardano-node` and record the baseline.
+2. Add Yggdrasil wrapper binaries under the test repo's `.bin/` directory:
+   - `cardano-node` wrapper -> `target/release/yggdrasil-node run ...`
+   - `cardano-cli` wrapper -> `target/release/yggdrasil-node cardano-cli ...` or the upstream `cardano-cli` when the test requires a command Yggdrasil has not implemented yet.
+3. Start with role/protocol slices that match implemented surfaces: startup, topology, local query, submit-tx, relay sync, producer credential preflight, KES/OpCert startup failure cases.
+4. Mark failures caused by unsupported `cardano-cli` commands as explicit parity gaps. Do not rewrite upstream tests to hide missing behavior.
+5. Promote stable Yggdrasil-compatible selections into a separate optional CI job once the wrapper layer is deterministic.
+
+Example targeted invocation from a sibling checkout:
+
+```sh
+cd ../cardano-node-tests
+mkdir -p .bin
+ln -sf /workspaces/Cardano-node/target/release/yggdrasil-node .bin/yggdrasil-node
+cat > .bin/cardano-node <<'SH'
+#!/usr/bin/env sh
+exec /workspaces/Cardano-node/target/release/yggdrasil-node "$@"
+SH
+chmod +x .bin/cardano-node
+
+./runner/runc.sh -- \
+  TEST_THREADS=0 \
+  CLUSTERS_COUNT=1 \
+  PYTEST_ARGS="-k 'test_cli or test_local_state_query'" \
+  ./runner/regression.sh
+```
+
+The wrapper command above is intentionally minimal. Tests that require exact upstream CLI argument compatibility should get a purpose-built wrapper rather than changing Yggdrasil's production CLI only for test harness convenience.
+
+---
+
 ## 9. Pass / fail summary template
 
 At the end of a successful rehearsal session, record (e.g. into a session log):
@@ -576,6 +613,7 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
   preprod  knob=4  24h soak                result=PASS|FAIL
   mainnet  knob=2  24h hash-compare       result=PASS|FAIL
   throughput-delta knob=2/knob=1 = <N.NN>x  (target >= 1.0x)
+[cardano-node-tests]    selected pytest expression=<expr> result=PASS|FAIL|N/A
 [metrics-snapshots]
   /tmp/ygg-metrics-snapshots/*.txt  N captured
 [evidence-summary]
@@ -605,3 +643,4 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 - `node/scripts/compare_tip_to_haskell.sh` — hash-comparison harness (Slice M)
 - `node/scripts/restart_resilience.sh` — restart-resilience automation (Slice N)
 - `node/scripts/parallel_blockfetch_soak.sh` — §6.5 multi-peer BlockFetch soak automation
+- `IntersectMBO/cardano-node-tests` — upstream system/E2E parity harness: <https://github.com/IntersectMBO/cardano-node-tests>, <https://tests.cardano.intersectmbo.org/>

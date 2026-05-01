@@ -56,7 +56,7 @@ The node maintains its own GC for the chain DB:
 
 - **Immutable region**: never trimmed in normal operation. Stable blocks are append-only.
 - **Volatile region**: pruned to slots after the most-recent immutable boundary.
-- **Ledger snapshots**: capped at `--max-ledger-snapshots` (default 10). Older snapshots are deleted when a new one is taken.
+- **Ledger snapshots**: capped at `--max-ledger-snapshots` (default 8). Older snapshots are deleted when a new one is taken.
 
 If the immutable region grows too large for your disk, you have two options:
 

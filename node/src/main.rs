@@ -119,6 +119,10 @@ enum Command {
         /// Port for Prometheus metrics HTTP endpoint. Disabled when not set.
         #[arg(long)]
         metrics_port: Option<u16>,
+        /// Run as a relay/non-producing node even when block-producer
+        /// credential paths are present in the config.
+        #[arg(long)]
+        non_producing_node: bool,
         /// Override `max_concurrent_block_fetch_peers` from the config
         /// file.  When `> 1`, the runtime promotes each warm peer's
         /// `BlockFetchClient` into a per-peer worker task and the sync
@@ -164,6 +168,28 @@ enum Command {
         /// Database directory path. Overrides config `storage_dir`.
         #[arg(long)]
         database_path: Option<PathBuf>,
+        /// Listen port for inbound node-to-node connections.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Listen host address for inbound node-to-node connections.
+        #[arg(long)]
+        host_addr: Option<String>,
+        /// Validate as a relay/non-producing node even when block-producer
+        /// credential paths are present in the config.
+        #[arg(long)]
+        non_producing_node: bool,
+        /// Path to the KES signing key file (text-envelope format).
+        #[arg(long)]
+        shelley_kes_key: Option<PathBuf>,
+        /// Path to the VRF signing key file (text-envelope format).
+        #[arg(long)]
+        shelley_vrf_key: Option<PathBuf>,
+        /// Path to the operational certificate file (text-envelope format).
+        #[arg(long)]
+        shelley_operational_certificate: Option<PathBuf>,
+        /// Path to the issuer cold verification key file (text-envelope format).
+        #[arg(long)]
+        shelley_operational_certificate_issuer_vkey: Option<PathBuf>,
     },
     /// Inspect on-disk storage and report current sync status.
     Status {
@@ -341,6 +367,7 @@ struct ConfigValidationReport {
     network_magic: u32,
     protocol_versions: Vec<u32>,
     storage_dir: String,
+    node_role: NodeRoleValidationReport,
     configured_fallback_peer_count: usize,
     resolved_startup_peer_count: usize,
     use_ledger_peers: String,
@@ -369,6 +396,23 @@ struct StorageValidationReport {
     checkpoint_slot: Option<u64>,
     replayed_volatile_blocks: Option<usize>,
     ledger_peer_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct NodeRoleValidationReport {
+    role: &'static str,
+    non_producing_node: bool,
+    inbound_listen_addr: Option<String>,
+    block_producer_credentials: &'static str,
+    credential_fields_present: Vec<&'static str>,
+    credential_fields_missing: Vec<&'static str>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockProducerCredentialStatus {
+    Absent,
+    Complete,
+    Partial,
 }
 
 // ---------------------------------------------------------------------------
@@ -949,6 +993,13 @@ fn main() -> Result<()> {
             network,
             topology,
             database_path,
+            port,
+            host_addr,
+            non_producing_node,
+            shelley_kes_key,
+            shelley_vrf_key,
+            shelley_operational_certificate,
+            shelley_operational_certificate_issuer_vkey,
         } => {
             let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
             apply_topology_override(
@@ -959,7 +1010,23 @@ fn main() -> Result<()> {
             if let Some(ref db_path) = database_path {
                 file_cfg.storage_dir = db_path.clone();
             }
-            let report = validate_config_report(&file_cfg, config_base_dir.as_deref())?;
+            apply_inbound_listen_overrides(&mut file_cfg, port, host_addr)?;
+            apply_block_producer_credential_overrides(
+                &mut file_cfg,
+                shelley_kes_key.as_ref(),
+                shelley_vrf_key.as_ref(),
+                shelley_operational_certificate.as_ref(),
+                shelley_operational_certificate_issuer_vkey.as_ref(),
+            );
+            let report = if non_producing_node {
+                validate_config_report_with_role(
+                    &file_cfg,
+                    config_base_dir.as_deref(),
+                    non_producing_node,
+                )?
+            } else {
+                validate_config_report(&file_cfg, config_base_dir.as_deref())?
+            };
             let json = serde_json::to_string_pretty(&report)?;
             println!("{json}");
             Ok(())
@@ -1001,6 +1068,7 @@ fn main() -> Result<()> {
             checkpoint_trace_severity,
             checkpoint_trace_backend,
             metrics_port,
+            non_producing_node,
             max_concurrent_block_fetch_peers,
             socket_path,
             shelley_kes_key,
@@ -1027,39 +1095,20 @@ fn main() -> Result<()> {
                 file_cfg.storage_dir = db_path.clone();
             }
 
-            // CLI --port and --host-addr override inbound listen address.
-            if port.is_some() || host_addr.is_some() {
-                let listen_ip: std::net::IpAddr = host_addr
-                    .as_deref()
-                    .unwrap_or("0.0.0.0")
-                    .parse()
-                    .wrap_err("invalid --host-addr")?;
-                let listen_port = port.unwrap_or(3001);
-                file_cfg.inbound_listen_addr = Some(SocketAddr::new(listen_ip, listen_port));
-            }
+            apply_inbound_listen_overrides(&mut file_cfg, port, host_addr)?;
 
             // CLI --socket-path overrides config file SocketPath.
             if let Some(ref sp) = socket_path {
                 file_cfg.socket_path = Some(sp.display().to_string());
             }
 
-            // CLI --shelley-kes-key / --shelley-vrf-key /
-            // --shelley-operational-certificate /
-            // --shelley-operational-certificate-issuer-vkey override config
-            // file block producer credential paths.
-            if let Some(ref p) = shelley_kes_key {
-                file_cfg.shelley_kes_key = Some(p.display().to_string());
-            }
-            if let Some(ref p) = shelley_vrf_key {
-                file_cfg.shelley_vrf_key = Some(p.display().to_string());
-            }
-            if let Some(ref p) = shelley_operational_certificate {
-                file_cfg.shelley_operational_certificate = Some(p.display().to_string());
-            }
-            if let Some(ref p) = shelley_operational_certificate_issuer_vkey {
-                file_cfg.shelley_operational_certificate_issuer_vkey =
-                    Some(p.display().to_string());
-            }
+            apply_block_producer_credential_overrides(
+                &mut file_cfg,
+                shelley_kes_key.as_ref(),
+                shelley_vrf_key.as_ref(),
+                shelley_operational_certificate.as_ref(),
+                shelley_operational_certificate_issuer_vkey.as_ref(),
+            );
 
             if let Some(max_frequency) = checkpoint_trace_max_frequency {
                 checkpoint_trace_config_mut(&mut file_cfg).max_frequency = if max_frequency > 0.0 {
@@ -1360,75 +1409,30 @@ fn main() -> Result<()> {
                 topology_config.peer_snapshot_file = Some(peer_snapshot_path.display().to_string());
             }
 
-            // Load block producer credentials when all required paths are present.
-            let has_any_block_producer_path = file_cfg.shelley_kes_key.is_some()
-                || file_cfg.shelley_vrf_key.is_some()
-                || file_cfg.shelley_operational_certificate.is_some()
-                || file_cfg
-                    .shelley_operational_certificate_issuer_vkey
-                    .is_some();
+            let node_role = node_role_report(&file_cfg, non_producing_node)?;
+            tracer.trace_runtime(
+                "Startup.NodeRole",
+                "Notice",
+                "resolved node role",
+                trace_fields([
+                    ("role", json!(node_role.role)),
+                    ("nonProducingNode", json!(node_role.non_producing_node)),
+                    (
+                        "inboundListenAddr",
+                        json!(node_role.inbound_listen_addr.as_deref()),
+                    ),
+                    (
+                        "blockProducerCredentials",
+                        json!(node_role.block_producer_credentials),
+                    ),
+                ]),
+            );
 
-            let has_all_block_producer_paths = file_cfg.shelley_kes_key.is_some()
-                && file_cfg.shelley_vrf_key.is_some()
-                && file_cfg.shelley_operational_certificate.is_some()
-                && file_cfg
-                    .shelley_operational_certificate_issuer_vkey
-                    .is_some();
-
-            if has_any_block_producer_path && !has_all_block_producer_paths {
-                bail!(
-                    "block producer credentials are partially configured; \
-                     required: ShelleyKesKey, ShelleyVrfKey, \
-                     ShelleyOperationalCertificate, \
-                     ShelleyOperationalCertificateIssuerVkey"
-                );
-            }
-
-            let block_producer_credentials = if has_all_block_producer_paths {
-                let creds = yggdrasil_node::block_producer::load_block_producer_credentials(
-                    &resolve_config_path(
-                        std::path::Path::new(
-                            file_cfg
-                                .shelley_kes_key
-                                .as_ref()
-                                .expect("shelley_kes_key is checked as present above"),
-                        ),
-                        config_base_dir.as_deref(),
-                    ),
-                    &resolve_config_path(
-                        std::path::Path::new(
-                            file_cfg
-                                .shelley_vrf_key
-                                .as_ref()
-                                .expect("shelley_vrf_key is checked as present above"),
-                        ),
-                        config_base_dir.as_deref(),
-                    ),
-                    &resolve_config_path(
-                        std::path::Path::new(
-                            file_cfg
-                                .shelley_operational_certificate
-                                .as_ref()
-                                .expect("shelley_operational_certificate is checked as present above"),
-                        ),
-                        config_base_dir.as_deref(),
-                    ),
-                    &resolve_config_path(
-                        std::path::Path::new(
-                            file_cfg
-                                .shelley_operational_certificate_issuer_vkey
-                                .as_ref()
-                                .expect("shelley_operational_certificate_issuer_vkey is checked as present above"),
-                        ),
-                        config_base_dir.as_deref(),
-                    ),
-                    file_cfg.slots_per_kes_period,
-                    file_cfg.max_kes_evolutions,
-                ).wrap_err("failed to load block producer credentials")?;
-                Some(creds)
-            } else {
-                None
-            };
+            let block_producer_credentials = load_configured_block_producer_credentials(
+                &file_cfg,
+                config_base_dir.as_deref(),
+                non_producing_node,
+            )?;
 
             // R214 — pre-encode `ShelleyGenesis` once at startup so
             // the `GetGenesisConfig` (era-specific tag 11) LSQ
@@ -1748,9 +1752,202 @@ fn apply_topology_override(
     Ok(())
 }
 
+fn apply_inbound_listen_overrides(
+    file_cfg: &mut NodeConfigFile,
+    port: Option<u16>,
+    host_addr: Option<String>,
+) -> Result<()> {
+    if port.is_some() || host_addr.is_some() {
+        let listen_ip: std::net::IpAddr = host_addr
+            .as_deref()
+            .unwrap_or("0.0.0.0")
+            .parse()
+            .wrap_err("invalid --host-addr")?;
+        let listen_port = port.unwrap_or(3001);
+        file_cfg.inbound_listen_addr = Some(SocketAddr::new(listen_ip, listen_port));
+    }
+    Ok(())
+}
+
+fn apply_block_producer_credential_overrides(
+    file_cfg: &mut NodeConfigFile,
+    shelley_kes_key: Option<&PathBuf>,
+    shelley_vrf_key: Option<&PathBuf>,
+    shelley_operational_certificate: Option<&PathBuf>,
+    shelley_operational_certificate_issuer_vkey: Option<&PathBuf>,
+) {
+    if let Some(p) = shelley_kes_key {
+        file_cfg.shelley_kes_key = Some(p.display().to_string());
+    }
+    if let Some(p) = shelley_vrf_key {
+        file_cfg.shelley_vrf_key = Some(p.display().to_string());
+    }
+    if let Some(p) = shelley_operational_certificate {
+        file_cfg.shelley_operational_certificate = Some(p.display().to_string());
+    }
+    if let Some(p) = shelley_operational_certificate_issuer_vkey {
+        file_cfg.shelley_operational_certificate_issuer_vkey = Some(p.display().to_string());
+    }
+}
+
+fn block_producer_credential_fields(
+    file_cfg: &NodeConfigFile,
+) -> (Vec<&'static str>, Vec<&'static str>) {
+    let fields = [
+        ("ShelleyKesKey", file_cfg.shelley_kes_key.is_some()),
+        ("ShelleyVrfKey", file_cfg.shelley_vrf_key.is_some()),
+        (
+            "ShelleyOperationalCertificate",
+            file_cfg.shelley_operational_certificate.is_some(),
+        ),
+        (
+            "ShelleyOperationalCertificateIssuerVkey",
+            file_cfg
+                .shelley_operational_certificate_issuer_vkey
+                .is_some(),
+        ),
+    ];
+
+    let mut present = Vec::new();
+    let mut missing = Vec::new();
+    for (field, is_present) in fields {
+        if is_present {
+            present.push(field);
+        } else {
+            missing.push(field);
+        }
+    }
+    (present, missing)
+}
+
+fn block_producer_credential_status(file_cfg: &NodeConfigFile) -> BlockProducerCredentialStatus {
+    let (present, missing) = block_producer_credential_fields(file_cfg);
+    match (present.is_empty(), missing.is_empty()) {
+        (true, false) => BlockProducerCredentialStatus::Absent,
+        (false, true) => BlockProducerCredentialStatus::Complete,
+        _ => BlockProducerCredentialStatus::Partial,
+    }
+}
+
+fn ensure_block_producer_credential_policy(
+    file_cfg: &NodeConfigFile,
+    non_producing_node: bool,
+) -> Result<BlockProducerCredentialStatus> {
+    let status = block_producer_credential_status(file_cfg);
+    if status == BlockProducerCredentialStatus::Partial && !non_producing_node {
+        let (present, missing) = block_producer_credential_fields(file_cfg);
+        bail!(
+            "block producer credentials are partially configured; present: {}; missing: {}. \
+             Provide all four ShelleyKesKey, ShelleyVrfKey, ShelleyOperationalCertificate, \
+             ShelleyOperationalCertificateIssuerVkey, or pass --non-producing-node to run \
+             explicitly as a relay/non-producing node",
+            present.join(", "),
+            missing.join(", "),
+        );
+    }
+    Ok(status)
+}
+
+fn node_role_report(
+    file_cfg: &NodeConfigFile,
+    non_producing_node: bool,
+) -> Result<NodeRoleValidationReport> {
+    let status = ensure_block_producer_credential_policy(file_cfg, non_producing_node)?;
+    let (present, missing) = block_producer_credential_fields(file_cfg);
+    let inbound_listen_addr = file_cfg.inbound_listen_addr.map(|addr| addr.to_string());
+    let role = if status == BlockProducerCredentialStatus::Complete && !non_producing_node {
+        "block-producer"
+    } else if inbound_listen_addr.is_some() {
+        "relay"
+    } else if non_producing_node {
+        "non-producing"
+    } else {
+        "sync-only"
+    };
+    let block_producer_credentials = match (non_producing_node, status) {
+        (true, BlockProducerCredentialStatus::Absent) => "absent",
+        (true, _) => "ignored-by-non-producing-node",
+        (false, BlockProducerCredentialStatus::Absent) => "absent",
+        (false, BlockProducerCredentialStatus::Complete) => "complete",
+        (false, BlockProducerCredentialStatus::Partial) => "partial",
+    };
+
+    Ok(NodeRoleValidationReport {
+        role,
+        non_producing_node,
+        inbound_listen_addr,
+        block_producer_credentials,
+        credential_fields_present: present,
+        credential_fields_missing: missing,
+    })
+}
+
+fn load_configured_block_producer_credentials(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&std::path::Path>,
+    non_producing_node: bool,
+) -> Result<Option<yggdrasil_node::block_producer::BlockProducerCredentials>> {
+    let status = ensure_block_producer_credential_policy(file_cfg, non_producing_node)?;
+    if non_producing_node || status == BlockProducerCredentialStatus::Absent {
+        return Ok(None);
+    }
+
+    let creds = yggdrasil_node::block_producer::load_block_producer_credentials(
+        &resolve_config_path(
+            std::path::Path::new(
+                file_cfg
+                    .shelley_kes_key
+                    .as_ref()
+                    .expect("complete block producer credentials include ShelleyKesKey"),
+            ),
+            config_base_dir,
+        ),
+        &resolve_config_path(
+            std::path::Path::new(
+                file_cfg
+                    .shelley_vrf_key
+                    .as_ref()
+                    .expect("complete block producer credentials include ShelleyVrfKey"),
+            ),
+            config_base_dir,
+        ),
+        &resolve_config_path(
+            std::path::Path::new(file_cfg.shelley_operational_certificate.as_ref().expect(
+                "complete block producer credentials include ShelleyOperationalCertificate",
+            )),
+            config_base_dir,
+        ),
+        &resolve_config_path(
+            std::path::Path::new(
+                file_cfg
+                    .shelley_operational_certificate_issuer_vkey
+                    .as_ref()
+                    .expect(
+                        "complete block producer credentials include \
+                         ShelleyOperationalCertificateIssuerVkey",
+                    ),
+            ),
+            config_base_dir,
+        ),
+        file_cfg.slots_per_kes_period,
+        file_cfg.max_kes_evolutions,
+    )
+    .wrap_err("failed to load block producer credentials")?;
+
+    Ok(Some(creds))
+}
+
 fn validate_config_report(
     file_cfg: &NodeConfigFile,
     config_base_dir: Option<&std::path::Path>,
+) -> Result<ConfigValidationReport> {
+    validate_config_report_with_role(file_cfg, config_base_dir, false)
+}
+
+fn validate_config_report_with_role(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&std::path::Path>,
+    non_producing_node: bool,
 ) -> Result<ConfigValidationReport> {
     if file_cfg.protocol_versions.is_empty() {
         bail!("node config must include at least one protocol version");
@@ -1808,6 +2005,17 @@ fn validate_config_report(
     let ledger_dir = storage_dir.join("ledger");
 
     let mut warnings = Vec::new();
+    let node_role = node_role_report(file_cfg, non_producing_node)?;
+    if node_role.block_producer_credentials == "ignored-by-non-producing-node" {
+        warnings.push(
+            "block producer credential paths are configured but --non-producing-node is set; \
+             credentials will be ignored and the forge loop will stay disabled"
+                .to_owned(),
+        );
+    }
+    if node_role.block_producer_credentials == "complete" {
+        load_configured_block_producer_credentials(file_cfg, config_base_dir, non_producing_node)?;
+    }
 
     // Surface genesis-hash mismatches in the preflight report (without
     // bailing) so an operator running `validate-config` sees the
@@ -2218,6 +2426,7 @@ fn validate_config_report(
         network_magic: file_cfg.network_magic,
         protocol_versions: file_cfg.protocol_versions.clone(),
         storage_dir: storage_dir.display().to_string(),
+        node_role,
         configured_fallback_peer_count: file_cfg.ordered_fallback_peers().len(),
         resolved_startup_peer_count: 1 + fallback_peers.len(),
         use_ledger_peers: format!("{:?}", file_cfg.use_ledger_peers_policy()),
@@ -2550,6 +2759,24 @@ fn checkpoint_trace_config_mut(file_cfg: &mut NodeConfigFile) -> &mut TraceNames
         .or_default()
 }
 
+#[cfg(unix)]
+async fn wait_for_shutdown_signal() -> &'static str {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut sigint = signal(SignalKind::interrupt()).expect("install SIGINT handler");
+    let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+    tokio::select! {
+        _ = sigint.recv() => "SIGINT",
+        _ = sigterm.recv() => "SIGTERM",
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_shutdown_signal() -> &'static str {
+    tokio::signal::ctrl_c().await.ok();
+    "CtrlC"
+}
+
 async fn run_node(request: RunNodeRequest) -> Result<()> {
     let RunNodeRequest {
         node_config,
@@ -2593,45 +2820,47 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         );
     }
 
-    let block_producer_runtime_config = block_producer_credentials.as_ref().and_then(|_| {
-        sync_config
+    let block_producer_runtime_config = if block_producer_credentials.is_some() {
+        let active_slot_coeff = sync_config
             .active_slot_coeff
             .clone()
-            .map(|active_slot_coeff| {
-                let protocol_version =
-                    forged_header_protocol_version(&base_ledger_state, max_major_protocol_version);
-                let (max_block_body_size, protocol_version) = base_ledger_state
-                    .protocol_params()
-                    .map(|params| {
-                        (
-                            params.max_block_body_size,
-                            params.protocol_version.unwrap_or(protocol_version),
-                        )
-                    })
-                    .unwrap_or((65_536, protocol_version));
-
-                yggdrasil_node::RuntimeBlockProducerConfig {
-                    slot_length: std::time::Duration::from_secs_f64(
-                        sync_config.slot_length_secs.unwrap_or(1.0),
-                    ),
-                    active_slot_coeff,
-                    sigma_num: 1,
-                    sigma_den: 1,
-                    epoch_nonce: Nonce::Neutral,
-                    max_block_body_size,
-                    protocol_version,
-                }
+            .ok_or_else(|| eyre::eyre!("block producer requires a valid active_slot_coeff"))?;
+        let system_start_unix_secs = sync_config.system_start_unix_secs.ok_or_else(|| {
+            eyre::eyre!(
+                "block producer requires ShelleyGenesis.systemStart for absolute slot-clock parity"
+            )
+        })?;
+        let slot_length_secs = sync_config.slot_length_secs.unwrap_or(1.0);
+        let max_ledger_state_age_secs = sync_config
+            .nonce_config
+            .as_ref()
+            .map(|nonce_config| nonce_config.stability_window as f64 * slot_length_secs);
+        let protocol_version =
+            forged_header_protocol_version(&base_ledger_state, max_major_protocol_version);
+        let (max_block_body_size, protocol_version) = base_ledger_state
+            .protocol_params()
+            .map(|params| {
+                (
+                    params.max_block_body_size,
+                    params.protocol_version.unwrap_or(protocol_version),
+                )
             })
-    });
+            .unwrap_or((65_536, protocol_version));
 
-    if block_producer_credentials.is_some() && block_producer_runtime_config.is_none() {
-        tracer.trace_runtime(
-            "Startup.BlockProducer",
-            "Warning",
-            "block producer credentials present but active slot coefficient unavailable; producer loop disabled",
-            std::collections::BTreeMap::new(),
-        );
-    }
+        Some(yggdrasil_node::RuntimeBlockProducerConfig {
+            slot_length: std::time::Duration::from_secs_f64(slot_length_secs),
+            system_start_unix_secs: Some(system_start_unix_secs),
+            max_ledger_state_age_secs,
+            active_slot_coeff,
+            sigma_num: 1,
+            sigma_den: 1,
+            epoch_nonce: Nonce::Neutral,
+            max_block_body_size,
+            protocol_version,
+        })
+    } else {
+        None
+    };
 
     let chain_db = Arc::new(RwLock::new(chain_db));
     let peer_registry = Arc::new(RwLock::new(seed_peer_registry(
@@ -2684,12 +2913,12 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
     let signal_tracer = tracer.clone();
     let signal_shutdown_tx = shutdown_tx.clone();
     tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
+        let signal = wait_for_shutdown_signal().await;
         signal_tracer.trace_runtime(
             "Node.Shutdown",
             "Notice",
             "shutdown signal received",
-            std::collections::BTreeMap::new(),
+            trace_fields([("signal", json!(signal))]),
         );
         let _ = signal_shutdown_tx.send(true);
     });
@@ -3258,7 +3487,8 @@ mod tests {
         CHECKPOINT_TRACE_NAMESPACE, apply_topology_override, checkpoint_trace_config_mut,
         configured_fallback_peers, decode_optional_prefixed_hex, decode_tx_hex_arg,
         forged_header_protocol_version, ledger_peer_snapshot_from_ledger_state,
-        load_effective_config, preset_config_base_dir, status_report, validate_config_report,
+        load_effective_config, node_role_report, preset_config_base_dir, status_report,
+        validate_config_report,
     };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3754,6 +3984,71 @@ mod tests {
         assert!(
             err.to_string().contains("max_kes_evolutions"),
             "error should mention max_kes_evolutions: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_config_report_rejects_partial_block_producer_credentials() {
+        let mut cfg = default_config();
+        cfg.shelley_kes_key = Some("kes.skey".to_owned());
+
+        let err = validate_config_report(&cfg, None)
+            .expect_err("partial block producer credentials must fail");
+        assert!(
+            err.to_string()
+                .contains("block producer credentials are partially configured"),
+            "error should identify partial credentials: {err}",
+        );
+    }
+
+    #[test]
+    fn validate_config_report_rejects_missing_complete_block_producer_credentials() {
+        let mut cfg = default_config();
+        cfg.shelley_kes_key = Some("missing-kes.skey".to_owned());
+        cfg.shelley_vrf_key = Some("missing-vrf.skey".to_owned());
+        cfg.shelley_operational_certificate = Some("missing-opcert.cert".to_owned());
+        cfg.shelley_operational_certificate_issuer_vkey = Some("missing-cold.vkey".to_owned());
+
+        let err = validate_config_report(&cfg, None)
+            .expect_err("complete but unreadable block producer credentials must fail");
+        assert!(
+            err.to_string()
+                .contains("failed to load block producer credentials"),
+            "error should identify credential loading: {err}",
+        );
+    }
+
+    #[test]
+    fn non_producing_node_ignores_configured_block_producer_credentials() {
+        let mut cfg = default_config();
+        cfg.shelley_kes_key = Some("kes.skey".to_owned());
+        cfg.shelley_vrf_key = Some("vrf.skey".to_owned());
+
+        let role = node_role_report(&cfg, true).expect("non-producing role");
+
+        assert_eq!(role.role, "non-producing");
+        assert_eq!(
+            role.block_producer_credentials,
+            "ignored-by-non-producing-node"
+        );
+        assert!(
+            role.credential_fields_missing
+                .contains(&"ShelleyOperationalCertificate")
+        );
+    }
+
+    #[test]
+    fn node_role_report_distinguishes_relay_from_sync_only() {
+        let mut cfg = default_config();
+        assert_eq!(
+            node_role_report(&cfg, false).expect("sync role").role,
+            "sync-only"
+        );
+
+        cfg.inbound_listen_addr = Some("127.0.0.1:3001".parse().expect("listen addr"));
+        assert_eq!(
+            node_role_report(&cfg, false).expect("relay role").role,
+            "relay"
         );
     }
 

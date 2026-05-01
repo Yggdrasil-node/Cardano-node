@@ -44,8 +44,8 @@ The keys below are the Yggdrasil-specific snake_case names. PascalCase aliases m
 | Key                     | Type    | Default     | Upstream alias                | Description |
 |-------------------------|---------|-------------|-------------------------------|-------------|
 | `storage_dir`           | string  | `./db`      | (CLI: `--database-path`)      | Root directory for immutable + volatile chain + ledger snapshots. |
-| `max_ledger_snapshots`  | u32     | 10          | (none)                        | How many ledger checkpoints to retain. |
-| `checkpoint_interval_slots` | u64 | 21600       | (none)                        | Slots between checkpoint flushes. |
+| `max_ledger_snapshots`  | usize   | 8           | (none)                        | How many ledger checkpoints to retain. |
+| `checkpoint_interval_slots` | u64 | 2160        | (none)                        | Minimum slot delta between checkpoint flushes. |
 
 ### Peer set
 
@@ -166,13 +166,15 @@ Every flag listed in the table below overrides the corresponding config key when
 | `--metrics-port <u16>`            | `metrics_port`                         |
 | `--batch-size <usize>`            | `sync_batch_size`                      |
 | `--checkpoint-interval-slots <u64>`| `checkpoint_interval_slots`           |
-| `--max-ledger-snapshots <u32>`    | `max_ledger_snapshots`                 |
+| `--max-ledger-snapshots <usize>`  | `max_ledger_snapshots`                 |
+| `--non-producing-node`            | role override: ignore producer credentials |
 | `--shelley-kes-key <path>`        | `shelley_kes_key`                      |
 | `--shelley-vrf-key <path>`        | `shelley_vrf_key`                      |
 | `--shelley-operational-certificate <path>`| `shelley_operational_certificate`|
 | `--shelley-operational-certificate-issuer-vkey <path>`| `shelley_operational_certificate_issuer_vkey` |
 
 Unspecified flags fall through to config file → preset default.
+Producer credential fields are atomic: provide all four fields to enable forging, provide none for relay/sync-only mode, or pass `--non-producing-node` to force relay mode while leaving credential paths in the file.
 
 ## Topology file
 

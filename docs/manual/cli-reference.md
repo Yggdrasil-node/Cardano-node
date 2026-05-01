@@ -60,13 +60,14 @@ yggdrasil-node run [flags]
 | `--database-path <path>`                  | path    | `./db`        | Chain DB root. |
 | `--topology <path>`                       | path    | preset's      | Override topology file. |
 | `--metrics-port <u16>`                    | u16     | none          | Enable HTTP metrics on `127.0.0.1:<port>`. |
-| `--batch-size <usize>`                    | usize   | 100           | Sync batch size (blocks per BlockFetch round-trip). |
-| `--checkpoint-interval-slots <u64>`       | u64     | 21600         | Slots between ledger checkpoint flushes. |
-| `--max-ledger-snapshots <u32>`            | u32     | 10            | Number of ledger checkpoints to retain. |
+| `--batch-size <usize>`                    | usize   | 50            | Sync batch size (blocks per BlockFetch round-trip). |
+| `--checkpoint-interval-slots <u64>`       | u64     | 2160          | Minimum slot delta between ledger checkpoint flushes. |
+| `--max-ledger-snapshots <usize>`          | usize   | 8             | Number of ledger checkpoints to retain. |
 | `--checkpoint-trace-max-frequency <f64>`  | f64     | 1.0           | Hz cap on `Node.Recovery.Checkpoint` trace events. |
 | `--checkpoint-trace-severity <severity>`  | string  | `Info`        | Severity threshold for checkpoint traces. |
 | `--checkpoint-trace-backend <backend>`    | string  | `Stdout HumanFormatColoured` | Trace backend for checkpoint events. |
 | `--no-verify`                             | flag    | off           | **Disable** block verification. Development/testing only. **Never use on mainnet.** |
+| `--non-producing-node`                    | flag    | off           | Force relay/non-producing mode even when producer credential paths are present. |
 | `--shelley-kes-key <path>`                | path    | none          | KES signing key (block production). |
 | `--shelley-vrf-key <path>`                | path    | none          | VRF signing key. |
 | `--shelley-operational-certificate <path>`| path    | none          | OpCert. |
@@ -75,7 +76,8 @@ yggdrasil-node run [flags]
 ### Behavior
 
 - If `--peer` is omitted, the node tries the preset's primary peer, then falls back to topology-derived peers.
-- If all four block-production credentials are present, the forge loop is activated.
+- If all four block-production credentials are present, the forge loop is activated unless `--non-producing-node` is set.
+- A partial block-production credential set is a startup error unless `--non-producing-node` is set.
 - Graceful shutdown on `SIGINT` or `SIGTERM`.
 - Exit status 0 on clean shutdown, non-zero on unrecoverable error.
 
@@ -126,6 +128,7 @@ yggdrasil-node validate-config [flags]
 ### Flags
 
 Same as `run` for `--config`, `--network`, `--database-path`, `--topology`. Block-production credential flags also apply if you want to validate them.
+`--port`, `--host-addr`, and `--non-producing-node` are accepted so the report can show the exact resolved relay/producer role.
 
 ### Output
 

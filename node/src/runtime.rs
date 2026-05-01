@@ -289,6 +289,14 @@ impl RuntimeGovernorConfig {
 pub struct RuntimeBlockProducerConfig {
     /// Slot duration used by the local slot clock.
     pub slot_length: Duration,
+    /// Seconds since Unix epoch of `ShelleyGenesis.system_start`.
+    ///
+    /// Block production must use absolute network slots derived from this
+    /// value; relative process-start clocks are valid only in unit tests.
+    pub system_start_unix_secs: Option<f64>,
+    /// Maximum tolerated age of the current ledger tip before forging is
+    /// suppressed.
+    pub max_ledger_state_age_secs: Option<f64>,
     /// Active slot coefficient `f` used for Praos leader checks.
     pub active_slot_coeff: ActiveSlotCoeff,
     /// Relative stake numerator for the forging key (sigma numerator).
@@ -1369,6 +1377,22 @@ fn wall_clock_unix_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
+fn block_producer_ledger_state_judgement(
+    tip_slot: Option<SlotNo>,
+    config: &RuntimeBlockProducerConfig,
+) -> LedgerStateJudgement {
+    match config.max_ledger_state_age_secs {
+        Some(max_age_secs) => derive_judgement_at(
+            tip_slot.map(|slot| slot.0),
+            config.system_start_unix_secs,
+            Some(config.slot_length.as_secs_f64()),
+            max_age_secs,
+            wall_clock_unix_secs(),
+        ),
+        None => LedgerStateJudgement::YoungEnough,
+    }
+}
+
 /// Live `peerSnapshotFile` source that re-reads the configured snapshot path
 /// each tick.
 struct FilePeerSnapshotSource<'a> {
@@ -1744,11 +1768,22 @@ pub async fn run_block_producer_loop<I, V, L, F>(
     let anchor_slot = tip_slot
         .map(|slot| SlotNo(slot.0.saturating_add(1)))
         .unwrap_or(SlotNo(0));
-    let slot_clock = SlotClock::new(anchor_slot, config.slot_length);
+    let (slot_clock, clock_mode) = match config.system_start_unix_secs {
+        Some(system_start) => (
+            SlotClock::from_system_start(system_start, config.slot_length),
+            "system-start",
+        ),
+        None => (
+            SlotClock::new(anchor_slot, config.slot_length),
+            "relative-anchor",
+        ),
+    };
 
     let mut interval = tokio::time::interval(config.slot_length);
     let mut last_checked_slot: Option<SlotNo> = None;
     let mut last_kes_warning_period: Option<u64> = None;
+    let mut last_ledger_judgement: Option<LedgerStateJudgement> = None;
+    let mut waiting_for_live_ledger_view_reported = false;
     tokio::pin!(shutdown);
 
     tracer.trace_runtime(
@@ -1758,6 +1793,7 @@ pub async fn run_block_producer_loop<I, V, L, F>(
         trace_fields([
             ("anchorSlot", json!(anchor_slot.0)),
             ("slotLengthSecs", json!(config.slot_length.as_secs())),
+            ("clockMode", json!(clock_mode)),
         ]),
     );
 
@@ -1808,6 +1844,25 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                     let db = chain_db.read().expect("chain db lock poisoned");
                     tip_context_from_chain_db(&db)
                 };
+
+                let ledger_judgement = block_producer_ledger_state_judgement(tip_slot, &config);
+                if ledger_judgement != LedgerStateJudgement::YoungEnough {
+                    if last_ledger_judgement != Some(ledger_judgement) {
+                        tracer.trace_runtime(
+                            "Node.BlockProduction",
+                            "Warning",
+                            "ledger state is not recent enough for block production",
+                            trace_fields([
+                                ("slot", json!(current_slot.0)),
+                                ("tipSlot", json!(tip_slot.map(|s| s.0))),
+                                ("judgement", json!(format!("{ledger_judgement:?}"))),
+                            ]),
+                        );
+                        last_ledger_judgement = Some(ledger_judgement);
+                    }
+                    continue;
+                }
+                last_ledger_judgement = Some(ledger_judgement);
 
                 let Some(context) = make_block_context(
                     current_slot,
@@ -1861,19 +1916,33 @@ pub async fn run_block_producer_loop<I, V, L, F>(
                 //
                 // Reference: upstream `forkBlockForging` re-reads the ledger
                 // view's epoch nonce and per-pool relative stake each slot.
-                let (live_nonce, live_sigma_num, live_sigma_den) = {
-                    let bp_snapshot = bp_state
-                        .as_ref()
-                        .and_then(|bp| bp.read().ok().map(|st| st.clone()));
-                    let nonce = bp_snapshot
-                        .as_ref()
-                        .and_then(|s| s.epoch_nonce)
-                        .unwrap_or(config.epoch_nonce);
-                    let (sn, sd) = bp_snapshot
-                        .as_ref()
-                        .and_then(|s| s.sigma)
-                        .unwrap_or((config.sigma_num, config.sigma_den));
-                    (nonce, sn, sd)
+                let (live_nonce, live_sigma_num, live_sigma_den) = if let Some(bp) = bp_state.as_ref() {
+                    let bp_snapshot = bp.read().ok().map(|st| st.clone());
+                    match bp_snapshot.and_then(|snapshot| {
+                        Some((snapshot.epoch_nonce?, snapshot.sigma?))
+                    }) {
+                        Some((nonce, (sn, sd))) => {
+                            waiting_for_live_ledger_view_reported = false;
+                            (nonce, sn, sd)
+                        }
+                        None => {
+                            if !waiting_for_live_ledger_view_reported {
+                                tracer.trace_runtime(
+                                    "Node.BlockProduction",
+                                    "Info",
+                                    "waiting for live nonce and stake distribution before forging",
+                                    trace_fields([
+                                        ("slot", json!(current_slot.0)),
+                                        ("tipSlot", json!(tip_slot.map(|s| s.0))),
+                                    ]),
+                                );
+                                waiting_for_live_ledger_view_reported = true;
+                            }
+                            continue;
+                        }
+                    }
+                } else {
+                    (config.epoch_nonce, config.sigma_num, config.sigma_den)
                 };
 
                 let should_forge = check_should_forge(
@@ -4848,6 +4917,7 @@ where
                 "missing exact ChainDepState sidecar history for recovered point {from_point:?}"
             )));
         }
+        update_bp_state_nonce(&bp_state, nonce_state.as_ref());
     }
     let mut had_session = false;
     let mut preferred_peer = None;
@@ -6583,8 +6653,8 @@ where
         mempool: _,
         tentative_state,
         tip_notify,
-        bp_state: _,
-        bp_pool_key_hash: _,
+        bp_state,
+        bp_pool_key_hash,
         inbound_tx_state: _,
         chain_dep_persist_dir,
     } = request;
@@ -6627,6 +6697,14 @@ where
         pool_block_counts: std::collections::BTreeMap::new(),
         chain_dep_persist_dir: chain_dep_persist_dir.clone(),
     };
+    if let (Some(bp), Some(pool_key_hash), Some(snapshots)) = (
+        bp_state.as_ref(),
+        bp_pool_key_hash.as_ref(),
+        checkpoint_tracking.stake_snapshots.as_ref(),
+    ) {
+        let state = Some(Arc::clone(bp));
+        update_bp_state_sigma(&state, Some(snapshots), pool_key_hash);
+    }
 
     let sync = run_reconnecting_verified_sync_service_chaindb_inner(
         chain_db,
@@ -6642,8 +6720,8 @@ where
             mempool: None,
             tentative_state,
             tip_notify,
-            bp_state: None,
-            bp_pool_key_hash: None,
+            bp_state,
+            bp_pool_key_hash,
             inbound_tx_state: None,
         },
         ReconnectingVerifiedSyncState {
@@ -6748,6 +6826,14 @@ where
         pool_block_counts: std::collections::BTreeMap::new(),
         chain_dep_persist_dir: chain_dep_persist_dir.clone(),
     };
+    if let (Some(bp), Some(pool_key_hash), Some(snapshots)) = (
+        bp_state.as_ref(),
+        bp_pool_key_hash.as_ref(),
+        checkpoint_tracking.stake_snapshots.as_ref(),
+    ) {
+        let state = Some(Arc::clone(bp));
+        update_bp_state_sigma(&state, Some(snapshots), pool_key_hash);
+    }
 
     let sync = run_reconnecting_verified_sync_service_shared_chaindb_inner(
         chain_db,
@@ -6848,7 +6934,8 @@ mod tests {
     use super::{
         BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome,
         LedgerJudgementSettings, NodeConfig, ReconnectingRunState, ReconnectingVerifiedSyncRequest,
-        ResumeReconnectingVerifiedSyncRequest, VerifiedSyncServiceConfig, checkpoint_trace_fields,
+        ResumeReconnectingVerifiedSyncRequest, RuntimeBlockProducerConfig,
+        VerifiedSyncServiceConfig, block_producer_ledger_state_judgement, checkpoint_trace_fields,
         derive_judgement_at, handle_reconnect_batch_error, kes_expiry_warning_from_periods,
         local_root_targets_from_config, mempool_entries_for_forging,
         ordered_reconnect_fallback_peers, peer_share_request_amount,
@@ -6858,6 +6945,7 @@ mod tests {
         refresh_ledger_peer_sources_from_chain_db, seed_peer_registry, self_validate_forged_block,
         session_established_trace_fields, stake_snapshots_for_recovered_point,
         sync_error_trace_fields, tip_context_from_chain_db, verified_sync_batch_trace_fields,
+        wall_clock_unix_secs,
     };
     use crate::sync::LedgerCheckpointPolicy;
     use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
@@ -7801,6 +7889,34 @@ mod tests {
         assert_eq!(
             judgement,
             yggdrasil_network::LedgerStateJudgement::YoungEnough
+        );
+    }
+
+    #[test]
+    fn block_producer_ledger_judgement_blocks_stale_tips() {
+        let now = wall_clock_unix_secs();
+        let mut cfg = RuntimeBlockProducerConfig {
+            slot_length: std::time::Duration::from_secs(1),
+            system_start_unix_secs: Some(now - 100.0),
+            max_ledger_state_age_secs: Some(10.0),
+            active_slot_coeff: yggdrasil_consensus::ActiveSlotCoeff::new(0.05)
+                .expect("valid active slot coefficient"),
+            sigma_num: 1,
+            sigma_den: 1,
+            epoch_nonce: Nonce::Neutral,
+            max_block_body_size: 65_536,
+            protocol_version: (10, 0),
+        };
+
+        assert_eq!(
+            block_producer_ledger_state_judgement(Some(SlotNo(50)), &cfg),
+            LedgerStateJudgement::TooOld
+        );
+
+        cfg.max_ledger_state_age_secs = Some(60.0);
+        assert_eq!(
+            block_producer_ledger_state_judgement(Some(SlotNo(50)), &cfg),
+            LedgerStateJudgement::YoungEnough
         );
     }
 

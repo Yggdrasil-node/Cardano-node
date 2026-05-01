@@ -882,6 +882,7 @@ pub struct SlotClock {
     anchor_slot: SlotNo,
     anchor_instant: Instant,
     slot_length: Duration,
+    system_start_unix_secs: Option<f64>,
 }
 
 impl SlotClock {
@@ -896,7 +897,19 @@ impl SlotClock {
             anchor_slot,
             anchor_instant: Instant::now(),
             slot_length,
+            system_start_unix_secs: None,
         }
+    }
+
+    /// Construct a slot clock from the network genesis wall-clock start.
+    ///
+    /// This is the production block-forging clock: Cardano slots are
+    /// absolute slots since `ShelleyGenesis.systemStart`, not relative slots
+    /// since the node process started.
+    pub fn from_system_start(system_start_unix_secs: f64, slot_length: Duration) -> Self {
+        let mut clock = Self::new(SlotNo(0), slot_length);
+        clock.system_start_unix_secs = Some(system_start_unix_secs);
+        clock
     }
 
     /// Derive the slot number corresponding to `now`.
@@ -908,8 +921,28 @@ impl SlotClock {
         SlotNo(self.anchor_slot.0.saturating_add(slots_elapsed))
     }
 
+    /// Derive the absolute slot for a Unix timestamp.
+    pub fn slot_at_unix_secs(&self, now_unix_secs: f64) -> SlotNo {
+        let Some(system_start_unix_secs) = self.system_start_unix_secs else {
+            return self.current_slot();
+        };
+        if !now_unix_secs.is_finite() || now_unix_secs <= system_start_unix_secs {
+            return SlotNo(0);
+        }
+        let elapsed_secs = now_unix_secs - system_start_unix_secs;
+        let slots_elapsed = (elapsed_secs / self.slot_length.as_secs_f64()).floor() as u64;
+        SlotNo(slots_elapsed)
+    }
+
     /// Return the current slot according to the local wall-clock.
     pub fn current_slot(&self) -> SlotNo {
+        if self.system_start_unix_secs.is_some() {
+            let now_unix_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            return self.slot_at_unix_secs(now_unix_secs);
+        }
         self.slot_at(Instant::now())
     }
 }
@@ -1940,5 +1973,15 @@ mod tests {
         let now = Instant::now();
         let slot = clock.slot_at(now + Duration::from_secs(2));
         assert_eq!(slot, SlotNo(9));
+    }
+
+    #[test]
+    fn slot_clock_from_system_start_uses_absolute_network_slot() {
+        let clock = SlotClock::from_system_start(1_000.0, Duration::from_secs(2));
+
+        assert_eq!(clock.slot_at_unix_secs(999.0), SlotNo(0));
+        assert_eq!(clock.slot_at_unix_secs(1_000.0), SlotNo(0));
+        assert_eq!(clock.slot_at_unix_secs(1_009.9), SlotNo(4));
+        assert_eq!(clock.slot_at_unix_secs(1_010.0), SlotNo(5));
     }
 }

@@ -131,7 +131,7 @@ nav_order: 3
 **CLI**:
 - `NodeConfigFile` — JSON config parsing + genesis integration
 - `load_topology_file()` — External P2P topology file loading (upstream JSON format)
-- Forged header protocol-version source parity — block producer header `protocol_version` now uses ledger protocol parameters when present, otherwise falls back to node `max_major_protocol_version` (not network handshake versions)
+- Block producer role and forge-context parity — `--non-producing-node` disables forging explicitly, producer credentials are atomic, absolute slots derive from Shelley `systemStart + slotLength`, stale ledger views suppress forging, and forged header `protocol_version` uses ledger protocol parameters when present (fallback: node `max_major_protocol_version`, not network handshake versions)
 - `apply_topology_to_config()` — Override inline topology from external file
 - `apply_topology_override()` — CLI `--topology` flag and `TopologyFilePath` config key integration
 - `BasicLocalQueryDispatcher` — 18-tag LocalStateQuery server (wallet queries: UTxOByTxIn, StakePools, DelegationsAndRewards, DRepStakeDistr; Conway governance queries: GetConstitution, GetGovState, GetDRepState, GetCommitteeMembersState, GetStakePoolParams, GetAccountState)

@@ -33,6 +33,7 @@ fn node_binary_run_help_lists_checkpoint_flags() {
     assert!(stdout.contains("--checkpoint-trace-max-frequency"));
     assert!(stdout.contains("--checkpoint-trace-severity"));
     assert!(stdout.contains("--checkpoint-trace-backend"));
+    assert!(stdout.contains("--non-producing-node"));
 }
 
 #[test]

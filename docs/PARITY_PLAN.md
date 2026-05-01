@@ -458,9 +458,9 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 | Environment overrides | CLI flag precedence | ✅ | ✅ | Complete | clap-based override model
 | Topology file loading | `--topology` / `TopologyFilePath` | ✅ | ✅ | Complete | `load_topology_file()` reads upstream P2P JSON format; `apply_topology_to_config()` overrides inline topology; CLI flag takes priority over config key
 | Database path override | `--database-path` | ✅ | ✅ | Complete | CLI flag overrides `storage_dir` on `run`, `validate-config`, `status`
-| Port / host-addr | `--port` / `--host-addr` | ✅ | ✅ | Complete | CLI flags override listen address on `run`
+| Port / host-addr | `--port` / `--host-addr` | ✅ | ✅ | Complete | CLI flags override listen address on `run` and `validate-config`
 | Genesis loading | ShelleyGenesis + AlonzoGenesis | ✅ | ✅ | Complete | load_genesis_protocol_params
-| BP credential paths | ShelleyKesKey/VrfKey/OpCert/IssuerVkey | ✅ | ✅ | Complete | `--shelley-kes-key`, `--shelley-vrf-key`, `--shelley-operational-certificate`, `--shelley-operational-certificate-issuer-vkey` CLI flags + config file keys; text envelope parsing (VRF/KES/OpCert/issuer key) via `load_block_producer_credentials()` with OpCert-vs-issuer signature check
+| Producer/non-producer role | `--non-producing-node`; ShelleyKesKey/VrfKey/OpCert/IssuerVkey | ✅ | ✅ | Complete | `--non-producing-node` forces relay/non-producing mode even when credential paths are configured. Producer credentials are atomic: all four paths are required for forging, partial sets fail preflight/startup. Text envelope parsing (VRF/KES/OpCert/issuer key) via `load_block_producer_credentials()` with OpCert-vs-issuer signature check
 | **Subcommands** |
 | run | Sync + validate | ✅ | ✅ | Complete | Main sync loop wired
 | validate-config | Verify config file | ✅ | ✅ | Complete | Basic validation
@@ -491,7 +491,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 | TX relay readiness | Mempool admission | ✅ | ✅ | Complete | LocalTxSubmission routes through staged ledger validation (`add_tx_to_shared_mempool` → `apply_submitted_tx`) before `insert_checked`; invalid txs rejected without mutating ledger/mempool
 | Feedback | Acceptance or error | ✅ | ✅ | Complete | Display format (human-readable LedgerError messages via #[error]) sent in rejection CBOR; Debug format replaced
 
-**CLI Summary**: ~99% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. TX rejection feedback now uses Display format for human-readable LedgerError messages. Config-file loading accepts both JSON and YAML. External topology file loading via `--topology` CLI flag and `TopologyFilePath` config key with upstream P2P JSON format support. `--database-path`, `--port`, `--host-addr` CLI flags for runtime overrides.
+**CLI Summary**: ~99% feature complete. CLI `query` and `submit-tx` subcommands are fully wired using NtC LocalStateQuery and LocalTxSubmission client drivers. TX rejection feedback now uses Display format for human-readable LedgerError messages. Config-file loading accepts both JSON and YAML. External topology file loading via `--topology` CLI flag and `TopologyFilePath` config key with upstream P2P JSON format support. `--database-path`, `--port`, `--host-addr`, and `--non-producing-node` cover the relay/block-producer role surface used by upstream operator flows.
 
 ---
 
