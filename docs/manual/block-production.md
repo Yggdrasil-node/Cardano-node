@@ -91,6 +91,36 @@ Check current slot with `yggdrasil-node status` or via a query.
 
 The cold key should not normally live on the block producer — store it offline and only touch it for OpCert reissue.
 
+### Preview-only generated harness
+
+For fast preview-network runtime testing, the repository includes a harness that generates upstream `cardano-cli` text-envelope credentials and self-contained Yggdrasil configs under the ignored `tmp/` tree:
+
+```bash
+$ cargo build --release -p yggdrasil-node
+$ FORCE=1 node/scripts/preview_producer_harness.sh generate
+$ node/scripts/preview_producer_harness.sh wallet
+$ node/scripts/preview_producer_harness.sh certs
+$ node/scripts/preview_producer_harness.sh validate
+$ RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-relay
+$ RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-producer
+$ RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 node/scripts/preview_producer_harness.sh endurance-producer
+```
+
+The default output directory is `tmp/preview-producer/`. It contains:
+
+- `keys/` — cold key, VRF key, KES key, OpCert, and issue counter.
+- `wallet/` — preview payment/stake signing keys and addresses for funding and delegation.
+- `certs/` — stake registration, stake delegation, pool registration, pool id, and registration summary.
+- `config/preview-relay.json` — preview relay config with local inbound serving.
+- `config/preview-producer.json` — preview producer-mode config with generated credentials.
+- `run/run-preview-relay.sh` and `run/run-preview-producer.sh` — convenience launchers.
+
+The generated cold key is **not registered on-chain** until the certificate transaction is submitted. The producer smoke test proves credential loading, OpCert validation, preview bootstrap connection, metrics, sync, and forge-loop startup. Actual block adoption requires preview tADA, stake-pool registration, delegation, and enough active stake to win leader slots. With the default zero pledge, the funding address needs the preview stake-key deposit plus pool deposit and transaction fees before registration can be submitted.
+
+If you build the preview registration transaction manually with `cardano-cli transaction build-raw`, pass the certificate files in this order: `stake-registration.cert`, `pool-registration.cert`, then `stake-delegation.cert`. The delegation certificate depends on the pool already being present in the transaction certificate sequence.
+
+Use `endurance-producer` after the startup smoke when you need evidence that sync continues over the full bounded run. It samples Prometheus metrics for the whole `RUN_SECONDS` window and fails unless `yggdrasil_current_slot` advances by at least `MIN_SLOT_ADVANCE`.
+
 ## Configuring Yggdrasil for block production
 
 Add to `config.json`:

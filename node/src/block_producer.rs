@@ -218,8 +218,9 @@ const STAKE_POOL_VERIFICATION_KEY_TYPE: &str = "StakePoolVerificationKey_ed25519
 /// The text-envelope type string encodes the depth:
 /// `KesSigningKey_ed25519_kes_2^6` means depth 6 (64 periods, mainnet).
 ///
-/// The CBOR payload is a `bstr` containing the 32-byte seed from which
-/// the full SumKES key tree is generated.
+/// The CBOR payload is a `bstr` containing either the historical 32-byte
+/// seed fixture shape or the expanded `SignKeySumKES` payload emitted by
+/// upstream `cardano-cli node key-gen-KES` (608 bytes at depth 6).
 pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProducerError> {
     ensure_secret_file_mode(path)?;
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
@@ -238,17 +239,27 @@ pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProduc
             detail: format!("cannot parse KES depth from type tag suffix '{depth_str}'"),
         })?;
 
-    let seed_bytes = unwrap_cbor_bytes(&cbor_bytes, path)?;
-    if seed_bytes.len() != 32 {
-        return Err(BlockProducerError::PayloadLength {
-            path: path.display().to_string(),
-            expected: 32,
-            actual: seed_bytes.len(),
-        });
+    let key_bytes = unwrap_cbor_bytes(&cbor_bytes, path)?;
+    if key_bytes.len() == 32 {
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(key_bytes);
+        return gen_sum_kes_signing_key(&seed, depth)
+            .map_err(|e| BlockProducerError::Crypto(e.to_string()));
     }
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(seed_bytes);
-    gen_sum_kes_signing_key(&seed, depth).map_err(|e| BlockProducerError::Crypto(e.to_string()))
+
+    let expected_expanded_len = SumKesSigningKey::expected_size(depth);
+    if key_bytes.len() == expected_expanded_len {
+        return SumKesSigningKey::from_bytes(depth, key_bytes)
+            .map_err(|e| BlockProducerError::Crypto(e.to_string()));
+    }
+
+    Err(BlockProducerError::OpCertDecode {
+        path: path.display().to_string(),
+        detail: format!(
+            "KES signing key payload length {}, expected 32-byte seed or {expected_expanded_len}-byte expanded key for depth {depth}",
+            key_bytes.len()
+        ),
+    })
 }
 
 /// Load the stake-pool cold verification key used as header `issuer_vkey`.
@@ -288,8 +299,9 @@ const OPCERT_TYPE: &str = "NodeOperationalCertificate";
 
 /// Load an operational certificate from a text-envelope file.
 ///
-/// The CBOR payload is an array:
-/// `[hot_vkey_bytes, sequence_number, kes_period, cold_sig_bytes]`
+/// The CBOR payload is either the direct `OCert` array or the wrapped
+/// upstream `cardano-cli node issue-op-cert` payload containing
+/// `[OCert, cold_vkey]`.
 ///
 /// Reference: `OCert` in `Cardano.Protocol.TPraos.OCert`.
 pub fn load_operational_certificate(path: &Path) -> Result<OpCert, BlockProducerError> {
@@ -306,9 +318,12 @@ pub fn load_operational_certificate(path: &Path) -> Result<OpCert, BlockProducer
 
 /// Decode an operational certificate from raw CBOR bytes.
 ///
-/// Expected encoding:
+/// Accepted encodings:
 /// ```text
 /// [hot_vkey_bytes(32), sequence_number(uint), kes_period(uint), sigma_bytes(64)]
+/// [ [hot_vkey_bytes(32), sequence_number(uint), kes_period(uint), sigma_bytes(64)]
+/// , cold_vkey_bytes(32)
+/// ]
 /// ```
 fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerError> {
     use std::io::Cursor;
@@ -319,15 +334,57 @@ fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerE
         detail: detail.to_owned(),
     };
 
-    // Expect a CBOR array of length 4.
     let first = read_cbor_byte(&mut cursor).map_err(|_| err("truncated CBOR"))?;
-    if first != 0x84 {
-        return Err(err(&format!("expected CBOR array(4), got 0x{first:02x}")));
+
+    let opcert = match first {
+        // Historical/internal fixture shape: OCert directly.
+        0x84 => decode_opcert_fields(&mut cursor, path)?,
+        // Upstream cardano-cli text envelope shape:
+        // [OCert, cold verification key].
+        0x82 => {
+            let nested = read_cbor_byte(&mut cursor).map_err(|_| err("truncated OCert CBOR"))?;
+            if nested != 0x84 {
+                return Err(err(&format!(
+                    "expected nested OCert CBOR array(4), got 0x{nested:02x}"
+                )));
+            }
+            let opcert = decode_opcert_fields(&mut cursor, path)?;
+            let cold_vkey_raw = read_cbor_bytes_field(&mut cursor)
+                .map_err(|_| err("failed to read wrapped cold verification key bytes"))?;
+            if cold_vkey_raw.len() != 32 {
+                return Err(err(&format!(
+                    "wrapped cold verification key length {}, expected 32",
+                    cold_vkey_raw.len()
+                )));
+            }
+            opcert
+        }
+        _ => {
+            return Err(err(&format!(
+                "expected CBOR array(4) or wrapped array(2), got 0x{first:02x}"
+            )));
+        }
+    };
+
+    if cursor.position() != data.len() as u64 {
+        return Err(err("trailing bytes after operational certificate"));
     }
+
+    Ok(opcert)
+}
+
+fn decode_opcert_fields(
+    cursor: &mut std::io::Cursor<&[u8]>,
+    path: &Path,
+) -> Result<OpCert, BlockProducerError> {
+    let err = |detail: &str| BlockProducerError::OpCertDecode {
+        path: path.display().to_string(),
+        detail: detail.to_owned(),
+    };
 
     // 1) hot_vkey: CBOR bytes(32)
     let hot_vkey_raw =
-        read_cbor_bytes_field(&mut cursor).map_err(|_| err("failed to read hot_vkey bytes"))?;
+        read_cbor_bytes_field(cursor).map_err(|_| err("failed to read hot_vkey bytes"))?;
     if hot_vkey_raw.len() != 32 {
         return Err(err(&format!(
             "hot_vkey length {}, expected 32",
@@ -340,14 +397,13 @@ fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerE
 
     // 2) sequence_number: CBOR uint
     let sequence_number =
-        read_cbor_uint(&mut cursor).map_err(|_| err("failed to read sequence_number"))?;
+        read_cbor_uint(cursor).map_err(|_| err("failed to read sequence_number"))?;
 
     // 3) kes_period: CBOR uint
-    let kes_period = read_cbor_uint(&mut cursor).map_err(|_| err("failed to read kes_period"))?;
+    let kes_period = read_cbor_uint(cursor).map_err(|_| err("failed to read kes_period"))?;
 
     // 4) sigma: CBOR bytes(64)
-    let sigma_raw =
-        read_cbor_bytes_field(&mut cursor).map_err(|_| err("failed to read sigma bytes"))?;
+    let sigma_raw = read_cbor_bytes_field(cursor).map_err(|_| err("failed to read sigma bytes"))?;
     if sigma_raw.len() != 64 {
         return Err(err(&format!(
             "sigma length {}, expected 64",
@@ -963,17 +1019,16 @@ pub fn check_should_forge(
     sigma_den: u64,
     active_slot_coeff: &ActiveSlotCoeff,
 ) -> ShouldForge {
-    // Step 1: updateForgeState — evolve KES key to the current period.
-    let target_period = match kes_period_of_slot(slot.0, creds.slots_per_kes_period) {
-        Ok(p) => p,
+    // Step 1: updateForgeState — evolve KES key to the period offset
+    // relative to the operational certificate start. The certificate stores
+    // the absolute network KES period; the hot KES key itself only tracks the
+    // bounded [0, maxKESEvolutions) offset within that OpCert window.
+    let target_offset = match check_can_forge(creds, slot) {
+        Ok(offset) => offset,
         Err(e) => return ShouldForge::ForgeStateUpdateError(e.to_string()),
     };
-    let target_u32 = match u32::try_from(target_period) {
-        Ok(p) => p,
-        Err(_) => return ShouldForge::ForgeStateUpdateError("KES period exceeds u32".to_owned()),
-    };
-    if target_u32 > creds.kes_current_period {
-        match evolve_kes_key_to_period(creds, target_u32) {
+    if target_offset > creds.kes_current_period {
+        match evolve_kes_key_to_period(creds, target_offset) {
             Ok(_) => {}
             Err(e) => return ShouldForge::ForgeStateUpdateError(e.to_string()),
         }
@@ -1552,6 +1607,26 @@ mod tests {
     }
 
     #[test]
+    fn load_kes_key_accepts_upstream_expanded_depth_6_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = [0x52u8; 32];
+        let generated = gen_sum_kes_signing_key(&seed, 6).expect("expanded kes key");
+        assert_eq!(generated.to_bytes().len(), 608);
+
+        let cbor = cbor_bstr(generated.to_bytes());
+        let json = make_text_envelope("KesSigningKey_ed25519_kes_2^6", "", &hex::encode(&cbor));
+        let path = write_temp_file(&dir, "kes-expanded.skey", &json);
+        let loaded = load_kes_signing_key(&path).unwrap();
+
+        assert_eq!(loaded.depth(), 6);
+        assert_eq!(loaded.total_periods(), 64);
+        assert_eq!(
+            derive_sum_kes_vk(&loaded).unwrap(),
+            derive_sum_kes_vk(&generated).unwrap()
+        );
+    }
+
+    #[test]
     fn load_opcert_from_text_envelope() {
         let dir = tempfile::tempdir().unwrap();
 
@@ -1573,6 +1648,34 @@ mod tests {
         assert_eq!(opcert.hot_vkey.to_bytes(), hot_vkey);
         assert_eq!(opcert.sequence_number, 5);
         assert_eq!(opcert.kes_period, 10);
+        assert_eq!(opcert.sigma.0, sigma);
+    }
+
+    #[test]
+    fn load_opcert_accepts_upstream_wrapped_text_envelope_payload() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let hot_vkey = [0x31u8; 32];
+        let cold_vkey = [0x32u8; 32];
+        let sigma = [0x33u8; 64];
+
+        let mut cbor = Vec::new();
+        cbor.push(0x82); // array(2): [OCert, cold_vkey]
+        cbor.push(0x84); // OCert array(4)
+        cbor.extend_from_slice(&cbor_bstr(&hot_vkey));
+        cbor.push(0x00); // sequence_number
+        cbor.push(0x19); // kes_period follows as uint16
+        cbor.extend_from_slice(&856u16.to_be_bytes());
+        cbor.extend_from_slice(&cbor_bstr(&sigma));
+        cbor.extend_from_slice(&cbor_bstr(&cold_vkey));
+
+        let json = make_text_envelope("NodeOperationalCertificate", "", &hex::encode(&cbor));
+        let path = write_temp_file(&dir, "node.opcert", &json);
+        let opcert = load_operational_certificate(&path).unwrap();
+
+        assert_eq!(opcert.hot_vkey.to_bytes(), hot_vkey);
+        assert_eq!(opcert.sequence_number, 0);
+        assert_eq!(opcert.kes_period, 856);
         assert_eq!(opcert.sigma.0, sigma);
     }
 
@@ -1713,6 +1816,45 @@ mod tests {
         // Slot 10 → KES period 1, which is beyond the max (0 + 1 = 1 → expired).
         let result = check_can_forge(&creds, SlotNo(10));
         assert!(result.is_err(), "should reject expired KES");
+    }
+
+    #[test]
+    fn check_should_forge_evolves_to_opcert_relative_kes_offset() {
+        let kes_sk = gen_sum_kes_signing_key(&[0xBCu8; 32], 2).unwrap();
+        let opcert = OpCert {
+            hot_vkey: derive_sum_kes_vk(&kes_sk).unwrap(),
+            sequence_number: 0,
+            kes_period: 10,
+            sigma: Signature([0u8; 64]),
+        };
+        let vrf_sk = VrfSecretKey::from_seed([0xCDu8; 32]);
+        let vrf_vk = vrf_sk.verification_key();
+
+        let mut creds = BlockProducerCredentials {
+            vrf_signing_key: vrf_sk,
+            vrf_verification_key: vrf_vk,
+            kes_signing_key: kes_sk,
+            kes_current_period: 0,
+            operational_cert: opcert,
+            issuer_vkey: VerificationKey::from_bytes([0x21; 32]),
+            slots_per_kes_period: 100,
+            max_kes_evolutions: 4,
+        };
+
+        let result = check_should_forge(
+            &mut creds,
+            SlotNo(1_200), // absolute KES period 12, offset 2 from OpCert start 10
+            Nonce::Hash([0xEF; 32]),
+            1,
+            1,
+            &ActiveSlotCoeff::new(1.0).unwrap(),
+        );
+
+        assert!(
+            matches!(result, ShouldForge::ShouldForge(_)),
+            "expected forge decision, got {result:?}"
+        );
+        assert_eq!(creds.kes_current_period, 2);
     }
 
     #[test]

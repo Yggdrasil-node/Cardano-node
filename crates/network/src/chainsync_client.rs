@@ -223,11 +223,13 @@ impl ChainSyncClient {
     // -- helpers ----------------------------------------------------------
 
     async fn send_msg(&mut self, msg: &ChainSyncMessage) -> Result<(), ChainSyncClientError> {
-        self.state = self.state.transition(msg)?;
+        let next_state = self.state.transition(msg)?;
         self.channel
             .send(msg.to_cbor())
             .await
-            .map_err(ChainSyncClientError::Mux)
+            .map_err(ChainSyncClientError::Mux)?;
+        self.state = next_state;
+        Ok(())
     }
 
     /// Receive with an optional per-state time limit.
@@ -474,5 +476,32 @@ mod tests {
         let s = format!("{e}");
         assert!(s.contains("header decode"));
         assert!(s.contains("bad vrf proof size"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_failure_does_not_advance_protocol_state() {
+        use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum};
+        use crate::mux::start_unix;
+        use tokio::net::UnixStream;
+
+        let (client_stream, _server_stream) = UnixStream::pair().expect("unix stream pair");
+        let (mut handles, mux_handle) = start_unix(
+            client_stream,
+            MiniProtocolDir::Initiator,
+            &[MiniProtocolNum::CHAIN_SYNC],
+            1,
+        );
+        let handle = handles
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("chainsync handle");
+        mux_handle.abort();
+        tokio::task::yield_now().await;
+
+        let mut client = ChainSyncClient::new(handle);
+        let result = client.find_intersect_points(vec![Point::Origin]).await;
+
+        assert!(matches!(result, Err(ChainSyncClientError::Mux(_))));
+        assert_eq!(client.state(), ChainSyncState::StIdle);
     }
 }

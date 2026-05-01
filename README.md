@@ -123,6 +123,15 @@ cargo lint        # cargo clippy --workspace --all-targets --all-features -- -D 
 
 All three must pass. The release build also runs `cargo doc --workspace --no-deps`. Aliases live in [.cargo/config.toml](.cargo/config.toml); CI lives in [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
+For fast preview-network block-producer rehearsal, the ignored harness bundle can generate upstream `cardano-cli` credentials, a funding wallet, registration certificates, configs, and bounded relay/producer smoke runs:
+
+```bash
+cargo build --release --bin yggdrasil-node
+FORCE=1 node/scripts/preview_producer_harness.sh all
+RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 node/scripts/preview_producer_harness.sh endurance-producer
+node/scripts/preview_producer_harness.sh funding-address
+```
+
 ## Documentation
 
 - [User Manual](https://yggdrasil-node.github.io/Cardano-node/manual/) — install, configure, run, monitor, troubleshoot, and produce blocks.

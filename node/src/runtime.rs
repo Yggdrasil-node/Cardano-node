@@ -871,13 +871,14 @@ impl OutboundPeerManager {
         peer_registry: &Arc<RwLock<PeerRegistry>>,
         governor_state: &mut GovernorState,
         tracer: &NodeTracer,
-    ) {
+    ) -> Vec<SocketAddr> {
         let hot_peers: Vec<SocketAddr> = self
             .warm_peers
             .iter()
             .filter(|(_, m)| m.is_hot)
             .map(|(addr, _)| *addr)
             .collect();
+        let mut failed_peers = Vec::new();
 
         for peer in hot_peers {
             let Some(managed) = self.warm_peers.get_mut(&peer) else {
@@ -913,6 +914,7 @@ impl OutboundPeerManager {
                 }
                 Err(err) => {
                     governor_state.record_failure(peer);
+                    failed_peers.push(peer);
                     if let Ok(mut registry) = peer_registry.write() {
                         let _ = registry.set_hot_tip_slot(peer, None);
                     }
@@ -928,6 +930,8 @@ impl OutboundPeerManager {
                 }
             }
         }
+
+        failed_peers
     }
 
     /// Select the best hot peer to sync from based on its last known tip.
@@ -951,9 +955,9 @@ impl OutboundPeerManager {
         keepalive_interval: Option<Duration>,
         governor_state: &mut GovernorState,
         tracer: &NodeTracer,
-    ) {
+    ) -> Vec<SocketAddr> {
         let Some(interval) = keepalive_interval else {
-            return;
+            return Vec::new();
         };
 
         let now = Instant::now();
@@ -978,10 +982,10 @@ impl OutboundPeerManager {
             }
         }
 
+        let mut failed_peers = Vec::new();
         for (peer, err) in failed {
-            if let Some(session) = self.warm_peers.remove(&peer) {
-                session.abort();
-            }
+            let _ = self.demote_to_cold(peer).await;
+            failed_peers.push(peer);
             tracer.trace_runtime(
                 "Net.Governor",
                 "Warning",
@@ -992,6 +996,8 @@ impl OutboundPeerManager {
                 ]),
             );
         }
+
+        failed_peers
     }
 }
 
@@ -1577,6 +1583,53 @@ fn update_registry_status_from_cm(
     };
     let mut registry = peer_registry.write().expect("peer registry lock poisoned");
     registry.set_status(peer, peer_status_from_cm_state(state))
+}
+
+async fn retire_failed_outbound_peer(
+    peer_manager: &mut OutboundPeerManager,
+    peer_registry: &Arc<RwLock<PeerRegistry>>,
+    connection_manager: &Arc<RwLock<ConnectionManagerState>>,
+    governor_state: &mut GovernorState,
+    peer: SocketAddr,
+    reason: &'static str,
+    tracer: &NodeTracer,
+) -> bool {
+    governor_state.clear_in_flight_warm(&peer);
+    governor_state.clear_in_flight_hot(&peer);
+    governor_state.clear_in_flight_demote_warm(&peer);
+    governor_state.clear_in_flight_demote_hot(&peer);
+
+    let connection_changed = peer_manager.demote_to_cold(peer).await;
+    let cm_changed = {
+        let mut cm = connection_manager
+            .write()
+            .expect("connection manager lock poisoned");
+        let marked = cm.mark_terminating(peer, Some(reason.to_owned())).is_some();
+        let expired = cm.time_wait_expired(peer).is_ok();
+        let removed = cm.remove_terminated(&peer);
+        marked || expired || removed
+    };
+    let status_changed = {
+        let mut registry = peer_registry.write().expect("peer registry lock poisoned");
+        registry.set_status(peer, PeerStatus::PeerCold)
+    };
+
+    let changed = connection_changed || cm_changed || status_changed;
+    if changed {
+        tracer.trace_runtime(
+            "Net.Governor",
+            "Info",
+            "outbound peer retired after protocol failure",
+            trace_fields([
+                ("peer", json!(peer.to_string())),
+                ("reason", json!(reason)),
+                ("connectionChanged", json!(connection_changed)),
+                ("connectionManagerChanged", json!(cm_changed)),
+                ("statusChanged", json!(status_changed)),
+            ]),
+        );
+    }
+    changed
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2421,9 +2474,21 @@ pub async fn run_governor_loop<I, V, L, F>(
                     root_sources.refresh(&mut registry, &tracer);
                 }
 
-                peer_manager
+                let failed_keepalive_peers = peer_manager
                     .drive_keepalives(config.keepalive_interval, &mut governor_state, &tracer)
                     .await;
+                for peer in failed_keepalive_peers {
+                    let _ = retire_failed_outbound_peer(
+                        &mut peer_manager,
+                        &peer_registry,
+                        &connection_manager,
+                        &mut governor_state,
+                        peer,
+                        "keepalive failure",
+                        &tracer,
+                    )
+                    .await;
+                }
 
                 // Peer sharing is now governor-driven via ShareRequest actions
                 // dispatched to specific target peers, matching upstream behavior.
@@ -2440,9 +2505,21 @@ pub async fn run_governor_loop<I, V, L, F>(
                     )
                 };
 
-                peer_manager
+                let failed_tip_peers = peer_manager
                     .refresh_hot_peer_tips(&peer_registry, &mut governor_state, &tracer)
                     .await;
+                for peer in failed_tip_peers {
+                    let _ = retire_failed_outbound_peer(
+                        &mut peer_manager,
+                        &peer_registry,
+                        &connection_manager,
+                        &mut governor_state,
+                        peer,
+                        "hot peer tip query failure",
+                        &tracer,
+                    )
+                    .await;
+                }
 
                 if let Some(best_peer) = peer_manager.best_hot_peer() {
                     if let Some(slot) = peer_manager

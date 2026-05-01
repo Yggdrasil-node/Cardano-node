@@ -39,6 +39,36 @@ nav_order: 8
 
   Each directory contains the JSON config plus the four genesis files (Byron, Shelley, Alonzo, Conway). No download step is required.
 
+### 1a. Preview producer harness (fast local gate)
+
+Use preview when you need the fastest public-network startup/sync loop and do not yet have real preprod/mainnet pool credentials. The harness uses upstream `cardano-cli` to generate text-envelope cold, VRF, KES, and operational-certificate files, then writes self-contained preview relay and producer configs under `tmp/preview-producer/`.
+
+```sh
+cargo build --release -p yggdrasil-node
+export YGG_BIN="$PWD/target/release/yggdrasil-node"
+
+FORCE=1 node/scripts/preview_producer_harness.sh generate
+node/scripts/preview_producer_harness.sh wallet
+node/scripts/preview_producer_harness.sh certs
+node/scripts/preview_producer_harness.sh validate
+RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-relay
+RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-producer
+RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 node/scripts/preview_producer_harness.sh endurance-producer
+```
+
+Pass conditions:
+- `wallet` prints a preview payment address and stake address under `tmp/preview-producer/wallet/`.
+- `certs` emits stake registration, stake delegation, pool registration, and pool-id files under `tmp/preview-producer/certs/`.
+- `validate` reports relay credentials absent and producer credentials complete.
+- `smoke-relay` observes preview bootstrap connection, metrics, and synced blocks.
+- `smoke-producer` observes `Startup.BlockProducer`, `block producer loop started`, preview bootstrap connection, metrics, and synced blocks.
+- `endurance-producer` runs for the full duration and proves the preview sync point advances by at least `MIN_SLOT_ADVANCE` slots.
+- No `invalid VRF proof` line appears.
+
+This does **not** prove real block adoption until the generated pool is registered and delegated on-chain. With the default zero pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the preview stake-key deposit plus pool deposit and transaction fees (currently 502 tADA plus fees from the vendored preview genesis), submit the generated certificates, then wait for active stake before expecting leader election.
+
+When constructing the registration transaction manually, keep certificate order deterministic: stake-address registration first, pool registration second, stake delegation third. Submitting delegation before the pool-registration certificate is processed is rejected by the preview ledger as `DelegateeStakePoolNotRegisteredDELEG`.
+
 ---
 
 ## 2. Preprod smoke test (start here)

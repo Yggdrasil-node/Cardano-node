@@ -2814,6 +2814,8 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
                     json!(bp.operational_cert.sequence_number),
                 ),
                 ("kesPeriod", json!(bp.kes_current_period)),
+                ("kesCurrentPeriod", json!(bp.kes_current_period)),
+                ("opcertKesPeriod", json!(bp.operational_cert.kes_period)),
             ]),
         );
     }

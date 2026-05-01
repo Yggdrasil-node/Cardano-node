@@ -201,6 +201,37 @@ impl SumKesSigningKey {
     pub fn total_periods(&self) -> u32 {
         1u32 << self.depth
     }
+
+    /// Expected serialized byte length for a signing key at the given depth.
+    ///
+    /// Upstream `cardano-cli node key-gen-KES` stores the expanded
+    /// `SignKeySumKES` payload in the text envelope.  For depth 6 this is
+    /// 608 bytes, not just the original 32-byte seed.
+    pub fn expected_size(depth: u32) -> usize {
+        sk_size(depth)
+    }
+
+    /// Constructs a SumKES signing key from its expanded serialized bytes.
+    ///
+    /// This accepts the same byte layout produced by [`gen_sum_kes_signing_key`]
+    /// and by upstream `cardano-cli` text-envelope KES signing keys:
+    /// recursive current child key, right-child seed, left verification key,
+    /// and right verification key.
+    pub fn from_bytes(depth: u32, data: &[u8]) -> Result<Self, CryptoError> {
+        let expected = Self::expected_size(depth);
+        if data.len() != expected {
+            return Err(CryptoError::InvalidKesKeyMaterialLength(data.len()));
+        }
+        Ok(Self {
+            depth,
+            data: data.to_vec(),
+        })
+    }
+
+    /// Returns the expanded serialized signing-key bytes.
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.data
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -625,6 +656,29 @@ mod tests {
             let sk = gen_sum_kes_signing_key(&test_seed(1), depth).unwrap();
             assert_eq!(sk.total_periods(), 1u32 << depth);
         }
+    }
+
+    #[test]
+    fn signing_key_expected_size_matches_upstream_depth_6_payload() {
+        assert_eq!(SumKesSigningKey::expected_size(0), 32);
+        assert_eq!(SumKesSigningKey::expected_size(6), 608);
+    }
+
+    #[test]
+    fn signing_key_from_expanded_bytes_roundtrip() {
+        let sk = gen_sum_kes_signing_key(&test_seed(7), 6).unwrap();
+        let decoded = SumKesSigningKey::from_bytes(6, sk.to_bytes()).unwrap();
+        assert_eq!(decoded, sk);
+        assert_eq!(
+            derive_sum_kes_vk(&decoded).unwrap(),
+            derive_sum_kes_vk(&sk).unwrap()
+        );
+    }
+
+    #[test]
+    fn signing_key_from_expanded_bytes_rejects_wrong_len() {
+        let result = SumKesSigningKey::from_bytes(6, &[0u8; 32]);
+        assert_eq!(result, Err(CryptoError::InvalidKesKeyMaterialLength(32)));
     }
 
     #[test]
