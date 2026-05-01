@@ -1883,6 +1883,24 @@ mod tests {
     }
 
     #[test]
+    fn collect_datum_map_hashes_raw_witness_datum_bytes() {
+        // Witness set { 4: [0] }, but the datum integer 0 is encoded in
+        // non-canonical uint8 form `0x18 0x00`. Upstream `TxDats` hashes
+        // those memoized bytes, not the canonical re-encoding `0x00`.
+        let witness = [0xa1, 0x04, 0x81, 0x18, 0x00];
+        let ws = ShelleyWitnessSet::from_cbor_bytes(&witness).expect("witness set");
+        let datum = PlutusData::Integer(0.into());
+        assert_eq!(ws.plutus_data, vec![datum.clone()]);
+
+        let map = collect_datum_map_from_witness_bytes(Some(&witness), &ws).expect("datum map");
+        let raw_hash = yggdrasil_crypto::blake2b::hash_bytes_256(&[0x18, 0x00]).0;
+        let canonical_hash = yggdrasil_crypto::blake2b::hash_bytes_256(&datum.to_cbor_bytes()).0;
+
+        assert_eq!(map[&raw_hash], datum);
+        assert!(!map.contains_key(&canonical_hash));
+    }
+
+    #[test]
     fn resolve_spending_purpose() {
         let inputs = vec![
             crate::eras::shelley::ShelleyTxIn {
