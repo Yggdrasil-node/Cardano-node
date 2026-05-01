@@ -1750,20 +1750,18 @@ fn dispatch_upstream_query(
                             EraSpecificQuery::GetPoolDistr2 {
                                 maybe_pool_hash_set_cbor,
                             } => {
-                                // Round 186 — Conway `GetPoolDistr2`
-                                // returns `PoolDistr` (2-element record
-                                // `[map, NonZero Coin]`).  Same shape as
-                                // `GetStakeDistribution2` (tag 37, R179)
-                                // — emit empty distribution with
-                                // 1-lovelace `pdTotalStake` placeholder
-                                // (NonZero requirement).  Filter
-                                // parameter accepted but not applied.
-                                let _ = maybe_pool_hash_set_cbor;
-                                let mut e = Encoder::new();
-                                e.array(2);
-                                e.map(0);
-                                e.unsigned(1);
-                                encode_query_if_current_match(&e.into_bytes())
+                                // R237 — Conway `GetPoolDistr2` returns
+                                // the same upstream `PoolDistr` shape as
+                                // `GetStakeDistribution2`, but accepts an
+                                // optional pool-key filter.  Decode and
+                                // apply that filter on the server side so
+                                // cardano-cli receives the requested
+                                // subset rather than the historical
+                                // `[empty_map, 1]` placeholder.
+                                let filter = decode_maybe_pool_hash_set(&maybe_pool_hash_set_cbor)
+                                    .unwrap_or(None);
+                                let body = encode_pool_distr_for_lsq(snapshot, filter.as_ref());
+                                encode_query_if_current_match(&body)
                             }
                             EraSpecificQuery::GetProposals {
                                 gov_action_id_set_cbor,
@@ -2200,6 +2198,24 @@ fn encode_stake_pools_set(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
 /// hash.  Falls back to an empty map + 1-lovelace `NonZero Coin`
 /// total when no snapshots are attached (pre-rotation chains).
 fn encode_stake_distribution_map(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
+    encode_pool_distr_for_lsq(snapshot, None)
+}
+
+/// Encode upstream `PoolDistr`, optionally restricted to the requested
+/// pool key hashes.
+///
+/// `GetStakeDistribution{,2}` calls this with `None`, while
+/// Conway `GetPoolDistr2` supplies the optional server-side filter
+/// carried by `Maybe (Set PoolKeyHash)`.  The `pdTotalActiveStake`
+/// denominator remains the full active stake from the source
+/// distribution even when the map is filtered; each
+/// `IndividualPoolStake` therefore remains a share of the current
+/// epoch's leader-election stake distribution rather than a share
+/// of the filtered subset.
+fn encode_pool_distr_for_lsq(
+    snapshot: &LedgerStateSnapshot,
+    filter: Option<&std::collections::HashSet<[u8; 28]>>,
+) -> Vec<u8> {
     use yggdrasil_ledger::Encoder;
     let mut enc = Encoder::new();
     enc.array(2);
@@ -2213,7 +2229,12 @@ fn encode_stake_distribution_map(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
 
     let entries: Vec<(&[u8; 28], u64)> = dist
         .as_ref()
-        .map(|d| d.iter().map(|(k, v)| (k, *v)).collect())
+        .map(|d| {
+            d.iter()
+                .filter(|(k, _)| filter.is_none_or(|f| f.contains(*k)))
+                .map(|(k, v)| (k, *v))
+                .collect()
+        })
         .unwrap_or_default();
     let mut sorted: Vec<(&[u8; 28], u64)> = entries;
     sorted.sort_by_key(|(k, _)| *k);
@@ -2649,8 +2670,9 @@ fn encode_drep_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
     enc.into_bytes()
 }
 
-/// Round 195 — encode upstream `LedgerPeerSnapshotV2` with live
-/// registered pool relays from yggdrasil's snapshot.
+/// Round 195/237 — encode upstream `LedgerPeerSnapshotV2` with
+/// live registered pool relays + per-pool stake from yggdrasil's
+/// snapshot.
 ///
 /// Wire shape per
 /// `Ouroboros.Network.PeerSelection.LedgerPeers.Type.encodeLedgerPeerSnapshot
@@ -2667,10 +2689,15 @@ fn encode_drep_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
 ///
 /// `AccPoolStake` and `PoolStake` are newtypes wrapping `Rational`,
 /// CBOR-encoded as 2-element `[numerator, denominator]` lists.
-/// Yggdrasil's chain doesn't yet track active stake distribution
-/// snapshot-side, so each entry uses 0/1 placeholders for stake;
-/// the real-time pool registration data (pool key hash + relay
-/// access points) is live from `snapshot.pool_state()`.
+///
+/// R237 — when the runtime has attached live `StakeSnapshots` via
+/// `with_stake_snapshots`, per-pool stake is sourced from
+/// `set.pool_stake_distribution()` (matches upstream
+/// `accumulateBigLedgerStake`'s use of `nesPd`).  Pools are sorted
+/// descending by stake and `AccPoolStake` is the running cumulative
+/// distribution function over `total_active_stake`.  Falls back to
+/// 0/1 placeholders when no rotation snapshot is attached
+/// (pre-rotation chains).
 ///
 /// `LedgerRelayAccessPoint` per
 /// `Ouroboros.Network.PeerSelection.RelayAccessPoint`:
@@ -2685,6 +2712,28 @@ fn encode_drep_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
 fn encode_ledger_peer_snapshot_v2_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec<u8> {
     use std::net::IpAddr;
     use yggdrasil_ledger::Encoder;
+
+    let dist = snapshot
+        .stake_snapshots()
+        .map(|s| s.set.pool_stake_distribution());
+    let total_stake = dist.as_ref().map(|d| d.total_active_stake()).unwrap_or(0);
+
+    // Build (pool_hash, pool_stake, relays) for every registered
+    // pool with at least one dialable relay.  Pools with no relays
+    // are skipped per upstream `accumulateBigLedgerStake` (only
+    // dialable pools surface in the snapshot).
+    let mut entries: Vec<(u64, Vec<yggdrasil_ledger::PoolRelayAccessPoint>)> = Vec::new();
+    for (pool_hash, pool) in snapshot.pool_state().iter() {
+        let relays = pool.relay_access_points();
+        if relays.is_empty() {
+            continue;
+        }
+        let pool_stake = dist.as_ref().map(|d| d.pool_stake(pool_hash)).unwrap_or(0);
+        entries.push((pool_stake, relays));
+    }
+    // Sort by descending pool stake (ties broken by registration
+    // order, matching upstream's stable sort).
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
 
     let mut enc = Encoder::new();
     enc.array(2);
@@ -2707,27 +2756,34 @@ fn encode_ledger_peer_snapshot_v2_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec
     // Pools — indefinite-length CBOR list.
     enc.raw(&[0x9f]);
 
-    for (_pool_hash, pool) in snapshot.pool_state().iter() {
-        let relays = pool.relay_access_points();
-        if relays.is_empty() {
-            continue; // Skip pools without dialable relays.
-        }
-
+    let mut acc_running: u64 = 0;
+    for (pool_stake, relays) in entries {
         // Each entry: [AccPoolStake, [PoolStake, NonEmpty Relays]].
         enc.array(2);
 
-        // AccPoolStake — Rational 0/1 (live stake unavailable
-        // without active stake distribution snapshot).
+        acc_running = acc_running.saturating_add(pool_stake);
+
+        // AccPoolStake — Rational acc_running/total_stake.
         enc.array(2);
-        enc.unsigned(0);
-        enc.unsigned(1);
+        if total_stake == 0 {
+            enc.unsigned(0);
+            enc.unsigned(1);
+        } else {
+            enc.unsigned(acc_running);
+            enc.unsigned(total_stake);
+        }
 
         // [PoolStake, NonEmpty Relays] (2-elem).
         enc.array(2);
-        // PoolStake — Rational 0/1.
+        // PoolStake — Rational pool_stake/total_stake.
         enc.array(2);
-        enc.unsigned(0);
-        enc.unsigned(1);
+        if total_stake == 0 {
+            enc.unsigned(0);
+            enc.unsigned(1);
+        } else {
+            enc.unsigned(pool_stake);
+            enc.unsigned(total_stake);
+        }
         // NonEmpty Relays — upstream emits indef-length list
         // (cardano-cli's decoder rejected definite-length here at
         // depth 20).
@@ -4024,6 +4080,221 @@ mod tests {
 
         let total = dec.unsigned().expect("pdTotalActiveStake");
         assert_eq!(total, 1000, "total active stake matches sum of inputs");
+    }
+
+    /// R237 — Conway `GetPoolDistr2` applies the optional pool-key
+    /// filter server-side while preserving the full active-stake
+    /// denominator from the source `PoolDistr`.
+    #[test]
+    fn get_pool_distr2_with_filter_emits_requested_pool_only() {
+        use std::collections::HashSet;
+        use yggdrasil_ledger::cbor::Decoder;
+        use yggdrasil_ledger::stake::{StakeSnapshot, StakeSnapshots};
+        use yggdrasil_ledger::{
+            PoolMetadata, PoolParams, RewardAccount, StakeCredential, UnitInterval,
+        };
+
+        let state = LedgerState::new(Era::Conway);
+        let pool_a: [u8; 28] = [0xa0; 28];
+        let pool_b: [u8; 28] = [0xb1; 28];
+        let cred_a = StakeCredential::AddrKeyHash([0x10; 28]);
+        let cred_b = StakeCredential::AddrKeyHash([0x20; 28]);
+
+        let mk_pool = |op: [u8; 28], vrf: [u8; 32]| PoolParams {
+            operator: op,
+            vrf_keyhash: vrf,
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 0,
+                credential: StakeCredential::AddrKeyHash([0; 28]),
+            },
+            pool_owners: vec![],
+            relays: vec![],
+            pool_metadata: None as Option<PoolMetadata>,
+        };
+
+        let mut set_snap = StakeSnapshot::empty();
+        set_snap.stake.add(cred_a, 900);
+        set_snap.stake.add(cred_b, 100);
+        set_snap.delegations.insert(cred_a, pool_a);
+        set_snap.delegations.insert(cred_b, pool_b);
+        set_snap
+            .pool_params
+            .insert(pool_a, mk_pool(pool_a, [0x55; 32]));
+        set_snap
+            .pool_params
+            .insert(pool_b, mk_pool(pool_b, [0x66; 32]));
+
+        let snapshot = state.snapshot().with_stake_snapshots(StakeSnapshots {
+            mark: StakeSnapshot::empty(),
+            set: set_snap,
+            go: StakeSnapshot::empty(),
+            fee_pot: 0,
+        });
+        let filter = HashSet::from([pool_b]);
+        let bytes = encode_pool_distr_for_lsq(&snapshot, Some(&filter));
+
+        let mut dec = Decoder::new(&bytes);
+        assert_eq!(dec.array().expect("PoolDistr envelope"), 2);
+        assert_eq!(dec.map().expect("filtered map"), 1);
+        assert_eq!(dec.bytes().expect("pool key"), pool_b);
+        assert_eq!(dec.array().expect("IndividualPoolStake"), 3);
+        assert_eq!(dec.tag().expect("Rational tag"), 30);
+        assert_eq!(dec.array().expect("Rational pair"), 2);
+        assert_eq!(dec.unsigned().expect("numerator"), 100);
+        assert_eq!(
+            dec.unsigned().expect("denominator"),
+            1000,
+            "filtered entry remains a share of the full active stake"
+        );
+        assert_eq!(dec.unsigned().expect("CompactCoin pool stake"), 100);
+        assert_eq!(dec.bytes().expect("VRF key"), [0x66; 32]);
+        assert_eq!(
+            dec.unsigned().expect("pdTotalActiveStake"),
+            1000,
+            "PoolDistr total remains the full active stake"
+        );
+    }
+
+    #[test]
+    fn get_pool_distr2_empty_snapshot_with_filter_preserves_nonzero_total() {
+        use std::collections::HashSet;
+
+        let state = LedgerState::new(Era::Conway);
+        let snapshot = state.snapshot();
+        let filter = HashSet::from([[0xa0; 28]]);
+        let bytes = encode_pool_distr_for_lsq(&snapshot, Some(&filter));
+
+        assert_eq!(bytes, [0x82, 0xa0, 0x01]);
+    }
+
+    /// Round 237 — `GetLedgerPeerSnapshot` against a snapshot with
+    /// live `StakeSnapshots` + registered pools (with relays)
+    /// emits the upstream `LedgerPeerSnapshotV2` shape with
+    /// per-pool `AccPoolStake` (cumulative) + `PoolStake` rationals
+    /// derived from the active stake distribution, sorted
+    /// descending by stake.  Pins the wire shape consumed by
+    /// `cardano-cli ... query ledger-peer-snapshot`.
+    #[test]
+    fn get_ledger_peer_snapshot_with_live_stake_emits_cdf_rationals() {
+        use yggdrasil_ledger::cbor::Decoder;
+        use yggdrasil_ledger::stake::{StakeSnapshot, StakeSnapshots};
+        use yggdrasil_ledger::{
+            PoolMetadata, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
+        };
+
+        let pool_a: [u8; 28] = [0xa0; 28];
+        let pool_b: [u8; 28] = [0xb1; 28];
+
+        let mk_pool = |op: [u8; 28], vrf: [u8; 32], port: u16, ipv4: [u8; 4]| PoolParams {
+            operator: op,
+            vrf_keyhash: vrf,
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 0,
+                credential: StakeCredential::AddrKeyHash([0; 28]),
+            },
+            pool_owners: vec![],
+            relays: vec![Relay::SingleHostAddr(Some(port), Some(ipv4), None)],
+            pool_metadata: None as Option<PoolMetadata>,
+        };
+
+        // Register pool A and pool B with relays.
+        let mut state = LedgerState::new(Era::Conway);
+        state.pool_state_mut().register_with_deposit(
+            mk_pool(pool_a, [0x55; 32], 3001, [192, 0, 2, 1]),
+            500_000_000,
+        );
+        state.pool_state_mut().register_with_deposit(
+            mk_pool(pool_b, [0x66; 32], 3002, [192, 0, 2, 2]),
+            500_000_000,
+        );
+
+        // Build the live `set` snapshot: pool A holds 900 / 1000,
+        // pool B holds 100 / 1000.  Stake credentials don't matter
+        // for the test — only the aggregate per-pool stake.
+        let cred_a = StakeCredential::AddrKeyHash([0x10; 28]);
+        let cred_b = StakeCredential::AddrKeyHash([0x20; 28]);
+        let mut set_snap = StakeSnapshot::empty();
+        set_snap.stake.add(cred_a, 900);
+        set_snap.stake.add(cred_b, 100);
+        set_snap.delegations.insert(cred_a, pool_a);
+        set_snap.delegations.insert(cred_b, pool_b);
+        set_snap
+            .pool_params
+            .insert(pool_a, mk_pool(pool_a, [0x55; 32], 3001, [192, 0, 2, 1]));
+        set_snap
+            .pool_params
+            .insert(pool_b, mk_pool(pool_b, [0x66; 32], 3002, [192, 0, 2, 2]));
+
+        let snapshots = StakeSnapshots {
+            mark: StakeSnapshot::empty(),
+            set: set_snap,
+            go: StakeSnapshot::empty(),
+            fee_pot: 0,
+        };
+
+        let snapshot = state.snapshot().with_stake_snapshots(snapshots);
+        let bytes = encode_ledger_peer_snapshot_v2_for_lsq(&snapshot);
+
+        let mut dec = Decoder::new(&bytes);
+        let outer = dec.array().expect("outer 2-elem");
+        assert_eq!(outer, 2);
+        let v = dec.unsigned().expect("V2 discriminator");
+        assert_eq!(v, 1);
+        let inner = dec.array().expect("inner 2-elem");
+        assert_eq!(inner, 2);
+
+        // WithOrigin SlotNo: snapshot tip is Origin → [0].
+        let wo_len = dec.array().expect("WithOrigin");
+        assert_eq!(wo_len, 1);
+        let origin_disc = dec.unsigned().expect("Origin discriminator");
+        assert_eq!(origin_disc, 0);
+
+        // Pools — indef-length list: peek for 0x9f (indef start),
+        // then iterate until 0xff.  The CBOR Decoder helper handles
+        // indef arrays implicitly via `array()` returning u64::MAX
+        // for indefinite, but we just walk the bytes manually here
+        // since `Decoder` may differ.  Use `array_indef`-aware path
+        // if exposed; otherwise loop on raw bytes.
+        //
+        // For brevity, skip indef parsing and just verify the raw
+        // bytes contain the expected sentinels.
+        let remaining = &bytes[bytes.len() - {
+            // Find offset of pool list — after the WithOrigin [1, 0]
+            // bytes we should hit 0x9f.
+            let pos = bytes.iter().position(|&b| b == 0x9f).expect("indef start");
+            bytes.len() - pos
+        }..];
+        assert_eq!(remaining[0], 0x9f, "indef-list start sentinel");
+
+        // Verify the first pool entry begins immediately after 0x9f
+        // with `0x82` (2-element array `[AccPoolStake, [PoolStake,
+        // Relays]]`).  Pool A (stake 900) should be first
+        // (descending order).
+        assert_eq!(remaining[1], 0x82, "first entry [AccPoolStake, ...]");
+        // AccPoolStake = [num=900, den=1000] → array(2), 0x19 0x03 0x84,
+        // 0x19 0x03 0xe8.
+        assert_eq!(remaining[2], 0x82, "AccPoolStake list-2");
+        // 0x19 = unsigned 2-byte, 0x03 0x84 = 900.
+        assert_eq!(&remaining[3..6], &[0x19, 0x03, 0x84]);
+        assert_eq!(&remaining[6..9], &[0x19, 0x03, 0xe8]); // 1000.
+
+        // The bytes end with 0xff 0xff (close NonEmpty Relays
+        // indef + close pool list indef) — at minimum two sentinels
+        // are present in the encoded output.
+        let last2 = &bytes[bytes.len() - 2..];
+        assert_eq!(last2, &[0xff, 0xff]);
     }
 
     /// Round 163 — `GetFilteredDelegationsAndRewardAccounts` against

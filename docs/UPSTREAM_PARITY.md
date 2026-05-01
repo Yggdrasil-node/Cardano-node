@@ -7,7 +7,7 @@ nav_order: 5
 
 # Upstream Parity Matrix
 
-Last updated: 2026-04-27
+Last updated: 2026-05-01
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.
 
@@ -18,7 +18,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 - `cargo test-all`: passing (0 failures, **4 744** discovered tests, 1 ignored — count current at R190)
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 - `cargo deny check advisories bans licenses sources`: passing (one intentional ignore: `RUSTSEC-2021-0127` for the `serde_cbor` storage carve-out, tracked separately for migration)
-- **`cardano-cli 10.16` LSQ parity** (R164–R190): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preprod (Shelley) and preview (Alonzo).  With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries (`stake-pools`, `stake-distribution`, `pool-state`, `stake-snapshot`, `stake-address-info`, `ref-script-size`) plus **every Conway-era subcommand** (`constitution`, `gov-state`, `drep-state`, `drep-stake-distribution`, `committee-state`, `treasury`, `spo-stake-distribution`, `proposals`, `ratify-state`, `future-pparams`, `stake-pool-default-vote`, `ledger-peer-snapshot`, `protocol-state`, `ledger-state`) decode end-to-end.  Tail-end Conway dispatchers (tags 22 `GetStakeDelegDeposits`, 36 `GetPoolDistr2`) are wire-correct (R186) — no direct cardano-cli subcommands but emit valid empty placeholders.  **The Conway-era LSQ wire-protocol gap is fully closed** (R190 comprehensive audit confirmed 28 cardano-cli subcommands working end-to-end).  Remaining work is data-plumbing for the placeholder fields rather than wire-shape parity.
+- **`cardano-cli 10.16` LSQ parity** (R164–R237): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end. Tail-end Conway dispatcher tag 36 `GetPoolDistr2` now serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
 
 ## Subsystem Status
 
@@ -32,14 +32,13 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 | Peer governor | ouroboros-network diffusion/governor | Near parity | Policy engine implemented; keep behavior checks against upstream changes |
 | Node orchestration | cardano-node | Near parity | Runtime orchestration complete for main paths, including the live consensus-fed ledger-peer bridge |
 | Storage | ouroboros-consensus storage | Near parity | Immutable/volatile/checkpoint model implemented |
-| Monitoring/tracing | cardano-node + cardano-tracer | Partial parity | Forwarder backend wired; ongoing interoperability/endurance validation |
+| Monitoring/tracing | cardano-node + cardano-tracer | Near parity | Forwarder backend wired; aggregate server egress and lifetime peer stats covered; ongoing interoperability/endurance validation |
 
 ## Open Gaps
 
 - No critical parity blockers are currently tracked in this matrix.
-- **Conway governance LSQ — `gov-state` body shape** (R180 dispatcher routes; 7-element `ConwayGovState` record with `Proposals` tree + `DRepPulsingState` cache pending).
-- **Live stake-snapshot plumbing** (R163/R173/R179 follow-up): `query stake-distribution` and `query stake-snapshot` currently emit 1-lovelace `NonZero Coin` placeholders for totals; routing the runtime's `mark`/`set`/`go` snapshot rotation into the LSQ `LedgerStateSnapshot` would surface real per-pool stake.
-- Active validation focus: systematic mainnet bring-up rehearsal (interop checkpoints, restart resilience, and endurance traces) to harden operational parity evidence.
+- Active validation focus: systematic mainnet endurance rehearsal, parallel BlockFetch §6.5 sign-off, and restart resilience evidence before changing the default `max_concurrent_block_fetch_peers`.
+- Fixture maintenance focus: refresh `cardano-base` upstream vectors and update the pinned SHA metadata.
 
 ## Upstream Anchors
 

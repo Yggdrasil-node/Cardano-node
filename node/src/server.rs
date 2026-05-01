@@ -30,10 +30,11 @@ use yggdrasil_network::{
     AcceptedConnectionsLimit, BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
     ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest, CmAction, ConnectionId,
     ConnectionManagerState, DataFlow, InboundGovernorAction, InboundGovernorEvent,
-    InboundGovernorState, KeepAliveServer, KeepAliveServerError, MuxHandle, NodePeerSharing,
-    OperationResult, PeerConnection, PeerListener, PeerListenerError, PeerRegistry,
-    PeerSharingServer, PeerSharingServerError, PeerStatus, RateLimitDecision, ResponderCounters,
-    SharedPeerAddress, TxIdsReply, TxSubmissionServer, TxSubmissionServerError,
+    InboundGovernorState, KeepAliveMessage, KeepAliveServer, KeepAliveServerError, MuxHandle,
+    NodePeerSharing, OperationResult, PeerConnection, PeerListener, PeerListenerError,
+    PeerRegistry, PeerSharingMessage, PeerSharingServer, PeerSharingServerError,
+    PeerSharingServerRequest, PeerStatus, RateLimitDecision, ResponderCounters, SharedPeerAddress,
+    TxIdsReply, TxSubmissionMessage, TxSubmissionServer, TxSubmissionServerError,
     rate_limit_decision,
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
@@ -553,7 +554,11 @@ impl InboundPeerSession {
 ///
 /// Enforces upstream `timeLimitsKeepAlive` — 60 s server-side timeout
 /// (upstream `SingServer → Just 60`) per receive.
-pub async fn run_keepalive_server(mut server: KeepAliveServer) -> Result<(), KeepAliveServerError> {
+pub async fn run_keepalive_server(
+    mut server: KeepAliveServer,
+    metrics: Option<&crate::tracer::NodeMetrics>,
+    peer: Option<SocketAddr>,
+) -> Result<(), KeepAliveServerError> {
     loop {
         let result = tokio::time::timeout(
             yggdrasil_network::protocol_limits::keepalive::SERVER
@@ -562,7 +567,15 @@ pub async fn run_keepalive_server(mut server: KeepAliveServer) -> Result<(), Kee
         )
         .await;
         match result {
-            Ok(Ok(Some(cookie))) => server.respond(cookie).await?,
+            Ok(Ok(Some(cookie))) => {
+                server.respond(cookie).await?;
+                if let Some(m) = metrics {
+                    let bytes = KeepAliveMessage::MsgKeepAliveResponse { cookie }
+                        .to_cbor()
+                        .len() as u64;
+                    m.add_keepalive_server_bytes_served_for_peer(peer, bytes);
+                }
+            }
             Ok(Ok(None)) => return Ok(()), // client sent MsgDone
             Ok(Err(e)) => return Err(e),
             Err(_elapsed) => return Err(KeepAliveServerError::Timeout),
@@ -592,22 +605,20 @@ pub async fn run_blockfetch_server(
     mut server: BlockFetchServer,
     provider: &dyn BlockProvider,
     metrics: Option<&crate::tracer::NodeMetrics>,
+    peer: Option<SocketAddr>,
 ) -> Result<(), BlockFetchServerError> {
     loop {
         match server.recv_request().await? {
             BlockFetchServerRequest::RequestRange(range) => {
                 let blocks = provider.get_block_range(&range.lower, &range.upper);
-                // R234 — Phase D.2 bytes-out (initial slice): tally
-                // bytes served as a peer.  This is the egress
-                // counterpart to `peer_lifetime_bytes_in_total`
-                // (R224, BlockFetch ingress).  Aggregate-only (not
-                // per-peer); adding per-peer attribution would
-                // require threading the remote `SocketAddr` through
-                // the run-loop signature, deferred to a follow-up
-                // alongside ChainSync/TxSubmission2 egress accounting.
+                // R234/R237 — Phase D.2 bytes-out: tally bytes served
+                // as a peer.  The exported Prometheus counter stays
+                // aggregate-only; the optional `peer` address feeds the
+                // internal lifetime-stat fold without high-cardinality
+                // labels.
                 if let Some(m) = metrics {
                     let bytes_out: u64 = blocks.iter().map(|b| b.len() as u64).sum();
-                    m.add_blockfetch_server_bytes_served(bytes_out);
+                    m.add_blockfetch_server_bytes_served_for_peer(peer, bytes_out);
                 }
                 server.serve_batch(blocks).await?;
             }
@@ -685,6 +696,7 @@ pub async fn run_chainsync_server(
     provider: &dyn ChainProvider,
     tip_notify: Option<crate::runtime::ChainTipNotify>,
     metrics: Option<&crate::tracer::NodeMetrics>,
+    peer: Option<SocketAddr>,
 ) -> Result<(), ChainSyncServerError> {
     let mut cursor: Option<Vec<u8>> = None;
     // Track whether the last served header was a tentative (pipelined)
@@ -692,8 +704,9 @@ pub async fn run_chainsync_server(
     // we must roll-backward to the confirmed tip before serving new data.
     let mut served_tentative = false;
 
-    // R235 — Phase D.2 bytes-out (ChainSync slice): tally the
-    // bytes emitted in `MsgRollForward { header, tip }` per call.
+    // R235/R237 — Phase D.2 bytes-out (ChainSync slice): tally the
+    // bytes emitted in `MsgRollForward { header, tip }` per call and
+    // optionally attribute them to the remote peer for lifetime stats.
     // Counterpart to R234's BlockFetch server bytes-out.
     // ChainSync header bytes are smaller per message (~94 bytes
     // for Byron, ~150 bytes for Shelley) but fire on every
@@ -702,7 +715,7 @@ pub async fn run_chainsync_server(
     let record_emit = |header: &[u8], tip: &[u8], m: Option<&crate::tracer::NodeMetrics>| {
         if let Some(metrics) = m {
             let bytes_out = (header.len() as u64).saturating_add(tip.len() as u64);
-            metrics.add_chainsync_server_bytes_served(bytes_out);
+            metrics.add_chainsync_server_bytes_served_for_peer(peer, bytes_out);
         }
     };
 
@@ -789,14 +802,17 @@ pub async fn run_chainsync_server(
                         if let Some(m) = metrics {
                             // R235 — also tally MsgIntersectFound
                             // (point + tip envelope bytes).
-                            m.add_chainsync_server_bytes_served((point.len() + tip.len()) as u64);
+                            m.add_chainsync_server_bytes_served_for_peer(
+                                peer,
+                                (point.len() + tip.len()) as u64,
+                            );
                         }
                         server.intersect_found(point, tip).await?;
                     }
                     None => {
                         let tip = provider.chain_tip();
                         if let Some(m) = metrics {
-                            m.add_chainsync_server_bytes_served(tip.len() as u64);
+                            m.add_chainsync_server_bytes_served_for_peer(peer, tip.len() as u64);
                         }
                         server.intersect_not_found(tip).await?;
                     }
@@ -898,6 +914,8 @@ pub async fn run_txsubmission_server(
     mut server: TxSubmissionServer,
     consumer: &dyn TxSubmissionConsumer,
     dedup: Option<(&SharedTxState, SocketAddr)>,
+    metrics: Option<&crate::tracer::NodeMetrics>,
+    peer: Option<SocketAddr>,
 ) -> Result<(), TxSubmissionServerError> {
     const TXSUBMISSION_BATCH_SIZE: u16 = 16;
     /// Per-peer cap on advertised bytes in flight, mirroring upstream
@@ -977,7 +995,19 @@ pub async fn run_txsubmission_server(
         // indefinitely.  Mirrors the upstream `bracketTxSubmissionPeer`
         // cleanup in `Ouroboros.Network.TxSubmission.Inbound.V2.Server`.
         let reply = match server.request_tx_ids(true, ack, req).await {
-            Ok(r) => r,
+            Ok(r) => {
+                if let Some(m) = metrics {
+                    let bytes = TxSubmissionMessage::MsgRequestTxIds {
+                        blocking: true,
+                        ack,
+                        req,
+                    }
+                    .to_cbor()
+                    .len() as u64;
+                    m.add_txsubmission_server_bytes_served_for_peer(peer, bytes);
+                }
+                r
+            }
             Err(e) => {
                 if let Some((tx_state, peer_addr)) = &dedup {
                     tx_state.unregister_peer(peer_addr);
@@ -1082,7 +1112,17 @@ pub async fn run_txsubmission_server(
                     match tokio::time::timeout(timeout, server.request_txs(to_request.clone()))
                         .await
                     {
-                        Ok(Ok(txs)) => txs,
+                        Ok(Ok(txs)) => {
+                            if let Some(m) = metrics {
+                                let bytes = TxSubmissionMessage::MsgRequestTxs {
+                                    txids: to_request.clone(),
+                                }
+                                .to_cbor()
+                                .len() as u64;
+                                m.add_txsubmission_server_bytes_served_for_peer(peer, bytes);
+                            }
+                            txs
+                        }
                         Ok(Err(e)) => {
                             if let Some((tx_state, peer_addr)) = &dedup {
                                 tx_state.unregister_peer(peer_addr);
@@ -1162,10 +1202,26 @@ pub async fn run_txsubmission_server(
 pub async fn run_peersharing_server(
     mut server: PeerSharingServer,
     provider: &dyn PeerSharingProvider,
+    metrics: Option<&crate::tracer::NodeMetrics>,
+    peer: Option<SocketAddr>,
 ) -> Result<(), PeerSharingServerError> {
-    server
-        .serve_loop(|amount| provider.shareable_peers(amount))
-        .await
+    loop {
+        match server.recv_request().await? {
+            PeerSharingServerRequest::ShareRequest { amount } => {
+                let peers = provider.shareable_peers(amount);
+                let bytes = PeerSharingMessage::MsgSharePeers {
+                    peers: peers.clone(),
+                }
+                .to_cbor()
+                .len() as u64;
+                server.share_peers(peers).await?;
+                if let Some(m) = metrics {
+                    m.add_peersharing_server_bytes_served_for_peer(peer, bytes);
+                }
+            }
+            PeerSharingServerRequest::Done => return Ok(()),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1847,6 +1903,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         let shared_cm = shared_cm.clone();
                         let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
+                        let ka_metrics = bf_metrics.clone();
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1866,7 +1923,12 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 );
                             }
 
-                            let _ = run_keepalive_server(session.keep_alive).await;
+                            let _ = run_keepalive_server(
+                                session.keep_alive,
+                                ka_metrics.as_deref(),
+                                Some(connection_id.remote),
+                            )
+                            .await;
 
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1923,6 +1985,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 session.block_fetch,
                                 &*provider,
                                 bf_metrics.as_deref(),
+                                Some(connection_id.remote),
                             )
                             .await;
 
@@ -1980,6 +2043,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 &*provider,
                                 notify,
                                 cs_metrics.as_deref(),
+                                Some(connection_id.remote),
                             )
                             .await;
 
@@ -2010,6 +2074,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
                         let dedup = session_tx_state.as_ref().map(|ts| (ts.clone(), connection_id.remote));
+                        let tx_metrics = bf_metrics.clone();
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -2030,7 +2095,14 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                             }
 
                             let dedup_ref = dedup.as_ref().map(|(ts, addr)| (ts, *addr));
-                            let _ = run_txsubmission_server(session.tx_submission, &*consumer, dedup_ref).await;
+                            let _ = run_txsubmission_server(
+                                session.tx_submission,
+                                &*consumer,
+                                dedup_ref,
+                                tx_metrics.as_deref(),
+                                Some(connection_id.remote),
+                            )
+                            .await;
 
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -2059,6 +2131,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                             let shared_cm = shared_cm.clone();
                             let session_aborts = session_aborts_clone.clone();
                             let responder_counters = responder_counters.clone();
+                            let ps_metrics = bf_metrics.clone();
                             tokio::spawn(async move {
                                 if let (Some(ig), Some(cm)) =
                                     (shared_ig.as_ref(), shared_cm.as_ref())
@@ -2078,7 +2151,13 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                     );
                                 }
 
-                                let _ = run_peersharing_server(server, &*provider).await;
+                                let _ = run_peersharing_server(
+                                    server,
+                                    &*provider,
+                                    ps_metrics.as_deref(),
+                                    Some(connection_id.remote),
+                                )
+                                .await;
 
                                 if let (Some(ig), Some(cm)) =
                                     (shared_ig.as_ref(), shared_cm.as_ref())
@@ -2218,7 +2297,8 @@ mod tests {
     use yggdrasil_mempool::SharedTxState;
     use yggdrasil_network::{
         ConnStateId, ConnectionEntry, ConnectionId, ConnectionManagerState, ConnectionState,
-        HandshakeVersion, MuxError, MuxHandle, NextResponse, PeerListener, TxIdAndSize,
+        HandshakeVersion, KeepAliveMessage, MuxError, MuxHandle, NextResponse, PeerListener,
+        PeerSharingMessage, SharedPeerAddress, TxIdAndSize, TxSubmissionMessage,
     };
     use yggdrasil_storage::{
         ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
@@ -2685,23 +2765,44 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct StaticPeerSharingProvider {
+        peers: Vec<SharedPeerAddress>,
+    }
+
+    impl PeerSharingProvider for StaticPeerSharingProvider {
+        fn shareable_peers(&self, amount: u16) -> Vec<SharedPeerAddress> {
+            let mut peers = self.peers.clone();
+            peers.truncate(amount as usize);
+            peers
+        }
+    }
+
     #[tokio::test]
-    async fn inbound_accept_loop_runs_txsubmission_server() {
+    async fn inbound_accept_loop_records_responder_egress_metrics() {
         let listener = PeerListener::bind("127.0.0.1:0", 42, vec![HandshakeVersion(15)])
             .await
             .expect("bind listener");
         let listen_addr = listener.local_addr().expect("listen addr");
         let consumer = Arc::new(RecordingTxSubmissionConsumer::default());
+        let metrics = Arc::new(crate::tracer::NodeMetrics::new());
+        let shared_peer = SocketAddr::from(([10, 0, 0, 1], 3001));
+        let peer_sharing_provider = Arc::new(StaticPeerSharingProvider {
+            peers: vec![SharedPeerAddress { addr: shared_peer }],
+        });
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let accept_task = tokio::spawn({
             let consumer = Arc::clone(&consumer);
+            let metrics = Arc::clone(&metrics);
+            let peer_sharing_provider = Arc::clone(&peer_sharing_provider);
             async move {
                 run_inbound_accept_loop(
                     &listener,
                     None,
                     None,
                     Some(consumer),
+                    Some(peer_sharing_provider),
                     None,
                     None,
                     None,
@@ -2709,8 +2810,7 @@ mod tests {
                     None,
                     None,
                     None,
-                    None,
-                    None,
+                    Some(&metrics),
                     async move {
                         let _ = shutdown_rx.await;
                     },
@@ -2730,6 +2830,22 @@ mod tests {
         })
         .await
         .expect("bootstrap client");
+
+        let keepalive_cookie = 0xBEEFu16;
+        session
+            .keep_alive
+            .keep_alive(keepalive_cookie)
+            .await
+            .expect("keepalive response");
+
+        let shared = session
+            .peer_sharing
+            .as_mut()
+            .expect("peer sharing client negotiated")
+            .share_request(1)
+            .await
+            .expect("peer sharing response");
+        assert_eq!(shared, vec![SharedPeerAddress { addr: shared_peer }]);
 
         session
             .tx_submission
@@ -2797,6 +2913,55 @@ mod tests {
         assert_eq!(
             consumer.received.lock().expect("poisoned").clone(),
             vec![vec![1, 2, 3]]
+        );
+        let expected_keepalive = KeepAliveMessage::MsgKeepAliveResponse {
+            cookie: keepalive_cookie,
+        }
+        .to_cbor()
+        .len() as u64;
+        let expected_peersharing = PeerSharingMessage::MsgSharePeers {
+            peers: vec![SharedPeerAddress { addr: shared_peer }],
+        }
+        .to_cbor()
+        .len() as u64;
+        let expected_txsubmission = (TxSubmissionMessage::MsgRequestTxIds {
+            blocking: true,
+            ack: 0,
+            req: 16,
+        }
+        .to_cbor()
+        .len()
+            + TxSubmissionMessage::MsgRequestTxs { txids: vec![txid] }
+                .to_cbor()
+                .len()
+            + TxSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 1,
+                req: 16,
+            }
+            .to_cbor()
+            .len()) as u64;
+        let snapshot = metrics.snapshot();
+        assert_eq!(
+            snapshot.keepalive_server_bytes_served_total,
+            expected_keepalive
+        );
+        assert_eq!(
+            snapshot.peersharing_server_bytes_served_total,
+            expected_peersharing
+        );
+        assert_eq!(
+            snapshot.txsubmission_server_bytes_served_total,
+            expected_txsubmission
+        );
+        let per_peer_total: u64 = metrics
+            .peer_lifetime_bytes_out_by_peer()
+            .into_iter()
+            .map(|(_, bytes)| bytes)
+            .sum();
+        assert_eq!(
+            per_peer_total,
+            expected_keepalive + expected_peersharing + expected_txsubmission
         );
 
         let _ = shutdown_tx.send(());

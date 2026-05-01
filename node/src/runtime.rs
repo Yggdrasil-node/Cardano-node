@@ -2520,10 +2520,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                         // so we use the cumulative-overwrite setter
                         // `set_lifetime_bytes_in` rather than the
                         // additive `record_lifetime_traffic` to
-                        // avoid double-counting.  Bytes-out is not
-                        // tracked yet (no analogous source on the
-                        // server-emit side) — left at 0 for a
-                        // future slice.
+                        // avoid double-counting.
                         if let Some(pool) = config.block_fetch_pool.as_ref() {
                             if let Ok(p) = pool.lock() {
                                 for (peer, state) in p.peers.iter() {
@@ -2534,14 +2531,28 @@ pub async fn run_governor_loop<I, V, L, F>(
                                 }
                             }
                         }
-                        let (sessions_total, failures_total, bytes_in_total, handshakes_total) =
-                            governor_state.lifetime_stats.values().fold(
-                                (0u64, 0u64, 0u64, 0u64),
-                                |(sessions, failures, bytes_in, handshakes), s| {
+                        // R237 — refresh `bytes_out` per-peer from the
+                        // server-egress observations recorded by inbound
+                        // mini-protocol responder tasks.  The source is
+                        // cumulative per peer, so overwrite the lifetime
+                        // total just like the bytes-in path above.
+                        for (peer, bytes_out) in m.peer_lifetime_bytes_out_by_peer() {
+                            governor_state.set_lifetime_bytes_out(peer, bytes_out);
+                        }
+                        let (
+                            sessions_total,
+                            failures_total,
+                            bytes_in_total,
+                            bytes_out_total,
+                            handshakes_total,
+                        ) = governor_state.lifetime_stats.values().fold(
+                            (0u64, 0u64, 0u64, 0u64, 0u64),
+                            |(sessions, failures, bytes_in, bytes_out, handshakes), s| {
                                     (
                                         sessions.saturating_add(s.sessions as u64),
                                         failures.saturating_add(s.failures_total as u64),
                                         bytes_in.saturating_add(s.bytes_in),
+                                        bytes_out.saturating_add(s.bytes_out),
                                         handshakes
                                             .saturating_add(s.successful_handshakes as u64),
                                     )
@@ -2550,6 +2561,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                         m.set_peer_lifetime_sessions_total(sessions_total);
                         m.set_peer_lifetime_failures_total(failures_total);
                         m.set_peer_lifetime_bytes_in_total(bytes_in_total);
+                        m.set_peer_lifetime_bytes_out_total(bytes_out_total);
                         // R226 — unique peer count + cumulative
                         // handshakes.  Cardinality of the lifetime
                         // map is a stable indicator of how many

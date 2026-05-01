@@ -658,6 +658,10 @@ pub struct NodeMetrics {
     /// each governor tick from per-peer
     /// `BlockFetchInstrumentation::bytes_delivered`.
     peer_lifetime_bytes_in_total: AtomicU64,
+    /// R237 — Phase D.2: aggregate of `PeerLifetimeStats.bytes_out`
+    /// across all peers (cumulative bytes sent).  Refreshed at each
+    /// governor tick from the internal per-peer server-egress map.
+    peer_lifetime_bytes_out_total: AtomicU64,
     /// R234 — Phase D.2 bytes-out (initial slice): cumulative
     /// bytes served by the BlockFetch SERVER (yggdrasil-as-peer
     /// egress).  Counterpart to `peer_lifetime_bytes_in_total`
@@ -677,6 +681,20 @@ pub struct NodeMetrics {
     /// Shelley) but fires on every RollForward so cumulative
     /// volume is non-trivial.
     chainsync_server_bytes_served_total: AtomicU64,
+    /// R237 — cumulative bytes served by the KeepAlive server
+    /// (`MsgKeepAliveResponse` payloads).
+    keepalive_server_bytes_served_total: AtomicU64,
+    /// R237 — cumulative bytes served by the TxSubmission2 server
+    /// (`MsgRequestTxIds` and `MsgRequestTxs` payloads).
+    txsubmission_server_bytes_served_total: AtomicU64,
+    /// R237 — cumulative bytes served by the PeerSharing server
+    /// (`MsgSharePeers` payloads).
+    peersharing_server_bytes_served_total: AtomicU64,
+    /// R237 — internal, unlabelled per-peer egress totals.  This is
+    /// intentionally not exported as labelled Prometheus series to
+    /// avoid peer-address cardinality.  The governor tick folds these
+    /// totals into `PeerLifetimeStats::bytes_out`.
+    peer_egress_bytes_by_peer: Mutex<BTreeMap<std::net::SocketAddr, u64>>,
     /// R226 — Phase D.2: count of distinct peers this node has
     /// ever connected to (cardinality of `lifetime_stats` map).
     /// Distinct from the live `known_peers` gauge which counts the
@@ -847,6 +865,10 @@ pub struct MetricsSnapshot {
     /// peers (sum of `PeerLifetimeStats::bytes_in`, sourced from
     /// per-peer `BlockFetchInstrumentation::bytes_delivered`).
     pub peer_lifetime_bytes_in_total: u64,
+    /// R237 — Phase D.2: cumulative bytes sent across all peers
+    /// (sum of `PeerLifetimeStats::bytes_out`, sourced from
+    /// server-side mini-protocol egress accounting).
+    pub peer_lifetime_bytes_out_total: u64,
     /// R234 — Phase D.2: cumulative bytes served by the BlockFetch
     /// server (egress; aggregate, not per-peer).
     pub blockfetch_server_bytes_served_total: u64,
@@ -855,6 +877,12 @@ pub struct MetricsSnapshot {
     /// payload bytes per RollForward / IntersectFound /
     /// IntersectNotFound).
     pub chainsync_server_bytes_served_total: u64,
+    /// R237 — cumulative KeepAlive server egress bytes.
+    pub keepalive_server_bytes_served_total: u64,
+    /// R237 — cumulative TxSubmission2 server egress bytes.
+    pub txsubmission_server_bytes_served_total: u64,
+    /// R237 — cumulative PeerSharing server egress bytes.
+    pub peersharing_server_bytes_served_total: u64,
     /// R226 — Phase D.2: count of distinct peers ever connected
     /// (cardinality of the governor's `lifetime_stats` map).
     pub peer_lifetime_unique_peers: u64,
@@ -951,8 +979,13 @@ impl NodeMetrics {
             peer_lifetime_sessions_total: AtomicU64::new(0),
             peer_lifetime_failures_total: AtomicU64::new(0),
             peer_lifetime_bytes_in_total: AtomicU64::new(0),
+            peer_lifetime_bytes_out_total: AtomicU64::new(0),
             blockfetch_server_bytes_served_total: AtomicU64::new(0),
             chainsync_server_bytes_served_total: AtomicU64::new(0),
+            keepalive_server_bytes_served_total: AtomicU64::new(0),
+            txsubmission_server_bytes_served_total: AtomicU64::new(0),
+            peersharing_server_bytes_served_total: AtomicU64::new(0),
+            peer_egress_bytes_by_peer: Mutex::new(BTreeMap::new()),
             peer_lifetime_unique_peers: AtomicU64::new(0),
             peer_lifetime_handshakes_total: AtomicU64::new(0),
             rollback_depth_buckets: [
@@ -1078,6 +1111,43 @@ impl NodeMetrics {
             .store(total, Ordering::Relaxed);
     }
 
+    /// R237 — Phase D.2: set the cumulative peer-lifetime bytes-out
+    /// counter from the governor's aggregated state after folding
+    /// server-side per-peer egress observations into
+    /// `PeerLifetimeStats::bytes_out`.
+    pub fn set_peer_lifetime_bytes_out_total(&self, total: u64) {
+        self.peer_lifetime_bytes_out_total
+            .store(total, Ordering::Relaxed);
+    }
+
+    fn record_peer_egress_bytes(&self, peer: Option<std::net::SocketAddr>, n: u64) {
+        if n == 0 {
+            return;
+        }
+        if let Some(peer) = peer {
+            let mut by_peer = self
+                .peer_egress_bytes_by_peer
+                .lock()
+                .expect("peer egress metrics lock poisoned");
+            let entry = by_peer.entry(peer).or_insert(0);
+            *entry = (*entry).saturating_add(n);
+        }
+    }
+
+    /// Return a snapshot of cumulative server-egress bytes per peer.
+    ///
+    /// This intentionally stays off the Prometheus surface to avoid
+    /// high-cardinality labels; the runtime uses it to refresh
+    /// `GovernorState::lifetime_stats`.
+    pub fn peer_lifetime_bytes_out_by_peer(&self) -> Vec<(std::net::SocketAddr, u64)> {
+        self.peer_egress_bytes_by_peer
+            .lock()
+            .expect("peer egress metrics lock poisoned")
+            .iter()
+            .map(|(peer, bytes)| (*peer, *bytes))
+            .collect()
+    }
+
     /// R234 — Phase D.2 bytes-out: add `n` bytes to the BlockFetch
     /// server cumulative bytes-served counter.  Called by
     /// `run_blockfetch_server` after each successful
@@ -1085,6 +1155,16 @@ impl NodeMetrics {
     pub fn add_blockfetch_server_bytes_served(&self, n: u64) {
         self.blockfetch_server_bytes_served_total
             .fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// R237 — BlockFetch server egress with optional peer attribution.
+    pub fn add_blockfetch_server_bytes_served_for_peer(
+        &self,
+        peer: Option<std::net::SocketAddr>,
+        n: u64,
+    ) {
+        self.add_blockfetch_server_bytes_served(n);
+        self.record_peer_egress_bytes(peer, n);
     }
 
     /// R235 — Phase D.2 bytes-out: add `n` bytes to the ChainSync
@@ -1095,6 +1175,49 @@ impl NodeMetrics {
     pub fn add_chainsync_server_bytes_served(&self, n: u64) {
         self.chainsync_server_bytes_served_total
             .fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// R237 — ChainSync server egress with optional peer attribution.
+    pub fn add_chainsync_server_bytes_served_for_peer(
+        &self,
+        peer: Option<std::net::SocketAddr>,
+        n: u64,
+    ) {
+        self.add_chainsync_server_bytes_served(n);
+        self.record_peer_egress_bytes(peer, n);
+    }
+
+    /// R237 — add KeepAlive server egress bytes.
+    pub fn add_keepalive_server_bytes_served_for_peer(
+        &self,
+        peer: Option<std::net::SocketAddr>,
+        n: u64,
+    ) {
+        self.keepalive_server_bytes_served_total
+            .fetch_add(n, Ordering::Relaxed);
+        self.record_peer_egress_bytes(peer, n);
+    }
+
+    /// R237 — add TxSubmission2 server egress bytes.
+    pub fn add_txsubmission_server_bytes_served_for_peer(
+        &self,
+        peer: Option<std::net::SocketAddr>,
+        n: u64,
+    ) {
+        self.txsubmission_server_bytes_served_total
+            .fetch_add(n, Ordering::Relaxed);
+        self.record_peer_egress_bytes(peer, n);
+    }
+
+    /// R237 — add PeerSharing server egress bytes.
+    pub fn add_peersharing_server_bytes_served_for_peer(
+        &self,
+        peer: Option<std::net::SocketAddr>,
+        n: u64,
+    ) {
+        self.peersharing_server_bytes_served_total
+            .fetch_add(n, Ordering::Relaxed);
+        self.record_peer_egress_bytes(peer, n);
     }
 
     /// R226 — Phase D.2: set the unique-peer cardinality counter
@@ -1382,11 +1505,23 @@ impl NodeMetrics {
             peer_lifetime_sessions_total: self.peer_lifetime_sessions_total.load(Ordering::Relaxed),
             peer_lifetime_failures_total: self.peer_lifetime_failures_total.load(Ordering::Relaxed),
             peer_lifetime_bytes_in_total: self.peer_lifetime_bytes_in_total.load(Ordering::Relaxed),
+            peer_lifetime_bytes_out_total: self
+                .peer_lifetime_bytes_out_total
+                .load(Ordering::Relaxed),
             blockfetch_server_bytes_served_total: self
                 .blockfetch_server_bytes_served_total
                 .load(Ordering::Relaxed),
             chainsync_server_bytes_served_total: self
                 .chainsync_server_bytes_served_total
+                .load(Ordering::Relaxed),
+            keepalive_server_bytes_served_total: self
+                .keepalive_server_bytes_served_total
+                .load(Ordering::Relaxed),
+            txsubmission_server_bytes_served_total: self
+                .txsubmission_server_bytes_served_total
+                .load(Ordering::Relaxed),
+            peersharing_server_bytes_served_total: self
+                .peersharing_server_bytes_served_total
                 .load(Ordering::Relaxed),
             peer_lifetime_unique_peers: self.peer_lifetime_unique_peers.load(Ordering::Relaxed),
             peer_lifetime_handshakes_total: self
@@ -1707,6 +1842,14 @@ yggdrasil_blocks_conway {}\n",
             self.peer_lifetime_bytes_in_total
         ));
         out.push_str(
+            "# HELP yggdrasil_peer_lifetime_bytes_out_total Cumulative bytes sent to peers (lifetime, monotonic across reconnects; sourced from server-side mini-protocol egress observations).\n",
+        );
+        out.push_str("# TYPE yggdrasil_peer_lifetime_bytes_out_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_peer_lifetime_bytes_out_total {}\n",
+            self.peer_lifetime_bytes_out_total
+        ));
+        out.push_str(
             "# HELP yggdrasil_blockfetch_server_bytes_served_total Cumulative bytes served by the BlockFetch server (yggdrasil-as-peer egress).\n",
         );
         out.push_str("# TYPE yggdrasil_blockfetch_server_bytes_served_total counter\n");
@@ -1721,6 +1864,30 @@ yggdrasil_blocks_conway {}\n",
         out.push_str(&format!(
             "yggdrasil_chainsync_server_bytes_served_total {}\n",
             self.chainsync_server_bytes_served_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_keepalive_server_bytes_served_total Cumulative bytes served by the KeepAlive server (MsgKeepAliveResponse; yggdrasil-as-peer egress).\n",
+        );
+        out.push_str("# TYPE yggdrasil_keepalive_server_bytes_served_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_keepalive_server_bytes_served_total {}\n",
+            self.keepalive_server_bytes_served_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_txsubmission_server_bytes_served_total Cumulative bytes served by the TxSubmission2 server (MsgRequestTxIds/MsgRequestTxs; yggdrasil-as-peer egress).\n",
+        );
+        out.push_str("# TYPE yggdrasil_txsubmission_server_bytes_served_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_txsubmission_server_bytes_served_total {}\n",
+            self.txsubmission_server_bytes_served_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_peersharing_server_bytes_served_total Cumulative bytes served by the PeerSharing server (MsgSharePeers; yggdrasil-as-peer egress).\n",
+        );
+        out.push_str("# TYPE yggdrasil_peersharing_server_bytes_served_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_peersharing_server_bytes_served_total {}\n",
+            self.peersharing_server_bytes_served_total
         ));
         out.push_str(
             "# HELP yggdrasil_peer_lifetime_unique_peers Count of distinct peers ever connected during this process lifetime.\n",
@@ -2298,8 +2465,8 @@ mod tests {
         assert!(text.contains("yggdrasil_rollback_depth_blocks_count 3\n"));
     }
 
-    /// R229 — pin the Phase D.2 5-counter lifetime peer-stats
-    /// Prometheus output contract.  The 4 counters
+    /// R229/R237 — pin the Phase D.2 lifetime peer-stats
+    /// Prometheus output contract.  The 5 counters
     /// (`*_total`) MUST emit `# TYPE …_total counter`; the 1
     /// gauge (`unique_peers`) MUST emit `# TYPE … gauge`.  Drift
     /// in the contract (e.g. accidentally emitting a counter as a
@@ -2311,11 +2478,12 @@ mod tests {
     fn node_metrics_tracks_phase_d2_lifetime_peer_stats() {
         let metrics = NodeMetrics::new();
 
-        // Default state: all five lifetime counters at zero.
+        // Default state: all lifetime counters at zero.
         let snap = metrics.snapshot();
         assert_eq!(snap.peer_lifetime_sessions_total, 0);
         assert_eq!(snap.peer_lifetime_failures_total, 0);
         assert_eq!(snap.peer_lifetime_bytes_in_total, 0);
+        assert_eq!(snap.peer_lifetime_bytes_out_total, 0);
         assert_eq!(snap.peer_lifetime_unique_peers, 0);
         assert_eq!(snap.peer_lifetime_handshakes_total, 0);
 
@@ -2323,6 +2491,7 @@ mod tests {
         metrics.set_peer_lifetime_sessions_total(7);
         metrics.set_peer_lifetime_failures_total(2);
         metrics.set_peer_lifetime_bytes_in_total(1_500_000);
+        metrics.set_peer_lifetime_bytes_out_total(750_000);
         metrics.set_peer_lifetime_unique_peers(9);
         metrics.set_peer_lifetime_handshakes_total(7);
 
@@ -2330,19 +2499,31 @@ mod tests {
         assert_eq!(snap.peer_lifetime_sessions_total, 7);
         assert_eq!(snap.peer_lifetime_failures_total, 2);
         assert_eq!(snap.peer_lifetime_bytes_in_total, 1_500_000);
+        assert_eq!(snap.peer_lifetime_bytes_out_total, 750_000);
         assert_eq!(snap.peer_lifetime_unique_peers, 9);
         assert_eq!(snap.peer_lifetime_handshakes_total, 7);
 
+        let peer: std::net::SocketAddr = "127.0.0.1:3001".parse().expect("peer addr");
+        metrics.add_keepalive_server_bytes_served_for_peer(Some(peer), 4);
+        metrics.add_txsubmission_server_bytes_served_for_peer(Some(peer), 12);
+        metrics.add_peersharing_server_bytes_served_for_peer(Some(peer), 20);
+        assert_eq!(
+            metrics.peer_lifetime_bytes_out_by_peer(),
+            vec![(peer, 36)],
+            "internal per-peer egress map is cumulative and unlabelled"
+        );
+
         // Prometheus text contract — TYPE lines + value lines for
-        // each of the 5 metrics, with correct counter / gauge
+        // each metric, with correct counter / gauge
         // discrimination.
         let text = snap.to_prometheus_text();
 
-        // 4 counters.
+        // 5 counters.
         for counter in [
             "yggdrasil_peer_lifetime_sessions_total",
             "yggdrasil_peer_lifetime_failures_total",
             "yggdrasil_peer_lifetime_bytes_in_total",
+            "yggdrasil_peer_lifetime_bytes_out_total",
             "yggdrasil_peer_lifetime_handshakes_total",
         ] {
             assert!(
@@ -2360,8 +2541,14 @@ mod tests {
         assert!(text.contains("yggdrasil_peer_lifetime_sessions_total 7\n"));
         assert!(text.contains("yggdrasil_peer_lifetime_failures_total 2\n"));
         assert!(text.contains("yggdrasil_peer_lifetime_bytes_in_total 1500000\n"));
+        assert!(text.contains("yggdrasil_peer_lifetime_bytes_out_total 750000\n"));
         assert!(text.contains("yggdrasil_peer_lifetime_unique_peers 9\n"));
         assert!(text.contains("yggdrasil_peer_lifetime_handshakes_total 7\n"));
+
+        let after_egress = metrics.snapshot();
+        assert_eq!(after_egress.keepalive_server_bytes_served_total, 4);
+        assert_eq!(after_egress.txsubmission_server_bytes_served_total, 12);
+        assert_eq!(after_egress.peersharing_server_bytes_served_total, 20);
     }
 
     #[test]

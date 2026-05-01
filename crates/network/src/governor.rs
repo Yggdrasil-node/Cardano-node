@@ -1272,6 +1272,21 @@ impl GovernorState {
         entry.last_seen = Some(now);
     }
 
+    /// R237 — overwrite the lifetime `bytes_out` total for `peer`
+    /// from an external cumulative server-egress source.  Mirrors
+    /// [`Self::set_lifetime_bytes_in`] for the responder side:
+    /// the source already accumulates monotonically per peer, so the
+    /// runtime must overwrite rather than add to avoid double-counting.
+    pub fn set_lifetime_bytes_out(&mut self, peer: SocketAddr, total: u64) {
+        let entry = self.lifetime_stats.entry(peer).or_default();
+        let now = Instant::now();
+        entry.bytes_out = total;
+        if entry.first_seen.is_none() {
+            entry.first_seen = Some(now);
+        }
+        entry.last_seen = Some(now);
+    }
+
     /// R222 — Read-only accessor for a peer's lifetime stats, or
     /// `None` if the peer has never connected.
     pub fn lifetime_stats_for(&self, peer: &SocketAddr) -> Option<&PeerLifetimeStats> {
@@ -3575,6 +3590,15 @@ mod tests {
             s2.last_seen >= s1.last_seen,
             "last_seen advances on each event"
         );
+
+        // R237 cumulative overwrite path: server-egress sources are
+        // already monotonic per peer, so refreshing from that source
+        // replaces the local total rather than adding to it.
+        state.set_lifetime_bytes_out(peer, 9_000);
+        let s3 = *state
+            .lifetime_stats_for(&peer)
+            .expect("entry after bytes_out overwrite");
+        assert_eq!(s3.bytes_out, 9_000);
     }
 
     #[test]

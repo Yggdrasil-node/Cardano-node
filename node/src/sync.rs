@@ -30,7 +30,7 @@ use yggdrasil_ledger::{
     CborDecode, CborEncode, ConwayBlock, Decoder, EpochBoundaryEvent, Era, HeaderHash, LedgerError,
     LedgerState, Nonce, Point, PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock,
     ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId,
-    UnitInterval, apply_epoch_boundary, compute_block_body_hash,
+    UnitInterval, apply_epoch_boundary, compute_block_body_hash, compute_stake_snapshot,
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_network::{
@@ -1683,7 +1683,16 @@ where
     let mut epoch_events = Vec::new();
 
     if progress.rollback_count > 0 {
-        chain_db.truncate_ledger_checkpoints_after_point(&progress.current_point)?;
+        let rollback_point = progress
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                MultiEraSyncStep::RollBackward { point, .. } => Some(*point),
+                MultiEraSyncStep::RollForward { .. } => None,
+            })
+            .next_back()
+            .unwrap_or(progress.current_point);
+        chain_db.truncate_ledger_checkpoints_after_point(&rollback_point)?;
 
         // Round 166 — initial-sync rollback fast path.
         //
@@ -1712,6 +1721,19 @@ where
 
         if initial_sync_rollback_to_origin {
             tracking.ledger_state = tracking.base_ledger_state.clone();
+        } else if let (Some(_), Some(epoch_size)) =
+            (tracking.stake_snapshots.as_ref(), tracking.epoch_size)
+        {
+            let recovery = recover_ledger_state_chaindb_with_epoch_boundary(
+                chain_db,
+                tracking.base_ledger_state.clone(),
+                epoch_size,
+                Some(&tracking.plutus_evaluator),
+            )?;
+            tracking.ledger_state = recovery.ledger_state;
+            tracking.stake_snapshots = Some(recovery.stake_snapshots);
+            tracking.pool_block_counts = recovery.pool_block_counts;
+            epoch_events.extend(recovery.epoch_events);
         } else {
             tracking.ledger_state =
                 recover_ledger_state_chaindb(chain_db, tracking.base_ledger_state.clone())?
@@ -1744,14 +1766,18 @@ where
                     tracking.ledger_state.set_current_epoch(actual_epoch);
                 }
             }
+            // After fallback recovery, stake snapshots are stale — reset
+            // them so epoch boundary processing restarts cleanly.  The
+            // epoch-boundary-aware replay branch above rebuilds and
+            // preserves them instead.
+            if tracking.stake_snapshots.is_some() {
+                tracking.stake_snapshots = Some(StakeSnapshots::new());
+            }
+            // Pool block counts are epoch-relative and stale after
+            // fallback replay.  Boundary-aware replay returns rebuilt
+            // counts for the current epoch.
+            tracking.pool_block_counts.clear();
         }
-        // After rollback recovery, stake snapshots are stale — reset them
-        // so epoch boundary processing restarts cleanly.
-        if tracking.stake_snapshots.is_some() {
-            tracking.stake_snapshots = Some(StakeSnapshots::new());
-        }
-        // Pool block counts are epoch-relative and stale after rollback.
-        tracking.pool_block_counts.clear();
         // Per-pool OpCert counters are part of upstream `PraosState.csCounters`
         // (rolled back via `ChainDepState` snapshot at the rollback restore
         // point). Reset them here so a fork that legitimately includes
@@ -1938,6 +1964,183 @@ where
             other => SyncError::Storage(other),
         })
 }
+
+fn storage_point_for_block(block: &Block) -> Point {
+    Point::BlockPoint(block.header.slot_no, block.header.hash)
+}
+
+fn volatile_replay_blocks_after<V: VolatileStore>(
+    volatile: &V,
+    replay_from_exclusive: &Point,
+) -> Result<Vec<Block>, StorageError> {
+    let volatile_tip = volatile.tip();
+    if volatile_tip == Point::Origin {
+        return Ok(Vec::new());
+    }
+
+    let mut blocks = volatile.prefix_up_to(&volatile_tip)?;
+    if *replay_from_exclusive == Point::Origin {
+        return Ok(blocks);
+    }
+
+    if let Some(pos) = blocks
+        .iter()
+        .position(|block| storage_point_for_block(block) == *replay_from_exclusive)
+    {
+        Ok(blocks.split_off(pos + 1))
+    } else {
+        Ok(blocks)
+    }
+}
+
+fn stake_snapshots_from_ledger_state(ledger_state: &LedgerState) -> StakeSnapshots {
+    let current = compute_stake_snapshot(
+        ledger_state.multi_era_utxo(),
+        ledger_state.stake_credentials(),
+        ledger_state.reward_accounts(),
+        ledger_state.pool_state(),
+    );
+    StakeSnapshots {
+        mark: current.clone(),
+        set: current.clone(),
+        go: current,
+        fee_pot: 0,
+    }
+}
+
+fn replay_storage_block_with_epoch_boundary(
+    ledger_state: &mut LedgerState,
+    snapshots: &mut StakeSnapshots,
+    epoch_schedule: EpochSchedule,
+    block: &Block,
+    evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
+    pool_block_counts: &mut BTreeMap<PoolKeyHash, u64>,
+) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
+    if let Some(raw) = block.raw_cbor.as_ref() {
+        let raw_vec = raw.to_vec();
+        let decoded = decode_multi_era_block(&raw_vec)?;
+        let spans = extract_spans_per_block(
+            std::slice::from_ref(&decoded),
+            std::slice::from_ref(&raw_vec),
+        );
+        let progress = MultiEraSyncProgress {
+            current_point: storage_point_for_block(block),
+            steps: vec![MultiEraSyncStep::RollForward {
+                raw_header: Vec::new(),
+                tip: storage_point_for_block(block),
+                blocks: vec![decoded],
+                raw_blocks: vec![raw_vec],
+                block_spans: spans,
+            }],
+            fetched_blocks: 1,
+            rollback_count: 0,
+        };
+        advance_ledger_with_epoch_boundary(
+            ledger_state,
+            snapshots,
+            epoch_schedule,
+            &progress,
+            evaluator,
+            None,
+            pool_block_counts,
+        )
+    } else {
+        let mut events = Vec::new();
+        let prev_slot = match ledger_state.tip {
+            Point::BlockPoint(s, _) => Some(s),
+            Point::Origin => None,
+        };
+        if epoch_schedule.is_new_epoch(prev_slot, block.header.slot_no) {
+            let new_epoch = epoch_schedule.slot_to_epoch(block.header.slot_no);
+            let pool_performance = compute_pool_performance(
+                pool_block_counts,
+                &snapshots.set,
+                epoch_schedule.shelley_epoch_size(),
+            );
+            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
+                .map(|event| events.push(event))
+                .map_err(SyncError::LedgerDecode)?;
+            pool_block_counts.clear();
+        }
+        ledger_state.apply_block_validated(block, evaluator)?;
+        Ok(events)
+    }
+}
+
+struct BoundaryAwareRecovery {
+    ledger_state: LedgerState,
+    stake_snapshots: StakeSnapshots,
+    pool_block_counts: BTreeMap<PoolKeyHash, u64>,
+    epoch_events: Vec<EpochBoundaryEvent>,
+}
+
+fn recover_ledger_state_chaindb_with_epoch_boundary<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    base_state: LedgerState,
+    epoch_schedule: EpochSchedule,
+    evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
+) -> Result<BoundaryAwareRecovery, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let best_tip = chain_db.tip();
+    let checkpoint = match best_tip {
+        Point::Origin => chain_db.latest_ledger_checkpoint()?,
+        Point::BlockPoint(slot, _) => chain_db.latest_ledger_checkpoint_before_or_at(slot)?,
+    };
+    let mut ledger_state = checkpoint
+        .map(|(_, checkpoint)| checkpoint.restore())
+        .unwrap_or(base_state);
+    let replay_from_exclusive = ledger_state.tip;
+    let mut snapshots = stake_snapshots_from_ledger_state(&ledger_state);
+    let mut pool_block_counts = ledger_state.blocks_made().clone();
+    let mut epoch_events = Vec::new();
+
+    let immutable_blocks = chain_db.immutable().suffix_after(&replay_from_exclusive)?;
+    for block in &immutable_blocks {
+        epoch_events.extend(replay_storage_block_with_epoch_boundary(
+            &mut ledger_state,
+            &mut snapshots,
+            epoch_schedule,
+            block,
+            evaluator,
+            &mut pool_block_counts,
+        )?);
+    }
+
+    let replay_anchor = immutable_blocks
+        .last()
+        .map(storage_point_for_block)
+        .unwrap_or(replay_from_exclusive);
+    let volatile_blocks = volatile_replay_blocks_after(chain_db.volatile(), &replay_anchor)?;
+    for block in &volatile_blocks {
+        epoch_events.extend(replay_storage_block_with_epoch_boundary(
+            &mut ledger_state,
+            &mut snapshots,
+            epoch_schedule,
+            block,
+            evaluator,
+            &mut pool_block_counts,
+        )?);
+    }
+
+    if ledger_state.tip != best_tip {
+        return Err(SyncError::Recovery(format!(
+            "boundary-aware recovered ledger tip {:?} does not match coordinated storage tip {:?}",
+            ledger_state.tip, best_tip
+        )));
+    }
+
+    Ok(BoundaryAwareRecovery {
+        ledger_state,
+        stake_snapshots: snapshots,
+        pool_block_counts,
+        epoch_events,
+    })
+}
+
 /// Run a continuous verified sync loop with multi-era block decoding,
 /// header/body verification, and optional epoch nonce tracking.
 ///

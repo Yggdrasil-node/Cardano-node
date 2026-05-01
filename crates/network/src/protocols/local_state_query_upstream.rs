@@ -436,8 +436,9 @@ pub enum EraSpecificQuery {
     /// `GetStakeDistribution2` (tag 37, R179) but with an
     /// optional pool-id filter.  Parameter is
     /// `Maybe (Set PoolKeyHash)` (Nothing = all pools).
-    /// Filter accepted but not applied — yggdrasil emits the
-    /// full distribution.
+    /// Yggdrasil applies the filter in the node dispatcher and
+    /// emits the requested subset while preserving the full
+    /// `PoolDistr` total-active-stake denominator.
     ///
     /// Reference:
     /// `Cardano.Ledger.Conway.LedgerStateQuery.GetPoolDistr2`;
