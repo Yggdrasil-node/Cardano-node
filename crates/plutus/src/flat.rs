@@ -7,9 +7,10 @@
 //!
 //! ## Wire format
 //!
-//! On-chain Plutus scripts are stored as CBOR bytestrings wrapping the
-//! Flat-encoded program. For PlutusV1/V2 there is an additional CBOR
-//! bytestring wrapper (double CBOR encoding).
+//! Ledger CBOR decoding stores Plutus scripts as `PlutusBinary`: the raw
+//! Flat-encoded program bytes extracted from the enclosing CBOR bytestring.
+//! Upstream `decodePlutusRunnable` receives those raw bytes, so this module
+//! intentionally does not guess at or strip an additional CBOR layer.
 //!
 //! ## Bit-level format
 //!
@@ -58,65 +59,15 @@ pub fn decode_flat_program(bytes: &[u8]) -> Result<Program, MachineError> {
     Ok(program)
 }
 
-/// Unwrap script bytes from the on-chain CBOR encoding, then Flat-decode.
+/// Decode an on-chain Plutus script from its raw `PlutusBinary` bytes.
 ///
-/// PlutusV1/V2 scripts have a double-CBOR wrapping: the outer witness-set
-/// decode produces a bytestring whose content is another CBOR bytestring
-/// containing the Flat bytes. PlutusV3 uses single wrapping.
-///
-/// This function handles both cases by checking whether the content starts
-/// with a CBOR bytestring header.
-pub fn decode_script_bytes(cbor_bytes: &[u8]) -> Result<Program, MachineError> {
-    let flat_bytes = unwrap_cbor_bytestring(cbor_bytes);
-    decode_flat_program(flat_bytes)
-}
-
-/// Strip one layer of CBOR bytestring wrapping if present.
-fn unwrap_cbor_bytestring(bytes: &[u8]) -> &[u8] {
-    if bytes.is_empty() {
-        return bytes;
-    }
-    let major = bytes[0] >> 5;
-    if major != 2 {
-        // Not a CBOR bytestring — already raw Flat bytes.
-        return bytes;
-    }
-    let additional = bytes[0] & 0x1f;
-    match additional {
-        0..=23 => {
-            let len = additional as usize;
-            if bytes.len() > len {
-                &bytes[1..1 + len]
-            } else {
-                bytes
-            }
-        }
-        24 if bytes.len() >= 2 => {
-            let len = bytes[1] as usize;
-            if bytes.len() >= 2 + len {
-                &bytes[2..2 + len]
-            } else {
-                bytes
-            }
-        }
-        25 if bytes.len() >= 3 => {
-            let len = u16::from_be_bytes([bytes[1], bytes[2]]) as usize;
-            if bytes.len() >= 3 + len {
-                &bytes[3..3 + len]
-            } else {
-                bytes
-            }
-        }
-        26 if bytes.len() >= 5 => {
-            let len = u32::from_be_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]) as usize;
-            if bytes.len() >= 5 + len {
-                &bytes[5..5 + len]
-            } else {
-                bytes
-            }
-        }
-        _ => bytes,
-    }
+/// Ledger CBOR decoding already strips the surrounding CBOR bytestring and
+/// leaves the Flat-encoded `PlutusBinary` payload. Upstream
+/// `decodePlutusRunnable` receives those raw bytes; opportunistically
+/// unwrapping a payload that merely starts with a CBOR bytestring major type
+/// can reject valid on-chain scripts.
+pub fn decode_script_bytes(script_bytes: &[u8]) -> Result<Program, MachineError> {
+    decode_flat_program(script_bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -755,22 +706,6 @@ mod tests {
     }
 
     #[test]
-    fn test_unwrap_cbor_bytestring_single() {
-        // CBOR bytestring of length 3: 0x43 followed by 3 bytes.
-        let data = [0x43, 0x01, 0x02, 0x03];
-        let result = unwrap_cbor_bytestring(&data);
-        assert_eq!(result, &[0x01, 0x02, 0x03]);
-    }
-
-    #[test]
-    fn test_unwrap_cbor_bytestring_not_cbor() {
-        // Not a CBOR bytestring (major type 0 = unsigned int).
-        let data = [0x01, 0x02, 0x03];
-        let result = unwrap_cbor_bytestring(&data);
-        assert_eq!(result, &data[..]);
-    }
-
-    #[test]
     fn test_decode_simple_term_error() {
         // Term tag 6 = Error, followed by filler to byte boundary.
         // Tag 6 in 4 bits: 0110, then 4 bits of filler padding.
@@ -977,31 +912,6 @@ mod tests {
         assert_eq!(term, Term::Case(Box::new(Term::Error), vec![]));
     }
 
-    // -- CBOR unwrap edge cases -----------------------------------------
-
-    #[test]
-    fn test_unwrap_cbor_empty() {
-        let result = unwrap_cbor_bytestring(&[]);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_unwrap_cbor_len_24() {
-        // CBOR additional=24, length byte, then payload.
-        let data = vec![0x58, 0x03, 0xAA, 0xBB, 0xCC];
-        let result = unwrap_cbor_bytestring(&data);
-        assert_eq!(result, &[0xAA, 0xBB, 0xCC]);
-    }
-
-    #[test]
-    fn test_unwrap_cbor_truncated() {
-        // CBOR header says 10 bytes but only 2 available.
-        let data = [0x4A, 0x01, 0x02];
-        let result = unwrap_cbor_bytestring(&data);
-        // Falls through to returning original bytes.
-        assert_eq!(result, &[0x4A, 0x01, 0x02]);
-    }
-
     // -- FlatDecoder read_bits8 ----------------------------------------
 
     #[test]
@@ -1104,18 +1014,29 @@ mod tests {
             .expect("deep-decode test thread completed");
     }
 
-    // -- decode_script_bytes with CBOR wrapping -------------------------
+    // -- decode_script_bytes -------------------------------------------
 
     #[test]
-    fn test_decode_script_bytes_single_wrapped() {
+    fn test_decode_script_bytes_raw_flat() {
         // Build a flat program: version 1.0.0, body = Error.
         let flat_bytes = vec![0x01, 0x00, 0x00, 0x60];
-        // Single CBOR wrap.
-        let mut cbor = vec![0x44u8]; // 0x40 | 4 = 4-byte bytestring
-        cbor.extend_from_slice(&flat_bytes);
 
-        let program = decode_script_bytes(&cbor).expect("decode");
+        let program = decode_script_bytes(&flat_bytes).expect("decode");
         assert_eq!(program.major, 1);
         assert_eq!(program.term, Term::Error);
+    }
+
+    #[test]
+    fn test_decode_script_bytes_does_not_cbor_unwrap() {
+        // Ledger CBOR decoding already removes the surrounding bytestring.
+        // A caller accidentally passing a CBOR-wrapped payload is decoded as
+        // raw Flat bytes. It may still happen to parse, but must not decode to
+        // the inner payload through a non-upstream compatibility path.
+        let raw = [0x01, 0x00, 0x00, 0x60];
+        let wrapped = [0x44u8, 0x01, 0x00, 0x00, 0x60];
+        assert_ne!(
+            decode_script_bytes(&wrapped).ok(),
+            decode_script_bytes(&raw).ok()
+        );
     }
 }

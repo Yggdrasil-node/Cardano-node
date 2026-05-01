@@ -558,18 +558,19 @@ pub fn gen_delg_hash_set(
 fn is_plutus_script_well_formed(
     script: &crate::plutus::Script,
     evaluator: &dyn crate::plutus_validation::PlutusEvaluator,
+    protocol_version: Option<(u64, u64)>,
 ) -> bool {
     use crate::plutus_validation::PlutusVersion;
     match script {
         crate::plutus::Script::Native(_) => true,
         crate::plutus::Script::PlutusV1(bytes) => {
-            evaluator.is_script_well_formed(PlutusVersion::V1, bytes)
+            evaluator.is_script_well_formed(PlutusVersion::V1, protocol_version, bytes)
         }
         crate::plutus::Script::PlutusV2(bytes) => {
-            evaluator.is_script_well_formed(PlutusVersion::V2, bytes)
+            evaluator.is_script_well_formed(PlutusVersion::V2, protocol_version, bytes)
         }
         crate::plutus::Script::PlutusV3(bytes) => {
-            evaluator.is_script_well_formed(PlutusVersion::V3, bytes)
+            evaluator.is_script_well_formed(PlutusVersion::V3, protocol_version, bytes)
         }
     }
 }
@@ -601,13 +602,14 @@ pub fn script_hash(script: &crate::plutus::Script) -> [u8; 28] {
 pub fn validate_script_witnesses_well_formed(
     witness_set: &crate::eras::shelley::ShelleyWitnessSet,
     evaluator: &dyn crate::plutus_validation::PlutusEvaluator,
+    protocol_version: Option<(u64, u64)>,
 ) -> Result<(), LedgerError> {
     use crate::plutus_validation::PlutusVersion;
 
     let mut malformed: Vec<[u8; 28]> = Vec::new();
 
     for bytes in &witness_set.plutus_v1_scripts {
-        if !evaluator.is_script_well_formed(PlutusVersion::V1, bytes) {
+        if !evaluator.is_script_well_formed(PlutusVersion::V1, protocol_version, bytes) {
             malformed.push(crate::plutus_validation::plutus_script_hash(
                 PlutusVersion::V1,
                 bytes,
@@ -615,7 +617,7 @@ pub fn validate_script_witnesses_well_formed(
         }
     }
     for bytes in &witness_set.plutus_v2_scripts {
-        if !evaluator.is_script_well_formed(PlutusVersion::V2, bytes) {
+        if !evaluator.is_script_well_formed(PlutusVersion::V2, protocol_version, bytes) {
             malformed.push(crate::plutus_validation::plutus_script_hash(
                 PlutusVersion::V2,
                 bytes,
@@ -623,7 +625,7 @@ pub fn validate_script_witnesses_well_formed(
         }
     }
     for bytes in &witness_set.plutus_v3_scripts {
-        if !evaluator.is_script_well_formed(PlutusVersion::V3, bytes) {
+        if !evaluator.is_script_well_formed(PlutusVersion::V3, protocol_version, bytes) {
             malformed.push(crate::plutus_validation::plutus_script_hash(
                 PlutusVersion::V3,
                 bytes,
@@ -646,13 +648,14 @@ pub fn validate_reference_scripts_well_formed(
     outputs: &[crate::eras::babbage::BabbageTxOut],
     collateral_return: Option<&crate::eras::babbage::BabbageTxOut>,
     evaluator: &dyn crate::plutus_validation::PlutusEvaluator,
+    protocol_version: Option<(u64, u64)>,
 ) -> Result<(), LedgerError> {
     let mut malformed: Vec<[u8; 28]> = Vec::new();
 
     let iter = outputs.iter().chain(collateral_return);
     for txout in iter {
         if let Some(sref) = &txout.script_ref {
-            if !is_plutus_script_well_formed(&sref.0, evaluator) {
+            if !is_plutus_script_well_formed(&sref.0, evaluator, protocol_version) {
                 malformed.push(script_hash(&sref.0));
             }
         }

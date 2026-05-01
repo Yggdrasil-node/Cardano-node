@@ -5047,11 +5047,20 @@ impl LedgerState {
                 )?;
                 // Babbage UTXOW: validateScriptsWellFormed.
                 if let Some(eval) = evaluator {
-                    crate::witnesses::validate_script_witnesses_well_formed(&tx.witness_set, eval)?;
+                    let protocol_version = self
+                        .protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version);
+                    crate::witnesses::validate_script_witnesses_well_formed(
+                        &tx.witness_set,
+                        eval,
+                        protocol_version,
+                    )?;
                     crate::witnesses::validate_reference_scripts_well_formed(
                         &tx.body.outputs,
                         tx.body.collateral_return.as_ref(),
                         eval,
+                        protocol_version,
                     )?;
                 }
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
@@ -5432,11 +5441,20 @@ impl LedgerState {
                 )?;
                 // Conway UTXOW: validateScriptsWellFormed.
                 if let Some(eval) = evaluator {
-                    crate::witnesses::validate_script_witnesses_well_formed(&tx.witness_set, eval)?;
+                    let protocol_version = self
+                        .protocol_params
+                        .as_ref()
+                        .and_then(|p| p.protocol_version);
+                    crate::witnesses::validate_script_witnesses_well_formed(
+                        &tx.witness_set,
+                        eval,
+                        protocol_version,
+                    )?;
                     crate::witnesses::validate_reference_scripts_well_formed(
                         &tx.body.outputs,
                         tx.body.collateral_return.as_ref(),
                         eval,
+                        protocol_version,
                     )?;
                 }
                 let witness_bytes = tx.witness_set.to_cbor_bytes();
@@ -7234,9 +7252,17 @@ impl LedgerState {
             )?;
             // Babbage UTXOW: validateScriptsWellFormed.
             if let Some(eval) = evaluator {
+                let protocol_version = self
+                    .protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version);
                 if let Some(wb) = witness_bytes.as_deref() {
                     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
-                    crate::witnesses::validate_script_witnesses_well_formed(&ws, eval)?;
+                    crate::witnesses::validate_script_witnesses_well_formed(
+                        &ws,
+                        eval,
+                        protocol_version,
+                    )?;
                 }
                 let produced_outputs = if tx_is_valid {
                     body.outputs.as_slice()
@@ -7247,6 +7273,7 @@ impl LedgerState {
                     produced_outputs,
                     body.collateral_return.as_ref(),
                     eval,
+                    protocol_version,
                 )?;
             }
             if let Some(ref_inputs) = &body.reference_inputs {
@@ -7778,9 +7805,17 @@ impl LedgerState {
             )?;
             // Conway UTXOW: validateScriptsWellFormed.
             if let Some(eval) = evaluator {
+                let protocol_version = self
+                    .protocol_params
+                    .as_ref()
+                    .and_then(|p| p.protocol_version);
                 if let Some(wb) = witness_bytes.as_deref() {
                     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
-                    crate::witnesses::validate_script_witnesses_well_formed(&ws, eval)?;
+                    crate::witnesses::validate_script_witnesses_well_formed(
+                        &ws,
+                        eval,
+                        protocol_version,
+                    )?;
                 }
                 let produced_outputs = if tx_is_valid {
                     body.outputs.as_slice()
@@ -7791,6 +7826,7 @@ impl LedgerState {
                     produced_outputs,
                     body.collateral_return.as_ref(),
                     eval,
+                    protocol_version,
                 )?;
             }
             if let Some(ref_inputs) = &body.reference_inputs {

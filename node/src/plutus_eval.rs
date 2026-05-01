@@ -103,7 +103,7 @@ impl CekPlutusEvaluator {
 
 impl PlutusEvaluator for CekPlutusEvaluator {
     fn evaluate(&self, eval: &PlutusScriptEval, tx_ctx: &TxContext) -> Result<(), LedgerError> {
-        // 1. Decode the on-chain script bytes (Flat / CBOR-unwrap).
+        // 1. Decode the on-chain PlutusBinary bytes (raw Flat).
         let program = decode_script_bytes(&eval.script_bytes).map_err(|e| {
             LedgerError::PlutusScriptDecodeError {
                 hash: eval.script_hash,
@@ -160,7 +160,17 @@ impl PlutusEvaluator for CekPlutusEvaluator {
         }
     }
 
-    fn is_script_well_formed(&self, _version: PlutusVersion, script_bytes: &[u8]) -> bool {
+    fn is_script_well_formed(
+        &self,
+        version: PlutusVersion,
+        protocol_version: Option<(u64, u64)>,
+        script_bytes: &[u8],
+    ) -> bool {
+        if let Some((major, _minor)) = protocol_version {
+            if major < version.first_supported_protocol_major() {
+                return false;
+            }
+        }
         decode_script_bytes(script_bytes).is_ok()
     }
 }

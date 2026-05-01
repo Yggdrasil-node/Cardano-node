@@ -83,7 +83,7 @@ pub fn evaluate_program(
     evaluate_term(program.term, budget, cost_model)
 }
 
-/// Decode and evaluate a Plutus script from on-chain CBOR-wrapped bytes.
+/// Decode and evaluate a Plutus script from raw on-chain `PlutusBinary` bytes.
 ///
 /// This is the primary entry point for evaluating scripts extracted from
 /// transaction witness sets.

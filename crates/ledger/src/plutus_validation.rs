@@ -65,6 +65,18 @@ impl PlutusVersion {
             Self::V3 => 2,
         }
     }
+
+    /// First protocol major version that supports this Plutus language.
+    ///
+    /// Mirrors upstream `guardPlutus` / `decodePlutusRunnable` availability:
+    /// V1 at PV5, V2 at PV7, and V3 at PV9.
+    pub fn first_supported_protocol_major(self) -> u64 {
+        match self {
+            Self::V1 => 5,
+            Self::V2 => 7,
+            Self::V3 => 9,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +119,7 @@ pub struct PlutusScriptEval {
     pub script_hash: [u8; 28],
     /// Script language version.
     pub version: PlutusVersion,
-    /// Raw script bytes (Flat-encoded, possibly CBOR-wrapped).
+    /// Raw on-chain `PlutusBinary` script bytes (Flat-encoded).
     pub script_bytes: Vec<u8>,
     /// Purpose that triggered this evaluation.
     pub purpose: ScriptPurpose,
@@ -190,20 +202,27 @@ pub trait PlutusEvaluator {
     /// Evaluate a single Plutus script.
     ///
     /// The implementor should:
-    /// 1. Decode `eval.script_bytes` (Flat decode / CBOR unwrap).
+    /// 1. Decode `eval.script_bytes` as raw Flat `PlutusBinary`.
     /// 2. Apply `eval.datum` (if spending), `eval.redeemer`, and a
     ///    `ScriptContext` as arguments to the decoded program.
     /// 3. Evaluate within `eval.ex_units` budget.
     /// 4. Return `Ok(())` on success, or a `LedgerError` on failure.
     fn evaluate(&self, eval: &PlutusScriptEval, tx_ctx: &TxContext) -> Result<(), LedgerError>;
 
-    /// Check whether Plutus script bytes are well-formed (upstream
-    /// `decodePlutusRunnable` from the UTXOW rule).
+    /// Check whether Plutus script bytes are well-formed for the active
+    /// protocol version (upstream `decodePlutusRunnable` from the UTXOW rule).
     ///
-    /// Returns `true` when the script can be successfully decoded (CBOR
-    /// unwrap + Flat decode).  The default implementation returns `true`
+    /// `script_bytes` are the raw on-chain `PlutusBinary` bytes after ledger
+    /// CBOR decoding has removed the surrounding bytestring. The optional
+    /// protocol version lets evaluators reject languages before their
+    /// upstream activation point. The default implementation returns `true`
     /// so callers without a CEK machine still pass the check.
-    fn is_script_well_formed(&self, _version: PlutusVersion, _script_bytes: &[u8]) -> bool {
+    fn is_script_well_formed(
+        &self,
+        _version: PlutusVersion,
+        _protocol_version: Option<(u64, u64)>,
+        _script_bytes: &[u8],
+    ) -> bool {
         true
     }
 }
