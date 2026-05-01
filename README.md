@@ -71,7 +71,7 @@ published yet. Full details: [Installation](https://yggdrasil-node.github.io/Car
 - **Node CLI**: `clap`-based binary with `run` (connect to peer and sync), `validate-config` (operator preflight for config, peer-snapshot inputs, and any existing storage recovery state), `status` (inspect on-disk storage and report sync position, block counts, and checkpoint state), and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides, topology/config parsing that feeds reusable network-crate topology and peer-ordering helpers, and upstream-aligned tracing fields (`TurnOnLogging`, `UseTraceDispatcher`, `TraceOptions`, `TraceOptionNodeName`, `TraceOptionForwarder`). `NodeMetrics` provides atomic operational counters wired into the hot sync loops, with `--metrics-port` exposing a Prometheus-compatible HTTP `/metrics` endpoint and a JSON `/metrics/json` endpoint on `127.0.0.1`.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Ordered bootstrap relay fallback plus reconnecting verified sync on ChainSync or BlockFetch connectivity loss. Graceful shutdown via Ctrl-C signal handling. A local `NodeTracer` now emits human- or machine-formatted runtime trace objects for bootstrap, reconnect, sync progress, and shutdown/failure paths. Live sync now evicts confirmed and expired transactions from the shared mempool, and epoch-boundary reward math uses tracked per-pool performance instead of an always-perfect stub.
 - **Upstream parity**: CBOR golden round-trip tests, cross-subsystem integration tests, and wire-format field naming aligned with official Cardano CDDL specifications.
-- **Validation baseline**: `cargo test-all` discovers 4,640 tests across the workspace, all passing at every slice boundary.
+- **Validation baseline**: `cargo test-all` discovers 4,749 tests across the workspace (R232 cumulative — up from 4,640 at v0.2.0 baseline), all passing at every slice boundary.  The R211→R231 operational-parity arc adds: mainnet sync end-to-end (R211/R213), full LSQ surface verified on all 3 networks (R212–R215), bidirectional P2P parity (R220+R221), Phase A.6 GetGenesisConfig (R214), Phase D.2 5-counter lifetime peer-stats (R222–R226), Phase D.1 rollback-depth observability (R225), Phase E.1 5/5 documentary pins in-sync (R201+R216), and full Prometheus-output regression coverage for every R200/R217/R225/R226 observability metric (R229+R230+R231).
 - CI workflow and workspace cargo aliases for check/test/lint.
 
 ### Status: 100% feature-complete
@@ -80,8 +80,17 @@ As of the 2026-Q2 audit closure, every confirmed-active parity slice tracked in 
 
 ### Ongoing operational work
 
-- Mainnet sync endurance testing per the runbook.
+- Mainnet sync endurance testing per the runbook (Phase E.2 — 24h+ rehearsal).
 - Extended cardano-tracer interoperability validation.
+
+### Deferred substantive items (R211→R231 arc surfaces)
+
+Each requires multi-day implementation or sustained operator time:
+
+- **Phase D.1 full deep-rollback recovery** — historical stake-snapshot reconstruction so rollbacks beyond `k` blocks don't force re-sync from origin.  R225's `yggdrasil_rollback_depth_blocks` Prometheus histogram is the empirical-data prerequisite that justifies (or de-prioritises) the implementation cost based on actual mainnet rollback distribution.
+- **Phase D.2 bytes-out** — per-mini-protocol egress byte accounting on the server-emit path.  The 5 lifetime peer-stats counters (`peer_lifetime_sessions_total`, `_failures_total`, `_bytes_in_total`, `_unique_peers`, `_handshakes_total`) ship today via R222+R223+R224+R226; bytes-out remains 0 until the per-protocol egress instrumentation lands.
+- **Phase E.1 cardano-base** — coordinated vendored fixture refresh.  The other 5/5 documentary upstream pins are in-sync (R201+R216); `cardano-base` is gated on a `git mv` of the vendored test-vector tree at `specs/upstream-test-vectors/cardano-base/<sha>/`.
+- **Phase E.2** — 24h+ mainnet sync rehearsal.  Operator-time gate; yggdrasil's mainnet sync is end-to-end working (R211+R213) and exposes all the observability surface needed (R200/R217/R225/R226 histograms + R222+R226 lifetime counters).
 
 ## Workspace Layout
 

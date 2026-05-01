@@ -212,22 +212,100 @@ adding topology peers.
 
 ---
 
+## 4b. Phase D.2 — Multi-session peer accounting (5 lifetime counters)
+
+R222 + R223 + R224 + R226 deliver the major Phase D.2 scope: a
+parallel-tracking shadow data structure (`PeerLifetimeStats`) on
+`GovernorState` that accumulates monotonically across reconnects,
+distinct from the session-keyed `failures` map (which decays /
+resets on `record_success`).  Five Prometheus counters / gauges
+expose the aggregate state:
+
+| Metric                                    | Type    | Source                              | Round  |
+| ----------------------------------------- | ------- | ----------------------------------- | ------ |
+| `peer_lifetime_sessions_total`            | counter | `promote_to_warm` Ok branch         | R223   |
+| `peer_lifetime_failures_total`            | counter | `promote_to_warm` Err branch        | R223   |
+| `peer_lifetime_bytes_in_total`            | counter | BlockFetch `bytes_delivered` mirror | R224   |
+| `peer_lifetime_unique_peers`              | gauge   | `lifetime_stats` map cardinality    | R226   |
+| `peer_lifetime_handshakes_total`          | counter | `successful_handshakes` aggregate   | R226   |
+
+**Mainnet operator-derived signals** (verified R226, 60 s knob=4):
+
+```
+yggdrasil_peer_lifetime_sessions_total 2
+yggdrasil_peer_lifetime_failures_total 0
+yggdrasil_peer_lifetime_bytes_in_total 1548246
+yggdrasil_peer_lifetime_unique_peers 3
+yggdrasil_peer_lifetime_handshakes_total 2
+```
+
+Operators compute:
+
+```promql
+# Reliability ratio
+yggdrasil_peer_lifetime_failures_total
+  / yggdrasil_peer_lifetime_sessions_total
+
+# Avg bytes per session
+yggdrasil_peer_lifetime_bytes_in_total
+  / yggdrasil_peer_lifetime_sessions_total
+
+# Registry-leakage indicator (peers tracked but never promoted)
+1 - (yggdrasil_peer_lifetime_sessions_total
+     / yggdrasil_peer_lifetime_unique_peers)
+
+# Real peer churn rate (cumulative reconnects)
+rate(yggdrasil_peer_lifetime_sessions_total[5m])
+```
+
+**Bytes-out remains 0** — requires per-mini-protocol egress byte
+accounting on the server-emit path; deferred to a follow-up
+slice.
+
+---
+
+## 4c. Phase D.1 — Rollback-depth observability (R225)
+
+R225 adds `yggdrasil_rollback_depth_blocks` Prometheus histogram
+classifying actual rollback depths.  Bucket boundaries
+`[1, 2, 5, 50, 2160 (k), 10_000, +Inf]` span shallow chain
+reorgs through the stability window edge to cross-epoch and
+full-resync (the Phase D.1 problematic case).
+
+Operators alert on rare deep rollbacks via:
+
+```promql
+histogram_quantile(0.99,
+    rate(yggdrasil_rollback_depth_blocks_bucket[1h]))
+```
+
+**The full Phase D.1 recovery infrastructure** (historical
+stake-snapshot reconstruction so rollbacks beyond `k` don't force
+re-sync from origin) remains deferred — R225 is the
+observability prerequisite that justifies (or de-prioritises) the
+multi-day implementation work based on actual mainnet rollback
+distribution.
+
+---
+
 ## 5. Upstream alignment — Phase E.1 first slice
 
 R201 advanced 4 of 5 drifted documentary upstream pins to live HEAD:
 
-| Repository | Pinned (post-R201) | Status |
+| Repository | Pinned (post-R216) | Status |
 |---|---|---|
 | `cardano-base` | `db52f43b38ba…` (audit baseline 2026-Q2) | drifted (vendored-fixture coupled) |
 | `cardano-ledger` | `42d088ed84b7…` | **in-sync** |
-| `ouroboros-consensus` | `c368c2529f2f…` | **in-sync** |
+| `ouroboros-consensus` | `b047aca4a731…` (R216 advance) | **in-sync** |
 | `ouroboros-network` | `0e84bced45c7…` | **in-sync** |
-| `plutus` | `e3eb4c76ea20…` | **in-sync** |
+| `plutus` | `4cd40a14e364…` (R216 advance) | **in-sync** |
 | `cardano-node` | `799325937a45…` | **in-sync** |
 
 Drift detector (`bash node/scripts/check_upstream_drift.sh`) reports
 `drifted=1 unreachable=0 total=6`. Three drift-guard tests pass
-(format, cardinality, vendored-directory match).
+(format, cardinality, vendored-directory match).  R201 → R216
+cadence (~15 rounds apart) demonstrates the audit-baseline is
+being actively maintained against upstream.
 
 ---
 
@@ -240,20 +318,29 @@ Drift detector (`bash node/scripts/check_upstream_drift.sh`) reports
 | **A.3** | Live `GovRelation` + gov-state OMap shape | ✅ closed | R193+R204 |
 | **A.4** | Live DRep/SPO stake + deleg deposits | ✅ closed | R194 |
 | **A.5** | Live ledger-peer-snapshot pools | ✅ closed | R195 |
-| **A.6** | `GetGenesisConfig` ShelleyGenesis serialiser | ⏳ deferred | (no direct cli consumer) |
+| **A.6** | `GetGenesisConfig` ShelleyGenesis serialiser | ✅ closed | R214 |
 | **A.7** | Live stake-snapshots | ✅ closed | R202+R203 |
 | **B** | R91 multi-peer dispatch livelock | ✅ verified resolved | R199 |
+| **B (mainnet)** | Mainnet sync unblocked (Byron EBB hash + same-slot tolerance + mux egress) | ✅ closed | R211+R213 |
+| **B (P2P)** | Bidirectional P2P parity (server ChainSync `Tip` envelope) | ✅ closed | R220+R221 |
 | **C.1** | Apply-batch duration histogram | ✅ wired | R200 |
-| **C.2** | Pipelined fetch+apply | ⏳ deferred | (deadlock risk — needs careful design) |
-| **D.1** | Deep cross-epoch rollback recovery | ⏳ deferred | (substantial sync.rs work) |
-| **D.2** | Multi-session peer accounting | ⏳ deferred | (architectural refactor) |
-| **E.1** | Audit baseline pin refresh | ✅ first slice (4/5) | R201 |
+| **C.1+** | Fetch-batch duration histogram + multi-peer quantification | ✅ wired | R217+R218 |
+| **C.2** | Pipelined fetch+apply | 🚫 de-prioritised | R217 measurement showed ~1.7% gain — multi-peer dispatch is the actual sync-rate lever |
+| **D.1** | Deep cross-epoch rollback recovery | ⏳ partial (observability) | R225 rollback-depth histogram |
+| **D.2** | Multi-session peer accounting | ✅ major scope shipped | R222+R223+R224+R226 (5 lifetime counters) |
+| **E.1** | Audit baseline pin refresh | ✅ 5/5 documentary pins | R201+R216 |
 | **E.1 cardano-base** | Vendored fixture coordinated refresh | ⏳ deferred | (requires fetching upstream test vectors at new SHA) |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 
-**8 closed, 1 verified, 7 deferred** (3 substantial new features
-+ 4 operational runs / coordinated refreshes).
+**13 closed/verified, 1 partial, 4 deferred** (out of original
+16 plan items + 2 follow-ons surfaced during the R211→R226 arc).
+The 4 remaining deferred items each require substantial multi-day
+work or operator time:
+- Phase D.1 full deep-rollback recovery (historical stake-snapshot reconstruction)
+- Phase D.2 bytes-out (per-mini-protocol egress accounting)
+- Phase E.1 cardano-base (vendored fixture refresh)
+- Phase E.2 24h+ mainnet rehearsal (sustained operator observation)
 
 ---
 

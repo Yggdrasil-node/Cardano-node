@@ -393,6 +393,31 @@ For Phase 6 parallel-fetch validation (§6.5):
 - `yggdrasil_fetch_batch_duration_seconds` — R217 fetch+verify histogram (per-batch).  Compare against `yggdrasil_apply_batch_duration_seconds` (R200) to size sync-rate bottlenecks.  On mainnet from the IOG backbone peer the R217 baseline is ~12.85 s/batch single-peer; multi-peer with 2 active workers brings it to ~8.56 s/batch (R218).  Operator action: if `fetch_avg/batch` is much higher than expected for your `blockfetch_workers_registered` count, the topology peers may be routing-distant / unhealthy — increase peer diversity.
 - `yggdrasil_apply_batch_duration_seconds` — R200 ledger-apply histogram (per-batch).  Mainnet baseline ~0.22 s/batch (≈4 ms/block); essentially independent of multi-peer knob.  Stable apply time confirms the multi-peer dispatch path doesn't distort apply behaviour.
 
+For Phase D.2 multi-session peer accounting (R222–R226) — five lifetime peer-stats counters monotonic across reconnects, distinct from the live `known/active/established_peers` gauges:
+- `yggdrasil_peer_lifetime_sessions_total` — cumulative warm-peer establishments. `rate(...)` over a 5-minute window gives real peer-churn rate independent of current state.
+- `yggdrasil_peer_lifetime_failures_total` — cumulative session failures. Pair with `sessions_total` to compute peer reliability ratio (`failures/sessions`).
+- `yggdrasil_peer_lifetime_bytes_in_total` — cumulative bytes received from peers (sourced from BlockFetch `bytes_delivered`).  Lower bound for total ingress — does not include ChainSync header bytes or TxSubmission2 traffic.  Pair with `sessions_total` for average bytes/session throughput.
+- `yggdrasil_peer_lifetime_unique_peers` — distinct peer addresses ever observed during this process lifetime.  When `unique_peers > sessions_total`, some peer entries exist in the registry but never promoted to warm — useful registry-leakage signal.
+- `yggdrasil_peer_lifetime_handshakes_total` — cumulative successful NtN handshakes.  When `handshakes > sessions`, sessions are completing handshake but disconnecting before mini-protocol traffic.
+
+Operator-derived signals via PromQL:
+```
+# Peer reliability ratio (failures per session)
+yggdrasil_peer_lifetime_failures_total / yggdrasil_peer_lifetime_sessions_total
+
+# Average bytes received per session
+yggdrasil_peer_lifetime_bytes_in_total / yggdrasil_peer_lifetime_sessions_total
+
+# Registry-leakage indicator (peers tracked but never promoted)
+1 - (yggdrasil_peer_lifetime_sessions_total / yggdrasil_peer_lifetime_unique_peers)
+
+# Real peer churn rate (cumulative reconnects, distinct from current peer-count gauges)
+rate(yggdrasil_peer_lifetime_sessions_total[5m])
+```
+
+For Phase D.1 deep-rollback observability (R225):
+- `yggdrasil_rollback_depth_blocks` — histogram (7 buckets `[1, 2, 5, 50, 2160, 10_000, +Inf]`) of rollback depths in rolled-back transactions.  Recorded at every batch with `rollback_count > 0`; depth=0 captures session-start `RollBackward(Origin)` confirms (always present at session establishment).  Operators alert on rare deep cross-epoch rollbacks via `histogram_quantile(0.99, rate(yggdrasil_rollback_depth_blocks_bucket[1h]))`.  Distribution is the prerequisite data for sizing the full Phase D.1 deep-rollback recovery work.
+
 Quick health JSON:
 
 ```sh

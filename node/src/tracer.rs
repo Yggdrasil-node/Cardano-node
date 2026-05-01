@@ -2039,6 +2039,261 @@ mod tests {
         assert!(text.contains("yggdrasil_uptime_seconds"));
     }
 
+    /// R231 — pin the R200 apply-batch + R217 fetch-batch
+    /// duration histogram contracts.  Both share
+    /// [`NodeMetrics::APPLY_BATCH_BUCKETS_SECONDS`] bucket
+    /// boundaries so dashboards can render fetch-vs-apply
+    /// side-by-side comparisons (R217+R218 multi-peer sync-rate
+    /// quantification depends on this).  Pins:
+    /// (1) bucket boundaries `[1ms, 5ms, 10ms, 50ms, 100ms, 500ms,
+    /// 1s, 5s, 10s, +Inf]` — drift means dashboards misclassify
+    /// latency tier;
+    /// (2) cumulative-bucket semantic (observation `d` increments
+    /// every bucket whose `le_secs` is ≥ `d`);
+    /// (3) Prometheus exposition shape for both metrics.
+    #[test]
+    fn node_metrics_tracks_fetch_and_apply_batch_histograms() {
+        use std::time::Duration;
+
+        // Bucket-boundary pin.  Each numeric value is load-bearing
+        // for operator alerting.
+        assert_eq!(
+            NodeMetrics::APPLY_BATCH_BUCKETS_SECONDS,
+            [
+                0.001,
+                0.005,
+                0.01,
+                0.05,
+                0.1,
+                0.5,
+                1.0,
+                5.0,
+                10.0,
+                f64::INFINITY
+            ],
+        );
+
+        let metrics = NodeMetrics::new();
+
+        // Default: no observations.
+        let snap = metrics.snapshot();
+        assert_eq!(snap.apply_batch_duration_count, 0);
+        assert_eq!(snap.fetch_batch_duration_count, 0);
+
+        // Apply observation: 200ms (a typical mainnet apply per
+        // R218).  Falls into le=0.5 and higher (5 buckets).
+        metrics.record_apply_batch_duration(Duration::from_millis(200));
+        let snap = metrics.snapshot();
+        assert_eq!(snap.apply_batch_duration_count, 1);
+        assert_eq!(snap.apply_batch_duration_buckets[0], 0, "le=0.001 < 0.2s");
+        assert_eq!(snap.apply_batch_duration_buckets[4], 0, "le=0.1 < 0.2s");
+        assert_eq!(
+            snap.apply_batch_duration_buckets[5], 1,
+            "le=0.5 includes 0.2s"
+        );
+        assert_eq!(
+            snap.apply_batch_duration_buckets[9], 1,
+            "+Inf includes everything"
+        );
+
+        // Fetch observation: 12.85s (R217 mainnet single-peer
+        // baseline).  Falls into +Inf only (>10s).
+        metrics.record_fetch_batch_duration(Duration::from_millis(12_850));
+        let snap = metrics.snapshot();
+        assert_eq!(snap.fetch_batch_duration_count, 1);
+        assert_eq!(snap.fetch_batch_duration_buckets[8], 0, "le=10.0 < 12.85s");
+        assert_eq!(
+            snap.fetch_batch_duration_buckets[9], 1,
+            "+Inf includes 12.85s"
+        );
+
+        // Fetch observation: 8.56s (R218 multi-peer, 2 active
+        // workers).  Falls into le=10.0 and +Inf.
+        metrics.record_fetch_batch_duration(Duration::from_millis(8_560));
+        let snap = metrics.snapshot();
+        assert_eq!(snap.fetch_batch_duration_count, 2);
+        assert_eq!(
+            snap.fetch_batch_duration_buckets[8], 1,
+            "le=10.0 includes 8.56s"
+        );
+        assert_eq!(
+            snap.fetch_batch_duration_buckets[9], 2,
+            "+Inf includes both"
+        );
+
+        // Prometheus text format pin.
+        let text = snap.to_prometheus_text();
+        assert!(text.contains("# TYPE yggdrasil_apply_batch_duration_seconds histogram\n"));
+        assert!(text.contains("# TYPE yggdrasil_fetch_batch_duration_seconds histogram\n"));
+        assert!(
+            text.contains("yggdrasil_apply_batch_duration_seconds_bucket{le=\"0.5\"} 1\n"),
+            "apply le=0.5 not exposed"
+        );
+        assert!(
+            text.contains("yggdrasil_fetch_batch_duration_seconds_bucket{le=\"+Inf\"} 2\n"),
+            "fetch +Inf not exposed"
+        );
+        assert!(text.contains("yggdrasil_apply_batch_duration_seconds_count 1\n"));
+        assert!(text.contains("yggdrasil_fetch_batch_duration_seconds_count 2\n"));
+    }
+
+    /// R230 — pin the Phase D.1 rollback-depth histogram contract
+    /// from R225.  Bucket boundaries `[1, 2, 5, 50, 2160 (k),
+    /// 10_000, +Inf]` are load-bearing — operator dashboards and
+    /// `histogram_quantile(0.99, …)` alerts depend on them.
+    /// Also pins the cumulative-bucket semantic: an observation of
+    /// depth `d` increments every bucket whose `le` is ≥ `d` (so
+    /// the +Inf bucket is the total observation count).
+    #[test]
+    fn node_metrics_tracks_phase_d1_rollback_depth_histogram() {
+        let metrics = NodeMetrics::new();
+
+        // Default: zero observations.
+        let snap = metrics.snapshot();
+        assert_eq!(snap.rollback_depth_count, 0);
+        assert_eq!(snap.rollback_depth_sum_blocks, 0);
+        for bucket in &snap.rollback_depth_buckets {
+            assert_eq!(*bucket, 0);
+        }
+
+        // Observation 1: depth=0 (session-start confirm rollback,
+        // common case).  Falls into every bucket including le=1.
+        metrics.record_rollback_depth(0);
+        let snap = metrics.snapshot();
+        assert_eq!(snap.rollback_depth_count, 1);
+        assert_eq!(snap.rollback_depth_sum_blocks, 0);
+        for (i, bucket) in snap.rollback_depth_buckets.iter().enumerate() {
+            assert_eq!(*bucket, 1, "depth=0 must increment every bucket (i={i})");
+        }
+
+        // Observation 2: depth=3 (small chain reorg).  Falls into
+        // le=5, le=50, le=2160, le=10_000, le=+Inf (5 buckets).
+        // Does NOT fall into le=1 or le=2.
+        metrics.record_rollback_depth(3);
+        let snap = metrics.snapshot();
+        assert_eq!(snap.rollback_depth_count, 2);
+        assert_eq!(snap.rollback_depth_sum_blocks, 3);
+        assert_eq!(
+            snap.rollback_depth_buckets[0], 1,
+            "le=1 unchanged for depth=3"
+        );
+        assert_eq!(
+            snap.rollback_depth_buckets[1], 1,
+            "le=2 unchanged for depth=3"
+        );
+        assert_eq!(snap.rollback_depth_buckets[2], 2, "le=5 includes depth=3");
+        assert_eq!(
+            snap.rollback_depth_buckets[6], 2,
+            "+Inf includes everything"
+        );
+
+        // Observation 3: depth=5000 (cross-epoch range).  Falls into
+        // le=10_000 and le=+Inf only.
+        metrics.record_rollback_depth(5000);
+        let snap = metrics.snapshot();
+        assert_eq!(snap.rollback_depth_count, 3);
+        assert_eq!(snap.rollback_depth_sum_blocks, 3 + 5000);
+        assert_eq!(
+            snap.rollback_depth_buckets[5], 3,
+            "le=10_000 includes depth=5000"
+        );
+        assert_eq!(
+            snap.rollback_depth_buckets[6], 3,
+            "+Inf still includes everything"
+        );
+        assert_eq!(
+            snap.rollback_depth_buckets[4], 2,
+            "le=2160 (k) does NOT include 5000"
+        );
+
+        // Bucket boundaries pin: drift here means operator dashboards
+        // misclassify rollback severity.
+        assert_eq!(
+            NodeMetrics::ROLLBACK_DEPTH_BUCKETS,
+            [1, 2, 5, 50, 2160, 10_000, u64::MAX]
+        );
+
+        // Prometheus text format pin.
+        let text = snap.to_prometheus_text();
+        assert!(text.contains("# TYPE yggdrasil_rollback_depth_blocks histogram\n"));
+        assert!(
+            text.contains("yggdrasil_rollback_depth_blocks_bucket{le=\"1\"} 1\n"),
+            "le=1 bucket value not exposed correctly"
+        );
+        assert!(
+            text.contains("yggdrasil_rollback_depth_blocks_bucket{le=\"+Inf\"} 3\n"),
+            "+Inf bucket value not exposed correctly"
+        );
+        assert!(text.contains("yggdrasil_rollback_depth_blocks_sum 5003\n"));
+        assert!(text.contains("yggdrasil_rollback_depth_blocks_count 3\n"));
+    }
+
+    /// R229 — pin the Phase D.2 5-counter lifetime peer-stats
+    /// Prometheus output contract.  The 4 counters
+    /// (`*_total`) MUST emit `# TYPE …_total counter`; the 1
+    /// gauge (`unique_peers`) MUST emit `# TYPE … gauge`.  Drift
+    /// in the contract (e.g. accidentally emitting a counter as a
+    /// gauge) silently breaks operator alerts that depend on
+    /// `rate(...)` semantics.
+    ///
+    /// References R222–R226 (the lifetime peer-stats deliverable).
+    #[test]
+    fn node_metrics_tracks_phase_d2_lifetime_peer_stats() {
+        let metrics = NodeMetrics::new();
+
+        // Default state: all five lifetime counters at zero.
+        let snap = metrics.snapshot();
+        assert_eq!(snap.peer_lifetime_sessions_total, 0);
+        assert_eq!(snap.peer_lifetime_failures_total, 0);
+        assert_eq!(snap.peer_lifetime_bytes_in_total, 0);
+        assert_eq!(snap.peer_lifetime_unique_peers, 0);
+        assert_eq!(snap.peer_lifetime_handshakes_total, 0);
+
+        // Simulate governor-tick aggregate updates.
+        metrics.set_peer_lifetime_sessions_total(7);
+        metrics.set_peer_lifetime_failures_total(2);
+        metrics.set_peer_lifetime_bytes_in_total(1_500_000);
+        metrics.set_peer_lifetime_unique_peers(9);
+        metrics.set_peer_lifetime_handshakes_total(7);
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.peer_lifetime_sessions_total, 7);
+        assert_eq!(snap.peer_lifetime_failures_total, 2);
+        assert_eq!(snap.peer_lifetime_bytes_in_total, 1_500_000);
+        assert_eq!(snap.peer_lifetime_unique_peers, 9);
+        assert_eq!(snap.peer_lifetime_handshakes_total, 7);
+
+        // Prometheus text contract — TYPE lines + value lines for
+        // each of the 5 metrics, with correct counter / gauge
+        // discrimination.
+        let text = snap.to_prometheus_text();
+
+        // 4 counters.
+        for counter in [
+            "yggdrasil_peer_lifetime_sessions_total",
+            "yggdrasil_peer_lifetime_failures_total",
+            "yggdrasil_peer_lifetime_bytes_in_total",
+            "yggdrasil_peer_lifetime_handshakes_total",
+        ] {
+            assert!(
+                text.contains(&format!("# TYPE {counter} counter\n")),
+                "missing counter TYPE for {counter}"
+            );
+        }
+        // 1 gauge.
+        assert!(
+            text.contains("# TYPE yggdrasil_peer_lifetime_unique_peers gauge\n"),
+            "unique_peers must be a gauge (cardinality of map)"
+        );
+
+        // Value lines.
+        assert!(text.contains("yggdrasil_peer_lifetime_sessions_total 7\n"));
+        assert!(text.contains("yggdrasil_peer_lifetime_failures_total 2\n"));
+        assert!(text.contains("yggdrasil_peer_lifetime_bytes_in_total 1500000\n"));
+        assert!(text.contains("yggdrasil_peer_lifetime_unique_peers 9\n"));
+        assert!(text.contains("yggdrasil_peer_lifetime_handshakes_total 7\n"));
+    }
+
     #[test]
     fn node_metrics_tracks_blockfetch_worker_pool_size() {
         // Phase 6 multi-peer dispatch observability: operators must
