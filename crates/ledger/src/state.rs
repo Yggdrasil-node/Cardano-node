@@ -4126,14 +4126,21 @@ impl LedgerState {
             }
         }
 
-        match block.era {
-            Era::Byron => self.apply_byron_block(block, slot)?,
-            Era::Shelley => self.apply_shelley_block(block, slot)?,
-            Era::Allegra => self.apply_allegra_block(block, slot)?,
-            Era::Mary => self.apply_mary_block(block, slot)?,
-            Era::Alonzo => self.apply_alonzo_block(block, slot, evaluator)?,
-            Era::Babbage => self.apply_babbage_block(block, slot, evaluator)?,
-            Era::Conway => self.apply_conway_block(block, slot, evaluator)?,
+        let protocol_params_before_block = self.protocol_params.clone();
+        self.adopt_block_protocol_version_for_validation(block.era, block.header.protocol_version);
+
+        let apply_result = match block.era {
+            Era::Byron => self.apply_byron_block(block, slot),
+            Era::Shelley => self.apply_shelley_block(block, slot),
+            Era::Allegra => self.apply_allegra_block(block, slot),
+            Era::Mary => self.apply_mary_block(block, slot),
+            Era::Alonzo => self.apply_alonzo_block(block, slot, evaluator),
+            Era::Babbage => self.apply_babbage_block(block, slot, evaluator),
+            Era::Conway => self.apply_conway_block(block, slot, evaluator),
+        };
+        if let Err(err) = apply_result {
+            self.protocol_params = protocol_params_before_block;
+            return Err(err);
         }
 
         // Track block producer for per-pool performance accounting.
@@ -4152,6 +4159,40 @@ impl LedgerState {
             self.latest_block_protocol_version = Some(pv);
         }
         Ok(())
+    }
+
+    /// Mirrors the HFC ledger-state translation step for protocol-version state.
+    ///
+    /// Upstream Babbage `validateScriptsWellFormed` checks Plutus availability
+    /// against `ppProtocolVersionL`. In the full node, translating the ledger
+    /// state at an era boundary keeps that field aligned with the active block
+    /// protocol version. This workspace keeps a single cross-era
+    /// `ProtocolParameters` struct, so block application stages a monotonic
+    /// header-PV adoption before era-specific validation and restores the old
+    /// value if the block is rejected.
+    fn adopt_block_protocol_version_for_validation(
+        &mut self,
+        era: Era,
+        protocol_version: Option<(u64, u64)>,
+    ) {
+        let Some(protocol_version) = protocol_version else {
+            return;
+        };
+        let Some(params) = self.protocol_params.as_mut() else {
+            return;
+        };
+        let Some(min_major) = era_min_protocol_major(era) else {
+            return;
+        };
+        if protocol_version.0 < min_major {
+            return;
+        }
+        if params
+            .protocol_version
+            .is_none_or(|current| protocol_version_is_newer(protocol_version, current))
+        {
+            params.protocol_version = Some(protocol_version);
+        }
     }
 
     /// Applies a single submitted transaction to the current ledger state.
@@ -8712,6 +8753,22 @@ fn conway_drep_parameter_change_threshold(
     }
 
     selected
+}
+
+fn era_min_protocol_major(era: Era) -> Option<u64> {
+    match era {
+        Era::Byron => None,
+        Era::Shelley => Some(2),
+        Era::Allegra => Some(3),
+        Era::Mary => Some(4),
+        Era::Alonzo => Some(5),
+        Era::Babbage => Some(7),
+        Era::Conway => Some(9),
+    }
+}
+
+fn protocol_version_is_newer(candidate: (u64, u64), current: (u64, u64)) -> bool {
+    candidate.0 > current.0 || (candidate.0 == current.0 && candidate.1 > current.1)
 }
 
 fn conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {

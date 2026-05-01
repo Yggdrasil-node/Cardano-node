@@ -733,6 +733,28 @@ fn same_era_consecutive_blocks_allowed() {
     );
 }
 
+/// HFC era activation stages the block header protocol version into the
+/// cross-era protocol-parameter state before era-specific validation.
+#[test]
+fn babbage_block_adopts_header_protocol_version_for_validation() {
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(ProtocolParameters::alonzo_defaults());
+    assert_eq!(
+        state.protocol_params().and_then(|p| p.protocol_version),
+        Some((6, 0))
+    );
+
+    let mut block = make_empty_block(Era::Babbage, 1, 1, 0xAC);
+    block.header.protocol_version = Some((7, 0));
+    state.apply_block(&block).expect("babbage activation block");
+
+    assert_eq!(
+        state.protocol_params().and_then(|p| p.protocol_version),
+        Some((7, 0))
+    );
+    assert_eq!(state.latest_block_protocol_version, Some((7, 0)));
+}
+
 /// An era-advance from Shelley to Conway (skipping Allegra/Mary/Alonzo/Babbage) is allowed.
 #[test]
 fn era_advance_across_multiple_eras_allowed() {

@@ -354,6 +354,18 @@ pub fn validate_script_data_hash(
                 required_script_hashes,
             )?;
             if computed != declared_hash {
+                if std::env::var_os("YGGDRASIL_DEBUG_SCRIPT_INTEGRITY").is_some() {
+                    debug_script_integrity_mismatch(
+                        declared_hash,
+                        computed,
+                        witness_bytes,
+                        protocol_params,
+                        utxo,
+                        reference_inputs,
+                        spending_inputs,
+                        required_script_hashes,
+                    );
+                }
                 // PV >= 11: ScriptIntegrityHashMismatch
                 // PV < 11 or unknown: PPViewHashesDontMatch
                 let pv_ge_11 = matches!(protocol_version, Some((major, _)) if major >= 11);
@@ -371,6 +383,63 @@ pub fn validate_script_data_hash(
             Ok(())
         }
     }
+}
+
+fn debug_script_integrity_mismatch(
+    declared: [u8; 32],
+    computed: [u8; 32],
+    witness_bytes: Option<&[u8]>,
+    protocol_params: Option<&ProtocolParameters>,
+    utxo: Option<&MultiEraUtxo>,
+    reference_inputs: Option<&[ShelleyTxIn]>,
+    spending_inputs: Option<&[ShelleyTxIn]>,
+    required_script_hashes: Option<&HashSet<[u8; 28]>>,
+) {
+    let Some(wb) = witness_bytes else {
+        eprintln!(
+            "script_integrity_debug declared={declared:02x?} computed={computed:02x?} no_witness_bytes"
+        );
+        return;
+    };
+    let Ok(ws) = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb) else {
+        eprintln!(
+            "script_integrity_debug declared={declared:02x?} computed={computed:02x?} witness_decode_failed"
+        );
+        return;
+    };
+    let mut langs: Vec<u8> = collect_all_plutus_scripts(
+        &ws,
+        utxo.unwrap_or(&MultiEraUtxo::new()),
+        reference_inputs,
+        spending_inputs,
+    )
+    .into_iter()
+    .filter(|(hash, _)| {
+        required_script_hashes
+            .map(|required| required.contains(hash))
+            .unwrap_or(true)
+    })
+    .map(|(_, (version, _))| version.cost_model_key())
+    .collect();
+    langs.sort_unstable();
+    langs.dedup();
+    let cm_keys: Vec<u8> = protocol_params
+        .and_then(|p| p.cost_models.as_ref())
+        .map(|m| m.keys().copied().collect())
+        .unwrap_or_default();
+    let cm_lens: Vec<(u8, usize)> = protocol_params
+        .and_then(|p| p.cost_models.as_ref())
+        .map(|m| m.iter().map(|(k, v)| (*k, v.len())).collect())
+        .unwrap_or_default();
+    eprintln!(
+        "script_integrity_debug declared={declared:02x?} computed={computed:02x?} protocol_version={:?} langs={langs:?} cost_model_keys={cm_keys:?} cost_model_lens={cm_lens:?} redeemers={} datums={} v1={} v2={} v3={}",
+        protocol_params.and_then(|p| p.protocol_version),
+        ws.redeemers.len(),
+        ws.plutus_data.len(),
+        ws.plutus_v1_scripts.len(),
+        ws.plutus_v2_scripts.len(),
+        ws.plutus_v3_scripts.len(),
+    );
 }
 
 /// Determine whether a script integrity hash is needed for this transaction.
