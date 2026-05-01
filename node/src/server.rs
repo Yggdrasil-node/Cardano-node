@@ -684,12 +684,27 @@ pub async fn run_chainsync_server(
     mut server: ChainSyncServer,
     provider: &dyn ChainProvider,
     tip_notify: Option<crate::runtime::ChainTipNotify>,
+    metrics: Option<&crate::tracer::NodeMetrics>,
 ) -> Result<(), ChainSyncServerError> {
     let mut cursor: Option<Vec<u8>> = None;
     // Track whether the last served header was a tentative (pipelined)
     // header.  If the tentative header is later trapped (body invalid),
     // we must roll-backward to the confirmed tip before serving new data.
     let mut served_tentative = false;
+
+    // R235 — Phase D.2 bytes-out (ChainSync slice): tally the
+    // bytes emitted in `MsgRollForward { header, tip }` per call.
+    // Counterpart to R234's BlockFetch server bytes-out.
+    // ChainSync header bytes are smaller per message (~94 bytes
+    // for Byron, ~150 bytes for Shelley) but fire on every
+    // RollForward so the cumulative volume is comparable to
+    // BlockFetch over a full sync.
+    let record_emit = |header: &[u8], tip: &[u8], m: Option<&crate::tracer::NodeMetrics>| {
+        if let Some(metrics) = m {
+            let bytes_out = (header.len() as u64).saturating_add(tip.len() as u64);
+            metrics.add_chainsync_server_bytes_served(bytes_out);
+        }
+    };
 
     loop {
         match server.recv_request().await? {
@@ -726,6 +741,7 @@ pub async fn run_chainsync_server(
                     Some((point, header, tip)) => {
                         served_tentative = false;
                         cursor = Some(point);
+                        record_emit(&header, &tip, metrics);
                         server.roll_forward(header, tip).await?;
                     }
                     None => {
@@ -733,6 +749,7 @@ pub async fn run_chainsync_server(
                         if let Some((point, header, tip)) = provider.tentative_tip() {
                             served_tentative = true;
                             cursor = Some(point);
+                            record_emit(&header, &tip, metrics);
                             server.roll_forward(header, tip).await?;
                         } else {
                             // No tentative either — tell client to wait.
@@ -747,6 +764,7 @@ pub async fn run_chainsync_server(
                                 if let Some((point, header, tip)) = provider.next_header(&cursor) {
                                     served_tentative = false;
                                     cursor = Some(point);
+                                    record_emit(&header, &tip, metrics);
                                     server.roll_forward(header, tip).await?;
                                     break;
                                 }
@@ -754,6 +772,7 @@ pub async fn run_chainsync_server(
                                 if let Some((point, header, tip)) = provider.tentative_tip() {
                                     served_tentative = true;
                                     cursor = Some(point);
+                                    record_emit(&header, &tip, metrics);
                                     server.roll_forward(header, tip).await?;
                                     break;
                                 }
@@ -767,10 +786,18 @@ pub async fn run_chainsync_server(
                 match provider.find_intersect(&points) {
                     Some((point, tip)) => {
                         cursor = Some(point.clone());
+                        if let Some(m) = metrics {
+                            // R235 — also tally MsgIntersectFound
+                            // (point + tip envelope bytes).
+                            m.add_chainsync_server_bytes_served((point.len() + tip.len()) as u64);
+                        }
                         server.intersect_found(point, tip).await?;
                     }
                     None => {
                         let tip = provider.chain_tip();
+                        if let Some(m) = metrics {
+                            m.add_chainsync_server_bytes_served(tip.len() as u64);
+                        }
                         server.intersect_not_found(tip).await?;
                     }
                 }
@@ -1926,6 +1953,9 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
                         let notify = session_tip_notify.clone();
+                        // R235 — clone metrics into ChainSync responder
+                        // spawn for server-side bytes-out accounting.
+                        let cs_metrics = bf_metrics.clone();
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1945,7 +1975,13 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 );
                             }
 
-                            let _ = run_chainsync_server(session.chain_sync, &*provider, notify).await;
+                            let _ = run_chainsync_server(
+                                session.chain_sync,
+                                &*provider,
+                                notify,
+                                cs_metrics.as_deref(),
+                            )
+                            .await;
 
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())

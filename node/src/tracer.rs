@@ -667,6 +667,16 @@ pub struct NodeMetrics {
     /// is a larger refactor deferred to a follow-up that also
     /// covers ChainSync and TxSubmission2 egress.
     blockfetch_server_bytes_served_total: AtomicU64,
+    /// R235 — Phase D.2 bytes-out (ChainSync slice): cumulative
+    /// bytes served by the ChainSync SERVER, including
+    /// `MsgRollForward { header, tip }`,
+    /// `MsgIntersectFound { point, tip }`, and
+    /// `MsgIntersectNotFound { tip }` payloads (sum of inline
+    /// CBOR header + tip-envelope bytes).  Per-message volume is
+    /// smaller than BlockFetch (~94 bytes Byron headers, ~150
+    /// Shelley) but fires on every RollForward so cumulative
+    /// volume is non-trivial.
+    chainsync_server_bytes_served_total: AtomicU64,
     /// R226 — Phase D.2: count of distinct peers this node has
     /// ever connected to (cardinality of `lifetime_stats` map).
     /// Distinct from the live `known_peers` gauge which counts the
@@ -840,6 +850,11 @@ pub struct MetricsSnapshot {
     /// R234 — Phase D.2: cumulative bytes served by the BlockFetch
     /// server (egress; aggregate, not per-peer).
     pub blockfetch_server_bytes_served_total: u64,
+    /// R235 — Phase D.2: cumulative bytes served by the ChainSync
+    /// server (egress; aggregate, not per-peer; sums header + tip
+    /// payload bytes per RollForward / IntersectFound /
+    /// IntersectNotFound).
+    pub chainsync_server_bytes_served_total: u64,
     /// R226 — Phase D.2: count of distinct peers ever connected
     /// (cardinality of the governor's `lifetime_stats` map).
     pub peer_lifetime_unique_peers: u64,
@@ -937,6 +952,7 @@ impl NodeMetrics {
             peer_lifetime_failures_total: AtomicU64::new(0),
             peer_lifetime_bytes_in_total: AtomicU64::new(0),
             blockfetch_server_bytes_served_total: AtomicU64::new(0),
+            chainsync_server_bytes_served_total: AtomicU64::new(0),
             peer_lifetime_unique_peers: AtomicU64::new(0),
             peer_lifetime_handshakes_total: AtomicU64::new(0),
             rollback_depth_buckets: [
@@ -1068,6 +1084,16 @@ impl NodeMetrics {
     /// `serve_batch`.  Aggregate only (not per-peer).
     pub fn add_blockfetch_server_bytes_served(&self, n: u64) {
         self.blockfetch_server_bytes_served_total
+            .fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// R235 — Phase D.2 bytes-out: add `n` bytes to the ChainSync
+    /// server cumulative bytes-served counter.  Called by
+    /// `run_chainsync_server` for each `MsgRollForward`,
+    /// `MsgIntersectFound`, and `MsgIntersectNotFound`.
+    /// Aggregate only (not per-peer).
+    pub fn add_chainsync_server_bytes_served(&self, n: u64) {
+        self.chainsync_server_bytes_served_total
             .fetch_add(n, Ordering::Relaxed);
     }
 
@@ -1358,6 +1384,9 @@ impl NodeMetrics {
             peer_lifetime_bytes_in_total: self.peer_lifetime_bytes_in_total.load(Ordering::Relaxed),
             blockfetch_server_bytes_served_total: self
                 .blockfetch_server_bytes_served_total
+                .load(Ordering::Relaxed),
+            chainsync_server_bytes_served_total: self
+                .chainsync_server_bytes_served_total
                 .load(Ordering::Relaxed),
             peer_lifetime_unique_peers: self.peer_lifetime_unique_peers.load(Ordering::Relaxed),
             peer_lifetime_handshakes_total: self
@@ -1684,6 +1713,14 @@ yggdrasil_blocks_conway {}\n",
         out.push_str(&format!(
             "yggdrasil_blockfetch_server_bytes_served_total {}\n",
             self.blockfetch_server_bytes_served_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_chainsync_server_bytes_served_total Cumulative bytes served by the ChainSync server (RollForward/IntersectFound/IntersectNotFound; yggdrasil-as-peer egress).\n",
+        );
+        out.push_str("# TYPE yggdrasil_chainsync_server_bytes_served_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_chainsync_server_bytes_served_total {}\n",
+            self.chainsync_server_bytes_served_total
         ));
         out.push_str(
             "# HELP yggdrasil_peer_lifetime_unique_peers Count of distinct peers ever connected during this process lifetime.\n",
