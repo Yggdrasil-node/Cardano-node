@@ -15,5 +15,5 @@ This directory contains vendored Praos crypto fixture content from upstream `car
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Commit-scoped package root: <https://github.com/IntersectMBO/cardano-base/tree/db52f43b38ba5d8927feb2199d4913fe6c0f974d/cardano-crypto-praos/>
-- Commit-scoped vector directory: <https://github.com/IntersectMBO/cardano-base/tree/db52f43b38ba5d8927feb2199d4913fe6c0f974d/cardano-crypto-praos/test_vectors/>
+- Commit-scoped package root: <https://github.com/IntersectMBO/cardano-base/tree/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/>
+- Commit-scoped vector directory: <https://github.com/IntersectMBO/cardano-base/tree/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/test_vectors/>

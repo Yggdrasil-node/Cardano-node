@@ -33,7 +33,7 @@ Yggdrasil is specification-driven. When sources disagree, use them in this order
 
 ## Vendored Upstream Test Vectors
 - Vendored cryptographic vectors live under `specs/upstream-test-vectors/` with pinned upstream commit provenance.
-- Current pinned `cardano-base` source revision: `db52f43b38ba5d8927feb2199d4913fe6c0f974d`.
+- Current pinned `cardano-base` source revision: `7a8a991945d401d89e27f53b3d3bb464a354ad4c`.
 - Included corpora:
 	- `cardano-crypto-praos/test_vectors/` (Praos VRF vectors)
 	- `cardano-crypto-class/bls12-381-test-vectors/test_vectors/` (BLS12-381 vectors)

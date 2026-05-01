@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 238)
+title: Parity Proof Report (Round 239)
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,10 +7,10 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R238 refresh (2026-05-01)
-**Cumulative arc**: R1 → R238
+**Document round**: R239 refresh (2026-05-01)
+**Cumulative arc**: R1 → R239
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4.7K+ passing, 0 failing at the R238 slice boundary
+**Workspace tests**: 4.7K+ passing, 0 failing at the R239 slice boundary
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the
@@ -303,13 +303,18 @@ point sidecars and does not read nonce/OpCert latest mirrors.
 
 ---
 
-## 5. Upstream alignment — Phase E.1 first slice
+## 5. Upstream alignment — Phase E.1 closed
 
-R201 advanced 4 of 5 drifted documentary upstream pins to live HEAD:
+R201 advanced the first documentary upstream pins to live HEAD, R216
+refreshed the pins that drifted again, and R239 completed the
+coordinated `cardano-base` fixture refresh. All six canonical
+IntersectMBO pins now match live HEAD and `cardano-base` still keeps
+the test-vector directory name, crypto test constant, and node pin in
+lockstep:
 
-| Repository | Pinned (post-R216) | Status |
+| Repository | Pinned (post-R239) | Status |
 |---|---|---|
-| `cardano-base` | `db52f43b38ba…` (audit baseline 2026-Q2) | drifted (vendored-fixture coupled) |
+| `cardano-base` | `7a8a991945d4…` (R239 fixture refresh) | **in-sync** |
 | `cardano-ledger` | `42d088ed84b7…` | **in-sync** |
 | `ouroboros-consensus` | `b047aca4a731…` (R216 advance) | **in-sync** |
 | `ouroboros-network` | `0e84bced45c7…` | **in-sync** |
@@ -317,10 +322,10 @@ R201 advanced 4 of 5 drifted documentary upstream pins to live HEAD:
 | `cardano-node` | `799325937a45…` | **in-sync** |
 
 Drift detector (`bash node/scripts/check_upstream_drift.sh`) reports
-`drifted=1 unreachable=0 total=6`. Three drift-guard tests pass
-(format, cardinality, vendored-directory match).  R201 → R216
-cadence (~15 rounds apart) demonstrates the audit-baseline is
-being actively maintained against upstream.
+`drifted=0 unreachable=0 total=6`. Three drift-guard tests pass
+(format, cardinality, vendored-directory match). R201 → R216 → R239
+demonstrates the audit baseline is actively maintained against
+upstream while preserving SHA-anchored vendored fixture provenance.
 
 ---
 
@@ -343,32 +348,18 @@ being actively maintained against upstream.
 | **C.2** | Pipelined fetch+apply | 🚫 de-prioritised | R217 measurement showed ~1.7% gain — multi-peer dispatch is the actual sync-rate lever |
 | **D.1** | Deep rollback recovery and chain-dep sidecars | ✅ closed code-level slice | R225+R237+R238 |
 | **D.2** | Multi-session peer accounting + aggregate bytes-out | ✅ shipped | R222+R223+R224+R226+R234+R235+R237 |
-| **E.1** | Audit baseline pin refresh | ✅ 5/5 documentary pins | R201+R216 |
-| **E.1 cardano-base** | Vendored fixture coordinated refresh | ⏳ deferred | (requires fetching upstream test vectors at new SHA) |
+| **E.1** | Audit baseline pin refresh + `cardano-base` fixture refresh | ✅ closed, 6/6 pins in-sync | R201+R216+R239 |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 
-The remaining gates are no longer known code-level parity blockers:
-`cardano-base` vendored fixture refresh and the 24h+ mainnet
-rehearsal both require sustained operator or fixture-maintenance
-time. Default multi-peer BlockFetch concurrency still waits on the
-runbook §6.5 sign-off before changing `max_concurrent_block_fetch_peers`.
+The remaining gates are no longer known code-level parity blockers.
+They require sustained operator time: the 24h+ mainnet rehearsal and
+the runbook §6.5 sign-off before changing the default
+`max_concurrent_block_fetch_peers`.
 
 ---
 
 ## 7. Remaining gates
-
-### Phase E.1 cardano-base — coordinated fixture refresh
-
-Vendored test vectors (`specs/upstream-test-vectors/cardano-base/<sha>/`)
-are SHA-anchored to upstream's repo. Advancing to live HEAD requires
-fetching new fixtures and re-running the corpus drift-guard tests
-against them. Risk: any fixture change upstream surfaces as a real
-test failure that needs upstream-source investigation.
-
-**Bar to close**: download new fixtures from upstream at SHA
-`9965336f769d`; move directory; update `CARDANO_BASE_SHA` constant;
-verify all crypto tests pass.
 
 ### Phase E.2 — Mainnet rehearsal
 
@@ -422,7 +413,7 @@ curl -s http://127.0.0.1:12400/metrics | grep apply_batch
 
 # Drift detector
 bash node/scripts/check_upstream_drift.sh
-# Expected: drifted=1 unreachable=0 total=6 (only cardano-base drifted)
+# Expected: drifted=0 unreachable=0 total=6
 
 # Workspace gates
 cargo fmt --all -- --check

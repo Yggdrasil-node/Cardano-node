@@ -6,7 +6,7 @@ description: Guidance for the pinned cardano-base commit snapshot used by vendor
 This directory corresponds to a single pinned upstream commit snapshot.
 
 ## Scope
-- Vendored artifacts from `IntersectMBO/cardano-base` commit `db52f43b38ba5d8927feb2199d4913fe6c0f974d`.
+- Vendored artifacts from `IntersectMBO/cardano-base` commit `7a8a991945d401d89e27f53b3d3bb464a354ad4c`.
 
 ##  Rules *Non-Negotiable*
 - Preserve this directory as a faithful commit-scoped snapshot.
@@ -15,6 +15,6 @@ This directory corresponds to a single pinned upstream commit snapshot.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Commit tree root: <https://github.com/IntersectMBO/cardano-base/tree/db52f43b38ba5d8927feb2199d4913fe6c0f974d/>
-- Commit-scoped `cardano-crypto-praos`: <https://github.com/IntersectMBO/cardano-base/tree/db52f43b38ba5d8927feb2199d4913fe6c0f974d/cardano-crypto-praos/>
-- Commit-scoped `cardano-crypto-class`: <https://github.com/IntersectMBO/cardano-base/tree/db52f43b38ba5d8927feb2199d4913fe6c0f974d/cardano-crypto-class/>
+- Commit tree root: <https://github.com/IntersectMBO/cardano-base/tree/7a8a991945d401d89e27f53b3d3bb464a354ad4c/>
+- Commit-scoped `cardano-crypto-praos`: <https://github.com/IntersectMBO/cardano-base/tree/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-praos/>
+- Commit-scoped `cardano-crypto-class`: <https://github.com/IntersectMBO/cardano-base/tree/7a8a991945d401d89e27f53b3d3bb464a354ad4c/cardano-crypto-class/>

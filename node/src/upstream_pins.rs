@@ -26,8 +26,12 @@
 /// the directory name in that tree so a `git mv`-style refresh is
 /// detectable.
 ///
+/// R239 fixture refresh (2026-05-01) — advanced from
+/// `db52f43b38ba…` to live HEAD and refreshed the vendored Praos VRF +
+/// BLS12-381 vector tree in lockstep.
+///
 /// Reference: `crates/crypto/tests/upstream_vectors.rs::CARDANO_BASE_SHA`.
-pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "db52f43b38ba5d8927feb2199d4913fe6c0f974d";
+pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "7a8a991945d401d89e27f53b3d3bb464a354ad4c";
 
 /// `cardano-ledger` — era-specific rules and CDDL schemas ported into
 /// `crates/ledger/` and `crates/cddl-codegen/`.
@@ -183,7 +187,7 @@ mod tests {
         // build configurations, so we just pin the literal here. The
         // drift-detector script does the directory cross-check.
         assert_eq!(
-            UPSTREAM_CARDANO_BASE_COMMIT, "db52f43b38ba5d8927feb2199d4913fe6c0f974d",
+            UPSTREAM_CARDANO_BASE_COMMIT, "7a8a991945d401d89e27f53b3d3bb464a354ad4c",
             "cardano-base pin must match the vendored test-vector directory name",
         );
     }

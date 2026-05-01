@@ -26,7 +26,7 @@ nav_order: 4
 | Mainnet rehearsal script | `docs/PARITY_SUMMARY.md:303` | `confirmed-active` | `ls node/scripts/` returns only `run_preprod_real_pool_producer.sh`. Mainnet counterpart absent. |
 | Hash-comparison harness vs. Haskell node | `docs/PARITY_SUMMARY.md:304` | `confirmed-active` | `find -name "*hash*compar*" -o -name "*upstream*interop*"` returns nothing. |
 | Restart-resilience automation | `docs/PARITY_SUMMARY.md:305` | `confirmed-active` | No script in `node/scripts/`; documented but unimplemented. |
-| Upstream commit pinning for non-`cardano-base` repos | session-derived | `confirmed-active` | Only `cardano-base` is pinned at `db52f43b38ba5d8927feb2199d4913fe6c0f974d` (referenced in `crates/crypto/tests/upstream_vectors.rs:18`). `cardano-ledger`, `ouroboros-consensus`, `ouroboros-network`, `plutus`, `cardano-node` reference live `master`/`main` branches. `find Cargo.toml -exec grep -l "git ="` confirms zero Cargo git deps — pinning is documentary only. |
+| Upstream commit pinning for canonical repos | session-derived | `closed-already` | R122 introduced documentary pins for all 6 canonical IntersectMBO repos; R201/R216 advanced the non-fixture pins; R239 advanced `cardano-base` to `7a8a991945d401d89e27f53b3d3bb464a354ad4c` and refreshed the vendored fixture directory plus crypto/node constants in lockstep. `find Cargo.toml -exec grep -l "git ="` confirms zero Cargo git deps — pinning remains documentary plus vendored-test-vector provenance. |
 
 ## Doc corrections triggered by this audit
 

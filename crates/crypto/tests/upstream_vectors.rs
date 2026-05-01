@@ -13,7 +13,7 @@ use yggdrasil_crypto::{
     vrf_praos_batchcompat_test_vectors, vrf_praos_test_vectors,
 };
 
-const CARDANO_BASE_SHA: &str = "db52f43b38ba5d8927feb2199d4913fe6c0f974d";
+const CARDANO_BASE_SHA: &str = "7a8a991945d401d89e27f53b3d3bb464a354ad4c";
 
 // ---------------------------------------------------------------------------
 // BLS12-381 hardcoded test parameters (drift-guarded; see
@@ -33,7 +33,7 @@ const CARDANO_BASE_SHA: &str = "db52f43b38ba5d8927feb2199d4913fe6c0f974d";
 // itself (mirrors slices 76/78/80/84 — "named constant + drift guard").
 //
 // Reference: `cardano-base/cardano-crypto-class/bls12-381-test-vectors/`
-// at commit `db52f43b38ba5d8927feb2199d4913fe6c0f974d`.
+// at commit `7a8a991945d401d89e27f53b3d3bb464a354ad4c`.
 // ---------------------------------------------------------------------------
 
 /// Scalar used for `[scalar]Q` lines in `ec_operations_test_vectors`
@@ -650,7 +650,7 @@ fn vendored_standard_full_corpus_probe() {
 /// guard" — for the BLS surface.
 ///
 /// Reference: `cardano-base/cardano-crypto-class/bls12-381-test-vectors/`
-/// at commit `db52f43b38ba5d8927feb2199d4913fe6c0f974d`; IETF BLS suite
+/// at commit `7a8a991945d401d89e27f53b3d3bb464a354ad4c`; IETF BLS suite
 /// ID per `draft-irtf-cfrg-bls-signature-05` §4.2.3.
 #[test]
 fn bls_hardcoded_test_parameters_match_upstream_pins() {

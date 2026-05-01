@@ -675,7 +675,7 @@ This section covers every non-trivial file. Files marked `(read in full)` were r
 | File | Notes |
 |---|---|
 | `mini-ledger.cddl`, `upstream-cddl-fragments/conway-ranges-min.cddl` | CDDL fixtures used by `cddl-codegen`. |
-| `upstream-test-vectors/cardano-base/db52f43.../...` | Vendored VRF + BLS12-381 test vectors. Pinned to commit `db52f43b38ba5d8927feb2199d4913fe6c0f974d`. The directory naming makes drift detectable. |
+| `upstream-test-vectors/cardano-base/db52f43.../...` | Vendored VRF + BLS12-381 test vectors. Pinned to commit `7a8a991945d401d89e27f53b3d3bb464a354ad4c`. The directory naming makes drift detectable. |
 
 ### `docs/`
 

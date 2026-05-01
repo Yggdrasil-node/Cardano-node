@@ -15,10 +15,10 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - `cargo fmt --all -- --check`: clean (zero diff; CI gate added under audit M-2 follow-up)
 - `cargo check-all`: passing
-- `cargo test-all`: passing (0 failures; workspace coverage is 4.7K+ tests at R238)
+- `cargo test-all`: passing (0 failures; workspace coverage is 4.7K+ tests at R239)
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 - `cargo deny check advisories bans licenses sources`: passing (one intentional ignore: `RUSTSEC-2021-0127` for the `serde_cbor` storage carve-out, tracked separately for migration)
-- **`cardano-cli 10.16` LSQ parity** (R164–R238): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end. Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
+- **`cardano-cli 10.16` LSQ parity** (R164–R239): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end. Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip, and R239 closes the outstanding upstream pin/fixture refresh. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
 
 ## Subsystem Status
 
@@ -38,7 +38,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - No critical parity blockers are currently tracked in this matrix.
 - Active validation focus: systematic mainnet endurance rehearsal, parallel BlockFetch §6.5 sign-off, and restart resilience evidence before changing the default `max_concurrent_block_fetch_peers`.
-- Fixture maintenance focus: refresh `cardano-base` upstream vectors and update the pinned SHA metadata.
+- Fixture maintenance focus: keep the R239 `cardano-base` vector cadence current when upstream advances again.
 
 ## Upstream Anchors
 
@@ -58,7 +58,7 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 
 | Repository | Pinned commit | Source |
 |---|---|---|
-| `cardano-base` | `db52f43b38ba5d8927feb2199d4913fe6c0f974d` | `node/src/upstream_pins.rs` (mirrors vendored `specs/upstream-test-vectors/cardano-base/<sha>/` directory name; pin advance gated on vendored fixture refresh) |
+| `cardano-base` | `7a8a991945d401d89e27f53b3d3bb464a354ad4c` | `node/src/upstream_pins.rs` (R239 fixture refresh; mirrors vendored `specs/upstream-test-vectors/cardano-base/<sha>/` directory name) |
 | `cardano-ledger` | `42d088ed84b799d6d980f9be6f14ad953a3c957d` | `node/src/upstream_pins.rs` (audit baseline 2026-04-30, R201 advance) |
 | `ouroboros-consensus` | `b047aca4a731d3282b1dab012d3669e9395328cc` | `node/src/upstream_pins.rs` (audit baseline 2026-04-30, R216 advance) |
 | `ouroboros-network` | `0e84bced45c7fc64252d576fbce55864d75e722a` | `node/src/upstream_pins.rs` (audit baseline 2026-04-26, in-sync with HEAD) |
@@ -75,20 +75,20 @@ Yggdrasil is a pure-Rust port; there are no Cargo `git =` dependencies, so pinni
 
 **Drift is expected and informational**. The audit baseline is allowed to lag upstream — the drift report exists so the lag is visible, not so it triggers a build failure. `check_upstream_drift.sh` exits 0 on drift by default; pass `--fail-on-drift` for CI gating if/when desired.
 
-### Drift snapshot — 2026-04-30 (post-R216 advance)
+### Drift snapshot — 2026-05-01 (post-R239 advance)
 
 `node/scripts/check_upstream_drift.sh` against live `git ls-remote HEAD`:
 
-| Repository | Pinned (audit baseline) | Live HEAD (2026-04-30) | Status |
+| Repository | Pinned (audit baseline) | Live HEAD (2026-05-01) | Status |
 |---|---|---|---|
-| `cardano-base` | `db52f43b38ba…` | `7a8a991945d4…` | drifted (vendored-fixture coupled — see below) |
+| `cardano-base` | `7a8a991945d4…` | (same) | **in-sync** (R239 fixture refresh) |
 | `cardano-ledger` | `42d088ed84b7…` | (same) | **in-sync** |
 | `ouroboros-consensus` | `b047aca4a731…` | (same) | **in-sync** (R216 advance) |
 | `ouroboros-network` | `0e84bced45c7…` | (same) | **in-sync** |
 | `plutus` | `4cd40a14e364…` | (same) | **in-sync** (R216 advance) |
 | `cardano-node` | `799325937a45…` | (same) | **in-sync** |
 
-R201 (2026-04-30) advanced 4 of the 5 drifted documentary pins to live HEAD.  R216 (2026-04-30) refreshed the two pins that had drifted again since R201 (`ouroboros-consensus` and `plutus`).  All 5 documentary pins (every non-cardano-base pin) are in-sync at this point.  `cardano-base` remains at the original 2026-Q2 baseline because its SHA is mirrored by the vendored test-vector directory name (`specs/upstream-test-vectors/cardano-base/<sha>/`) consumed by `crates/crypto/tests/upstream_vectors.rs::CARDANO_BASE_SHA`; advancing it requires a coordinated refresh of the vendored fixtures and re-running the full corpus drift-guard tests, which is intentionally a separate audit slice (Phase E.1 cardano-base item).
+R201 (2026-04-30) advanced 4 of the 5 drifted documentary pins to live HEAD. R216 (2026-04-30) refreshed the two pins that had drifted again since R201 (`ouroboros-consensus` and `plutus`). R239 (2026-05-01) refreshed the coordinated `cardano-base` vendored fixture tree and advanced the mirrored `CARDANO_BASE_SHA` / `UPSTREAM_CARDANO_BASE_COMMIT` pins. All 6 canonical upstream pins are now in-sync with live HEAD.
 
 The Yggdrasil code surface remains tested against the audit-baseline behavior; the documentary pins record which upstream commit the audit cadence (`cargo check-all`, `cargo test-all`, `cargo lint`, drift-guard tests) was last run against.
 

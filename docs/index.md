@@ -85,7 +85,7 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
 
 ## What's implemented
 
-Every confirmed-active code-level parity slice from the [2026-Q2 audit]({{ "/AUDIT_VERIFICATION_2026Q2/" | relative_url }}) is closed, including all runtime integrations originally tracked as follow-ups and the R238 rollback sidecar hardening work.
+Every confirmed-active code-level parity slice from the [2026-Q2 audit]({{ "/AUDIT_VERIFICATION_2026Q2/" | relative_url }}) is closed, including all runtime integrations originally tracked as follow-ups, the R238 rollback sidecar hardening work, and the R239 `cardano-base` upstream fixture refresh.
 
 | Subsystem | Status |
 |-----------|--------|

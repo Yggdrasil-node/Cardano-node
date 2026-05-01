@@ -12,10 +12,9 @@ nav_order: 2
 **Scope**: All subsystems from crypto through orchestration, covering all 7 eras (Byron → Conway)
 
 > **Current operational status**: see [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for the
-> R206 cumulative reference (208 rounds completed; 8 plan items closed,
-> 1 verified, 7 deferred; multi-network operational evidence on preview +
-> preprod; mainnet boot-path verified with sync-pipeline gap deferred to
-> Phase E.2 proper).  The "Recently completed parity items" list below
+> R239 cumulative reference (239 rounds completed; all confirmed-active
+> code-level parity slices and all 6 documentary upstream pins closed;
+> remaining gates are operator-time rehearsals).  The "Recently completed parity items" list below
 > tracks per-round changes; see also [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
 > per-round summary table and [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md)
 > live parity matrix.
@@ -35,7 +34,7 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved (post-R238 status):
+The Rust Cardano node (Yggdrasil) has achieved (post-R239 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
 - ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
@@ -52,17 +51,17 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R238 status):
 - ✅ **Bidirectional P2P parity** (R220+R221 — server-side ChainSync `Tip` envelope wire-shape contract; instance-to-instance preprod sync verified end-to-end with `reconnects=0`)
 - ✅ **Phase D.2 lifetime peer-stats** (R222–R237 — Prometheus counters for sessions, failures, bytes_in, bytes_out, unique_peers, handshakes; bytes_out is folded from per-peer internal egress totals without high-cardinality labels)
 - ✅ **Phase D.1 rollback recovery** (R225 + R237 + R238 — rollback-depth histogram, epoch-boundary-aware checkpoint replay when stake snapshots are enabled, and exact nonce/OpCert ChainDepState sidecar restore-and-replay)
-- ✅ **Phase E.1 documentary pins** (R201+R216 — 5/5 of the non-cardano-base pins in-sync with upstream live HEAD)
+- ✅ **Phase E.1 documentary pins** (R201+R216+R239 — all 6 canonical IntersectMBO pins in-sync with upstream live HEAD; `cardano-base` vector tree refreshed in lockstep)
 - ✅ **Cumulative regression coverage** (R229+R230+R231 — every R200/R217/R225/R226 observability metric has explicit Prometheus-output regression tests pinning bucket boundaries, counter/gauge types, and exposition format)
 
 **To achieve full 1:1 parity** (per the plan at `/home/vscode/.claude/plans/clever-shimmying-quokka.md`), the remaining deferred items are:
-1. **Phase E.1 cardano-base** — coordinated vendored fixture refresh (`git mv` of `specs/upstream-test-vectors/cardano-base/<sha>/` + corpus re-run; network-dependent)
-2. **Phase E.2 24h+ mainnet rehearsal** — sustained operator wall-clock observation; sync infrastructure is end-to-end working post-R211/R213
-3. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
+1. **Phase E.2 24h+ mainnet rehearsal** — sustained operator wall-clock observation; sync infrastructure is end-to-end working post-R211/R213
+2. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
 
 **Recently completed parity items**:
 Older entries in this list preserve the status known at that round; the Executive Summary above is authoritative for current closure state.
 
+- ✅ **R239 cardano-base fixture refresh** — Phase E.1 is now closed across all 6 canonical upstream pins. The vendored `specs/upstream-test-vectors/cardano-base/<sha>/` tree moved to `7a8a991945d401d89e27f53b3d3bb464a354ad4c`, Praos VRF and BLS12-381 vectors were refreshed from official `IntersectMBO/cardano-base`, and both the crypto test `CARDANO_BASE_SHA` and node `UPSTREAM_CARDANO_BASE_COMMIT` constants now mirror that directory.
 - ✅ **R238 rollback sidecar parity hardening** — storage now keeps opaque slot-indexed `chain_dep_state/<slot-hex>.cbor` snapshots as the canonical nonce/OpCert ChainDepState history. Verified sync persists node-owned ChainDepState bundles only at checkpoint cadence after nonce/OpCert updates, terminates batches immediately on `RollBackward`, restores the newest sidecar at-or-before the rollback point, verifies the sidecar point remains on the selected chain prefix, and replays stored raw blocks to the rollback target. Startup/reconnect recovery uses the same restore-and-replay path to the recovered storage tip; LSQ protocol-state uses exact point sidecars. Persistent non-origin rollback fails closed when exact ChainDepState history is unavailable.
 - ✅ **R237 LSQ + egress + rollback closure slice** — `GetPoolDistr2` now reuses the live `PoolDistr` encoder with optional pool-hash filtering and preserves full active-stake denominator; `LedgerPeerSnapshotV2` emits live cumulative pool stake CDF rationals from the `set` snapshot; KeepAlive, TxSubmission2, and PeerSharing server egress counters are wired alongside BlockFetch/ChainSync, with per-peer bytes-out folded into `PeerLifetimeStats`; checkpoint rollback recovery now truncates snapshots at the actual rollback point and replays through `advance_ledger_with_epoch_boundary` when stake snapshot tracking is active.
 - ✅ **Phase A.6 — GetGenesisConfig ShelleyGenesis serialiser (Round 214, final Phase A item, Phase A now 7/7)** — new `encode_shelley_genesis_for_lsq` helper emits upstream's 15-element `Cardano.Ledger.Shelley.Genesis.encCBOR` shape (systemStart UTCTime 3-tuple, networkMagic/networkId, activeSlotsCoeff PositiveUnitInterval, Word64 scalars, 17-element Shelley PP, genDelegs/initialFunds maps, staking record).  Bytes are pre-encoded once at startup and threaded through `BasicLocalQueryDispatcher` via a new `with_genesis_config_cbor` builder.  Mainnet verification: dispatcher reports `genesisConfigCborBytes=833` of real genesis CBOR available; `query tip` continues to work.  Test count 4744 → 4745.
@@ -1265,7 +1264,7 @@ TX expires (TTL):
 **Document prepared by**: Research & Planning Agent
 **Target Review Date**: Week of March 31, 2026 (original projection)
 **Expected Final Delivery (original)**: Mid-June 2026 (13-week roadmap)
-**Actual delivery status (R238, 2026-05-01)**: yggdrasil is a
+**Actual delivery status (R239, 2026-05-01)**: yggdrasil is a
 production-ready pure-Rust Cardano node.  All 3 official Cardano
 networks (preview, preprod, mainnet) demonstrate working
 operational LSQ surface + consensus-side sidecars, including
@@ -1277,11 +1276,12 @@ D.2 lifetime peer-stats plus aggregate server bytes-out deliverable
 (R222+R223+R224+R226+R234+R235+R237) and Phase D.1 rollback
 recovery hardening (R225+R237+R238) are implemented: exact
 nonce/OpCert ChainDepState sidecar restore-and-replay is now the
-code-level baseline. Every R200/R217/R225/R226 observability metric
+code-level baseline. Phase E.1 upstream pin maintenance is closed
+for all 6 canonical IntersectMBO repositories after the R239
+`cardano-base` vendored-vector refresh. Every R200/R217/R225/R226 observability metric
 has explicit Prometheus-output regression tests (R229+R230+R231).
-The workspace has 4.7K+ passing tests at the R238 slice boundary.
-Remaining gates are fixture-maintenance or operator-time items
-(E.1 `cardano-base`, E.2 24h+ rehearsal, §6.5 BlockFetch default
-flip sign-off). See
+The workspace has 4.7K+ passing tests at the R239 slice boundary.
+Remaining gates are operator-time items (E.2 24h+ rehearsal and §6.5
+BlockFetch default flip sign-off). See
 [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for canonical operational
 evidence.

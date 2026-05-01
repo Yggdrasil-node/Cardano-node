@@ -26,7 +26,7 @@ This directory vendors official upstream vector and golden artifacts used for pa
 ## Vendored Set (Current)
 
 - Repository: `IntersectMBO/cardano-base`
-- Commit: `db52f43b38ba5d8927feb2199d4913fe6c0f974d`
+- Commit: `7a8a991945d401d89e27f53b3d3bb464a354ad4c`
 - Paths:
   - `cardano-crypto-praos/test_vectors`
   - `cardano-crypto-class/bls12-381-test-vectors/test_vectors`
