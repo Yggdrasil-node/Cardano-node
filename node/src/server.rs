@@ -591,11 +591,24 @@ pub trait BlockProvider: Send + Sync {
 pub async fn run_blockfetch_server(
     mut server: BlockFetchServer,
     provider: &dyn BlockProvider,
+    metrics: Option<&crate::tracer::NodeMetrics>,
 ) -> Result<(), BlockFetchServerError> {
     loop {
         match server.recv_request().await? {
             BlockFetchServerRequest::RequestRange(range) => {
                 let blocks = provider.get_block_range(&range.lower, &range.upper);
+                // R234 — Phase D.2 bytes-out (initial slice): tally
+                // bytes served as a peer.  This is the egress
+                // counterpart to `peer_lifetime_bytes_in_total`
+                // (R224, BlockFetch ingress).  Aggregate-only (not
+                // per-peer); adding per-peer attribution would
+                // require threading the remote `SocketAddr` through
+                // the run-loop signature, deferred to a follow-up
+                // alongside ChainSync/TxSubmission2 egress accounting.
+                if let Some(m) = metrics {
+                    let bytes_out: u64 = blocks.iter().map(|b| b.len() as u64).sum();
+                    m.add_blockfetch_server_bytes_served(bytes_out);
+                }
                 server.serve_batch(blocks).await?;
             }
             BlockFetchServerRequest::ClientDone => return Ok(()),
@@ -1789,6 +1802,11 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 let session_aborts_clone = session_aborts.clone();
                 let session_tx_state = shared_tx_state.clone();
                 let session_tip_notify = tip_notify.clone();
+                // R234 — Phase D.2 bytes-out: clone the metrics
+                // handle for the BlockFetch responder spawn so it
+                // can record server-side bytes-served.
+                let bf_metrics: Option<Arc<crate::tracer::NodeMetrics>> =
+                    metrics.cloned();
                 let remote_addr = session.remote_addr;
                 let connection_id = conn_id;
                 let base = start;
@@ -1849,6 +1867,12 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         let shared_cm = shared_cm.clone();
                         let session_aborts = session_aborts_clone.clone();
                         let responder_counters = responder_counters.clone();
+                        // R234 — clone the metrics handle into the
+                        // BlockFetch responder spawn so
+                        // `run_blockfetch_server` can record
+                        // server-side bytes-served (Phase D.2 bytes-out
+                        // initial slice).
+                        let bf_metrics = bf_metrics.clone();
                         tokio::spawn(async move {
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())
@@ -1868,7 +1892,12 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 );
                             }
 
-                            let _ = run_blockfetch_server(session.block_fetch, &*provider).await;
+                            let _ = run_blockfetch_server(
+                                session.block_fetch,
+                                &*provider,
+                                bf_metrics.as_deref(),
+                            )
+                            .await;
 
                             if let (Some(ig), Some(cm)) =
                                 (shared_ig.as_ref(), shared_cm.as_ref())

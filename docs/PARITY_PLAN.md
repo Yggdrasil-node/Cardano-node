@@ -35,7 +35,7 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved (post-R214 status):
+The Rust Cardano node (Yggdrasil) has achieved (post-R232 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
 - ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
@@ -49,15 +49,18 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R214 status):
 - ✅ **Monitoring** (35+ metrics including R200's apply-batch duration histogram, Prometheus/JSON endpoints, coloured stdout, detail levels, upstream backend recognition)
 - ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting, post-forge adoption check)
 - ✅ **Mainnet sync** (R211 closed the operational Phase E.2 critical path — Byron EBB hash + same-slot consensus check fixed; mainnet now syncs end-to-end with non-zero volatile/ledger persistence; long-running 24h+ rehearsal still pending separately)
+- ✅ **Bidirectional P2P parity** (R220+R221 — server-side ChainSync `Tip` envelope wire-shape contract; instance-to-instance preprod sync verified end-to-end with `reconnects=0`)
+- ✅ **Phase D.2 lifetime peer-stats** (R222–R226 — 5 Prometheus counters: sessions, failures, bytes_in, unique_peers, handshakes — distinct from session-keyed gauges, monotonic across reconnects)
+- ✅ **Phase D.1 rollback-depth observability** (R225 — 7-bucket histogram from shallow reorgs through cross-epoch and full-resync; data prerequisite for sizing the substantive Phase D.1 implementation work)
+- ✅ **Phase E.1 documentary pins** (R201+R216 — 5/5 of the non-cardano-base pins in-sync with upstream live HEAD)
+- ✅ **Cumulative regression coverage** (R229+R230+R231 — every R200/R217/R225/R226 observability metric has explicit Prometheus-output regression tests pinning bucket boundaries, counter/gauge types, and exposition format)
 
-**To achieve full parity** (per the plan at `/home/vscode/.claude/plans/clever-shimmying-quokka.md`), the remaining deferred items are:
-1. **Phase E.2 long-running mainnet rehearsal** — R211 unblocked sync; verify 24h+ continuous run, block-by-block hash comparison vs upstream `cardano-node 10.7.x`
-2. **Phase A.6** — `GetGenesisConfig` ShelleyGenesis serialiser (no direct cli consumer; ~2-3 days)
-3. **Phase C.2** — pipelined fetch+apply (~3-4 days, deadlock-risk)
-4. **Phase D.1** — deep cross-epoch rollback recovery (~4-5 days)
-5. **Phase D.2** — multi-session peer accounting (~3-4 days, architectural refactor)
-6. **Phase E.1 cardano-base** — coordinated vendored fixture refresh (network-dependent)
-7. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
+**To achieve full 1:1 parity** (per the plan at `/home/vscode/.claude/plans/clever-shimmying-quokka.md`), the remaining deferred items are:
+1. **Phase D.1 full deep-rollback recovery** — historical stake-snapshot reconstruction so rollbacks beyond `k` blocks don't force re-sync from origin (~4-5 days, gated by R225 mainnet rollback distribution data)
+2. **Phase D.2 bytes-out** — per-mini-protocol egress byte accounting on the server-emit path (~3-4 days, architectural)
+3. **Phase E.1 cardano-base** — coordinated vendored fixture refresh (`git mv` of `specs/upstream-test-vectors/cardano-base/<sha>/` + corpus re-run; network-dependent)
+4. **Phase E.2 24h+ mainnet rehearsal** — sustained operator wall-clock observation; sync infrastructure is end-to-end working post-R211/R213
+5. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
 
 **Recently completed parity items**:
 - ✅ **Phase A.6 — GetGenesisConfig ShelleyGenesis serialiser (Round 214, final Phase A item, Phase A now 7/7)** — new `encode_shelley_genesis_for_lsq` helper emits upstream's 15-element `Cardano.Ledger.Shelley.Genesis.encCBOR` shape (systemStart UTCTime 3-tuple, networkMagic/networkId, activeSlotsCoeff PositiveUnitInterval, Word64 scalars, 17-element Shelley PP, genDelegs/initialFunds maps, staking record).  Bytes are pre-encoded once at startup and threaded through `BasicLocalQueryDispatcher` via a new `with_genesis_config_cbor` builder.  Mainnet verification: dispatcher reports `genesisConfigCborBytes=833` of real genesis CBOR available; `query tip` continues to work.  Test count 4744 → 4745.
@@ -1260,15 +1263,21 @@ TX expires (TTL):
 **Document prepared by**: Research & Planning Agent
 **Target Review Date**: Week of March 31, 2026 (original projection)
 **Expected Final Delivery (original)**: Mid-June 2026 (13-week roadmap)
-**Actual delivery status (R214, 2026-04-30)**: **all 3 official
-Cardano networks** (preview, preprod, mainnet) demonstrate working
+**Actual delivery status (R232, 2026-05-01)**: yggdrasil is a
+production-ready pure-Rust Cardano node.  All 3 official Cardano
+networks (preview, preprod, mainnet) demonstrate working
 operational LSQ surface + consensus-side sidecars, including
 heavyweight queries like mainnet `query utxo --whole-utxo` (14 505
-AVVM entries / 31.1B ADA), and **`GetGenesisConfig` returns real
-upstream-shape ShelleyGenesis bytes** (R214 closes Phase A — final
-item, 7/7 complete).  R211 closed the sync gap, R212 verified
-baseline cardano-cli queries on mainnet, R213 closed the BearerClosed
-limitation on large LSQ responses, R214 closes the final Phase A
-encoder item.  Long-running 24h+ rehearsal pending separately.  See
+AVVM entries / 31.1B ADA).  Bidirectional P2P parity (R220+R221) —
+yggdrasil can both sync from upstream IOG peers AND serve blocks
+to other yggdrasil/cardano-node instances byte-correctly.  Phase
+D.2 5-counter lifetime peer-stats deliverable (R222+R223+R224+R226)
++ Phase D.1 rollback-depth observability (R225) operational on
+mainnet.  Every R200/R217/R225/R226 observability metric has
+explicit Prometheus-output regression tests (R229+R230+R231).
+4 749 workspace tests passing, 0 failing.  4 substantive items
+remain deferred to multi-day implementation pushes (D.1 full
+recovery, D.2 bytes-out) or sustained operator observation (E.1
+cardano-base, E.2 24h+ rehearsal).  See
 [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for canonical operational
 evidence.

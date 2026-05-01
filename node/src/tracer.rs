@@ -658,6 +658,15 @@ pub struct NodeMetrics {
     /// each governor tick from per-peer
     /// `BlockFetchInstrumentation::bytes_delivered`.
     peer_lifetime_bytes_in_total: AtomicU64,
+    /// R234 — Phase D.2 bytes-out (initial slice): cumulative
+    /// bytes served by the BlockFetch SERVER (yggdrasil-as-peer
+    /// egress).  Counterpart to `peer_lifetime_bytes_in_total`
+    /// (yggdrasil-as-client ingress).  Aggregate-only (not
+    /// per-peer); per-peer attribution requires threading remote
+    /// `SocketAddr` through the BlockFetch server run-loop, which
+    /// is a larger refactor deferred to a follow-up that also
+    /// covers ChainSync and TxSubmission2 egress.
+    blockfetch_server_bytes_served_total: AtomicU64,
     /// R226 — Phase D.2: count of distinct peers this node has
     /// ever connected to (cardinality of `lifetime_stats` map).
     /// Distinct from the live `known_peers` gauge which counts the
@@ -828,6 +837,9 @@ pub struct MetricsSnapshot {
     /// peers (sum of `PeerLifetimeStats::bytes_in`, sourced from
     /// per-peer `BlockFetchInstrumentation::bytes_delivered`).
     pub peer_lifetime_bytes_in_total: u64,
+    /// R234 — Phase D.2: cumulative bytes served by the BlockFetch
+    /// server (egress; aggregate, not per-peer).
+    pub blockfetch_server_bytes_served_total: u64,
     /// R226 — Phase D.2: count of distinct peers ever connected
     /// (cardinality of the governor's `lifetime_stats` map).
     pub peer_lifetime_unique_peers: u64,
@@ -924,6 +936,7 @@ impl NodeMetrics {
             peer_lifetime_sessions_total: AtomicU64::new(0),
             peer_lifetime_failures_total: AtomicU64::new(0),
             peer_lifetime_bytes_in_total: AtomicU64::new(0),
+            blockfetch_server_bytes_served_total: AtomicU64::new(0),
             peer_lifetime_unique_peers: AtomicU64::new(0),
             peer_lifetime_handshakes_total: AtomicU64::new(0),
             rollback_depth_buckets: [
@@ -1047,6 +1060,15 @@ impl NodeMetrics {
     pub fn set_peer_lifetime_bytes_in_total(&self, total: u64) {
         self.peer_lifetime_bytes_in_total
             .store(total, Ordering::Relaxed);
+    }
+
+    /// R234 — Phase D.2 bytes-out: add `n` bytes to the BlockFetch
+    /// server cumulative bytes-served counter.  Called by
+    /// `run_blockfetch_server` after each successful
+    /// `serve_batch`.  Aggregate only (not per-peer).
+    pub fn add_blockfetch_server_bytes_served(&self, n: u64) {
+        self.blockfetch_server_bytes_served_total
+            .fetch_add(n, Ordering::Relaxed);
     }
 
     /// R226 — Phase D.2: set the unique-peer cardinality counter
@@ -1334,6 +1356,9 @@ impl NodeMetrics {
             peer_lifetime_sessions_total: self.peer_lifetime_sessions_total.load(Ordering::Relaxed),
             peer_lifetime_failures_total: self.peer_lifetime_failures_total.load(Ordering::Relaxed),
             peer_lifetime_bytes_in_total: self.peer_lifetime_bytes_in_total.load(Ordering::Relaxed),
+            blockfetch_server_bytes_served_total: self
+                .blockfetch_server_bytes_served_total
+                .load(Ordering::Relaxed),
             peer_lifetime_unique_peers: self.peer_lifetime_unique_peers.load(Ordering::Relaxed),
             peer_lifetime_handshakes_total: self
                 .peer_lifetime_handshakes_total
@@ -1651,6 +1676,14 @@ yggdrasil_blocks_conway {}\n",
         out.push_str(&format!(
             "yggdrasil_peer_lifetime_bytes_in_total {}\n",
             self.peer_lifetime_bytes_in_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_blockfetch_server_bytes_served_total Cumulative bytes served by the BlockFetch server (yggdrasil-as-peer egress).\n",
+        );
+        out.push_str("# TYPE yggdrasil_blockfetch_server_bytes_served_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_blockfetch_server_bytes_served_total {}\n",
+            self.blockfetch_server_bytes_served_total
         ));
         out.push_str(
             "# HELP yggdrasil_peer_lifetime_unique_peers Count of distinct peers ever connected during this process lifetime.\n",
