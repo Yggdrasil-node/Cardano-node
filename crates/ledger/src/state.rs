@@ -3559,6 +3559,29 @@ impl LedgerState {
         }
     }
 
+    /// Applies all pending protocol-parameter updates whose target epoch is
+    /// less than or equal to `epoch`, in epoch order.
+    ///
+    /// This is equivalent to repeatedly running the upstream epoch update
+    /// step for every epoch boundary that may have been skipped by a sparse
+    /// replay or recovered from an older checkpoint.  The exact-epoch helper
+    /// intentionally prunes stale proposals; callers crossing an epoch
+    /// boundary should use this catch-up variant so a due update is applied
+    /// before later-epoch validation consumes the active protocol parameters.
+    pub fn apply_due_pending_pparam_updates(&mut self, epoch: EpochNo) -> usize {
+        let due_epochs: Vec<EpochNo> = self
+            .pending_pparam_updates
+            .keys()
+            .copied()
+            .filter(|pending_epoch| *pending_epoch <= epoch)
+            .collect();
+
+        due_epochs
+            .into_iter()
+            .map(|due_epoch| self.apply_pending_pparam_updates(due_epoch))
+            .sum()
+    }
+
     /// Returns a reference to registered stake-pool state.
     pub fn pool_state(&self) -> &PoolState {
         &self.pool_state
@@ -12331,7 +12354,7 @@ mod tests {
     use super::*;
     use crate::eras::conway::{GovAction, Vote, Voter};
     use crate::eras::shelley::ShelleyTxOut;
-    use crate::protocol_params::ProtocolParameters;
+    use crate::protocol_params::{ProtocolParameterUpdate, ProtocolParameters};
     use crate::types::{Relay, RewardAccount, UnitInterval};
 
     fn sample_pool_params(relays: Vec<Relay>, operator: u8) -> PoolParams {
@@ -12416,6 +12439,41 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn apply_due_pending_pparam_updates_catches_up_stale_epoch() {
+        let mut state = LedgerState::new(Era::Babbage);
+        state.protocol_params = Some(ProtocolParameters::alonzo_defaults());
+        state.gen_delegs.insert(
+            [0x01; 28],
+            GenesisDelegationState {
+                delegate: [0x02; 28],
+                vrf: [0x03; 32],
+            },
+        );
+
+        let mut cost_models = BTreeMap::new();
+        cost_models.insert(0, vec![10, 20, 30]);
+        let update = ProtocolParameterUpdate {
+            min_fee_a: Some(99),
+            cost_models: Some(cost_models.clone()),
+            ..Default::default()
+        };
+        let field_count = update.field_count();
+        state
+            .pending_pparam_updates
+            .entry(EpochNo(8))
+            .or_default()
+            .insert([0x01; 28], update);
+
+        let applied = state.apply_due_pending_pparam_updates(EpochNo(9));
+
+        assert_eq!(applied, field_count);
+        let params = state.protocol_params().expect("protocol params");
+        assert_eq!(params.min_fee_a, 99);
+        assert_eq!(params.cost_models, Some(cost_models));
+        assert!(state.pending_pparam_updates().is_empty());
     }
 
     #[test]

@@ -26,7 +26,7 @@ Focus on deterministic CEK machine behavior, cost model accuracy, and upstream p
 
 ## Current Status
 - **CEK machine**: complete. De Bruijn indices, closures, partial application. Per-step-kind cost differentiation matching upstream (9 distinct `StepKind` variants: Constant, Var, LamAbs, Apply, Delay, Force, Builtin, Constr, Case). Return phase (`apply_fun`, `force_value`) does not charge step costs, matching upstream semantics.
-- **PlutusBinary / Flat decoder**: complete. Parses upstream `SerialisedScript` bytes (CBOR bytestring containing Flat) into UPLC `Program`; `decode_flat_program()` remains available for raw Flat test fixtures.
+- **PlutusBinary / Flat decoder**: complete. Parses upstream `SerialisedScript` bytes (CBOR bytestring containing Flat) into UPLC `Program`; `decode_flat_program()` remains available for raw Flat test fixtures. Public program/script decode performs the Cardano-specific closed-term scope check after Flat deserialization, rejecting out-of-scope de Bruijn indices as `FlatDecodeError`.
 - **PlutusV1 builtins**: all 60+ implemented (integer, bytestring, string, bool, list, pair, data, crypto).
 - **PlutusV2 builtins**: secp256k1 ECDSA/Schnorr verify, SHA3-256, Keccak-256 — all implemented.
 - **PlutusV3 builtins**: RIPEMD-160, integer↔bytestring conversion, all bitwise operations, modular exponentiation, BLS12-381 (17 builtins: G1/G2 add/neg/scalar-mul/equal/hash-to-group/compress/uncompress, miller-loop, mul-ml-result, final-verify) — all implemented.

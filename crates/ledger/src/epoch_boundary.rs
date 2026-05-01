@@ -442,7 +442,7 @@ pub fn apply_epoch_boundary(
     //     Reference: `Cardano.Ledger.Shelley.Rules.Epoch` — UPEC
     //     is the last sub-rule inside EPOCH.
     // -----------------------------------------------------------------------
-    let pparam_updates_applied = ledger.apply_pending_pparam_updates(new_epoch);
+    let pparam_updates_applied = ledger.apply_due_pending_pparam_updates(new_epoch);
 
     // -----------------------------------------------------------------------
     // 4. Accounting — update treasury and reserves.

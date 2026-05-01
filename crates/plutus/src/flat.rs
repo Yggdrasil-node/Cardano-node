@@ -53,6 +53,7 @@ pub const MAX_TERM_DECODE_DEPTH: usize = 512;
 pub fn decode_flat_program(bytes: &[u8]) -> Result<Program, MachineError> {
     let mut dec = FlatDecoder::new(bytes);
     let program = dec.decode_program()?;
+    validate_program_closed(&program)?;
     Ok(program)
 }
 
@@ -93,6 +94,39 @@ fn decode_script_bytes_with_remainder_policy(
         )));
     }
     decode_flat_program(&flat_bytes)
+}
+
+fn validate_program_closed(program: &Program) -> Result<(), MachineError> {
+    validate_term_closed(&program.term, 0)
+}
+
+fn validate_term_closed(term: &Term, scope_depth: u64) -> Result<(), MachineError> {
+    match term {
+        Term::Var(index) => {
+            if *index == 0 || *index > scope_depth {
+                return Err(MachineError::FlatDecodeError(format!(
+                    "open term: de Bruijn index {index} outside scope depth {scope_depth}"
+                )));
+            }
+            Ok(())
+        }
+        Term::LamAbs(body) => validate_term_closed(body, scope_depth.saturating_add(1)),
+        Term::Apply(fun, arg) => {
+            validate_term_closed(fun, scope_depth)?;
+            validate_term_closed(arg, scope_depth)
+        }
+        Term::Delay(body) | Term::Force(body) => validate_term_closed(body, scope_depth),
+        Term::Constr(_, fields) => fields
+            .iter()
+            .try_for_each(|field| validate_term_closed(field, scope_depth)),
+        Term::Case(scrutinee, branches) => {
+            validate_term_closed(scrutinee, scope_depth)?;
+            branches
+                .iter()
+                .try_for_each(|branch| validate_term_closed(branch, scope_depth))
+        }
+        Term::Constant(_) | Term::Builtin(_) | Term::Error => Ok(()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -604,6 +638,12 @@ mod tests {
         }
     }
 
+    fn flat_program_from_term_bits(term_bits: &[u8]) -> Vec<u8> {
+        let mut data = vec![0x01, 0x00, 0x00]; // version 1.0.0
+        data.extend(bits_to_bytes(term_bits));
+        data
+    }
+
     #[test]
     fn test_read_bit() {
         let data = [0b10110000];
@@ -921,6 +961,50 @@ mod tests {
         assert_eq!(program.minor, 0);
         assert_eq!(program.patch, 0);
         assert_eq!(program.term, Term::Error);
+    }
+
+    #[test]
+    fn test_decode_flat_program_rejects_open_term() {
+        // Program body = Var(1). Top-level programs must be closed.
+        let data = flat_program_from_term_bits(&[
+            0, 0, 0, 0, // tag=0 (Var)
+            0, 0, 0, 0, 0, 0, 0, 1, // natural=1
+        ]);
+
+        let err = decode_flat_program(&data).expect_err("open term rejected");
+        assert!(
+            matches!(&err, MachineError::FlatDecodeError(msg) if msg.contains("open term")),
+            "expected open-term FlatDecodeError, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_decode_flat_program_accepts_closed_lambda() {
+        // Program body = LamAbs(Var(1)).
+        let data = flat_program_from_term_bits(&[
+            0, 0, 1, 0, // tag=2 (LamAbs)
+            0, 0, 0, 0, // tag=0 (Var)
+            0, 0, 0, 0, 0, 0, 0, 1, // natural=1
+        ]);
+
+        let program = decode_flat_program(&data).expect("closed lambda decodes");
+        assert_eq!(program.term, Term::LamAbs(Box::new(Term::Var(1))));
+    }
+
+    #[test]
+    fn test_decode_flat_program_rejects_lambda_with_out_of_scope_var() {
+        // Program body = LamAbs(Var(2)); only Var(1) is bound.
+        let data = flat_program_from_term_bits(&[
+            0, 0, 1, 0, // tag=2 (LamAbs)
+            0, 0, 0, 0, // tag=0 (Var)
+            0, 0, 0, 0, 0, 0, 1, 0, // natural=2
+        ]);
+
+        let err = decode_flat_program(&data).expect_err("out-of-scope variable rejected");
+        assert!(
+            matches!(&err, MachineError::FlatDecodeError(msg) if msg.contains("open term")),
+            "expected open-term FlatDecodeError, got {err:?}"
+        );
     }
 
     // -- Constr / Case decoding -----------------------------------------
