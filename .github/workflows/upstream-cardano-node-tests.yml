@@ -1,0 +1,131 @@
+name: Upstream cardano-node-tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      cardano_node_tests_ref:
+        description: "Ref to checkout from IntersectMBO/cardano-node-tests"
+        required: true
+        default: "master"
+      runner_script:
+        description: "cardano-node-tests runner script to execute"
+        required: true
+        default: "./runner/regression.sh"
+      pytest_args:
+        description: "Pytest selector passed through PYTEST_ARGS"
+        required: true
+        default: "-k 'test_cli or test_local_state_query'"
+      test_threads:
+        description: "TEST_THREADS value for cardano-node-tests"
+        required: true
+        default: "0"
+      clusters_count:
+        description: "CLUSTERS_COUNT value for cardano-node-tests"
+        required: true
+        default: "1"
+      cardano_cli_mode:
+        description: "cardano-cli wrapper mode"
+        required: true
+        type: choice
+        options:
+          - yggdrasil-shim
+          - upstream
+        default: yggdrasil-shim
+      cardano_cli_bin:
+        description: "Absolute cardano-cli path when cardano_cli_mode=upstream"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-cardano-node-tests-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  upstream-e2e:
+    name: Optional upstream E2E harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      CARDANO_NODE_TESTS_DIR: cardano-node-tests
+      YGGDRASIL_CARDANO_CLI_MODE: ${{ inputs.cardano_cli_mode }}
+      CARDANO_CLI_BIN: ${{ inputs.cardano_cli_bin }}
+    steps:
+      - name: Checkout Yggdrasil
+        uses: actions/checkout@v6
+        with:
+          path: yggdrasil
+
+      - name: Install Rust toolchain
+        working-directory: yggdrasil
+        run: |
+          rustup show
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: yggdrasil -> target
+
+      - name: Build Yggdrasil release binary
+        working-directory: yggdrasil
+        run: cargo build --release --bin yggdrasil-node
+
+      - name: Checkout upstream cardano-node-tests
+        uses: actions/checkout@v6
+        with:
+          repository: IntersectMBO/cardano-node-tests
+          ref: ${{ inputs.cardano_node_tests_ref }}
+          path: cardano-node-tests
+
+      - name: Install Yggdrasil wrappers for upstream harness
+        run: |
+          set -euo pipefail
+          mkdir -p "$CARDANO_NODE_TESTS_DIR/.bin"
+          cp yggdrasil/target/release/yggdrasil-node "$CARDANO_NODE_TESTS_DIR/.bin/yggdrasil-node"
+
+          cat > "$CARDANO_NODE_TESTS_DIR/.bin/cardano-node" <<'SH'
+          #!/usr/bin/env sh
+          set -eu
+          bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+          exec "$bin_dir/yggdrasil-node" "$@"
+          SH
+
+          cat > "$CARDANO_NODE_TESTS_DIR/.bin/cardano-cli" <<'SH'
+          #!/usr/bin/env sh
+          set -eu
+          if [ "${YGGDRASIL_CARDANO_CLI_MODE:-yggdrasil-shim}" = "upstream" ]; then
+            if [ -n "${CARDANO_CLI_BIN:-}" ]; then
+              exec "$CARDANO_CLI_BIN" "$@"
+            fi
+            echo "CARDANO_CLI_BIN must be set when cardano_cli_mode=upstream" >&2
+            exit 127
+          fi
+          bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+          exec "$bin_dir/yggdrasil-node" cardano-cli "$@"
+          SH
+
+          chmod +x \
+            "$CARDANO_NODE_TESTS_DIR/.bin/yggdrasil-node" \
+            "$CARDANO_NODE_TESTS_DIR/.bin/cardano-node" \
+            "$CARDANO_NODE_TESTS_DIR/.bin/cardano-cli"
+
+      - name: Run selected upstream tests
+        working-directory: cardano-node-tests
+        env:
+          SELECTED_CARDANO_NODE_TESTS_REF: ${{ inputs.cardano_node_tests_ref }}
+          SELECTED_RUNNER_SCRIPT: ${{ inputs.runner_script }}
+          SELECTED_PYTEST_ARGS: ${{ inputs.pytest_args }}
+          SELECTED_TEST_THREADS: ${{ inputs.test_threads }}
+          SELECTED_CLUSTERS_COUNT: ${{ inputs.clusters_count }}
+        run: |
+          set -euo pipefail
+          echo "cardano-node-tests ref: $SELECTED_CARDANO_NODE_TESTS_REF"
+          echo "runner script: $SELECTED_RUNNER_SCRIPT"
+          echo "pytest args: $SELECTED_PYTEST_ARGS"
+          ./runner/runc.sh -- \
+            TEST_THREADS="$SELECTED_TEST_THREADS" \
+            CLUSTERS_COUNT="$SELECTED_CLUSTERS_COUNT" \
+            PYTEST_ARGS="$SELECTED_PYTEST_ARGS" \
+            "$SELECTED_RUNNER_SCRIPT"

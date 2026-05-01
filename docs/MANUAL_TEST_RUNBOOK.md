@@ -562,7 +562,7 @@ Use the official IntersectMBO [`cardano-node-tests`](https://github.com/Intersec
 
 ### GitHub Actions path
 
-For an Actions-hosted run, use a fork of the upstream test repository. Do not wire this directly into Yggdrasil's required CI until the wrapper layer and selected pytest expression are deterministic.
+For an Actions-hosted run, use either a fork of the upstream test repository or Yggdrasil's manual-only `.github/workflows/upstream-cardano-node-tests.yml` workflow. Do not wire this directly into Yggdrasil's required CI until the wrapper layer and selected pytest expression are deterministic.
 
 1. Fork `IntersectMBO/cardano-node-tests`.
 2. Enable Actions in the fork: `Settings` -> `Actions` -> `General` -> `Actions permissions` -> `Allow all actions and reusable workflows`.
@@ -571,7 +571,8 @@ For an Actions-hosted run, use a fork of the upstream test repository. Do not wi
    - `01 Regression tests`
    - `02 Regression tests with db-sync`
    - `03 Upgrade tests`
-5. Record the upstream workflow URL, Yggdrasil commit, selected test expression, and whether the run used upstream `cardano-cli` or the Yggdrasil `cardano-cli` shim.
+5. For the Yggdrasil workflow, dispatch `Upstream cardano-node-tests`, select the upstream test ref (`master` by default), runner script, pytest expression, cluster count, and `cardano-cli` mode. If `cardano-cli` mode is `upstream`, provide `cardano_cli_bin` through a workflow customization that installs the upstream binary first.
+6. Record the upstream workflow URL, Yggdrasil commit, selected test expression, and whether the run used upstream `cardano-cli` or the Yggdrasil `cardano-cli` shim.
 
 Treat this as external evidence. A failing upstream workflow caused by an unsupported Yggdrasil CLI command is a parity gap to classify, not a reason to edit upstream tests. A failing workflow caused by the wrapper layer is harness debt and must be fixed before the selected slice can become a CI gate.
 

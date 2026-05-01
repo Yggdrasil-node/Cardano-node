@@ -25,6 +25,9 @@
   a fork of that upstream test repository. Any local workflow for it
   MUST be `workflow_dispatch`-only, optional, and documented in
   `docs/MANUAL_TEST_RUNBOOK.md`.
+- `upstream-cardano-node-tests.yml` is that optional wrapper workflow.
+  Keep it manual-only, keep permissions to `contents: read`, and keep
+  all selected upstream refs/pytest expressions as dispatch inputs.
 - Always read the folder-specific `**/AGENTS.md` files. They MUST
   stay current and MUST remain operational rather than long-form
   documentation. If the folder context is outdated, missing, or
