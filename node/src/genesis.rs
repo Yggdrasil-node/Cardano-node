@@ -54,6 +54,18 @@ pub enum GenesisLoadError {
         #[source]
         source: serde_json::Error,
     },
+    /// A Byron genesis file could not be parsed as upstream canonical JSON.
+    ///
+    /// Byron genesis hashes are computed over `renderCanonicalJSON` of the
+    /// parsed JSON value, preserving duplicate object keys and sorting fields
+    /// only during rendering.
+    #[error("failed to parse canonical JSON genesis file {path}: {message}")]
+    CanonicalJson {
+        /// File that failed canonical JSON parsing.
+        path: std::path::PathBuf,
+        /// Parser diagnostic.
+        message: String,
+    },
     /// A genesis field contained an invalid encoded value.
     #[error("invalid genesis field {field}: {message} ({value})")]
     InvalidField {
@@ -1223,24 +1235,38 @@ fn load_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, GenesisLo
     })
 }
 
-/// Compute the Blake2b-256 hash of a genesis file's raw bytes.
+/// Compute the Blake2b-256 hash of a Shelley-family genesis file's raw bytes.
 ///
 /// Matches upstream `cardano-node` `Cardano.Node.Configuration.POM`
 /// hashing for **Shelley / Alonzo / Conway** genesis files, where the
 /// declared `*GenesisHash` is computed over the JSON file's bytes
 /// directly.
-///
-/// **Byron caveat**: upstream Byron genesis hashing uses canonical CBOR
-/// (`Cardano.Crypto.Hashing` round-trips the JSON through canonical CBOR
-/// before hashing); a future slice can extend this helper for the Byron
-/// case. For now Byron hash verification is a no-op via
-/// `NodeConfigFile::verify_known_genesis_hashes`.
 pub fn compute_genesis_file_hash(path: &Path) -> Result<[u8; 32], GenesisLoadError> {
     let bytes = fs::read(path).map_err(|source| GenesisLoadError::Io {
         path: path.to_path_buf(),
         source,
     })?;
     Ok(hash_bytes_256(&bytes).0)
+}
+
+/// Compute the upstream Byron genesis hash.
+///
+/// The official Byron loader (`Cardano.Chain.Genesis.Data.readGenesisData`)
+/// parses the file with `Text.JSON.Canonical.parseCanonicalJSON`, then hashes
+/// `renderCanonicalJSON genesisDataJSON` with Blake2b-256. This differs from
+/// Shelley-family genesis files, whose declared hashes are over raw file bytes.
+pub fn compute_byron_genesis_file_hash(path: &Path) -> Result<[u8; 32], GenesisLoadError> {
+    let bytes = fs::read(path).map_err(|source| GenesisLoadError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let value = parse_canonical_json(&bytes).map_err(|message| GenesisLoadError::CanonicalJson {
+        path: path.to_path_buf(),
+        message,
+    })?;
+    let mut canonical = Vec::with_capacity(bytes.len());
+    render_canonical_json(&value, &mut canonical);
+    Ok(hash_bytes_256(&canonical).0)
 }
 
 /// Verify that the file at `path` hashes to `expected_hex` using
@@ -1256,6 +1282,23 @@ pub fn verify_genesis_file_hash(
 ) -> Result<(), GenesisLoadError> {
     let expected_bytes = parse_blake2b_256_hex(expected_hex, field)?;
     let actual = compute_genesis_file_hash(path)?;
+    if actual.as_slice() != expected_bytes.as_slice() {
+        return Err(GenesisLoadError::HashMismatch {
+            path: path.to_path_buf(),
+            expected: expected_hex.to_string(),
+            actual: hex::encode(actual),
+        });
+    }
+    Ok(())
+}
+
+/// Verify a Byron genesis hash using upstream canonical JSON hashing.
+pub fn verify_byron_genesis_file_hash(
+    path: &Path,
+    expected_hex: &str,
+) -> Result<(), GenesisLoadError> {
+    let expected_bytes = parse_blake2b_256_hex(expected_hex, "ByronGenesisHash")?;
+    let actual = compute_byron_genesis_file_hash(path)?;
     if actual.as_slice() != expected_bytes.as_slice() {
         return Err(GenesisLoadError::HashMismatch {
             path: path.to_path_buf(),
@@ -1293,6 +1336,278 @@ pub fn parse_blake2b_256_hex(
                 value: expected_hex.to_string(),
             })?;
     Ok(bytes)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CanonicalJson {
+    Null,
+    Bool(bool),
+    Num(i64),
+    String(Vec<u8>),
+    Array(Vec<CanonicalJson>),
+    Object(Vec<(Vec<u8>, CanonicalJson)>),
+}
+
+fn parse_canonical_json(input: &[u8]) -> Result<CanonicalJson, String> {
+    let mut parser = CanonicalJsonParser { input, pos: 0 };
+    let value = parser.parse_value_with_leading_space()?;
+    parser.skip_spaces();
+    if parser.is_eof() {
+        Ok(value)
+    } else {
+        Err(format!("trailing bytes after JSON value at byte {}", parser.pos))
+    }
+}
+
+struct CanonicalJsonParser<'a> {
+    input: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> CanonicalJsonParser<'a> {
+    fn is_eof(&self) -> bool {
+        self.pos >= self.input.len()
+    }
+
+    fn peek(&self) -> Option<u8> {
+        self.input.get(self.pos).copied()
+    }
+
+    fn bump(&mut self) -> Option<u8> {
+        let b = self.peek()?;
+        self.pos += 1;
+        Some(b)
+    }
+
+    fn skip_spaces(&mut self) {
+        while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t' | 0x0c)) {
+            self.pos += 1;
+        }
+    }
+
+    fn parse_value_with_leading_space(&mut self) -> Result<CanonicalJson, String> {
+        self.skip_spaces();
+        self.parse_value()
+    }
+
+    fn parse_value(&mut self) -> Result<CanonicalJson, String> {
+        match self.peek() {
+            Some(b'n') => self.parse_keyword(b"null", CanonicalJson::Null),
+            Some(b't') => self.parse_keyword(b"true", CanonicalJson::Bool(true)),
+            Some(b'f') => self.parse_keyword(b"false", CanonicalJson::Bool(false)),
+            Some(b'"') => self.parse_string().map(CanonicalJson::String),
+            Some(b'[') => self.parse_array(),
+            Some(b'{') => self.parse_object(),
+            Some(b'-' | b'0'..=b'9') => self.parse_number().map(CanonicalJson::Num),
+            Some(b) => Err(format!(
+                "unexpected byte 0x{b:02x} at byte {}, expected JSON value",
+                self.pos
+            )),
+            None => Err("unexpected end of input, expected JSON value".to_owned()),
+        }
+    }
+
+    fn parse_keyword(
+        &mut self,
+        keyword: &[u8],
+        value: CanonicalJson,
+    ) -> Result<CanonicalJson, String> {
+        if self.input.get(self.pos..self.pos + keyword.len()) == Some(keyword) {
+            self.pos += keyword.len();
+            self.skip_spaces();
+            Ok(value)
+        } else {
+            Err(format!(
+                "invalid keyword at byte {}, expected {}",
+                self.pos,
+                String::from_utf8_lossy(keyword)
+            ))
+        }
+    }
+
+    fn parse_string(&mut self) -> Result<Vec<u8>, String> {
+        self.expect_byte(b'"')?;
+        let mut out = Vec::new();
+        loop {
+            match self.bump() {
+                Some(b'"') => {
+                    self.skip_spaces();
+                    return Ok(out);
+                }
+                Some(b'\\') => match self.bump() {
+                    Some(b'"') => out.push(b'"'),
+                    Some(b'\\') => out.push(b'\\'),
+                    Some(b) => {
+                        return Err(format!(
+                            "invalid canonical JSON string escape \\{} at byte {}",
+                            b as char,
+                            self.pos.saturating_sub(1)
+                        ));
+                    }
+                    None => {
+                        return Err("unterminated string escape at end of input".to_owned());
+                    }
+                },
+                Some(b) => out.push(b),
+                None => return Err("unterminated string at end of input".to_owned()),
+            }
+        }
+    }
+
+    fn parse_array(&mut self) -> Result<CanonicalJson, String> {
+        self.expect_byte(b'[')?;
+        self.skip_spaces();
+        let mut values = Vec::new();
+        if self.consume_byte(b']') {
+            self.skip_spaces();
+            return Ok(CanonicalJson::Array(values));
+        }
+        loop {
+            values.push(self.parse_value()?);
+            if self.consume_byte(b',') {
+                self.skip_spaces();
+                continue;
+            }
+            self.expect_byte(b']')?;
+            self.skip_spaces();
+            return Ok(CanonicalJson::Array(values));
+        }
+    }
+
+    fn parse_object(&mut self) -> Result<CanonicalJson, String> {
+        self.expect_byte(b'{')?;
+        self.skip_spaces();
+        let mut fields = Vec::new();
+        if self.consume_byte(b'}') {
+            self.skip_spaces();
+            return Ok(CanonicalJson::Object(fields));
+        }
+        loop {
+            let key = self.parse_string()?;
+            self.expect_byte(b':')?;
+            self.skip_spaces();
+            let value = self.parse_value()?;
+            fields.push((key, value));
+            if self.consume_byte(b',') {
+                self.skip_spaces();
+                continue;
+            }
+            self.expect_byte(b'}')?;
+            self.skip_spaces();
+            return Ok(CanonicalJson::Object(fields));
+        }
+    }
+
+    fn parse_number(&mut self) -> Result<i64, String> {
+        let negative = self.consume_byte(b'-');
+        if negative && self.peek() == Some(b'0') {
+            return Err(format!("canonical JSON forbids -0 at byte {}", self.pos));
+        }
+        let start = self.pos;
+        match self.peek() {
+            Some(b'0') if !negative => {
+                self.pos += 1;
+                self.skip_spaces();
+                return Ok(0);
+            }
+            Some(b'1'..=b'9') => {
+                self.pos += 1;
+                while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    self.pos += 1;
+                    if self.pos - start > 15 {
+                        return Err(format!(
+                            "canonical JSON integer at byte {start} exceeds 15 digits"
+                        ));
+                    }
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "invalid canonical JSON integer at byte {}, expected non-zero digit",
+                    self.pos
+                ));
+            }
+        }
+        let digits = std::str::from_utf8(&self.input[start..self.pos])
+            .map_err(|err| format!("invalid UTF-8 in integer at byte {start}: {err}"))?;
+        let magnitude = digits
+            .parse::<i64>()
+            .map_err(|err| format!("invalid integer at byte {start}: {err}"))?;
+        self.skip_spaces();
+        if negative {
+            Ok(-magnitude)
+        } else {
+            Ok(magnitude)
+        }
+    }
+
+    fn expect_byte(&mut self, expected: u8) -> Result<(), String> {
+        match self.bump() {
+            Some(actual) if actual == expected => Ok(()),
+            Some(actual) => Err(format!(
+                "unexpected byte 0x{actual:02x} at byte {}, expected 0x{expected:02x}",
+                self.pos.saturating_sub(1)
+            )),
+            None => Err(format!(
+                "unexpected end of input, expected byte 0x{expected:02x}"
+            )),
+        }
+    }
+
+    fn consume_byte(&mut self, expected: u8) -> bool {
+        if self.peek() == Some(expected) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn render_canonical_json(value: &CanonicalJson, out: &mut Vec<u8>) {
+    match value {
+        CanonicalJson::Null => out.extend_from_slice(b"null"),
+        CanonicalJson::Bool(false) => out.extend_from_slice(b"false"),
+        CanonicalJson::Bool(true) => out.extend_from_slice(b"true"),
+        CanonicalJson::Num(n) => out.extend_from_slice(n.to_string().as_bytes()),
+        CanonicalJson::String(bytes) => render_canonical_json_string(bytes, out),
+        CanonicalJson::Array(values) => {
+            out.push(b'[');
+            for (idx, value) in values.iter().enumerate() {
+                if idx > 0 {
+                    out.push(b',');
+                }
+                render_canonical_json(value, out);
+            }
+            out.push(b']');
+        }
+        CanonicalJson::Object(fields) => {
+            let mut sorted = fields.iter().collect::<Vec<_>>();
+            sorted.sort_by(|(left, _), (right, _)| left.cmp(right));
+            out.push(b'{');
+            for (idx, (key, value)) in sorted.into_iter().enumerate() {
+                if idx > 0 {
+                    out.push(b',');
+                }
+                render_canonical_json_string(key, out);
+                out.push(b':');
+                render_canonical_json(value, out);
+            }
+            out.push(b'}');
+        }
+    }
+}
+
+fn render_canonical_json_string(bytes: &[u8], out: &mut Vec<u8>) {
+    out.push(b'"');
+    for &byte in bytes {
+        match byte {
+            b'"' => out.extend_from_slice(br#"\""#),
+            b'\\' => out.extend_from_slice(br#"\\"#),
+            b => out.push(b),
+        }
+    }
+    out.push(b'"');
 }
 
 /// Load `shelley-genesis.json` from the given path.

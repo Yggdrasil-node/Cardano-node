@@ -566,6 +566,26 @@ that run; treat it as a regression, not as expected incompleteness.
 
 Use the official IntersectMBO [`cardano-node-tests`](https://github.com/IntersectMBO/cardano-node-tests) suite as an external parity harness, not as a default `cargo test` dependency. The upstream documentation at <https://tests.cardano.intersectmbo.org/> describes the suite as system/E2E coverage for `cardano-node`, with `runner/runc.sh` for containerized runs and a `.bin` custom-binary path for alternate `cardano-node` / `cardano-cli` executables.
 
+The upstream process index at <https://tests.cardano.intersectmbo.org/process.html>
+is the selector for Yggdrasil external parity runs. Apply it as a coverage
+taxonomy, not as permission to promote the full upstream suite into required
+CI before wrapper behavior is deterministic:
+
+| Upstream process area | Yggdrasil parity use |
+|---|---|
+| Node CLI E2E and local-cluster tests | First external gate. Run unchanged against upstream Haskell `cardano-node` first, then run the same pytest expression through Yggdrasil wrappers. |
+| Node sync tests | Use for operator evidence after local wrapper slices pass. Keep sync speed, RAM, CPU, and disk observations with the §2-§9 endurance evidence. |
+| Tag-testing regression combinations | Select the lowest-risk combinations that match implemented surfaces: local cluster, P2P or legacy topology as configured, current transaction era, startup, local query, submit-tx, relay sync, and producer preflight. |
+| Upgrade, rollback, mixed-topology, and block-production checks | Treat as manual sign-off gates until the corresponding Yggdrasil runtime path has already passed native runbook checks. Do not make these required CI solely because they exist upstream. |
+| Submit-API, DB Sync, explorer, Plutus, governance, and UAT coverage | Classify unsupported surfaces as explicit parity gaps. Use upstream binaries or skip only when documenting that the missing component is outside the selected Yggdrasil slice. |
+| Negative and error-path tests | Preserve upstream expectations. A missing command or incompatible error shape is either a Yggdrasil parity gap or wrapper debt; do not rewrite upstream tests to hide it. |
+
+When selecting tests, prefer upstream markers or `-k` expressions that map to a
+single Yggdrasil surface and record the exact expression in the pass/fail
+summary. If the upstream tag-testing checklist adds a new class for the target
+node tag, either add a matching row to this runbook or record why that class is
+not yet a Yggdrasil gate.
+
 ### GitHub Actions path
 
 For an Actions-hosted run, use either a fork of the upstream test repository or Yggdrasil's manual-only `.github/workflows/upstream-cardano-node-tests.yml` workflow. Do not wire this directly into Yggdrasil's required CI until the wrapper layer and selected pytest expression are deterministic.
@@ -698,4 +718,4 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 - `node/scripts/compare_tip_to_haskell.sh` — hash-comparison harness (Slice M)
 - `node/scripts/restart_resilience.sh` — restart-resilience automation (Slice N)
 - `node/scripts/parallel_blockfetch_soak.sh` — §6.5 multi-peer BlockFetch soak automation
-- `IntersectMBO/cardano-node-tests` — upstream system/E2E parity harness: <https://github.com/IntersectMBO/cardano-node-tests>, <https://tests.cardano.intersectmbo.org/>
+- `IntersectMBO/cardano-node-tests` — upstream system/E2E parity harness and process taxonomy: <https://github.com/IntersectMBO/cardano-node-tests>, <https://tests.cardano.intersectmbo.org/>, <https://tests.cardano.intersectmbo.org/process.html>

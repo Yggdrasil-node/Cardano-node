@@ -40,8 +40,14 @@ pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "7a8a991945d401d89e27f53b3d3bb464
 /// `9ae77d611ad8…` to live HEAD reported by
 /// `node/scripts/check_upstream_drift.sh`.
 ///
+/// R243 import-only refresh (2026-05-01) — advanced from
+/// `42d088ed84b7…` to live HEAD.  Upstream PR #5787 removes one
+/// redundant import from `Cardano.Ledger.Shelley.API.Mempool`; no
+/// ledger rule, CDDL, or binary codec behavior changed in the ported
+/// subset.
+///
 /// Reference: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "42d088ed84b799d6d980f9be6f14ad953a3c957d";
+pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "110b30e7abd8f507ea21625f8ac06fb6c8b66768";
 
 /// `ouroboros-consensus` — Praos protocol, ChainDB, mempool, and storage
 /// design rationale ported into `crates/consensus/`, `crates/storage/`,
