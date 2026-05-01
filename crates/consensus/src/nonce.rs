@@ -265,9 +265,9 @@ impl NonceEvolutionState {
     }
 }
 
-/// Round 197 — CBOR codec for `NonceEvolutionState` enabling
-/// sidecar persistence (`nonce_state.cbor`) under the storage
-/// directory.  Encoded as a 6-element CBOR list in field-order:
+/// CBOR codec for `NonceEvolutionState` as embedded in node-owned
+/// ChainDepState sidecar bundles. Encoded as a 6-element CBOR list in
+/// field-order:
 ///
 /// ```text
 /// [evolving, candidate, epoch, prev_hash, lab, current_epoch]

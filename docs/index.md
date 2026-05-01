@@ -29,7 +29,7 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
 </div>
 
 <div class="yg-stats" markdown="0">
-  <div class="yg-stat yg-stat-accent"><span class="yg-stat-value">4,640</span><span class="yg-stat-label">Tests passing</span></div>
+  <div class="yg-stat yg-stat-accent"><span class="yg-stat-value">4.7K+</span><span class="yg-stat-label">Tests passing</span></div>
   <div class="yg-stat"><span class="yg-stat-value">0</span><span class="yg-stat-label">Tests failing</span></div>
   <div class="yg-stat"><span class="yg-stat-value">Byron→Conway</span><span class="yg-stat-label">Era coverage</span></div>
   <div class="yg-stat"><span class="yg-stat-value">5 / 5</span><span class="yg-stat-label">Mini-protocols</span></div>
@@ -85,13 +85,13 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
 
 ## What's implemented
 
-Every confirmed-active parity slice from the [2026-Q2 audit]({{ "/AUDIT_VERIFICATION_2026Q2/" | relative_url }}) is closed, including all runtime integrations originally tracked as follow-ups.
+Every confirmed-active code-level parity slice from the [2026-Q2 audit]({{ "/AUDIT_VERIFICATION_2026Q2/" | relative_url }}) is closed, including all runtime integrations originally tracked as follow-ups and the R238 rollback sidecar hardening work.
 
 | Subsystem | Status |
 |-----------|--------|
 | **Crypto** — Blake2b, Ed25519, VRF (std + batchcompat), KES (Simple + Sum 0–6+), BLS12-381, secp256k1 | Complete |
 | **Ledger** — eras Byron through Conway, multi-era UTxO, governance, PPUP, MIR, ratification | Complete |
-| **Storage** — file-backed `ImmutableStore` / `VolatileStore` / `LedgerStore` + `ChainDb` | Complete |
+| **Storage** — file-backed `ImmutableStore` / `VolatileStore` / `LedgerStore` + `ChainDb` + ChainDepState sidecars | Complete |
 | **Consensus** — Praos leader election, KES/OpCert, `ChainState`, nonce evolution | Complete |
 | **Mempool** — fee-ordered queue, TTL admission, ledger revalidation, eviction | Complete |
 | **Network** — mux, all 5 mini-protocols, governor, ledger peers, diffusion types | Complete |

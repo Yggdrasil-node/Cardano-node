@@ -17,11 +17,12 @@ use crate::block_producer::{
 };
 use crate::config::load_peer_snapshot_file;
 use crate::sync::{
-    LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, LedgerRecoveryOutcome,
-    MultiEraSyncProgress, MultiEraSyncStep, SyncError, TypedIntersectResult,
+    ChainDepStateTracking, LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome,
+    LedgerRecoveryOutcome, MultiEraSyncProgress, MultiEraSyncStep, SyncError, TypedIntersectResult,
     VerifiedSyncServiceConfig, VrfVerificationContext, apply_nonce_evolution_to_progress,
     apply_verified_progress_to_chaindb, decode_multi_era_block, extract_consumed_inputs,
-    extract_tx_ids, multi_era_block_to_block, recover_ledger_state_chaindb,
+    extract_tx_ids, multi_era_block_to_block, persist_chain_dep_state_sidecar,
+    recover_ledger_state_chaindb, restore_chain_dep_sidecar_state_to_point,
     sync_batch_apply_verified, sync_batch_verified_with_tentative, track_chain_state,
     typed_find_intersect, validate_block_body_size, validate_block_protocol_version,
     verify_block_body_hash,
@@ -3627,15 +3628,12 @@ pub struct ResumeReconnectingVerifiedSyncRequest<'a> {
     /// `Ouroboros.Network.TxSubmission.Inbound.V2.State` `bufferedTxs`
     /// population on confirmation.
     pub inbound_tx_state: Option<SharedTxState>,
-    /// Optional storage directory under which the OpCert counter sidecar
-    /// (`ocert_counters.cbor`) is persisted whenever a ledger checkpoint
-    /// is written. When `None`, the counters are process-local — same
-    /// behavior as before this slice. When `Some(path)`, the runtime
-    /// writes the encoded counter map atomically alongside each
-    /// checkpoint persistence event so a restarted node retains its
-    /// per-pool monotonicity high-water marks. Reference:
-    /// `PraosState.csCounters` in `Ouroboros.Consensus.Protocol.Praos`.
-    pub ocert_persist_dir: Option<PathBuf>,
+    /// Optional storage directory under which slot-indexed ChainDepState
+    /// sidecars are persisted whenever a ledger checkpoint is written. When
+    /// `Some(path)`, the runtime restores nonce/OpCert state from the exact
+    /// recovered point on restart and requires exact history for persistent
+    /// non-origin rollback.
+    pub chain_dep_persist_dir: Option<PathBuf>,
 }
 
 impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
@@ -3663,7 +3661,7 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
             bp_state: None,
             bp_pool_key_hash: None,
             inbound_tx_state: None,
-            ocert_persist_dir: None,
+            chain_dep_persist_dir: None,
         }
     }
 
@@ -3731,13 +3729,11 @@ impl<'a> ResumeReconnectingVerifiedSyncRequest<'a> {
         self
     }
 
-    /// Enable atomic persistence of the OpCert counter sidecar
-    /// (`ocert_counters.cbor`) under `dir` whenever a ledger checkpoint is
-    /// written. Pass `None` (the default) to keep counters process-local.
-    /// Reference: `PraosState.csCounters` in
-    /// `Ouroboros.Consensus.Protocol.Praos`.
-    pub fn with_ocert_persist_dir(mut self, dir: Option<PathBuf>) -> Self {
-        self.ocert_persist_dir = dir;
+    /// Enable atomic persistence of slot-indexed ChainDepState sidecars under
+    /// `dir` whenever a ledger checkpoint is written. Pass `None` (the
+    /// default) for non-persistent test-style runs.
+    pub fn with_chain_dep_persist_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.chain_dep_persist_dir = dir;
         self
     }
 
@@ -4835,6 +4831,24 @@ where
     // upstream `Ouroboros.Consensus.Storage.ChainDB.Init` reference.
     let mut chain_state = seed_chain_state_via_chain_db(chain_db, config.security_param);
     let mut ocert_counters = config.verification.ocert_counters.clone();
+    if let Some(tracking) = checkpoint_tracking.as_ref() {
+        let restored = restore_chain_dep_sidecar_state_to_point(
+            chain_db,
+            &from_point,
+            tracking.chain_dep_persist_dir.as_deref(),
+            &mut nonce_state,
+            config.nonce_config.as_ref(),
+            &mut ocert_counters,
+        )?;
+        if !restored
+            && tracking.chain_dep_persist_dir.is_some()
+            && !matches!(from_point, Point::Origin)
+        {
+            return Err(SyncError::Recovery(format!(
+                "missing exact ChainDepState sidecar history for recovered point {from_point:?}"
+            )));
+        }
+    }
     let mut had_session = false;
     let mut preferred_peer = None;
     let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
@@ -5075,13 +5089,19 @@ where
                     }
                     match result {
                         Ok(progress) => {
+                            let vrf_nonce_snapshot = if config.verify_vrf {
+                                nonce_state.clone()
+                            } else {
+                                None
+                            };
                             let vrf_ctx = if config.verify_vrf {
-                                nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
-                                    |(ns, asc)| VrfVerificationContext {
+                                vrf_nonce_snapshot
+                                    .as_ref()
+                                    .zip(config.active_slot_coeff.as_ref())
+                                    .map(|(ns, asc)| VrfVerificationContext {
                                         nonce_state: ns,
                                         active_slot_coeff: asc,
-                                    },
-                                )
+                                    })
                             } else {
                                 None
                             };
@@ -5108,7 +5128,11 @@ where
                                 checkpoint_tracking.as_mut(),
                                 &config.checkpoint_policy,
                                 vrf_ctx.as_ref(),
-                                ocert_counters.as_mut(),
+                                ChainDepStateTracking {
+                                    nonce_state: &mut nonce_state,
+                                    nonce_cfg: config.nonce_config.as_ref(),
+                                    ocert_counters: &mut ocert_counters,
+                                },
                             )?;
                             if std::env::var("YGG_SYNC_DEBUG").is_ok() {
                                 let tip_str = checkpoint_tracking
@@ -5273,30 +5297,15 @@ where
                                 metrics,
                             );
 
-                            // R198 — persist evolved nonce_state to
-                            // sidecar so LSQ `query protocol-state`
-                            // surfaces live nonces across restarts.
-                            if let (
-                                Some(state),
-                                Some(LedgerCheckpointUpdateOutcome::Persisted { .. }),
-                                Some(tracking),
-                            ) = (
-                                nonce_state.as_ref(),
-                                applied.checkpoint_outcome.as_ref(),
-                                checkpoint_tracking.as_ref(),
-                            ) && let Some(dir) = tracking.ocert_persist_dir.as_deref()
-                            {
-                                let encoded = {
-                                    use yggdrasil_ledger::cbor::{CborEncode, Encoder};
-                                    let mut enc = Encoder::new();
-                                    state.encode_cbor(&mut enc);
-                                    enc.into_bytes()
-                                };
-                                if let Err(err) =
-                                    yggdrasil_storage::save_nonce_state(dir, &encoded)
-                                {
-                                    return Err(SyncError::Storage(err));
-                                }
+                            if let Some(tracking) = checkpoint_tracking.as_ref() {
+                                persist_chain_dep_state_sidecar(
+                                    &applied.checkpoint_outcome,
+                                    tracking.chain_dep_persist_dir.as_deref(),
+                                    from_point,
+                                    nonce_state.as_ref(),
+                                    ocert_counters.as_ref(),
+                                    config.checkpoint_policy.max_snapshots,
+                                )?;
                             }
 
                             // Update pool fragment-head tracking with the
@@ -5471,6 +5480,27 @@ where
     // upstream `Ouroboros.Consensus.Storage.ChainDB.Init` reference.
     let mut chain_state = seed_chain_state_via_chain_db(chain_db, config.security_param);
     let mut ocert_counters = config.verification.ocert_counters.clone();
+    if let Some(tracking) = checkpoint_tracking.as_ref() {
+        let restored = {
+            let chain_db = chain_db.read().map_err(|_| shared_chaindb_lock_error())?;
+            restore_chain_dep_sidecar_state_to_point(
+                &chain_db,
+                &from_point,
+                tracking.chain_dep_persist_dir.as_deref(),
+                &mut nonce_state,
+                config.nonce_config.as_ref(),
+                &mut ocert_counters,
+            )?
+        };
+        if !restored
+            && tracking.chain_dep_persist_dir.is_some()
+            && !matches!(from_point, Point::Origin)
+        {
+            return Err(SyncError::Recovery(format!(
+                "missing exact ChainDepState sidecar history for recovered point {from_point:?}"
+            )));
+        }
+    }
     let mut had_session = false;
     let mut preferred_peer = None;
     let mut recently_confirmed = BTreeMap::<TxId, MempoolEntry>::new();
@@ -5710,13 +5740,19 @@ where
                     }
                     match result {
                         Ok(progress) => {
+                            let vrf_nonce_snapshot = if config.verify_vrf {
+                                nonce_state.clone()
+                            } else {
+                                None
+                            };
                             let vrf_ctx = if config.verify_vrf {
-                                nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
-                                    |(ns, asc)| VrfVerificationContext {
+                                vrf_nonce_snapshot
+                                    .as_ref()
+                                    .zip(config.active_slot_coeff.as_ref())
+                                    .map(|(ns, asc)| VrfVerificationContext {
                                         nonce_state: ns,
                                         active_slot_coeff: asc,
-                                    },
-                                )
+                                    })
                             } else {
                                 None
                             };
@@ -5744,7 +5780,11 @@ where
                                     checkpoint_tracking.as_mut(),
                                     &config.checkpoint_policy,
                                     vrf_ctx.as_ref(),
-                                    ocert_counters.as_mut(),
+                                    ChainDepStateTracking {
+                                        nonce_state: &mut nonce_state,
+                                        nonce_cfg: config.nonce_config.as_ref(),
+                                        ocert_counters: &mut ocert_counters,
+                                    },
                                 )?
                             };
                             if std::env::var("YGG_SYNC_DEBUG").is_ok() {
@@ -5906,30 +5946,15 @@ where
                                 metrics,
                             );
 
-                            // R198 — persist evolved nonce_state to
-                            // sidecar so LSQ `query protocol-state`
-                            // surfaces live nonces across restarts.
-                            if let (
-                                Some(state),
-                                Some(LedgerCheckpointUpdateOutcome::Persisted { .. }),
-                                Some(tracking),
-                            ) = (
-                                nonce_state.as_ref(),
-                                applied.checkpoint_outcome.as_ref(),
-                                checkpoint_tracking.as_ref(),
-                            ) && let Some(dir) = tracking.ocert_persist_dir.as_deref()
-                            {
-                                let encoded = {
-                                    use yggdrasil_ledger::cbor::{CborEncode, Encoder};
-                                    let mut enc = Encoder::new();
-                                    state.encode_cbor(&mut enc);
-                                    enc.into_bytes()
-                                };
-                                if let Err(err) =
-                                    yggdrasil_storage::save_nonce_state(dir, &encoded)
-                                {
-                                    return Err(SyncError::Storage(err));
-                                }
+                            if let Some(tracking) = checkpoint_tracking.as_ref() {
+                                persist_chain_dep_state_sidecar(
+                                    &applied.checkpoint_outcome,
+                                    tracking.chain_dep_persist_dir.as_deref(),
+                                    from_point,
+                                    nonce_state.as_ref(),
+                                    ocert_counters.as_ref(),
+                                    config.checkpoint_policy.max_snapshots,
+                                )?;
                             }
 
                             // Update pool fragment-head tracking with the
@@ -6541,7 +6566,7 @@ where
         bp_state: _,
         bp_pool_key_hash: _,
         inbound_tx_state: _,
-        ocert_persist_dir,
+        chain_dep_persist_dir,
     } = request;
 
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
@@ -6577,7 +6602,7 @@ where
                 .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
         }),
         pool_block_counts: std::collections::BTreeMap::new(),
-        ocert_persist_dir: ocert_persist_dir.clone(),
+        chain_dep_persist_dir: chain_dep_persist_dir.clone(),
     };
 
     let sync = run_reconnecting_verified_sync_service_chaindb_inner(
@@ -6656,7 +6681,7 @@ where
         bp_state,
         bp_pool_key_hash,
         inbound_tx_state,
-        ocert_persist_dir,
+        chain_dep_persist_dir,
     } = request;
 
     let recovery = {
@@ -6695,7 +6720,7 @@ where
                 .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
         }),
         pool_block_counts: std::collections::BTreeMap::new(),
-        ocert_persist_dir: ocert_persist_dir.clone(),
+        chain_dep_persist_dir: chain_dep_persist_dir.clone(),
     };
 
     let sync = run_reconnecting_verified_sync_service_shared_chaindb_inner(

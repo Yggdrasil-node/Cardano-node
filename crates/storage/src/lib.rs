@@ -20,7 +20,7 @@ pub mod file_volatile;
 pub mod immutable_db;
 /// Ledger snapshot storage.
 pub mod ledger_db;
-/// Sidecar persistence for opaque consensus state files (OpCert counters).
+/// Sidecar persistence for opaque consensus state files.
 pub mod ocert_sidecar;
 /// Rollback-aware volatile block storage.
 pub mod volatile_db;
@@ -30,9 +30,10 @@ pub use error::StorageError;
 
 // -- Sidecar re-exports -------------------------------------------------------
 pub use ocert_sidecar::{
-    NONCE_STATE_FILENAME, OCERT_COUNTERS_FILENAME, STAKE_SNAPSHOTS_FILENAME, load_nonce_state,
-    load_ocert_counters, load_stake_snapshots, save_nonce_state, save_ocert_counters,
-    save_stake_snapshots,
+    CHAIN_DEP_STATE_DIR, STAKE_SNAPSHOTS_FILENAME,
+    load_latest_chain_dep_state_snapshot_before_or_at, load_stake_snapshots,
+    retain_latest_chain_dep_state_snapshots, save_chain_dep_state_snapshot, save_stake_snapshots,
+    truncate_chain_dep_state_snapshots_after,
 };
 
 // -- Coordination re-exports --------------------------------------------------

@@ -67,6 +67,17 @@ Keep these documents synchronized with the implemented workspace, not with specu
   notes MUST use clear conventional-commit prefixes
   (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
 
+## Operational run records
+- `docs/operational-runs/*.md` files are dated evidence snapshots.
+  Do not rewrite historical "open follow-up" wording in old run
+  records just because later rounds closed the follow-up. Add a new
+  operational run record for new evidence, then update living status in
+  `README.md`, `PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
+  `PARITY_PROOF.md`, `UPSTREAM_PARITY.md`, and
+  `MANUAL_TEST_RUNBOOK.md`.
+- If a run record itself has a typo or incorrect fact about that same
+  run, correct it narrowly and leave the rest of the record intact.
+
 ##  Rules *Non-Negotiable*
 - Documentation in this directory MUST describe current behavior or explicitly labeled near-term policy, not aspirational features.
 - Dependency decisions MUST be recorded in `DEPENDENCIES.md` before a new crate is treated as accepted.
@@ -80,6 +91,9 @@ Keep these documents synchronized with the implemented workspace, not with specu
 - Formal ledger specifications (Agda, Conway-complete): <https://github.com/IntersectMBO/formal-ledger-specifications>
 - Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
 - Consensus implementation, tech report, and architecture docs: <https://github.com/IntersectMBO/ouroboros-consensus/>
+- LedgerDB/openDB restore-replay semantics: <https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus/Ouroboros-Consensus-Storage-LedgerDB.html>
+- Caught-up node storage model: <https://ouroboros-consensus.cardano.intersectmbo.org/docs/explanations/node_tasks/>
+- UTxO-HD rollback/snapshot design: <https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/utxo-hd/utxo-hd_in_depth/>
 - Networking implementation and protocol specification: <https://github.com/IntersectMBO/ouroboros-network/>
 - Cryptographic primitives (hashing, VRF, KES, BLS): <https://github.com/IntersectMBO/cardano-base/>
 - Plutus core and CEK machine: <https://github.com/IntersectMBO/plutus/>

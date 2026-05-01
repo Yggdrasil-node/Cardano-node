@@ -415,8 +415,8 @@ yggdrasil_peer_lifetime_bytes_in_total / yggdrasil_peer_lifetime_sessions_total
 rate(yggdrasil_peer_lifetime_sessions_total[5m])
 ```
 
-For Phase D.1 deep-rollback observability (R225):
-- `yggdrasil_rollback_depth_blocks` — histogram (7 buckets `[1, 2, 5, 50, 2160, 10_000, +Inf]`) of rollback depths in rolled-back transactions.  Recorded at every batch with `rollback_count > 0`; depth=0 captures session-start `RollBackward(Origin)` confirms (always present at session establishment).  Operators alert on rare deep cross-epoch rollbacks via `histogram_quantile(0.99, rate(yggdrasil_rollback_depth_blocks_bucket[1h]))`.  Distribution is the prerequisite data for sizing the full Phase D.1 deep-rollback recovery work.
+For Phase D.1 rollback observability and R238 sidecar recovery:
+- `yggdrasil_rollback_depth_blocks` — histogram (7 buckets `[1, 2, 5, 50, 2160, 10_000, +Inf]`) of rollback depths in rolled-back transactions. Recorded at every batch with `rollback_count > 0`; depth=0 captures session-start `RollBackward(Origin)` confirms. Operators alert on rare deep cross-epoch rollbacks via `histogram_quantile(0.99, rate(yggdrasil_rollback_depth_blocks_bucket[1h]))`. This metric is now the operator signal for validating rollback distribution and restart-resilience behavior after R238's exact nonce/OpCert sidecar restore-and-replay implementation.
 
 Quick health JSON:
 

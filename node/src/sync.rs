@@ -27,10 +27,11 @@ use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
 use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_ledger::{
     AlonzoBlock, BYRON_SLOTS_PER_EPOCH, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock,
-    CborDecode, CborEncode, ConwayBlock, Decoder, EpochBoundaryEvent, Era, HeaderHash, LedgerError,
-    LedgerState, Nonce, Point, PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock,
-    ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId,
-    UnitInterval, apply_epoch_boundary, compute_block_body_hash, compute_stake_snapshot,
+    CborDecode, CborEncode, ChainDepStateContext, ConwayBlock, Decoder, EpochBoundaryEvent, Era,
+    HeaderHash, LedgerError, LedgerState, Nonce, Point, PoolKeyHash, PraosHeader, PraosHeaderBody,
+    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxIn, SlotNo,
+    StakeSnapshots, Tx, TxId, UnitInterval, apply_epoch_boundary, compute_block_body_hash,
+    compute_stake_snapshot,
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_network::{
@@ -1444,13 +1445,11 @@ pub(crate) struct LedgerCheckpointTracking {
     /// ratios (`blocks_produced / expected_blocks`) and passed to
     /// `apply_epoch_boundary`, then reset for the next epoch.
     pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
-    /// Storage directory under which the OpCert counter sidecar
-    /// (`ocert_counters.cbor`) is persisted whenever a ledger checkpoint
-    /// is written. When `None`, no sidecar persistence happens — the
-    /// counters remain process-local, matching pre-slice behavior.
-    /// Reference: `PraosState.csCounters` in
-    /// `Ouroboros.Consensus.Protocol.Praos`.
-    pub(crate) ocert_persist_dir: Option<PathBuf>,
+    /// Storage directory under which slot-indexed ChainDepState sidecars are
+    /// persisted whenever a ledger checkpoint is written. When `None`, no
+    /// durable nonce/OpCert ChainDepState history exists and rollback can only
+    /// reset to the non-persistent baseline.
+    pub(crate) chain_dep_persist_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1468,6 +1467,121 @@ pub(crate) enum LedgerCheckpointUpdateOutcome {
         rollback_count: usize,
         since_last_slot_delta: u64,
     },
+}
+
+const CHAIN_DEP_SIDECAR_VERSION: u64 = 1;
+
+/// Node-owned CBOR payload stored in the storage crate's opaque
+/// `chain_dep_state/<slot>.cbor` files.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ChainDepSidecarSnapshot {
+    pub point: Point,
+    pub nonce_state: Option<NonceEvolutionState>,
+    pub ocert_counters: Option<OcertCounters>,
+}
+
+fn encode_chain_dep_sidecar_snapshot(
+    point: &Point,
+    nonce_state: Option<&NonceEvolutionState>,
+    ocert_counters: Option<&OcertCounters>,
+) -> Vec<u8> {
+    let mut enc = yggdrasil_ledger::Encoder::new();
+    enc.array(4);
+    enc.unsigned(CHAIN_DEP_SIDECAR_VERSION);
+    point.encode_cbor(&mut enc);
+    match nonce_state {
+        Some(state) => state.encode_cbor(&mut enc),
+        None => {
+            enc.null();
+        }
+    }
+    match ocert_counters {
+        Some(counters) => counters.encode_cbor(&mut enc),
+        None => {
+            enc.null();
+        }
+    }
+    enc.into_bytes()
+}
+
+pub(crate) fn decode_chain_dep_sidecar_snapshot(
+    bytes: &[u8],
+) -> Result<ChainDepSidecarSnapshot, SyncError> {
+    let mut dec = Decoder::new(bytes);
+    let len = dec.array()?;
+    if len != 4 {
+        return Err(LedgerError::CborInvalidLength {
+            expected: 4,
+            actual: len as usize,
+        }
+        .into());
+    }
+    let version = dec.unsigned()?;
+    if version != CHAIN_DEP_SIDECAR_VERSION {
+        return Err(SyncError::Recovery(format!(
+            "unsupported chain-dep sidecar version {version}"
+        )));
+    }
+    let point = Point::decode_cbor(&mut dec)?;
+    let nonce_state = if dec.peek_is_null() {
+        dec.skip()?;
+        None
+    } else {
+        Some(NonceEvolutionState::decode_cbor(&mut dec)?)
+    };
+    let ocert_counters = if dec.peek_is_null() {
+        dec.skip()?;
+        None
+    } else {
+        Some(OcertCounters::decode_cbor(&mut dec)?)
+    };
+    Ok(ChainDepSidecarSnapshot {
+        point,
+        nonce_state,
+        ocert_counters,
+    })
+}
+
+pub(crate) fn chain_dep_context_from_sidecar(
+    sidecar: &ChainDepSidecarSnapshot,
+) -> ChainDepStateContext {
+    let mut ctx = ChainDepStateContext::default();
+    if let Some(nonces) = sidecar.nonce_state.as_ref() {
+        ctx.evolving_nonce = nonces.evolving_nonce;
+        ctx.candidate_nonce = nonces.candidate_nonce;
+        ctx.epoch_nonce = nonces.epoch_nonce;
+        ctx.lab_nonce = nonces.lab_nonce;
+        ctx.last_epoch_block_nonce = nonces.prev_hash_nonce;
+    }
+    if let Some(counters) = sidecar.ocert_counters.as_ref() {
+        for (hash, counter) in counters.iter() {
+            ctx.opcert_counters.insert(*hash, *counter);
+        }
+    }
+    ctx
+}
+
+pub(crate) fn load_exact_chain_dep_sidecar_snapshot(
+    storage_dir: Option<&Path>,
+    point: &Point,
+) -> Result<Option<ChainDepSidecarSnapshot>, SyncError> {
+    let Some(dir) = storage_dir else {
+        return Ok(None);
+    };
+    let Point::BlockPoint(slot, _) = point else {
+        return Ok(None);
+    };
+    let Some((_, bytes)) =
+        yggdrasil_storage::load_latest_chain_dep_state_snapshot_before_or_at(dir, *slot)?
+    else {
+        return Ok(None);
+    };
+    let sidecar = decode_chain_dep_sidecar_snapshot(&bytes)?;
+    if sidecar.point == *point {
+        Ok(Some(sidecar))
+    } else {
+        Ok(None)
+    }
 }
 
 pub(crate) fn for_each_roll_forward_block<E, F>(
@@ -1582,6 +1696,12 @@ pub(crate) struct VrfVerificationContext<'a> {
     pub active_slot_coeff: &'a ActiveSlotCoeff,
 }
 
+pub(crate) struct ChainDepStateTracking<'a> {
+    pub nonce_state: &'a mut Option<NonceEvolutionState>,
+    pub nonce_cfg: Option<&'a NonceEvolutionConfig>,
+    pub ocert_counters: &'a mut Option<OcertCounters>,
+}
+
 pub(crate) fn advance_ledger_with_epoch_boundary(
     ledger_state: &mut LedgerState,
     snapshots: &mut StakeSnapshots,
@@ -1673,7 +1793,7 @@ pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
     progress: &MultiEraSyncProgress,
     policy: &LedgerCheckpointPolicy,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
-    mut ocert_counters: Option<&mut OcertCounters>,
+    chain_dep: ChainDepStateTracking<'_>,
 ) -> Result<(LedgerCheckpointUpdateOutcome, Vec<EpochBoundaryEvent>), SyncError>
 where
     I: ImmutableStore,
@@ -1693,6 +1813,9 @@ where
             .next_back()
             .unwrap_or(progress.current_point);
         chain_db.truncate_ledger_checkpoints_after_point(&rollback_point)?;
+        if let Some(dir) = tracking.chain_dep_persist_dir.as_deref() {
+            yggdrasil_storage::truncate_chain_dep_state_snapshots_after(dir, &rollback_point)?;
+        }
 
         // Round 166 — initial-sync rollback fast path.
         //
@@ -1778,17 +1901,36 @@ where
             // counts for the current epoch.
             tracking.pool_block_counts.clear();
         }
-        // Per-pool OpCert counters are part of upstream `PraosState.csCounters`
-        // (rolled back via `ChainDepState` snapshot at the rollback restore
-        // point). Reset them here so a fork that legitimately includes
-        // lower-sequence OpCerts from the same pool is accepted as
-        // "first-seen" via `OcertCounters::validate_and_update`'s permissive
-        // initialisation rule, instead of being rejected as
-        // `OcertCounterTooOld` against a stale pre-rollback high-water mark.
-        // The persisted sidecar will be overwritten with the post-reset
-        // map at the next checkpoint persistence below.
-        if let Some(counters) = ocert_counters.as_mut() {
-            counters.clear();
+        // Per-pool OpCert counters and Praos nonces are part of upstream
+        // `PraosState` / `ChainDepState`, which LedgerDB restores to the
+        // rollback point before replaying the selected chain suffix. Prefer
+        // the slot-indexed sidecar history. Persistent stores must have this
+        // exact history for non-origin rollback; otherwise proceeding would
+        // invent chain-dependent state. Non-persistent configurations can
+        // only reset to the conservative origin/no-state baseline.
+        let restored_chain_dep = restore_chain_dep_state_after_rollback(
+            chain_db,
+            &rollback_point,
+            tracking.chain_dep_persist_dir.as_deref(),
+            &mut *chain_dep.nonce_state,
+            chain_dep.nonce_cfg,
+            &mut *chain_dep.ocert_counters,
+        )?;
+        if !restored_chain_dep {
+            if tracking.chain_dep_persist_dir.is_some()
+                && !matches!(rollback_point, Point::Origin)
+                && !initial_sync_rollback_to_origin
+            {
+                return Err(SyncError::Recovery(format!(
+                    "missing exact ChainDepState sidecar history for rollback point {rollback_point:?}"
+                )));
+            }
+            if let Some(counters) = chain_dep.ocert_counters.as_mut() {
+                counters.clear();
+            }
+            if chain_dep.nonce_state.is_some() {
+                *chain_dep.nonce_state = Some(NonceEvolutionState::new(Nonce::Neutral));
+            }
         }
 
         // For initial-sync rollback to Origin, the heavy recovery was
@@ -1859,27 +2001,12 @@ where
                     &tracking.ledger_state.checkpoint(),
                     policy.max_snapshots,
                 )?;
-                // Persist the OpCert counter sidecar atomically alongside
-                // the ledger checkpoint. Mirrors `PraosState.csCounters`
-                // durability in upstream `Ouroboros.Consensus.Protocol.Praos`,
-                // which is part of the persistent `ChainDepState`. Without
-                // this, a restart resets per-pool monotonicity high-water
-                // marks to zero and a peer can replay an old block whose
-                // OpCert sequence number is below the true on-chain value.
-                if let (Some(dir), Some(counters)) = (
-                    tracking.ocert_persist_dir.as_ref(),
-                    ocert_counters.as_deref(),
-                ) {
-                    let encoded = counters.to_cbor_bytes();
-                    yggdrasil_storage::save_ocert_counters(dir, &encoded)
-                        .map_err(SyncError::Storage)?;
-                }
                 // R203 — persist active stake-snapshot rotation
                 // alongside the OCert sidecar so LSQ
                 // `query stake-snapshot` can serve live per-pool
                 // mark/set/go totals across restarts.
                 if let (Some(dir), Some(snapshots)) = (
-                    tracking.ocert_persist_dir.as_ref(),
+                    tracking.chain_dep_persist_dir.as_ref(),
                     tracking.stake_snapshots.as_ref(),
                 ) {
                     let encoded = {
@@ -1938,7 +2065,7 @@ where
         stake_snapshots: None,
         epoch_size: None,
         pool_block_counts: BTreeMap::new(),
-        ocert_persist_dir: None,
+        chain_dep_persist_dir: None,
     })
 }
 
@@ -2141,6 +2268,215 @@ where
     })
 }
 
+fn storage_chain_contains_point<I, V, L>(chain_db: &ChainDb<I, V, L>, point: &Point) -> bool
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    match point {
+        Point::Origin => true,
+        Point::BlockPoint(slot, hash) => chain_db
+            .immutable()
+            .get_block(hash)
+            .or_else(|| chain_db.volatile().get_block(hash))
+            .is_some_and(|block| block.header.slot_no == *slot),
+    }
+}
+
+fn replay_chain_dep_block(
+    block: &Block,
+    nonce_state: &mut Option<NonceEvolutionState>,
+    nonce_cfg: Option<&NonceEvolutionConfig>,
+    ocert_counters: &mut Option<OcertCounters>,
+) -> Result<(), SyncError> {
+    if nonce_state.is_none() && ocert_counters.is_none() {
+        return Ok(());
+    }
+    let Some(raw) = block.raw_cbor.as_ref() else {
+        return Err(SyncError::Recovery(format!(
+            "cannot replay chain-dep sidecar state through block {:?}: raw CBOR is missing",
+            storage_point_for_block(block)
+        )));
+    };
+    let decoded = decode_multi_era_block(raw.as_ref())?;
+    if let Some(state) = nonce_state.as_mut() {
+        let Some(cfg) = nonce_cfg else {
+            return Err(SyncError::Recovery(
+                "cannot replay nonce sidecar state without NonceEvolutionConfig".to_owned(),
+            ));
+        };
+        apply_nonce_evolution(state, &decoded, cfg);
+    }
+    if let Some(counters) = ocert_counters.as_mut() {
+        validate_block_opcert_counter_permissive(&decoded, counters)?;
+    }
+    Ok(())
+}
+
+fn replay_chain_dep_state_to_point<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    from_exclusive: &Point,
+    to_inclusive: &Point,
+    nonce_state: &mut Option<NonceEvolutionState>,
+    nonce_cfg: Option<&NonceEvolutionConfig>,
+    ocert_counters: &mut Option<OcertCounters>,
+) -> Result<(), SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    if from_exclusive == to_inclusive {
+        return Ok(());
+    }
+
+    let target_slot = to_inclusive.slot();
+    let mut replay_anchor = *from_exclusive;
+    for block in chain_db.immutable().suffix_after(from_exclusive)? {
+        let point = storage_point_for_block(&block);
+        if let Some(target_slot) = target_slot
+            && point.slot().is_some_and(|slot| slot.0 > target_slot.0)
+        {
+            break;
+        }
+        replay_chain_dep_block(&block, nonce_state, nonce_cfg, ocert_counters)?;
+        replay_anchor = point;
+        if &point == to_inclusive {
+            return Ok(());
+        }
+    }
+
+    for block in volatile_replay_blocks_after(chain_db.volatile(), &replay_anchor)? {
+        let point = storage_point_for_block(&block);
+        if let Some(target_slot) = target_slot
+            && point.slot().is_some_and(|slot| slot.0 > target_slot.0)
+        {
+            break;
+        }
+        replay_chain_dep_block(&block, nonce_state, nonce_cfg, ocert_counters)?;
+        if &point == to_inclusive {
+            return Ok(());
+        }
+    }
+
+    Err(SyncError::Recovery(format!(
+        "chain-dep sidecar replay target {to_inclusive:?} not found after {from_exclusive:?}"
+    )))
+}
+
+fn restore_chain_dep_state_after_rollback<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    rollback_point: &Point,
+    storage_dir: Option<&Path>,
+    nonce_state: &mut Option<NonceEvolutionState>,
+    nonce_cfg: Option<&NonceEvolutionConfig>,
+    ocert_counters: &mut Option<OcertCounters>,
+) -> Result<bool, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let (Some(dir), &Point::BlockPoint(mut cursor, _)) = (storage_dir, rollback_point) else {
+        return Ok(false);
+    };
+
+    loop {
+        let Some((snapshot_slot, bytes)) =
+            yggdrasil_storage::load_latest_chain_dep_state_snapshot_before_or_at(dir, cursor)?
+        else {
+            return Ok(false);
+        };
+
+        let sidecar = match decode_chain_dep_sidecar_snapshot(&bytes) {
+            Ok(sidecar) => sidecar,
+            Err(_) if snapshot_slot.0 > 0 => {
+                cursor = SlotNo(snapshot_slot.0 - 1);
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+
+        if !storage_chain_contains_point(chain_db, &sidecar.point) {
+            if snapshot_slot.0 == 0 {
+                return Ok(false);
+            }
+            cursor = SlotNo(snapshot_slot.0 - 1);
+            continue;
+        }
+
+        // Slot-indexed filenames cannot distinguish Byron EBB/main-block
+        // same-slot ordering. If the hashes differ at the same slot, the
+        // snapshot may be after the rollback target; try an older one.
+        if sidecar.point != *rollback_point && sidecar.point.slot() == rollback_point.slot() {
+            if snapshot_slot.0 == 0 {
+                return Ok(false);
+            }
+            cursor = SlotNo(snapshot_slot.0 - 1);
+            continue;
+        }
+
+        if nonce_state.is_some() && sidecar.nonce_state.is_none() {
+            return Ok(false);
+        }
+        if ocert_counters.is_some() && sidecar.ocert_counters.is_none() {
+            return Ok(false);
+        }
+
+        let mut restored_nonce = if nonce_state.is_some() {
+            sidecar.nonce_state.clone()
+        } else {
+            None
+        };
+        let mut restored_ocert = if ocert_counters.is_some() {
+            sidecar.ocert_counters.clone()
+        } else {
+            None
+        };
+
+        replay_chain_dep_state_to_point(
+            chain_db,
+            &sidecar.point,
+            rollback_point,
+            &mut restored_nonce,
+            nonce_cfg,
+            &mut restored_ocert,
+        )?;
+
+        if nonce_state.is_some() {
+            *nonce_state = restored_nonce;
+        }
+        if ocert_counters.is_some() {
+            *ocert_counters = Some(restored_ocert.unwrap_or_else(OcertCounters::new));
+        }
+        return Ok(true);
+    }
+}
+
+pub(crate) fn restore_chain_dep_sidecar_state_to_point<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    target_point: &Point,
+    storage_dir: Option<&Path>,
+    nonce_state: &mut Option<NonceEvolutionState>,
+    nonce_cfg: Option<&NonceEvolutionConfig>,
+    ocert_counters: &mut Option<OcertCounters>,
+) -> Result<bool, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    restore_chain_dep_state_after_rollback(
+        chain_db,
+        target_point,
+        storage_dir,
+        nonce_state,
+        nonce_cfg,
+        ocert_counters,
+    )
+}
+
 /// Run a continuous verified sync loop with multi-era block decoding,
 /// header/body verification, and optional epoch nonce tracking.
 ///
@@ -2155,10 +2491,10 @@ where
 ///
 /// ## Nonce evolution and rollbacks
 ///
-/// During initial chain sync, rollbacks are rare and typically shallow.
-/// Nonce evolution is forward-only — a rollback does **not** revert the
-/// nonce state.  This is safe for initial sync but will need epoch-boundary
-/// checkpointing when handling live chain forks.
+/// This volatile-store variant has no sidecar history, so callers that need
+/// live-fork parity should prefer the `ChainDb` runtime path. The durable
+/// path restores nonce and OpCert state from slot-indexed ChainDepState
+/// sidecars before replaying to a rollback target.
 ///
 /// # Errors
 ///
@@ -2317,13 +2653,19 @@ where
                 // Build VRF context when verification is enabled and nonce
                 // tracking is active.  The nonce state must be read before
                 // this batch's nonce evolution update.
+                let vrf_nonce_snapshot = if config.verify_vrf {
+                    nonce_state.clone()
+                } else {
+                    None
+                };
                 let vrf_ctx = if config.verify_vrf {
-                    nonce_state.as_ref().zip(config.active_slot_coeff.as_ref()).map(
-                        |(ns, asc)| VrfVerificationContext {
+                    vrf_nonce_snapshot
+                        .as_ref()
+                        .zip(config.active_slot_coeff.as_ref())
+                        .map(|(ns, asc)| VrfVerificationContext {
                             nonce_state: ns,
                             active_slot_coeff: asc,
-                        },
-                    )
+                        })
                 } else {
                     None
                 };
@@ -2335,7 +2677,11 @@ where
                     Some(&mut checkpoint_tracking),
                     &config.checkpoint_policy,
                     vrf_ctx.as_ref(),
-                    ocert_counters.as_mut(),
+                    ChainDepStateTracking {
+                        nonce_state: &mut nonce_state,
+                        nonce_cfg: config.nonce_config.as_ref(),
+                        ocert_counters: &mut ocert_counters,
+                    },
                 )?;
                 from_point = progress.current_point;
                 total_blocks += progress.fetched_blocks;
@@ -2347,10 +2693,22 @@ where
                     nonce_state.as_mut().zip(config.nonce_config.as_ref())
                 {
                     apply_nonce_evolution_to_progress(state, &progress, nonce_cfg);
-                    persist_nonce_state_sidecar(
+                    persist_chain_dep_state_sidecar(
                         &applied.checkpoint_outcome,
-                        checkpoint_tracking.ocert_persist_dir.as_deref(),
-                        state,
+                        checkpoint_tracking.chain_dep_persist_dir.as_deref(),
+                        from_point,
+                        nonce_state.as_ref(),
+                        ocert_counters.as_ref(),
+                        config.checkpoint_policy.max_snapshots,
+                    )?;
+                } else {
+                    persist_chain_dep_state_sidecar(
+                        &applied.checkpoint_outcome,
+                        checkpoint_tracking.chain_dep_persist_dir.as_deref(),
+                        from_point,
+                        None,
+                        ocert_counters.as_ref(),
+                        config.checkpoint_policy.max_snapshots,
                     )?;
                 }
             }
@@ -2358,17 +2716,19 @@ where
     }
 }
 
-/// R198 — persist the post-evolution `NonceEvolutionState` to
-/// `<storage_dir>/nonce_state.cbor` whenever a checkpoint just
-/// landed.  The cadence matches the OCert sidecar pattern
-/// (R196): one sidecar write per ledger-checkpoint persistence.
-/// The LSQ `query protocol-state` read path
-/// (`attach_chain_dep_state_from_sidecar`) surfaces these
-/// live values across LSQ acquires.
-fn persist_nonce_state_sidecar(
+/// Persist the slot-indexed ChainDepState sidecar snapshot corresponding to a
+/// newly persisted ledger checkpoint.
+///
+/// This helper writes the rollback-addressable history that lets rollback
+/// recovery, restart recovery, and LSQ attachment restore `PraosState`-owned
+/// nonces and OpCert counters to an exact point before replaying forward.
+pub(crate) fn persist_chain_dep_state_sidecar(
     checkpoint_outcome: &Option<LedgerCheckpointUpdateOutcome>,
     storage_dir: Option<&Path>,
-    state: &NonceEvolutionState,
+    point: Point,
+    nonce_state: Option<&NonceEvolutionState>,
+    ocert_counters: Option<&OcertCounters>,
+    max_snapshots: usize,
 ) -> Result<(), SyncError> {
     if !matches!(
         checkpoint_outcome,
@@ -2379,13 +2739,14 @@ fn persist_nonce_state_sidecar(
     let Some(dir) = storage_dir else {
         return Ok(());
     };
-    let encoded = {
-        use yggdrasil_ledger::cbor::{CborEncode, Encoder};
-        let mut enc = Encoder::new();
-        state.encode_cbor(&mut enc);
-        enc.into_bytes()
-    };
-    yggdrasil_storage::save_nonce_state(dir, &encoded).map_err(SyncError::Storage)
+    if nonce_state.is_none() && ocert_counters.is_none() {
+        return Ok(());
+    }
+    let encoded = encode_chain_dep_sidecar_snapshot(&point, nonce_state, ocert_counters);
+    yggdrasil_storage::save_chain_dep_state_snapshot(dir, &point, &encoded)
+        .map_err(SyncError::Storage)?;
+    yggdrasil_storage::retain_latest_chain_dep_state_snapshots(dir, max_snapshots)
+        .map_err(SyncError::Storage)
 }
 
 // ---------------------------------------------------------------------------
@@ -4140,7 +4501,7 @@ pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
     checkpoint_tracking: Option<&mut LedgerCheckpointTracking>,
     checkpoint_policy: &LedgerCheckpointPolicy,
     vrf_ctx: Option<&VrfVerificationContext<'_>>,
-    ocert_counters: Option<&mut OcertCounters>,
+    chain_dep: ChainDepStateTracking<'_>,
 ) -> Result<AppliedVerifiedProgress, SyncError>
 where
     I: ImmutableStore,
@@ -4175,7 +4536,7 @@ where
                 progress,
                 checkpoint_policy,
                 vrf_ctx,
-                ocert_counters,
+                chain_dep,
             )
         })
         .transpose()?
@@ -4723,7 +5084,11 @@ pub(crate) async fn sync_batch_verified_with_tentative(
             }
         };
 
+        let end_batch_after_step = verified_batch_step_terminates_batch(&me_step);
         steps.push(me_step);
+        if end_batch_after_step {
+            break;
+        }
     }
 
     Ok(MultiEraSyncProgress {
@@ -4732,6 +5097,10 @@ pub(crate) async fn sync_batch_verified_with_tentative(
         fetched_blocks,
         rollback_count,
     })
+}
+
+fn verified_batch_step_terminates_batch(step: &MultiEraSyncStep) -> bool {
+    matches!(step, MultiEraSyncStep::RollBackward { .. })
 }
 
 /// Execute one batch of verified multi-era sync and apply results to storage.
@@ -5779,6 +6148,65 @@ mod tests {
         Point::BlockPoint(SlotNo(slot), HeaderHash(hash))
     }
 
+    fn storage_block_for_point(point: Point, block_no: u64) -> Block {
+        let Point::BlockPoint(slot, hash) = point else {
+            panic!("test storage block requires a block point")
+        };
+        Block {
+            era: Era::Byron,
+            header: BlockHeader {
+                hash,
+                prev_hash: HeaderHash([0; 32]),
+                slot_no: slot,
+                block_no: BlockNo(block_no),
+                issuer_vkey: [0; 32],
+                protocol_version: None,
+            },
+            transactions: Vec::new(),
+            raw_cbor: None,
+            header_cbor_size: None,
+        }
+    }
+
+    fn test_ocert_counters_through(pool: [u8; 28], seq: u64) -> OcertCounters {
+        let mut counters = OcertCounters::new();
+        for n in 0..=seq {
+            counters.validate_and_update(pool, n, true).unwrap();
+        }
+        counters
+    }
+
+    fn test_nonce_state(byte: u8) -> NonceEvolutionState {
+        NonceEvolutionState::new(Nonce::Hash([byte; 32]))
+    }
+
+    fn raw_byron_ebb(epoch: u64, difficulty: u64, prev_hash: [u8; 32]) -> Vec<u8> {
+        let mut enc = yggdrasil_ledger::Encoder::new();
+        enc.array(2);
+        enc.unsigned(0);
+        enc.array(3);
+        enc.array(5);
+        enc.unsigned(0);
+        enc.bytes(&prev_hash);
+        enc.array(0);
+        enc.array(2);
+        enc.unsigned(epoch);
+        enc.array(1);
+        enc.unsigned(difficulty);
+        enc.array(0);
+        enc.array(0);
+        enc.array(0);
+        enc.into_bytes()
+    }
+
+    fn byron_ebb_storage_block(epoch: u64, difficulty: u64, prev_hash: [u8; 32]) -> Block {
+        let raw = raw_byron_ebb(epoch, difficulty, prev_hash);
+        let decoded = decode_multi_era_block(&raw).expect("decode test byron ebb");
+        let mut block = multi_era_block_to_block(&decoded, &raw);
+        block.raw_cbor = Some(std::sync::Arc::from(raw));
+        block
+    }
+
     #[test]
     fn effective_concurrency_zero_knob_returns_one() {
         // knob = 0 must collapse to single-peer dispatch — preserves
@@ -6698,15 +7126,14 @@ mod tests {
         assert!(near_future_wait_duration_until_slot_at(1010.0, 1000.0, -1.0, SlotNo(8)).is_none());
     }
 
-    /// Pins the rollback-aware reset of `OcertCounters` in
-    /// `update_ledger_checkpoint_after_progress`. Mirrors upstream
-    /// `Cardano.Protocol.TPraos.API` `tickChainDepState` semantics
-    /// where `PraosState.csCounters` is restored from the rollback's
-    /// `ChainDepState` snapshot — without the reset, an alt chain that
-    /// legitimately includes lower-sequence OpCerts from the same pool
-    /// would be rejected as `OcertCounterTooOld`.
+    /// Pins the no-sidecar rollback fallback in
+    /// `update_ledger_checkpoint_after_progress`. The exact path restores
+    /// upstream `ChainDepState` from a sidecar; without history, the only
+    /// safe fallback is to clear OpCert counters and reset nonce state to the
+    /// origin baseline instead of carrying stale chain-dependent state across
+    /// the rollback.
     #[test]
-    fn update_ledger_checkpoint_after_progress_clears_ocert_counters_on_rollback() {
+    fn rollback_without_sidecar_resets_ocert_counters_and_nonce_state() {
         use crate::plutus_eval::CekPlutusEvaluator;
         use yggdrasil_consensus::OcertCounters;
         use yggdrasil_ledger::Era;
@@ -6723,6 +7150,81 @@ mod tests {
         assert_eq!(counters.get(&pool), Some(5));
 
         // Minimal in-memory ChainDb + base ledger state.
+        let rollback_point = block_point(42);
+        let mut chain_db = ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        );
+        chain_db
+            .add_volatile_block(storage_block_for_point(rollback_point, 1))
+            .expect("insert rollback target");
+        let base = LedgerState::new(Era::Byron);
+        let mut tracking = LedgerCheckpointTracking {
+            base_ledger_state: base.clone(),
+            ledger_state: base,
+            last_persisted_point: Point::Origin,
+            plutus_evaluator: CekPlutusEvaluator::default(),
+            stake_snapshots: None,
+            epoch_size: None,
+            pool_block_counts: BTreeMap::new(),
+            chain_dep_persist_dir: None,
+        };
+
+        // A rollback-only batch with no sidecar history exercises the
+        // conservative fallback.
+        let progress = MultiEraSyncProgress {
+            current_point: rollback_point,
+            steps: vec![MultiEraSyncStep::RollBackward {
+                point: rollback_point,
+                tip: rollback_point,
+            }],
+            fetched_blocks: 0,
+            rollback_count: 1,
+        };
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 0,
+            max_snapshots: 0,
+        };
+
+        // Run the helper. Pre-this-slice, counters would still hold
+        // pool → 5 after the call.
+        let mut nonce_state = Some(test_nonce_state(0x88));
+        let mut counter_state = Some(counters);
+        update_ledger_checkpoint_after_progress(
+            &mut chain_db,
+            &mut tracking,
+            &progress,
+            &policy,
+            None,
+            ChainDepStateTracking {
+                nonce_state: &mut nonce_state,
+                nonce_cfg: None,
+                ocert_counters: &mut counter_state,
+            },
+        )
+        .expect("rollback path");
+
+        // The reset must have cleared the counters so the next OpCert
+        // from the same pool is treated as first-seen.
+        let counters = counter_state.expect("counter tracking remains enabled");
+        assert!(counters.is_empty());
+        assert_eq!(counters.get(&pool), None);
+        assert_eq!(
+            nonce_state.as_ref(),
+            Some(&NonceEvolutionState::new(Nonce::Neutral))
+        );
+    }
+
+    #[test]
+    fn initial_sync_rollback_to_origin_resets_nonce_to_origin_without_sidecar() {
+        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_consensus::OcertCounters;
+        use yggdrasil_ledger::Era;
+        use yggdrasil_storage::{
+            ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
+        };
+
         let mut chain_db = ChainDb::new(
             InMemoryImmutable::default(),
             InMemoryVolatile::default(),
@@ -6737,15 +7239,14 @@ mod tests {
             stake_snapshots: None,
             epoch_size: None,
             pool_block_counts: BTreeMap::new(),
-            ocert_persist_dir: None,
+            chain_dep_persist_dir: None,
         };
-
-        // A progress with a rollback-only batch (no real blocks needed —
-        // the helper inspects `progress.rollback_count` for the reset
-        // branch).
         let progress = MultiEraSyncProgress {
             current_point: Point::Origin,
-            steps: Vec::new(),
+            steps: vec![MultiEraSyncStep::RollBackward {
+                point: Point::Origin,
+                tip: Point::Origin,
+            }],
             fetched_blocks: 0,
             rollback_count: 1,
         };
@@ -6754,22 +7255,293 @@ mod tests {
             max_snapshots: 0,
         };
 
-        // Run the helper. Pre-this-slice, counters would still hold
-        // pool → 5 after the call.
+        let mut nonce_state = Some(test_nonce_state(0x44));
+        let mut counter_state = Some(OcertCounters::new());
         update_ledger_checkpoint_after_progress(
             &mut chain_db,
             &mut tracking,
             &progress,
             &policy,
             None,
-            Some(&mut counters),
+            ChainDepStateTracking {
+                nonce_state: &mut nonce_state,
+                nonce_cfg: None,
+                ocert_counters: &mut counter_state,
+            },
         )
-        .expect("rollback path");
+        .expect("initial rollback path");
 
-        // The reset must have cleared the counters so the next OpCert
-        // from the same pool is treated as first-seen.
-        assert!(counters.is_empty());
-        assert_eq!(counters.get(&pool), None);
+        assert_eq!(
+            nonce_state.as_ref(),
+            Some(&NonceEvolutionState::new(Nonce::Neutral))
+        );
+    }
+
+    #[test]
+    fn persistent_rollback_without_chain_dep_sidecar_errors() {
+        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_consensus::OcertCounters;
+        use yggdrasil_ledger::Era;
+        use yggdrasil_storage::{
+            ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
+        };
+
+        let dir = tempfile::tempdir().expect("temp sidecar dir");
+        let rollback_point = block_point(42);
+        let mut chain_db = ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        );
+        chain_db
+            .add_volatile_block(storage_block_for_point(rollback_point, 1))
+            .expect("insert rollback target");
+        let base = LedgerState::new(Era::Byron);
+        let mut tracking = LedgerCheckpointTracking {
+            base_ledger_state: base.clone(),
+            ledger_state: base,
+            last_persisted_point: Point::Origin,
+            plutus_evaluator: CekPlutusEvaluator::default(),
+            stake_snapshots: None,
+            epoch_size: None,
+            pool_block_counts: BTreeMap::new(),
+            chain_dep_persist_dir: Some(dir.path().to_path_buf()),
+        };
+        let progress = MultiEraSyncProgress {
+            current_point: rollback_point,
+            steps: vec![MultiEraSyncStep::RollBackward {
+                point: rollback_point,
+                tip: rollback_point,
+            }],
+            fetched_blocks: 0,
+            rollback_count: 1,
+        };
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 0,
+            max_snapshots: 0,
+        };
+        let mut nonce_state = Some(test_nonce_state(0x66));
+        let mut counter_state = Some(OcertCounters::new());
+        let err = update_ledger_checkpoint_after_progress(
+            &mut chain_db,
+            &mut tracking,
+            &progress,
+            &policy,
+            None,
+            ChainDepStateTracking {
+                nonce_state: &mut nonce_state,
+                nonce_cfg: None,
+                ocert_counters: &mut counter_state,
+            },
+        )
+        .expect_err("persistent rollback without exact sidecar must fail");
+
+        assert!(
+            err.to_string()
+                .contains("missing exact ChainDepState sidecar history")
+        );
+    }
+
+    #[test]
+    fn verified_batch_policy_terminates_after_rollback_step() {
+        let rollback = MultiEraSyncStep::RollBackward {
+            point: block_point(10),
+            tip: block_point(20),
+        };
+        assert!(verified_batch_step_terminates_batch(&rollback));
+
+        let roll_forward = MultiEraSyncStep::RollForward {
+            raw_header: Vec::new(),
+            tip: block_point(20),
+            blocks: Vec::new(),
+            raw_blocks: Vec::new(),
+            block_spans: Vec::new(),
+        };
+        assert!(!verified_batch_step_terminates_batch(&roll_forward));
+    }
+
+    #[test]
+    fn chain_dep_sidecar_snapshot_round_trips_to_context() {
+        let point = block_point(9);
+        let pool = [0xAB; 28];
+        let nonce = test_nonce_state(0x42);
+        let counters = test_ocert_counters_through(pool, 3);
+
+        let bytes = encode_chain_dep_sidecar_snapshot(&point, Some(&nonce), Some(&counters));
+        let decoded = decode_chain_dep_sidecar_snapshot(&bytes).expect("chain-dep sidecar decodes");
+
+        assert_eq!(decoded.point, point);
+        assert_eq!(decoded.nonce_state, Some(nonce.clone()));
+        assert_eq!(decoded.ocert_counters, Some(counters));
+
+        let ctx = chain_dep_context_from_sidecar(&decoded);
+        assert_eq!(ctx.evolving_nonce, nonce.evolving_nonce);
+        assert_eq!(ctx.candidate_nonce, nonce.candidate_nonce);
+        assert_eq!(ctx.epoch_nonce, nonce.epoch_nonce);
+        assert_eq!(ctx.opcert_counters.get(&pool).copied(), Some(3));
+    }
+
+    #[test]
+    fn rollback_restores_exact_chain_dep_sidecar_snapshot() {
+        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_storage::{
+            ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
+        };
+
+        let dir = tempfile::tempdir().expect("temp sidecar dir");
+        let rollback_point = block_point(42);
+        let block = storage_block_for_point(rollback_point, 1);
+        let pool = [0xAC; 28];
+        let restored_nonce = test_nonce_state(0x22);
+        let restored_counters = test_ocert_counters_through(pool, 2);
+        let sidecar = encode_chain_dep_sidecar_snapshot(
+            &rollback_point,
+            Some(&restored_nonce),
+            Some(&restored_counters),
+        );
+        yggdrasil_storage::save_chain_dep_state_snapshot(dir.path(), &rollback_point, &sidecar)
+            .expect("save exact chain-dep sidecar");
+
+        let mut chain_db = ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        );
+        chain_db
+            .add_volatile_block(block)
+            .expect("insert rollback target");
+
+        let base = LedgerState::new(Era::Byron);
+        let mut tracking = LedgerCheckpointTracking {
+            base_ledger_state: base.clone(),
+            ledger_state: base,
+            last_persisted_point: Point::Origin,
+            plutus_evaluator: CekPlutusEvaluator::default(),
+            stake_snapshots: None,
+            epoch_size: None,
+            pool_block_counts: BTreeMap::new(),
+            chain_dep_persist_dir: Some(dir.path().to_path_buf()),
+        };
+        let progress = MultiEraSyncProgress {
+            current_point: rollback_point,
+            steps: vec![MultiEraSyncStep::RollBackward {
+                point: rollback_point,
+                tip: rollback_point,
+            }],
+            fetched_blocks: 0,
+            rollback_count: 1,
+        };
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 0,
+            max_snapshots: 1,
+        };
+        let mut nonce_state = Some(test_nonce_state(0x99));
+        let mut counter_state = Some(test_ocert_counters_through(pool, 5));
+
+        update_ledger_checkpoint_after_progress(
+            &mut chain_db,
+            &mut tracking,
+            &progress,
+            &policy,
+            None,
+            ChainDepStateTracking {
+                nonce_state: &mut nonce_state,
+                nonce_cfg: None,
+                ocert_counters: &mut counter_state,
+            },
+        )
+        .expect("rollback restore");
+
+        assert_eq!(nonce_state.as_ref(), Some(&restored_nonce));
+        let counters = counter_state.expect("counter tracking remains enabled");
+        assert_eq!(counters.get(&pool), Some(2));
+    }
+
+    #[test]
+    fn rollback_replays_chain_dep_state_from_sidecar_to_target() {
+        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_storage::{
+            ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
+        };
+
+        let dir = tempfile::tempdir().expect("temp sidecar dir");
+        let block_one = byron_ebb_storage_block(1, 1, [0; 32]);
+        let point_one = storage_point_for_block(&block_one);
+        let block_two = byron_ebb_storage_block(2, 2, block_one.header.hash.0);
+        let point_two = storage_point_for_block(&block_two);
+        let pool = [0xAD; 28];
+        let restored_nonce = test_nonce_state(0x33);
+        let restored_counters = test_ocert_counters_through(pool, 1);
+        let sidecar = encode_chain_dep_sidecar_snapshot(
+            &point_one,
+            Some(&restored_nonce),
+            Some(&restored_counters),
+        );
+        yggdrasil_storage::save_chain_dep_state_snapshot(dir.path(), &point_one, &sidecar)
+            .expect("save older chain-dep sidecar");
+
+        let mut chain_db = ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        );
+        chain_db
+            .add_volatile_block(block_one)
+            .expect("insert sidecar anchor");
+        chain_db
+            .add_volatile_block(block_two)
+            .expect("insert rollback target");
+
+        let base = LedgerState::new(Era::Byron);
+        let mut tracking = LedgerCheckpointTracking {
+            base_ledger_state: base.clone(),
+            ledger_state: base,
+            last_persisted_point: Point::Origin,
+            plutus_evaluator: CekPlutusEvaluator::default(),
+            stake_snapshots: None,
+            epoch_size: None,
+            pool_block_counts: BTreeMap::new(),
+            chain_dep_persist_dir: Some(dir.path().to_path_buf()),
+        };
+        let progress = MultiEraSyncProgress {
+            current_point: point_two,
+            steps: vec![MultiEraSyncStep::RollBackward {
+                point: point_two,
+                tip: point_two,
+            }],
+            fetched_blocks: 0,
+            rollback_count: 1,
+        };
+        let policy = LedgerCheckpointPolicy {
+            min_slot_delta: 0,
+            max_snapshots: 1,
+        };
+        let nonce_cfg = NonceEvolutionConfig {
+            epoch_size: EpochSize(BYRON_SLOTS_PER_EPOCH),
+            stability_window: 10,
+            extra_entropy: Nonce::Neutral,
+        };
+        let mut nonce_state = Some(test_nonce_state(0x99));
+        let mut counter_state = Some(test_ocert_counters_through(pool, 5));
+
+        update_ledger_checkpoint_after_progress(
+            &mut chain_db,
+            &mut tracking,
+            &progress,
+            &policy,
+            None,
+            ChainDepStateTracking {
+                nonce_state: &mut nonce_state,
+                nonce_cfg: Some(&nonce_cfg),
+                ocert_counters: &mut counter_state,
+            },
+        )
+        .expect("rollback restore and replay");
+
+        assert_eq!(tracking.ledger_state.tip, point_two);
+        assert_eq!(nonce_state.as_ref(), Some(&restored_nonce));
+        let counters = counter_state.expect("counter tracking remains enabled");
+        assert_eq!(counters.get(&pool), Some(1));
     }
 
     #[test]

@@ -388,7 +388,7 @@ Same pattern as L-8. `usize::MAX` boundary unreachable in practice (would requir
 
 #### I-2 — OpCert monotonic counter logic matches upstream `currentIssueNo`
 
-- `crates/consensus/src/opcert.rs:107-200` (`OcertCounters::validate_and_update`) implements the rule `stored ≤ new_seq ≤ stored + 1` exactly as in upstream `Ouroboros.Consensus.Protocol.Praos`. The `OcertCounters` map is persisted atomically as a CBOR sidecar (`crates/storage/src/ocert_sidecar.rs`) so a restart cannot replay an old block whose OpCert sequence number is below the true on-chain value. This is the protection that prevents hot-key compromise from being arbitrarily replayable.
+- `crates/consensus/src/opcert.rs:107-200` (`OcertCounters::validate_and_update`) implements the rule `stored ≤ new_seq ≤ stored + 1` exactly as in upstream `Ouroboros.Consensus.Protocol.Praos`. The `OcertCounters` map is persisted atomically as a CBOR latest mirror and, since R238, as part of slot-indexed ChainDepState sidecars (`chain_dep_state/<slot-hex>.cbor`) so restart and rollback recovery can restore the exact counter state at or before the selected point before replaying stored blocks. This is the protection that prevents hot-key compromise from being arbitrarily replayable.
 
 #### I-3 — Praos chain selection matches upstream `comparePraos`
 
@@ -405,7 +405,7 @@ Same pattern as L-8. `usize::MAX` boundary unreachable in practice (would requir
 
 #### I-6 — Storage layer uses correct atomic-write discipline
 
-- `crates/storage/src/file_immutable.rs:25-44` (`atomic_write_file`): write to `.tmp`, `sync_all()` on the file, `rename()`, then `sync_all()` on the parent directory. Same pattern in `file_volatile.rs`, `file_ledger.rs`, `ocert_sidecar.rs`.
+- `crates/storage/src/file_immutable.rs:25-44` (`atomic_write_file`): write to `.tmp`, `sync_all()` on the file, `rename()`, then `sync_all()` on the parent directory. Same pattern in `file_volatile.rs`, `file_ledger.rs`, `ocert_sidecar.rs`, including the canonical slot-indexed ChainDepState sidecar snapshots.
 - A `dirty.flag` sentinel is created on open and removed on clean shutdown, with clear recovery semantics that skip corrupted/partial files on restart.
 
 #### I-7 — No `unsafe` blocks anywhere; no `build.rs`; no FFI

@@ -15,10 +15,10 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - `cargo fmt --all -- --check`: clean (zero diff; CI gate added under audit M-2 follow-up)
 - `cargo check-all`: passing
-- `cargo test-all`: passing (0 failures, **4 744** discovered tests, 1 ignored — count current at R190)
+- `cargo test-all`: passing (0 failures; workspace coverage is 4.7K+ tests at R238)
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 - `cargo deny check advisories bans licenses sources`: passing (one intentional ignore: `RUSTSEC-2021-0127` for the `serde_cbor` storage carve-out, tracked separately for migration)
-- **`cardano-cli 10.16` LSQ parity** (R164–R237): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end. Tail-end Conway dispatcher tag 36 `GetPoolDistr2` now serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
+- **`cardano-cli 10.16` LSQ parity** (R164–R238): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end. Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
 
 ## Subsystem Status
 
@@ -31,7 +31,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 | Network protocols | ouroboros-network | Near parity | Handshake/mux/mini-protocol suites implemented |
 | Peer governor | ouroboros-network diffusion/governor | Near parity | Policy engine implemented; keep behavior checks against upstream changes |
 | Node orchestration | cardano-node | Near parity | Runtime orchestration complete for main paths, including the live consensus-fed ledger-peer bridge |
-| Storage | ouroboros-consensus storage | Near parity | Immutable/volatile/checkpoint model implemented |
+| Storage | ouroboros-consensus storage | Near parity | Immutable/volatile/checkpoint model implemented; R238 ChainDepState sidecars follow LedgerDB restore-and-replay semantics without changing checkpoint CBOR |
 | Monitoring/tracing | cardano-node + cardano-tracer | Near parity | Forwarder backend wired; aggregate server egress and lifetime peer stats covered; ongoing interoperability/endurance validation |
 
 ## Open Gaps
@@ -45,6 +45,9 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 - cardano-node: https://github.com/IntersectMBO/cardano-node
 - cardano-ledger: https://github.com/IntersectMBO/cardano-ledger
 - ouroboros-consensus: https://github.com/IntersectMBO/ouroboros-consensus
+- LedgerDB/openDB restore and replay semantics: https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus/Ouroboros-Consensus-Storage-LedgerDB.html
+- Caught-up node storage model: https://ouroboros-consensus.cardano.intersectmbo.org/docs/explanations/node_tasks/
+- UTxO-HD rollback/snapshot design: https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/utxo-hd/utxo-hd_in_depth/
 - ouroboros-network: https://github.com/IntersectMBO/ouroboros-network
 - cardano-base: https://github.com/IntersectMBO/cardano-base
 - plutus: https://github.com/IntersectMBO/plutus

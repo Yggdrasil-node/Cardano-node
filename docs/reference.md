@@ -25,7 +25,7 @@ description: "Architecture, parity, and contributing references for developers a
     <a class="yg-card" href="{{ '/ARCHITECTURE/' | relative_url }}">
       <span class="yg-card-arrow">→</span>
       <span class="yg-card-title">Architecture</span>
-      <span class="yg-card-desc">Workspace structure, dependency direction, mini-protocol layering, Phase 6 multi-peer dispatch.</span>
+      <span class="yg-card-desc">Workspace structure, dependency direction, mini-protocol layering, multi-peer dispatch, rollback sidecars.</span>
     </a>
   </li>
   <li>

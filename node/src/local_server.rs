@@ -44,7 +44,10 @@ use yggdrasil_network::{
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
 use crate::runtime::{MempoolAddTxResult, add_tx_to_shared_mempool_with_eviction};
-use crate::sync::recover_ledger_state_chaindb;
+use crate::sync::{
+    chain_dep_context_from_sidecar, load_exact_chain_dep_sidecar_snapshot,
+    recover_ledger_state_chaindb,
+};
 use crate::tracer::NodeMetrics;
 
 // ---------------------------------------------------------------------------
@@ -472,28 +475,21 @@ where
         }
     };
 
-    // R196 — attach `ChainDepStateContext` from on-disk sidecars
-    // (currently OCert counters; nonces tracked as Phase A.2
-    // follow-up).
+    // R238 — attach `ChainDepStateContext` from the canonical slot-indexed
+    // sidecar whose point exactly matches the acquired ledger point.
     Some(attach_chain_dep_state_from_sidecar(snapshot, storage_dir))
 }
 
-/// R196 / R197 — load `ChainDepStateContext` data from on-disk
-/// sidecars produced by the sync runtime and attach to the
+/// R238 — load `ChainDepStateContext` data from the exact on-disk
+/// ChainDepState sidecar produced by the sync runtime and attach it to the
 /// snapshot.
 ///
-/// - `ocert_counters.cbor` (R196) — `PraosState.csCounters`
-/// - `nonce_state.cbor`    (R197) — `NonceEvolutionState`
-///   (`Cardano.Ledger.Crypto.Nonce` × 5 + current epoch)
-///
-/// Each sidecar is independently optional; a missing or
-/// undecodeable file is silently skipped (the corresponding
-/// `ChainDepStateContext` field stays at the neutral default).
+/// Missing exact sidecar history leaves `ChainDepStateContext` absent so the
+/// protocol-state encoder uses its neutral no-context shape.
 fn attach_chain_dep_state_from_sidecar(
     snapshot: LedgerStateSnapshot,
     storage_dir: Option<&Path>,
 ) -> LedgerStateSnapshot {
-    use yggdrasil_consensus::{NonceEvolutionState, OcertCounters};
     use yggdrasil_ledger::stake::StakeSnapshots;
     use yggdrasil_ledger::{CborDecode, ChainDepStateContext, Decoder};
 
@@ -505,30 +501,9 @@ fn attach_chain_dep_state_from_sidecar(
     let mut ctx = ChainDepStateContext::default();
     let mut chain_dep_populated = false;
 
-    // OCert counters (R196).
-    if let Ok(Some(counters_bytes)) = yggdrasil_storage::load_ocert_counters(dir) {
-        let mut dec = Decoder::new(&counters_bytes);
-        if let Ok(counters) = OcertCounters::decode_cbor(&mut dec) {
-            for (hash, counter) in counters.iter() {
-                ctx.opcert_counters.insert(*hash, *counter);
-            }
-            chain_dep_populated = true;
-        }
-    }
-
-    // Nonce evolution state (R197).
-    if let Ok(Some(nonce_bytes)) = yggdrasil_storage::load_nonce_state(dir) {
-        let mut dec = Decoder::new(&nonce_bytes);
-        if let Ok(nonces) = NonceEvolutionState::decode_cbor(&mut dec) {
-            ctx.evolving_nonce = nonces.evolving_nonce;
-            ctx.candidate_nonce = nonces.candidate_nonce;
-            ctx.epoch_nonce = nonces.epoch_nonce;
-            ctx.lab_nonce = nonces.lab_nonce;
-            ctx.last_epoch_block_nonce = nonces.prev_hash_nonce;
-            // `previous_epoch_nonce` not tracked separately by yggdrasil
-            // — leaves the `ChainDepStateContext::default()` Neutral.
-            chain_dep_populated = true;
-        }
+    if let Ok(Some(sidecar)) = load_exact_chain_dep_sidecar_snapshot(Some(dir), snap.tip()) {
+        ctx = chain_dep_context_from_sidecar(&sidecar);
+        chain_dep_populated = sidecar.nonce_state.is_some() || sidecar.ocert_counters.is_some();
     }
 
     if chain_dep_populated {
@@ -3692,6 +3667,7 @@ fn decode_txin_set(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yggdrasil_consensus::{NonceEvolutionState, OcertCounters};
     use yggdrasil_ledger::{Era, LedgerState};
     use yggdrasil_network::MiniProtocolNum;
 
@@ -3706,6 +3682,88 @@ mod tests {
     fn test_encode_rejection_reason_is_non_empty() {
         let bytes = encode_rejection_reason("tx too large");
         assert!(!bytes.is_empty());
+    }
+
+    #[test]
+    fn protocol_state_uses_exact_chain_dep_sidecar_and_ignores_latest_mirrors() {
+        use crate::sync::{LedgerCheckpointUpdateOutcome, persist_chain_dep_state_sidecar};
+        use yggdrasil_ledger::{
+            Block, BlockHeader, BlockNo, CborEncode, Decoder, HeaderHash, Nonce, Point, SlotNo,
+        };
+
+        let dir = tempfile::tempdir().expect("temp sidecar dir");
+        let point = Point::BlockPoint(SlotNo(7), HeaderHash([7; 32]));
+        let block = Block {
+            era: Era::Byron,
+            header: BlockHeader {
+                hash: HeaderHash([7; 32]),
+                prev_hash: HeaderHash([0; 32]),
+                slot_no: SlotNo(7),
+                block_no: BlockNo(1),
+                issuer_vkey: [0; 32],
+                protocol_version: None,
+            },
+            transactions: Vec::new(),
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        let mut ledger = LedgerState::new(Era::Byron);
+        ledger.apply_block(&block).expect("advance ledger tip");
+        let snapshot = ledger.snapshot();
+
+        let pool = [0xBE; 28];
+        let exact_nonce = NonceEvolutionState::new(Nonce::Hash([0x55; 32]));
+        let mut exact_counters = OcertCounters::new();
+        for seq in 0..=4 {
+            exact_counters
+                .validate_and_update(pool, seq, true)
+                .expect("advance exact counter");
+        }
+        let outcome = Some(LedgerCheckpointUpdateOutcome::Persisted {
+            slot: SlotNo(7),
+            retained_snapshots: 1,
+            pruned_snapshots: 0,
+            rollback_count: 0,
+        });
+        persist_chain_dep_state_sidecar(
+            &outcome,
+            Some(dir.path()),
+            point,
+            Some(&exact_nonce),
+            Some(&exact_counters),
+            1,
+        )
+        .expect("persist exact chain-dep sidecar");
+
+        let stale_nonce = NonceEvolutionState::new(Nonce::Hash([0x99; 32]));
+        let mut nonce_enc = yggdrasil_ledger::Encoder::new();
+        stale_nonce.encode_cbor(&mut nonce_enc);
+        std::fs::write(dir.path().join("nonce_state.cbor"), nonce_enc.into_bytes())
+            .expect("write stale nonce mirror");
+        let stale_counters = OcertCounters::new();
+        std::fs::write(
+            dir.path().join("ocert_counters.cbor"),
+            stale_counters.to_cbor_bytes(),
+        )
+        .expect("write stale counter mirror");
+
+        let snapshot = attach_chain_dep_state_from_sidecar(snapshot, Some(dir.path()));
+        let ctx = snapshot.chain_dep_state().expect("chain-dep context");
+        assert_eq!(ctx.evolving_nonce, exact_nonce.evolving_nonce);
+        assert_eq!(ctx.opcert_counters.get(&pool).copied(), Some(4));
+
+        let encoded = encode_praos_state_versioned(&snapshot);
+        let mut dec = Decoder::new(&encoded);
+        assert_eq!(dec.array().expect("versioned wrapper"), 2);
+        assert_eq!(dec.unsigned().expect("version"), 0);
+        assert_eq!(dec.array().expect("praos fields"), 8);
+        dec.skip().expect("last slot");
+        assert_eq!(dec.map().expect("ocert map"), 1);
+        assert_eq!(dec.bytes().expect("pool key"), pool);
+        assert_eq!(dec.unsigned().expect("counter"), 4);
+        assert_eq!(dec.array().expect("nonce constructor"), 2);
+        assert_eq!(dec.unsigned().expect("nonce tag"), 1);
+        assert_eq!(dec.bytes().expect("nonce hash"), [0x55; 32]);
     }
 
     /// R214 — pin upstream's 15-element shape for

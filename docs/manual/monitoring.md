@@ -28,7 +28,7 @@ Bind is intentionally to `127.0.0.1` only. To scrape from a remote Prometheus, r
 
 ### Counters and gauges
 
-Yggdrasil emits 35+ counters and gauges. Selected highlights:
+Yggdrasil emits 40+ counters, gauges, and histograms. Selected highlights:
 
 #### Sync
 
@@ -39,9 +39,12 @@ Yggdrasil emits 35+ counters and gauges. Selected highlights:
 | `yggdrasil_current_slot`                  | gauge   | Slot of the latest applied block. |
 | `yggdrasil_checkpoint_slot`               | gauge   | Slot of the most recent ledger checkpoint. |
 | `yggdrasil_rollbacks`                     | counter | RollBackward events received. |
+| `yggdrasil_rollback_depth_blocks`         | histogram | Rollback depth distribution for R225/R238 rollback recovery validation. |
 | `yggdrasil_stable_blocks_promoted`        | counter | Volatile → immutable promotions. |
 | `yggdrasil_reconnects`                    | counter | Sync session reconnects. |
 | `yggdrasil_batches_completed`             | counter | Verified batches applied. |
+| `yggdrasil_apply_batch_duration_seconds`  | histogram | Ledger apply duration per verified batch. |
+| `yggdrasil_fetch_batch_duration_seconds`  | histogram | BlockFetch duration per verified batch. |
 
 #### Mempool
 
@@ -72,6 +75,23 @@ Yggdrasil emits 35+ counters and gauges. Selected highlights:
 | `yggdrasil_blockfetch_workers_migrated_total`   | counter | Cumulative warm-to-hot migrations into the worker pool. |
 
 A healthy multi-peer setup has `registered` ≈ number of hot peers (usually 2 with `max_concurrent_block_fetch_peers = 2`) and `migrated_total` strictly increasing across the run.
+
+#### Peer lifetime and egress
+
+| Metric                                          | Type    | Description |
+|-------------------------------------------------|---------|-------------|
+| `yggdrasil_peer_lifetime_sessions_total`        | counter | Cumulative warm-peer sessions across reconnects. |
+| `yggdrasil_peer_lifetime_failures_total`        | counter | Cumulative peer session failures. |
+| `yggdrasil_peer_lifetime_bytes_in_total`        | counter | Aggregate bytes received from peer block fetch. |
+| `yggdrasil_peer_lifetime_unique_peers`          | gauge   | Distinct peer addresses observed by the runtime. |
+| `yggdrasil_peer_lifetime_handshakes_total`      | counter | Successful NtN handshakes across peers. |
+| `yggdrasil_blockfetch_server_bytes_served_total`| counter | Bytes served by Yggdrasil's BlockFetch server. |
+| `yggdrasil_chainsync_server_bytes_served_total` | counter | Bytes served by Yggdrasil's ChainSync server. |
+| `yggdrasil_keepalive_server_bytes_served_total` | counter | Bytes served by Yggdrasil's KeepAlive server. |
+| `yggdrasil_txsubmission_server_bytes_served_total` | counter | Bytes served by Yggdrasil's TxSubmission2 server. |
+| `yggdrasil_peersharing_server_bytes_served_total` | counter | Bytes served by Yggdrasil's PeerSharing server. |
+
+The server egress counters are aggregate-only to avoid high-cardinality Prometheus labels. Per-peer egress is folded into runtime lifetime stats internally.
 
 #### Process
 
@@ -188,6 +208,7 @@ A starting alerting baseline:
 | Slot lag > 3600                | as above, threshold 3600                       | critical |
 | Frequent reconnects            | `rate(yggdrasil_reconnects[5m]) > 1`           | warning  |
 | Excessive rollbacks            | `rate(yggdrasil_rollbacks[10m]) > 0.1`         | warning  |
+| Deep rollback spike            | `histogram_quantile(0.99, rate(yggdrasil_rollback_depth_blocks_bucket[1h])) > 2160` | warning |
 | Stuck migration                | `yggdrasil_blockfetch_workers_registered < hot_peer_count` | warning |
 | Mempool growing unbounded      | `yggdrasil_mempool_bytes > 10485760`           | warning  |
 | Inbound rate-limit hits        | `rate(yggdrasil_inbound_connections_rejected[5m]) > 0.5` | info |

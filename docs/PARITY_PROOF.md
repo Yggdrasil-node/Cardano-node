@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 206)
+title: Parity Proof Report (Round 238)
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,17 +7,16 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R206 (2026-04-30)
-**Cumulative arc**: R1 → R205 (205 rounds completed)
+**Document round**: R238 refresh (2026-05-01)
+**Cumulative arc**: R1 → R238
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4 744 passing, 0 failing, 1 ignored
+**Workspace tests**: 4.7K+ passing, 0 failing at the R238 slice boundary
 
 This report documents yggdrasil's parity status against upstream
-IntersectMBO Cardano node 10.7.x / cardano-cli 10.16. It is the
+IntersectMBO Cardano node / cardano-cli behavior. It is the
 canonical reference for "what works end-to-end" today and what
 remains. Each claim cites the round that closed it and the
-operational evidence captured under
-`docs/operational-runs/`.
+operational evidence captured under `docs/operational-runs/`.
 
 ---
 
@@ -88,19 +87,28 @@ yggdrasil bugs. They work given correct CLI inputs:
 
 ---
 
-## 2. Consensus-side state persistence — 3 sidecars
+## 2. Consensus-side state persistence
 
-R196–R198 + R202–R203 wired three consensus-side sidecars that
-persist atomically alongside the ledger checkpoint and survive node
-restarts:
+R238 makes slot-indexed ChainDepState bundles the authoritative
+nonce/OpCert state source. They persist atomically at ledger-checkpoint
+cadence, restore on restart, restore on rollback, and feed LSQ
+`protocol-state` for exact acquired points. `stake_snapshots.cbor`
+remains the separate stake-snapshot mirror for stake-query surfaces:
 
 | Sidecar | Round | Filename | Surfaces in | Restart resilient |
 |---|---|---|---|---|
-| OCert counters | R196/R198 | `ocert_counters.cbor` | `query protocol-state` `oCertCounters` | ✅ R205 verified |
-| Nonce evolution | R197/R198 | `nonce_state.cbor` | `query protocol-state` 5 nonce fields | ✅ R205 verified |
+| ChainDepState nonce + OpCert bundle | R238 | `chain_dep_state/<slot-hex>.cbor` | `query protocol-state` nonces + `oCertCounters` | ✅ exact restart/rollback path |
 | Stake snapshots | R202/R203 | `stake_snapshots.cbor` | `query stake-snapshot` per-pool totals | ✅ |
 
-R205 verified live nonces survive node restart:
+Current canonical verification is R238: exact ChainDepState sidecars are
+saved under `chain_dep_state/`, rollback restores the newest bundle at or
+before the target point, and LSQ `protocol-state` ignores any stale
+root-level nonce/OpCert mirror files.
+
+R205 verified the live-nonce restart path before R238 replaced the
+root-level nonce/OpCert mirrors with slot-indexed ChainDepState bundles.
+Those filenames below are retained only as historical evidence for that
+round:
 
 ```
 Pre-restart at slot ~10K:
@@ -126,14 +134,16 @@ $ cardano-cli conway query protocol-state --testnet-magic 2
 }
 ```
 
-The sidecars are persisted via:
-- `crates/storage/src/ocert_sidecar.rs` — atomic-write helpers (`save_*` /
-  `load_*`)
+The current sidecars are persisted via:
+- `crates/storage/src/ocert_sidecar.rs` — atomic-write helpers for
+  `chain_dep_state/<slot-hex>.cbor` and `stake_snapshots.cbor`
 - `node/src/sync.rs::update_ledger_checkpoint_after_progress` —
-  persists at every checkpoint landing
+  persists ChainDepState only at checkpoint landing after nonce/OpCert
+  updates
 - `node/src/local_server.rs::attach_chain_dep_state_from_sidecar` —
-  loads at LSQ acquire time, attaches to `LedgerStateSnapshot` via the
-  R192 `with_chain_dep_state` and R202 `with_stake_snapshots` builders
+  loads exact point sidecars at LSQ acquire time and attaches to
+  `LedgerStateSnapshot` via the R192 `with_chain_dep_state` and R202
+  `with_stake_snapshots` builders
 
 ---
 
@@ -258,19 +268,20 @@ yggdrasil_peer_lifetime_bytes_in_total
 rate(yggdrasil_peer_lifetime_sessions_total[5m])
 ```
 
-**Bytes-out remains 0** — requires per-mini-protocol egress byte
-accounting on the server-emit path; deferred to a follow-up
-slice.
+R234, R235, and R237 complete the aggregate server egress path:
+BlockFetch, ChainSync, KeepAlive, TxSubmission2, and PeerSharing
+bytes-out counters are recorded without high-cardinality Prometheus
+labels, and per-peer egress totals are folded into lifetime stats.
 
 ---
 
-## 4c. Phase D.1 — Rollback-depth observability (R225)
+## 4c. Phase D.1 — Rollback recovery and sidecars (R225+R237+R238)
 
 R225 adds `yggdrasil_rollback_depth_blocks` Prometheus histogram
-classifying actual rollback depths.  Bucket boundaries
+classifying actual rollback depths. Bucket boundaries
 `[1, 2, 5, 50, 2160 (k), 10_000, +Inf]` span shallow chain
 reorgs through the stability window edge to cross-epoch and
-full-resync (the Phase D.1 problematic case).
+full-resync shapes.
 
 Operators alert on rare deep rollbacks via:
 
@@ -279,12 +290,16 @@ histogram_quantile(0.99,
     rate(yggdrasil_rollback_depth_blocks_bucket[1h]))
 ```
 
-**The full Phase D.1 recovery infrastructure** (historical
-stake-snapshot reconstruction so rollbacks beyond `k` don't force
-re-sync from origin) remains deferred — R225 is the
-observability prerequisite that justifies (or de-prioritises) the
-multi-day implementation work based on actual mainnet rollback
-distribution.
+R237 adds epoch-boundary-aware checkpoint replay when stake
+snapshots are enabled. R238 completes the code-level nonce/OpCert
+sidecar hardening: storage keeps opaque slot-indexed
+`chain_dep_state/<slot-hex>.cbor` bundles, verified sync writes
+them only at ledger-checkpoint cadence after nonce/OpCert updates,
+`RollBackward` terminates the current batch, recovery restores the
+newest bundle at or before the rollback point, verifies the bundled
+point against the selected chain prefix, and replays stored raw
+blocks to the rollback target. LSQ `protocol-state` prefers exact
+point sidecars and does not read nonce/OpCert latest mirrors.
 
 ---
 
@@ -326,70 +341,22 @@ being actively maintained against upstream.
 | **C.1** | Apply-batch duration histogram | ✅ wired | R200 |
 | **C.1+** | Fetch-batch duration histogram + multi-peer quantification | ✅ wired | R217+R218 |
 | **C.2** | Pipelined fetch+apply | 🚫 de-prioritised | R217 measurement showed ~1.7% gain — multi-peer dispatch is the actual sync-rate lever |
-| **D.1** | Deep cross-epoch rollback recovery | ⏳ partial (observability) | R225 rollback-depth histogram |
-| **D.2** | Multi-session peer accounting | ✅ major scope shipped | R222+R223+R224+R226 (5 lifetime counters) |
+| **D.1** | Deep rollback recovery and chain-dep sidecars | ✅ closed code-level slice | R225+R237+R238 |
+| **D.2** | Multi-session peer accounting + aggregate bytes-out | ✅ shipped | R222+R223+R224+R226+R234+R235+R237 |
 | **E.1** | Audit baseline pin refresh | ✅ 5/5 documentary pins | R201+R216 |
 | **E.1 cardano-base** | Vendored fixture coordinated refresh | ⏳ deferred | (requires fetching upstream test vectors at new SHA) |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 
-**13 closed/verified, 1 partial, 4 deferred** (out of original
-16 plan items + 2 follow-ons surfaced during the R211→R226 arc).
-The 4 remaining deferred items each require substantial multi-day
-work or operator time:
-- Phase D.1 full deep-rollback recovery (historical stake-snapshot reconstruction)
-- Phase D.2 bytes-out (per-mini-protocol egress accounting)
-- Phase E.1 cardano-base (vendored fixture refresh)
-- Phase E.2 24h+ mainnet rehearsal (sustained operator observation)
+The remaining gates are no longer known code-level parity blockers:
+`cardano-base` vendored fixture refresh and the 24h+ mainnet
+rehearsal both require sustained operator or fixture-maintenance
+time. Default multi-peer BlockFetch concurrency still waits on the
+runbook §6.5 sign-off before changing `max_concurrent_block_fetch_peers`.
 
 ---
 
-## 7. What's deferred and why
-
-### Phase A.6 — `GetGenesisConfig` ShelleyGenesis serialiser
-
-Substantial 16-field upstream record encoder (sgSystemStart through
-sgExtraConfig). The LSQ dispatcher returns `null_response` placeholder
-which is acceptable because no direct `cardano-cli conway query`
-subcommand exercises it. Two indirect consumers (`leadership-schedule`,
-`kes-period-info`) fail at client-side argument validation before
-the query is ever sent.
-
-**Bar to close**: full 16-field encoder with sub-encoders for
-`PParams`, `Map (KeyHash) GenDelegPair`, `Map Address Coin`,
-`ShelleyGenesisStaking`. Estimated 2–3 days of careful encoder
-work.
-
-### Phase C.2 — pipelined fetch+apply
-
-Pipeline block-fetch slot N+2 with apply slot N to reduce per-batch
-latency. Deadlock risk on rollback (apply task may need to drain a
-fetch buffer that's also being mutated).
-
-**Bar to close**: bounded channel + explicit drain semantics on
-rollback + integration test for rollback-during-fetch. Estimated
-3–4 days with rollback edge cases.
-
-### Phase D.1 — Deep cross-epoch rollback recovery
-
-Currently within-epoch reorgs work; deep reorgs (>2 epochs) would
-force resync from origin. Critical file:
-`node/src/sync.rs::handle_rollback_beyond_stability_window`. The
-`LedgerCheckpointTracking` infrastructure is in place; needs
-orchestration to walk back to the appropriate checkpoint and replay
-forward.
-
-**Bar to close**: synthetic test forcing 3-epoch rollback +
-ledger-state hash comparison oracle. Estimated 4–5 days.
-
-### Phase D.2 — Multi-session peer accounting
-
-Peer governor state currently resets per reconnect, masking real
-churn metrics. Refactor to track lifetime stats independently of
-session-state.
-
-**Bar to close**: peer-keyed lifetime stats + 6h soak test showing
-stable counters across reconnects. Estimated 3–4 days.
+## 7. Remaining gates
 
 ### Phase E.1 cardano-base — coordinated fixture refresh
 
@@ -406,27 +373,17 @@ verify all crypto tests pass.
 ### Phase E.2 — Mainnet rehearsal
 
 24+ hour continuous mainnet sync from genesis with metrics capture.
-Validates everything works at mainnet scale.
+Validates the already-working R211/R213 mainnet path at operator
+duration, including restart cycles, hash comparison against the
+Haskell node, and R238 rollback sidecar behavior under real chain
+conditions.
 
-**R208 partial finding**: yggdrasil boots cleanly with
-`--network mainnet` (NtC server, peer connection, verified-sync
-session all establish), but block fetch+apply does NOT advance
-past Origin in a 2-minute window.  This is a real operational
-gap distinct from the testnet parity surface.  Likely a Byron-era
-ChainSync or BlockFetch shape mismatch specific to mainnet's
-ancient first blocks (preview's `Test*HardForkAtEpoch=0` config
-skips Byron entirely).
+### Parallel BlockFetch default flip
 
-**Bar to close**: diagnose why blocks aren't fetched from the
-established session.  Capture wire bytes on the BlockFetch
-mini-protocol; compare against upstream cardano-node 10.7.x
-behavior on the same bootstrap peer; trace through
-`run_verified_sync_service_chaindb` to find where the apply
-path stalls.  See R208 in `docs/operational-runs/`.
-
-### Phase E.3 — Parity proof report
-
-✅ This document (R206).
+The multi-peer dispatch path is implemented and observable, but
+`max_concurrent_block_fetch_peers` defaults to `1` until
+[`MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) §6.5 signs off
+2- and 4-peer rehearsals with restart-resilience evidence.
 
 ---
 
@@ -456,8 +413,8 @@ cardano-cli conway query gov-state --testnet-magic 2
 # ... (full list in R205 operational-run doc)
 
 # Verify sidecars persist
-ls -la /tmp/ygg-verify-db/*.cbor
-# Expected: nonce_state.cbor, ocert_counters.cbor, stake_snapshots.cbor
+find /tmp/ygg-verify-db -maxdepth 2 -name '*.cbor' -print
+# Expected: stake_snapshots.cbor plus chain_dep_state/<slot-hex>.cbor
 
 # Apply-batch histogram
 curl -s http://127.0.0.1:12400/metrics | grep apply_batch
@@ -476,6 +433,10 @@ cargo test-all
 ---
 
 ## 8b. Mainnet boot smoke test (R208, 2026-04-30)
+
+This section is retained as historical diagnostic evidence. The
+failure was resolved by R211/R213 and then verified through the
+cardano-cli wire stack in R212.
 
 R208 ran a 2-minute mainnet boot smoke test to validate the
 `--network mainnet` codepath:
@@ -506,28 +467,15 @@ immutable/ (empty)
 # and verified-sync session establishes but doesn't advance.
 ```
 
-**Result**: yggdrasil's `--network mainnet` flag is recognised
-and boots cleanly (NtC server starts, peer connection
-establishes to bootstrap peer at 18.221.168.221:3001), but
-**block fetch / apply does not advance past Origin** in the
-2-minute window.  This is a known operational gap distinct
-from the testnet-verified parity surface.
+**Historical result**: yggdrasil's `--network mainnet` flag was
+recognised and booted cleanly, but block fetch/apply did not
+advance past Origin in this 2-minute R208 window.
 
-**Status**: Mainnet sync diagnosis is **deferred to Phase E.2
-proper** (24h+ rehearsal with diagnostic capture).  The
-preview (R205) and preprod (R207) verifications confirm the
-yggdrasil binary, NtC dispatcher, sidecar persistence, and
-LSQ surface all work correctly on testnets.  The mainnet gap
-is at the sync-pipeline layer (block fetch + apply
-coordination) and likely involves Byron-era specifics or
-mainnet bootstrap peer behavior that doesn't manifest on
-preview's `Test*HardForkAtEpoch=0` configuration.
-
-**Bar to close mainnet rehearsal**: investigate why blocks
-aren't being fetched from the established bootstrap peer
-session; likely a Byron-era ChainSync or BlockFetch shape
-mismatch specific to mainnet's ancient first blocks.  Tracked
-under Phase E.2 follow-ups.
+**Resolution**: R211 fixed the Byron EBB hash prefix and same-slot
+consensus tolerance, R213 fixed the mux egress limit for large
+single LSQ payloads, and R212 verified mainnet `cardano-cli`
+queries against an actively syncing node. Phase E.2 now means
+long-duration operator rehearsal, not diagnosing this R208 stall.
 
 ---
 
@@ -567,7 +515,8 @@ sync):
 | `query protocol-parameters`  | 17-element Shelley shape, full PP JSON               |
 | `query tx-mempool info`      | `{capacity: 0, count: 0, size: 0, slot: 397}`        |
 
-**Sidecars** (post-test mainnet `<storage_dir>/`):
+**Sidecars** (post-test mainnet `<storage_dir>/`, historical R212
+pre-R238 filenames):
 ```
 nonce_state.cbor      12 B
 ocert_counters.cbor    1 B
@@ -577,6 +526,16 @@ stake_snapshots.cbor  14 B
 Smaller than testnets because mainnet at slot 397 is pre-Shelley
 (post-Byron consensus state mostly empty — same shape as the
 pre-Shelley testnet behaviour observed in R207).
+
+Post-R238 runs should instead show ChainDepState point bundles under
+`<storage_dir>/chain_dep_state/` plus the separate
+`stake_snapshots.cbor` mirror:
+
+```
+$ find <storage_dir>/chain_dep_state -type f -name '*.cbor' | sort
+<storage_dir>/chain_dep_state/000000000000002f.cbor
+...
+```
 
 **Multi-network parity matrix** (closed by R212):
 
@@ -744,7 +703,8 @@ $ ls -la /tmp/ygg-r207-preprod-db/*.cbor
 114 nonce_state.cbor
   1 ocert_counters.cbor
  18 stake_snapshots.cbor
-# All 3 sidecars persist on preprod too
+# Historical pre-R238 mirror files; current runs use chain_dep_state/*.cbor
+# for nonce/OpCert and stake_snapshots.cbor for stake-query snapshots.
 
 $ cardano-cli query tip --testnet-magic 1
 {

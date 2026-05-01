@@ -8,6 +8,8 @@ Guidance for Claude Code (claude.ai/code) and other AI assistants when working w
 
 For the architectural picture see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the running implementation journal and operational rules see [AGENTS.md](AGENTS.md).
 
+Current baseline: R238 closes the code-level Phase D.1 rollback sidecar hardening slice. Verified sync persists slot-indexed ChainDepState sidecars under `chain_dep_state/<slot-hex>.cbor`, restores nonce/OpCert state from the newest sidecar at or before a rollback point, verifies the sidecar point against the selected chain prefix, and replays stored blocks to the rollback target. The remaining gates are operator-side rehearsal/endurance work and the coordinated `cardano-base` fixture refresh, not known code-level parity blockers.
+
 ## AGENTS.md Files Are Primary Context
 
 Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept current, and take precedence over this file for local details. **Read them before changing code in a given area, and update them after changes.** The root [AGENTS.md](AGENTS.md) is very long — prefer targeted reads with `offset`/`limit` over full reads.
@@ -59,7 +61,7 @@ Crates form a strict dependency stack — respect this direction when adding cro
 
 1. `crates/crypto` — Blake2b, Ed25519, VRF (std + batchcompat, ietfdraft03/13), KES (Simple + Sum depth 0–6+), BLS12-381 (PlutusV3/CIP-0381), secp256k1 (ECDSA + BIP-340).
 2. `crates/cddl-codegen` — parses pinned Cardano CDDL, generates Rust structs + `CborEncode`/`CborDecode` impls; outputs must remain reproducible and must not be hand-edited.
-3. `crates/ledger` + `crates/storage` — era types Byron→Conway, multi-era UTxO, all per-era apply rules, epoch boundary, governance enactment, PPUP, MIR, ratification engine; trait-based `ImmutableStore`/`VolatileStore`/`LedgerStore` plus a `ChainDb` coordinator with file-backed implementations and crash-recovery.
+3. `crates/ledger` + `crates/storage` — era types Byron→Conway, multi-era UTxO, all per-era apply rules, epoch boundary, governance enactment, PPUP, MIR, ratification engine; trait-based `ImmutableStore`/`VolatileStore`/`LedgerStore` plus a `ChainDb` coordinator with file-backed implementations, crash-recovery, rollback-time checkpoint replay, and opaque slot-indexed ChainDepState sidecar helpers.
 4. `crates/consensus` + `crates/mempool` — Praos leader election, OpCert/KES checks, `ChainState`, nonce evolution (TPraos + Praos), per-pool OpCert counter monotonicity; fee-ordered mempool with TTL, block-application eviction, ledger revalidation, TxSubmission inbound byte/count accounting.
 5. `crates/network` — SDU framing, mux, handshake, all five mini-protocols (ChainSync, BlockFetch, KeepAlive, TxSubmission2, PeerSharing) with typed client + server drivers, peer registry, root providers, ledger-peer provider, governor decision engine, inbound governor, connection manager, diffusion types, `blockfetch_pool`.
 6. `crates/plutus` — CEK machine, builtin semantics, cost model (used via the `PlutusEvaluator` trait in `ledger`).
@@ -76,7 +78,7 @@ The `node/` crate **must stay an integration layer**. Reusable policy, peer-sele
 - `status` — inspect on-disk storage and report sync position, block counts, checkpoint state, ledger counts.
 - `default-config` — emit the default JSON config to stdout.
 - `cardano-cli` — pure-Rust subset (`version`, `show-upstream-config`, `query-tip`).
-- `query` (Unix) — NtC LocalStateQuery dispatcher for all 24 supported tags (0–23).
+- `query` (Unix) — NtC LocalStateQuery dispatcher plus upstream era-specific LSQ surface verified through `cardano-cli`; see [node/src/AGENTS.md](node/src/AGENTS.md) for the exact current dispatcher inventory.
 - `submit-tx` (Unix) — NtC LocalTxSubmission with `0x`-prefix-tolerant `--tx-hex`.
 
 `--network mainnet|preprod|preview` selects a preset; `--config` overrides the file; individual flags (`--peer`, `--network-magic`, `--port`, `--host-addr`, `--database-path`, `--topology`, `--metrics-port`, etc.) override config-file values.
@@ -98,6 +100,7 @@ Anchor every parity-sensitive change to one of these:
 - **Ledger** — [`IntersectMBO/cardano-ledger`](https://github.com/IntersectMBO/cardano-ledger) (`eras/`, `libs/cardano-ledger-binary/`, `libs/`).
 - **Formal specs** — [`IntersectMBO/formal-ledger-specifications`](https://github.com/IntersectMBO/formal-ledger-specifications) and the [published spec site](https://intersectmbo.github.io/formal-ledger-specifications/site).
 - **Consensus** — [`IntersectMBO/ouroboros-consensus`](https://github.com/IntersectMBO/ouroboros-consensus) (`ouroboros-consensus/`, `ouroboros-consensus-protocol/`, `ouroboros-consensus-cardano/`, `ouroboros-consensus-diffusion/`, `docs/agda-spec`).
+- **Consensus storage** — LedgerDB [`openDB` Haddock](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus/Ouroboros-Consensus-Storage-LedgerDB.html), [caught-up node storage model](https://ouroboros-consensus.cardano.intersectmbo.org/docs/explanations/node_tasks/), and [UTxO-HD rollback/snapshot design](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/utxo-hd/utxo-hd_in_depth/).
 - **Network** — [`IntersectMBO/ouroboros-network`](https://github.com/IntersectMBO/ouroboros-network) (`network-mux/`, `ouroboros-network-framework/`, `ouroboros-network-protocols/`, `ouroboros-network/`, `cardano-diffusion/`).
 - **Crypto** — [`IntersectMBO/cardano-base`](https://github.com/IntersectMBO/cardano-base) (`cardano-crypto-class/`, `cardano-crypto-praos/`, `cardano-crypto-peras/`).
 - **Plutus** — [`IntersectMBO/plutus`](https://github.com/IntersectMBO/plutus) (`plutus-core/`, CEK machine and cost model).
@@ -120,3 +123,4 @@ Tests can opt out of `unwrap_used` via the per-crate `#![cfg_attr(test, allow(cl
 - When a folder's `AGENTS.md` is outdated, missing, or incorrect, update it as part of the change.
 - Use upstream Haskell module references in commit messages, comments, and journal entries (e.g. `Ouroboros.Network.PeerSelection.Governor`, `Cardano.Ledger.Conway.Rules.Utxo`) so parity work and fixture comparison remain tractable.
 - Avoid hand-editing generated artifacts under `crates/cddl-codegen` outputs or vendored data under `node/configuration/*` and `specs/upstream-test-vectors/`.
+- Treat dated files under `docs/operational-runs/` as historical evidence. Update living status in `README.md`, `AGENTS.md`, `docs/PARITY_PLAN.md`, `docs/PARITY_SUMMARY.md`, `docs/PARITY_PROOF.md`, `docs/UPSTREAM_PARITY.md`, and the manual/runbook rather than rewriting old run records, except to add a new run or correct a factual typo in that same record.
