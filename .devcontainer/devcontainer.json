@@ -9,6 +9,8 @@
 //   • Docker CLI access for upstream cardano-node-tests `runner/runc.sh`
 //   • GitHub CLI for manual workflow dispatch / log inspection
 //   • actionlint + shellcheck for workflow and shell harness validation
+//   • musl-tools + x86_64-unknown-linux-musl Rust target for static
+//     Yggdrasil binaries accepted by upstream cardano-node-tests .bin validation
 //   • Upstream IntersectMBO Haskell `cardano-node` + `cardano-cli`
 //     binaries pre-installed under ~/.local/bin/ so the §5 hash-comparison
 //     and §6.5b parallel-fetch parity checks can run end-to-end.

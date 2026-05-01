@@ -57,6 +57,32 @@ install_actionlint() {
   )
 }
 
+install_static_link_tools() {
+  missing=()
+  for tool in musl-gcc file; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      missing+=("$tool")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "[devcontainer] installing static-link helper tools: ${missing[*]}"
+    "${SUDO[@]}" apt-get update
+    "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive \
+      apt-get install -y --no-install-recommends musl-tools file
+    "${SUDO[@]}" rm -rf /var/lib/apt/lists/*
+  else
+    echo "[devcontainer] static-link helper tools already installed"
+  fi
+
+  if rustup target list --installed | grep -qx 'x86_64-unknown-linux-musl'; then
+    echo "[devcontainer] rust target x86_64-unknown-linux-musl already installed"
+  else
+    echo "[devcontainer] installing rust target x86_64-unknown-linux-musl"
+    rustup target add x86_64-unknown-linux-musl
+  fi
+}
+
 install_haskell_cardano_node() {
   if ! "$REPO_ROOT/node/scripts/install_haskell_cardano_node.sh"; then
     echo "[devcontainer] install_haskell_cardano_node failed; re-run manually when network access is available" >&2
@@ -65,4 +91,5 @@ install_haskell_cardano_node() {
 
 install_shellcheck
 install_actionlint
+install_static_link_tools
 install_haskell_cardano_node

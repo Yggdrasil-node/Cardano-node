@@ -594,20 +594,47 @@ Recommended flow:
 
 Example targeted invocation from a sibling checkout:
 
-Prerequisite: a working Docker or Podman runtime visible from the
-current shell. Inside the repository devcontainer this is supplied by
-the Docker-outside-of-Docker feature; on a bare host install Docker or
-Podman before invoking `runner/runc.sh`.
+Prerequisites:
+
+- A working Docker or Podman runtime visible from the current shell.
+  GitHub-hosted runners satisfy this directly.  In a devcontainer that
+  uses Docker-outside-of-Docker, the upstream checkout and `.bin/`
+  wrapper files must live on a path the host Docker daemon can bind
+  mount; files created only inside the devcontainer overlay can appear
+  missing inside `runner/runc.sh`.
+- A container-compatible Yggdrasil binary.  Upstream `runner/runc.sh`
+  validates `.bin/` before starting and rejects dynamically linked
+  non-`/nix` binaries.  Use a MUSL/static build for local container
+  runs, or a Nix-store binary when running from Nix.
 
 ```sh
 cd ../cardano-node-tests
 mkdir -p .bin
-ln -sf /workspaces/Cardano-node/target/release/yggdrasil-node .bin/yggdrasil-node
+rm -rf .yggdrasil-configuration
+cp -R /workspaces/Cardano-node/node/configuration .yggdrasil-configuration
+cp /workspaces/Cardano-node/target/x86_64-unknown-linux-musl/release/yggdrasil-node .bin/yggdrasil-node
 cat > .bin/cardano-node <<'SH'
 #!/usr/bin/env sh
-exec /workspaces/Cardano-node/target/release/yggdrasil-node "$@"
+set -eu
+bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$bin_dir/yggdrasil-node" "$@"
 SH
-chmod +x .bin/cardano-node
+cat > .bin/cardano-cli <<'SH'
+#!/usr/bin/env sh
+set -eu
+bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+config_root=${YGGDRASIL_CONFIG_ROOT:-"$bin_dir/../.yggdrasil-configuration"}
+case "${1:-}" in
+  --version|-V)
+    shift
+    exec "$bin_dir/yggdrasil-node" cardano-cli --upstream-config-root "$config_root" version "$@"
+    ;;
+  *)
+    exec "$bin_dir/yggdrasil-node" cardano-cli --upstream-config-root "$config_root" "$@"
+    ;;
+esac
+SH
+chmod +x .bin/yggdrasil-node .bin/cardano-node .bin/cardano-cli
 
 ./runner/runc.sh -- \
   TEST_THREADS=0 \
