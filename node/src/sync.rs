@@ -4780,17 +4780,16 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     let mut steps = Vec::new();
     let mut fetched_blocks = 0usize;
     let mut rollback_count = 0usize;
+    let mut pending_forwards = Vec::new();
+    let mut pending_rollback = None;
 
     for _ in 0..batch_size {
         let next = chain_sync.request_next_typed().await?;
 
-        let me_step = match next {
+        match next {
             TypedNextResponse::RollForward { header, tip }
             | TypedNextResponse::AwaitRollForward { header, tip } => {
                 let header_point = point_from_raw_header(&header);
-                let range_upper = header_point.unwrap_or(tip);
-                let effective_range = normalize_blockfetch_range_points(from_point, range_upper);
-                let skip_fetch = header_point.is_some() && effective_range.is_none();
                 // Slice GD-RT — Genesis density observation hook.
                 // Push the observed header slot into the per-peer
                 // `DensityWindow` so the governor can read chain-quality
@@ -4829,386 +4828,80 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 if sync_debug_enabled() {
                     let header_hex = bytes_to_hex(&header);
                     eprintln!(
-                        "[ygg-sync-debug] blockfetch-range lower={:?} upper={:?} tip={:?} header_point_decoded={} range_valid={} skip_fetch={} raw_header_len={} raw_header_hex={}",
+                        "[ygg-sync-debug] chainsync-roll-forward current_lower={:?} header_point={:?} tip={:?} header_point_decoded={} raw_header_len={} raw_header_hex={}",
                         from_point,
-                        range_upper,
+                        header_point,
                         tip,
                         header_point.is_some(),
-                        effective_range.is_some(),
-                        skip_fetch,
                         header.len(),
                         header_hex
                     );
                 }
-                let tentative_set =
-                    tentative_state.is_some_and(|state| try_set_tentative_header(state, &header));
-
-                let raw_and_decoded = if skip_fetch {
-                    Vec::new()
-                } else {
-                    match effective_range {
-                        Some((lower, upper)) => {
-                            // Phase 6 — multi-peer dispatch branch.
-                            // Active when the runtime opted in via
-                            // `max_concurrent_block_fetch_peers > 1`
-                            // AND the shared worker pool has registered
-                            // at least one worker.  Reads the pool under
-                            // a brief read-lock; dispatches through the
-                            // upstream-style per-peer worker tasks
-                            // (mirrors `BlockFetch.ClientRegistry`
-                            // semantics).
-                            //
-                            // Genesis bootstrap (`from_point = Origin`)
-                            // is handled inside [`FetchWorkerPool::dispatch_plan`]
-                            // — `split_range` already returns a single
-                            // chunk for Origin lower, and the dispatcher
-                            // seeds its `ReorderBuffer` so the chunk
-                            // releases cleanly.  Multi-chunk Origin
-                            // plans (programmer error) are rejected
-                            // upfront.  Reference: `docs/MANUAL_TEST_RUNBOOK.md`
-                            // §6.5a "Round 91 Gap BN" closure (Round 144).
-                            let multi_peer_result = if let Some(ctx) = &multi_peer_dispatch {
-                                let pool_guard = ctx.pool.read().await;
-                                let n_workers = pool_guard.len();
-                                let effective = effective_block_fetch_concurrency(
-                                    ctx.max_concurrent_knob,
-                                    n_workers,
-                                );
-                                if effective > 1 {
-                                    let peer_addrs = pool_guard.peer_addrs();
-                                    // Round 151 — when a candidate-fragment
-                                    // pool is wired through, attempt to
-                                    // resolve `split_range`'s placeholder
-                                    // hashes against per-peer announcements
-                                    // for a real-hash multi-chunk plan.
-                                    // Falls back to the placeholder-collapse
-                                    // single-chunk path when fragments don't
-                                    // have the required hashes.
-                                    let plan = if let Some(cs_pool) = ctx.chainsync_pool.as_ref() {
-                                        // Drop the BlockFetch read-lock
-                                        // before awaiting on the
-                                        // ChainSync pool to avoid lock
-                                        // ordering issues.
-                                        drop(pool_guard);
-                                        let resolved =
-                                            partition_fetch_range_with_candidate_fragments(
-                                                lower,
-                                                upper,
-                                                &peer_addrs,
-                                                ctx.max_concurrent_knob,
-                                                cs_pool,
-                                            )
-                                            .await;
-                                        resolved.unwrap_or_else(|| {
-                                            partition_fetch_range_across_peers(
-                                                lower,
-                                                upper,
-                                                &peer_addrs,
-                                                ctx.max_concurrent_knob,
-                                            )
-                                        })
-                                    } else {
-                                        partition_fetch_range_across_peers(
-                                            lower,
-                                            upper,
-                                            &peer_addrs,
-                                            ctx.max_concurrent_knob,
-                                        )
-                                    };
-                                    let pool_guard = ctx.pool.read().await;
-                                    Some(
-                                        pool_guard
-                                            .dispatch_plan(
-                                                &plan,
-                                                from_point,
-                                                pool_instr.map(|(p, _)| p),
-                                            )
-                                            .await,
-                                    )
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            };
-
-                            // If the multi-peer branch was taken, use
-                            // its result.  Otherwise fall through to
-                            // the legacy single-peer fetch.
-                            if let Some(result) = multi_peer_result {
-                                match result {
-                                    Ok(mut blocks) => {
-                                        // Symmetric `lower_hash` dedup with the
-                                        // legacy single-peer branch below.  The
-                                        // BlockFetch wire protocol returns the
-                                        // closed interval `[lower, upper]`; when
-                                        // the caller already has the block at
-                                        // `lower` applied (from the previous
-                                        // batch's `from_point` advancement), the
-                                        // returned vector starts with a
-                                        // duplicate.  `apply_multi_era_step_to_volatile`
-                                        // tolerates a hash-already-present
-                                        // replay idempotently, but
-                                        // `track_chain_state_entries` enforces a
-                                        // strict block_number contiguity check
-                                        // (`expected N, got N-1`) that fires when
-                                        // the duplicate is fed in — so the dedup
-                                        // must run on both paths.  Missing this
-                                        // branch was the second half of Round
-                                        // 91 Gap BN: with my placeholder-hash
-                                        // collapse the worker now delivers blocks
-                                        // correctly, but the un-deduped front
-                                        // entry caused
-                                        // `consensus error: non-contiguous
-                                        // block` on every batch after the first.
-                                        // Reference: `docs/MANUAL_TEST_RUNBOOK.md`
-                                        // §6.5a Round 144 closure.
-                                        if let (Point::BlockPoint(_, lower_hash), true) =
-                                            (lower, matches!(from_point, Point::BlockPoint(_, _)))
-                                        {
-                                            while let Some((first_raw, first)) = blocks.first() {
-                                                let first_hash =
-                                                    multi_era_block_to_block(first, first_raw)
-                                                        .header
-                                                        .hash;
-                                                if first_hash == lower_hash {
-                                                    blocks.remove(0);
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        blocks
-                                    }
-                                    Err(err) => {
-                                        if tentative_set {
-                                            if let Some(state) = tentative_state {
-                                                clear_tentative_trap(state);
-                                            }
-                                        }
-                                        return Err(err);
-                                    }
-                                }
-                            } else {
-                                // Pool instrumentation: record dispatch synchronously
-                                // so per-peer in-flight accounting reflects the
-                                // outstanding fetch.  Mirrors upstream
-                                // `bumpFetchClientStateVars` in
-                                // `Ouroboros.Network.BlockFetch.ClientState`.
-                                if let Some((pool, peer)) = pool_instr {
-                                    if let Ok(mut g) = pool.lock() {
-                                        g.note_dispatch(peer);
-                                    }
-                                }
-                                let bf = block_fetch.as_deref_mut().expect(
-                                "legacy single-peer fetch path requires Some(BlockFetchClient); \
-                                 caller must provide the leader's BlockFetch handle when no \
-                                 multi-peer dispatch context is active",
-                            );
-                                match fetch_range_blocks_multi_era_raw_decoded(bf, lower, upper)
-                                    .await
-                                {
-                                    Ok(mut blocks) => {
-                                        // Only deduplicate against `lower_hash` when the
-                                        // caller actually had a known prior tip
-                                        // (`from_point` was a BlockPoint).  When syncing
-                                        // from Origin, `normalize_blockfetch_range_points`
-                                        // sets `lower = upper`, and dropping blocks that
-                                        // match `lower_hash` would erase the very first
-                                        // block we just fetched.
-                                        if let (Point::BlockPoint(_, lower_hash), true) =
-                                            (lower, matches!(from_point, Point::BlockPoint(_, _)))
-                                        {
-                                            while let Some((first_raw, first)) = blocks.first() {
-                                                let first_hash =
-                                                    multi_era_block_to_block(first, first_raw)
-                                                        .header
-                                                        .hash;
-                                                if first_hash == lower_hash {
-                                                    blocks.remove(0);
-                                                } else {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        blocks
-                                    }
-                                    Err(err) => {
-                                        if let Some((pool, peer)) = pool_instr {
-                                            if let Ok(mut g) = pool.lock() {
-                                                g.note_failure(peer);
-                                            }
-                                        }
-                                        if tentative_set {
-                                            if let Some(state) = tentative_state {
-                                                clear_tentative_trap(state);
-                                            }
-                                        }
-                                        return Err(err);
-                                    }
-                                }
-                            }
-                        }
-                        None => Vec::new(),
-                    }
-                };
-
-                // Pool instrumentation: record success after fetch completes
-                // (and any caller-side dedup is applied above).
-                if let Some((pool, peer)) = pool_instr {
-                    if let Ok(mut g) = pool.lock() {
-                        let n_blocks = raw_and_decoded.len() as u64;
-                        let n_bytes: u64 = raw_and_decoded
-                            .iter()
-                            .map(|(raw, _)| raw.len() as u64)
-                            .sum();
-                        g.note_success(peer, n_blocks, n_bytes, Instant::now());
-                    }
-                }
-
-                if let Some(config) = verification {
-                    if config.verify_body_hash {
-                        for (raw, _) in &raw_and_decoded {
-                            if let Err(err) = verify_block_body_hash(raw) {
-                                if tentative_set {
-                                    if let Some(state) = tentative_state {
-                                        clear_tentative_trap(state);
-                                    }
-                                }
-                                return Err(err);
-                            }
-                        }
-                    }
-                }
-
-                let (raw_bytes, decoded_blocks): (Vec<Vec<u8>>, Vec<MultiEraBlock>) =
-                    raw_and_decoded.into_iter().unzip();
-
-                if let Some(config) = verification {
-                    for (raw, block) in raw_bytes.iter().zip(decoded_blocks.iter()) {
-                        if let Err(err) =
-                            verify_multi_era_block_with_raw(block, Some(raw.as_slice()), config)
-                        {
-                            if tentative_set {
-                                if let Some(state) = tentative_state {
-                                    clear_tentative_trap(state);
-                                }
-                            }
-                            return Err(err);
-                        }
-                    }
-
-                    // Blocks-from-the-future check: reject blocks whose
-                    // slot exceeds the tolerable clock skew window.
-                    //
-                    // Near-future blocks (within skew) are tolerated after
-                    // waiting until their slot is no longer in the future,
-                    // matching upstream `InFutureCheck` behavior.
-                    //
-                    // Far-future blocks trigger a peer-attributable error
-                    // (see `SyncError::is_peer_attributable`) which causes
-                    // the runtime to disconnect and reconnect to another
-                    // peer.
-                    //
-                    // Reference: `InFutureCheck.handleHeaderArrival` in
-                    // `ouroboros-consensus`.
-                    if let Some(ref fc) = config.future_check {
-                        let current_wall_slot = fc.current_wall_slot();
-                        let mut max_near_future_slot: Option<SlotNo> = None;
-                        for block in &decoded_blocks {
-                            let block_slot = block.slot();
-                            match judge_header_slot(block_slot, current_wall_slot, fc.clock_skew) {
-                                FutureSlotJudgement::NotFuture => {}
-                                FutureSlotJudgement::NearFuture { .. } => {
-                                    max_near_future_slot = Some(
-                                        max_near_future_slot
-                                            .map(|s| std::cmp::max(s, block_slot))
-                                            .unwrap_or(block_slot),
-                                    );
-                                }
-                                FutureSlotJudgement::FarFuture { excess_slots } => {
-                                    if tentative_set {
-                                        if let Some(state) = tentative_state {
-                                            clear_tentative_trap(state);
-                                        }
-                                    }
-                                    return Err(SyncError::BlockFromFuture {
-                                        slot: block_slot.0,
-                                        excess_slots,
-                                    });
-                                }
-                            }
-                        }
-
-                        if let Some(wait) = max_near_future_slot.and_then(|slot| {
-                            near_future_wait_duration(
-                                fc.system_start_unix_secs,
-                                fc.slot_length_secs,
-                                slot,
-                            )
-                        }) {
-                            tokio::time::sleep(wait).await;
-                        }
-                    }
-                }
-
-                // OpCert counter validation: each Shelley-family block's
-                // OpCert sequence number must be ≥ the stored counter for
-                // its issuer pool and ≤ stored + 1.  First-seen pools are
-                // accepted permissively (without stake distribution lookup).
-                //
-                // Reference: `PraosState.csCounters` in
-                // `Ouroboros.Consensus.Protocol.Praos`.
-                if let Some(ref mut counters) = *ocert_counters {
-                    for block in &decoded_blocks {
-                        if let Err(err) = validate_block_opcert_counter_permissive(block, counters)
-                        {
-                            if tentative_set {
-                                if let Some(state) = tentative_state {
-                                    clear_tentative_trap(state);
-                                }
-                            }
-                            return Err(err);
-                        }
-                    }
-                }
-
-                if tentative_set {
-                    if let Some(state) = tentative_state {
-                        clear_tentative_adopted(state);
-                    }
-                }
-
-                if let Some((_, upper)) = effective_range {
-                    from_point = upper;
-                }
-                fetched_blocks += decoded_blocks.len();
-
-                {
-                    let block_spans = extract_spans_per_block(&decoded_blocks, &raw_bytes);
-                    MultiEraSyncStep::RollForward {
-                        raw_header: header,
-                        tip,
-                        blocks: decoded_blocks,
-                        raw_blocks: raw_bytes,
-                        block_spans,
-                    }
-                }
+                pending_forwards.push(PendingRollForward {
+                    raw_header: header,
+                    tip,
+                    header_point,
+                });
             }
             TypedNextResponse::RollBackward { point, tip }
             | TypedNextResponse::AwaitRollBackward { point, tip } => {
-                from_point = point;
-                rollback_count += 1;
-
-                MultiEraSyncStep::RollBackward { point, tip }
+                pending_rollback = Some((point, tip));
+                break;
             }
         };
+    }
 
-        let end_batch_after_step = verified_batch_step_terminates_batch(&me_step);
-        steps.push(me_step);
-        if end_batch_after_step {
-            break;
+    if let Some(last_forward) = pending_forwards.last() {
+        let range_upper = last_forward.header_point.unwrap_or(last_forward.tip);
+        let effective_range = normalize_blockfetch_range_points(from_point, range_upper);
+        let tentative_set = tentative_state
+            .is_some_and(|state| try_set_tentative_header(state, &last_forward.raw_header));
+
+        let (raw_bytes, decoded_blocks) = match effective_range {
+            Some((lower, upper)) => {
+                fetch_verified_multi_era_range(
+                    &mut block_fetch,
+                    from_point,
+                    lower,
+                    upper,
+                    verification,
+                    tentative_state,
+                    tentative_set,
+                    ocert_counters,
+                    pool_instr,
+                    multi_peer_dispatch.as_ref(),
+                )
+                .await?
+            }
+            None => (Vec::new(), Vec::new()),
+        };
+
+        if tentative_set {
+            if let Some(state) = tentative_state {
+                clear_tentative_adopted(state);
+            }
         }
+
+        if let Some((_, upper)) = effective_range {
+            from_point = upper;
+        }
+        fetched_blocks += decoded_blocks.len();
+        let block_spans = extract_spans_per_block(&decoded_blocks, &raw_bytes);
+        steps.push(MultiEraSyncStep::RollForward {
+            raw_header: last_forward.raw_header.clone(),
+            tip: last_forward.tip,
+            blocks: decoded_blocks,
+            raw_blocks: raw_bytes,
+            block_spans,
+        });
+    }
+
+    if let Some((point, tip)) = pending_rollback {
+        from_point = point;
+        rollback_count += 1;
+        let step = MultiEraSyncStep::RollBackward { point, tip };
+        let _end_batch = verified_batch_step_terminates_batch(&step);
+        steps.push(step);
     }
 
     Ok(MultiEraSyncProgress {
@@ -5217,6 +4910,235 @@ pub(crate) async fn sync_batch_verified_with_tentative(
         fetched_blocks,
         rollback_count,
     })
+}
+
+#[derive(Debug)]
+struct PendingRollForward {
+    raw_header: Vec<u8>,
+    tip: Point,
+    header_point: Option<Point>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fetch_verified_multi_era_range(
+    block_fetch: &mut Option<&mut BlockFetchClient>,
+    from_point: Point,
+    lower: Point,
+    upper: Point,
+    verification: Option<&VerificationConfig>,
+    tentative_state: Option<&Arc<RwLock<TentativeState>>>,
+    tentative_set: bool,
+    ocert_counters: &mut Option<OcertCounters>,
+    pool_instr: Option<(&BlockFetchInstrumentation, SocketAddr)>,
+    multi_peer_dispatch: Option<&MultiPeerDispatchContext<'_>>,
+) -> Result<(Vec<Vec<u8>>, Vec<MultiEraBlock>), SyncError> {
+    let raw_and_decoded = fetch_multi_era_range_raw_decoded(
+        block_fetch,
+        from_point,
+        lower,
+        upper,
+        pool_instr,
+        multi_peer_dispatch,
+    )
+    .await
+    .map_err(|err| {
+        if tentative_set {
+            if let Some(state) = tentative_state {
+                clear_tentative_trap(state);
+            }
+        }
+        err
+    })?;
+
+    if let Some((pool, peer)) = pool_instr {
+        if let Ok(mut g) = pool.lock() {
+            let n_blocks = raw_and_decoded.len() as u64;
+            let n_bytes: u64 = raw_and_decoded
+                .iter()
+                .map(|(raw, _)| raw.len() as u64)
+                .sum();
+            g.note_success(peer, n_blocks, n_bytes, Instant::now());
+        }
+    }
+
+    if let Some(config) = verification {
+        if config.verify_body_hash {
+            for (raw, _) in &raw_and_decoded {
+                if let Err(err) = verify_block_body_hash(raw) {
+                    if tentative_set {
+                        if let Some(state) = tentative_state {
+                            clear_tentative_trap(state);
+                        }
+                    }
+                    return Err(err);
+                }
+            }
+        }
+    }
+
+    let (raw_bytes, decoded_blocks): (Vec<Vec<u8>>, Vec<MultiEraBlock>) =
+        raw_and_decoded.into_iter().unzip();
+
+    if let Some(config) = verification {
+        for (raw, block) in raw_bytes.iter().zip(decoded_blocks.iter()) {
+            if let Err(err) = verify_multi_era_block_with_raw(block, Some(raw.as_slice()), config) {
+                if tentative_set {
+                    if let Some(state) = tentative_state {
+                        clear_tentative_trap(state);
+                    }
+                }
+                return Err(err);
+            }
+        }
+
+        // Blocks-from-the-future check: reject blocks whose slot exceeds the
+        // tolerable clock skew window. Near-future blocks are tolerated after
+        // waiting until their slot is no longer in the future, matching
+        // upstream `InFutureCheck` behavior.
+        if let Some(ref fc) = config.future_check {
+            let current_wall_slot = fc.current_wall_slot();
+            let mut max_near_future_slot: Option<SlotNo> = None;
+            for block in &decoded_blocks {
+                let block_slot = block.slot();
+                match judge_header_slot(block_slot, current_wall_slot, fc.clock_skew) {
+                    FutureSlotJudgement::NotFuture => {}
+                    FutureSlotJudgement::NearFuture { .. } => {
+                        max_near_future_slot = Some(
+                            max_near_future_slot
+                                .map(|s| std::cmp::max(s, block_slot))
+                                .unwrap_or(block_slot),
+                        );
+                    }
+                    FutureSlotJudgement::FarFuture { excess_slots } => {
+                        if tentative_set {
+                            if let Some(state) = tentative_state {
+                                clear_tentative_trap(state);
+                            }
+                        }
+                        return Err(SyncError::BlockFromFuture {
+                            slot: block_slot.0,
+                            excess_slots,
+                        });
+                    }
+                }
+            }
+
+            if let Some(wait) = max_near_future_slot.and_then(|slot| {
+                near_future_wait_duration(fc.system_start_unix_secs, fc.slot_length_secs, slot)
+            }) {
+                tokio::time::sleep(wait).await;
+            }
+        }
+    }
+
+    if let Some(ref mut counters) = *ocert_counters {
+        for block in &decoded_blocks {
+            if let Err(err) = validate_block_opcert_counter_permissive(block, counters) {
+                if tentative_set {
+                    if let Some(state) = tentative_state {
+                        clear_tentative_trap(state);
+                    }
+                }
+                return Err(err);
+            }
+        }
+    }
+
+    Ok((raw_bytes, decoded_blocks))
+}
+
+async fn fetch_multi_era_range_raw_decoded(
+    block_fetch: &mut Option<&mut BlockFetchClient>,
+    from_point: Point,
+    lower: Point,
+    upper: Point,
+    pool_instr: Option<(&BlockFetchInstrumentation, SocketAddr)>,
+    multi_peer_dispatch: Option<&MultiPeerDispatchContext<'_>>,
+) -> Result<Vec<(Vec<u8>, MultiEraBlock)>, SyncError> {
+    if let Some(ctx) = multi_peer_dispatch {
+        let pool_guard = ctx.pool.read().await;
+        let n_workers = pool_guard.len();
+        let effective = effective_block_fetch_concurrency(ctx.max_concurrent_knob, n_workers);
+        if effective > 1 {
+            let peer_addrs = pool_guard.peer_addrs();
+            let plan = if let Some(cs_pool) = ctx.chainsync_pool.as_ref() {
+                drop(pool_guard);
+                let resolved = partition_fetch_range_with_candidate_fragments(
+                    lower,
+                    upper,
+                    &peer_addrs,
+                    ctx.max_concurrent_knob,
+                    cs_pool,
+                )
+                .await;
+                resolved.unwrap_or_else(|| {
+                    partition_fetch_range_across_peers(
+                        lower,
+                        upper,
+                        &peer_addrs,
+                        ctx.max_concurrent_knob,
+                    )
+                })
+            } else {
+                partition_fetch_range_across_peers(
+                    lower,
+                    upper,
+                    &peer_addrs,
+                    ctx.max_concurrent_knob,
+                )
+            };
+            let pool_guard = ctx.pool.read().await;
+            let mut blocks = pool_guard
+                .dispatch_plan(&plan, from_point, pool_instr.map(|(p, _)| p))
+                .await?;
+            dedup_range_lower_boundary(&mut blocks, from_point, lower);
+            return Ok(blocks);
+        }
+    }
+
+    if let Some((pool, peer)) = pool_instr {
+        if let Ok(mut g) = pool.lock() {
+            g.note_dispatch(peer);
+        }
+    }
+    let bf = block_fetch.as_deref_mut().expect(
+        "legacy single-peer fetch path requires Some(BlockFetchClient); \
+         caller must provide the leader's BlockFetch handle when no \
+         multi-peer dispatch context is active",
+    );
+    match fetch_range_blocks_multi_era_raw_decoded(bf, lower, upper).await {
+        Ok(mut blocks) => {
+            dedup_range_lower_boundary(&mut blocks, from_point, lower);
+            Ok(blocks)
+        }
+        Err(err) => {
+            if let Some((pool, peer)) = pool_instr {
+                if let Ok(mut g) = pool.lock() {
+                    g.note_failure(peer);
+                }
+            }
+            Err(err)
+        }
+    }
+}
+
+fn dedup_range_lower_boundary(
+    blocks: &mut Vec<(Vec<u8>, MultiEraBlock)>,
+    from_point: Point,
+    lower: Point,
+) {
+    if let (Point::BlockPoint(_, lower_hash), true) =
+        (lower, matches!(from_point, Point::BlockPoint(_, _)))
+    {
+        while let Some((first_raw, first)) = blocks.first() {
+            let first_hash = multi_era_block_to_block(first, first_raw).header.hash;
+            if first_hash == lower_hash {
+                blocks.remove(0);
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 fn verified_batch_step_terminates_batch(step: &MultiEraSyncStep) -> bool {
