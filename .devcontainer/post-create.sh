@@ -89,7 +89,21 @@ install_haskell_cardano_node() {
   fi
 }
 
+prepare_yggdrasil_runtime_dirs() {
+  local preview_root="$REPO_ROOT/tmp/preview-producer"
+  mkdir -p \
+    "$preview_root/run" \
+    "$preview_root/logs" \
+    "$preview_root/db" \
+    "$preview_root/config" \
+    "$preview_root/keys"
+  chmod 0775 "$preview_root" "$preview_root/run" "$preview_root/logs" "$preview_root/db" "$preview_root/config" "$preview_root/keys"
+  echo "[devcontainer] prepared preview runtime dirs under $preview_root"
+  echo "[devcontainer] default CARDANO_NODE_SOCKET_PATH: $preview_root/run/preview-producer.sock"
+}
+
 install_shellcheck
 install_actionlint
 install_static_link_tools
 install_haskell_cardano_node
+prepare_yggdrasil_runtime_dirs

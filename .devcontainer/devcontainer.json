@@ -34,14 +34,27 @@
 		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
 
-	// Forward yggdrasil's default Prometheus + NtN + NtC ports for local
-	// browsing / metrics scraping during operator rehearsals.
-	"forwardPorts": [3001, 9001, 9099, 9101],
+	// Forward Yggdrasil's default NtN/P2P and Prometheus ports for local
+	// browsing / metrics scraping during operator rehearsals. NtC uses Unix
+	// sockets, so it is exposed through the workspace filesystem rather than
+	// through a TCP forward.
+	"forwardPorts": [3001, 13001, 12798, 19002, 9001, 9099, 9101],
 	"portsAttributes": {
 		"3001": { "label": "yggdrasil NtN (peer port)" },
+		"13001": { "label": "preview relay NtN (local P2P rehearsal)" },
+		"12798": { "label": "yggdrasil /metrics (docker compose)" },
+		"19002": { "label": "preview producer /metrics" },
 		"9001": { "label": "yggdrasil /metrics (relay-only smoke)" },
 		"9099": { "label": "yggdrasil /metrics (restart-resilience)" },
 		"9101": { "label": "yggdrasil /metrics (preprod rehearsal)" }
+	},
+
+	"remoteEnv": {
+		"CARDANO_NODE_SOCKET_PATH": "/workspaces/Cardano-node/tmp/preview-producer/run/preview-producer.sock",
+		"YGG_PREVIEW_PRODUCER_SOCKET": "/workspaces/Cardano-node/tmp/preview-producer/run/preview-producer.sock",
+		"YGG_PREVIEW_RELAY_SOCKET": "/workspaces/Cardano-node/tmp/preview-producer/run/preview-relay.sock",
+		"YGG_PREVIEW_CONFIG": "/workspaces/Cardano-node/tmp/preview-producer/config/preview-producer.json",
+		"YGG_PREVIEW_TOPOLOGY": "/workspaces/Cardano-node/tmp/preview-producer/config/topology-fast.json"
 	},
 
 	// Install dev/test helper tools and the Haskell cardano-node +
@@ -54,7 +67,9 @@
 			"extensions": [
 				"rust-lang.rust-analyzer",
 				"vadimcn.vscode-lldb",
-				"tamasfe.even-better-toml"
+				"tamasfe.even-better-toml",
+				"azuretools.vscode-docker",
+				"openai.chatgpt"
 			]
 		}
 	}

@@ -7238,8 +7238,13 @@ impl LedgerState {
                     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
                     crate::witnesses::validate_script_witnesses_well_formed(&ws, eval)?;
                 }
+                let produced_outputs = if tx_is_valid {
+                    body.outputs.as_slice()
+                } else {
+                    &[]
+                };
                 crate::witnesses::validate_reference_scripts_well_formed(
-                    &body.outputs,
+                    produced_outputs,
                     body.collateral_return.as_ref(),
                     eval,
                 )?;
@@ -7777,8 +7782,13 @@ impl LedgerState {
                     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
                     crate::witnesses::validate_script_witnesses_well_formed(&ws, eval)?;
                 }
+                let produced_outputs = if tx_is_valid {
+                    body.outputs.as_slice()
+                } else {
+                    &[]
+                };
                 crate::witnesses::validate_reference_scripts_well_formed(
-                    &body.outputs,
+                    produced_outputs,
                     body.collateral_return.as_ref(),
                     eval,
                 )?;

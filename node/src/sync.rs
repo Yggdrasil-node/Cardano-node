@@ -2179,12 +2179,43 @@ where
     V: VolatileStore,
     L: LedgerStore,
 {
-    chain_db
-        .recover_ledger_state(base_state)
-        .map_err(|error| match error {
-            StorageError::Recovery(message) => SyncError::Recovery(message),
-            other => SyncError::Storage(other),
-        })
+    let best_tip = chain_db.tip();
+    let checkpoint = match best_tip {
+        Point::Origin => chain_db.latest_ledger_checkpoint()?,
+        Point::BlockPoint(slot, _) => chain_db.latest_ledger_checkpoint_before_or_at(slot)?,
+    };
+    let (mut ledger_state, checkpoint_slot) = checkpoint
+        .map(|(slot, checkpoint)| (checkpoint.restore(), Some(slot)))
+        .unwrap_or((base_state, None));
+    let replay_from_exclusive = ledger_state.tip;
+
+    let immutable_blocks = chain_db.immutable().suffix_after(&replay_from_exclusive)?;
+    for block in &immutable_blocks {
+        replay_storage_block_without_epoch_boundary(&mut ledger_state, block)?;
+    }
+
+    let replay_anchor = immutable_blocks
+        .last()
+        .map(storage_point_for_block)
+        .unwrap_or(replay_from_exclusive);
+    let volatile_blocks = volatile_replay_blocks_after(chain_db.volatile(), &replay_anchor)?;
+    for block in &volatile_blocks {
+        replay_storage_block_without_epoch_boundary(&mut ledger_state, block)?;
+    }
+
+    let point = ledger_state.tip;
+    if point != best_tip {
+        return Err(SyncError::Recovery(format!(
+            "recovered ledger tip {point:?} does not match coordinated storage tip {best_tip:?}"
+        )));
+    }
+
+    Ok(LedgerRecoveryOutcome {
+        ledger_state,
+        point,
+        checkpoint_slot,
+        replayed_volatile_blocks: volatile_blocks.len(),
+    })
 }
 
 fn storage_point_for_block(block: &Block) -> Point {
@@ -2228,6 +2259,30 @@ fn stake_snapshots_from_ledger_state(ledger_state: &LedgerState) -> StakeSnapsho
         go: current,
         fee_pot: 0,
     }
+}
+
+fn replay_storage_block_without_epoch_boundary(
+    ledger_state: &mut LedgerState,
+    block: &Block,
+) -> Result<(), SyncError> {
+    if let Some(raw) = block.raw_cbor.as_ref() {
+        let raw_vec = raw.to_vec();
+        let decoded = decode_multi_era_block(&raw_vec)?;
+        let spans = extract_spans_per_block(
+            std::slice::from_ref(&decoded),
+            std::slice::from_ref(&raw_vec),
+        );
+        let empty_spans = yggdrasil_ledger::BlockTxRawSpans::default();
+        let replay_block = multi_era_block_to_block_with_raw_and_spans(
+            &decoded,
+            &raw_vec,
+            spans.first().unwrap_or(&empty_spans),
+        );
+        ledger_state.apply_block(&replay_block)?;
+    } else {
+        ledger_state.apply_block(block)?;
+    }
+    Ok(())
 }
 
 fn replay_storage_block_with_epoch_boundary(

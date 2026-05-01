@@ -301,10 +301,12 @@ pub struct BlockTxRawSpans {
 /// spans of every `transaction_body` and `transaction_witness_set` entry.
 ///
 /// Works for every Cardano post-Byron era because all of them encode the
-/// block as `[header, [* tx_body], [* witness_set], …]` with the bodies
-/// and witness sets at fixed array indices 1 and 2 respectively.  The
-/// helper does NOT validate the typed contents; it just slices the raw
-/// CBOR bytes between `dec.position()` markers.  Use the typed decoder
+/// inner block as `[header, [* tx_body], [* witness_set], …]` with the
+/// bodies and witness sets at fixed array indices 1 and 2 respectively.
+/// The helper also accepts hard-fork-combinator envelopes shaped
+/// `[era_index, inner_block]` and unwraps them before walking the block.
+/// It does NOT validate the typed contents; it just slices the raw CBOR
+/// bytes between `dec.position()` markers.  Use the typed decoder
 /// (`ShelleyBlock::decode_cbor`, etc.) for validation.
 ///
 /// Returns `BlockTxRawSpans { bodies, witness_sets }` whose entries are
@@ -312,6 +314,14 @@ pub struct BlockTxRawSpans {
 ///
 /// Reference: `Cardano.Ledger.Shelley.Block` — block CBOR layout.
 pub fn extract_block_tx_byte_spans(raw_block: &[u8]) -> Result<BlockTxRawSpans, LedgerError> {
+    let mut envelope = Decoder::new(raw_block);
+    if matches!(envelope.array(), Ok(2)) && envelope.unsigned().is_ok() {
+        let inner = envelope.raw_value()?;
+        if envelope.is_empty() {
+            return extract_block_tx_byte_spans(inner);
+        }
+    }
+
     let mut dec = Decoder::new(raw_block);
     // Outer block array: at least 4 elements (header, bodies, witness_sets,
     // metadata) for Shelley/Allegra/Mary; 5 for Alonzo+ (adds invalid_txs).
@@ -3184,6 +3194,27 @@ mod tests {
         assert_eq!(spans.bodies[1], &raw[body1_start..body1_end]);
         assert_eq!(spans.witness_sets[0], &raw[ws0_start..ws0_end]);
         assert_eq!(spans.witness_sets[1], &raw[ws1_start..ws1_end]);
+    }
+
+    #[test]
+    fn extract_block_tx_byte_spans_unwraps_hfc_envelope() {
+        let inner: Vec<u8> = vec![
+            0x84, // array(4)
+            0x00, //   header
+            0x81, //   bodies array(1)
+            0x9f, 0x18, 0x42, 0xff, // body uses non-canonical-on-reencode form
+            0x81, //   witnesses array(1)
+            0x18, 0x55, // witness set marker
+            0xa0, //   metadata
+        ];
+        let mut wrapped = Vec::with_capacity(inner.len() + 2);
+        wrapped.push(0x82); // HFC [era_index, inner_block]
+        wrapped.push(0x06); // Babbage-era index in deployed networks
+        wrapped.extend_from_slice(&inner);
+
+        let spans = extract_block_tx_byte_spans(&wrapped).expect("extract wrapped spans");
+        assert_eq!(spans.bodies, vec![vec![0x9f, 0x18, 0x42, 0xff]]);
+        assert_eq!(spans.witness_sets, vec![vec![0x18, 0x55]]);
     }
 
     /// Verifies the central parity invariant: when re-serialising a typed
