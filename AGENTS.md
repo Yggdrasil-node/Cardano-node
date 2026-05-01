@@ -107,7 +107,7 @@
 - Explanations of behavior or naming MUST be cross-checked against the official `cardano-node` and the relevant upstream IntersectMBO repositories.
 - Type and function naming MUST stay as close to upstream terminology as practical so parity work and fixture comparison remain tractable.
 - Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
-- When you do not know how to proceed after researching the official node and upstream repositories, you may review [Amaru Rust node github repo](https://github.com/pragma-org/amaru/) and [Dolos Data-node github repo](https://github.com/txpipe/dolos/) for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
+- When you do not know how to proceed after researching the official node and upstream IntersectMBO repositories, you may review [Amaru Rust node github repo](https://github.com/pragma-org/amaru/) and [Dolos Data-node github repo](https://github.com/txpipe/dolos/) for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
 - Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, `docs/CONTRIBUTING.md`, `docs/UPSTREAM_RESEARCH.md`, `docs/UPSTREAM_PARITY.md`, `docs/PARITY_SUMMARY.md`, `docs/PARITY_PROOF.md`, `docs/PARITY_PLAN.md`, and `docs/MANUAL_TEST_RUNBOOK.md` for project details and keep `./README.md` updated.
 
 

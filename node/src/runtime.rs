@@ -4179,6 +4179,70 @@ fn pool_unregister_peer(
     }
 }
 
+async fn migrate_sync_blockfetch_to_worker(
+    config: &VerifiedSyncServiceConfig,
+    session: &mut PeerSession,
+    tracer: &NodeTracer,
+    metrics: Option<&NodeMetrics>,
+) {
+    if config.max_concurrent_block_fetch_peers <= 1 {
+        return;
+    }
+
+    let Some(worker_pool) = config.shared_fetch_worker_pool.as_ref() else {
+        return;
+    };
+    let Some(block_fetch) = session.take_block_fetch() else {
+        return;
+    };
+
+    let peer = session.connected_peer_addr;
+    let handle = crate::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client(
+        peer,
+        block_fetch,
+    );
+    let registered = {
+        let mut guard = worker_pool.write().await;
+        let _previous = guard.register(handle);
+        guard.len() as u64
+    };
+    if let Some(m) = metrics {
+        m.inc_blockfetch_workers_migrated();
+        m.set_blockfetch_workers_registered(registered);
+    }
+    tracer.trace_runtime(
+        "Net.BlockFetch.Worker",
+        "Info",
+        "sync BlockFetch migrated to per-peer worker",
+        trace_fields([
+            ("peer", json!(peer.to_string())),
+            (
+                "maxConcurrent",
+                json!(config.max_concurrent_block_fetch_peers),
+            ),
+            ("registeredWorkers", json!(registered)),
+        ]),
+    );
+}
+
+async fn unregister_sync_blockfetch_worker(
+    config: &VerifiedSyncServiceConfig,
+    peer: SocketAddr,
+    metrics: Option<&NodeMetrics>,
+) {
+    let Some(worker_pool) = config.shared_fetch_worker_pool.as_ref() else {
+        return;
+    };
+    let registered = {
+        let mut guard = worker_pool.write().await;
+        let _ = guard.unregister(&peer);
+        guard.len() as u64
+    };
+    if let Some(m) = metrics {
+        m.set_blockfetch_workers_registered(registered);
+    }
+}
+
 /// Round 168 — register the bootstrap sync peer in the shared `PeerRegistry`
 /// as a hot peer for the duration of the verified-sync session.
 ///
@@ -5164,11 +5228,14 @@ where
                 &err,
                 from_point,
             );
+            unregister_sync_blockfetch_worker(config, session.connected_peer_addr, metrics).await;
             session.mux.abort();
             registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
             run_state.record_reconnect_failure();
             continue;
         }
+
+        migrate_sync_blockfetch_to_worker(config, &mut session, tracer, metrics).await;
 
         let mut keepalive = KeepAliveScheduler::new(Instant::now());
         loop {
@@ -5184,6 +5251,8 @@ where
                     &err,
                     from_point,
                 );
+                unregister_sync_blockfetch_worker(config, session.connected_peer_addr, metrics)
+                    .await;
                 session.mux.abort();
                 // Round 175 — companion teardown for R168's bootstrap-Hot
                 // promotion.  Without this, a KeepAlive timeout left the
@@ -5234,6 +5303,8 @@ where
                         session.connected_peer_addr,
                         from_point,
                     );
+                    unregister_sync_blockfetch_worker(config, session.connected_peer_addr, metrics)
+                        .await;
                     session.mux.abort();
                     return Ok(run_state.finish(from_point, nonce_state, chain_state));
                 }
@@ -5528,6 +5599,12 @@ where
                                     ]),
                                 );
                                 preferred_peer = Some(next_hot_peer);
+                                unregister_sync_blockfetch_worker(
+                                    config,
+                                    session.connected_peer_addr,
+                                    metrics,
+                                )
+                                .await;
                                 session.mux.abort();
                                 // Round 175 — the previous bootstrap peer
                                 // is no longer the active sync target;
@@ -5567,6 +5644,12 @@ where
                                 config.block_fetch_pool.as_ref(),
                                 session.connected_peer_addr,
                             );
+                            unregister_sync_blockfetch_worker(
+                                config,
+                                session.connected_peer_addr,
+                                metrics,
+                            )
+                            .await;
                             session.mux.abort();
                             match disposition {
                                 BatchErrorDisposition::ReconnectAndPunish => {
@@ -5820,11 +5903,14 @@ where
                 &err,
                 from_point,
             );
+            unregister_sync_blockfetch_worker(config, session.connected_peer_addr, metrics).await;
             session.mux.abort();
             registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
             run_state.record_reconnect_failure();
             continue;
         }
+
+        migrate_sync_blockfetch_to_worker(config, &mut session, tracer, metrics).await;
 
         let mut keepalive = KeepAliveScheduler::new(Instant::now());
         loop {
@@ -5840,6 +5926,8 @@ where
                     &err,
                     from_point,
                 );
+                unregister_sync_blockfetch_worker(config, session.connected_peer_addr, metrics)
+                    .await;
                 session.mux.abort();
                 // Round 175 — companion teardown for R168's bootstrap-Hot
                 // promotion.  Without this, a KeepAlive timeout left the
@@ -5890,6 +5978,8 @@ where
                         session.connected_peer_addr,
                         from_point,
                     );
+                    unregister_sync_blockfetch_worker(config, session.connected_peer_addr, metrics)
+                        .await;
                     session.mux.abort();
                     return Ok(run_state.finish(from_point, nonce_state, chain_state));
                 }
@@ -6181,6 +6271,12 @@ where
                                     ]),
                                 );
                                 preferred_peer = Some(next_hot_peer);
+                                unregister_sync_blockfetch_worker(
+                                    config,
+                                    session.connected_peer_addr,
+                                    metrics,
+                                )
+                                .await;
                                 session.mux.abort();
                                 // Round 175 — the previous bootstrap peer
                                 // is no longer the active sync target;
@@ -6229,6 +6325,12 @@ where
                                 peer_registry.as_ref(),
                                 session.connected_peer_addr,
                             );
+                            unregister_sync_blockfetch_worker(
+                                config,
+                                session.connected_peer_addr,
+                                metrics,
+                            )
+                            .await;
                             session.mux.abort();
                             match disposition {
                                 BatchErrorDisposition::ReconnectAndPunish => {

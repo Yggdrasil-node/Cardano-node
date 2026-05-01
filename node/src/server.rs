@@ -21,8 +21,8 @@ use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool_with_eviction
 use crate::sync::recover_ledger_state_chaindb;
 use yggdrasil_consensus::TentativeState;
 use yggdrasil_ledger::{
-    AlonzoBlock, BabbageBlock, ByronBlock, CborDecode, CborEncode, ConwayBlock, Decoder, Encoder,
-    MultiEraSubmittedTx, Point, ShelleyBlock, SlotNo, Tip, TxId,
+    ByronBlock, CborDecode, CborEncode, Decoder, Encoder, MultiEraSubmittedTx, Point, SlotNo, Tip,
+    TxId,
 };
 use yggdrasil_mempool::{SharedMempool, SharedTxState};
 use yggdrasil_network::multiplexer::MiniProtocolNum;
@@ -1427,30 +1427,18 @@ fn extract_chainsync_header(raw_block: &[u8]) -> Option<Vec<u8>> {
             ByronBlock::MainBlock { raw_header, .. } => Some(raw_header),
             ByronBlock::EpochBoundary { .. } => None,
         },
-        era_tag::SHELLEY | era_tag::ALLEGRA | era_tag::MARY => Some(
-            ShelleyBlock::from_cbor_bytes(body_bytes)
-                .ok()?
-                .header
-                .to_cbor_bytes(),
-        ),
-        era_tag::ALONZO => Some(
-            AlonzoBlock::from_cbor_bytes(body_bytes)
-                .ok()?
-                .header
-                .to_cbor_bytes(),
-        ),
-        era_tag::BABBAGE => Some(
-            BabbageBlock::from_cbor_bytes(body_bytes)
-                .ok()?
-                .header
-                .to_cbor_bytes(),
-        ),
-        era_tag::CONWAY => Some(
-            ConwayBlock::from_cbor_bytes(body_bytes)
-                .ok()?
-                .header
-                .to_cbor_bytes(),
-        ),
+        era_tag::SHELLEY
+        | era_tag::ALLEGRA
+        | era_tag::MARY
+        | era_tag::ALONZO
+        | era_tag::BABBAGE
+        | era_tag::CONWAY => {
+            let mut body_dec = Decoder::new(body_bytes);
+            if let Some(0) = body_dec.array_begin().ok()? {
+                return None;
+            }
+            Some(body_dec.raw_value().ok()?.to_vec())
+        }
         _ => None,
     }
 }
