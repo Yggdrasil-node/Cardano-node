@@ -240,6 +240,15 @@ impl ChainSyncClient {
         &mut self,
         limit: Option<Duration>,
     ) -> Result<ChainSyncMessage, ChainSyncClientError> {
+        let msg = self.recv_raw_msg_timeout(limit).await?;
+        self.state = self.state.transition(&msg)?;
+        Ok(msg)
+    }
+
+    async fn recv_raw_msg_timeout(
+        &mut self,
+        limit: Option<Duration>,
+    ) -> Result<ChainSyncMessage, ChainSyncClientError> {
         let raw = match limit {
             Some(d) => tokio::time::timeout(d, self.channel.recv())
                 .await
@@ -251,10 +260,7 @@ impl ChainSyncClient {
                 .await
                 .ok_or(ChainSyncClientError::ConnectionClosed)?,
         };
-        let msg = ChainSyncMessage::from_cbor(&raw)
-            .map_err(|e| ChainSyncClientError::Decode(e.to_string()))?;
-        self.state = self.state.transition(&msg)?;
-        Ok(msg)
+        ChainSyncMessage::from_cbor(&raw).map_err(|e| ChainSyncClientError::Decode(e.to_string()))
     }
 
     fn decode_point(raw: &[u8]) -> Result<Point, ChainSyncClientError> {
@@ -269,6 +275,66 @@ impl ChainSyncClient {
 
     fn decode_header<H: CborDecode>(raw: &[u8]) -> Result<H, ChainSyncClientError> {
         H::from_cbor_bytes(raw).map_err(|e| ChainSyncClientError::HeaderDecode(e.to_string()))
+    }
+
+    fn decode_typed_next(
+        response: NextResponse,
+    ) -> Result<TypedNextResponse, ChainSyncClientError> {
+        match response {
+            NextResponse::RollForward { header, tip } => Ok(TypedNextResponse::RollForward {
+                header,
+                tip: Self::decode_tip(&tip)?,
+            }),
+            NextResponse::RollBackward { point, tip } => Ok(TypedNextResponse::RollBackward {
+                point: Self::decode_point(&point)?,
+                tip: Self::decode_tip(&tip)?,
+            }),
+            NextResponse::AwaitRollForward { header, tip } => {
+                Ok(TypedNextResponse::AwaitRollForward {
+                    header,
+                    tip: Self::decode_tip(&tip)?,
+                })
+            }
+            NextResponse::AwaitRollBackward { point, tip } => {
+                Ok(TypedNextResponse::AwaitRollBackward {
+                    point: Self::decode_point(&point)?,
+                    tip: Self::decode_tip(&tip)?,
+                })
+            }
+        }
+    }
+
+    async fn recv_next_response_raw(&mut self) -> Result<NextResponse, ChainSyncClientError> {
+        let msg = self
+            .recv_raw_msg_timeout(cs_limits::ST_NEXT_CAN_AWAIT)
+            .await?;
+        match msg {
+            ChainSyncMessage::MsgRollForward { header, tip } => {
+                Ok(NextResponse::RollForward { header, tip })
+            }
+            ChainSyncMessage::MsgRollBackward { point, tip } => {
+                Ok(NextResponse::RollBackward { point, tip })
+            }
+            ChainSyncMessage::MsgAwaitReply => {
+                let follow_up = self
+                    .recv_raw_msg_timeout(cs_limits::ST_NEXT_MUST_REPLY_TRUSTABLE)
+                    .await?;
+                match follow_up {
+                    ChainSyncMessage::MsgRollForward { header, tip } => {
+                        Ok(NextResponse::AwaitRollForward { header, tip })
+                    }
+                    ChainSyncMessage::MsgRollBackward { point, tip } => {
+                        Ok(NextResponse::AwaitRollBackward { point, tip })
+                    }
+                    other => Err(ChainSyncClientError::UnexpectedMessage(
+                        other.tag_name().to_string(),
+                    )),
+                }
+            }
+            other => Err(ChainSyncClientError::UnexpectedMessage(
+                other.tag_name().to_string(),
+            )),
+        }
     }
 
     // -- public API -------------------------------------------------------
@@ -329,65 +395,60 @@ impl ChainSyncClient {
     /// The client must be in `StIdle`.
     pub async fn request_next(&mut self) -> Result<NextResponse, ChainSyncClientError> {
         self.send_msg(&ChainSyncMessage::MsgRequestNext).await?;
-        let msg = self.recv_msg_timeout(cs_limits::ST_NEXT_CAN_AWAIT).await?;
-        match msg {
-            ChainSyncMessage::MsgRollForward { header, tip } => {
-                Ok(NextResponse::RollForward { header, tip })
-            }
-            ChainSyncMessage::MsgRollBackward { point, tip } => {
-                Ok(NextResponse::RollBackward { point, tip })
-            }
-            ChainSyncMessage::MsgAwaitReply => {
-                // After AwaitReply, wait for the real response.
-                // Trustable peers: wait forever (upstream default).
-                // Non-trustable peers: randomized 135–269 s — applied by
-                // the runtime caller wrapping this method.
-                let follow_up = self
-                    .recv_msg_timeout(cs_limits::ST_NEXT_MUST_REPLY_TRUSTABLE)
-                    .await?;
-                match follow_up {
-                    ChainSyncMessage::MsgRollForward { header, tip } => {
-                        Ok(NextResponse::AwaitRollForward { header, tip })
-                    }
-                    ChainSyncMessage::MsgRollBackward { point, tip } => {
-                        Ok(NextResponse::AwaitRollBackward { point, tip })
-                    }
-                    other => Err(ChainSyncClientError::UnexpectedMessage(
-                        other.tag_name().to_string(),
-                    )),
-                }
-            }
-            other => Err(ChainSyncClientError::UnexpectedMessage(
-                other.tag_name().to_string(),
-            )),
-        }
+        let response = self.recv_next_response_raw().await?;
+        self.state = ChainSyncState::StIdle;
+        Ok(response)
     }
 
     /// Send `MsgRequestNext` and decode any point or tip payloads in the
     /// server response into typed ledger `Point` values.
     pub async fn request_next_typed(&mut self) -> Result<TypedNextResponse, ChainSyncClientError> {
-        match self.request_next().await? {
-            NextResponse::RollForward { header, tip } => Ok(TypedNextResponse::RollForward {
-                header,
-                tip: Self::decode_tip(&tip)?,
-            }),
-            NextResponse::RollBackward { point, tip } => Ok(TypedNextResponse::RollBackward {
-                point: Self::decode_point(&point)?,
-                tip: Self::decode_tip(&tip)?,
-            }),
-            NextResponse::AwaitRollForward { header, tip } => {
-                Ok(TypedNextResponse::AwaitRollForward {
-                    header,
-                    tip: Self::decode_tip(&tip)?,
-                })
-            }
-            NextResponse::AwaitRollBackward { point, tip } => {
-                Ok(TypedNextResponse::AwaitRollBackward {
-                    point: Self::decode_point(&point)?,
-                    tip: Self::decode_tip(&tip)?,
-                })
+        Self::decode_typed_next(self.request_next().await?)
+    }
+
+    /// Pipeline several `MsgRequestNext` messages and collect their typed
+    /// responses in wire order.
+    ///
+    /// Upstream `ChainSyncClientPipelined` permits only `MsgRequestNext`
+    /// pipelining; `MsgFindIntersect` remains non-pipelined. This method
+    /// mirrors that shape for bulk sync callers that are far from the tip
+    /// and can profitably avoid one RTT per header. The driver is borrowed
+    /// mutably for the full send/collect window, so no other protocol action
+    /// can interleave while requests are in flight.
+    pub async fn request_next_typed_pipelined(
+        &mut self,
+        count: usize,
+    ) -> Result<Vec<TypedNextResponse>, ChainSyncClientError> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        if self.state != ChainSyncState::StIdle {
+            return Err(ChainSyncClientError::Protocol(ChainSyncTransitionError {
+                state: self.state,
+                message: "MsgRequestNextPipelined",
+            }));
+        }
+
+        let request = ChainSyncMessage::MsgRequestNext.to_cbor();
+        for _ in 0..count {
+            if let Err(err) = self.channel.send(request.clone()).await {
+                self.state = ChainSyncState::StDone;
+                return Err(ChainSyncClientError::Mux(err));
             }
         }
+
+        let mut responses = Vec::with_capacity(count);
+        for _ in 0..count {
+            match self.recv_next_response_raw().await {
+                Ok(response) => responses.push(Self::decode_typed_next(response)?),
+                Err(err) => {
+                    self.state = ChainSyncState::StDone;
+                    return Err(err);
+                }
+            }
+        }
+        self.state = ChainSyncState::StIdle;
+        Ok(responses)
     }
 
     /// Send `MsgRequestNext` and decode the returned header plus any point/tip

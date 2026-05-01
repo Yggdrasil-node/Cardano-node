@@ -4903,6 +4903,36 @@ fn sync_debug_enabled() -> bool {
     std::env::var("YGG_SYNC_DEBUG").is_ok_and(|v| v != "0")
 }
 
+fn chainsync_pipeline_request_count(
+    batch_size: usize,
+    from_point: Point,
+    verification: Option<&VerificationConfig>,
+) -> usize {
+    const MAX_PIPELINED_REQUEST_NEXT: usize = 128;
+    const TIP_DISTANCE_SAFETY_SLOTS: u64 = 512;
+
+    if batch_size <= 1 {
+        return 1;
+    }
+    let Some(from_slot) = from_point.slot() else {
+        return 1;
+    };
+    let Some(wall_slot) = verification
+        .and_then(|config| config.future_check.as_ref())
+        .map(FutureBlockCheckConfig::current_wall_slot)
+    else {
+        return 1;
+    };
+
+    let requested = batch_size.min(MAX_PIPELINED_REQUEST_NEXT);
+    let required_distance = TIP_DISTANCE_SAFETY_SLOTS.saturating_add(requested as u64);
+    if wall_slot.0.saturating_sub(from_slot.0) > required_distance {
+        requested
+    } else {
+        1
+    }
+}
+
 /// Lowercase hex-encode a byte slice without per-byte `format!` allocations.
 ///
 /// Used by the optional `YGG_SYNC_DEBUG` trace path to render raw header /
@@ -4962,72 +4992,95 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     let mut pending_forwards = Vec::new();
     let mut pending_rollback = None;
 
-    for _ in 0..batch_size {
-        let next = chain_sync.request_next_typed().await?;
-
-        match next {
-            TypedNextResponse::RollForward { header, tip }
-            | TypedNextResponse::AwaitRollForward { header, tip } => {
-                let header_point = point_from_raw_header(&header);
-                // Slice GD-RT — Genesis density observation hook.
-                // Push the observed header slot into the per-peer
-                // `DensityWindow` so the governor can read chain-quality
-                // density on its next tick.  No-op when registry is None.
-                if let (Some(Point::BlockPoint(slot, _)), Some((registry, peer))) =
-                    (header_point, density_instr)
-                {
-                    let _ = observe_chain_sync_header_density(peer, slot, registry);
-                }
-                // Round 151 — publish the observed RollForward `(slot,
-                // hash)` to the shared `ChainSyncWorkerPool` candidate
-                // fragment for the verified-sync session's peer.  This
-                // gives `partition_fetch_range_with_candidate_fragments`
-                // real intermediate-boundary hashes for multi-peer
-                // BlockFetch dispatch.  No-op when the pool isn't
-                // wired through.  Reference: Finding A foundation in
-                // `node/src/chainsync_worker.rs`.
-                if let (Some(Point::BlockPoint(slot, hash)), Some(ctx)) =
-                    (header_point, multi_peer_dispatch.as_ref())
-                {
-                    if let Some(chainsync_pool) = ctx.chainsync_pool.as_ref() {
-                        let peer = pool_instr.map(|(_, p)| p).unwrap_or_else(|| {
-                            // Fallback synthetic addr — never reached in
-                            // production where pool_instr is wired.
-                            std::net::SocketAddr::from(([0, 0, 0, 0], 0))
-                        });
-                        crate::chainsync_worker::publish_announced_header(
-                            chainsync_pool,
-                            peer,
-                            slot,
-                            hash,
-                        )
-                        .await;
+    macro_rules! handle_next_response {
+        ($next:expr, $has_pipelined_responses_after_rollback:expr) => {
+            match $next {
+                TypedNextResponse::RollForward { header, tip }
+                | TypedNextResponse::AwaitRollForward { header, tip } => {
+                    let header_point = point_from_raw_header(&header);
+                    // Slice GD-RT — Genesis density observation hook.
+                    // Push the observed header slot into the per-peer
+                    // `DensityWindow` so the governor can read chain-quality
+                    // density on its next tick.  No-op when registry is None.
+                    if let (Some(Point::BlockPoint(slot, _)), Some((registry, peer))) =
+                        (header_point, density_instr)
+                    {
+                        let _ = observe_chain_sync_header_density(peer, slot, registry);
                     }
-                }
-                if sync_debug_enabled() {
-                    let header_hex = bytes_to_hex(&header);
-                    eprintln!(
-                        "[ygg-sync-debug] chainsync-roll-forward current_lower={:?} header_point={:?} tip={:?} header_point_decoded={} raw_header_len={} raw_header_hex={}",
-                        from_point,
-                        header_point,
+                    // Round 151 — publish the observed RollForward `(slot,
+                    // hash)` to the shared `ChainSyncWorkerPool` candidate
+                    // fragment for the verified-sync session's peer.  This
+                    // gives `partition_fetch_range_with_candidate_fragments`
+                    // real intermediate-boundary hashes for multi-peer
+                    // BlockFetch dispatch.  No-op when the pool isn't
+                    // wired through.  Reference: Finding A foundation in
+                    // `node/src/chainsync_worker.rs`.
+                    if let (Some(Point::BlockPoint(slot, hash)), Some(ctx)) =
+                        (header_point, multi_peer_dispatch.as_ref())
+                    {
+                        if let Some(chainsync_pool) = ctx.chainsync_pool.as_ref() {
+                            let peer = pool_instr.map(|(_, p)| p).unwrap_or_else(|| {
+                                // Fallback synthetic addr — never reached in
+                                // production where pool_instr is wired.
+                                std::net::SocketAddr::from(([0, 0, 0, 0], 0))
+                            });
+                            crate::chainsync_worker::publish_announced_header(
+                                chainsync_pool,
+                                peer,
+                                slot,
+                                hash,
+                            )
+                            .await;
+                        }
+                    }
+                    if sync_debug_enabled() {
+                        let header_hex = bytes_to_hex(&header);
+                        eprintln!(
+                            "[ygg-sync-debug] chainsync-roll-forward current_lower={:?} header_point={:?} tip={:?} header_point_decoded={} raw_header_len={} raw_header_hex={}",
+                            from_point,
+                            header_point,
+                            tip,
+                            header_point.is_some(),
+                            header.len(),
+                            header_hex
+                        );
+                    }
+                    pending_forwards.push(PendingRollForward {
+                        raw_header: header,
                         tip,
-                        header_point.is_some(),
-                        header.len(),
-                        header_hex
-                    );
+                        header_point,
+                    });
                 }
-                pending_forwards.push(PendingRollForward {
-                    raw_header: header,
-                    tip,
-                    header_point,
-                });
-            }
-            TypedNextResponse::RollBackward { point, tip }
-            | TypedNextResponse::AwaitRollBackward { point, tip } => {
-                pending_rollback = Some((point, tip));
-                break;
-            }
+                TypedNextResponse::RollBackward { point, tip }
+                | TypedNextResponse::AwaitRollBackward { point, tip } => {
+                    if $has_pipelined_responses_after_rollback {
+                        return Err(SyncError::ChainSync(
+                            ChainSyncClientError::UnexpectedMessage(
+                                "rollback before end of pipelined ChainSync batch; reconnecting to preserve cursor alignment"
+                                    .to_owned(),
+                            ),
+                        ));
+                    }
+                    pending_rollback = Some((point, tip));
+                    break;
+                }
+            };
         };
+    }
+
+    let request_count = chainsync_pipeline_request_count(batch_size, from_point, verification);
+    if request_count > 1 {
+        let next_responses = chain_sync
+            .request_next_typed_pipelined(request_count)
+            .await?;
+        for (response_idx, next) in next_responses.into_iter().enumerate() {
+            handle_next_response!(next, response_idx + 1 < request_count);
+        }
+    } else {
+        for _ in 0..batch_size {
+            let next = chain_sync.request_next_typed().await?;
+            handle_next_response!(next, false);
+        }
     }
 
     if let Some(last_forward) = pending_forwards.last() {
