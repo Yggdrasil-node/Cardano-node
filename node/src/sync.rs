@@ -1584,6 +1584,22 @@ pub(crate) fn load_exact_chain_dep_sidecar_snapshot(
     }
 }
 
+pub(crate) fn load_stake_snapshots_sidecar(
+    storage_dir: Option<&Path>,
+) -> Result<Option<StakeSnapshots>, SyncError> {
+    let Some(dir) = storage_dir else {
+        return Ok(None);
+    };
+    let Some(bytes) = yggdrasil_storage::load_stake_snapshots(dir).map_err(SyncError::Storage)?
+    else {
+        return Ok(None);
+    };
+    let mut dec = Decoder::new(&bytes);
+    StakeSnapshots::decode_cbor(&mut dec)
+        .map(Some)
+        .map_err(SyncError::LedgerDecode)
+}
+
 pub(crate) fn for_each_roll_forward_block<E, F>(
     progress: &MultiEraSyncProgress,
     mut f: F,
@@ -1852,6 +1868,7 @@ where
                 tracking.base_ledger_state.clone(),
                 epoch_size,
                 Some(&tracking.plutus_evaluator),
+                tracking.stake_snapshots.clone(),
             )?;
             tracking.ledger_state = recovery.ledger_state;
             tracking.stake_snapshots = Some(recovery.stake_snapshots);
@@ -2206,6 +2223,7 @@ fn recover_ledger_state_chaindb_with_epoch_boundary<I, V, L>(
     base_state: LedgerState,
     epoch_schedule: EpochSchedule,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
+    restored_stake_snapshots: Option<StakeSnapshots>,
 ) -> Result<BoundaryAwareRecovery, SyncError>
 where
     I: ImmutableStore,
@@ -2221,7 +2239,8 @@ where
         .map(|(_, checkpoint)| checkpoint.restore())
         .unwrap_or(base_state);
     let replay_from_exclusive = ledger_state.tip;
-    let mut snapshots = stake_snapshots_from_ledger_state(&ledger_state);
+    let mut snapshots = restored_stake_snapshots
+        .unwrap_or_else(|| stake_snapshots_from_ledger_state(&ledger_state));
     let mut pool_block_counts = ledger_state.blocks_made().clone();
     let mut epoch_events = Vec::new();
 
@@ -7379,6 +7398,30 @@ mod tests {
         assert_eq!(ctx.candidate_nonce, nonce.candidate_nonce);
         assert_eq!(ctx.epoch_nonce, nonce.epoch_nonce);
         assert_eq!(ctx.opcert_counters.get(&pool).copied(), Some(3));
+    }
+
+    #[test]
+    fn stake_snapshots_sidecar_round_trips() {
+        let dir = tempfile::tempdir().expect("temp stake snapshot dir");
+        let snapshots = StakeSnapshots {
+            mark: make_snapshot_with_pools(&[(pool_hash(1), 100)]),
+            set: make_snapshot_with_pools(&[(pool_hash(2), 200)]),
+            go: make_snapshot_with_pools(&[(pool_hash(3), 300)]),
+            fee_pot: 42,
+        };
+        let encoded = {
+            let mut enc = yggdrasil_ledger::Encoder::new();
+            snapshots.encode_cbor(&mut enc);
+            enc.into_bytes()
+        };
+        yggdrasil_storage::save_stake_snapshots(dir.path(), &encoded)
+            .expect("save stake snapshots");
+
+        let restored = load_stake_snapshots_sidecar(Some(dir.path()))
+            .expect("load stake snapshots")
+            .expect("stake snapshots present");
+
+        assert_eq!(restored, snapshots);
     }
 
     #[test]

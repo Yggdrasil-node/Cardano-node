@@ -21,11 +21,11 @@ use crate::sync::{
     LedgerRecoveryOutcome, MultiEraSyncProgress, MultiEraSyncStep, SyncError, TypedIntersectResult,
     VerifiedSyncServiceConfig, VrfVerificationContext, apply_nonce_evolution_to_progress,
     apply_verified_progress_to_chaindb, decode_multi_era_block, extract_consumed_inputs,
-    extract_tx_ids, multi_era_block_to_block, persist_chain_dep_state_sidecar,
-    recover_ledger_state_chaindb, restore_chain_dep_sidecar_state_to_point,
-    sync_batch_apply_verified, sync_batch_verified_with_tentative, track_chain_state,
-    typed_find_intersect, validate_block_body_size, validate_block_protocol_version,
-    verify_block_body_hash,
+    extract_tx_ids, load_stake_snapshots_sidecar, multi_era_block_to_block,
+    persist_chain_dep_state_sidecar, recover_ledger_state_chaindb,
+    restore_chain_dep_sidecar_state_to_point, sync_batch_apply_verified,
+    sync_batch_verified_with_tentative, track_chain_state, typed_find_intersect,
+    validate_block_body_size, validate_block_protocol_version, verify_block_body_hash,
 };
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use serde_json::Value;
@@ -37,8 +37,8 @@ use yggdrasil_consensus::{
 };
 use yggdrasil_ledger::{
     BlockNo, Decoder, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
-    MultiEraSubmittedTx, Nonce, Point, PoolRelayAccessPoint, ShelleyTxIn, SlotNo, TxId,
-    plutus_validation::PlutusEvaluator,
+    MultiEraSubmittedTx, Nonce, Point, PoolRelayAccessPoint, ShelleyTxIn, SlotNo, StakeSnapshots,
+    TxId, plutus_validation::PlutusEvaluator,
 };
 use yggdrasil_mempool::{
     MEMPOOL_ZERO_IDX, Mempool, MempoolEntry, MempoolError, MempoolIdx, MempoolSnapshot,
@@ -6536,6 +6536,26 @@ where
     }
 }
 
+fn stake_snapshots_for_recovered_point(
+    config: &VerifiedSyncServiceConfig,
+    storage_dir: Option<&Path>,
+    recovery_point: &Point,
+) -> Result<Option<StakeSnapshots>, SyncError> {
+    if config.nonce_config.is_none() {
+        return Ok(None);
+    }
+
+    match load_stake_snapshots_sidecar(storage_dir)? {
+        Some(snapshots) => Ok(Some(snapshots)),
+        None if storage_dir.is_some() && !matches!(recovery_point, Point::Origin) => {
+            Err(SyncError::Recovery(format!(
+                "missing exact StakeSnapshots sidecar history for recovered point {recovery_point:?}"
+            )))
+        }
+        None => Ok(Some(StakeSnapshots::new())),
+    }
+}
+
 /// Recover ledger state from coordinated storage and then run reconnecting
 /// verified sync while emitting runtime trace events.
 pub async fn resume_reconnecting_verified_sync_service_chaindb_with_tracer<I, V, L, F>(
@@ -6587,15 +6607,18 @@ where
         ]),
     );
 
+    let stake_snapshots = stake_snapshots_for_recovered_point(
+        config,
+        chain_dep_persist_dir.as_deref(),
+        &recovery.point,
+    )?;
+
     let checkpoint_tracking = LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
         plutus_evaluator: config.build_plutus_evaluator(),
-        stake_snapshots: config
-            .nonce_config
-            .as_ref()
-            .map(|_| yggdrasil_ledger::StakeSnapshots::new()),
+        stake_snapshots,
         epoch_size: config.nonce_config.as_ref().map(|nc| {
             config
                 .epoch_schedule
@@ -6705,15 +6728,18 @@ where
         ]),
     );
 
+    let stake_snapshots = stake_snapshots_for_recovered_point(
+        config,
+        chain_dep_persist_dir.as_deref(),
+        &recovery.point,
+    )?;
+
     let checkpoint_tracking = LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
         plutus_evaluator: config.build_plutus_evaluator(),
-        stake_snapshots: config
-            .nonce_config
-            .as_ref()
-            .map(|_| yggdrasil_ledger::StakeSnapshots::new()),
+        stake_snapshots,
         epoch_size: config.nonce_config.as_ref().map(|nc| {
             config
                 .epoch_schedule
@@ -6830,8 +6856,8 @@ mod tests {
         prepare_reconnect_attempt_state, reconnect_preferred_peer,
         reconnect_preferred_peer_with_source, record_verified_batch_progress,
         refresh_ledger_peer_sources_from_chain_db, seed_peer_registry, self_validate_forged_block,
-        session_established_trace_fields, sync_error_trace_fields, tip_context_from_chain_db,
-        verified_sync_batch_trace_fields,
+        session_established_trace_fields, stake_snapshots_for_recovered_point,
+        sync_error_trace_fields, tip_context_from_chain_db, verified_sync_batch_trace_fields,
     };
     use crate::sync::LedgerCheckpointPolicy;
     use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
@@ -6912,6 +6938,48 @@ mod tests {
             shared_fetch_worker_pool: None,
             shared_chainsync_worker_pool: None,
         }
+    }
+
+    fn sample_nonce_config() -> NonceEvolutionConfig {
+        NonceEvolutionConfig {
+            epoch_size: EpochSize(100),
+            stability_window: 10,
+            extra_entropy: Nonce::Neutral,
+        }
+    }
+
+    #[test]
+    fn recovered_non_origin_requires_stake_snapshot_sidecar() {
+        let dir = tempfile::tempdir().expect("temp recovery dir");
+        let mut config = sample_sync_config();
+        config.nonce_config = Some(sample_nonce_config());
+        let point = Point::BlockPoint(SlotNo(10), HeaderHash([1; 32]));
+
+        let err = stake_snapshots_for_recovered_point(&config, Some(dir.path()), &point)
+            .expect_err("persistent non-origin recovery requires stake snapshots");
+
+        assert!(
+            err.to_string()
+                .contains("missing exact StakeSnapshots sidecar history")
+        );
+    }
+
+    #[test]
+    fn recovered_origin_uses_empty_stake_snapshots_without_sidecar() {
+        let dir = tempfile::tempdir().expect("temp recovery dir");
+        let mut config = sample_sync_config();
+        config.nonce_config = Some(sample_nonce_config());
+
+        let snapshots =
+            stake_snapshots_for_recovered_point(&config, Some(dir.path()), &Point::Origin)
+                .expect("origin recovery tolerates empty sidecar")
+                .expect("nonce tracking enables stake snapshots");
+
+        assert_eq!(snapshots.fee_pot, 0);
+        assert_eq!(
+            snapshots.set.pool_stake_distribution().total_active_stake(),
+            0
+        );
     }
 
     fn sample_pool_params(relay: Relay, operator: u8) -> PoolParams {
