@@ -7,7 +7,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-Operational-parity arc on top of v0.2.0 — Rounds 144 → 235.
+Operational-parity arc on top of v0.2.0 — Rounds 144 → 236.
 Highlights: full cardano-cli 10.16 query parity at preprod (Shelley
 era) and preview (Alonzo era), **every Conway-era LSQ subcommand**
 (constitution, gov-state, drep-state, drep-stake-distribution,
@@ -15,9 +15,23 @@ committee-state, treasury, spo-stake-distribution, proposals,
 ratify-state, future-pparams, stake-pool-default-vote,
 ledger-peer-snapshot) decoding end-to-end, multi-round
 sync-speed and apply-correctness fixes.  Workspace tests:
-4 640 (v0.2.0) → **4 744 passing, 0 failing**.
+4 640 (v0.2.0) → **4 750 passing, 0 failing**.
 
 ### Added
+
+- **R236 — Live `PoolDistr` for `GetStakeDistribution` and
+  `GetSPOStakeDistr`**.  `encode_stake_distribution_map` and
+  `encode_spo_stake_distribution_for_lsq` now source per-pool
+  active stake from `LedgerStateSnapshot::stake_snapshots()`'s
+  `set` snapshot (matching upstream `nesPd`).
+  `cardano-cli conway query stake-distribution` and `query
+  spo-stake-distribution` now render real per-pool data
+  post-epoch-rotation; the empty-snapshot fallback (`0x82 0xa0
+  0x01`) is preserved for pre-rotation chains.  The
+  `IndividualPoolStake` 3-tuple wire shape `[Rational stake_share,
+  CompactCoin pool_stake, VRFKeyHash]` matches upstream
+  `Cardano.Protocol.TPraos.API.IndividualPoolStake.encCBOR`.
+  Closes a Phase A.3 LSQ data-plumbing gap.
 
 - **`cardano-cli query` end-to-end parity at preprod (Shelley)
   and preview (Alonzo)**.  All 11 working cardano-cli
