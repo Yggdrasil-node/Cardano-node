@@ -21,7 +21,8 @@
 //! | `SubtractedSizes` | `max(min, intercept + slope*(size[0]-size[1]))`  |
 //!
 //! Argument sizes follow the upstream Plutus `ExMemoryUsage` type class:
-//! integers are measured in 64-bit words, byte strings in bytes, etc.
+//! integers and byte strings are measured in 64-bit words; polymorphic lists
+//! are measured by spine length.
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model>
 
@@ -51,6 +52,39 @@ pub enum StepKind {
     Builtin,
     Constr,
     Case,
+}
+
+impl StepKind {
+    /// Number of CEK step kinds with distinct budget costs.
+    pub const COUNT: usize = 9;
+
+    /// Stable order used when accumulating batched CEK step counts.
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::Constant,
+        Self::Var,
+        Self::LamAbs,
+        Self::Apply,
+        Self::Delay,
+        Self::Force,
+        Self::Builtin,
+        Self::Constr,
+        Self::Case,
+    ];
+
+    /// Index into [`Self::ALL`].
+    pub const fn index(self) -> usize {
+        match self {
+            Self::Constant => 0,
+            Self::Var => 1,
+            Self::LamAbs => 2,
+            Self::Apply => 3,
+            Self::Delay => 4,
+            Self::Force => 5,
+            Self::Builtin => 6,
+            Self::Constr => 7,
+            Self::Case => 8,
+        }
+    }
 }
 
 /// Per-step-kind CPU and memory costs.
@@ -141,12 +175,13 @@ pub enum CostModelError {
 ///
 /// Matches the upstream Plutus `ExMemoryUsage` type class:
 /// - Integers: 64-bit words needed for the absolute value (minimum 1).
-/// - ByteStrings / Strings: byte length.
+/// - ByteStrings: 64-bit words occupied by bytes, minimum 1.
+/// - Strings: character count.
 /// - Bool / Unit: 1.
-/// - Pair: 1 + size(fst) + size(snd).
-/// - List: 1 + Σ element sizes.
+/// - Pair: `i64::MAX`; upstream assumes pair builtins are constant-cost.
+/// - List: spine length only.
 /// - Data: recursive node cost (4 per node).
-/// - BLS elements: fixed word counts (6 / 12 / 6 for G1 / G2 / MlResult).
+/// - BLS elements: fixed word counts (18 / 36 / 72 for G1 / G2 / MlResult).
 /// - Non-data runtime values (lambda, delay, partial builtin): 0.
 pub fn ex_memory(value: &Value) -> i64 {
     match value {
@@ -159,17 +194,16 @@ fn constant_ex_memory(c: &crate::types::Constant) -> i64 {
     use crate::types::Constant::*;
     match c {
         Integer(n) => integer_ex_memory(*n),
-        ByteString(bs) => bs.len() as i64,
-        String(s) => s.len() as i64,
+        ByteString(bs) => bytestring_ex_memory(bs.len()),
+        String(s) => s.chars().count() as i64,
         Unit => 1,
         Bool(_) => 1,
-        ProtoList(_, elems) => 1 + elems.iter().map(constant_ex_memory).sum::<i64>(),
-        ProtoPair(_, _, a, b) => 1 + constant_ex_memory(a) + constant_ex_memory(b),
+        ProtoList(_, elems) => elems.len() as i64,
+        ProtoPair(_, _, _, _) => i64::MAX,
         Data(d) => data_ex_memory(d),
-        // G1=48B=6 words, G2=96B=12 words, MlResult=48B=6 words
-        Bls12_381_G1_Element(_) => 6,
-        Bls12_381_G2_Element(_) => 12,
-        Bls12_381_MlResult(_) => 6,
+        Bls12_381_G1_Element(_) => 18,
+        Bls12_381_G2_Element(_) => 36,
+        Bls12_381_MlResult(_) => 72,
     }
 }
 
@@ -183,6 +217,14 @@ pub fn integer_ex_memory(n: i128) -> i64 {
     }
     let bits = 128u32 - n.unsigned_abs().leading_zeros();
     ((bits as i64) + 63) / 64
+}
+
+/// Compute the ExMemory size of a byte string.
+///
+/// Upstream uses `((n - 1) quot 8) + 1`, which yields 1 for the empty
+/// bytestring and for lengths 1..=8.
+pub fn bytestring_ex_memory(len: usize) -> i64 {
+    ((len.saturating_sub(1) / 8) + 1) as i64
 }
 
 /// Compute the ExMemory size of a `PlutusData` value.
@@ -200,7 +242,7 @@ fn data_ex_memory(d: &yggdrasil_ledger::plutus::PlutusData) -> i64 {
         }
         List(items) => 4 + items.iter().map(data_ex_memory).sum::<i64>(),
         Integer(n) => 4 + integer_ex_memory(*n),
-        Bytes(bs) => 4 + bs.len() as i64,
+        Bytes(bs) => 4 + bytestring_ex_memory(bs.len()),
     }
 }
 
@@ -1786,15 +1828,16 @@ mod tests {
             .get(&DefaultFun::Sha2_256)
             .expect("Sha2_256 must have a per-builtin entry");
 
-        // Empty input → intercept only
+        // Empty input -> intercept + one bytestring word * slope.
         let cost_empty =
             entry.evaluate(&[Value::Constant(crate::types::Constant::ByteString(vec![]))]);
         assert_eq!(
-            cost_empty.cpu, 2_477_736,
-            "empty input: cpu should equal intercept"
+            cost_empty.cpu,
+            2_477_736 + 29_175,
+            "empty input: cpu should include the one-word bytestring size"
         );
 
-        // 1-byte input → intercept + 1 * slope
+        // 1-byte input -> intercept + 1 word * slope
         let cost_one =
             entry.evaluate(&[Value::Constant(crate::types::Constant::ByteString(vec![
                 0u8,
@@ -1823,7 +1866,7 @@ mod tests {
     fn builtin_cost_uses_per_builtin_entry() {
         let model =
             CostModel::from_alonzo_genesis_params(&sample_params()).expect("derive cost model");
-        // sha2_256 on empty input — per-builtin entry must win over flat fallback
+        // sha2_256 on empty input; per-builtin entry must win over flat fallback.
         let cost = model
             .builtin_cost(
                 DefaultFun::Sha2_256,
@@ -1831,7 +1874,8 @@ mod tests {
             )
             .expect("per-builtin entry present");
         assert_eq!(
-            cost.cpu, 2_477_736,
+            cost.cpu,
+            2_477_736 + 29_175,
             "builtin_cost must use per-builtin entry, not flat fallback"
         );
     }
@@ -1863,7 +1907,7 @@ mod tests {
             .expect("per-builtin entry present");
 
         assert_eq!(short.cpu, 5_010);
-        assert_eq!(long.cpu, 5_090);
+        assert_eq!(long.cpu, 5_020);
     }
 
     #[test]
@@ -1882,7 +1926,7 @@ mod tests {
             )
             .expect("per-builtin entry present");
 
-        assert_eq!(cost.cpu, 7_060);
+        assert_eq!(cost.cpu, 7_020);
         assert_eq!(cost.mem, 10);
     }
 
@@ -1931,15 +1975,62 @@ mod tests {
     }
 
     #[test]
-    fn ex_memory_bytestring_is_byte_length() {
-        let v = Value::Constant(crate::types::Constant::ByteString(vec![0u8; 100]));
-        assert_eq!(ex_memory(&v), 100);
+    fn bytestring_ex_memory_counts_64_bit_words() {
+        assert_eq!(bytestring_ex_memory(0), 1);
+        assert_eq!(bytestring_ex_memory(1), 1);
+        assert_eq!(bytestring_ex_memory(8), 1);
+        assert_eq!(bytestring_ex_memory(9), 2);
+        assert_eq!(bytestring_ex_memory(100), 13);
     }
 
     #[test]
-    fn ex_memory_empty_bytestring_is_zero() {
+    fn ex_memory_bytestring_is_word_length() {
+        let v = Value::Constant(crate::types::Constant::ByteString(vec![0u8; 100]));
+        assert_eq!(ex_memory(&v), 13);
+    }
+
+    #[test]
+    fn ex_memory_empty_bytestring_is_one() {
         let v = Value::Constant(crate::types::Constant::ByteString(vec![]));
-        assert_eq!(ex_memory(&v), 0);
+        assert_eq!(ex_memory(&v), 1);
+    }
+
+    #[test]
+    fn ex_memory_string_counts_characters() {
+        let v = Value::Constant(crate::types::Constant::String("aé".to_owned()));
+        assert_eq!(ex_memory(&v), 2);
+    }
+
+    #[test]
+    fn ex_memory_polymorphic_list_is_spine_length() {
+        let v = Value::Constant(crate::types::Constant::ProtoList(
+            crate::types::Type::ByteString,
+            vec![
+                crate::types::Constant::ByteString(vec![0; 100]),
+                crate::types::Constant::ByteString(vec![0; 100]),
+            ],
+        ));
+        assert_eq!(ex_memory(&v), 2);
+    }
+
+    #[test]
+    fn ex_memory_polymorphic_pair_is_max_bound() {
+        let v = Value::Constant(crate::types::Constant::ProtoPair(
+            crate::types::Type::Integer,
+            crate::types::Type::ByteString,
+            Box::new(crate::types::Constant::Integer(1)),
+            Box::new(crate::types::Constant::ByteString(vec![0])),
+        ));
+        assert_eq!(ex_memory(&v), i64::MAX);
+    }
+
+    #[test]
+    fn data_ex_memory_charges_nodes_and_bytestring_words() {
+        let data = yggdrasil_ledger::plutus::PlutusData::List(vec![
+            yggdrasil_ledger::plutus::PlutusData::Integer(0),
+            yggdrasil_ledger::plutus::PlutusData::Bytes(vec![0; 9]),
+        ]);
+        assert_eq!(data_ex_memory(&data), 15);
     }
 
     #[test]

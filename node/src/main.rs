@@ -1399,6 +1399,7 @@ fn main() -> Result<()> {
             .with_max_concurrent_block_fetch_peers(file_cfg.max_concurrent_block_fetch_peers)
             .with_shared_fetch_worker_pool(Some(shared_fetch_worker_pool.clone()))
             .with_shared_chainsync_worker_pool(Some(shared_chainsync_worker_pool.clone()))
+            .with_epoch_schedule(Some(file_cfg.epoch_schedule()))
             // Wire genesis-derived timing into the live LedgerStateJudgement
             // so the governor's per-tick `fetch_mode_from_judgement(...)`
             // signal actually reflects whether the recovered tip is fresh

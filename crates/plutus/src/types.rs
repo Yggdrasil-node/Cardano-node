@@ -5,6 +5,8 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core>
 
+use std::sync::Arc;
+
 use yggdrasil_ledger::plutus::PlutusData;
 
 use crate::error::MachineError;
@@ -722,10 +724,19 @@ impl Value {
 
 /// CEK environment mapping de Bruijn indices to values.
 ///
-/// Index 1 refers to the most recently bound variable (last element).
+/// Index 1 refers to the most recently bound variable. The representation is
+/// persistent so closures and continuation frames can share captured tails
+/// without cloning large values such as `ScriptContext`.
 #[derive(Clone, Debug, Default)]
 pub struct Environment {
-    values: Vec<Value>,
+    head: Option<Arc<EnvNode>>,
+    len: usize,
+}
+
+#[derive(Debug)]
+struct EnvNode {
+    value: Value,
+    parent: Option<Arc<EnvNode>>,
 }
 
 impl Environment {
@@ -735,17 +746,30 @@ impl Environment {
 
     /// Create a new environment with `val` as the most recent binding.
     pub fn extend(&self, val: Value) -> Self {
-        let mut values = self.values.clone();
-        values.push(val);
-        Self { values }
+        Self {
+            head: Some(Arc::new(EnvNode {
+                value: val,
+                parent: self.head.clone(),
+            })),
+            len: self.len + 1,
+        }
     }
 
     /// Look up a 1-based de Bruijn index.
     pub fn lookup(&self, index: u64) -> Result<&Value, MachineError> {
-        if index == 0 || index as usize > self.values.len() {
+        let depth = usize::try_from(index).map_err(|_| MachineError::UnboundVariable(index))?;
+        if depth == 0 || depth > self.len {
             return Err(MachineError::UnboundVariable(index));
         }
-        Ok(&self.values[self.values.len() - index as usize])
+
+        let mut current = self.head.as_deref();
+        for _ in 1..depth {
+            current = current.and_then(|node| node.parent.as_deref());
+        }
+
+        current
+            .map(|node| &node.value)
+            .ok_or(MachineError::UnboundVariable(index))
     }
 }
 

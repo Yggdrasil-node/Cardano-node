@@ -551,8 +551,9 @@ pub fn gen_delg_hash_set(
 // validateScriptsWellFormed (Babbage+ UTXOW rule)
 // ---------------------------------------------------------------------------
 
-/// Checks whether a Plutus script's bytes can be decoded into valid UPLC
-/// using the provided evaluator's `is_script_well_formed` method.
+/// Checks whether a Plutus script's `PlutusBinary` bytes can be decoded
+/// into valid UPLC using the provided evaluator's
+/// `is_script_well_formed` method.
 ///
 /// Native scripts are always well-formed (returns `true`).
 fn is_plutus_script_well_formed(

@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_ledger::eras::alonzo::ExUnits;
+use yggdrasil_ledger::plutus_validation::PlutusVersion;
 use yggdrasil_ledger::protocol_params::{CostModels, DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::{
@@ -135,6 +136,14 @@ pub enum GenesisCostModelError {
         expected: usize,
         /// Number of values successfully mapped to named parameters.
         mapped: usize,
+    },
+    /// An ordered protocol-parameter cost model had an unexpected length for
+    /// its Plutus language.
+    #[error("invalid Plutus language {language} cost-model length {actual}; expected {expected}")]
+    InvalidProtocolCostModelLength {
+        language: u8,
+        actual: usize,
+        expected: usize,
     },
 }
 
@@ -825,11 +834,75 @@ fn ordered_plutus_v1_param_names() -> Vec<String> {
 }
 
 fn ordered_plutus_v2_param_names() -> Vec<String> {
-    CONWAY_V3_PARAM_NAMES
+    let mut names = ordered_plutus_v1_param_names();
+
+    for name in &mut names {
+        match name.as_str() {
+            "blake2b-cpu-arguments-intercept" => {
+                *name = "blake2b_256-cpu-arguments-intercept".to_owned();
+            }
+            "blake2b-cpu-arguments-slope" => {
+                *name = "blake2b_256-cpu-arguments-slope".to_owned();
+            }
+            "blake2b-memory-arguments" => {
+                *name = "blake2b_256-memory-arguments".to_owned();
+            }
+            "verifySignature-cpu-arguments-intercept" => {
+                *name = "verifyEd25519Signature-cpu-arguments-intercept".to_owned();
+            }
+            "verifySignature-cpu-arguments-slope" => {
+                *name = "verifyEd25519Signature-cpu-arguments-slope".to_owned();
+            }
+            "verifySignature-memory-arguments" => {
+                *name = "verifyEd25519Signature-memory-arguments".to_owned();
+            }
+            _ => {}
+        }
+    }
+
+    let serialise_after = names
         .iter()
-        .take(PLUTUS_V2_INITIAL_COST_MODEL_LEN)
-        .map(|name| (*name).to_owned())
-        .collect()
+        .position(|name| name == "remainderInteger-memory-arguments-slope")
+        .expect("V1 table must include remainderInteger memory slope")
+        + 1;
+    names.splice(
+        serialise_after..serialise_after,
+        [
+            "serialiseData-cpu-arguments-intercept".to_owned(),
+            "serialiseData-cpu-arguments-slope".to_owned(),
+            "serialiseData-memory-arguments-intercept".to_owned(),
+            "serialiseData-memory-arguments-slope".to_owned(),
+        ],
+    );
+
+    let ed25519_at = names
+        .iter()
+        .position(|name| name == "verifyEd25519Signature-cpu-arguments-intercept")
+        .expect("V2 table must include Ed25519 signature cost");
+    names.splice(
+        ed25519_at..ed25519_at,
+        [
+            "verifyEcdsaSecp256k1Signature-cpu-arguments".to_owned(),
+            "verifyEcdsaSecp256k1Signature-memory-arguments".to_owned(),
+        ],
+    );
+
+    let schnorr_after = names
+        .iter()
+        .position(|name| name == "verifyEd25519Signature-memory-arguments")
+        .expect("V2 table must include Ed25519 signature memory cost")
+        + 1;
+    names.splice(
+        schnorr_after..schnorr_after,
+        [
+            "verifySchnorrSecp256k1Signature-cpu-arguments-intercept".to_owned(),
+            "verifySchnorrSecp256k1Signature-cpu-arguments-slope".to_owned(),
+            "verifySchnorrSecp256k1Signature-memory-arguments".to_owned(),
+        ],
+    );
+
+    debug_assert_eq!(names.len(), PLUTUS_V2_INITIAL_COST_MODEL_LEN);
+    names
 }
 
 /// Build the initial [`EnactState`] from the Conway genesis constitution.
@@ -966,6 +1039,64 @@ pub fn build_plutus_cost_model(
             Ok(Some(CostModel::from_alonzo_genesis_params(&named)?))
         }
     }
+}
+
+/// Build a CEK [`CostModel`] from the ordered protocol-parameter cost-model
+/// array active for a specific Plutus language.
+///
+/// Ledger protocol parameters store cost models in CDDL array order keyed by
+/// language (`0 = PlutusV1`, `1 = PlutusV2`, `2 = PlutusV3`). The CEK layer
+/// consumes named upstream parameters, so phase-2 replay maps the active array
+/// back through the same ordered name tables used when seeding genesis
+/// protocol parameters.
+pub fn build_plutus_cost_model_from_protocol_values(
+    version: PlutusVersion,
+    values: &[i64],
+) -> Result<CostModel, GenesisCostModelError> {
+    let named: BTreeMap<String, i64> = match version {
+        PlutusVersion::V1 => {
+            if values.len() != PLUTUS_V1_INITIAL_COST_MODEL_LEN {
+                return Err(GenesisCostModelError::InvalidProtocolCostModelLength {
+                    language: version.cost_model_key(),
+                    actual: values.len(),
+                    expected: PLUTUS_V1_INITIAL_COST_MODEL_LEN,
+                });
+            }
+            PLUTUS_V1_PARAM_NAMES
+                .iter()
+                .copied()
+                .zip(values.iter().copied())
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect()
+        }
+        PlutusVersion::V2 => {
+            if values.len() != PLUTUS_V2_INITIAL_COST_MODEL_LEN {
+                return Err(GenesisCostModelError::InvalidProtocolCostModelLength {
+                    language: version.cost_model_key(),
+                    actual: values.len(),
+                    expected: PLUTUS_V2_INITIAL_COST_MODEL_LEN,
+                });
+            }
+            ordered_plutus_v2_param_names()
+                .into_iter()
+                .zip(values.iter().copied())
+                .map(|(name, value)| (name, value))
+                .collect()
+        }
+        PlutusVersion::V3 => {
+            if !SUPPORTED_CONWAY_V3_ARRAY_LENGTHS.contains(&values.len()) {
+                return Err(GenesisCostModelError::UnsupportedConwayV3ArrayLength {
+                    actual: values.len(),
+                    supported: SUPPORTED_CONWAY_V3_ARRAY_LENGTHS,
+                });
+            }
+            let named = conway_v3_named_params(values);
+            ensure_conway_v3_mapping_complete(values.len(), named.len())?;
+            named
+        }
+    };
+
+    Ok(CostModel::from_alonzo_genesis_params(&named)?)
 }
 
 const PLUTUS_V1_INITIAL_COST_MODEL_LEN: usize = 166;
@@ -2781,6 +2912,89 @@ mod tests {
         assert_eq!(model.step_costs.var_mem, 100);
         assert_eq!(model.builtin_cpu, 29_773);
         assert_eq!(model.builtin_mem, 100);
+    }
+
+    #[test]
+    fn build_plutus_cost_model_from_active_protocol_values() {
+        let params =
+            build_protocol_parameters(&sample_shelley(), &sample_alonzo(), Some(&sample_conway()))
+                .expect("build params");
+        let models = params.cost_models.as_ref().expect("cost models");
+        let values = models.get(&0).expect("PlutusV1 values");
+
+        let model = build_plutus_cost_model_from_protocol_values(PlutusVersion::V1, values)
+            .expect("build active model");
+        assert_eq!(model.step_costs.var_cpu, 29_773);
+        assert_eq!(model.step_costs.var_mem, 100);
+        assert_eq!(model.builtin_cpu, 29_773);
+        assert_eq!(model.builtin_mem, 100);
+    }
+
+    #[test]
+    fn ordered_plutus_v2_param_names_match_upstream_initial_order() {
+        let names = ordered_plutus_v2_param_names();
+        assert_eq!(names.len(), PLUTUS_V2_INITIAL_COST_MODEL_LEN);
+        assert_eq!(names[14], "blake2b_256-cpu-arguments-intercept");
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "blake2b-cpu-arguments-intercept")
+        );
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "verifySignature-cpu-arguments-intercept")
+        );
+
+        let serialise = names
+            .iter()
+            .position(|name| name == "serialiseData-cpu-arguments-intercept")
+            .expect("serialiseData present");
+        let sha2 = names
+            .iter()
+            .position(|name| name == "sha2_256-cpu-arguments-intercept")
+            .expect("sha2_256 present");
+        assert!(serialise < sha2);
+
+        let ecdsa = names
+            .iter()
+            .position(|name| name == "verifyEcdsaSecp256k1Signature-cpu-arguments")
+            .expect("ECDSA present");
+        let ed25519 = names
+            .iter()
+            .position(|name| name == "verifyEd25519Signature-cpu-arguments-intercept")
+            .expect("Ed25519 present");
+        let schnorr = names
+            .iter()
+            .position(|name| name == "verifySchnorrSecp256k1Signature-cpu-arguments-intercept")
+            .expect("Schnorr present");
+        assert!(ecdsa < ed25519);
+        assert!(ed25519 < schnorr);
+
+        assert!(!names.iter().any(|name| {
+            name == "divideInteger-cpu-arguments-model-arguments-c00"
+                || name == "modInteger-cpu-arguments-model-arguments-c00"
+                || name == "quotientInteger-cpu-arguments-model-arguments-c00"
+                || name == "remainderInteger-cpu-arguments-model-arguments-c00"
+        }));
+    }
+
+    #[test]
+    fn build_plutus_cost_model_from_active_protocol_values_rejects_bad_length() {
+        let err = build_plutus_cost_model_from_protocol_values(PlutusVersion::V1, &[1, 2])
+            .expect_err("bad V1 length");
+        match err {
+            GenesisCostModelError::InvalidProtocolCostModelLength {
+                language,
+                actual,
+                expected,
+            } => {
+                assert_eq!(language, 0);
+                assert_eq!(actual, 2);
+                assert_eq!(expected, PLUTUS_V1_INITIAL_COST_MODEL_LEN);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

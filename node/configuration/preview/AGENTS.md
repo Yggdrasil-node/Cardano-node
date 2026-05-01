@@ -12,4 +12,7 @@ This directory contains preview reference configuration artifacts only.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Preview configuration files](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preview/)
-- [Cardano Operations Book — preview](https://book.play.dev.cardano.org/)
+- [Cardano Operations Book — preview](https://book.world.dev.cardano.org/env-preview.html)
+
+## Current Phase
+- Treat preview as a GenesisMode/P2P preset per the Operations Book; do not reintroduce legacy non-P2P or split forger/non-forger assumptions when using these reference files.

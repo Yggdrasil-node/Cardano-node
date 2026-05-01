@@ -8,9 +8,9 @@
 //! ## Wire format
 //!
 //! Ledger CBOR decoding stores Plutus scripts as `PlutusBinary`: the raw
-//! Flat-encoded program bytes extracted from the enclosing CBOR bytestring.
-//! Upstream `decodePlutusRunnable` receives those raw bytes, so this module
-//! intentionally does not guess at or strip an additional CBOR layer.
+//! ledger bytes for `PlutusLedgerApi.Common.SerialisedScript`. Upstream
+//! `decodePlutusRunnable` feeds those bytes to `scriptCBORDecoder`, which
+//! first decodes one CBOR bytestring and then Flat-decodes that payload.
 //!
 //! ## Bit-level format
 //!
@@ -23,7 +23,7 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/UntypedPlutusCore/Core/Instance/Flat.hs>
 
-use yggdrasil_ledger::plutus::PlutusData;
+use yggdrasil_ledger::{cbor::Decoder, plutus::PlutusData};
 
 use crate::error::MachineError;
 use crate::types::{Constant, DefaultFun, Program, Term, Type};
@@ -39,18 +39,15 @@ use crate::types::{Constant, DefaultFun, Program, Term, Type};
 /// from on-chain bytes; without a depth bound a malicious script with
 /// deeply nested `Apply` / `LamAbs` / `Constr` could overflow the runtime
 /// stack via the recursive `FlatDecoder::decode_term` path. Real on-chain
-/// scripts rarely nest beyond a few dozen levels even after extensive
-/// macro expansion; 128 sits well above any realistic legitimate payload
-/// while keeping per-frame stack usage of the recursive decoder (which
-/// holds local `Box<Term>` allocations and large match scaffolding) safely
-/// inside the default 2 MB Rust thread stack in debug builds. Exceeding
-/// the bound returns [`MachineError::FlatDecodeError`] cleanly instead of
-/// a process crash.
+/// scripts can exceed a few hundred levels after extensive macro expansion;
+/// 512 admits known Preview Babbage reference scripts while keeping a hard
+/// recursion ceiling. Exceeding the bound returns
+/// [`MachineError::FlatDecodeError`] cleanly instead of a process crash.
 ///
 /// Reference: defensive bound. Upstream Haskell relies on its lazy `Flat`
 /// decoder being stack-safe by construction; the Rust port makes the limit
 /// explicit.
-pub const MAX_TERM_DECODE_DEPTH: usize = 128;
+pub const MAX_TERM_DECODE_DEPTH: usize = 512;
 
 /// Decode a UPLC program from raw Flat bytes.
 pub fn decode_flat_program(bytes: &[u8]) -> Result<Program, MachineError> {
@@ -61,13 +58,41 @@ pub fn decode_flat_program(bytes: &[u8]) -> Result<Program, MachineError> {
 
 /// Decode an on-chain Plutus script from its raw `PlutusBinary` bytes.
 ///
-/// Ledger CBOR decoding already strips the surrounding CBOR bytestring and
-/// leaves the Flat-encoded `PlutusBinary` payload. Upstream
-/// `decodePlutusRunnable` receives those raw bytes; opportunistically
-/// unwrapping a payload that merely starts with a CBOR bytestring major type
-/// can reject valid on-chain scripts.
+/// `PlutusBinary` contains the upstream `SerialisedScript`, which is a CBOR
+/// bytestring whose payload is the Flat-encoded UPLC program. This function
+/// mirrors `scriptCBORDecoder` strictly: decode one CBOR bytestring, reject
+/// trailing bytes, then Flat-decode the payload.
 pub fn decode_script_bytes(script_bytes: &[u8]) -> Result<Program, MachineError> {
-    decode_flat_program(script_bytes)
+    decode_script_bytes_with_remainder_policy(script_bytes, false)
+}
+
+/// Decode a Plutus V1/V2 `PlutusBinary`.
+///
+/// Upstream `deserialiseScript` historically allows a trailing CBOR
+/// remainder for PlutusV1 and PlutusV2 after decoding the first script
+/// bytestring. PlutusV3 rejects such remainders, so callers with a known
+/// language version should use this helper only for V1/V2.
+pub fn decode_script_bytes_allowing_remainder(
+    script_bytes: &[u8],
+) -> Result<Program, MachineError> {
+    decode_script_bytes_with_remainder_policy(script_bytes, true)
+}
+
+fn decode_script_bytes_with_remainder_policy(
+    script_bytes: &[u8],
+    allow_remainder: bool,
+) -> Result<Program, MachineError> {
+    let mut dec = Decoder::new(script_bytes);
+    let flat_bytes = dec
+        .bytes_owned()
+        .map_err(|e| MachineError::FlatDecodeError(format!("PlutusBinary CBOR bytestring: {e}")))?;
+    if !allow_remainder && !dec.is_empty() {
+        return Err(MachineError::FlatDecodeError(format!(
+            "trailing bytes after PlutusBinary script: {}",
+            dec.remaining()
+        )));
+    }
+    decode_flat_program(&flat_bytes)
 }
 
 // ---------------------------------------------------------------------------
@@ -116,14 +141,6 @@ impl<'a> FlatDecoder<'a> {
             result = (result << 1) | u8::from(self.read_bit()?);
         }
         Ok(result)
-    }
-
-    /// Advance to the next byte boundary (skip filler bits).
-    fn skip_to_byte_boundary(&mut self) {
-        if self.bit != 0 {
-            self.pos += 1;
-            self.bit = 0;
-        }
     }
 
     /// Read a Flat natural number (variable-length, 8-bit groups, MSB continuation).
@@ -177,9 +194,18 @@ impl<'a> FlatDecoder<'a> {
         Ok(decoded)
     }
 
-    /// Read a Flat bytestring: pad to byte boundary, then length-prefixed chunks.
+    /// Read the Flat filler sequence used before byte-aligned payloads.
+    ///
+    /// Upstream `dFiller` reads zero bits until the terminating one bit. The
+    /// terminator is placed so the next read starts on a byte boundary.
+    fn read_filler(&mut self) -> Result<(), MachineError> {
+        while !self.read_bit()? {}
+        Ok(())
+    }
+
+    /// Read a Flat bytestring: filler, then length-prefixed chunks.
     fn read_bytestring(&mut self) -> Result<Vec<u8>, MachineError> {
-        self.skip_to_byte_boundary();
+        self.read_filler()?;
         let mut result = Vec::new();
         loop {
             if self.pos >= self.bytes.len() {
@@ -252,8 +278,8 @@ impl<'a> FlatDecoder<'a> {
     /// entry; exceeding it returns
     /// [`MachineError::FlatDecodeError`]. Per-frame size of `decode_term`
     /// is small (no `Vec` accumulator on the stack), so the chosen
-    /// [`MAX_TERM_DECODE_DEPTH`] of 256 fits comfortably inside the default
-    /// 2 MB Rust thread stack in debug builds.
+    /// [`MAX_TERM_DECODE_DEPTH`] avoids rejecting known on-chain scripts
+    /// while still bounding malicious recursive inputs.
     ///
     /// Reference: defensive bound. Upstream Haskell relies on its lazy
     /// `Flat` decoder being stack-safe by construction; the Rust port
@@ -327,201 +353,124 @@ impl<'a> FlatDecoder<'a> {
         }
     }
 
-    /// Decode a type-tag list (used for constant encoding) with an explicit
-    /// nesting depth budget.
-    ///
-    /// The type is encoded as a list of tags using the 1-bit continuation
-    /// scheme, with recursive structure for parameterized types.
     fn decode_type_list_with_depth(
         &mut self,
         depth_remaining: usize,
     ) -> Result<Type, MachineError> {
-        let tag = self.decode_single_type_tag()?;
-        self.build_type_with_depth(tag, depth_remaining)
+        let tags = self.read_list(|d| d.read_bits8(4))?;
+        if tags.is_empty() {
+            return Err(MachineError::FlatDecodeError(
+                "empty constant type tag list".into(),
+            ));
+        }
+        let mut parser = TypeTagParser::new(&tags);
+        let ty = match parser.parse_uni(depth_remaining)? {
+            DecodedUni::Star(ty) => ty,
+            DecodedUni::ProtoList | DecodedUni::ProtoPair | DecodedUni::PartialPair(_) => {
+                return Err(MachineError::FlatDecodeError(
+                    "non-star type cannot have a Flat constant value".into(),
+                ));
+            }
+        };
+        if !parser.is_empty() {
+            return Err(MachineError::FlatDecodeError(format!(
+                "trailing constant type tags: {}",
+                parser.remaining()
+            )));
+        }
+        Ok(ty)
+    }
+}
+
+enum DecodedUni {
+    Star(Type),
+    ProtoList,
+    ProtoPair,
+    PartialPair(Type),
+}
+
+struct TypeTagParser<'a> {
+    tags: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> TypeTagParser<'a> {
+    fn new(tags: &'a [u8]) -> Self {
+        Self { tags, pos: 0 }
     }
 
-    fn decode_single_type_tag(&mut self) -> Result<u8, MachineError> {
-        // Type tags are encoded using the list-of-tags scheme.
-        // Read 1 continuation bit (should be 1 for a non-empty type),
-        // then the tag bits.
-        // Actually, the type is encoded as: read continuation bit (1=more tags),
-        // then 4-bit type tag, then possibly more tags for parameterized types,
-        // then 0-continuation to end.
-        //
-        // The Flat encoding of types uses a tagged format where:
-        // - Simple types: [1, 4-bit-tag, 0]
-        // - Parameterized: [1, 4-bit-tag, ... inner types ..., 0]
-        //
-        // But we need to be more precise. Looking at the Plutus Flat instance:
-        // The constant type is encoded as a list of "type tags" using the
-        // standard list encoding. Each type tag is 4 bits.
-        //
-        // For simple types (Integer, ByteString, etc.): one tag.
-        // For List(a): tag 7 (apply), tag 5 (list), then the element type tags.
-        // For Pair(a,b): tag 7 (apply), tag 7 (apply), tag 6 (pair), then a, then b.
-        //
-        // Actually the scheme is:
-        // - The type is encoded as a list of type-tag atoms (each 4 bits)
-        //   using the standard 1-bit-continuation list encoding.
-        // - The atom sequence encodes the type tree in a specific traversal.
+    fn is_empty(&self) -> bool {
+        self.pos == self.tags.len()
+    }
 
-        // Read 4-bit type tag (within the list element).
-        let tag = self.read_bits8(4)?;
+    fn remaining(&self) -> usize {
+        self.tags.len().saturating_sub(self.pos)
+    }
+
+    fn next_tag(&mut self) -> Result<u8, MachineError> {
+        let tag = self.tags.get(self.pos).copied().ok_or_else(|| {
+            MachineError::FlatDecodeError("unexpected end of constant type tags".into())
+        })?;
+        self.pos += 1;
         Ok(tag)
     }
 
-    fn build_type_with_depth(
-        &mut self,
-        first_tag: u8,
-        depth_remaining: usize,
-    ) -> Result<Type, MachineError> {
+    fn parse_uni(&mut self, depth_remaining: usize) -> Result<DecodedUni, MachineError> {
         if depth_remaining == 0 {
             return Err(MachineError::FlatDecodeError(format!(
                 "type nesting exceeded depth budget {MAX_TERM_DECODE_DEPTH}"
             )));
         }
         let next = depth_remaining - 1;
-        match first_tag {
-            0 => Ok(Type::Integer),
-            1 => Ok(Type::ByteString),
-            2 => Ok(Type::String),
-            3 => Ok(Type::Unit),
-            4 => Ok(Type::Bool),
-            5 => {
-                // ProtoList — next type is the element type.
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected element type for list".into(),
-                    ));
-                }
-                let elem_tag = self.read_bits8(4)?;
-                let elem = self.build_type_with_depth(elem_tag, next)?;
-                Ok(Type::List(Box::new(elem)))
-            }
-            6 => {
-                // ProtoPair — next two types are key and value.
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected first type for pair".into(),
-                    ));
-                }
-                let key_tag = self.read_bits8(4)?;
-                let key = self.build_type_with_depth(key_tag, next)?;
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected second type for pair".into(),
-                    ));
-                }
-                let val_tag = self.read_bits8(4)?;
-                let val = self.build_type_with_depth(val_tag, next)?;
-                Ok(Type::Pair(Box::new(key), Box::new(val)))
-            }
+        let tag = self.next_tag()?;
+        match tag {
+            0 => Ok(DecodedUni::Star(Type::Integer)),
+            1 => Ok(DecodedUni::Star(Type::ByteString)),
+            2 => Ok(DecodedUni::Star(Type::String)),
+            3 => Ok(DecodedUni::Star(Type::Unit)),
+            4 => Ok(DecodedUni::Star(Type::Bool)),
+            5 => Ok(DecodedUni::ProtoList),
+            6 => Ok(DecodedUni::ProtoPair),
             7 => {
-                // Apply — type application. Read the constructor type, then
-                // the argument type(s). This handles the encoding of
-                // parameterized types like `list integer` or `pair integer bool`.
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected type in apply".into(),
-                    ));
-                }
-                let inner_tag = self.read_bits8(4)?;
-                self.build_applied_type_with_depth(inner_tag, next)
+                let fun = self.parse_uni(next)?;
+                let arg = self.parse_uni(next)?;
+                self.apply_uni(fun, arg)
             }
-            8 => Ok(Type::Data),
-            9 => Ok(Type::Bls12_381_G1_Element),
-            10 => Ok(Type::Bls12_381_G2_Element),
-            11 => Ok(Type::Bls12_381_MlResult),
+            8 => Ok(DecodedUni::Star(Type::Data)),
+            9 => Ok(DecodedUni::Star(Type::Bls12_381_G1_Element)),
+            10 => Ok(DecodedUni::Star(Type::Bls12_381_G2_Element)),
+            11 => Ok(DecodedUni::Star(Type::Bls12_381_MlResult)),
+            12 => Err(MachineError::FlatDecodeError(
+                "DefaultUniProtoArray constants are not supported".into(),
+            )),
+            13 => Err(MachineError::FlatDecodeError(
+                "DefaultUniValue constants are not supported".into(),
+            )),
             _ => Err(MachineError::FlatDecodeError(format!(
-                "unknown type tag {first_tag}"
+                "unknown type tag {tag}"
             ))),
         }
     }
 
-    /// Handle type application: `apply(ctor, args...)`.
-    fn build_applied_type_with_depth(
-        &mut self,
-        ctor_tag: u8,
-        depth_remaining: usize,
-    ) -> Result<Type, MachineError> {
-        if depth_remaining == 0 {
-            return Err(MachineError::FlatDecodeError(format!(
-                "applied-type nesting exceeded depth budget {MAX_TERM_DECODE_DEPTH}"
-            )));
-        }
-        let next = depth_remaining - 1;
-        match ctor_tag {
-            5 => {
-                // apply(list, elem_type)
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected element type for applied list".into(),
-                    ));
-                }
-                let elem_tag = self.read_bits8(4)?;
-                let elem = self.build_type_with_depth(elem_tag, next)?;
-                Ok(Type::List(Box::new(elem)))
+    fn apply_uni(&self, fun: DecodedUni, arg: DecodedUni) -> Result<DecodedUni, MachineError> {
+        match (fun, arg) {
+            (DecodedUni::ProtoList, DecodedUni::Star(arg_ty)) => {
+                Ok(DecodedUni::Star(Type::List(Box::new(arg_ty))))
             }
-            6 => {
-                // apply(pair, first_type, second_type)
-                // First is: apply(apply(pair, a), b)
-                // We already consumed one apply + pair, so read a.
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected first type for applied pair".into(),
-                    ));
-                }
-                let a_tag = self.read_bits8(4)?;
-                let a = self.build_type_with_depth(a_tag, next)?;
-                // Need another apply for b.
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected second apply for pair".into(),
-                    ));
-                }
-                let b_tag = self.read_bits8(4)?;
-                let b = self.build_type_with_depth(b_tag, next)?;
-                Ok(Type::Pair(Box::new(a), Box::new(b)))
+            (DecodedUni::ProtoPair, DecodedUni::Star(arg_ty)) => {
+                Ok(DecodedUni::PartialPair(arg_ty))
             }
-            7 => {
-                // Nested apply — e.g., apply(apply(pair, a), b).
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected inner type in nested apply".into(),
-                    ));
-                }
-                let inner = self.read_bits8(4)?;
-                let base = self.build_applied_type_with_depth(inner, next)?;
-                // The result of the nested apply is applied to one more arg.
-                if !self.read_bit()? {
-                    return Err(MachineError::FlatDecodeError(
-                        "expected arg type in nested apply".into(),
-                    ));
-                }
-                let arg_tag = self.read_bits8(4)?;
-                match base {
-                    Type::List(_) => {
-                        // Shouldn't happen: list applied to more args.
-                        Err(MachineError::FlatDecodeError(
-                            "list type over-applied".into(),
-                        ))
-                    }
-                    Type::Pair(a, _) => {
-                        // pair applied to second arg.
-                        let b = self.build_type_with_depth(arg_tag, next)?;
-                        Ok(Type::Pair(a, Box::new(b)))
-                    }
-                    _ => Err(MachineError::FlatDecodeError(format!(
-                        "unexpected nested apply on type tag {inner}"
-                    ))),
-                }
-            }
-            _ => Err(MachineError::FlatDecodeError(format!(
-                "unexpected type constructor in apply: tag {ctor_tag}"
-            ))),
+            (DecodedUni::PartialPair(left_ty), DecodedUni::Star(right_ty)) => Ok(DecodedUni::Star(
+                Type::Pair(Box::new(left_ty), Box::new(right_ty)),
+            )),
+            _ => Err(MachineError::FlatDecodeError(
+                "ill-kinded constant type application".into(),
+            )),
         }
     }
+}
 
+impl<'a> FlatDecoder<'a> {
     fn decode_constant_with_depth(
         &mut self,
         ty: &Type,
@@ -627,6 +576,34 @@ mod tests {
         bytes
     }
 
+    fn type_tag_list_bits(tags: &[u8]) -> Vec<u8> {
+        let mut bits = Vec::new();
+        for &tag in tags {
+            bits.push(1);
+            for shift in (0..4).rev() {
+                bits.push((tag >> shift) & 1);
+            }
+        }
+        bits.push(0);
+        bits
+    }
+
+    fn push_filler_bits(bits: &mut Vec<u8>) {
+        loop {
+            let bit = u8::from((bits.len() + 1).is_multiple_of(8));
+            bits.push(bit);
+            if bit == 1 {
+                break;
+            }
+        }
+    }
+
+    fn push_byte_bits(bits: &mut Vec<u8>, byte: u8) {
+        for shift in (0..8).rev() {
+            bits.push((byte >> shift) & 1);
+        }
+    }
+
     #[test]
     fn test_read_bit() {
         let data = [0b10110000];
@@ -689,8 +666,8 @@ mod tests {
 
     #[test]
     fn test_read_bytestring_empty() {
-        // Empty bytestring: just a zero-length chunk.
-        let data = [0x00];
+        // Empty bytestring: aligned filler byte, then zero-length chunk.
+        let data = [0x01, 0x00];
         let mut dec = FlatDecoder::new(&data);
         let bs = dec.read_bytestring().expect("decode");
         assert!(bs.is_empty());
@@ -698,8 +675,8 @@ mod tests {
 
     #[test]
     fn test_read_bytestring_short() {
-        // Bytestring [0xAB, 0xCD]: one chunk of length 2, then terminator.
-        let data = [0x02, 0xAB, 0xCD, 0x00];
+        // Bytestring [0xAB, 0xCD]: filler, one chunk of length 2, terminator.
+        let data = [0x01, 0x02, 0xAB, 0xCD, 0x00];
         let mut dec = FlatDecoder::new(&data);
         let bs = dec.read_bytestring().expect("decode");
         assert_eq!(bs, vec![0xAB, 0xCD]);
@@ -795,11 +772,12 @@ mod tests {
 
     #[test]
     fn test_decode_constant_unit_term() {
-        // Constant = tag 4 (0100), type tag Unit=3 (0011). No payload.
-        let data = bits_to_bytes(&[
+        // Constant = tag 4 (0100), type list [Unit=3]. No payload.
+        let mut bits = vec![
             0, 1, 0, 0, // tag=4 (Constant)
-            0, 0, 1, 1, // type tag=3 (Unit)
-        ]);
+        ];
+        bits.extend(type_tag_list_bits(&[3]));
+        let data = bits_to_bytes(&bits);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
         assert_eq!(term, Term::Constant(Constant::Unit));
@@ -807,12 +785,13 @@ mod tests {
 
     #[test]
     fn test_decode_constant_bool_true() {
-        // Constant = tag 4 (0100), type tag Bool=4 (0100), payload: 1 bit.
-        let data = bits_to_bytes(&[
+        // Constant = tag 4 (0100), type list [Bool=4], payload: 1 bit.
+        let mut bits = vec![
             0, 1, 0, 0, // tag=4 (Constant)
-            0, 1, 0, 0, // type tag=4 (Bool)
-            1, // bool value = true
-        ]);
+        ];
+        bits.extend(type_tag_list_bits(&[4]));
+        bits.push(1); // bool value = true
+        let data = bits_to_bytes(&bits);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
         assert_eq!(term, Term::Constant(Constant::Bool(true)));
@@ -820,11 +799,12 @@ mod tests {
 
     #[test]
     fn test_decode_constant_bool_false() {
-        let data = bits_to_bytes(&[
+        let mut bits = vec![
             0, 1, 0, 0, // tag=4 (Constant)
-            0, 1, 0, 0, // type tag=4 (Bool)
-            0, // bool value = false
-        ]);
+        ];
+        bits.extend(type_tag_list_bits(&[4]));
+        bits.push(0); // bool value = false
+        let data = bits_to_bytes(&bits);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
         assert_eq!(term, Term::Constant(Constant::Bool(false)));
@@ -834,14 +814,75 @@ mod tests {
     fn test_decode_constant_integer_zero() {
         // Constant = tag 4, Type = Integer (tag 0).
         // Integer 0: zigzag(0) = 0, encoded as 8-bit group: 0x00.
-        let data = bits_to_bytes(&[
+        let mut bits = vec![
             0, 1, 0, 0, // tag=4 (Constant)
-            0, 0, 0, 0, // type tag=0 (Integer)
-            0, 0, 0, 0, 0, 0, 0, 0, // integer byte 0x00 (value=0, MSB=0 → stop)
-        ]);
+        ];
+        bits.extend(type_tag_list_bits(&[0]));
+        bits.extend([0, 0, 0, 0, 0, 0, 0, 0]); // integer byte 0x00
+        let data = bits_to_bytes(&bits);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
         assert_eq!(term, Term::Constant(Constant::Integer(0)));
+    }
+
+    #[test]
+    fn test_decode_constant_list_type_tags() {
+        // Type list [Apply=7, ProtoList=5, Bool=4], empty list payload.
+        let mut bits = vec![
+            0, 1, 0, 0, // tag=4 (Constant)
+        ];
+        bits.extend(type_tag_list_bits(&[7, 5, 4]));
+        bits.push(0); // empty value list
+        let data = bits_to_bytes(&bits);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(
+            term,
+            Term::Constant(Constant::ProtoList(Type::Bool, vec![]))
+        );
+    }
+
+    #[test]
+    fn test_decode_constant_pair_type_tags() {
+        // Type list [Apply, Apply, ProtoPair, Integer, Bool], then pair payload.
+        let mut bits = vec![
+            0, 1, 0, 0, // tag=4 (Constant)
+        ];
+        bits.extend(type_tag_list_bits(&[7, 7, 6, 0, 4]));
+        bits.extend([0, 0, 0, 0, 0, 0, 0, 0]); // integer 0
+        bits.push(1); // bool true
+        let data = bits_to_bytes(&bits);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(
+            term,
+            Term::Constant(Constant::ProtoPair(
+                Type::Integer,
+                Type::Bool,
+                Box::new(Constant::Integer(0)),
+                Box::new(Constant::Bool(true)),
+            ))
+        );
+    }
+
+    #[test]
+    fn test_decode_constant_string_consumes_flat_filler() {
+        // String payloads use upstream Flat `dFiller` before byte chunks.
+        // After the term tag and type-list [String=2], we are not byte
+        // aligned, so the filler must be consumed bit-by-bit before chunk
+        // decoding starts.
+        let mut bits = vec![
+            0, 1, 0, 0, // tag=4 (Constant)
+        ];
+        bits.extend(type_tag_list_bits(&[2]));
+        push_filler_bits(&mut bits);
+        for byte in [2, b'O', b'K', 0] {
+            push_byte_bits(&mut bits, byte);
+        }
+        let data = bits_to_bytes(&bits);
+        let mut dec = FlatDecoder::new(&data);
+        let term = dec.decode_term().expect("decode");
+        assert_eq!(term, Term::Constant(Constant::String("OK".to_owned())));
     }
 
     #[test]
@@ -943,27 +984,6 @@ mod tests {
         assert!(list.is_empty());
     }
 
-    // -- Skip to byte boundary ------------------------------------------
-
-    #[test]
-    fn test_skip_to_byte_boundary() {
-        let data = [0xFF, 0xAA];
-        let mut dec = FlatDecoder::new(&data);
-        dec.read_bit().unwrap(); // consume 1 bit
-        dec.skip_to_byte_boundary();
-        assert_eq!(dec.pos, 1);
-        assert_eq!(dec.bit, 0);
-    }
-
-    #[test]
-    fn test_skip_to_byte_boundary_already_aligned() {
-        let data = [0xFF];
-        let mut dec = FlatDecoder::new(&data);
-        dec.skip_to_byte_boundary();
-        assert_eq!(dec.pos, 0);
-        assert_eq!(dec.bit, 0);
-    }
-
     // -- depth bound ----------------------------------------------------
 
     #[test]
@@ -974,14 +994,14 @@ mod tests {
         // of them must trigger the depth-bound check rather than
         // overflow the runtime stack.
         //
-        // Run on a generously-sized thread stack (8 MB) because debug
+        // Run on a generously-sized thread stack (64 MB) because debug
         // builds on Rust 1.95+ use larger per-frame storage than the
         // default 2 MB cargo-test stack can safely accommodate at the
         // depth budget.  Release builds (which is what production runs)
         // have frames small enough to stay under 2 MB at the same
         // budget; this is purely a test-harness allowance.
         std::thread::Builder::new()
-            .stack_size(8 * 1024 * 1024)
+            .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let depth = MAX_TERM_DECODE_DEPTH + 16;
                 // Each `LamAbs` is a 4-bit tag `0010`. We pack two tags
@@ -1017,26 +1037,37 @@ mod tests {
     // -- decode_script_bytes -------------------------------------------
 
     #[test]
-    fn test_decode_script_bytes_raw_flat() {
+    fn test_decode_script_bytes_decodes_plutus_binary_cbor() {
         // Build a flat program: version 1.0.0, body = Error.
         let flat_bytes = vec![0x01, 0x00, 0x00, 0x60];
+        let mut script_bytes = vec![0x44u8];
+        script_bytes.extend_from_slice(&flat_bytes);
 
-        let program = decode_script_bytes(&flat_bytes).expect("decode");
+        let program = decode_script_bytes(&script_bytes).expect("decode");
         assert_eq!(program.major, 1);
         assert_eq!(program.term, Term::Error);
     }
 
     #[test]
-    fn test_decode_script_bytes_does_not_cbor_unwrap() {
-        // Ledger CBOR decoding already removes the surrounding bytestring.
-        // A caller accidentally passing a CBOR-wrapped payload is decoded as
-        // raw Flat bytes. It may still happen to parse, but must not decode to
-        // the inner payload through a non-upstream compatibility path.
-        let raw = [0x01, 0x00, 0x00, 0x60];
-        let wrapped = [0x44u8, 0x01, 0x00, 0x00, 0x60];
-        assert_ne!(
-            decode_script_bytes(&wrapped).ok(),
-            decode_script_bytes(&raw).ok()
-        );
+    fn test_decode_script_bytes_rejects_raw_flat_without_cbor() {
+        let raw_flat = [0x01, 0x00, 0x00, 0x60];
+
+        assert!(decode_script_bytes(&raw_flat).is_err());
+    }
+
+    #[test]
+    fn test_decode_script_bytes_rejects_trailing_remainder_by_default() {
+        let with_remainder = [0x44u8, 0x01, 0x00, 0x00, 0x60, 0x00];
+
+        assert!(decode_script_bytes(&with_remainder).is_err());
+    }
+
+    #[test]
+    fn test_decode_script_bytes_allowing_remainder_matches_v1_v2() {
+        let with_remainder = [0x44u8, 0x01, 0x00, 0x00, 0x60, 0x00];
+
+        let program = decode_script_bytes_allowing_remainder(&with_remainder).expect("decode");
+        assert_eq!(program.major, 1);
+        assert_eq!(program.term, Term::Error);
     }
 }

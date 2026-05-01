@@ -292,6 +292,7 @@ fn alonzo_plutus_v1_minting_evaluator_fails() {
             Err(LedgerError::ValidationTagMismatch {
                 claimed: true,
                 actual: false,
+                ..
             })
         ),
         "expected ValidationTagMismatch(claimed=true, actual=false), got: {:?}",
@@ -325,6 +326,7 @@ fn alonzo_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
             Err(LedgerError::ValidationTagMismatch {
                 claimed: false,
                 actual: true,
+                ..
             })
         ),
         "expected ValidationTagMismatch(claimed=false, actual=true), got: {:?}",
@@ -526,6 +528,7 @@ fn babbage_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
             Err(LedgerError::ValidationTagMismatch {
                 claimed: true,
                 actual: false,
+                ..
             })
         ),
         "expected ValidationTagMismatch(claimed=true, actual=false), got: {:?}",
@@ -611,6 +614,7 @@ fn babbage_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch()
             Err(LedgerError::ValidationTagMismatch {
                 claimed: false,
                 actual: true,
+                ..
             })
         ),
         "expected ValidationTagMismatch(claimed=false, actual=true), got: {:?}",
@@ -787,6 +791,7 @@ fn conway_claimed_valid_but_phase2_fails_returns_validation_tag_mismatch() {
             Err(LedgerError::ValidationTagMismatch {
                 claimed: true,
                 actual: false,
+                ..
             })
         ),
         "expected ValidationTagMismatch(claimed=true, actual=false), got: {:?}",
@@ -875,6 +880,7 @@ fn conway_claimed_invalid_but_phase2_succeeds_returns_validation_tag_mismatch() 
             Err(LedgerError::ValidationTagMismatch {
                 claimed: false,
                 actual: true,
+                ..
             })
         ),
         "expected ValidationTagMismatch(claimed=false, actual=true), got: {:?}",

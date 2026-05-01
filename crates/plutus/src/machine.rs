@@ -11,6 +11,13 @@ use crate::cost_model::{CostModel, StepKind};
 use crate::error::MachineError;
 use crate::types::{Environment, ExBudget, Term, Value};
 
+/// Upstream CEK restricting mode only spends accumulated machine-step budget
+/// after this many unbudgeted steps.
+///
+/// Reference: `defaultSlippage` in upstream
+/// `UntypedPlutusCore.Evaluation.Machine.Cek.Internal`.
+const DEFAULT_STEP_SLIPPAGE: u64 = 200;
+
 // ---------------------------------------------------------------------------
 // Continuation frames
 // ---------------------------------------------------------------------------
@@ -72,6 +79,9 @@ pub struct CekMachine {
     cost_model: CostModel,
     steps: u64,
     max_steps: u64,
+    pending_step_counts: [u64; StepKind::COUNT],
+    pending_steps_total: u64,
+    step_slippage: u64,
     /// Trace log messages emitted by the `trace` builtin.
     pub logs: Vec<String>,
 }
@@ -79,12 +89,25 @@ pub struct CekMachine {
 impl CekMachine {
     /// Create a new machine with the given budget.
     pub fn new(budget: ExBudget, cost_model: CostModel) -> Self {
+        Self::with_step_slippage(budget, cost_model, DEFAULT_STEP_SLIPPAGE)
+    }
+
+    /// Create a machine with a custom CEK step slippage.
+    ///
+    /// Upstream restricting evaluation batches machine-step costs and only
+    /// spends the accumulated amount once the unbudgeted step count reaches
+    /// `defaultSlippage` (200). A value of `1` is useful for exact-cost unit
+    /// tests because it flushes every step.
+    pub fn with_step_slippage(budget: ExBudget, cost_model: CostModel, step_slippage: u64) -> Self {
         Self {
             frames: Vec::with_capacity(64),
             budget,
             cost_model,
             steps: 0,
             max_steps: 10_000_000_000,
+            pending_step_counts: [0; StepKind::COUNT],
+            pending_steps_total: 0,
+            step_slippage: step_slippage.max(1),
             logs: Vec::new(),
         }
     }
@@ -92,7 +115,7 @@ impl CekMachine {
     /// Evaluate a term to a value.
     pub fn evaluate(&mut self, term: Term) -> Result<Value, MachineError> {
         // Upstream charges a one-time startup cost before evaluation begins.
-        self.budget.spend(self.cost_model.startup_cost)?;
+        self.spend_budget("startup", self.cost_model.startup_cost)?;
 
         let env = Environment::new();
         let mut state = State::Computing(term, env);
@@ -106,6 +129,7 @@ impl CekMachine {
                     state = self.step_return(value)?;
                 }
                 State::Done(value) => {
+                    self.spend_accumulated_step_budget()?;
                     return Ok(value);
                 }
             }
@@ -295,7 +319,7 @@ impl CekMachine {
                     let result =
                         evaluate_builtin(builtin, &args, &self.cost_model, &mut self.logs)?;
                     let cost = self.cost_model.builtin_cost(builtin, &args)?;
-                    self.budget.spend(cost)?;
+                    self.spend_budget(format!("builtin {builtin:?}").as_str(), cost)?;
                     Ok(State::Returning(result))
                 } else {
                     Ok(State::Returning(Value::BuiltinApp {
@@ -329,7 +353,7 @@ impl CekMachine {
                 if new_forces >= needed_forces && args.len() >= needed_args {
                     let result = evaluate_builtin(fun, &args, &self.cost_model, &mut self.logs)?;
                     let cost = self.cost_model.builtin_cost(fun, &args)?;
-                    self.budget.spend(cost)?;
+                    self.spend_budget(format!("builtin {fun:?}").as_str(), cost)?;
                     Ok(State::Returning(result))
                 } else {
                     Ok(State::Returning(Value::BuiltinApp {
@@ -353,8 +377,49 @@ impl CekMachine {
                 self.max_steps
             )));
         }
-        let cost = self.cost_model.step_cost(kind);
-        self.budget.spend(cost)
+        self.pending_step_counts[kind.index()] =
+            self.pending_step_counts[kind.index()].saturating_add(1);
+        self.pending_steps_total = self.pending_steps_total.saturating_add(1);
+
+        if self.pending_steps_total >= self.step_slippage {
+            self.spend_accumulated_step_budget()
+        } else {
+            Ok(())
+        }
+    }
+
+    fn spend_accumulated_step_budget(&mut self) -> Result<(), MachineError> {
+        if self.pending_steps_total == 0 {
+            return Ok(());
+        }
+
+        let mut cost = ExBudget::new(0, 0);
+        for kind in StepKind::ALL {
+            let count = self.pending_step_counts[kind.index()] as i64;
+            if count == 0 {
+                continue;
+            }
+            let step_cost = self.cost_model.step_cost(kind);
+            cost.cpu = cost.cpu.saturating_add(step_cost.cpu.saturating_mul(count));
+            cost.mem = cost.mem.saturating_add(step_cost.mem.saturating_mul(count));
+        }
+
+        let steps = self.pending_steps_total;
+        self.pending_step_counts = [0; StepKind::COUNT];
+        self.pending_steps_total = 0;
+        self.spend_budget(format!("{steps} accumulated steps").as_str(), cost)
+    }
+
+    fn spend_budget(&mut self, context: &str, cost: ExBudget) -> Result<(), MachineError> {
+        let before = self.budget;
+        match self.budget.spend(cost) {
+            Ok(()) => Ok(()),
+            Err(MachineError::OutOfBudget(_)) => Err(MachineError::OutOfBudget(format!(
+                "{context}: cost cpu={}, mem={}, before cpu={}, mem={}, after cpu={}, mem={}",
+                cost.cpu, cost.mem, before.cpu, before.mem, self.budget.cpu, self.budget.mem
+            ))),
+            Err(err) => Err(err),
+        }
     }
 }
 
@@ -1155,6 +1220,10 @@ mod tests {
         }
     }
 
+    fn exact_cost_machine(initial: ExBudget, model: CostModel) -> CekMachine {
+        CekMachine::with_step_slippage(initial, model, 1)
+    }
+
     #[test]
     fn startup_cost_charged_once() {
         let model = CostModel {
@@ -1162,11 +1231,48 @@ mod tests {
             ..CostModel::default()
         };
         let initial = ExBudget::new(10_000_000, 10_000_000);
-        let mut m = CekMachine::new(initial, model);
+        let mut m = exact_cost_machine(initial, model);
         // Evaluating a constant: startup(500,250) + constant_step(100,100)
         m.evaluate(Term::Constant(Constant::Unit)).unwrap();
         assert_eq!(m.remaining_budget().cpu, initial.cpu - 500 - 100);
         assert_eq!(m.remaining_budget().mem, initial.mem - 250 - 100);
+    }
+
+    #[test]
+    fn default_step_slippage_flushes_residual_steps_on_success() {
+        let model = custom_model(crate::cost_model::StepCosts {
+            constant_cpu: 20,
+            constant_mem: 2,
+            ..crate::cost_model::StepCosts::default()
+        });
+        let initial = ExBudget::new(10_000_000, 10_000_000);
+        let mut m = CekMachine::new(initial, model);
+
+        m.evaluate(Term::Constant(Constant::Unit)).unwrap();
+
+        assert_eq!(m.steps_taken(), 1);
+        assert_eq!(m.remaining_budget().cpu, initial.cpu - 20);
+        assert_eq!(m.remaining_budget().mem, initial.mem - 2);
+    }
+
+    #[test]
+    fn default_step_slippage_flushes_at_threshold() {
+        let model = custom_model(crate::cost_model::StepCosts {
+            constant_cpu: 20,
+            constant_mem: 2,
+            ..crate::cost_model::StepCosts::default()
+        });
+        let initial = ExBudget::new(10_000_000, 10_000_000);
+        let mut m = CekMachine::new(initial, model);
+
+        for _ in 0..199 {
+            m.spend_step(StepKind::Constant).unwrap();
+        }
+        assert_eq!(m.remaining_budget(), initial);
+
+        m.spend_step(StepKind::Constant).unwrap();
+        assert_eq!(m.remaining_budget().cpu, initial.cpu - (200 * 20));
+        assert_eq!(m.remaining_budget().mem, initial.mem - (200 * 2));
     }
 
     #[test]
@@ -1197,7 +1303,7 @@ mod tests {
         let initial = ExBudget::new(10_000_000, 10_000_000);
 
         // Single Constant(42): 1 step, charges constant_cpu=20
-        let mut m = CekMachine::new(initial, model.clone());
+        let mut m = exact_cost_machine(initial, model.clone());
         m.evaluate(Term::Constant(Constant::Integer(42))).unwrap();
         assert_eq!(m.steps_taken(), 1);
         assert_eq!(m.remaining_budget().cpu, initial.cpu - 20);
@@ -1208,14 +1314,14 @@ mod tests {
             Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
             Box::new(Term::Constant(Constant::Integer(42))),
         );
-        let mut m2 = CekMachine::new(initial, model.clone());
+        let mut m2 = exact_cost_machine(initial, model.clone());
         m2.evaluate(term).unwrap();
         assert_eq!(m2.steps_taken(), 4);
         assert_eq!(m2.remaining_budget().cpu, initial.cpu - (40 + 30 + 20 + 10));
         assert_eq!(m2.remaining_budget().mem, initial.mem - (4 + 3 + 2 + 1));
 
         // Delay(Const): Delay wraps a thunk – only 1 step
-        let mut m3 = CekMachine::new(initial, model);
+        let mut m3 = exact_cost_machine(initial, model);
         m3.evaluate(Term::Delay(Box::new(Term::Constant(Constant::Integer(42)))))
             .unwrap();
         assert_eq!(m3.steps_taken(), 1);
@@ -1241,7 +1347,7 @@ mod tests {
         let term = Term::Force(Box::new(Term::Delay(Box::new(Term::Constant(
             Constant::Integer(42),
         )))));
-        let mut m = CekMachine::new(initial, model);
+        let mut m = exact_cost_machine(initial, model);
         m.evaluate(term).unwrap();
         assert_eq!(m.steps_taken(), 3);
         assert_eq!(m.remaining_budget().cpu, initial.cpu - (60 + 50 + 20));
@@ -1263,7 +1369,7 @@ mod tests {
         let initial = ExBudget::new(10_000_000, 10_000_000);
 
         // Constr(0, [42]): Constr + Constant = 2 steps
-        let mut m = CekMachine::new(initial, model.clone());
+        let mut m = exact_cost_machine(initial, model.clone());
         m.evaluate(Term::Constr(0, vec![Term::Constant(Constant::Integer(42))]))
             .unwrap();
         assert_eq!(m.remaining_budget().cpu, initial.cpu - (80 + 20));
@@ -1273,7 +1379,7 @@ mod tests {
             Box::new(Term::Constr(0, vec![])),
             vec![Term::Constant(Constant::Integer(42))],
         );
-        let mut m2 = CekMachine::new(initial, model);
+        let mut m2 = exact_cost_machine(initial, model);
         m2.evaluate(term).unwrap();
         assert_eq!(m2.remaining_budget().cpu, initial.cpu - (90 + 80 + 20));
     }

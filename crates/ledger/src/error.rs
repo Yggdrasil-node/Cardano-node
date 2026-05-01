@@ -832,12 +832,17 @@ pub enum LedgerError {
     /// Phase-2 script re-evaluation.
     ///
     /// Reference: `Cardano.Ledger.Alonzo.Rules.Bbody` — `ValidationTagMismatch`.
-    #[error("Phase-2 validation tag mismatch: block says {claimed}, re-evaluation says {actual}")]
+    #[error(
+        "Phase-2 validation tag mismatch: block says {claimed}, re-evaluation says {actual}: {reason}"
+    )]
     ValidationTagMismatch {
         /// The `is_valid` flag from the block producer.
         claimed: bool,
         /// The result of local Phase-2 re-evaluation.
         actual: bool,
+        /// Description of why the local result disagreed with the producer's
+        /// validation tag.
+        reason: String,
     },
 
     /// Total reference script size across all referenced UTxO entries exceeds

@@ -119,7 +119,11 @@ pub struct PlutusScriptEval {
     pub script_hash: [u8; 28],
     /// Script language version.
     pub version: PlutusVersion,
-    /// Raw on-chain `PlutusBinary` script bytes (Flat-encoded).
+    /// Raw on-chain `PlutusBinary` script bytes.
+    ///
+    /// These are the bytes inside the ledger witness/reference-script CBOR
+    /// item. Upstream `PlutusBinary` stores a `SerialisedScript`, which is
+    /// itself a CBOR bytestring containing the Flat-encoded UPLC program.
     pub script_bytes: Vec<u8>,
     /// Purpose that triggered this evaluation.
     pub purpose: ScriptPurpose,
@@ -129,6 +133,13 @@ pub struct PlutusScriptEval {
     pub redeemer: PlutusData,
     /// Execution budget allocated by the transaction for this script.
     pub ex_units: ExUnits,
+    /// Active protocol-parameter cost model for this script language.
+    ///
+    /// The ledger owns the epoch-specific protocol parameters, while the node
+    /// owns the concrete CEK implementation. Carrying the ordered CDDL array
+    /// here lets the evaluator charge exactly the cost model active for the
+    /// transaction rather than a startup fallback.
+    pub cost_model: Option<Vec<i64>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -202,7 +213,8 @@ pub trait PlutusEvaluator {
     /// Evaluate a single Plutus script.
     ///
     /// The implementor should:
-    /// 1. Decode `eval.script_bytes` as raw Flat `PlutusBinary`.
+    /// 1. Decode `eval.script_bytes` as upstream `PlutusBinary`
+    ///    (`SerialisedScript` CBOR bytestring, then Flat).
     /// 2. Apply `eval.datum` (if spending), `eval.redeemer`, and a
     ///    `ScriptContext` as arguments to the decoded program.
     /// 3. Evaluate within `eval.ex_units` budget.
@@ -213,10 +225,12 @@ pub trait PlutusEvaluator {
     /// protocol version (upstream `decodePlutusRunnable` from the UTXOW rule).
     ///
     /// `script_bytes` are the raw on-chain `PlutusBinary` bytes after ledger
-    /// CBOR decoding has removed the surrounding bytestring. The optional
-    /// protocol version lets evaluators reject languages before their
-    /// upstream activation point. The default implementation returns `true`
-    /// so callers without a CEK machine still pass the check.
+    /// CBOR decoding has removed only the witness/reference-script bytestring.
+    /// Evaluators must still decode the `SerialisedScript` CBOR bytestring
+    /// contained in `PlutusBinary` before Flat-decoding the UPLC program. The
+    /// optional protocol version lets evaluators reject languages before their
+    /// upstream activation point. The default implementation returns `true` so
+    /// callers without a CEK machine still pass the check.
     fn is_script_well_formed(
         &self,
         _version: PlutusVersion,
@@ -1557,14 +1571,51 @@ pub fn validate_plutus_scripts(
                     datum,
                     redeemer: redeemer_data.clone(),
                     ex_units: redeemer.ex_units,
+                    cost_model: cost_models
+                        .and_then(|models| models.get(&version.cost_model_key()))
+                        .cloned(),
                 };
 
-                evaluator.evaluate(&eval_target, &augmented_tx_ctx)?;
+                evaluator
+                    .evaluate(&eval_target, &augmented_tx_ctx)
+                    .map_err(|err| annotate_plutus_evaluation_error(err, &eval_target, tx_ctx))?;
             }
         }
     }
 
     Ok(())
+}
+
+fn annotate_plutus_evaluation_error(
+    err: LedgerError,
+    eval: &PlutusScriptEval,
+    tx_ctx: &TxContext,
+) -> LedgerError {
+    match err {
+        LedgerError::PlutusScriptFailed { hash, reason } => LedgerError::PlutusScriptFailed {
+            hash,
+            reason: format!(
+                "purpose {:?}, version {:?}, tx {}, ex_units(mem={}, steps={}): {}",
+                eval.purpose,
+                eval.version,
+                hex_lower(&tx_ctx.tx_hash),
+                eval.ex_units.mem,
+                eval.ex_units.steps,
+                reason
+            ),
+        },
+        other => other,
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 struct RequiredPlutusRedeemer {

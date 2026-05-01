@@ -12,4 +12,7 @@ This directory contains preprod reference configuration artifacts only.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Preprod configuration files](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preprod/)
-- [Cardano Operations Book — preprod](https://book.play.dev.cardano.org/)
+- [Cardano Operations Book — preprod](https://book.world.dev.cardano.org/env-preprod.html)
+
+## Current Phase
+- Treat preprod as a GenesisMode/P2P preset per the Operations Book; do not reintroduce legacy non-P2P or split forger/non-forger assumptions when using these reference files.

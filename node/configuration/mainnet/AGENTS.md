@@ -12,4 +12,7 @@ This directory contains mainnet reference configuration artifacts only.
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - [Mainnet configuration files](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/mainnet/)
-- [Cardano Operations Book — mainnet](https://book.play.dev.cardano.org/)
+- [Cardano Operations Book — mainnet](https://book.world.dev.cardano.org/env-mainnet.html)
+
+## Current Phase
+- Mainnet can be run in GenesisMode by setting `ConsensusMode = GenesisMode`; keep preset handling P2P-only and avoid PeerSharing-enabled relay connections to a block producer through `InitiatorOnlyMode`.

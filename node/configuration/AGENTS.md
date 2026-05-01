@@ -17,7 +17,10 @@ This directory contains reference configuration files and per-network presets us
 - [Preprod configuration](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preprod)
 - [Preview configuration](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preview)
 - [Node runtime configuration usage](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/)
-- [Cardano Operations Book — environments](https://book.play.dev.cardano.org/)
+- [Cardano Operations Book — mainnet](https://book.world.dev.cardano.org/env-mainnet.html)
+- [Cardano Operations Book — preprod](https://book.world.dev.cardano.org/env-preprod.html)
+- [Cardano Operations Book — preview](https://book.world.dev.cardano.org/env-preview.html)
 
 ## Current Phase
 - Yggdrasil exposes `NetworkPreset` values for `Mainnet`, `Preprod`, and `Preview` and now parses the vendored `topology.json` files here as read-only reference inputs for ordered peer selection across `bootstrapPeers`, `localRoots`, `publicRoots`, `useLedgerAfterSlot`, and `peerSnapshotFile`.
+- Operations Book 10.7.1 notes apply to all three presets: new tracing is the default, separate forger/non-forger config files are no longer required, legacy non-P2P mode is unavailable, and PeerSharing-enabled relays must not be connected to a block producer through `InitiatorOnlyMode` because that can leak the producer IP.

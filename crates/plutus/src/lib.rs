@@ -4,7 +4,7 @@
 //! This crate implements a pure-Rust CEK machine that evaluates Plutus
 //! scripts as used on the Cardano blockchain. It supports:
 //!
-//! - **Flat decoding**: parse on-chain script bytes into a UPLC `Program`
+//! - **PlutusBinary decoding**: parse on-chain script bytes into a UPLC `Program`
 //! - **CEK evaluation**: evaluate terms with de Bruijn indices, closures,
 //!   and partial application of built-in functions
 //! - **All PlutusV1 builtins**: integer, bytestring, string, bool, list,
@@ -37,7 +37,7 @@
 //! ## Architecture
 //!
 //! - [`types`] — UPLC term language, constants, builtins, runtime values
-//! - [`flat`] — Flat binary format decoder for on-chain scripts
+//! - [`flat`] — PlutusBinary and Flat binary format decoder for on-chain scripts
 //! - [`machine`] — CEK machine evaluator
 //! - [`builtins`] — Built-in function implementations
 //! - [`cost_model`] — Execution budget and cost tracking
@@ -55,7 +55,7 @@ pub mod types;
 // Re-exports for convenience.
 pub use cost_model::{CostModel, CostModelError};
 pub use error::MachineError;
-pub use flat::{decode_flat_program, decode_script_bytes};
+pub use flat::{decode_flat_program, decode_script_bytes, decode_script_bytes_allowing_remainder};
 pub use machine::CekMachine;
 pub use types::{Constant, DefaultFun, ExBudget, Program, Term, Type, Value};
 
@@ -210,11 +210,10 @@ mod tests {
     #[test]
     fn evaluate_script_constant_unit() {
         // Build flat program: version 1.0.0, body = Constant Unit.
-        // Constant tag=4 (0100), type=Unit (0011).
-        // Bits: 0100 0011 = 0x43
-        let flat_bytes: Vec<u8> = vec![0x01, 0x00, 0x00, 0x43];
+        // Constant tag=4 (0100), type tag list [Unit=3].
+        let flat_bytes: Vec<u8> = vec![0x01, 0x00, 0x00, 0x49, 0x80];
         // Single CBOR wrap.
-        let mut cbor = vec![0x44u8]; // 4-byte bytestring
+        let mut cbor = vec![0x45u8]; // 5-byte bytestring
         cbor.extend_from_slice(&flat_bytes);
 
         let (val, _) = evaluate_script(&cbor, big_budget(), CostModel::default()).unwrap();

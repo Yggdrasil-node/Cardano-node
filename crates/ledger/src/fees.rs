@@ -38,37 +38,37 @@ pub fn min_fee_linear(params: &ProtocolParameters, tx_size_bytes: usize) -> u64 
         .saturating_add(params.min_fee_b)
 }
 
-/// Evaluates a `UnitInterval` rational as a u64-scaled value.
-///
-/// `rational_ceil(value, UnitInterval { n, d }) = ceil(value × n / d)`
-fn rational_ceil(value: u64, ratio: &UnitInterval) -> u64 {
-    if ratio.denominator == 0 {
-        return 0;
-    }
-    let num = value as u128 * ratio.numerator as u128;
-    let den = ratio.denominator as u128;
-    num.div_ceil(den) as u64
-}
-
 /// Computes the fee contribution from script execution units.
 ///
-/// `script_fee = ceil(mem × price_mem) + ceil(steps × price_step)`
+/// `script_fee = ceil(mem × price_mem + steps × price_step)`
 ///
 /// Returns 0 when execution-unit prices are not configured (pre-Alonzo).
 ///
-/// Reference: `Cardano.Ledger.Alonzo.Tx` — `totExUnits` pricing.
+/// Reference: `Cardano.Ledger.Plutus.ExUnits.txscriptfee`.
 pub fn script_fee(params: &ProtocolParameters, total_ex_units: &ExUnits) -> u64 {
-    let mem_fee = params
-        .price_mem
-        .as_ref()
-        .map(|pm| rational_ceil(total_ex_units.mem, pm))
-        .unwrap_or(0);
-    let step_fee = params
-        .price_step
-        .as_ref()
-        .map(|ps| rational_ceil(total_ex_units.steps, ps))
-        .unwrap_or(0);
-    mem_fee.saturating_add(step_fee)
+    let mut acc_num: u128 = 0;
+    let mut acc_den: u128 = 1;
+
+    for (value, ratio) in [
+        (total_ex_units.mem, params.price_mem.as_ref()),
+        (total_ex_units.steps, params.price_step.as_ref()),
+    ] {
+        let Some(ratio) = ratio else {
+            continue;
+        };
+        if ratio.denominator == 0 || ratio.numerator == 0 || value == 0 {
+            continue;
+        }
+        let term_num = value as u128 * ratio.numerator as u128;
+        let term_den = ratio.denominator as u128;
+        acc_num = acc_num * term_den + term_num * acc_den;
+        acc_den *= term_den;
+        let g = gcd_u128(acc_num, acc_den);
+        acc_num /= g;
+        acc_den /= g;
+    }
+
+    acc_num.div_ceil(acc_den) as u64
 }
 
 /// Computes the total minimum fee for a transaction, including script costs.
@@ -332,6 +332,24 @@ mod tests {
         // ceil(1_000_000 * 577/10_000) + ceil(1_000_000_000 * 721/10_000_000)
         // = 57_700 + 72_100 = 129_800
         assert_eq!(fee, 129_800);
+    }
+
+    #[test]
+    fn alonzo_script_fee_ceil_after_summing_components() {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.price_mem = Some(UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        });
+        params.price_step = Some(UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        });
+        let units = ExUnits { mem: 1, steps: 1 };
+
+        // Upstream `txscriptfee` computes `ceiling (mem * priceMem +
+        // steps * priceSteps)`, not one ceiling per component.
+        assert_eq!(script_fee(&params, &units), 1);
     }
 
     #[test]

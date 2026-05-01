@@ -7149,10 +7149,13 @@ impl LedgerState {
             if tx_is_valid {
                 match run_phase2() {
                     Ok(()) => {}
-                    Err(LedgerError::PlutusScriptFailed { .. }) if evaluator.is_some() => {
+                    Err(LedgerError::PlutusScriptFailed { hash, reason })
+                        if evaluator.is_some() =>
+                    {
                         return Err(LedgerError::ValidationTagMismatch {
                             claimed: true,
                             actual: false,
+                            reason: phase2_failure_reason(&hash, &reason),
                         });
                     }
                     Err(e) => return Err(e),
@@ -7189,6 +7192,7 @@ impl LedgerState {
                             return Err(LedgerError::ValidationTagMismatch {
                                 claimed: false,
                                 actual: true,
+                                reason: "phase-2 unexpectedly succeeded".to_string(),
                             });
                         }
                         Err(LedgerError::PlutusScriptFailed { .. }) => {}
@@ -7616,10 +7620,13 @@ impl LedgerState {
             if tx_is_valid {
                 match run_phase2() {
                     Ok(()) => {}
-                    Err(LedgerError::PlutusScriptFailed { .. }) if evaluator.is_some() => {
+                    Err(LedgerError::PlutusScriptFailed { hash, reason })
+                        if evaluator.is_some() =>
+                    {
                         return Err(LedgerError::ValidationTagMismatch {
                             claimed: true,
                             actual: false,
+                            reason: phase2_failure_reason(&hash, &reason),
                         });
                     }
                     Err(e) => return Err(e),
@@ -7656,6 +7663,7 @@ impl LedgerState {
                             return Err(LedgerError::ValidationTagMismatch {
                                 claimed: false,
                                 actual: true,
+                                reason: "phase-2 unexpectedly succeeded".to_string(),
                             });
                         }
                         Err(LedgerError::PlutusScriptFailed { .. }) => {}
@@ -8234,10 +8242,13 @@ impl LedgerState {
             if tx_is_valid {
                 match run_phase2() {
                     Ok(()) => {}
-                    Err(LedgerError::PlutusScriptFailed { .. }) if evaluator.is_some() => {
+                    Err(LedgerError::PlutusScriptFailed { hash, reason })
+                        if evaluator.is_some() =>
+                    {
                         return Err(LedgerError::ValidationTagMismatch {
                             claimed: true,
                             actual: false,
+                            reason: phase2_failure_reason(&hash, &reason),
                         });
                     }
                     Err(e) => return Err(e),
@@ -8428,6 +8439,7 @@ impl LedgerState {
                             return Err(LedgerError::ValidationTagMismatch {
                                 claimed: false,
                                 actual: true,
+                                reason: "phase-2 unexpectedly succeeded".to_string(),
                             });
                         }
                         Err(LedgerError::PlutusScriptFailed { .. }) => {}
@@ -8777,6 +8789,16 @@ fn era_min_protocol_major(era: Era) -> Option<u64> {
         Era::Babbage => Some(7),
         Era::Conway => Some(9),
     }
+}
+
+fn phase2_failure_reason(hash: &[u8; 28], reason: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut hash_hex = String::with_capacity(hash.len() * 2);
+    for byte in hash {
+        let _ = write!(&mut hash_hex, "{byte:02x}");
+    }
+    format!("script {hash_hex} failed: {reason}")
 }
 
 fn conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {
@@ -9816,9 +9838,18 @@ fn apply_certificates_and_withdrawals_with_future(
     let mut withdrawal_total = 0u64;
     if let Some(entries) = withdrawals {
         for (account, requested) in entries {
-            let Some(state) = reward_accounts.get_mut(account) else {
+            // `withdrawalsThatDoNotDrainAccounts` checks the submitted
+            // account address network, then upstream `drainAccounts`
+            // adjusts the registered account by staking credential.
+            let Some(reward_key) = reward_accounts
+                .find_account_by_credential(&account.credential)
+                .copied()
+            else {
                 return Err(LedgerError::RewardAccountNotRegistered(*account));
             };
+            let state = reward_accounts
+                .get_mut(&reward_key)
+                .expect("reward account key resolved from RewardAccounts must exist");
 
             let available = state.balance();
             if *requested > available {
@@ -9890,6 +9921,11 @@ fn apply_certificates_and_withdrawals_with_future(
             match cert {
                 DCert::AccountRegistration(credential) => {
                     register_stake_credential(stake_credentials, *credential, key_deposit)?;
+                    register_reward_account_for_credential(
+                        reward_accounts,
+                        *credential,
+                        ctx.expected_network_id,
+                    );
                     deposit_pot.add_key_deposit(key_deposit);
                     total_deposits = total_deposits.saturating_add(key_deposit);
                 }
@@ -9920,6 +9956,11 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_reward_account_for_credential(
+                            reward_accounts,
+                            *credential,
+                            ctx.expected_network_id,
+                        );
                         deposit_pot.add_key_deposit(*deposit);
                         total_deposits = total_deposits.saturating_add(*deposit);
                     }
@@ -10010,6 +10051,11 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_reward_account_for_credential(
+                            reward_accounts,
+                            *credential,
+                            ctx.expected_network_id,
+                        );
                         deposit_pot.add_key_deposit(*deposit);
                         total_deposits = total_deposits.saturating_add(*deposit);
                     }
@@ -10071,6 +10117,11 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_reward_account_for_credential(
+                            reward_accounts,
+                            *credential,
+                            ctx.expected_network_id,
+                        );
                         deposit_pot.add_key_deposit(*deposit);
                         total_deposits = total_deposits.saturating_add(*deposit);
                     }
@@ -10110,6 +10161,11 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_reward_account_for_credential(
+                            reward_accounts,
+                            *credential,
+                            ctx.expected_network_id,
+                        );
                         deposit_pot.add_key_deposit(*deposit);
                         total_deposits = total_deposits.saturating_add(*deposit);
                     }
@@ -10501,6 +10557,29 @@ fn register_stake_credential(
     }
 
     Ok(())
+}
+
+fn register_reward_account_for_credential(
+    reward_accounts: &mut RewardAccounts,
+    credential: StakeCredential,
+    expected_network_id: Option<u8>,
+) {
+    let Some(network) = expected_network_id else {
+        return;
+    };
+    if reward_accounts
+        .find_account_by_credential(&credential)
+        .is_some()
+    {
+        return;
+    }
+    reward_accounts.insert(
+        RewardAccount {
+            network,
+            credential,
+        },
+        RewardAccountState::new(0, None),
+    );
 }
 
 fn unregister_stake_credential(
@@ -23192,6 +23271,114 @@ mod tests {
         .unwrap();
         assert_eq!(cert_adj.withdrawal_total, 100);
         assert_eq!(ra.balance(&ra_key), 0);
+    }
+
+    #[test]
+    fn test_cert_withdrawals_resolve_account_by_credential() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::ScriptHash([0xCD; 28]);
+        sc.register(cred);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let stored_key = RewardAccount {
+            network: 1,
+            credential: cred,
+        };
+        let withdrawal_key = RewardAccount {
+            network: 0,
+            credential: cred,
+        };
+        let mut ra = RewardAccounts::new();
+        ra.insert(stored_key, RewardAccountState::new(77, None));
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+
+        let mut withdrawals = std::collections::BTreeMap::new();
+        withdrawals.insert(withdrawal_key, 77);
+
+        let cert_adj = apply_certificates_and_withdrawals(
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            None,
+            Some(&withdrawals),
+        )
+        .unwrap();
+
+        assert_eq!(cert_adj.withdrawal_total, 77);
+        assert_eq!(ra.balance(&stored_key), 0);
+    }
+
+    #[test]
+    fn test_stake_registration_creates_zero_reward_account() {
+        let mut pool = PoolState::new();
+        let mut sc = StakeCredentials::new();
+        let cred = crate::StakeCredential::ScriptHash([0xCE; 28]);
+        let mut cs = CommitteeState::new();
+        let mut ds = DrepState::new();
+        let mut ra = RewardAccounts::new();
+        let mut dp = DepositPot {
+            key_deposits: 0,
+            pool_deposits: 0,
+            drep_deposits: 0,
+            proposal_deposits: 0,
+        };
+        let mut gd = std::collections::BTreeMap::new();
+        let ctx = sample_cert_ctx();
+        let reg = vec![DCert::AccountRegistration(cred)];
+
+        let cert_adj = apply_certificates_and_withdrawals(
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            Some(&reg),
+            None,
+        )
+        .unwrap();
+
+        let account = RewardAccount {
+            network: 1,
+            credential: cred,
+        };
+        assert_eq!(cert_adj.total_deposits, 2_000_000);
+        assert!(sc.is_registered(&cred));
+        assert_eq!(ra.balance(&account), 0);
+
+        let withdrawals = std::collections::BTreeMap::from([(account, 0)]);
+        let cert_adj = apply_certificates_and_withdrawals(
+            &mut pool,
+            &mut sc,
+            &mut cs,
+            &mut ds,
+            &mut ra,
+            &mut dp,
+            &mut gd,
+            &std::collections::BTreeMap::new(),
+            &ctx,
+            None,
+            Some(&withdrawals),
+        )
+        .unwrap();
+        assert_eq!(cert_adj.withdrawal_total, 0);
     }
 
     /// Upstream Conway CERTS rule drains reward-account withdrawals BEFORE

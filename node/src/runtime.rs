@@ -23,17 +23,18 @@ use crate::sync::{
     apply_verified_progress_to_chaindb, decode_multi_era_block, extract_consumed_inputs,
     extract_tx_ids, load_stake_snapshots_sidecar, multi_era_block_to_block,
     persist_chain_dep_state_sidecar, recover_ledger_state_chaindb,
-    restore_chain_dep_sidecar_state_to_point, sync_batch_apply_verified,
-    sync_batch_verified_with_tentative, track_chain_state, typed_find_intersect,
-    validate_block_body_size, validate_block_protocol_version, verify_block_body_hash,
+    recover_ledger_state_chaindb_epoch_boundary, restore_chain_dep_sidecar_state_to_point,
+    sync_batch_apply_verified, sync_batch_verified_with_tentative, track_chain_state,
+    typed_find_intersect, validate_block_body_size, validate_block_protocol_version,
+    verify_block_body_hash,
 };
 use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
 use serde_json::Value;
 use serde_json::json;
 use yggdrasil_consensus::praos::ActiveSlotCoeff;
 use yggdrasil_consensus::{
-    ChainState, NonceEvolutionConfig, NonceEvolutionState, SecurityParam, TentativeState,
-    kes_period_of_slot,
+    ChainState, EpochSchedule, NonceEvolutionConfig, NonceEvolutionState, SecurityParam,
+    TentativeState, kes_period_of_slot,
 };
 use yggdrasil_ledger::{
     BlockNo, Decoder, EpochBoundaryEvent, HeaderHash, LedgerError, LedgerState,
@@ -157,6 +158,11 @@ pub struct RuntimeGovernorConfig {
     /// fallback (no genesis timing → always `YoungEnough`) so existing
     /// test paths keep working.
     pub ledger_judgement_settings: LedgerJudgementSettings,
+    /// Era-aware epoch schedule used when recovering the ledger snapshot
+    /// that feeds live ledger-peer discovery. Preview/preprod/mainnet can
+    /// cross hard-fork boundaries during replay; using the non-boundary
+    /// path can reject otherwise valid PPUP timing during runtime resume.
+    pub epoch_schedule: Option<EpochSchedule>,
     /// Optional shared per-peer ChainSync header-density registry
     /// (Slice GD-Final).  When set, the governor loop reads density
     /// values from the registry into `PeerMetrics::density` before
@@ -213,6 +219,7 @@ impl RuntimeGovernorConfig {
             targets,
             block_fetch_pool: None,
             ledger_judgement_settings: LedgerJudgementSettings::default(),
+            epoch_schedule: None,
             density_registry: None,
             max_concurrent_block_fetch_peers: 1,
             shared_fetch_worker_pool: None,
@@ -280,6 +287,15 @@ impl RuntimeGovernorConfig {
     /// behavior — useful for tests that don't configure genesis.
     pub fn with_ledger_judgement_settings(mut self, settings: LedgerJudgementSettings) -> Self {
         self.ledger_judgement_settings = settings;
+        self
+    }
+
+    /// Attach the era-aware epoch schedule used by ChainDb-backed
+    /// ledger-peer recovery. Production callers should pass
+    /// `NodeConfigFile::epoch_schedule()` so governor refreshes replay
+    /// storage with the same epoch-boundary semantics as verified sync.
+    pub fn with_epoch_schedule(mut self, epoch_schedule: Option<EpochSchedule>) -> Self {
+        self.epoch_schedule = epoch_schedule;
         self
     }
 }
@@ -1288,6 +1304,8 @@ where
     /// `TooOld`. Upstream uses `stabilityWindow * slotLength` (≈
     /// `3 * k / f * slotLength`).
     max_ledger_state_age_secs: f64,
+    /// Era-aware epoch schedule for boundary-aware ChainDb recovery.
+    epoch_schedule: Option<EpochSchedule>,
 }
 
 impl<I, V, L> ConsensusLedgerPeerSource for ChainDbConsensusLedgerSource<'_, I, V, L>
@@ -1299,7 +1317,16 @@ where
     fn observe(&mut self) -> ConsensusLedgerPeerInputs {
         let chain_db = self.chain_db.read().expect("chain db lock poisoned");
         let tip = chain_db.recovery().tip;
-        match recover_ledger_state_chaindb(&chain_db, self.base_ledger_state.clone()) {
+        let recovery_result = match self.epoch_schedule {
+            Some(epoch_schedule) => recover_ledger_state_chaindb_epoch_boundary(
+                &chain_db,
+                self.base_ledger_state.clone(),
+                epoch_schedule,
+                None,
+            ),
+            None => recover_ledger_state_chaindb(&chain_db, self.base_ledger_state.clone()),
+        };
+        match recovery_result {
             Ok(recovery) => {
                 let latest_slot = point_slot(&recovery.point).or_else(|| point_slot(&tip));
                 let judgement = derive_judgement_for_observe(
@@ -1468,6 +1495,7 @@ fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
     topology: &TopologyConfig,
     tracer: &NodeTracer,
     judgement_settings: LedgerJudgementSettings,
+    epoch_schedule: Option<EpochSchedule>,
 ) -> LiveLedgerPeerRefreshObservation
 where
     I: ImmutableStore,
@@ -1493,6 +1521,7 @@ where
         system_start_unix_secs: judgement_settings.system_start_unix_secs,
         slot_length_secs: judgement_settings.slot_length_secs,
         max_ledger_state_age_secs: judgement_settings.max_ledger_state_age_secs,
+        epoch_schedule,
     };
     let mut snapshot_source = FilePeerSnapshotSource {
         path: topology.peer_snapshot_file.as_deref(),
@@ -2317,6 +2346,7 @@ pub async fn run_governor_loop<I, V, L, F>(
             &topology,
             &tracer,
             config.ledger_judgement_settings,
+            config.epoch_schedule,
         );
     }
 
@@ -2511,6 +2541,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                         &topology,
                         &tracer,
                         config.ledger_judgement_settings,
+                        config.epoch_schedule,
                     )
                 };
 
@@ -3008,6 +3039,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                                         &topology,
                                         &tracer,
                                         config.ledger_judgement_settings,
+                                        config.epoch_schedule,
                                     )
                                 };
                                 let changed = observation.update.changed;
@@ -6720,6 +6752,33 @@ fn stake_snapshots_for_recovered_point(
     }
 }
 
+fn recover_ledger_state_for_runtime<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    base_ledger_state: LedgerState,
+    config: &VerifiedSyncServiceConfig,
+) -> Result<LedgerRecoveryOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    match config.nonce_config.as_ref() {
+        Some(nonce_config) => {
+            let epoch_schedule = config
+                .epoch_schedule
+                .unwrap_or_else(|| EpochSchedule::fixed(nonce_config.epoch_size));
+            let evaluator = config.build_plutus_evaluator();
+            recover_ledger_state_chaindb_epoch_boundary(
+                chain_db,
+                base_ledger_state,
+                epoch_schedule,
+                Some(&evaluator),
+            )
+        }
+        None => recover_ledger_state_chaindb(chain_db, base_ledger_state),
+    }
+}
+
 /// Recover ledger state from coordinated storage and then run reconnecting
 /// verified sync while emitting runtime trace events.
 pub async fn resume_reconnecting_verified_sync_service_chaindb_with_tracer<I, V, L, F>(
@@ -6753,7 +6812,7 @@ where
         chain_dep_persist_dir,
     } = request;
 
-    let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
+    let recovery = recover_ledger_state_for_runtime(chain_db, base_ledger_state, config)?;
     tracer.trace_runtime(
         "Node.Recovery",
         "Notice",
@@ -6881,7 +6940,7 @@ where
 
     let recovery = {
         let chain_db = chain_db.read().map_err(|_| shared_chaindb_lock_error())?;
-        recover_ledger_state_chaindb(&chain_db, base_ledger_state)?
+        recover_ledger_state_for_runtime(&chain_db, base_ledger_state, config)?
     };
     tracer.trace_runtime(
         "Node.Recovery",
@@ -7934,6 +7993,7 @@ mod tests {
             &topology,
             &tracer,
             LedgerJudgementSettings::default(),
+            None,
         );
 
         assert!(observation.update.changed);
