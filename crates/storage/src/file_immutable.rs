@@ -71,12 +71,26 @@ impl FileImmutable {
     /// The number of skipped files is available via
     /// [`FileImmutable::skipped_on_open`].
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_inner(data_dir, true)
+    }
+
+    /// Opens a file-backed immutable store without mutating recovery files.
+    ///
+    /// This is intended for operator inspection of a possibly live store.
+    /// Unlike [`FileImmutable::open`], it does not delete temporary files or
+    /// clear `dirty.flag`; callers that intend to own the store for writing
+    /// should use [`FileImmutable::open`] so stale crash markers are recovered.
+    pub fn open_read_only(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_inner(data_dir, false)
+    }
+
+    fn open_inner(data_dir: impl AsRef<Path>, recover_dirty: bool) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
 
         let dirty_path = data_dir.join("dirty.flag");
         let had_dirty = dirty_path.exists();
-        if had_dirty {
+        if had_dirty && recover_dirty {
             // A dirty sentinel left from a previous run indicates that the
             // node did not shut down cleanly.  The scan below will recover
             // whatever complete block files are present; corrupted or
@@ -176,7 +190,7 @@ impl FileImmutable {
 
         // Stale dirty sentinel has been recovered; clear it so subsequent
         // opens do not produce spurious warnings.
-        if had_dirty {
+        if had_dirty && recover_dirty {
             let _ = fs::remove_file(&dirty_path);
             if skipped > 0 {
                 eprintln!("  -> skipped {skipped} unreadable block file(s) during recovery");

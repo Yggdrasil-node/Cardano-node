@@ -110,12 +110,13 @@ The default output directory is `tmp/preview-producer/`. It contains:
 
 - `keys/` — cold key, VRF key, KES key, OpCert, and issue counter.
 - `wallet/` — preview payment/stake signing keys and addresses for funding and delegation.
+- `metadata/` — pool metadata JSON and hash; defaults to ticker `RUST` and name `WORLDS FIRST RUST NODE`.
 - `certs/` — stake registration, stake delegation, pool registration, pool id, and registration summary.
 - `config/preview-relay.json` — preview relay config with local inbound serving.
 - `config/preview-producer.json` — preview producer-mode config with generated credentials.
 - `run/run-preview-relay.sh` and `run/run-preview-producer.sh` — convenience launchers.
 
-The generated cold key is **not registered on-chain** until the certificate transaction is submitted. The producer smoke test proves credential loading, OpCert validation, preview bootstrap connection, metrics, sync, and forge-loop startup. Actual block adoption requires preview tADA, stake-pool registration, delegation, and enough active stake to win leader slots. With the default zero pledge, the funding address needs the preview stake-key deposit plus pool deposit and transaction fees before registration can be submitted.
+The generated cold key is **not registered on-chain** until the certificate transaction is submitted. The producer smoke test proves credential loading, OpCert validation, preview bootstrap connection, metrics, sync, and forge-loop startup. Actual block adoption requires preview tADA, stake-pool registration, delegation, and enough active stake to win leader slots. With the default zero pledge, the funding address needs the preview stake-key deposit plus pool deposit and transaction fees before registration can be submitted. Override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before `certs` if you need different off-chain metadata committed into the pool certificate.
 
 If you build the preview registration transaction manually with `cardano-cli transaction build-raw`, pass the certificate files in this order: `stake-registration.cert`, `pool-registration.cert`, then `stake-delegation.cert`. The delegation certificate depends on the pool already being present in the transaction certificate sequence.
 

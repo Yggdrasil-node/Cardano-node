@@ -2370,13 +2370,13 @@ fn validate_config_report_with_role(
     {
         let base_ledger_state = best_effort_base_ledger_state(file_cfg, config_base_dir);
         let chain_db = ChainDb::new(
-            FileImmutable::open(&immutable_dir).wrap_err_with(|| {
+            FileImmutable::open_read_only(&immutable_dir).wrap_err_with(|| {
                 format!("failed to open immutable store {}", immutable_dir.display())
             })?,
-            FileVolatile::open(&volatile_dir).wrap_err_with(|| {
+            FileVolatile::open_read_only(&volatile_dir).wrap_err_with(|| {
                 format!("failed to open volatile store {}", volatile_dir.display())
             })?,
-            FileLedgerStore::open(&ledger_dir).wrap_err_with(|| {
+            FileLedgerStore::open_read_only(&ledger_dir).wrap_err_with(|| {
                 format!("failed to open ledger store {}", ledger_dir.display())
             })?,
         );
@@ -2529,9 +2529,9 @@ fn status_report(
     }
 
     let chain_db = ChainDb::new(
-        FileImmutable::open(immutable_dir).wrap_err("failed to open immutable store")?,
-        FileVolatile::open(volatile_dir).wrap_err("failed to open volatile store")?,
-        FileLedgerStore::open(ledger_dir).wrap_err("failed to open ledger store")?,
+        FileImmutable::open_read_only(immutable_dir).wrap_err("failed to open immutable store")?,
+        FileVolatile::open_read_only(volatile_dir).wrap_err("failed to open volatile store")?,
+        FileLedgerStore::open_read_only(ledger_dir).wrap_err("failed to open ledger store")?,
     );
 
     let chain_tip = chain_db.tip();

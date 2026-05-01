@@ -1,0 +1,6 @@
+{
+  "name": "WORLDS FIRST RUST NODE",
+  "description": "Yggdrasil preview stake pool operated by the pure Rust Cardano node implementation.",
+  "ticker": "RUST",
+  "homepage": "https://github.com/Yggdrasil-node/Cardano-node"
+}

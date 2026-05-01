@@ -4986,6 +4986,7 @@ where
     // upstream `Ouroboros.Consensus.Storage.ChainDB.Init` reference.
     let mut chain_state = seed_chain_state_via_chain_db(chain_db, config.security_param);
     let mut ocert_counters = config.verification.ocert_counters.clone();
+    let origin_nonce_state = nonce_state.clone();
     if let Some(tracking) = checkpoint_tracking.as_ref() {
         let restored = restore_chain_dep_sidecar_state_to_point(
             chain_db,
@@ -5288,6 +5289,7 @@ where
                                 vrf_ctx.as_ref(),
                                 ChainDepStateTracking {
                                     nonce_state: &mut nonce_state,
+                                    origin_nonce_state: origin_nonce_state.as_ref(),
                                     nonce_cfg: config.nonce_config.as_ref(),
                                     ocert_counters: &mut ocert_counters,
                                 },
@@ -5638,6 +5640,7 @@ where
     // upstream `Ouroboros.Consensus.Storage.ChainDB.Init` reference.
     let mut chain_state = seed_chain_state_via_chain_db(chain_db, config.security_param);
     let mut ocert_counters = config.verification.ocert_counters.clone();
+    let origin_nonce_state = nonce_state.clone();
     if let Some(tracking) = checkpoint_tracking.as_ref() {
         let restored = {
             let chain_db = chain_db.read().map_err(|_| shared_chaindb_lock_error())?;
@@ -5942,6 +5945,7 @@ where
                                     vrf_ctx.as_ref(),
                                     ChainDepStateTracking {
                                         nonce_state: &mut nonce_state,
+                                        origin_nonce_state: origin_nonce_state.as_ref(),
                                         nonce_cfg: config.nonce_config.as_ref(),
                                         ocert_counters: &mut ocert_counters,
                                     },

@@ -80,13 +80,27 @@ impl FileVolatile {
     /// chain order is recovered from block slot numbers. Corrupted or
     /// unreadable block files are skipped.
     pub fn open(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_inner(data_dir, true)
+    }
+
+    /// Opens a file-backed volatile store without applying recovery cleanup.
+    ///
+    /// This is intended for read-only operator inspection of a possibly live
+    /// store. Unlike [`FileVolatile::open`], it does not remove temporary
+    /// files, apply the delete WAL, or clear `dirty.flag`; callers that intend
+    /// to write should use [`FileVolatile::open`].
+    pub fn open_read_only(data_dir: impl AsRef<Path>) -> Result<Self, StorageError> {
+        Self::open_inner(data_dir, false)
+    }
+
+    fn open_inner(data_dir: impl AsRef<Path>, recover_dirty: bool) -> Result<Self, StorageError> {
         let data_dir = data_dir.as_ref().to_path_buf();
         fs::create_dir_all(&data_dir)?;
 
         let dirty_path = data_dir.join("dirty.flag");
         let wal_path = data_dir.join(VOLATILE_WAL_FILENAME);
         let had_dirty = dirty_path.exists();
-        if had_dirty {
+        if had_dirty && recover_dirty {
             eprintln!(
                 "[storage] VolatileStore: dirty sentinel found at {:?}; \
                  recovering from unclean shutdown",
@@ -109,7 +123,7 @@ impl FileVolatile {
             }
         }
 
-        if wal_path.exists() {
+        if recover_dirty && wal_path.exists() {
             eprintln!(
                 "[storage] VolatileStore: pending WAL found at {:?}; recovering delete plan",
                 wal_path
@@ -223,7 +237,7 @@ impl FileVolatile {
 
         // Stale dirty sentinel has been recovered; clear it so subsequent
         // opens do not produce spurious warnings.
-        if had_dirty {
+        if had_dirty && recover_dirty {
             let _ = fs::remove_file(&dirty_path);
             if skipped > 0 {
                 eprintln!("  -> skipped {skipped} unreadable block file(s) during recovery");

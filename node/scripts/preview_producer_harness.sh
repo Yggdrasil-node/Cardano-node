@@ -19,6 +19,7 @@ RUN_DIR="$OUT_DIR/run"
 LOG_DIR="${LOG_DIR:-$OUT_DIR/logs}"
 WALLET_DIR="${WALLET_DIR:-$OUT_DIR/wallet}"
 CERT_DIR="${CERT_DIR:-$OUT_DIR/certs}"
+METADATA_DIR="${METADATA_DIR:-$OUT_DIR/metadata}"
 
 CARDANO_CLI="${CARDANO_CLI:-cardano-cli}"
 YGG_BIN="${YGG_BIN:-$ROOT_DIR/target/release/yggdrasil-node}"
@@ -34,6 +35,11 @@ PRODUCER_METRICS_PORT="${PRODUCER_METRICS_PORT:-19002}"
 POOL_PLEDGE="${POOL_PLEDGE:-0}"
 POOL_MARGIN="${POOL_MARGIN:-0/1}"
 POOL_RELAY_PORT="${POOL_RELAY_PORT:-3001}"
+POOL_TICKER="${POOL_TICKER:-RUST}"
+POOL_NAME="${POOL_NAME:-WORLDS FIRST RUST NODE}"
+POOL_DESCRIPTION="${POOL_DESCRIPTION:-Yggdrasil preview stake pool operated by the pure Rust Cardano node implementation.}"
+POOL_HOMEPAGE="${POOL_HOMEPAGE:-https://github.com/Yggdrasil-node/Cardano-node}"
+POOL_METADATA_URL="${POOL_METADATA_URL:-https://yggdrasil-node.github.io/Cardano-node/poolMetaData.json}"
 
 usage() {
   cat <<'EOF'
@@ -77,6 +83,11 @@ Environment:
   PRODUCER_METRICS_PORT  Default: 19002
   POOL_PLEDGE            Default: 0 lovelace
   POOL_MARGIN            Default: 0/1
+  POOL_TICKER            Default: RUST
+  POOL_NAME              Default: WORLDS FIRST RUST NODE
+  POOL_DESCRIPTION       Default: Yggdrasil preview stake pool description.
+  POOL_HOMEPAGE          Default: https://github.com/Yggdrasil-node/Cardano-node
+  POOL_METADATA_URL      Default: GitHub Pages poolMetaData.json URL.
   POOL_RELAY_DNS         Optional relay DNS name to publish in the pool cert.
   POOL_RELAY_IPV4        Optional relay IPv4 address to publish in the pool cert.
   POOL_RELAY_PORT        Default: 3001 when a relay is published.
@@ -293,6 +304,27 @@ pool_relay_args() {
   fi
 }
 
+write_pool_metadata() {
+  mkdir -p "$METADATA_DIR"
+  chmod 0755 "$METADATA_DIR"
+
+  jq -n \
+    --arg name "$POOL_NAME" \
+    --arg ticker "$POOL_TICKER" \
+    --arg description "$POOL_DESCRIPTION" \
+    --arg homepage "$POOL_HOMEPAGE" \
+    '{
+      name: $name,
+      description: $description,
+      ticker: $ticker,
+      homepage: $homepage
+    }' >"$METADATA_DIR/poolMetaData.json"
+
+  "$CARDANO_CLI" latest stake-pool metadata-hash \
+    --pool-metadata-file "$METADATA_DIR/poolMetaData.json" \
+    --out-file "$METADATA_DIR/poolMetaData.hash"
+}
+
 generate_registration_certs() {
   require_prereqs
   ensure_generated_bundle
@@ -314,6 +346,9 @@ generate_registration_certs() {
 
   local relay_args=()
   pool_relay_args relay_args
+  write_pool_metadata
+  local metadata_hash
+  metadata_hash="$(cat "$METADATA_DIR/poolMetaData.hash")"
 
   echo "[info] writing preview registration certificates in $CERT_DIR"
   "$CARDANO_CLI" latest stake-address registration-certificate \
@@ -335,6 +370,8 @@ generate_registration_certs() {
     --pool-reward-account-verification-key-file "$WALLET_DIR/stake.vkey" \
     --pool-owner-stake-verification-key-file "$WALLET_DIR/stake.vkey" \
     "${relay_args[@]}" \
+    --metadata-url "$POOL_METADATA_URL" \
+    --metadata-hash "$metadata_hash" \
     --testnet-magic 2 \
     --out-file "$CERT_DIR/pool-registration.cert"
 
@@ -360,7 +397,12 @@ generate_registration_certs() {
   "pool_deposit_lovelace": $pool_deposit,
   "pool_pledge_lovelace": $POOL_PLEDGE,
   "pool_cost_lovelace": $pool_cost,
-  "pool_margin": "$POOL_MARGIN"
+  "pool_margin": "$POOL_MARGIN",
+  "pool_metadata_file": "$METADATA_DIR/poolMetaData.json",
+  "pool_metadata_url": "$POOL_METADATA_URL",
+  "pool_metadata_hash": "$metadata_hash",
+  "pool_ticker": "$POOL_TICKER",
+  "pool_name": "$POOL_NAME"
 }
 EOF
 
@@ -522,6 +564,8 @@ OpCert KES period: $kes_period
 - run/run-preview-producer.sh
 - wallet/payment.addr
 - wallet/stake.addr
+- metadata/poolMetaData.json
+- metadata/poolMetaData.hash
 - certs/stake-registration.cert
 - certs/stake-delegation.cert
 - certs/pool-registration.cert

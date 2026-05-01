@@ -165,15 +165,15 @@ pub fn praos_vrf_input(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
 
 /// Pre-computed seed tag hashes for TPraos VRF input construction.
 ///
-/// Upstream `mkNonceFromNumber n` = `Nonce (Blake2b-256(CBOR(n)))`.
-/// CBOR(0) = `0x00`, CBOR(1) = `0x01`.
+/// Upstream `mkNonceFromNumber n` = `Nonce (Blake2b-256(word64be(n)))`.
 ///
 /// Reference: `mkNonceFromNumber` in `Cardano.Ledger.BaseTypes`.
 fn tpraos_seed_tag_hash(usage: VrfUsage) -> [u8; 32] {
-    match usage {
-        VrfUsage::Nonce => hash_bytes_256(&[0x00]).0, // mkNonceFromNumber 0 = seedEta
-        VrfUsage::Leader => hash_bytes_256(&[0x01]).0, // mkNonceFromNumber 1 = seedL
-    }
+    let tag = match usage {
+        VrfUsage::Nonce => 0u64,  // seedEta
+        VrfUsage::Leader => 1u64, // seedL
+    };
+    hash_bytes_256(&tag.to_be_bytes()).0
 }
 
 /// Builds a TPraos (Shelley–Alonzo) VRF seed: `Blake2b-256(slot_be8 || nonce_bytes) XOR tag_hash`.
@@ -645,6 +645,34 @@ mod tests {
         let nonce = Nonce::Hash([0xAA; 32]);
         let seed = tpraos_vrf_seed(SlotNo(42), nonce, VrfUsage::Leader);
         assert_eq!(seed.len(), 32, "TPraos mkSeed produces 32-byte XOR'd hash");
+    }
+
+    #[test]
+    fn tpraos_vrf_seed_uses_word64be_seed_tags() {
+        let nonce = Nonce::Hash([0xAA; 32]);
+        let nonce_seed = tpraos_vrf_seed(SlotNo(42), nonce, VrfUsage::Nonce);
+        let leader_seed = tpraos_vrf_seed(SlotNo(42), nonce, VrfUsage::Leader);
+
+        assert_eq!(
+            nonce_seed,
+            [
+                0xfe, 0x84, 0x09, 0x6f, 0x3d, 0xb6, 0xa6, 0x88, 0x61, 0xb6, 0x55, 0x51, 0x9a, 0xdb,
+                0x10, 0xa7, 0x74, 0x01, 0xbf, 0xb2, 0x55, 0xa0, 0x91, 0x9a, 0xb9, 0xe5, 0x32, 0x02,
+                0xae, 0xcf, 0x1a, 0xba,
+            ]
+            .to_vec(),
+            "seedEta must match upstream mkNonceFromNumber 0"
+        );
+        assert_eq!(
+            leader_seed,
+            [
+                0x6d, 0xbd, 0x79, 0x1c, 0xa6, 0x0a, 0x1f, 0xa8, 0x93, 0x9d, 0x61, 0xe6, 0xc2, 0xce,
+                0x1b, 0x93, 0xf1, 0xe2, 0x73, 0x53, 0x8e, 0x3f, 0x08, 0x51, 0xb1, 0x13, 0x2a, 0x2f,
+                0xe0, 0x15, 0xd1, 0x86,
+            ]
+            .to_vec(),
+            "seedL must match upstream mkNonceFromNumber 1"
+        );
     }
 
     #[test]

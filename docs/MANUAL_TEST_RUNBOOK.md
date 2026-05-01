@@ -58,7 +58,7 @@ RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 node/scripts/preview_producer_harness.sh e
 
 Pass conditions:
 - `wallet` prints a preview payment address and stake address under `tmp/preview-producer/wallet/`.
-- `certs` emits stake registration, stake delegation, pool registration, and pool-id files under `tmp/preview-producer/certs/`.
+- `certs` emits stake registration, stake delegation, pool registration, pool-id files under `tmp/preview-producer/certs/`, and pool metadata under `tmp/preview-producer/metadata/` (default ticker `RUST`, name `WORLDS FIRST RUST NODE`).
 - `validate` reports relay credentials absent and producer credentials complete.
 - `smoke-relay` observes preview bootstrap connection, metrics, and synced blocks.
 - `smoke-producer` observes `Startup.BlockProducer`, `block producer loop started`, preview bootstrap connection, metrics, and synced blocks.

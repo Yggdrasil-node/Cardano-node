@@ -82,6 +82,22 @@ pub enum SyncError {
     #[error("consensus error: {0}")]
     Consensus(#[from] ConsensusError),
 
+    /// VRF verification failed for a concrete block header.
+    #[error(
+        "VRF verification failed at slot {slot} in {era} using epoch nonce {epoch_nonce:?}: {source}"
+    )]
+    VrfVerification {
+        /// Slot of the block whose VRF proof failed.
+        slot: u64,
+        /// Era decoder branch used for this block.
+        era: &'static str,
+        /// Epoch nonce supplied to the VRF input constructor.
+        epoch_nonce: Nonce,
+        /// Underlying consensus-layer VRF error.
+        #[source]
+        source: ConsensusError,
+    },
+
     /// Recovery failed because the available storage state could not be
     /// reconstructed into a usable ledger tip.
     #[error("recovery error: {0}")]
@@ -193,6 +209,7 @@ impl SyncError {
             SyncError::Consensus(_)
                 | SyncError::BlockBodyHashMismatch
                 | SyncError::LedgerDecode(_)
+                | SyncError::VrfVerification { .. }
                 | SyncError::BlockFromFuture { .. }
                 | SyncError::WrongBlockBodySize { .. }
                 | SyncError::ProtocolVersionMismatch { .. }
@@ -1724,6 +1741,7 @@ pub(crate) struct VrfVerificationContext<'a> {
 
 pub(crate) struct ChainDepStateTracking<'a> {
     pub nonce_state: &'a mut Option<NonceEvolutionState>,
+    pub origin_nonce_state: Option<&'a NonceEvolutionState>,
     pub nonce_cfg: Option<&'a NonceEvolutionConfig>,
     pub ocert_counters: &'a mut Option<OcertCounters>,
 }
@@ -1973,7 +1991,12 @@ where
                 counters.clear();
             }
             if chain_dep.nonce_state.is_some() {
-                *chain_dep.nonce_state = Some(NonceEvolutionState::new(Nonce::Neutral));
+                *chain_dep.nonce_state = Some(
+                    chain_dep
+                        .origin_nonce_state
+                        .cloned()
+                        .unwrap_or_else(|| NonceEvolutionState::new(Nonce::Neutral)),
+                );
             }
         }
 
@@ -2666,6 +2689,7 @@ where
                 .unwrap_or_else(|| EpochSchedule::fixed(nonce_cfg.epoch_size)),
         );
     }
+    let origin_nonce_state = nonce_state.clone();
 
     loop {
         let batch_fut = sync_batch_verified(
@@ -2727,6 +2751,7 @@ where
                     vrf_ctx.as_ref(),
                     ChainDepStateTracking {
                         nonce_state: &mut nonce_state,
+                        origin_nonce_state: origin_nonce_state.as_ref(),
                         nonce_cfg: config.nonce_config.as_ref(),
                         ocert_counters: &mut ocert_counters,
                     },
@@ -3565,13 +3590,14 @@ pub fn verify_block_vrf(
 ) -> Result<bool, SyncError> {
     // Extract VRF fields per era.  TPraos blocks carry two proofs (leader + nonce);
     // Praos blocks carry a single unified proof.
-    let (vrf_vkey_bytes, leader_proof, nonce_proof, slot, mode) = match block {
+    let (vrf_vkey_bytes, leader_proof, nonce_proof, slot, mode, era) = match block {
         MultiEraBlock::Shelley(s) => (
             s.header.body.vrf_vkey,
             &s.header.body.leader_vrf.proof,
             Some(&s.header.body.nonce_vrf.proof),
             SlotNo(s.header.body.slot),
             VrfMode::TPraos,
+            "Shelley",
         ),
         MultiEraBlock::Alonzo(a) => (
             a.header.body.vrf_vkey,
@@ -3579,6 +3605,7 @@ pub fn verify_block_vrf(
             Some(&a.header.body.nonce_vrf.proof),
             SlotNo(a.header.body.slot),
             VrfMode::TPraos,
+            "Alonzo",
         ),
         MultiEraBlock::Babbage(b) => (
             b.header.body.vrf_vkey,
@@ -3586,6 +3613,7 @@ pub fn verify_block_vrf(
             None,
             SlotNo(b.header.body.slot),
             VrfMode::Praos,
+            "Babbage",
         ),
         MultiEraBlock::Conway(c) => (
             c.header.body.vrf_vkey,
@@ -3593,6 +3621,7 @@ pub fn verify_block_vrf(
             None,
             SlotNo(c.header.body.slot),
             VrfMode::Praos,
+            "Conway",
         ),
         MultiEraBlock::Byron { .. } => return Ok(true),
     };
@@ -3610,12 +3639,24 @@ pub fn verify_block_vrf(
         &params.active_slot_coeff,
         mode,
     )
-    .map_err(SyncError::Consensus)?;
+    .map_err(|source| SyncError::VrfVerification {
+        slot: slot.0,
+        era,
+        epoch_nonce: params.epoch_nonce,
+        source,
+    })?;
 
     // 2. For TPraos blocks, also verify the nonce VRF proof (upstream `vrfChecks`
     //    verifies both `bheaderEta` and `bheaderL`).
     if let Some(np) = nonce_proof {
-        verify_nonce_proof(&vk, slot, params.epoch_nonce, np).map_err(SyncError::Consensus)?;
+        verify_nonce_proof(&vk, slot, params.epoch_nonce, np).map_err(|source| {
+            SyncError::VrfVerification {
+                slot: slot.0,
+                era,
+                epoch_nonce: params.epoch_nonce,
+                source,
+            }
+        })?;
     }
 
     Ok(leader_ok)
@@ -7278,6 +7319,7 @@ mod tests {
             None,
             ChainDepStateTracking {
                 nonce_state: &mut nonce_state,
+                origin_nonce_state: None,
                 nonce_cfg: None,
                 ocert_counters: &mut counter_state,
             },
@@ -7334,6 +7376,7 @@ mod tests {
             max_snapshots: 0,
         };
 
+        let origin_nonce_state = test_nonce_state(0x11);
         let mut nonce_state = Some(test_nonce_state(0x44));
         let mut counter_state = Some(OcertCounters::new());
         update_ledger_checkpoint_after_progress(
@@ -7344,16 +7387,14 @@ mod tests {
             None,
             ChainDepStateTracking {
                 nonce_state: &mut nonce_state,
+                origin_nonce_state: Some(&origin_nonce_state),
                 nonce_cfg: None,
                 ocert_counters: &mut counter_state,
             },
         )
         .expect("initial rollback path");
 
-        assert_eq!(
-            nonce_state.as_ref(),
-            Some(&NonceEvolutionState::new(Nonce::Neutral))
-        );
+        assert_eq!(nonce_state.as_ref(), Some(&origin_nonce_state));
     }
 
     #[test]
@@ -7409,6 +7450,7 @@ mod tests {
             None,
             ChainDepStateTracking {
                 nonce_state: &mut nonce_state,
+                origin_nonce_state: None,
                 nonce_cfg: None,
                 ocert_counters: &mut counter_state,
             },
@@ -7604,6 +7646,7 @@ mod tests {
             None,
             ChainDepStateTracking {
                 nonce_state: &mut nonce_state,
+                origin_nonce_state: None,
                 nonce_cfg: None,
                 ocert_counters: &mut counter_state,
             },
@@ -7690,6 +7733,7 @@ mod tests {
             None,
             ChainDepStateTracking {
                 nonce_state: &mut nonce_state,
+                origin_nonce_state: None,
                 nonce_cfg: Some(&nonce_cfg),
                 ocert_counters: &mut counter_state,
             },
@@ -7870,6 +7914,23 @@ mod tests {
         assert!(s.contains("10"), "must name the pp major: {s}");
     }
 
+    #[test]
+    fn display_vrf_verification_names_slot_and_era() {
+        let e = SyncError::VrfVerification {
+            slot: 172_000,
+            era: "Shelley",
+            epoch_nonce: Nonce::Neutral,
+            source: yggdrasil_consensus::ConsensusError::InvalidVrfProof,
+        };
+        let s = format!("{e}");
+        assert!(s.contains("172000") || s.contains("172_000"));
+        assert!(s.contains("Shelley"), "must name the block era: {s}");
+        assert!(
+            s.contains("invalid VRF proof"),
+            "must keep source error: {s}"
+        );
+    }
+
     // -- is_peer_attributable classification tests --
 
     #[test]
@@ -7878,6 +7939,15 @@ mod tests {
         assert!(
             SyncError::Consensus(yggdrasil_consensus::ConsensusError::InvalidKesSignature)
                 .is_peer_attributable()
+        );
+        assert!(
+            SyncError::VrfVerification {
+                slot: 42,
+                era: "Shelley",
+                epoch_nonce: Nonce::Neutral,
+                source: yggdrasil_consensus::ConsensusError::InvalidVrfProof,
+            }
+            .is_peer_attributable()
         );
         assert!(SyncError::LedgerDecode(LedgerError::CborTrailingBytes(1)).is_peer_attributable());
         assert!(
@@ -7955,6 +8025,12 @@ mod tests {
             SyncError::Storage(StorageError::Serialization("x".to_owned())),
             SyncError::KeepAlive(yggdrasil_network::KeepAliveClientError::ConnectionClosed),
             SyncError::Consensus(yggdrasil_consensus::ConsensusError::InvalidKesSignature),
+            SyncError::VrfVerification {
+                slot: 42,
+                era: "Shelley",
+                epoch_nonce: Nonce::Neutral,
+                source: yggdrasil_consensus::ConsensusError::InvalidVrfProof,
+            },
             SyncError::Recovery("x".to_owned()),
             SyncError::BlockBodyHashMismatch,
             SyncError::BlockFromFuture {
@@ -7990,6 +8066,7 @@ mod tests {
                 SyncError::Storage(_) => false,
                 SyncError::KeepAlive(_) => false,
                 SyncError::Consensus(_) => true,
+                SyncError::VrfVerification { .. } => true,
                 SyncError::Recovery(_) => false,
                 SyncError::BlockBodyHashMismatch => true,
                 SyncError::BlockFromFuture { .. } => true,

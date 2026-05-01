@@ -132,6 +132,8 @@ RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 node/scripts/preview_producer_harness.sh e
 node/scripts/preview_producer_harness.sh funding-address
 ```
 
+The preview harness writes pool metadata into `tmp/preview-producer/metadata/` and commits that hash into the generated pool certificate. Defaults are ticker `RUST` and name `WORLDS FIRST RUST NODE`; override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before running `certs` when needed.
+
 ## Documentation
 
 - [User Manual](https://yggdrasil-node.github.io/Cardano-node/manual/) — install, configure, run, monitor, troubleshoot, and produce blocks.

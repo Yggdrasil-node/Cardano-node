@@ -117,7 +117,7 @@ $ yggdrasil-node run \
 
 ## `validate-config`
 
-Operator preflight without starting the network. Reports config + storage + credential sanity issues.
+Operator preflight without starting the network. Reports config + storage + credential sanity issues. Storage inspection uses a read-only open path, so it can inspect a live node database without applying crash-recovery cleanup.
 
 ### Synopsis
 
@@ -171,7 +171,7 @@ $ yggdrasil-node validate-config --network mainnet || exit 1
 
 ## `status`
 
-Inspect on-disk state without connecting to the network.
+Inspect on-disk state without connecting to the network. The command opens file-backed stores in read-only mode and does not delete temp files, replay volatile WALs, or clear `dirty.flag`, so it is safe to run while `run` owns the same database.
 
 ### Synopsis
 

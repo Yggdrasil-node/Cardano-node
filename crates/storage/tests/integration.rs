@@ -1103,6 +1103,43 @@ fn file_ledger_store_does_not_leave_temp_files() {
     );
 }
 
+#[test]
+fn read_only_file_store_open_does_not_run_dirty_recovery() {
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let immutable = dir.path().join("immutable");
+    let volatile = dir.path().join("volatile");
+    let ledger = dir.path().join("ledger");
+    std::fs::create_dir_all(&immutable).expect("immutable dir");
+    std::fs::create_dir_all(&volatile).expect("volatile dir");
+    std::fs::create_dir_all(&ledger).expect("ledger dir");
+
+    for path in [&immutable, &volatile, &ledger] {
+        std::fs::write(path.join("dirty.flag"), b"dirty").expect("write dirty");
+        std::fs::write(path.join("live-write.tmp"), b"partial").expect("write tmp");
+    }
+    std::fs::write(volatile.join("wal.pending.json"), b"not-json").expect("write volatile wal");
+
+    let _ = FileImmutable::open_read_only(&immutable).expect("open immutable read-only");
+    let _ = FileVolatile::open_read_only(&volatile).expect("open volatile read-only");
+    let _ = FileLedgerStore::open_read_only(&ledger).expect("open ledger read-only");
+
+    for path in [&immutable, &volatile, &ledger] {
+        assert!(path.join("dirty.flag").exists());
+        assert!(path.join("live-write.tmp").exists());
+    }
+    assert!(volatile.join("wal.pending.json").exists());
+
+    let _ = FileImmutable::open(&immutable).expect("recover immutable");
+    let _ = FileVolatile::open(&volatile).expect("recover volatile");
+    let _ = FileLedgerStore::open(&ledger).expect("recover ledger");
+
+    for path in [&immutable, &volatile, &ledger] {
+        assert!(!path.join("dirty.flag").exists());
+        assert!(!path.join("live-write.tmp").exists());
+    }
+    assert!(!volatile.join("wal.pending.json").exists());
+}
+
 // ---------------------------------------------------------------------------
 // Volatile → Immutable promotion
 // ---------------------------------------------------------------------------
