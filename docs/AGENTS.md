@@ -87,6 +87,7 @@ Keep these documents synchronized with the implemented workspace, not with specu
 
 ## Official Upstream References *Always research references and add or update links as needed*
 - Node integration and operational behavior: <https://github.com/IntersectMBO/cardano-node/>
+- Node system/E2E parity harness: <https://github.com/IntersectMBO/cardano-node-tests/> and <https://tests.cardano.intersectmbo.org/>
 - Ledger implementation, per-era rules and CDDL: <https://github.com/IntersectMBO/cardano-ledger/>
 - Formal ledger specifications (Agda, Conway-complete): <https://github.com/IntersectMBO/formal-ledger-specifications>
 - Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>

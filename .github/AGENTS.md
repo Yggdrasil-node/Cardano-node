@@ -19,6 +19,12 @@
 - The CI workflow (`ci.yml`) MUST keep running `cargo fmt --all --
   --check`, `cargo check-all`, `cargo test-all`, and `cargo lint`
   as the canonical gates.
+- The upstream `IntersectMBO/cardano-node-tests` suite is an
+  external parity harness. Do not add it to required CI until a
+  deterministic wrapper layer and pytest selection have been proven in
+  a fork of that upstream test repository. Any local workflow for it
+  MUST be `workflow_dispatch`-only, optional, and documented in
+  `docs/MANUAL_TEST_RUNBOOK.md`.
 - Always read the folder-specific `**/AGENTS.md` files. They MUST
   stay current and MUST remain operational rather than long-form
   documentation. If the folder context is outdated, missing, or

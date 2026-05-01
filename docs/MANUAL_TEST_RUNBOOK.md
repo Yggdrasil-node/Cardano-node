@@ -560,6 +560,21 @@ that run; treat it as a regression, not as expected incompleteness.
 
 Use the official IntersectMBO [`cardano-node-tests`](https://github.com/IntersectMBO/cardano-node-tests) suite as an external parity harness, not as a default `cargo test` dependency. The upstream documentation at <https://tests.cardano.intersectmbo.org/> describes the suite as system/E2E coverage for `cardano-node`, with `runner/runc.sh` for containerized runs and a `.bin` custom-binary path for alternate `cardano-node` / `cardano-cli` executables.
 
+### GitHub Actions path
+
+For an Actions-hosted run, use a fork of the upstream test repository. Do not wire this directly into Yggdrasil's required CI until the wrapper layer and selected pytest expression are deterministic.
+
+1. Fork `IntersectMBO/cardano-node-tests`.
+2. Enable Actions in the fork: `Settings` -> `Actions` -> `General` -> `Actions permissions` -> `Allow all actions and reusable workflows`.
+3. Build and publish a Yggdrasil release artifact, or make a branch in the fork that downloads the exact Yggdrasil binary from the commit under test and installs wrappers into `.bin/`.
+4. In the fork's `Actions` tab, manually dispatch one of the upstream workflows:
+   - `01 Regression tests`
+   - `02 Regression tests with db-sync`
+   - `03 Upgrade tests`
+5. Record the upstream workflow URL, Yggdrasil commit, selected test expression, and whether the run used upstream `cardano-cli` or the Yggdrasil `cardano-cli` shim.
+
+Treat this as external evidence. A failing upstream workflow caused by an unsupported Yggdrasil CLI command is a parity gap to classify, not a reason to edit upstream tests. A failing workflow caused by the wrapper layer is harness debt and must be fixed before the selected slice can become a CI gate.
+
 Recommended flow:
 
 1. Run the selected pytest slice unchanged against upstream Haskell `cardano-node` and record the baseline.
@@ -614,6 +629,7 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
   mainnet  knob=2  24h hash-compare       result=PASS|FAIL
   throughput-delta knob=2/knob=1 = <N.NN>x  (target >= 1.0x)
 [cardano-node-tests]    selected pytest expression=<expr> result=PASS|FAIL|N/A
+  workflow=<url-or-local> yggdrasil_commit=<sha> cli=<upstream|yggdrasil-shim>
 [metrics-snapshots]
   /tmp/ygg-metrics-snapshots/*.txt  N captured
 [evidence-summary]

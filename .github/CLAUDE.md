@@ -8,6 +8,7 @@ Before making changes:
 - Anchor parity-sensitive behavior to official IntersectMBO sources: `cardano-node`, `cardano-ledger`, `ouroboros-consensus`, `ouroboros-network`, `cardano-base`, and `plutus`.
 - For storage and rollback work, cross-check the Ouroboros Consensus LedgerDB/openDB docs, caught-up node storage model, and UTxO-HD snapshot/rollback notes before introducing local terminology.
 - For the remaining multi-peer BlockFetch default-flip gate, use `node/scripts/parallel_blockfetch_soak.sh` and the runbook §6.5 evidence template rather than assembling metrics manually.
+- For upstream `cardano-node-tests`, use the external/fork-based GitHub Actions flow in `docs/MANUAL_TEST_RUNBOOK.md` §8.5. Do not make it a required repository CI gate until the wrapper layer is deterministic.
 - Treat `docs/operational-runs/*.md` as historical run records. Add a new run record for new evidence and update living docs (`README.md`, `docs/PARITY_PLAN.md`, `docs/PARITY_SUMMARY.md`, `docs/PARITY_PROOF.md`, `docs/UPSTREAM_PARITY.md`, manual/runbook) for current status.
 
 Default verification remains:
