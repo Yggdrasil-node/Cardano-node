@@ -953,8 +953,11 @@ pub fn validate_supplemental_datums(
 
     let ws = crate::eras::shelley::ShelleyWitnessSet::from_cbor_bytes(wb)?;
 
-    // tx_hashes: all datum hashes from witness set
-    let tx_hashes: HashSet<[u8; 32]> = collect_datum_map(&ws).into_keys().collect();
+    // tx_hashes: all datum hashes from witness set, keyed by the original
+    // datum CBOR bytes like upstream memoized `TxDats`.
+    let tx_hashes: HashSet<[u8; 32]> = collect_datum_map_from_witness_bytes(Some(wb), &ws)?
+        .into_keys()
+        .collect();
 
     // Collect Plutus scripts (witness + reference + spending) to identify Plutus-locked inputs.
     let ref_txins: Vec<_> = reference_input_utxos
@@ -1012,25 +1015,6 @@ pub fn validate_supplemental_datums(
     // supplemental = tx_hashes \ input_hashes — must all be allowed.
     for dh in &tx_hashes {
         if !input_hashes.contains(dh) && !allowed.contains(dh) {
-            if std::env::var_os("YGGDRASIL_DEBUG_SUPPLEMENTAL_DATUMS").is_some() {
-                eprintln!(
-                    "supplemental datum rejected hash={:02x?} tx_hashes={:02x?} input_hashes={:02x?} allowed={:02x?} spending_inputs={:?} tx_output_datums={:02x?} ref_datums={:02x?} plutus_script_hashes={:02x?}",
-                    dh,
-                    tx_hashes,
-                    input_hashes,
-                    allowed,
-                    spending_inputs,
-                    tx_outputs
-                        .iter()
-                        .filter_map(MultiEraTxOut::datum_hash)
-                        .collect::<Vec<_>>(),
-                    reference_input_utxos
-                        .iter()
-                        .filter_map(|(_, txout)| txout.datum_hash())
-                        .collect::<Vec<_>>(),
-                    plutus_scripts.keys().copied().collect::<Vec<_>>()
-                );
-            }
             return Err(LedgerError::NotAllowedSupplementalDatums { hash: *dh });
         }
     }
@@ -1345,7 +1329,7 @@ pub fn validate_plutus_scripts(
         },
         Some(sorted_inputs),
     );
-    let datum_map = collect_datum_map(&ws);
+    let datum_map = collect_datum_map_from_witness_bytes(Some(wb), &ws)?;
     let resolved_redeemers: Vec<(ScriptPurpose, PlutusData)> = ws
         .redeemers
         .iter()
