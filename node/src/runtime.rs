@@ -1609,9 +1609,17 @@ async fn retire_failed_outbound_peer(
         let removed = cm.remove_terminated(&peer);
         marked || expired || removed
     };
-    let status_changed = {
+    let (status_changed, preserved_bootstrap_hot) = {
         let mut registry = peer_registry.write().expect("peer registry lock poisoned");
-        registry.set_status(peer, PeerStatus::PeerCold)
+        let preserve_bootstrap_hot = registry.get(&peer).is_some_and(|entry| {
+            entry.status == PeerStatus::PeerHot
+                && entry.sources.contains(&PeerSource::PeerSourceBootstrap)
+        });
+        if preserve_bootstrap_hot {
+            (registry.set_hot_tip_slot(peer, None), true)
+        } else {
+            (registry.set_status(peer, PeerStatus::PeerCold), false)
+        }
     };
 
     let changed = connection_changed || cm_changed || status_changed;
@@ -1626,6 +1634,7 @@ async fn retire_failed_outbound_peer(
                 ("connectionChanged", json!(connection_changed)),
                 ("connectionManagerChanged", json!(cm_changed)),
                 ("statusChanged", json!(status_changed)),
+                ("preservedBootstrapHot", json!(preserved_bootstrap_hot)),
             ]),
         );
     }
@@ -5245,8 +5254,10 @@ where
                                 vrf_nonce_snapshot
                                     .as_ref()
                                     .zip(config.active_slot_coeff.as_ref())
-                                    .map(|(ns, asc)| VrfVerificationContext {
+                                    .zip(config.nonce_config.as_ref())
+                                    .map(|((ns, asc), nonce_cfg)| VrfVerificationContext {
                                         nonce_state: ns,
+                                        nonce_cfg,
                                         active_slot_coeff: asc,
                                     })
                             } else {
@@ -5896,8 +5907,10 @@ where
                                 vrf_nonce_snapshot
                                     .as_ref()
                                     .zip(config.active_slot_coeff.as_ref())
-                                    .map(|(ns, asc)| VrfVerificationContext {
+                                    .zip(config.nonce_config.as_ref())
+                                    .map(|((ns, asc), nonce_cfg)| VrfVerificationContext {
                                         nonce_state: ns,
+                                        nonce_cfg,
                                         active_slot_coeff: asc,
                                     })
                             } else {
@@ -7019,10 +7032,10 @@ mod tests {
         preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
         prepare_reconnect_attempt_state, reconnect_preferred_peer,
         reconnect_preferred_peer_with_source, record_verified_batch_progress,
-        refresh_ledger_peer_sources_from_chain_db, seed_peer_registry, self_validate_forged_block,
-        session_established_trace_fields, stake_snapshots_for_recovered_point,
-        sync_error_trace_fields, tip_context_from_chain_db, verified_sync_batch_trace_fields,
-        wall_clock_unix_secs,
+        refresh_ledger_peer_sources_from_chain_db, retire_failed_outbound_peer, seed_peer_registry,
+        self_validate_forged_block, session_established_trace_fields,
+        stake_snapshots_for_recovered_point, sync_error_trace_fields, tip_context_from_chain_db,
+        verified_sync_batch_trace_fields, wall_clock_unix_secs,
     };
     use crate::sync::LedgerCheckpointPolicy;
     use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
@@ -7044,9 +7057,10 @@ mod tests {
     };
     use yggdrasil_mempool::SharedMempool;
     use yggdrasil_network::{
-        AfterSlot, BlockFetchClientError, ChainSyncClientError, GovernorTargets, HandshakeVersion,
+        AbstractState, AfterSlot, BlockFetchClientError, ChainSyncClientError,
+        ConnectionManagerState, DataFlow, GovernorState, GovernorTargets, HandshakeVersion,
         LedgerStateJudgement, LocalRootConfig, PeerAccessPoint, PeerRegistry, PeerSource,
-        PeerStatus, TopologyConfig, UseBootstrapPeers, UseLedgerPeers,
+        PeerStatus, TimeoutExpired, TopologyConfig, UseBootstrapPeers, UseLedgerPeers,
     };
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
@@ -8345,6 +8359,127 @@ mod tests {
         assert_eq!(bundle.hot, ControlMessage::Terminate);
         assert_eq!(bundle.warm, ControlMessage::Terminate);
         assert_eq!(bundle.established, ControlMessage::Terminate);
+    }
+
+    #[tokio::test]
+    async fn retire_failed_outbound_peer_marks_registry_and_connection_cold() {
+        use super::OutboundPeerManager;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session_async(addr).await;
+        mgr.warm_peers.insert(
+            addr,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+        assert!(mgr.promote_to_hot(addr, &yggdrasil_network::HotPeerScheduling::new()));
+
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(addr, PeerSource::PeerSourcePublicRoot);
+        registry.set_status(addr, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(addr, Some(42));
+        let peer_registry = Arc::new(RwLock::new(registry));
+
+        let connection_manager = Arc::new(RwLock::new(ConnectionManagerState::default()));
+        {
+            let mut cm = connection_manager.write().unwrap();
+            let (_result, actions) = cm
+                .acquire_outbound_connection(super::outbound_cm_local_addr(), addr)
+                .unwrap();
+            assert_eq!(actions.len(), 1);
+            cm.outbound_handshake_done(super::outbound_cm_local_addr(), addr, DataFlow::Duplex)
+                .unwrap();
+            assert_eq!(
+                cm.abstract_state_of(&addr),
+                AbstractState::OutboundDupSt(TimeoutExpired::Ticking)
+            );
+        }
+
+        let mut governor_state = GovernorState::default();
+        assert!(
+            retire_failed_outbound_peer(
+                &mut mgr,
+                &peer_registry,
+                &connection_manager,
+                &mut governor_state,
+                addr,
+                "test failure",
+                &NodeTracer::disabled(),
+            )
+            .await
+        );
+
+        assert!(!mgr.warm_peers.contains_key(&addr));
+        {
+            let registry = peer_registry.read().unwrap();
+            let entry = registry.get(&addr).unwrap();
+            assert_eq!(entry.status, PeerStatus::PeerCold);
+            assert_eq!(entry.hot_tip_slot, None);
+        }
+        let cm = connection_manager.read().unwrap();
+        assert_eq!(
+            cm.abstract_state_of(&addr),
+            AbstractState::UnknownConnectionSt
+        );
+    }
+
+    #[tokio::test]
+    async fn retire_failed_outbound_peer_preserves_bootstrap_hot_marker() {
+        use super::OutboundPeerManager;
+
+        let addr: std::net::SocketAddr = "1.2.3.4:3001".parse().unwrap();
+        let mut mgr = OutboundPeerManager::new();
+        let session = fake_peer_session_async(addr).await;
+        mgr.warm_peers.insert(
+            addr,
+            super::ManagedWarmPeer::new(session, std::time::Instant::now()),
+        );
+        assert!(mgr.promote_to_hot(addr, &yggdrasil_network::HotPeerScheduling::new()));
+
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(addr, PeerSource::PeerSourceBootstrap);
+        registry.set_status(addr, PeerStatus::PeerHot);
+        registry.set_hot_tip_slot(addr, Some(42));
+        let peer_registry = Arc::new(RwLock::new(registry));
+
+        let connection_manager = Arc::new(RwLock::new(ConnectionManagerState::default()));
+        {
+            let mut cm = connection_manager.write().unwrap();
+            let (_result, actions) = cm
+                .acquire_outbound_connection(super::outbound_cm_local_addr(), addr)
+                .unwrap();
+            assert_eq!(actions.len(), 1);
+            cm.outbound_handshake_done(super::outbound_cm_local_addr(), addr, DataFlow::Duplex)
+                .unwrap();
+        }
+
+        let mut governor_state = GovernorState::default();
+        assert!(
+            retire_failed_outbound_peer(
+                &mut mgr,
+                &peer_registry,
+                &connection_manager,
+                &mut governor_state,
+                addr,
+                "test failure",
+                &NodeTracer::disabled(),
+            )
+            .await
+        );
+
+        assert!(!mgr.warm_peers.contains_key(&addr));
+        {
+            let registry = peer_registry.read().unwrap();
+            let entry = registry.get(&addr).unwrap();
+            assert_eq!(entry.status, PeerStatus::PeerHot);
+            assert_eq!(entry.hot_tip_slot, None);
+            assert!(entry.sources.contains(&PeerSource::PeerSourceBootstrap));
+        }
+        let cm = connection_manager.read().unwrap();
+        assert_eq!(
+            cm.abstract_state_of(&addr),
+            AbstractState::UnknownConnectionSt
+        );
     }
 
     #[test]

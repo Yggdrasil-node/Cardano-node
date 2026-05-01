@@ -1715,6 +1715,9 @@ pub(crate) fn compute_pool_performance(
 pub(crate) struct VrfVerificationContext<'a> {
     /// Current epoch nonce from nonce evolution tracking.
     pub nonce_state: &'a NonceEvolutionState,
+    /// Network nonce-evolution parameters used to tick the verification
+    /// nonce at epoch boundaries inside a fetched batch.
+    pub nonce_cfg: &'a NonceEvolutionConfig,
     /// Active slot coefficient from genesis.
     pub active_slot_coeff: &'a ActiveSlotCoeff,
 }
@@ -1736,6 +1739,11 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
     let shelley_epoch_size = epoch_schedule.shelley_epoch_size();
+    // Upstream validates each header against a ticked chain-dependent state.
+    // Keep a batch-local cursor so a range crossing an epoch boundary uses the
+    // new epoch nonce for the first block in that epoch, while the durable
+    // nonce state is still only committed after the whole batch is accepted.
+    let mut vrf_nonce_cursor = vrf_ctx.map(|ctx| ctx.nonce_state.clone());
     for_each_roll_forward_block(progress, |block, _raw, spans| -> Result<(), SyncError> {
         let converted = multi_era_block_to_block_with_spans(block, spans);
         let block_slot = converted.header.slot_no;
@@ -1767,13 +1775,22 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
             *pool_block_counts.entry(pool_hash).or_insert(0) += 1;
         }
 
+        let next_vrf_nonce_cursor = vrf_ctx.and_then(|ctx| {
+            vrf_nonce_cursor
+                .as_ref()
+                .map(|cursor| ticked_vrf_nonce_state_for_block(cursor, block, ctx.nonce_cfg))
+        });
+
         // VRF leader eligibility check using the `set` snapshot.
         if let Some(ctx) = vrf_ctx {
             let stake_dist = snapshots.set.pool_stake_distribution();
             if stake_dist.total_active_stake() > 0 {
                 let valid = verify_block_vrf_with_stake(
                     block,
-                    ctx.nonce_state.epoch_nonce,
+                    next_vrf_nonce_cursor
+                        .as_ref()
+                        .map(|state| state.epoch_nonce)
+                        .unwrap_or(ctx.nonce_state.epoch_nonce),
                     &stake_dist,
                     ctx.active_slot_coeff,
                 )?;
@@ -1781,6 +1798,9 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
                     return Err(SyncError::Consensus(ConsensusError::VrfLeaderCheckFailed));
                 }
             }
+        }
+        if let (Some(cursor), Some(next)) = (vrf_nonce_cursor.as_mut(), next_vrf_nonce_cursor) {
+            *cursor = next;
         }
 
         ledger_state.apply_block_validated(&converted, evaluator)?;
@@ -2688,8 +2708,10 @@ where
                     vrf_nonce_snapshot
                         .as_ref()
                         .zip(config.active_slot_coeff.as_ref())
-                        .map(|(ns, asc)| VrfVerificationContext {
+                        .zip(config.nonce_config.as_ref())
+                        .map(|((ns, asc), nonce_cfg)| VrfVerificationContext {
                             nonce_state: ns,
+                            nonce_cfg,
                             active_slot_coeff: asc,
                         })
                 } else {
@@ -3839,6 +3861,16 @@ pub fn apply_nonce_evolution(
             // Byron blocks have no VRF; skip nonce evolution.
         }
     }
+}
+
+fn ticked_vrf_nonce_state_for_block(
+    cursor: &NonceEvolutionState,
+    block: &MultiEraBlock,
+    config: &NonceEvolutionConfig,
+) -> NonceEvolutionState {
+    let mut next = cursor.clone();
+    apply_nonce_evolution(&mut next, block, config);
+    next
 }
 
 /// Verify that the block body hash declared in the header matches the actual
@@ -7450,6 +7482,61 @@ mod tests {
             .expect("stake snapshots present");
 
         assert_eq!(restored, snapshots);
+    }
+
+    fn babbage_nonce_test_block(slot: u64, output_seed: u8) -> MultiEraBlock {
+        MultiEraBlock::Babbage(Box::new(BabbageBlock {
+            header: PraosHeader {
+                body: PraosHeaderBody {
+                    block_number: slot,
+                    slot,
+                    prev_hash: Some([slot as u8; 32]),
+                    issuer_vkey: [0x11; 32],
+                    vrf_vkey: [0x22; 32],
+                    vrf_result: yggdrasil_ledger::ShelleyVrfCert {
+                        output: vec![output_seed; 64],
+                        proof: [0x33; 80],
+                    },
+                    block_body_size: 0,
+                    block_body_hash: [0x44; 32],
+                    operational_cert: ShelleyOpCert {
+                        hot_vkey: [0x55; 32],
+                        sequence_number: 0,
+                        kes_period: 0,
+                        sigma: [0x66; 64],
+                    },
+                    protocol_version: (9, 0),
+                },
+                signature: vec![0x77; 64],
+            },
+            transaction_bodies: vec![],
+            transaction_witness_sets: vec![],
+            auxiliary_data_set: std::collections::HashMap::new(),
+            invalid_transactions: vec![],
+        }))
+    }
+
+    #[test]
+    fn vrf_nonce_cursor_ticks_before_first_block_after_epoch_boundary() {
+        let cfg = NonceEvolutionConfig {
+            epoch_size: EpochSize(10),
+            stability_window: 0,
+            extra_entropy: Nonce::Neutral,
+        };
+        let mut cursor = NonceEvolutionState::new(Nonce::Neutral);
+        apply_nonce_evolution(&mut cursor, &babbage_nonce_test_block(9, 1), &cfg);
+
+        let expected_epoch_nonce = cursor
+            .candidate_nonce
+            .combine(cursor.prev_hash_nonce)
+            .combine(cfg.extra_entropy);
+        let ticked =
+            ticked_vrf_nonce_state_for_block(&cursor, &babbage_nonce_test_block(10, 2), &cfg);
+
+        assert_eq!(cursor.current_epoch.0, 0);
+        assert_eq!(ticked.current_epoch.0, 1);
+        assert_eq!(ticked.epoch_nonce, expected_epoch_nonce);
+        assert_ne!(ticked.epoch_nonce, cursor.epoch_nonce);
     }
 
     #[test]

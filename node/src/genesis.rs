@@ -28,7 +28,7 @@ use yggdrasil_ledger::eras::alonzo::ExUnits;
 use yggdrasil_ledger::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::{
-    AddrKeyHash, Address, Anchor, EnactState, GenesisDelegateHash, GenesisHash, PoolKeyHash,
+    AddrKeyHash, Address, Anchor, EnactState, GenesisDelegateHash, GenesisHash, Nonce, PoolKeyHash,
     ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
 };
 use yggdrasil_plutus::{CostModel, CostModelError};
@@ -1334,6 +1334,36 @@ pub fn parse_blake2b_256_hex(
                 value: expected_hex.to_string(),
             })?;
     Ok(bytes)
+}
+
+/// Convert the verified Shelley genesis hash into the initial Praos nonce.
+///
+/// Upstream threads this value as `shelleyBasedInitialNonce` and constructs it
+/// with `genesisHashToPraosNonce (GenesisHash h) = Nonce (castHash h)` before
+/// `mkTPraosParams` / `initialChainDepState` seed the TPraos chain-dependent
+/// state. Starting from `NeutralNonce` instead causes every later VRF input to
+/// diverge from the official node.
+///
+/// Reference:
+/// `Cardano.Node.Protocol.Shelley.genesisHashToPraosNonce` and
+/// `Ouroboros.Consensus.Protocol.TPraos.mkTPraosParams`.
+pub fn shelley_genesis_hash_to_praos_nonce(expected_hex: &str) -> Result<Nonce, GenesisLoadError> {
+    parse_blake2b_256_hex(expected_hex, "ShelleyGenesisHash").map(Nonce::Hash)
+}
+
+/// Convert Shelley genesis `extraEntropy` into the nonce used by TICKN.
+///
+/// The field is normally neutral on public networks, but it is part of the
+/// upstream TICKN environment and must not be hardcoded away.
+pub fn genesis_extra_entropy_to_nonce(
+    extra_entropy: Option<&GenesisExtraEntropy>,
+) -> Result<Nonce, GenesisLoadError> {
+    match extra_entropy {
+        None | Some(GenesisExtraEntropy::NeutralNonce) => Ok(Nonce::Neutral),
+        Some(GenesisExtraEntropy::Nonce { contents }) => {
+            parse_blake2b_256_hex(contents, "ShelleyGenesis.extraEntropy").map(Nonce::Hash)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2993,6 +3023,39 @@ mod tests {
         )
         .expect_err("non-hex must fail");
         assert!(matches!(err, GenesisLoadError::InvalidHashHex { .. }));
+    }
+
+    #[test]
+    fn shelley_genesis_hash_to_praos_nonce_casts_hash_bytes() {
+        let hash_hex = "1a3be38bcbb7911969283716ad7aa550250226b76a61fc51cc9a9a35d9276d81";
+        let nonce = shelley_genesis_hash_to_praos_nonce(hash_hex).expect("valid hash");
+
+        assert_eq!(
+            nonce,
+            Nonce::Hash(hex::decode(hash_hex).unwrap().try_into().unwrap())
+        );
+    }
+
+    #[test]
+    fn genesis_extra_entropy_to_nonce_handles_neutral_and_hash() {
+        assert_eq!(
+            genesis_extra_entropy_to_nonce(None).expect("missing extra entropy defaults neutral"),
+            Nonce::Neutral,
+        );
+        assert_eq!(
+            genesis_extra_entropy_to_nonce(Some(&GenesisExtraEntropy::NeutralNonce))
+                .expect("neutral entropy"),
+            Nonce::Neutral,
+        );
+
+        let contents = "ab".repeat(32);
+        assert_eq!(
+            genesis_extra_entropy_to_nonce(Some(&GenesisExtraEntropy::Nonce {
+                contents: contents.clone(),
+            }))
+            .expect("hash entropy"),
+            Nonce::Hash(hex::decode(contents).unwrap().try_into().unwrap()),
+        );
     }
 
     // ── GenesisLoadError Display-content tests ─────────────────────────

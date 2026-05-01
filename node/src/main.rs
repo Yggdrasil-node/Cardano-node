@@ -1216,7 +1216,12 @@ fn main() -> Result<()> {
                 // stability_window = 3k/f
                 stability_window: (3.0 * file_cfg.security_param_k as f64
                     / file_cfg.active_slot_coeff) as u64,
-                extra_entropy: Nonce::Neutral,
+                extra_entropy: genesis::genesis_extra_entropy_to_nonce(
+                    shelley_genesis
+                        .as_ref()
+                        .and_then(|g| g.protocol_params.extra_entropy.as_ref()),
+                )
+                .wrap_err("invalid Shelley genesis extraEntropy")?,
             };
 
             let security_param = SecurityParam(file_cfg.security_param_k);
@@ -1495,6 +1500,13 @@ fn main() -> Result<()> {
                     );
                     std::sync::Arc::new(bytes)
                 });
+            let initial_praos_nonce = file_cfg
+                .shelley_genesis_hash
+                .as_deref()
+                .map(genesis::shelley_genesis_hash_to_praos_nonce)
+                .transpose()
+                .wrap_err("invalid ShelleyGenesisHash for Praos initial nonce")?
+                .unwrap_or(Nonce::Neutral);
 
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(run_node(RunNodeRequest {
@@ -1515,6 +1527,7 @@ fn main() -> Result<()> {
                 block_producer_credentials,
                 max_major_protocol_version: file_cfg.max_major_protocol_version,
                 genesis_config_cbor,
+                initial_praos_nonce,
             }))
         }
         #[cfg(unix)]
@@ -2794,6 +2807,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
         block_producer_credentials,
         max_major_protocol_version,
         genesis_config_cbor,
+        initial_praos_nonce,
     } = request;
 
     // Log block producer mode availability.
@@ -2905,7 +2919,7 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
     let nonce_state = sync_config
         .nonce_config
         .as_ref()
-        .map(|_| NonceEvolutionState::new(Nonce::Neutral));
+        .map(|_| NonceEvolutionState::new(initial_praos_nonce));
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
@@ -3393,6 +3407,8 @@ struct RunNodeRequest {
     /// `None` the dispatcher falls back to `null_response()` (legacy
     /// pre-R214 behaviour).
     genesis_config_cbor: Option<std::sync::Arc<Vec<u8>>>,
+    /// Initial TPraos epoch nonce derived from `ShelleyGenesisHash`.
+    initial_praos_nonce: Nonce,
 }
 
 // ---------------------------------------------------------------------------
