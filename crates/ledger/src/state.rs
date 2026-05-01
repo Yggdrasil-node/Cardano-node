@@ -4165,11 +4165,11 @@ impl LedgerState {
     ///
     /// Upstream Babbage `validateScriptsWellFormed` checks Plutus availability
     /// against `ppProtocolVersionL`. In the full node, translating the ledger
-    /// state at an era boundary keeps that field aligned with the active block
-    /// protocol version. This workspace keeps a single cross-era
-    /// `ProtocolParameters` struct, so block application stages a monotonic
-    /// header-PV adoption before era-specific validation and restores the old
-    /// value if the block is rejected.
+    /// state at an era boundary sets that field to the new era's lower bound,
+    /// not to every block-header minor version. This workspace keeps a single
+    /// cross-era `ProtocolParameters` struct, so block application stages only
+    /// a major-version era translation before era-specific validation and
+    /// restores the old value if the block is rejected.
     fn adopt_block_protocol_version_for_validation(
         &mut self,
         era: Era,
@@ -4189,9 +4189,9 @@ impl LedgerState {
         }
         if params
             .protocol_version
-            .is_none_or(|current| protocol_version_is_newer(protocol_version, current))
+            .is_none_or(|current| current.0 < min_major)
         {
-            params.protocol_version = Some(protocol_version);
+            params.protocol_version = Some((min_major, 0));
         }
     }
 
@@ -5292,12 +5292,15 @@ impl LedgerState {
                 )?;
                 // Supplemental datum check (Babbage submitted — includes reference inputs).
                 {
-                    let tx_outputs: Vec<MultiEraTxOut> = tx
+                    let mut tx_outputs: Vec<MultiEraTxOut> = tx
                         .body
                         .outputs
                         .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
+                    if let Some(collateral_return) = &tx.body.collateral_return {
+                        tx_outputs.push(MultiEraTxOut::Babbage(collateral_return.clone()));
+                    }
                     let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx
                         .body
                         .reference_inputs
@@ -5730,12 +5733,15 @@ impl LedgerState {
                 )?;
                 // Supplemental datum check (Conway submitted — includes reference inputs).
                 {
-                    let tx_outputs: Vec<MultiEraTxOut> = tx
+                    let mut tx_outputs: Vec<MultiEraTxOut> = tx
                         .body
                         .outputs
                         .iter()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()))
                         .collect();
+                    if let Some(collateral_return) = &tx.body.collateral_return {
+                        tx_outputs.push(MultiEraTxOut::Babbage(collateral_return.clone()));
+                    }
                     let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx
                         .body
                         .reference_inputs
@@ -7489,11 +7495,14 @@ impl LedgerState {
             )?;
             // Supplemental datum check (Babbage — includes reference inputs).
             {
-                let tx_outputs: Vec<MultiEraTxOut> = body
+                let mut tx_outputs: Vec<MultiEraTxOut> = body
                     .outputs
                     .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
+                if let Some(collateral_return) = &body.collateral_return {
+                    tx_outputs.push(MultiEraTxOut::Babbage(collateral_return.clone()));
+                }
                 let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body
                     .reference_inputs
                     .as_deref()
@@ -8083,11 +8092,14 @@ impl LedgerState {
             )?;
             // Supplemental datum check (Conway — includes reference inputs).
             {
-                let tx_outputs: Vec<MultiEraTxOut> = body
+                let mut tx_outputs: Vec<MultiEraTxOut> = body
                     .outputs
                     .iter()
                     .map(|o| MultiEraTxOut::Babbage(o.clone()))
                     .collect();
+                if let Some(collateral_return) = &body.collateral_return {
+                    tx_outputs.push(MultiEraTxOut::Babbage(collateral_return.clone()));
+                }
                 let ref_utxos: Vec<(ShelleyTxIn, MultiEraTxOut)> = body
                     .reference_inputs
                     .as_deref()
@@ -8765,10 +8777,6 @@ fn era_min_protocol_major(era: Era) -> Option<u64> {
         Era::Babbage => Some(7),
         Era::Conway => Some(9),
     }
-}
-
-fn protocol_version_is_newer(candidate: (u64, u64), current: (u64, u64)) -> bool {
-    candidate.0 > current.0 || (candidate.0 == current.0 && candidate.1 > current.1)
 }
 
 fn conway_bootstrap_phase(protocol_version: Option<(u64, u64)>) -> bool {

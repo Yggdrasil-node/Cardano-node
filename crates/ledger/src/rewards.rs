@@ -742,8 +742,9 @@ pub fn compute_epoch_rewards(
                 .get(pool_hash)
                 .map(|pp| pp.reward_account)
                 .expect("pool_params should contain pool_hash from iteration");
-            *leader_deltas.entry(reward_account).or_insert(0) += breakdown.leader_reward;
-            total_distributed += breakdown.leader_reward;
+            let entry = leader_deltas.entry(reward_account).or_insert(0);
+            *entry = entry.saturating_add(breakdown.leader_reward);
+            total_distributed = total_distributed.saturating_add(breakdown.leader_reward);
         }
 
         // Member rewards → keyed by credential (upstream `RewardAns`).
@@ -753,8 +754,9 @@ pub fn compute_epoch_rewards(
         // Reference: `rewardOnePoolMember` in
         // `Cardano.Ledger.Shelley.Rewards` returns `Maybe Coin`.
         for (cred, amount) in &breakdown.member_rewards {
-            *reward_deltas.entry(*cred).or_insert(0) += amount;
-            total_distributed += amount;
+            let entry = reward_deltas.entry(*cred).or_insert(0);
+            *entry = entry.saturating_add(*amount);
+            total_distributed = total_distributed.saturating_add(*amount);
         }
     }
 

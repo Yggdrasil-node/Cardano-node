@@ -814,6 +814,10 @@ where
 }
 
 fn ordered_plutus_v1_param_names() -> Vec<String> {
+    debug_assert_eq!(
+        PLUTUS_V1_PARAM_NAMES.len(),
+        PLUTUS_V1_INITIAL_COST_MODEL_LEN
+    );
     PLUTUS_V1_PARAM_NAMES
         .iter()
         .map(|name| (*name).to_owned())

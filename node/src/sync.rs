@@ -2151,6 +2151,29 @@ where
     V: VolatileStore,
     L: LedgerStore,
 {
+    if let Some(ref nonce_cfg) = config.nonce_config {
+        let epoch_schedule = config
+            .epoch_schedule
+            .unwrap_or_else(|| EpochSchedule::fixed(nonce_cfg.epoch_size));
+        let recovery = recover_ledger_state_chaindb_with_epoch_boundary(
+            chain_db,
+            base_ledger_state,
+            epoch_schedule,
+            Some(&config.build_plutus_evaluator()),
+            None,
+        )?;
+        return Ok(LedgerCheckpointTracking {
+            base_ledger_state: recovery.ledger_state.clone(),
+            ledger_state: recovery.ledger_state,
+            last_persisted_point: chain_db.tip(),
+            plutus_evaluator: config.build_plutus_evaluator(),
+            stake_snapshots: Some(recovery.stake_snapshots),
+            epoch_size: Some(epoch_schedule),
+            pool_block_counts: recovery.pool_block_counts,
+            chain_dep_persist_dir: None,
+        });
+    }
+
     let recovery = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
     Ok(LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
@@ -2184,9 +2207,18 @@ where
         Point::Origin => chain_db.latest_ledger_checkpoint()?,
         Point::BlockPoint(slot, _) => chain_db.latest_ledger_checkpoint_before_or_at(slot)?,
     };
-    let (mut ledger_state, checkpoint_slot) = checkpoint
-        .map(|(slot, checkpoint)| (checkpoint.restore(), Some(slot)))
-        .unwrap_or((base_state, None));
+    let genesis_protocol_params = base_state.protocol_params().cloned();
+    let (mut ledger_state, checkpoint_slot) = match checkpoint {
+        Some((slot, checkpoint)) => {
+            let restored = checkpoint.restore();
+            if checkpoint_missing_genesis_cost_models(&restored, genesis_protocol_params.as_ref()) {
+                (base_state, None)
+            } else {
+                (restored, Some(slot))
+            }
+        }
+        None => (base_state, None),
+    };
     let replay_from_exclusive = ledger_state.tip;
 
     let immutable_blocks = chain_db.immutable().suffix_after(&replay_from_exclusive)?;
@@ -2216,6 +2248,27 @@ where
         checkpoint_slot,
         replayed_volatile_blocks: volatile_blocks.len(),
     })
+}
+
+fn checkpoint_missing_genesis_cost_models(
+    ledger_state: &LedgerState,
+    genesis_protocol_params: Option<&yggdrasil_ledger::ProtocolParameters>,
+) -> bool {
+    let Some(genesis_params) = genesis_protocol_params else {
+        return false;
+    };
+    if genesis_params.cost_models.is_none() {
+        return false;
+    };
+
+    // Backward-compatible checkpoint recovery: older local snapshots were
+    // created before genesis cost models were seeded into the base state. That
+    // marker means the checkpoint may also contain other pre-parity ledger
+    // state, so replay from raw storage instead of mutating the snapshot.
+    ledger_state
+        .protocol_params()
+        .and_then(|params| params.cost_models.as_ref())
+        .is_none()
 }
 
 fn storage_point_for_block(block: &Block) -> Point {
@@ -2346,9 +2399,38 @@ fn replay_storage_block_with_epoch_boundary(
 
 struct BoundaryAwareRecovery {
     ledger_state: LedgerState,
+    checkpoint_slot: Option<SlotNo>,
+    replayed_volatile_blocks: usize,
     stake_snapshots: StakeSnapshots,
     pool_block_counts: BTreeMap<PoolKeyHash, u64>,
     epoch_events: Vec<EpochBoundaryEvent>,
+}
+
+pub fn recover_ledger_state_chaindb_epoch_boundary<I, V, L>(
+    chain_db: &ChainDb<I, V, L>,
+    base_state: LedgerState,
+    epoch_schedule: EpochSchedule,
+    evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
+) -> Result<LedgerRecoveryOutcome, SyncError>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    let recovery = recover_ledger_state_chaindb_with_epoch_boundary(
+        chain_db,
+        base_state,
+        epoch_schedule,
+        evaluator,
+        None,
+    )?;
+    let point = recovery.ledger_state.tip;
+    Ok(LedgerRecoveryOutcome {
+        ledger_state: recovery.ledger_state,
+        point,
+        checkpoint_slot: recovery.checkpoint_slot,
+        replayed_volatile_blocks: recovery.replayed_volatile_blocks,
+    })
 }
 
 fn recover_ledger_state_chaindb_with_epoch_boundary<I, V, L>(
@@ -2368,9 +2450,18 @@ where
         Point::Origin => chain_db.latest_ledger_checkpoint()?,
         Point::BlockPoint(slot, _) => chain_db.latest_ledger_checkpoint_before_or_at(slot)?,
     };
-    let mut ledger_state = checkpoint
-        .map(|(_, checkpoint)| checkpoint.restore())
-        .unwrap_or(base_state);
+    let genesis_protocol_params = base_state.protocol_params().cloned();
+    let (mut ledger_state, checkpoint_slot) = match checkpoint {
+        Some((slot, checkpoint)) => {
+            let restored = checkpoint.restore();
+            if checkpoint_missing_genesis_cost_models(&restored, genesis_protocol_params.as_ref()) {
+                (base_state, None)
+            } else {
+                (restored, Some(slot))
+            }
+        }
+        None => (base_state, None),
+    };
     let replay_from_exclusive = ledger_state.tip;
     let mut snapshots = restored_stake_snapshots
         .unwrap_or_else(|| stake_snapshots_from_ledger_state(&ledger_state));
@@ -2414,6 +2505,8 @@ where
 
     Ok(BoundaryAwareRecovery {
         ledger_state,
+        checkpoint_slot,
+        replayed_volatile_blocks: volatile_blocks.len(),
         stake_snapshots: snapshots,
         pool_block_counts,
         epoch_events,
@@ -2765,12 +2858,16 @@ where
 
     // Enable epoch boundary processing when nonce config provides epoch size.
     if let Some(ref nonce_cfg) = config.nonce_config {
-        checkpoint_tracking.stake_snapshots = Some(StakeSnapshots::new());
-        checkpoint_tracking.epoch_size = Some(
-            config
-                .epoch_schedule
-                .unwrap_or_else(|| EpochSchedule::fixed(nonce_cfg.epoch_size)),
-        );
+        if checkpoint_tracking.stake_snapshots.is_none() {
+            checkpoint_tracking.stake_snapshots = Some(StakeSnapshots::new());
+        }
+        if checkpoint_tracking.epoch_size.is_none() {
+            checkpoint_tracking.epoch_size = Some(
+                config
+                    .epoch_schedule
+                    .unwrap_or_else(|| EpochSchedule::fixed(nonce_cfg.epoch_size)),
+            );
+        }
     }
     let origin_nonce_state = nonce_state.clone();
 
@@ -6475,6 +6572,41 @@ mod tests {
             snapshot.stake.add(cred, *amount);
         }
         snapshot
+    }
+
+    #[test]
+    fn checkpoint_missing_genesis_cost_models_detects_legacy_checkpoint_only() {
+        let mut genesis_state = LedgerState::new(Era::Byron);
+        let mut genesis_params = yggdrasil_ledger::ProtocolParameters::default();
+        let mut genesis_models = BTreeMap::new();
+        genesis_models.insert(0, vec![1, 2, 3]);
+        genesis_params.cost_models = Some(genesis_models);
+        genesis_state.set_protocol_params(genesis_params);
+
+        let mut restored = LedgerState::new(Era::Babbage);
+        let mut restored_params = yggdrasil_ledger::ProtocolParameters {
+            protocol_version: Some((7, 0)),
+            ..yggdrasil_ledger::ProtocolParameters::default()
+        };
+        restored_params.cost_models = None;
+        restored.set_protocol_params(restored_params);
+
+        assert!(checkpoint_missing_genesis_cost_models(
+            &restored,
+            genesis_state.protocol_params()
+        ));
+
+        let mut existing = LedgerState::new(Era::Babbage);
+        let mut existing_params = yggdrasil_ledger::ProtocolParameters::default();
+        let mut existing_models = BTreeMap::new();
+        existing_models.insert(0, vec![9]);
+        existing_params.cost_models = Some(existing_models);
+        existing.set_protocol_params(existing_params);
+
+        assert!(!checkpoint_missing_genesis_cost_models(
+            &existing,
+            genesis_state.protocol_params()
+        ));
     }
 
     #[test]

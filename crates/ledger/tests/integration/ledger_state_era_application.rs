@@ -733,7 +733,7 @@ fn same_era_consecutive_blocks_allowed() {
     );
 }
 
-/// HFC era activation stages the block header protocol version into the
+/// HFC era activation stages the block header protocol-version major into the
 /// cross-era protocol-parameter state before era-specific validation.
 #[test]
 fn babbage_block_adopts_header_protocol_version_for_validation() {
@@ -751,6 +751,44 @@ fn babbage_block_adopts_header_protocol_version_for_validation() {
     assert_eq!(
         state.protocol_params().and_then(|p| p.protocol_version),
         Some((7, 0))
+    );
+    assert_eq!(state.latest_block_protocol_version, Some((7, 0)));
+}
+
+/// Block-header minor versions are operational observations, not PPUP state.
+#[test]
+fn block_header_minor_version_is_not_copied_into_protocol_params() {
+    let mut params = ProtocolParameters::alonzo_defaults();
+    params.protocol_version = Some((7, 0));
+    let mut state = LedgerState::new(Era::Babbage);
+    state.set_protocol_params(params);
+
+    let mut block = make_empty_block(Era::Babbage, 2, 2, 0xAD);
+    block.header.protocol_version = Some((7, 2));
+    state.apply_block(&block).expect("babbage minor block");
+
+    assert_eq!(
+        state.protocol_params().and_then(|p| p.protocol_version),
+        Some((7, 0))
+    );
+    assert_eq!(state.latest_block_protocol_version, Some((7, 2)));
+}
+
+/// Header protocol versions ahead of the current era do not alter PPUP state.
+#[test]
+fn pre_hard_fork_header_protocol_version_is_not_staged() {
+    let mut state = LedgerState::new(Era::Alonzo);
+    state.set_protocol_params(ProtocolParameters::alonzo_defaults());
+
+    let mut block = make_empty_block(Era::Alonzo, 3, 3, 0xAE);
+    block.header.protocol_version = Some((7, 0));
+    state
+        .apply_block(&block)
+        .expect("alonzo header signal block");
+
+    assert_eq!(
+        state.protocol_params().and_then(|p| p.protocol_version),
+        Some((6, 0))
     );
     assert_eq!(state.latest_block_protocol_version, Some((7, 0)));
 }

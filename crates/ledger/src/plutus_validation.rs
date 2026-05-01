@@ -273,9 +273,20 @@ pub fn compute_script_data_hash(
         },
     };
 
-    let redeemers_bytes =
-        encode_redeemers_for_script_data_hash(&ws.redeemers, conway_redeemer_format);
-    let datums_bytes = encode_datums_for_script_data_hash(&ws.plutus_data);
+    let raw_redeemers = witness_bytes
+        .map(|wb| extract_witness_set_field_raw(wb, 5))
+        .transpose()?
+        .flatten();
+    let raw_datums = witness_bytes
+        .map(|wb| extract_witness_set_field_raw(wb, 4))
+        .transpose()?
+        .flatten();
+
+    let redeemers_bytes = raw_redeemers.unwrap_or_else(|| {
+        encode_redeemers_for_script_data_hash(&ws.redeemers, conway_redeemer_format)
+    });
+    let datums_bytes =
+        raw_datums.unwrap_or_else(|| encode_datums_for_script_data_hash(&ws.plutus_data));
     let language_views = encode_language_views_for_script_data_hash(
         &ws,
         protocol_params,
@@ -464,6 +475,41 @@ fn encode_datums_for_script_data_hash(datums: &[PlutusData]) -> Vec<u8> {
     enc.into_bytes()
 }
 
+fn extract_witness_set_field_raw(
+    witness_bytes: &[u8],
+    wanted_key: u64,
+) -> Result<Option<Vec<u8>>, LedgerError> {
+    fn visit_value(dec: &mut crate::cbor::Decoder<'_>) -> Result<Vec<u8>, LedgerError> {
+        let start = dec.position();
+        dec.skip()?;
+        Ok(dec.slice(start, dec.position())?.to_vec())
+    }
+
+    let mut dec = crate::cbor::Decoder::new(witness_bytes);
+    match dec.map_begin()? {
+        Some(count) => {
+            for _ in 0..count {
+                let key = dec.unsigned()?;
+                let value = visit_value(&mut dec)?;
+                if key == wanted_key {
+                    return Ok(Some(value));
+                }
+            }
+        }
+        None => {
+            while !dec.is_break() {
+                let key = dec.unsigned()?;
+                let value = visit_value(&mut dec)?;
+                if key == wanted_key {
+                    return Ok(Some(value));
+                }
+            }
+            dec.consume_break()?;
+        }
+    }
+    Ok(None)
+}
+
 fn encode_cost_model_values(values: &[i64], indefinite: bool) -> Vec<u8> {
     let mut out = Vec::new();
     if indefinite {
@@ -597,8 +643,10 @@ pub fn collect_plutus_scripts(
 
 /// Builds a datum lookup map from the witness set's `plutus_data` list.
 ///
-/// Keys are Blake2b-256 hashes of the CBOR-encoded datum; values are the
-/// typed `PlutusData`.
+/// Keys are Blake2b-256 hashes of the canonical CBOR-encoded datum; values
+/// are the typed `PlutusData`. Use
+/// [`collect_datum_map_from_witness_bytes`] when original witness bytes are
+/// available, because upstream `TxDats` hashes the memoized datum bytes.
 pub fn collect_datum_map(
     ws: &crate::eras::shelley::ShelleyWitnessSet,
 ) -> HashMap<[u8; 32], PlutusData> {
@@ -610,6 +658,70 @@ pub fn collect_datum_map(
         map.insert(hash, datum.clone());
     }
     map
+}
+
+/// Builds a datum lookup map using the original witness-set datum bytes.
+///
+/// Upstream `TxDats` is memoized: `hashData` is computed from the original
+/// datum CBOR bytes, not from a canonical re-encoding after decode. This is
+/// observable for non-canonical but accepted encodings such as wider integer
+/// forms or indefinite containers.
+fn collect_datum_map_from_witness_bytes(
+    witness_bytes: Option<&[u8]>,
+    ws: &crate::eras::shelley::ShelleyWitnessSet,
+) -> Result<HashMap<[u8; 32], PlutusData>, LedgerError> {
+    let Some(raw_datums) = witness_bytes
+        .map(|wb| extract_witness_set_field_raw(wb, 4))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(collect_datum_map(ws));
+    };
+    collect_raw_datum_map(&raw_datums)
+}
+
+fn collect_raw_datum_map(raw_datums: &[u8]) -> Result<HashMap<[u8; 32], PlutusData>, LedgerError> {
+    let mut dec = crate::cbor::Decoder::new(raw_datums);
+    if dec.peek_major()? == 6 {
+        let tag = dec.tag()?;
+        if tag != 258 {
+            return Err(LedgerError::CborTypeMismatch {
+                expected: 4,
+                actual: 6,
+            });
+        }
+    }
+
+    let mut map = HashMap::new();
+    match dec.array_begin()? {
+        Some(count) => {
+            for _ in 0..count {
+                collect_one_raw_datum(&mut dec, &mut map)?;
+            }
+        }
+        None => {
+            while !dec.is_break() {
+                collect_one_raw_datum(&mut dec, &mut map)?;
+            }
+            dec.consume_break()?;
+        }
+    }
+    if !dec.is_empty() {
+        return Err(LedgerError::CborTrailingBytes(dec.remaining()));
+    }
+    Ok(map)
+}
+
+fn collect_one_raw_datum(
+    dec: &mut crate::cbor::Decoder<'_>,
+    map: &mut HashMap<[u8; 32], PlutusData>,
+) -> Result<(), LedgerError> {
+    let start = dec.position();
+    let datum = PlutusData::decode_cbor(dec)?;
+    let raw = dec.slice(start, dec.position())?;
+    let hash = yggdrasil_crypto::blake2b::hash_bytes_256(raw).0;
+    map.insert(hash, datum);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +1012,25 @@ pub fn validate_supplemental_datums(
     // supplemental = tx_hashes \ input_hashes — must all be allowed.
     for dh in &tx_hashes {
         if !input_hashes.contains(dh) && !allowed.contains(dh) {
+            if std::env::var_os("YGGDRASIL_DEBUG_SUPPLEMENTAL_DATUMS").is_some() {
+                eprintln!(
+                    "supplemental datum rejected hash={:02x?} tx_hashes={:02x?} input_hashes={:02x?} allowed={:02x?} spending_inputs={:?} tx_output_datums={:02x?} ref_datums={:02x?} plutus_script_hashes={:02x?}",
+                    dh,
+                    tx_hashes,
+                    input_hashes,
+                    allowed,
+                    spending_inputs,
+                    tx_outputs
+                        .iter()
+                        .filter_map(MultiEraTxOut::datum_hash)
+                        .collect::<Vec<_>>(),
+                    reference_input_utxos
+                        .iter()
+                        .filter_map(|(_, txout)| txout.datum_hash())
+                        .collect::<Vec<_>>(),
+                    plutus_scripts.keys().copied().collect::<Vec<_>>()
+                );
+            }
             return Err(LedgerError::NotAllowedSupplementalDatums { hash: *dh });
         }
     }
@@ -1724,6 +1855,27 @@ mod tests {
         assert_eq!(scripts[&h1].0, PlutusVersion::V1);
         assert_eq!(scripts[&h2].0, PlutusVersion::V2);
         assert_eq!(scripts[&h3].0, PlutusVersion::V3);
+    }
+
+    #[test]
+    fn script_data_hash_uses_raw_witness_redeemers_and_datums_bytes() {
+        // Witness set:
+        // { 5: [_], 4: [_] } where both arrays use indefinite-length
+        // encodings. Upstream hashes the memoized original bytes for
+        // `Redeemers` and `TxDats`, not a canonical reconstruction.
+        let witness = [0xa2, 0x05, 0x9f, 0xff, 0x04, 0x9f, 0x01, 0xff];
+
+        let computed =
+            compute_script_data_hash(Some(&witness), None, false, None, None, None, None)
+                .expect("script data hash");
+
+        let expected =
+            yggdrasil_crypto::blake2b::hash_bytes_256(&[0x9f, 0xff, 0x9f, 0x01, 0xff, 0xa0]).0;
+        let canonical_reencoded =
+            yggdrasil_crypto::blake2b::hash_bytes_256(&[0x80, 0x81, 0x01, 0xa0]).0;
+
+        assert_eq!(computed, expected);
+        assert_ne!(computed, canonical_reencoded);
     }
 
     #[test]

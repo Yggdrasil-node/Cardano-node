@@ -33,7 +33,7 @@ use yggdrasil_node::{
     BlockProvider, ChainProvider, FutureBlockCheckConfig, LedgerCheckpointPolicy, NodeConfig,
     ResumeReconnectingVerifiedSyncRequest, ResumedSyncServiceOutcome, RuntimeGovernorConfig,
     SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer, VerificationConfig,
-    VerifiedSyncServiceConfig, recover_ledger_state_chaindb,
+    VerifiedSyncServiceConfig, recover_ledger_state_chaindb_epoch_boundary,
     resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer, run_block_producer_loop,
     run_governor_loop, run_inbound_accept_loop, seed_peer_registry,
 };
@@ -1321,7 +1321,12 @@ fn main() -> Result<()> {
             );
 
             let peer_addr = peer.unwrap_or(file_cfg.peer_addr);
-            let recovery = recover_ledger_state_chaindb(&chain_db, base_ledger_state.clone());
+            let recovery = recover_ledger_state_chaindb_epoch_boundary(
+                &chain_db,
+                base_ledger_state.clone(),
+                file_cfg.epoch_schedule(),
+                None,
+            );
             let latest_slot = recovery
                 .as_ref()
                 .ok()
@@ -2381,13 +2386,18 @@ fn validate_config_report_with_role(
             })?,
         );
         let tip = chain_db.recovery().tip;
-        let recovery =
-            recover_ledger_state_chaindb(&chain_db, base_ledger_state).wrap_err_with(|| {
-                format!(
-                    "failed to recover ledger state from storage directory {}",
-                    storage_dir.display()
-                )
-            })?;
+        let recovery = recover_ledger_state_chaindb_epoch_boundary(
+            &chain_db,
+            base_ledger_state,
+            file_cfg.epoch_schedule(),
+            None,
+        )
+        .wrap_err_with(|| {
+            format!(
+                "failed to recover ledger state from storage directory {}",
+                storage_dir.display()
+            )
+        })?;
         let latest_slot = point_slot(&recovery.point).or_else(|| point_slot(&tip));
         let ledger_snapshot = ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state);
         (
@@ -2551,9 +2561,11 @@ fn status_report(
     };
 
     let ledger_checkpoint_count = LedgerStore::count(chain_db.ledger());
-    let recovery = recover_ledger_state_chaindb(
+    let recovery = recover_ledger_state_chaindb_epoch_boundary(
         &chain_db,
         best_effort_base_ledger_state(file_cfg, config_base_dir),
+        file_cfg.epoch_schedule(),
+        None,
     );
 
     let (chain_tip_slot, chain_tip_hash) = match &chain_tip {
