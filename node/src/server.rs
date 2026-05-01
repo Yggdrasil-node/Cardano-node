@@ -635,7 +635,7 @@ pub async fn run_blockfetch_server(
 ///
 /// The node layer implements this over its storage + consensus state.
 ///
-/// **Wire-shape contract** (R220): every `tip` Vec<u8> returned by
+/// **Wire-shape contract** (R220): every `tip` `Vec<u8>` returned by
 /// the methods below MUST encode the upstream `Tip` envelope, not a
 /// bare `Point`.  `Tip` is `[]` (genesis) or `[point, blockNo]`
 /// (specific tip).  See `chain_tip_envelope_cbor` in this file for

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+use crate::config::MAINNET_NETWORK_MAGIC;
 use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule, EpochSize,
     FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
@@ -43,6 +44,12 @@ use yggdrasil_plutus::CostModel;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
 
 pub use yggdrasil_storage::LedgerRecoveryOutcome;
+
+/// Dijkstra-era protocol major used by upstream Conway BBODY to re-enable
+/// `HeaderProtVerTooHigh` on testnets.
+///
+/// Reference: `Cardano.Ledger.Conway.Rules.Bbody` `natVersion @12`.
+const DIJKSTRA_MAJOR_PROTOCOL_VERSION: u64 = 12;
 
 /// Error type for sync orchestration operations.
 #[derive(Debug, thiserror::Error)]
@@ -3392,12 +3399,30 @@ pub struct VerificationConfig {
     /// Current protocol-parameter major version from the live ledger state.
     ///
     /// When present, block headers are rejected if their major version
-    /// exceeds `pp_major_protocol_version + 1` (Conway BBODY rule
-    /// `HeaderProtVerTooHigh`).
+    /// exceeds `pp_major_protocol_version + 1` where upstream currently
+    /// enables the Conway BBODY `HeaderProtVerTooHigh` check: always on
+    /// mainnet, and on testnets once Dijkstra-era protocol version 12 is
+    /// active. The separate `MaxMajorProtVer` cap remains enforced for
+    /// every network.
     ///
     /// Reference: `Cardano.Ledger.Conway.Rules.Bbody` —
     /// `pvMajor(bhprotver hdr) > succVersion(pvMajor pp)`.
     pub pp_major_protocol_version: Option<u64>,
+    /// Network magic used to classify mainnet vs. testnet for
+    /// `HeaderProtVerTooHigh` parity. `None` preserves the historical
+    /// fail-closed behavior for direct callers that have not threaded a
+    /// network discriminant yet.
+    pub network_magic: Option<u32>,
+}
+
+impl VerificationConfig {
+    fn enforce_header_protocol_version_window(&self, pp_major: u64) -> bool {
+        let is_mainnet = self
+            .network_magic
+            .map(|magic| magic == MAINNET_NETWORK_MAGIC)
+            .unwrap_or(true);
+        is_mainnet || pp_major >= DIJKSTRA_MAJOR_PROTOCOL_VERSION
+    }
 }
 
 /// Configuration for the blocks-from-the-future check.
@@ -3929,10 +3954,13 @@ pub fn verify_multi_era_block_with_raw(
     validate_block_protocol_version_with_max(block, config.max_major_protocol_version)?;
 
     // Conway BBODY: HeaderProtVerTooHigh — header major must be
-    // ≤ pp.protocolVersion.major + 1.
+    // ≤ pp.protocolVersion.major + 1. Upstream temporarily disables this
+    // check for testnets until Dijkstra (protocol major 12).
     if let Some(pp_major) = config.pp_major_protocol_version {
         if let Some((header_major, _)) = block.protocol_version() {
-            if header_major > pp_major + 1 {
+            if config.enforce_header_protocol_version_window(pp_major)
+                && header_major > pp_major + 1
+            {
                 return Err(SyncError::HeaderProtVerTooHigh {
                     header_major,
                     pp_major,
@@ -5852,8 +5880,8 @@ where
 /// - On success: returns blocks reassembled in chain order via
 ///   [`yggdrasil_network::blockfetch_pool::ReorderBuffer`].
 ///
-/// This is the runtime-friendly executor that Phase 6 step 2 of
-/// [`docs/ARCHITECTURE.md`] will consume from
+/// This is the runtime-friendly executor that Phase 6 step 2 of the
+/// [architecture docs](../../docs/ARCHITECTURE.md) will consume from
 /// `sync_batch_verified_with_tentative` once the sync-loop branching
 /// lands.  Real parallelism (Phase 6 step 3) comes when the runtime
 /// adopts the per-peer worker-task pattern; the API surface here
@@ -8003,6 +8031,63 @@ mod tests {
         // Equal-to-ceiling at the sync layer ↔ Ok at the consensus layer.
         assert!(validate_protocol_version_for_era(Era::Conway, 10, 0, Some(10)).is_ok());
         assert!(yggdrasil_consensus::check_header_protocol_version(10, 10).is_ok());
+    }
+
+    fn verification_config_for_header_window(
+        pp_major_protocol_version: u64,
+        network_magic: Option<u32>,
+    ) -> VerificationConfig {
+        VerificationConfig {
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            verify_body_hash: true,
+            max_major_protocol_version: Some(10),
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: Some(pp_major_protocol_version),
+            network_magic,
+        }
+    }
+
+    #[test]
+    fn header_protocol_version_window_enforced_on_mainnet_before_dijkstra() {
+        let config =
+            verification_config_for_header_window(10, Some(crate::config::MAINNET_NETWORK_MAGIC));
+        assert!(
+            config.enforce_header_protocol_version_window(10),
+            "mainnet keeps Conway BBODY HeaderProtVerTooHigh active before Dijkstra",
+        );
+    }
+
+    #[test]
+    fn header_protocol_version_window_skipped_on_testnet_before_dijkstra() {
+        let config =
+            verification_config_for_header_window(10, Some(crate::config::PREVIEW_NETWORK_MAGIC));
+        assert!(
+            !config.enforce_header_protocol_version_window(10),
+            "testnets suppress HeaderProtVerTooHigh until protocol major 12",
+        );
+    }
+
+    #[test]
+    fn header_protocol_version_window_enforced_on_testnet_at_dijkstra() {
+        let config = verification_config_for_header_window(
+            DIJKSTRA_MAJOR_PROTOCOL_VERSION,
+            Some(crate::config::PREPROD_NETWORK_MAGIC),
+        );
+        assert!(
+            config.enforce_header_protocol_version_window(DIJKSTRA_MAJOR_PROTOCOL_VERSION),
+            "testnets re-enable HeaderProtVerTooHigh once Dijkstra protocol major is active",
+        );
+    }
+
+    #[test]
+    fn header_protocol_version_window_unknown_network_fails_closed() {
+        let config = verification_config_for_header_window(10, None);
+        assert!(
+            config.enforce_header_protocol_version_window(10),
+            "direct callers without network magic keep the historical fail-closed check",
+        );
     }
 
     #[test]

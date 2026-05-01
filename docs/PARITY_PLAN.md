@@ -12,7 +12,7 @@ nav_order: 2
 **Scope**: All subsystems from crypto through orchestration, covering all 7 eras (Byron → Conway)
 
 > **Current operational status**: see [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for the
-> R243 cumulative reference (243 rounds completed; all confirmed-active
+> R245 cumulative reference (245 rounds completed; all confirmed-active
 > code-level parity slices and all 6 documentary upstream pins closed;
 > remaining gates are operator-time rehearsals).  The "Recently completed parity items" list below
 > tracks per-round changes; see also [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
@@ -34,7 +34,7 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved (post-R243 status):
+The Rust Cardano node (Yggdrasil) has achieved (post-R245 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
 - ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
@@ -51,7 +51,9 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R243 status):
 - ✅ **Bidirectional P2P parity** (R220+R221 — server-side ChainSync `Tip` envelope wire-shape contract; instance-to-instance preprod sync verified end-to-end with `reconnects=0`)
 - ✅ **Phase D.2 lifetime peer-stats** (R222–R237 — Prometheus counters for sessions, failures, bytes_in, bytes_out, unique_peers, handshakes; bytes_out is folded from per-peer internal egress totals without high-cardinality labels)
 - ✅ **Phase D.1 rollback recovery** (R225 + R237 + R238 — rollback-depth histogram, epoch-boundary-aware checkpoint replay when stake snapshots are enabled, and exact nonce/OpCert ChainDepState sidecar restore-and-replay)
-- ✅ **Phase E.1 documentary pins** (R201+R216+R239+R243 — all 6 canonical IntersectMBO pins in-sync with upstream live HEAD; `cardano-base` vector tree refreshed in lockstep and the latest `cardano-ledger` drift was import-only)
+- ✅ **Phase E.1 documentary pins** (R201+R216+R239+R243+R245 — all 6 canonical IntersectMBO pins in-sync with upstream live HEAD; `cardano-base` vector tree refreshed in lockstep and the latest `cardano-ledger` drift was mirrored)
+- ✅ **Byron genesis hash parity** (R244 — `ByronGenesisHash` now verifies by parsing upstream Canonical JSON and hashing `renderCanonicalJSON` bytes; Shelley/Alonzo/Conway continue to verify raw file bytes, so all four preset genesis hashes are checked at startup)
+- ✅ **Conway BBODY protocol-version parity** (R245 — `HeaderProtVerTooHigh` remains active on mainnet and on testnets from Dijkstra protocol major 12 onward, while pre-Dijkstra testnets follow upstream's temporary grace path; `MaxMajorProtVer` remains network-independent)
 - ✅ **Parallel BlockFetch soak automation** (R240 — `node/scripts/parallel_blockfetch_soak.sh` captures §6.5 worker-migration, metrics, Haskell tip-compare, and log-scan evidence before the default concurrency flip)
 - ✅ **Cumulative regression coverage** (R229+R230+R231 — every R200/R217/R225/R226 observability metric has explicit Prometheus-output regression tests pinning bucket boundaries, counter/gauge types, and exposition format)
 
@@ -63,6 +65,8 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R243 status):
 **Recently completed parity items**:
 Older entries in this list preserve the status known at that round; the Executive Summary above is authoritative for current closure state.
 
+- ✅ **R245 `cardano-ledger` BBODY/GOV drift refresh** — upstream advanced from `110b30e7abd8…` to `b90b97488da3…`. The GOV change switches `preceedingHardFork` to accumulated proposals; Yggdrasil's proposal validation already uses the accumulated pending-proposal view and has hard-fork sequencing tests. The BBODY change temporarily disables `HeaderProtVerTooHigh` on testnets until Dijkstra (`curProtVerMajor >= 12`); `VerificationConfig` now carries `network_magic` and mirrors the upstream condition while preserving the separate `MaxMajorProtVer` ceiling for all networks. Drift detector returns all 6 canonical pins in-sync again.
+- ✅ **R244 Byron genesis canonical JSON hash verification** — upstream `cardano-node` loads Byron genesis through `Cardano.Chain.Genesis.readGenesisData`, and `cardano-ledger` computes the hash over `Text.JSON.Canonical.renderCanonicalJSON` after `parseCanonicalJSON`. Yggdrasil now mirrors that path in `compute_byron_genesis_file_hash()`, wires it into `NodeConfigFile::verify_known_genesis_hashes()`, updates `Node.GenesisHash.Verified` to report `byronVerified`, and changes `validate-config` / manual docs from "3/4 verified" to "4/4 verified". Vendored mainnet, preprod, and preview Byron genesis files all match the declared upstream hashes.
 - ✅ **R243 cardano-ledger import-only pin refresh** — `node/scripts/check_upstream_drift.sh` found `cardano-ledger` had advanced from `42d088ed84b7…` to `110b30e7abd8…`. Official upstream PR #5787 removes one redundant import from `Cardano.Ledger.Shelley.API.Mempool`; no ledger rule, CDDL, or binary codec behavior changed in the ported subset. `UPSTREAM_CARDANO_LEDGER_COMMIT` and the living parity docs now point at the new live HEAD, and the drift detector reports all 6 canonical pins in-sync again.
 - ✅ **R242 upstream cardano-node-tests harness smoke** — validated the upstream `cardano-node-tests` runner contract for custom binaries and static `.bin/` validation. The runbook wrapper now documents/handles static MUSL Yggdrasil binaries and translated `cardano-cli --version` behavior for local or CI harness runs.
 - ✅ **R241 devcontainer preprod BlockFetch smoke** — rebuilt devcontainer tooling can run the §6.5 harness; a short preprod `--max-concurrent-block-fetch-peers 2` smoke synced 1 150 blocks with 6 workers migrated/registered and no worker-channel failure traces. This is evidence hardening, not a replacement for the required 6h/24h sign-off.
@@ -337,7 +341,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 | OpCert counter enforcement | Per-pool monotonic seq no | ✅ | ✅ | Complete | OcertCounters.validate_and_update; threaded through batch/service/runtime loops via `&mut Option<OcertCounters>`
 | Body hash verify | Blake2b-256 of body | ✅ | ✅ | Complete | verify_block_body_hash
 | Body size verify | Declared vs actual body size | ✅ | ✅ | Complete | validate_block_body_size (upstream WrongBlockBodySizeBBODY)
-| Protocol version check | Era/version consistency + MaxMajorProtVer guard | ✅ | ✅ | Complete | validate_block_protocol_version (hard-fork combinator era transitions); MaxMajorProtVer config-wired (default 10, Conway)
+| Protocol version check | Era/version consistency + MaxMajorProtVer guard + Conway BBODY `HeaderProtVerTooHigh` policy | ✅ | ✅ | Complete | validate_block_protocol_version (hard-fork combinator era transitions); MaxMajorProtVer config-wired (default 10, Conway); R245 mirrors upstream testnet grace until Dijkstra while keeping mainnet enforcement active
 | Header size check | Header CBOR ≤ maxBlockHeaderSize | ✅ | ✅ | Complete | `LedgerError::HeaderTooLarge`; `Block::header_cbor_size` set from wire bytes in sync.rs for all Shelley-family eras; checked in `apply_block_validated` (upstream `Cardano.Ledger.Shelley.Rules.Bbody` `bHeaderSize`)
 | UTxO rules | UTXO + CERTS + REWARDS | ✅ | ✅ | Complete | Full era-specific UTxO rules with cert/reward processing
 | **Density Tiebreaker** |
@@ -1270,7 +1274,7 @@ TX expires (TTL):
 **Document prepared by**: Research & Planning Agent
 **Target Review Date**: Week of March 31, 2026 (original projection)
 **Expected Final Delivery (original)**: Mid-June 2026 (13-week roadmap)
-**Actual delivery status (R243, 2026-05-01)**: yggdrasil is a
+**Actual delivery status (R245, 2026-05-01)**: yggdrasil is a
 production-ready pure-Rust Cardano node.  All 3 official Cardano
 networks (preview, preprod, mainnet) demonstrate working
 operational LSQ surface + consensus-side sidecars, including
@@ -1284,13 +1288,18 @@ recovery hardening (R225+R237+R238) are implemented: exact
 nonce/OpCert ChainDepState sidecar restore-and-replay is now the
 code-level baseline. Phase E.1 upstream pin maintenance is closed
 for all 6 canonical IntersectMBO repositories after the R239
-`cardano-base` vendored-vector refresh and the R243 import-only
-`cardano-ledger` refresh. Every R200/R217/R225/R226 observability metric
+`cardano-base` vendored-vector refresh, the R243 import-only
+`cardano-ledger` refresh, and the R245 BBODY/GOV drift refresh. R244
+closes the remaining genesis-hash preflight asymmetry by verifying Byron
+through upstream canonical JSON hashing while keeping Shelley-family
+raw-file hashing unchanged. R245 mirrors upstream's temporary Conway
+BBODY `HeaderProtVerTooHigh` testnet grace until Dijkstra while leaving
+the network-independent `MaxMajorProtVer` cap unchanged. Every R200/R217/R225/R226 observability metric
 has explicit Prometheus-output regression tests (R229+R230+R231).
 R240 adds `parallel_blockfetch_soak.sh`, making the §6.5 BlockFetch
 default-flip evidence gate reproducible rather than manually assembled;
 R241/R242 harden the local operator and upstream-test harness paths.
-The workspace has 4.7K+ passing tests at the R243 slice boundary.
+The workspace has 4.7K+ passing tests at the R245 slice boundary.
 Remaining gates are operator-time items (E.2 24h+ rehearsal and §6.5
 BlockFetch default flip sign-off using the soak harness). See
 [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for canonical operational

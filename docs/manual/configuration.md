@@ -81,7 +81,7 @@ The keys below are the Yggdrasil-specific snake_case names. PascalCase aliases m
 | Key                     | Type    | Default        | Upstream alias                | Description |
 |-------------------------|---------|----------------|-------------------------------|-------------|
 | `byron_genesis_file`    | string  | preset         | `ByronGenesisFile`            | Path to Byron genesis JSON. |
-| `byron_genesis_hash`    | string  | preset         | `ByronGenesisHash`            | Expected hash. (Currently parsed; canonical-CBOR verification is a future slice.) |
+| `byron_genesis_hash`    | string  | preset         | `ByronGenesisHash`            | Expected hash. Verified using upstream canonical JSON hashing. |
 | `shelley_genesis_file`  | string  | preset         | `ShelleyGenesisFile`          | Path to Shelley genesis JSON. |
 | `shelley_genesis_hash`  | string  | preset         | `ShelleyGenesisHash`          | Verified at startup. |
 | `alonzo_genesis_file`   | string  | preset         | `AlonzoGenesisFile`           | Path to Alonzo genesis JSON. |
@@ -145,7 +145,7 @@ If all four are supplied, the node activates block production. Otherwise it runs
 
 | Key                          | Type | Default | Upstream alias                   | Description |
 |------------------------------|------|---------|----------------------------------|-------------|
-| `max_major_protocol_version` | u32  | 10      | `MaxKnownMajorProtocolVersion`   | Reject blocks whose protocol version exceeds this. Bump when upstream signals an imminent hard fork. |
+| `max_major_protocol_version` | u32  | 10      | `MaxKnownMajorProtocolVersion`   | Reject blocks whose protocol version exceeds this on every network. Conway `HeaderProtVerTooHigh` separately follows upstream: mainnet stays strict, testnets are relaxed until Dijkstra protocol major 12. |
 | `peer_sharing`               | u8   | 1       | `PeerSharing`                    | NtN handshake `peer_sharing` willingness flag. `0` = disabled, `1` = enabled. |
 | `consensus_mode`             | string | `PraosMode` | `ConsensusMode`              | `PraosMode` or `GenesisMode`. |
 

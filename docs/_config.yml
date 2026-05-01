@@ -79,6 +79,8 @@ footer_content: 'Yggdrasil — a pure-Rust Cardano node, targeting upstream Inte
 aux_links:
   "GitHub":
     - "https://github.com/yggdrasil-node/Cardano-node"
+  "Releases":
+    - "https://github.com/yggdrasil-node/Cardano-node/releases"
 aux_links_new_tab: true
 
 # Files and directories to exclude from the rendered site.

@@ -7,7 +7,7 @@ nav_order: 10
 
 # Comprehensive Upstream Research: Cardano Haskell Implementation
 
-**Last Updated**: March 26, 2026  
+**Last Updated**: May 1, 2026
 **Focus**: Detailed analysis of official IntersectMBO repositories to identify implementation guidance for the Rust Cardano node.
 
 ---
@@ -237,6 +237,16 @@ data LedgerState era = LedgerState
 **RATIFICATION Rule** (Conway):
 - Tally votes (committee threshold, DRep stake weight, SPO proportional)
 - Check proposal is accepted by required thresholds
+
+**BBODY / GOV Drift Notes (2026-05-01)**:
+- `Cardano.Ledger.Conway.Rules.Bbody` now applies `HeaderProtVerTooHigh`
+  only when `networkId == Mainnet || curProtVerMajor >= 12`. Testnets
+  before Dijkstra therefore keep syncing blocks whose header protocol
+  version is more than one major above current ledger parameters; the
+  separate consensus `MaxMajorProtVer` ceiling remains independent.
+- `Cardano.Ledger.Conway.Rules.Gov` now checks `preceedingHardFork`
+  against accumulated proposals, avoiding split behavior between
+  `PrevGovActionId` lookup and hard-fork sequencing validation.
 
 ### 2.5 Important Invariants
 

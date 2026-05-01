@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 243)
+title: Parity Proof Report (Round 245)
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,10 +7,10 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R243 refresh (2026-05-01)
-**Cumulative arc**: R1 → R243
+**Document round**: R245 refresh (2026-05-01)
+**Cumulative arc**: R1 → R245
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4.7K+ passing, 0 failing at the R243 slice boundary
+**Workspace tests**: 4.7K+ passing, 0 failing at the R245 slice boundary
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the
@@ -144,6 +144,47 @@ The current sidecars are persisted via:
   loads exact point sidecars at LSQ acquire time and attaches to
   `LedgerStateSnapshot` via the R192 `with_chain_dep_state` and R202
   `with_stake_snapshots` builders
+
+---
+
+## 2b. Genesis hash preflight
+
+R244 closes the last genesis-hash verification asymmetry. Upstream
+`cardano-node` reads Byron genesis through
+`Cardano.Chain.Genesis.readGenesisData`; upstream `cardano-ledger`
+parses Canonical JSON and hashes `renderCanonicalJSON` bytes. Yggdrasil
+now mirrors that for `ByronGenesisHash`, while Shelley, Alonzo, and
+Conway continue to use raw-file Blake2b-256.
+
+Current operator-facing behavior:
+
+| Genesis field | Hash basis | Startup/preflight status |
+|---|---|---|
+| `ByronGenesisHash` | Canonical JSON rendering | ✅ verified |
+| `ShelleyGenesisHash` | raw file bytes | ✅ verified |
+| `AlonzoGenesisHash` | raw file bytes | ✅ verified |
+| `ConwayGenesisHash` | raw file bytes | ✅ verified |
+
+`validate-config --network mainnet` now reports `Genesis hashes: 4/4
+verified`, and `Node.GenesisHash.Verified` traces `byronVerified=true`
+when the file/hash pair is present.
+
+---
+
+## 2c. BBODY header protocol-version policy
+
+R245 mirrors the upstream `cardano-ledger` Conway BBODY change that
+keeps `HeaderProtVerTooHigh` active on mainnet, temporarily suppresses
+that check on testnets before Dijkstra, and re-enables it on testnets
+once protocol major 12 is active. Yggdrasil threads `network_magic`
+through `VerificationConfig` to classify mainnet vs. testnet, and keeps
+the separate `MaxMajorProtVer` ceiling active for every network.
+
+The paired upstream GOV drift switches `preceedingHardFork` from the
+original state to accumulated proposals. Yggdrasil's Conway proposal
+validator already evaluates hard-fork sequencing against the accumulated
+pending-proposal view, and the hard-fork sequencing regression tests
+remain green.
 
 ---
 
@@ -307,16 +348,17 @@ point sidecars and does not read nonce/OpCert latest mirrors.
 
 R201 advanced the first documentary upstream pins to live HEAD, R216
 refreshed the pins that drifted again, R239 completed the coordinated
-`cardano-base` fixture refresh, and R243 refreshed the import-only
-`cardano-ledger` drift from upstream PR #5787. All six canonical
+`cardano-base` fixture refresh, R243 refreshed the import-only
+`cardano-ledger` drift from upstream PR #5787, and R245 refreshed the
+BBODY/GOV `cardano-ledger` drift through `b90b97488da3…`. All six canonical
 IntersectMBO pins now match live HEAD and `cardano-base` still keeps
 the test-vector directory name, crypto test constant, and node pin in
 lockstep:
 
-| Repository | Pinned (post-R243) | Status |
+| Repository | Pinned (post-R245) | Status |
 |---|---|---|
 | `cardano-base` | `7a8a991945d4…` (R239 fixture refresh) | **in-sync** |
-| `cardano-ledger` | `110b30e7abd8…` (R243 import-only refresh) | **in-sync** |
+| `cardano-ledger` | `b90b97488da3…` (R245 BBODY/GOV refresh) | **in-sync** |
 | `ouroboros-consensus` | `b047aca4a731…` (R216 advance) | **in-sync** |
 | `ouroboros-network` | `0e84bced45c7…` | **in-sync** |
 | `plutus` | `4cd40a14e364…` (R216 advance) | **in-sync** |
@@ -324,7 +366,7 @@ lockstep:
 
 Drift detector (`bash node/scripts/check_upstream_drift.sh`) reports
 `drifted=0 unreachable=0 total=6`. Three drift-guard tests pass
-(format, cardinality, vendored-directory match). R201 → R216 → R239 → R243
+(format, cardinality, vendored-directory match). R201 → R216 → R239 → R243 → R245
 demonstrates the audit baseline is actively maintained against
 upstream while preserving SHA-anchored vendored fixture provenance.
 
@@ -349,8 +391,10 @@ upstream while preserving SHA-anchored vendored fixture provenance.
 | **C.2** | Pipelined fetch+apply | 🚫 de-prioritised | R217 measurement showed ~1.7% gain — multi-peer dispatch is the actual sync-rate lever |
 | **D.1** | Deep rollback recovery and chain-dep sidecars | ✅ closed code-level slice | R225+R237+R238 |
 | **D.2** | Multi-session peer accounting + aggregate bytes-out | ✅ shipped | R222+R223+R224+R226+R234+R235+R237 |
-| **E.1** | Audit baseline pin refresh + `cardano-base` fixture refresh | ✅ closed, 6/6 pins in-sync | R201+R216+R239+R243 |
+| **E.1** | Audit baseline pin refresh + `cardano-base` fixture refresh | ✅ closed, 6/6 pins in-sync | R201+R216+R239+R243+R245 |
 | **E.2a** | Parallel BlockFetch soak automation | ✅ harness shipped | R240 |
+| **Config integrity** | Byron + Shelley-family genesis hash verification | ✅ closed | R244 |
+| **Ledger drift** | Conway BBODY testnet `HeaderProtVerTooHigh` grace | ✅ closed | R245 |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 

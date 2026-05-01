@@ -379,6 +379,7 @@ async fn run_verified_sync_service_chaindb_persists_checkpoint() {
             future_check: None,
             ocert_counters: None,
             pp_major_protocol_version: None,
+            network_magic: Some(magic),
         },
         nonce_config: None,
         security_param: Some(SecurityParam(1)),
@@ -1832,6 +1833,7 @@ fn verify_multi_era_block_byron_is_noop() {
         future_check: None,
         ocert_counters: None,
         pp_major_protocol_version: None,
+        network_magic: None,
     };
     assert!(verify_multi_era_block(&me, &config).is_ok());
 }
@@ -2613,6 +2615,7 @@ fn verify_multi_era_block_babbage_passes() {
         future_check: None,
         ocert_counters: None,
         pp_major_protocol_version: None,
+        network_magic: None,
     };
     let result = verify_multi_era_block(&me, &config);
     // Expect error since the signature is dummy bytes, confirming the
@@ -2641,6 +2644,7 @@ fn verify_multi_era_block_conway_passes() {
         future_check: None,
         ocert_counters: None,
         pp_major_protocol_version: None,
+        network_magic: None,
     };
     let result = verify_multi_era_block(&me, &config);
     assert!(result.is_err());
@@ -4593,6 +4597,7 @@ fn verify_multi_era_block_rejects_bad_protocol_version() {
         future_check: None,
         ocert_counters: None,
         pp_major_protocol_version: None,
+        network_magic: None,
     };
     let err = verify_multi_era_block(&block, &config).unwrap_err();
     assert!(
@@ -4628,6 +4633,7 @@ fn verify_multi_era_block_rejects_header_prot_ver_too_high() {
         future_check: None,
         ocert_counters: None,
         pp_major_protocol_version: Some(10), // PP says major 10 → header 12 > 11
+        network_magic: None,
     };
     let err = verify_multi_era_block(&block, &config).unwrap_err();
     assert!(
@@ -4660,6 +4666,7 @@ fn verify_multi_era_block_accepts_header_prot_ver_at_successor() {
         future_check: None,
         ocert_counters: None,
         pp_major_protocol_version: Some(10), // PP 10, header 11 = 10+1 → ok
+        network_magic: None,
     };
     // This should NOT fail on protocol version — it may fail on KES/VRF
     // checks, but not on HeaderProtVerTooHigh.

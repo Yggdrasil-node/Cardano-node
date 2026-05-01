@@ -53,7 +53,7 @@ pub const DEFAULT_CANDIDATE_FRAGMENT_CAPACITY: usize = 2160;
 /// A peer's announced chain prefix — an ordered sliding window of
 /// `(slot, hash)` tuples from oldest to newest.
 ///
-/// Each [`ChainSyncWorker`] populates its own candidate fragment as
+/// Each ChainSync worker task populates its own candidate fragment as
 /// `MsgRollForward` headers arrive on the wire.  `MsgRollBackward`
 /// drops trailing entries past the rollback point.  The
 /// [`ChainSyncWorkerPool`] surfaces the per-peer fragments so the

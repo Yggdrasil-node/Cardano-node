@@ -1207,6 +1207,7 @@ fn main() -> Result<()> {
                     future_check,
                     ocert_counters: Some(initial_ocert_counters.clone()),
                     pp_major_protocol_version: None,
+                    network_magic: Some(file_cfg.network_magic),
                 })
             };
 
@@ -1275,6 +1276,7 @@ fn main() -> Result<()> {
                         future_check,
                         ocert_counters: Some(initial_ocert_counters.clone()),
                         pp_major_protocol_version: None,
+                        network_magic: Some(file_cfg.network_magic),
                     },
                     nonce_config: Some(nonce_config),
                     security_param: Some(security_param),
@@ -1547,10 +1549,9 @@ fn main() -> Result<()> {
 /// `strict_base_ledger_state` has completed genesis-hash verification.
 ///
 /// Each `(file, hash)` pair is reported so operators can confirm exactly
-/// which files were checked. `byron` is counted only when an expected hash
-/// is declared — Byron hash verification is still a follow-up slice
-/// (requires canonical CBOR), so a present expectation is currently a
-/// "declared but not yet verified" nuance we surface separately.
+/// which files were checked. Byron is counted when both `ByronGenesisFile`
+/// and `ByronGenesisHash` are present because the verifier now mirrors
+/// upstream canonical JSON hashing.
 fn trace_genesis_hashes_verified(tracer: &NodeTracer, file_cfg: &NodeConfigFile) {
     let shelley_verified =
         file_cfg.shelley_genesis_file.is_some() && file_cfg.shelley_genesis_hash.is_some();
@@ -1558,10 +1559,12 @@ fn trace_genesis_hashes_verified(tracer: &NodeTracer, file_cfg: &NodeConfigFile)
         file_cfg.alonzo_genesis_file.is_some() && file_cfg.alonzo_genesis_hash.is_some();
     let conway_verified =
         file_cfg.conway_genesis_file.is_some() && file_cfg.conway_genesis_hash.is_some();
-    let byron_declared =
+    let byron_verified =
         file_cfg.byron_genesis_file.is_some() && file_cfg.byron_genesis_hash.is_some();
-    let verified_count =
-        u64::from(shelley_verified) + u64::from(alonzo_verified) + u64::from(conway_verified);
+    let verified_count = u64::from(byron_verified)
+        + u64::from(shelley_verified)
+        + u64::from(alonzo_verified)
+        + u64::from(conway_verified);
 
     tracer.trace_runtime(
         "Node.GenesisHash.Verified",
@@ -1571,10 +1574,7 @@ fn trace_genesis_hashes_verified(tracer: &NodeTracer, file_cfg: &NodeConfigFile)
             ("shelleyVerified", json!(shelley_verified)),
             ("alonzoVerified", json!(alonzo_verified)),
             ("conwayVerified", json!(conway_verified)),
-            (
-                "byronHashDeclaredButCanonicalCborPending",
-                json!(byron_declared),
-            ),
+            ("byronVerified", json!(byron_verified)),
             ("verifiedCount", json!(verified_count)),
         ]),
     );
@@ -2026,14 +2026,13 @@ fn validate_config_report_with_role(
         warnings.push(format!("genesis hash verification: {err}"));
     }
 
-    // `ByronGenesisHash` content verification is deferred pending a Rust
-    // port of upstream's canonical-CBOR hashing (`verify_known_genesis_hashes`
-    // intentionally skips it). But the declared value can still be
-    // syntax-checked at preflight time — typos / wrong-length pastes /
-    // non-hex input are real user errors that surface today as a garbled
-    // mismatch much later. Warn when the declared `ByronGenesisHash` fails
-    // the 64-char lowercase-hex shape check.
-    if let Some(byron_hex) = file_cfg.byron_genesis_hash.as_deref() {
+    // `verify_known_genesis_hashes` validates Byron content when both the
+    // path and hash are present. If an operator supplied only
+    // `ByronGenesisHash`, add a more specific format warning for malformed
+    // hex alongside the paired-file warning above.
+    if file_cfg.byron_genesis_file.is_none()
+        && let Some(byron_hex) = file_cfg.byron_genesis_hash.as_deref()
+    {
         if let Err(err) = genesis::parse_blake2b_256_hex(byron_hex, "ByronGenesisHash") {
             warnings.push(format!("ByronGenesisHash format: {err}"));
         }
@@ -2262,9 +2261,8 @@ fn validate_config_report_with_role(
     // verification cannot regress in that follow-up.
     //
     // Reference: `Cardano.Node.Configuration.Checkpoints` in cardano-node;
-    // the Blake2b-256 digest is taken over the raw JSON bytes (era-
-    // agnostic — no canonical-CBOR step — so the existing
-    // `verify_genesis_file_hash` helper applies unchanged).
+    // the Blake2b-256 digest is taken over the raw JSON bytes, so the
+    // existing `verify_genesis_file_hash` helper applies unchanged.
     if let Some(ckpt_file) = file_cfg.checkpoints_file.as_deref() {
         let ckpt_path = resolve_config_path(std::path::Path::new(ckpt_file), config_base_dir);
         if !ckpt_path.exists() {
@@ -4858,10 +4856,9 @@ mod tests {
 
     #[test]
     fn validate_config_report_warns_on_malformed_byron_genesis_hash() {
-        // Full Byron-canonical-CBOR verification is deferred, but the
-        // declared hex itself can still be syntax-checked today. Wrong
-        // length ("abcd" → 2 bytes) must surface as an InvalidHashHex
-        // warning so the operator fixes the typo at preflight time.
+        // Wrong length ("abcd" -> 2 bytes) must surface as an
+        // InvalidHashHex warning so the operator fixes the typo at preflight
+        // time, even when the paired Byron file path is absent.
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")
@@ -4879,8 +4876,8 @@ mod tests {
             report
                 .warnings
                 .iter()
-                .any(|w| w.contains("ByronGenesisHash format")),
-            "expected ByronGenesisHash format warning, got: {:?}",
+                .any(|w| w.contains("invalid genesis hash hex string for ByronGenesisHash")),
+            "expected ByronGenesisHash hex warning, got: {:?}",
             report.warnings,
         );
         std::fs::remove_dir_all(dir).ok();
@@ -4906,8 +4903,8 @@ mod tests {
             report
                 .warnings
                 .iter()
-                .any(|w| w.contains("ByronGenesisHash format")),
-            "expected ByronGenesisHash format warning on non-hex input, got: {:?}",
+                .any(|w| w.contains("invalid genesis hash hex string for ByronGenesisHash")),
+            "expected ByronGenesisHash hex warning on non-hex input, got: {:?}",
             report.warnings,
         );
         std::fs::remove_dir_all(dir).ok();
@@ -4916,8 +4913,8 @@ mod tests {
     #[test]
     fn validate_config_report_accepts_well_formed_byron_genesis_hash() {
         // 64-char lowercase-hex → parses cleanly → no format warning.
-        // (Content verification is still deferred — we're only checking
-        // the hex shape here.)
+        // Content verification is covered when the paired file path exists;
+        // this test only checks the supplemental no-file format warning.
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock")

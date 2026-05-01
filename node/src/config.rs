@@ -333,9 +333,8 @@ pub struct NodeConfigFile {
     /// `CheckpointsFileHash` in the official Cardano node configuration.
     /// Verified at `validate-config` time against the raw-bytes digest of
     /// `checkpoints_file` via
-    /// [`crate::genesis::verify_genesis_file_hash`] (era-agnostic, no
-    /// canonical-CBOR step). Enforcement at the loader level will land
-    /// alongside the checkpoint-pinning feature.
+    /// [`crate::genesis::verify_genesis_file_hash`]. Enforcement at the
+    /// loader level will land alongside the checkpoint-pinning feature.
     #[serde(
         rename = "CheckpointsFileHash",
         default,
@@ -561,11 +560,12 @@ pub struct NodeConfigFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub byron_genesis_file: Option<String>,
-    /// Expected Byron genesis hash. **Currently parsed but not verified**
-    /// because upstream Byron hashing uses canonical CBOR (round-trips the
-    /// JSON through canonical CBOR and hashes that), which has not yet
-    /// been ported to Rust. Tracked separately from the Shelley-family
-    /// hashes which use raw-file Blake2b-256.
+    /// Expected Byron genesis hash.
+    ///
+    /// Unlike Shelley-family genesis hashes, upstream Byron hashes are
+    /// computed over `Text.JSON.Canonical.renderCanonicalJSON` of the parsed
+    /// JSON value. Startup verifies this with
+    /// [`crate::genesis::verify_byron_genesis_file_hash`].
     #[serde(
         rename = "ByronGenesisHash",
         default,
@@ -883,18 +883,14 @@ impl NodeConfigFile {
         load_byron_genesis_utxo(&path)
     }
 
-    /// Verify the Blake2b-256 hashes of the configured Shelley / Alonzo /
-    /// Conway genesis files against the operator-supplied
-    /// `*GenesisHash` declarations.
+    /// Verify the Blake2b-256 hashes of the configured genesis files against
+    /// the operator-supplied `*GenesisHash` declarations.
     ///
     /// For each `(file_path, expected_hash)` pair where both sides are
-    /// present, this method invokes
-    /// [`crate::genesis::verify_genesis_file_hash`] and short-circuits on
-    /// the first mismatch. Pairs where either the file path or the
-    /// expected hash is `None` are skipped (no expectation, no check).
-    /// Byron is intentionally skipped because upstream Byron hashing uses
-    /// canonical CBOR rather than raw-file Blake2b-256; that case is
-    /// tracked separately and will become a follow-up slice.
+    /// present, this method invokes the era-appropriate hash verifier and
+    /// short-circuits on the first mismatch. Each configured file must have
+    /// its paired hash and vice versa. Byron uses canonical JSON rendering;
+    /// Shelley / Alonzo / Conway use raw file bytes.
     ///
     /// Returns `Ok(())` when every checked file matches, or
     /// [`crate::genesis::GenesisLoadError::HashMismatch`] /
@@ -907,7 +903,7 @@ impl NodeConfigFile {
         &self,
         config_base_dir: Option<&Path>,
     ) -> Result<(), crate::genesis::GenesisLoadError> {
-        use crate::genesis::verify_genesis_file_hash;
+        use crate::genesis::{verify_byron_genesis_file_hash, verify_genesis_file_hash};
 
         let resolve = |relative: &str| -> std::path::PathBuf {
             let p = Path::new(relative);
@@ -920,32 +916,45 @@ impl NodeConfigFile {
 
         let pairs = [
             (
+                self.byron_genesis_file.as_deref(),
+                self.byron_genesis_hash.as_deref(),
+                "ByronGenesisHash",
+                true,
+            ),
+            (
                 self.shelley_genesis_file.as_deref(),
                 self.shelley_genesis_hash.as_deref(),
                 "ShelleyGenesisHash",
+                false,
             ),
             (
                 self.alonzo_genesis_file.as_deref(),
                 self.alonzo_genesis_hash.as_deref(),
                 "AlonzoGenesisHash",
+                false,
             ),
             (
                 self.conway_genesis_file.as_deref(),
                 self.conway_genesis_hash.as_deref(),
                 "ConwayGenesisHash",
+                false,
             ),
         ];
 
-        for (file, expected, field) in pairs {
+        for (file, expected, field, byron) in pairs {
             // Hard-fail on unpaired (file, hash). A configured genesis file
             // without a matching `*GenesisHash` would otherwise be loaded
             // unverified — that is the path that lets an operator silently
             // substitute a tampered or wrong-network genesis file.  Audit
-            // finding M-8.  The Byron path is handled separately because
-            // canonical-CBOR hashing is not yet ported.
+            // finding M-8.
             match (file, expected) {
                 (Some(file), Some(expected)) => {
-                    verify_genesis_file_hash(&resolve(file), expected, field)?;
+                    let path = resolve(file);
+                    if byron {
+                        verify_byron_genesis_file_hash(&path, expected)?;
+                    } else {
+                        verify_genesis_file_hash(&path, expected, field)?;
+                    }
                 }
                 (Some(_), None) => {
                     return Err(crate::genesis::GenesisLoadError::MissingHash { field });
@@ -2211,12 +2220,18 @@ mod tests {
     fn verify_known_genesis_hashes_passes_when_files_match() {
         let dir = tempfile::tempdir().expect("tempdir");
         let body = b"{\"k\":1}";
+        let byron_body = br#"{ "z": 1, "a": "b" }"#;
         std::fs::write(dir.path().join("shelley.json"), body).expect("write");
         std::fs::write(dir.path().join("alonzo.json"), body).expect("write");
         std::fs::write(dir.path().join("conway.json"), body).expect("write");
+        std::fs::write(dir.path().join("byron.json"), byron_body).expect("write");
         let expected_hex = hex::encode(yggdrasil_crypto::blake2b::hash_bytes_256(body).0);
+        let expected_byron_hex =
+            hex::encode(yggdrasil_crypto::blake2b::hash_bytes_256(br#"{"a":"b","z":1}"#).0);
 
         let mut cfg = mainnet_config();
+        cfg.byron_genesis_file = Some("byron.json".to_owned());
+        cfg.byron_genesis_hash = Some(expected_byron_hex);
         cfg.shelley_genesis_file = Some("shelley.json".to_owned());
         cfg.shelley_genesis_hash = Some(expected_hex.clone());
         cfg.alonzo_genesis_file = Some("alonzo.json".to_owned());
@@ -2254,9 +2269,15 @@ mod tests {
     #[test]
     fn verify_known_genesis_hashes_short_circuits_on_first_mismatch() {
         let dir = tempfile::tempdir().expect("tempdir");
+        let byron_body = br#"{"a":1}"#;
+        std::fs::write(dir.path().join("byron.json"), byron_body).expect("write");
         std::fs::write(dir.path().join("shelley.json"), b"{}").expect("write");
+        let byron_expected_hex =
+            hex::encode(yggdrasil_crypto::blake2b::hash_bytes_256(br#"{"a":1}"#).0);
 
         let mut cfg = mainnet_config();
+        cfg.byron_genesis_file = Some("byron.json".to_owned());
+        cfg.byron_genesis_hash = Some(byron_expected_hex);
         cfg.shelley_genesis_file = Some("shelley.json".to_owned());
         cfg.shelley_genesis_hash = Some("0".repeat(64));
         // Other genesis paths intentionally point at non-existent files

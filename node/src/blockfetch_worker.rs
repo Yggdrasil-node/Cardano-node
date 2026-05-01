@@ -1,5 +1,5 @@
-//! Per-peer BlockFetch worker tasks (Phase 6 step 3 of
-//! [`docs/ARCHITECTURE.md`]).
+//! Per-peer BlockFetch worker tasks (Phase 6 step 3 of the
+//! [architecture docs](../../docs/ARCHITECTURE.md)).
 //!
 //! Mirrors upstream `Ouroboros.Network.BlockFetch.ClientRegistry`
 //! semantics from `IntersectMBO/ouroboros-network`:

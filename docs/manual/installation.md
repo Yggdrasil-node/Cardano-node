@@ -77,7 +77,7 @@ For a faster smoke check before shipping the binary:
 
 ```bash
 $ ./target/release/yggdrasil-node --version
-yggdrasil-node 0.1.0
+yggdrasil-node 0.2.0
 $ ./target/release/yggdrasil-node default-config | head -20
 ```
 

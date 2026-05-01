@@ -70,7 +70,7 @@ On startup, the node hashes each genesis file and compares against the declared 
 - Accidentally edited genesis files.
 - Supply-chain tampering between repository checkout and runtime.
 
-(Byron genesis hashing uses canonical CBOR rather than raw-file Blake2b-256, so the Byron hash is currently parsed but not verified. The other three are fully checked.)
+Byron genesis hashing uses upstream canonical JSON rendering before Blake2b-256, while Shelley, Alonzo, and Conway hashes use raw file bytes. All four preset genesis hashes are verified at startup.
 
 ## Custom networks
 
@@ -97,7 +97,7 @@ You can run both at once on different ports (`--port 3001` for mainnet, `--port 
 
 Cardano protocol upgrades typically arrive on networks in the order **preview → preprod → mainnet**, separated by a few weeks each. To test your operational tooling against an upcoming change before it reaches mainnet, run a preprod or preview node alongside your mainnet node.
 
-The current Cardano protocol version (Conway, major 10 as of 2025) is supported on all three Yggdrasil presets. The `MaxKnownMajorProtocolVersion` config key (default 10) is the soft cap — bump it if upstream signals an imminent major-version increase.
+The current Cardano protocol version (Conway, major 10 as of 2026) is supported on all three Yggdrasil presets. The `MaxKnownMajorProtocolVersion` config key (default 10) is the hard cap for every network. Conway's `HeaderProtVerTooHigh` ledger check is stricter on mainnet and temporarily relaxed on testnets until Dijkstra protocol major 12, matching upstream `cardano-ledger`.
 
 ## Where to go next
 

@@ -1260,10 +1260,11 @@ pub fn compute_byron_genesis_file_hash(path: &Path) -> Result<[u8; 32], GenesisL
         path: path.to_path_buf(),
         source,
     })?;
-    let value = parse_canonical_json(&bytes).map_err(|message| GenesisLoadError::CanonicalJson {
-        path: path.to_path_buf(),
-        message,
-    })?;
+    let value =
+        parse_canonical_json(&bytes).map_err(|message| GenesisLoadError::CanonicalJson {
+            path: path.to_path_buf(),
+            message,
+        })?;
     let mut canonical = Vec::with_capacity(bytes.len());
     render_canonical_json(&value, &mut canonical);
     Ok(hash_bytes_256(&canonical).0)
@@ -1314,11 +1315,8 @@ pub fn verify_byron_genesis_file_hash(
 /// (64-hex-char) length.
 ///
 /// Surfaces the structural check that previously lived inline inside
-/// [`verify_genesis_file_hash`] so other config-level fields whose content
-/// verification is deferred (e.g. `ByronGenesisHash`, whose canonical-CBOR
-/// hashing path has not yet been ported) can still syntax-check their
-/// declared value today. Catches typos and wrong-length pastes at preflight
-/// time instead of at first-use time.
+/// [`verify_genesis_file_hash`] so every declared hash field, including
+/// `ByronGenesisHash`, can share the same typo and length validation.
 pub fn parse_blake2b_256_hex(
     expected_hex: &str,
     field: &'static str,
@@ -1355,7 +1353,10 @@ fn parse_canonical_json(input: &[u8]) -> Result<CanonicalJson, String> {
     if parser.is_eof() {
         Ok(value)
     } else {
-        Err(format!("trailing bytes after JSON value at byte {}", parser.pos))
+        Err(format!(
+            "trailing bytes after JSON value at byte {}",
+            parser.pos
+        ))
     }
 }
 
@@ -1380,7 +1381,7 @@ impl<'a> CanonicalJsonParser<'a> {
     }
 
     fn skip_spaces(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t' | 0x0c)) {
+        while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
             self.pos += 1;
         }
     }
@@ -1448,6 +1449,12 @@ impl<'a> CanonicalJsonParser<'a> {
                         return Err("unterminated string escape at end of input".to_owned());
                     }
                 },
+                Some(b @ 0x00..=0x1f) => {
+                    return Err(format!(
+                        "unescaped control byte 0x{b:02x} in canonical JSON string at byte {}",
+                        self.pos.saturating_sub(1)
+                    ));
+                }
                 Some(b) => out.push(b),
                 None => return Err("unterminated string at end of input".to_owned()),
             }
@@ -2855,6 +2862,83 @@ mod tests {
         let computed = compute_genesis_file_hash(&path).expect("hash");
         let direct = hash_bytes_256(body).0;
         assert_eq!(computed, direct);
+    }
+
+    #[test]
+    fn compute_byron_genesis_file_hash_matches_canonical_json_bytes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("byron.json");
+        let body = br#"{
+            "z": 1,
+            "a": "quote\"slash\\",
+            "arr": [true, false, null]
+        }"#;
+        std::fs::write(&path, body).expect("write");
+
+        let computed = compute_byron_genesis_file_hash(&path).expect("hash");
+        let canonical = br#"{"a":"quote\"slash\\","arr":[true,false,null],"z":1}"#;
+        assert_eq!(computed, hash_bytes_256(canonical).0);
+    }
+
+    #[test]
+    fn compute_byron_genesis_file_hash_rejects_non_canonical_escape() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("byron.json");
+        std::fs::write(&path, br#"{"bad":"line\nbreak"}"#).expect("write");
+
+        let err = compute_byron_genesis_file_hash(&path)
+            .expect_err("canonical JSON only accepts quote/backslash escapes");
+        assert!(
+            matches!(err, GenesisLoadError::CanonicalJson { .. }),
+            "expected CanonicalJson error, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn compute_byron_genesis_file_hash_rejects_raw_control_byte_in_string() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("byron.json");
+        std::fs::write(&path, b"{\"bad\":\"line\nbreak\"}").expect("write");
+
+        let err = compute_byron_genesis_file_hash(&path)
+            .expect_err("raw control bytes are not valid canonical JSON strings");
+        assert!(
+            matches!(err, GenesisLoadError::CanonicalJson { .. }),
+            "expected CanonicalJson error, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn compute_byron_genesis_file_hash_matches_vendored_preset_hashes() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cases = [
+            (
+                "mainnet",
+                "5f20df933584822601f9e3f8c024eb5eb252fe8cefb24d1317dc3d432e940ebb",
+            ),
+            (
+                "preprod",
+                "d4b8de7a11d929a323373cbab6c1a9bdc931beffff11db111cf9d57356ee1937",
+            ),
+            (
+                "preview",
+                "83de1d7302569ad56cf9139a41e2e11346d4cb4a31c00142557b6ab3fa550761",
+            ),
+        ];
+
+        for (network, expected_hex) in cases {
+            let path = manifest_dir
+                .join("configuration")
+                .join(network)
+                .join("byron-genesis.json");
+            let computed = compute_byron_genesis_file_hash(&path)
+                .unwrap_or_else(|err| panic!("{network} Byron genesis hash failed: {err}"));
+            assert_eq!(
+                hex::encode(computed),
+                expected_hex,
+                "{network} ByronGenesisHash drifted from vendored file",
+            );
+        }
     }
 
     #[test]

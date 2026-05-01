@@ -2,7 +2,8 @@
 //!
 //! Implements a sliding-window header-density estimator over chain slots.
 //! Mirrors the upstream `Ouroboros.Consensus.Genesis.Governor` density
-//! comparison from [`IntersectMBO/ouroboros-consensus`], where each peer
+//! comparison from [`IntersectMBO/ouroboros-consensus`](https://github.com/IntersectMBO/ouroboros-consensus),
+//! where each peer
 //! tracks how many headers it has surfaced within the last `slot_window`
 //! slots and the governor uses density as a chain-quality signal when
 //! deciding which peer to keep hot.

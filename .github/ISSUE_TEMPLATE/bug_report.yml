@@ -14,7 +14,7 @@ body:
     attributes:
       label: Yggdrasil version
       description: "Output of `yggdrasil-node --version`"
-      placeholder: "yggdrasil-node 0.1.0 (commit abc1234)"
+      placeholder: "yggdrasil-node 0.2.0 (commit abc1234)"
     validations:
       required: true
 

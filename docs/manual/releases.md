@@ -34,7 +34,7 @@ This pulls the latest tagged release for your detected architecture, verifies th
 If you prefer to inspect each step:
 
 ```bash
-$ TAG=v0.1.0
+$ TAG=v0.2.0
 $ ARCH=$(uname -m | sed 's/x86_64/x86_64/; s/aarch64\|arm64/aarch64/')
 $ ARCHIVE="yggdrasil-node-${TAG}-linux-${ARCH}.tar.gz"
 $ BASE="https://github.com/yggdrasil-node/Cardano-node/releases/download/${TAG}"
@@ -45,7 +45,7 @@ $ curl -fsSL -O "${BASE}/SHA256SUMS.txt"
 
 # Verify the SHA256 — exits non-zero on mismatch.
 $ grep " ${ARCHIVE}\$" SHA256SUMS.txt | sha256sum -c -
-yggdrasil-node-v0.1.0-linux-x86_64.tar.gz: OK
+yggdrasil-node-v0.2.0-linux-x86_64.tar.gz: OK
 
 # Extract.
 $ tar -xzf "${ARCHIVE}"
@@ -71,7 +71,7 @@ Install where convenient:
 
 ```bash
 $ yggdrasil-node --version
-yggdrasil-node 0.1.0 (commit abc1234)
+yggdrasil-node 0.2.0 (commit abc1234)
 $ yggdrasil-node validate-config --network mainnet --database-path /tmp/empty
 ```
 
@@ -103,7 +103,7 @@ For higher provenance assurance, build from source and verify against the same s
 ```bash
 $ git clone https://github.com/yggdrasil-node/Cardano-node yggdrasil
 $ cd yggdrasil
-$ git checkout v0.1.0
+$ git checkout v0.2.0
 $ cargo build --release --bin yggdrasil-node
 $ sha256sum target/release/yggdrasil-node
 # Compare with the release archive's contained binary.

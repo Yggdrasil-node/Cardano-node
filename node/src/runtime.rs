@@ -7010,6 +7010,7 @@ mod tests {
                 future_check: None,
                 ocert_counters: None,
                 pp_major_protocol_version: None,
+                network_magic: None,
             },
             nonce_config: None,
             security_param: None,

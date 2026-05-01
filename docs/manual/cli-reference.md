@@ -144,7 +144,7 @@ Example:
 $ yggdrasil-node validate-config --network mainnet --database-path /tmp/empty
 Config: OK (mainnet preset)
 Network magic: 764824073
-Genesis hashes: 3/4 verified (Byron skipped — canonical CBOR not yet ported)
+Genesis hashes: 4/4 verified
 Storage: NOT INITIALIZED at /tmp/empty (will be created on `run`)
 Peer snapshot: not configured
 KES/Praos: no credentials configured (running as relay)

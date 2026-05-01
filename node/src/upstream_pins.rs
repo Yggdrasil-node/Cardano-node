@@ -21,8 +21,8 @@
 //!
 //! Audit baseline established: 2026-Q2 (`docs/AUDIT_VERIFICATION_2026Q2.md`).
 
-/// `cardano-base` — already pinned via vendored test vectors at
-/// [`specs/upstream-test-vectors/cardano-base/`]. The SHA below mirrors
+/// `cardano-base` — already pinned via vendored test vectors under
+/// `specs/upstream-test-vectors/cardano-base/`. The SHA below mirrors
 /// the directory name in that tree so a `git mv`-style refresh is
 /// detectable.
 ///
@@ -46,8 +46,16 @@ pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "7a8a991945d401d89e27f53b3d3bb464
 /// ledger rule, CDDL, or binary codec behavior changed in the ported
 /// subset.
 ///
+/// R245 BBODY/GOV drift refresh (2026-05-01) — advanced from
+/// `110b30e7abd8…` to live HEAD.  Upstream changes: a Conway GOV
+/// consistency cleanup switches `preceedingHardFork` to accumulated
+/// proposals; the local proposal lineage path already uses accumulated
+/// pending proposals.  The Conway BBODY `HeaderProtVerTooHigh` check is
+/// temporarily disabled for testnets until Dijkstra (protocol major 12),
+/// mirrored in `node/src/sync.rs`.
+///
 /// Reference: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "110b30e7abd8f507ea21625f8ac06fb6c8b66768";
+pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "b90b97488da3cbdc01c5c4a610c674a22d467882";
 
 /// `ouroboros-consensus` — Praos protocol, ChainDB, mempool, and storage
 /// design rationale ported into `crates/consensus/`, `crates/storage/`,

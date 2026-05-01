@@ -26,9 +26,11 @@ Yggdrasil is a pure Rust Cardano node workspace targeting long-term protocol and
 
 ## Install
 
-> **Pre-1.0 status:** prebuilt release tarballs are published once the project
-> tags a `v*` release. Until then, the source build (under one minute on a
-> warm cache) and the Docker path are the supported install routes.
+> **Pre-1.0 status:** `v0.2.0` is the public code-level parity closure
+> release for the 2026-Q2 audit cycle. Linux release tarballs are published
+> for x86_64 and aarch64; source builds remain recommended for auditing,
+> development, custom CPU targets, or operators who want to reproduce the
+> binary locally.
 
 **From source (recommended for testing):**
 
@@ -48,14 +50,14 @@ docker compose up -d
 docker compose logs -f
 ```
 
-**From a published release tarball (Linux x86_64 / aarch64) — once tagged:**
+**From a published release tarball (Linux x86_64 / aarch64):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/node/scripts/install_from_release.sh | bash
 ```
 
-The installer falls back to clear instructions when no release has been
-published yet. Full details: [Installation](https://yggdrasil-node.github.io/Cardano-node/manual/installation/).
+The installer verifies the downloaded archive against the published
+`SHA256SUMS.txt`. Full details: [Installing from Releases](https://yggdrasil-node.github.io/Cardano-node/manual/releases/).
 
 ## Current Status
 
@@ -71,19 +73,19 @@ published yet. Full details: [Installation](https://yggdrasil-node.github.io/Car
 - **Node CLI**: `clap`-based binary with `run` (connect to peer and sync), `validate-config` (operator preflight for config, peer-snapshot inputs, and any existing storage recovery state), `status` (inspect on-disk storage and report sync position, block counts, and checkpoint state), and `default-config` (emit JSON config) subcommands. JSON configuration file support with CLI flag overrides, topology/config parsing that feeds reusable network-crate topology and peer-ordering helpers, and upstream-aligned tracing fields (`TurnOnLogging`, `UseTraceDispatcher`, `TraceOptions`, `TraceOptionNodeName`, `TraceOptionForwarder`). `NodeMetrics` provides atomic operational counters wired into the hot sync loops, with `--metrics-port` exposing a Prometheus-compatible HTTP `/metrics` endpoint and a JSON `/metrics/json` endpoint on `127.0.0.1`.
 - **Node sync orchestration**: Full multi-era sync pipeline from bootstrap through managed service. Multi-era block decode (all 7 era tags). Consensus header verification bridge. Block header hash computation (Blake2b-256). Ordered bootstrap relay fallback plus reconnecting verified sync on ChainSync or BlockFetch connectivity loss. Graceful shutdown via Ctrl-C signal handling. A local `NodeTracer` emits human- or machine-formatted runtime trace objects for bootstrap, reconnect, sync progress, and shutdown/failure paths. Live sync evicts confirmed and expired transactions from the shared mempool, epoch-boundary reward math uses tracked per-pool performance, and rollback recovery restores nonce/OpCert ChainDepState from sidecar history before replaying stored blocks to the selected rollback point.
 - **Upstream parity**: CBOR golden round-trip tests, cross-subsystem integration tests, and wire-format field naming aligned with official Cardano CDDL specifications.
-- **Validation baseline**: `cargo test-all` covers 4.7K+ workspace tests and is green at every slice boundary. The R211→R243 operational-parity arc adds: mainnet sync end-to-end (R211/R213), full LSQ surface verified on all 3 networks (R212–R215), bidirectional P2P parity (R220+R221), Phase A.6 GetGenesisConfig (R214), Phase D.2 lifetime peer-stats plus aggregate bytes-out (R222–R237), Phase D.1 rollback-depth observability plus exact ChainDepState sidecar restore-and-replay (R225/R237/R238), Phase E.1 all 6 documentary pins in-sync after the coordinated `cardano-base` fixture refresh and import-only `cardano-ledger` refresh (R201+R216+R239+R243), Prometheus-output regression coverage for the R200/R217/R225/R226 observability metrics (R229+R230+R231), and `node/scripts/parallel_blockfetch_soak.sh` automation for the §6.5 multi-peer BlockFetch default-flip evidence gate (R240).
+- **Validation baseline**: `cargo test-all` covers 4.7K+ workspace tests and is green at every slice boundary. The R211→R245 operational-parity arc adds: mainnet sync end-to-end (R211/R213), full LSQ surface verified on all 3 networks (R212–R215), bidirectional P2P parity (R220+R221), Phase A.6 GetGenesisConfig (R214), Phase D.2 lifetime peer-stats plus aggregate bytes-out (R222–R237), Phase D.1 rollback-depth observability plus exact ChainDepState sidecar restore-and-replay (R225/R237/R238), Phase E.1 all 6 documentary pins in-sync after the coordinated `cardano-base` fixture refresh and two `cardano-ledger` refreshes (R201+R216+R239+R243+R245), Byron genesis hash preflight parity via upstream canonical JSON hashing (R244), Conway BBODY `HeaderProtVerTooHigh` testnet grace through the Dijkstra transition (R245), Prometheus-output regression coverage for the R200/R217/R225/R226 observability metrics (R229+R230+R231), and `node/scripts/parallel_blockfetch_soak.sh` automation for the §6.5 multi-peer BlockFetch default-flip evidence gate (R240).
 - CI workflow and workspace cargo aliases for check/test/lint.
 
-### Status: 100% feature-complete
+### Status: code-level parity closure
 
-As of R243, every confirmed-active code-level parity slice tracked in [`docs/AUDIT_VERIFICATION_2026Q2.md`](docs/AUDIT_VERIFICATION_2026Q2.md) is closed, including the runtime integrations that previously lived as follow-ups: multi-session BlockFetch orchestration through the per-peer `FetchWorkerPool` (mirroring upstream `Ouroboros.Network.BlockFetch.ClientRegistry`) consuming `partition_fetch_range_across_peers`; the ChainSync `observe_header(slot)` hook feeding per-peer `DensityWindow` instances surfaced through `PeerMetrics.density`; weight-aware connection-manager scheduling driven by `HotPeerScheduling` with density-biased demotion; Phase D.1 rollback sidecar hardening, where nonce/OpCert ChainDepState restores to the exact rollback point using slot-indexed sidecar bundles and stored-block replay; and the coordinated upstream pin refreshes through the latest import-only `cardano-ledger` drift. The remaining production-readiness gates are operator-side rehearsals in [`docs/MANUAL_TEST_RUNBOOK.md`](docs/MANUAL_TEST_RUNBOOK.md) §2–9 (preprod/mainnet sync, hash compare vs Haskell node, restart-resilience cycles, parallel-fetch rehearsal §6.5, sign-off summary); R240 adds the `parallel_blockfetch_soak.sh` harness so §6.5 evidence collection is reproducible.
+As of R245, every confirmed-active code-level parity slice tracked in [`docs/AUDIT_VERIFICATION_2026Q2.md`](docs/AUDIT_VERIFICATION_2026Q2.md) is closed, including the runtime integrations that previously lived as follow-ups: multi-session BlockFetch orchestration through the per-peer `FetchWorkerPool` (mirroring upstream `Ouroboros.Network.BlockFetch.ClientRegistry`) consuming `partition_fetch_range_across_peers`; the ChainSync `observe_header(slot)` hook feeding per-peer `DensityWindow` instances surfaced through `PeerMetrics.density`; weight-aware connection-manager scheduling driven by `HotPeerScheduling` with density-biased demotion; Phase D.1 rollback sidecar hardening, where nonce/OpCert ChainDepState restores to the exact rollback point using slot-indexed sidecar bundles and stored-block replay; the coordinated upstream pin refreshes through the latest `cardano-ledger` BBODY/GOV drift; startup verification of all four preset genesis hashes, including Byron's upstream canonical JSON hash path; and the upstream Conway BBODY temporary suppression of `HeaderProtVerTooHigh` on testnets until protocol major 12. The remaining production-readiness gates are operator-side rehearsals in [`docs/MANUAL_TEST_RUNBOOK.md`](docs/MANUAL_TEST_RUNBOOK.md) §2–9 (preprod/mainnet sync, hash compare vs Haskell node, restart-resilience cycles, parallel-fetch rehearsal §6.5, sign-off summary); R240 adds the `parallel_blockfetch_soak.sh` harness so §6.5 evidence collection is reproducible.
 
 ### Ongoing operational work
 
 - Mainnet sync endurance testing per the runbook (Phase E.2 — 24h+ rehearsal).
 - Extended cardano-tracer interoperability validation.
 
-### Remaining gates (R211→R243 arc)
+### Remaining gates (R211→R245 arc)
 
 The remaining items are operator-time gates, not known code-level parity blockers:
 

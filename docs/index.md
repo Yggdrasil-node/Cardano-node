@@ -13,7 +13,7 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
 </figure>
 
 <div class="yg-hero" markdown="0">
-  <span class="yg-eyebrow">Yggdrasil v0.1.0 · Pure Rust</span>
+  <span class="yg-eyebrow">Yggdrasil v0.2.0 · Pure Rust</span>
   <h1>A pure-Rust Cardano node, built for parity.</h1>
   <p class="yg-lead">
     Yggdrasil is a from-scratch Rust implementation of the Cardano node,
@@ -33,7 +33,7 @@ description: "Yggdrasil — a pure-Rust Cardano node. Operator manual: install, 
   <div class="yg-stat"><span class="yg-stat-value">0</span><span class="yg-stat-label">Tests failing</span></div>
   <div class="yg-stat"><span class="yg-stat-value">Byron→Conway</span><span class="yg-stat-label">Era coverage</span></div>
   <div class="yg-stat"><span class="yg-stat-value">5 / 5</span><span class="yg-stat-label">Mini-protocols</span></div>
-  <div class="yg-stat"><span class="yg-stat-value">v0.1.0</span><span class="yg-stat-label">Latest release</span></div>
+  <div class="yg-stat"><span class="yg-stat-value">v0.2.0</span><span class="yg-stat-label">Latest release</span></div>
 </div>
 
 ## Where to start

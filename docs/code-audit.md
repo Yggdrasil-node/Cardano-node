@@ -103,10 +103,11 @@ Cardano-node/
 
 ### 2.4 Authenticity verification
 
-The shipped mainnet genesis files were Blake2b-256 hashed and compared against the values declared in the shipped `config.json`:
+The shipped mainnet genesis files were hashed and compared against the values declared in the shipped `config.json`:
 
-| File | Computed Blake2b-256 | Declared & Canonical IOG |
+| File | Computed hash | Declared & Canonical IOG |
 |---|---|---|
+| `mainnet/byron-genesis.json`   | `5f20df93…e940ebb` (Canonical JSON → Blake2b-256) | ✅ matches `IntersectMBO/cardano-node` master |
 | `mainnet/shelley-genesis.json` | `1a3be38b…9276d81` | ✅ matches `IntersectMBO/cardano-node` master |
 | `mainnet/alonzo-genesis.json`  | `7e94a15f…068ed874` | ✅ matches |
 | `mainnet/conway-genesis.json`  | `15a199f8…643ef62` | ✅ matches |
@@ -306,7 +307,7 @@ for (file, expected, field) in pairs {
 
 **Impact.** An operator could swap in a tampered or wrong-network genesis file by removing the corresponding `*GenesisHash` line, with no error at startup. The shipped configs all carry both, but operator-edited configs may not.
 
-**Remediation.** Hard-fail with a clear error when a genesis file is configured without a paired hash. The Byron-genesis-hash special case (which is handled separately because Byron uses canonical-CBOR hashing not yet ported) should be a special-case allowlist, not a generic silent skip.
+**Remediation.** Hard-fail with a clear error when a genesis file is configured without a paired hash. Post-audit status: this is closed. Byron is no longer skipped; R244 verifies it using upstream Canonical JSON rendering before Blake2b-256, while Shelley-family genesis files continue to use raw-file Blake2b-256.
 
 ### 3.4 Low
 
@@ -442,7 +443,7 @@ Same pattern as L-8. `usize::MAX` boundary unreachable in practice (would requir
 
 #### I-14 — Genesis files are cryptographically authentic
 
-- All three shipped mainnet genesis files Blake2b-256-hash to the canonical IOG values. Topology files reference legitimate IOG / CF / Emurgo backbone hosts. No tampering.
+- All four shipped mainnet genesis files hash to the canonical IOG values. Byron uses upstream Canonical JSON rendering before Blake2b-256; Shelley, Alonzo, and Conway use raw-file Blake2b-256. Topology files reference legitimate IOG / CF / Emurgo backbone hosts. No tampering.
 
 #### I-15 — `zmij 1.0.21` (transitive of `serde_json 1.0.149`) verified legitimate
 
@@ -566,7 +567,7 @@ This section covers every non-trivial file. Files marked `(read in full)` were r
 | `node/src/genesis.rs` `slot_to_posix_ms` helper | Used by Plutus evaluator, matches upstream `transVITime`. |
 | `node/src/upstream_pins.rs` (read in full) | See I-13. |
 | `node/src/lib.rs` | Re-exports. Trivial. |
-| `node/configuration/{mainnet,preprod,preview}/*` (verified) | Genesis hashes match canonical IOG (I-14). Topology files reference IOG/CF/Emurgo backbones. |
+| `node/configuration/{mainnet,preprod,preview}/*` (verified) | All four genesis hashes match canonical IOG values (I-14). Topology files reference IOG/CF/Emurgo backbones. |
 | `node/scripts/*.sh` (read in full) | 8 scripts. `install_from_release.sh` does verify SHA-256. `backup_db.sh` uses `sudo systemctl`. `compare_tip_to_haskell.sh`, `restart_resilience.sh` (L-7), `run_*_real_pool_producer.sh` rehearsals, `healthcheck.sh`, `check_upstream_drift.sh`. No `eval`, no `curl \| bash`. Clean. |
 | `node/scripts/yggdrasil-node.service` (read in full) | See I-9. |
 
@@ -875,7 +876,7 @@ docs/{AGENTS.md,ARCHITECTURE.md,AUDIT_VERIFICATION_2026Q2.md,
 - Cloned via `git clone https://github.com/Yggdrasil-node/Cardano-node.git` on 27 April 2026.
 - Walked every directory; counted lines per file and per language.
 - Read in full or in part every Rust source file; structural skim of test fixtures.
-- Verified mainnet genesis Blake2b-256 hashes by hashing the file contents and comparing to the declared `*GenesisHash` strings, then cross-checking those against canonical IntersectMBO/cardano-node master.
+- Verified mainnet genesis hashes by comparing declared `*GenesisHash` strings against canonical IntersectMBO/cardano-node master. Byron uses Canonical JSON rendering before Blake2b-256; Shelley-family files use raw-file Blake2b-256.
 - Searched the entire workspace for: hardcoded secrets, `unwrap()` outside test modules, `unsafe` blocks, `panic!` / `todo!` / `unimplemented!` outside tests, `eval` / `exec` patterns, `std::process::Command`, `curl … | bash`, lock-held-across-await footguns, `Vec::with_capacity(<attacker-input>)`, bare `+`/`+=` on coin/size types.
 - Read the entire git history (`git log --all`) for: committed key files (none), force-push anomalies (none), suspicious authors (one cosmetic `daniel@example.com` on early commits), large blob diffs (only `state.rs` and `byron-genesis.json`, both legitimate).
 - Read all 8 shell scripts and the systemd unit file in full.

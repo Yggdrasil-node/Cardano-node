@@ -7,15 +7,22 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-Operational-parity arc on top of v0.2.0 — Rounds 144 → 236.
+No unreleased changes.
+
+## [0.2.0] - 2026-05-01
+
+Public code-level parity closure release for the 2026-Q2 audit cycle.
+This release includes the operational-parity arc from Rounds 144 → 245.
 Highlights: full cardano-cli 10.16 query parity at preprod (Shelley
 era) and preview (Alonzo era), **every Conway-era LSQ subcommand**
 (constitution, gov-state, drep-state, drep-stake-distribution,
 committee-state, treasury, spo-stake-distribution, proposals,
 ratify-state, future-pparams, stake-pool-default-vote,
 ledger-peer-snapshot) decoding end-to-end, multi-round
-sync-speed and apply-correctness fixes.  Workspace tests:
-4 640 (v0.2.0) → **4 750 passing, 0 failing**.
+sync-speed and apply-correctness fixes, exact ChainDepState rollback
+sidecar recovery, all four preset genesis hashes verified at startup,
+and the Conway BBODY `HeaderProtVerTooHigh` testnet grace matched
+through Dijkstra.  Workspace tests: **4.7K+ passing, 0 failing**.
 
 ### Added
 
@@ -32,6 +39,28 @@ sync-speed and apply-correctness fixes.  Workspace tests:
   CompactCoin pool_stake, VRFKeyHash]` matches upstream
   `Cardano.Protocol.TPraos.API.IndividualPoolStake.encCBOR`.
   Closes a Phase A.3 LSQ data-plumbing gap.
+- **R238 — ChainDepState rollback sidecar hardening.** Startup,
+  rollback, and LocalStateQuery recovery now restore the exact
+  slot-indexed nonce/OpCert bundle from `chain_dep_state/<slot>.cbor`
+  and replay stored blocks from that point. Persistent non-origin
+  rollback fails closed when the required bundle history is missing.
+- **R239/R243/R245 — upstream pin refreshes.** All six documentary
+  IntersectMBO pins are in sync with live upstream heads; R245 updates
+  `cardano-ledger` through the BBODY/GOV drift.
+- **R240 — reproducible parallel BlockFetch soak harness.**
+  `node/scripts/parallel_blockfetch_soak.sh` captures the §6.5
+  multi-peer BlockFetch default-flip evidence path instead of relying
+  on hand-assembled operator notes.
+- **R242 — optional upstream `cardano-node-tests` wrapper workflow.**
+  The workflow is manual-only and documented as an external parity
+  harness, not a required CI gate.
+- **R244 — Byron genesis hash parity.** `validate-config` now verifies
+  Byron genesis files with upstream Canonical JSON hashing while
+  Shelley-family genesis files continue to use raw-byte SHA256.
+- **R245 — Conway BBODY testnet grace.** `HeaderProtVerTooHigh` is
+  enforced on mainnet, suppressed on testnets before Dijkstra
+  protocol major 12, and re-enabled on testnets from protocol major
+  12 onward.
 
 - **`cardano-cli query` end-to-end parity at preprod (Shelley)
   and preview (Alonzo)**.  All 11 working cardano-cli
@@ -156,7 +185,11 @@ sync-speed and apply-correctness fixes.  Workspace tests:
   can pass `--batch-size 10` explicitly.
 
 
-## [0.2.0] - 2026-04-27
+## 0.2.0 candidate checkpoint - 2026-04-27
+
+This was an internal local checkpoint before the public `v0.2.0`
+release tag. Later R211→R245 rounds closed the known issue noted in
+this checkpoint and are included in the public `v0.2.0` section above.
 
 Operational-parity, byzantine-path, and recovery-correctness release on
 top of v0.1.0.  Highlights: full byzantine-path audit closure
@@ -603,5 +636,6 @@ originally tracked as a follow-up has landed.
 - All four gates clean: `cargo check-all`, `cargo test-all`,
   `cargo lint`, `cargo doc --workspace --no-deps`.
 
-[Unreleased]: https://github.com/yggdrasil-node/Cardano-node/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/yggdrasil-node/Cardano-node/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/yggdrasil-node/Cardano-node/releases/tag/v0.2.0
 [0.1.0]: https://github.com/yggdrasil-node/Cardano-node/releases/tag/v0.1.0
