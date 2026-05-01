@@ -1,11 +1,14 @@
 // Yggdrasil Cardano-node devcontainer.
 //
 // Provides the full toolchain to run every operational rehearsal in
-// docs/MANUAL_TEST_RUNBOOK.md (§§1–8) in addition to the standard
+// docs/MANUAL_TEST_RUNBOOK.md (§§1–8.5) in addition to the standard
 // build/test/lint workspace gates:
 //
 //   • Rust 1.95.0 (pinned via rust-toolchain.toml) for `cargo {check,test,lint,fmt}-all`
 //   • jq + curl + standard build tools for the operator scripts
+//   • Docker CLI access for upstream cardano-node-tests `runner/runc.sh`
+//   • GitHub CLI for manual workflow dispatch / log inspection
+//   • actionlint + shellcheck for workflow and shell harness validation
 //   • Upstream IntersectMBO Haskell `cardano-node` + `cardano-cli`
 //     binaries pre-installed under ~/.local/bin/ so the §5 hash-comparison
 //     and §6.5b parallel-fetch parity checks can run end-to-end.
@@ -24,7 +27,9 @@
 			"installZsh": false,
 			"upgradePackages": false,
 			"username": "vscode"
-		}
+		},
+		"ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+		"ghcr.io/devcontainers/features/github-cli:1": {}
 	},
 
 	// Forward yggdrasil's default Prometheus + NtN + NtC ports for local
@@ -37,11 +42,10 @@
 		"9101": { "label": "yggdrasil /metrics (preprod rehearsal)" }
 	},
 
-	// Install the Haskell cardano-node + cardano-cli once at container
-	// creation time so the operator runbook's §5 / §6.5b paths work
-	// without an additional manual step.  The script is idempotent —
-	// subsequent rebuilds skip the download.
-	"postCreateCommand": "node/scripts/install_haskell_cardano_node.sh || echo '[devcontainer] install_haskell_cardano_node failed; re-run manually'",
+	// Install dev/test helper tools and the Haskell cardano-node +
+	// cardano-cli once at container creation time. The script is
+	// idempotent; subsequent rebuilds skip already-matching tools.
+	"postCreateCommand": ".devcontainer/post-create.sh",
 
 	"customizations": {
 		"vscode": {

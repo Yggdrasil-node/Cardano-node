@@ -26,6 +26,12 @@ nav_order: 8
   (debug build works for short smoke tests but is much slower at block validation.)
 - Optional but recommended for hash-comparison: an upstream `cardano-cli` binary on `$PATH` and (separately) a running `cardano-node` syncing the same network with a known `--socket-path`.
 - Optional for producer mode: a real pool's `kes.skey`, `vrf.skey`, `node.cert`, and `cold.vkey` (issuer vkey).
+- Optional for upstream E2E parity (§8.5): Docker or Podman for the
+  official `cardano-node-tests` `runner/runc.sh` wrapper. The
+  repository devcontainer provisions Docker CLI access through the
+  devcontainers `docker-outside-of-docker` feature, plus `gh`,
+  `actionlint`, and `shellcheck` for manual workflow inspection and
+  harness validation.
 - Vendored network configs are already present at:
   - `node/configuration/mainnet/`
   - `node/configuration/preprod/`
@@ -587,6 +593,11 @@ Recommended flow:
 5. Promote stable Yggdrasil-compatible selections into a separate optional CI job once the wrapper layer is deterministic.
 
 Example targeted invocation from a sibling checkout:
+
+Prerequisite: a working Docker or Podman runtime visible from the
+current shell. Inside the repository devcontainer this is supplied by
+the Docker-outside-of-Docker feature; on a bare host install Docker or
+Podman before invoking `runner/runc.sh`.
 
 ```sh
 cd ../cardano-node-tests
