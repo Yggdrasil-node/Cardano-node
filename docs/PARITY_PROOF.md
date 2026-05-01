@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 239)
+title: Parity Proof Report (Round 240)
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,10 +7,10 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R239 refresh (2026-05-01)
-**Cumulative arc**: R1 → R239
+**Document round**: R240 refresh (2026-05-01)
+**Cumulative arc**: R1 → R240
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4.7K+ passing, 0 failing at the R239 slice boundary
+**Workspace tests**: 4.7K+ passing, 0 failing at the R240 slice boundary
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the
@@ -349,6 +349,7 @@ upstream while preserving SHA-anchored vendored fixture provenance.
 | **D.1** | Deep rollback recovery and chain-dep sidecars | ✅ closed code-level slice | R225+R237+R238 |
 | **D.2** | Multi-session peer accounting + aggregate bytes-out | ✅ shipped | R222+R223+R224+R226+R234+R235+R237 |
 | **E.1** | Audit baseline pin refresh + `cardano-base` fixture refresh | ✅ closed, 6/6 pins in-sync | R201+R216+R239 |
+| **E.2a** | Parallel BlockFetch soak automation | ✅ harness shipped | R240 |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 
@@ -374,7 +375,11 @@ conditions.
 The multi-peer dispatch path is implemented and observable, but
 `max_concurrent_block_fetch_peers` defaults to `1` until
 [`MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) §6.5 signs off
-2- and 4-peer rehearsals with restart-resilience evidence.
+2- and 4-peer rehearsals with restart-resilience evidence. R240 adds
+`node/scripts/parallel_blockfetch_soak.sh`, which starts the node with
+the requested concurrency knob, captures Prometheus snapshots, asserts
+worker migration metrics, optionally runs Haskell tip comparison, and
+preserves a summary under `$LOG_DIR/summary.txt`.
 
 ---
 

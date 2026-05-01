@@ -15,10 +15,10 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - `cargo fmt --all -- --check`: clean (zero diff; CI gate added under audit M-2 follow-up)
 - `cargo check-all`: passing
-- `cargo test-all`: passing (0 failures; workspace coverage is 4.7K+ tests at R239)
+- `cargo test-all`: passing (0 failures; workspace coverage is 4.7K+ tests at R240)
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 - `cargo deny check advisories bans licenses sources`: passing (one intentional ignore: `RUSTSEC-2021-0127` for the `serde_cbor` storage carve-out, tracked separately for migration)
-- **`cardano-cli 10.16` LSQ parity** (R164–R239): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end. Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip, and R239 closes the outstanding upstream pin/fixture refresh. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
+- **`cardano-cli 10.16` LSQ parity** (R164–R240): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end, including `conway query gov-state` (R188/R193/R204). Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip, R239 closes the outstanding upstream pin/fixture refresh, and R240 adds reproducible §6.5 BlockFetch soak automation. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
 
 ## Subsystem Status
 
@@ -37,7 +37,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 ## Open Gaps
 
 - No critical parity blockers are currently tracked in this matrix.
-- Active validation focus: systematic mainnet endurance rehearsal, parallel BlockFetch §6.5 sign-off, and restart resilience evidence before changing the default `max_concurrent_block_fetch_peers`.
+- Active validation focus: systematic mainnet endurance rehearsal plus runbook §6.5 sign-off using `node/scripts/parallel_blockfetch_soak.sh` before changing the default `max_concurrent_block_fetch_peers`.
 - Fixture maintenance focus: keep the R239 `cardano-base` vector cadence current when upstream advances again.
 
 ## Upstream Anchors

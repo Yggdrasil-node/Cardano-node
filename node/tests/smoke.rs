@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used)]
-use std::process::Command;
+use std::{path::Path, process::Command};
 
 #[test]
 fn node_binary_shows_help() {
@@ -55,4 +55,38 @@ fn node_binary_default_config() {
     assert!(stdout.contains("TraceOptions"));
     assert!(stdout.contains("Node.Recovery.Checkpoint"));
     assert!(stdout.contains("maxFrequency"));
+}
+
+#[test]
+fn parallel_blockfetch_soak_script_help_is_available() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .join("parallel_blockfetch_soak.sh");
+    let output = Command::new(&script)
+        .arg("--help")
+        .output()
+        .expect("parallel BlockFetch soak script should launch");
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("script help should be valid UTF-8");
+    assert!(stdout.contains("MAX_CONCURRENT_BLOCK_FETCH_PEERS"));
+    assert!(stdout.contains("HASKELL_SOCK"));
+    assert!(stdout.contains("EXPECT_WORKERS"));
+}
+
+#[test]
+fn parallel_blockfetch_soak_script_rejects_legacy_knob() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("scripts")
+        .join("parallel_blockfetch_soak.sh");
+    let output = Command::new(&script)
+        .env("MAX_CONCURRENT_BLOCK_FETCH_PEERS", "1")
+        .output()
+        .expect("parallel BlockFetch soak script should launch");
+
+    assert_eq!(output.status.code(), Some(2));
+
+    let stderr = String::from_utf8(output.stderr).expect("script stderr should be valid UTF-8");
+    assert!(stderr.contains("MAX_CONCURRENT_BLOCK_FETCH_PEERS must be >= 2"));
 }

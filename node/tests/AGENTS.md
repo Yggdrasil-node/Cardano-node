@@ -18,4 +18,4 @@ Keep tests in this directory focused on node orchestration and cross-crate integ
 - [Consensus diffusion integration](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion)
 
 ## Current Phase
-- Tests in this directory cover runtime bootstrap, sync orchestration, verified service shutdown, TxSubmission integration behavior, and coordinated-storage recovery behavior across the node crate boundary, including first-Shelley activation of pending genesis initial funds and static stake delegations during replay.
+- Tests in this directory cover runtime bootstrap, sync orchestration, verified service shutdown, TxSubmission integration behavior, coordinated-storage recovery behavior across the node crate boundary, and smoke coverage for operator scripts that are part of the release/runbook surface. This includes first-Shelley activation of pending genesis initial funds and static stake delegations during replay.

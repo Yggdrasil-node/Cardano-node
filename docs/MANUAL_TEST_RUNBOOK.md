@@ -184,6 +184,24 @@ Logs land at `$LOG_ROOT/cycle-NN.log` (default `/tmp/ygg-restart/`). Preserve th
 
 Yggdrasil's runtime supports the upstream-faithful per-peer BlockFetch worker architecture (mirrors `Ouroboros.Network.BlockFetch.ClientRegistry`). When `max_concurrent_block_fetch_peers > 1`, the governor migrates each warm peer's `BlockFetchClient` into a per-peer worker task and the sync loop dispatches fetch ranges in parallel via the shared `FetchWorkerPool`. **Default ships at `1`** to keep the legacy single-peer path active until this rehearsal is complete.
 
+Preferred automation for §6.5 is the repository harness:
+
+```sh
+NETWORK=preprod \
+MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
+RUN_SECONDS=21600 \
+HASKELL_SOCK=/tmp/cardano.sock \
+node/scripts/parallel_blockfetch_soak.sh
+```
+
+The harness starts `yggdrasil-node`, captures Prometheus snapshots,
+asserts worker registration/migration, optionally runs
+`compare_tip_to_haskell.sh` at `COMPARE_INTERVAL_S` cadence, scans logs
+for worker-channel failures, and writes a concise summary under
+`$LOG_DIR/summary.txt`. Use `RUN_SECONDS=86400` for the 24-hour soak
+steps and set `TOPOLOGY=/path/to/topology.json` when rehearsing with
+a custom multi-relay topology.
+
 ### 6.5a Two-peer parity check (preprod)
 
 Two prerequisites combine to activate the multi-peer BlockFetch dispatch:
@@ -300,10 +318,13 @@ peer in the registry, (b) `useLedgerAfterSlot` not yet crossed and no
 Run the existing tip-comparison harness from §5 against a Haskell node that's also fully synced on preprod:
 
 ```sh
-scripts/compare_tip_to_haskell.sh \
-  --rust-socket /tmp/ygg.sock \
-  --haskell-socket /tmp/cardano.sock \
-  --watch 15
+YGG_SOCK=/tmp/ygg.sock \
+HASKELL_SOCK=/tmp/cardano.sock \
+NETWORK_MAGIC=1 \
+node/scripts/compare_tip_to_haskell.sh
+
+# Watch loop, every 15 minutes:
+watch -n 900 'YGG_SOCK=/tmp/ygg.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 node/scripts/compare_tip_to_haskell.sh'
 ```
 
 **Pass criterion:** the Yggdrasil tip `{slot, hash, block, epoch}` must match the Haskell tip at every check for at least 6 hours after the multi-peer mode is engaged. Any divergence under parallel fetch indicates a bug in the dispatch / reorder / tentative-header path that does not surface in the single-peer path.
@@ -507,6 +528,7 @@ cardano-cli conway query stake-distribution --testnet-magic 1
 cardano-cli conway query pool-state --all-stake-pools --testnet-magic 1
 cardano-cli conway query stake-snapshot --all-stake-pools --testnet-magic 1
 cardano-cli conway query constitution --testnet-magic 1
+cardano-cli conway query gov-state --testnet-magic 1
 cardano-cli conway query drep-state --all-dreps --testnet-magic 1
 cardano-cli conway query treasury --testnet-magic 1
 cardano-cli conway query committee-state --testnet-magic 1
@@ -514,7 +536,8 @@ cardano-cli conway query committee-state --testnet-magic 1
 
 Expected outputs on a fresh-sync chain (no pools / DReps yet
 registered): `[]`, `{}`, `{}`, `{ "pools": {}, "total": ... }`,
-real Conway constitution data, `[]`, `0`, and
+real Conway constitution data, a Conway governance-state object with
+empty proposals unless governance traffic has been observed, `[]`, `0`, and
 `{ "committee": {}, "epoch": 0, "threshold": null }`
 respectively.
 
@@ -524,12 +547,12 @@ respectively.
 > to exercise the era-gated query surface against a partial sync.
 > Default behaviour (env var unset) is unchanged.
 
-`cardano-cli conway query gov-state` is currently the one
-remaining gap on the conway-query surface — yggdrasil's
-dispatcher routes correctly (tag 24) but the body shape
-(7-element `ConwayGovState` record with `Proposals` tree +
-`DRepPulsingState` cache) is not yet aligned with cardano-cli
-10.16's decoder.  Tracked as a follow-up.
+`cardano-cli conway query gov-state` is no longer a known gap:
+R188/R193/R204 aligned tag 24's 7-field `ConwayGovState` shape,
+the `GovRelation` encoding, and the OMap proposal adapter used by
+cardano-cli 10.16. If this query fails during a rehearsal, capture
+the raw LSQ request/response CBOR plus the active-era floor used for
+that run; treat it as a regression, not as expected incompleteness.
 
 ---
 
@@ -581,3 +604,4 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 - `node/scripts/run_mainnet_real_pool_producer.sh` — mainnet rehearsal (Slice L)
 - `node/scripts/compare_tip_to_haskell.sh` — hash-comparison harness (Slice M)
 - `node/scripts/restart_resilience.sh` — restart-resilience automation (Slice N)
+- `node/scripts/parallel_blockfetch_soak.sh` — §6.5 multi-peer BlockFetch soak automation

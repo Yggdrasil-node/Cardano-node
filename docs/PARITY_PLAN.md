@@ -12,7 +12,7 @@ nav_order: 2
 **Scope**: All subsystems from crypto through orchestration, covering all 7 eras (Byron → Conway)
 
 > **Current operational status**: see [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for the
-> R239 cumulative reference (239 rounds completed; all confirmed-active
+> R240 cumulative reference (240 rounds completed; all confirmed-active
 > code-level parity slices and all 6 documentary upstream pins closed;
 > remaining gates are operator-time rehearsals).  The "Recently completed parity items" list below
 > tracks per-round changes; see also [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
@@ -34,7 +34,7 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved (post-R239 status):
+The Rust Cardano node (Yggdrasil) has achieved (post-R240 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
 - ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
@@ -52,15 +52,18 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R239 status):
 - ✅ **Phase D.2 lifetime peer-stats** (R222–R237 — Prometheus counters for sessions, failures, bytes_in, bytes_out, unique_peers, handshakes; bytes_out is folded from per-peer internal egress totals without high-cardinality labels)
 - ✅ **Phase D.1 rollback recovery** (R225 + R237 + R238 — rollback-depth histogram, epoch-boundary-aware checkpoint replay when stake snapshots are enabled, and exact nonce/OpCert ChainDepState sidecar restore-and-replay)
 - ✅ **Phase E.1 documentary pins** (R201+R216+R239 — all 6 canonical IntersectMBO pins in-sync with upstream live HEAD; `cardano-base` vector tree refreshed in lockstep)
+- ✅ **Parallel BlockFetch soak automation** (R240 — `node/scripts/parallel_blockfetch_soak.sh` captures §6.5 worker-migration, metrics, Haskell tip-compare, and log-scan evidence before the default concurrency flip)
 - ✅ **Cumulative regression coverage** (R229+R230+R231 — every R200/R217/R225/R226 observability metric has explicit Prometheus-output regression tests pinning bucket boundaries, counter/gauge types, and exposition format)
 
 **To achieve full 1:1 parity** (per the plan at `/home/vscode/.claude/plans/clever-shimmying-quokka.md`), the remaining deferred items are:
 1. **Phase E.2 24h+ mainnet rehearsal** — sustained operator wall-clock observation; sync infrastructure is end-to-end working post-R211/R213
-2. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
+2. **Parallel BlockFetch default flip sign-off** — runbook §6.5 must pass with `parallel_blockfetch_soak.sh` at knob=2/4 before changing `max_concurrent_block_fetch_peers` from `1`
+3. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
 
 **Recently completed parity items**:
 Older entries in this list preserve the status known at that round; the Executive Summary above is authoritative for current closure state.
 
+- ✅ **R240 parallel BlockFetch soak automation** — new `node/scripts/parallel_blockfetch_soak.sh` turns the manual §6.5 rehearsal into a reproducible operator gate. The harness starts `yggdrasil-node` with `--max-concurrent-block-fetch-peers`, captures Prometheus snapshots, asserts `yggdrasil_blockfetch_workers_registered` and `yggdrasil_blockfetch_workers_migrated_total`, optionally runs `compare_tip_to_haskell.sh` against a Haskell socket at fixed cadence, scans logs for worker-channel failures, and writes `$LOG_DIR/summary.txt`. The runbook also now documents the actual env-var interface for `compare_tip_to_haskell.sh` and removes the stale `gov-state` follow-up wording because R188/R193/R204 closed that LSQ surface.
 - ✅ **R239 cardano-base fixture refresh** — Phase E.1 is now closed across all 6 canonical upstream pins. The vendored `specs/upstream-test-vectors/cardano-base/<sha>/` tree moved to `7a8a991945d401d89e27f53b3d3bb464a354ad4c`, Praos VRF and BLS12-381 vectors were refreshed from official `IntersectMBO/cardano-base`, and both the crypto test `CARDANO_BASE_SHA` and node `UPSTREAM_CARDANO_BASE_COMMIT` constants now mirror that directory.
 - ✅ **R238 rollback sidecar parity hardening** — storage now keeps opaque slot-indexed `chain_dep_state/<slot-hex>.cbor` snapshots as the canonical nonce/OpCert ChainDepState history. Verified sync persists node-owned ChainDepState bundles only at checkpoint cadence after nonce/OpCert updates, terminates batches immediately on `RollBackward`, restores the newest sidecar at-or-before the rollback point, verifies the sidecar point remains on the selected chain prefix, and replays stored raw blocks to the rollback target. Startup/reconnect recovery uses the same restore-and-replay path to the recovered storage tip; LSQ protocol-state uses exact point sidecars. Persistent non-origin rollback fails closed when exact ChainDepState history is unavailable.
 - ✅ **R237 LSQ + egress + rollback closure slice** — `GetPoolDistr2` now reuses the live `PoolDistr` encoder with optional pool-hash filtering and preserves full active-stake denominator; `LedgerPeerSnapshotV2` emits live cumulative pool stake CDF rationals from the `set` snapshot; KeepAlive, TxSubmission2, and PeerSharing server egress counters are wired alongside BlockFetch/ChainSync, with per-peer bytes-out folded into `PeerLifetimeStats`; checkpoint rollback recovery now truncates snapshots at the actual rollback point and replays through `advance_ledger_with_epoch_boundary` when stake snapshot tracking is active.
@@ -1264,7 +1267,7 @@ TX expires (TTL):
 **Document prepared by**: Research & Planning Agent
 **Target Review Date**: Week of March 31, 2026 (original projection)
 **Expected Final Delivery (original)**: Mid-June 2026 (13-week roadmap)
-**Actual delivery status (R239, 2026-05-01)**: yggdrasil is a
+**Actual delivery status (R240, 2026-05-01)**: yggdrasil is a
 production-ready pure-Rust Cardano node.  All 3 official Cardano
 networks (preview, preprod, mainnet) demonstrate working
 operational LSQ surface + consensus-side sidecars, including
@@ -1280,8 +1283,10 @@ code-level baseline. Phase E.1 upstream pin maintenance is closed
 for all 6 canonical IntersectMBO repositories after the R239
 `cardano-base` vendored-vector refresh. Every R200/R217/R225/R226 observability metric
 has explicit Prometheus-output regression tests (R229+R230+R231).
-The workspace has 4.7K+ passing tests at the R239 slice boundary.
+R240 adds `parallel_blockfetch_soak.sh`, making the §6.5 BlockFetch
+default-flip evidence gate reproducible rather than manually assembled.
+The workspace has 4.7K+ passing tests at the R240 slice boundary.
 Remaining gates are operator-time items (E.2 24h+ rehearsal and §6.5
-BlockFetch default flip sign-off). See
+BlockFetch default flip sign-off using the soak harness). See
 [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for canonical operational
 evidence.

@@ -83,7 +83,7 @@ Each release archive contains:
 
 - **`yggdrasil-node`** — the binary.
 - **`configuration/`** — the vendored mainnet, preprod, and preview presets including genesis files, `config.json`, and `topology.json`. These match the SHAs pinned at release time.
-- **`scripts/`** — operator scripts: `install_from_release.sh`, `healthcheck.sh`, `backup_db.sh`, `check_upstream_drift.sh`, `compare_tip_to_haskell.sh`, `restart_resilience.sh`, `run_mainnet_real_pool_producer.sh`, `run_preprod_real_pool_producer.sh`, `yggdrasil-node.service` (systemd unit template).
+- **`scripts/`** — operator scripts: `install_from_release.sh`, `healthcheck.sh`, `backup_db.sh`, `check_upstream_drift.sh`, `compare_tip_to_haskell.sh`, `parallel_blockfetch_soak.sh`, `restart_resilience.sh`, `run_mainnet_real_pool_producer.sh`, `run_preprod_real_pool_producer.sh`, `yggdrasil-node.service` (systemd unit template).
 - **`README.md`** and any LICENSE files.
 
 ## Pre-release tags

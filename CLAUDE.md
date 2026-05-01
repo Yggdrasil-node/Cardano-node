@@ -8,7 +8,7 @@ Guidance for Claude Code (claude.ai/code) and other AI assistants when working w
 
 For the architectural picture see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the running implementation journal and operational rules see [AGENTS.md](AGENTS.md).
 
-Current baseline: R239 closes the coordinated `cardano-base` fixture refresh after R238 closed the code-level Phase D.1 rollback sidecar hardening slice. Verified sync persists slot-indexed ChainDepState sidecars under `chain_dep_state/<slot-hex>.cbor`, restores nonce/OpCert state from the newest sidecar at or before a rollback point, verifies the sidecar point against the selected chain prefix, and replays stored blocks to the rollback target. All 6 documentary upstream pins are in sync with live HEAD; the remaining gates are operator-side rehearsal/endurance work, not known code-level parity blockers.
+Current baseline: R240 keeps all confirmed-active code-level parity slices closed and adds `node/scripts/parallel_blockfetch_soak.sh` for the remaining §6.5 multi-peer BlockFetch sign-off. R239 closed the coordinated `cardano-base` fixture refresh after R238 closed the Phase D.1 rollback sidecar hardening slice. Verified sync persists slot-indexed ChainDepState sidecars under `chain_dep_state/<slot-hex>.cbor`, restores nonce/OpCert state from the newest sidecar at or before a rollback point, verifies the sidecar point against the selected chain prefix, and replays stored blocks to the rollback target. All 6 documentary upstream pins are in sync with live HEAD; the remaining gates are operator-side rehearsal/endurance work, not known code-level parity blockers.
 
 ## AGENTS.md Files Are Primary Context
 
