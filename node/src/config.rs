@@ -834,7 +834,7 @@ impl NodeConfigFile {
                     &shelley,
                     &alonzo,
                     conway.as_ref(),
-                )))
+                )?))
             }
             _ => Ok(None),
         }

@@ -3,7 +3,7 @@
 //! The official Cardano node reads separate genesis files per era at startup:
 //! - `ShelleyGenesisFile` — fee constants, staking deposits, epoch/security params.
 //! - `AlonzoGenesisFile` — Plutus execution prices, ex-unit limits, collateral rules.
-//! - `ConwayGenesisFile` — governance deposits, DRep activity threshold.
+//! - `ConwayGenesisFile` — governance deposits, DRep activity threshold, and Plutus V3 cost model.
 //!
 //! This module provides typed serde representations for the fields we consume
 //! and a `build_protocol_parameters` function that assembles a
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_ledger::eras::alonzo::ExUnits;
-use yggdrasil_ledger::protocol_params::{DRepVotingThresholds, PoolVotingThresholds};
+use yggdrasil_ledger::protocol_params::{CostModels, DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::{
     AddrKeyHash, Address, Anchor, EnactState, GenesisDelegateHash, GenesisHash, Nonce, PoolKeyHash,
@@ -654,14 +654,15 @@ pub fn build_protocol_parameters(
     shelley: &ShelleyGenesis,
     alonzo: &AlonzoGenesis,
     conway: Option<&ConwayGenesis>,
-) -> ProtocolParameters {
+) -> Result<ProtocolParameters, GenesisLoadError> {
     let pp = &shelley.protocol_params;
 
     // Derive coins_per_utxo_byte from lovelacePerUTxOWord.
     // 1 UTxO word = 8 bytes.  The Alonzo field is per word; Babbage uses per byte.
     let coins_per_utxo_byte = alonzo.lovelace_per_utxo_word.map(|v| v / 8).or(Some(4_310)); // Babbage mainnet default
+    let cost_models = build_protocol_parameter_cost_models(alonzo, conway)?;
 
-    ProtocolParameters {
+    Ok(ProtocolParameters {
         min_fee_a: pp.min_fee_a,
         min_fee_b: pp.min_fee_b,
         max_block_body_size: pp.max_block_body_size,
@@ -740,9 +741,91 @@ pub fn build_protocol_parameters(
             }),
         min_committee_size: conway.and_then(|c| c.committee_min_size),
         committee_term_limit: conway.and_then(|c| c.committee_max_term_length),
-        cost_models: None,
+        cost_models,
         min_fee_ref_script_cost_per_byte: None,
+    })
+}
+
+fn build_protocol_parameter_cost_models(
+    alonzo: &AlonzoGenesis,
+    conway: Option<&ConwayGenesis>,
+) -> Result<Option<CostModels>, GenesisLoadError> {
+    let mut cost_models = BTreeMap::new();
+
+    if let Some(params) = alonzo.cost_models.get("PlutusV1") {
+        cost_models.insert(
+            0,
+            ordered_named_cost_model_values(
+                "costModels.PlutusV1",
+                params,
+                ordered_plutus_v1_param_names(),
+            )?,
+        );
     }
+
+    if let Some(params) = alonzo.cost_models.get("PlutusV2") {
+        cost_models.insert(
+            1,
+            ordered_named_cost_model_values(
+                "costModels.PlutusV2",
+                params,
+                ordered_plutus_v2_param_names(),
+            )?,
+        );
+    }
+
+    if let Some(v3_array) = conway.and_then(|c| c.plutus_v3_cost_model.as_ref()) {
+        if !SUPPORTED_CONWAY_V3_ARRAY_LENGTHS.contains(&v3_array.len()) {
+            return Err(GenesisLoadError::InvalidField {
+                field: "plutusV3CostModel",
+                value: v3_array.len().to_string(),
+                message: format!(
+                    "unsupported array length; expected one of {SUPPORTED_CONWAY_V3_ARRAY_LENGTHS:?}"
+                ),
+            });
+        }
+        cost_models.insert(2, v3_array.clone());
+    }
+
+    Ok((!cost_models.is_empty()).then_some(cost_models))
+}
+
+fn ordered_named_cost_model_values<I>(
+    field: &'static str,
+    params: &BTreeMap<String, i64>,
+    names: I,
+) -> Result<Vec<i64>, GenesisLoadError>
+where
+    I: IntoIterator<Item = String>,
+{
+    names
+        .into_iter()
+        .map(|name| {
+            params
+                .get(&name)
+                .copied()
+                .ok_or_else(|| GenesisLoadError::InvalidField {
+                    field,
+                    value: name,
+                    message: "missing cost-model parameter".to_owned(),
+                })
+        })
+        .collect()
+}
+
+fn ordered_plutus_v1_param_names() -> Vec<String> {
+    PLUTUS_V1_PARAM_NAMES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
+fn ordered_plutus_v2_param_names() -> Vec<String> {
+    CONWAY_V3_PARAM_NAMES
+        .iter()
+        .take(PLUTUS_V2_INITIAL_COST_MODEL_LEN)
+        .map(|name| (*name).to_owned())
+        .collect()
 }
 
 /// Build the initial [`EnactState`] from the Conway genesis constitution.
@@ -864,11 +947,6 @@ pub fn build_plutus_cost_model(
                 return Ok(None);
             };
 
-            // Upstream Conway genesis currently ships either:
-            // - 251 entries (through byteStringToInteger-memory-arguments-slope)
-            // - 302 entries (adds bitwise/ripemd_160/expModInteger tail)
-            // Any other length indicates a spec drift we should fail fast on.
-            const SUPPORTED_CONWAY_V3_ARRAY_LENGTHS: &[usize] = &[251, 302];
             if !SUPPORTED_CONWAY_V3_ARRAY_LENGTHS.contains(&v3_array.len()) {
                 return Err(GenesisCostModelError::UnsupportedConwayV3ArrayLength {
                     actual: v3_array.len(),
@@ -885,6 +963,188 @@ pub fn build_plutus_cost_model(
         }
     }
 }
+
+const PLUTUS_V1_INITIAL_COST_MODEL_LEN: usize = 166;
+const PLUTUS_V2_INITIAL_COST_MODEL_LEN: usize = 175;
+const SUPPORTED_CONWAY_V3_ARRAY_LENGTHS: &[usize] = &[251, 302];
+
+/// Ordered Alonzo-era `PlutusV1` genesis parameter names.
+///
+/// Upstream `costModelInitParamNames PlutusV1` takes the first 166 entries from
+/// the Plutus V1 `ParamName` enum order, then maps the six Alonzo-era legacy
+/// names (`blake2b-*`, `verifySignature-*`) before looking up the genesis map.
+/// V1 also predates the later quadratic integer parameter names used by V2/V3,
+/// so this table must stay independent from [`CONWAY_V3_PARAM_NAMES`].
+///
+/// Reference: `Cardano.Ledger.Plutus.CostModels.plutusV1ParamNames`.
+const PLUTUS_V1_PARAM_NAMES: &[&str] = &[
+    "addInteger-cpu-arguments-intercept",
+    "addInteger-cpu-arguments-slope",
+    "addInteger-memory-arguments-intercept",
+    "addInteger-memory-arguments-slope",
+    "appendByteString-cpu-arguments-intercept",
+    "appendByteString-cpu-arguments-slope",
+    "appendByteString-memory-arguments-intercept",
+    "appendByteString-memory-arguments-slope",
+    "appendString-cpu-arguments-intercept",
+    "appendString-cpu-arguments-slope",
+    "appendString-memory-arguments-intercept",
+    "appendString-memory-arguments-slope",
+    "bData-cpu-arguments",
+    "bData-memory-arguments",
+    "blake2b-cpu-arguments-intercept",
+    "blake2b-cpu-arguments-slope",
+    "blake2b-memory-arguments",
+    "cekApplyCost-exBudgetCPU",
+    "cekApplyCost-exBudgetMemory",
+    "cekBuiltinCost-exBudgetCPU",
+    "cekBuiltinCost-exBudgetMemory",
+    "cekConstCost-exBudgetCPU",
+    "cekConstCost-exBudgetMemory",
+    "cekDelayCost-exBudgetCPU",
+    "cekDelayCost-exBudgetMemory",
+    "cekForceCost-exBudgetCPU",
+    "cekForceCost-exBudgetMemory",
+    "cekLamCost-exBudgetCPU",
+    "cekLamCost-exBudgetMemory",
+    "cekStartupCost-exBudgetCPU",
+    "cekStartupCost-exBudgetMemory",
+    "cekVarCost-exBudgetCPU",
+    "cekVarCost-exBudgetMemory",
+    "chooseData-cpu-arguments",
+    "chooseData-memory-arguments",
+    "chooseList-cpu-arguments",
+    "chooseList-memory-arguments",
+    "chooseUnit-cpu-arguments",
+    "chooseUnit-memory-arguments",
+    "consByteString-cpu-arguments-intercept",
+    "consByteString-cpu-arguments-slope",
+    "consByteString-memory-arguments-intercept",
+    "consByteString-memory-arguments-slope",
+    "constrData-cpu-arguments",
+    "constrData-memory-arguments",
+    "decodeUtf8-cpu-arguments-intercept",
+    "decodeUtf8-cpu-arguments-slope",
+    "decodeUtf8-memory-arguments-intercept",
+    "decodeUtf8-memory-arguments-slope",
+    "divideInteger-cpu-arguments-constant",
+    "divideInteger-cpu-arguments-model-arguments-intercept",
+    "divideInteger-cpu-arguments-model-arguments-slope",
+    "divideInteger-memory-arguments-intercept",
+    "divideInteger-memory-arguments-minimum",
+    "divideInteger-memory-arguments-slope",
+    "encodeUtf8-cpu-arguments-intercept",
+    "encodeUtf8-cpu-arguments-slope",
+    "encodeUtf8-memory-arguments-intercept",
+    "encodeUtf8-memory-arguments-slope",
+    "equalsByteString-cpu-arguments-constant",
+    "equalsByteString-cpu-arguments-intercept",
+    "equalsByteString-cpu-arguments-slope",
+    "equalsByteString-memory-arguments",
+    "equalsData-cpu-arguments-intercept",
+    "equalsData-cpu-arguments-slope",
+    "equalsData-memory-arguments",
+    "equalsInteger-cpu-arguments-intercept",
+    "equalsInteger-cpu-arguments-slope",
+    "equalsInteger-memory-arguments",
+    "equalsString-cpu-arguments-constant",
+    "equalsString-cpu-arguments-intercept",
+    "equalsString-cpu-arguments-slope",
+    "equalsString-memory-arguments",
+    "fstPair-cpu-arguments",
+    "fstPair-memory-arguments",
+    "headList-cpu-arguments",
+    "headList-memory-arguments",
+    "iData-cpu-arguments",
+    "iData-memory-arguments",
+    "ifThenElse-cpu-arguments",
+    "ifThenElse-memory-arguments",
+    "indexByteString-cpu-arguments",
+    "indexByteString-memory-arguments",
+    "lengthOfByteString-cpu-arguments",
+    "lengthOfByteString-memory-arguments",
+    "lessThanByteString-cpu-arguments-intercept",
+    "lessThanByteString-cpu-arguments-slope",
+    "lessThanByteString-memory-arguments",
+    "lessThanEqualsByteString-cpu-arguments-intercept",
+    "lessThanEqualsByteString-cpu-arguments-slope",
+    "lessThanEqualsByteString-memory-arguments",
+    "lessThanEqualsInteger-cpu-arguments-intercept",
+    "lessThanEqualsInteger-cpu-arguments-slope",
+    "lessThanEqualsInteger-memory-arguments",
+    "lessThanInteger-cpu-arguments-intercept",
+    "lessThanInteger-cpu-arguments-slope",
+    "lessThanInteger-memory-arguments",
+    "listData-cpu-arguments",
+    "listData-memory-arguments",
+    "mapData-cpu-arguments",
+    "mapData-memory-arguments",
+    "mkCons-cpu-arguments",
+    "mkCons-memory-arguments",
+    "mkNilData-cpu-arguments",
+    "mkNilData-memory-arguments",
+    "mkNilPairData-cpu-arguments",
+    "mkNilPairData-memory-arguments",
+    "mkPairData-cpu-arguments",
+    "mkPairData-memory-arguments",
+    "modInteger-cpu-arguments-constant",
+    "modInteger-cpu-arguments-model-arguments-intercept",
+    "modInteger-cpu-arguments-model-arguments-slope",
+    "modInteger-memory-arguments-intercept",
+    "modInteger-memory-arguments-minimum",
+    "modInteger-memory-arguments-slope",
+    "multiplyInteger-cpu-arguments-intercept",
+    "multiplyInteger-cpu-arguments-slope",
+    "multiplyInteger-memory-arguments-intercept",
+    "multiplyInteger-memory-arguments-slope",
+    "nullList-cpu-arguments",
+    "nullList-memory-arguments",
+    "quotientInteger-cpu-arguments-constant",
+    "quotientInteger-cpu-arguments-model-arguments-intercept",
+    "quotientInteger-cpu-arguments-model-arguments-slope",
+    "quotientInteger-memory-arguments-intercept",
+    "quotientInteger-memory-arguments-minimum",
+    "quotientInteger-memory-arguments-slope",
+    "remainderInteger-cpu-arguments-constant",
+    "remainderInteger-cpu-arguments-model-arguments-intercept",
+    "remainderInteger-cpu-arguments-model-arguments-slope",
+    "remainderInteger-memory-arguments-intercept",
+    "remainderInteger-memory-arguments-minimum",
+    "remainderInteger-memory-arguments-slope",
+    "sha2_256-cpu-arguments-intercept",
+    "sha2_256-cpu-arguments-slope",
+    "sha2_256-memory-arguments",
+    "sha3_256-cpu-arguments-intercept",
+    "sha3_256-cpu-arguments-slope",
+    "sha3_256-memory-arguments",
+    "sliceByteString-cpu-arguments-intercept",
+    "sliceByteString-cpu-arguments-slope",
+    "sliceByteString-memory-arguments-intercept",
+    "sliceByteString-memory-arguments-slope",
+    "sndPair-cpu-arguments",
+    "sndPair-memory-arguments",
+    "subtractInteger-cpu-arguments-intercept",
+    "subtractInteger-cpu-arguments-slope",
+    "subtractInteger-memory-arguments-intercept",
+    "subtractInteger-memory-arguments-slope",
+    "tailList-cpu-arguments",
+    "tailList-memory-arguments",
+    "trace-cpu-arguments",
+    "trace-memory-arguments",
+    "unBData-cpu-arguments",
+    "unBData-memory-arguments",
+    "unConstrData-cpu-arguments",
+    "unConstrData-memory-arguments",
+    "unIData-cpu-arguments",
+    "unIData-memory-arguments",
+    "unListData-cpu-arguments",
+    "unListData-memory-arguments",
+    "unMapData-cpu-arguments",
+    "unMapData-memory-arguments",
+    "verifySignature-cpu-arguments-intercept",
+    "verifySignature-cpu-arguments-slope",
+    "verifySignature-memory-arguments",
+];
 
 /// Ordered Conway `plutusV3CostModel` parameter names.
 ///
@@ -2205,25 +2465,29 @@ mod tests {
 
     fn sample_alonzo() -> AlonzoGenesis {
         let mut cost_models = BTreeMap::new();
-        cost_models.insert(
-            "PlutusV1".to_owned(),
-            BTreeMap::from([
-                ("cekVarCost-exBudgetCPU".to_owned(), 29_773),
-                ("cekConstCost-exBudgetCPU".to_owned(), 29_773),
-                ("cekLamCost-exBudgetCPU".to_owned(), 29_773),
-                ("cekDelayCost-exBudgetCPU".to_owned(), 29_773),
-                ("cekForceCost-exBudgetCPU".to_owned(), 29_773),
-                ("cekApplyCost-exBudgetCPU".to_owned(), 29_773),
-                ("cekVarCost-exBudgetMemory".to_owned(), 100),
-                ("cekConstCost-exBudgetMemory".to_owned(), 100),
-                ("cekLamCost-exBudgetMemory".to_owned(), 100),
-                ("cekDelayCost-exBudgetMemory".to_owned(), 100),
-                ("cekForceCost-exBudgetMemory".to_owned(), 100),
-                ("cekApplyCost-exBudgetMemory".to_owned(), 100),
-                ("cekBuiltinCost-exBudgetCPU".to_owned(), 29_773),
-                ("cekBuiltinCost-exBudgetMemory".to_owned(), 100),
-            ]),
-        );
+        let mut plutus_v1 = ordered_plutus_v1_param_names()
+            .into_iter()
+            .map(|name| (name, 1))
+            .collect::<BTreeMap<_, _>>();
+        for (name, value) in [
+            ("cekVarCost-exBudgetCPU", 29_773),
+            ("cekConstCost-exBudgetCPU", 29_773),
+            ("cekLamCost-exBudgetCPU", 29_773),
+            ("cekDelayCost-exBudgetCPU", 29_773),
+            ("cekForceCost-exBudgetCPU", 29_773),
+            ("cekApplyCost-exBudgetCPU", 29_773),
+            ("cekVarCost-exBudgetMemory", 100),
+            ("cekConstCost-exBudgetMemory", 100),
+            ("cekLamCost-exBudgetMemory", 100),
+            ("cekDelayCost-exBudgetMemory", 100),
+            ("cekForceCost-exBudgetMemory", 100),
+            ("cekApplyCost-exBudgetMemory", 100),
+            ("cekBuiltinCost-exBudgetCPU", 29_773),
+            ("cekBuiltinCost-exBudgetMemory", 100),
+        ] {
+            plutus_v1.insert(name.to_owned(), value);
+        }
+        cost_models.insert("PlutusV1".to_owned(), plutus_v1);
 
         AlonzoGenesis {
             lovelace_per_utxo_word: Some(34_482),
@@ -2343,7 +2607,7 @@ mod tests {
     fn build_protocol_parameters_shelley_fields() {
         let shelley = sample_shelley();
         let alonzo = sample_alonzo();
-        let params = build_protocol_parameters(&shelley, &alonzo, None);
+        let params = build_protocol_parameters(&shelley, &alonzo, None).expect("build params");
 
         assert_eq!(params.min_fee_a, 44);
         assert_eq!(params.min_fee_b, 155_381);
@@ -2360,7 +2624,7 @@ mod tests {
     fn build_protocol_parameters_alonzo_fields() {
         let shelley = sample_shelley();
         let alonzo = sample_alonzo();
-        let params = build_protocol_parameters(&shelley, &alonzo, None);
+        let params = build_protocol_parameters(&shelley, &alonzo, None).expect("build params");
 
         // lovelacePerUTxOWord = 34482 → coins_per_utxo_byte = 34482 / 8 = 4310
         assert_eq!(params.coins_per_utxo_byte, Some(4_310));
@@ -2380,6 +2644,21 @@ mod tests {
         assert_eq!(params.collateral_percentage, Some(150));
         assert_eq!(params.max_collateral_inputs, Some(3));
         assert_eq!(params.max_val_size, Some(5_000));
+
+        let cost_models = params.cost_models.as_ref().expect("cost models");
+        let v1 = cost_models.get(&0).expect("PlutusV1 cost model");
+        assert_eq!(v1.len(), PLUTUS_V1_INITIAL_COST_MODEL_LEN);
+        let names = ordered_plutus_v1_param_names();
+        let var_cpu = names
+            .iter()
+            .position(|name| name == "cekVarCost-exBudgetCPU")
+            .expect("var cpu index");
+        let blake2b = names
+            .iter()
+            .position(|name| name == "blake2b-cpu-arguments-intercept")
+            .expect("Alonzo-era blake2b key index");
+        assert_eq!(v1[var_cpu], 29_773);
+        assert_eq!(v1[blake2b], 1);
     }
 
     #[test]
@@ -2387,7 +2666,8 @@ mod tests {
         let shelley = sample_shelley();
         let alonzo = sample_alonzo();
         let conway = sample_conway();
-        let params = build_protocol_parameters(&shelley, &alonzo, Some(&conway));
+        let params =
+            build_protocol_parameters(&shelley, &alonzo, Some(&conway)).expect("build params");
 
         assert_eq!(params.gov_action_lifetime, Some(6));
         assert_eq!(params.gov_action_deposit, Some(100_000_000_000));
@@ -2686,19 +2966,11 @@ mod tests {
     /// the table fails this test rather than producing silent
     /// under-mappings at runtime.
     ///
-    /// `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS` is a function-local const inside
-    /// `build_plutus_cost_model`, so this test reproduces its canonical
-    /// values explicitly. If those values change, this test must change
-    /// in the same commit — that lockstep is the drift guard.
+    /// `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS` is the canonical accepted shape set.
+    /// If those values change, the named table must change in the same commit.
     #[test]
     fn supported_conway_v3_array_lengths_fit_within_param_names_table() {
-        // Mirror of the function-local const at line ~851. A drift between
-        // this list and the actual function-local const would surface as a
-        // failure in `build_plutus_cost_model_rejects_short_conway_v3_array`
-        // / `_rejects_partial_bitwise_tail_array` (which already pin the
-        // exact `&[251, 302]` literal in their `matches!` patterns).
-        const CANONICAL_SUPPORTED: &[usize] = &[251, 302];
-        for &n in CANONICAL_SUPPORTED {
+        for &n in SUPPORTED_CONWAY_V3_ARRAY_LENGTHS {
             assert!(
                 n <= CONWAY_V3_PARAM_NAMES.len(),
                 "supported Conway V3 array length {n} exceeds CONWAY_V3_PARAM_NAMES \
