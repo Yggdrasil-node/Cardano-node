@@ -565,4 +565,84 @@ mod tests {
         assert!(matches!(result, Err(ChainSyncClientError::Mux(_))));
         assert_eq!(client.state(), ChainSyncState::StIdle);
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn request_next_typed_pipelined_sends_all_requests_before_collecting() {
+        use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum};
+        use crate::mux::start_unix;
+        use tokio::net::UnixStream;
+
+        let (client_stream, server_stream) = UnixStream::pair().expect("unix stream pair");
+        let (mut client_handles, client_mux) = start_unix(
+            client_stream,
+            MiniProtocolDir::Initiator,
+            &[MiniProtocolNum::CHAIN_SYNC],
+            1,
+        );
+        let (mut server_handles, server_mux) = start_unix(
+            server_stream,
+            MiniProtocolDir::Responder,
+            &[MiniProtocolNum::CHAIN_SYNC],
+            1,
+        );
+        let client_handle = client_handles
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("client chainsync handle");
+        let mut server_handle = server_handles
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("server chainsync handle");
+        let tip = Tip::TipGenesis.to_cbor_bytes();
+
+        let server = tokio::spawn(async move {
+            for _ in 0..3 {
+                let raw = server_handle.recv().await.expect("request");
+                assert_eq!(
+                    ChainSyncMessage::from_cbor(&raw).expect("request cbor"),
+                    ChainSyncMessage::MsgRequestNext
+                );
+            }
+
+            for header in [vec![0x01], vec![0x02], vec![0x03]] {
+                server_handle
+                    .send(
+                        ChainSyncMessage::MsgRollForward {
+                            header,
+                            tip: tip.clone(),
+                        }
+                        .to_cbor(),
+                    )
+                    .await
+                    .expect("response send");
+            }
+        });
+
+        let mut client = ChainSyncClient::new(client_handle);
+        let responses = client
+            .request_next_typed_pipelined(3)
+            .await
+            .expect("pipelined request");
+        assert_eq!(
+            responses,
+            vec![
+                TypedNextResponse::RollForward {
+                    header: vec![0x01],
+                    tip: Point::Origin,
+                },
+                TypedNextResponse::RollForward {
+                    header: vec![0x02],
+                    tip: Point::Origin,
+                },
+                TypedNextResponse::RollForward {
+                    header: vec![0x03],
+                    tip: Point::Origin,
+                },
+            ]
+        );
+        assert_eq!(client.state(), ChainSyncState::StIdle);
+
+        server.await.expect("server task");
+        client_mux.abort();
+        server_mux.abort();
+    }
 }

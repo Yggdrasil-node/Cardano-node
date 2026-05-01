@@ -4919,7 +4919,7 @@ fn chainsync_pipeline_request_count(
     };
     let Some(wall_slot) = verification
         .and_then(|config| config.future_check.as_ref())
-        .map(FutureBlockCheckConfig::current_wall_slot)
+        .map(|future_check| future_check.current_wall_slot())
     else {
         return 1;
     };
@@ -4993,7 +4993,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     let mut pending_rollback = None;
 
     macro_rules! handle_next_response {
-        ($next:expr, $has_pipelined_responses_after_rollback:expr) => {
+        ($next:expr) => {
             match $next {
                 TypedNextResponse::RollForward { header, tip }
                 | TypedNextResponse::AwaitRollForward { header, tip } => {
@@ -5053,14 +5053,6 @@ pub(crate) async fn sync_batch_verified_with_tentative(
                 }
                 TypedNextResponse::RollBackward { point, tip }
                 | TypedNextResponse::AwaitRollBackward { point, tip } => {
-                    if $has_pipelined_responses_after_rollback {
-                        return Err(SyncError::ChainSync(
-                            ChainSyncClientError::UnexpectedMessage(
-                                "rollback before end of pipelined ChainSync batch; reconnecting to preserve cursor alignment"
-                                    .to_owned(),
-                            ),
-                        ));
-                    }
                     pending_rollback = Some((point, tip));
                     break;
                 }
@@ -5073,13 +5065,19 @@ pub(crate) async fn sync_batch_verified_with_tentative(
         let next_responses = chain_sync
             .request_next_typed_pipelined(request_count)
             .await?;
-        for (response_idx, next) in next_responses.into_iter().enumerate() {
-            handle_next_response!(next, response_idx + 1 < request_count);
+        for next in next_responses {
+            // The pipelined client has already drained every in-flight
+            // response before we process this vector. If a rollback appears
+            // before the end of the collected window, discarding the remaining
+            // drained responses is cursor-safe; the next batch requests again
+            // from the applied rollback point, matching the serial driver's
+            // "stop at first rollback" policy.
+            handle_next_response!(next);
         }
     } else {
         for _ in 0..batch_size {
             let next = chain_sync.request_next_typed().await?;
-            handle_next_response!(next, false);
+            handle_next_response!(next);
         }
     }
 
@@ -7970,6 +7968,61 @@ mod tests {
             clock_skew: ClockSkew::default_for_slot_length(std::time::Duration::from_secs(1)),
         };
         assert_eq!(cfg.current_wall_slot(), SlotNo(0));
+    }
+
+    fn verification_config_with_wall_slot(wall_slot: u64) -> VerificationConfig {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time before epoch")
+            .as_secs_f64();
+        VerificationConfig {
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            verify_body_hash: true,
+            max_major_protocol_version: Some(10),
+            future_check: Some(FutureBlockCheckConfig {
+                system_start_unix_secs: now_secs - wall_slot as f64,
+                slot_length_secs: 1.0,
+                clock_skew: ClockSkew::default_for_slot_length(std::time::Duration::from_secs(1)),
+            }),
+            ocert_counters: None,
+            pp_major_protocol_version: Some(10),
+            network_magic: Some(crate::config::PREVIEW_NETWORK_MAGIC),
+        }
+    }
+
+    #[test]
+    fn chainsync_pipeline_request_count_is_bounded_for_bulk_sync() {
+        let config = verification_config_with_wall_slot(2_000);
+        let point = Point::BlockPoint(SlotNo(1_000), HeaderHash([0x11; 32]));
+
+        assert_eq!(
+            chainsync_pipeline_request_count(512, point, Some(&config)),
+            128,
+            "bulk sync only pipelines bounded MsgRequestNext windows",
+        );
+    }
+
+    #[test]
+    fn chainsync_pipeline_request_count_stays_serial_near_tip_or_without_wall_clock() {
+        let config = verification_config_with_wall_slot(2_000);
+        let near_tip = Point::BlockPoint(SlotNo(1_900), HeaderHash([0x22; 32]));
+
+        assert_eq!(
+            chainsync_pipeline_request_count(128, near_tip, Some(&config)),
+            1,
+            "near-tip sync keeps request/response ordering conservative",
+        );
+        assert_eq!(
+            chainsync_pipeline_request_count(128, Point::Origin, Some(&config)),
+            1,
+            "origin cannot provide a slot distance to the wall-clock tip",
+        );
+        assert_eq!(
+            chainsync_pipeline_request_count(128, near_tip, None),
+            1,
+            "callers without genesis wall-clock context stay serial",
+        );
     }
 
     #[test]
