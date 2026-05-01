@@ -1252,6 +1252,26 @@ impl GovernorState {
         }
     }
 
+    /// R224 — Phase D.2 third slice: overwrite the lifetime
+    /// `bytes_in` total for `peer` from an external cumulative
+    /// source (e.g. `BlockFetchInstrumentation::peer_state(peer)
+    /// .bytes_delivered`, which already accumulates monotonically
+    /// across reconnects).  Use this instead of
+    /// [`Self::record_lifetime_traffic`] when the source is
+    /// already cumulative; mixing the two would double-count.
+    /// Creates the lifetime entry if absent (allowing the runtime
+    /// to refresh totals before the first explicit
+    /// `record_lifetime_session_started`).  Updates `last_seen`.
+    pub fn set_lifetime_bytes_in(&mut self, peer: SocketAddr, total: u64) {
+        let entry = self.lifetime_stats.entry(peer).or_default();
+        let now = Instant::now();
+        entry.bytes_in = total;
+        if entry.first_seen.is_none() {
+            entry.first_seen = Some(now);
+        }
+        entry.last_seen = Some(now);
+    }
+
     /// R222 — Read-only accessor for a peer's lifetime stats, or
     /// `None` if the peer has never connected.
     pub fn lifetime_stats_for(&self, peer: &SocketAddr) -> Option<&PeerLifetimeStats> {

@@ -641,6 +641,53 @@ pub struct NodeMetrics {
     fetch_batch_duration_buckets: [AtomicU64; 10],
     fetch_batch_duration_sum_micros: AtomicU64,
     fetch_batch_duration_count: AtomicU64,
+    /// R223 — Phase D.2: aggregate of `PeerLifetimeStats.sessions`
+    /// across all peers in the governor's `lifetime_stats` map.
+    /// Monotonic across reconnects; lets dashboards alert on
+    /// peer-churn rate (`rate(yggdrasil_peer_lifetime_sessions_total[5m])`)
+    /// distinct from the live `known/active/established_peers`
+    /// gauges which reflect the current session count only.
+    peer_lifetime_sessions_total: AtomicU64,
+    /// R223 — Phase D.2: aggregate of `PeerLifetimeStats.failures_total`
+    /// across all peers.  Monotonic; pairs with the sessions counter
+    /// to compute peer reliability (`failures_total /
+    /// sessions_total`).
+    peer_lifetime_failures_total: AtomicU64,
+    /// R224 — Phase D.2: aggregate of `PeerLifetimeStats.bytes_in`
+    /// across all peers (cumulative bytes received).  Refreshed at
+    /// each governor tick from per-peer
+    /// `BlockFetchInstrumentation::bytes_delivered`.
+    peer_lifetime_bytes_in_total: AtomicU64,
+    /// R226 — Phase D.2: count of distinct peers this node has
+    /// ever connected to (cardinality of `lifetime_stats` map).
+    /// Distinct from the live `known_peers` gauge which counts the
+    /// current peer registry; this is monotonic across restarts
+    /// (within the lifetime of a single process; the
+    /// `lifetime_stats` map is in-memory and starts empty on each
+    /// `yggdrasil-node run` invocation).
+    peer_lifetime_unique_peers: AtomicU64,
+    /// R226 — Phase D.2: aggregate of
+    /// `PeerLifetimeStats.successful_handshakes` across all peers.
+    /// Tracks every successful handshake completion; useful for
+    /// computing `(handshakes_total / sessions_total) > 1`
+    /// scenarios where some sessions don't progress past handshake.
+    peer_lifetime_handshakes_total: AtomicU64,
+    /// R225 — Phase D.1 first slice: rollback-depth histogram
+    /// bucket counters.  Each rollback event observed during sync
+    /// increments the bucket whose `le` (rollback depth in blocks)
+    /// is `>=` the observed depth.  Pairs with
+    /// `_count` total to compute mean rollback depth and tail
+    /// percentiles via the standard Prometheus histogram queries.
+    /// Lets operators distinguish frequent shallow rollbacks (1-2
+    /// blocks, normal chain reorgs) from rare deep cross-epoch
+    /// rollbacks (>k blocks, the Phase D.1 problematic case).
+    rollback_depth_buckets: [AtomicU64; 7],
+    /// R225 — sum of all observed rollback depths.  Standard
+    /// Prometheus histogram `_sum` field.
+    rollback_depth_sum_blocks: AtomicU64,
+    /// R225 — total number of rollback observations.  Standard
+    /// Prometheus histogram `_count` field.
+    rollback_depth_count: AtomicU64,
     start_time_ms: u128,
 }
 
@@ -770,6 +817,33 @@ pub struct MetricsSnapshot {
     pub fetch_batch_duration_sum_micros: u64,
     /// R217 — total number of fetch-batch duration observations.
     pub fetch_batch_duration_count: u64,
+    /// R223 — Phase D.2: cumulative sessions across all peers in
+    /// the governor's `lifetime_stats` map (sum of
+    /// `PeerLifetimeStats::sessions`).
+    pub peer_lifetime_sessions_total: u64,
+    /// R223 — Phase D.2: cumulative session failures across all
+    /// peers (sum of `PeerLifetimeStats::failures_total`).
+    pub peer_lifetime_failures_total: u64,
+    /// R224 — Phase D.2: cumulative bytes received across all
+    /// peers (sum of `PeerLifetimeStats::bytes_in`, sourced from
+    /// per-peer `BlockFetchInstrumentation::bytes_delivered`).
+    pub peer_lifetime_bytes_in_total: u64,
+    /// R226 — Phase D.2: count of distinct peers ever connected
+    /// (cardinality of the governor's `lifetime_stats` map).
+    pub peer_lifetime_unique_peers: u64,
+    /// R226 — Phase D.2: cumulative successful-handshake count
+    /// across all peers (sum of
+    /// `PeerLifetimeStats::successful_handshakes`).
+    pub peer_lifetime_handshakes_total: u64,
+    /// R225 — Phase D.1: rollback-depth histogram bucket counts.
+    /// Each entry is the cumulative count of rollback observations
+    /// whose depth (in blocks) was `<=` the corresponding bucket
+    /// boundary in [`NodeMetrics::ROLLBACK_DEPTH_BUCKETS`].
+    pub rollback_depth_buckets: [u64; 7],
+    /// R225 — sum of all observed rollback depths in blocks.
+    pub rollback_depth_sum_blocks: u64,
+    /// R225 — total rollback-depth observations.
+    pub rollback_depth_count: u64,
     /// Milliseconds since the metrics tracker was created.
     pub uptime_ms: u128,
 }
@@ -847,8 +921,46 @@ impl NodeMetrics {
             ],
             fetch_batch_duration_sum_micros: AtomicU64::new(0),
             fetch_batch_duration_count: AtomicU64::new(0),
+            peer_lifetime_sessions_total: AtomicU64::new(0),
+            peer_lifetime_failures_total: AtomicU64::new(0),
+            peer_lifetime_bytes_in_total: AtomicU64::new(0),
+            peer_lifetime_unique_peers: AtomicU64::new(0),
+            peer_lifetime_handshakes_total: AtomicU64::new(0),
+            rollback_depth_buckets: [
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ],
+            rollback_depth_sum_blocks: AtomicU64::new(0),
+            rollback_depth_count: AtomicU64::new(0),
             start_time_ms: current_unix_millis(),
         }
+    }
+
+    /// R225 — Phase D.1 first slice: bucket boundaries (in blocks)
+    /// for the rollback-depth histogram.  Covers the spectrum from
+    /// shallow chain-reorg rollbacks (1, 2, 5 blocks) through the
+    /// stability-window edge (k=2160) to cross-epoch rollbacks
+    /// (>10k blocks) and full-resync (`+Inf`).
+    pub const ROLLBACK_DEPTH_BUCKETS: [u64; 7] = [1, 2, 5, 50, 2160, 10_000, u64::MAX];
+
+    /// R225 — Phase D.1 first slice: record a rollback observation
+    /// of `depth_blocks` blocks into the histogram.  Cumulative
+    /// buckets: each observation increments every bucket whose
+    /// `le` is ≥ the observed depth.
+    pub fn record_rollback_depth(&self, depth_blocks: u64) {
+        for (i, le) in Self::ROLLBACK_DEPTH_BUCKETS.iter().enumerate() {
+            if depth_blocks <= *le {
+                self.rollback_depth_buckets[i].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        self.rollback_depth_sum_blocks
+            .fetch_add(depth_blocks, Ordering::Relaxed);
+        self.rollback_depth_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// R200 — Bucket boundaries (in seconds) for the apply-batch
@@ -907,6 +1019,48 @@ impl NodeMetrics {
     /// Add `n` to the blocks-synced counter.
     pub fn add_blocks_synced(&self, n: u64) {
         self.blocks_synced.fetch_add(n, Ordering::Relaxed);
+    }
+
+    /// R223 — Phase D.2: set the cumulative peer-lifetime sessions
+    /// counter from the governor's aggregated state.  Caller computes
+    /// `sum(peer.sessions for peer in lifetime_stats.values())` and
+    /// passes the total here on each governor tick.  Distinct from
+    /// the live `known_peers` / `active_peers` gauges which reflect
+    /// the current session count only.
+    pub fn set_peer_lifetime_sessions_total(&self, total: u64) {
+        self.peer_lifetime_sessions_total
+            .store(total, Ordering::Relaxed);
+    }
+
+    /// R223 — Phase D.2: set the cumulative peer-lifetime failures
+    /// counter from the governor's aggregated state.
+    pub fn set_peer_lifetime_failures_total(&self, total: u64) {
+        self.peer_lifetime_failures_total
+            .store(total, Ordering::Relaxed);
+    }
+
+    /// R224 — Phase D.2: set the cumulative peer-lifetime bytes-in
+    /// counter from the governor's aggregated state.  Caller folds
+    /// `peer.bytes_in` across `lifetime_stats.values()` after
+    /// refreshing each per-peer entry from the BlockFetch pool's
+    /// `bytes_delivered` counter.
+    pub fn set_peer_lifetime_bytes_in_total(&self, total: u64) {
+        self.peer_lifetime_bytes_in_total
+            .store(total, Ordering::Relaxed);
+    }
+
+    /// R226 — Phase D.2: set the unique-peer cardinality counter
+    /// (`governor_state.lifetime_stats.len()`).
+    pub fn set_peer_lifetime_unique_peers(&self, total: u64) {
+        self.peer_lifetime_unique_peers
+            .store(total, Ordering::Relaxed);
+    }
+
+    /// R226 — Phase D.2: set the cumulative successful-handshakes
+    /// counter from the governor's aggregated state.
+    pub fn set_peer_lifetime_handshakes_total(&self, total: u64) {
+        self.peer_lifetime_handshakes_total
+            .store(total, Ordering::Relaxed);
     }
 
     /// Add `n` to the rollback counter.
@@ -1177,6 +1331,22 @@ impl NodeMetrics {
                 .fetch_batch_duration_sum_micros
                 .load(Ordering::Relaxed),
             fetch_batch_duration_count: self.fetch_batch_duration_count.load(Ordering::Relaxed),
+            peer_lifetime_sessions_total: self.peer_lifetime_sessions_total.load(Ordering::Relaxed),
+            peer_lifetime_failures_total: self.peer_lifetime_failures_total.load(Ordering::Relaxed),
+            peer_lifetime_bytes_in_total: self.peer_lifetime_bytes_in_total.load(Ordering::Relaxed),
+            peer_lifetime_unique_peers: self.peer_lifetime_unique_peers.load(Ordering::Relaxed),
+            peer_lifetime_handshakes_total: self
+                .peer_lifetime_handshakes_total
+                .load(Ordering::Relaxed),
+            rollback_depth_buckets: {
+                let mut buckets = [0u64; 7];
+                for (i, b) in self.rollback_depth_buckets.iter().enumerate() {
+                    buckets[i] = b.load(Ordering::Relaxed);
+                }
+                buckets
+            },
+            rollback_depth_sum_blocks: self.rollback_depth_sum_blocks.load(Ordering::Relaxed),
+            rollback_depth_count: self.rollback_depth_count.load(Ordering::Relaxed),
             uptime_ms: current_unix_millis().saturating_sub(self.start_time_ms),
         }
     }
@@ -1450,6 +1620,83 @@ yggdrasil_blocks_conway {}\n",
         out.push_str(&format!(
             "yggdrasil_fetch_batch_duration_seconds_count {}\n",
             self.fetch_batch_duration_count
+        ));
+
+        // R223 — Phase D.2 lifetime peer-stats aggregates.  Distinct
+        // from the live `known/active/established_peers` gauges
+        // which track current session counts; these accumulate
+        // monotonically across reconnects so dashboards can alert
+        // on real peer churn rate
+        // (`rate(yggdrasil_peer_lifetime_sessions_total[5m])`).
+        out.push_str(
+            "# HELP yggdrasil_peer_lifetime_sessions_total Cumulative count of successful peer sessions across all peers (lifetime, monotonic across reconnects).\n",
+        );
+        out.push_str("# TYPE yggdrasil_peer_lifetime_sessions_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_peer_lifetime_sessions_total {}\n",
+            self.peer_lifetime_sessions_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_peer_lifetime_failures_total Cumulative count of peer session failures (lifetime, monotonic across reconnects).\n",
+        );
+        out.push_str("# TYPE yggdrasil_peer_lifetime_failures_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_peer_lifetime_failures_total {}\n",
+            self.peer_lifetime_failures_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_peer_lifetime_bytes_in_total Cumulative bytes received from peers (lifetime, monotonic across reconnects; sourced from BlockFetch per-peer bytes_delivered).\n",
+        );
+        out.push_str("# TYPE yggdrasil_peer_lifetime_bytes_in_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_peer_lifetime_bytes_in_total {}\n",
+            self.peer_lifetime_bytes_in_total
+        ));
+        out.push_str(
+            "# HELP yggdrasil_peer_lifetime_unique_peers Count of distinct peers ever connected during this process lifetime.\n",
+        );
+        out.push_str("# TYPE yggdrasil_peer_lifetime_unique_peers gauge\n");
+        out.push_str(&format!(
+            "yggdrasil_peer_lifetime_unique_peers {}\n",
+            self.peer_lifetime_unique_peers
+        ));
+        out.push_str(
+            "# HELP yggdrasil_peer_lifetime_handshakes_total Cumulative successful NtN handshake completions across all peers.\n",
+        );
+        out.push_str("# TYPE yggdrasil_peer_lifetime_handshakes_total counter\n");
+        out.push_str(&format!(
+            "yggdrasil_peer_lifetime_handshakes_total {}\n",
+            self.peer_lifetime_handshakes_total
+        ));
+
+        // R225 — Phase D.1 rollback-depth histogram.  Bucket
+        // boundaries (in blocks): 1, 2, 5, 50, 2160 (k), 10 000,
+        // +Inf.  Lets operators distinguish shallow chain-reorg
+        // rollbacks from rare deep cross-epoch rollbacks (the
+        // Phase D.1 problematic case where current behaviour
+        // forces a re-sync from origin).
+        out.push_str(
+            "# HELP yggdrasil_rollback_depth_blocks Distribution of rollback depths (in blocks) observed during sync.\n",
+        );
+        out.push_str("# TYPE yggdrasil_rollback_depth_blocks histogram\n");
+        for (i, le) in NodeMetrics::ROLLBACK_DEPTH_BUCKETS.iter().enumerate() {
+            let le_str = if *le == u64::MAX {
+                "+Inf".to_string()
+            } else {
+                format!("{le}")
+            };
+            out.push_str(&format!(
+                "yggdrasil_rollback_depth_blocks_bucket{{le=\"{le_str}\"}} {}\n",
+                self.rollback_depth_buckets[i]
+            ));
+        }
+        out.push_str(&format!(
+            "yggdrasil_rollback_depth_blocks_sum {}\n",
+            self.rollback_depth_sum_blocks
+        ));
+        out.push_str(&format!(
+            "yggdrasil_rollback_depth_blocks_count {}\n",
+            self.rollback_depth_count
         ));
 
         out
@@ -1755,7 +2002,14 @@ mod tests {
                 || (field_name == "fetch_batch_duration_sum_micros"
                     && text.contains("yggdrasil_fetch_batch_duration_seconds_sum "))
                 || (field_name == "fetch_batch_duration_count"
-                    && text.contains("yggdrasil_fetch_batch_duration_seconds_count "));
+                    && text.contains("yggdrasil_fetch_batch_duration_seconds_count "))
+                // R225 — rollback-depth histogram.
+                || (field_name == "rollback_depth_buckets"
+                    && text.contains("yggdrasil_rollback_depth_blocks_bucket"))
+                || (field_name == "rollback_depth_sum_blocks"
+                    && text.contains("yggdrasil_rollback_depth_blocks_sum "))
+                || (field_name == "rollback_depth_count"
+                    && text.contains("yggdrasil_rollback_depth_blocks_count "));
             if !accepts {
                 missing.push(field_name);
             }

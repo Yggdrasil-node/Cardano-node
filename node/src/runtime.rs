@@ -694,6 +694,14 @@ impl OutboundPeerManager {
                 self.warm_peers
                     .insert(peer, ManagedWarmPeer::new(session, Instant::now()));
                 governor_state.record_success(peer);
+                // R223 — Phase D.2: bump the lifetime-stats session
+                // counters when a peer successfully transitions to
+                // warm.  Distinct from `record_success` above which
+                // resets the session-keyed `failures` map; this
+                // accumulates monotonically across reconnects so
+                // dashboards can distinguish "first contact" from
+                // "5th reconnect this hour" (peer churn).
+                governor_state.record_lifetime_session_started(peer);
                 tracer.trace_runtime(
                     "Net.Governor",
                     "Info",
@@ -707,6 +715,9 @@ impl OutboundPeerManager {
             }
             Err(err) => {
                 governor_state.record_failure(peer);
+                // R223 — Phase D.2: bump the lifetime-stats failure
+                // counter alongside the session-keyed one.
+                governor_state.record_lifetime_session_failure(peer);
                 tracer.trace_runtime(
                     "Net.Governor",
                     "Warning",
@@ -2492,6 +2503,63 @@ pub async fn run_governor_loop<I, V, L, F>(
                             c.established_local_root as u64,
                             c.active_local_root as u64,
                         );
+
+                        // R223 — Phase D.2: aggregate lifetime peer
+                        // stats across all known peers and publish
+                        // the totals as Prometheus counters.  Updated
+                        // on the same governor tick as the peer
+                        // selection counters so dashboards see a
+                        // consistent snapshot.
+                        //
+                        // R224 — refresh `bytes_in` per-peer from the
+                        // BlockFetch pool's cumulative
+                        // `bytes_delivered` counter before
+                        // aggregating.  The pool's counter is
+                        // already monotonic across reconnects (the
+                        // pool registry survives session changes),
+                        // so we use the cumulative-overwrite setter
+                        // `set_lifetime_bytes_in` rather than the
+                        // additive `record_lifetime_traffic` to
+                        // avoid double-counting.  Bytes-out is not
+                        // tracked yet (no analogous source on the
+                        // server-emit side) — left at 0 for a
+                        // future slice.
+                        if let Some(pool) = config.block_fetch_pool.as_ref() {
+                            if let Ok(p) = pool.lock() {
+                                for (peer, state) in p.peers.iter() {
+                                    governor_state.set_lifetime_bytes_in(
+                                        *peer,
+                                        state.bytes_delivered,
+                                    );
+                                }
+                            }
+                        }
+                        let (sessions_total, failures_total, bytes_in_total, handshakes_total) =
+                            governor_state.lifetime_stats.values().fold(
+                                (0u64, 0u64, 0u64, 0u64),
+                                |(sessions, failures, bytes_in, handshakes), s| {
+                                    (
+                                        sessions.saturating_add(s.sessions as u64),
+                                        failures.saturating_add(s.failures_total as u64),
+                                        bytes_in.saturating_add(s.bytes_in),
+                                        handshakes
+                                            .saturating_add(s.successful_handshakes as u64),
+                                    )
+                                },
+                            );
+                        m.set_peer_lifetime_sessions_total(sessions_total);
+                        m.set_peer_lifetime_failures_total(failures_total);
+                        m.set_peer_lifetime_bytes_in_total(bytes_in_total);
+                        // R226 — unique peer count + cumulative
+                        // handshakes.  Cardinality of the lifetime
+                        // map is a stable indicator of how many
+                        // distinct addresses this process has ever
+                        // observed (independent of how many times
+                        // each reconnected).
+                        m.set_peer_lifetime_unique_peers(
+                            governor_state.lifetime_stats.len() as u64,
+                        );
+                        m.set_peer_lifetime_handshakes_total(handshakes_total);
 
                         // Update connection-manager Prometheus counters from actual CM state.
                         let cm_c = {
@@ -5099,6 +5167,22 @@ where
                                 }
                             }
 
+                            // R225 — Phase D.1 first slice: record
+                            // rollback-depth observations into the
+                            // Prometheus histogram.  Unit is
+                            // rolled-back transactions (proxy for
+                            // block depth × txs/block); depth=0 for
+                            // confirm-shape rollbacks (e.g.
+                            // session-start RollBackward(Origin) on
+                            // a fresh DB).  Operators graph the
+                            // distribution to detect rare deep
+                            // cross-epoch rollbacks (the Phase D.1
+                            // problematic case).
+                            if progress.rollback_count > 0 {
+                                if let Some(m) = metrics {
+                                    m.record_rollback_depth(applied.rolled_back_tx_ids.len() as u64);
+                                }
+                            }
                             if !applied.rolled_back_tx_ids.is_empty() {
                                 tracer.trace_runtime(
                                     "ChainDB.Rollback",
@@ -5716,6 +5800,22 @@ where
                                 }
                             }
 
+                            // R225 — Phase D.1 first slice: record
+                            // rollback-depth observations into the
+                            // Prometheus histogram.  Unit is
+                            // rolled-back transactions (proxy for
+                            // block depth × txs/block); depth=0 for
+                            // confirm-shape rollbacks (e.g.
+                            // session-start RollBackward(Origin) on
+                            // a fresh DB).  Operators graph the
+                            // distribution to detect rare deep
+                            // cross-epoch rollbacks (the Phase D.1
+                            // problematic case).
+                            if progress.rollback_count > 0 {
+                                if let Some(m) = metrics {
+                                    m.record_rollback_depth(applied.rolled_back_tx_ids.len() as u64);
+                                }
+                            }
                             if !applied.rolled_back_tx_ids.is_empty() {
                                 tracer.trace_runtime(
                                     "ChainDB.Rollback",
