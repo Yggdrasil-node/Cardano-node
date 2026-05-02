@@ -12,10 +12,11 @@ nav_order: 2
 **Scope**: All subsystems from crypto through orchestration, covering all 7 eras (Byron → Conway)
 
 > **Current operational status**: see [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for the
-> R246 cumulative reference (246 rounds completed; all confirmed-active
+> R247 cumulative reference (247 rounds completed; all confirmed-active
 > code-level parity slices and all 6 documentary upstream pins closed;
-> remaining gates are operator-time rehearsals plus a fresh preview replay
-> over clean/repaired checkpoint state after the R246 runtime recovery fix).
+> remaining gates are operator-time rehearsals plus preview replay over
+> clean/repaired checkpoint state after the R246/R247 recovery and prefix
+> fixes).
 > The "Recently completed parity items" list below
 > tracks per-round changes; see also [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
 > per-round summary table and [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md)
@@ -36,7 +37,7 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved (post-R246 status):
+The Rust Cardano node (Yggdrasil) has achieved (post-R247 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
 - ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
@@ -46,6 +47,7 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R246 status):
 - ✅ **Consensus-side state persistence** (slot-indexed ChainDepState sidecars are authoritative for nonce/OpCert restart and rollback recovery; `stake_snapshots.cbor` remains the live stake-snapshot mirror)
 - ✅ **File-backed storage** (Immutable/Volatile with rollback + crash recovery; multi-peer dispatch verified)
 - ✅ **Preview Plutus replay parity** (CEK machine framework, V1/V2/V3 support wired; R246 validates raw `PlutusBinary` well-formedness, reference-input ordering, CEK memory accounting, protocol-aware validity intervals, arbitrary-precision Plutus `Integer`, Plutus `serialiseData` CBOR shape, and legacy registration-certificate redeemer collection through refscan slot `901725`; a later bounded live run reached checkpoint slot `1038614` before exposing stale persisted reward state from a pre-fix runtime recovery)
+- ✅ **Preview Origin-prefix BlockFetch parity** (R247 preserves the first ChainSync-announced concrete header as the BlockFetch lower bound when verified sync starts from `Point::Origin`; clean preview replay now stores slots `0`, `60`, `300`, and `320` and advances to slot `101100` without the prior missing-UTxO stop)
 - ✅ **Peer management** (governor with dual churn, big-ledger, backoff, inbound)
 - ✅ **Monitoring** (40+ metrics including R200's apply-batch duration histogram, server egress counters for BlockFetch/ChainSync/KeepAlive/TxSubmission2/PeerSharing, Prometheus/JSON endpoints, coloured stdout, detail levels, upstream backend recognition)
 - ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting, post-forge adoption check)
@@ -67,6 +69,7 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R246 status):
 **Recently completed parity items**:
 Older entries in this list preserve the status known at that round; the Executive Summary above is authoritative for current closure state.
 
+- ✅ **R247 Origin BlockFetch prefix preservation** — verified sync no longer drops the first ChainSync-announced prefix when a batch starts from `Point::Origin` and accumulates multiple roll-forward headers before fetching bodies. The helper `blockfetch_range_for_pending_forwards()` uses the first concrete announced header as the BlockFetch lower bound while preserving normal Origin-to-upper normalization for single-point callers. Focused regression `cargo test -p yggdrasil-node blockfetch_range_ --lib` passed; bounded clean preview replay stored early Byron slots `0`, `60`, `300`, and `320` and advanced to slot `101100`.
 - ✅ **R246 preview Plutus well-formedness parity** — preview replay no longer fails with `MalformedReferenceScripts` at the Babbage reference-script boundary and no longer hits the later Plutus validation mismatch at slot `840719`. The evaluator keeps upstream well-formedness enforcement active, treats on-chain scripts as raw `PlutusBinary` bytes (CBOR bytestring containing Flat), applies protocol-version language gates, sorts reference inputs by `ShelleyTxIn` for ScriptContext construction, uses CEK non-constant `ExMemory` value `1`, keeps Plutus `Integer` arbitrary precision across Flat, CBOR `PlutusData`, and builtins, and encodes pre-Conway upper-only validity intervals with inclusive `PV1.to`. Follow-up replay fixed Plutus `serialiseData` CBOR shape and legacy `AccountRegistration` redeemer/witness over-collection, with refscan clean through slot `901725`. A bounded live preview run then reached checkpoint `1038614` and exposed a non-Plutus reward-account mismatch caused by stale post-boundary checkpoints written before runtime recovery preserved current-epoch `pool_block_counts`; focused tests, release build, `cargo check-all`, `cargo test-all`, and `cargo lint` passed.
 - ✅ **R245 `cardano-ledger` BBODY/GOV drift refresh** — upstream advanced from `110b30e7abd8…` to `b90b97488da3…`. The GOV change switches `preceedingHardFork` to accumulated proposals; Yggdrasil's proposal validation already uses the accumulated pending-proposal view and has hard-fork sequencing tests. The BBODY change temporarily disables `HeaderProtVerTooHigh` on testnets until Dijkstra (`curProtVerMajor >= 12`); `VerificationConfig` now carries `network_magic` and mirrors the upstream condition while preserving the separate `MaxMajorProtVer` ceiling for all networks. Drift detector returns all 6 canonical pins in-sync again.
 - ✅ **R244 Byron genesis canonical JSON hash verification** — upstream `cardano-node` loads Byron genesis through `Cardano.Chain.Genesis.readGenesisData`, and `cardano-ledger` computes the hash over `Text.JSON.Canonical.renderCanonicalJSON` after `parseCanonicalJSON`. Yggdrasil now mirrors that path in `compute_byron_genesis_file_hash()`, wires it into `NodeConfigFile::verify_known_genesis_hashes()`, updates `Node.GenesisHash.Verified` to report `byronVerified`, and changes `validate-config` / manual docs from "3/4 verified" to "4/4 verified". Vendored mainnet, preprod, and preview Byron genesis files all match the declared upstream hashes.

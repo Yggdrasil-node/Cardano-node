@@ -522,7 +522,7 @@ fn normalize_blockfetch_range_points(lower: Point, upper: Point) -> Option<(Poin
     // single block at `upper`. Callers that need to detect this case and avoid
     // dropping the fetched block must inspect the *original* `from_point`
     // before normalization (see the dedup gate in
-    // `sync_batch_verified_with_tentative`).
+    // `blockfetch_range_for_pending_forwards`).
     let normalized_lower = if matches!(lower, Point::Origin) {
         upper
     } else {
@@ -1831,17 +1831,23 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
         if let Some(ctx) = vrf_ctx {
             let stake_dist = snapshots.set.pool_stake_distribution();
             if stake_dist.total_active_stake() > 0 {
+                let epoch_nonce = next_vrf_nonce_cursor
+                    .as_ref()
+                    .map(|state| state.epoch_nonce)
+                    .unwrap_or(ctx.nonce_state.epoch_nonce);
                 let valid = verify_block_vrf_with_stake(
                     block,
-                    next_vrf_nonce_cursor
-                        .as_ref()
-                        .map(|state| state.epoch_nonce)
-                        .unwrap_or(ctx.nonce_state.epoch_nonce),
+                    epoch_nonce,
                     &stake_dist,
                     ctx.active_slot_coeff,
                 )?;
                 if !valid {
-                    return Err(SyncError::Consensus(ConsensusError::VrfLeaderCheckFailed));
+                    return Err(SyncError::VrfVerification {
+                        slot: block.slot().0,
+                        era: block.era_label(),
+                        epoch_nonce,
+                        source: ConsensusError::VrfLeaderCheckFailed,
+                    });
                 }
             }
         }
@@ -3194,6 +3200,17 @@ impl MultiEraBlock {
             Self::Alonzo(b) => SlotNo(b.header.body.slot),
             Self::Babbage(b) => SlotNo(b.header.body.slot),
             Self::Conway(b) => SlotNo(b.header.body.slot),
+        }
+    }
+
+    /// Return the era decoder branch used for this block.
+    pub fn era_label(&self) -> &'static str {
+        match self {
+            Self::Byron { .. } => "Byron",
+            Self::Shelley(_) => "Shelley",
+            Self::Alonzo(_) => "Alonzo",
+            Self::Babbage(_) => "Babbage",
+            Self::Conway(_) => "Conway",
         }
     }
 
@@ -5234,8 +5251,7 @@ pub(crate) async fn sync_batch_verified_with_tentative(
     }
 
     if let Some(last_forward) = pending_forwards.last() {
-        let range_upper = last_forward.header_point.unwrap_or(last_forward.tip);
-        let effective_range = normalize_blockfetch_range_points(from_point, range_upper);
+        let effective_range = blockfetch_range_for_pending_forwards(from_point, &pending_forwards);
         let tentative_set = tentative_state
             .is_some_and(|state| try_set_tentative_header(state, &last_forward.raw_header));
 
@@ -5300,6 +5316,33 @@ struct PendingRollForward {
     raw_header: Vec<u8>,
     tip: Point,
     header_point: Option<Point>,
+}
+
+fn blockfetch_range_for_pending_forwards(
+    from_point: Point,
+    pending_forwards: &[PendingRollForward],
+) -> Option<(Point, Point)> {
+    let last_forward = pending_forwards.last()?;
+    let upper = last_forward.header_point.unwrap_or(last_forward.tip);
+
+    if matches!(from_point, Point::Origin) {
+        // BlockFetch cannot request from the virtual Origin point, but the
+        // verified batch loop may already have collected several ChainSync
+        // RollForward headers while still at Origin.  Use the first announced
+        // real block as the lower bound so the first BlockFetch window
+        // includes the whole announced prefix instead of only the final
+        // header.  This mirrors the upstream split between ChainSync
+        // discovery and BlockFetch over concrete block points.
+        if let Some(first_announced) = pending_forwards
+            .iter()
+            .filter_map(|forward| forward.header_point)
+            .find(|point| matches!(point, Point::BlockPoint(_, _)))
+        {
+            return normalize_blockfetch_range_points(first_announced, upper);
+        }
+    }
+
+    normalize_blockfetch_range_points(from_point, upper)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -6644,6 +6687,38 @@ mod tests {
         hash[..bytes.len()].copy_from_slice(&bytes);
         hash[31] = 0xff;
         Point::BlockPoint(SlotNo(slot), HeaderHash(hash))
+    }
+
+    fn pending_forward(slot: u64) -> PendingRollForward {
+        PendingRollForward {
+            raw_header: Vec::new(),
+            tip: block_point(10_000),
+            header_point: Some(block_point(slot)),
+        }
+    }
+
+    #[test]
+    fn blockfetch_range_from_origin_uses_first_announced_header() {
+        let pending = vec![
+            pending_forward(0),
+            pending_forward(20),
+            pending_forward(300),
+        ];
+
+        assert_eq!(
+            blockfetch_range_for_pending_forwards(Point::Origin, &pending),
+            Some((block_point(0), block_point(300))),
+        );
+    }
+
+    #[test]
+    fn blockfetch_range_from_non_origin_uses_current_point_lower_bound() {
+        let pending = vec![pending_forward(340), pending_forward(360)];
+
+        assert_eq!(
+            blockfetch_range_for_pending_forwards(block_point(320), &pending),
+            Some((block_point(320), block_point(360))),
+        );
     }
 
     fn storage_block_for_point(point: Point, block_no: u64) -> Block {

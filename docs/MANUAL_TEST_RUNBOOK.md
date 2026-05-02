@@ -90,6 +90,18 @@ before runtime recovery preserved current-epoch pool block counts. Verify
 past that point only on a clean replay or after rolling back to a
 pre-boundary checkpoint with matching sidecars.
 
+R247 clean preview prefix gate:
+
+When starting from an empty database, the first verified sync batch must
+fetch every ChainSync-announced block from the first concrete preview
+header onward. A failure around Alonzo slot `86600` with a missing input
+from transaction `e3ca57e8f323265742a8f4e79ff9af884c9ff8719bd4f7788adaea4c33ba07b6`
+means the initial BlockFetch range collapsed an `Origin` lower bound to
+the final announced upper header and skipped prefix blocks. The fixed
+path uses the first announced concrete header as the BlockFetch lower
+bound; a fresh preview replay verified slots `0`, `60`, `300`, and
+`320` are all stored before continuing to slot `101100`.
+
 This does **not** prove real block adoption until the generated pool is registered and delegated on-chain. With the default zero pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the preview stake-key deposit plus pool deposit and transaction fees (currently 502 tADA plus fees from the vendored preview genesis), submit the generated certificates, then wait for active stake before expecting leader election.
 
 When constructing the registration transaction manually, keep certificate order deterministic: stake-address registration first, pool registration second, stake delegation third. Submitting delegation before the pool-registration certificate is processed is rejected by the preview ledger as `DelegateeStakePoolNotRegisteredDELEG`.

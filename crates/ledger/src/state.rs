@@ -3279,22 +3279,23 @@ impl LedgerState {
     ///
     /// Byron genesis distributes initial Ada via two channels:
     /// `avvmDistr` (ADA Voucher Vending Machine) and `nonAvvmBalances`.
-    /// For each non-zero entry the upstream `genesisUtxo` formula
-    /// computes:
+    /// For each non-zero entry the upstream `genesisUtxo` /
+    /// `fromTxOut` formula computes:
     ///
     /// ```text
-    ///     tx_id = Blake2b-256( CBOR( [address_cbor, amount] ) )
+    ///     tx_id = Blake2b-256( CBOR(address) )
     ///     utxo[ TxIn(tx_id, 0) ] = TxOut(address, amount)
     /// ```
     ///
-    /// where `address_cbor` is the canonical CBOR encoding of the Byron
-    /// address (already preserved as raw bytes in `address`).  The
-    /// resulting UTxO is available immediately at slot 0 so the first
-    /// Byron transaction that spends a genesis output can resolve its
-    /// inputs.
+    /// where `address` is the canonical CBOR encoding of the Byron
+    /// `Address` (already preserved as raw bytes in `address`).  The
+    /// amount is part of the produced `TxOut`, not the pseudo transaction
+    /// id. The resulting UTxO is available immediately at slot 0 so the
+    /// first Byron transaction that spends a genesis output can resolve
+    /// its inputs.
     ///
-    /// Reference: `Cardano.Chain.Genesis.UTxO.genesisUtxo` in
-    /// `cardano-ledger/eras/byron/ledger/impl/src/Cardano/Chain/Genesis/UTxO.hs`.
+    /// Reference: `Cardano.Chain.Genesis.UTxO.genesisUtxo` and
+    /// `Cardano.Chain.UTxO.UTxO.fromTxOut` in the upstream Byron ledger.
     pub fn seed_byron_genesis_utxo(&mut self, entries: impl IntoIterator<Item = (Vec<u8>, u64)>) {
         use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut};
         use crate::utxo::MultiEraTxOut;
@@ -3303,18 +3304,9 @@ impl LedgerState {
             if amount == 0 {
                 continue;
             }
-            // The Byron genesis TxIn for an entry `(addr, amount)` is
-            //   TxIn { tx_id = blake2b_256(serialize Address), index = 0 }
-            // i.e. the CBOR bytes of the *address alone* are hashed —
-            // NOT a `TxOut(addr, amount)` tuple.  This matches pallas
-            // `genesis_non_avvm_utxos` / `genesis_avvm_utxos`
-            // (`pallas-configs/src/byron.rs`), which is the
-            // implementation verified against on-chain pre-production
-            // and mainnet genesis distributions.
-            //
-            // The base58-decoded address bytes ARE the canonical CBOR
+            // The base58-decoded address bytes are the canonical CBOR
             // encoding of the Byron `Address` (CBOR-in-CBOR with CRC32),
-            // so we hash them directly.
+            // so `serializeCborHash txOutAddress` is this direct hash.
             let tx_id = yggdrasil_crypto::hash_bytes_256(&address).0;
             let txin = ShelleyTxIn {
                 transaction_id: tx_id,

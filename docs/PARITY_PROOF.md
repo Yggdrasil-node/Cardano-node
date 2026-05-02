@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 246)
+title: Parity Proof Report (Round 247)
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,12 +7,13 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R246 refresh (2026-05-02)
-**Cumulative arc**: R1 → R246
+**Document round**: R247 refresh (2026-05-02)
+**Cumulative arc**: R1 → R247
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
 **Workspace tests**: 4.7K+ passing, 0 failing; focused R246 tests,
 release build, `cargo check-all`, `cargo test-all`, and `cargo lint`
-pass after the latest Plutus/certificate/runtime recovery patches
+pass after the Plutus/certificate/runtime recovery patches; focused
+R247 BlockFetch-prefix regression and bounded clean preview replay pass
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the
@@ -259,6 +260,40 @@ operational evidence past that point.
 
 ---
 
+## 2e. Preview Origin-prefix BlockFetch parity
+
+R247 fixes the clean-preview replay stop caused by the first verified
+sync batch starting at `Point::Origin`, collecting several ChainSync
+roll-forward headers, then requesting BlockFetch only for the last
+announced header. Since BlockFetch requires concrete points and cannot
+fetch from virtual Origin, the batch now uses the first announced concrete
+header as the lower bound.
+
+Local impact:
+
+- `sync_batch_verified_with_tentative()` routes pending roll-forward
+  headers through `blockfetch_range_for_pending_forwards()`.
+- `normalize_blockfetch_range_points()` keeps its Origin-to-upper behavior
+  for ordinary single-point callers; the prefix-aware helper handles the
+  multi-header verified-batch case.
+- `crates/ledger/src/state.rs` comments now document upstream Byron
+  genesis pseudo-output ids correctly: hash serialized `Address` only,
+  not `[address, amount]`.
+
+Focused verification:
+
+```text
+cargo test -p yggdrasil-node blockfetch_range_ --lib
+```
+
+Operational verification used a fresh preview database and the existing
+preview producer config. The replay stored the early prefix blocks
+including slots `0`, `60`, `300`, and `320`, resolved the previously
+missing Byron lineage, and advanced to slot `101100` before the bounded
+run ended.
+
+---
+
 ## 3. Sync robustness — Phase B verified
 
 R199 verified Phase B (R91 multi-peer storage livelock) is fully
@@ -467,6 +502,7 @@ upstream while preserving SHA-anchored vendored fixture provenance.
 | **Config integrity** | Byron + Shelley-family genesis hash verification | ✅ closed | R244 |
 | **Ledger drift** | Conway BBODY testnet `HeaderProtVerTooHigh` grace | ✅ closed | R245 |
 | **Plutus replay** | Preview reference-script well-formedness/runtime parity | ✅ closed | R246 |
+| **Preview prefix fetch** | Origin-start verified sync preserves first ChainSync-announced BlockFetch prefix | ✅ closed | R247 |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 
