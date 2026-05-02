@@ -44,7 +44,45 @@ pub fn validate_all_outputs_min_utxo(
     outputs: &[MultiEraTxOut],
 ) -> Result<(), LedgerError> {
     for output in outputs {
-        validate_min_utxo(params, output)?;
+    validate_min_utxo(params, output)?;
+    }
+    Ok(())
+}
+
+/// Validates all outputs using caller-supplied serialized `TxOut` sizes.
+///
+/// Babbage-family ledger rules operate on `Sized (TxOut era)` values, so the
+/// size used by `coins_per_utxo_byte` is the original on-wire `TxOut` byte
+/// span, not necessarily the size of our canonical typed re-encoding. This is
+/// observable for Babbage-era legacy array outputs, which are two bytes smaller
+/// than the equivalent post-Alonzo map output.
+pub fn validate_all_outputs_min_utxo_with_sizes(
+    params: &ProtocolParameters,
+    outputs: &[MultiEraTxOut],
+    serialized_sizes: &[usize],
+) -> Result<(), LedgerError> {
+    if outputs.len() != serialized_sizes.len() {
+        return Err(LedgerError::CborInvalidLength {
+            expected: outputs.len(),
+            actual: serialized_sizes.len(),
+        });
+    }
+    for (output, serialized_size) in outputs.iter().zip(serialized_sizes.iter().copied()) {
+        validate_min_utxo_for_size(params, output, serialized_size)?;
+    }
+    Ok(())
+}
+
+fn validate_min_utxo_for_size(
+    params: &ProtocolParameters,
+    output: &MultiEraTxOut,
+    serialized_size: usize,
+) -> Result<(), LedgerError> {
+    if let Some(minimum) = params.min_lovelace_for_utxo(serialized_size) {
+        let actual = output.coin();
+        if actual < minimum {
+            return Err(LedgerError::OutputTooSmall { minimum, actual });
+        }
     }
     Ok(())
 }

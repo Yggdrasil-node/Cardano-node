@@ -299,8 +299,15 @@ pub fn compute_script_data_hash(
     let redeemers_bytes = raw_redeemers.unwrap_or_else(|| {
         encode_redeemers_for_script_data_hash(&ws.redeemers, conway_redeemer_format)
     });
-    let datums_bytes =
-        raw_datums.unwrap_or_else(|| encode_datums_for_script_data_hash(&ws.plutus_data));
+    let datums_bytes = if ws.plutus_data.is_empty() {
+        // Upstream `SafeToHash (ScriptIntegrity era)` omits `TxDats`
+        // whenever the decoded datum map is empty, even if witness field 4
+        // was present as an empty array. Only non-empty datums preserve their
+        // memoized original bytes.
+        Vec::new()
+    } else {
+        raw_datums.unwrap_or_else(|| encode_datums_for_script_data_hash(&ws.plutus_data))
+    };
     let language_views = encode_language_views_for_script_data_hash(
         &ws,
         protocol_params,
@@ -1911,6 +1918,35 @@ mod tests {
 
         assert_eq!(computed, expected);
         assert_ne!(computed, canonical_reencoded);
+    }
+
+    #[test]
+    fn script_data_hash_omits_present_empty_datums_field() {
+        // Witness set with one redeemer and field 4 present as an empty datum
+        // array. Upstream checks decoded `TxDats` emptiness, so the `80` bytes
+        // for the empty field are not part of the script integrity preimage.
+        let raw_redeemers = [0x81, 0x84, 0x00, 0x00, 0x00, 0x82, 0x01, 0x02];
+        let witness = [
+            0xa2, 0x05, 0x81, 0x84, 0x00, 0x00, 0x00, 0x82, 0x01, 0x02, 0x04, 0x80,
+        ];
+
+        let computed =
+            compute_script_data_hash(Some(&witness), None, false, None, None, None, None)
+                .expect("script data hash");
+
+        let mut expected_preimage = Vec::new();
+        expected_preimage.extend_from_slice(&raw_redeemers);
+        expected_preimage.push(0xa0);
+        let expected = yggdrasil_crypto::blake2b::hash_bytes_256(&expected_preimage).0;
+
+        let mut wrong_preimage = Vec::new();
+        wrong_preimage.extend_from_slice(&raw_redeemers);
+        wrong_preimage.push(0x80);
+        wrong_preimage.push(0xa0);
+        let wrong = yggdrasil_crypto::blake2b::hash_bytes_256(&wrong_preimage).0;
+
+        assert_eq!(computed, expected);
+        assert_ne!(computed, wrong);
     }
 
     #[test]

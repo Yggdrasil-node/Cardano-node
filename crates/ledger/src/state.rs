@@ -4807,8 +4807,10 @@ impl LedgerState {
                         tx.size_for_fee_and_max(),
                         tx.body.fee,
                         &outputs,
+                        None,
                         tx.body.collateral.as_deref(),
                         total_eu.as_ref(),
+                        None,
                         None,
                         None,
                         has_redeemers,
@@ -5183,15 +5185,19 @@ impl LedgerState {
                         .collateral_return
                         .as_ref()
                         .map(|o| MultiEraTxOut::Babbage(o.clone()));
+                    let output_sizes =
+                        crate::eras::babbage::extract_babbage_tx_output_raw_sizes(tx.raw_body())?;
                     validate_alonzo_plus_tx(
                         params,
                         &self.multi_era_utxo,
                         tx.size_for_fee_and_max(),
                         tx.body.fee,
                         &outputs,
+                        Some(&output_sizes.outputs),
                         tx.body.collateral.as_deref(),
                         total_eu.as_ref(),
                         coll_ret.as_ref(),
+                        output_sizes.collateral_return,
                         tx.body.total_collateral,
                         has_redeemers,
                         0,
@@ -5604,15 +5610,19 @@ impl LedgerState {
                         &tx.body.inputs,
                         tx.body.reference_inputs.as_deref(),
                     );
+                    let output_sizes =
+                        crate::eras::babbage::extract_babbage_tx_output_raw_sizes(tx.raw_body())?;
                     validate_alonzo_plus_tx(
                         params,
                         &self.multi_era_utxo,
                         tx.size_for_fee_and_max(),
                         tx.body.fee,
                         &outputs,
+                        Some(&output_sizes.outputs),
                         tx.body.collateral.as_deref(),
                         total_eu.as_ref(),
                         coll_ret.as_ref(),
+                        output_sizes.collateral_return,
                         tx.body.total_collateral,
                         has_redeemers,
                         ref_scripts_size,
@@ -6949,8 +6959,10 @@ impl LedgerState {
                     *tx_size,
                     body.fee,
                     &outputs,
+                    None,
                     body.collateral.as_deref(),
                     total_eu.as_ref(),
+                    None,
                     None,
                     None,
                     total_eu.is_some(),
@@ -7276,6 +7288,7 @@ impl LedgerState {
             crate::types::TxId,
             usize,
             BabbageTxBody,
+            crate::eras::babbage::BabbageTxOutputRawSizes,
             Option<Vec<u8>>,
             Option<Vec<u8>>,
             Option<bool>,
@@ -7284,10 +7297,14 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = BabbageTxBody::from_cbor_bytes(&tx.body)?;
+                let output_sizes = crate::eras::babbage::extract_babbage_tx_output_raw_sizes(
+                    &tx.body,
+                )?;
                 Ok((
                     tx.id,
                     tx.serialized_size(),
                     body,
+                    output_sizes,
                     tx.witnesses.clone(),
                     tx.auxiliary_data.clone(),
                     tx.is_valid,
@@ -7299,7 +7316,7 @@ impl LedgerState {
         {
             let wb_refs: Vec<Option<&[u8]>> = decoded
                 .iter()
-                .map(|(_, _, _, wb, _, _)| wb.as_deref())
+                .map(|(_, _, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
         }
@@ -7315,7 +7332,7 @@ impl LedgerState {
         let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
-        for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
+        for (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid) in &decoded {
             let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -7405,9 +7422,11 @@ impl LedgerState {
                     *tx_size,
                     body.fee,
                     &outputs,
+                    Some(&output_sizes.outputs),
                     body.collateral.as_deref(),
                     total_eu.as_ref(),
                     coll_ret.as_ref(),
+                    output_sizes.collateral_return,
                     body.total_collateral,
                     total_eu.is_some(),
                     0,
@@ -7746,6 +7765,7 @@ impl LedgerState {
             crate::types::TxId,
             usize,
             ConwayTxBody,
+            crate::eras::babbage::BabbageTxOutputRawSizes,
             Option<Vec<u8>>,
             Option<Vec<u8>>,
             Option<bool>,
@@ -7754,10 +7774,14 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = ConwayTxBody::from_cbor_bytes(&tx.body)?;
+                let output_sizes = crate::eras::babbage::extract_babbage_tx_output_raw_sizes(
+                    &tx.body,
+                )?;
                 Ok((
                     tx.id,
                     tx.serialized_size(),
                     body,
+                    output_sizes,
                     tx.witnesses.clone(),
                     tx.auxiliary_data.clone(),
                     tx.is_valid,
@@ -7769,7 +7793,7 @@ impl LedgerState {
         {
             let wb_refs: Vec<Option<&[u8]>> = decoded
                 .iter()
-                .map(|(_, _, _, wb, _, _)| wb.as_deref())
+                .map(|(_, _, _, _, wb, _, _)| wb.as_deref())
                 .collect();
             validate_block_ex_units(self.protocol_params.as_ref(), &wb_refs)?;
         }
@@ -7798,7 +7822,7 @@ impl LedgerState {
                 // newly produced outputs from preceding txs.
                 let mut overlay: std::collections::HashMap<ShelleyTxIn, MultiEraTxOut> =
                     std::collections::HashMap::new();
-                for (tx_id, _, body, _, _, is_valid) in &decoded {
+                for (tx_id, _, body, _, _, _, is_valid) in &decoded {
                     // Measure ref-script size from ORIGINAL utxo + overlay
                     // (overlay entries take precedence conceptually but won't
                     // collide with existing entries since they use fresh TxIds).
@@ -7841,7 +7865,7 @@ impl LedgerState {
                 }
             } else {
                 // PV <= 10: use pre-block UTxO (static) for all txs.
-                for (_, _, body, _, _, _) in &decoded {
+                for (_, _, body, _, _, _, _) in &decoded {
                     block_ref_total = block_ref_total.saturating_add(
                         self.multi_era_utxo
                             .total_ref_scripts_size(&body.inputs, body.reference_inputs.as_deref()),
@@ -7875,7 +7899,7 @@ impl LedgerState {
             .unwrap_or(0);
         let current_treasury = self.accounting.treasury;
         let cert_ctx = self.certificate_validation_context();
-        for (tx_id, tx_size, body, witness_bytes, aux_data, is_valid) in &decoded {
+        for (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid) in &decoded {
             let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -7984,9 +8008,11 @@ impl LedgerState {
                     *tx_size,
                     body.fee,
                     &outputs,
+                    Some(&output_sizes.outputs),
                     body.collateral.as_deref(),
                     total_eu.as_ref(),
                     coll_ret.as_ref(),
+                    output_sizes.collateral_return,
                     body.total_collateral,
                     total_eu.is_some(),
                     ref_scripts_size,
@@ -10957,9 +10983,11 @@ fn validate_alonzo_plus_tx(
     tx_body_size: usize,
     declared_fee: u64,
     outputs: &[MultiEraTxOut],
+    output_raw_sizes: Option<&[usize]>,
     collateral_inputs: Option<&[crate::eras::shelley::ShelleyTxIn]>,
     total_ex_units: Option<&crate::eras::alonzo::ExUnits>,
     collateral_return: Option<&MultiEraTxOut>,
+    collateral_return_raw_size: Option<usize>,
     total_collateral: Option<u64>,
     has_redeemers: bool,
     ref_scripts_size: usize,
@@ -10990,7 +11018,26 @@ fn validate_alonzo_plus_tx(
     } else {
         outputs
     };
-    crate::min_utxo::validate_all_outputs_min_utxo(params, all_outputs)?;
+    let mut all_output_sizes_buf: Vec<usize>;
+    let all_output_raw_sizes = match (output_raw_sizes, collateral_return) {
+        (Some(sizes), Some(_)) => {
+            all_output_sizes_buf = Vec::with_capacity(sizes.len() + 1);
+            all_output_sizes_buf.extend_from_slice(sizes);
+            if let Some(size) = collateral_return_raw_size {
+                all_output_sizes_buf.push(size);
+                Some(all_output_sizes_buf.as_slice())
+            } else {
+                None
+            }
+        }
+        (Some(sizes), None) => Some(sizes),
+        _ => None,
+    };
+    if let Some(sizes) = all_output_raw_sizes {
+        crate::min_utxo::validate_all_outputs_min_utxo_with_sizes(params, all_outputs, sizes)?;
+    } else {
+        crate::min_utxo::validate_all_outputs_min_utxo(params, all_outputs)?;
+    }
     crate::min_utxo::validate_output_not_too_big(params, all_outputs)?;
     crate::min_utxo::validate_no_zero_valued_multi_asset(all_outputs)?;
     crate::min_utxo::validate_output_boot_addr_attrs(all_outputs)?;
@@ -23608,7 +23655,8 @@ mod tests {
         let outputs = vec![];
         // has_redeemers = true, collateral_inputs = None → must fail
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, true, 0, false,
+            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, None, true, 0,
+            false,
         );
         assert!(matches!(
             result,
@@ -23628,7 +23676,9 @@ mod tests {
             200,
             200_000,
             &outputs,
+            None,
             Some(&[]),
+            None,
             None,
             None,
             None,
@@ -23649,7 +23699,8 @@ mod tests {
         let outputs = vec![];
         // has_redeemers = false, collateral_inputs = None → ok (no scripts)
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, false, 0, false,
+            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, None, false, 0,
+            false,
         );
         assert!(result.is_ok());
     }
@@ -23682,7 +23733,9 @@ mod tests {
             200,
             200_000,
             &outputs,
+            None,
             Some(&collateral_inputs),
+            None,
             None,
             None,
             None,
@@ -23726,6 +23779,7 @@ mod tests {
             None,
             Some(&cr),
             None,
+            None,
             false,
             0,
             false,
@@ -23764,7 +23818,9 @@ mod tests {
             200,
             200_000,
             &outputs,
+            None,
             Some(&inputs),
+            None,
             None,
             None,
             None,

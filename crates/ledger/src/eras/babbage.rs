@@ -135,6 +135,21 @@ pub struct BabbageTxOut {
     pub script_ref: Option<ScriptRef>,
 }
 
+/// Original serialized `TxOut` sizes carried by a Babbage-family transaction
+/// body.
+///
+/// Upstream stores transaction-body outputs as `Sized (TxOut era)`, and
+/// min-UTxO uses that original byte size. This matters when a Babbage or Conway
+/// transaction uses the legacy array output encoding instead of the post-Alonzo
+/// map encoding.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BabbageTxOutputRawSizes {
+    /// Raw serialized sizes for body outputs in transaction order.
+    pub outputs: Vec<usize>,
+    /// Raw serialized size for the collateral return output, when present.
+    pub collateral_return: Option<usize>,
+}
+
 impl CborEncode for BabbageTxOut {
     fn encode_cbor(&self, enc: &mut Encoder) {
         let mut field_count: u64 = 2; // keys 0, 1
@@ -253,6 +268,89 @@ fn decode_post_alonzo_txout(dec: &mut Decoder<'_>) -> Result<BabbageTxOut, Ledge
         datum_option,
         script_ref,
     })
+}
+
+/// Extract original serialized output sizes from a Babbage-family transaction
+/// body.
+///
+/// This is intentionally a span walker rather than a typed decode/re-encode
+/// path. The Babbage CDDL permits both legacy array outputs and map-format
+/// outputs; the two forms are semantically equivalent but have different byte
+/// sizes, and upstream min-UTxO validation uses the original `Sized TxOut`
+/// bytes.
+pub fn extract_babbage_tx_output_raw_sizes(
+    raw_body: &[u8],
+) -> Result<BabbageTxOutputRawSizes, LedgerError> {
+    let mut dec = Decoder::new(raw_body);
+    let mut sizes = BabbageTxOutputRawSizes::default();
+    let mut saw_outputs = false;
+
+    match dec.map_begin()? {
+        Some(count) => {
+            for _ in 0..count {
+                extract_output_size_field(&mut dec, &mut sizes, &mut saw_outputs)?;
+            }
+        }
+        None => {
+            while !dec.is_break() {
+                extract_output_size_field(&mut dec, &mut sizes, &mut saw_outputs)?;
+            }
+            dec.consume_break()?;
+        }
+    }
+
+    if !saw_outputs {
+        return Err(LedgerError::CborInvalidLength {
+            expected: 1,
+            actual: 0,
+        });
+    }
+    Ok(sizes)
+}
+
+fn extract_output_size_field(
+    dec: &mut Decoder<'_>,
+    sizes: &mut BabbageTxOutputRawSizes,
+    saw_outputs: &mut bool,
+) -> Result<(), LedgerError> {
+    let key = dec.unsigned()?;
+    match key {
+        1 => {
+            sizes.outputs = extract_output_array_item_sizes(dec)?;
+            *saw_outputs = true;
+        }
+        16 => {
+            let start = dec.position();
+            dec.skip()?;
+            sizes.collateral_return = Some(dec.position() - start);
+        }
+        _ => {
+            dec.skip()?;
+        }
+    }
+    Ok(())
+}
+
+fn extract_output_array_item_sizes(dec: &mut Decoder<'_>) -> Result<Vec<usize>, LedgerError> {
+    let mut sizes = Vec::new();
+    match dec.array_begin()? {
+        Some(count) => {
+            for _ in 0..count {
+                let start = dec.position();
+                dec.skip()?;
+                sizes.push(dec.position() - start);
+            }
+        }
+        None => {
+            while !dec.is_break() {
+                let start = dec.position();
+                dec.skip()?;
+                sizes.push(dec.position() - start);
+            }
+            dec.consume_break()?;
+        }
+    }
+    Ok(sizes)
 }
 
 // ---------------------------------------------------------------------------
