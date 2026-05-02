@@ -4327,6 +4327,7 @@ mod tests {
                 match v {
                     QueryCommand::CurrentEra => "CurrentEra",
                     QueryCommand::Tip => "Tip",
+                    QueryCommand::ChainBlockNo => "ChainBlockNo",
                     QueryCommand::CurrentEpoch => "CurrentEpoch",
                     QueryCommand::ProtocolParams => "ProtocolParams",
                     QueryCommand::UtxoByAddress { .. } => "UtxoByAddress",
@@ -4354,6 +4355,7 @@ mod tests {
             vec![
                 mk(QueryCommand::CurrentEra),
                 mk(QueryCommand::Tip),
+                mk(QueryCommand::ChainBlockNo),
                 mk(QueryCommand::CurrentEpoch),
                 mk(QueryCommand::ProtocolParams),
                 mk(QueryCommand::UtxoByAddress {
