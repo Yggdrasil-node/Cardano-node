@@ -44,7 +44,7 @@ pub fn validate_all_outputs_min_utxo(
     outputs: &[MultiEraTxOut],
 ) -> Result<(), LedgerError> {
     for output in outputs {
-    validate_min_utxo(params, output)?;
+        validate_min_utxo(params, output)?;
     }
     Ok(())
 }
@@ -220,6 +220,8 @@ fn byron_addr_attrs_size(raw: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eras::babbage::BabbageTxOut;
+    use crate::eras::mary::Value;
     use crate::eras::shelley::ShelleyTxOut;
 
     fn shelley_params() -> ProtocolParameters {
@@ -295,6 +297,34 @@ mod tests {
         ];
         let result = validate_all_outputs_min_utxo(&params, &outputs);
         assert!(matches!(result, Err(LedgerError::OutputTooSmall { .. })));
+    }
+
+    #[test]
+    fn babbage_min_utxo_accepts_legacy_array_raw_size() {
+        let params = alonzo_params();
+        let mut output = MultiEraTxOut::Babbage(BabbageTxOut {
+            address: vec![0x01; 57],
+            amount: Value::Coin(1_000_000),
+            datum_option: None,
+            script_ref: None,
+        });
+        let canonical_size = output.inner_cbor_size();
+        let raw_size = canonical_size - 2;
+        let amount = params.min_lovelace_for_utxo(raw_size).unwrap();
+        if let MultiEraTxOut::Babbage(out) = &mut output {
+            out.amount = Value::Coin(amount);
+        }
+        assert_eq!(output.inner_cbor_size(), canonical_size);
+
+        assert_eq!(
+            params.min_lovelace_for_utxo(canonical_size).unwrap(),
+            amount + 8_620
+        );
+        assert!(matches!(
+            validate_min_utxo(&params, &output),
+            Err(LedgerError::OutputTooSmall { .. })
+        ));
+        assert!(validate_all_outputs_min_utxo_with_sizes(&params, &[output], &[raw_size]).is_ok());
     }
 
     // ----- Zero-valued multi-asset output tests -----

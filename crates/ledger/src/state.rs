@@ -7297,9 +7297,8 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = BabbageTxBody::from_cbor_bytes(&tx.body)?;
-                let output_sizes = crate::eras::babbage::extract_babbage_tx_output_raw_sizes(
-                    &tx.body,
-                )?;
+                let output_sizes =
+                    crate::eras::babbage::extract_babbage_tx_output_raw_sizes(&tx.body)?;
                 Ok((
                     tx.id,
                     tx.serialized_size(),
@@ -7736,7 +7735,8 @@ impl LedgerState {
         // Skip is_valid=false transactions — upstream alonzoEvalScriptsTxInvalid
         // returns `pure pup` (no PPUP) and does not run DELEGS (no MIR).
         let ppup_ctx = self.ppup_slot_context(slot);
-        for (_tx_id, _tx_size, body, _witness_bytes, _aux_data, is_valid) in &decoded {
+        for (_tx_id, _tx_size, body, _output_sizes, _witness_bytes, _aux_data, is_valid) in &decoded
+        {
             if is_valid.unwrap_or(true) {
                 if let Some(ref update) = body.update {
                     self.validate_ppup_proposal(update, ppup_ctx.as_ref())?;
@@ -7774,9 +7774,8 @@ impl LedgerState {
             .iter()
             .map(|tx| {
                 let body = ConwayTxBody::from_cbor_bytes(&tx.body)?;
-                let output_sizes = crate::eras::babbage::extract_babbage_tx_output_raw_sizes(
-                    &tx.body,
-                )?;
+                let output_sizes =
+                    crate::eras::babbage::extract_babbage_tx_output_raw_sizes(&tx.body)?;
                 Ok((
                     tx.id,
                     tx.serialized_size(),
@@ -23655,7 +23654,7 @@ mod tests {
         let outputs = vec![];
         // has_redeemers = true, collateral_inputs = None → must fail
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, None, true, 0,
+            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, None, None, true, 0,
             false,
         );
         assert!(matches!(
@@ -23699,7 +23698,7 @@ mod tests {
         let outputs = vec![];
         // has_redeemers = false, collateral_inputs = None → ok (no scripts)
         let result = validate_alonzo_plus_tx(
-            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, None, false, 0,
+            &params, &utxo, 200, 200_000, &outputs, None, None, None, None, None, None, false, 0,
             false,
         );
         assert!(result.is_ok());
@@ -23775,6 +23774,7 @@ mod tests {
             200,
             200_000,
             &outputs,
+            None,
             None,
             None,
             Some(&cr),

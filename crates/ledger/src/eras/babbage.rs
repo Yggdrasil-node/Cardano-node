@@ -1103,6 +1103,30 @@ mod tests {
         assert_ne!(without.to_cbor_bytes(), with.to_cbor_bytes());
     }
 
+    #[test]
+    fn extract_output_raw_sizes_preserves_legacy_array_txout_size() {
+        let out = BabbageTxOut {
+            amount: Value::Coin(1_030_090),
+            ..mk_babbage_txout()
+        };
+        let mut legacy = Encoder::new();
+        legacy.array(2);
+        legacy.bytes(&out.address);
+        out.amount.encode_cbor(&mut legacy);
+        let legacy = legacy.into_bytes();
+        let map_form = out.to_cbor_bytes();
+        assert_eq!(map_form.len(), legacy.len() + 2);
+
+        let mut body = Encoder::new();
+        body.map(2);
+        body.unsigned(1).array(1).raw(&legacy);
+        body.unsigned(16).raw(&map_form);
+
+        let sizes = extract_babbage_tx_output_raw_sizes(&body.into_bytes()).unwrap();
+        assert_eq!(sizes.outputs, vec![legacy.len()]);
+        assert_eq!(sizes.collateral_return, Some(map_form.len()));
+    }
+
     // ── BabbageTxBody ──────────────────────────────────────────────────
 
     fn mk_babbage_body() -> BabbageTxBody {
