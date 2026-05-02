@@ -347,6 +347,7 @@ fn build_tx_info(
     let valid_range = posix_time_range(
         tx_ctx.validity_start.map(|s| evaluator.slot_to_posix_ms(s)),
         tx_ctx.ttl.map(|t| evaluator.slot_to_posix_ms(t)),
+        tx_ctx.protocol_version,
     );
 
     let signatories = PlutusData::List(
@@ -554,7 +555,7 @@ fn build_tx_info(
 
 fn sorted_witness_datums(tx_ctx: &TxContext) -> Vec<(&[u8; 32], &PlutusData)> {
     let mut datums: Vec<_> = tx_ctx.witness_datums.iter().collect();
-    datums.sort_by(|(a, _), (b, _)| a.cmp(b));
+    datums.sort_by_key(|(hash, _)| *hash);
     datums
 }
 
@@ -562,7 +563,11 @@ fn sorted_witness_datums(tx_ctx: &TxContext) -> Vec<(&[u8; 32], &PlutusData)> {
 ///
 /// `Interval (LowerBound lb inclusive) (UpperBound ub inclusive)`
 /// layout: Constr(0, [lower_bound, upper_bound])
-fn posix_time_range(start: Option<u64>, end: Option<u64>) -> PlutusData {
+fn posix_time_range(
+    start: Option<u64>,
+    end: Option<u64>,
+    protocol_version: Option<(u64, u64)>,
+) -> PlutusData {
     let lower = match start {
         Some(s) => PlutusData::Constr(
             0,
@@ -580,13 +585,20 @@ fn posix_time_range(start: Option<u64>, end: Option<u64>) -> PlutusData {
         ),
     };
     let upper = match end {
-        Some(e) => PlutusData::Constr(
-            0,
-            vec![
-                PlutusData::Constr(1, vec![PlutusData::Integer(e as i128)]), // Finite
-                PlutusData::Constr(0, vec![]), // False (exclusive) — upstream strictUpperBound
-            ],
-        ),
+        Some(e) => {
+            // Alonzo/Babbage use `PV1.to` for an upper-only interval, which
+            // makes the finite upper bound inclusive. Conway switched that
+            // case to `strictUpperBound`.
+            let upper_is_closed =
+                start.is_none() && !matches!(protocol_version, Some((major, _)) if major >= 9);
+            PlutusData::Constr(
+                0,
+                vec![
+                    PlutusData::Constr(1, vec![PlutusData::Integer(e as i128)]), // Finite
+                    bool_data(upper_is_closed),
+                ],
+            )
+        }
         None => PlutusData::Constr(
             0,
             vec![
@@ -596,6 +608,10 @@ fn posix_time_range(start: Option<u64>, end: Option<u64>) -> PlutusData {
         ),
     };
     PlutusData::Constr(0, vec![lower, upper])
+}
+
+fn bool_data(value: bool) -> PlutusData {
+    PlutusData::Constr(if value { 1 } else { 0 }, vec![])
 }
 
 /// Encode a TxInInfo as PlutusData: Constr(0, [txOutRef, txOut]).
@@ -3519,7 +3535,7 @@ mod tests {
 
     #[test]
     fn posix_time_range_encodes_open_interval() {
-        let result = posix_time_range(None, None);
+        let result = posix_time_range(None, None, Some((7, 0)));
         // Interval(LowerBound(NegInf, True), UpperBound(PosInf, True))
         assert_eq!(
             result,
@@ -3547,7 +3563,7 @@ mod tests {
 
     #[test]
     fn posix_time_range_encodes_bounded_interval() {
-        let result = posix_time_range(Some(1000), Some(2000));
+        let result = posix_time_range(Some(1000), Some(2000), Some((7, 0)));
         assert_eq!(
             result,
             PlutusData::Constr(
@@ -3574,7 +3590,7 @@ mod tests {
 
     #[test]
     fn posix_time_range_encodes_lower_bounded_only() {
-        let result = posix_time_range(Some(500), None);
+        let result = posix_time_range(Some(500), None, Some((7, 0)));
         let PlutusData::Constr(0, ref fields) = result else {
             panic!("expected Interval")
         };
@@ -3600,8 +3616,8 @@ mod tests {
     }
 
     #[test]
-    fn posix_time_range_encodes_upper_bounded_only() {
-        let result = posix_time_range(None, Some(9999));
+    fn posix_time_range_encodes_upper_bounded_only_pre_conway_as_inclusive() {
+        let result = posix_time_range(None, Some(9999), Some((7, 0)));
         let PlutusData::Constr(0, ref fields) = result else {
             panic!("expected Interval")
         };
@@ -3613,7 +3629,25 @@ mod tests {
                 vec![PlutusData::Constr(0, vec![]), PlutusData::Constr(1, vec![]),]
             )
         );
-        // Upper bound: Finite(9999) — exclusive (upstream strictUpperBound)
+        // Alonzo/Babbage upper-only interval uses PV1.to, so the bound is inclusive.
+        assert_eq!(
+            fields[1],
+            PlutusData::Constr(
+                0,
+                vec![
+                    PlutusData::Constr(1, vec![PlutusData::Integer(9999)]),
+                    PlutusData::Constr(1, vec![]),
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn posix_time_range_encodes_upper_bounded_only_conway_as_strict() {
+        let result = posix_time_range(None, Some(9999), Some((9, 0)));
+        let PlutusData::Constr(0, ref fields) = result else {
+            panic!("expected Interval")
+        };
         assert_eq!(
             fields[1],
             PlutusData::Constr(
@@ -5219,7 +5253,10 @@ mod tests {
             panic!()
         };
         // V1 field 6 = validRange
-        assert_eq!(fields[6], posix_time_range(Some(1_000), Some(2_000)));
+        assert_eq!(
+            fields[6],
+            posix_time_range(Some(1_000), Some(2_000), tx_ctx.protocol_version)
+        );
     }
 
     #[test]
@@ -5808,7 +5845,7 @@ mod tests {
         assert_eq!(start_ms, 1_506_204_091_000); // 1506203091 + 1000
         assert_eq!(end_ms, 1_506_205_091_000); // 1506203091 + 2000
 
-        let range = posix_time_range(Some(start_ms), Some(end_ms));
+        let range = posix_time_range(Some(start_ms), Some(end_ms), Some((7, 0)));
         // Verify Finite(start_ms) inclusive lower, Finite(end_ms) exclusive upper.
         assert_eq!(
             range,

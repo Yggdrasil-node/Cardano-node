@@ -5326,13 +5326,12 @@ async fn fetch_verified_multi_era_range(
         allow_exact_upper_fallback,
     )
     .await
-    .map_err(|err| {
+    .inspect_err(|_err| {
         if tentative_set {
             if let Some(state) = tentative_state {
                 clear_tentative_trap(state);
             }
         }
-        err
     })?;
 
     if let Some((pool, peer)) = pool_instr {

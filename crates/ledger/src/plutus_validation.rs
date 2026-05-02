@@ -1447,7 +1447,7 @@ pub fn validate_plutus_scripts(
                 .map(|txout| (txin.clone(), txout.clone()))
         })
         .collect();
-    let resolved_reference_inputs: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx_ctx
+    let mut resolved_reference_inputs: Vec<(ShelleyTxIn, MultiEraTxOut)> = tx_ctx
         .reference_inputs
         .iter()
         .filter_map(|txin| {
@@ -1456,6 +1456,7 @@ pub fn validate_plutus_scripts(
                 .map(|txout| (txin.clone(), txout.clone()))
         })
         .collect();
+    resolved_reference_inputs.sort_by(|(a, _), (b, _)| a.cmp(b));
     let augmented_tx_ctx = TxContext {
         inputs: resolved_inputs,
         certificates: certificates.to_vec(),

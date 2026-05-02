@@ -204,11 +204,11 @@ pub enum BuiltinSemanticsVariant {
 /// - List: spine length only.
 /// - Data: recursive node cost (4 per node).
 /// - BLS elements: fixed word counts (18 / 36 / 72 for G1 / G2 / MlResult).
-/// - Non-data runtime values (lambda, delay, partial builtin): 0.
+/// - Non-constant runtime values (lambda, delay, partial builtin, constructor): 1.
 pub fn ex_memory(value: &Value) -> i64 {
     match value {
         Value::Constant(c) => constant_ex_memory(c),
-        _ => 0,
+        _ => 1,
     }
 }
 
@@ -2094,6 +2094,33 @@ mod tests {
     #[test]
     fn ex_memory_unit_is_one() {
         assert_eq!(ex_memory(&Value::Constant(crate::types::Constant::Unit)), 1);
+    }
+
+    #[test]
+    fn ex_memory_non_constant_runtime_values_are_one() {
+        assert_eq!(
+            ex_memory(&Value::Lambda(
+                crate::types::Term::Var(1),
+                crate::types::Environment::new()
+            )),
+            1
+        );
+        assert_eq!(
+            ex_memory(&Value::Delay(
+                crate::types::Term::Var(1),
+                crate::types::Environment::new()
+            )),
+            1
+        );
+        assert_eq!(
+            ex_memory(&Value::BuiltinApp {
+                fun: crate::types::DefaultFun::IfThenElse,
+                forces: 0,
+                args: Vec::new(),
+            }),
+            1
+        );
+        assert_eq!(ex_memory(&Value::Constr(0, Vec::new())), 1);
     }
 
     // ---- MaxSizeYZ / ExpModCost ----

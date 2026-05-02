@@ -1095,7 +1095,6 @@ pub fn build_plutus_cost_model_from_protocol_values_for_protocol(
             ordered_plutus_v2_param_names()
                 .into_iter()
                 .zip(values.iter().copied())
-                .map(|(name, value)| (name, value))
                 .collect()
         }
         PlutusVersion::V3 => {
