@@ -102,16 +102,6 @@ impl U256 {
         U256 { hi, lo }
     }
 
-    /// Add two U256 values (wrapping on overflow beyond 256 bits).
-    fn add(self, other: Self) -> Self {
-        let (lo, c) = self.lo.overflowing_add(other.lo);
-        let hi = self
-            .hi
-            .wrapping_add(other.hi)
-            .wrapping_add(if c { 1 } else { 0 });
-        U256 { hi, lo }
-    }
-
     /// Multiply U256 × u128 → U256 (low 256 bits).
     fn mul_u128(self, b: u128) -> Self {
         let lo_wide = U256::widening_mul(self.lo, b);
@@ -120,12 +110,6 @@ impl U256 {
             hi: lo_wide.hi.wrapping_add(hi_low),
             lo: lo_wide.lo,
         }
-    }
-
-    /// Returns `Some(self.lo)` if `self.hi == 0`, otherwise `None`.
-    #[inline]
-    fn to_u128(self) -> Option<u128> {
-        if self.hi == 0 { Some(self.lo) } else { None }
     }
 
     /// Subtract two U256 values.  Returns the wrapped result; the
@@ -220,15 +204,6 @@ impl U512 {
         lo: U256 { hi: 0, lo: 0 },
     };
 
-    /// Lift a U256 into U512 with hi = 0.
-    #[inline]
-    fn from_u256(x: U256) -> Self {
-        U512 {
-            hi: U256 { hi: 0, lo: 0 },
-            lo: x,
-        }
-    }
-
     /// `self <= other` (lexicographic on the (hi, lo) pair).
     #[inline]
     fn le(self, other: Self) -> bool {
@@ -244,7 +219,10 @@ impl U512 {
         let (lo_lo, c0) = self.lo.lo.overflowing_add(other.lo.lo);
         let (lo_hi, c1a) = self.lo.hi.overflowing_add(other.lo.hi);
         let (lo_hi, c1b) = lo_hi.overflowing_add(if c0 { 1 } else { 0 });
-        let lo = U256 { hi: lo_hi, lo: lo_lo };
+        let lo = U256 {
+            hi: lo_hi,
+            lo: lo_lo,
+        };
         let carry_lo = (c1a || c1b) as u128;
         let (hi_lo, c2) = self.hi.lo.overflowing_add(other.hi.lo);
         let (hi_lo, c2b) = hi_lo.overflowing_add(carry_lo);
@@ -254,7 +232,10 @@ impl U512 {
             .wrapping_add(other.hi.hi)
             .wrapping_add(if c2 || c2b { 1 } else { 0 });
         U512 {
-            hi: U256 { hi: hi_hi, lo: hi_lo },
+            hi: U256 {
+                hi: hi_hi,
+                lo: hi_lo,
+            },
             lo,
         }
     }
@@ -648,7 +629,8 @@ fn u512_mul_u256(a: U256, b: U256) -> U512 {
     // Add p_hi_hi shifted by 256 bits (occupies hi.lo and hi.hi).
     let (hi_lo, c5) = hi.lo.overflowing_add(p_hi_hi.lo);
     hi.lo = hi_lo;
-    let hi_hi = hi.hi
+    let hi_hi = hi
+        .hi
         .wrapping_add(p_hi_hi.hi)
         .wrapping_add(if c5 { 1 } else { 0 })
         .wrapping_add(hi_hi_carry);
@@ -719,14 +701,19 @@ fn u512_sub(a: U512, b: U512) -> U512 {
     let borrow_to_hi = (br1a || br1b) as u128;
     let (hi_lo, br2) = a.hi.lo.overflowing_sub(b.hi.lo);
     let (hi_lo, br2b) = hi_lo.overflowing_sub(borrow_to_hi);
-    let hi_hi = a
-        .hi
-        .hi
-        .wrapping_sub(b.hi.hi)
-        .wrapping_sub(if br2 || br2b { 1 } else { 0 });
+    let hi_hi =
+        a.hi.hi
+            .wrapping_sub(b.hi.hi)
+            .wrapping_sub(if br2 || br2b { 1 } else { 0 });
     U512 {
-        hi: U256 { hi: hi_hi, lo: hi_lo },
-        lo: U256 { hi: lo_hi, lo: lo_lo },
+        hi: U256 {
+            hi: hi_hi,
+            lo: hi_lo,
+        },
+        lo: U256 {
+            hi: lo_hi,
+            lo: lo_lo,
+        },
     }
 }
 
@@ -2097,17 +2084,6 @@ mod tests {
     }
 
     #[test]
-    fn u256_add_basic() {
-        let a = U256 {
-            hi: 0,
-            lo: u128::MAX,
-        };
-        let b = U256 { hi: 0, lo: 1 };
-        let sum = a.add(b);
-        assert_eq!(sum, U256 { hi: 1, lo: 0 });
-    }
-
-    #[test]
     fn u256_div_u128_basic() {
         let v = U256 { hi: 1, lo: 0 }; // = 2^128
         // 2^128 / 2 = 2^127 = 170141183460469231731687303715884105728
@@ -2230,12 +2206,12 @@ mod tests {
             denominator: 10,
         };
         let result = max_pool_reward(
-            35_956_813_126_022,         // R ≈ 35.96 T lovelace
-            150,                        // k = 150 (preview initial value)
+            35_956_813_126_022, // R ≈ 35.96 T lovelace
+            150,                // k = 150 (preview initial value)
             a0,
-            100_000_000_000_000,        // pool_stake = 100M ADA
-            100_000_000_000_000,        // pledge same as stake (full self-pledge)
-            30_017_994_599_484_487,     // circulation = max_supply − reserves
+            100_000_000_000_000,    // pool_stake = 100M ADA
+            100_000_000_000_000,    // pledge same as stake (full self-pledge)
+            30_017_994_599_484_487, // circulation = max_supply − reserves
         );
         // Expected upstream value (computed in Rational): the formula
         // factors via maxPool = R·σ·(1 + a0·(σ/z)²) / (1+a0) since σ < z
