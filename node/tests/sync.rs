@@ -7,7 +7,7 @@ use yggdrasil_ledger::{
     ByronBlock, CborEncode, ConwayBlock, ConwayTxBody, Encoder, Era, HeaderHash, LedgerState,
     Nonce, Point, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
     ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert, ShelleyWitnessSet, SlotNo,
-    StakeCredential, Tip, Tx, TxId, compute_block_body_hash,
+    StakeCredential, Tip, Tx, TxId, UnitInterval, compute_block_body_hash,
 };
 use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_network::{
@@ -3520,6 +3520,52 @@ fn recover_ledger_state_chaindb_replays_immutable_blocks_after_checkpoint() {
         recovered.point,
         Point::BlockPoint(SlotNo(30), HeaderHash([0x1E; 32]))
     );
+}
+
+#[test]
+fn recover_ledger_state_chaindb_rehydrates_runtime_genesis_fields_from_base() {
+    let immutable = InMemoryImmutable::default();
+    let volatile = InMemoryVolatile::default();
+    let ledger = InMemoryLedgerStore::default();
+    let mut chain_db = ChainDb::new(immutable, volatile, ledger);
+
+    let mut checkpoint_state = LedgerState::new(Era::Shelley);
+    checkpoint_state.tip = Point::BlockPoint(SlotNo(10), HeaderHash([0x0A; 32]));
+
+    chain_db
+        .save_ledger_checkpoint(SlotNo(10), &checkpoint_state.checkpoint())
+        .expect("save checkpoint");
+    chain_db
+        .immutable_mut()
+        .append_block(test_store_block(0x0A, 10))
+        .expect("append immutable checkpoint tip");
+
+    let mut base_state = LedgerState::new(Era::Shelley);
+    base_state.set_max_lovelace_supply(45_000_000_000_000_000);
+    base_state.set_slots_per_epoch(86_400);
+    base_state.set_active_slot_coeff(UnitInterval {
+        numerator: 1,
+        denominator: 20,
+    });
+    base_state.set_stability_window(25_920);
+
+    let recovered = recover_ledger_state_chaindb(&chain_db, base_state)
+        .expect("recover ledger state from checkpoint");
+
+    assert_eq!(recovered.checkpoint_slot, Some(SlotNo(10)));
+    assert_eq!(
+        recovered.ledger_state.max_lovelace_supply(),
+        45_000_000_000_000_000
+    );
+    assert_eq!(recovered.ledger_state.slots_per_epoch(), 86_400);
+    assert_eq!(
+        recovered.ledger_state.active_slot_coeff(),
+        UnitInterval {
+            numerator: 1,
+            denominator: 20,
+        }
+    );
+    assert_eq!(recovered.ledger_state.stability_window(), Some(25_920));
 }
 
 #[test]

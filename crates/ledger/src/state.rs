@@ -3944,6 +3944,31 @@ impl LedgerState {
         self.stability_window
     }
 
+    /// Rehydrates genesis-derived runtime fields after restoring a CBOR
+    /// checkpoint.
+    ///
+    /// Checkpoint CBOR intentionally omits values that come from node
+    /// configuration or genesis files rather than on-chain state. Storage and
+    /// node recovery must call this with the genesis-seeded base ledger state
+    /// before replaying blocks, otherwise epoch reward math loses the
+    /// `maxLovelaceSupply` circulation denominator and falls back to active
+    /// stake.
+    pub fn rehydrate_runtime_genesis_from(&mut self, base_state: &Self) {
+        self.max_lovelace_supply = base_state.max_lovelace_supply;
+        self.slots_per_epoch = base_state.slots_per_epoch;
+        self.active_slot_coeff = base_state.active_slot_coeff;
+        self.stability_window = base_state.stability_window;
+
+        // Pending Shelley genesis bootstrap bundles are also omitted from
+        // checkpoint CBOR. They are only still relevant before the first
+        // Shelley-family block has activated them.
+        if self.current_era == Era::Byron {
+            self.pending_shelley_genesis_utxo = base_state.pending_shelley_genesis_utxo.clone();
+            self.pending_shelley_genesis_stake = base_state.pending_shelley_genesis_stake.clone();
+            self.pending_shelley_genesis_delegs = base_state.pending_shelley_genesis_delegs.clone();
+        }
+    }
+
     /// Builds a [`PpupSlotContext`] for the given slot when the stability
     /// window is configured and `slots_per_epoch > 0`.
     ///

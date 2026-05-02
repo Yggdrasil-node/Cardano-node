@@ -37,6 +37,10 @@ tmp
 **/db/
 **/chain/
 **/ledger/
+wallet/
+metadata/
+keys/
+certs/
 
 # Jekyll docs site (built in CI; do not commit local builds)
 docs/_site/

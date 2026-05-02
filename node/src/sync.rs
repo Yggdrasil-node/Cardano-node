@@ -2412,7 +2412,8 @@ where
     let genesis_protocol_params = base_state.protocol_params().cloned();
     let (mut ledger_state, checkpoint_slot) = match checkpoint {
         Some((slot, checkpoint)) => {
-            let restored = checkpoint.restore();
+            let mut restored = checkpoint.restore();
+            restored.rehydrate_runtime_genesis_from(&base_state);
             if checkpoint_missing_genesis_cost_models(&restored, genesis_protocol_params.as_ref()) {
                 (base_state, None)
             } else {
@@ -2656,7 +2657,8 @@ where
     let genesis_protocol_params = base_state.protocol_params().cloned();
     let (mut ledger_state, checkpoint_slot) = match checkpoint {
         Some((slot, checkpoint)) => {
-            let restored = checkpoint.restore();
+            let mut restored = checkpoint.restore();
+            restored.rehydrate_runtime_genesis_from(&base_state);
             if checkpoint_missing_genesis_cost_models(&restored, genesis_protocol_params.as_ref()) {
                 (base_state, None)
             } else {

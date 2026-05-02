@@ -302,7 +302,8 @@ where
 
             match LedgerStateCheckpoint::from_cbor_bytes(data) {
                 Ok(checkpoint) => {
-                    let state = checkpoint.restore();
+                    let mut state = checkpoint.restore();
+                    state.rehydrate_runtime_genesis_from(&base_state);
                     let point = state.tip;
                     return Ok((state, Some(snapshot_slot), point));
                 }
