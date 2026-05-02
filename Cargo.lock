@@ -1385,9 +1385,11 @@ dependencies = [
 name = "yggdrasil-ledger"
 version = "0.2.0"
 dependencies = [
+ "hex",
  "num-bigint",
  "num-traits",
  "serde",
+ "serde_json",
  "thiserror",
  "yggdrasil-cddl-codegen",
  "yggdrasil-crypto",
@@ -1446,6 +1448,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "ripemd",
+ "serde_json",
  "sha2 0.11.0",
  "sha3",
  "thiserror",

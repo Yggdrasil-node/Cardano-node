@@ -568,8 +568,12 @@ impl CborDecode for GovAction {
                     });
                 }
                 let prev_action_id = decode_optional_gov_action_id(dec)?;
-                // set<committee_cold_credential>
-                let remove_count = dec.array()?;
+                // set<committee_cold_credential> — Conway CDDL
+                // `update_committee` element 2.  May arrive as either
+                // bare array or `#6.258([+ credential])`; accept both
+                // via `array_or_set` to match upstream
+                // `Cardano.Ledger.Conway.Governance.Procedures.UpdateCommittee`.
+                let remove_count = dec.array_or_set()?;
                 let mut members_to_remove =
                     vec_with_safe_capacity(remove_count, BLOCK_BODY_ELEMENTS_MAX);
                 for _ in 0..remove_count {

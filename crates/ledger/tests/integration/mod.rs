@@ -110,6 +110,7 @@ mod missing_redeemer;
 mod multi_era_utxo;
 mod network_validation;
 mod no_cost_model;
+mod operator_pool_registration_envelope;
 mod output_validation;
 mod plutus_evaluation;
 mod plutus_scripts;

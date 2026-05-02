@@ -17,5 +17,11 @@ thiserror.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true
 
+[dev-dependencies]
+# `tests/upstream_cost_model.rs` reads the vendored alonzo-genesis JSON
+# directly (instead of pulling in the whole `node::genesis` parsing
+# stack just to load `costModels.PlutusV1` for an end-to-end assertion).
+serde_json.workspace = true
+
 [lints]
 workspace = true

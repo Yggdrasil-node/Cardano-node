@@ -738,7 +738,14 @@ impl CborDecode for ShelleyWitnessSet {
                         dec.consume_break()?;
                     }
                 },
-                4 => match dec.array_begin()? {
+                // Conway CDDL `witness_set` field 4 is
+                // `nonempty_set<plutus_data> = #6.258([+ plutus_data])`,
+                // not the bare-array shape pre-Conway encoders emit.
+                // Upstream `Cardano.Ledger.Alonzo.TxWits.decodeBinaryTxWits`
+                // (and its Conway successor) accept either form, so we
+                // do too — `begin_array_or_set` strips the optional
+                // tag-258 wrapper transparently.
+                4 => match begin_array_or_set(dec)? {
                     Some(count) => {
                         for _ in 0..count {
                             plutus_data.push(PlutusData::decode_cbor(dec)?);

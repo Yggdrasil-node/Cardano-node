@@ -1521,8 +1521,14 @@ impl PoolParams {
         let cost = dec.unsigned()?;
         let margin = UnitInterval::decode_cbor(dec)?;
         let reward_account = RewardAccount::decode_cbor(dec)?;
-        // pool_owners
-        let n_owners = dec.array()?;
+        // pool_owners — Conway CDDL `nonempty_set<addr_keyhash>` =
+        // `#6.258([+ addr_keyhash])`.  Upstream Haskell decoder
+        // accepts both the legacy bare-array shape (Shelley→Babbage)
+        // and the Conway tag-258 wrapped shape; `array_or_set()`
+        // strips the optional tag transparently so an operator's
+        // `cardano-cli stake-pool registration-certificate`
+        // (Conway) parses cleanly here.
+        let n_owners = dec.array_or_set()?;
         let mut pool_owners = vec_with_safe_capacity(n_owners, BLOCK_BODY_ELEMENTS_MAX);
         for _ in 0..n_owners {
             let raw = dec.bytes()?;
