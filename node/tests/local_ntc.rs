@@ -318,6 +318,63 @@ async fn ntc_local_state_query_chain_tip_round_trip() {
     let _ = handle.await;
 }
 
+/// End-to-end test: LocalStateQuery `BlockQuery (QueryHardFork
+/// GetInterpreter)` returns the indefinite-length-encoded `Interpreter`
+/// summary for the operator-configured network preset.  This pins the
+/// CBOR-aware reassembly path in [`MessageChannel::recv`] / our
+/// [`cbor_item_length`] for indefinite-length containers — without it
+/// `recv` hangs forever waiting for a complete-CBOR-item delimiter that
+/// the standard length-prefixed containers never provide.
+#[tokio::test]
+async fn ntc_local_state_query_interpreter_round_trip() {
+    let (socket_path, shutdown, handle, _tmp) = spawn_local_server().await;
+
+    let mut conn = ntc_connect(&socket_path, TEST_MAGIC, true)
+        .await
+        .expect("ntc_connect should succeed");
+
+    let sq_handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_STATE_QUERY)
+        .expect("NTC_LOCAL_STATE_QUERY handle missing");
+    let mut client = LocalStateQueryClient::new(sq_handle);
+    client
+        .acquire(AcquireTarget::VolatileTip)
+        .await
+        .expect("acquire volatile tip");
+
+    // `BlockQuery (QueryHardFork GetInterpreter) = [0, [2, [0]]]` per
+    // upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`.
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(0u64);
+    enc.array(2).unsigned(2u64);
+    enc.array(1).unsigned(0u64);
+    let result = client
+        .query(enc.into_bytes())
+        .await
+        .expect("GetInterpreter query round-trip");
+
+    // The reply is an indefinite-length-encoded `Interpreter` — the
+    // outer `0x9f` ... `0xff` envelope is the Phase-2 minimal shape
+    // emitted by `encode_interpreter_for_network`.
+    assert_eq!(
+        result.first(),
+        Some(&0x9f),
+        "Interpreter wire format must start with indefinite-length array marker"
+    );
+    assert_eq!(
+        result.last(),
+        Some(&0xff),
+        "Interpreter wire format must end with break stop-code"
+    );
+
+    let _ = client.release().await;
+    let _ = client.done().await;
+
+    let _ = shutdown.send(());
+    let _ = handle.await;
+}
+
 /// End-to-end test: NtC handshake fails cleanly when the client advertises
 /// the wrong network magic. This mirrors upstream wallet/CLI behavior when
 /// pointed at the wrong network socket.

@@ -807,8 +807,29 @@ async fn write_sdu<W: tokio::io::AsyncWrite + Unpin>(
 /// reassembling multi-SDU protocol messages, matching the upstream approach
 /// where CBOR encoding is self-delimiting.
 ///
-/// Only definite-length encodings are supported because all Ouroboros
-/// mini-protocol messages use definite-length CBOR arrays.
+/// One nesting level on the [`cbor_item_length`] parser stack.  The
+/// top frame is the item we are currently consuming; once it reaches
+/// a "done" state the frame is popped and the outer one resumes.
+enum CborFrame {
+    /// Definite-length container: `remaining` items still to consume.
+    Definite(u64),
+    /// Indefinite array `[_ … ff]` — keep eating items until break.
+    IndefArray,
+    /// Indefinite map `{_ k v … ff}` — items must come in pairs.
+    /// `expect_value` toggles between key (false) and value (true).
+    IndefMap { expect_value: bool },
+}
+
+/// Both definite- and indefinite-length CBOR encodings are supported.
+/// Upstream Ouroboros mini-protocols use indefinite-length arrays for
+/// some compound replies (e.g. the hard-fork combinator's `Interpreter`
+/// summary returned by `BlockQuery (QueryHardFork GetInterpreter)` ships
+/// as `0x9f … 0xff`), so the message-boundary detector must walk through
+/// them.  Indefinite-length byte/text strings (`0x5f` / `0x7f`) and
+/// nested indefinite containers are also handled.
+///
+/// Reference: RFC 8949 §3.2.2 / 3.2.3 (indefinite-length encodings),
+/// upstream `Codec.CBOR.Decoding.decodeContainerSkelM`.
 pub fn cbor_item_length(buf: &[u8]) -> Option<usize> {
     let len = buf.len();
     if len == 0 {
@@ -816,21 +837,61 @@ pub fn cbor_item_length(buf: &[u8]) -> Option<usize> {
     }
 
     let mut pos: usize = 0;
-    // Number of CBOR data items still to consume.
-    let mut remaining: u64 = 1;
+    // Outer level: we need exactly one CBOR item.
+    let mut stack: Vec<CborFrame> = vec![CborFrame::Definite(1)];
 
-    while remaining > 0 {
+    while !stack.is_empty() {
+        // Discharge any frames whose count has hit zero before reading
+        // the next byte — keeps the loop simple when nested definite
+        // containers all close on the same item.
+        while let Some(CborFrame::Definite(0)) = stack.last() {
+            stack.pop();
+        }
+        if stack.is_empty() {
+            break;
+        }
+
         if pos >= len {
             return None;
         }
-        remaining -= 1;
-
         let initial = buf[pos];
         let major = initial >> 5;
         let additional = initial & 0x1f;
+
+        // Break stop-code: legal only as the next byte inside an
+        // indefinite container.  In an indefinite map a break is
+        // illegal mid-pair (after a key, before its value).
+        if initial == 0xff {
+            match stack.pop()? {
+                CborFrame::IndefArray => {
+                    pos += 1;
+                }
+                CborFrame::IndefMap {
+                    expect_value: false,
+                } => {
+                    pos += 1;
+                }
+                CborFrame::IndefMap { expect_value: true } => {
+                    return None;
+                }
+                CborFrame::Definite(_) => {
+                    // 0xff outside an indefinite container is malformed.
+                    return None;
+                }
+            }
+            // When this break closed an indefinite container that was
+            // sitting inside another indefinite map, the outer map's
+            // `expect_value` flag must toggle since the indefinite
+            // container counted as exactly one item.
+            if let Some(CborFrame::IndefMap { expect_value }) = stack.last_mut() {
+                *expect_value = !*expect_value;
+            }
+            continue;
+        }
+
         pos += 1;
 
-        // Decode the argument value from the additional-info field.
+        // Decode the argument from the additional-info bits.
         let arg: u64 = match additional {
             0..=23 => additional as u64,
             24 => {
@@ -873,22 +934,85 @@ pub fn cbor_item_length(buf: &[u8]) -> Option<usize> {
                 pos += 8;
                 v
             }
-            31 if major == 7 => {
-                // Break code (0xFF) — terminates indefinite-length containers.
-                continue;
-            }
-            31 => {
-                // Indefinite-length container — not supported.
-                return None;
-            }
-            // Additional-info values 28–30 are reserved.
+            31 => 0, // indefinite-length marker; container kind decides what to do
+            // 28–30 reserved.
             _ => return None,
         };
 
+        // Account this item against the surrounding container BEFORE
+        // pushing any new frame for nested content.
+        match stack.last_mut() {
+            Some(CborFrame::Definite(n)) => {
+                if *n == 0 {
+                    return None;
+                }
+                *n -= 1;
+            }
+            Some(CborFrame::IndefArray) => {}
+            Some(CborFrame::IndefMap { expect_value }) => {
+                *expect_value = !*expect_value;
+            }
+            None => unreachable!("loop guard ensures stack is non-empty"),
+        }
+
+        // Indefinite-length headers (additional-info == 31) are only
+        // legal for byte/text strings, arrays, and maps.  For arrays
+        // and maps we push a new frame; for strings we consume their
+        // chunks locally so the chunk count never collides with the
+        // surrounding container's count.
+        if additional == 31 {
+            match major {
+                2 => {
+                    // Indefinite byte string: definite-length byte
+                    // chunks until break.
+                    while pos < len {
+                        let next = buf[pos];
+                        if next == 0xff {
+                            pos += 1;
+                            break;
+                        }
+                        if next >> 5 != 2 {
+                            return None;
+                        }
+                        let n = cbor_item_length(&buf[pos..])?;
+                        pos += n;
+                    }
+                    continue;
+                }
+                3 => {
+                    while pos < len {
+                        let next = buf[pos];
+                        if next == 0xff {
+                            pos += 1;
+                            break;
+                        }
+                        if next >> 5 != 3 {
+                            return None;
+                        }
+                        let n = cbor_item_length(&buf[pos..])?;
+                        pos += n;
+                    }
+                    continue;
+                }
+                4 => {
+                    stack.push(CborFrame::IndefArray);
+                    continue;
+                }
+                5 => {
+                    stack.push(CborFrame::IndefMap {
+                        expect_value: false,
+                    });
+                    continue;
+                }
+                _ => return None,
+            }
+        }
+
+        // Definite-length cases.
         match major {
-            // Unsigned integer / negative integer — value is fully encoded.
+            // Unsigned / negative integer — fully encoded.
             0 | 1 => {}
-            // Byte string / text string — `arg` bytes of content follow.
+            // Byte / text string — `arg` bytes follow.
             2 | 3 => {
                 let end = pos.checked_add(arg as usize)?;
                 if end > len {
@@ -896,19 +1020,24 @@ pub fn cbor_item_length(buf: &[u8]) -> Option<usize> {
                 }
                 pos = end;
             }
-            // Array — `arg` items follow.
+            // Array of `arg` items.
             4 => {
-                remaining = remaining.checked_add(arg)?;
+                if arg > 0 {
+                    stack.push(CborFrame::Definite(arg));
+                }
             }
-            // Map — `arg` key-value pairs ⇒ 2 × arg items follow.
+            // Map of `arg` key-value pairs (2 * arg items).
             5 => {
-                remaining = remaining.checked_add(arg.checked_mul(2)?)?;
+                if arg > 0 {
+                    let pairs = arg.checked_mul(2)?;
+                    stack.push(CborFrame::Definite(pairs));
+                }
             }
-            // Tag — one tagged data item follows.
+            // Tag — followed by one tagged data item.
             6 => {
-                remaining = remaining.checked_add(1)?;
+                stack.push(CborFrame::Definite(1));
             }
-            // Simple value / float — fully encoded by the header + arg.
+            // Simple value / float — already fully encoded.
             7 => {}
             _ => return None,
         }

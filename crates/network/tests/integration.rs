@@ -1841,6 +1841,69 @@ fn cbor_item_length_unit_tests() {
     assert_eq!(cbor_item_length(&[0x01, 0x99]), Some(1)); // uint 1 + trailing byte
 }
 
+/// Indefinite-length CBOR is used by upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`
+/// for the `Interpreter` reply (`BlockQuery (QueryHardFork GetInterpreter)`) and by other
+/// canonical responses (e.g. `LedgerPeerSnapshot`).  The mini-protocol message-boundary
+/// detector must walk through these or `MessageChannel::recv` hangs on responses larger
+/// than one SDU.  Reference: RFC 8949 §3.2.2 / §3.2.3.
+#[test]
+fn cbor_item_length_handles_indefinite_length_containers() {
+    use yggdrasil_network::mux::cbor_item_length;
+
+    // Empty indefinite array: 0x9f 0xff
+    assert_eq!(cbor_item_length(&[0x9f, 0xff]), Some(2));
+
+    // Indefinite array with three elements: 0x9f 0x01 0x02 0x03 0xff
+    assert_eq!(cbor_item_length(&[0x9f, 0x01, 0x02, 0x03, 0xff]), Some(5));
+
+    // Nested indefinite array: [_ 1, [_ 2, 3]]
+    //   = 9f 01 9f 02 03 ff ff
+    assert_eq!(
+        cbor_item_length(&[0x9f, 0x01, 0x9f, 0x02, 0x03, 0xff, 0xff]),
+        Some(7)
+    );
+
+    // Indefinite map: {_ 1: 2, 3: 4} = bf 01 02 03 04 ff
+    assert_eq!(
+        cbor_item_length(&[0xbf, 0x01, 0x02, 0x03, 0x04, 0xff]),
+        Some(6)
+    );
+
+    // Indefinite array nested inside a definite array:
+    //   [1, [_ 2, 3], 4] = 83 01 9f 02 03 ff 04
+    assert_eq!(
+        cbor_item_length(&[0x83, 0x01, 0x9f, 0x02, 0x03, 0xff, 0x04]),
+        Some(7)
+    );
+
+    // Indefinite-length byte string with two chunks:
+    //   _ h'AABB' h'CC' = 5f 42 AA BB 41 CC ff
+    assert_eq!(
+        cbor_item_length(&[0x5f, 0x42, 0xAA, 0xBB, 0x41, 0xCC, 0xff]),
+        Some(7)
+    );
+
+    // Indefinite-length text string with two chunks:
+    //   _ "Hi" " there" = 7f 62 48 69 66 20 74 68 65 72 65 ff
+    assert_eq!(
+        cbor_item_length(&[
+            0x7f, 0x62, 0x48, 0x69, 0x66, 0x20, 0x74, 0x68, 0x65, 0x72, 0x65, 0xff
+        ]),
+        Some(12)
+    );
+
+    // Truncated indefinite array (no break) → must return None so the
+    // recv loop waits for more SDU bytes.
+    assert_eq!(cbor_item_length(&[0x9f, 0x01, 0x02]), None);
+
+    // Trailing bytes after a complete indefinite value are NOT consumed.
+    assert_eq!(cbor_item_length(&[0x9f, 0x01, 0xff, 0x99]), Some(3));
+
+    // Mid-pair break inside an indefinite map is malformed.  Encoding:
+    //   bf 01 ff  ← key 1 then break before value
+    assert_eq!(cbor_item_length(&[0xbf, 0x01, 0xff]), None);
+}
+
 // ===========================================================================
 // Mux — ingress queue overrun detection
 // ===========================================================================

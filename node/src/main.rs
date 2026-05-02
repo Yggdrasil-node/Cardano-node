@@ -234,6 +234,20 @@ enum Command {
         #[command(subcommand)]
         query: QueryCommand,
     },
+    /// Inspect the running node's mempool via the NtC LocalTxMonitor
+    /// mini-protocol.  Mirrors upstream `cardano-cli query tx-mempool`.
+    #[cfg(unix)]
+    TxMempool {
+        /// Path to the NtC Unix domain socket of the running node.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Network magic used by the running node.
+        #[arg(long, env = "CARDANO_NODE_NETWORK_MAGIC", default_value_t = 764824073)]
+        network_magic: u32,
+        /// Mempool action to execute.
+        #[command(subcommand)]
+        action: TxMempoolCommand,
+    },
     /// Submit a transaction to the running node via the NtC LocalTxSubmission protocol.
     #[cfg(unix)]
     SubmitTx {
@@ -253,6 +267,29 @@ enum Command {
     },
 }
 
+/// `cardano-cli query tx-mempool` sub-commands, mirroring upstream
+/// `Cardano.CLI.Shelley.Run.Query.runQueryTxMempool`.
+#[cfg(unix)]
+#[derive(Subcommand, Debug)]
+enum TxMempoolCommand {
+    /// Acquire a mempool snapshot and report the size + capacity.
+    /// Equivalent to upstream `cardano-cli query tx-mempool info`.
+    Info,
+    /// Acquire a mempool snapshot and emit the next transaction
+    /// (hex-encoded raw CBOR), or `null` if the snapshot is empty.
+    /// Equivalent to upstream `cardano-cli query tx-mempool next-tx`.
+    NextTx,
+    /// Acquire a mempool snapshot and report whether `tx_id` is
+    /// currently present.  Equivalent to upstream
+    /// `cardano-cli query tx-mempool tx-exists`.
+    TxExists {
+        /// Hex-encoded transaction id, 32 bytes (with or without `0x`
+        /// prefix).
+        #[arg(long)]
+        tx_id: String,
+    },
+}
+
 /// LocalStateQuery query sub-commands.
 #[cfg(unix)]
 #[derive(Subcommand, Debug)]
@@ -263,6 +300,16 @@ enum QueryCommand {
     Tip,
     /// Query the chain block number (height) at the current tip.
     ChainBlockNo,
+    /// Query the network's system-start time.  Mirrors upstream
+    /// `cardano-cli query system-start` and the `GetSystemStart`
+    /// hard-fork query (`Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`).
+    SystemStart,
+    /// Query the era-summary interpreter — a sequence of past+future
+    /// hard-fork era boundaries used by clients to convert between
+    /// slots, epochs, and wall-clock times across era transitions.
+    /// Mirrors upstream `cardano-cli query era-history` and the
+    /// `BlockQuery (QueryHardFork GetInterpreter)` query.
+    EraHistory,
     /// Query the current epoch number.
     CurrentEpoch,
     /// Query the current protocol parameters.
@@ -490,6 +537,22 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
             // `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`.
             enc.array(1).unsigned(2u64);
         }
+        QueryCommand::SystemStart => {
+            // Upstream-shaped: `GetSystemStart = [1]` per upstream
+            // `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`.
+            enc.array(1).unsigned(1u64);
+        }
+        QueryCommand::EraHistory => {
+            // Upstream-shaped: `BlockQuery (QueryHardFork GetInterpreter)`
+            // = `[0, [2, [0]]]` per upstream
+            // `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`.
+            // Same envelope as `CurrentEra` but with the inner
+            // `QueryHardFork` payload tag `0` (GetInterpreter) instead
+            // of `1` (GetCurrentEra).
+            enc.array(2).unsigned(0u64);
+            enc.array(2).unsigned(2u64);
+            enc.array(1).unsigned(0u64);
+        }
         QueryCommand::CurrentEpoch => {
             // Yggdrasil-extension tag — upstream `[2]` is
             // `GetChainBlockNo`, so yggdrasil's `CurrentEpoch` query
@@ -638,6 +701,44 @@ fn decode_ntc_result(query: &QueryCommand, result: &[u8]) -> Result<serde_json::
                 }
                 _ => json!({"chain_block_no_cbor": hex::encode(result)}),
             }
+        }
+        QueryCommand::SystemStart => {
+            // Upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`
+            // — `GetSystemStart` reply is a 3-element CBOR array
+            // `[year, dayOfYear, picosecondsOfDay]` (UTCTime as
+            // `Cardano.Slotting.Time.SystemStart`).  Operators expect
+            // an ISO 8601 string; we surface both the raw structured
+            // fields (matching `cardano-cli query system-start --output
+            // cbor`) and a derived `time` field for human use.
+            let mut dec = Decoder::new(result);
+            match dec.array() {
+                Ok(3) => {
+                    let year = dec.unsigned().unwrap_or(0);
+                    let day_of_year = dec.unsigned().unwrap_or(1);
+                    let picoseconds_of_day = dec.unsigned().unwrap_or(0);
+                    json!({
+                        "system_start": {
+                            "year": year,
+                            "dayOfYear": day_of_year,
+                            "picosecondsOfDay": picoseconds_of_day,
+                            "time": format_utc_time(year, day_of_year, picoseconds_of_day),
+                        }
+                    })
+                }
+                _ => json!({"system_start_cbor": hex::encode(result)}),
+            }
+        }
+        QueryCommand::EraHistory => {
+            // The interpreter response is a deeply-nested CBOR record
+            // (`Ouroboros.Consensus.HardFork.History.Summary.Interpreter`)
+            // whose top-level shape is a list of era summaries.
+            // Operators consume it as opaque bytes (passed back into
+            // ledger libraries for slot↔time conversion); surface it as
+            // hex so the result is round-trip-safe and matches what
+            // `cardano-cli query era-history --output cbor` emits.
+            json!({
+                "era_history_cbor": hex::encode(result),
+            })
         }
         QueryCommand::CurrentEpoch => {
             let mut dec = Decoder::new(result);
@@ -844,6 +945,53 @@ fn decode_optional_prefixed_hex(raw: &str) -> Vec<u8> {
     hex::decode(stripped).unwrap_or_default()
 }
 
+/// Format a Cardano `SystemStart` triple `(year, dayOfYear, picosecondsOfDay)`
+/// as an ISO 8601 UTC timestamp, matching `cardano-cli query system-start`'s
+/// human-facing rendering.
+///
+/// Inputs are taken straight from upstream `Cardano.Slotting.Time.SystemStart`
+/// — `year` is a Gregorian year, `dayOfYear` is `[1, 366]`, and
+/// `picosecondsOfDay` is `[0, 86_400 * 10^12)`.  The conversion uses the
+/// proleptic Gregorian calendar (matching the `time` Haskell library
+/// `fromOrdinalDate` semantics) and floors picoseconds → seconds for the
+/// timestamp's HH:MM:SS portion.
+#[cfg(unix)]
+fn format_utc_time(year: u64, day_of_year: u64, picoseconds_of_day: u64) -> String {
+    // Convert (year, dayOfYear) to (year, month, day) using the proleptic
+    // Gregorian calendar.  `dayOfYear == 1` ↔ January 1.
+    let is_leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let month_days: [u64; 12] = [
+        31,
+        if is_leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut remaining = day_of_year.saturating_sub(1);
+    let mut month: u32 = 1;
+    let mut day_of_month: u32 = 1;
+    for (idx, &md) in month_days.iter().enumerate() {
+        if remaining < md {
+            month = (idx as u32) + 1;
+            day_of_month = (remaining as u32) + 1;
+            break;
+        }
+        remaining -= md;
+    }
+    let total_seconds = picoseconds_of_day / 1_000_000_000_000;
+    let hour = (total_seconds / 3600) % 24;
+    let minute = (total_seconds / 60) % 60;
+    let second = total_seconds % 60;
+    format!("{year:04}-{month:02}-{day_of_month:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
 /// Connect to the running node's NtC Unix socket and submit a transaction
 /// via the LocalTxSubmission protocol, printing the accept/reject outcome.
 ///
@@ -873,6 +1021,83 @@ async fn run_submit_tx(socket_path: PathBuf, network_magic: u32, tx_bytes: Vec<u
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
     }
+    let _ = client.done().await;
+    Ok(())
+}
+
+/// Drive the NtC LocalTxMonitor mini-protocol against a running node.
+///
+/// Mirrors upstream `cardano-cli query tx-mempool`:
+/// - `info`        → acquire snapshot + `MsgGetSizes` → JSON
+///   `{capacityInBytes, sizeInBytes, numberOfTxs, slot}`.
+/// - `next-tx`     → acquire snapshot + `MsgNextTx` → JSON
+///   `{slot, tx: <hex|null>}`.
+/// - `tx-exists`   → acquire snapshot + `MsgHasTx(tx_id)` → JSON
+///   `{slot, exists}`.
+///
+/// Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Client` and
+/// `cardano-cli/src/Cardano/CLI/Shelley/Run/Query.hs:runQueryTxMempool`.
+#[cfg(unix)]
+async fn run_tx_mempool(
+    socket_path: PathBuf,
+    network_magic: u32,
+    action: TxMempoolCommand,
+) -> Result<()> {
+    use yggdrasil_network::{LocalTxMonitorClient, MiniProtocolNum, ntc_connect};
+
+    let mut conn = ntc_connect(&socket_path, network_magic, false)
+        .await
+        .wrap_err_with(|| format!("failed to connect to NtC socket {}", socket_path.display()))?;
+
+    let handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_TX_MONITOR)
+        .expect("NTC_LOCAL_TX_MONITOR handle missing");
+    let mut client = LocalTxMonitorClient::new(handle);
+
+    let snapshot = client
+        .acquire()
+        .await
+        .wrap_err("LocalTxMonitor acquire failed")?;
+
+    let out = match action {
+        TxMempoolCommand::Info => {
+            let sizes = client
+                .get_sizes()
+                .await
+                .wrap_err("LocalTxMonitor get_sizes failed")?;
+            json!({
+                "slot": snapshot.slot_no,
+                "capacityInBytes": sizes.capacity_in_bytes,
+                "sizeInBytes": sizes.size_in_bytes,
+                "numberOfTxs": sizes.num_txs,
+            })
+        }
+        TxMempoolCommand::NextTx => {
+            let tx = client
+                .next_tx()
+                .await
+                .wrap_err("LocalTxMonitor next_tx failed")?;
+            json!({
+                "slot": snapshot.slot_no,
+                "tx": tx.map(hex::encode),
+            })
+        }
+        TxMempoolCommand::TxExists { tx_id } => {
+            let id_bytes = decode_optional_prefixed_hex(&tx_id);
+            let exists = client
+                .has_tx(id_bytes)
+                .await
+                .wrap_err("LocalTxMonitor has_tx failed")?;
+            json!({
+                "slot": snapshot.slot_no,
+                "exists": exists,
+            })
+        }
+    };
+    println!("{}", serde_json::to_string_pretty(&out)?);
+
+    let _ = client.release().await;
     let _ = client.done().await;
     Ok(())
 }
@@ -1570,6 +1795,15 @@ fn main() -> Result<()> {
         } => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(run_query(socket_path, network_magic, query))
+        }
+        #[cfg(unix)]
+        Command::TxMempool {
+            socket_path,
+            network_magic,
+            action,
+        } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(run_tx_mempool(socket_path, network_magic, action))
         }
         #[cfg(unix)]
         Command::SubmitTx {
@@ -3012,7 +3246,23 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
     });
 
     // Shared mempool for governor TTL purge and inbound TxSubmission admission.
-    let shared_mempool = SharedMempool::default();
+    //
+    // Capacity matches upstream `Ouroboros.Consensus.Mempool.Capacity`'s
+    // default `NoMempoolCapacityBytesOverride`:
+    //
+    //     mempoolCapacity = 2 * maxBlockBodySize
+    //
+    // For preview / preprod / mainnet that resolves to ~131 KB / ~180 KB
+    // / ~180 KB respectively, matching what `cardano-cli query
+    // tx-mempool info` reports against an upstream node.  Falls back to
+    // `2 * 65_536` when protocol params are unavailable (test fakes,
+    // very early bootstrap before genesis params are loaded).
+    let mempool_max_bytes = base_ledger_state
+        .protocol_params()
+        .map(|params| params.max_block_body_size as usize)
+        .unwrap_or(65_536)
+        .saturating_mul(2);
+    let shared_mempool = SharedMempool::with_capacity(mempool_max_bytes);
     let shared_connection_manager = Arc::new(RwLock::new(ConnectionManagerState::new()));
     let shared_inbound_governor = Arc::new(RwLock::new(InboundGovernorState::new()));
     let shared_inbound_peers: Arc<RwLock<BTreeMap<SocketAddr, NodePeerSharing>>> =
@@ -3576,7 +3826,7 @@ mod tests {
     use super::{
         CHECKPOINT_TRACE_NAMESPACE, apply_topology_override, checkpoint_trace_config_mut,
         configured_fallback_peers, decode_optional_prefixed_hex, decode_tx_hex_arg,
-        forged_header_protocol_version, ledger_peer_snapshot_from_ledger_state,
+        forged_header_protocol_version, format_utc_time, ledger_peer_snapshot_from_ledger_state,
         load_effective_config, node_role_report, preset_config_base_dir, status_report,
         strict_base_ledger_state, validate_config_report,
     };
@@ -3619,6 +3869,33 @@ mod tests {
     fn decode_tx_hex_arg_combines_whitespace_and_prefix() {
         let bytes = decode_tx_hex_arg("\t0xDEADBEEF\n").expect("prefix + whitespace");
         assert_eq!(bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    /// `cardano-cli query system-start` against the canonical preview
+    /// system-start `2022-10-25T00:00:00Z` (year=2022, dayOfYear=298,
+    /// picosecondsOfDay=0) must format identically to upstream's
+    /// human-facing rendering.  Pin both preview and mainnet so a
+    /// future refactor that breaks Gregorian-day arithmetic surfaces
+    /// here, not silently in operator output.
+    #[test]
+    fn format_utc_time_matches_upstream_rendering() {
+        // Preview: `2022-10-25T00:00:00Z` ↔ (2022, 298).
+        assert_eq!(format_utc_time(2022, 298, 0), "2022-10-25T00:00:00Z");
+        // Mainnet: `2017-09-23T21:44:51Z` ↔ (2017, 266) at 21:44:51.
+        let secs_into_day = 21 * 3600 + 44 * 60 + 51;
+        let picos = secs_into_day * 1_000_000_000_000;
+        assert_eq!(format_utc_time(2017, 266, picos), "2017-09-23T21:44:51Z");
+        // Leap-year: 2024-12-31 is dayOfYear 366.
+        assert_eq!(format_utc_time(2024, 366, 0), "2024-12-31T00:00:00Z");
+        // Common-year: 2023-12-31 is dayOfYear 365.
+        assert_eq!(format_utc_time(2023, 365, 0), "2023-12-31T00:00:00Z");
+        // Sub-day picoseconds floor to seconds (last day-of-year case
+        // would otherwise off-by-one if floor logic went the other way).
+        let almost_midnight = 23 * 3600 + 59 * 60 + 59;
+        assert_eq!(
+            format_utc_time(2024, 60, almost_midnight * 1_000_000_000_000),
+            "2024-02-29T23:59:59Z"
+        );
     }
 
     #[test]
@@ -4328,6 +4605,8 @@ mod tests {
                     QueryCommand::CurrentEra => "CurrentEra",
                     QueryCommand::Tip => "Tip",
                     QueryCommand::ChainBlockNo => "ChainBlockNo",
+                    QueryCommand::SystemStart => "SystemStart",
+                    QueryCommand::EraHistory => "EraHistory",
                     QueryCommand::CurrentEpoch => "CurrentEpoch",
                     QueryCommand::ProtocolParams => "ProtocolParams",
                     QueryCommand::UtxoByAddress { .. } => "UtxoByAddress",
@@ -4356,6 +4635,8 @@ mod tests {
                 mk(QueryCommand::CurrentEra),
                 mk(QueryCommand::Tip),
                 mk(QueryCommand::ChainBlockNo),
+                mk(QueryCommand::SystemStart),
+                mk(QueryCommand::EraHistory),
                 mk(QueryCommand::CurrentEpoch),
                 mk(QueryCommand::ProtocolParams),
                 mk(QueryCommand::UtxoByAddress {
