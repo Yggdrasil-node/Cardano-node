@@ -29,8 +29,17 @@ fn mul_rational(coin: u64, ratio: UnitInterval) -> u64 {
     if ratio.denominator == 0 {
         return 0;
     }
-    let num = coin as u128 * ratio.numerator as u128;
-    (num / ratio.denominator as u128) as u64
+    floor_mul_div(
+        coin as u128,
+        ratio.numerator as u128,
+        ratio.denominator as u128,
+    )
+    .min(u64::MAX as u128) as u64
+}
+
+/// Multiplies a coin value by a rational and caps the result.
+fn mul_rational_capped(coin: u64, ratio: UnitInterval, cap: u64) -> u64 {
+    mul_rational(coin, ratio).min(cap)
 }
 
 // ---------------------------------------------------------------------------
@@ -551,8 +560,11 @@ pub fn compute_pool_reward(
         total_stake_for_sigma,
     );
 
-    // poolR = floor(apparentPerformance × maxP)
-    let apparent = mul_rational(optimal, performance);
+    // poolR = floor(apparentPerformance × maxP). Under upstream
+    // invariants this cannot exceed the epoch reward pot; keep that cap
+    // explicit so a lossy local nonnegative-interval representation cannot
+    // inflate supply if the performance ratio is very large.
+    let apparent = mul_rational_capped(optimal, performance, rewards_pot);
 
     let cost = pool_params.cost.max(params.min_pool_cost);
 
@@ -603,7 +615,7 @@ pub fn compute_pool_reward(
     let combined_den = m_den.saturating_mul(pool);
 
     let leader_extra = floor_mul_div(p, combined_num, combined_den) as u64;
-    let leader_reward = cost.saturating_add(leader_extra);
+    let leader_reward = cost.saturating_add(leader_extra).min(apparent);
 
     // -- Member rewards (upstream `calcStakePoolMemberReward`) --
     //
@@ -928,6 +940,68 @@ mod tests {
 
         // The apparent reward (100 lovelace pot, tiny pool) < cost of 340 ADA.
         assert_eq!(breakdown.leader_reward, 0);
+        assert!(breakdown.member_rewards.is_empty());
+    }
+
+    #[test]
+    fn pool_reward_caps_oversized_performance_to_reward_pot() {
+        let params = RewardParams {
+            rho: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            n_opt: 1,
+            min_pool_cost: 0,
+            reserves: 0,
+            fee_pot: 0,
+            max_lovelace_supply: 0,
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
+        };
+        let pool = test_pool(1);
+        let owner_cred = test_cred(1);
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.stake.add(owner_cred, 1000);
+        snapshot.delegations.insert(owner_cred, pool);
+        snapshot.pool_params.insert(
+            pool,
+            test_pool_params(
+                1,
+                0,
+                0,
+                UnitInterval {
+                    numerator: 0,
+                    denominator: 1,
+                },
+            ),
+        );
+        let pool_dist = snapshot.pool_stake_distribution();
+        let oversized_performance = UnitInterval {
+            numerator: u64::MAX,
+            denominator: 1,
+        };
+
+        let breakdown = compute_pool_reward(
+            1000,
+            &params,
+            &pool,
+            &snapshot,
+            &pool_dist,
+            oversized_performance,
+        );
+
+        assert_eq!(breakdown.apparent_performance_reward, 1000);
+        assert_eq!(breakdown.leader_reward, 1000);
         assert!(breakdown.member_rewards.is_empty());
     }
 

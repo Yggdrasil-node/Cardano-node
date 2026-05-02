@@ -1697,6 +1697,79 @@ pub(crate) fn advance_ledger_state_with_progress(
     })
 }
 
+fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn ceil_div_u128(a: u128, b: u128) -> u128 {
+    if b == 0 { 0 } else { a.div_ceil(b) }
+}
+
+fn apparent_performance_ratio(
+    blocks_produced: u64,
+    total_active_stake: u64,
+    pool_stake: u64,
+    total_blocks: u64,
+) -> Option<UnitInterval> {
+    if blocks_produced == 0 || total_active_stake == 0 || pool_stake == 0 || total_blocks == 0 {
+        return None;
+    }
+
+    let mut n1 = blocks_produced;
+    let mut n2 = total_active_stake;
+    let mut d1 = pool_stake;
+    let mut d2 = total_blocks;
+
+    let g = gcd_u64(n1, d2);
+    n1 /= g;
+    d2 /= g;
+    let g = gcd_u64(n2, d1);
+    n2 /= g;
+    d1 /= g;
+    let g = gcd_u64(n1, d1);
+    n1 /= g;
+    d1 /= g;
+    let g = gcd_u64(n2, d2);
+    n2 /= g;
+    d2 /= g;
+
+    let mut numerator = (n1 as u128).saturating_mul(n2 as u128);
+    let mut denominator = (d1 as u128).saturating_mul(d2 as u128);
+    if denominator == 0 {
+        return None;
+    }
+
+    let g = gcd_u128(numerator, denominator);
+    numerator /= g;
+    denominator /= g;
+
+    let max = u64::MAX as u128;
+    if numerator > max || denominator > max {
+        let scale = ceil_div_u128(numerator, max).max(ceil_div_u128(denominator, max));
+        numerator = (numerator / scale).max(1);
+        denominator = (denominator / scale).max(1);
+    }
+
+    Some(UnitInterval {
+        numerator: numerator as u64,
+        denominator: denominator as u64,
+    })
+}
+
 /// Advances the ledger state block-by-block, detecting epoch transitions
 /// and applying the NEWEPOCH / SNAP / RUPD boundary rules before the
 /// first block of each new epoch.
@@ -1705,20 +1778,24 @@ pub(crate) fn advance_ledger_state_with_progress(
 /// When no epoch transition occurs, the returned vec is empty and the
 /// behavior is identical to [`advance_ledger_state_with_progress`].
 /// Compute per-pool performance ratios from accumulated block counts and
-/// the `set` stake snapshot.
+/// the reward stake snapshot.
 ///
-/// Performance for each pool is `blocks_produced / expected_blocks` where
-/// `expected_blocks = σ_pool * total_blocks`. When the snapshot has no
-/// stake data (initial sync epochs), returns an empty map which causes
-/// `apply_epoch_boundary` to fall back to perfect performance for all pools.
+/// Upstream `startStep` passes `ssStakeGo` into `mkPoolRewardInfo`; callers
+/// must therefore pass the `go` snapshot, not `set` or `mark`. Performance
+/// for each pool is `blocks_produced / (σ_pool * total_blocks)` where
+/// `total_blocks` is the actual number of blocks produced in the epoch.
+/// When the snapshot has no stake data (initial sync epochs), returns an
+/// empty map.
 ///
-/// Reference: `Cardano.Ledger.Shelley.LedgerState` — `completeRupd`.
+/// Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward` —
+/// `startStep`; `Cardano.Ledger.Shelley.Rewards` —
+/// `mkApparentPerformance`.
 pub(crate) fn compute_pool_performance(
     pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
-    set_snapshot: &yggdrasil_ledger::StakeSnapshot,
+    reward_snapshot: &yggdrasil_ledger::StakeSnapshot,
     _epoch_size: EpochSize,
 ) -> BTreeMap<PoolKeyHash, UnitInterval> {
-    let stake_dist = set_snapshot.pool_stake_distribution();
+    let stake_dist = reward_snapshot.pool_stake_distribution();
     let total_stake = stake_dist.total_active_stake();
     if total_stake == 0 || pool_block_counts.is_empty() {
         return BTreeMap::new();
@@ -1733,24 +1810,24 @@ pub(crate) fn compute_pool_performance(
     for (pool_hash, &blocks_produced) in pool_block_counts {
         let pool_stake = stake_dist.pool_stake(pool_hash);
         if pool_stake == 0 {
-            // Pool has no stake in the set snapshot — skip (defaults to perfect).
+            // Pool has no stake in the reward snapshot.
             continue;
         }
-        // performance = blocks_produced / (σ * total_blocks)
-        //             = blocks_produced * total_stake / (pool_stake * total_blocks)
-        let numerator = blocks_produced.saturating_mul(total_stake);
-        let denominator = pool_stake.saturating_mul(total_blocks);
-        if denominator > 0 {
-            performance.insert(
-                *pool_hash,
-                UnitInterval {
-                    numerator,
-                    denominator,
-                },
-            );
+        if let Some(ratio) =
+            apparent_performance_ratio(blocks_produced, total_stake, pool_stake, total_blocks)
+        {
+            performance.insert(*pool_hash, ratio);
         }
     }
     performance
+}
+
+pub(crate) fn compute_epoch_boundary_pool_performance(
+    pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
+    snapshots: &StakeSnapshots,
+    epoch_size: EpochSize,
+) -> BTreeMap<PoolKeyHash, UnitInterval> {
+    compute_pool_performance(pool_block_counts, &snapshots.go, epoch_size)
 }
 
 /// Optional VRF verification context for epoch-boundary-aware block application.
@@ -1873,13 +1950,14 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
         };
         if epoch_schedule.is_new_epoch(prev_slot, block_slot) {
             let new_epoch = epoch_schedule.slot_to_epoch(block_slot);
-            // Compute pool performance ratios from accumulated block counts.
-            // Performance = blocks_produced / expected_blocks where
-            // expected_blocks ≈ σ_pool * epoch_size * f.  When the set
-            // snapshot has stake data we use it; otherwise fall back to
-            // the previous behavior of treating all pools as perfect.
-            let pool_performance =
-                compute_pool_performance(pool_block_counts, &snapshots.set, shelley_epoch_size);
+            // Compute pool performance ratios from accumulated block counts
+            // against `go` (`ssStakeGo`), the same snapshot used for reward
+            // distribution by `apply_epoch_boundary`.
+            let pool_performance = compute_epoch_boundary_pool_performance(
+                pool_block_counts,
+                snapshots,
+                shelley_epoch_size,
+            );
             apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
@@ -2501,9 +2579,9 @@ fn replay_storage_block_with_epoch_boundary(
         };
         if epoch_schedule.is_new_epoch(prev_slot, block.header.slot_no) {
             let new_epoch = epoch_schedule.slot_to_epoch(block.header.slot_no);
-            let pool_performance = compute_pool_performance(
+            let pool_performance = compute_epoch_boundary_pool_performance(
                 pool_block_counts,
-                &snapshots.set,
+                snapshots,
                 epoch_schedule.shelley_epoch_size(),
             );
             apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
@@ -8592,6 +8670,47 @@ mod tests {
         let pa = perf.get(&pool_a).unwrap();
         // numerator = 25 * 1000, denominator = 500 * 100 → 25000/50000 = 0.5
         assert_eq!(pa.numerator * 2, pa.denominator);
+    }
+
+    #[test]
+    fn pool_performance_reduces_before_u64_product() {
+        let pool_a = pool_hash(1);
+        let snapshot = make_snapshot_with_pools(&[
+            (pool_a, 3_000_000_000_000_000),
+            (pool_hash(2), 6_000_000_000_000_000),
+        ]);
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 5_000);
+        counts.insert(pool_hash(2), 25_000);
+
+        let perf = compute_pool_performance(&counts, &snapshot, EpochSize(432000));
+        let pa = perf.get(&pool_a).unwrap();
+
+        assert_eq!(pa.numerator * 2, pa.denominator);
+    }
+
+    #[test]
+    fn epoch_boundary_pool_performance_uses_go_snapshot_not_set() {
+        let pool_a = pool_hash(1);
+        let pool_b = pool_hash(2);
+        let mut snapshots = StakeSnapshots::new();
+        snapshots.go = make_snapshot_with_pools(&[(pool_a, 500), (pool_b, 500)]);
+        snapshots.set = make_snapshot_with_pools(&[(pool_a, 900), (pool_b, 100)]);
+
+        let mut counts = BTreeMap::new();
+        counts.insert(pool_a, 25);
+        counts.insert(pool_b, 75);
+
+        let perf = compute_epoch_boundary_pool_performance(&counts, &snapshots, EpochSize(432000));
+        let set_perf = compute_pool_performance(&counts, &snapshots.set, EpochSize(432000));
+
+        let pa = perf.get(&pool_a).unwrap();
+        assert_eq!(pa.numerator * 2, pa.denominator);
+        assert_ne!(
+            pa.numerator * set_perf.get(&pool_a).unwrap().denominator,
+            set_perf.get(&pool_a).unwrap().numerator * pa.denominator,
+            "regression guard: reward performance must use ssStakeGo, not ssStakeSet"
+        );
     }
 
     #[test]

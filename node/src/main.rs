@@ -1290,7 +1290,7 @@ fn main() -> Result<()> {
                         max_snapshots: max_ledger_snapshots,
                     },
                     plutus_cost_model: plutus_cost_model.clone(),
-                    verify_vrf: active_slot_coeff.is_some(),
+                    verify_vrf: false,
                     active_slot_coeff,
                     slot_length_secs: genesis_slot_length,
                     system_start_unix_secs: genesis_system_start_unix_secs,

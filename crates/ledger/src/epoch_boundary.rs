@@ -175,12 +175,92 @@ fn compute_eta(
     }
 }
 
+fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+fn ceil_div_u128(a: u128, b: u128) -> u128 {
+    if b == 0 { 0 } else { a.div_ceil(b) }
+}
+
+fn apparent_performance_ratio(
+    blocks_produced: u64,
+    total_active_stake: u64,
+    pool_stake: u64,
+    total_blocks: u64,
+) -> Option<UnitInterval> {
+    if blocks_produced == 0 || total_active_stake == 0 || pool_stake == 0 || total_blocks == 0 {
+        return None;
+    }
+
+    // performance = blocks_produced * total_active_stake
+    //             / (pool_stake * total_blocks)
+    //
+    // Reduce factors before multiplication. Preview/mainnet-scale values
+    // can otherwise overflow u64 even when the rational itself is small.
+    let mut n1 = blocks_produced;
+    let mut n2 = total_active_stake;
+    let mut d1 = pool_stake;
+    let mut d2 = total_blocks;
+
+    let g = gcd_u64(n1, d2);
+    n1 /= g;
+    d2 /= g;
+    let g = gcd_u64(n2, d1);
+    n2 /= g;
+    d1 /= g;
+    let g = gcd_u64(n1, d1);
+    n1 /= g;
+    d1 /= g;
+    let g = gcd_u64(n2, d2);
+    n2 /= g;
+    d2 /= g;
+
+    let mut numerator = (n1 as u128).saturating_mul(n2 as u128);
+    let mut denominator = (d1 as u128).saturating_mul(d2 as u128);
+    if denominator == 0 {
+        return None;
+    }
+
+    let g = gcd_u128(numerator, denominator);
+    numerator /= g;
+    denominator /= g;
+
+    let max = u64::MAX as u128;
+    if numerator > max || denominator > max {
+        let scale = ceil_div_u128(numerator, max).max(ceil_div_u128(denominator, max));
+        numerator = (numerator / scale).max(1);
+        denominator = (denominator / scale).max(1);
+    }
+
+    Some(UnitInterval {
+        numerator: numerator as u64,
+        denominator: denominator as u64,
+    })
+}
+
 /// Derives per-pool performance ratios from block production counts and
-/// the `set` stake snapshot.
+/// the reward stake snapshot (`ssStakeGo`).
 ///
-/// Performance for each pool is `blocks_produced / expected_blocks` where
-/// `expected_blocks = σ_pool * total_blocks`. When the snapshot has no
-/// stake data, returns an empty map (all pools get perfect performance).
+/// Upstream `startStep` passes `ssStakeGo` into `mkPoolRewardInfo`.
+/// Performance for each block-producing pool is
+/// `blocks_produced / (σ_pool * total_blocks)` where `total_blocks` is the
+/// actual number of blocks produced in the epoch. When the snapshot has no
+/// stake data, returns an empty map.
 ///
 /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `completeRupd`,
 /// `mkApparentPerformance`.
@@ -190,7 +270,7 @@ fn compute_eta(
 /// their actual share of blocks.
 fn derive_pool_performance(
     blocks_made: &BTreeMap<PoolKeyHash, u64>,
-    set_snapshot: &crate::stake::StakeSnapshot,
+    reward_snapshot: &crate::stake::StakeSnapshot,
     d: UnitInterval,
 ) -> BTreeMap<PoolKeyHash, UnitInterval> {
     // d >= 0.8  →  all block-producing pools get perf = 1.
@@ -212,7 +292,7 @@ fn derive_pool_performance(
             .collect();
     }
 
-    let stake_dist = set_snapshot.pool_stake_distribution();
+    let stake_dist = reward_snapshot.pool_stake_distribution();
     let total_stake = stake_dist.total_active_stake();
     if total_stake == 0 || blocks_made.is_empty() {
         return BTreeMap::new();
@@ -229,18 +309,10 @@ fn derive_pool_performance(
         if pool_stake == 0 {
             continue;
         }
-        // performance = blocks_produced / (σ * total_blocks)
-        //             = blocks_produced * total_stake / (pool_stake * total_blocks)
-        let numerator = blocks_produced.saturating_mul(total_stake);
-        let denominator = pool_stake.saturating_mul(total_blocks);
-        if denominator > 0 {
-            performance.insert(
-                *pool_hash,
-                UnitInterval {
-                    numerator,
-                    denominator,
-                },
-            );
+        if let Some(ratio) =
+            apparent_performance_ratio(blocks_produced, total_stake, pool_stake, total_blocks)
+        {
+            performance.insert(*pool_hash, ratio);
         }
     }
     performance
@@ -261,10 +333,10 @@ fn derive_pool_performance(
 /// * `pool_performance` — per-pool performance ratios for the reward
 ///   calculation.  When non-empty, these values are used directly.
 ///   When the caller passes an empty map, the function derives
-///   per-pool performance from `ledger.blocks_made()` and the `set`
+///   per-pool performance from `ledger.blocks_made()` and the `go`
 ///   snapshot's stake distribution (upstream `nesBcur` semantics).
 ///   A pool absent from the resulting map is treated as having
-///   perfect (1/1) performance.
+///   zero performance.
 ///
 /// # Errors
 ///
@@ -1819,6 +1891,15 @@ mod tests {
             event.rewards_distributed > 0 || event.treasury_delta > 0,
             "expected some reward activity at epoch boundary"
         );
+    }
+
+    #[test]
+    fn apparent_performance_ratio_reduces_before_u64_product() {
+        let ratio =
+            apparent_performance_ratio(5_000, 9_000_000_000_000_000, 3_000_000_000_000_000, 30_000)
+                .expect("nonzero performance ratio");
+
+        assert_eq!(ratio.numerator * 2, ratio.denominator);
     }
 
     // -- Pool retirement + deposit refund ---------------------------------
