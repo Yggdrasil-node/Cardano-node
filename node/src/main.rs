@@ -1623,6 +1623,9 @@ fn strict_base_ledger_state(
     let byron_entries = file_cfg
         .load_byron_genesis_utxo(config_base_dir)
         .wrap_err("failed to load Byron genesis UTxO")?;
+    let byron_initial_lovelace = byron_entries
+        .iter()
+        .fold(0u64, |sum, entry| sum.saturating_add(entry.amount));
     if !byron_entries.is_empty() {
         state.seed_byron_genesis_utxo(
             byron_entries
@@ -1634,6 +1637,11 @@ fn strict_base_ledger_state(
         .load_shelley_genesis_bootstrap(config_base_dir)
         .wrap_err("failed to load Shelley genesis bootstrap")?
     {
+        let shelley_initial_lovelace = bootstrap
+            .initial_funds
+            .iter()
+            .fold(0u64, |sum, (_, txout)| sum.saturating_add(txout.amount));
+        let initial_circulation = byron_initial_lovelace.saturating_add(shelley_initial_lovelace);
         state.configure_pending_shelley_genesis_utxo(bootstrap.initial_funds);
         state.configure_pending_shelley_genesis_stake(
             bootstrap
@@ -1659,6 +1667,9 @@ fn strict_base_ledger_state(
         );
         state.set_genesis_update_quorum(bootstrap.update_quorum);
         state.set_max_lovelace_supply(bootstrap.max_lovelace_supply);
+        state.accounting_mut().reserves = bootstrap
+            .max_lovelace_supply
+            .saturating_sub(initial_circulation);
         state.set_slots_per_epoch(bootstrap.epoch_length);
         state.set_active_slot_coeff(yggdrasil_ledger::UnitInterval {
             numerator: bootstrap.active_slots_coeff.0,
@@ -3517,7 +3528,7 @@ mod tests {
         configured_fallback_peers, decode_optional_prefixed_hex, decode_tx_hex_arg,
         forged_header_protocol_version, ledger_peer_snapshot_from_ledger_state,
         load_effective_config, node_role_report, preset_config_base_dir, status_report,
-        validate_config_report,
+        strict_base_ledger_state, validate_config_report,
     };
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -5379,6 +5390,20 @@ mod tests {
                 yggdrasil_node::config::NetworkPreset::Preview
             ))
         );
+    }
+
+    #[test]
+    fn strict_base_ledger_state_seeds_preview_reserves_from_genesis_supply() {
+        let (cfg, config_base_dir) =
+            load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
+                .expect("preset config");
+
+        let ledger =
+            strict_base_ledger_state(&cfg, config_base_dir.as_deref()).expect("base ledger state");
+
+        assert_eq!(ledger.max_lovelace_supply(), 45_000_000_000_000_000);
+        assert_eq!(ledger.accounting().treasury, 0);
+        assert_eq!(ledger.accounting().reserves, 15_000_000_000_000_000);
     }
 
     #[test]

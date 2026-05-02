@@ -1,15 +1,16 @@
 //! Epoch boundary processing for the Shelley-based ledger.
 //!
-//! At each epoch transition the ledger performs the NEWEPOCH / EPOCH /
-//! SNAP / RUPD sequence defined in the Shelley formal specification:
+//! At each epoch transition the ledger performs the NEWEPOCH / RUPD /
+//! EPOCH sequence defined in the Shelley formal specification:
 //!
-//! 1. **Stake snapshot rotation** (SNAP rule) — a fresh snapshot is
-//!    computed from the current UTxO and reward accounts, and the
+//! 1. **Reward distribution** (RUPD reward update) — the reward pot is
+//!    formed from monetary expansion (ρ) and delayed accumulated fees,
+//!    the treasury cut (τ) is deducted, and the remainder is distributed
+//!    to pools and delegators according to the **go** snapshot and
+//!    previous-epoch block counts (`nesBprev`).
+//! 2. **Stake snapshot rotation** (SNAP rule) — a fresh snapshot is
+//!    computed from the post-reward UTxO and reward accounts, and the
 //!    three-snapshot ring is rotated (`go ← set ← mark ← new`).
-//! 2. **Reward distribution** (RUPD rule) — the reward pot is formed
-//!    from monetary expansion (ρ) and accumulated fees, the treasury
-//!    cut (τ) is deducted, and the remainder is distributed to pools
-//!    and delegators according to the **go** snapshot.
 //! 3. **Pool retirement** — pools whose `retiring_epoch` ≤ the new
 //!    epoch are removed and their deposits refunded.
 //! 4. **Accounting update** — treasury receives its cut plus any
@@ -333,8 +334,8 @@ fn derive_pool_performance(
 /// * `pool_performance` — per-pool performance ratios for the reward
 ///   calculation.  When non-empty, these values are used directly.
 ///   When the caller passes an empty map, the function derives
-///   per-pool performance from `ledger.blocks_made()` and the `go`
-///   snapshot's stake distribution (upstream `nesBcur` semantics).
+///   per-pool performance from `ledger.previous_blocks_made()` and the `go`
+///   snapshot's stake distribution (upstream `nesBprev` semantics).
 ///   A pool absent from the resulting map is treated as having
 ///   zero performance.
 ///
@@ -381,24 +382,22 @@ pub fn apply_epoch_boundary(
     //
     //    When the caller supplies an explicit pool_performance map
     //    (non-empty), use it directly.  Otherwise derive performance
-    //    from the ledger's internal `blocks_made` (upstream `nesBcur`).
+    //    from the ledger's delayed `previous_blocks_made` (upstream
+    //    `nesBprev`).
     //
-    //    NOTE (pulsing phase shift): upstream reward computation is
-    //    *pulsed* across the epoch via `startStep`/`pulseStep`/
-    //    `completeStep` and the resulting `RewardUpdate` is only applied
-    //    the *following* epoch boundary (`applyRUpdFiltered` in
-    //    NEWEPOCH).  We compute rewards **inline** at the current epoch
-    //    boundary, which shifts reward application one epoch earlier.
-    //    The stake distribution (`snapshots.go`) and fee value are
-    //    identical to what `startStep` would read from `ssStakeGo` and
-    //    `ssFee`; only the application timing differs.
+    //    Upstream reward computation is pulsed across the epoch via
+    //    `startStep`/`pulseStep`/`completeStep` and applied at the next
+    //    NEWEPOCH.  This inline implementation preserves the observable
+    //    boundary effect by using the same delayed inputs: `ssStakeGo`,
+    //    `ssFee`, and `nesBprev`, all captured before SNAP rotates the
+    //    current epoch state.
     //
     //    Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch` — RUPD runs
     //    before EPOCH (which contains SNAP).
     //    Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward`
     //    — `startStep`, `completeRupd`.
     // -----------------------------------------------------------------------
-    let fee_pot = std::mem::take(&mut snapshots.fee_pot);
+    let fee_pot = snapshots.previous_fee_pot;
 
     // Compute eta — monetary expansion efficiency factor.
     //
@@ -417,7 +416,7 @@ pub fn apply_epoch_boundary(
         d_param,
         ledger.active_slot_coeff(),
         ledger.slots_per_epoch(),
-        ledger.blocks_made(),
+        ledger.previous_blocks_made(),
     );
 
     let reward_params = RewardParams {
@@ -432,20 +431,18 @@ pub fn apply_epoch_boundary(
         eta,
     };
 
-    // Derive effective performance: caller-provided or from internal blocks_made.
+    // Derive effective performance: caller-provided or from delayed blocks_made.
     //
     // Upstream `mkApparentPerformance` in `mkPoolRewardInfo` uses data from
     // `ssStakeGo` — the same snapshot used for reward distribution.
     // Pre-rotation in our code, `snapshots.go` corresponds to upstream's
     // `ssStakeGo` at the time `startStep` would read it.
     let effective_performance: BTreeMap<PoolKeyHash, UnitInterval> =
-        if pool_performance.is_empty() && !ledger.blocks_made().is_empty() {
-            derive_pool_performance(ledger.blocks_made(), &snapshots.go, d_param)
+        if pool_performance.is_empty() && !ledger.previous_blocks_made().is_empty() {
+            derive_pool_performance(ledger.previous_blocks_made(), &snapshots.go, d_param)
         } else {
             pool_performance.clone()
         };
-    // Clear blocks_made for the new epoch (upstream NEWEPOCH rotates nesBcur).
-    ledger.take_blocks_made();
 
     let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, &effective_performance);
     let (accounts_rewarded, unregistered_rewards) = distribute_rewards(ledger, &reward_dist);
@@ -482,8 +479,11 @@ pub fn apply_epoch_boundary(
         ledger.reward_accounts(),
         ledger.pool_state(),
     );
-    // fee_pot was already taken above; rotate returns 0 here.
+    // Rotate the just-ended epoch's fees into `previous_fee_pot` for the next
+    // reward update.  The current boundary has already consumed the old
+    // delayed fee pot above.
     let _ = snapshots.rotate(new_mark);
+    ledger.rotate_blocks_made_for_epoch_boundary();
 
     // -----------------------------------------------------------------------
     // 2b. Activate future pool params — upstream does this inside
@@ -5002,11 +5002,20 @@ mod tests {
 
         let _ =
             apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &perf).expect("epoch 1");
+        assert_eq!(
+            ledger.accounting().reserves,
+            0,
+            "current-epoch fees are delayed until the next reward update"
+        );
+
+        let _ =
+            apply_epoch_boundary(&mut ledger, EpochNo(2), &mut snapshots, &perf).expect("epoch 2");
 
         // -- Fee pot does not affect reserves via monetary expansion --
-        // With zero reserves, delta_reserves = 0.  The fee pot feeds the
-        // reward pot.  With no pools, all rewards_pot is unclaimed → returned
-        // to reserves (upstream deltaR2).  Treasury gets only the τ-cut.
+        // With zero reserves, delta_reserves = 0.  The delayed previous fee
+        // pot feeds the reward pot.  With no pools, all rewards_pot is
+        // unclaimed → returned to reserves (upstream deltaR2).  Treasury gets
+        // only the τ-cut.
         // So reserves = 0 - 0 + unclaimed (from fee pot - tau cut).
         // But the fee pot does increase reserves via unclaimed return.
         let expected_unclaimed = {
@@ -5667,16 +5676,22 @@ mod tests {
     // ── blocks_made integration ────────────────────────────────────────
 
     #[test]
-    fn epoch_boundary_uses_internal_blocks_made_when_caller_passes_empty() {
+    fn epoch_boundary_uses_previous_blocks_made_when_caller_passes_empty() {
         // Set up a ledger with a pool and stake.
         let mut ledger = make_ledger_with_pool(1);
         let pool_hash = test_pool(1);
 
-        // Simulate blocks_made: the pool produced 10 blocks.
+        // Simulate delayed nesBprev: the pool produced 10 blocks in the
+        // epoch currently eligible for rewards.
         for _ in 0..10 {
             ledger.record_block_producer(pool_hash);
         }
-        assert_eq!(*ledger.blocks_made().get(&pool_hash).unwrap(), 10);
+        ledger.rotate_blocks_made_for_epoch_boundary();
+        assert_eq!(*ledger.previous_blocks_made().get(&pool_hash).unwrap(), 10);
+
+        // Simulate one current-epoch block that should be delayed until the
+        // next boundary.
+        ledger.record_block_producer(pool_hash);
 
         // Build snapshots with the pool having stake.
         let mut snapshot = StakeSnapshot::empty();
@@ -5687,15 +5702,18 @@ mod tests {
         snapshots.go = snapshot.clone();
         snapshots.set = snapshot;
 
-        // Call epoch boundary with an EMPTY performance map → should use internal blocks_made.
+        // Call epoch boundary with an EMPTY performance map → should use
+        // delayed previous_blocks_made, not current blocks_made.
         let event = apply_epoch_boundary(&mut ledger, EpochNo(1), &mut snapshots, &BTreeMap::new())
             .expect("epoch boundary");
 
-        // blocks_made should be cleared after epoch boundary.
+        // blocks_made should be cleared after epoch boundary and the
+        // just-ended current count should become the delayed previous count.
         assert!(
             ledger.blocks_made().is_empty(),
             "blocks_made should be cleared after epoch boundary"
         );
+        assert_eq!(ledger.previous_blocks_made().get(&pool_hash), Some(&1));
 
         // Rewards should have been computed (non-zero distribution).
         assert!(
@@ -5709,8 +5727,10 @@ mod tests {
         let mut ledger = make_ledger_with_pool(1);
         let pool_hash = test_pool(1);
 
-        // Internal blocks_made: 1 block (low performance).
+        // Delayed internal blocks_made: 1 block. This keeps eta non-zero,
+        // but caller-provided performance should override the derived score.
         ledger.record_block_producer(pool_hash);
+        ledger.rotate_blocks_made_for_epoch_boundary();
 
         // But caller provides explicit perfect performance.
         let mut explicit_perf = BTreeMap::new();

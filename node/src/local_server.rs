@@ -4094,6 +4094,7 @@ mod tests {
             set: set_snap,
             go: StakeSnapshot::empty(),
             fee_pot: 0,
+            previous_fee_pot: 0,
         };
         snapshot = snapshot.with_stake_snapshots(snapshots);
 
@@ -4193,6 +4194,7 @@ mod tests {
             set: set_snap,
             go: StakeSnapshot::empty(),
             fee_pot: 0,
+            previous_fee_pot: 0,
         });
         let filter = HashSet::from([pool_b]);
         let bytes = encode_pool_distr_for_lsq(&snapshot, Some(&filter));
@@ -4300,6 +4302,7 @@ mod tests {
             set: set_snap,
             go: StakeSnapshot::empty(),
             fee_pot: 0,
+            previous_fee_pot: 0,
         };
 
         let snapshot = state.snapshot().with_stake_snapshots(snapshots);

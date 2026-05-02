@@ -397,8 +397,9 @@ impl PoolStakeDistribution {
 /// * **mark** — most recently computed snapshot (this epoch boundary).
 /// * **set** — previous mark; used for leader election in the current epoch.
 /// * **go** — previous set; used for reward calculation.
-/// * **fee_pot** — accumulated transaction fees during the current epoch,
-///   to be distributed as rewards at the next epoch boundary.
+/// * **fee_pot** — accumulated transaction fees during the current epoch.
+/// * **previous_fee_pot** — fees from the epoch whose block-production
+///   counts are currently eligible for reward calculation.
 ///
 /// Reference: `SnapShots` in `Cardano.Ledger.Shelley.LedgerState`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -411,6 +412,12 @@ pub struct StakeSnapshots {
     pub go: StakeSnapshot,
     /// Accumulated transaction fees for the current epoch.
     pub fee_pot: u64,
+    /// Accumulated transaction fees from the previous epoch.
+    ///
+    /// Upstream reward pulsing runs in the epoch after block production
+    /// and uses `nesBprev`, so the fee pot used by rewards is delayed by
+    /// the same epoch-boundary rotation as block-production counts.
+    pub previous_fee_pot: u64,
 }
 
 impl Default for StakeSnapshots {
@@ -420,6 +427,7 @@ impl Default for StakeSnapshots {
             set: StakeSnapshot::empty(),
             go: StakeSnapshot::empty(),
             fee_pot: 0,
+            previous_fee_pot: 0,
         }
     }
 }
@@ -435,12 +443,15 @@ impl StakeSnapshots {
     /// 1. `go` ← `set`
     /// 2. `set` ← `mark`
     /// 3. `mark` ← `new_mark` (freshly computed)
-    /// 4. `fee_pot` is returned (the fees to be distributed) and reset to zero.
+    /// 4. `fee_pot` is moved into `previous_fee_pot` for the next reward
+    ///    calculation and reset to zero.
     ///
     /// Reference: SNAP transition rule — `snapTransition`.
     pub fn rotate(&mut self, new_mark: StakeSnapshot) -> u64 {
         self.go = std::mem::replace(&mut self.set, std::mem::replace(&mut self.mark, new_mark));
-        std::mem::take(&mut self.fee_pot)
+        let closed_epoch_fees = std::mem::take(&mut self.fee_pot);
+        self.previous_fee_pot = closed_epoch_fees;
+        closed_epoch_fees
     }
 
     /// Adds `fees` to the current-epoch fee pot.
@@ -453,20 +464,21 @@ impl StakeSnapshots {
 
 impl CborEncode for StakeSnapshots {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(4);
+        enc.array(5);
         self.mark.encode_cbor(enc);
         self.set.encode_cbor(enc);
         self.go.encode_cbor(enc);
         enc.unsigned(self.fee_pot);
+        enc.unsigned(self.previous_fee_pot);
     }
 }
 
 impl CborDecode for StakeSnapshots {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 4 {
+        if len != 4 && len != 5 {
             return Err(LedgerError::CborInvalidLength {
-                expected: 4,
+                expected: 5,
                 actual: len as usize,
             });
         }
@@ -474,11 +486,13 @@ impl CborDecode for StakeSnapshots {
         let set = StakeSnapshot::decode_cbor(dec)?;
         let go = StakeSnapshot::decode_cbor(dec)?;
         let fee_pot = dec.unsigned()?;
+        let previous_fee_pot = if len >= 5 { dec.unsigned()? } else { 0 };
         Ok(Self {
             mark,
             set,
             go,
             fee_pot,
+            previous_fee_pot,
         })
     }
 }
@@ -794,6 +808,7 @@ mod tests {
         let fees = snapshots.rotate(snap1.clone());
         assert_eq!(fees, 500);
         assert_eq!(snapshots.fee_pot, 0);
+        assert_eq!(snapshots.previous_fee_pot, 500);
         assert_eq!(snapshots.mark, snap1);
         assert!(snapshots.set.stake.is_empty()); // was the initial empty
         assert!(snapshots.go.stake.is_empty());
@@ -802,6 +817,7 @@ mod tests {
         snapshots.accumulate_fees(1000);
         let fees = snapshots.rotate(snap2.clone());
         assert_eq!(fees, 1000);
+        assert_eq!(snapshots.previous_fee_pot, 1000);
         assert_eq!(snapshots.mark, snap2);
         assert_eq!(snapshots.set, snap1);
         assert!(snapshots.go.stake.is_empty());
@@ -809,6 +825,7 @@ mod tests {
         // Third rotation.
         let fees = snapshots.rotate(snap3.clone());
         assert_eq!(fees, 0);
+        assert_eq!(snapshots.previous_fee_pot, 0);
         assert_eq!(snapshots.mark, snap3);
         assert_eq!(snapshots.set, snap2);
         assert_eq!(snapshots.go, snap1);
@@ -872,6 +889,7 @@ mod tests {
         snap.stake.add(test_cred(1), 500);
         snapshots.rotate(snap);
         snapshots.accumulate_fees(42);
+        snapshots.previous_fee_pot = 24;
 
         let bytes = {
             let mut enc = Encoder::new();

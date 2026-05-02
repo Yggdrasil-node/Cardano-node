@@ -2836,6 +2836,16 @@ pub struct LedgerState {
     /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `NewEpochState.nesBcur`;
     /// `BlocksMade (EraCrypto era)`.
     blocks_made: BTreeMap<PoolKeyHash, u64>,
+    /// Per-pool block production counts from the previous epoch.
+    ///
+    /// Upstream reward pulsing uses `nesBprev` when starting/completing a
+    /// reward update, not the just-ending `nesBcur` counts. This delayed map
+    /// is rotated from [`Self::blocks_made`] at epoch boundaries after any
+    /// currently eligible rewards have been applied.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` —
+    /// `NewEpochState.nesBprev`.
+    blocks_made_prev: BTreeMap<PoolKeyHash, u64>,
 
     /// Maximum lovelace supply from genesis (mainnet: 45 000 000 000 000 000).
     ///
@@ -2889,7 +2899,7 @@ pub struct LedgerStateCheckpoint {
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(23);
+        enc.array(24);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
         match self.expected_network_id {
@@ -2956,16 +2966,23 @@ impl CborEncode for LedgerState {
             enc.bytes(pool_hash);
             enc.unsigned(count);
         }
+        // blocks_made_prev: delayed per-pool block counts used by rewards.
+        // Reference: NewEpochState.nesBprev.
+        enc.map(self.blocks_made_prev.len() as u64);
+        for (pool_hash, &count) in &self.blocks_made_prev {
+            enc.bytes(pool_hash);
+            enc.unsigned(count);
+        }
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept legacy 9/10-element arrays and current 12-23-element arrays.
-        if len != 9 && len != 10 && !(12..=23).contains(&len) {
+        // Accept legacy 9/10-element arrays and current 12-24-element arrays.
+        if len != 9 && len != 10 && !(12..=24).contains(&len) {
             return Err(LedgerError::CborInvalidLength {
-                expected: 23,
+                expected: 24,
                 actual: len as usize,
             });
         }
@@ -3130,6 +3147,21 @@ impl CborDecode for LedgerState {
             BTreeMap::new()
         };
 
+        let blocks_made_prev = if len >= 24 {
+            let map_len = dec.map()?;
+            let mut bm = BTreeMap::new();
+            for _ in 0..map_len {
+                let bytes = dec.bytes()?;
+                let mut arr = [0u8; 28];
+                arr.copy_from_slice(bytes);
+                let count = dec.unsigned()?;
+                bm.insert(arr, count);
+            }
+            bm
+        } else {
+            BTreeMap::new()
+        };
+
         Ok(Self {
             current_era,
             tip,
@@ -3156,6 +3188,7 @@ impl CborDecode for LedgerState {
             genesis_update_quorum,
             num_dormant_epochs,
             blocks_made,
+            blocks_made_prev,
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
@@ -3244,6 +3277,7 @@ impl LedgerState {
             genesis_update_quorum: 5,
             num_dormant_epochs: 0,
             blocks_made: BTreeMap::new(),
+            blocks_made_prev: BTreeMap::new(),
             max_lovelace_supply: 0,
             slots_per_epoch: 0,
             active_slot_coeff: UnitInterval {
@@ -3772,6 +3806,14 @@ impl LedgerState {
         &self.blocks_made
     }
 
+    /// Returns a reference to the delayed per-pool block production counts
+    /// used by reward calculation.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `nesBprev`.
+    pub fn previous_blocks_made(&self) -> &BTreeMap<PoolKeyHash, u64> {
+        &self.blocks_made_prev
+    }
+
     /// Records that the pool identified by `pool_hash` produced a block
     /// in the current epoch.
     ///
@@ -3783,9 +3825,22 @@ impl LedgerState {
     }
 
     /// Takes the current-epoch block production counts and replaces them
-    /// with an empty map.  Intended for epoch-boundary rotation.
+    /// with an empty map.
+    ///
+    /// Prefer [`Self::rotate_blocks_made_for_epoch_boundary`] for real
+    /// epoch-boundary handling so `nesBprev` parity is preserved.
     pub fn take_blocks_made(&mut self) -> BTreeMap<PoolKeyHash, u64> {
         std::mem::take(&mut self.blocks_made)
+    }
+
+    /// Rotates current-epoch block counts into the delayed previous-epoch
+    /// slot used by reward calculation, then clears current counts.
+    ///
+    /// This mirrors upstream `NewEpochState` rotation from `nesBcur` to
+    /// `nesBprev`. Callers should run this after applying any reward update
+    /// that used the old `nesBprev` value.
+    pub fn rotate_blocks_made_for_epoch_boundary(&mut self) {
+        self.blocks_made_prev = std::mem::take(&mut self.blocks_made);
     }
 
     /// Returns the maximum lovelace supply (genesis constant).

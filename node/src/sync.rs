@@ -15,8 +15,10 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use crate::config::MAINNET_NETWORK_MAGIC;
+#[cfg(test)]
+use yggdrasil_consensus::EpochSize;
 use yggdrasil_consensus::{
-    ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule, EpochSize,
+    ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule,
     FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
     NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters,
     OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, judge_header_slot,
@@ -1491,11 +1493,12 @@ pub(crate) struct LedgerCheckpointTracking {
     /// Epoch schedule (era-aware slots per epoch) for epoch boundary
     /// detection.  Required when `stake_snapshots` is `Some`.
     pub(crate) epoch_size: Option<EpochSchedule>,
-    /// Per-pool block production counts for the current epoch.
+    /// Diagnostic mirror of per-pool block production counts for the
+    /// current epoch.
     ///
-    /// At each epoch boundary, these counts are converted to performance
-    /// ratios (`blocks_produced / expected_blocks`) and passed to
-    /// `apply_epoch_boundary`, then reset for the next epoch.
+    /// The ledger state's `blocks_made` / `blocks_made_prev` fields are
+    /// authoritative for reward timing. This mirror is retained for runtime
+    /// recovery evidence and tests, then reset at the same epoch boundary.
     pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
     /// Storage directory under which slot-indexed ChainDepState sidecars are
     /// persisted whenever a ledger checkpoint is written. When `None`, no
@@ -1697,6 +1700,7 @@ pub(crate) fn advance_ledger_state_with_progress(
     })
 }
 
+#[cfg(test)]
 fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
     while b != 0 {
         let t = b;
@@ -1706,6 +1710,7 @@ fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
     a
 }
 
+#[cfg(test)]
 fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
     while b != 0 {
         let t = b;
@@ -1715,10 +1720,12 @@ fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
     a
 }
 
+#[cfg(test)]
 fn ceil_div_u128(a: u128, b: u128) -> u128 {
     if b == 0 { 0 } else { a.div_ceil(b) }
 }
 
+#[cfg(test)]
 fn apparent_performance_ratio(
     blocks_produced: u64,
     total_active_stake: u64,
@@ -1790,6 +1797,7 @@ fn apparent_performance_ratio(
 /// Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward` —
 /// `startStep`; `Cardano.Ledger.Shelley.Rewards` —
 /// `mkApparentPerformance`.
+#[cfg(test)]
 pub(crate) fn compute_pool_performance(
     pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
     reward_snapshot: &yggdrasil_ledger::StakeSnapshot,
@@ -1822,6 +1830,7 @@ pub(crate) fn compute_pool_performance(
     performance
 }
 
+#[cfg(test)]
 pub(crate) fn compute_epoch_boundary_pool_performance(
     pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
     snapshots: &StakeSnapshots,
@@ -1933,7 +1942,6 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
     pool_block_counts: &mut BTreeMap<PoolKeyHash, u64>,
 ) -> Result<Vec<EpochBoundaryEvent>, SyncError> {
     let mut events = Vec::new();
-    let shelley_epoch_size = epoch_schedule.shelley_epoch_size();
     // Upstream validates each header against a ticked chain-dependent state.
     // Keep a batch-local cursor so a range crossing an epoch boundary uses the
     // new epoch nonce for the first block in that epoch, while the durable
@@ -1950,25 +1958,14 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
         };
         if epoch_schedule.is_new_epoch(prev_slot, block_slot) {
             let new_epoch = epoch_schedule.slot_to_epoch(block_slot);
-            // Compute pool performance ratios from accumulated block counts
-            // against `go` (`ssStakeGo`), the same snapshot used for reward
-            // distribution by `apply_epoch_boundary`.
-            let pool_performance = compute_epoch_boundary_pool_performance(
-                pool_block_counts,
-                snapshots,
-                shelley_epoch_size,
-            );
-            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
+            // Reward timing is ledger-owned: `apply_epoch_boundary` derives
+            // performance from `LedgerState::previous_blocks_made()` when the
+            // caller passes an empty map, matching upstream `nesBprev`.
+            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &BTreeMap::new())
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
-            // Reset counts for the new epoch.
+            // Reset the diagnostic current-epoch mirror.
             pool_block_counts.clear();
-        }
-
-        // Track pool block production.
-        if let Some(issuer_vkey) = block_issuer_vkey(block) {
-            let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey).0;
-            *pool_block_counts.entry(pool_hash).or_insert(0) += 1;
         }
 
         let next_vrf_nonce_cursor = vrf_ctx.and_then(|ctx| {
@@ -2047,6 +2044,14 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
         }
 
         ledger_state.apply_block_validated(&converted, evaluator)?;
+
+        // Track pool block production after successful ledger application.
+        // The ledger records the authoritative count internally; this mirror
+        // exists only for runtime recovery evidence and tests.
+        if let Some(issuer_vkey) = block_issuer_vkey(block) {
+            let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey).0;
+            *pool_block_counts.entry(pool_hash).or_insert(0) += 1;
+        }
 
         // Accumulate declared transaction fees into the snapshot fee pot.
         // This feeds `compute_epoch_rewards()` at the next epoch boundary
@@ -2508,6 +2513,7 @@ fn stake_snapshots_from_ledger_state(ledger_state: &LedgerState) -> StakeSnapsho
         set: current.clone(),
         go: current,
         fee_pot: 0,
+        previous_fee_pot: 0,
     }
 }
 
@@ -2579,17 +2585,17 @@ fn replay_storage_block_with_epoch_boundary(
         };
         if epoch_schedule.is_new_epoch(prev_slot, block.header.slot_no) {
             let new_epoch = epoch_schedule.slot_to_epoch(block.header.slot_no);
-            let pool_performance = compute_epoch_boundary_pool_performance(
-                pool_block_counts,
-                snapshots,
-                epoch_schedule.shelley_epoch_size(),
-            );
-            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &pool_performance)
+            apply_epoch_boundary(ledger_state, new_epoch, snapshots, &BTreeMap::new())
                 .map(|event| events.push(event))
                 .map_err(SyncError::LedgerDecode)?;
             pool_block_counts.clear();
         }
         ledger_state.apply_block_validated(block, evaluator)?;
+        if !matches!(block.era, yggdrasil_ledger::Era::Byron) {
+            let issuer_vkey = &block.header.issuer_vkey;
+            let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(issuer_vkey).0;
+            *pool_block_counts.entry(pool_hash).or_insert(0) += 1;
+        }
         Ok(events)
     }
 }
@@ -8288,6 +8294,7 @@ mod tests {
             set: make_snapshot_with_pools(&[(pool_hash(2), 200)]),
             go: make_snapshot_with_pools(&[(pool_hash(3), 300)]),
             fee_pot: 42,
+            previous_fee_pot: 24,
         };
         let encoded = {
             let mut enc = yggdrasil_ledger::Encoder::new();
