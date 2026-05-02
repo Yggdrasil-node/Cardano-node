@@ -566,7 +566,11 @@ pub fn compute_pool_reward(
     // inflate supply if the performance ratio is very large.
     let apparent = mul_rational_capped(optimal, performance, rewards_pot);
 
-    let cost = pool_params.cost.max(params.min_pool_cost);
+    // Upstream uses the cost stored in the stake-pool snapshot (`spssCost`)
+    // directly. Minimum-pool-cost is an admission/update constraint; reward
+    // calculation does not re-max a historical snapshot cost against the
+    // currently active parameter.
+    let cost = pool_params.cost;
 
     // Upstream `calcStakePoolOperatorReward`: when f <= cost, leader
     // receives the entire pool reward `f` (not zero).
@@ -938,9 +942,73 @@ mod tests {
 
         let breakdown = compute_pool_reward(100, &params, &pool, &snapshot, &pool_dist, perfect);
 
-        // The apparent reward (100 lovelace pot, tiny pool) < cost of 340 ADA.
-        assert_eq!(breakdown.leader_reward, 0);
+        // If the apparent reward is below cost, upstream gives the operator
+        // the whole apparent reward. For this tiny pool it currently floors
+        // to zero, so keep the assertion tied to the computed apparent value.
+        assert_eq!(
+            breakdown.leader_reward,
+            breakdown.apparent_performance_reward
+        );
         assert!(breakdown.member_rewards.is_empty());
+    }
+
+    #[test]
+    fn pool_reward_uses_snapshot_pool_cost_without_current_minimum_remax() {
+        let params = RewardParams {
+            rho: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            tau: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            a0: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            n_opt: 1,
+            min_pool_cost: 1_000,
+            reserves: 0,
+            fee_pot: 0,
+            max_lovelace_supply: 0,
+            eta: UnitInterval {
+                numerator: 1,
+                denominator: 1,
+            },
+        };
+        let pool = test_pool(1);
+        let member = test_cred(2);
+        let mut snapshot = StakeSnapshot::empty();
+        snapshot.stake.add(member, 1_000);
+        snapshot.delegations.insert(member, pool);
+        snapshot.pool_params.insert(
+            pool,
+            test_pool_params(
+                1,
+                0,
+                100,
+                UnitInterval {
+                    numerator: 0,
+                    denominator: 1,
+                },
+            ),
+        );
+
+        let pool_dist = snapshot.pool_stake_distribution();
+        let perfect = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+
+        let breakdown = compute_pool_reward(10_000, &params, &pool, &snapshot, &pool_dist, perfect);
+
+        assert_eq!(breakdown.apparent_performance_reward, 10_000);
+        assert_eq!(
+            breakdown.leader_reward, 100,
+            "reward calculation must use spssCost, not max(spssCost, ppMinPoolCost)"
+        );
+        assert_eq!(breakdown.member_rewards.get(&member), Some(&9_900));
     }
 
     #[test]

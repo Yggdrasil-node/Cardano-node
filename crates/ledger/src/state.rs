@@ -56,6 +56,25 @@ pub fn pv_can_follow(cur_major: u64, cur_minor: u64, new_major: u64, new_minor: 
     major_bump || minor_bump
 }
 
+fn overlay_step(offset_from_epoch_start: u64, d: UnitInterval) -> u128 {
+    let denominator = d.denominator as u128;
+    if denominator == 0 {
+        return 0;
+    }
+    (offset_from_epoch_start as u128)
+        .saturating_mul(d.numerator as u128)
+        .div_ceil(denominator)
+}
+
+fn is_overlay_slot_for_blocks_made(first_slot: u64, d: UnitInterval, slot: u64) -> bool {
+    if d.numerator == 0 || d.denominator == 0 || slot < first_slot {
+        return false;
+    }
+
+    let offset = slot - first_slot;
+    overlay_step(offset, d) < overlay_step(offset.saturating_add(1), d)
+}
+
 fn encode_optional_epoch_no(value: Option<EpochNo>, enc: &mut Encoder) {
     match value {
         Some(epoch) => epoch.encode_cbor(enc),
@@ -2827,11 +2846,12 @@ pub struct LedgerState {
     pub(crate) num_dormant_epochs: u64,
     /// Per-pool block production counts for the current epoch.
     ///
-    /// Each non-Byron block applied via [`apply_block_validated`]
-    /// increments the count for the block's issuer pool (identified by
-    /// `Blake2b-224(issuer_vkey)`).  At the epoch boundary, these
-    /// counts are used to derive per-pool performance ratios which
-    /// modulate the reward calculation, then cleared for the new epoch.
+    /// Each non-Byron, non-overlay block applied via
+    /// [`apply_block_validated`] increments the count for the block's
+    /// issuer pool (identified by `Blake2b-224(issuer_vkey)`).  At the
+    /// epoch boundary, these counts are used to derive per-pool
+    /// performance ratios which modulate the reward calculation, then
+    /// cleared for the new epoch.
     ///
     /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `NewEpochState.nesBcur`;
     /// `BlocksMade (EraCrypto era)`.
@@ -3814,14 +3834,52 @@ impl LedgerState {
         &self.blocks_made_prev
     }
 
-    /// Records that the pool identified by `pool_hash` produced a block
-    /// in the current epoch.
+    /// Records that the pool identified by `pool_hash` produced a
+    /// counted block in the current epoch.
     ///
-    /// This should be called once per non-Byron block during block application.
+    /// This is the raw counter update.  Real block application should use
+    /// [`Self::record_block_producer_for_block`] so TPraos overlay slots are
+    /// skipped before incrementing `nesBcur`.
     ///
     /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `nesBcur`.
     pub fn record_block_producer(&mut self, pool_hash: PoolKeyHash) {
         *self.blocks_made.entry(pool_hash).or_insert(0) += 1;
+    }
+
+    fn should_count_block_producer(
+        &self,
+        slot: u64,
+        params: Option<&crate::protocol_params::ProtocolParameters>,
+    ) -> bool {
+        let Some(d) = params.and_then(|pp| pp.d) else {
+            return true;
+        };
+        if self.slots_per_epoch == 0 {
+            return true;
+        }
+
+        let first_slot = self.current_epoch.0.saturating_mul(self.slots_per_epoch);
+        !is_overlay_slot_for_blocks_made(first_slot, d, slot)
+    }
+
+    /// Records the block producer for a Shelley-family block when the block
+    /// is not an overlay slot.
+    ///
+    /// This mirrors upstream `incrBlocks`: Byron blocks are excluded by the
+    /// caller, and TPraos overlay slots are not inserted into `nesBcur`.
+    /// The issuer may be a genesis delegate cold key in early eras; upstream
+    /// still coerces it into the stake-pool key role for this accounting map.
+    fn record_block_producer_for_block(
+        &mut self,
+        block: &crate::tx::Block,
+        params: Option<&crate::protocol_params::ProtocolParameters>,
+    ) {
+        if !self.should_count_block_producer(block.header.slot_no.0, params) {
+            return;
+        }
+
+        let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&block.header.issuer_vkey).0;
+        self.record_block_producer(pool_hash);
     }
 
     /// Takes the current-epoch block production counts and replaces them
@@ -4216,11 +4274,11 @@ impl LedgerState {
         // Track block producer for per-pool performance accounting.
         // Byron blocks are excluded because they predate the Shelley
         // reward system and have no meaningful issuer-pool identity.
+        // TPraos overlay slots are skipped to mirror upstream `incrBlocks`.
         //
-        // Reference: `Cardano.Ledger.Shelley.LedgerState` — `nesBcur`.
+        // Reference: `Cardano.Ledger.Shelley.BlockBody.Internal.incrBlocks`.
         if block.era != Era::Byron {
-            let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&block.header.issuer_vkey).0;
-            self.record_block_producer(pool_hash);
+            self.record_block_producer_for_block(block, protocol_params_before_block.as_ref());
         }
 
         self.current_era = block.era;
@@ -12451,7 +12509,7 @@ mod tests {
     use crate::eras::conway::{GovAction, Vote, Voter};
     use crate::eras::shelley::ShelleyTxOut;
     use crate::protocol_params::{ProtocolParameterUpdate, ProtocolParameters};
-    use crate::types::{Relay, RewardAccount, UnitInterval};
+    use crate::types::{BlockNo, HeaderHash, Relay, RewardAccount, SlotNo, UnitInterval};
 
     fn sample_pool_params(relays: Vec<Relay>, operator: u8) -> PoolParams {
         PoolParams {
@@ -12470,6 +12528,23 @@ mod tests {
             pool_owners: vec![[operator; 28]],
             relays,
             pool_metadata: None,
+        }
+    }
+
+    fn empty_test_block(era: Era, slot: u64, block_no: u64, issuer: u8) -> crate::tx::Block {
+        crate::tx::Block {
+            era,
+            header: crate::tx::BlockHeader {
+                hash: HeaderHash([slot as u8; 32]),
+                prev_hash: HeaderHash([block_no.saturating_sub(1) as u8; 32]),
+                slot_no: SlotNo(slot),
+                block_no: BlockNo(block_no),
+                issuer_vkey: [issuer; 32],
+                protocol_version: None,
+            },
+            transactions: Vec::new(),
+            raw_cbor: None,
+            header_cbor_size: None,
         }
     }
 
@@ -12535,6 +12610,54 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn overlay_slot_detection_matches_upstream_step_function() {
+        let first_slot = 100;
+        let d = UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
+
+        assert!(is_overlay_slot_for_blocks_made(first_slot, d, 100));
+        assert!(!is_overlay_slot_for_blocks_made(first_slot, d, 101));
+        assert!(is_overlay_slot_for_blocks_made(first_slot, d, 102));
+        assert!(!is_overlay_slot_for_blocks_made(first_slot, d, 103));
+        assert!(!is_overlay_slot_for_blocks_made(
+            first_slot,
+            UnitInterval {
+                numerator: 0,
+                denominator: 1
+            },
+            100
+        ));
+    }
+
+    #[test]
+    fn apply_block_validated_skips_overlay_slots_for_blocks_made() {
+        let mut params = ProtocolParameters::default();
+        params.d = Some(UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        });
+
+        let mut state = LedgerState::new(Era::Shelley);
+        state.set_current_epoch(EpochNo(1));
+        state.set_slots_per_epoch(100);
+        state.set_protocol_params(params);
+
+        let overlay = empty_test_block(Era::Shelley, 100, 1, 7);
+        state.apply_block_validated(&overlay, None).unwrap();
+        assert!(
+            state.blocks_made().is_empty(),
+            "overlay slots must not increment nesBcur"
+        );
+
+        let regular = empty_test_block(Era::Shelley, 101, 2, 7);
+        state.apply_block_validated(&regular, None).unwrap();
+        let pool_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&[7; 32]).0;
+        assert_eq!(state.blocks_made().get(&pool_hash), Some(&1));
     }
 
     #[test]

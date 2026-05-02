@@ -13,8 +13,9 @@
 //!    three-snapshot ring is rotated (`go ← set ← mark ← new`).
 //! 3. **Pool retirement** — pools whose `retiring_epoch` ≤ the new
 //!    epoch are removed and their deposits refunded.
-//! 4. **Accounting update** — treasury receives its cut plus any
-//!    unclaimed rewards; reserves are reduced by monetary expansion.
+//! 4. **Accounting update** — treasury receives its cut plus unclaimed
+//!    deposits; unclaimed reward remainder returns to reserves, and
+//!    reserves are reduced by monetary expansion.
 //!
 //! The orchestration entry point is [`apply_epoch_boundary`], which
 //! operates on a [`LedgerState`] and returns an [`EpochBoundaryEvent`]
