@@ -566,6 +566,24 @@ pub fn compute_pool_reward(
     // inflate supply if the performance ratio is very large.
     let apparent = mul_rational_capped(optimal, performance, rewards_pot);
 
+    // DIAGNOSTIC: log inputs/outputs for the failing pool a8e65680...
+    if pool_hash[0] == 0xa8 && pool_hash[1] == 0xe6 && pool_hash[2] == 0x56 && pool_hash[3] == 0x80 {
+        eprintln!(
+            "DIAG_POOL a8e65680 rewards_pot={} n_opt={} a0={}/{} pool_stake={} pledge={} total_stake={} performance={}/{} optimal={} apparent={} cost={} margin={}/{}",
+            rewards_pot,
+            params.n_opt,
+            params.a0.numerator, params.a0.denominator,
+            pool_stake,
+            pool_params.pledge,
+            total_stake_for_sigma,
+            performance.numerator, performance.denominator,
+            optimal,
+            apparent,
+            pool_params.cost,
+            pool_params.margin.numerator, pool_params.margin.denominator,
+        );
+    }
+
     // Upstream uses the cost stored in the stake-pool snapshot (`spssCost`)
     // directly. Minimum-pool-cost is an admission/update constraint; reward
     // calculation does not re-max a historical snapshot cost against the
@@ -777,6 +795,30 @@ pub fn compute_epoch_rewards(
     }
 
     let unclaimed = pot.rewards_pot.saturating_sub(total_distributed);
+
+    // DIAGNOSTIC: log per-pool aggregate to diagnose total over-distribution.
+    eprintln!(
+        "DIAG_TOTAL rewards_pot={} total_distributed={} unclaimed={} num_pools={} num_leader_deltas={} num_member_deltas={} delta_reserves={} treasury_cut={}",
+        pot.rewards_pot,
+        total_distributed,
+        unclaimed,
+        go_snapshot.pool_params.len(),
+        leader_deltas.len(),
+        reward_deltas.len(),
+        pot.delta_reserves,
+        pot.treasury_cut,
+    );
+    // Also dump the 5 biggest leader_deltas and 5 biggest member_deltas
+    let mut leader_sorted: Vec<_> = leader_deltas.iter().collect();
+    leader_sorted.sort_by(|a, b| b.1.cmp(a.1));
+    for (i, (acct, amt)) in leader_sorted.iter().take(10).enumerate() {
+        eprintln!("DIAG_TOTAL leader[{}] amt={} cred={:?}", i, amt, acct.credential);
+    }
+    let mut reward_sorted: Vec<_> = reward_deltas.iter().collect();
+    reward_sorted.sort_by(|a, b| b.1.cmp(a.1));
+    for (i, (cred, amt)) in reward_sorted.iter().take(10).enumerate() {
+        eprintln!("DIAG_TOTAL member[{}] amt={} cred={:?}", i, amt, cred);
+    }
 
     EpochRewardDistribution {
         reward_deltas,
