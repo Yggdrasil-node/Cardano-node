@@ -405,20 +405,6 @@ impl CekMachine {
         }
 
         let steps = self.pending_steps_total;
-        if std::env::var_os("YGGDRASIL_CEK_BUDGET_TRACE").is_some() {
-            eprintln!(
-                "CEK_STEPS total={steps} const={} var={} lam={} apply={} delay={} force={} builtin={} constr={} case={}",
-                self.pending_step_counts[StepKind::Constant.index()],
-                self.pending_step_counts[StepKind::Var.index()],
-                self.pending_step_counts[StepKind::LamAbs.index()],
-                self.pending_step_counts[StepKind::Apply.index()],
-                self.pending_step_counts[StepKind::Delay.index()],
-                self.pending_step_counts[StepKind::Force.index()],
-                self.pending_step_counts[StepKind::Builtin.index()],
-                self.pending_step_counts[StepKind::Constr.index()],
-                self.pending_step_counts[StepKind::Case.index()],
-            );
-        }
         self.pending_step_counts = [0; StepKind::COUNT];
         self.pending_steps_total = 0;
         self.spend_budget(format!("{steps} accumulated steps").as_str(), cost)
@@ -426,12 +412,6 @@ impl CekMachine {
 
     fn spend_budget(&mut self, context: &str, cost: ExBudget) -> Result<(), MachineError> {
         let before = self.budget;
-        if std::env::var_os("YGGDRASIL_CEK_BUDGET_TRACE").is_some() {
-            eprintln!(
-                "CEK_BUDGET context={context} cost_cpu={} cost_mem={} before_cpu={} before_mem={}",
-                cost.cpu, cost.mem, before.cpu, before.mem
-            );
-        }
         match self.budget.spend(cost) {
             Ok(()) => Ok(()),
             Err(MachineError::OutOfBudget(_)) => Err(MachineError::OutOfBudget(format!(

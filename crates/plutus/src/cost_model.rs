@@ -167,6 +167,28 @@ pub enum CostModelError {
     NegativeParameter { name: &'static str, value: i64 },
 }
 
+/// Upstream Plutus builtin semantics variant used when interpreting named
+/// cost-model parameters.
+///
+/// Cardano protocol versions select a semantics variant before CEK execution:
+/// V1/V2 use variant A before Conway, variant B from Conway until Van Rossem,
+/// and variant D after Van Rossem; V3 uses C before Van Rossem and E after.
+/// Upstream variants D and E reuse the builtin cost-model files for B and C,
+/// respectively, so this Rust mapper only needs the three distinct costing
+/// shapes A, B, and C.
+///
+/// Reference: `PlutusLedgerApi.MachineParameters.machineParametersFor` and
+/// `PlutusCore.DataFilePaths` in `IntersectMBO/plutus`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum BuiltinSemanticsVariant {
+    /// Pre-Conway PlutusV1/V2 builtin cost semantics.
+    A,
+    /// Conway+ PlutusV1/V2 builtin cost semantics; also used by variant D.
+    B,
+    /// PlutusV3 builtin cost semantics; also used by variant E.
+    C,
+}
+
 // ---------------------------------------------------------------------------
 // ExMemory — argument size measurement
 // ---------------------------------------------------------------------------
@@ -566,6 +588,19 @@ impl CostModel {
     pub fn from_alonzo_genesis_params(
         params: &BTreeMap<String, i64>,
     ) -> Result<Self, CostModelError> {
+        Self::from_alonzo_genesis_params_with_variant(params, BuiltinSemanticsVariant::B)
+    }
+
+    /// Derive a cost model from named protocol parameters using the specified
+    /// upstream builtin semantics variant.
+    ///
+    /// Use this when replaying transactions because the same named parameter
+    /// keys can map to different builtin costing shapes depending on the active
+    /// protocol major version.
+    pub fn from_alonzo_genesis_params_with_variant(
+        params: &BTreeMap<String, i64>,
+        builtin_semantics_variant: BuiltinSemanticsVariant,
+    ) -> Result<Self, CostModelError> {
         let var_cpu = named_value(params, "cekVarCost-exBudgetCPU")?;
         let var_mem = named_value(params, "cekVarCost-exBudgetMemory")?;
         let constant_cpu = named_value(params, "cekConstCost-exBudgetCPU")?;
@@ -634,7 +669,7 @@ impl CostModel {
             .get("cekBuiltinCost-exBudgetMemory")
             .copied()
             .unwrap_or(1_000);
-        let builtin_costs = build_per_builtin_costs(params);
+        let builtin_costs = build_per_builtin_costs(params, builtin_semantics_variant);
 
         // Startup cost charged once at the beginning of evaluation.
         let startup_cpu = params
@@ -733,6 +768,7 @@ impl CostModel {
 /// incomplete. Unknown genesis keys are silently ignored.
 fn build_per_builtin_costs(
     params: &BTreeMap<String, i64>,
+    builtin_semantics_variant: BuiltinSemanticsVariant,
 ) -> HashMap<DefaultFun, BuiltinCostEntry> {
     use DefaultFun::*;
 
@@ -770,8 +806,8 @@ fn build_per_builtin_costs(
         }
     }
 
-    // multiplyInteger: MultipliedSizes for CPU (upstream: multiplied_sizes),
-    // AddedSizes for memory.
+    // multiplyInteger: Variant A uses AddedSizes CPU. Variants B/C use
+    // MultipliedSizes CPU. Memory is AddedSizes for all variants.
     {
         let ci = get("multiplyInteger-cpu-arguments-intercept");
         let cs = get("multiplyInteger-cpu-arguments-slope");
@@ -781,9 +817,17 @@ fn build_per_builtin_costs(
             map.insert(
                 MultiplyInteger,
                 BuiltinCostEntry {
-                    cpu: CostExpr::MultipliedSizes {
-                        intercept: ci,
-                        slope: cs,
+                    cpu: match builtin_semantics_variant {
+                        BuiltinSemanticsVariant::A => CostExpr::AddedSizes {
+                            intercept: ci,
+                            slope: cs,
+                        },
+                        BuiltinSemanticsVariant::B | BuiltinSemanticsVariant::C => {
+                            CostExpr::MultipliedSizes {
+                                intercept: ci,
+                                slope: cs,
+                            }
+                        }
                     },
                     mem: CostExpr::AddedSizes {
                         intercept: mi,
@@ -794,19 +838,19 @@ fn build_per_builtin_costs(
         }
     }
 
-    // divideInteger / quotientInteger:
-    //   CPU = ConstAboveDiagonal wrapping TwoVarQuadratic (upstream: const_above_diagonal + quadratic_in_x_and_y),
-    //   memory = SubtractedSizes (upstream: subtracted_sizes).
-    // modInteger / remainderInteger:
-    //   CPU = same ConstAboveDiagonal shape,
-    //   memory = LinearInY (upstream: linear_in_y).
+    // divideInteger / modInteger / quotientInteger / remainderInteger:
+    //   Variants A/B CPU = ConstAboveDiagonal(MultipliedSizes).
+    //   Variant C CPU = ConstAboveDiagonal(TwoVarQuadratic).
+    //   divide/quotient memory = SubtractedSizes for all variants.
+    //   mod/remainder memory = SubtractedSizes for A/B, LinearInY for C.
     for (fun, p) in [
         (DivideInteger, "divideInteger"),
         (ModInteger, "modInteger"),
         (QuotientInteger, "quotientInteger"),
         (RemainderInteger, "remainderInteger"),
     ] {
-        // CPU: try ConstAboveDiagonal(TwoVarQuadratic) keys first, then legacy SubtractedSizes, then constant.
+        // CPU: try ConstAboveDiagonal(TwoVarQuadratic) keys first, then
+        // legacy ConstAboveDiagonal(MultipliedSizes), then constant.
         let cpu = if let Some(c00) = get(&format!("{p}-cpu-arguments-model-arguments-c00")) {
             let constant = get(&format!("{p}-cpu-arguments-constant")).unwrap_or(0);
             let c01 = get(&format!("{p}-cpu-arguments-model-arguments-c01")).unwrap_or(0);
@@ -831,19 +875,22 @@ fn build_per_builtin_costs(
             get(&format!("{p}-cpu-arguments-model-arguments-intercept")),
             get(&format!("{p}-cpu-arguments-model-arguments-slope")),
         ) {
-            // Legacy SubtractedSizes for older parameter maps.
-            Some(CostExpr::SubtractedSizes {
-                intercept: ci,
-                slope: cs,
-                minimum: 0,
+            let constant = get(&format!("{p}-cpu-arguments-constant")).unwrap_or(0);
+            Some(CostExpr::ConstAboveDiagonal {
+                constant,
+                inner: Box::new(CostExpr::MultipliedSizes {
+                    intercept: ci,
+                    slope: cs,
+                }),
             })
         } else {
             get(&format!("{p}-cpu-arguments-constant")).map(CostExpr::Constant)
         };
         // Memory shape depends on the builtin variant.
         let mem = match fun {
-            // modInteger and remainderInteger: upstream linear_in_y.
-            ModInteger | RemainderInteger => {
+            ModInteger | RemainderInteger
+                if builtin_semantics_variant == BuiltinSemanticsVariant::C =>
+            {
                 if let (Some(mi), Some(ms)) = (
                     get(&format!("{p}-memory-arguments-intercept")),
                     get(&format!("{p}-memory-arguments-slope")),
@@ -856,7 +903,6 @@ fn build_per_builtin_costs(
                     get(&format!("{p}-memory-arguments-intercept")).map(CostExpr::Constant)
                 }
             }
-            // divideInteger and quotientInteger: upstream subtracted_sizes.
             _ => {
                 if let (Some(mi), Some(ms)) = (
                     get(&format!("{p}-memory-arguments-intercept")),
@@ -2365,6 +2411,135 @@ mod tests {
                 assert_eq!(*slope, 11_218);
             }
             other => panic!("Expected MultipliedSizes, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn variant_a_multiply_integer_uses_added_sizes_cpu() {
+        let model = CostModel::from_alonzo_genesis_params_with_variant(
+            &sample_params(),
+            BuiltinSemanticsVariant::A,
+        )
+        .expect("derive variant A cost model");
+        let entry = model
+            .builtin_costs
+            .get(&DefaultFun::MultiplyInteger)
+            .expect("MultiplyInteger must have entry");
+        match &entry.cpu {
+            CostExpr::AddedSizes { intercept, slope } => {
+                assert_eq!(*intercept, 61_516);
+                assert_eq!(*slope, 11_218);
+            }
+            other => panic!("Expected AddedSizes, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn legacy_division_cpu_uses_const_above_diagonal_multiplied_sizes() {
+        let mut params = sample_params();
+        params.insert("divideInteger-cpu-arguments-constant".to_owned(), 196_500);
+        params.insert(
+            "divideInteger-cpu-arguments-model-arguments-intercept".to_owned(),
+            453_240,
+        );
+        params.insert(
+            "divideInteger-cpu-arguments-model-arguments-slope".to_owned(),
+            220,
+        );
+        params.insert("divideInteger-memory-arguments-intercept".to_owned(), 0);
+        params.insert("divideInteger-memory-arguments-slope".to_owned(), 1);
+        params.insert("divideInteger-memory-arguments-minimum".to_owned(), 1);
+
+        let model =
+            CostModel::from_alonzo_genesis_params_with_variant(&params, BuiltinSemanticsVariant::A)
+                .expect("derive variant A cost model");
+        let entry = model
+            .builtin_costs
+            .get(&DefaultFun::DivideInteger)
+            .expect("DivideInteger must have entry");
+
+        match &entry.cpu {
+            CostExpr::ConstAboveDiagonal { constant, inner } => {
+                assert_eq!(*constant, 196_500);
+                assert_eq!(entry.cpu.evaluate(&[1, 2]), 196_500);
+                match inner.as_ref() {
+                    CostExpr::MultipliedSizes { intercept, slope } => {
+                        assert_eq!(*intercept, 453_240);
+                        assert_eq!(*slope, 220);
+                    }
+                    other => panic!("Expected MultipliedSizes inner, got {:?}", other),
+                }
+            }
+            other => panic!("Expected ConstAboveDiagonal, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn variant_a_mod_remainder_memory_uses_subtracted_sizes() {
+        let mut params = sample_params();
+        for prefix in ["modInteger", "remainderInteger"] {
+            params.insert(format!("{prefix}-cpu-arguments-constant"), 196_500);
+            params.insert(
+                format!("{prefix}-cpu-arguments-model-arguments-intercept"),
+                453_240,
+            );
+            params.insert(format!("{prefix}-cpu-arguments-model-arguments-slope"), 220);
+            params.insert(format!("{prefix}-memory-arguments-intercept"), 0);
+            params.insert(format!("{prefix}-memory-arguments-slope"), 1);
+            params.insert(format!("{prefix}-memory-arguments-minimum"), 1);
+        }
+
+        let model =
+            CostModel::from_alonzo_genesis_params_with_variant(&params, BuiltinSemanticsVariant::A)
+                .expect("derive variant A cost model");
+        for fun in [DefaultFun::ModInteger, DefaultFun::RemainderInteger] {
+            let entry = model.builtin_costs.get(&fun).expect("entry present");
+            match &entry.mem {
+                CostExpr::SubtractedSizes {
+                    intercept,
+                    slope,
+                    minimum,
+                } => {
+                    assert_eq!((*intercept, *slope, *minimum), (0, 1, 1));
+                }
+                other => panic!("Expected SubtractedSizes for {fun:?}, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn variant_c_mod_remainder_memory_uses_linear_in_y() {
+        let mut params = sample_params();
+        for prefix in ["modInteger", "remainderInteger"] {
+            params.insert(format!("{prefix}-cpu-arguments-constant"), 85_848);
+            params.insert(
+                format!("{prefix}-cpu-arguments-model-arguments-c00"),
+                123_203,
+            );
+            params.insert(format!("{prefix}-cpu-arguments-model-arguments-c01"), 7305);
+            params.insert(format!("{prefix}-cpu-arguments-model-arguments-c02"), -900);
+            params.insert(format!("{prefix}-cpu-arguments-model-arguments-c10"), 1716);
+            params.insert(format!("{prefix}-cpu-arguments-model-arguments-c11"), 549);
+            params.insert(format!("{prefix}-cpu-arguments-model-arguments-c20"), 57);
+            params.insert(
+                format!("{prefix}-cpu-arguments-model-arguments-minimum"),
+                85_848,
+            );
+            params.insert(format!("{prefix}-memory-arguments-intercept"), 0);
+            params.insert(format!("{prefix}-memory-arguments-slope"), 1);
+        }
+
+        let model =
+            CostModel::from_alonzo_genesis_params_with_variant(&params, BuiltinSemanticsVariant::C)
+                .expect("derive variant C cost model");
+        for fun in [DefaultFun::ModInteger, DefaultFun::RemainderInteger] {
+            let entry = model.builtin_costs.get(&fun).expect("entry present");
+            match &entry.mem {
+                CostExpr::LinearInY { intercept, slope } => {
+                    assert_eq!((*intercept, *slope), (0, 1));
+                }
+                other => panic!("Expected LinearInY for {fun:?}, got {:?}", other),
+            }
         }
     }
 

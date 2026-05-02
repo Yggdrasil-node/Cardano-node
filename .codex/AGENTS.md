@@ -1,4 +1,4 @@
-This supplements the root `AGENTS.md` with Codex-specific guidance.
+This supplements the root `AGENTS.md` and Nested `AGENTS.md` with Codex-specific guidance.
 
 ## Model Recommendations
 

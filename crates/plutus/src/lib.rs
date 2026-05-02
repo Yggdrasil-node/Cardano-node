@@ -53,7 +53,7 @@ pub mod machine;
 pub mod types;
 
 // Re-exports for convenience.
-pub use cost_model::{CostModel, CostModelError};
+pub use cost_model::{BuiltinSemanticsVariant, CostModel, CostModelError};
 pub use error::MachineError;
 pub use flat::{decode_flat_program, decode_script_bytes, decode_script_bytes_allowing_remainder};
 pub use machine::CekMachine;

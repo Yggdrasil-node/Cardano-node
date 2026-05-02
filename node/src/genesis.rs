@@ -32,7 +32,7 @@ use yggdrasil_ledger::{
     AddrKeyHash, Address, Anchor, EnactState, GenesisDelegateHash, GenesisHash, Nonce, PoolKeyHash,
     ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
 };
-use yggdrasil_plutus::{CostModel, CostModelError};
+use yggdrasil_plutus::{BuiltinSemanticsVariant, CostModel, CostModelError};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -1053,6 +1053,21 @@ pub fn build_plutus_cost_model_from_protocol_values(
     version: PlutusVersion,
     values: &[i64],
 ) -> Result<CostModel, GenesisCostModelError> {
+    build_plutus_cost_model_from_protocol_values_for_protocol(version, None, values)
+}
+
+/// Build a CEK [`CostModel`] from active ordered protocol-parameter values
+/// using the builtin semantics variant selected by the active protocol major.
+///
+/// Upstream `machineParametersFor` chooses variant A for Plutus V1/V2 before
+/// Conway (PV < 9), variant B for V1/V2 from Conway onward, and variant C for
+/// Plutus V3. Van Rossem variants D/E reuse the same builtin cost-model files
+/// as B/C, respectively.
+pub fn build_plutus_cost_model_from_protocol_values_for_protocol(
+    version: PlutusVersion,
+    protocol_version: Option<(u64, u64)>,
+    values: &[i64],
+) -> Result<CostModel, GenesisCostModelError> {
     let named: BTreeMap<String, i64> = match version {
         PlutusVersion::V1 => {
             if values.len() != PLUTUS_V1_INITIAL_COST_MODEL_LEN {
@@ -1096,7 +1111,23 @@ pub fn build_plutus_cost_model_from_protocol_values(
         }
     };
 
-    Ok(CostModel::from_alonzo_genesis_params(&named)?)
+    let variant = builtin_semantics_variant(version, protocol_version);
+    Ok(CostModel::from_alonzo_genesis_params_with_variant(
+        &named, variant,
+    )?)
+}
+
+fn builtin_semantics_variant(
+    version: PlutusVersion,
+    protocol_version: Option<(u64, u64)>,
+) -> BuiltinSemanticsVariant {
+    match version {
+        PlutusVersion::V1 | PlutusVersion::V2 => match protocol_version {
+            Some((major, _minor)) if major < 9 => BuiltinSemanticsVariant::A,
+            _ => BuiltinSemanticsVariant::B,
+        },
+        PlutusVersion::V3 => BuiltinSemanticsVariant::C,
+    }
 }
 
 const PLUTUS_V1_INITIAL_COST_MODEL_LEN: usize = 166;
@@ -2550,6 +2581,7 @@ fn f64_to_rational(f: f64) -> (u64, u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yggdrasil_plutus::{DefaultFun, cost_model::CostExpr};
 
     fn sample_shelley() -> ShelleyGenesis {
         ShelleyGenesis {
@@ -2928,6 +2960,47 @@ mod tests {
         assert_eq!(model.step_costs.var_mem, 100);
         assert_eq!(model.builtin_cpu, 29_773);
         assert_eq!(model.builtin_mem, 100);
+    }
+
+    #[test]
+    fn active_protocol_cost_model_selects_builtin_semantics_variant() {
+        let params =
+            build_protocol_parameters(&sample_shelley(), &sample_alonzo(), Some(&sample_conway()))
+                .expect("build params");
+        let models = params.cost_models.as_ref().expect("cost models");
+        let values = models.get(&0).expect("PlutusV1 values");
+
+        let pre_conway = build_plutus_cost_model_from_protocol_values_for_protocol(
+            PlutusVersion::V1,
+            Some((7, 0)),
+            values,
+        )
+        .expect("build pre-Conway active model");
+        let conway = build_plutus_cost_model_from_protocol_values_for_protocol(
+            PlutusVersion::V1,
+            Some((9, 0)),
+            values,
+        )
+        .expect("build Conway active model");
+
+        match &pre_conway
+            .builtin_costs
+            .get(&DefaultFun::MultiplyInteger)
+            .expect("MultiplyInteger")
+            .cpu
+        {
+            CostExpr::AddedSizes { .. } => {}
+            other => panic!("expected variant A AddedSizes, got {other:?}"),
+        }
+        match &conway
+            .builtin_costs
+            .get(&DefaultFun::MultiplyInteger)
+            .expect("MultiplyInteger")
+            .cpu
+        {
+            CostExpr::MultipliedSizes { .. } => {}
+            other => panic!("expected variant B MultipliedSizes, got {other:?}"),
+        }
     }
 
     #[test]

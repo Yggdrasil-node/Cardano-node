@@ -145,12 +145,17 @@ impl PlutusEvaluator for CekPlutusEvaluator {
         let budget = ExBudget::new(eval.ex_units.steps as i64, eval.ex_units.mem as i64);
         let cost_model = match eval.cost_model.as_deref() {
             Some(values) => {
-                crate::genesis::build_plutus_cost_model_from_protocol_values(eval.version, values)
-                    .map_err(|err| LedgerError::PlutusScriptFailed {
+                crate::genesis::build_plutus_cost_model_from_protocol_values_for_protocol(
+                    eval.version,
+                    tx_ctx.protocol_version,
+                    values,
+                )
+                .map_err(|err| LedgerError::PlutusScriptFailed {
                     hash: eval.script_hash,
                     reason: format!(
-                        "invalid active cost model for {:?} ({} values): {err}",
+                        "invalid active cost model for {:?} at protocol {:?} ({} values): {err}",
                         eval.version,
+                        tx_ctx.protocol_version,
                         values.len()
                     ),
                 })?
