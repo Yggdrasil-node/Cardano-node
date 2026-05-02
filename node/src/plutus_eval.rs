@@ -163,9 +163,30 @@ impl PlutusEvaluator for CekPlutusEvaluator {
             None => self.cost_model.clone(),
         };
 
-        // 5. Evaluate the applied term.
-        let (result, _logs) = yggdrasil_plutus::evaluate_term(applied, budget, cost_model)
-            .map_err(|e| map_machine_error(&eval.script_hash, e))?;
+        // 5. Evaluate the applied term. Keep the machine available on
+        // failure so explicit Plutus `trace` breadcrumbs can be surfaced
+        // during live parity investigations without changing default errors.
+        let mut machine = yggdrasil_plutus::CekMachine::new(budget, cost_model);
+        let result = match machine.evaluate(applied) {
+            Ok(result) => result,
+            Err(err) => {
+                let raw_machine_err = err.to_string();
+                let mut ledger_err = map_machine_error(&eval.script_hash, err);
+                if std::env::var_os("YGGDRASIL_PLUTUS_TRACE_FAILURES").is_some() {
+                    if let LedgerError::PlutusScriptFailed { reason, .. } = &mut ledger_err {
+                        reason.push_str("; machine_error=");
+                        reason.push_str(&raw_machine_err);
+                    }
+                    if let LedgerError::PlutusScriptFailed { reason, .. } = &mut ledger_err
+                        && !machine.logs.is_empty()
+                    {
+                        reason.push_str("; logs=");
+                        reason.push_str(&format!("{:?}", machine.logs));
+                    }
+                }
+                return Err(ledger_err);
+            }
+        };
 
         // 6. PlutusV3 scripts must explicitly return Bool(true).
         //    PlutusV1/V2 accept any non-error result.
@@ -300,7 +321,7 @@ fn build_tx_info(
     // Reference: V1/V2 — `transCoinToValue (txBody ^. feeTxBodyL)`
     //            V3   — `transCoinToLovelace (txBody ^. feeTxBodyL)`
     let fee_v1v2 = plutus_value_data(&yggdrasil_ledger::eras::mary::Value::Coin(tx_ctx.fee));
-    let fee_v3 = PlutusData::Integer(tx_ctx.fee as i128);
+    let fee_v3 = PlutusData::integer(tx_ctx.fee as i128);
 
     let mint_entries: Vec<(PlutusData, PlutusData)> = tx_ctx
         .mint
@@ -311,7 +332,7 @@ fn build_tx_info(
                 .map(|(name, qty)| {
                     (
                         PlutusData::Bytes(name.clone()),
-                        PlutusData::Integer(*qty as i128),
+                        PlutusData::integer(*qty as i128),
                     )
                 })
                 .collect();
@@ -328,7 +349,7 @@ fn build_tx_info(
         .map(|(ra, amt)| {
             (
                 staking_credential_data(&ra.credential),
-                PlutusData::Integer(*amt as i128),
+                PlutusData::integer(*amt as i128),
             )
         })
         .collect();
@@ -339,7 +360,7 @@ fn build_tx_info(
         .map(|(ra, amt)| {
             (
                 credential_data(&ra.credential),
-                PlutusData::Integer(*amt as i128),
+                PlutusData::integer(*amt as i128),
             )
         })
         .collect();
@@ -373,7 +394,7 @@ fn build_tx_info(
             // V1 mint prepends zero-ADA entry (upstream `transMintValue m = transCoinToValue zero <> transMultiAsset m`)
             let mut v1_mint = vec![(
                 PlutusData::Bytes(vec![]),
-                PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::Integer(0))]),
+                PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::integer(0))]),
             )];
             v1_mint.extend(mint_entries);
             // V1 withdrawals: [(StakingCredential, Integer)] as List of tuples
@@ -423,7 +444,7 @@ fn build_tx_info(
             // V2 mint also prepends zero-ADA entry (upstream `transMintValue`)
             let mut v2_mint = vec![(
                 PlutusData::Bytes(vec![]),
-                PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::Integer(0))]),
+                PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::integer(0))]),
             )];
             v2_mint.extend(mint_entries);
             let redeemers_v2 = PlutusData::Map(
@@ -486,12 +507,12 @@ fn build_tx_info(
             let current_treasury = maybe_data(
                 tx_ctx
                     .current_treasury_value
-                    .map(|v| PlutusData::Integer(v as i128)),
+                    .map(|v| PlutusData::integer(v as i128)),
             );
             let treasury_donation = maybe_data(
                 tx_ctx
                     .treasury_donation
-                    .map(|v| PlutusData::Integer(v as i128)),
+                    .map(|v| PlutusData::integer(v as i128)),
             );
             let votes = PlutusData::Map(
                 tx_ctx
@@ -572,7 +593,7 @@ fn posix_time_range(
         Some(s) => PlutusData::Constr(
             0,
             vec![
-                PlutusData::Constr(1, vec![PlutusData::Integer(s as i128)]), // Finite
+                PlutusData::Constr(1, vec![PlutusData::integer(s as i128)]), // Finite
                 PlutusData::Constr(1, vec![]),                               // True (inclusive)
             ],
         ),
@@ -594,7 +615,7 @@ fn posix_time_range(
             PlutusData::Constr(
                 0,
                 vec![
-                    PlutusData::Constr(1, vec![PlutusData::Integer(e as i128)]), // Finite
+                    PlutusData::Constr(1, vec![PlutusData::integer(e as i128)]), // Finite
                     bool_data(upper_is_closed),
                 ],
             )
@@ -752,9 +773,9 @@ fn pointer_staking_credential_data(pointer: &yggdrasil_ledger::PointerAddress) -
     PlutusData::Constr(
         1,
         vec![
-            PlutusData::Integer(pointer.slot as i128),
-            PlutusData::Integer(pointer.tx_index as i128),
-            PlutusData::Integer(pointer.cert_index as i128),
+            PlutusData::integer(pointer.slot as i128),
+            PlutusData::integer(pointer.tx_index as i128),
+            PlutusData::integer(pointer.cert_index as i128),
         ],
     )
 }
@@ -771,7 +792,7 @@ fn plutus_value_data(value: &yggdrasil_ledger::eras::mary::Value) -> PlutusData 
         PlutusData::Bytes(vec![]),
         PlutusData::Map(vec![(
             PlutusData::Bytes(vec![]),
-            PlutusData::Integer(coin as i128),
+            PlutusData::integer(coin as i128),
         )]),
     ));
     // Multi-asset entries
@@ -782,7 +803,7 @@ fn plutus_value_data(value: &yggdrasil_ledger::eras::mary::Value) -> PlutusData 
                 .map(|(name, qty)| {
                     (
                         PlutusData::Bytes(name.clone()),
-                        PlutusData::Integer(*qty as i128),
+                        PlutusData::integer(*qty as i128),
                     )
                 })
                 .collect();
@@ -846,7 +867,7 @@ fn script_purpose_data_v3(
         } => PlutusData::Constr(
             3,
             vec![
-                PlutusData::Integer(*cert_index as i128),
+                PlutusData::integer(*cert_index as i128),
                 tx_cert_data_v3(certificate, pv)?,
             ],
         ),
@@ -857,7 +878,7 @@ fn script_purpose_data_v3(
         } => PlutusData::Constr(
             5,
             vec![
-                PlutusData::Integer(*proposal_index as i128),
+                PlutusData::integer(*proposal_index as i128),
                 proposal_procedure_data_v3(proposal)?,
             ],
         ),
@@ -889,7 +910,7 @@ fn script_info_data_v3(
         } => PlutusData::Constr(
             3,
             vec![
-                PlutusData::Integer(*cert_index as i128),
+                PlutusData::integer(*cert_index as i128),
                 tx_cert_data_v3(certificate, pv)?,
             ],
         ),
@@ -900,7 +921,7 @@ fn script_info_data_v3(
         } => PlutusData::Constr(
             5,
             vec![
-                PlutusData::Integer(*proposal_index as i128),
+                PlutusData::integer(*proposal_index as i128),
                 proposal_procedure_data_v3(proposal)?,
             ],
         ),
@@ -1041,7 +1062,7 @@ fn tx_cert_data_v3(
                 vec![
                     credential_data(credential),
                     delegatee_stake_data(pool_key_hash),
-                    PlutusData::Integer(*deposit as i128),
+                    PlutusData::integer(*deposit as i128),
                 ],
             ))
         }
@@ -1051,7 +1072,7 @@ fn tx_cert_data_v3(
                 vec![
                     credential_data(credential),
                     delegatee_vote_data(drep),
-                    PlutusData::Integer(*deposit as i128),
+                    PlutusData::integer(*deposit as i128),
                 ],
             ))
         }
@@ -1065,14 +1086,14 @@ fn tx_cert_data_v3(
             vec![
                 credential_data(credential),
                 delegatee_stake_vote_data(pool_key_hash, drep),
-                PlutusData::Integer(*deposit as i128),
+                PlutusData::integer(*deposit as i128),
             ],
         )),
         DCert::DrepRegistration(credential, deposit, _) => Ok(PlutusData::Constr(
             4,
             vec![
                 drep_credential_data(credential),
-                PlutusData::Integer(*deposit as i128),
+                PlutusData::integer(*deposit as i128),
             ],
         )),
         DCert::DrepUpdate(credential, _) => Ok(PlutusData::Constr(
@@ -1083,7 +1104,7 @@ fn tx_cert_data_v3(
             6,
             vec![
                 drep_credential_data(credential),
-                PlutusData::Integer(*refund as i128),
+                PlutusData::integer(*refund as i128),
             ],
         )),
         DCert::PoolRegistration(pool_params) => Ok(PlutusData::Constr(
@@ -1097,7 +1118,7 @@ fn tx_cert_data_v3(
             8,
             vec![
                 PlutusData::Bytes(pool_key_hash.to_vec()),
-                PlutusData::Integer(epoch.0 as i128),
+                PlutusData::integer(epoch.0 as i128),
             ],
         )),
         DCert::CommitteeAuthorization(cold, hot) => Ok(PlutusData::Constr(
@@ -1122,7 +1143,7 @@ fn tx_cert_data_v3(
 
 fn maybe_lovelace(value: Option<u64>) -> PlutusData {
     match value {
-        Some(value) => PlutusData::Constr(0, vec![PlutusData::Integer(value as i128)]),
+        Some(value) => PlutusData::Constr(0, vec![PlutusData::integer(value as i128)]),
         None => PlutusData::Constr(1, vec![]),
     }
 }
@@ -1181,7 +1202,7 @@ fn proposal_procedure_data_v3(
     Ok(PlutusData::Constr(
         0,
         vec![
-            PlutusData::Integer(proposal.deposit as i128),
+            PlutusData::integer(proposal.deposit as i128),
             credential_data(&reward_account.credential),
             gov_action_data_v3(&proposal.gov_action),
         ],
@@ -1224,7 +1245,7 @@ fn gov_action_data_v3(gov_action: &yggdrasil_ledger::GovAction) -> PlutusData {
                         .map(|(account, lovelace)| {
                             (
                                 credential_data(&account.credential),
-                                PlutusData::Integer(*lovelace as i128),
+                                PlutusData::integer(*lovelace as i128),
                             )
                         })
                         .collect(),
@@ -1256,7 +1277,7 @@ fn gov_action_data_v3(gov_action: &yggdrasil_ledger::GovAction) -> PlutusData {
                         .map(|(credential, epoch)| {
                             (
                                 committee_credential_data(credential),
-                                PlutusData::Integer(*epoch as i128),
+                                PlutusData::integer(*epoch as i128),
                             )
                         })
                         .collect(),
@@ -1290,7 +1311,7 @@ fn gov_action_id_data(gov_action_id: &yggdrasil_ledger::GovActionId) -> PlutusDa
         0,
         vec![
             PlutusData::Bytes(gov_action_id.transaction_id.to_vec()),
-            PlutusData::Integer(gov_action_id.gov_action_index as i128),
+            PlutusData::integer(gov_action_id.gov_action_index as i128),
         ],
     )
 }
@@ -1307,8 +1328,8 @@ fn protocol_version_data(protocol_version: (u64, u64)) -> PlutusData {
     PlutusData::Constr(
         0,
         vec![
-            PlutusData::Integer(protocol_version.0 as i128),
-            PlutusData::Integer(protocol_version.1 as i128),
+            PlutusData::integer(protocol_version.0 as i128),
+            PlutusData::integer(protocol_version.1 as i128),
         ],
     )
 }
@@ -1337,8 +1358,8 @@ fn script_hash_from_ref(script_ref: &yggdrasil_ledger::ScriptRef) -> [u8; 28] {
 
 fn unit_interval_data(unit_interval: &yggdrasil_ledger::UnitInterval) -> PlutusData {
     PlutusData::List(vec![
-        PlutusData::Integer(unit_interval.numerator as i128),
-        PlutusData::Integer(unit_interval.denominator as i128),
+        PlutusData::integer(unit_interval.numerator as i128),
+        PlutusData::integer(unit_interval.denominator as i128),
     ])
 }
 
@@ -1408,7 +1429,7 @@ fn legacy_dcert_data(certificate: &DCert) -> Result<PlutusData, LedgerError> {
             4,
             vec![
                 PlutusData::Bytes(pool_key_hash.to_vec()),
-                PlutusData::Integer(epoch.0 as i128),
+                PlutusData::integer(epoch.0 as i128),
             ],
         )),
         DCert::GenesisDelegation(_, _, _) => Ok(PlutusData::Constr(5, vec![])),
@@ -1449,7 +1470,7 @@ fn tx_out_ref_data(version: PlutusVersion, tx_id: &[u8; 32], index: u64) -> Plut
         0,
         vec![
             tx_id_data(version, tx_id),
-            PlutusData::Integer(index as i128),
+            PlutusData::integer(index as i128),
         ],
     )
 }
@@ -1580,7 +1601,7 @@ mod tests {
                 policy_id: dummy_hash(),
             },
             datum: None,
-            redeemer: PlutusData::Integer(42),
+            redeemer: PlutusData::integer(42),
             ex_units: ExUnits {
                 mem: 10_000_000,
                 steps: 10_000_000,
@@ -1630,7 +1651,7 @@ mod tests {
                     index: 7,
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1644,7 +1665,7 @@ mod tests {
                     0,
                     vec![
                         PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x11; 32])]),
-                        PlutusData::Integer(7),
+                        PlutusData::integer(7),
                     ],
                 )],
             )
@@ -1663,7 +1684,7 @@ mod tests {
                 PlutusVersion::V2,
                 ScriptPurpose::Rewarding { reward_account },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1692,7 +1713,7 @@ mod tests {
                     policy_id: [0x33; 28],
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1713,7 +1734,7 @@ mod tests {
                     certificate: DCert::PoolRetirement([0x44; 28], yggdrasil_ledger::EpochNo(9)),
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1724,7 +1745,7 @@ mod tests {
                 3,
                 vec![PlutusData::Constr(
                     4,
-                    vec![PlutusData::Bytes(vec![0x44; 28]), PlutusData::Integer(9),],
+                    vec![PlutusData::Bytes(vec![0x44; 28]), PlutusData::integer(9),],
                 )],
             )
         );
@@ -1747,7 +1768,7 @@ mod tests {
                     ),
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
             &CekPlutusEvaluator::new(),
@@ -1778,7 +1799,7 @@ mod tests {
                     ),
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
             &CekPlutusEvaluator::new(),
@@ -1805,7 +1826,7 @@ mod tests {
                     ),
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1841,7 +1862,7 @@ mod tests {
                     ),
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1877,7 +1898,7 @@ mod tests {
                     ),
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1913,7 +1934,7 @@ mod tests {
                     ),
                 },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -1938,8 +1959,8 @@ mod tests {
 
     #[test]
     fn script_context_data_uses_v3_three_field_shape_for_spending() {
-        let datum = PlutusData::Integer(12);
-        let redeemer = PlutusData::Integer(34);
+        let datum = PlutusData::integer(12);
+        let redeemer = PlutusData::integer(34);
         let data = expect_script_context_data(
             &test_eval(
                 PlutusVersion::V3,
@@ -1966,7 +1987,7 @@ mod tests {
                 vec![
                     PlutusData::Constr(
                         0,
-                        vec![PlutusData::Bytes(vec![0x55; 32]), PlutusData::Integer(4),],
+                        vec![PlutusData::Bytes(vec![0x55; 32]), PlutusData::integer(4),],
                     ),
                     PlutusData::Constr(0, vec![datum]),
                 ],
@@ -1987,7 +2008,7 @@ mod tests {
                     ),
                 },
                 None,
-                PlutusData::Integer(77),
+                PlutusData::integer(77),
             ),
             &test_tx_ctx(),
         );
@@ -1997,7 +2018,7 @@ mod tests {
             PlutusData::Constr(
                 3,
                 vec![
-                    PlutusData::Integer(1),
+                    PlutusData::integer(1),
                     PlutusData::Constr(
                         2,
                         vec![
@@ -2019,7 +2040,7 @@ mod tests {
                     voter: yggdrasil_ledger::Voter::DRepScript([0x77; 28]),
                 },
                 None,
-                PlutusData::Integer(88),
+                PlutusData::integer(88),
             ),
             &test_tx_ctx(),
         );
@@ -2051,7 +2072,7 @@ mod tests {
                     voter: yggdrasil_ledger::Voter::DRepScript([0x77; 28]),
                 },
                 None,
-                PlutusData::Integer(88),
+                PlutusData::integer(88),
             ),
             &test_tx_ctx(),
             &CekPlutusEvaluator::new(),
@@ -2074,7 +2095,7 @@ mod tests {
                     voter: yggdrasil_ledger::Voter::DRepScript([0x77; 28]),
                 },
                 None,
-                PlutusData::Integer(88),
+                PlutusData::integer(88),
             ),
             &test_tx_ctx(),
             &CekPlutusEvaluator::new(),
@@ -2113,7 +2134,7 @@ mod tests {
                     proposal,
                 },
                 None,
-                PlutusData::Integer(101),
+                PlutusData::integer(101),
             ),
             &test_tx_ctx(),
             &CekPlutusEvaluator::new(),
@@ -2152,7 +2173,7 @@ mod tests {
                     proposal,
                 },
                 None,
-                PlutusData::Integer(101),
+                PlutusData::integer(101),
             ),
             &test_tx_ctx(),
             &CekPlutusEvaluator::new(),
@@ -2190,7 +2211,7 @@ mod tests {
                     proposal,
                 },
                 None,
-                PlutusData::Integer(101),
+                PlutusData::integer(101),
             ),
             &test_tx_ctx(),
         );
@@ -2200,11 +2221,11 @@ mod tests {
             PlutusData::Constr(
                 5,
                 vec![
-                    PlutusData::Integer(2),
+                    PlutusData::integer(2),
                     PlutusData::Constr(
                         0,
                         vec![
-                            PlutusData::Integer(9),
+                            PlutusData::integer(9),
                             PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x99; 28])]),
                             PlutusData::Constr(6, vec![]),
                         ],
@@ -2268,7 +2289,7 @@ mod tests {
                         0,
                         vec![
                             PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x44; 32])]),
-                            PlutusData::Integer(1),
+                            PlutusData::integer(1),
                         ],
                     ),
                     PlutusData::Constr(
@@ -2326,7 +2347,7 @@ mod tests {
             ScriptPurpose::Minting {
                 policy_id: [0x22; 28],
             },
-            PlutusData::Integer(5),
+            PlutusData::integer(5),
         )];
 
         let tx_info = expect_tx_info(PlutusVersion::V2, &tx_ctx);
@@ -2337,7 +2358,7 @@ mod tests {
             fields[9],
             PlutusData::Map(vec![(
                 PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x22; 28])]),
-                PlutusData::Integer(5),
+                PlutusData::integer(5),
             )])
         );
     }
@@ -2519,7 +2540,7 @@ mod tests {
             ScriptPurpose::Voting {
                 voter: yggdrasil_ledger::Voter::StakePool([0x33; 28]),
             },
-            PlutusData::Integer(9),
+            PlutusData::integer(9),
         )];
         tx_ctx.voting_procedures = Some(yggdrasil_ledger::VotingProcedures {
             procedures: std::collections::BTreeMap::from([(
@@ -2557,7 +2578,7 @@ mod tests {
                         vec![PlutusData::Bytes(vec![0x33; 28])]
                     )]
                 ),
-                PlutusData::Integer(9),
+                PlutusData::integer(9),
             )])
         );
         assert_eq!(
@@ -2567,7 +2588,7 @@ mod tests {
                 PlutusData::Map(vec![(
                     PlutusData::Constr(
                         0,
-                        vec![PlutusData::Bytes(vec![0x44; 32]), PlutusData::Integer(3),],
+                        vec![PlutusData::Bytes(vec![0x44; 32]), PlutusData::integer(3),],
                     ),
                     PlutusData::Constr(1, vec![]),
                 )]),
@@ -2578,7 +2599,7 @@ mod tests {
             PlutusData::List(vec![PlutusData::Constr(
                 0,
                 vec![
-                    PlutusData::Integer(7),
+                    PlutusData::integer(7),
                     PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x55; 28])]),
                     PlutusData::Constr(6, vec![]),
                 ],
@@ -2608,7 +2629,7 @@ mod tests {
             fields[6],
             PlutusData::Map(vec![(
                 PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x24; 28])]),
-                PlutusData::Integer(11),
+                PlutusData::integer(11),
             )])
         );
     }
@@ -2680,9 +2701,9 @@ mod tests {
                                 vec![PlutusData::Constr(
                                     1,
                                     vec![
-                                        PlutusData::Integer(9),
-                                        PlutusData::Integer(4),
-                                        PlutusData::Integer(2),
+                                        PlutusData::integer(9),
+                                        PlutusData::integer(4),
+                                        PlutusData::integer(2),
                                     ],
                                 )],
                             ),
@@ -2711,7 +2732,7 @@ mod tests {
         let txout = yggdrasil_ledger::utxo::MultiEraTxOut::Babbage(BabbageTxOut {
             address,
             amount: Value::Coin(5),
-            datum_option: Some(DatumOption::Inline(PlutusData::Integer(4))),
+            datum_option: Some(DatumOption::Inline(PlutusData::integer(4))),
             script_ref: Some(ScriptRef(Script::PlutusV2(script_bytes))),
         });
 
@@ -2737,7 +2758,7 @@ mod tests {
                         ],
                     ),
                     plutus_value_data(&Value::Coin(5)),
-                    PlutusData::Constr(2, vec![PlutusData::Integer(4)]),
+                    PlutusData::Constr(2, vec![PlutusData::integer(4)]),
                     PlutusData::Constr(0, vec![PlutusData::Bytes(script_hash.to_vec())]),
                 ],
             ))
@@ -2762,7 +2783,7 @@ mod tests {
                 PlutusVersion::V1,
                 ScriptPurpose::Minting { policy_id: [0; 28] },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -2783,7 +2804,7 @@ mod tests {
                 PlutusVersion::V3,
                 ScriptPurpose::Minting { policy_id: [0; 28] },
                 None,
-                PlutusData::Integer(0),
+                PlutusData::integer(0),
             ),
             &test_tx_ctx(),
         );
@@ -2817,7 +2838,7 @@ mod tests {
                             vec![PlutusData::Bytes(vec![0x11; 28])]
                         ),]
                     ),
-                    PlutusData::Integer(2_000_000),
+                    PlutusData::integer(2_000_000),
                 ],
             )
         );
@@ -2840,7 +2861,7 @@ mod tests {
                             vec![PlutusData::Bytes(vec![0x22; 28])]
                         ),]
                     ),
-                    PlutusData::Integer(500_000),
+                    PlutusData::integer(500_000),
                 ],
             )
         );
@@ -2911,7 +2932,7 @@ mod tests {
                 0,
                 vec![
                     PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x66; 28])]),
-                    PlutusData::Constr(0, vec![PlutusData::Integer(1_000_000)]),
+                    PlutusData::Constr(0, vec![PlutusData::integer(1_000_000)]),
                 ],
             )
         );
@@ -2966,7 +2987,7 @@ mod tests {
                 1,
                 vec![
                     PlutusData::Constr(1, vec![PlutusData::Bytes(vec![0x33; 28])]),
-                    PlutusData::Constr(0, vec![PlutusData::Integer(750_000)]),
+                    PlutusData::Constr(0, vec![PlutusData::integer(750_000)]),
                 ],
             )
         );
@@ -3025,7 +3046,7 @@ mod tests {
                 0,
                 vec![
                     PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x66; 28])]),
-                    PlutusData::Constr(0, vec![PlutusData::Integer(1_000_000)]),
+                    PlutusData::Constr(0, vec![PlutusData::integer(1_000_000)]),
                 ],
             )
         );
@@ -3118,7 +3139,7 @@ mod tests {
                 vec![
                     PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0x88; 28])]),
                     PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xcc; 28])]),
-                    PlutusData::Integer(3_000_000),
+                    PlutusData::integer(3_000_000),
                 ],
             )
         );
@@ -3153,7 +3174,7 @@ mod tests {
                             ),]
                         ),]
                     ),
-                    PlutusData::Integer(5_000_000),
+                    PlutusData::integer(5_000_000),
                 ],
             )
         );
@@ -3193,7 +3214,7 @@ mod tests {
                             ),
                         ],
                     ),
-                    PlutusData::Integer(4_000_000),
+                    PlutusData::integer(4_000_000),
                 ],
             )
         );
@@ -3261,7 +3282,7 @@ mod tests {
             result,
             PlutusData::Constr(
                 8,
-                vec![PlutusData::Bytes(vec![0xcc; 28]), PlutusData::Integer(42),],
+                vec![PlutusData::Bytes(vec![0xcc; 28]), PlutusData::integer(42),],
             )
         );
     }
@@ -3403,7 +3424,7 @@ mod tests {
                     0,
                     vec![PlutusData::Constr(
                         0,
-                        vec![PlutusData::Bytes(vec![0xaa; 32]), PlutusData::Integer(3),],
+                        vec![PlutusData::Bytes(vec![0xaa; 32]), PlutusData::integer(3),],
                     )],
                 )],
             )
@@ -3423,7 +3444,7 @@ mod tests {
                 1,
                 vec![
                     PlutusData::Constr(1, vec![]),
-                    PlutusData::Constr(0, vec![PlutusData::Integer(10), PlutusData::Integer(0)],),
+                    PlutusData::Constr(0, vec![PlutusData::integer(10), PlutusData::integer(0)],),
                 ],
             )
         );
@@ -3507,7 +3528,7 @@ mod tests {
             panic!("expected Constr(0, _)")
         };
         assert_eq!(fields.len(), 3);
-        assert_eq!(fields[0], PlutusData::Integer(100_000_000));
+        assert_eq!(fields[0], PlutusData::integer(100_000_000));
         // gov_action = InfoAction = Constr(6, [])
         assert_eq!(fields[2], PlutusData::Constr(6, vec![]));
     }
@@ -3572,14 +3593,14 @@ mod tests {
                     PlutusData::Constr(
                         0,
                         vec![
-                            PlutusData::Constr(1, vec![PlutusData::Integer(1000)]), // Finite(1000)
+                            PlutusData::Constr(1, vec![PlutusData::integer(1000)]), // Finite(1000)
                             PlutusData::Constr(1, vec![]), // True (inclusive)
                         ]
                     ),
                     PlutusData::Constr(
                         0,
                         vec![
-                            PlutusData::Constr(1, vec![PlutusData::Integer(2000)]), // Finite(2000)
+                            PlutusData::Constr(1, vec![PlutusData::integer(2000)]), // Finite(2000)
                             PlutusData::Constr(0, vec![]), // False (exclusive — upstream strictUpperBound)
                         ]
                     ),
@@ -3600,7 +3621,7 @@ mod tests {
             PlutusData::Constr(
                 0,
                 vec![
-                    PlutusData::Constr(1, vec![PlutusData::Integer(500)]),
+                    PlutusData::Constr(1, vec![PlutusData::integer(500)]),
                     PlutusData::Constr(1, vec![]),
                 ]
             )
@@ -3635,7 +3656,7 @@ mod tests {
             PlutusData::Constr(
                 0,
                 vec![
-                    PlutusData::Constr(1, vec![PlutusData::Integer(9999)]),
+                    PlutusData::Constr(1, vec![PlutusData::integer(9999)]),
                     PlutusData::Constr(1, vec![]),
                 ]
             )
@@ -3653,7 +3674,7 @@ mod tests {
             PlutusData::Constr(
                 0,
                 vec![
-                    PlutusData::Constr(1, vec![PlutusData::Integer(9999)]),
+                    PlutusData::Constr(1, vec![PlutusData::integer(9999)]),
                     PlutusData::Constr(0, vec![]),
                 ]
             )
@@ -3673,7 +3694,7 @@ mod tests {
                 PlutusData::Bytes(vec![]),
                 PlutusData::Map(vec![(
                     PlutusData::Bytes(vec![]),
-                    PlutusData::Integer(5_000_000),
+                    PlutusData::integer(5_000_000),
                 )]),
             )])
         );
@@ -3698,7 +3719,7 @@ mod tests {
             entries[0].1,
             PlutusData::Map(vec![(
                 PlutusData::Bytes(vec![]),
-                PlutusData::Integer(2_000_000),
+                PlutusData::integer(2_000_000),
             )])
         );
         // Second entry is the policy
@@ -3707,7 +3728,7 @@ mod tests {
             entries[1].1,
             PlutusData::Map(vec![(
                 PlutusData::Bytes(b"Token1".to_vec()),
-                PlutusData::Integer(100),
+                PlutusData::integer(100),
             )])
         );
     }
@@ -3723,7 +3744,7 @@ mod tests {
                 0,
                 vec![
                     PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xbb; 32])]),
-                    PlutusData::Integer(7),
+                    PlutusData::integer(7),
                 ],
             )
         );
@@ -3776,7 +3797,7 @@ mod tests {
 
     #[test]
     fn maybe_data_encodes_just() {
-        let inner = PlutusData::Integer(42);
+        let inner = PlutusData::integer(42);
         assert_eq!(
             maybe_data(Some(inner.clone())),
             PlutusData::Constr(0, vec![inner])
@@ -3884,7 +3905,7 @@ mod tests {
     fn maybe_lovelace_some_encodes_just() {
         assert_eq!(
             maybe_lovelace(Some(1_000_000)),
-            PlutusData::Constr(0, vec![PlutusData::Integer(1_000_000)])
+            PlutusData::Constr(0, vec![PlutusData::integer(1_000_000)])
         );
     }
 
@@ -3931,7 +3952,7 @@ mod tests {
     fn protocol_version_data_encodes_major_minor() {
         assert_eq!(
             protocol_version_data((9, 1)),
-            PlutusData::Constr(0, vec![PlutusData::Integer(9), PlutusData::Integer(1),])
+            PlutusData::Constr(0, vec![PlutusData::integer(9), PlutusData::integer(1),])
         );
     }
 
@@ -3945,7 +3966,7 @@ mod tests {
         };
         assert_eq!(
             unit_interval_data(&ui),
-            PlutusData::List(vec![PlutusData::Integer(1), PlutusData::Integer(5)])
+            PlutusData::List(vec![PlutusData::integer(1), PlutusData::integer(5)])
         );
     }
 
@@ -3979,7 +4000,7 @@ mod tests {
                 0,
                 vec![PlutusData::Constr(
                     0,
-                    vec![PlutusData::Bytes(vec![0x22; 32]), PlutusData::Integer(3),]
+                    vec![PlutusData::Bytes(vec![0x22; 32]), PlutusData::integer(3),]
                 )]
             )
         );
@@ -4005,7 +4026,7 @@ mod tests {
             gov_action_id_data(&gid),
             PlutusData::Constr(
                 0,
-                vec![PlutusData::Bytes(vec![0x44; 32]), PlutusData::Integer(7),]
+                vec![PlutusData::Bytes(vec![0x44; 32]), PlutusData::integer(7),]
             )
         );
     }
@@ -4017,7 +4038,7 @@ mod tests {
             tx_out_ref_data(PlutusVersion::V3, &tx_id, 42),
             PlutusData::Constr(
                 0,
-                vec![PlutusData::Bytes(tx_id.to_vec()), PlutusData::Integer(42),]
+                vec![PlutusData::Bytes(tx_id.to_vec()), PlutusData::integer(42),]
             )
         );
     }
@@ -4143,7 +4164,7 @@ mod tests {
             panic!("Expected Constr(5, ...)")
         };
         assert_eq!(fields.len(), 2);
-        assert_eq!(fields[0], PlutusData::Integer(0));
+        assert_eq!(fields[0], PlutusData::integer(0));
     }
 
     // -- plutus_address_data encoding ----------------------------------------
@@ -4251,7 +4272,7 @@ mod tests {
 
     #[test]
     fn script_info_v3_spending_with_datum_includes_just() {
-        let datum = PlutusData::Integer(99);
+        let datum = PlutusData::integer(99);
         let purpose = ScriptPurpose::Spending {
             tx_id: [0xAA; 32],
             index: 3,
@@ -4268,7 +4289,7 @@ mod tests {
         // datum wrapped in Just
         assert_eq!(
             fields[1],
-            PlutusData::Constr(0, vec![PlutusData::Integer(99)])
+            PlutusData::Constr(0, vec![PlutusData::integer(99)])
         );
     }
 
@@ -4460,7 +4481,7 @@ mod tests {
             })
             .to_bytes(),
             amount: Value::Coin(2_000_000),
-            datum_option: Some(DatumOption::Inline(PlutusData::Integer(777))),
+            datum_option: Some(DatumOption::Inline(PlutusData::integer(777))),
             script_ref: None,
         });
         let result = plutus_output_data(PlutusVersion::V2, &txout).expect("Babbage should encode");
@@ -4471,7 +4492,7 @@ mod tests {
         // Inline datum → Constr(2, [data])
         assert_eq!(
             fields[2],
-            PlutusData::Constr(2, vec![PlutusData::Integer(777)])
+            PlutusData::Constr(2, vec![PlutusData::integer(777)])
         );
         // No script ref → Nothing
         assert_eq!(fields[3], PlutusData::Constr(1, vec![]));
@@ -4557,7 +4578,7 @@ mod tests {
             })
             .to_bytes(),
             amount: Value::Coin(1_000_000),
-            datum_option: Some(DatumOption::Inline(PlutusData::Integer(42))),
+            datum_option: Some(DatumOption::Inline(PlutusData::integer(42))),
             script_ref: None,
         });
         let result =
@@ -4612,7 +4633,7 @@ mod tests {
                 })
                 .to_bytes(),
                 amount: Value::Coin(1_000_000),
-                datum_option: Some(DatumOption::Inline(PlutusData::Integer(1))),
+                datum_option: Some(DatumOption::Inline(PlutusData::integer(1))),
                 script_ref: None,
             }),
         )];
@@ -4654,7 +4675,7 @@ mod tests {
                 })
                 .to_bytes(),
                 amount: Value::Coin(1_000_000),
-                datum_option: Some(DatumOption::Inline(PlutusData::Integer(1))),
+                datum_option: Some(DatumOption::Inline(PlutusData::integer(1))),
                 script_ref: Some(ScriptRef(Script::PlutusV2(vec![0xDE, 0xAD]))),
             }),
         )];
@@ -4676,7 +4697,7 @@ mod tests {
             panic!()
         };
         // V3 field 3 = fee (Lovelace = plain Integer)
-        assert_eq!(fields[3], PlutusData::Integer(500_000));
+        assert_eq!(fields[3], PlutusData::integer(500_000));
     }
 
     // -- B3: V2 mint also has zero-ADA padding, V3 mint does not --------------
@@ -4757,7 +4778,7 @@ mod tests {
             panic!("Expected Constr tuple")
         };
         assert_eq!(pair.len(), 2);
-        assert_eq!(pair[1], PlutusData::Integer(42));
+        assert_eq!(pair[1], PlutusData::integer(42));
     }
 
     #[test]
@@ -4834,7 +4855,7 @@ mod tests {
             panic!("Expected Map")
         };
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].1, PlutusData::Integer(5_000_000));
+        assert_eq!(entries[0].1, PlutusData::integer(5_000_000));
         // guardrails: Nothing
         assert_eq!(fields[1], PlutusData::Constr(1, vec![]));
     }
@@ -4875,11 +4896,11 @@ mod tests {
             panic!("Expected Map")
         };
         assert_eq!(added.len(), 1);
-        assert_eq!(added[0].1, PlutusData::Integer(100));
+        assert_eq!(added[0].1, PlutusData::integer(100));
         // quorum: [2, 3]
         assert_eq!(
             fields[3],
-            PlutusData::List(vec![PlutusData::Integer(2), PlutusData::Integer(3)])
+            PlutusData::List(vec![PlutusData::integer(2), PlutusData::integer(3)])
         );
     }
 
@@ -4952,7 +4973,7 @@ mod tests {
                 PlutusData::Bytes(vec![]),
                 PlutusData::Map(vec![(
                     PlutusData::Bytes(vec![]),
-                    PlutusData::Integer(173_201),
+                    PlutusData::integer(173_201),
                 )]),
             )])
         );
@@ -4973,7 +4994,7 @@ mod tests {
                 PlutusData::Bytes(vec![]),
                 PlutusData::Map(vec![(
                     PlutusData::Bytes(vec![]),
-                    PlutusData::Integer(250_000),
+                    PlutusData::integer(250_000),
                 )]),
             )])
         );
@@ -5106,7 +5127,7 @@ mod tests {
         assert_eq!(mint[0].0, PlutusData::Bytes(vec![]));
         assert_eq!(
             mint[0].1,
-            PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::Integer(0))])
+            PlutusData::Map(vec![(PlutusData::Bytes(vec![]), PlutusData::integer(0))])
         );
         // mint[1] = actual policy
         assert_eq!(mint[1].0, PlutusData::Bytes(vec![0x22; 28]));
@@ -5115,7 +5136,7 @@ mod tests {
         };
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].0, PlutusData::Bytes(b"TokenA".to_vec()));
-        assert_eq!(assets[0].1, PlutusData::Integer(100));
+        assert_eq!(assets[0].1, PlutusData::integer(100));
     }
 
     #[test]
@@ -5150,7 +5171,7 @@ mod tests {
                 )]
             )
         );
-        assert_eq!(wdrl[0].1, PlutusData::Integer(42));
+        assert_eq!(wdrl[0].1, PlutusData::integer(42));
     }
 
     #[test]
@@ -5176,7 +5197,7 @@ mod tests {
     fn tx_info_v1_datums_map_populated() {
         let mut tx_ctx = test_tx_ctx();
         let datum_hash = [0x66; 32];
-        let datum = PlutusData::Integer(999);
+        let datum = PlutusData::integer(999);
         tx_ctx.witness_datums.insert(datum_hash, datum.clone());
 
         let tx_info = expect_tx_info(PlutusVersion::V1, &tx_ctx);
@@ -5192,7 +5213,7 @@ mod tests {
             datums[0],
             PlutusData::Constr(
                 0,
-                vec![PlutusData::Bytes(vec![0x66; 32]), PlutusData::Integer(999)]
+                vec![PlutusData::Bytes(vec![0x66; 32]), PlutusData::integer(999)]
             )
         );
     }
@@ -5202,10 +5223,10 @@ mod tests {
         let mut tx_ctx = test_tx_ctx();
         tx_ctx
             .witness_datums
-            .insert([0x66; 32], PlutusData::Integer(2));
+            .insert([0x66; 32], PlutusData::integer(2));
         tx_ctx
             .witness_datums
-            .insert([0x11; 32], PlutusData::Integer(1));
+            .insert([0x11; 32], PlutusData::integer(1));
 
         let v1 = expect_tx_info(PlutusVersion::V1, &tx_ctx);
         let PlutusData::Constr(0, v1_fields) = v1 else {
@@ -5218,14 +5239,14 @@ mod tests {
             v1_datums[0],
             PlutusData::Constr(
                 0,
-                vec![PlutusData::Bytes(vec![0x11; 32]), PlutusData::Integer(1)]
+                vec![PlutusData::Bytes(vec![0x11; 32]), PlutusData::integer(1)]
             )
         );
         assert_eq!(
             v1_datums[1],
             PlutusData::Constr(
                 0,
-                vec![PlutusData::Bytes(vec![0x66; 32]), PlutusData::Integer(2)]
+                vec![PlutusData::Bytes(vec![0x66; 32]), PlutusData::integer(2)]
             )
         );
 
@@ -5237,9 +5258,9 @@ mod tests {
             panic!("Expected V2 datum map")
         };
         assert_eq!(v2_datums[0].0, PlutusData::Bytes(vec![0x11; 32]));
-        assert_eq!(v2_datums[0].1, PlutusData::Integer(1));
+        assert_eq!(v2_datums[0].1, PlutusData::integer(1));
         assert_eq!(v2_datums[1].0, PlutusData::Bytes(vec![0x66; 32]));
-        assert_eq!(v2_datums[1].1, PlutusData::Integer(2));
+        assert_eq!(v2_datums[1].1, PlutusData::integer(2));
     }
 
     #[test]
@@ -5293,7 +5314,7 @@ mod tests {
         // V3 field 14 = currentTreasuryAmount
         assert_eq!(
             fields[14],
-            PlutusData::Constr(0, vec![PlutusData::Integer(50_000_000)])
+            PlutusData::Constr(0, vec![PlutusData::integer(50_000_000)])
         );
     }
 
@@ -5309,7 +5330,7 @@ mod tests {
         // V3 field 15 = treasuryDonation
         assert_eq!(
             fields[15],
-            PlutusData::Constr(0, vec![PlutusData::Integer(10_000)])
+            PlutusData::Constr(0, vec![PlutusData::integer(10_000)])
         );
     }
 
@@ -5394,7 +5415,7 @@ mod tests {
         };
         assert_eq!(
             assets[0].1,
-            PlutusData::Integer(-50),
+            PlutusData::integer(-50),
             "Burns should be negative"
         );
     }
@@ -5464,7 +5485,7 @@ mod tests {
         tx_ctx.required_signers = vec![[0xB3; 28]];
         tx_ctx
             .witness_datums
-            .insert([0xB4; 32], PlutusData::Integer(42));
+            .insert([0xB4; 32], PlutusData::integer(42));
 
         let v2 = expect_tx_info(PlutusVersion::V2, &tx_ctx);
         let v3 = expect_tx_info(PlutusVersion::V3, &tx_ctx);
@@ -5752,7 +5773,7 @@ mod tests {
             PlutusData::Constr(
                 3,
                 vec![
-                    PlutusData::Integer(5),
+                    PlutusData::integer(5),
                     tx_cert_data_v3(&cert, None).unwrap(),
                 ]
             )
@@ -5807,7 +5828,7 @@ mod tests {
             PlutusData::Constr(
                 5,
                 vec![
-                    PlutusData::Integer(3),
+                    PlutusData::integer(3),
                     proposal_procedure_data_v3(&proposal).unwrap(),
                 ]
             )
@@ -5855,14 +5876,14 @@ mod tests {
                     PlutusData::Constr(
                         0,
                         vec![
-                            PlutusData::Constr(1, vec![PlutusData::Integer(start_ms as i128)]),
+                            PlutusData::Constr(1, vec![PlutusData::integer(start_ms as i128)]),
                             PlutusData::Constr(1, vec![]),
                         ]
                     ),
                     PlutusData::Constr(
                         0,
                         vec![
-                            PlutusData::Constr(1, vec![PlutusData::Integer(end_ms as i128)]),
+                            PlutusData::Constr(1, vec![PlutusData::integer(end_ms as i128)]),
                             PlutusData::Constr(0, vec![]),
                         ]
                     ),

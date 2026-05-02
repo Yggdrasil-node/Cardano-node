@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 245)
+title: Parity Proof Report (Round 246)
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,10 +7,10 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R245 refresh (2026-05-01)
-**Cumulative arc**: R1 → R245
+**Document round**: R246 refresh (2026-05-02)
+**Cumulative arc**: R1 → R246
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4.7K+ passing, 0 failing at the R245 slice boundary
+**Workspace tests**: 4.7K+ passing, 0 failing at the R246 slice boundary
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the
@@ -188,6 +188,52 @@ remain green.
 
 ---
 
+## 2d. Preview Plutus well-formedness/runtime parity
+
+R246 closes the preview replay blocker originally observed as
+`MalformedReferenceScripts` near Babbage slot `730728`, plus the later
+Plutus validation mismatch around slot `831387`.
+
+The local behavior now matches the upstream path that stores Plutus
+scripts as `PlutusBinary`:
+
+| Parity point | R246 behavior |
+|---|---|
+| Well-formedness input | Treat script bytes as raw `PlutusBinary`: a CBOR bytestring containing Flat; do not fall back between raw Flat and CBOR shapes |
+| Language gate | Use protocol version: V1 >= PV5, V2 >= PV7, V3 >= PV9 |
+| Reference inputs | Sort resolved Babbage/Conway reference inputs by `ShelleyTxIn`, matching upstream `Set.toList` order |
+| CEK memory | Non-constant runtime values consume `ExMemory = 1` |
+| Validity intervals | Pre-Conway upper-only intervals use inclusive `PV1.to`; Conway/PV9+ upper bounds remain strict |
+
+Focused verification:
+
+```text
+cargo fmt
+cargo test -p yggdrasil-plutus flat::tests --lib
+cargo test -p yggdrasil-plutus cost_model --lib
+cargo test -p yggdrasil-ledger cbor::tests::extract_block_tx_byte_spans --lib
+cargo test -p yggdrasil-ledger witness_validation --test integration
+cargo test -p yggdrasil-node plutus_eval --lib
+cargo test -p yggdrasil-node sync:: --lib
+cargo build -p yggdrasil-node --release
+cargo check-all
+cargo test-all
+cargo lint
+```
+
+Operational replay:
+
+```text
+cargo run --manifest-path tmp/refscan/Cargo.toml --release -- \
+  tmp/preview-producer/db/producer \
+  tmp/preview-producer/config/preview-producer.json
+```
+
+Result: `ok final tip=BlockPoint(SlotNo(834713), HeaderHash(ecf07479870a29bf...))`.
+No `MalformedReferenceScripts` or ledger decode error occurred.
+
+---
+
 ## 3. Sync robustness — Phase B verified
 
 R199 verified Phase B (R91 multi-peer storage livelock) is fully
@@ -355,7 +401,7 @@ IntersectMBO pins now match live HEAD and `cardano-base` still keeps
 the test-vector directory name, crypto test constant, and node pin in
 lockstep:
 
-| Repository | Pinned (post-R245) | Status |
+| Repository | Pinned audit baseline | Status |
 |---|---|---|
 | `cardano-base` | `7a8a991945d4…` (R239 fixture refresh) | **in-sync** |
 | `cardano-ledger` | `b90b97488da3…` (R245 BBODY/GOV refresh) | **in-sync** |
@@ -395,6 +441,7 @@ upstream while preserving SHA-anchored vendored fixture provenance.
 | **E.2a** | Parallel BlockFetch soak automation | ✅ harness shipped | R240 |
 | **Config integrity** | Byron + Shelley-family genesis hash verification | ✅ closed | R244 |
 | **Ledger drift** | Conway BBODY testnet `HeaderProtVerTooHigh` grace | ✅ closed | R245 |
+| **Plutus replay** | Preview reference-script well-formedness/runtime parity | ✅ closed | R246 |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 

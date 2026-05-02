@@ -1028,7 +1028,7 @@ mod tests {
 
     #[test]
     fn datum_option_inline_round_trip() {
-        let d = DatumOption::Inline(PlutusData::Integer(42));
+        let d = DatumOption::Inline(PlutusData::integer(42));
         let decoded = DatumOption::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
     }
@@ -1037,7 +1037,7 @@ mod tests {
     fn datum_option_inline_complex_round_trip() {
         let d = DatumOption::Inline(PlutusData::Constr(
             0,
-            vec![PlutusData::Bytes(vec![0x01, 0x02]), PlutusData::Integer(-1)],
+            vec![PlutusData::Bytes(vec![0x01, 0x02]), PlutusData::integer(-1)],
         ));
         let decoded = DatumOption::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
@@ -1086,7 +1086,7 @@ mod tests {
         let out = BabbageTxOut {
             address: vec![0x01; 57],
             amount: Value::Coin(10_000_000),
-            datum_option: Some(DatumOption::Inline(PlutusData::Integer(99))),
+            datum_option: Some(DatumOption::Inline(PlutusData::integer(99))),
             script_ref: Some(ScriptRef(Script::PlutusV1(vec![0xAB]))),
         };
         let decoded = BabbageTxOut::from_cbor_bytes(&out.to_cbor_bytes()).unwrap();
@@ -1217,7 +1217,7 @@ mod tests {
     fn datum_option_encoder_tag_and_arity_match_canonical_cddl() {
         let cases: Vec<(u64, DatumOption)> = vec![
             (0, DatumOption::Hash([0x55; 32])),
-            (1, DatumOption::Inline(PlutusData::Integer(42))),
+            (1, DatumOption::Inline(PlutusData::integer(42))),
         ];
         assert_eq!(cases.len(), 2, "DatumOption tag space must be 0..=1");
 

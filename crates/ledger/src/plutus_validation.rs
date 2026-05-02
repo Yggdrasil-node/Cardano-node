@@ -1369,6 +1369,7 @@ pub fn validate_plutus_scripts(
             ))
         })
         .collect::<Result<_, LedgerError>>()?;
+    let tx_info_redeemers = sorted_redeemers_for_tx_info(&ws.redeemers, &resolved_redeemers);
 
     // ── ExtraRedeemers check (UTXOW Phase-1) ──────────────────────────
     // Every redeemer must target a purpose backed by a Plutus script.
@@ -1474,7 +1475,7 @@ pub fn validate_plutus_scripts(
         reference_inputs: tx_ctx.reference_inputs.clone(),
         current_treasury_value: tx_ctx.current_treasury_value,
         treasury_donation: tx_ctx.treasury_donation,
-        redeemers: resolved_redeemers.clone(),
+        redeemers: tx_info_redeemers,
         voting_procedures: tx_ctx.voting_procedures.clone(),
         proposal_procedures: tx_ctx.proposal_procedures.clone(),
         protocol_version: tx_ctx.protocol_version,
@@ -1614,6 +1615,24 @@ fn annotate_plutus_evaluation_error(
         },
         other => other,
     }
+}
+
+fn sorted_redeemers_for_tx_info(
+    witness_redeemers: &[Redeemer],
+    resolved_redeemers: &[(ScriptPurpose, PlutusData)],
+) -> Vec<(ScriptPurpose, PlutusData)> {
+    let mut redeemers: Vec<(u8, u64, ScriptPurpose, PlutusData)> = witness_redeemers
+        .iter()
+        .zip(resolved_redeemers.iter())
+        .map(|(redeemer, (purpose, data))| {
+            (redeemer.tag, redeemer.index, purpose.clone(), data.clone())
+        })
+        .collect();
+    redeemers.sort_by_key(|(tag, index, _, _)| (*tag, *index));
+    redeemers
+        .into_iter()
+        .map(|(_, _, purpose, data)| (purpose, data))
+        .collect()
 }
 
 fn hex_lower(bytes: &[u8]) -> String {
@@ -1952,7 +1971,7 @@ mod tests {
 
     #[test]
     fn collect_datum_map_hashes_cbor() {
-        let datum = PlutusData::Integer(42.into());
+        let datum = PlutusData::integer(42);
         let ws = ShelleyWitnessSet {
             vkey_witnesses: vec![],
             native_scripts: vec![],
@@ -1977,7 +1996,7 @@ mod tests {
         // those memoized bytes, not the canonical re-encoding `0x00`.
         let witness = [0xa1, 0x04, 0x81, 0x18, 0x00];
         let ws = ShelleyWitnessSet::from_cbor_bytes(&witness).expect("witness set");
-        let datum = PlutusData::Integer(0.into());
+        let datum = PlutusData::integer(0);
         assert_eq!(ws.plutus_data, vec![datum.clone()]);
 
         let map = collect_datum_map_from_witness_bytes(Some(&witness), &ws).expect("datum map");
@@ -2003,7 +2022,7 @@ mod tests {
         let redeemer = Redeemer {
             tag: 0,
             index: 1,
-            data: PlutusData::Integer(0.into()),
+            data: PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -2022,7 +2041,7 @@ mod tests {
         let redeemer = Redeemer {
             tag: 1,
             index: 0,
-            data: PlutusData::Integer(0.into()),
+            data: PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -2039,7 +2058,7 @@ mod tests {
         let redeemer = Redeemer {
             tag: 2,
             index: 0,
-            data: PlutusData::Integer(0.into()),
+            data: PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -2070,7 +2089,7 @@ mod tests {
         let redeemer = Redeemer {
             tag: 4,
             index: 0,
-            data: PlutusData::Integer(0.into()),
+            data: PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -2110,7 +2129,7 @@ mod tests {
         let redeemer = Redeemer {
             tag: 5,
             index: 0,
-            data: PlutusData::Integer(0.into()),
+            data: PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -2142,7 +2161,7 @@ mod tests {
         let redeemer = Redeemer {
             tag: 0,
             index: 5,
-            data: PlutusData::Integer(0.into()),
+            data: PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -2245,7 +2264,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 1, // minting
                 index: 0,
-                data: PlutusData::Integer(42.into()),
+                data: PlutusData::integer(42),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -2289,7 +2308,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 1,
                 index: 0,
-                data: PlutusData::Integer(42.into()),
+                data: PlutusData::integer(42),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -2388,7 +2407,7 @@ mod tests {
     fn validate_spending_script_resolves_alonzo_datum_hash() {
         let script_bytes = vec![0x01, 0x02, 0x03];
         let script_hash = plutus_script_hash(PlutusVersion::V1, &script_bytes);
-        let datum = PlutusData::Integer(99.into());
+        let datum = PlutusData::integer(99);
         let datum_hash = yggdrasil_crypto::blake2b::hash_bytes_256(&datum.to_cbor_bytes()).0;
         let txin = ShelleyTxIn {
             transaction_id: [0xAB; 32],
@@ -2407,7 +2426,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 0,
                 index: 0,
-                data: PlutusData::Integer(42.into()),
+                data: PlutusData::integer(42),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -2455,7 +2474,7 @@ mod tests {
     fn validate_spending_script_uses_inline_babbage_datum() {
         let script_bytes = vec![0x01, 0x02, 0x03];
         let script_hash = plutus_script_hash(PlutusVersion::V2, &script_bytes);
-        let datum = PlutusData::Integer(7.into());
+        let datum = PlutusData::integer(7);
         let txin = ShelleyTxIn {
             transaction_id: [0xCD; 32],
             index: 1,
@@ -2473,7 +2492,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 0,
                 index: 0,
-                data: PlutusData::Integer(1.into()),
+                data: PlutusData::integer(1),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -2539,7 +2558,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 0,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -2599,7 +2618,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 2,
                 index: 0,
-                data: PlutusData::Integer(5.into()),
+                data: PlutusData::integer(5),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -2651,7 +2670,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 3,
                 index: 0,
-                data: PlutusData::Integer(8.into()),
+                data: PlutusData::integer(8),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -2695,7 +2714,7 @@ mod tests {
             redeemers: vec![Redeemer {
                 tag: 4,
                 index: 0,
-                data: PlutusData::Integer(9.into()),
+                data: PlutusData::integer(9),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,

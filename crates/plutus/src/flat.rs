@@ -23,6 +23,8 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/UntypedPlutusCore/Core/Instance/Flat.hs>
 
+use num_bigint::BigInt;
+use num_traits::{One, Zero};
 use yggdrasil_ledger::{cbor::Decoder, plutus::PlutusData};
 
 use crate::error::MachineError;
@@ -201,29 +203,23 @@ impl<'a> FlatDecoder<'a> {
     }
 
     /// Read a Flat integer (zigzag-encoded natural).
-    fn read_integer(&mut self) -> Result<i128, MachineError> {
-        // Read as u128 to handle the full zigzag range.
-        let mut result: u128 = 0;
+    fn read_integer(&mut self) -> Result<BigInt, MachineError> {
+        let mut result = BigInt::zero();
         let mut shift: u32 = 0;
         loop {
             let byte = self.read_bits8(8)?;
-            let val = u128::from(byte & 0x7F);
-            result |= val
-                .checked_shl(shift)
-                .ok_or_else(|| MachineError::FlatDecodeError("integer too large".into()))?;
+            let val = BigInt::from(byte & 0x7F);
+            result |= val << shift;
             if byte & 0x80 == 0 {
                 break;
             }
             shift += 7;
-            if shift > 127 {
-                return Err(MachineError::FlatDecodeError("integer overflow".into()));
-            }
         }
         // Zigzag decode: even → positive, odd → negative.
-        let decoded = if result & 1 == 0 {
-            (result >> 1) as i128
+        let decoded = if (&result & BigInt::one()).is_zero() {
+            result >> 1
         } else {
-            -((result >> 1) as i128) - 1
+            BigInt::zero() - ((result >> 1) + BigInt::from(1u8))
         };
         Ok(decoded)
     }
@@ -519,7 +515,7 @@ impl<'a> FlatDecoder<'a> {
         match ty {
             Type::Integer => {
                 let val = self.read_integer()?;
-                Ok(Constant::Integer(val))
+                Ok(Constant::integer(val))
             }
             Type::ByteString => {
                 let bs = self.read_bytestring()?;
@@ -685,7 +681,7 @@ mod tests {
         // Integer 5: zigzag(5) = 10 = 0b00001010 = 0x0A
         let data = [0x0A];
         let mut dec = FlatDecoder::new(&data);
-        assert_eq!(dec.read_integer().ok(), Some(5));
+        assert_eq!(dec.read_integer().ok(), Some(BigInt::from(5)));
     }
 
     #[test]
@@ -693,7 +689,7 @@ mod tests {
         // Integer -3: zigzag(-3) = 5 = 0b00000101 = 0x05
         let data = [0x05];
         let mut dec = FlatDecoder::new(&data);
-        assert_eq!(dec.read_integer().ok(), Some(-3));
+        assert_eq!(dec.read_integer().ok(), Some(BigInt::from(-3)));
     }
 
     #[test]
@@ -701,7 +697,7 @@ mod tests {
         // Integer 0: zigzag(0) = 0
         let data = [0x00];
         let mut dec = FlatDecoder::new(&data);
-        assert_eq!(dec.read_integer().ok(), Some(0));
+        assert_eq!(dec.read_integer().ok(), Some(BigInt::from(0)));
     }
 
     #[test]
@@ -862,7 +858,7 @@ mod tests {
         let data = bits_to_bytes(&bits);
         let mut dec = FlatDecoder::new(&data);
         let term = dec.decode_term().expect("decode");
-        assert_eq!(term, Term::Constant(Constant::Integer(0)));
+        assert_eq!(term, Term::Constant(Constant::integer(0)));
     }
 
     #[test]
@@ -899,7 +895,7 @@ mod tests {
             Term::Constant(Constant::ProtoPair(
                 Type::Integer,
                 Type::Bool,
-                Box::new(Constant::Integer(0)),
+                Box::new(Constant::integer(0)),
                 Box::new(Constant::Bool(true)),
             ))
         );

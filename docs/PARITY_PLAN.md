@@ -12,7 +12,7 @@ nav_order: 2
 **Scope**: All subsystems from crypto through orchestration, covering all 7 eras (Byron → Conway)
 
 > **Current operational status**: see [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for the
-> R245 cumulative reference (245 rounds completed; all confirmed-active
+> R246 cumulative reference (246 rounds completed; all confirmed-active
 > code-level parity slices and all 6 documentary upstream pins closed;
 > remaining gates are operator-time rehearsals).  The "Recently completed parity items" list below
 > tracks per-round changes; see also [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
@@ -34,7 +34,7 @@ nav_order: 2
 
 ## Executive Summary
 
-The Rust Cardano node (Yggdrasil) has achieved (post-R245 status):
+The Rust Cardano node (Yggdrasil) has achieved (post-R246 status):
 - ✅ **Complete era-type coverage** (Byron → Conway)
 - ✅ **Core network protocols** (5 mini-protocols + mux + handshake)
 - ✅ **Fundamental consensus structures** (Praos validation, nonce evolution + sidecar persistence)
@@ -43,7 +43,7 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R245 status):
 - ✅ **Local query & submission APIs** (LocalStateQuery + 25/25 cardano-cli `conway query` subcommands working end-to-end on preview, 6/6 baseline on preprod; full Conway-era LSQ surface complete)
 - ✅ **Consensus-side state persistence** (slot-indexed ChainDepState sidecars are authoritative for nonce/OpCert restart and rollback recovery; `stake_snapshots.cbor` remains the live stake-snapshot mirror)
 - ✅ **File-backed storage** (Immutable/Volatile with rollback + crash recovery; multi-peer dispatch verified)
-- ⚠️ **Partial Plutus** (CEK machine framework, V1/V2/V3 support wired)
+- ✅ **Preview Plutus replay parity** (CEK machine framework, V1/V2/V3 support wired; R246 validates raw `PlutusBinary` well-formedness, reference-input ordering, CEK memory accounting, and protocol-aware validity intervals through Babbage slot `834713`)
 - ✅ **Peer management** (governor with dual churn, big-ledger, backoff, inbound)
 - ✅ **Monitoring** (40+ metrics including R200's apply-batch duration histogram, server egress counters for BlockFetch/ChainSync/KeepAlive/TxSubmission2/PeerSharing, Prometheus/JSON endpoints, coloured stdout, detail levels, upstream backend recognition)
 - ✅ **Block production** (credential loading, VRF leader election, KES header signing, runtime slot loop, local block minting, post-forge adoption check)
@@ -65,6 +65,7 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R245 status):
 **Recently completed parity items**:
 Older entries in this list preserve the status known at that round; the Executive Summary above is authoritative for current closure state.
 
+- ✅ **R246 preview Plutus well-formedness parity** — preview replay no longer fails with `MalformedReferenceScripts` at the Babbage reference-script boundary and no longer hits the later Plutus validation mismatch around slot `831387`. The evaluator keeps upstream well-formedness enforcement active, treats on-chain scripts as raw `PlutusBinary` bytes (CBOR bytestring containing Flat), applies protocol-version language gates, sorts reference inputs by `ShelleyTxIn` for ScriptContext construction, uses CEK non-constant `ExMemory` value `1`, and encodes pre-Conway upper-only validity intervals with inclusive `PV1.to`. Release refscan reached slot `834713`; `cargo check-all`, `cargo test-all`, and `cargo lint` passed.
 - ✅ **R245 `cardano-ledger` BBODY/GOV drift refresh** — upstream advanced from `110b30e7abd8…` to `b90b97488da3…`. The GOV change switches `preceedingHardFork` to accumulated proposals; Yggdrasil's proposal validation already uses the accumulated pending-proposal view and has hard-fork sequencing tests. The BBODY change temporarily disables `HeaderProtVerTooHigh` on testnets until Dijkstra (`curProtVerMajor >= 12`); `VerificationConfig` now carries `network_magic` and mirrors the upstream condition while preserving the separate `MaxMajorProtVer` ceiling for all networks. Drift detector returns all 6 canonical pins in-sync again.
 - ✅ **R244 Byron genesis canonical JSON hash verification** — upstream `cardano-node` loads Byron genesis through `Cardano.Chain.Genesis.readGenesisData`, and `cardano-ledger` computes the hash over `Text.JSON.Canonical.renderCanonicalJSON` after `parseCanonicalJSON`. Yggdrasil now mirrors that path in `compute_byron_genesis_file_hash()`, wires it into `NodeConfigFile::verify_known_genesis_hashes()`, updates `Node.GenesisHash.Verified` to report `byronVerified`, and changes `validate-config` / manual docs from "3/4 verified" to "4/4 verified". Vendored mainnet, preprod, and preview Byron genesis files all match the declared upstream hashes.
 - ✅ **R243 cardano-ledger import-only pin refresh** — `node/scripts/check_upstream_drift.sh` found `cardano-ledger` had advanced from `42d088ed84b7…` to `110b30e7abd8…`. Official upstream PR #5787 removes one redundant import from `Cardano.Ledger.Shelley.API.Mempool`; no ledger rule, CDDL, or binary codec behavior changed in the ported subset. `UPSTREAM_CARDANO_LEDGER_COMMIT` and the living parity docs now point at the new live HEAD, and the drift detector reports all 6 canonical pins in-sync again.
@@ -151,7 +152,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 - ✅ **OpCert counter runtime wiring** — `OcertCounters::new()` initialized at startup in both verified and unverified `VerificationConfig` paths; batch sync functions thread `&mut Option<OcertCounters>` across batches and reconnects; permissive mode accepts first-seen pools without stake-distribution lookup; per-pool monotonic sequence validation (same or +1) is enforced for all tracked pools (upstream `PraosState.csCounters` / `currentIssueNo`)
 - ✅ **TriesToForgeADA** — `validate_no_ada_in_mint` rejects any transaction whose `mint` field contains the ADA policy ID (`[0u8; 28]`), implementing the formal spec predicate `adaPolicy ∉ supp mint tx` (upstream `Cardano.Ledger.Mary.Rules.Utxo`, Mary through Conway). In Haskell this is guaranteed by construction (the `MultiAsset` type cannot represent ADA); in Rust the `BTreeMap<[u8; 28], …>` representation requires a runtime check. Wired into all 4 mint-capable era UTxO apply functions covering both block-apply and submitted-tx paths; 6 unit tests.
 - ✅ **Plutus cost-shape parity** — All 18 `CostExpr` variants now match upstream builtin argument shapes (Constant, LinearInX/Y/Z, AddedSizes, SubtractedSizes, MultipliedSizes, MinSize, MaxSize, LinearOnDiagonal, ConstAboveDiagonal, ConstBelowDiagonal, QuadraticInY/Z, LiteralInYOrLinearInZ, LinearInYAndZ, ConstOffDiag). ~14 builtin shape mappings fixed in `build_per_builtin_costs()`.
-- ✅ **validateScriptsWellFormed** — `PlutusEvaluator::is_script_well_formed()` trait method (default `true`); `validate_script_witnesses_well_formed()` / `validate_reference_scripts_well_formed()` in `witnesses.rs` detect malformed Plutus scripts at admission time (upstream `Cardano.Ledger.Alonzo.Rules.Utxos`). Wired into all Alonzo+-era `apply_block_validated` paths.
+- ✅ **validateScriptsWellFormed** — `PlutusEvaluator::is_script_well_formed(version, protocol_version, script_bytes)` mirrors upstream language activation gates (V1 >= PV5, V2 >= PV7, V3 >= PV9) and then validates the on-chain bytes as raw `PlutusBinary` (CBOR bytestring containing Flat), with no fallback to raw Flat. `validate_script_witnesses_well_formed()` / `validate_reference_scripts_well_formed()` keep `MalformedReferenceScripts` enforcement active in all Alonzo+-era `apply_block_validated` paths.
 - ✅ **OutsideForecast** — `validate_outside_forecast()` in `utxo.rs` implements upstream infrastructure from `Cardano.Ledger.Shelley.Rules.Utxo`; correctly modeled as no-op since `unsafeLinearExtendEpochInfo` makes the check always pass.
 - ✅ **BlocksMade tracking** — `LedgerState.blocks_made` (element 23, upstream `NewEpochState.nesBcur`) tracks per-pool block production; `record_block_producer()` called automatically from `apply_block_validated()` for non-Byron blocks; `take_blocks_made()` clears at epoch boundary. `derive_pool_performance()` computes `UnitInterval` ratios from internal block counts + stake distribution; `apply_epoch_boundary()` uses internally derived performance when caller passes empty performance map.
 - ✅ **Dynamic block-producer nonce/sigma** — Block producer loop now reads live epoch nonce and pool relative stake from `SharedBlockProducerState` (falling back to static config). Sync pipeline pushes updated values via `update_bp_state_nonce()` after every batch and `update_bp_state_sigma()` after epoch boundary stake snapshot rotation. `main.rs` computes `bp_pool_key_hash` (Blake2b-224 of cold issuer key) and threads both shared state and hash into the reconnecting sync request. Fixes leader election stalling after the first epoch transition.
@@ -223,7 +224,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 - ✅ **TxId raw body byte preservation** — `ShelleyCompatibleSubmittedTx` and `AlonzoCompatibleSubmittedTx` now preserve the original wire CBOR bytes of the transaction body in a `raw_body` field, populated during decode. `tx_id()` hashes the original on-wire bytes instead of re-serializing from typed fields. This ensures correct TxId computation for non-canonically encoded transactions submitted via LocalTxSubmission. Reference: upstream `Cardano.Ledger.Core` — `txIdTxBody` uses `originalBytes`.
 - ✅ **SNAP-before-adopt ordering** — `apply_epoch_boundary()` now takes the mark snapshot BEFORE activating `psFutureStakePoolParams` (via `adopt_future_params()`), matching upstream EPOCH rule ordering SNAP → POOLREAP. Previously the Rust code adopted future pool params first, causing the mark snapshot to contain post-adoption pool params one epoch early. 1 new parity test. Reference: `Cardano.Ledger.Shelley.Rules.Epoch` — SNAP runs before POOLREAP; `Cardano.Ledger.Shelley.Rules.PoolReap` — `poolReapTransition` activates future params.
 - ✅ **Dormant epoch counter semantics** — `apply_epoch_boundary()` no longer resets `num_dormant_epochs` to 0 when governance proposals exist; it only increments when proposals are empty and leaves the counter unchanged otherwise. Matches upstream `updateNumDormantEpochs` which only calls `succ` (never resets at epoch boundary). The per-tx `updateDormantDRepExpiries` in the GOV rule is responsible for the counter reset. 1 new parity test + 1 integration test updated. Reference: `Cardano.Ledger.Conway.Rules.Epoch` — `updateNumDormantEpochs`.
-- ✅ **Slot-to-POSIX time conversion in ScriptContext** — `CekPlutusEvaluator` now carries `system_start_unix_secs` and `slot_length_secs` for converting slot numbers to POSIX milliseconds in `posix_time_range`. When configured, ScriptContext validity intervals encode real POSIX timestamps instead of raw slot numbers. `slot_to_posix_ms()` in `genesis.rs` implements the conversion. `VerifiedSyncServiceConfig.build_plutus_evaluator()` wires genesis `system_start` through to the evaluator. 6 new tests. Reference: `Cardano.Ledger.Alonzo.Plutus.TxInfo` — `slotToPOSIXTime`.
+- ✅ **Slot-to-POSIX time conversion and interval-bound parity in ScriptContext** — `CekPlutusEvaluator` carries `system_start_unix_secs` and `slot_length_secs` for converting slot numbers to POSIX milliseconds in `posix_time_range`. When configured, ScriptContext validity intervals encode real POSIX timestamps instead of raw slot numbers. R246 makes interval-bound encoding protocol-aware: pre-Conway upper-only intervals use inclusive `PV1.to`, while Conway/PV9+ upper bounds remain strict. `slot_to_posix_ms()` in `genesis.rs` implements the conversion. `VerifiedSyncServiceConfig.build_plutus_evaluator()` wires genesis `system_start` through to the evaluator. Reference: `Cardano.Ledger.Alonzo.Plutus.TxInfo` and `Cardano.Ledger.Conway.TxInfo`.
 - ✅ **PPUP/MIR collection gates `is_valid=false` (Round 50)** — Alonzo and Babbage `apply_block()` post-loops now skip `is_valid=false` transactions when collecting PPUP proposals and MIR certificate accumulation. Upstream `alonzoEvalScriptsTxInvalid` returns `pure pup` (no PPUP collection) and does not run DELEGS (no MIR), but our pre-fix code iterated all decoded transactions unconditionally. 2 new integration tests. Reference: `Cardano.Ledger.Alonzo.Rules.Utxos` — `alonzoEvalScriptsTxInvalid`.
 - ✅ **PV9 Conway bootstrap deposit omission in PlutusV3 ScriptContext (Round 50)** — `tx_cert_data_v3()` now accepts `protocol_version` from `TxContext`; when PV major == 9 (Conway bootstrap phase), `AccountRegistrationDeposit` and `AccountUnregistrationDeposit` omit the deposit/refund field (`Nothing` instead of `Just deposit`), matching upstream `hardforkConwayBootstrapPhase` in `Cardano.Ledger.Conway.TxInfo.transTxCert` (bug #4863). PV >= 10 includes deposits normally. `TxContext.protocol_version` threaded through all 6 construction sites. 3 new tests. Reference: `Cardano.Ledger.Conway.TxInfo` — `transTxCert`.
 - ✅ **Conway hardfork gate PV boundary correction (Round 68)** — Three PV boundary bugs fixed where our code applied gates at PV >= 10 (using `!bootstrap_phase`) but upstream uses PV > 10 (PV 11+):
@@ -605,7 +606,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 
 ### 2. LEDGER STATE MANAGEMENT (`crates/ledger`)
 
-**Current State**: ⚠️ Mostly complete, with Plutus edge cases pending
+**Current State**: ✅ Mostly complete, with no known preview Plutus replay blocker
 
 **What's Done**:
 - **Multi-era types** (Byron → Conway) with CBOR codecs
@@ -631,7 +632,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 - ✅ **Treasury value check ordering** (`validate_conway_current_treasury_value` now Phase-1 in submitted-tx path, matching block-apply and upstream UTXO rule layering)
 - ✅ **Submitted-tx reference-input validation** (cleaned duplicate calls in Babbage/Conway — early direct-UTxO check retained, redundant staged-clone check removed)
 
-**Parity Status**: **~96% complete** — All era types, core rules, Conway governance lifecycle, deposit/refund validation, dormant epoch tracking, exact redeemer-set checks, and Phase-2 Plutus validation (block + submitted-tx). Remaining work on CEK builtin coverage and edge cases.
+**Parity Status**: **~98% complete** — All era types, core rules, Conway governance lifecycle, deposit/refund validation, dormant epoch tracking, exact redeemer-set checks, and Phase-2 Plutus validation (block + submitted-tx). R246 closes the observed preview Babbage Plutus replay blocker; remaining work is systematic long-run drift monitoring rather than a known active ledger stop.
 
 ---
 
@@ -1274,7 +1275,7 @@ TX expires (TTL):
 **Document prepared by**: Research & Planning Agent
 **Target Review Date**: Week of March 31, 2026 (original projection)
 **Expected Final Delivery (original)**: Mid-June 2026 (13-week roadmap)
-**Actual delivery status (R245, 2026-05-01)**: yggdrasil is a
+**Actual delivery status (R246, 2026-05-02)**: yggdrasil is a
 production-ready pure-Rust Cardano node.  All 3 official Cardano
 networks (preview, preprod, mainnet) demonstrate working
 operational LSQ surface + consensus-side sidecars, including
@@ -1294,12 +1295,17 @@ closes the remaining genesis-hash preflight asymmetry by verifying Byron
 through upstream canonical JSON hashing while keeping Shelley-family
 raw-file hashing unchanged. R245 mirrors upstream's temporary Conway
 BBODY `HeaderProtVerTooHigh` testnet grace until Dijkstra while leaving
-the network-independent `MaxMajorProtVer` cap unchanged. Every R200/R217/R225/R226 observability metric
+the network-independent `MaxMajorProtVer` cap unchanged. R246 closes the
+observed preview Plutus well-formedness/runtime replay blocker by
+matching upstream raw `PlutusBinary` handling, reference-input ordering,
+CEK memory accounting, and protocol-aware validity intervals; release
+refscan reached Babbage slot `834713` with no `MalformedReferenceScripts`.
+Every R200/R217/R225/R226 observability metric
 has explicit Prometheus-output regression tests (R229+R230+R231).
 R240 adds `parallel_blockfetch_soak.sh`, making the §6.5 BlockFetch
 default-flip evidence gate reproducible rather than manually assembled;
 R241/R242 harden the local operator and upstream-test harness paths.
-The workspace has 4.7K+ passing tests at the R245 slice boundary.
+The workspace has 4.7K+ passing tests at the R246 slice boundary.
 Remaining gates are operator-time items (E.2 24h+ rehearsal and §6.5
 BlockFetch default flip sign-off using the soak harness). See
 [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for canonical operational

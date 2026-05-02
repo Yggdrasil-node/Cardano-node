@@ -1063,13 +1063,13 @@ mod tests {
                     Redeemer {
                         tag: 0,
                         index: 0,
-                        data: PlutusData::Integer(0),
+                        data: PlutusData::integer(0),
                         ex_units: ExUnits { mem: 10, steps: 20 },
                     },
                     Redeemer {
                         tag: 1,
                         index: 0,
-                        data: PlutusData::Integer(1),
+                        data: PlutusData::integer(1),
                         ex_units: ExUnits { mem: 30, steps: 40 },
                     },
                 ],

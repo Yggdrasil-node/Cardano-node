@@ -561,7 +561,7 @@ mod tests {
         let r = crate::eras::alonzo::Redeemer {
             tag: 0,
             index: 0,
-            data: crate::plutus::PlutusData::Integer(0.into()),
+            data: crate::plutus::PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -581,7 +581,7 @@ mod tests {
         let good = crate::eras::alonzo::Redeemer {
             tag: 0,
             index: 0,
-            data: crate::plutus::PlutusData::Integer(0.into()),
+            data: crate::plutus::PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 100,
@@ -590,7 +590,7 @@ mod tests {
         let bad = crate::eras::alonzo::Redeemer {
             tag: 1,
             index: 0,
-            data: crate::plutus::PlutusData::Integer(0.into()),
+            data: crate::plutus::PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 1001,
                 steps: 100,

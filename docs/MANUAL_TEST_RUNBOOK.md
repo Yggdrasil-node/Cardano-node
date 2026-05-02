@@ -65,6 +65,21 @@ Pass conditions:
 - `endurance-producer` runs for the full duration and proves the preview sync point advances by at least `MIN_SLOT_ADVANCE` slots.
 - No `invalid VRF proof` line appears.
 
+R246 preview Plutus replay gate:
+
+```sh
+cargo run --manifest-path tmp/refscan/Cargo.toml --release -- \
+  tmp/preview-producer/db/producer \
+  tmp/preview-producer/config/preview-producer.json
+```
+
+Expected result after the preview Plutus parity fix: replay advances past
+the old Babbage reference-script failure and reports a tip at or beyond
+slot `834713`, with no `MalformedReferenceScripts` and no ledger decode
+error. Debug refscan builds can overflow the default process stack on
+deep Plutus scripts; use release mode for this gate, or raise the stack
+with `ulimit -s 65536` when intentionally debugging unoptimized code.
+
 This does **not** prove real block adoption until the generated pool is registered and delegated on-chain. With the default zero pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the preview stake-key deposit plus pool deposit and transaction fees (currently 502 tADA plus fees from the vendored preview genesis), submit the generated certificates, then wait for active stake before expecting leader election.
 
 When constructing the registration transaction manually, keep certificate order deterministic: stake-address registration first, pool registration second, stake delegation third. Submitting delegation before the pool-registration certificate is processed is rejected by the preview ledger as `DelegateeStakePoolNotRegisteredDELEG`.

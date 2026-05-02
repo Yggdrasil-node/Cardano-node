@@ -29,6 +29,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 
+use num_bigint::BigInt;
 use thiserror::Error;
 
 use crate::types::{DefaultFun, ExBudget, Value};
@@ -215,7 +216,7 @@ pub fn ex_memory(value: &Value) -> i64 {
 fn constant_ex_memory(c: &crate::types::Constant) -> i64 {
     use crate::types::Constant::*;
     match c {
-        Integer(n) => integer_ex_memory(*n),
+        Integer(n) => integer_ex_memory_bigint(n),
         ByteString(bs) => bytestring_ex_memory(bs.len()),
         String(s) => s.chars().count() as i64,
         Unit => 1,
@@ -233,12 +234,17 @@ fn constant_ex_memory(c: &crate::types::Constant) -> i64 {
 ///
 /// size = ceil(bit_length(|n|) / 64), minimum 1.
 /// Matches Haskell `nWords` in `ExMemoryUsage Integer`.
-pub fn integer_ex_memory(n: i128) -> i64 {
-    if n == 0 {
+pub fn integer_ex_memory<N: Into<BigInt>>(n: N) -> i64 {
+    let n = n.into();
+    integer_ex_memory_bigint(&n)
+}
+
+fn integer_ex_memory_bigint(n: &BigInt) -> i64 {
+    if n == &BigInt::from(0u8) {
         return 1;
     }
-    let bits = 128u32 - n.unsigned_abs().leading_zeros();
-    ((bits as i64) + 63) / 64
+    let words = n.bits().saturating_add(63) / 64;
+    i64::try_from(words).unwrap_or(i64::MAX)
 }
 
 /// Compute the ExMemory size of a byte string.
@@ -263,7 +269,7 @@ fn data_ex_memory(d: &yggdrasil_ledger::plutus::PlutusData) -> i64 {
                 .sum::<i64>()
         }
         List(items) => 4 + items.iter().map(data_ex_memory).sum::<i64>(),
-        Integer(n) => 4 + integer_ex_memory(*n),
+        Integer(n) => 4 + integer_ex_memory_bigint(n),
         Bytes(bs) => 4 + bytestring_ex_memory(bs.len()),
     }
 }
@@ -541,6 +547,13 @@ pub struct CostModel {
     /// at runtime instead of silently charging fallback costs.
     pub builtin_costs: HashMap<DefaultFun, BuiltinCostEntry>,
 
+    /// Runtime builtin semantics selected by the active protocol version.
+    ///
+    /// This is not only a costing selector: a small number of builtins changed
+    /// behavior across Plutus semantics variants. The CEK builtin dispatcher
+    /// must consult this value when executing those builtins.
+    pub builtin_semantics_variant: BuiltinSemanticsVariant,
+
     /// When true, [`Self::builtin_cost`] fails with
     /// `MachineError::MissingBuiltinCost` for any builtin lacking a per-builtin
     /// entry instead of returning the flat fallback. Production cost models
@@ -564,6 +577,7 @@ impl Default for CostModel {
             builtin_cpu: 1_000,
             builtin_mem: 1_000,
             builtin_costs: HashMap::new(),
+            builtin_semantics_variant: BuiltinSemanticsVariant::B,
             strict_builtin_costs: false,
         }
     }
@@ -688,6 +702,7 @@ impl CostModel {
             builtin_cpu,
             builtin_mem,
             builtin_costs,
+            builtin_semantics_variant,
             // Production-derived models must surface uncalibrated builtins
             // instead of silently falling back to flat costs.
             strict_builtin_costs: true,
@@ -2021,6 +2036,12 @@ mod tests {
     }
 
     #[test]
+    fn integer_ex_memory_arbitrary_precision_values() {
+        let n = BigInt::from(1u8) << 130u32;
+        assert_eq!(integer_ex_memory(n), 3); // 131 bits -> 3 words
+    }
+
+    #[test]
     fn bytestring_ex_memory_counts_64_bit_words() {
         assert_eq!(bytestring_ex_memory(0), 1);
         assert_eq!(bytestring_ex_memory(1), 1);
@@ -2064,7 +2085,7 @@ mod tests {
         let v = Value::Constant(crate::types::Constant::ProtoPair(
             crate::types::Type::Integer,
             crate::types::Type::ByteString,
-            Box::new(crate::types::Constant::Integer(1)),
+            Box::new(crate::types::Constant::integer(1)),
             Box::new(crate::types::Constant::ByteString(vec![0])),
         ));
         assert_eq!(ex_memory(&v), i64::MAX);
@@ -2073,7 +2094,7 @@ mod tests {
     #[test]
     fn data_ex_memory_charges_nodes_and_bytestring_words() {
         let data = yggdrasil_ledger::plutus::PlutusData::List(vec![
-            yggdrasil_ledger::plutus::PlutusData::Integer(0),
+            yggdrasil_ledger::plutus::PlutusData::integer(0),
             yggdrasil_ledger::plutus::PlutusData::Bytes(vec![0; 9]),
         ]);
         assert_eq!(data_ex_memory(&data), 15);

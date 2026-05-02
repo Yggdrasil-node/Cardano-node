@@ -19,7 +19,7 @@
 //! // Build a simple program: (\x -> x) 42
 //! let term = Term::Apply(
 //!     Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
-//!     Box::new(Term::Constant(Constant::Integer(42))),
+//!     Box::new(Term::Constant(Constant::integer(42))),
 //! );
 //!
 //! let (result, _logs) = evaluate_term(
@@ -29,7 +29,7 @@
 //! ).expect("evaluation should succeed");
 //!
 //! match result {
-//!     Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+//!     Value::Constant(Constant::integer(n)) => assert_eq!(n, 42),
 //!     _ => panic!("unexpected result"),
 //! }
 //! ```
@@ -109,12 +109,14 @@ mod tests {
     #[test]
     fn evaluate_term_constant() {
         let (val, logs) = evaluate_term(
-            Term::Constant(Constant::Integer(99)),
+            Term::Constant(Constant::integer(99)),
             big_budget(),
             CostModel::default(),
         )
         .unwrap();
-        assert!(matches!(val, Value::Constant(Constant::Integer(99))));
+        assert!(
+            matches!(val, Value::Constant(Constant::Integer(ref n)) if n == &num_bigint::BigInt::from(99))
+        );
         assert!(logs.is_empty());
     }
 
@@ -154,7 +156,7 @@ mod tests {
         // Apply requires several steps, should exhaust quickly.
         let term = Term::Apply(
             Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
-            Box::new(Term::Constant(Constant::Integer(1))),
+            Box::new(Term::Constant(Constant::integer(1))),
         );
         let err = evaluate_term(term, tiny, CostModel::default());
         assert!(err.is_err());
@@ -168,10 +170,12 @@ mod tests {
             major: 1,
             minor: 0,
             patch: 0,
-            term: Term::Constant(Constant::Integer(42)),
+            term: Term::Constant(Constant::integer(42)),
         };
         let (val, _) = evaluate_program(prog, big_budget(), CostModel::default()).unwrap();
-        assert!(matches!(val, Value::Constant(Constant::Integer(42))));
+        assert!(
+            matches!(val, Value::Constant(Constant::Integer(ref n)) if n == &num_bigint::BigInt::from(42))
+        );
     }
 
     #[test]
@@ -179,9 +183,9 @@ mod tests {
         let add = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::AddInteger)),
-                Box::new(Term::Constant(Constant::Integer(3))),
+                Box::new(Term::Constant(Constant::integer(3))),
             )),
-            Box::new(Term::Constant(Constant::Integer(7))),
+            Box::new(Term::Constant(Constant::integer(7))),
         );
         let prog = Program {
             major: 1,
@@ -190,7 +194,9 @@ mod tests {
             term: add,
         };
         let (val, _) = evaluate_program(prog, big_budget(), CostModel::default()).unwrap();
-        assert!(matches!(val, Value::Constant(Constant::Integer(10))));
+        assert!(
+            matches!(val, Value::Constant(Constant::Integer(ref n)) if n == &num_bigint::BigInt::from(10))
+        );
     }
 
     // -- evaluate_script -----------------------------------------------

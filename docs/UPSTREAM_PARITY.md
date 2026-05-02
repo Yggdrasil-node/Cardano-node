@@ -7,7 +7,7 @@ nav_order: 5
 
 # Upstream Parity Matrix
 
-Last updated: 2026-05-01
+Last updated: 2026-05-02
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.
 
@@ -15,11 +15,12 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - `cargo fmt --all -- --check`: clean (zero diff; CI gate added under audit M-2 follow-up)
 - `cargo check-all`: passing
-- `cargo test-all`: passing (0 failures; workspace coverage is 4.7K+ tests at R245)
+- `cargo test-all`: passing (0 failures; workspace coverage is 4.7K+ tests at R246)
 - `cargo lint`: passing (clippy `-D warnings` clean across all crates and targets)
 - `cargo deny check advisories bans licenses sources`: passing (one intentional ignore: `RUSTSEC-2021-0127` for the `serde_cbor` storage carve-out, tracked separately for migration)
 - **Genesis preflight parity** (R244): all four configured genesis hashes are verified at startup. Byron follows upstream `Cardano.Chain.Genesis.Data.readGenesisData` by hashing `renderCanonicalJSON` after `parseCanonicalJSON`; Shelley, Alonzo, and Conway continue to use raw-file Blake2b-256.
 - **Conway BBODY drift parity** (R245): `HeaderProtVerTooHigh` now follows upstream's `netId == Mainnet || curProtVerMajor >= 12` condition, so mainnet remains strict, pre-Dijkstra testnets get the temporary grace path, and testnets re-enable the check at Dijkstra protocol major 12. The separate `MaxMajorProtVer` cap remains enforced on every network.
+- **Preview Plutus replay parity** (R246): well-formedness remains enforced while on-chain scripts are treated as raw `PlutusBinary` bytes (CBOR bytestring containing Flat) under protocol-version language gates; Babbage/Conway reference inputs are ordered by `ShelleyTxIn`; CEK non-constant runtime values use `ExMemory = 1`; and pre-Conway upper-only validity intervals use inclusive `PV1.to`. Release refscan reached preview slot `834713` with no `MalformedReferenceScripts` or ledger decode error.
 - **`cardano-cli 10.16` LSQ parity** (R164–R240): all 11 always-available cardano-cli queries (`tip`, `protocol-parameters`, `era-history`, `slot-number`, `utxo --whole-utxo`/`--address`/`--tx-in`, `tx-mempool info`/`next-tx`/`tx-exists`, `submit-tx`) decode end-to-end against yggdrasil's NtC socket on preview, preprod, and mainnet. With opt-in `YGG_LSQ_ERA_FLOOR=6` the era-gated queries plus every Conway-era cardano-cli subcommand decode end-to-end, including `conway query gov-state` (R188/R193/R204). Tail-end Conway dispatcher tag 36 `GetPoolDistr2` serves live `PoolDistr` data from the `set` stake snapshot with optional pool filtering (R237); `GetStakeDistribution`/`GetStakeDistribution2`, `GetSPOStakeDistr`, and `LedgerPeerSnapshotV2` likewise use live stake snapshot data when available. R238 makes `protocol-state` use the exact ChainDepState sidecar for the acquired point/tip, R239 closes the coordinated `cardano-base` fixture refresh, R240 adds reproducible §6.5 BlockFetch soak automation, and R245 refreshes the latest `cardano-ledger` documentary pin. **The Conway-era LSQ wire-protocol gap is fully closed** (R190) and the remaining LSQ work is now edge-case data validation rather than placeholder removal.
 
 ## Subsystem Status
@@ -40,7 +41,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 
 - No critical parity blockers are currently tracked in this matrix.
 - Active validation focus: systematic mainnet endurance rehearsal plus runbook §6.5 sign-off using `node/scripts/parallel_blockfetch_soak.sh` before changing the default `max_concurrent_block_fetch_peers`.
-- Fixture maintenance focus: keep the R239 `cardano-base` vector cadence current when upstream advances again.
+- Fixture and Plutus maintenance focus: keep the R239 `cardano-base` vector cadence current when upstream advances again, and keep the R246 Plutus parity assumptions under replay/drift watch as new preview/preprod scripts appear.
 
 ## Upstream Anchors
 

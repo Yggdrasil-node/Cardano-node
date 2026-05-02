@@ -1385,6 +1385,8 @@ dependencies = [
 name = "yggdrasil-ledger"
 version = "0.2.0"
 dependencies = [
+ "num-bigint",
+ "num-traits",
  "serde",
  "thiserror",
  "yggdrasil-cddl-codegen",
@@ -1440,6 +1442,9 @@ dependencies = [
 name = "yggdrasil-plutus"
 version = "0.2.0"
 dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
  "ripemd",
  "sha2 0.11.0",
  "sha3",

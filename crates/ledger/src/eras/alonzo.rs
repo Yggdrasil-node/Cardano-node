@@ -694,7 +694,7 @@ mod tests {
         let r = Redeemer {
             tag: 0,
             index: 0,
-            data: PlutusData::Integer(42),
+            data: PlutusData::integer(42),
             ex_units: ExUnits {
                 mem: 100,
                 steps: 200,
@@ -724,7 +724,7 @@ mod tests {
         let r = Redeemer {
             tag: 2,
             index: 0,
-            data: PlutusData::List(vec![PlutusData::Integer(1)]),
+            data: PlutusData::List(vec![PlutusData::integer(1)]),
             ex_units: ExUnits { mem: 10, steps: 20 },
         };
         let decoded = Redeemer::from_cbor_bytes(&r.to_cbor_bytes()).unwrap();

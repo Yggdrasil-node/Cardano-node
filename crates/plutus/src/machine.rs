@@ -443,9 +443,9 @@ mod tests {
     #[test]
     fn eval_constant_integer() {
         let mut m = machine();
-        let result = m.evaluate(Term::Constant(Constant::Integer(42))).unwrap();
+        let result = m.evaluate(Term::Constant(Constant::integer(42))).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected integer"),
         }
     }
@@ -496,11 +496,11 @@ mod tests {
         // (\x -> x) 42
         let term = Term::Apply(
             Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
-            Box::new(Term::Constant(Constant::Integer(42))),
+            Box::new(Term::Constant(Constant::integer(42))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected integer 42"),
         }
     }
@@ -515,13 +515,13 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(k),
-                Box::new(Term::Constant(Constant::Integer(10))),
+                Box::new(Term::Constant(Constant::integer(10))),
             )),
-            Box::new(Term::Constant(Constant::Integer(20))),
+            Box::new(Term::Constant(Constant::integer(20))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 10),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(10)),
             _ => panic!("expected integer 10"),
         }
     }
@@ -533,11 +533,11 @@ mod tests {
         let mut m = machine();
         // Force (Delay 42)  →  42
         let term = Term::Force(Box::new(Term::Delay(Box::new(Term::Constant(
-            Constant::Integer(42),
+            Constant::integer(42),
         )))));
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected integer 42"),
         }
     }
@@ -546,7 +546,7 @@ mod tests {
     fn eval_delay_produces_thunk() {
         let mut m = machine();
         // Delay <body> produces a Delay value (not evaluated).
-        let term = Term::Delay(Box::new(Term::Constant(Constant::Integer(99))));
+        let term = Term::Delay(Box::new(Term::Constant(Constant::integer(99))));
         let result = m.evaluate(term).unwrap();
         assert!(matches!(result, Value::Delay(..)));
     }
@@ -586,8 +586,8 @@ mod tests {
         let mut m = machine();
         // (42) 10  →  NonFunctionApplication
         let term = Term::Apply(
-            Box::new(Term::Constant(Constant::Integer(42))),
-            Box::new(Term::Constant(Constant::Integer(10))),
+            Box::new(Term::Constant(Constant::integer(42))),
+            Box::new(Term::Constant(Constant::integer(10))),
         );
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(err, MachineError::NonFunctionApplication));
@@ -599,7 +599,7 @@ mod tests {
     fn eval_force_non_polymorphic() {
         let mut m = machine();
         // Force 42  →  NonPolymorphicForce
-        let term = Term::Force(Box::new(Term::Constant(Constant::Integer(42))));
+        let term = Term::Force(Box::new(Term::Constant(Constant::integer(42))));
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(err, MachineError::NonPolymorphicForce));
     }
@@ -613,13 +613,13 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::AddInteger)),
-                Box::new(Term::Constant(Constant::Integer(3))),
+                Box::new(Term::Constant(Constant::integer(3))),
             )),
-            Box::new(Term::Constant(Constant::Integer(4))),
+            Box::new(Term::Constant(Constant::integer(4))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 7),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(7)),
             _ => panic!("expected integer 7"),
         }
     }
@@ -630,13 +630,13 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::SubtractInteger)),
-                Box::new(Term::Constant(Constant::Integer(10))),
+                Box::new(Term::Constant(Constant::integer(10))),
             )),
-            Box::new(Term::Constant(Constant::Integer(3))),
+            Box::new(Term::Constant(Constant::integer(3))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 7),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(7)),
             _ => panic!("expected integer 7"),
         }
     }
@@ -647,13 +647,13 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::MultiplyInteger)),
-                Box::new(Term::Constant(Constant::Integer(6))),
+                Box::new(Term::Constant(Constant::integer(6))),
             )),
-            Box::new(Term::Constant(Constant::Integer(7))),
+            Box::new(Term::Constant(Constant::integer(7))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected integer 42"),
         }
     }
@@ -666,9 +666,9 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::EqualsInteger)),
-                Box::new(Term::Constant(Constant::Integer(42))),
+                Box::new(Term::Constant(Constant::integer(42))),
             )),
-            Box::new(Term::Constant(Constant::Integer(42))),
+            Box::new(Term::Constant(Constant::integer(42))),
         );
         let result = m.evaluate(term).unwrap();
         assert!(matches!(result, Value::Constant(Constant::Bool(true))));
@@ -680,9 +680,9 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::EqualsInteger)),
-                Box::new(Term::Constant(Constant::Integer(1))),
+                Box::new(Term::Constant(Constant::integer(1))),
             )),
-            Box::new(Term::Constant(Constant::Integer(2))),
+            Box::new(Term::Constant(Constant::integer(2))),
         );
         let result = m.evaluate(term).unwrap();
         assert!(matches!(result, Value::Constant(Constant::Bool(false))));
@@ -700,13 +700,13 @@ mod tests {
                     Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::IfThenElse)))),
                     Box::new(Term::Constant(Constant::Bool(true))),
                 )),
-                Box::new(Term::Constant(Constant::Integer(1))),
+                Box::new(Term::Constant(Constant::integer(1))),
             )),
-            Box::new(Term::Constant(Constant::Integer(2))),
+            Box::new(Term::Constant(Constant::integer(2))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 1),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(1)),
             _ => panic!("expected integer 1"),
         }
     }
@@ -720,13 +720,13 @@ mod tests {
                     Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::IfThenElse)))),
                     Box::new(Term::Constant(Constant::Bool(false))),
                 )),
-                Box::new(Term::Constant(Constant::Integer(1))),
+                Box::new(Term::Constant(Constant::integer(1))),
             )),
-            Box::new(Term::Constant(Constant::Integer(2))),
+            Box::new(Term::Constant(Constant::integer(2))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 2),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(2)),
             _ => panic!("expected integer 2"),
         }
     }
@@ -747,8 +747,8 @@ mod tests {
         let term = Term::Constr(
             1,
             vec![
-                Term::Constant(Constant::Integer(10)),
-                Term::Constant(Constant::Integer(20)),
+                Term::Constant(Constant::integer(10)),
+                Term::Constant(Constant::integer(20)),
             ],
         );
         let result = m.evaluate(term).unwrap();
@@ -767,13 +767,13 @@ mod tests {
         let term = Term::Case(
             Box::new(Term::Constr(0, vec![])),
             vec![
-                Term::Constant(Constant::Integer(42)),
-                Term::Constant(Constant::Integer(99)),
+                Term::Constant(Constant::integer(42)),
+                Term::Constant(Constant::integer(99)),
             ],
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected integer 42"),
         }
     }
@@ -784,13 +784,13 @@ mod tests {
         let term = Term::Case(
             Box::new(Term::Constr(1, vec![])),
             vec![
-                Term::Constant(Constant::Integer(42)),
-                Term::Constant(Constant::Integer(99)),
+                Term::Constant(Constant::integer(42)),
+                Term::Constant(Constant::integer(99)),
             ],
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 99),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(99)),
             _ => panic!("expected integer 99"),
         }
     }
@@ -800,7 +800,7 @@ mod tests {
         let mut m = machine();
         let term = Term::Case(
             Box::new(Term::Constr(5, vec![])),
-            vec![Term::Constant(Constant::Integer(1))],
+            vec![Term::Constant(Constant::integer(1))],
         );
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(
@@ -813,8 +813,8 @@ mod tests {
     fn eval_case_non_constr_scrutinee() {
         let mut m = machine();
         let term = Term::Case(
-            Box::new(Term::Constant(Constant::Integer(0))),
-            vec![Term::Constant(Constant::Integer(1))],
+            Box::new(Term::Constant(Constant::integer(0))),
+            vec![Term::Constant(Constant::integer(1))],
         );
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(err, MachineError::NonConstrScrutinized));
@@ -831,11 +831,11 @@ mod tests {
                 Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::Trace)))),
                 Box::new(Term::Constant(Constant::String("hello".into()))),
             )),
-            Box::new(Term::Constant(Constant::Integer(42))),
+            Box::new(Term::Constant(Constant::integer(42))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected integer 42"),
         }
         assert_eq!(m.logs, vec!["hello".to_string()]);
@@ -853,7 +853,7 @@ mod tests {
                 Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
                 Box::new(Term::Var(1)),
             )))),
-            Box::new(Term::Constant(Constant::Integer(1))),
+            Box::new(Term::Constant(Constant::integer(1))),
         );
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(err, MachineError::OutOfBudget(_)));
@@ -887,7 +887,7 @@ mod tests {
         // AddInteger 3  →  BuiltinApp (partially applied)
         let term = Term::Apply(
             Box::new(Term::Builtin(DefaultFun::AddInteger)),
-            Box::new(Term::Constant(Constant::Integer(3))),
+            Box::new(Term::Constant(Constant::integer(3))),
         );
         let result = m.evaluate(term).unwrap();
         assert!(matches!(
@@ -975,11 +975,11 @@ mod tests {
         let id = Term::LamAbs(Box::new(Term::Var(1)));
         let term = Term::Apply(
             Box::new(Term::Apply(Box::new(outer), Box::new(id))),
-            Box::new(Term::Constant(Constant::Integer(42))),
+            Box::new(Term::Constant(Constant::integer(42))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected 42"),
         }
     }
@@ -992,9 +992,9 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::LessThanInteger)),
-                Box::new(Term::Constant(Constant::Integer(1))),
+                Box::new(Term::Constant(Constant::integer(1))),
             )),
-            Box::new(Term::Constant(Constant::Integer(2))),
+            Box::new(Term::Constant(Constant::integer(2))),
         );
         let result = m.evaluate(term).unwrap();
         assert!(matches!(result, Value::Constant(Constant::Bool(true))));
@@ -1006,9 +1006,9 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::LessThanInteger)),
-                Box::new(Term::Constant(Constant::Integer(5))),
+                Box::new(Term::Constant(Constant::integer(5))),
             )),
-            Box::new(Term::Constant(Constant::Integer(3))),
+            Box::new(Term::Constant(Constant::integer(3))),
         );
         let result = m.evaluate(term).unwrap();
         assert!(matches!(result, Value::Constant(Constant::Bool(false))));
@@ -1022,13 +1022,13 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::DivideInteger)),
-                Box::new(Term::Constant(Constant::Integer(7))),
+                Box::new(Term::Constant(Constant::integer(7))),
             )),
-            Box::new(Term::Constant(Constant::Integer(2))),
+            Box::new(Term::Constant(Constant::integer(2))),
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 3),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(3)),
             _ => panic!("expected 3"),
         }
     }
@@ -1039,9 +1039,9 @@ mod tests {
         let term = Term::Apply(
             Box::new(Term::Apply(
                 Box::new(Term::Builtin(DefaultFun::DivideInteger)),
-                Box::new(Term::Constant(Constant::Integer(10))),
+                Box::new(Term::Constant(Constant::integer(10))),
             )),
-            Box::new(Term::Constant(Constant::Integer(0))),
+            Box::new(Term::Constant(Constant::integer(0))),
         );
         let err = m.evaluate(term).unwrap_err();
         assert!(matches!(err, MachineError::DivisionByZero));
@@ -1055,12 +1055,12 @@ mod tests {
         // Case (Constr 0 [10]) [\x. x]
         // Branch \x. x receives field 10.
         let term = Term::Case(
-            Box::new(Term::Constr(0, vec![Term::Constant(Constant::Integer(10))])),
+            Box::new(Term::Constr(0, vec![Term::Constant(Constant::integer(10))])),
             vec![Term::LamAbs(Box::new(Term::Var(1)))],
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 10),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(10)),
             _ => panic!("expected integer 10"),
         }
     }
@@ -1074,9 +1074,9 @@ mod tests {
         let list = Term::Constant(Constant::ProtoList(
             crate::types::Type::Integer,
             vec![
-                Constant::Integer(1),
-                Constant::Integer(2),
-                Constant::Integer(3),
+                Constant::integer(1),
+                Constant::integer(2),
+                Constant::integer(3),
             ],
         ));
         let term = Term::Apply(
@@ -1085,7 +1085,7 @@ mod tests {
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 1),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(1)),
             _ => panic!("expected 1"),
         }
     }
@@ -1119,7 +1119,7 @@ mod tests {
         let mut m = machine();
         let list = Term::Constant(Constant::ProtoList(
             crate::types::Type::Integer,
-            vec![Constant::Integer(1)],
+            vec![Constant::integer(1)],
         ));
         let term = Term::Apply(
             Box::new(Term::Force(Box::new(Term::Builtin(DefaultFun::NullList)))),
@@ -1137,7 +1137,7 @@ mod tests {
         let pair = Term::Constant(Constant::ProtoPair(
             crate::types::Type::Integer,
             crate::types::Type::ByteString,
-            Box::new(Constant::Integer(1)),
+            Box::new(Constant::integer(1)),
             Box::new(Constant::ByteString(vec![2])),
         ));
         // Force Force FstPair pair
@@ -1149,7 +1149,7 @@ mod tests {
         );
         let result = m.evaluate(term).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 1),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(1)),
             _ => panic!("expected integer 1"),
         }
     }
@@ -1160,7 +1160,7 @@ mod tests {
         let pair = Term::Constant(Constant::ProtoPair(
             crate::types::Type::Integer,
             crate::types::Type::ByteString,
-            Box::new(Constant::Integer(1)),
+            Box::new(Constant::integer(1)),
             Box::new(Constant::ByteString(vec![2])),
         ));
         let term = Term::Apply(
@@ -1189,7 +1189,7 @@ mod tests {
                 Box::new(trace_forced.clone()),
                 Box::new(Term::Constant(Constant::String("b".into()))),
             )),
-            Box::new(Term::Constant(Constant::Integer(42))),
+            Box::new(Term::Constant(Constant::integer(42))),
         );
         let outer = Term::Apply(
             Box::new(Term::Apply(
@@ -1200,7 +1200,7 @@ mod tests {
         );
         let result = m.evaluate(outer).unwrap();
         match result {
-            Value::Constant(Constant::Integer(n)) => assert_eq!(n, 42),
+            Value::Constant(Constant::Integer(n)) => assert_eq!(n, num_bigint::BigInt::from(42)),
             _ => panic!("expected integer 42"),
         }
         // Inner trace fires first (argument is evaluated before outer trace completes).
@@ -1216,6 +1216,7 @@ mod tests {
             builtin_cpu: 1_000,
             builtin_mem: 1_000,
             builtin_costs: std::collections::HashMap::new(),
+            builtin_semantics_variant: crate::cost_model::BuiltinSemanticsVariant::B,
             strict_builtin_costs: false,
         }
     }
@@ -1304,7 +1305,7 @@ mod tests {
 
         // Single Constant(42): 1 step, charges constant_cpu=20
         let mut m = exact_cost_machine(initial, model.clone());
-        m.evaluate(Term::Constant(Constant::Integer(42))).unwrap();
+        m.evaluate(Term::Constant(Constant::integer(42))).unwrap();
         assert_eq!(m.steps_taken(), 1);
         assert_eq!(m.remaining_budget().cpu, initial.cpu - 20);
         assert_eq!(m.remaining_budget().mem, initial.mem - 2);
@@ -1312,7 +1313,7 @@ mod tests {
         // (\x -> x) 42: Apply + LamAbs + Constant + Var = 4 steps
         let term = Term::Apply(
             Box::new(Term::LamAbs(Box::new(Term::Var(1)))),
-            Box::new(Term::Constant(Constant::Integer(42))),
+            Box::new(Term::Constant(Constant::integer(42))),
         );
         let mut m2 = exact_cost_machine(initial, model.clone());
         m2.evaluate(term).unwrap();
@@ -1322,7 +1323,7 @@ mod tests {
 
         // Delay(Const): Delay wraps a thunk – only 1 step
         let mut m3 = exact_cost_machine(initial, model);
-        m3.evaluate(Term::Delay(Box::new(Term::Constant(Constant::Integer(42)))))
+        m3.evaluate(Term::Delay(Box::new(Term::Constant(Constant::integer(42)))))
             .unwrap();
         assert_eq!(m3.steps_taken(), 1);
         assert_eq!(m3.remaining_budget().cpu, initial.cpu - 50);
@@ -1345,7 +1346,7 @@ mod tests {
 
         // Force(Delay(Constant(42))): Force + Delay + Constant = 3 steps
         let term = Term::Force(Box::new(Term::Delay(Box::new(Term::Constant(
-            Constant::Integer(42),
+            Constant::integer(42),
         )))));
         let mut m = exact_cost_machine(initial, model);
         m.evaluate(term).unwrap();
@@ -1370,14 +1371,14 @@ mod tests {
 
         // Constr(0, [42]): Constr + Constant = 2 steps
         let mut m = exact_cost_machine(initial, model.clone());
-        m.evaluate(Term::Constr(0, vec![Term::Constant(Constant::Integer(42))]))
+        m.evaluate(Term::Constr(0, vec![Term::Constant(Constant::integer(42))]))
             .unwrap();
         assert_eq!(m.remaining_budget().cpu, initial.cpu - (80 + 20));
 
         // Case(Constr(0, []), [Constant(42)]): Case + Constr + Constant = 3 steps
         let term = Term::Case(
             Box::new(Term::Constr(0, vec![])),
-            vec![Term::Constant(Constant::Integer(42))],
+            vec![Term::Constant(Constant::integer(42))],
         );
         let mut m2 = exact_cost_machine(initial, model);
         m2.evaluate(term).unwrap();

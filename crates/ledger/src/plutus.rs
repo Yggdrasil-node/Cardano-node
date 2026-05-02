@@ -38,6 +38,8 @@
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::allegra::NativeScript;
 use crate::error::LedgerError;
+use num_bigint::{BigInt, Sign};
+use num_traits::ToPrimitive;
 
 // ---------------------------------------------------------------------------
 // PlutusData
@@ -58,7 +60,10 @@ pub enum PlutusData {
     /// Ordered list: `[* plutus_data]`.
     List(Vec<PlutusData>),
     /// Integer value: `big_int = int / #6.2(bounded_bytes) / #6.3(bounded_bytes)`.
-    Integer(i128),
+    ///
+    /// Plutus `Integer` is arbitrary precision upstream, so ledger data must
+    /// not clamp to a machine-sized integer when decoding datum/redeemer CBOR.
+    Integer(BigInt),
     /// Byte string: `bounded_bytes`.
     Bytes(Vec<u8>),
 }
@@ -120,7 +125,7 @@ impl CborEncode for PlutusData {
                     }
                 }
                 Self::Integer(n) => {
-                    encode_big_int(enc, *n);
+                    encode_big_int(enc, n);
                 }
                 Self::Bytes(b) => {
                     enc.bytes(b);
@@ -130,33 +135,36 @@ impl CborEncode for PlutusData {
     }
 }
 
-/// Encode a `big_int`: use plain CBOR int when it fits in i64,
+/// Encode a `big_int`: use plain CBOR int when it fits in u64/CBOR nint,
 /// otherwise use tagged bignum encoding.
-fn encode_big_int(enc: &mut Encoder, n: i128) {
-    if n >= 0 {
-        if let Ok(u) = u64::try_from(n) {
+fn encode_big_int(enc: &mut Encoder, n: &BigInt) {
+    if n.sign() != Sign::Minus {
+        if let Some(u) = n.to_u64() {
             enc.unsigned(u);
         } else {
             // big_uint: #6.2(bounded_bytes)
-            let bytes = n.to_be_bytes();
-            let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
-            enc.tag(BIG_UINT_TAG).bytes(&bytes[start..]);
+            let (_, bytes) = n.to_bytes_be();
+            enc.tag(BIG_UINT_TAG).bytes(&bytes);
         }
     } else {
         // CBOR negative: encode as -(1+n), where n is the unsigned magnitude
-        let magnitude = (-1 - n) as u128;
-        if let Ok(u) = u64::try_from(magnitude) {
+        let magnitude = -n - BigInt::from(1u8);
+        if let Some(u) = magnitude.to_u64() {
             enc.negative(u);
         } else {
             // big_nint: #6.3(bounded_bytes) — encodes -(1+n) as big unsigned
-            let bytes = magnitude.to_be_bytes();
-            let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
-            enc.tag(BIG_NINT_TAG).bytes(&bytes[start..]);
+            let (_, bytes) = magnitude.to_bytes_be();
+            enc.tag(BIG_NINT_TAG).bytes(&bytes);
         }
     }
 }
 
 impl PlutusData {
+    /// Construct a Plutus arbitrary-precision integer from any BigInt-compatible value.
+    pub fn integer<N: Into<BigInt>>(n: N) -> Self {
+        Self::Integer(n.into())
+    }
+
     /// Maximum nesting depth permitted when decoding `PlutusData` from CBOR.
     ///
     /// Cardano blocks routinely contain `PlutusData` nesting up to a few
@@ -312,11 +320,11 @@ impl PlutusData {
             match major {
                 0 => {
                     let v = dec.unsigned()?;
-                    value = Some(Self::Integer(i128::from(v)));
+                    value = Some(Self::Integer(BigInt::from(v)));
                 }
                 1 => {
                     let v = dec.negative()?;
-                    value = Some(Self::Integer(-1 - i128::from(v)));
+                    value = Some(Self::Integer(-BigInt::from(1u8) - BigInt::from(v)));
                 }
                 2 => {
                     let b = dec.bytes_owned()?;
@@ -382,29 +390,15 @@ impl PlutusData {
                         BIG_UINT_TAG => {
                             // big_uint = #6.2(bounded_bytes)
                             let raw = dec.bytes()?;
-                            let mut val: i128 = 0;
-                            for &b in raw {
-                                val = val.checked_shl(8).ok_or(LedgerError::CborTypeMismatch {
-                                    expected: 0,
-                                    actual: 0,
-                                })? | i128::from(b);
-                            }
+                            let val = BigInt::from_bytes_be(Sign::Plus, raw);
                             value = Some(Self::Integer(val));
                             continue;
                         }
                         BIG_NINT_TAG => {
                             // big_nint = #6.3(bounded_bytes) — value is -(1+n)
                             let raw = dec.bytes()?;
-                            let mut magnitude: u128 = 0;
-                            for &b in raw {
-                                magnitude = magnitude.checked_shl(8).ok_or(
-                                    LedgerError::CborTypeMismatch {
-                                        expected: 0,
-                                        actual: 0,
-                                    },
-                                )? | u128::from(b);
-                            }
-                            value = Some(Self::Integer(-1 - magnitude as i128));
+                            let magnitude = BigInt::from_bytes_be(Sign::Plus, raw);
+                            value = Some(Self::Integer(-BigInt::from(1u8) - magnitude));
                             continue;
                         }
                         _ => {
@@ -588,7 +582,7 @@ mod tests {
 
     #[test]
     fn integer_zero_round_trip() {
-        let d = PlutusData::Integer(0);
+        let d = PlutusData::integer(0);
         let bytes = d.to_cbor_bytes();
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
@@ -596,21 +590,21 @@ mod tests {
 
     #[test]
     fn integer_positive_small_round_trip() {
-        let d = PlutusData::Integer(42);
+        let d = PlutusData::integer(42);
         let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
     }
 
     #[test]
     fn integer_u64_max_round_trip() {
-        let d = PlutusData::Integer(i128::from(u64::MAX));
+        let d = PlutusData::integer(i128::from(u64::MAX));
         let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
     }
 
     #[test]
     fn integer_negative_small_round_trip() {
-        let d = PlutusData::Integer(-1);
+        let d = PlutusData::integer(-1);
         let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
     }
@@ -618,7 +612,7 @@ mod tests {
     #[test]
     fn integer_negative_large_round_trip() {
         // Fits in CBOR negative int (magnitude fits in u64)
-        let d = PlutusData::Integer(-1_000_000_000_000);
+        let d = PlutusData::integer(-1_000_000_000_000i128);
         let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
     }
@@ -627,9 +621,19 @@ mod tests {
     fn integer_big_uint_round_trip() {
         // Exceeds u64::MAX → uses tag 2 big_uint
         let big = i128::from(u64::MAX) + 1;
-        let d = PlutusData::Integer(big);
+        let d = PlutusData::integer(big);
         let bytes = d.to_cbor_bytes();
         // Should contain tag 2
+        assert!(bytes.contains(&0xc2)); // tag(2) = 0xc2
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_larger_than_i128_round_trip() {
+        let big = (BigInt::from(i128::MAX) << 1u8) + BigInt::from(123u16);
+        let d = PlutusData::integer(big);
+        let bytes = d.to_cbor_bytes();
         assert!(bytes.contains(&0xc2)); // tag(2) = 0xc2
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
@@ -640,9 +644,19 @@ mod tests {
         // Exceeds i64 negative range → uses tag 3 big_nint
         // -(1 + magnitude) where magnitude > u64::MAX
         let val = -1 - i128::from(u64::MAX) - 1;
-        let d = PlutusData::Integer(val);
+        let d = PlutusData::integer(val);
         let bytes = d.to_cbor_bytes();
         // Should contain tag 3
+        assert!(bytes.contains(&0xc3)); // tag(3) = 0xc3
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn integer_smaller_than_i128_round_trip() {
+        let val = -(BigInt::from(i128::MAX) << 1u8) - BigInt::from(123u16);
+        let d = PlutusData::integer(val);
+        let bytes = d.to_cbor_bytes();
         assert!(bytes.contains(&0xc3)); // tag(3) = 0xc3
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
@@ -676,7 +690,7 @@ mod tests {
     #[test]
     fn list_with_items_round_trip() {
         let d = PlutusData::List(vec![
-            PlutusData::Integer(1),
+            PlutusData::integer(1),
             PlutusData::Bytes(vec![0x01]),
             PlutusData::List(vec![]),
         ]);
@@ -696,8 +710,8 @@ mod tests {
     #[test]
     fn map_with_entries_round_trip() {
         let d = PlutusData::Map(vec![
-            (PlutusData::Integer(0), PlutusData::Bytes(vec![0xaa])),
-            (PlutusData::Bytes(vec![0x01]), PlutusData::Integer(99)),
+            (PlutusData::integer(0), PlutusData::Bytes(vec![0xaa])),
+            (PlutusData::Bytes(vec![0x01]), PlutusData::integer(99)),
         ]);
         let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, d);
@@ -760,7 +774,7 @@ mod tests {
     #[test]
     fn constr_compact_tag_121_round_trip() {
         // Alternative 0 → tag 121
-        let d = PlutusData::Constr(0, vec![PlutusData::Integer(1)]);
+        let d = PlutusData::Constr(0, vec![PlutusData::integer(1)]);
         let bytes = d.to_cbor_bytes();
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
@@ -778,7 +792,7 @@ mod tests {
     #[test]
     fn constr_all_compact_alternatives() {
         for alt in 0..=6 {
-            let d = PlutusData::Constr(alt, vec![PlutusData::Integer(alt as i128)]);
+            let d = PlutusData::Constr(alt, vec![PlutusData::integer(alt as i128)]);
             let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
             assert_eq!(decoded, d, "Compact constructor alt={alt} failed");
         }
@@ -787,7 +801,7 @@ mod tests {
     #[test]
     fn constr_general_form_round_trip() {
         // Alternative 7 → tag 102 (general form)
-        let d = PlutusData::Constr(7, vec![PlutusData::Integer(42)]);
+        let d = PlutusData::Constr(7, vec![PlutusData::integer(42)]);
         let bytes = d.to_cbor_bytes();
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
@@ -805,7 +819,7 @@ mod tests {
         let d = PlutusData::Constr(
             0,
             vec![
-                PlutusData::Constr(1, vec![PlutusData::Integer(10)]),
+                PlutusData::Constr(1, vec![PlutusData::integer(10)]),
                 PlutusData::List(vec![PlutusData::Bytes(vec![0xff])]),
             ],
         );
@@ -821,7 +835,7 @@ mod tests {
             PlutusData::Constr(
                 0,
                 vec![PlutusData::List(vec![
-                    PlutusData::Integer(-100),
+                    PlutusData::integer(-100),
                     PlutusData::Bytes(vec![0x01, 0x02, 0x03]),
                 ])],
             ),
@@ -885,7 +899,7 @@ mod tests {
         // sequence `[0x81] * (MAX_DEPTH - 1)` followed by a `0x00` leaf and
         // must not overflow the runtime stack.
         let depth = PlutusData::MAX_DECODE_DEPTH - 1;
-        let mut value = PlutusData::Integer(0);
+        let mut value = PlutusData::integer(0);
         for _ in 0..depth {
             value = PlutusData::List(vec![value]);
         }
@@ -918,14 +932,14 @@ mod tests {
                 other => panic!("expected List, got {other:?}"),
             }
         }
-        assert_eq!(value, PlutusData::Integer(0));
+        assert_eq!(value, PlutusData::integer(0));
     }
 
     // ── encode_big_int internals ───────────────────────────────────────
 
     #[test]
     fn encode_big_int_small_positive_is_plain_unsigned() {
-        let d = PlutusData::Integer(23);
+        let d = PlutusData::integer(23);
         let bytes = d.to_cbor_bytes();
         // CBOR unsigned 23 = single byte 0x17
         assert_eq!(bytes, [0x17]);
@@ -933,7 +947,7 @@ mod tests {
 
     #[test]
     fn encode_big_int_negative_one_is_plain_negative() {
-        let d = PlutusData::Integer(-1);
+        let d = PlutusData::integer(-1);
         let bytes = d.to_cbor_bytes();
         // CBOR negative -1 (magnitude 0) = 0x20
         assert_eq!(bytes, [0x20]);
@@ -1045,9 +1059,9 @@ mod tests {
         assert_eq!(
             pd,
             PlutusData::List(vec![
-                PlutusData::Integer(1),
-                PlutusData::Integer(2),
-                PlutusData::Integer(3),
+                PlutusData::integer(1),
+                PlutusData::integer(2),
+                PlutusData::integer(3),
             ])
         );
     }
@@ -1060,8 +1074,8 @@ mod tests {
         assert_eq!(
             pd,
             PlutusData::Map(vec![
-                (PlutusData::Integer(1), PlutusData::Integer(2)),
-                (PlutusData::Integer(3), PlutusData::Integer(4)),
+                (PlutusData::integer(1), PlutusData::integer(2)),
+                (PlutusData::integer(3), PlutusData::integer(4)),
             ])
         );
     }
@@ -1081,7 +1095,7 @@ mod tests {
         let pd = PlutusData::from_cbor_bytes(&data).unwrap();
         assert_eq!(
             pd,
-            PlutusData::Constr(0, vec![PlutusData::Integer(1), PlutusData::Integer(2),])
+            PlutusData::Constr(0, vec![PlutusData::integer(1), PlutusData::integer(2),])
         );
     }
 
@@ -1103,8 +1117,8 @@ mod tests {
             pd,
             PlutusData::List(vec![
                 PlutusData::Map(vec![(
-                    PlutusData::Integer(1),
-                    PlutusData::List(vec![PlutusData::Integer(2), PlutusData::Integer(3),])
+                    PlutusData::integer(1),
+                    PlutusData::List(vec![PlutusData::integer(2), PlutusData::integer(3),])
                 ),]),
                 PlutusData::Bytes(vec![0xff]),
             ])

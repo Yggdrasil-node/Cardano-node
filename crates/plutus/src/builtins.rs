@@ -6,13 +6,16 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs>
 
+use num_bigint::{BigInt, Sign};
+use num_integer::Integer as NumInteger;
+use num_traits::{One, Signed, ToPrimitive, Zero};
 use yggdrasil_crypto::blake2b;
 use yggdrasil_crypto::bls12_381;
 use yggdrasil_crypto::secp256k1;
 use yggdrasil_ledger::cbor::{CborEncode, Encoder};
 use yggdrasil_ledger::plutus::PlutusData;
 
-use crate::cost_model::CostModel;
+use crate::cost_model::{BuiltinSemanticsVariant, CostModel};
 use crate::error::MachineError;
 use crate::types::{Constant, DefaultFun, Type, Value};
 
@@ -32,47 +35,36 @@ pub fn evaluate_builtin(
         // ---------------------------------------------------------------
         // Integer arithmetic
         // ---------------------------------------------------------------
-        AddInteger => int_binop(args, |a, b| {
-            a.checked_add(b).ok_or(MachineError::IntegerOverflow)
-        }),
-        SubtractInteger => int_binop(args, |a, b| {
-            a.checked_sub(b).ok_or(MachineError::IntegerOverflow)
-        }),
-        MultiplyInteger => int_binop(args, |a, b| {
-            a.checked_mul(b).ok_or(MachineError::IntegerOverflow)
-        }),
+        AddInteger => int_binop(args, |a, b| Ok(a + b)),
+        SubtractInteger => int_binop(args, |a, b| Ok(a - b)),
+        MultiplyInteger => int_binop(args, |a, b| Ok(a * b)),
         DivideInteger => int_binop(args, |a, b| {
-            if b == 0 {
+            if b.is_zero() {
                 return Err(MachineError::DivisionByZero);
             }
             // Haskell `div`: rounds towards negative infinity (floor division).
-            // Rust `div_euclid` rounds towards positive infinity for negative
-            // divisors, so we implement floor division manually.
-            let q = a / b;
-            let r = a % b;
-            Ok(if r != 0 && ((r ^ b) < 0) { q - 1 } else { q })
+            Ok(a.div_floor(&b))
         }),
         QuotientInteger => int_binop(args, |a, b| {
-            if b == 0 {
+            if b.is_zero() {
                 return Err(MachineError::DivisionByZero);
             }
             // Haskell `quot`: rounds towards zero.
             Ok(a / b)
         }),
         RemainderInteger => int_binop(args, |a, b| {
-            if b == 0 {
+            if b.is_zero() {
                 return Err(MachineError::DivisionByZero);
             }
             // Haskell `rem`: sign follows dividend.
             Ok(a % b)
         }),
         ModInteger => int_binop(args, |a, b| {
-            if b == 0 {
+            if b.is_zero() {
                 return Err(MachineError::DivisionByZero);
             }
             // Haskell `mod`: sign follows divisor (floor-division remainder).
-            let r = a % b;
-            Ok(if r != 0 && ((r ^ b) < 0) { r + b } else { r })
+            Ok(a.mod_floor(&b))
         }),
 
         // ---------------------------------------------------------------
@@ -103,13 +95,26 @@ pub fn evaluate_builtin(
         ConsByteString => {
             let byte_val = get_int(&args[0])?;
             let bs = get_bytestring(&args[1])?;
-            if !(0..=255).contains(&byte_val) {
-                return Err(MachineError::IndexOutOfBounds {
-                    index: byte_val,
-                    length: 256,
-                });
-            }
-            let mut result = vec![byte_val as u8];
+            let byte = match _cost_model.builtin_semantics_variant {
+                BuiltinSemanticsVariant::A | BuiltinSemanticsVariant::B => {
+                    byte_val.mod_floor(&BigInt::from(256u16)).to_u8().ok_or(
+                        MachineError::BuiltinError {
+                            builtin: "consByteString".into(),
+                            message: "wrapped byte did not fit in u8".into(),
+                        },
+                    )?
+                }
+                BuiltinSemanticsVariant::C => {
+                    if byte_val < BigInt::zero() || byte_val > BigInt::from(255u8) {
+                        return Err(MachineError::IndexOutOfBounds {
+                            index: bigint_to_i128_for_error(&byte_val),
+                            length: 256,
+                        });
+                    }
+                    byte_val.to_u8().expect("checked byte range")
+                }
+            };
+            let mut result = vec![byte];
             result.extend_from_slice(bs);
             Ok(Value::Constant(Constant::ByteString(result)))
         }
@@ -117,27 +122,36 @@ pub fn evaluate_builtin(
             let start = get_int(&args[0])?;
             let count = get_int(&args[1])?;
             let bs = get_bytestring(&args[2])?;
-            // Plutus semantics: clamp to valid range silently.
-            let len = bs.len() as i128;
-            let s = start.max(0).min(len) as usize;
-            let c = count.max(0).min(len - s as i128) as usize;
-            Ok(Value::Constant(Constant::ByteString(bs[s..s + c].to_vec())))
+            // Plutus semantics: i = max(start + 1, 1), j = min(start + count, len)
+            // with a 1-based inclusive range; if j < i the result is empty.
+            let len = BigInt::from(bs.len());
+            let start_idx = start.clone().max(BigInt::zero());
+            let end_idx = (start + count).min(len);
+            if end_idx <= start_idx {
+                Ok(Value::Constant(Constant::ByteString(Vec::new())))
+            } else {
+                let start_idx = start_idx.to_usize().unwrap_or(bs.len());
+                let end_idx = end_idx.to_usize().unwrap_or(bs.len());
+                Ok(Value::Constant(Constant::ByteString(
+                    bs[start_idx..end_idx].to_vec(),
+                )))
+            }
         }
         LengthOfByteString => {
             let bs = get_bytestring(&args[0])?;
-            Ok(Value::Constant(Constant::Integer(bs.len() as i128)))
+            Ok(Value::Constant(Constant::integer(BigInt::from(bs.len()))))
         }
         IndexByteString => {
             let bs = get_bytestring(&args[0])?;
             let idx = get_int(&args[1])?;
-            if idx < 0 || idx as usize >= bs.len() {
+            if idx < BigInt::zero() || idx >= BigInt::from(bs.len()) {
                 return Err(MachineError::IndexOutOfBounds {
-                    index: idx,
+                    index: bigint_to_i128_for_error(&idx),
                     length: bs.len(),
                 });
             }
-            Ok(Value::Constant(Constant::Integer(i128::from(
-                bs[idx as usize],
+            Ok(Value::Constant(Constant::integer(BigInt::from(
+                bs[idx.to_usize().expect("checked index range")],
             ))))
         }
         EqualsByteString => {
@@ -306,8 +320,12 @@ pub fn evaluate_builtin(
         ConstrData => {
             let tag = get_int(&args[0])?;
             let list = get_data_list(&args[1])?;
+            let tag = tag.to_u64().ok_or_else(|| MachineError::BuiltinError {
+                builtin: "constrData".into(),
+                message: format!("constructor tag out of range: {tag}"),
+            })?;
             Ok(Value::Constant(Constant::Data(PlutusData::Constr(
-                tag as u64, list,
+                tag, list,
             ))))
         }
         MapData => {
@@ -320,7 +338,7 @@ pub fn evaluate_builtin(
         }
         IData => {
             let i = get_int(&args[0])?;
-            Ok(Value::Constant(Constant::Data(PlutusData::Integer(i))))
+            Ok(Value::Constant(Constant::Data(PlutusData::integer(i))))
         }
         BData => {
             let bs = get_bytestring(&args[0])?;
@@ -332,7 +350,7 @@ pub fn evaluate_builtin(
             let data = get_data(&args[0])?;
             match data {
                 PlutusData::Constr(tag, fields) => {
-                    let tag_const = Constant::Integer(*tag as i128);
+                    let tag_const = Constant::integer(BigInt::from(*tag));
                     let fields_const = Constant::ProtoList(
                         Type::Data,
                         fields.iter().map(|d| Constant::Data(d.clone())).collect(),
@@ -393,7 +411,7 @@ pub fn evaluate_builtin(
         UnIData => {
             let data = get_data(&args[0])?;
             match data {
-                PlutusData::Integer(i) => Ok(Value::Constant(Constant::Integer(*i))),
+                PlutusData::Integer(i) => Ok(Value::Constant(Constant::integer(i.clone()))),
                 _ => Err(MachineError::TypeMismatch {
                     expected: "Integer data",
                     actual: data_variant_name(data),
@@ -609,7 +627,7 @@ pub fn evaluate_builtin(
             let endianness = get_bool(&args[0])?;
             let bs = get_bytestring(&args[1])?;
             let value = bytestring_to_integer(endianness, bs);
-            Ok(Value::Constant(Constant::Integer(value)))
+            Ok(Value::Constant(Constant::integer(value)))
         }
 
         AndByteString => {
@@ -672,21 +690,21 @@ pub fn evaluate_builtin(
             // args: [length, byte_value]
             let len = get_int(&args[0])?;
             let byte_val = get_int(&args[1])?;
-            if !(0..=8192).contains(&len) {
+            if len < BigInt::zero() || len > BigInt::from(8192u16) {
                 return Err(MachineError::BuiltinError {
                     builtin: "replicateByte".into(),
                     message: format!("length out of range: {len}"),
                 });
             }
-            if !(0..=255).contains(&byte_val) {
+            if byte_val < BigInt::zero() || byte_val > BigInt::from(255u8) {
                 return Err(MachineError::BuiltinError {
                     builtin: "replicateByte".into(),
                     message: format!("byte value out of range: {byte_val}"),
                 });
             }
             Ok(Value::Constant(Constant::ByteString(vec![
-                byte_val as u8;
-                len as usize
+                byte_val.to_u8().expect("checked byte range");
+                len.to_usize().expect("checked replicate length")
             ])))
         }
         ShiftByteString => {
@@ -706,13 +724,13 @@ pub fn evaluate_builtin(
         }
         CountSetBits => {
             let bs = get_bytestring(&args[0])?;
-            let count: i128 = bs.iter().map(|b| i128::from(b.count_ones())).sum();
-            Ok(Value::Constant(Constant::Integer(count)))
+            let count: usize = bs.iter().map(|b| b.count_ones() as usize).sum();
+            Ok(Value::Constant(Constant::integer(BigInt::from(count))))
         }
         FindFirstSetBit => {
             let bs = get_bytestring(&args[0])?;
             let idx = find_first_set_bit(bs);
-            Ok(Value::Constant(Constant::Integer(idx)))
+            Ok(Value::Constant(Constant::integer(idx)))
         }
 
         ExpModInteger => {
@@ -720,11 +738,11 @@ pub fn evaluate_builtin(
             let base = get_int(&args[0])?;
             let exp = get_int(&args[1])?;
             let modulus = get_int(&args[2])?;
-            if modulus == 0 {
+            if modulus.is_zero() {
                 return Err(MachineError::DivisionByZero);
             }
             let result = exp_mod_integer(base, exp, modulus)?;
-            Ok(Value::Constant(Constant::Integer(result)))
+            Ok(Value::Constant(Constant::integer(result)))
         }
     }
 }
@@ -733,9 +751,9 @@ pub fn evaluate_builtin(
 // Argument extraction helpers
 // ---------------------------------------------------------------------------
 
-fn get_int(val: &Value) -> Result<i128, MachineError> {
+fn get_int(val: &Value) -> Result<BigInt, MachineError> {
     match val.as_constant()? {
-        Constant::Integer(i) => Ok(*i),
+        Constant::Integer(i) => Ok(i.clone()),
         other => Err(MachineError::TypeMismatch {
             expected: "integer",
             actual: constant_type_name(other),
@@ -823,7 +841,7 @@ fn get_pair(val: &Value) -> Result<(&Constant, &Constant), MachineError> {
     }
 }
 
-fn get_two_ints(args: &[Value]) -> Result<(i128, i128), MachineError> {
+fn get_two_ints(args: &[Value]) -> Result<(BigInt, BigInt), MachineError> {
     Ok((get_int(&args[0])?, get_int(&args[1])?))
 }
 
@@ -838,10 +856,10 @@ fn get_two_strings(args: &[Value]) -> Result<(&String, &String), MachineError> {
 /// Integer binary operator helper.
 fn int_binop(
     args: &[Value],
-    op: impl FnOnce(i128, i128) -> Result<i128, MachineError>,
+    op: impl FnOnce(BigInt, BigInt) -> Result<BigInt, MachineError>,
 ) -> Result<Value, MachineError> {
     let (a, b) = get_two_ints(args)?;
-    Ok(Value::Constant(Constant::Integer(op(a, b)?)))
+    Ok(Value::Constant(Constant::integer(op(a, b)?)))
 }
 
 /// Extract a `Vec<PlutusData>` from a list-of-data constant.
@@ -953,26 +971,15 @@ fn get_ml(val: &Value) -> Result<&yggdrasil_crypto::MlResult, MachineError> {
 }
 
 /// Converts a Plutus integer to (magnitude_bytes, negative) for BLS scalar mul.
-fn int_to_scalar_bytes(val: i128) -> (Vec<u8>, bool) {
-    let negative = val < 0;
-    let abs = if val == i128::MIN {
-        // i128::MIN.unsigned_abs() works correctly.
-        val.unsigned_abs()
-    } else if negative {
-        (-val) as u128
-    } else {
-        val as u128
-    };
-    if abs == 0 {
+fn int_to_scalar_bytes<N: Into<BigInt>>(val: N) -> (Vec<u8>, bool) {
+    let val = val.into();
+    let negative = val.sign() == Sign::Minus;
+    let abs = val.abs();
+    if abs.is_zero() {
         return (vec![0], false);
     }
-    let be_bytes = abs.to_be_bytes();
-    // Strip leading zeros.
-    let start = be_bytes
-        .iter()
-        .position(|&b| b != 0)
-        .unwrap_or(be_bytes.len());
-    (be_bytes[start..].to_vec(), negative)
+    let (_, be_bytes) = abs.to_bytes_be();
+    (be_bytes, negative)
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,30 +1069,32 @@ fn ripemd_160_hash(data: &[u8]) -> [u8; 20] {
 /// Reference: CIP-0087 / Plutus `integerToByteString`.
 fn integer_to_bytestring(
     little_endian: bool,
-    required_len: i128,
-    value: i128,
+    required_len: impl Into<BigInt>,
+    value: impl Into<BigInt>,
 ) -> Result<Vec<u8>, MachineError> {
-    if value < 0 {
+    let required_len = required_len.into();
+    let value = value.into();
+    if value.sign() == Sign::Minus {
         return Err(MachineError::BuiltinError {
             builtin: "integerToByteString".into(),
             message: "negative integer".into(),
         });
     }
-    if required_len < 0 {
+    if required_len.sign() == Sign::Minus {
         return Err(MachineError::BuiltinError {
             builtin: "integerToByteString".into(),
             message: format!("negative required length: {required_len}"),
         });
     }
-    if required_len > 8192 {
+    if required_len > BigInt::from(8192u16) {
         return Err(MachineError::BuiltinError {
             builtin: "integerToByteString".into(),
             message: format!("required length too large: {required_len}"),
         });
     }
-    let req = required_len as usize;
+    let req = required_len.to_usize().expect("checked required length");
 
-    if value == 0 {
+    if value.is_zero() {
         return if req == 0 {
             Ok(vec![])
         } else {
@@ -1093,17 +1102,7 @@ fn integer_to_bytestring(
         };
     }
 
-    // Convert to big-endian bytes.
-    let big_endian = {
-        let mut v = value;
-        let mut bytes = Vec::new();
-        while v > 0 {
-            bytes.push((v & 0xFF) as u8);
-            v >>= 8;
-        }
-        bytes.reverse();
-        bytes
-    };
+    let (_, big_endian) = value.to_bytes_be();
 
     let mut result = if req > 0 {
         if big_endian.len() > req {
@@ -1135,20 +1134,17 @@ fn integer_to_bytestring(
 /// `endianness`: `true` = little-endian, `false` = big-endian.
 ///
 /// Reference: CIP-0087 / Plutus `byteStringToInteger`.
-fn bytestring_to_integer(little_endian: bool, bs: &[u8]) -> i128 {
+fn bytestring_to_integer(little_endian: bool, bs: &[u8]) -> BigInt {
     if bs.is_empty() {
-        return 0;
+        return BigInt::zero();
     }
-    let iter: Box<dyn Iterator<Item = &u8>> = if little_endian {
-        Box::new(bs.iter().rev())
+    if little_endian {
+        let mut bytes = bs.to_vec();
+        bytes.reverse();
+        BigInt::from_bytes_be(Sign::Plus, &bytes)
     } else {
-        Box::new(bs.iter())
-    };
-    let mut result: i128 = 0;
-    for &byte in iter {
-        result = (result << 8) | i128::from(byte);
+        BigInt::from_bytes_be(Sign::Plus, bs)
     }
-    result
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,14 +1187,16 @@ fn bitwise_binop(a: &[u8], b: &[u8], pad: bool, op: fn(u8, u8) -> u8) -> Vec<u8>
 /// Read a single bit from a byte string.
 ///
 /// Bit indexing: bit 0 is the LSB of the last byte.
-fn read_bit(bs: &[u8], bit_index: i128) -> Result<bool, MachineError> {
-    let total_bits = (bs.len() as i128) * 8;
-    if bit_index < 0 || bit_index >= total_bits {
+fn read_bit(bs: &[u8], bit_index: impl Into<BigInt>) -> Result<bool, MachineError> {
+    let bit_index = bit_index.into();
+    let total_bits = BigInt::from(bs.len() * 8);
+    if bit_index < BigInt::zero() || bit_index >= total_bits {
         return Err(MachineError::IndexOutOfBounds {
-            index: bit_index,
-            length: total_bits as usize,
+            index: bigint_to_i128_for_error(&bit_index),
+            length: bs.len() * 8,
         });
     }
+    let bit_index = bit_index.to_usize().expect("checked bit index range");
     let byte_idx = bs.len() - 1 - (bit_index / 8) as usize;
     let bit_offset = (bit_index % 8) as u32;
     Ok((bs[byte_idx] >> bit_offset) & 1 == 1)
@@ -1207,7 +1205,7 @@ fn read_bit(bs: &[u8], bit_index: i128) -> Result<bool, MachineError> {
 /// Write bits at specified indices.
 ///
 /// Bit indexing: bit 0 is the LSB of the last byte.
-fn write_bits(bs: &[u8], indices: &[i128], values: &[bool]) -> Result<Vec<u8>, MachineError> {
+fn write_bits(bs: &[u8], indices: &[BigInt], values: &[bool]) -> Result<Vec<u8>, MachineError> {
     if indices.len() != values.len() {
         return Err(MachineError::BuiltinError {
             builtin: "writeBits".into(),
@@ -1218,16 +1216,17 @@ fn write_bits(bs: &[u8], indices: &[i128], values: &[bool]) -> Result<Vec<u8>, M
             ),
         });
     }
-    let total_bits = (bs.len() as i128) * 8;
+    let total_bits = BigInt::from(bs.len() * 8);
     let mut result = bs.to_vec();
-    for (&idx, &val) in indices.iter().zip(values.iter()) {
-        if idx < 0 || idx >= total_bits {
+    for (idx, &val) in indices.iter().zip(values.iter()) {
+        if idx < &BigInt::zero() || idx >= &total_bits {
             return Err(MachineError::IndexOutOfBounds {
-                index: idx,
-                length: total_bits as usize,
+                index: bigint_to_i128_for_error(idx),
+                length: bs.len() * 8,
             });
         }
-        let byte_idx = result.len() - 1 - (idx / 8) as usize;
+        let idx = idx.to_usize().expect("checked bit index range");
+        let byte_idx = result.len() - 1 - (idx / 8);
         let bit_offset = (idx % 8) as u32;
         if val {
             result[byte_idx] |= 1 << bit_offset;
@@ -1241,24 +1240,26 @@ fn write_bits(bs: &[u8], indices: &[i128], values: &[bool]) -> Result<Vec<u8>, M
 /// Shift a byte string left (positive) or right (negative).
 ///
 /// Vacated bits are filled with zeros.
-fn shift_bytestring(bs: &[u8], shift: i128) -> Vec<u8> {
+fn shift_bytestring(bs: &[u8], shift: impl Into<BigInt>) -> Vec<u8> {
+    let shift = shift.into();
     if bs.is_empty() {
         return Vec::new();
     }
     let total_bits = bs.len() * 8;
-    let abs_shift = shift.unsigned_abs() as usize;
+    let abs_shift_big = shift.abs();
 
-    if abs_shift >= total_bits {
+    if abs_shift_big >= BigInt::from(total_bits) {
         return vec![0u8; bs.len()];
     }
+    let abs_shift = abs_shift_big.to_usize().expect("checked shift range");
 
     let byte_shift = abs_shift / 8;
     let bit_shift = abs_shift % 8;
 
     let mut result = vec![0u8; bs.len()];
 
-    match shift.cmp(&0) {
-        std::cmp::Ordering::Greater => {
+    match shift.sign() {
+        Sign::Plus => {
             // Shift left: MSB direction.
             for i in 0..bs.len() {
                 if i + byte_shift < bs.len() {
@@ -1269,7 +1270,7 @@ fn shift_bytestring(bs: &[u8], shift: i128) -> Vec<u8> {
                 }
             }
         }
-        std::cmp::Ordering::Less => {
+        Sign::Minus => {
             // Shift right: LSB direction.
             for i in (0..bs.len()).rev() {
                 if i >= byte_shift {
@@ -1280,7 +1281,7 @@ fn shift_bytestring(bs: &[u8], shift: i128) -> Vec<u8> {
                 }
             }
         }
-        std::cmp::Ordering::Equal => {
+        Sign::NoSign => {
             result.copy_from_slice(bs);
         }
     }
@@ -1289,19 +1290,20 @@ fn shift_bytestring(bs: &[u8], shift: i128) -> Vec<u8> {
 }
 
 /// Rotate a byte string left (positive) or right (negative).
-fn rotate_bytestring(bs: &[u8], rot: i128) -> Vec<u8> {
+fn rotate_bytestring(bs: &[u8], rot: impl Into<BigInt>) -> Vec<u8> {
+    let rot = rot.into();
     if bs.is_empty() {
         return Vec::new();
     }
-    let total_bits = (bs.len() * 8) as i128;
+    let total_bits = BigInt::from(bs.len() * 8);
     // Normalize rotation to [0, total_bits).
-    let effective = ((rot % total_bits) + total_bits) % total_bits;
-    if effective == 0 {
+    let effective = rot.mod_floor(&total_bits);
+    if effective.is_zero() {
         return bs.to_vec();
     }
 
     // Use shift-based rotation: rotate_left(n) = (bs << n) | (bs >> (total - n))
-    let left = shift_bytestring(bs, effective);
+    let left = shift_bytestring(bs, effective.clone());
     let right = shift_bytestring(bs, effective - total_bits);
     left.iter()
         .zip(right.iter())
@@ -1312,22 +1314,22 @@ fn rotate_bytestring(bs: &[u8], rot: i128) -> Vec<u8> {
 /// Find the index of the lowest set bit (bit 0 = LSB of last byte).
 ///
 /// Returns -1 if the byte string is empty or all zeros.
-fn find_first_set_bit(bs: &[u8]) -> i128 {
+fn find_first_set_bit(bs: &[u8]) -> BigInt {
     for (byte_idx_from_end, &byte) in bs.iter().rev().enumerate() {
         if byte != 0 {
-            let bit_within_byte = byte.trailing_zeros() as i128;
-            return (byte_idx_from_end as i128) * 8 + bit_within_byte;
+            let bit_within_byte = byte.trailing_zeros() as usize;
+            return BigInt::from(byte_idx_from_end * 8 + bit_within_byte);
         }
     }
-    -1
+    BigInt::from(-1)
 }
 
 /// Extract a list of integers from a ProtoList of Integers.
-fn get_int_list(val: &Value) -> Result<Vec<i128>, MachineError> {
+fn get_int_list(val: &Value) -> Result<Vec<BigInt>, MachineError> {
     let list = get_list(val)?;
     list.iter()
         .map(|c| match c {
-            Constant::Integer(i) => Ok(*i),
+            Constant::Integer(i) => Ok(i.clone()),
             other => Err(MachineError::TypeMismatch {
                 expected: "integer list element",
                 actual: constant_type_name(other),
@@ -1354,62 +1356,39 @@ fn get_bool_list(val: &Value) -> Result<Vec<bool>, MachineError> {
 // Modular exponentiation
 // ---------------------------------------------------------------------------
 
-/// Compute `base^exp mod modulus` for arbitrary-precision i128 values.
+/// Compute `base^exp mod modulus`.
 ///
 /// For negative exponents, returns 0 (matching upstream Plutus behavior
 /// where modular inverse is not supported and negative exponents yield 0).
 ///
 /// Reference: CIP-0109 / Plutus `expModInteger`.
-fn exp_mod_integer(base: i128, exp: i128, modulus: i128) -> Result<i128, MachineError> {
-    if modulus == 0 {
+fn exp_mod_integer(base: BigInt, exp: BigInt, modulus: BigInt) -> Result<BigInt, MachineError> {
+    if modulus.is_zero() {
         return Err(MachineError::DivisionByZero);
     }
-    if exp < 0 {
+    if exp.sign() == Sign::Minus {
         // Upstream Plutus: negative exponent → error (we follow the spec).
         return Err(MachineError::BuiltinError {
             builtin: "expModInteger".into(),
             message: "negative exponent".into(),
         });
     }
-    let m = modulus.unsigned_abs();
-    if m == 1 {
-        return Ok(0);
+    let m = modulus.abs();
+    if m.is_one() {
+        return Ok(BigInt::zero());
     }
 
-    // Normalize base to [0, m).
-    let mut result: u128 = 1;
-    let mut b = ((base % modulus) + modulus) as u128 % m;
-    let mut e = exp as u128;
-
-    while e > 0 {
-        if e & 1 == 1 {
-            result = mul_mod(result, b, m);
-        }
-        e >>= 1;
-        b = mul_mod(b, b, m);
-    }
-
-    Ok(result as i128)
+    Ok(base.modpow(&exp, &m))
 }
 
-/// Multiply two u128 values modulo m, avoiding overflow.
-fn mul_mod(a: u128, b: u128, m: u128) -> u128 {
-    // For values that fit in u64, use direct multiplication.
-    if a <= u64::MAX as u128 && b <= u64::MAX as u128 {
-        return (a * b) % m;
-    }
-    // Fallback: Russian peasant multiplication to avoid u128 overflow.
-    let mut result: u128 = 0;
-    let mut a = a % m;
-    let mut b = b % m;
-    while b > 0 {
-        if b & 1 == 1 {
-            result = (result + a) % m;
+fn bigint_to_i128_for_error(value: &BigInt) -> i128 {
+    value.to_i128().unwrap_or_else(|| {
+        if value.sign() == Sign::Minus {
+            i128::MIN
+        } else {
+            i128::MAX
         }
-        a = (a << 1) % m;
-        b >>= 1;
-    }
-    result
+    })
 }
 
 // ===========================================================================
@@ -1423,7 +1402,7 @@ mod tests {
 
     /// Helper: make a Value from an i128.
     fn int(n: i128) -> Value {
-        Value::Constant(Constant::Integer(n))
+        Value::Constant(Constant::integer(n))
     }
 
     fn bs(data: &[u8]) -> Value {
@@ -1460,6 +1439,15 @@ mod tests {
         evaluate_builtin(fun, args, &cm, &mut logs)
     }
 
+    fn eval_with_model(
+        fun: DefaultFun,
+        args: &[Value],
+        cm: &CostModel,
+    ) -> Result<Value, MachineError> {
+        let mut logs = Vec::new();
+        evaluate_builtin(fun, args, cm, &mut logs)
+    }
+
     fn eval_logged(fun: DefaultFun, args: &[Value]) -> Result<(Value, Vec<String>), MachineError> {
         let cm = CostModel::default();
         let mut logs = Vec::new();
@@ -1468,6 +1456,15 @@ mod tests {
     }
 
     fn expect_int(v: Value) -> i128 {
+        match v {
+            Value::Constant(Constant::Integer(n)) => n
+                .to_i128()
+                .unwrap_or_else(|| panic!("expected i128-sized integer, got {n}")),
+            _ => panic!("expected integer, got {:?}", v.type_name()),
+        }
+    }
+
+    fn expect_big_int(v: Value) -> BigInt {
         match v {
             Value::Constant(Constant::Integer(n)) => n,
             _ => panic!("expected integer, got {:?}", v.type_name()),
@@ -1553,6 +1550,40 @@ mod tests {
             expect_int(eval(DefaultFun::MultiplyInteger, &[int(999), int(0)]).unwrap()),
             0
         );
+    }
+
+    #[test]
+    fn add_integer_does_not_overflow_i128() {
+        let a = BigInt::from(i128::MAX);
+        let b = BigInt::from(1u8);
+        let result = expect_big_int(
+            eval(
+                DefaultFun::AddInteger,
+                &[
+                    Value::Constant(Constant::integer(a.clone())),
+                    Value::Constant(Constant::integer(b.clone())),
+                ],
+            )
+            .unwrap(),
+        );
+        assert_eq!(result, a + b);
+    }
+
+    #[test]
+    fn multiply_integer_does_not_overflow_i128() {
+        let a = BigInt::from(i128::MAX);
+        let b = BigInt::from(2u8);
+        let result = expect_big_int(
+            eval(
+                DefaultFun::MultiplyInteger,
+                &[
+                    Value::Constant(Constant::integer(a.clone())),
+                    Value::Constant(Constant::integer(b.clone())),
+                ],
+            )
+            .unwrap(),
+        );
+        assert_eq!(result, a * b);
     }
 
     #[test]
@@ -1753,9 +1784,36 @@ mod tests {
     }
 
     #[test]
-    fn cons_bytestring_out_of_range() {
-        assert!(eval(DefaultFun::ConsByteString, &[int(256), bs(&[])]).is_err());
-        assert!(eval(DefaultFun::ConsByteString, &[int(-1), bs(&[])]).is_err());
+    fn cons_bytestring_variant_c_rejects_out_of_range_byte() {
+        let cm = CostModel {
+            builtin_semantics_variant: BuiltinSemanticsVariant::C,
+            ..CostModel::default()
+        };
+
+        assert!(eval_with_model(DefaultFun::ConsByteString, &[int(256), bs(&[])], &cm).is_err());
+        assert!(eval_with_model(DefaultFun::ConsByteString, &[int(-1), bs(&[])], &cm).is_err());
+    }
+
+    #[test]
+    fn cons_bytestring_variants_a_and_b_wrap_byte_modulo_256() {
+        for variant in [
+            BuiltinSemanticsVariant::A,
+            BuiltinSemanticsVariant::B,
+        ] {
+            let cm = CostModel {
+                builtin_semantics_variant: variant,
+                ..CostModel::default()
+            };
+            let hi = expect_bs(
+                eval_with_model(DefaultFun::ConsByteString, &[int(256), bs(&[1])], &cm).unwrap(),
+            );
+            let neg = expect_bs(
+                eval_with_model(DefaultFun::ConsByteString, &[int(-1), bs(&[1])], &cm).unwrap(),
+            );
+
+            assert_eq!(hi, vec![0, 1]);
+            assert_eq!(neg, vec![255, 1]);
+        }
     }
 
     #[test]
@@ -1777,6 +1835,30 @@ mod tests {
             eval(
                 DefaultFun::SliceByteString,
                 &[int(100), int(5), bs(&[1, 2])],
+            )
+            .unwrap(),
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn slice_bytestring_negative_start_uses_plutus_range_semantics() {
+        let r = expect_bs(
+            eval(
+                DefaultFun::SliceByteString,
+                &[int(-1), int(2), bs(&[10, 11, 12])],
+            )
+            .unwrap(),
+        );
+        assert_eq!(r, vec![10]);
+    }
+
+    #[test]
+    fn slice_bytestring_negative_count_is_empty() {
+        let r = expect_bs(
+            eval(
+                DefaultFun::SliceByteString,
+                &[int(1), int(-1), bs(&[10, 11, 12])],
             )
             .unwrap(),
         );
@@ -2024,7 +2106,7 @@ mod tests {
         let p = pair_val(
             Type::Integer,
             Type::ByteString,
-            Constant::Integer(1),
+            Constant::integer(1),
             Constant::ByteString(vec![2]),
         );
         let r = eval(DefaultFun::FstPair, &[p]).unwrap();
@@ -2036,7 +2118,7 @@ mod tests {
         let p = pair_val(
             Type::Integer,
             Type::ByteString,
-            Constant::Integer(1),
+            Constant::integer(1),
             Constant::ByteString(vec![2]),
         );
         let r = eval(DefaultFun::SndPair, &[p]).unwrap();
@@ -2061,7 +2143,7 @@ mod tests {
 
     #[test]
     fn choose_list_cons() {
-        let non_empty = list_val(Type::Integer, vec![Constant::Integer(10)]);
+        let non_empty = list_val(Type::Integer, vec![Constant::integer(10)]);
         let r = eval(DefaultFun::ChooseList, &[non_empty, int(1), int(2)]).unwrap();
         assert_eq!(expect_int(r), 2);
     }
@@ -2073,7 +2155,7 @@ mod tests {
         match r {
             Value::Constant(Constant::ProtoList(_, items)) => {
                 assert_eq!(items.len(), 1);
-                assert_eq!(items[0], Constant::Integer(42));
+                assert_eq!(items[0], Constant::integer(42));
             }
             _ => panic!("expected list"),
         }
@@ -2083,7 +2165,7 @@ mod tests {
     fn head_list() {
         let l = list_val(
             Type::Integer,
-            vec![Constant::Integer(1), Constant::Integer(2)],
+            vec![Constant::integer(1), Constant::integer(2)],
         );
         let r = eval(DefaultFun::HeadList, &[l]).unwrap();
         assert_eq!(expect_int(r), 1);
@@ -2103,17 +2185,17 @@ mod tests {
         let l = list_val(
             Type::Integer,
             vec![
-                Constant::Integer(1),
-                Constant::Integer(2),
-                Constant::Integer(3),
+                Constant::integer(1),
+                Constant::integer(2),
+                Constant::integer(3),
             ],
         );
         let r = eval(DefaultFun::TailList, &[l]).unwrap();
         match r {
             Value::Constant(Constant::ProtoList(_, items)) => {
                 assert_eq!(items.len(), 2);
-                assert_eq!(items[0], Constant::Integer(2));
-                assert_eq!(items[1], Constant::Integer(3));
+                assert_eq!(items[0], Constant::integer(2));
+                assert_eq!(items[1], Constant::integer(3));
             }
             _ => panic!("expected list"),
         }
@@ -2136,7 +2218,7 @@ mod tests {
 
     #[test]
     fn null_list_false() {
-        let l = list_val(Type::Integer, vec![Constant::Integer(1)]);
+        let l = list_val(Type::Integer, vec![Constant::integer(1)]);
         assert!(!expect_bool(eval(DefaultFun::NullList, &[l]).unwrap()));
     }
 
@@ -2179,7 +2261,7 @@ mod tests {
 
     #[test]
     fn choose_data_integer() {
-        let d = data_val(PlutusData::Integer(42));
+        let d = data_val(PlutusData::integer(42));
         let r = eval(
             DefaultFun::ChooseData,
             &[d, int(1), int(2), int(3), int(4), int(5)],
@@ -2201,7 +2283,7 @@ mod tests {
 
     #[test]
     fn constr_data() {
-        let field_list = list_val(Type::Data, vec![Constant::Data(PlutusData::Integer(1))]);
+        let field_list = list_val(Type::Data, vec![Constant::Data(PlutusData::integer(1))]);
         let r = eval(DefaultFun::ConstrData, &[int(0), field_list]).unwrap();
         match r {
             Value::Constant(Constant::Data(PlutusData::Constr(tag, fields))) => {
@@ -2217,8 +2299,8 @@ mod tests {
         let pair = Constant::ProtoPair(
             Type::Data,
             Type::Data,
-            Box::new(Constant::Data(PlutusData::Integer(1))),
-            Box::new(Constant::Data(PlutusData::Integer(2))),
+            Box::new(Constant::Data(PlutusData::integer(1))),
+            Box::new(Constant::Data(PlutusData::integer(2))),
         );
         let l = list_val(
             Type::Pair(Box::new(Type::Data), Box::new(Type::Data)),
@@ -2233,7 +2315,7 @@ mod tests {
 
     #[test]
     fn list_data() {
-        let l = list_val(Type::Data, vec![Constant::Data(PlutusData::Integer(1))]);
+        let l = list_val(Type::Data, vec![Constant::Data(PlutusData::integer(1))]);
         let r = eval(DefaultFun::ListData, &[l]).unwrap();
         assert!(matches!(
             r,
@@ -2246,7 +2328,7 @@ mod tests {
         let r = eval(DefaultFun::IData, &[int(42)]).unwrap();
         assert!(matches!(
             r,
-            Value::Constant(Constant::Data(PlutusData::Integer(42)))
+            Value::Constant(Constant::Data(PlutusData::Integer(ref n))) if n == &BigInt::from(42)
         ));
     }
 
@@ -2261,7 +2343,7 @@ mod tests {
 
     #[test]
     fn un_constr_data() {
-        let d = data_val(PlutusData::Constr(1, vec![PlutusData::Integer(10)]));
+        let d = data_val(PlutusData::Constr(1, vec![PlutusData::integer(10)]));
         let r = eval(DefaultFun::UnConstrData, &[d]).unwrap();
         // Should be a pair (tag, list of data).
         assert!(matches!(r, Value::Constant(Constant::ProtoPair(..))));
@@ -2269,15 +2351,15 @@ mod tests {
 
     #[test]
     fn un_constr_data_wrong_type() {
-        let d = data_val(PlutusData::Integer(1));
+        let d = data_val(PlutusData::integer(1));
         assert!(eval(DefaultFun::UnConstrData, &[d]).is_err());
     }
 
     #[test]
     fn un_map_data() {
         let d = data_val(PlutusData::Map(vec![(
-            PlutusData::Integer(1),
-            PlutusData::Integer(2),
+            PlutusData::integer(1),
+            PlutusData::integer(2),
         )]));
         let r = eval(DefaultFun::UnMapData, &[d]).unwrap();
         assert!(matches!(r, Value::Constant(Constant::ProtoList(..))));
@@ -2285,12 +2367,12 @@ mod tests {
 
     #[test]
     fn un_map_data_wrong_type() {
-        assert!(eval(DefaultFun::UnMapData, &[data_val(PlutusData::Integer(1))]).is_err());
+        assert!(eval(DefaultFun::UnMapData, &[data_val(PlutusData::integer(1))]).is_err());
     }
 
     #[test]
     fn un_list_data() {
-        let d = data_val(PlutusData::List(vec![PlutusData::Integer(1)]));
+        let d = data_val(PlutusData::List(vec![PlutusData::integer(1)]));
         let r = eval(DefaultFun::UnListData, &[d]).unwrap();
         assert!(matches!(r, Value::Constant(Constant::ProtoList(..))));
     }
@@ -2308,7 +2390,7 @@ mod tests {
 
     #[test]
     fn un_i_data() {
-        let d = data_val(PlutusData::Integer(99));
+        let d = data_val(PlutusData::integer(99));
         assert_eq!(expect_int(eval(DefaultFun::UnIData, &[d]).unwrap()), 99);
     }
 
@@ -2328,27 +2410,27 @@ mod tests {
 
     #[test]
     fn un_b_data_wrong_type() {
-        assert!(eval(DefaultFun::UnBData, &[data_val(PlutusData::Integer(1))]).is_err());
+        assert!(eval(DefaultFun::UnBData, &[data_val(PlutusData::integer(1))]).is_err());
     }
 
     #[test]
     fn equals_data_true() {
-        let a = data_val(PlutusData::Integer(42));
-        let b = data_val(PlutusData::Integer(42));
+        let a = data_val(PlutusData::integer(42));
+        let b = data_val(PlutusData::integer(42));
         assert!(expect_bool(eval(DefaultFun::EqualsData, &[a, b]).unwrap()));
     }
 
     #[test]
     fn equals_data_false() {
-        let a = data_val(PlutusData::Integer(1));
-        let b = data_val(PlutusData::Integer(2));
+        let a = data_val(PlutusData::integer(1));
+        let b = data_val(PlutusData::integer(2));
         assert!(!expect_bool(eval(DefaultFun::EqualsData, &[a, b]).unwrap()));
     }
 
     #[test]
     fn mk_pair_data() {
-        let a = data_val(PlutusData::Integer(1));
-        let b = data_val(PlutusData::Integer(2));
+        let a = data_val(PlutusData::integer(1));
+        let b = data_val(PlutusData::integer(2));
         let r = eval(DefaultFun::MkPairData, &[a, b]).unwrap();
         assert!(matches!(r, Value::Constant(Constant::ProtoPair(..))));
     }
@@ -2373,7 +2455,7 @@ mod tests {
 
     #[test]
     fn serialise_data() {
-        let d = data_val(PlutusData::Integer(42));
+        let d = data_val(PlutusData::integer(42));
         let r = expect_bs(eval(DefaultFun::SerialiseData, &[d]).unwrap());
         assert!(!r.is_empty());
     }
@@ -2586,7 +2668,7 @@ mod tests {
     #[test]
     fn write_bits_basic() {
         // Start with 0x00, set bit 0 to true.
-        let indices = list_val(Type::Integer, vec![Constant::Integer(0)]);
+        let indices = list_val(Type::Integer, vec![Constant::integer(0)]);
         let values = list_val(Type::Bool, vec![Constant::Bool(true)]);
         let r = expect_bs(eval(DefaultFun::WriteBits, &[bs(&[0x00]), indices, values]).unwrap());
         assert_eq!(r, vec![0x01]);
@@ -2595,7 +2677,7 @@ mod tests {
     #[test]
     fn write_bits_clear() {
         // Start with 0xFF, clear bit 0.
-        let indices = list_val(Type::Integer, vec![Constant::Integer(0)]);
+        let indices = list_val(Type::Integer, vec![Constant::integer(0)]);
         let values = list_val(Type::Bool, vec![Constant::Bool(false)]);
         let r = expect_bs(eval(DefaultFun::WriteBits, &[bs(&[0xFF]), indices, values]).unwrap());
         assert_eq!(r, vec![0xFE]);
@@ -2603,7 +2685,7 @@ mod tests {
 
     #[test]
     fn write_bits_length_mismatch() {
-        let indices = list_val(Type::Integer, vec![Constant::Integer(0)]);
+        let indices = list_val(Type::Integer, vec![Constant::integer(0)]);
         let values = list_val(Type::Bool, vec![]);
         assert!(eval(DefaultFun::WriteBits, &[bs(&[0x00]), indices, values]).is_err());
     }
@@ -2833,7 +2915,7 @@ mod tests {
 
     #[test]
     fn constant_type_name_all_variants() {
-        assert_eq!(constant_type_name(&Constant::Integer(0)), "integer");
+        assert_eq!(constant_type_name(&Constant::integer(0)), "integer");
         assert_eq!(
             constant_type_name(&Constant::ByteString(vec![])),
             "bytestring"
@@ -2852,13 +2934,13 @@ mod tests {
             constant_type_name(&Constant::ProtoPair(
                 Type::Integer,
                 Type::Integer,
-                Box::new(Constant::Integer(0)),
-                Box::new(Constant::Integer(0)),
+                Box::new(Constant::integer(0)),
+                Box::new(Constant::integer(0)),
             )),
             "pair"
         );
         assert_eq!(
-            constant_type_name(&Constant::Data(PlutusData::Integer(0))),
+            constant_type_name(&Constant::Data(PlutusData::integer(0))),
             "data"
         );
     }
@@ -2872,7 +2954,7 @@ mod tests {
         assert_eq!(data_variant_name(&PlutusData::Constr(0, vec![])), "Constr");
         assert_eq!(data_variant_name(&PlutusData::Map(vec![])), "Map");
         assert_eq!(data_variant_name(&PlutusData::List(vec![])), "List");
-        assert_eq!(data_variant_name(&PlutusData::Integer(0)), "Integer");
+        assert_eq!(data_variant_name(&PlutusData::integer(0)), "Integer");
         assert_eq!(data_variant_name(&PlutusData::Bytes(vec![])), "Bytes");
     }
 
@@ -2885,7 +2967,7 @@ mod tests {
         let val = 12345;
         let bs_bytes = integer_to_bytestring(false, 0, val).unwrap();
         let back = bytestring_to_integer(false, &bs_bytes);
-        assert_eq!(back, val);
+        assert_eq!(back, BigInt::from(val));
     }
 
     #[test]
@@ -2893,7 +2975,7 @@ mod tests {
         let val = 12345;
         let bs_bytes = integer_to_bytestring(true, 0, val).unwrap();
         let back = bytestring_to_integer(true, &bs_bytes);
-        assert_eq!(back, val);
+        assert_eq!(back, BigInt::from(val));
     }
 
     // ===================================================================

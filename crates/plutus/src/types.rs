@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use num_bigint::BigInt;
 use yggdrasil_ledger::plutus::PlutusData;
 
 use crate::error::MachineError;
@@ -98,7 +99,11 @@ pub enum Type {
 /// The `Data` variant embeds a full Plutus data AST.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Constant {
-    Integer(i128),
+    /// Arbitrary-precision Plutus `Integer`.
+    ///
+    /// Upstream Plutus uses Haskell `Integer`; using `BigInt` here avoids
+    /// turning valid on-chain arithmetic into local overflow failures.
+    Integer(BigInt),
     ByteString(Vec<u8>),
     String(String),
     Unit,
@@ -118,6 +123,13 @@ pub enum Constant {
     /// BLS12-381 Miller loop intermediate result.
     #[allow(non_camel_case_types)]
     Bls12_381_MlResult(Box<yggdrasil_crypto::MlResult>),
+}
+
+impl Constant {
+    /// Construct an arbitrary-precision Plutus integer constant.
+    pub fn integer<N: Into<BigInt>>(n: N) -> Self {
+        Self::Integer(n.into())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -789,7 +801,7 @@ mod tests {
             major: 1,
             minor: 1,
             patch: 0,
-            term: Term::Constant(Constant::Integer(42)),
+            term: Term::Constant(Constant::integer(42)),
         };
         assert_eq!(p.clone(), p);
     }
@@ -840,7 +852,7 @@ mod tests {
     #[test]
     fn term_apply() {
         let f = Term::LamAbs(Box::new(Term::Var(1)));
-        let a = Term::Constant(Constant::Integer(10));
+        let a = Term::Constant(Constant::integer(10));
         let t = Term::Apply(Box::new(f.clone()), Box::new(a.clone()));
         assert_eq!(t, Term::Apply(Box::new(f), Box::new(a)));
     }
@@ -855,8 +867,8 @@ mod tests {
 
     #[test]
     fn term_constant_integer() {
-        let t = Term::Constant(Constant::Integer(i128::MAX));
-        assert_eq!(t, Term::Constant(Constant::Integer(i128::MAX)));
+        let t = Term::Constant(Constant::integer(i128::MAX));
+        assert_eq!(t, Term::Constant(Constant::integer(i128::MAX)));
     }
 
     #[test]
@@ -919,8 +931,8 @@ mod tests {
         let t = Term::Constr(
             1,
             vec![
-                Term::Constant(Constant::Integer(1)),
-                Term::Constant(Constant::Integer(2)),
+                Term::Constant(Constant::integer(1)),
+                Term::Constant(Constant::integer(2)),
             ],
         );
         if let Term::Constr(tag, fields) = &t {
@@ -934,7 +946,7 @@ mod tests {
     #[test]
     fn term_case() {
         let scrutinee = Term::Constr(0, vec![]);
-        let branch = Term::Constant(Constant::Integer(42));
+        let branch = Term::Constant(Constant::integer(42));
         let t = Term::Case(Box::new(scrutinee), vec![branch]);
         if let Term::Case(_, branches) = &t {
             assert_eq!(branches.len(), 1);
@@ -1005,8 +1017,8 @@ mod tests {
 
     #[test]
     fn constant_integer_eq() {
-        assert_eq!(Constant::Integer(0), Constant::Integer(0));
-        assert_ne!(Constant::Integer(1), Constant::Integer(2));
+        assert_eq!(Constant::integer(0), Constant::integer(0));
+        assert_ne!(Constant::integer(1), Constant::integer(2));
     }
 
     #[test]
@@ -1040,7 +1052,7 @@ mod tests {
     fn constant_proto_list() {
         let c = Constant::ProtoList(
             Type::Integer,
-            vec![Constant::Integer(1), Constant::Integer(2)],
+            vec![Constant::integer(1), Constant::integer(2)],
         );
         if let Constant::ProtoList(ty, items) = &c {
             assert_eq!(*ty, Type::Integer);
@@ -1055,13 +1067,13 @@ mod tests {
         let c = Constant::ProtoPair(
             Type::Integer,
             Type::ByteString,
-            Box::new(Constant::Integer(42)),
+            Box::new(Constant::integer(42)),
             Box::new(Constant::ByteString(vec![1])),
         );
         if let Constant::ProtoPair(t1, t2, a, b) = &c {
             assert_eq!(*t1, Type::Integer);
             assert_eq!(*t2, Type::ByteString);
-            assert_eq!(**a, Constant::Integer(42));
+            assert_eq!(**a, Constant::integer(42));
             assert_eq!(**b, Constant::ByteString(vec![1]));
         } else {
             panic!("expected ProtoPair");
@@ -1070,9 +1082,9 @@ mod tests {
 
     #[test]
     fn constant_data() {
-        let d = PlutusData::Integer(99);
+        let d = PlutusData::integer(99);
         let c = Constant::Data(d.clone());
-        assert_eq!(c, Constant::Data(PlutusData::Integer(99)));
+        assert_eq!(c, Constant::Data(PlutusData::integer(99)));
     }
 
     #[test]
@@ -1409,7 +1421,7 @@ mod tests {
 
     #[test]
     fn value_constant_type_name() {
-        let v = Value::Constant(Constant::Integer(1));
+        let v = Value::Constant(Constant::integer(1));
         assert_eq!(v.type_name(), "constant");
     }
 
@@ -1443,9 +1455,9 @@ mod tests {
 
     #[test]
     fn value_as_constant_ok() {
-        let v = Value::Constant(Constant::Integer(42));
+        let v = Value::Constant(Constant::integer(42));
         let c = v.as_constant().unwrap();
-        assert_eq!(*c, Constant::Integer(42));
+        assert_eq!(*c, Constant::integer(42));
     }
 
     #[test]
@@ -1495,36 +1507,38 @@ mod tests {
     #[test]
     fn env_extend_and_lookup() {
         let env = Environment::new();
-        let env = env.extend(Value::Constant(Constant::Integer(10)));
+        let env = env.extend(Value::Constant(Constant::integer(10)));
         let val = env.lookup(1).unwrap();
-        assert!(matches!(val, Value::Constant(Constant::Integer(10))));
+        assert!(
+            matches!(val, Value::Constant(Constant::Integer(n)) if n == &BigInt::from(10))
+        );
     }
 
     #[test]
     fn env_debruijn_ordering() {
         // Index 1 = most recent, 2 = next, etc.
         let env = Environment::new();
-        let env = env.extend(Value::Constant(Constant::Integer(1)));
-        let env = env.extend(Value::Constant(Constant::Integer(2)));
-        let env = env.extend(Value::Constant(Constant::Integer(3)));
+        let env = env.extend(Value::Constant(Constant::integer(1)));
+        let env = env.extend(Value::Constant(Constant::integer(2)));
+        let env = env.extend(Value::Constant(Constant::integer(3)));
 
         // Index 1 = most recent = 3
         if let Value::Constant(Constant::Integer(n)) = env.lookup(1).unwrap() {
-            assert_eq!(*n, 3);
+            assert_eq!(*n, BigInt::from(3));
         } else {
             panic!("expected integer");
         }
 
         // Index 2 = 2
         if let Value::Constant(Constant::Integer(n)) = env.lookup(2).unwrap() {
-            assert_eq!(*n, 2);
+            assert_eq!(*n, BigInt::from(2));
         } else {
             panic!("expected integer");
         }
 
         // Index 3 = oldest = 1
         if let Value::Constant(Constant::Integer(n)) = env.lookup(3).unwrap() {
-            assert_eq!(*n, 1);
+            assert_eq!(*n, BigInt::from(1));
         } else {
             panic!("expected integer");
         }
@@ -1552,8 +1566,8 @@ mod tests {
 
     #[test]
     fn env_extend_does_not_mutate_original() {
-        let env1 = Environment::new().extend(Value::Constant(Constant::Integer(1)));
-        let env2 = env1.extend(Value::Constant(Constant::Integer(2)));
+        let env1 = Environment::new().extend(Value::Constant(Constant::integer(1)));
+        let env2 = env1.extend(Value::Constant(Constant::integer(2)));
 
         // env1 should still have only 1 binding.
         assert!(env1.lookup(2).is_err());
@@ -1571,16 +1585,16 @@ mod tests {
     fn env_deep_nesting() {
         let mut env = Environment::new();
         for i in 0..100 {
-            env = env.extend(Value::Constant(Constant::Integer(i)));
+            env = env.extend(Value::Constant(Constant::integer(i)));
         }
         // Index 1 = 99, Index 100 = 0.
         if let Value::Constant(Constant::Integer(n)) = env.lookup(1).unwrap() {
-            assert_eq!(*n, 99);
+            assert_eq!(*n, BigInt::from(99));
         } else {
             panic!("expected integer");
         }
         if let Value::Constant(Constant::Integer(n)) = env.lookup(100).unwrap() {
-            assert_eq!(*n, 0);
+            assert_eq!(*n, BigInt::from(0));
         } else {
             panic!("expected integer");
         }
@@ -1595,8 +1609,8 @@ mod tests {
             vec![Constant::ProtoPair(
                 Type::Data,
                 Type::Data,
-                Box::new(Constant::Data(PlutusData::Integer(1))),
-                Box::new(Constant::Data(PlutusData::Integer(2))),
+                Box::new(Constant::Data(PlutusData::integer(1))),
+                Box::new(Constant::Data(PlutusData::integer(2))),
             )],
         );
         if let Constant::ProtoList(ty, items) = &c {

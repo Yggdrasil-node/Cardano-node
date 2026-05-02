@@ -450,7 +450,7 @@ fn insert_checked_rejects_ex_units_above_protocol_limit_for_decodable_tx() {
         vec![Redeemer {
             tag: 0,
             index: 0,
-            data: PlutusData::Integer(1),
+            data: PlutusData::integer(1),
             ex_units: ExUnits { mem: 10, steps: 10 },
         }],
     );
@@ -480,7 +480,7 @@ fn insert_checked_uses_script_fee_when_redeemers_present() {
         vec![Redeemer {
             tag: 0,
             index: 0,
-            data: PlutusData::Integer(2),
+            data: PlutusData::integer(2),
             ex_units: ExUnits {
                 mem: 1_000_000,
                 steps: 1_000_000_000,
