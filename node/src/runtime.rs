@@ -1052,6 +1052,10 @@ impl RuntimeRootPeerSources {
         registry.sync_root_peers(self.state.providers())
     }
 
+    fn bootstrap_peer_addrs(&self) -> Vec<SocketAddr> {
+        self.state.providers().public_roots.bootstrap_peers.clone()
+    }
+
     fn local_root_targets(&self) -> Vec<LocalRootTargets> {
         local_root_targets_from_resolved_groups(&self.state.providers().local_roots)
     }
@@ -1096,13 +1100,56 @@ fn trace_root_refresh_error(tracer: &NodeTracer, source: &str, error: String) {
 /// Seed a peer registry from the primary peer and current topology-owned root sources.
 pub fn seed_peer_registry(primary_peer: SocketAddr, topology: &TopologyConfig) -> PeerRegistry {
     let mut registry = PeerRegistry::default();
-    registry.sync_root_peers(&topology.resolved_root_providers());
+    let root_providers = topology.resolved_root_providers();
+    registry.sync_root_peers(&root_providers);
     // Insert the primary peer after syncing root peers so that sync_root_peers
     // (which clears all Bootstrap/LocalRoot/PublicRoot sources first) does not
     // remove the primary peer's Bootstrap source when the primary is not listed
     // in the topology bootstrap set.
     registry.insert_source(primary_peer, PeerSource::PeerSourceBootstrap);
+    reserve_bootstrap_sync_peers(
+        &mut registry,
+        std::iter::once(primary_peer).chain(root_providers.public_roots.bootstrap_peers),
+    );
     registry
+}
+
+fn reserve_bootstrap_sync_peers(
+    registry: &mut PeerRegistry,
+    peers: impl IntoIterator<Item = SocketAddr>,
+) -> bool {
+    let mut changed = false;
+
+    for peer in peers {
+        changed |= registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        if registry
+            .get(&peer)
+            .is_some_and(|entry| entry.status == PeerStatus::PeerCold)
+        {
+            changed |= registry.set_status(peer, PeerStatus::PeerCooling);
+        }
+    }
+
+    changed
+}
+
+fn registry_reserve_bootstrap_attempt_peers(
+    peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
+    peers: impl IntoIterator<Item = SocketAddr>,
+) {
+    if let Some(reg) = peer_registry {
+        if let Ok(mut guard) = reg.write() {
+            let _ = reserve_bootstrap_sync_peers(&mut guard, peers);
+        }
+    }
+}
+
+fn reconnect_storage_tip(volatile_tip: Point, best_tip: Point) -> Point {
+    if volatile_tip == Point::Origin && best_tip != Point::Origin {
+        best_tip
+    } else {
+        volatile_tip
+    }
 }
 
 /// Derive local-root governor targets from resolved topology groups.
@@ -1575,6 +1622,38 @@ fn governor_action_peer(action: &GovernorAction) -> Option<SocketAddr> {
         | GovernorAction::AdoptInboundPeer(peer) => Some(*peer),
         GovernorAction::RequestPublicRoots | GovernorAction::RequestBigLedgerPeers => None,
     }
+}
+
+fn direct_sync_bootstrap_pending(registry: &PeerRegistry) -> bool {
+    let has_direct_sync_hot_peer = registry
+        .iter()
+        .any(|(_, entry)| entry.status == PeerStatus::PeerHot);
+    if has_direct_sync_hot_peer {
+        return false;
+    }
+
+    registry.iter().any(|(_, entry)| {
+        entry.status == PeerStatus::PeerCooling
+            && entry.sources.contains(&PeerSource::PeerSourceBootstrap)
+    })
+}
+
+fn suppress_outbound_promotions_while_bootstrap_pending(
+    registry: &PeerRegistry,
+    actions: &mut Vec<GovernorAction>,
+) -> usize {
+    if !direct_sync_bootstrap_pending(registry) {
+        return 0;
+    }
+
+    let before = actions.len();
+    actions.retain(|action| {
+        !matches!(
+            action,
+            GovernorAction::PromoteToWarm(_) | GovernorAction::PromoteToHot(_)
+        )
+    });
+    before - actions.len()
 }
 
 fn outbound_cm_local_addr() -> SocketAddr {
@@ -2339,6 +2418,10 @@ pub async fn run_governor_loop<I, V, L, F>(
     {
         let mut registry = peer_registry.write().expect("peer registry lock poisoned");
         root_sources.sync_registry(&mut registry);
+        let _ = reserve_bootstrap_sync_peers(
+            &mut registry,
+            std::iter::once(node_config.peer_addr).chain(root_sources.bootstrap_peer_addrs()),
+        );
         let _ = refresh_ledger_peer_sources_from_chain_db(
             &mut registry,
             &chain_db,
@@ -2646,7 +2729,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                     };
                     governor_state.set_inbound_peers(inbound_snapshot);
                 }
-                let actions = {
+                let (actions, suppressed_bootstrap_promotions) = {
                     let registry = peer_registry.read().expect("peer registry lock poisoned");
                     // Slice GD-Final — propagate per-peer ChainSync density
                     // from the runtime registry into governor_state.metrics
@@ -2658,7 +2741,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                             governor_state.metrics.set_density(*addr, d);
                         }
                     }
-                    let actions = governor_state.tick(
+                    let mut actions = governor_state.tick(
                         &registry,
                         &config.targets,
                         &local_root_groups,
@@ -2666,6 +2749,11 @@ pub async fn run_governor_loop<I, V, L, F>(
                         association_mode,
                         Instant::now(),
                     );
+                    let suppressed_bootstrap_promotions =
+                        suppress_outbound_promotions_while_bootstrap_pending(
+                            &registry,
+                            &mut actions,
+                        );
 
                     // Update Prometheus peer-selection counters after every tick.
                     if let Some(m) = metrics.as_ref() {
@@ -2774,8 +2862,20 @@ pub async fn run_governor_loop<I, V, L, F>(
                         );
                     }
 
-                    actions
+                    (actions, suppressed_bootstrap_promotions)
                 };
+
+                if suppressed_bootstrap_promotions > 0 {
+                    tracer.trace_runtime(
+                        "Net.Governor",
+                        "Debug",
+                        "suppressed outbound promotions while direct sync bootstrap is pending",
+                        trace_fields([(
+                            "suppressedPromotions",
+                            json!(suppressed_bootstrap_promotions),
+                        )]),
+                    );
+                }
 
                 // Phase 6 — observe BlockFetch worker pool size each
                 // tick.  Done OUTSIDE the registry-read scope so the
@@ -3016,7 +3116,13 @@ pub async fn run_governor_loop<I, V, L, F>(
                                     let mut registry = peer_registry
                                         .write()
                                         .expect("peer registry lock poisoned");
-                                    root_sources.refresh(&mut registry, &tracer)
+                                    let mut changed = root_sources.refresh(&mut registry, &tracer);
+                                    changed |= reserve_bootstrap_sync_peers(
+                                        &mut registry,
+                                        std::iter::once(node_config.peer_addr)
+                                            .chain(root_sources.bootstrap_peer_addrs()),
+                                    );
+                                    changed
                                 };
                                 governor_state.complete_public_root_request(
                                     refresh_now,
@@ -4947,6 +5053,7 @@ fn seed_chain_state_via_chain_db<S: ChainDbVolatileAccess>(
 /// two ChainDb access modes used by the reconnecting sync entry points.
 trait ChainDbVolatileAccess {
     fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R;
+    fn best_tip(&self) -> Point;
 }
 
 impl<I, V, L> ChainDbVolatileAccess for ChainDb<I, V, L>
@@ -4957,6 +5064,10 @@ where
 {
     fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
         f(self.volatile())
+    }
+
+    fn best_tip(&self) -> Point {
+        self.tip()
     }
 }
 
@@ -4969,6 +5080,11 @@ where
     fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
         let guard = self.read().expect("chain db lock poisoned");
         f(guard.volatile())
+    }
+
+    fn best_tip(&self) -> Point {
+        let guard = self.read().expect("chain db lock poisoned");
+        guard.tip()
     }
 }
 
@@ -5077,15 +5193,18 @@ where
         if let Some(new_chain_state) =
             seed_chain_state_via_chain_db(chain_db, config.security_param)
         {
-            let storage_tip = new_chain_state.tip();
+            let volatile_tip = new_chain_state.tip();
+            let best_tip = chain_db.best_tip();
+            let storage_tip = reconnect_storage_tip(volatile_tip, best_tip);
             if storage_tip != from_point {
                 tracer.trace_runtime(
                     "Net.PeerSelection",
                     "Info",
-                    "realigning from_point to volatile storage tip before reconnect",
+                    "realigning from_point to storage tip before reconnect",
                     trace_fields([
                         ("staleFromPoint", json!(format!("{from_point:?}"))),
                         ("storageTip", json!(format!("{storage_tip:?}"))),
+                        ("volatileTip", json!(format!("{volatile_tip:?}"))),
                     ]),
                 );
                 from_point = storage_tip;
@@ -5106,6 +5225,10 @@ where
             &refreshed_fallback_peers,
             peer_registry.as_ref(),
             preferred_peer,
+        );
+        registry_reserve_bootstrap_attempt_peers(
+            peer_registry.as_ref(),
+            attempt_state.attempt_order(),
         );
 
         tracer.trace_runtime(
@@ -5155,10 +5278,6 @@ where
             config.block_fetch_pool.as_ref(),
             session.connected_peer_addr,
         );
-        // Round 168 — mirror the BlockFetch-pool registration into the
-        // shared `PeerRegistry` so the bootstrap sync peer surfaces in
-        // `/metrics`.  See `registry_mark_bootstrap_hot` for the rationale.
-        registry_mark_bootstrap_hot(peer_registry.as_ref(), session.connected_peer_addr);
         // Slice E — exercise the `max_concurrent_block_fetch_peers` knob
         // from a production code path so the audit gap "config knob read
         // by no production path" is closed.  Currently the runtime
@@ -5201,6 +5320,12 @@ where
             run_state.record_reconnect_failure();
             continue;
         }
+        // Round 168 — mirror the established ChainSync/BlockFetch session
+        // into the shared `PeerRegistry` only after the peer confirms the
+        // intersection. Until then the bootstrap peer stays `PeerCooling`,
+        // which keeps the governor from opening unrelated outbound sessions
+        // during the non-pipelined ChainSync setup.
+        registry_mark_bootstrap_hot(peer_registry.as_ref(), session.connected_peer_addr);
 
         let mut keepalive = KeepAliveScheduler::new(Instant::now());
         loop {
@@ -5733,15 +5858,18 @@ where
         if let Some(new_chain_state) =
             seed_chain_state_via_chain_db(chain_db, config.security_param)
         {
-            let storage_tip = new_chain_state.tip();
+            let volatile_tip = new_chain_state.tip();
+            let best_tip = chain_db.best_tip();
+            let storage_tip = reconnect_storage_tip(volatile_tip, best_tip);
             if storage_tip != from_point {
                 tracer.trace_runtime(
                     "Net.PeerSelection",
                     "Info",
-                    "realigning from_point to volatile storage tip before reconnect",
+                    "realigning from_point to storage tip before reconnect",
                     trace_fields([
                         ("staleFromPoint", json!(format!("{from_point:?}"))),
                         ("storageTip", json!(format!("{storage_tip:?}"))),
+                        ("volatileTip", json!(format!("{volatile_tip:?}"))),
                     ]),
                 );
                 from_point = storage_tip;
@@ -5762,6 +5890,10 @@ where
             &refreshed_fallback_peers,
             peer_registry.as_ref(),
             preferred_peer,
+        );
+        registry_reserve_bootstrap_attempt_peers(
+            peer_registry.as_ref(),
+            attempt_state.attempt_order(),
         );
 
         tracer.trace_runtime(
@@ -5811,10 +5943,6 @@ where
             config.block_fetch_pool.as_ref(),
             session.connected_peer_addr,
         );
-        // Round 168 — mirror the BlockFetch-pool registration into the
-        // shared `PeerRegistry` so the bootstrap sync peer surfaces in
-        // `/metrics`.  See `registry_mark_bootstrap_hot` for the rationale.
-        registry_mark_bootstrap_hot(peer_registry.as_ref(), session.connected_peer_addr);
         // Slice E — exercise the `max_concurrent_block_fetch_peers` knob
         // from a production code path so the audit gap "config knob read
         // by no production path" is closed.  Currently the runtime
@@ -5857,6 +5985,12 @@ where
             run_state.record_reconnect_failure();
             continue;
         }
+        // Round 168 — mirror the established ChainSync/BlockFetch session
+        // into the shared `PeerRegistry` only after the peer confirms the
+        // intersection. Until then the bootstrap peer stays `PeerCooling`,
+        // which keeps the governor from opening unrelated outbound sessions
+        // during the non-pipelined ChainSync setup.
+        registry_mark_bootstrap_hot(peer_registry.as_ref(), session.connected_peer_addr);
 
         let mut keepalive = KeepAliveScheduler::new(Instant::now());
         loop {
@@ -7120,17 +7254,18 @@ mod tests {
         LedgerJudgementSettings, NodeConfig, ReconnectingRunState, ReconnectingVerifiedSyncRequest,
         ResumeReconnectingVerifiedSyncRequest, RuntimeBlockProducerConfig,
         VerifiedSyncServiceConfig, block_producer_ledger_state_judgement, checkpoint_trace_fields,
-        derive_judgement_at, handle_reconnect_batch_error, kes_expiry_warning_from_periods,
-        local_root_targets_from_config, mempool_entries_for_forging,
-        ordered_reconnect_fallback_peers, peer_share_request_amount,
+        derive_judgement_at, direct_sync_bootstrap_pending, handle_reconnect_batch_error,
+        kes_expiry_warning_from_periods, local_root_targets_from_config,
+        mempool_entries_for_forging, ordered_reconnect_fallback_peers, peer_share_request_amount,
         preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
         prepare_reconnect_attempt_state, reconnect_preferred_peer,
-        reconnect_preferred_peer_with_source, record_verified_batch_progress,
-        recover_ledger_state_for_runtime, refresh_ledger_peer_sources_from_chain_db,
+        reconnect_preferred_peer_with_source, reconnect_storage_tip,
+        record_verified_batch_progress, recover_ledger_state_for_runtime,
+        refresh_ledger_peer_sources_from_chain_db, reserve_bootstrap_sync_peers,
         retire_failed_outbound_peer, seed_peer_registry, self_validate_forged_block,
         session_established_trace_fields, stake_snapshots_for_recovered_point,
-        sync_error_trace_fields, tip_context_from_chain_db, verified_sync_batch_trace_fields,
-        wall_clock_unix_secs,
+        suppress_outbound_promotions_while_bootstrap_pending, sync_error_trace_fields,
+        tip_context_from_chain_db, verified_sync_batch_trace_fields, wall_clock_unix_secs,
     };
     use crate::sync::LedgerCheckpointPolicy;
     use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
@@ -7153,9 +7288,9 @@ mod tests {
     use yggdrasil_mempool::SharedMempool;
     use yggdrasil_network::{
         AbstractState, AfterSlot, BlockFetchClientError, ChainSyncClientError,
-        ConnectionManagerState, DataFlow, GovernorState, GovernorTargets, HandshakeVersion,
-        LedgerStateJudgement, LocalRootConfig, PeerAccessPoint, PeerRegistry, PeerSource,
-        PeerStatus, TimeoutExpired, TopologyConfig, UseBootstrapPeers, UseLedgerPeers,
+        ConnectionManagerState, DataFlow, GovernorAction, GovernorState, GovernorTargets,
+        HandshakeVersion, LedgerStateJudgement, LocalRootConfig, PeerAccessPoint, PeerRegistry,
+        PeerSource, PeerStatus, TimeoutExpired, TopologyConfig, UseBootstrapPeers, UseLedgerPeers,
     };
     use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
@@ -8056,6 +8191,101 @@ mod tests {
             bootstrap_entry
                 .sources
                 .contains(&PeerSource::PeerSourceBootstrap)
+        );
+        assert_eq!(primary_entry.status, PeerStatus::PeerCooling);
+        assert_eq!(bootstrap_entry.status, PeerStatus::PeerCooling);
+        assert_eq!(local_root_entry.status, PeerStatus::PeerCold);
+    }
+
+    #[test]
+    fn reserve_bootstrap_sync_peers_does_not_downgrade_active_peer() {
+        let primary = local_addr(3001);
+        let fallback = local_addr(3002);
+        let hot = local_addr(3003);
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(hot, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot, PeerStatus::PeerHot);
+
+        assert!(reserve_bootstrap_sync_peers(
+            &mut registry,
+            [primary, fallback, hot]
+        ));
+
+        assert_eq!(
+            registry.get(&primary).expect("primary").status,
+            PeerStatus::PeerCooling
+        );
+        assert_eq!(
+            registry.get(&fallback).expect("fallback").status,
+            PeerStatus::PeerCooling
+        );
+        assert_eq!(registry.get(&hot).expect("hot").status, PeerStatus::PeerHot);
+    }
+
+    #[test]
+    fn direct_sync_bootstrap_pending_requires_reserved_bootstrap_without_hot_peer() {
+        let primary = local_addr(3001);
+        let hot = local_addr(3002);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(primary, PeerSource::PeerSourceBootstrap);
+        registry.set_status(primary, PeerStatus::PeerCooling);
+        assert!(direct_sync_bootstrap_pending(&registry));
+
+        registry.insert_source(hot, PeerSource::PeerSourceBootstrap);
+        registry.set_status(hot, PeerStatus::PeerHot);
+        assert!(!direct_sync_bootstrap_pending(&registry));
+    }
+
+    #[test]
+    fn bootstrap_pending_suppresses_only_outbound_promotions() {
+        let primary = local_addr(3001);
+        let warm_candidate = local_addr(3002);
+        let hot_candidate = local_addr(3003);
+        let demote_candidate = local_addr(3004);
+        let mut registry = PeerRegistry::default();
+
+        registry.insert_source(primary, PeerSource::PeerSourceBootstrap);
+        registry.set_status(primary, PeerStatus::PeerCooling);
+
+        let mut actions = vec![
+            GovernorAction::PromoteToWarm(warm_candidate),
+            GovernorAction::PromoteToHot(hot_candidate),
+            GovernorAction::DemoteToCold(demote_candidate),
+            GovernorAction::RequestPublicRoots,
+        ];
+
+        assert_eq!(
+            suppress_outbound_promotions_while_bootstrap_pending(&registry, &mut actions),
+            2
+        );
+        assert_eq!(
+            actions,
+            vec![
+                GovernorAction::DemoteToCold(demote_candidate),
+                GovernorAction::RequestPublicRoots,
+            ]
+        );
+    }
+
+    #[test]
+    fn reconnect_storage_tip_uses_immutable_tip_when_volatile_is_empty() {
+        let immutable_tip = Point::BlockPoint(SlotNo(855_632), HeaderHash([0x42; 32]));
+
+        assert_eq!(
+            reconnect_storage_tip(Point::Origin, immutable_tip),
+            immutable_tip
+        );
+    }
+
+    #[test]
+    fn reconnect_storage_tip_prefers_non_origin_volatile_tip() {
+        let volatile_tip = Point::BlockPoint(SlotNo(868_687), HeaderHash([0x24; 32]));
+        let immutable_tip = Point::BlockPoint(SlotNo(855_632), HeaderHash([0x42; 32]));
+
+        assert_eq!(
+            reconnect_storage_tip(volatile_tip, immutable_tip),
+            volatile_tip
         );
     }
 

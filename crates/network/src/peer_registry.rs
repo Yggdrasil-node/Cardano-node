@@ -313,8 +313,25 @@ impl PeerRegistry {
         let mut changed = false;
 
         for peer in current_peers {
-            for source in &removable_sources {
-                changed |= self.remove_source(peer, *source);
+            let desired_source = desired.get(&peer).copied();
+            let mut should_remove = false;
+
+            if let Some(entry) = self.peers.get_mut(&peer) {
+                if let Some(source) = desired_source {
+                    changed |= entry.sources.insert(source);
+                }
+
+                for source in &removable_sources {
+                    if Some(*source) != desired_source {
+                        changed |= entry.sources.remove(source);
+                    }
+                }
+
+                should_remove = entry.sources.is_empty();
+            }
+
+            if should_remove {
+                self.peers.remove(&peer);
             }
         }
 
@@ -441,6 +458,62 @@ mod tests {
         assert_eq!(
             entry.sources,
             BTreeSet::from([PeerSource::PeerSourcePeerShare])
+        );
+        assert_eq!(entry.status, PeerStatus::PeerWarm);
+    }
+
+    #[test]
+    fn sync_root_peers_preserves_status_for_still_desired_root() {
+        let peer: SocketAddr = "127.0.0.11:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        registry.set_status(peer, PeerStatus::PeerHot);
+
+        let providers = RootPeerProviders {
+            local_roots: vec![],
+            public_roots: ResolvedPublicRootPeers {
+                bootstrap_peers: vec![peer],
+                public_config_peers: vec![],
+            },
+            use_ledger_peers: UseLedgerPeers::DontUseLedgerPeers,
+            peer_snapshot_file: None,
+        };
+
+        assert!(!registry.sync_root_peers(&providers));
+        let entry = registry.get(&peer).expect("peer remains rooted");
+        assert_eq!(
+            entry.sources,
+            BTreeSet::from([PeerSource::PeerSourceBootstrap])
+        );
+        assert_eq!(entry.status, PeerStatus::PeerHot);
+    }
+
+    #[test]
+    fn sync_root_peers_preserves_status_when_root_source_changes() {
+        let peer: SocketAddr = "127.0.0.11:3001".parse().expect("addr");
+        let mut registry = PeerRegistry::default();
+        registry.insert_source(peer, PeerSource::PeerSourceBootstrap);
+        registry.set_status(peer, PeerStatus::PeerWarm);
+
+        let providers = RootPeerProviders {
+            local_roots: vec![ResolvedLocalRootGroup {
+                peers: vec![peer],
+                advertise: false,
+                trustable: true,
+                hot_valency: 1,
+                warm_valency: 1,
+                diffusion_mode: PeerDiffusionMode::InitiatorAndResponderDiffusionMode,
+            }],
+            public_roots: ResolvedPublicRootPeers::default(),
+            use_ledger_peers: UseLedgerPeers::DontUseLedgerPeers,
+            peer_snapshot_file: None,
+        };
+
+        assert!(registry.sync_root_peers(&providers));
+        let entry = registry.get(&peer).expect("peer remains rooted");
+        assert_eq!(
+            entry.sources,
+            BTreeSet::from([PeerSource::PeerSourceLocalRoot])
         );
         assert_eq!(entry.status, PeerStatus::PeerWarm);
     }
