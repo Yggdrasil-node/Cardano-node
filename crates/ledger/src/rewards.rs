@@ -2210,6 +2210,49 @@ mod tests {
     }
 
     #[test]
+    fn max_pool_reward_messy_total_stake_no_overflow() {
+        // Regression test for U256 overflow in `max_pool_reward` when
+        // `total_stake` doesn't share a clean GCD with `pool_stake`.
+        //
+        // Scenario from preview epoch 4 boundary: 3 genesis pools each
+        // staking 100M ADA, full pledge, into a circulation of
+        // 30,017,994,599,484,487 lovelace (≈30M ADA after a few boundaries
+        // of monetary expansion).  Without U512 arithmetic, the
+        // fully-expanded numerator (~10^89) overflows U256 (max ≈10^77),
+        // returning a wrapped value of ~9.3·10^18 instead of the
+        // correct ~99B (= R · σ' × (1 + a0·σ²/z²) / (1+a0)).
+        //
+        // Reference: `Cardano.Ledger.State.SnapShots.maxPool'` —
+        // upstream uses GHC `Rational` (arbitrary precision); we
+        // accumulate in U512 to match the single-floor result exactly.
+        let a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
+        let result = max_pool_reward(
+            35_956_813_126_022,         // R ≈ 35.96 T lovelace
+            150,                        // k = 150 (preview initial value)
+            a0,
+            100_000_000_000_000,        // pool_stake = 100M ADA
+            100_000_000_000_000,        // pledge same as stake (full self-pledge)
+            30_017_994_599_484_487,     // circulation = max_supply − reserves
+        );
+        // Expected upstream value (computed in Rational): the formula
+        // factors via maxPool = R·σ·(1 + a0·(σ/z)²) / (1+a0) since σ < z
+        // and σ = s'.  For these inputs σ = 1/300.18, z = 1/150 → σ/z =
+        // ½ → (σ/z)² = ¼ → bonus = 1 + 0.075 = 1.075.
+        // floor(R·σ·1.075 / 1.3) ≈ 99,041,498,069 lovelace.
+        // The exact upstream rational value is bounded between 99B and
+        // 100B; without U512 arithmetic we'd return ~9.3·10^18 (wrapped).
+        assert!(
+            result > 90_000_000_000 && result < 100_000_000_000,
+            "max_pool_reward returned {} for messy-t inputs (expected ~99B, \
+             which would indicate U256 overflow if returned ~9.3·10^18)",
+            result,
+        );
+    }
+
+    #[test]
     fn max_pool_reward_exact_floor_matches_upstream() {
         // Verify that the single-floor U256 computation matches the
         // upstream `maxPool'` result for a known mainnet-like scenario.
