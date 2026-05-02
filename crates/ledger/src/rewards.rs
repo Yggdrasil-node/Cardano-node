@@ -122,6 +122,23 @@ impl U256 {
         }
     }
 
+    /// Returns `Some(self.lo)` if `self.hi == 0`, otherwise `None`.
+    #[inline]
+    fn to_u128(self) -> Option<u128> {
+        if self.hi == 0 { Some(self.lo) } else { None }
+    }
+
+    /// Subtract two U256 values.  Returns the wrapped result; the
+    /// subtraction is exact when `self >= other`.
+    fn checked_sub(self, other: Self) -> Self {
+        let (lo, borrow) = self.lo.overflowing_sub(other.lo);
+        let hi = self
+            .hi
+            .wrapping_sub(other.hi)
+            .wrapping_sub(if borrow { 1 } else { 0 });
+        U256 { hi, lo }
+    }
+
     /// Floor-divide U256 by u128, returning quotient as u128.
     ///
     /// Uses binary long-division: remainder starts as `self.hi` and each
@@ -180,6 +197,176 @@ fn u256_div_floor(num: U256, den: U256) -> u64 {
         }
     }
     lo_q
+}
+
+// ---------------------------------------------------------------------------
+// U512 arithmetic — used by `max_pool_reward` to handle the saturated-pool
+// formula without intermediate U256 overflow.  The final fully-expanded
+// fraction in `maxPool` reaches ~10^89 for typical preview/mainnet stake
+// distributions, exceeding the U256 range (~1.16×10^77).  We accumulate in
+// U512 throughout and divide by a U256 denominator at the end.
+// ---------------------------------------------------------------------------
+
+/// 512-bit unsigned integer stored as `(hi, lo)` U256 halves.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct U512 {
+    hi: U256,
+    lo: U256,
+}
+
+impl U512 {
+    const ZERO: U512 = U512 {
+        hi: U256 { hi: 0, lo: 0 },
+        lo: U256 { hi: 0, lo: 0 },
+    };
+
+    /// Lift a U256 into U512 with hi = 0.
+    #[inline]
+    fn from_u256(x: U256) -> Self {
+        U512 {
+            hi: U256 { hi: 0, lo: 0 },
+            lo: x,
+        }
+    }
+
+    /// `self <= other` (lexicographic on the (hi, lo) pair).
+    #[inline]
+    fn le(self, other: Self) -> bool {
+        if self.hi == other.hi {
+            self.lo.le(other.lo)
+        } else {
+            self.hi.le(other.hi) && self.hi != other.hi
+        }
+    }
+
+    /// Add two U512 values (wrapping above 2^512).
+    fn add(self, other: Self) -> Self {
+        let (lo_lo, c0) = self.lo.lo.overflowing_add(other.lo.lo);
+        let (lo_hi, c1a) = self.lo.hi.overflowing_add(other.lo.hi);
+        let (lo_hi, c1b) = lo_hi.overflowing_add(if c0 { 1 } else { 0 });
+        let lo = U256 { hi: lo_hi, lo: lo_lo };
+        let carry_lo = (c1a || c1b) as u128;
+        let (hi_lo, c2) = self.hi.lo.overflowing_add(other.hi.lo);
+        let (hi_lo, c2b) = hi_lo.overflowing_add(carry_lo);
+        let hi_hi = self
+            .hi
+            .hi
+            .wrapping_add(other.hi.hi)
+            .wrapping_add(if c2 || c2b { 1 } else { 0 });
+        U512 {
+            hi: U256 { hi: hi_hi, lo: hi_lo },
+            lo,
+        }
+    }
+
+    /// Multiply U256 × u128 → U512 (no truncation).
+    fn from_u256_times_u128(a: U256, b: u128) -> Self {
+        // a × b = (a.hi · 2^128 + a.lo) × b
+        //       = a.hi·b · 2^128 + a.lo·b
+        let lo_part = U256::widening_mul(a.lo, b); // U256
+        let hi_part = U256::widening_mul(a.hi, b); // U256, contributes 2^128 ·
+        // Combine: result = hi_part << 128 + lo_part (as U512)
+        // hi_part << 128 means hi_part occupies bits [128 .. 384].
+        // lo_part occupies [0 .. 256].
+        // Lay out:
+        //   bits   0..128 : lo_part.lo
+        //   bits 128..256 : lo_part.hi + hi_part.lo
+        //   bits 256..384 : hi_part.hi
+        //   bits 384..512 : 0
+        let (mid, carry) = lo_part.hi.overflowing_add(hi_part.lo);
+        let new_hi_lo = hi_part.hi.wrapping_add(if carry { 1 } else { 0 });
+        U512 {
+            hi: U256 {
+                hi: 0,
+                lo: new_hi_lo,
+            },
+            lo: U256 {
+                hi: mid,
+                lo: lo_part.lo,
+            },
+        }
+    }
+
+    /// Multiply U512 × u128 → U512 (low 512 bits — wraps if >2^512).
+    fn mul_u128(self, b: u128) -> Self {
+        // Use the (hi, lo) decomposition. Compute lo×b as U512, hi×b
+        // truncated to U256 and shifted by 256 bits.
+        let lo_wide = U512::from_u256_times_u128(self.lo, b); // U512
+        let hi_wide = U512::from_u256_times_u128(self.hi, b); // U512 (logical << 0)
+        // hi_wide shifted by 256 bits: occupies bits [256 .. 768], wrap to U512.
+        let hi_shifted = U512 {
+            hi: hi_wide.lo,
+            lo: U256 { hi: 0, lo: 0 },
+        };
+        lo_wide.add(hi_shifted)
+    }
+
+    /// Floor-divide U512 by U256.  Returns quotient clamped to u128.
+    ///
+    /// Uses binary long division over 512 bits.
+    fn div_u256(self, d: U256) -> u128 {
+        if d.is_zero() {
+            return 0;
+        }
+        // If self.hi is zero, drop to U256/U256 division.
+        if self.hi.is_zero() {
+            if d.hi == 0 {
+                return self.lo.div_u128(d.lo);
+            }
+            return u256_div_floor(self.lo, d) as u128;
+        }
+        // Binary long division over 512 bits.
+        let mut rem = U256 { hi: 0, lo: 0 };
+        let mut quot_hi: u128 = 0;
+        let mut quot_lo: u128 = 0;
+        // Total 512 bits across (self.hi.hi, self.hi.lo, self.lo.hi, self.lo.lo).
+        // Iterate from bit 511 down to bit 0.
+        for i in (0u32..512).rev() {
+            // Shift rem left by 1, bringing in bit `i` of self.
+            let bit = u512_bit(self, i) as u128;
+            let new_rem = u256_shl1(rem, bit);
+            rem = new_rem;
+            // If rem >= d, subtract and set bit i of quot.
+            if !rem.le(d) || rem == d {
+                rem = rem.checked_sub(d);
+                if i >= 128 {
+                    quot_hi |= 1u128 << (i - 128);
+                } else {
+                    quot_lo |= 1u128 << i;
+                }
+            }
+        }
+        // Quotient = (quot_hi << 128) + quot_lo.  Clamp to u128.
+        if quot_hi != 0 {
+            return u128::MAX;
+        }
+        quot_lo
+    }
+}
+
+/// Shifts a U256 left by 1 bit, ORing `bit` into the LSB.
+#[inline]
+fn u256_shl1(x: U256, bit: u128) -> U256 {
+    let new_hi = (x.hi << 1) | (x.lo >> 127);
+    let new_lo = (x.lo << 1) | (bit & 1);
+    U256 {
+        hi: new_hi,
+        lo: new_lo,
+    }
+}
+
+/// Returns bit `i` (0..512) of a U512.
+#[inline]
+fn u512_bit(x: U512, i: u32) -> bool {
+    if i >= 384 {
+        ((x.hi.hi >> (i - 384)) & 1) != 0
+    } else if i >= 256 {
+        ((x.hi.lo >> (i - 256)) & 1) != 0
+    } else if i >= 128 {
+        ((x.lo.hi >> (i - 128)) & 1) != 0
+    } else {
+        ((x.lo.lo >> i) & 1) != 0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,84 +528,206 @@ pub fn max_pool_reward(
     let r = rewards_pot as u128;
     let a0_n = a0.numerator as u128;
     let a0_d = a0.denominator.max(1) as u128;
+    let one_plus_a0 = a0_d + a0_n;
 
     // σ' = min(σ, z) where σ = p/t, z = 1/k.
-    // Compare p/t vs 1/k ↔ p*k vs t.
+    // Compare p/t vs 1/k ↔ p·k vs t.
     let (sig_n, sig_d) = if p.checked_mul(k).is_some_and(|pk| pk <= t) {
         (p, t)
     } else {
         (1u128, k)
     };
-    // s' = min(s, z)
+    // s' = min(s, z).
     let (s_n, s_d) = if pi.checked_mul(k).is_some_and(|pk| pk <= t) {
         (pi, t)
     } else {
         (1u128, k)
     };
 
-    // GCD-reduce each rational pair before entering the U256 chain.
-    // This keeps all intermediate products well within u256 range even
-    // for mainnet-scale parameters (e.g. sig_n=70T, sig_d=35000T reduces
-    // to 1/500).
-    let g_sig = gcd128(sig_n, sig_d);
+    // GCD-reduce each rational pair (no-op when the GCD is 1).
+    let g_sig = gcd128(sig_n, sig_d).max(1);
     let sig_n = sig_n / g_sig;
     let sig_d = sig_d / g_sig;
-    let g_s = gcd128(s_n, s_d);
+    let g_s = gcd128(s_n, s_d).max(1);
     let s_n = s_n / g_s;
     let s_d = s_d / g_s;
 
-    // --- Expand the formula into a single fraction ---
+    // ----------------------------------------------------------------
+    // Build the single-floor U512 numerator/denominator for
+    //   maxPool = R · a0_d · factor1_num / ((a0_d + a0_n) · factor1_den)
+    // where
+    //   factor1 = sig_n/sig_d + (s_n·a0_n·k·diff_n) / (s_d·a0_d·diff_d)
+    //   diff_n  = sig_n·s_d − s_n·(sig_d − k·sig_n)
+    //   diff_d  = sig_d·s_d
     //
-    // factor4 = (z − σ')/z = (sig_d − k·sig_n) / sig_d
-    //   (≥ 0 because σ' ≤ z)
-    let f4_n = sig_d - k * sig_n;
-    // f4_d = sig_d
-
-    // σ' − s'·factor4
-    //   = sig_n/sig_d − (s_n/s_d)·(f4_n/sig_d)
-    //   = (sig_n·s_d − s_n·f4_n) / (sig_d·s_d)
+    // Equivalent expanded form (single floor at end):
+    //   num = R · (a0_d·sig_n·s_d·diff_d  +  s_n·a0_n·k·diff_n·sig_d)
+    //   den = (a0_d + a0_n) · sig_d · s_d · diff_d
     //
-    // Products fit u128: sig_n ≤ ~10^13, s_d ≤ ~10^16.
-    let diff_n = (sig_n * s_d).saturating_sub(s_n * f4_n);
-    let diff_d = sig_d * s_d;
-
-    // GCD-reduce diff_n/diff_d as well.
-    let g_diff = gcd128(diff_n, diff_d);
-    let diff_n = if g_diff > 1 { diff_n / g_diff } else { diff_n };
-    let diff_d = if g_diff > 1 { diff_d / g_diff } else { diff_d };
-
-    // factor3 = (σ' − s'·factor4) / z = k·diff_n / diff_d
-    //   After GCD reduction, k·diff_n is typically very small.
-
-    // Combine into the full fraction.
+    // For preview/mainnet stake distributions the ungcd-reducible
+    // sig_n/sig_d pair forces the numerator into U384/U512 territory
+    // (~10^89 worst case).  We accumulate in U512 throughout and divide
+    // by a U256 denominator at the end for byte-accurate parity with
+    // upstream's `rationalToCoinViaFloor`.
     //
-    // factor2 = σ' + s'·a0·factor3
-    //         = sig_n/sig_d + (s_n·a0_n·k·diff_n) / (s_d·a0_d·diff_d)
-    //
-    // All values are GCD-reduced, so U256 products stay well within bounds.
-    let sak = s_n * a0_n * k;
-    let term_b_num = U256::widening_mul(sak, diff_n);
-    let sda = s_d * a0_d;
-    let term_b_den = U256::widening_mul(sda, diff_d);
+    // Reference: `Cardano.Ledger.State.SnapShots.maxPool'`.
+    // ----------------------------------------------------------------
 
-    // factor2 = (sig_n·term_b_den + term_b_num·sig_d) / (sig_d·term_b_den)
-    let f2_num = term_b_den.mul_u128(sig_n).add(term_b_num.mul_u128(sig_d));
-    let f2_den = term_b_den.mul_u128(sig_d);
+    // diff_n = sig_n·s_d − s_n·(sig_d − k·sig_n)
+    let f4_n = sig_d.saturating_sub(k.saturating_mul(sig_n));
+    // diff_n / diff_d as U256 (both factors fit u128 when GCD-reduced).
+    let sn_sd = U256::widening_mul(sig_n, s_d);
+    let snm_f4 = U256::widening_mul(s_n, f4_n);
+    let diff_n = sn_sd.checked_sub(snm_f4); // U256 (≤ sig_n·s_d)
+    let diff_d = U256::widening_mul(sig_d, s_d); // U256
 
-    // result = floor(R·a0_d / (a0_d + a0_n)  ×  f2_num / f2_den)
-    //        = floor(R·a0_d · f2_num / ((a0_d + a0_n) · f2_den))
-    //
-    // r * a0_d always fits u128 (both ≤ u64).
-    let final_num = f2_num.mul_u128(r * a0_d);
-    let one_plus_a0 = a0_d + a0_n;
-    let final_den = f2_den.mul_u128(one_plus_a0);
+    // Term1 of numerator-without-R: a0_d · sig_n · s_d · diff_d.
+    let term1 = {
+        // a0_d · sig_n fits u128 (both ≤ u64 before reduction; sig_n ≤ t after).
+        // sig_n × s_d may overflow u128, so widen.
+        let ad_sn = U256::widening_mul(a0_d, sig_n);
+        let ad_sn_sd = ad_sn.mul_u128(s_d); // U256 — may already use full range
+        // Multiply U256 × diff_d (U256) → U512.
+        u512_mul_u256(ad_sn_sd, diff_d)
+    };
+    // Term2 of numerator-without-R: s_n · a0_n · k · diff_n · sig_d.
+    let term2 = {
+        let sn_an = U256::widening_mul(s_n, a0_n);
+        let sn_an_k = sn_an.mul_u128(k);
+        // sn_an_k × diff_n → U512.
+        let part_a = u512_mul_u256(sn_an_k, diff_n);
+        // × sig_d → U512.
+        part_a.mul_u128(sig_d)
+    };
+    // num_inner = term1 + term2 (U512).
+    let num_inner = term1.add(term2);
+    // Multiply by R → U512 × u128.
+    let num = num_inner.mul_u128(r);
+    // den = (a0_d + a0_n) · sig_d · s_d · diff_d (= (1+a0) · diff_d² /
+    // (sig_d·s_d))?  Concretely den = (a0_d+a0_n)·diff_d · sig_d · s_d
+    // BUT note diff_d = sig_d·s_d, so den = (a0_d+a0_n)·diff_d·diff_d.
+    let den = {
+        // diff_d × (a0_d+a0_n) → U256
+        let dd_aa = diff_d.mul_u128(one_plus_a0);
+        // × diff_d → U512
+        u512_mul_u256(dd_aa, diff_d)
+    };
+    // Final division: U512 / U512 → u128 → u64.
+    u512_div_u512(num, den).min(u64::MAX as u128) as u64
+}
 
-    // Reduce by GCD of accessible u128 factors before the final division
-    // to stay well within u256 range.  A simple reduction by
-    // gcd(r, one_plus_a0) and gcd(sig_n, sig_d) already removes the
-    // dominant common factors.  The binary-search division handles any
-    // remaining magnitude.
-    u256_div_floor(final_num, final_den)
+/// Multiply U256 × U256 → U512 (no truncation).
+fn u512_mul_u256(a: U256, b: U256) -> U512 {
+    // (a.hi · 2^128 + a.lo) × (b.hi · 2^128 + b.lo)
+    //   = a.hi·b.hi · 2^256 + (a.hi·b.lo + a.lo·b.hi) · 2^128 + a.lo·b.lo
+    let p_lo_lo = U256::widening_mul(a.lo, b.lo); // bits 0..256
+    let p_lo_hi = U256::widening_mul(a.lo, b.hi); // bits 128..384
+    let p_hi_lo = U256::widening_mul(a.hi, b.lo); // bits 128..384
+    let p_hi_hi = U256::widening_mul(a.hi, b.hi); // bits 256..512
+
+    // Layout p_lo_lo at bits [0..256]:
+    let mut lo = p_lo_lo;
+    let mut hi = U256 { hi: 0, lo: 0 };
+
+    // Add p_lo_hi shifted by 128 bits.
+    let (mid1, c1) = lo.hi.overflowing_add(p_lo_hi.lo);
+    lo.hi = mid1;
+    let (hi_lo, c2) = hi.lo.overflowing_add(p_lo_hi.hi);
+    let (hi_lo, c2b) = hi_lo.overflowing_add(if c1 { 1 } else { 0 });
+    hi.lo = hi_lo;
+    let mut hi_hi_carry = (c2 || c2b) as u128;
+
+    // Add p_hi_lo shifted by 128 bits.
+    let (mid2, c3) = lo.hi.overflowing_add(p_hi_lo.lo);
+    lo.hi = mid2;
+    let (hi_lo, c4) = hi.lo.overflowing_add(p_hi_lo.hi);
+    let (hi_lo, c4b) = hi_lo.overflowing_add(if c3 { 1 } else { 0 });
+    hi.lo = hi_lo;
+    hi_hi_carry = hi_hi_carry.wrapping_add((c4 || c4b) as u128);
+
+    // Add p_hi_hi shifted by 256 bits (occupies hi.lo and hi.hi).
+    let (hi_lo, c5) = hi.lo.overflowing_add(p_hi_hi.lo);
+    hi.lo = hi_lo;
+    let hi_hi = hi.hi
+        .wrapping_add(p_hi_hi.hi)
+        .wrapping_add(if c5 { 1 } else { 0 })
+        .wrapping_add(hi_hi_carry);
+    hi.hi = hi_hi;
+
+    U512 { hi, lo }
+}
+
+/// Floor-divide U512 by U512, returning the quotient clamped to u128.
+fn u512_div_u512(num: U512, den: U512) -> u128 {
+    if den == U512::ZERO {
+        return 0;
+    }
+    if num.le(den) {
+        return if num == den { 1 } else { 0 };
+    }
+    // If den fits in U256 (den.hi == 0), defer to the U256-aware
+    // U512.div_u256 path.
+    if den.hi == (U256 { hi: 0, lo: 0 }) {
+        return num.div_u256(den.lo);
+    }
+    // General U512/U512 binary long division.  Slow but correct.
+    let mut rem = U512::ZERO;
+    let mut quot_hi: u128 = 0;
+    let mut quot_lo: u128 = 0;
+    for i in (0u32..512).rev() {
+        let bit = u512_bit(num, i) as u128;
+        rem = u512_shl1(rem, bit);
+        if !rem.le(den) || rem == den {
+            rem = u512_sub(rem, den);
+            if i >= 128 {
+                quot_hi |= 1u128 << (i - 128);
+            } else {
+                quot_lo |= 1u128 << i;
+            }
+        }
+    }
+    if quot_hi != 0 {
+        return u128::MAX;
+    }
+    quot_lo
+}
+
+/// Shifts a U512 left by 1 bit, ORing `bit` into the LSB.
+#[inline]
+fn u512_shl1(x: U512, bit: u128) -> U512 {
+    let new_lo_lo = (x.lo.lo << 1) | (bit & 1);
+    let new_lo_hi = (x.lo.hi << 1) | (x.lo.lo >> 127);
+    let new_hi_lo = (x.hi.lo << 1) | (x.lo.hi >> 127);
+    let new_hi_hi = (x.hi.hi << 1) | (x.hi.lo >> 127);
+    U512 {
+        hi: U256 {
+            hi: new_hi_hi,
+            lo: new_hi_lo,
+        },
+        lo: U256 {
+            hi: new_lo_hi,
+            lo: new_lo_lo,
+        },
+    }
+}
+
+/// U512 subtraction (wraps on underflow).
+fn u512_sub(a: U512, b: U512) -> U512 {
+    let (lo_lo, br0) = a.lo.lo.overflowing_sub(b.lo.lo);
+    let (lo_hi, br1a) = a.lo.hi.overflowing_sub(b.lo.hi);
+    let (lo_hi, br1b) = lo_hi.overflowing_sub(if br0 { 1 } else { 0 });
+    let borrow_to_hi = (br1a || br1b) as u128;
+    let (hi_lo, br2) = a.hi.lo.overflowing_sub(b.hi.lo);
+    let (hi_lo, br2b) = hi_lo.overflowing_sub(borrow_to_hi);
+    let hi_hi = a
+        .hi
+        .hi
+        .wrapping_sub(b.hi.hi)
+        .wrapping_sub(if br2 || br2b { 1 } else { 0 });
+    U512 {
+        hi: U256 { hi: hi_hi, lo: hi_lo },
+        lo: U256 { hi: lo_hi, lo: lo_lo },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -565,24 +874,6 @@ pub fn compute_pool_reward(
     // explicit so a lossy local nonnegative-interval representation cannot
     // inflate supply if the performance ratio is very large.
     let apparent = mul_rational_capped(optimal, performance, rewards_pot);
-
-    // DIAGNOSTIC: log inputs/outputs for the failing pool a8e65680...
-    if pool_hash[0] == 0xa8 && pool_hash[1] == 0xe6 && pool_hash[2] == 0x56 && pool_hash[3] == 0x80 {
-        eprintln!(
-            "DIAG_POOL a8e65680 rewards_pot={} n_opt={} a0={}/{} pool_stake={} pledge={} total_stake={} performance={}/{} optimal={} apparent={} cost={} margin={}/{}",
-            rewards_pot,
-            params.n_opt,
-            params.a0.numerator, params.a0.denominator,
-            pool_stake,
-            pool_params.pledge,
-            total_stake_for_sigma,
-            performance.numerator, performance.denominator,
-            optimal,
-            apparent,
-            pool_params.cost,
-            pool_params.margin.numerator, pool_params.margin.denominator,
-        );
-    }
 
     // Upstream uses the cost stored in the stake-pool snapshot (`spssCost`)
     // directly. Minimum-pool-cost is an admission/update constraint; reward
@@ -795,30 +1086,6 @@ pub fn compute_epoch_rewards(
     }
 
     let unclaimed = pot.rewards_pot.saturating_sub(total_distributed);
-
-    // DIAGNOSTIC: log per-pool aggregate to diagnose total over-distribution.
-    eprintln!(
-        "DIAG_TOTAL rewards_pot={} total_distributed={} unclaimed={} num_pools={} num_leader_deltas={} num_member_deltas={} delta_reserves={} treasury_cut={}",
-        pot.rewards_pot,
-        total_distributed,
-        unclaimed,
-        go_snapshot.pool_params.len(),
-        leader_deltas.len(),
-        reward_deltas.len(),
-        pot.delta_reserves,
-        pot.treasury_cut,
-    );
-    // Also dump the 5 biggest leader_deltas and 5 biggest member_deltas
-    let mut leader_sorted: Vec<_> = leader_deltas.iter().collect();
-    leader_sorted.sort_by(|a, b| b.1.cmp(a.1));
-    for (i, (acct, amt)) in leader_sorted.iter().take(10).enumerate() {
-        eprintln!("DIAG_TOTAL leader[{}] amt={} cred={:?}", i, amt, acct.credential);
-    }
-    let mut reward_sorted: Vec<_> = reward_deltas.iter().collect();
-    reward_sorted.sort_by(|a, b| b.1.cmp(a.1));
-    for (i, (cred, amt)) in reward_sorted.iter().take(10).enumerate() {
-        eprintln!("DIAG_TOTAL member[{}] amt={} cred={:?}", i, amt, cred);
-    }
 
     EpochRewardDistribution {
         reward_deltas,

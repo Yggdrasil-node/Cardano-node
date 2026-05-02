@@ -305,11 +305,6 @@ fn derive_pool_performance(
         return BTreeMap::new();
     }
 
-    eprintln!(
-        "DIAG_PERF total_active={} total_blocks={} num_blockmakers={} num_pools_in_snap={}",
-        total_stake, total_blocks, blocks_made.len(), reward_snapshot.pool_params.len(),
-    );
-
     let mut performance = BTreeMap::new();
     for (pool_hash, &blocks_produced) in blocks_made {
         let pool_stake = stake_dist.pool_stake(pool_hash);
@@ -319,10 +314,6 @@ fn derive_pool_performance(
         if let Some(ratio) =
             apparent_performance_ratio(blocks_produced, total_stake, pool_stake, total_blocks)
         {
-            eprintln!(
-                "DIAG_PERF pool[{:?}] blocks={} pool_stake={} ratio={}/{}",
-                &pool_hash[..4], blocks_produced, pool_stake, ratio.numerator, ratio.denominator
-            );
             performance.insert(*pool_hash, ratio);
         }
     }
