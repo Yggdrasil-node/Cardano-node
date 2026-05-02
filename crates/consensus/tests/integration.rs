@@ -83,9 +83,17 @@ fn epoch_first_slot_round_trip() {
 #[test]
 fn is_new_epoch_transitions() {
     let sz = EpochSize(100);
+    // `Origin` is treated as `EpochNo 0` per upstream
+    // `Ouroboros.Consensus.Protocol.Ledger.Util.isNewEpoch`: a chain whose
+    // first block lies in epoch 0 does NOT trigger NEWEPOCH because the
+    // genesis-initialized state is already in epoch 0.
     assert!(
-        is_new_epoch(None, SlotNo(0), sz),
-        "first slot is always a new epoch"
+        !is_new_epoch(None, SlotNo(0), sz),
+        "Origin → epoch(slot) == 0 ⇒ no boundary"
+    );
+    assert!(
+        is_new_epoch(None, SlotNo(100), sz),
+        "Origin → epoch(slot) == 1 ⇒ NEWEPOCH (rare cold-start mid-chain)"
     );
     assert!(!is_new_epoch(Some(SlotNo(0)), SlotNo(99), sz));
     assert!(is_new_epoch(Some(SlotNo(99)), SlotNo(100), sz));

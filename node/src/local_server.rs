@@ -1817,10 +1817,14 @@ fn dispatch_upstream_query(
         }
         UpstreamQuery::GetChainPoint => encode_chain_point(snapshot.tip()),
         UpstreamQuery::GetChainBlockNo => {
-            let block_no = match snapshot.tip() {
-                yggdrasil_ledger::Point::Origin => None,
-                yggdrasil_ledger::Point::BlockPoint(slot, _) => Some(slot.0),
-            };
+            // `tip_block_no` is wired through `apply_block_validated`
+            // in the ledger crate; mirrors upstream
+            // `Ouroboros.Network.Block.Tip.tipBlockNo` so LSQ
+            // `GetChainBlockNo` (`[2]`) returns the actual chain
+            // height instead of leaking the slot number under that
+            // label.  Falls back to `Origin` when the chain is at
+            // genesis (no block applied yet).
+            let block_no = snapshot.tip_block_no().map(|bn| bn.0);
             encode_chain_block_no(block_no)
         }
         UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryAnytime { .. })
@@ -4767,21 +4771,46 @@ mod tests {
         assert_eq!(result[4], 0x20, "hash length 32");
     }
 
-    /// Round 148 — `[2]` is upstream `GetChainBlockNo`.  Yggdrasil's
-    /// snapshot doesn't yet track the chain block number (it's owned
-    /// by the consensus ChainState, not the ledger), so the response
-    /// is `Origin` (`[0]`) until the chain-tracker block-number is
-    /// threaded through to the snapshot.
+    /// `[2]` is upstream `GetChainBlockNo`.  At chain genesis the
+    /// snapshot's `tip_block_no` is `None`, so we encode `Origin`
+    /// (`[0]`).  Once the first block has been applied,
+    /// `apply_block_validated` populates the field and the dispatcher
+    /// returns `[1, blockNo]` — see
+    /// `upstream_get_chain_block_no_returns_block_no_after_apply`
+    /// below.
     #[test]
-    fn upstream_get_chain_block_no_returns_origin_until_chain_tracker_wired() {
+    fn upstream_get_chain_block_no_returns_origin_at_chain_genesis() {
         let state = LedgerState::new(Era::Conway);
         let snapshot = state.snapshot();
         let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &[0x81, 0x02]);
         assert_eq!(
             result,
             vec![0x81, 0x00],
-            "GetChainBlockNo returns `Origin` (`[0]`) until chain-tracker \
-             block-number wiring lands",
+            "GetChainBlockNo at chain genesis must encode `Origin` (`[0]`)",
+        );
+    }
+
+    /// Once `apply_block_validated` has populated `tip_block_no`,
+    /// `GetChainBlockNo` returns `[1, blockNo]` matching upstream
+    /// `Ouroboros.Network.Block.Tip.tipBlockNo` — NOT the slot value
+    /// (which historically leaked through under this label and
+    /// produced wrong answers for any caller computing chain density
+    /// from `cardano-cli query tip`).
+    #[test]
+    fn upstream_get_chain_block_no_returns_block_no_after_apply() {
+        use yggdrasil_ledger::{BlockNo, HeaderHash, SlotNo};
+        let mut state = LedgerState::new(Era::Conway);
+        state.tip = yggdrasil_ledger::Point::BlockPoint(SlotNo(123_456), HeaderHash([0xcd; 32]));
+        state.tip_block_no = Some(BlockNo(7_890));
+        let snapshot = state.snapshot();
+        let result = BasicLocalQueryDispatcher::default().dispatch_query(&snapshot, &[0x81, 0x02]);
+        // Upstream `encodeChainBlockNo (At b) = encodeListLen 2 <> encodeWord 1 <> encode b`
+        // → CBOR `[1, 7890]`.  7890 fits a uint16 escape (`0x19 1ed2`).
+        assert_eq!(
+            result,
+            vec![0x82, 0x01, 0x19, 0x1e, 0xd2],
+            "GetChainBlockNo after apply must encode `[1, blockNo]` with the actual \
+             block number, not the slot",
         );
     }
 

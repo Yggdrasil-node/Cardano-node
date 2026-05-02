@@ -2886,6 +2886,7 @@ fn ratification_thresholds_evolve_after_parameter_change() {
         set: StakeSnapshot::default(),
         go: StakeSnapshot::default(),
         fee_pot: 0,
+        previous_fee_pot: 0,
     };
 
     // Run epoch boundary — ratification happens inside.

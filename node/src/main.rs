@@ -261,6 +261,8 @@ enum QueryCommand {
     CurrentEra,
     /// Query the chain tip.
     Tip,
+    /// Query the chain block number (height) at the current tip.
+    ChainBlockNo,
     /// Query the current epoch number.
     CurrentEpoch,
     /// Query the current protocol parameters.
@@ -483,6 +485,11 @@ fn encode_ntc_query(query: &QueryCommand) -> Vec<u8> {
             // `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`.
             enc.array(1).unsigned(3u64);
         }
+        QueryCommand::ChainBlockNo => {
+            // Upstream-shaped: `GetChainBlockNo = [2]` per upstream
+            // `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`.
+            enc.array(1).unsigned(2u64);
+        }
         QueryCommand::CurrentEpoch => {
             // Yggdrasil-extension tag — upstream `[2]` is
             // `GetChainBlockNo`, so yggdrasil's `CurrentEpoch` query
@@ -595,22 +602,41 @@ fn decode_ntc_result(query: &QueryCommand, result: &[u8]) -> Result<serde_json::
             json!({"era": era})
         }
         QueryCommand::Tip => {
-            // Round 148 — upstream `encodePoint` shape:
-            //   Origin     = `[0]`
-            //   BlockPoint = `[1, slot, hash_bytes]`
+            // Upstream `Ouroboros.Network.Block.encodePoint`:
+            //   Origin     = `encodeListLen 0`           — `[]`
+            //   BlockPoint = `encodeListLen 2 <> slot <> hash` — `[slot, hash]`
+            //
+            // Captured against `cardano-node 10.7.1` socat proxy in the
+            // server-side regression test
+            // `upstream_get_chain_point_returns_encoded_tip_point`
+            // (`local_server.rs`).  No constructor tag; the historical
+            // `[1, slot, hash]` shape this decoder used to expect never
+            // existed in upstream and silently fell back to a raw-hex
+            // dump on every real response.
             let mut dec = Decoder::new(result);
             match dec.array() {
-                Ok(1) => {
-                    let _origin_tag = dec.unsigned().unwrap_or(0);
-                    json!({"tip": {"origin": true}})
-                }
-                Ok(3) => {
-                    let _bp_tag = dec.unsigned().unwrap_or(1);
+                Ok(0) => json!({"tip": {"origin": true}}),
+                Ok(2) => {
                     let slot = dec.unsigned().unwrap_or(0);
                     let hash = dec.bytes().unwrap_or_default();
                     json!({"tip": {"origin": false, "slot": slot, "hash": hex::encode(hash)}})
                 }
                 _ => json!({"tip_cbor": hex::encode(result)}),
+            }
+        }
+        QueryCommand::ChainBlockNo => {
+            // Upstream `Cardano.Slotting.Block.encodeChainBlockNo`:
+            //   `Origin = [0]`, `At b = [1, b]`.
+            // Mirrors `Ouroboros.Network.Block.Tip.tipBlockNo`.
+            let mut dec = Decoder::new(result);
+            match dec.array() {
+                Ok(1) => json!({"chain_block_no": null}),
+                Ok(2) => {
+                    let _tag = dec.unsigned().unwrap_or(1);
+                    let block_no = dec.unsigned().unwrap_or(0);
+                    json!({"chain_block_no": block_no})
+                }
+                _ => json!({"chain_block_no_cbor": hex::encode(result)}),
             }
         }
         QueryCommand::CurrentEpoch => {
@@ -2939,6 +2965,30 @@ async fn run_node(request: RunNodeRequest) -> Result<()> {
             ),
         ]),
     );
+
+    // Honestly disclose the trace-forwarder parity gap when the operator
+    // has enabled the `Forwarder` backend.  See
+    // [`trace_forwarder`] module docs for the full upstream protocol the
+    // current stub does not implement.
+    if let Some(socket_path) = tracer.forwarder_socket_path_if_configured() {
+        tracer.trace_runtime(
+            "Startup.TraceForwarderStub",
+            "Warning",
+            "Forwarder trace backend uses a stub transport that is not \
+             interoperable with upstream cardano-tracer; events routed \
+             only to the Forwarder backend will be silently dropped \
+             unless a Yggdrasil-aware listener is bound to the socket. \
+             Use `Stdout HumanFormatColoured` / `Stdout HumanFormat` / \
+             `StdoutMachine` for guaranteed delivery.",
+            trace_fields([
+                ("socketPath", json!(socket_path)),
+                (
+                    "upstreamReference",
+                    json!("Cardano.Logging.Forwarding (cardano-node)"),
+                ),
+            ]),
+        );
+    }
 
     let nonce_state = sync_config
         .nonce_config

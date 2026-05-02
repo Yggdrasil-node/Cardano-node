@@ -188,6 +188,17 @@ impl NodeTracer {
         }
     }
 
+    /// Returns `Some(socket_path)` when the operator has enabled the
+    /// `Forwarder` backend in `TraceOptions`.  Useful for emitting an
+    /// upfront parity-gap warning at startup since the current
+    /// transport (see `trace_forwarder` module docs) does not actually
+    /// interoperate with upstream `cardano-tracer`.
+    pub fn forwarder_socket_path_if_configured(&self) -> Option<String> {
+        self.forwarder
+            .as_ref()
+            .map(|fwd| fwd.socket_path().to_owned())
+    }
+
     /// Return a disabled tracer that emits no local trace output.
     pub fn disabled() -> Self {
         Self {

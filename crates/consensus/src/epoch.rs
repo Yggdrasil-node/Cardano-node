@@ -90,11 +90,21 @@ impl EpochSchedule {
     }
 
     /// True when `slot` is in a different epoch than `prev_slot`.
+    ///
+    /// Matches upstream `Ouroboros.Consensus.Protocol.Ledger.Util.isNewEpoch`
+    /// where `prevSlot = Origin` is treated as `EpochNo 0` (the chain
+    /// genesis epoch).  A fresh chain whose first block is in epoch 0
+    /// therefore does NOT trigger a NEWEPOCH transition — the genesis
+    /// state already lives in epoch 0, with nothing to wrap up.  A node
+    /// resuming from `Origin` whose first applicable block lands in a
+    /// later epoch (extremely rare in practice, since cold sync starts
+    /// from `Origin` itself) still observes the boundary.
     pub fn is_new_epoch(&self, prev_slot: Option<SlotNo>, slot: SlotNo) -> bool {
-        match prev_slot {
-            None => true,
-            Some(ps) => self.slot_to_epoch(ps) != self.slot_to_epoch(slot),
-        }
+        let prev_epoch = match prev_slot {
+            None => EpochNo(0),
+            Some(ps) => self.slot_to_epoch(ps),
+        };
+        prev_epoch != self.slot_to_epoch(slot)
     }
 
     /// Shelley-region epoch size (used by reward formula / pool-perf
@@ -127,12 +137,16 @@ pub fn epoch_first_slot(epoch: EpochNo, epoch_size: EpochSize) -> SlotNo {
 /// Determines whether a slot falls in a new epoch relative to an optional
 /// previous slot.
 ///
-/// Reference: `isNewEpoch` in `Ouroboros.Consensus.Protocol.Ledger.Util`.
+/// Reference: `isNewEpoch` in `Ouroboros.Consensus.Protocol.Ledger.Util` —
+/// `Origin` is treated as `EpochNo 0`, so a chain whose first applicable
+/// block is itself in epoch 0 does NOT trigger NEWEPOCH (the chain state
+/// is already in epoch 0 from genesis).
 pub fn is_new_epoch(prev_slot: Option<SlotNo>, slot: SlotNo, epoch_size: EpochSize) -> bool {
-    match prev_slot {
-        None => true,
-        Some(ps) => slot_to_epoch(ps, epoch_size) != slot_to_epoch(slot, epoch_size),
-    }
+    let prev_epoch = match prev_slot {
+        None => EpochNo(0),
+        Some(ps) => slot_to_epoch(ps, epoch_size),
+    };
+    prev_epoch != slot_to_epoch(slot, epoch_size)
 }
 
 #[cfg(test)]
@@ -189,7 +203,15 @@ mod tests {
 
     #[test]
     fn is_new_epoch_none_prev() {
-        assert!(is_new_epoch(None, SlotNo(0), E100));
+        // Upstream `isNewEpoch _ Origin _` treats Origin as `EpochNo 0`:
+        // a chain whose first applicable block is itself in epoch 0 must
+        // NOT trigger NEWEPOCH — the genesis-initialized chain state is
+        // already in epoch 0 with no previous epoch to wrap up.
+        assert!(!is_new_epoch(None, SlotNo(0), E100));
+        assert!(!is_new_epoch(None, SlotNo(99), E100));
+        // First slot of epoch 1 with `Origin` predecessor still trips
+        // NEWEPOCH because `epoch(slot) > 0`.
+        assert!(is_new_epoch(None, SlotNo(100), E100));
         assert!(is_new_epoch(None, SlotNo(500), E100));
     }
 

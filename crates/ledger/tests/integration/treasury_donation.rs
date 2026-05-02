@@ -409,6 +409,7 @@ fn epoch_boundary_transfers_donations_to_treasury() {
         set: StakeSnapshot::default(),
         go: StakeSnapshot::default(),
         fee_pot: 0,
+        previous_fee_pot: 0,
     };
 
     let event = apply_epoch_boundary(

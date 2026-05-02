@@ -1988,9 +1988,16 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
                     .protocol_params()
                     .and_then(|params| params.d)
                     .and_then(|d| {
+                        // `effective_gen_delegs()` falls back to the pending
+                        // Shelley-genesis map until the first Shelley-family
+                        // block triggers activation, mirroring upstream
+                        // `Cardano.Ledger.Shelley.Genesis.initialState`
+                        // where `_dsGenDelegs` is populated from chain
+                        // birth.  Without this, preview/preprod cold sync
+                        // rejects slot 0 as `TpraosOverlaySlotNotActive`.
                         lookup_tpraos_overlay_schedule(
                             first_slot,
-                            ledger_state.gen_delegs(),
+                            ledger_state.effective_gen_delegs(),
                             d,
                             ctx.active_slot_coeff,
                             block.slot(),

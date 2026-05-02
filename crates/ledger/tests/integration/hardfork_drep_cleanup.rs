@@ -287,6 +287,7 @@ fn snapshots_with_stake(state: &LedgerState) -> StakeSnapshots {
         set: StakeSnapshot::default(),
         go: StakeSnapshot::default(),
         fee_pot: 0,
+        previous_fee_pot: 0,
     }
 }
 

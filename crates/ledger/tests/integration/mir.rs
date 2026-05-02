@@ -61,6 +61,7 @@ fn empty_snapshots() -> StakeSnapshots {
         set: StakeSnapshot::default(),
         go: StakeSnapshot::default(),
         fee_pot: 0,
+        previous_fee_pot: 0,
     }
 }
 

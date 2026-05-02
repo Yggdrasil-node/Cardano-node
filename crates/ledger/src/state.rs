@@ -6,9 +6,9 @@ use crate::eras::conway::ConwayTxBody;
 use crate::eras::mary::{MultiAsset, Value};
 use crate::eras::shelley::{ShelleyTxBody, ShelleyTxIn, ShelleyUtxo};
 use crate::types::{
-    Address, Anchor, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, MirPot, MirTarget,
-    Nonce, Point, PoolKeyHash, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
-    VrfKeyHash,
+    Address, Anchor, BlockNo, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, MirPot,
+    MirTarget, Nonce, Point, PoolKeyHash, PoolParams, Relay, RewardAccount, StakeCredential,
+    UnitInterval, VrfKeyHash,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
@@ -2092,6 +2092,7 @@ pub struct LedgerStateSnapshot {
     current_era: Era,
     tip: Point,
     latest_block_protocol_version: Option<(u64, u64)>,
+    tip_block_no: Option<BlockNo>,
     current_epoch: EpochNo,
     expected_network_id: Option<u8>,
     governance_actions: BTreeMap<crate::eras::conway::GovActionId, GovernanceActionState>,
@@ -2175,6 +2176,14 @@ impl LedgerStateSnapshot {
     /// [`LedgerState::latest_block_protocol_version`] for rationale.
     pub fn latest_block_protocol_version(&self) -> Option<(u64, u64)> {
         self.latest_block_protocol_version
+    }
+
+    /// Returns the chain-tip block number captured in this snapshot.
+    ///
+    /// Mirrors upstream `Ouroboros.Network.Block.Tip.tipBlockNo`.  `None`
+    /// when no block has been applied yet (`tip == Origin`).
+    pub fn tip_block_no(&self) -> Option<BlockNo> {
+        self.tip_block_no
     }
 
     /// Returns the expected reward-account network id, if configured.
@@ -2743,6 +2752,17 @@ pub struct LedgerState {
     /// `None` until the first non-Byron block is applied (Byron
     /// blocks have no header PV).
     pub latest_block_protocol_version: Option<(u64, u64)>,
+    /// Block number of the most recently applied block, mirrors
+    /// upstream `nesEs.esLState.lsTip.blockNo` at the chain tip.
+    ///
+    /// Updated by every successful `apply_block_validated`; flows into
+    /// `LedgerStateSnapshot::tip_block_no` so LSQ `GetChainBlockNo`
+    /// (upstream `[2]`) can return the actual block height instead of
+    /// falling back to `Origin`.
+    ///
+    /// `None` before any block is applied.  Reference:
+    /// `Ouroboros.Network.Block.Tip.tipBlockNo`.
+    pub tip_block_no: Option<BlockNo>,
     /// Current epoch known to the ledger state.
     pub current_epoch: EpochNo,
     /// Expected network id for reward-account validation.
@@ -3186,6 +3206,7 @@ impl CborDecode for LedgerState {
             current_era,
             tip,
             latest_block_protocol_version: None,
+            tip_block_no: None,
             current_epoch,
             expected_network_id,
             governance_actions,
@@ -3272,6 +3293,7 @@ impl LedgerState {
             current_era,
             tip: Point::Origin,
             latest_block_protocol_version: None,
+            tip_block_no: None,
             current_epoch: EpochNo(0),
             expected_network_id: None,
             governance_actions: BTreeMap::new(),
@@ -3412,6 +3434,31 @@ impl LedgerState {
     /// Returns a mutable reference to the active genesis delegation map.
     pub fn gen_delegs_mut(&mut self) -> &mut BTreeMap<GenesisHash, GenesisDelegationState> {
         &mut self.gen_delegs
+    }
+
+    /// Returns the genesis delegation map effective for header validation,
+    /// including any Shelley-genesis-derived entries that have not yet been
+    /// activated by the first Shelley-family block.
+    ///
+    /// Upstream `Cardano.Ledger.Shelley.Genesis.initialState` populates
+    /// `_dsGenDelegs` directly from `sgGenDelegs`, so the genesis delegate
+    /// map is available from chain birth.  Yggdrasil keeps the entries in
+    /// `pending_shelley_genesis_delegs` until the first Shelley-family
+    /// block triggers `maybe_activate_pending_shelley_genesis`, but the
+    /// TPraos overlay schedule and VRF checks must observe them
+    /// immediately — otherwise the very first preview/preprod block from
+    /// `Origin` is rejected as `TpraosOverlaySlotNotActive`.
+    ///
+    /// Reference: `Cardano.Protocol.TPraos.Rules.Overlay.overlaySchedule`
+    /// (`genDelegs` parameter sourced from `nesEs.esLState.lsDPState`).
+    pub fn effective_gen_delegs(&self) -> &BTreeMap<GenesisHash, GenesisDelegationState> {
+        if !self.gen_delegs.is_empty() {
+            &self.gen_delegs
+        } else if let Some(pending) = self.pending_shelley_genesis_delegs.as_ref() {
+            pending
+        } else {
+            &self.gen_delegs
+        }
     }
 
     /// Returns a reference to pending Shelley-era protocol parameter update
@@ -4130,6 +4177,7 @@ impl LedgerState {
             current_era: self.current_era,
             tip: self.tip,
             latest_block_protocol_version: self.latest_block_protocol_version,
+            tip_block_no: self.tip_block_no,
             current_epoch: self.current_epoch,
             expected_network_id: self.expected_network_id,
             governance_actions: self.governance_actions.clone(),
@@ -4308,6 +4356,7 @@ impl LedgerState {
 
         self.current_era = block.era;
         self.tip = Point::BlockPoint(block.header.slot_no, block.header.hash);
+        self.tip_block_no = Some(block.header.block_no);
         if let Some(pv) = block.header.protocol_version {
             self.latest_block_protocol_version = Some(pv);
         }
@@ -12762,6 +12811,59 @@ mod tests {
     }
 
     // -- RegisteredDrep activity tracking ---------------------------------
+
+    #[test]
+    fn effective_gen_delegs_falls_back_to_pending_before_activation() {
+        // Mirrors the preview/preprod cold-sync entry path: at chain birth
+        // `LedgerState::new(Era::Byron)` leaves `gen_delegs` empty and the
+        // genesis delegate map sits in `pending_shelley_genesis_delegs`
+        // until the first Shelley-family block triggers
+        // `maybe_activate_pending_shelley_genesis`.  The TPraos overlay
+        // schedule lookup must observe the entries immediately; otherwise
+        // slot 0 is rejected as `TpraosOverlaySlotNotActive`.
+        //
+        // Reference: `Cardano.Ledger.Shelley.Genesis.initialState`
+        // populates `_dsGenDelegs` from `sgGenDelegs` at chain birth.
+        let mut state = LedgerState::new(Era::Byron);
+        assert!(state.gen_delegs().is_empty());
+        assert!(state.effective_gen_delegs().is_empty());
+
+        let mut pending: BTreeMap<GenesisHash, GenesisDelegationState> = BTreeMap::new();
+        pending.insert(
+            [0x10; 28],
+            GenesisDelegationState {
+                delegate: [0xA0; 28],
+                vrf: [0xB0; 32],
+            },
+        );
+        state.configure_pending_shelley_genesis_delegs(pending.clone());
+
+        // `gen_delegs()` still reports empty (no activation has occurred).
+        assert!(state.gen_delegs().is_empty());
+        // `effective_gen_delegs()` exposes the pending map so VRF/overlay
+        // checks for the very first Shelley-family block work correctly.
+        let effective = state.effective_gen_delegs();
+        assert_eq!(effective.len(), 1);
+        assert_eq!(effective.get(&[0x10; 28]), pending.get(&[0x10; 28]));
+
+        // After activation `effective_gen_delegs` continues to mirror the
+        // active map (matches upstream behaviour where `dsGenDelegs` is
+        // the single source of truth post-genesis).
+        state.gen_delegs_mut().extend(pending.iter().map(|(k, v)| {
+            (
+                *k,
+                GenesisDelegationState {
+                    delegate: v.delegate,
+                    vrf: v.vrf,
+                },
+            )
+        }));
+        assert_eq!(state.effective_gen_delegs().len(), 1);
+        assert!(std::ptr::eq(
+            state.effective_gen_delegs(),
+            state.gen_delegs(),
+        ));
+    }
 
     #[test]
     fn test_registered_drep_new_has_no_activity() {
