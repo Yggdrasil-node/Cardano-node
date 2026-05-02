@@ -13,7 +13,7 @@ nav_order: 1
 **Workspace tests**: 4.7K+ passing, 0 failing; focused R246 tests,
 release build, focused R247 BlockFetch-prefix regression and bounded
 clean preview replay, focused R248 TPraos overlay tests, live preview
-resume to Babbage slot `412896`, `cargo check-all`, `cargo test-all`,
+resume to Babbage slot `868687`, `cargo check-all`, `cargo test-all`,
 and `cargo lint` pass after the latest patches
 
 This report documents yggdrasil's parity status against upstream
@@ -324,11 +324,17 @@ cargo build -p yggdrasil-node --release
 ```
 
 Operational verification used a copied preview database from before the
-failure and the existing preview producer config. The run passed former
-blocker slot `106220`, progressed into Babbage, and stopped only after
-operator SIGTERM at slot `412896`. A log scan found no
-`VRF verification failed`, `MalformedReferenceScripts`, ledger decode
-error, or panic.
+failure and the existing preview producer config. The first run passed
+former blocker slot `106220`, progressed into Babbage, and stopped only
+after operator SIGTERM at slot `412896`. A continuation run resumed that
+same database, crossed the former `730728` `MalformedReferenceScripts`
+region and the former `840719` `ValidationTagMismatch` region, and
+reached slot `868687`. Log scans found no `VRF verification failed`,
+`MalformedReferenceScripts`, `ValidationTagMismatch`, ledger decode
+error, or panic. Attempts to continue beyond `868687` hit repeated
+preview peer mux closures during reconnect/intersection; that is
+recorded as an operational peer availability issue, not a validation
+failure.
 
 ---
 

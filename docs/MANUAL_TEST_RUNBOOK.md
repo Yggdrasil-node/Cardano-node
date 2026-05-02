@@ -111,9 +111,14 @@ active genesis delegate. The fixed path verifies the selected genesis
 delegate cold key, delegate VRF key, and both TPraos VRF proofs, then
 skips the pool stake leader-threshold check for active overlay slots.
 Reserved non-active overlay slots still fail closed. A copied preview DB
-resume passed slot `106220` and reached Babbage slot `412896` with no
-`VRF verification failed`, `MalformedReferenceScripts`, ledger decode
-error, or panic in the log.
+resume passed slot `106220`, crossed the prior `730728`
+`MalformedReferenceScripts` and `840719` `ValidationTagMismatch` regions,
+and reached Babbage slot `868687` with no `VRF verification failed`,
+`MalformedReferenceScripts`, `ValidationTagMismatch`, ledger decode
+error, or panic in the log. Follow-up attempts to continue from
+`868687` can be blocked by preview peer mux closures during
+reconnect/intersection; retry with alternate public-root peers before
+treating that as a ledger or Plutus regression.
 
 This does **not** prove real block adoption until the generated pool is registered and delegated on-chain. With the default zero pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the preview stake-key deposit plus pool deposit and transaction fees (currently 502 tADA plus fees from the vendored preview genesis), submit the generated certificates, then wait for active stake before expecting leader election.
 

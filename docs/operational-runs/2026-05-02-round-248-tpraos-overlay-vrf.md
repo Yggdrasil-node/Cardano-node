@@ -45,6 +45,17 @@ block issuer was a genesis delegate selected by the overlay schedule.
     `immutable_tip = 404134`, `current_era = Babbage`, `current_epoch = 4`
   - log scan found no `VRF verification failed`, `MalformedReferenceScripts`,
     `ledger decode error`, or panic.
+- Continuation live preview resume on the same copied DB:
+  - resumed from slot `412896`
+  - crossed the former `MalformedReferenceScripts` region at slot `730728`
+  - crossed the former `ValidationTagMismatch` region at slot `840719`
+  - reached slot `868687`, epoch `10`
+  - log scan found no `VRF verification failed`, `MalformedReferenceScripts`,
+    `ValidationTagMismatch`, `ledger decode error`, or panic.
+  - attempts to continue from `868687` against alternate resolved preview
+    bootstrap IPs hit repeated peer mux closure during
+    reconnect/intersection. This was treated as operational peer availability,
+    not as a ledger, Plutus, or consensus validation failure.
 
 ### Upstream References
 
