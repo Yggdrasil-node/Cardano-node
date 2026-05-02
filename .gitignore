@@ -37,6 +37,9 @@ tmp
 **/db/
 **/chain/
 **/ledger/
+# Don't ignore the source crate, which happens to share the name.
+!crates/ledger/
+!crates/ledger/**
 wallet/
 metadata/
 keys/
