@@ -102,6 +102,19 @@ path uses the first announced concrete header as the BlockFetch lower
 bound; a fresh preview replay verified slots `0`, `60`, `300`, and
 `320` are all stored before continuing to slot `101100`.
 
+R248 TPraos overlay VRF gate:
+
+Preview can still exercise Shelley-family TPraos overlay slots before
+Conway. The former failure was an `invalid VRF proof` style stop at
+Alonzo slot `106220`, where the upstream overlay schedule selected an
+active genesis delegate. The fixed path verifies the selected genesis
+delegate cold key, delegate VRF key, and both TPraos VRF proofs, then
+skips the pool stake leader-threshold check for active overlay slots.
+Reserved non-active overlay slots still fail closed. A copied preview DB
+resume passed slot `106220` and reached Babbage slot `412896` with no
+`VRF verification failed`, `MalformedReferenceScripts`, ledger decode
+error, or panic in the log.
+
 This does **not** prove real block adoption until the generated pool is registered and delegated on-chain. With the default zero pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the preview stake-key deposit plus pool deposit and transaction fees (currently 502 tADA plus fees from the vendored preview genesis), submit the generated certificates, then wait for active stake before expecting leader election.
 
 When constructing the registration transaction manually, keep certificate order deterministic: stake-address registration first, pool registration second, stake delegation third. Submitting delegation before the pool-registration certificate is processed is rejected by the preview ledger as `DelegateeStakePoolNotRegisteredDELEG`.

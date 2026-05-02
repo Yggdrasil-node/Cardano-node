@@ -20,7 +20,7 @@ use yggdrasil_consensus::{
     FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
     NonceDerivation, NonceEvolutionConfig, NonceEvolutionState, OcertCounters,
     OpCert as ConsensusOpCert, SecurityParam, TentativeState, VrfMode, judge_header_slot,
-    verify_header, verify_leader_proof, verify_nonce_proof,
+    verify_header, verify_leader_proof, verify_leader_proof_output, verify_nonce_proof,
 };
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::ed25519::{Signature as Ed25519Signature, VerificationKey};
@@ -29,10 +29,10 @@ use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_ledger::{
     AlonzoBlock, BYRON_SLOTS_PER_EPOCH, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock,
     CborDecode, CborEncode, ChainDepStateContext, ConwayBlock, Decoder, EpochBoundaryEvent, Era,
-    HeaderHash, LedgerError, LedgerState, Nonce, Point, PoolKeyHash, PraosHeader, PraosHeaderBody,
-    ShelleyBlock, ShelleyHeader, ShelleyHeaderBody, ShelleyOpCert, ShelleyTxIn, SlotNo,
-    StakeSnapshots, Tx, TxId, UnitInterval, apply_epoch_boundary, compute_block_body_hash,
-    compute_stake_snapshot,
+    GenesisDelegationState, GenesisHash, HeaderHash, LedgerError, LedgerState, Nonce, Point,
+    PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
+    ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
+    apply_epoch_boundary, compute_block_body_hash, compute_stake_snapshot,
 };
 use yggdrasil_mempool::Mempool;
 use yggdrasil_network::{
@@ -1767,6 +1767,78 @@ pub(crate) struct VrfVerificationContext<'a> {
     pub active_slot_coeff: &'a ActiveSlotCoeff,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TpraosOverlaySlot<'a> {
+    NonActive,
+    Active {
+        genesis_hash: GenesisHash,
+        delegation: &'a GenesisDelegationState,
+    },
+}
+
+fn is_tpraos_block(block: &MultiEraBlock) -> bool {
+    matches!(block, MultiEraBlock::Shelley(_) | MultiEraBlock::Alonzo(_))
+}
+
+fn unit_interval_is_zero(d: UnitInterval) -> bool {
+    d.denominator == 0 || d.numerator == 0
+}
+
+fn ceil_ratio_u128(numerator: u128, denominator: u128) -> u128 {
+    if denominator == 0 {
+        return 0;
+    }
+    numerator.div_ceil(denominator)
+}
+
+fn overlay_step(offset: u64, d: UnitInterval) -> u128 {
+    ceil_ratio_u128(
+        u128::from(offset) * u128::from(d.numerator),
+        u128::from(d.denominator),
+    )
+}
+
+fn is_overlay_slot(first_slot: SlotNo, d: UnitInterval, slot: SlotNo) -> bool {
+    if unit_interval_is_zero(d) || slot.0 < first_slot.0 {
+        return false;
+    }
+    let offset = slot.0 - first_slot.0;
+    overlay_step(offset, d) < overlay_step(offset.saturating_add(1), d)
+}
+
+fn lookup_tpraos_overlay_schedule<'a>(
+    first_slot: SlotNo,
+    gen_delegs: &'a BTreeMap<GenesisHash, GenesisDelegationState>,
+    d: UnitInterval,
+    active_slot_coeff: &ActiveSlotCoeff,
+    slot: SlotNo,
+) -> Option<TpraosOverlaySlot<'a>> {
+    if !is_overlay_slot(first_slot, d, slot) {
+        return None;
+    }
+
+    if gen_delegs.is_empty() {
+        return Some(TpraosOverlaySlot::NonActive);
+    }
+
+    let offset = slot.0 - first_slot.0;
+    let position = overlay_step(offset, d);
+    let asc_inv = (1.0 / active_slot_coeff.to_f64()).floor() as u128;
+    if asc_inv == 0 || !position.is_multiple_of(asc_inv) {
+        return Some(TpraosOverlaySlot::NonActive);
+    }
+
+    let genesis_idx = ((position / asc_inv) % gen_delegs.len() as u128) as usize;
+    gen_delegs
+        .iter()
+        .nth(genesis_idx)
+        .map(|(genesis_hash, delegation)| TpraosOverlaySlot::Active {
+            genesis_hash: *genesis_hash,
+            delegation,
+        })
+        .or(Some(TpraosOverlaySlot::NonActive))
+}
+
 pub(crate) struct ChainDepStateTracking<'a> {
     pub nonce_state: &'a mut Option<NonceEvolutionState>,
     pub origin_nonce_state: Option<&'a NonceEvolutionState>,
@@ -1829,26 +1901,67 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
 
         // VRF leader eligibility check using the `set` snapshot.
         if let Some(ctx) = vrf_ctx {
-            let stake_dist = snapshots.set.pool_stake_distribution();
-            if stake_dist.total_active_stake() > 0 {
-                let epoch_nonce = next_vrf_nonce_cursor
-                    .as_ref()
-                    .map(|state| state.epoch_nonce)
-                    .unwrap_or(ctx.nonce_state.epoch_nonce);
-                let valid = verify_block_vrf_with_stake(
-                    block,
-                    epoch_nonce,
-                    &stake_dist,
-                    ctx.active_slot_coeff,
-                )?;
-                if !valid {
+            let epoch_nonce = next_vrf_nonce_cursor
+                .as_ref()
+                .map(|state| state.epoch_nonce)
+                .unwrap_or(ctx.nonce_state.epoch_nonce);
+
+            let overlay_slot = if is_tpraos_block(block) {
+                let block_epoch = epoch_schedule.slot_to_epoch(block.slot());
+                let first_slot = epoch_schedule.epoch_first_slot(block_epoch);
+                ledger_state
+                    .protocol_params()
+                    .and_then(|params| params.d)
+                    .and_then(|d| {
+                        lookup_tpraos_overlay_schedule(
+                            first_slot,
+                            ledger_state.gen_delegs(),
+                            d,
+                            ctx.active_slot_coeff,
+                            block.slot(),
+                        )
+                    })
+            } else {
+                None
+            };
+
+            let valid = match overlay_slot {
+                Some(TpraosOverlaySlot::NonActive) => {
                     return Err(SyncError::VrfVerification {
                         slot: block.slot().0,
                         era: block.era_label(),
                         epoch_nonce,
-                        source: ConsensusError::VrfLeaderCheckFailed,
+                        source: ConsensusError::TpraosOverlaySlotNotActive {
+                            slot: block.slot().0,
+                        },
                     });
                 }
+                Some(TpraosOverlaySlot::Active {
+                    genesis_hash: _,
+                    delegation,
+                }) => verify_block_vrf_with_genesis_delegate(block, epoch_nonce, delegation)?,
+                None => {
+                    let stake_dist = snapshots.set.pool_stake_distribution();
+                    if stake_dist.total_active_stake() == 0 {
+                        true
+                    } else {
+                        verify_block_vrf_with_stake(
+                            block,
+                            epoch_nonce,
+                            &stake_dist,
+                            ctx.active_slot_coeff,
+                        )?
+                    }
+                }
+            };
+
+            if !valid {
+                return Err(SyncError::VrfVerification {
+                    slot: block.slot().0,
+                    era: block.era_label(),
+                    epoch_nonce,
+                    source: ConsensusError::VrfLeaderCheckFailed,
+                });
             }
         }
         if let (Some(cursor), Some(next)) = (vrf_nonce_cursor.as_mut(), next_vrf_nonce_cursor) {
@@ -4151,6 +4264,76 @@ pub fn verify_block_vrf_with_stake(
     };
 
     verify_block_vrf(block, &params)
+}
+
+/// Verify a TPraos overlay block against the selected genesis delegation.
+///
+/// Upstream `pbftVrfChecks` verifies the nonce and leader VRF proofs with the
+/// genesis delegate's registered VRF key, but does not apply the pool stake
+/// leader-value threshold. The overlay schedule already selected the delegate
+/// for the slot.
+///
+/// Reference: `Cardano.Protocol.TPraos.Rules.Overlay` `pbftVrfChecks`.
+fn verify_block_vrf_with_genesis_delegate(
+    block: &MultiEraBlock,
+    epoch_nonce: Nonce,
+    delegation: &GenesisDelegationState,
+) -> Result<bool, SyncError> {
+    let issuer_vkey_bytes = match block_issuer_vkey(block) {
+        Some(vk) => vk,
+        None => return Ok(true), // Byron
+    };
+    let issuer_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey_bytes).0;
+    if issuer_hash != delegation.delegate {
+        return Err(SyncError::Consensus(ConsensusError::WrongGenesisColdKey {
+            expected: delegation.delegate,
+            actual: issuer_hash,
+        }));
+    }
+
+    let Some(vrf_vkey_bytes) = block_vrf_vkey(block) else {
+        return Ok(false);
+    };
+    let vrf_hash_block = yggdrasil_crypto::blake2b::hash_bytes_256(&vrf_vkey_bytes).0;
+    if vrf_hash_block != delegation.vrf {
+        return Err(SyncError::Consensus(ConsensusError::VrfKeyMismatch {
+            expected: delegation.vrf,
+            actual: vrf_hash_block,
+        }));
+    }
+
+    let vk = VrfVerificationKey(vrf_vkey_bytes);
+    match block {
+        MultiEraBlock::Shelley(s) => {
+            let slot = SlotNo(s.header.body.slot);
+            verify_leader_proof_output(
+                &vk,
+                slot,
+                epoch_nonce,
+                &s.header.body.leader_vrf.proof,
+                VrfMode::TPraos,
+            )
+            .map_err(SyncError::Consensus)?;
+            verify_nonce_proof(&vk, slot, epoch_nonce, &s.header.body.nonce_vrf.proof)
+                .map_err(SyncError::Consensus)?;
+            Ok(true)
+        }
+        MultiEraBlock::Alonzo(a) => {
+            let slot = SlotNo(a.header.body.slot);
+            verify_leader_proof_output(
+                &vk,
+                slot,
+                epoch_nonce,
+                &a.header.body.leader_vrf.proof,
+                VrfMode::TPraos,
+            )
+            .map_err(SyncError::Consensus)?;
+            verify_nonce_proof(&vk, slot, epoch_nonce, &a.header.body.nonce_vrf.proof)
+                .map_err(SyncError::Consensus)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Applies a multi-era block to the nonce evolution state machine.
@@ -6584,6 +6767,70 @@ mod tests {
 
     fn stake_cred(seed: u8) -> StakeCredential {
         StakeCredential::AddrKeyHash([seed; 28])
+    }
+
+    fn genesis_delegation(seed: u8) -> GenesisDelegationState {
+        GenesisDelegationState {
+            delegate: [seed; 28],
+            vrf: [seed; 32],
+        }
+    }
+
+    #[test]
+    fn tpraos_overlay_schedule_selects_active_genesis_delegate() {
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert([0x10; 28], genesis_delegation(0xA0));
+        gen_delegs.insert([0x20; 28], genesis_delegation(0xB0));
+        let d = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid asc");
+
+        let selected =
+            lookup_tpraos_overlay_schedule(SlotNo(86_400), &gen_delegs, d, &asc, SlotNo(86_420));
+
+        match selected {
+            Some(TpraosOverlaySlot::Active {
+                genesis_hash,
+                delegation,
+            }) => {
+                assert_eq!(genesis_hash, [0x20; 28]);
+                assert_eq!(delegation.delegate, [0xB0; 28]);
+            }
+            other => panic!("expected active overlay slot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tpraos_overlay_schedule_reports_reserved_non_active_slots() {
+        let mut gen_delegs = BTreeMap::new();
+        gen_delegs.insert([0x10; 28], genesis_delegation(0xA0));
+        let d = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid asc");
+
+        let selected =
+            lookup_tpraos_overlay_schedule(SlotNo(86_400), &gen_delegs, d, &asc, SlotNo(86_401));
+
+        assert!(matches!(selected, Some(TpraosOverlaySlot::NonActive)));
+    }
+
+    #[test]
+    fn tpraos_overlay_schedule_ignores_fully_decentralized_slots() {
+        let gen_delegs = BTreeMap::new();
+        let d = UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        };
+        let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid asc");
+
+        let selected =
+            lookup_tpraos_overlay_schedule(SlotNo(86_400), &gen_delegs, d, &asc, SlotNo(86_400));
+
+        assert!(selected.is_none());
     }
 
     /// Build a snapshot where each pool has the specified stake via a

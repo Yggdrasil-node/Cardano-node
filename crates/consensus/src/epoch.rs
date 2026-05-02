@@ -73,6 +73,22 @@ impl EpochSchedule {
         }
     }
 
+    /// Return the first absolute slot of `epoch` under this schedule.
+    ///
+    /// This is the era-aware counterpart of [`epoch_first_slot`]. It is needed
+    /// by TPraos overlay schedule checks, whose upstream input is
+    /// `epochInfoFirst (epochInfoEpoch slot)`.
+    pub fn epoch_first_slot(&self, epoch: EpochNo) -> SlotNo {
+        match self.byron_shelley_transition {
+            Some((boundary_slot, first_shelley_epoch)) if epoch.0 >= first_shelley_epoch => {
+                let post_epoch = epoch.0 - first_shelley_epoch;
+                SlotNo(boundary_slot + post_epoch * self.slots_per_epoch.0)
+            }
+            Some(_) => SlotNo(epoch.0 * self.byron_slots_per_epoch),
+            None => epoch_first_slot(epoch, self.slots_per_epoch),
+        }
+    }
+
     /// True when `slot` is in a different epoch than `prev_slot`.
     pub fn is_new_epoch(&self, prev_slot: Option<SlotNo>, slot: SlotNo) -> bool {
         match prev_slot {
@@ -151,6 +167,15 @@ mod tests {
     #[test]
     fn epoch_first_slot_mainnet() {
         assert_eq!(epoch_first_slot(EpochNo(100), MAINNET), SlotNo(43_200_000));
+    }
+
+    #[test]
+    fn era_aware_epoch_first_slot_handles_byron_prefix() {
+        let schedule = EpochSchedule::with_byron_prefix(E100, 20, 60, 3);
+        assert_eq!(schedule.epoch_first_slot(EpochNo(0)), SlotNo(0));
+        assert_eq!(schedule.epoch_first_slot(EpochNo(2)), SlotNo(40));
+        assert_eq!(schedule.epoch_first_slot(EpochNo(3)), SlotNo(60));
+        assert_eq!(schedule.epoch_first_slot(EpochNo(4)), SlotNo(160));
     }
 
     #[test]

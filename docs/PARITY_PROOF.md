@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 247)
+title: Parity Proof Report (Round 248)
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,13 +7,14 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R247 refresh (2026-05-02)
-**Cumulative arc**: R1 → R247
+**Document round**: R248 refresh (2026-05-02)
+**Cumulative arc**: R1 → R248
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
 **Workspace tests**: 4.7K+ passing, 0 failing; focused R246 tests,
-release build, `cargo check-all`, `cargo test-all`, and `cargo lint`
-pass after the Plutus/certificate/runtime recovery patches; focused
-R247 BlockFetch-prefix regression and bounded clean preview replay pass
+release build, focused R247 BlockFetch-prefix regression and bounded
+clean preview replay, focused R248 TPraos overlay tests, live preview
+resume to Babbage slot `412896`, `cargo check-all`, `cargo test-all`,
+and `cargo lint` pass after the latest patches
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the
@@ -231,7 +232,7 @@ cargo build -p yggdrasil-node --release
 ```
 
 These focused gates passed, and the broad `cargo check-all`,
-`cargo test-all`, and `cargo lint` gates also pass after the latest R246
+`cargo test-all`, and `cargo lint` gates also pass after the latest
 patches.
 
 Operational replay:
@@ -291,6 +292,43 @@ preview producer config. The replay stored the early prefix blocks
 including slots `0`, `60`, `300`, and `320`, resolved the previously
 missing Byron lineage, and advanced to slot `101100` before the bounded
 run ended.
+
+---
+
+## 2f. Preview TPraos overlay VRF parity
+
+R248 closes the preview verified-sync stop at Alonzo slot `106220`.
+That slot is an active TPraos overlay slot because preview starts from
+Shelley genesis with `decentralisationParam = 1`. Upstream validates
+this branch with `Cardano.Protocol.TPraos.Rules.Overlay.pbftVrfChecks`:
+the selected genesis delegate cold key and VRF key must match, both
+TPraos VRF proofs must verify, and the pool stake leader-threshold check
+is not applied.
+
+Local behavior now matches that split:
+
+| Overlay case | R248 behavior |
+|---|---|
+| Active overlay slot | Verify selected genesis delegate cold key, delegate VRF key, leader VRF proof, and nonce VRF proof; skip pool stake threshold |
+| Reserved non-active overlay slot | Fail closed with `TpraosOverlaySlotNotActive` |
+| Non-overlay TPraos slot | Keep existing pool stake distribution threshold validation |
+
+Focused verification:
+
+```text
+cargo test -p yggdrasil-consensus praos::tests --lib
+cargo test -p yggdrasil-consensus epoch::tests --lib
+cargo test -p yggdrasil-node tpraos_overlay_schedule --lib
+cargo test -p yggdrasil-node sync:: --lib
+cargo build -p yggdrasil-node --release
+```
+
+Operational verification used a copied preview database from before the
+failure and the existing preview producer config. The run passed former
+blocker slot `106220`, progressed into Babbage, and stopped only after
+operator SIGTERM at slot `412896`. A log scan found no
+`VRF verification failed`, `MalformedReferenceScripts`, ledger decode
+error, or panic.
 
 ---
 
@@ -503,6 +541,7 @@ upstream while preserving SHA-anchored vendored fixture provenance.
 | **Ledger drift** | Conway BBODY testnet `HeaderProtVerTooHigh` grace | ✅ closed | R245 |
 | **Plutus replay** | Preview reference-script well-formedness/runtime parity | ✅ closed | R246 |
 | **Preview prefix fetch** | Origin-start verified sync preserves first ChainSync-announced BlockFetch prefix | ✅ closed | R247 |
+| **TPraos overlay VRF** | Active overlay slots use genesis-delegate proof checks and skip pool stake threshold | ✅ closed | R248 |
 | **E.2** | Mainnet rehearsal (24h+) | ⏳ deferred | (long-running observation) |
 | **E.3** | Parity proof report | ✅ this document (R206) | — |
 

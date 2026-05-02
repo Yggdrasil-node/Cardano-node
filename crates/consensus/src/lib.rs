@@ -60,5 +60,6 @@ pub use opcert::{OcertCounters, OpCert, check_kes_period, kes_period_of_slot};
 /// Active slot coefficient wrapper, threshold, and leader check helpers.
 pub use praos::{
     ActiveSlotCoeff, VrfMode, VrfUsage, check_is_leader, check_leader_value, leadership_threshold,
-    praos_vrf_input, tpraos_vrf_seed, verify_leader_proof, verify_nonce_proof, vrf_input,
+    praos_vrf_input, tpraos_vrf_seed, verify_leader_proof, verify_leader_proof_output,
+    verify_nonce_proof, vrf_input,
 };

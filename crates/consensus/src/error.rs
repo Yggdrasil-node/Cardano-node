@@ -90,6 +90,29 @@ pub enum ConsensusError {
     #[error("VRF leader eligibility check failed")]
     VrfLeaderCheckFailed,
 
+    /// A block occupied a TPraos overlay slot that is reserved but not active.
+    ///
+    /// Reference: `NotActiveSlotOVERLAY` in
+    /// `Cardano.Protocol.TPraos.Rules.Overlay`.
+    #[error("TPraos overlay slot {slot} is not active")]
+    TpraosOverlaySlotNotActive {
+        /// The reserved overlay slot that must remain silent.
+        slot: u64,
+    },
+
+    /// A block in an active TPraos overlay slot was not issued by the selected
+    /// genesis delegate.
+    ///
+    /// Reference: `WrongGenesisColdKeyOVERLAY` in
+    /// `Cardano.Protocol.TPraos.Rules.Overlay`.
+    #[error("wrong genesis delegate cold key: expected {expected:?}, got {actual:?}")]
+    WrongGenesisColdKey {
+        /// The delegate key hash selected by the overlay schedule.
+        expected: [u8; 28],
+        /// The block issuer key hash.
+        actual: [u8; 28],
+    },
+
     /// The block issuer's pool key hash has no entry in the OpCert counter
     /// map and is also absent from the stake distribution.
     ///

@@ -436,6 +436,27 @@ pub fn verify_leader_proof(
     active_slot_coeff: &ActiveSlotCoeff,
     mode: VrfMode,
 ) -> Result<bool, ConsensusError> {
+    let output = verify_leader_proof_output(vk, slot, epoch_nonce, proof_bytes, mode)?;
+
+    check_leader_value(&output, sigma_num, sigma_den, active_slot_coeff, mode)
+}
+
+/// Verifies a claimed leader VRF proof and returns its output without applying
+/// the stake-threshold leader check.
+///
+/// This is needed for TPraos overlay slots: upstream `pbftVrfChecks` verifies
+/// `bheaderL` with `mkSeed seedL slot eta0` but does not call
+/// `checkLeaderValue`, because the overlay schedule already selected the
+/// genesis delegate for the slot.
+///
+/// Reference: `Cardano.Protocol.TPraos.Rules.Overlay` `pbftVrfChecks`.
+pub fn verify_leader_proof_output(
+    vk: &VrfVerificationKey,
+    slot: SlotNo,
+    epoch_nonce: Nonce,
+    proof_bytes: &[u8],
+    mode: VrfMode,
+) -> Result<VrfOutput, ConsensusError> {
     use yggdrasil_crypto::vrf::{VRF_PROOF_SIZE, VrfProof};
 
     let proof_arr: [u8; VRF_PROOF_SIZE] = proof_bytes
@@ -448,7 +469,7 @@ pub fn verify_leader_proof(
         .verify(&input, &proof)
         .map_err(|_| ConsensusError::InvalidVrfProof)?;
 
-    check_leader_value(&output, sigma_num, sigma_den, active_slot_coeff, mode)
+    Ok(output)
 }
 
 /// Verifies a TPraos nonce VRF proof (`bheaderEta`) for a Shelley-through-Alonzo
