@@ -71,7 +71,7 @@ fn alonzo_block_rejects_unreferenced_supplemental_datum() {
     // Witness set: native script + an orphan datum that isn't referenced anywhere.
     let mut ws = empty_witness_set();
     ws.native_scripts.push(native);
-    let orphan_datum = PlutusData::Integer(999.into());
+    let orphan_datum = PlutusData::integer(999);
     ws.plutus_data.push(orphan_datum.clone());
     let orphan_hash = {
         use yggdrasil_ledger::CborEncode;

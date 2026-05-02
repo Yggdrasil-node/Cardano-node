@@ -92,7 +92,7 @@ fn alonzo_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     ws.redeemers.push(Redeemer {
         tag: 0, // Spending
         index: 0,
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -234,7 +234,7 @@ fn babbage_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -324,7 +324,7 @@ fn conway_submitted_tx_rejects_extra_redeemer_for_native_script_input() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -419,7 +419,7 @@ fn conway_submitted_tx_rejects_extra_minting_redeemer() {
     let redeemer = Redeemer {
         tag: 1,   // Minting
         index: 0, // first sorted policy
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,

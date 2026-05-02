@@ -43,7 +43,7 @@ fn empty_witness_set() -> ShelleyWitnessSet {
 }
 
 fn witness_datum() -> PlutusData {
-    PlutusData::Integer(0)
+    PlutusData::integer(0)
 }
 
 fn witness_datum_hash() -> [u8; 32] {
@@ -182,7 +182,7 @@ fn alonzo_block_accepts_plutus_script_locked_input_with_datum_hash() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -285,7 +285,7 @@ fn babbage_block_accepts_plutus_script_locked_input_with_inline_datum() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,

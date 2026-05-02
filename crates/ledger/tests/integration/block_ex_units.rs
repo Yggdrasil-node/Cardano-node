@@ -27,7 +27,7 @@ fn make_witness_set_with_redeemer(mem: u64, steps: u64) -> Vec<u8> {
         redeemers: vec![Redeemer {
             tag: 0,
             index: 0,
-            data: PlutusData::Integer(0),
+            data: PlutusData::integer(0),
             ex_units: ExUnits { mem, steps },
         }],
         plutus_v2_scripts: vec![],

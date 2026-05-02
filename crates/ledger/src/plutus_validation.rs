@@ -1765,9 +1765,8 @@ fn certifying_script_hash_from_cert(cert: &DCert) -> Option<[u8; 28]> {
     use crate::types::DRep;
 
     match cert {
-        DCert::AccountRegistration(cred)
+        DCert::AccountRegistrationDeposit(cred, _)
         | DCert::AccountUnregistration(cred)
-        | DCert::AccountRegistrationDeposit(cred, _)
         | DCert::AccountUnregistrationDeposit(cred, _)
         | DCert::DelegationToStakePool(cred, _)
         | DCert::AccountRegistrationDelegationToStakePool(cred, _, _)
@@ -1785,7 +1784,8 @@ fn certifying_script_hash_from_cert(cert: &DCert) -> Option<[u8; 28]> {
                 _ => None,
             })
         }
-        DCert::PoolRegistration(_)
+        DCert::AccountRegistration(_)
+        | DCert::PoolRegistration(_)
         | DCert::PoolRetirement(_, _)
         | DCert::GenesisDelegation(_, _, _)
         | DCert::MoveInstantaneousReward(_, _) => None,
@@ -2631,6 +2631,54 @@ mod tests {
             StakeCredential::AddrKeyHash([0x11; 28]),
             DRep::ScriptHash(script_hash),
         )];
+        let mut required = std::collections::HashSet::new();
+        required.insert(script_hash);
+        let utxo = MultiEraUtxo::new();
+
+        let result = validate_plutus_scripts(
+            Some(&AlwaysSucceeds),
+            Some(&ws.to_cbor_bytes()),
+            &required,
+            &utxo,
+            &[],
+            &[],
+            &certs,
+            &[],
+            &[],
+            &[],
+            &TxContext::default(),
+            None,
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_certifying_script_skips_legacy_registration_without_redeemer() {
+        let script_bytes = vec![0x01, 0x02, 0x03];
+        let script_hash = plutus_script_hash(PlutusVersion::V2, &script_bytes);
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![Redeemer {
+                tag: 2,
+                index: 1,
+                data: PlutusData::integer(0),
+                ex_units: ExUnits {
+                    mem: 1000,
+                    steps: 2000,
+                },
+            }],
+            plutus_v2_scripts: vec![script_bytes],
+            plutus_v3_scripts: vec![],
+        };
+        let certs = vec![
+            DCert::AccountRegistration(StakeCredential::ScriptHash(script_hash)),
+            DCert::DelegationToStakePool(StakeCredential::ScriptHash(script_hash), [0x44; 28]),
+        ];
         let mut required = std::collections::HashSet::new();
         required.insert(script_hash);
         let utxo = MultiEraUtxo::new();

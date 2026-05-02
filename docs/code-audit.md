@@ -402,7 +402,7 @@ Same pattern as L-8. `usize::MAX` boundary unreachable in practice (would requir
 #### I-5 — Plutus CEK machine has explicit budget and depth bounds
 
 - `crates/plutus/src/machine.rs` uses heap frames (`Vec<Frame>` continuation stack), so does not rely on the native call stack for evaluation depth. It applies a step budget (`max_steps = 10_000_000_000`) and the upstream `ExBudget` (cpu, mem) per step.
-- `crates/plutus/src/flat.rs` sets `MAX_TERM_DECODE_DEPTH = 128` to prevent native-stack overflow during recursive `decode_term`. `read_natural`/`read_integer` are bit-bounded (u64/i128). `read_list` does no `with_capacity`, so even adversarial Plutus scripts cannot trigger the C-1 / H-1 pattern in this decoder.
+- `crates/plutus/src/flat.rs` sets `MAX_TERM_DECODE_DEPTH = 128` to prevent native-stack overflow during recursive `decode_term`. `read_natural` is bounded to `u64`; `read_integer` is arbitrary precision and remains script-size/depth bounded rather than clamped to `i128`. `read_list` does no `with_capacity`, so even adversarial Plutus scripts cannot trigger the C-1 / H-1 pattern in this decoder.
 
 #### I-6 — Storage layer uses correct atomic-write discipline
 
@@ -655,7 +655,7 @@ This section covers every non-trivial file. Files marked `(read in full)` were r
 |---|---|
 | `machine.rs` (read in part — 1 280 lines) | CEK with heap frames + step budget + max_steps cap. See I-5. |
 | `builtins.rs` (read structurally — 2 972 lines) | Builtin function evaluation. Per-builtin cost charging via `cost_model`. |
-| `flat.rs` (read in part — 1 106 lines) | Flat decoder with `MAX_TERM_DECODE_DEPTH = 128`. read_natural / read_integer / read_bytestring all bounded. read_list uses `Vec::new` (no with_capacity exposure). See I-5. |
+| `flat.rs` (read in part — 1 106 lines) | Flat decoder with `MAX_TERM_DECODE_DEPTH = 128`. read_natural / read_bytestring are bounded, and read_integer is arbitrary precision but bounded by script size/depth rather than `i128`. read_list uses `Vec::new` (no with_capacity exposure). See I-5. |
 | `cost_model.rs` (read structurally — 2 351 lines) | Cost-model parser + evaluation table. |
 | `types.rs` (read in part — 1 657 lines) | Term / Value / ExBudget / DefaultFun. ExBudget::spend (L-8). |
 | `error.rs`, `lib.rs` | Boilerplate. |

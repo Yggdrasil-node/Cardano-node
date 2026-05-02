@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn plutus_data_integer_small_round_trip() {
-    let pd = PlutusData::Integer(42);
+    let pd = PlutusData::integer(42);
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(pd, decoded);
@@ -10,7 +10,7 @@ fn plutus_data_integer_small_round_trip() {
 
 #[test]
 fn plutus_data_negative_integer_round_trip() {
-    let pd = PlutusData::Integer(-100);
+    let pd = PlutusData::integer(-100);
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(pd, decoded);
@@ -19,7 +19,7 @@ fn plutus_data_negative_integer_round_trip() {
 #[test]
 fn plutus_data_big_uint_round_trip() {
     let big = i128::from(u64::MAX) + 1;
-    let pd = PlutusData::Integer(big);
+    let pd = PlutusData::integer(big);
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(pd, decoded);
@@ -28,7 +28,7 @@ fn plutus_data_big_uint_round_trip() {
 #[test]
 fn plutus_data_big_nint_round_trip() {
     let big_neg = -(i128::from(u64::MAX)) - 2;
-    let pd = PlutusData::Integer(big_neg);
+    let pd = PlutusData::integer(big_neg);
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(pd, decoded);
@@ -53,8 +53,8 @@ fn plutus_data_empty_bytes_round_trip() {
 #[test]
 fn plutus_data_list_round_trip() {
     let pd = PlutusData::List(vec![
-        PlutusData::Integer(1),
-        PlutusData::Integer(2),
+        PlutusData::integer(1),
+        PlutusData::integer(2),
         PlutusData::Bytes(vec![0xFF]),
     ]);
     let bytes = pd.to_cbor_bytes();
@@ -73,8 +73,8 @@ fn plutus_data_empty_list_round_trip() {
 #[test]
 fn plutus_data_map_round_trip() {
     let pd = PlutusData::Map(vec![
-        (PlutusData::Bytes(b"key1".to_vec()), PlutusData::Integer(10)),
-        (PlutusData::Integer(0), PlutusData::Bytes(b"val".to_vec())),
+        (PlutusData::Bytes(b"key1".to_vec()), PlutusData::integer(10)),
+        (PlutusData::integer(0), PlutusData::Bytes(b"val".to_vec())),
     ]);
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
@@ -92,7 +92,7 @@ fn plutus_data_empty_map_round_trip() {
 #[test]
 fn plutus_data_constr_compact_round_trip() {
     for alt in 0..=6u64 {
-        let pd = PlutusData::Constr(alt, vec![PlutusData::Integer(alt as i128)]);
+        let pd = PlutusData::Constr(alt, vec![PlutusData::integer(alt as i128)]);
         let bytes = pd.to_cbor_bytes();
         let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
         assert_eq!(pd, decoded, "failed for alternative {alt}");
@@ -103,7 +103,7 @@ fn plutus_data_constr_compact_round_trip() {
 fn plutus_data_constr_general_form_round_trip() {
     let pd = PlutusData::Constr(
         7,
-        vec![PlutusData::Bytes(vec![0x01]), PlutusData::Integer(99)],
+        vec![PlutusData::Bytes(vec![0x01]), PlutusData::integer(99)],
     );
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
@@ -137,12 +137,12 @@ fn plutus_data_nested_complex_round_trip() {
                     PlutusData::Constr(0, vec![PlutusData::Bytes(vec![0xAA; 28])]),
                 ),
                 (
-                    PlutusData::Integer(-1),
-                    PlutusData::List(vec![PlutusData::Integer(100), PlutusData::Integer(200)]),
+                    PlutusData::integer(-1),
+                    PlutusData::List(vec![PlutusData::integer(100), PlutusData::integer(200)]),
                 ),
             ]),
             PlutusData::List(vec![]),
-            PlutusData::Integer(0),
+            PlutusData::integer(0),
         ],
     );
     let bytes = pd.to_cbor_bytes();
@@ -152,7 +152,7 @@ fn plutus_data_nested_complex_round_trip() {
 
 #[test]
 fn plutus_data_zero_round_trip() {
-    let pd = PlutusData::Integer(0);
+    let pd = PlutusData::integer(0);
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(pd, decoded);
@@ -160,7 +160,7 @@ fn plutus_data_zero_round_trip() {
 
 #[test]
 fn plutus_data_negative_one_round_trip() {
-    let pd = PlutusData::Integer(-1);
+    let pd = PlutusData::integer(-1);
     let bytes = pd.to_cbor_bytes();
     let decoded = PlutusData::from_cbor_bytes(&bytes).expect("decode");
     assert_eq!(pd, decoded);

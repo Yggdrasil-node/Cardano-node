@@ -166,8 +166,11 @@ pub fn required_vkey_hashes_from_ppup(
 pub fn required_vkey_hashes_from_cert(cert: &crate::types::DCert, out: &mut HashSet<[u8; 28]>) {
     use crate::types::DCert;
     match cert {
-        // Shelley: unregistration requires the credential key
-        DCert::AccountUnregistration(cred) | DCert::AccountUnregistrationDeposit(cred, _) => {
+        // Registration-with-deposit, unregistration, and delegation require
+        // the credential key. Legacy registration without a deposit does not.
+        DCert::AccountRegistrationDeposit(cred, _)
+        | DCert::AccountUnregistration(cred)
+        | DCert::AccountUnregistrationDeposit(cred, _) => {
             if let crate::types::StakeCredential::AddrKeyHash(h) = cred {
                 out.insert(*h);
             }
@@ -220,8 +223,9 @@ pub fn required_vkey_hashes_from_cert(cert: &crate::types::DCert, out: &mut Hash
                 out.insert(*h);
             }
         }
-        // Simple registration does not require a witness in Shelley
-        DCert::AccountRegistration(_) | DCert::AccountRegistrationDeposit(_, _) => {}
+        // Legacy registration does not require a witness in Shelley-Babbage
+        // and remains witness-free for Conway transitional `stake_registration`.
+        DCert::AccountRegistration(_) => {}
         // MIR certs are signed by genesis delegates (not validated here)
         DCert::MoveInstantaneousReward(_, _) => {}
     }
@@ -342,7 +346,8 @@ pub fn required_script_hashes_from_inputs_multi_era(
 pub fn required_script_hashes_from_cert(cert: &crate::types::DCert, out: &mut HashSet<[u8; 28]>) {
     use crate::types::DCert;
     match cert {
-        DCert::AccountUnregistration(cred)
+        DCert::AccountRegistrationDeposit(cred, _)
+        | DCert::AccountUnregistration(cred)
         | DCert::AccountUnregistrationDeposit(cred, _)
         | DCert::DelegationToStakePool(cred, _)
         | DCert::DelegationToDrep(cred, _)
@@ -705,6 +710,46 @@ mod tests {
         assert!(required.contains(&[1u8; 28]));
         assert!(required.contains(&[2u8; 28]));
         assert_eq!(required.len(), 2);
+    }
+
+    #[test]
+    fn legacy_account_registration_requires_no_credential_witness() {
+        let script_cred = crate::types::StakeCredential::ScriptHash([0xA1; 28]);
+        let key_cred = crate::types::StakeCredential::AddrKeyHash([0xA2; 28]);
+
+        let mut scripts = HashSet::new();
+        required_script_hashes_from_cert(
+            &crate::types::DCert::AccountRegistration(script_cred),
+            &mut scripts,
+        );
+        assert!(scripts.is_empty());
+
+        let mut vkeys = HashSet::new();
+        required_vkey_hashes_from_cert(
+            &crate::types::DCert::AccountRegistration(key_cred),
+            &mut vkeys,
+        );
+        assert!(vkeys.is_empty());
+    }
+
+    #[test]
+    fn account_registration_deposit_requires_credential_witness() {
+        let script_cred = crate::types::StakeCredential::ScriptHash([0xB1; 28]);
+        let key_cred = crate::types::StakeCredential::AddrKeyHash([0xB2; 28]);
+
+        let mut scripts = HashSet::new();
+        required_script_hashes_from_cert(
+            &crate::types::DCert::AccountRegistrationDeposit(script_cred, 2_000_000),
+            &mut scripts,
+        );
+        assert_eq!(scripts, HashSet::from([[0xB1; 28]]));
+
+        let mut vkeys = HashSet::new();
+        required_vkey_hashes_from_cert(
+            &crate::types::DCert::AccountRegistrationDeposit(key_cred, 2_000_000),
+            &mut vkeys,
+        );
+        assert_eq!(vkeys, HashSet::from([[0xB2; 28]]));
     }
 
     #[test]

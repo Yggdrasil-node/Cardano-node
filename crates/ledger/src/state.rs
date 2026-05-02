@@ -10957,8 +10957,9 @@ fn validate_pre_alonzo_tx(
     // where max_val_size is None).
     // Reference: `Cardano.Ledger.Mary.Rules.Utxo` — `validateOutputTooBigUTxO`.
     crate::min_utxo::validate_output_not_too_big(params, outputs)?;
-    // Mary+ disallows zero-valued multi-asset entries in outputs.
-    // Reference: `Cardano.Ledger.Mary.Value` — non-zero invariant.
+    // Mary+ values are expected to be normalized before validation. Pre-Conway
+    // raw decoders prune zero quantities via upstream `decodeWithPrunning`;
+    // keep this as a defensive invariant for constructed values.
     crate::min_utxo::validate_no_zero_valued_multi_asset(outputs)?;
     crate::min_utxo::validate_output_boot_addr_attrs(outputs)?;
     Ok(())
@@ -11038,6 +11039,8 @@ fn validate_alonzo_plus_tx(
         crate::min_utxo::validate_all_outputs_min_utxo(params, all_outputs)?;
     }
     crate::min_utxo::validate_output_not_too_big(params, all_outputs)?;
+    // Pre-Conway raw decoders prune zero quantities before this point; this is
+    // a defensive invariant until Conway/Dijkstra strict decode is era-gated.
     crate::min_utxo::validate_no_zero_valued_multi_asset(all_outputs)?;
     crate::min_utxo::validate_output_boot_addr_attrs(all_outputs)?;
 

@@ -284,7 +284,7 @@ fn witness_set_with_plutus_v1_scripts_round_trip() {
 #[test]
 fn witness_set_with_plutus_data_round_trip() {
     // A typed PlutusData value: integer 42
-    let datum = PlutusData::Integer(42);
+    let datum = PlutusData::integer(42);
 
     let wset = ShelleyWitnessSet {
         vkey_witnesses: vec![],
@@ -312,7 +312,7 @@ fn witness_set_with_redeemers_round_trip() {
         redeemers: vec![Redeemer {
             tag: 0,
             index: 0,
-            data: PlutusData::Integer(0),
+            data: PlutusData::integer(0),
             ex_units: ExUnits {
                 mem: 1000,
                 steps: 2000,
@@ -365,7 +365,7 @@ fn witness_set_with_plutus_v3_scripts_round_trip() {
 #[test]
 fn witness_set_all_keys_round_trip() {
     // Plutus data: integer 99
-    let datum = PlutusData::Integer(99);
+    let datum = PlutusData::integer(99);
 
     let wset = ShelleyWitnessSet {
         vkey_witnesses: vec![ShelleyVkeyWitness {
@@ -384,7 +384,7 @@ fn witness_set_all_keys_round_trip() {
         redeemers: vec![Redeemer {
             tag: 1,
             index: 0,
-            data: PlutusData::Integer(7),
+            data: PlutusData::integer(7),
             ex_units: ExUnits {
                 mem: 500,
                 steps: 1000,

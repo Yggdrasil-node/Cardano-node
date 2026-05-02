@@ -73,12 +73,22 @@ cargo run --manifest-path tmp/refscan/Cargo.toml --release -- \
   tmp/preview-producer/config/preview-producer.json
 ```
 
-Expected result after the preview Plutus parity fix: replay advances past
-the old Babbage reference-script failure and reports a tip at or beyond
-slot `834713`, with no `MalformedReferenceScripts` and no ledger decode
-error. Debug refscan builds can overflow the default process stack on
-deep Plutus scripts; use release mode for this gate, or raise the stack
-with `ulimit -s 65536` when intentionally debugging unoptimized code.
+Expected result after the preview Plutus parity fixes: replay advances
+past the old Babbage reference-script failure and the follow-up
+`serialiseData` / legacy registration-certificate failures, reporting a
+tip at or beyond slot `901725`, with no `MalformedReferenceScripts`,
+`ValidationTagMismatch`, ledger decode error, or missing legacy
+registration redeemer. Debug refscan builds can overflow the default
+process stack on deep Plutus scripts; use release mode for this gate, or
+raise the stack with `ulimit -s 65536` when intentionally debugging
+unoptimized code.
+
+If using the existing `tmp/preview-producer/db/producer` from the R246
+investigation, a later stop at slot `1038978` with
+`WithdrawalExceedsBalance` is stale post-boundary reward state written
+before runtime recovery preserved current-epoch pool block counts. Verify
+past that point only on a clean replay or after rolling back to a
+pre-boundary checkpoint with matching sidecars.
 
 This does **not** prove real block adoption until the generated pool is registered and delegated on-chain. With the default zero pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the preview stake-key deposit plus pool deposit and transaction fees (currently 502 tADA plus fees from the vendored preview genesis), submit the generated certificates, then wait for active stake before expecting leader election.
 

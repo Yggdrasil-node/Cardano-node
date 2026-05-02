@@ -113,14 +113,16 @@ pub fn validate_output_not_too_big(
     Ok(())
 }
 
-/// Validates that no transaction output carries a multi-asset entry with
-/// a zero quantity.
+/// Validates that normalized transaction outputs carry no multi-asset entry
+/// with a zero quantity.
 ///
-/// Zero-valued tokens waste UTxO space and are disallowed by the formal
-/// spec from Mary onward. Upstream `nonAdaValue` filtering ensures zero
-/// entries are rejected.
+/// Pre-Conway upstream `MaryValue` decoding prunes zero asset quantities via
+/// `decodeWithPrunning`, so raw pre-Conway blocks should reach this check
+/// already normalized. This remains a defensive invariant for locally
+/// constructed values; stricter Conway/Dijkstra decoding should reject zeros
+/// at the era-aware decode boundary.
 ///
-/// Reference: `Cardano.Ledger.Mary.Value` — non-zero invariant on `MaryValue`.
+/// Reference: `Cardano.Ledger.Mary.Value` — `decodeWithPrunning`.
 pub fn validate_no_zero_valued_multi_asset(outputs: &[MultiEraTxOut]) -> Result<(), LedgerError> {
     use crate::eras::mary::Value;
     for output in outputs {

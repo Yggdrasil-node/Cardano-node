@@ -112,7 +112,7 @@ fn test_plutus_script_hash(version_tag: u8, script_bytes: &[u8]) -> [u8; 28] {
 }
 
 fn spending_datum() -> PlutusData {
-    PlutusData::Integer(9)
+    PlutusData::integer(9)
 }
 
 /// Build an Alonzo block with a single transaction that includes a Plutus
@@ -135,7 +135,7 @@ fn alonzo_block_with_plutus_v1_mint(
             Redeemer {
                 tag: 0, // spending
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -144,7 +144,7 @@ fn alonzo_block_with_plutus_v1_mint(
             Redeemer {
                 tag: 1, // minting
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -234,7 +234,7 @@ fn babbage_block_with_plutus_v2_mint(
             Redeemer {
                 tag: 0,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -243,7 +243,7 @@ fn babbage_block_with_plutus_v2_mint(
             Redeemer {
                 tag: 1,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -336,7 +336,7 @@ fn conway_submitted_tx_with_plutus_v3_mint(
             Redeemer {
                 tag: 0,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -345,7 +345,7 @@ fn conway_submitted_tx_with_plutus_v3_mint(
             Redeemer {
                 tag: 1,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -521,7 +521,7 @@ fn alonzo_submitted_tx_rejects_v1_when_no_cost_model() {
             Redeemer {
                 tag: 0, // spending
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -530,7 +530,7 @@ fn alonzo_submitted_tx_rejects_v1_when_no_cost_model() {
             Redeemer {
                 tag: 1, // minting
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -639,7 +639,7 @@ fn babbage_submitted_tx_rejects_v2_when_no_cost_model() {
             Redeemer {
                 tag: 0,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -648,7 +648,7 @@ fn babbage_submitted_tx_rejects_v2_when_no_cost_model() {
             Redeemer {
                 tag: 1,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -771,7 +771,7 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
             Redeemer {
                 tag: 0,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,
@@ -780,7 +780,7 @@ fn conway_block_rejects_v3_when_only_v1_v2_cost_models() {
             Redeemer {
                 tag: 1,
                 index: 0,
-                data: PlutusData::Integer(0.into()),
+                data: PlutusData::integer(0),
                 ex_units: ExUnits {
                     mem: 1000,
                     steps: 2000,

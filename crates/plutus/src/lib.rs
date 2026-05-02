@@ -29,7 +29,7 @@
 //! ).expect("evaluation should succeed");
 //!
 //! match result {
-//!     Value::Constant(Constant::integer(n)) => assert_eq!(n, 42),
+//!     Value::Constant(Constant::Integer(n)) => assert_eq!(n.to_string(), "42"),
 //!     _ => panic!("unexpected result"),
 //! }
 //! ```

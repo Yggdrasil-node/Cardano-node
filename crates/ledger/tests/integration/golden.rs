@@ -91,7 +91,7 @@ fn cbor_golden_shelley_block_round_trip() {
 #[test]
 fn cbor_golden_plutus_data_all_variants() {
     // Constr with compact tag (121 = constructor 0)
-    let constr = PlutusData::Constr(0, vec![PlutusData::Integer(42)]);
+    let constr = PlutusData::Constr(0, vec![PlutusData::integer(42)]);
     let enc = constr.to_cbor_bytes();
     let dec = PlutusData::from_cbor_bytes(&enc).expect("constr");
     assert_eq!(dec, constr);
@@ -104,7 +104,7 @@ fn cbor_golden_plutus_data_all_variants() {
 
     // Map
     let map = PlutusData::Map(vec![(
-        PlutusData::Integer(1),
+        PlutusData::integer(1),
         PlutusData::Bytes(vec![0xCA, 0xFE]),
     )]);
     let enc = map.to_cbor_bytes();
@@ -112,13 +112,13 @@ fn cbor_golden_plutus_data_all_variants() {
     assert_eq!(dec, map);
 
     // List
-    let list = PlutusData::List(vec![PlutusData::Integer(100), PlutusData::Integer(-1)]);
+    let list = PlutusData::List(vec![PlutusData::integer(100), PlutusData::integer(-1)]);
     let enc = list.to_cbor_bytes();
     let dec = PlutusData::from_cbor_bytes(&enc).expect("list");
     assert_eq!(dec, list);
 
     // Bignum (> i64 range)
-    let big = PlutusData::Integer(i128::from(i64::MAX) + 1);
+    let big = PlutusData::integer(i128::from(i64::MAX) + 1);
     let enc = big.to_cbor_bytes();
     let dec = PlutusData::from_cbor_bytes(&enc).expect("bignum");
     assert_eq!(dec, big);

@@ -73,7 +73,7 @@ fn minting_redeemer(steps: u64, mem: u64) -> Redeemer {
     Redeemer {
         tag: 1,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits { mem, steps },
     }
 }

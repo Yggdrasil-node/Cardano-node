@@ -6752,11 +6752,19 @@ fn stake_snapshots_for_recovered_point(
     }
 }
 
+#[derive(Clone, Debug)]
+struct RuntimeLedgerRecovery {
+    outcome: LedgerRecoveryOutcome,
+    stake_snapshots: Option<StakeSnapshots>,
+    pool_block_counts: BTreeMap<yggdrasil_ledger::PoolKeyHash, u64>,
+}
+
 fn recover_ledger_state_for_runtime<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
     base_ledger_state: LedgerState,
     config: &VerifiedSyncServiceConfig,
-) -> Result<LedgerRecoveryOutcome, SyncError>
+    storage_dir: Option<&Path>,
+) -> Result<RuntimeLedgerRecovery, SyncError>
 where
     I: ImmutableStore,
     V: VolatileStore,
@@ -6768,14 +6776,37 @@ where
                 .epoch_schedule
                 .unwrap_or_else(|| EpochSchedule::fixed(nonce_config.epoch_size));
             let evaluator = config.build_plutus_evaluator();
-            recover_ledger_state_chaindb_epoch_boundary(
+            let recovered_point = chain_db.tip();
+            let restored_stake_snapshots =
+                stake_snapshots_for_recovered_point(config, storage_dir, &recovered_point)?;
+            let recovery = crate::sync::recover_ledger_state_chaindb_with_epoch_boundary(
                 chain_db,
                 base_ledger_state,
                 epoch_schedule,
                 Some(&evaluator),
-            )
+                restored_stake_snapshots,
+            )?;
+            let point = recovery.ledger_state.tip;
+            let outcome = LedgerRecoveryOutcome {
+                ledger_state: recovery.ledger_state,
+                point,
+                checkpoint_slot: recovery.checkpoint_slot,
+                replayed_volatile_blocks: recovery.replayed_volatile_blocks,
+            };
+            Ok(RuntimeLedgerRecovery {
+                outcome,
+                stake_snapshots: Some(recovery.stake_snapshots),
+                pool_block_counts: recovery.pool_block_counts,
+            })
         }
-        None => recover_ledger_state_chaindb(chain_db, base_ledger_state),
+        None => {
+            let outcome = recover_ledger_state_chaindb(chain_db, base_ledger_state)?;
+            Ok(RuntimeLedgerRecovery {
+                outcome,
+                stake_snapshots: None,
+                pool_block_counts: BTreeMap::new(),
+            })
+        }
     }
 }
 
@@ -6812,7 +6843,13 @@ where
         chain_dep_persist_dir,
     } = request;
 
-    let recovery = recover_ledger_state_for_runtime(chain_db, base_ledger_state, config)?;
+    let runtime_recovery = recover_ledger_state_for_runtime(
+        chain_db,
+        base_ledger_state,
+        config,
+        chain_dep_persist_dir.as_deref(),
+    )?;
+    let recovery = runtime_recovery.outcome;
     tracer.trace_runtime(
         "Node.Recovery",
         "Notice",
@@ -6830,24 +6867,18 @@ where
         ]),
     );
 
-    let stake_snapshots = stake_snapshots_for_recovered_point(
-        config,
-        chain_dep_persist_dir.as_deref(),
-        &recovery.point,
-    )?;
-
     let checkpoint_tracking = LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
         plutus_evaluator: config.build_plutus_evaluator(),
-        stake_snapshots,
+        stake_snapshots: runtime_recovery.stake_snapshots,
         epoch_size: config.nonce_config.as_ref().map(|nc| {
             config
                 .epoch_schedule
                 .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
         }),
-        pool_block_counts: std::collections::BTreeMap::new(),
+        pool_block_counts: runtime_recovery.pool_block_counts,
         chain_dep_persist_dir: chain_dep_persist_dir.clone(),
     };
     if let (Some(bp), Some(pool_key_hash), Some(snapshots)) = (
@@ -6938,10 +6969,16 @@ where
         chain_dep_persist_dir,
     } = request;
 
-    let recovery = {
+    let runtime_recovery = {
         let chain_db = chain_db.read().map_err(|_| shared_chaindb_lock_error())?;
-        recover_ledger_state_for_runtime(&chain_db, base_ledger_state, config)?
+        recover_ledger_state_for_runtime(
+            &chain_db,
+            base_ledger_state,
+            config,
+            chain_dep_persist_dir.as_deref(),
+        )?
     };
+    let recovery = runtime_recovery.outcome;
     tracer.trace_runtime(
         "Node.Recovery",
         "Notice",
@@ -6959,24 +6996,18 @@ where
         ]),
     );
 
-    let stake_snapshots = stake_snapshots_for_recovered_point(
-        config,
-        chain_dep_persist_dir.as_deref(),
-        &recovery.point,
-    )?;
-
     let checkpoint_tracking = LedgerCheckpointTracking {
         base_ledger_state: recovery.ledger_state.clone(),
         ledger_state: recovery.ledger_state.clone(),
         last_persisted_point: recovery.point,
         plutus_evaluator: config.build_plutus_evaluator(),
-        stake_snapshots,
+        stake_snapshots: runtime_recovery.stake_snapshots,
         epoch_size: config.nonce_config.as_ref().map(|nc| {
             config
                 .epoch_schedule
                 .unwrap_or_else(|| yggdrasil_consensus::EpochSchedule::fixed(nc.epoch_size))
         }),
-        pool_block_counts: std::collections::BTreeMap::new(),
+        pool_block_counts: runtime_recovery.pool_block_counts,
         chain_dep_persist_dir: chain_dep_persist_dir.clone(),
     };
     if let (Some(bp), Some(pool_key_hash), Some(snapshots)) = (
@@ -7095,10 +7126,11 @@ mod tests {
         preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
         prepare_reconnect_attempt_state, reconnect_preferred_peer,
         reconnect_preferred_peer_with_source, record_verified_batch_progress,
-        refresh_ledger_peer_sources_from_chain_db, retire_failed_outbound_peer, seed_peer_registry,
-        self_validate_forged_block, session_established_trace_fields,
-        stake_snapshots_for_recovered_point, sync_error_trace_fields, tip_context_from_chain_db,
-        verified_sync_batch_trace_fields, wall_clock_unix_secs,
+        recover_ledger_state_for_runtime, refresh_ledger_peer_sources_from_chain_db,
+        retire_failed_outbound_peer, seed_peer_registry, self_validate_forged_block,
+        session_established_trace_fields, stake_snapshots_for_recovered_point,
+        sync_error_trace_fields, tip_context_from_chain_db, verified_sync_batch_trace_fields,
+        wall_clock_unix_secs,
     };
     use crate::sync::LedgerCheckpointPolicy;
     use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
@@ -7109,7 +7141,7 @@ mod tests {
     use std::sync::{Arc, RwLock};
     use yggdrasil_consensus::{EpochSize, NonceEvolutionConfig, NonceEvolutionState};
     use yggdrasil_consensus::{HeaderBody as ConsensusHeaderBody, OpCert};
-    use yggdrasil_crypto::blake2b::hash_bytes_256;
+    use yggdrasil_crypto::blake2b::{hash_bytes_224, hash_bytes_256};
     use yggdrasil_crypto::ed25519::{Signature, VerificationKey};
     use yggdrasil_crypto::sum_kes::{SumKesSignature, SumKesVerificationKey};
     use yggdrasil_crypto::vrf::VrfVerificationKey;
@@ -7223,6 +7255,63 @@ mod tests {
             snapshots.set.pool_stake_distribution().total_active_stake(),
             0
         );
+    }
+
+    #[test]
+    fn runtime_recovery_preserves_current_epoch_block_counts() {
+        let mut config = sample_sync_config();
+        config.nonce_config = Some(sample_nonce_config());
+
+        let mut chain_db = ChainDb::new(
+            InMemoryImmutable::default(),
+            InMemoryVolatile::default(),
+            InMemoryLedgerStore::default(),
+        );
+        let block = yggdrasil_ledger::Block {
+            era: Era::Shelley,
+            header: yggdrasil_ledger::BlockHeader {
+                hash: HeaderHash([0x5a; 32]),
+                prev_hash: HeaderHash([0; 32]),
+                slot_no: SlotNo(10),
+                block_no: BlockNo(1),
+                issuer_vkey: [0x42; 32],
+                protocol_version: None,
+            },
+            transactions: Vec::new(),
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        let point = Point::BlockPoint(block.header.slot_no, block.header.hash);
+
+        let mut checkpoint_state = LedgerState::new(Era::Byron);
+        checkpoint_state
+            .apply_block_validated(&block, None)
+            .expect("empty Shelley block applies in recovery fixture");
+        let pool_hash = hash_bytes_224(&block.header.issuer_vkey).0;
+        assert_eq!(checkpoint_state.blocks_made().get(&pool_hash), Some(&1));
+
+        chain_db
+            .add_volatile_block(block)
+            .expect("insert volatile tip block");
+        chain_db
+            .persist_ledger_checkpoint(&point, &checkpoint_state.checkpoint(), 8)
+            .expect("persist checkpoint");
+
+        let recovery = recover_ledger_state_for_runtime(
+            &chain_db,
+            LedgerState::new(Era::Byron),
+            &config,
+            None,
+        )
+        .expect("recover runtime ledger state");
+
+        assert_eq!(recovery.outcome.point, point);
+        assert_eq!(recovery.pool_block_counts.get(&pool_hash), Some(&1));
+        assert_eq!(
+            recovery.outcome.ledger_state.blocks_made().get(&pool_hash),
+            Some(&1)
+        );
+        assert!(recovery.stake_snapshots.is_some());
     }
 
     fn sample_pool_params(relay: Relay, operator: u8) -> PoolParams {

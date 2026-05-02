@@ -91,7 +91,7 @@ fn alonzo_block_rejects_extra_redeemer_for_native_script_input() {
     ws.redeemers.push(Redeemer {
         tag: 0,   // Spending
         index: 0, // first (only) input after sorting
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -284,7 +284,7 @@ fn alonzo_block_rejects_extra_minting_redeemer_for_native_policy() {
     ws.redeemers.push(Redeemer {
         tag: 1,   // Minting
         index: 0, // first (only) policy after sorting
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -391,7 +391,7 @@ fn alonzo_block_rejects_extra_redeemer_even_when_is_valid_false() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -496,7 +496,7 @@ fn babbage_block_rejects_extra_redeemer_for_native_script_input() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -612,7 +612,7 @@ fn conway_block_rejects_extra_minting_redeemer_for_native_policy() {
     ws.redeemers.push(Redeemer {
         tag: 1,
         index: 0,
-        data: PlutusData::Integer(0.into()),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,

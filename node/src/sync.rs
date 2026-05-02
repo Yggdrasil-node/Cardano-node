@@ -2397,13 +2397,13 @@ fn replay_storage_block_with_epoch_boundary(
     }
 }
 
-struct BoundaryAwareRecovery {
-    ledger_state: LedgerState,
-    checkpoint_slot: Option<SlotNo>,
-    replayed_volatile_blocks: usize,
-    stake_snapshots: StakeSnapshots,
-    pool_block_counts: BTreeMap<PoolKeyHash, u64>,
-    epoch_events: Vec<EpochBoundaryEvent>,
+pub(crate) struct BoundaryAwareRecovery {
+    pub(crate) ledger_state: LedgerState,
+    pub(crate) checkpoint_slot: Option<SlotNo>,
+    pub(crate) replayed_volatile_blocks: usize,
+    pub(crate) stake_snapshots: StakeSnapshots,
+    pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
+    pub(crate) epoch_events: Vec<EpochBoundaryEvent>,
 }
 
 pub fn recover_ledger_state_chaindb_epoch_boundary<I, V, L>(
@@ -2433,7 +2433,7 @@ where
     })
 }
 
-fn recover_ledger_state_chaindb_with_epoch_boundary<I, V, L>(
+pub(crate) fn recover_ledger_state_chaindb_with_epoch_boundary<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
     base_state: LedgerState,
     epoch_schedule: EpochSchedule,

@@ -96,14 +96,13 @@ pub fn evaluate_builtin(
             let byte_val = get_int(&args[0])?;
             let bs = get_bytestring(&args[1])?;
             let byte = match _cost_model.builtin_semantics_variant {
-                BuiltinSemanticsVariant::A | BuiltinSemanticsVariant::B => {
-                    byte_val.mod_floor(&BigInt::from(256u16)).to_u8().ok_or(
-                        MachineError::BuiltinError {
-                            builtin: "consByteString".into(),
-                            message: "wrapped byte did not fit in u8".into(),
-                        },
-                    )?
-                }
+                BuiltinSemanticsVariant::A | BuiltinSemanticsVariant::B => byte_val
+                    .mod_floor(&BigInt::from(256u16))
+                    .to_u8()
+                    .ok_or(MachineError::BuiltinError {
+                        builtin: "consByteString".into(),
+                        message: "wrapped byte did not fit in u8".into(),
+                    })?,
                 BuiltinSemanticsVariant::C => {
                     if byte_val < BigInt::zero() || byte_val > BigInt::from(255u8) {
                         return Err(MachineError::IndexOutOfBounds {
@@ -156,6 +155,7 @@ pub fn evaluate_builtin(
         }
         EqualsByteString => {
             let (a, b) = get_two_bytestrings(args)?;
+            trace_equals_bytestring(logs, a, b);
             Ok(Value::Constant(Constant::Bool(a == b)))
         }
         LessThanByteString => {
@@ -173,16 +173,19 @@ pub fn evaluate_builtin(
         Sha2_256 => {
             let bs = get_bytestring(&args[0])?;
             let hash = sha2_256_hash(bs);
+            trace_hash_builtin(logs, "sha2_256", bs, &hash);
             Ok(Value::Constant(Constant::ByteString(hash.to_vec())))
         }
         Sha3_256 => {
             let bs = get_bytestring(&args[0])?;
             let hash = sha3_256_hash(bs);
+            trace_hash_builtin(logs, "sha3_256", bs, &hash);
             Ok(Value::Constant(Constant::ByteString(hash.to_vec())))
         }
         Blake2b_256 => {
             let bs = get_bytestring(&args[0])?;
             let hash = blake2b::hash_bytes_256(bs);
+            trace_hash_builtin(logs, "blake2b_256", bs, &hash.0);
             Ok(Value::Constant(Constant::ByteString(hash.0.to_vec())))
         }
         VerifyEd25519Signature => {
@@ -190,6 +193,20 @@ pub fn evaluate_builtin(
             let msg = get_bytestring(&args[1])?;
             let sig = get_bytestring(&args[2])?;
             let valid = verify_ed25519(vkey, msg, sig);
+            if std::env::var_os("YGGDRASIL_PLUTUS_TRACE_FAILURES").is_some() {
+                logs.push(format!(
+                    "verifyEd25519Signature key={} msg={} sig={} valid={valid}",
+                    hex_bytes(vkey),
+                    hex_bytes(msg),
+                    hex_bytes(sig),
+                ));
+                logs.push(format!(
+                    "verifyEd25519Signature sizes key_len={} msg_len={} sig_len={}",
+                    vkey.len(),
+                    msg.len(),
+                    sig.len()
+                ));
+            }
             Ok(Value::Constant(Constant::Bool(valid)))
         }
 
@@ -459,7 +476,9 @@ pub fn evaluate_builtin(
             let data = get_data(&args[0])?;
             let mut enc = Encoder::new();
             data.encode_cbor(&mut enc);
-            Ok(Value::Constant(Constant::ByteString(enc.into_bytes())))
+            let bytes = enc.into_bytes();
+            trace_serialise_data(logs, data, &bytes);
+            Ok(Value::Constant(Constant::ByteString(bytes)))
         }
 
         // ---------------------------------------------------------------
@@ -702,10 +721,9 @@ pub fn evaluate_builtin(
                     message: format!("byte value out of range: {byte_val}"),
                 });
             }
-            Ok(Value::Constant(Constant::ByteString(vec![
-                byte_val.to_u8().expect("checked byte range");
-                len.to_usize().expect("checked replicate length")
-            ])))
+            let byte = byte_val.to_u8().expect("checked byte range");
+            let len = len.to_usize().expect("checked replicate length");
+            Ok(Value::Constant(Constant::ByteString(vec![byte; len])))
         }
         ShiftByteString => {
             // args: [bytestring, shift_amount]
@@ -1011,6 +1029,72 @@ fn verify_ed25519(vkey: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     vk.verify(msg, &sig).is_ok()
 }
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+fn trace_hash_builtin(logs: &mut Vec<String>, name: &str, input: &[u8], output: &[u8; 32]) {
+    if std::env::var_os("YGGDRASIL_PLUTUS_TRACE_FAILURES").is_none() {
+        return;
+    }
+    logs.push(format!(
+        "{name} input_len={} input_blake2b256={} output={}",
+        input.len(),
+        hex_bytes(&blake2b::hash_bytes_256(input).0),
+        hex_bytes(output),
+    ));
+}
+
+fn trace_serialise_data(logs: &mut Vec<String>, data: &PlutusData, bytes: &[u8]) {
+    if std::env::var_os("YGGDRASIL_PLUTUS_TRACE_FAILURES").is_none() {
+        return;
+    }
+    let data_preview = data_preview(data);
+    logs.push(format!(
+        "serialiseData variant={} cbor_len={} cbor_blake2b256={} cbor_sha2_256={} preview={}",
+        data_variant_name(data),
+        bytes.len(),
+        hex_bytes(&blake2b::hash_bytes_256(bytes).0),
+        hex_bytes(&sha2_256_hash(bytes)),
+        data_preview,
+    ));
+    if bytes.len() <= 160 {
+        logs.push(format!("serialiseData cbor={}", hex_bytes(bytes)));
+    }
+}
+
+fn trace_equals_bytestring(logs: &mut Vec<String>, a: &[u8], b: &[u8]) {
+    if std::env::var_os("YGGDRASIL_PLUTUS_TRACE_FAILURES").is_none() {
+        return;
+    }
+    let interesting = [28, 32, 64].contains(&a.len()) || [28, 32, 64].contains(&b.len());
+    if interesting {
+        logs.push(format!(
+            "equalsByteString a_len={} b_len={} a={} b={} result={}",
+            a.len(),
+            b.len(),
+            hex_bytes(a),
+            hex_bytes(b),
+            a == b,
+        ));
+    }
+}
+
+fn data_preview(data: &PlutusData) -> String {
+    match data {
+        PlutusData::Constr(tag, fields) => format!("Constr({tag}, fields={})", fields.len()),
+        PlutusData::Map(entries) => format!("Map(len={})", entries.len()),
+        PlutusData::List(items) => format!("List(len={})", items.len()),
+        PlutusData::Integer(value) => format!("Integer({value})"),
+        PlutusData::Bytes(bytes) => format!("Bytes(len={}, hex={})", bytes.len(), hex_bytes(bytes)),
+    }
+}
+
 /// secp256k1 ECDSA signature verification.
 ///
 /// Returns `false` for malformed keys/signatures rather than erroring,
@@ -1197,7 +1281,7 @@ fn read_bit(bs: &[u8], bit_index: impl Into<BigInt>) -> Result<bool, MachineErro
         });
     }
     let bit_index = bit_index.to_usize().expect("checked bit index range");
-    let byte_idx = bs.len() - 1 - (bit_index / 8) as usize;
+    let byte_idx = bs.len() - 1 - (bit_index / 8);
     let bit_offset = (bit_index % 8) as u32;
     Ok((bs[byte_idx] >> bit_offset) & 1 == 1)
 }
@@ -1796,10 +1880,7 @@ mod tests {
 
     #[test]
     fn cons_bytestring_variants_a_and_b_wrap_byte_modulo_256() {
-        for variant in [
-            BuiltinSemanticsVariant::A,
-            BuiltinSemanticsVariant::B,
-        ] {
+        for variant in [BuiltinSemanticsVariant::A, BuiltinSemanticsVariant::B] {
             let cm = CostModel {
                 builtin_semantics_variant: variant,
                 ..CostModel::default()

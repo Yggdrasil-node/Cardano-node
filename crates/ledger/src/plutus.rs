@@ -13,6 +13,7 @@
 //!             / bounded_bytes
 //!
 //! constr<a0> = #6.121([* a0]) / #6.122([* a0]) / ... / #6.127([* a0])
+//!            / #6.1280([* a0]) / ... / #6.1400([* a0])
 //!            / #6.102([uint, [* a0]])
 //!
 //! big_int = int / big_uint / big_nint
@@ -70,12 +71,18 @@ pub enum PlutusData {
 
 /// CBOR tag range for compact constructor alternatives 0–6.
 const CONSTR_TAG_BASE: u64 = 121;
+/// CBOR tag range for compact constructor alternatives 7–127.
+const CONSTR_TAG_EXT_BASE: u64 = 1280;
+/// Maximum constructor alternative encoded with the extended compact tags.
+const CONSTR_TAG_EXT_MAX_ALT: u64 = 127;
 /// CBOR tag for the general constructor form.
 const CONSTR_TAG_GENERAL: u64 = 102;
 /// CBOR tag for big unsigned integer: `big_uint = #6.2(bounded_bytes)`.
 const BIG_UINT_TAG: u64 = 2;
 /// CBOR tag for big negative integer: `big_nint = #6.3(bounded_bytes)`.
 const BIG_NINT_TAG: u64 = 3;
+/// Upstream Plutus `Data` encodes byte leaves in chunks of at most 64 bytes.
+const BOUNDED_BYTES_CHUNK_SIZE: usize = 64;
 
 impl CborEncode for PlutusData {
     /// Iterative encoder.
@@ -91,47 +98,82 @@ impl CborEncode for PlutusData {
     /// pop order produces the exact same byte sequence as a recursive
     /// pre-order encoder would have produced.
     fn encode_cbor(&self, enc: &mut Encoder) {
-        let mut stack: Vec<&PlutusData> = vec![self];
-        while let Some(node) = stack.pop() {
-            match node {
-                Self::Constr(alt, fields) => {
-                    if *alt <= 6 {
-                        // Compact form: tags 121–127.
-                        enc.tag(CONSTR_TAG_BASE + alt);
-                        enc.array(fields.len() as u64);
-                    } else {
-                        // General form: tag 102, [alternative, [* fields]].
-                        enc.tag(CONSTR_TAG_GENERAL);
-                        enc.array(2).unsigned(*alt);
-                        enc.array(fields.len() as u64);
+        enum Work<'a> {
+            Data(&'a PlutusData),
+            Break,
+        }
+
+        let mut stack: Vec<Work<'_>> = vec![Work::Data(self)];
+        while let Some(work) = stack.pop() {
+            match work {
+                Work::Break => {
+                    enc.raw(&[0xff]);
+                }
+                Work::Data(node) => match node {
+                    Self::Constr(alt, fields) => {
+                        if *alt <= 6 {
+                            // Compact form: alternatives 0–6 use tags 121–127.
+                            enc.tag(CONSTR_TAG_BASE + alt);
+                            encode_plutus_data_list_header(enc, fields.len());
+                        } else if *alt <= CONSTR_TAG_EXT_MAX_ALT {
+                            // Extended compact form: alternatives 7–127 use
+                            // tags 1280–1400.
+                            enc.tag(CONSTR_TAG_EXT_BASE + (*alt - 7));
+                            encode_plutus_data_list_header(enc, fields.len());
+                        } else {
+                            // General form: tag 102, [alternative, [* fields]].
+                            enc.tag(CONSTR_TAG_GENERAL);
+                            enc.array(2).unsigned(*alt);
+                            encode_plutus_data_list_header(enc, fields.len());
+                        }
+                        if !fields.is_empty() {
+                            stack.push(Work::Break);
+                        }
+                        for field in fields.iter().rev() {
+                            stack.push(Work::Data(field));
+                        }
                     }
-                    for field in fields.iter().rev() {
-                        stack.push(field);
+                    Self::Map(entries) => {
+                        enc.map(entries.len() as u64);
+                        // Push v before k for each pair so the next pop yields k
+                        // first, matching upstream key-then-value emission order.
+                        for (k, v) in entries.iter().rev() {
+                            stack.push(Work::Data(v));
+                            stack.push(Work::Data(k));
+                        }
                     }
-                }
-                Self::Map(entries) => {
-                    enc.map(entries.len() as u64);
-                    // Push v before k for each pair so the next pop yields k
-                    // first, matching upstream key-then-value emission order.
-                    for (k, v) in entries.iter().rev() {
-                        stack.push(v);
-                        stack.push(k);
+                    Self::List(items) => {
+                        encode_plutus_data_list_header(enc, items.len());
+                        if !items.is_empty() {
+                            stack.push(Work::Break);
+                        }
+                        for item in items.iter().rev() {
+                            stack.push(Work::Data(item));
+                        }
                     }
-                }
-                Self::List(items) => {
-                    enc.array(items.len() as u64);
-                    for item in items.iter().rev() {
-                        stack.push(item);
+                    Self::Integer(n) => {
+                        encode_big_int(enc, n);
                     }
-                }
-                Self::Integer(n) => {
-                    encode_big_int(enc, n);
-                }
-                Self::Bytes(b) => {
-                    enc.bytes(b);
-                }
+                    Self::Bytes(b) => {
+                        encode_bounded_bytes(enc, b);
+                    }
+                },
             }
         }
+    }
+}
+
+/// Encode the CBOR shape used by upstream `Serialise [Data]`.
+///
+/// Plutus `Data` serialisation delegates constructor arguments and `List`
+/// values to the Haskell list `Serialise` instance. Empty lists are encoded
+/// as definite `[]` (`0x80`); non-empty lists are indefinite arrays
+/// (`0x9f ... 0xff`). This byte shape is visible to `serialiseData`.
+fn encode_plutus_data_list_header(enc: &mut Encoder, len: usize) {
+    if len == 0 {
+        enc.array(0);
+    } else {
+        enc.raw(&[0x9f]); // indefinite-length array
     }
 }
 
@@ -144,7 +186,8 @@ fn encode_big_int(enc: &mut Encoder, n: &BigInt) {
         } else {
             // big_uint: #6.2(bounded_bytes)
             let (_, bytes) = n.to_bytes_be();
-            enc.tag(BIG_UINT_TAG).bytes(&bytes);
+            enc.tag(BIG_UINT_TAG);
+            encode_bounded_bytes(enc, &bytes);
         }
     } else {
         // CBOR negative: encode as -(1+n), where n is the unsigned magnitude
@@ -154,9 +197,29 @@ fn encode_big_int(enc: &mut Encoder, n: &BigInt) {
         } else {
             // big_nint: #6.3(bounded_bytes) — encodes -(1+n) as big unsigned
             let (_, bytes) = magnitude.to_bytes_be();
-            enc.tag(BIG_NINT_TAG).bytes(&bytes);
+            enc.tag(BIG_NINT_TAG);
+            encode_bounded_bytes(enc, &bytes);
         }
     }
+}
+
+/// Encode a Plutus `bounded_bytes` leaf.
+///
+/// Upstream `PlutusCore.Data.encodeBs` writes short byte strings directly and
+/// writes longer byte strings as an indefinite CBOR bytestring made of
+/// definite chunks no larger than 64 bytes. This byte shape is consensus
+/// visible through the PlutusV2 `serialiseData` builtin.
+fn encode_bounded_bytes(enc: &mut Encoder, bytes: &[u8]) {
+    if bytes.len() <= BOUNDED_BYTES_CHUNK_SIZE {
+        enc.bytes(bytes);
+        return;
+    }
+
+    enc.raw(&[0x5f]); // indefinite-length byte string
+    for chunk in bytes.chunks(BOUNDED_BYTES_CHUNK_SIZE) {
+        enc.bytes(chunk);
+    }
+    enc.raw(&[0xff]); // break
 }
 
 impl PlutusData {
@@ -389,15 +452,15 @@ impl PlutusData {
                         }
                         BIG_UINT_TAG => {
                             // big_uint = #6.2(bounded_bytes)
-                            let raw = dec.bytes()?;
-                            let val = BigInt::from_bytes_be(Sign::Plus, raw);
+                            let raw = dec.bytes_owned()?;
+                            let val = BigInt::from_bytes_be(Sign::Plus, &raw);
                             value = Some(Self::Integer(val));
                             continue;
                         }
                         BIG_NINT_TAG => {
                             // big_nint = #6.3(bounded_bytes) — value is -(1+n)
-                            let raw = dec.bytes()?;
-                            let magnitude = BigInt::from_bytes_be(Sign::Plus, raw);
+                            let raw = dec.bytes_owned()?;
+                            let magnitude = BigInt::from_bytes_be(Sign::Plus, &raw);
                             value = Some(Self::Integer(-BigInt::from(1u8) - magnitude));
                             continue;
                         }
@@ -578,6 +641,14 @@ impl CborDecode for ScriptRef {
 mod tests {
     use super::*;
 
+    fn hex_to_bytes(hex: &str) -> Vec<u8> {
+        assert!(hex.len().is_multiple_of(2), "hex length must be even");
+        (0..hex.len())
+            .step_by(2)
+            .map(|idx| u8::from_str_radix(&hex[idx..idx + 2], 16).expect("valid test hex"))
+            .collect()
+    }
+
     // ── PlutusData: Integer ────────────────────────────────────────────
 
     #[test]
@@ -683,7 +754,18 @@ mod tests {
     #[test]
     fn list_empty_round_trip() {
         let d = PlutusData::List(vec![]);
-        let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0x80]);
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn list_nonempty_uses_indefinite_shape() {
+        let d = PlutusData::List(vec![PlutusData::integer(1), PlutusData::integer(2)]);
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0x9f, 0x01, 0x02, 0xff]);
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
     }
 
@@ -759,6 +841,18 @@ mod tests {
             BIG_NINT_TAG, 3,
             "BIG_NINT_TAG drifted from canonical IETF CBOR big_nint tag 3",
         );
+        assert_eq!(
+            CONSTR_TAG_EXT_BASE, 1280,
+            "CONSTR_TAG_EXT_BASE drifted from upstream Plutus extended constructor tag 1280",
+        );
+        assert_eq!(
+            CONSTR_TAG_EXT_MAX_ALT, 127,
+            "CONSTR_TAG_EXT_MAX_ALT drifted from upstream compact constructor max alt 127",
+        );
+        assert_eq!(
+            BOUNDED_BYTES_CHUNK_SIZE, 64,
+            "BOUNDED_BYTES_CHUNK_SIZE drifted from upstream Plutus bounded_bytes leaf size 64",
+        );
 
         // Compact-constructor range pin: 121..=127 covers exactly 7
         // alternatives (alts 0..=6) per upstream. Drift that bumps the
@@ -769,6 +863,11 @@ mod tests {
             compact_range_size, 7,
             "compact-constructor range must cover exactly 7 alternatives (0..=6)",
         );
+        let extended_compact_range_size = 1400 - CONSTR_TAG_EXT_BASE + 1;
+        assert_eq!(
+            extended_compact_range_size, 121,
+            "extended compact-constructor range must cover alternatives 7..=127",
+        );
     }
 
     #[test]
@@ -776,6 +875,7 @@ mod tests {
         // Alternative 0 → tag 121
         let d = PlutusData::Constr(0, vec![PlutusData::integer(1)]);
         let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0xd8, 0x79, 0x9f, 0x01, 0xff]);
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
     }
@@ -799,18 +899,104 @@ mod tests {
     }
 
     #[test]
-    fn constr_general_form_round_trip() {
-        // Alternative 7 → tag 102 (general form)
+    fn constr_extended_compact_with_fields_round_trip() {
+        // Alternative 7 -> tag 1280, followed by the upstream list encoding.
         let d = PlutusData::Constr(7, vec![PlutusData::integer(42)]);
         let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0xd9, 0x05, 0x00, 0x9f, 0x18, 0x2a, 0xff]);
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_extended_compact_tag_1280_round_trip() {
+        // Alternative 7 -> tag 1280, not the general tag-102 form.
+        let d = PlutusData::Constr(7, vec![]);
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0xd9, 0x05, 0x00, 0x80]);
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_extended_compact_tag_1400_round_trip() {
+        // Alternative 127 -> tag 1400.
+        let d = PlutusData::Constr(127, vec![]);
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0xd9, 0x05, 0x78, 0x80]);
         let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
     }
 
     #[test]
     fn constr_general_form_large_alt() {
+        let d = PlutusData::Constr(128, vec![]);
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0xd8, 0x66, 0x82, 0x18, 0x80, 0x80]);
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_general_form_very_large_alt() {
         let d = PlutusData::Constr(1000, vec![]);
         let decoded = PlutusData::from_cbor_bytes(&d.to_cbor_bytes()).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn constr_general_form_nonempty_fields_use_indefinite_nested_list() {
+        let d = PlutusData::Constr(128, vec![PlutusData::integer(1)]);
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, [0xd8, 0x66, 0x82, 0x18, 0x80, 0x9f, 0x01, 0xff]);
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
+    }
+
+    #[test]
+    fn serialise_data_observed_preview_payload_shape() {
+        let d = PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::Constr(
+                    0,
+                    vec![
+                        PlutusData::integer(80),
+                        PlutusData::Bytes(hex_to_bytes(
+                            "8800c5d74c8638f5c5f1e8c4c01bbd801ef94345b356742d1b2dc7724747415f",
+                        )),
+                        PlutusData::Constr(1, vec![]),
+                        PlutusData::Constr(
+                            0,
+                            vec![
+                                PlutusData::Constr(
+                                    0,
+                                    vec![PlutusData::Bytes(hex_to_bytes(
+                                        "32b0946e3989fc8b8fbd65e42b87105018d003289c70978a61f3583357d195aa",
+                                    ))],
+                                ),
+                                PlutusData::integer(0),
+                            ],
+                        ),
+                    ],
+                ),
+                PlutusData::List(vec![
+                    PlutusData::Bytes(hex_to_bytes(
+                        "12e38af0065929afe1f3584708ca591bf17119b88719f17cde10ea3e35a5ad5c",
+                    )),
+                    PlutusData::Bytes(hex_to_bytes(
+                        "ae540ae14a0ec0ce46ae691c37a4872d267640f9b1c1d181372f13d6c010e46c",
+                    )),
+                ]),
+                PlutusData::Constr(1, vec![]),
+            ],
+        );
+        let expected = hex_to_bytes(
+            "d8799fd8799f185058208800c5d74c8638f5c5f1e8c4c01bbd801ef94345b356742d1b2dc7724747415fd87a80d8799fd8799f582032b0946e3989fc8b8fbd65e42b87105018d003289c70978a61f3583357d195aaff00ffff9f582012e38af0065929afe1f3584708ca591bf17119b88719f17cde10ea3e35a5ad5c5820ae540ae14a0ec0ce46ae691c37a4872d267640f9b1c1d181372f13d6c010e46cffd87a80ff",
+        );
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes, expected);
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
         assert_eq!(decoded, d);
     }
 
@@ -904,8 +1090,9 @@ mod tests {
             value = PlutusData::List(vec![value]);
         }
         let bytes = value.to_cbor_bytes();
-        let mut expected = vec![0x81_u8; depth];
+        let mut expected = vec![0x9f_u8; depth];
         expected.push(0x00);
+        expected.extend(std::iter::repeat_n(0xff, depth));
         assert_eq!(bytes, expected);
 
         // Re-decoding must yield the original value (round-trip parity with
@@ -951,6 +1138,24 @@ mod tests {
         let bytes = d.to_cbor_bytes();
         // CBOR negative -1 (magnitude 0) = 0x20
         assert_eq!(bytes, [0x20]);
+    }
+
+    #[test]
+    fn bytes_longer_than_64_use_indefinite_chunks() {
+        let payload: Vec<u8> = (0..65).collect();
+        let d = PlutusData::Bytes(payload.clone());
+        let bytes = d.to_cbor_bytes();
+        assert_eq!(bytes[0], 0x5f, "long Plutus bytes use indefinite CBOR");
+        assert_eq!(bytes[1], 0x58, "first chunk uses one-byte length marker");
+        assert_eq!(bytes[2], 0x40, "first chunk is exactly 64 bytes");
+        assert_eq!(
+            bytes[67], 0x41,
+            "second chunk starts after 0x5f + 0x58 0x40 + 64 bytes"
+        );
+        assert_eq!(bytes[68], 64, "second chunk carries the final byte");
+        assert_eq!(bytes[69], 0xff, "long Plutus bytes end with CBOR break");
+        let decoded = PlutusData::from_cbor_bytes(&bytes).unwrap();
+        assert_eq!(decoded, d);
     }
 
     // ── Script ─────────────────────────────────────────────────────────

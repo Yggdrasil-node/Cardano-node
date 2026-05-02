@@ -16,7 +16,7 @@ fn redeemer_cbor_round_trip() {
     let redeemer = Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(42),
+        data: PlutusData::integer(42),
         ex_units: ExUnits {
             mem: 100_000,
             steps: 50_000_000,
@@ -46,9 +46,9 @@ fn redeemer_with_complex_plutus_data() {
     let complex_data = PlutusData::Constr(
         0,
         vec![
-            PlutusData::Integer(42),
+            PlutusData::integer(42),
             PlutusData::Bytes(vec![0xDE, 0xAD]),
-            PlutusData::List(vec![PlutusData::Integer(-1), PlutusData::Integer(100)]),
+            PlutusData::List(vec![PlutusData::integer(-1), PlutusData::integer(100)]),
         ],
     );
     let redeemer = Redeemer {
@@ -68,8 +68,8 @@ fn redeemer_with_complex_plutus_data() {
 #[test]
 fn redeemer_with_map_plutus_data() {
     let map_data = PlutusData::Map(vec![
-        (PlutusData::Integer(1), PlutusData::Bytes(vec![0x01])),
-        (PlutusData::Integer(2), PlutusData::Bytes(vec![0x02])),
+        (PlutusData::integer(1), PlutusData::Bytes(vec![0x01])),
+        (PlutusData::integer(2), PlutusData::Bytes(vec![0x02])),
     ]);
     let redeemer = Redeemer {
         tag: 2,
@@ -84,10 +84,10 @@ fn redeemer_with_map_plutus_data() {
 
 #[test]
 fn witness_set_with_complex_plutus_data() {
-    let pd1 = PlutusData::Constr(0, vec![PlutusData::Integer(1)]);
+    let pd1 = PlutusData::Constr(0, vec![PlutusData::integer(1)]);
     let pd2 = PlutusData::Map(vec![(
         PlutusData::Bytes(b"x".to_vec()),
-        PlutusData::Integer(-5),
+        PlutusData::integer(-5),
     )]);
     let wset = ShelleyWitnessSet {
         vkey_witnesses: vec![],
@@ -112,7 +112,7 @@ fn witness_set_with_typed_redeemer_and_plutus_data() {
         native_scripts: vec![],
         bootstrap_witnesses: vec![],
         plutus_v1_scripts: vec![],
-        plutus_data: vec![PlutusData::Integer(42)],
+        plutus_data: vec![PlutusData::integer(42)],
         redeemers: vec![Redeemer {
             tag: 0,
             index: 0,

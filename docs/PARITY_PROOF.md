@@ -10,7 +10,9 @@ nav_order: 1
 **Document round**: R246 refresh (2026-05-02)
 **Cumulative arc**: R1 → R246
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4.7K+ passing, 0 failing at the R246 slice boundary
+**Workspace tests**: 4.7K+ passing, 0 failing; focused R246 tests,
+release build, `cargo check-all`, `cargo test-all`, and `cargo lint`
+pass after the latest Plutus/certificate/runtime recovery patches
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the
@@ -192,7 +194,9 @@ remain green.
 
 R246 closes the preview replay blocker originally observed as
 `MalformedReferenceScripts` near Babbage slot `730728`, plus the later
-Plutus validation mismatch around slot `831387`.
+Plutus validation mismatch at slot `840719`. Follow-up preview replay also
+closed Plutus `serialiseData` CBOR-shape drift and legacy
+`AccountRegistration` redeemer/witness over-collection.
 
 The local behavior now matches the upstream path that stores Plutus
 scripts as `PlutusBinary`:
@@ -203,23 +207,31 @@ scripts as `PlutusBinary`:
 | Language gate | Use protocol version: V1 >= PV5, V2 >= PV7, V3 >= PV9 |
 | Reference inputs | Sort resolved Babbage/Conway reference inputs by `ShelleyTxIn`, matching upstream `Set.toList` order |
 | CEK memory | Non-constant runtime values consume `ExMemory = 1` |
+| Plutus Integer | UPLC `Constant::Integer`, `PlutusData::Integer`, Flat integer decode, CBOR bignum decode/encode, and integer builtins use arbitrary-precision `BigInt`, matching upstream Haskell `Integer` |
 | Validity intervals | Pre-Conway upper-only intervals use inclusive `PV1.to`; Conway/PV9+ upper bounds remain strict |
+| `serialiseData` | PlutusData CBOR uses upstream constructor tags, bounded bytes chunks, and Haskell-list shape for non-empty lists/constructor fields |
+| Legacy registration certs | Shelley `AccountRegistration` is not a Certifying script purpose and does not require a credential witness/redeemer; deposit-bearing Conway registration certs still do |
 
 Focused verification:
 
 ```text
 cargo fmt
+cargo fmt --all -- --check
 cargo test -p yggdrasil-plutus flat::tests --lib
-cargo test -p yggdrasil-plutus cost_model --lib
+cargo test -p yggdrasil-plutus builtins::tests::serialise_data --lib
 cargo test -p yggdrasil-ledger cbor::tests::extract_block_tx_byte_spans --lib
+cargo test -p yggdrasil-ledger plutus::tests --lib
+cargo test -p yggdrasil-ledger plutus_validation::tests::validate_certifying_script_skips_legacy_registration_without_redeemer --lib
+cargo test -p yggdrasil-ledger witnesses::tests --lib
 cargo test -p yggdrasil-ledger witness_validation --test integration
-cargo test -p yggdrasil-node plutus_eval --lib
 cargo test -p yggdrasil-node sync:: --lib
+cargo test -p yggdrasil-node runtime::tests::runtime_recovery_preserves_current_epoch_block_counts --lib
 cargo build -p yggdrasil-node --release
-cargo check-all
-cargo test-all
-cargo lint
 ```
+
+These focused gates passed, and the broad `cargo check-all`,
+`cargo test-all`, and `cargo lint` gates also pass after the latest R246
+patches.
 
 Operational replay:
 
@@ -229,8 +241,21 @@ cargo run --manifest-path tmp/refscan/Cargo.toml --release -- \
   tmp/preview-producer/config/preview-producer.json
 ```
 
-Result: `ok final tip=BlockPoint(SlotNo(834713), HeaderHash(ecf07479870a29bf...))`.
-No `MalformedReferenceScripts` or ledger decode error occurred.
+Result after the PlutusBinary/integer/ScriptContext fixes: checkpoint
+`SlotNo(834713)`, `volatile replay blocks=255`, and final tip
+`SlotNo(842753)`. After the `serialiseData` and legacy registration
+certificate fixes, refscan advanced from checkpoint `SlotNo(898474)` to
+final tip `SlotNo(901725)`. No `MalformedReferenceScripts`,
+`ValidationTagMismatch`, ledger decode error, or missing
+legacy-registration redeemer occurred.
+
+A later bounded live preview run reached checkpoint slot `1038614`, then
+stopped at slot `1038978` with `WithdrawalExceedsBalance` in transaction
+`ffe6f2f14fe4743872f13863eb2e64898928b68415bce7180abe8d69325b580c`.
+That stop is stale persisted reward state from checkpoints written before
+runtime recovery preserved current-epoch `pool_block_counts`, not a
+Plutus failure. Clean/repaired preview replay is required for final
+operational evidence past that point.
 
 ---
 

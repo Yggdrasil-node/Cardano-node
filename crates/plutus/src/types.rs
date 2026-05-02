@@ -1509,9 +1509,7 @@ mod tests {
         let env = Environment::new();
         let env = env.extend(Value::Constant(Constant::integer(10)));
         let val = env.lookup(1).unwrap();
-        assert!(
-            matches!(val, Value::Constant(Constant::Integer(n)) if n == &BigInt::from(10))
-        );
+        assert!(matches!(val, Value::Constant(Constant::Integer(n)) if n == &BigInt::from(10)));
     }
 
     #[test]

@@ -133,7 +133,11 @@ impl CborDecode for Value {
             }
             let coin = dec.unsigned()?;
             let ma = decode_multi_asset_unsigned(dec)?;
-            Ok(Self::CoinAndAssets(coin, ma))
+            if ma.is_empty() {
+                Ok(Self::Coin(coin))
+            } else {
+                Ok(Self::CoinAndAssets(coin, ma))
+            }
         } else {
             Err(LedgerError::CborTypeMismatch {
                 expected: 0, // unsigned or array
@@ -161,6 +165,10 @@ fn encode_multi_asset(enc: &mut Encoder, ma: &MultiAsset) {
 }
 
 /// Decodes a `MultiAsset` (unsigned quantities) from a CBOR map-of-maps.
+///
+/// Pre-Conway upstream decoders use `decodeWithPrunning`, so zero asset
+/// quantities are pruned before UTxO validation sees the value. Policies made
+/// empty by pruning are omitted from the normalized map.
 fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, LedgerError> {
     let mut ma = BTreeMap::new();
     match dec.map_begin()? {
@@ -183,7 +191,7 @@ fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, Ledg
                                 return Err(LedgerError::AssetNameTooLong { actual: name.len() });
                             }
                             let qty = dec.unsigned()?;
-                            assets.insert(name, qty);
+                            insert_nonzero_asset(&mut assets, name, qty);
                         }
                     }
                     None => {
@@ -193,12 +201,12 @@ fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, Ledg
                                 return Err(LedgerError::AssetNameTooLong { actual: name.len() });
                             }
                             let qty = dec.unsigned()?;
-                            assets.insert(name, qty);
+                            insert_nonzero_asset(&mut assets, name, qty);
                         }
                         dec.consume_break()?;
                     }
                 }
-                ma.insert(policy, assets);
+                insert_nonempty_policy(&mut ma, policy, assets);
             }
         }
         None => {
@@ -220,7 +228,7 @@ fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, Ledg
                                 return Err(LedgerError::AssetNameTooLong { actual: name.len() });
                             }
                             let qty = dec.unsigned()?;
-                            assets.insert(name, qty);
+                            insert_nonzero_asset(&mut assets, name, qty);
                         }
                     }
                     None => {
@@ -230,17 +238,29 @@ fn decode_multi_asset_unsigned(dec: &mut Decoder<'_>) -> Result<MultiAsset, Ledg
                                 return Err(LedgerError::AssetNameTooLong { actual: name.len() });
                             }
                             let qty = dec.unsigned()?;
-                            assets.insert(name, qty);
+                            insert_nonzero_asset(&mut assets, name, qty);
                         }
                         dec.consume_break()?;
                     }
                 }
-                ma.insert(policy, assets);
+                insert_nonempty_policy(&mut ma, policy, assets);
             }
             dec.consume_break()?;
         }
     }
     Ok(ma)
+}
+
+fn insert_nonzero_asset(assets: &mut BTreeMap<AssetName, u64>, name: AssetName, qty: u64) {
+    if qty != 0 {
+        assets.insert(name, qty);
+    }
+}
+
+fn insert_nonempty_policy(ma: &mut MultiAsset, policy: PolicyId, assets: BTreeMap<AssetName, u64>) {
+    if !assets.is_empty() {
+        ma.insert(policy, assets);
+    }
 }
 
 /// Encodes a `MintAsset` (signed quantities) as a CBOR map-of-maps.
@@ -668,6 +688,41 @@ mod tests {
         let v = Value::CoinAndAssets(3_000_000, mk_multi_asset());
         let decoded = Value::from_cbor_bytes(&v.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, v);
+    }
+
+    #[test]
+    fn value_decode_prunes_zero_multi_asset_quantities() {
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(3_000_000).map(2);
+        enc.bytes(&[0x01; 28]).map(2);
+        enc.bytes(b"zero").unsigned(0);
+        enc.bytes(b"kept").unsigned(7);
+        enc.bytes(&[0x02; 28]).map(1);
+        enc.bytes(b"gone").unsigned(0);
+
+        let decoded = Value::from_cbor_bytes(&enc.into_bytes()).unwrap();
+        let Value::CoinAndAssets(coin, ma) = decoded else {
+            panic!("expected non-empty multi-asset value after pruning");
+        };
+
+        assert_eq!(coin, 3_000_000);
+        assert_eq!(ma.len(), 1);
+        let assets = ma.get(&[0x01; 28]).unwrap();
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets.get(b"kept".as_slice()), Some(&7));
+        assert!(!assets.contains_key(b"zero".as_slice()));
+        assert!(!ma.contains_key(&[0x02; 28]));
+    }
+
+    #[test]
+    fn value_decode_zero_only_multiasset_as_coin() {
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(2_000_000).map(1);
+        enc.bytes(&[0x01; 28]).map(1);
+        enc.bytes(b"zero").unsigned(0);
+
+        let decoded = Value::from_cbor_bytes(&enc.into_bytes()).unwrap();
+        assert_eq!(decoded, Value::Coin(2_000_000));
     }
 
     #[test]

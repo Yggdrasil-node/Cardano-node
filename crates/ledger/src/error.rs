@@ -441,10 +441,13 @@ pub enum LedgerError {
     #[error("Byron bootstrap address attributes too big: {size} bytes (max 64)")]
     OutputBootAddrAttrsTooBig { size: usize },
 
-    /// A transaction output contains a multi-asset entry with zero quantity.
+    /// A normalized transaction output still contains a multi-asset entry with
+    /// zero quantity.
     ///
-    /// Zero-valued tokens are disallowed from Mary onward.
-    /// Reference: `Cardano.Ledger.Mary.Value` — non-zero invariant.
+    /// Pre-Conway `MaryValue` decoding prunes zero quantities before UTxO
+    /// validation; Conway/Dijkstra strict decoding should reject them at the
+    /// era-aware decode boundary.
+    /// Reference: `Cardano.Ledger.Mary.Value` — `decodeWithPrunning`.
     #[error("zero-valued multi-asset output: policy {policy_id:?} asset {asset_name:?}")]
     ZeroValuedMultiAssetOutput {
         policy_id: [u8; 28],

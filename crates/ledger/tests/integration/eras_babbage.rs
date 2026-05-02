@@ -6,7 +6,7 @@ fn datum_option_inline_complex_plutus_data() {
         2,
         vec![PlutusData::Map(vec![(
             PlutusData::Bytes(b"key".to_vec()),
-            PlutusData::Integer(999),
+            PlutusData::integer(999),
         )])],
     );
     let datum = DatumOption::Inline(complex);
@@ -21,7 +21,7 @@ fn datum_option_inline_complex_plutus_data() {
 #[test]
 fn datum_option_inline_nested_list() {
     let nested = PlutusData::List(vec![
-        PlutusData::List(vec![PlutusData::Integer(1), PlutusData::Integer(2)]),
+        PlutusData::List(vec![PlutusData::integer(1), PlutusData::integer(2)]),
         PlutusData::Bytes(vec![0xFF]),
     ]);
     let datum = DatumOption::Inline(nested);
@@ -38,7 +38,7 @@ fn babbage_txout_with_typed_inline_datum() {
         datum_option: Some(DatumOption::Inline(PlutusData::Constr(
             0,
             vec![
-                PlutusData::Integer(100),
+                PlutusData::integer(100),
                 PlutusData::Bytes(vec![0xCA, 0xFE]),
             ],
         ))),
@@ -55,8 +55,8 @@ fn babbage_txout_with_inline_datum_and_script_ref_typed() {
         address: vec![0x03; 28],
         amount: Value::Coin(10_000_000),
         datum_option: Some(DatumOption::Inline(PlutusData::List(vec![
-            PlutusData::Integer(1),
-            PlutusData::Integer(2),
+            PlutusData::integer(1),
+            PlutusData::integer(2),
         ]))),
         script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey(
             [0x00; 28],
@@ -81,7 +81,7 @@ fn datum_option_hash_cbor_round_trip() {
 
 #[test]
 fn datum_option_inline_cbor_round_trip() {
-    let inline_data = PlutusData::Integer(42);
+    let inline_data = PlutusData::integer(42);
     let datum = DatumOption::Inline(inline_data.clone());
     let mut enc = Encoder::new();
     datum.encode_cbor(&mut enc);
@@ -133,7 +133,7 @@ fn babbage_txout_with_inline_datum_and_script_ref() {
     let txout = BabbageTxOut {
         address: vec![0x03; 28],
         amount: Value::Coin(10_000_000),
-        datum_option: Some(DatumOption::Inline(PlutusData::Integer(5))),
+        datum_option: Some(DatumOption::Inline(PlutusData::integer(5))),
         script_ref: Some(ScriptRef(Script::Native(NativeScript::ScriptPubkey(
             [0x00; 28],
         )))),
@@ -220,7 +220,7 @@ fn babbage_tx_body_with_new_fields() {
         outputs: vec![BabbageTxOut {
             address: vec![0x02; 28],
             amount: Value::Coin(5_000_000),
-            datum_option: Some(DatumOption::Inline(PlutusData::Integer(66))),
+            datum_option: Some(DatumOption::Inline(PlutusData::integer(66))),
             script_ref: None,
         }],
         fee: 300_000,

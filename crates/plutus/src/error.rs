@@ -54,7 +54,7 @@ pub enum MachineError {
     #[error("division by zero")]
     DivisionByZero,
 
-    /// Integer value exceeded i128 range.
+    /// Integer value exceeded a bounded helper or builtin range.
     #[error("integer overflow")]
     IntegerOverflow,
 

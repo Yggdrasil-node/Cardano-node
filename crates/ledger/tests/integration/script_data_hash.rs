@@ -67,7 +67,7 @@ fn alonzo_submitted_tx_accepts_matching_script_data_hash() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -123,7 +123,7 @@ fn alonzo_submitted_tx_rejects_mismatched_script_data_hash() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(99),
+        data: PlutusData::integer(99),
         ex_units: ExUnits { mem: 50, steps: 50 },
     });
     let body = AlonzoTxBody {
@@ -200,7 +200,7 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_reference_script(
     ws.redeemers.push(Redeemer {
         tag: 1,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -306,7 +306,7 @@ fn babbage_submitted_tx_accepts_matching_script_data_hash_with_unused_reference_
     ws.redeemers.push(Redeemer {
         tag: 1,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -406,7 +406,7 @@ fn conway_submitted_tx_rejects_mismatched_script_data_hash_with_reference_script
     ws.redeemers.push(Redeemer {
         tag: 1,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -557,7 +557,7 @@ fn alonzo_redeemers_without_hash_rejected() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(42),
+        data: PlutusData::integer(42),
         ex_units: ExUnits {
             mem: 100,
             steps: 100,
@@ -668,7 +668,7 @@ fn babbage_redeemers_without_hash_rejected() {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(1),
+        data: PlutusData::integer(1),
         ex_units: ExUnits { mem: 50, steps: 50 },
     });
 
@@ -787,7 +787,7 @@ fn minimal_ws_with_redeemer() -> Vec<u8> {
     ws.redeemers.push(Redeemer {
         tag: 0,
         index: 0,
-        data: PlutusData::Integer(0),
+        data: PlutusData::integer(0),
         ex_units: ExUnits {
             mem: 1_000_000,
             steps: 1_000_000,
@@ -805,7 +805,7 @@ fn minimal_ws_with_redeemer() -> Vec<u8> {
 #[test]
 fn datums_without_redeemers_requires_script_data_hash() {
     let mut ws = empty_witness_set();
-    ws.plutus_data.push(PlutusData::Integer(42));
+    ws.plutus_data.push(PlutusData::integer(42));
     let wb = ws.to_cbor_bytes();
 
     // No declared hash, but datums present → must error
@@ -830,7 +830,7 @@ fn datums_without_redeemers_requires_script_data_hash() {
 #[test]
 fn datums_without_redeemers_accepts_matching_hash() {
     let mut ws = empty_witness_set();
-    ws.plutus_data.push(PlutusData::Integer(42));
+    ws.plutus_data.push(PlutusData::integer(42));
     let wb = ws.to_cbor_bytes();
 
     // Compute the expected hash for datums-only witness set.
@@ -866,7 +866,7 @@ fn datums_without_redeemers_accepts_matching_hash() {
 #[test]
 fn datums_without_redeemers_rejects_wrong_hash() {
     let mut ws = empty_witness_set();
-    ws.plutus_data.push(PlutusData::Integer(42));
+    ws.plutus_data.push(PlutusData::integer(42));
     let wb = ws.to_cbor_bytes();
 
     let result = yggdrasil_ledger::plutus_validation::validate_script_data_hash(
