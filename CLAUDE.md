@@ -36,6 +36,7 @@ Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept cu
 | [docs/AGENTS.md](docs/AGENTS.md) | Architecture/dependency/spec/contributing docs policy |
 | [specs/AGENTS.md](specs/AGENTS.md) | Pinned CDDL fixtures and provenance |
 | [specs/upstream-test-vectors/AGENTS.md](specs/upstream-test-vectors/AGENTS.md) | Vendored upstream vectors (must not be hand-edited) |
+| [.claude/AGENTS.md](.claude/AGENTS.md) | Claude Code harness config: session-start hook, permissions, Stop hook |
 
 ## Commands
 
