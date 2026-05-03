@@ -69,8 +69,6 @@ cargo test -p yggdrasil-network <substring>                        # by name sub
 cargo test -p yggdrasil-node --lib <mod::path::test_name> -- --exact
 ```
 
-
-
 Crate package names use the `yggdrasil-` prefix: `yggdrasil-crypto`, `yggdrasil-cddl-codegen`, `yggdrasil-ledger`, `yggdrasil-storage`, `yggdrasil-consensus`, `yggdrasil-mempool`, `yggdrasil-network`, `yggdrasil-plutus`, plus the `yggdrasil-node` binary.
 
 ## Workspace Topology and Dependency Order
