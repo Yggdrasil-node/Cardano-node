@@ -9,6 +9,11 @@
 # Idempotent: safe to re-run. Non-interactive.
 set -euo pipefail
 
+# Run async so web sessions start without waiting on `cargo fetch`. The
+# harness reads this first line as hook config, then keeps streaming the
+# rest in the background. asyncTimeout is in ms.
+echo '{"async": true, "asyncTimeout": 300000}'
+
 # Only run in the remote (web) environment. Local sessions already have
 # whatever toolchain the developer chose.
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
