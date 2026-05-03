@@ -45,6 +45,8 @@ cargo lint        # cargo clippy --workspace --all-targets --all-features -- -D 
 
 All four (`fmt --all -- --check`, `check-all`, `test-all`, `lint`) are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
 
+In Claude Code on the web, [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) (registered in [`.claude/settings.json`](.claude/settings.json)) provisions the pinned 1.95.0 toolchain via `rust-toolchain.toml` and pre-fetches workspace dependencies (`cargo fetch --locked`) before the agent starts. The hook is gated on `$CLAUDE_CODE_REMOTE`, so local sessions are unaffected.
+
 Running a single test:
 
 ```bash
