@@ -2364,8 +2364,8 @@ mod tests {
             denominator: 10,
         };
         let r = max_pool_reward(
-            33_830_000_000_000,     // R ≈ 33.83 T
-            500,                    // k
+            33_830_000_000_000, // R ≈ 33.83 T
+            500,                // k
             a0,
             100_000_000_000_000,    // pool_stake = 100M ADA
             100_000_000_000_000,    // pledge = pool_stake

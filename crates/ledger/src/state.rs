@@ -2785,6 +2785,25 @@ pub struct LedgerState {
     shelley_utxo: ShelleyUtxo,
     /// Protocol parameters governing validation rules.
     protocol_params: Option<crate::protocol_params::ProtocolParameters>,
+    /// Protocol parameters from the previous UPEC update — i.e. the
+    /// `curPParams` value just before the most recent UPEC fired at an
+    /// epoch boundary.
+    ///
+    /// Upstream `Cardano.Ledger.Shelley.LedgerState.PulsingReward.startStep`
+    /// reads `esPrevPParams.d` (NOT `esCurPParams.d`) when computing
+    /// `η = min(1, blocksMade/expectedBlocks)`.  Since UPEC at the
+    /// start of each new epoch shifts `curPParams → prevPParams` then
+    /// applies any due update, `prevPParams` always lags one epoch behind.
+    /// Reading `curPParams.d` instead causes the RUPD applied at the
+    /// boundary entering the d=1 → d=0 transition (preview B(3) at
+    /// slot 172,800) to compute `eta = blocks_made / expected_blocks`
+    /// when upstream uses `eta = 1` (because pre-UPEC `d` was still ≥ 0.8),
+    /// dropping the entire monetary expansion at that boundary and
+    /// drifting our reserves from the upstream chain forever after.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward` —
+    /// `startStep` reads `pr ^. ppDL` where `pr = esPrevPParams`.
+    previous_protocol_params: Option<crate::protocol_params::ProtocolParameters>,
     /// Aggregate deposit accounting.
     deposit_pot: DepositPot,
     /// Treasury and reserves accounting.
@@ -3218,6 +3237,12 @@ impl CborDecode for LedgerState {
             multi_era_utxo,
             shelley_utxo,
             protocol_params,
+            // Reconstructing from a checkpoint: the snapshot only
+            // captured curPParams, not prevPParams.  Initialise prev = cur
+            // so the first reward calc after checkpoint resume falls back
+            // to current params; once UPEC fires again the field will
+            // hold the proper pre-update value.
+            previous_protocol_params: None,
             deposit_pot,
             accounting,
             enact_state,
@@ -3305,6 +3330,7 @@ impl LedgerState {
             multi_era_utxo: MultiEraUtxo::new(),
             shelley_utxo: ShelleyUtxo::new(),
             protocol_params: None,
+            previous_protocol_params: None,
             deposit_pot: DepositPot::default(),
             accounting: AccountingState::default(),
             enact_state: EnactState::default(),
@@ -3801,6 +3827,29 @@ impl LedgerState {
     /// Returns the current protocol parameters, if set.
     pub fn protocol_params(&self) -> Option<&crate::protocol_params::ProtocolParameters> {
         self.protocol_params.as_ref()
+    }
+
+    /// Returns the **previous** protocol parameters (upstream
+    /// `esPrevPParams`), if set — i.e. the value of `protocol_params`
+    /// just before the most recent UPEC fired at an epoch boundary.
+    /// Falls back to current `protocol_params` for early boundaries
+    /// before any UPEC has run.
+    ///
+    /// Used by `apply_epoch_boundary` for the `eta` factor in the
+    /// monetary expansion calc, matching upstream's
+    /// `pr ^. ppDL` lookup in `startStep`.
+    pub fn previous_protocol_params(&self) -> Option<&crate::protocol_params::ProtocolParameters> {
+        self.previous_protocol_params
+            .as_ref()
+            .or(self.protocol_params.as_ref())
+    }
+
+    /// Captures the current `protocol_params` into `previous_protocol_params`.
+    /// Called by `apply_epoch_boundary` immediately before UPEC applies any
+    /// pending parameter update so that subsequent boundaries can see the
+    /// pre-update value via `previous_protocol_params()`.
+    pub fn snapshot_previous_protocol_params(&mut self) {
+        self.previous_protocol_params = self.protocol_params.clone();
     }
 
     /// Returns a mutable reference to the protocol parameters slot.

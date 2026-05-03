@@ -407,12 +407,24 @@ pub fn apply_epoch_boundary(
     //
     // expectedBlocks = (1 - d) × active_slot_coeff × slots_per_epoch
     //
-    // Reference: `startStep` in
-    // `Cardano.Ledger.Shelley.LedgerState.PulsingReward`.
-    let d_param = params.d.unwrap_or(UnitInterval {
-        numerator: 0,
-        denominator: 1,
-    });
+    // Crucially, upstream `startStep` reads `pr ^. ppDL` (= `prevPParams.d`),
+    // not `pp ^. ppDL` (= `curPParams.d`).  The TPraos→Praos transition (d=1
+    // to d=0) is one such update: at the boundary entering the *first*
+    // d=0 epoch, `prevPParams.d` is still 1 (overlay era) so eta=1 and the
+    // monetary expansion fires; only one boundary later does
+    // `prevPParams` advance to d=0 and the eta=blocks/expected formula
+    // kick in.  Reading `curPParams.d` would prematurely zero `delta_R`
+    // for the boundary that lands the d=0 update, costing ~9 T lovelace
+    // of monetary expansion that upstream still credits.
+    //
+    // Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward.startStep`.
+    let d_param = ledger
+        .previous_protocol_params()
+        .and_then(|pp| pp.d)
+        .unwrap_or(UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        });
     let eta = compute_eta(
         d_param,
         ledger.active_slot_coeff(),
@@ -514,7 +526,13 @@ pub fn apply_epoch_boundary(
     //
     //     Reference: `Cardano.Ledger.Shelley.Rules.Epoch` — UPEC
     //     is the last sub-rule inside EPOCH.
+    //
+    //     Snapshot the current `protocol_params` into
+    //     `previous_protocol_params` BEFORE the update applies so that
+    //     the next boundary's reward calc reads the pre-update value
+    //     (matching upstream's `esPrevPParams`).
     // -----------------------------------------------------------------------
+    ledger.snapshot_previous_protocol_params();
     let pparam_updates_applied = ledger.apply_due_pending_pparam_updates(new_epoch);
 
     // -----------------------------------------------------------------------
