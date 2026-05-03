@@ -50,15 +50,26 @@ cargo lint                                   # cargo clippy --workspace --all-ta
 
 All four are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
 
-In Claude Code on the web, [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) (registered in [`.claude/settings.json`](.claude/settings.json)) provisions the pinned 1.95.0 toolchain via `rust-toolchain.toml` and pre-fetches workspace dependencies (`cargo fetch --locked`) before the agent starts. The hook is gated on `$CLAUDE_CODE_REMOTE`, so local sessions are unaffected.
+### Codespace setup (Claude Code on the web)
 
-Running a single test:
+[`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh), registered in [`.claude/settings.json`](.claude/settings.json), runs at session start in the web environment (gated on `$CLAUDE_CODE_REMOTE`):
+
+- Provisions the pinned `1.95.0` toolchain via [`rust-toolchain.toml`](rust-toolchain.toml).
+- Ensures `pkg-config` / `build-essential` are present.
+- Pre-fetches workspace dependencies with `cargo fetch --locked`.
+- Runs async (`{"async": true, "asyncTimeout": 300000}`); the agent loop may begin before the hook finishes.
+
+`.claude/settings.json` also allow-lists the cargo/git commands needed for the four verification gates and adds a `Stop` hook that re-prints the verification reminder. Local sessions are unaffected.
+
+### Running a single test
 
 ```bash
 cargo test -p yggdrasil-ledger --test <integration_test_name>      # one integration test file
 cargo test -p yggdrasil-network <substring>                        # by name substring within a crate
 cargo test -p yggdrasil-node --lib <mod::path::test_name> -- --exact
 ```
+
+
 
 Crate package names use the `yggdrasil-` prefix: `yggdrasil-crypto`, `yggdrasil-cddl-codegen`, `yggdrasil-ledger`, `yggdrasil-storage`, `yggdrasil-consensus`, `yggdrasil-mempool`, `yggdrasil-network`, `yggdrasil-plutus`, plus the `yggdrasil-node` binary.
 
