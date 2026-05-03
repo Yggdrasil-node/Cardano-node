@@ -69,7 +69,8 @@
 				"vadimcn.vscode-lldb",
 				"tamasfe.even-better-toml",
 				"azuretools.vscode-docker",
-				"openai.chatgpt"
+				"openai.chatgpt",
+				"anthropic.claude-code"
 			]
 		}
 	}

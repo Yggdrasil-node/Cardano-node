@@ -158,6 +158,10 @@ impl U256 {
 ///
 /// Assumes the true quotient fits in u64 (always true for per-pool reward).
 /// Uses binary search with at most 64 iterations.
+///
+/// **Important:** trial products `den × mid` are computed in U512 to avoid
+/// truncation when `den` is near U256-max.  Naïve U256-truncated multiply
+/// would silently wrap and accept far-too-large quotients.
 fn u256_div_floor(num: U256, den: U256) -> u64 {
     if den.is_zero() {
         return 0;
@@ -168,13 +172,25 @@ fn u256_div_floor(num: U256, den: U256) -> u64 {
     if num.le(den) {
         return if num == den { 1 } else { 0 };
     }
+    // Lift num to U512 so the trial-product comparison is accurate even
+    // when den · mid overflows U256.
+    let num_u512 = U512 {
+        hi: U256 { hi: 0, lo: 0 },
+        lo: num,
+    };
     // Binary search: largest q ∈ [1, u64::MAX] with den × q ≤ num.
     let mut lo_q: u64 = 1;
     let mut hi_q: u64 = u64::MAX;
     while lo_q < hi_q {
         let mid = lo_q + (hi_q - lo_q).div_ceil(2);
-        let prod = den.mul_u128(mid as u128);
-        if prod.le(num) {
+        let prod = u512_mul_u256(
+            den,
+            U256 {
+                hi: 0,
+                lo: mid as u128,
+            },
+        );
+        if prod.le(num_u512) {
             lo_q = mid;
         } else {
             hi_q = mid - 1;
@@ -498,7 +514,14 @@ pub fn max_pool_reward(
     pledge: u64,
     total_stake: u64,
 ) -> u64 {
-    if total_stake == 0 || n_opt == 0 || rewards_pot == 0 {
+    if total_stake == 0 || n_opt == 0 || rewards_pot == 0 || pool_stake == 0 {
+        // Upstream `mkPoolRewardInfo` returns `Left` (= zero reward)
+        // when a pool has no active stake.  Our internal expansion of
+        // `diff_n = sig_n·s_d − s_n·f4_n` requires sig_n > 0 (i.e.
+        // pool_stake > 0) — otherwise the U256 subtraction underflows
+        // and `apparent` saturates to `rewards_pot`, badly inflating
+        // the leader reward of any pool whose stake is missing from
+        // the snapshot's pool-stake distribution.  Bail out early.
         return 0;
     }
 
@@ -554,47 +577,68 @@ pub fn max_pool_reward(
     // Reference: `Cardano.Ledger.State.SnapShots.maxPool'`.
     // ----------------------------------------------------------------
 
-    // diff_n = sig_n·s_d − s_n·(sig_d − k·sig_n)
+    // diff_n = sig_n·s_d − s_n·(sig_d − k·sig_n).  May be negative as a
+    // signed rational when σ' is uncapped (small pool) but s' is capped
+    // (saturated pledge at z), since s'·(z−σ')/z can exceed σ'.
+    // Upstream computes the entire `maxPool` rational without explicit
+    // sign handling; if the final value is negative,
+    // `rationalToCoinViaFloor` clamps it to 0.  We track the sign and
+    // either add or subtract `|term2|` from `term1` accordingly.
     let f4_n = sig_d.saturating_sub(k.saturating_mul(sig_n));
-    // diff_n / diff_d as U256 (both factors fit u128 when GCD-reduced).
     let sn_sd = U256::widening_mul(sig_n, s_d);
     let snm_f4 = U256::widening_mul(s_n, f4_n);
-    let diff_n = sn_sd.checked_sub(snm_f4); // U256 (≤ sig_n·s_d)
-    let diff_d = U256::widening_mul(sig_d, s_d); // U256
-
-    // Term1 of numerator-without-R: a0_d · sig_n · s_d · diff_d.
-    let term1 = {
-        // a0_d · sig_n fits u128 (both ≤ u64 before reduction; sig_n ≤ t after).
-        // sig_n × s_d may overflow u128, so widen.
-        let ad_sn = U256::widening_mul(a0_d, sig_n);
-        let ad_sn_sd = ad_sn.mul_u128(s_d); // U256 — may already use full range
-        // Multiply U256 × diff_d (U256) → U512.
-        u512_mul_u256(ad_sn_sd, diff_d)
+    let (diff_n_abs, diff_n_neg) = if u256_lt(sn_sd, snm_f4) {
+        // sn_sd < snm_f4 → diff_n negative; |diff_n| = snm_f4 − sn_sd.
+        (snm_f4.checked_sub(sn_sd), true)
+    } else {
+        (sn_sd.checked_sub(snm_f4), false)
     };
-    // Term2 of numerator-without-R: s_n · a0_n · k · diff_n · sig_d.
-    let term2 = {
+    let diff_d = U256::widening_mul(sig_d, s_d); // U256, always > 0
+
+    // Term1 (always non-negative): a0_d · sig_n · s_d · diff_d.
+    let term1 = {
+        let ad_sn = U256::widening_mul(a0_d, sig_n);
+        let ad_sn_sd = ad_sn.mul_u128(s_d); // U256
+        u512_mul_u256(ad_sn_sd, diff_d) // U512
+    };
+    // |Term2|: s_n · a0_n · k · |diff_n| · sig_d.
+    let term2_abs = {
         let sn_an = U256::widening_mul(s_n, a0_n);
         let sn_an_k = sn_an.mul_u128(k);
-        // sn_an_k × diff_n → U512.
-        let part_a = u512_mul_u256(sn_an_k, diff_n);
-        // × sig_d → U512.
+        let part_a = u512_mul_u256(sn_an_k, diff_n_abs);
         part_a.mul_u128(sig_d)
     };
-    // num_inner = term1 + term2 (U512).
-    let num_inner = term1.add(term2);
-    // Multiply by R → U512 × u128.
+    // num_inner = term1 + sign × |term2|.  When term2 is negative, clamp
+    // the maxPool result to 0 if |term2| ≥ term1 (= maxPool ≤ 0).
+    let num_inner = if diff_n_neg {
+        if u512_lt(term1, term2_abs) || term1 == term2_abs {
+            return 0;
+        }
+        u512_sub(term1, term2_abs)
+    } else {
+        term1.add(term2_abs)
+    };
+    // Multiply by R → U512.
     let num = num_inner.mul_u128(r);
-    // den = (a0_d + a0_n) · sig_d · s_d · diff_d (= (1+a0) · diff_d² /
-    // (sig_d·s_d))?  Concretely den = (a0_d+a0_n)·diff_d · sig_d · s_d
-    // BUT note diff_d = sig_d·s_d, so den = (a0_d+a0_n)·diff_d·diff_d.
+    // den = (a0_d + a0_n) · sig_d · s_d · diff_d = (1+a0) · diff_d²
+    // (since diff_d = sig_d·s_d).
     let den = {
-        // diff_d × (a0_d+a0_n) → U256
         let dd_aa = diff_d.mul_u128(one_plus_a0);
-        // × diff_d → U512
         u512_mul_u256(dd_aa, diff_d)
     };
-    // Final division: U512 / U512 → u128 → u64.
     u512_div_u512(num, den).min(u64::MAX as u128) as u64
+}
+
+/// `a < b` for U256 values.
+#[inline]
+fn u256_lt(a: U256, b: U256) -> bool {
+    a.le(b) && a != b
+}
+
+/// `a < b` for U512 values.
+#[inline]
+fn u512_lt(a: U512, b: U512) -> bool {
+    a.le(b) && a != b
 }
 
 /// Multiply U256 × U256 → U512 (no truncation).
@@ -2276,6 +2320,124 @@ mod tests {
         assert!(reward > 0);
         // Should be less than the saturated reward of R/k = 60B.
         assert!(reward < 60_000_000_000);
+    }
+
+    #[test]
+    fn max_pool_reward_b9_genesis_pool_uncapped_with_k150() {
+        // EXACT inputs captured from DIAG_OVER at preview B(9):
+        //   R=33830044197456 k=150 a0=300000/1000000
+        //   p=100000000000000 pi=100000000000000
+        //   t=30064097539149320
+        // Live node returned optimal=19339676192756986 (1.93·10^16),
+        // capping `apparent` at `rewards_pot` per pool.
+        // Upstream value: maxPool ≈ 99B (formula gives R·σ·1.075/(1+a0)
+        // when σ=p/t < z=1/k, with full pledge bonus σ²/z²=1/4 → 1.075).
+        let a0 = UnitInterval {
+            numerator: 300_000,
+            denominator: 1_000_000,
+        };
+        let r = max_pool_reward(
+            33_830_044_197_456,
+            150,
+            a0,
+            100_000_000_000_000,
+            100_000_000_000_000,
+            30_064_097_539_149_320,
+        );
+        assert!(
+            r > 80_000_000_000 && r < 120_000_000_000,
+            "max_pool_reward returned {} for B(9) k=150 inputs (expected ~99 B)",
+            r,
+        );
+    }
+
+    #[test]
+    fn max_pool_reward_b9_genesis_pool_capped_returns_small_value() {
+        // Reproduces the exact failing-pool inputs at preview B(9):
+        // 100M ADA pool stake, 100M ADA pledge (full self-pledge), at
+        // a moment when reserves have shrunk to ≈14.93 PetaLovelace, so
+        // circulation = 30.07 PetaLovelace.  Pool is saturated
+        // (σ' = z = 1/500), pledge is saturated (s' = z).
+        // Expected upstream maxPool ≈ R/k = 67.66 B for R = 33.83 T.
+        let a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
+        let r = max_pool_reward(
+            33_830_000_000_000,     // R ≈ 33.83 T
+            500,                    // k
+            a0,
+            100_000_000_000_000,    // pool_stake = 100M ADA
+            100_000_000_000_000,    // pledge = pool_stake
+            30_070_000_000_000_000, // circulation = 30.07 P lovelace
+        );
+        assert!(
+            r > 60_000_000_000 && r < 75_000_000_000,
+            "max_pool_reward returned {} for B(9) genesis pool inputs (\
+             expected ~67 B; > 33 T indicates U256 overflow / underflow)",
+            r,
+        );
+    }
+
+    #[test]
+    fn max_pool_reward_negative_diff_n_clamps_to_zero() {
+        // Regression test: when σ' is uncapped (small pool, σ < z) but
+        // s' is capped (full pledge ≥ z), the upstream `maxPool'`
+        // factor `σ' − s'·(z−σ')/z` can be negative.  Upstream
+        // `rationalToCoinViaFloor` clamps the final maxPool to 0 in
+        // that case.  Pre-fix, our U256 subtraction underflows in
+        // `diff_n = sig_n·s_d − s_n·(sig_d − k·sig_n)`, producing a
+        // huge wrapped value that explodes `apparent` to `rewards_pot`.
+        //
+        // Scenario: 1 lovelace pool stake but full 100 M ADA pledge in
+        // a circulation of 30 quadrillion lovelace.  Upstream maxPool ≈
+        // 0; our pre-fix returned ~rewards_pot.
+        //
+        // Reference: `Cardano.Ledger.State.SnapShots.maxPool'` —
+        // `factor` term is computed without explicit clamp; final
+        // `rationalToCoinViaFloor` coerces negative coin to 0.
+        let a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
+        let r = max_pool_reward(
+            33_830_000_000_000, // R ≈ 33.83 T
+            500,                // k
+            a0,
+            1,                      // pool_stake = 1 (very tiny)
+            100_000_000_000_000,    // pledge = 100M ADA (capped at z)
+            30_000_000_000_000_000, // circulation = 30 P lovelace
+        );
+        // Upstream maxPool = 0 because the saturation bonus is negative
+        // and dominates.  Pre-fix returned ~33.83 T (full pot) due to
+        // wrapped underflow.
+        assert_eq!(r, 0);
+    }
+
+    #[test]
+    fn max_pool_reward_zero_pool_stake_returns_zero() {
+        // When a pool has no active stake (e.g. snapshot's pool-stake
+        // distribution doesn't include this pool), its reward must be
+        // zero.  Without this guard, the U256 subtraction
+        // `sn_sd − snm_f4` underflows when `sig_n = 0`, producing a
+        // garbage `optimal` which `mul_rational_capped` then caps at
+        // `rewards_pot`, badly inflating the leader reward.
+        //
+        // Reference: upstream `mkPoolRewardInfo` returns `Left` for a
+        // pool with no active stake.
+        let a0 = UnitInterval {
+            numerator: 3,
+            denominator: 10,
+        };
+        let r = max_pool_reward(
+            35_956_813_126_022, // R ≈ 35.96 T
+            500,                // k
+            a0,
+            0,                      // pool_stake = 0 (missing from snapshot)
+            100_000_000_000_000,    // pledge non-zero
+            30_017_994_599_484_487, // circulation
+        );
+        assert_eq!(r, 0);
     }
 
     #[test]
