@@ -510,6 +510,13 @@ impl CborDecode for StakeSnapshots {
 /// Reward account balances are then added on top.
 ///
 /// Reference: SNAP rule — `stakeDistr` in the formal specification.
+fn reward_snapshot_includes_target(stake_creds: &StakeCredentials) -> bool {
+    let target = StakeCredential::AddrKeyHash([
+        0x67, 0xec, 0xde, 0x65, 0x46, 0xb2, 0x5c, 0x00, 0x3e, 0x96, 0x37, 0xc6, 0x53, 0xbe, 0x2f,
+        0x58, 0x23, 0x75, 0x86, 0xce, 0x91, 0xa4, 0xed, 0x2e, 0x5a, 0xe1, 0xbd, 0x7c,
+    ]);
+    stake_creds.is_registered(&target)
+}
 pub fn compute_stake_snapshot(
     utxo: &MultiEraUtxo,
     stake_creds: &StakeCredentials,
@@ -521,15 +528,37 @@ pub fn compute_stake_snapshot(
     let mut pool_params_map: BTreeMap<PoolKeyHash, PoolParams> = BTreeMap::new();
 
     // 1. Walk the UTxO to accumulate per-credential stake.
+    let mut diag_target_67ecde65: u64 = 0;
+    let mut diag_target_67_pointer: u64 = 0;
+    let target_prefix = [0x67u8, 0xec, 0xde, 0x65, 0x46];
     for (_txin, txout) in utxo.iter() {
         let addr_bytes = txout.address();
-        if let Some(Address::Base(base)) = Address::from_bytes(addr_bytes) {
-            // Only base addresses carry a staking credential that
-            // participates in the stake distribution.
-            if stake_creds.is_registered(&base.staking) {
-                stake.add(base.staking, txout.coin());
+        match Address::from_bytes(addr_bytes) {
+            Some(Address::Base(base)) => {
+                if stake_creds.is_registered(&base.staking) {
+                    stake.add(base.staking, txout.coin());
+                }
+                // DIAG: track stake for the failing credential bc636ae… and 67ecde65…
+                let staking_bytes = match &base.staking {
+                    StakeCredential::AddrKeyHash(b) => &b[..5],
+                    StakeCredential::ScriptHash(b) => &b[..5],
+                };
+                if staking_bytes == &target_prefix {
+                    diag_target_67ecde65 = diag_target_67ecde65.saturating_add(txout.coin());
+                }
             }
+            Some(Address::Pointer(_)) => {
+                // DIAG: pointer stake placeholder (we don't yet count it).
+                diag_target_67_pointer = diag_target_67_pointer.saturating_add(txout.coin());
+            }
+            _ => {}
         }
+    }
+    if reward_snapshot_includes_target(stake_creds) {
+        eprintln!(
+            "DIAG_TARGET cred_67ecde65_base_utxo_total={} pointer_total_any={}",
+            diag_target_67ecde65, diag_target_67_pointer,
+        );
     }
 
     // 2. Add reward account balances.

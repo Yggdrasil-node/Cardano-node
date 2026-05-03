@@ -906,6 +906,33 @@ pub fn compute_pool_reward(
     // inflate supply if the performance ratio is very large.
     let apparent = mul_rational_capped(optimal, performance, rewards_pot);
 
+    // Diagnostic: dump every input and intermediate for the failing pool
+    // a8e65680… so we can bisect the 885-lovelace shortfall byte-for-byte
+    // against upstream's `mkPoolRewardInfo` evaluation.
+    if pool_hash[0] == 0xa8 && pool_hash[1] == 0xe6 && pool_hash[2] == 0x56 && pool_hash[3] == 0x80
+    {
+        eprintln!(
+            "DIAG_POOL_REWARD pool=a8e65680 R={} n_opt={} a0_n={} a0_d={} pool_stake={} pledge={} total_stake_for_sigma={} max_lovelace_supply={} reserves={} owner_delegated={} optimal={} perf_num={} perf_den={} apparent={} cost={} margin_n={} margin_d={}",
+            rewards_pot,
+            params.n_opt,
+            params.a0.numerator,
+            params.a0.denominator,
+            pool_stake,
+            pool_params.pledge,
+            total_stake_for_sigma,
+            params.max_lovelace_supply,
+            params.reserves,
+            owner_delegated_stake,
+            optimal,
+            performance.numerator,
+            performance.denominator,
+            apparent,
+            pool_params.cost,
+            pool_params.margin.numerator,
+            pool_params.margin.denominator,
+        );
+    }
+
     // Upstream uses the cost stored in the stake-pool snapshot (`spssCost`)
     // directly. Minimum-pool-cost is an admission/update constraint; reward
     // calculation does not re-max a historical snapshot cost against the
@@ -960,6 +987,14 @@ pub fn compute_pool_reward(
 
     let leader_extra = floor_mul_div(p, combined_num, combined_den) as u64;
     let leader_reward = cost.saturating_add(leader_extra).min(apparent);
+
+    if pool_hash[0] == 0xa8 && pool_hash[1] == 0xe6 && pool_hash[2] == 0x56 && pool_hash[3] == 0x80
+    {
+        eprintln!(
+            "DIAG_POOL_LEADER pool=a8e65680 profit={} m_num={} m_den={} owner={} pool={} combined_num={} combined_den={} leader_extra={} leader_reward={}",
+            p, m_num, m_den, own, pool, combined_num, combined_den, leader_extra, leader_reward,
+        );
+    }
 
     // -- Member rewards (upstream `calcStakePoolMemberReward`) --
     //
@@ -1063,6 +1098,18 @@ pub fn compute_epoch_rewards(
 ) -> EpochRewardDistribution {
     let pot = compute_epoch_reward_pot(params);
     let pool_dist = go_snapshot.pool_stake_distribution();
+    eprintln!(
+        "DIAG_REWARD_INPUT total_active_stake={} num_pools_with_stake={} num_pool_params={} num_perf_entries={}",
+        pool_dist.total_active_stake(),
+        pool_dist.iter().count(),
+        go_snapshot.pool_params.len(),
+        pool_performance.len(),
+    );
+    // Dump per-pool stake for diff against upstream pstakeGo.
+    for (pool, stake) in pool_dist.iter() {
+        eprintln!("DIAG_POOL_STAKE pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} stake={}",
+            pool[0], pool[1], pool[2], pool[3], pool[4], pool[5], pool[6], pool[7], stake);
+    }
 
     let mut reward_deltas: BTreeMap<StakeCredential, u64> = BTreeMap::new();
     let mut leader_deltas: BTreeMap<RewardAccount, u64> = BTreeMap::new();
