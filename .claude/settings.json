@@ -1,0 +1,50 @@
+{
+  "env": {
+    "CARGO_TERM_COLOR": "always",
+    "RUST_BACKTRACE": "1"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(cargo fmt*)",
+      "Bash(cargo check*)",
+      "Bash(cargo check-all)",
+      "Bash(cargo test*)",
+      "Bash(cargo test-all)",
+      "Bash(cargo clippy*)",
+      "Bash(cargo lint)",
+      "Bash(cargo build*)",
+      "Bash(cargo doc*)",
+      "Bash(cargo fetch*)",
+      "Bash(cargo metadata*)",
+      "Bash(cargo tree*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git branch)",
+      "Bash(git branch --show-current)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\":\"Verification gate: cargo fmt --all -- --check, cargo check-all, cargo test-all, cargo lint must all pass before declaring work done (per CLAUDE.md).\"}'"
+          }
+        ]
+      }
+    ]
+  }
+}

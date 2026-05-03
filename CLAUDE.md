@@ -8,7 +8,11 @@ Guidance for Claude Code (claude.ai/code) and other AI assistants when working w
 
 For the architectural picture see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the running implementation journal and operational rules see [AGENTS.md](AGENTS.md).
 
-Current baseline: R240 keeps all confirmed-active code-level parity slices closed and adds `node/scripts/parallel_blockfetch_soak.sh` for the remaining §6.5 multi-peer BlockFetch sign-off. R239 closed the coordinated `cardano-base` fixture refresh after R238 closed the Phase D.1 rollback sidecar hardening slice. Verified sync persists slot-indexed ChainDepState sidecars under `chain_dep_state/<slot-hex>.cbor`, restores nonce/OpCert state from the newest sidecar at or before a rollback point, verifies the sidecar point against the selected chain prefix, and replays stored blocks to the rollback target. All 6 documentary upstream pins are in sync with live HEAD; the remaining gates are operator-side rehearsal/endurance work, not known code-level parity blockers.
+Current implementation status, the rolling parity journal, and the open
+operator-side gates live in [AGENTS.md](AGENTS.md) (Current Phase) and
+[docs/PARITY_SUMMARY.md](docs/PARITY_SUMMARY.md) — read those for the
+in-flight slice rather than relying on this file. The four verification
+gates in [Commands](#commands) below must all pass before declaring work done.
 
 ## AGENTS.md Files Are Primary Context
 
@@ -32,20 +36,33 @@ Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept cu
 | [docs/AGENTS.md](docs/AGENTS.md) | Architecture/dependency/spec/contributing docs policy |
 | [specs/AGENTS.md](specs/AGENTS.md) | Pinned CDDL fixtures and provenance |
 | [specs/upstream-test-vectors/AGENTS.md](specs/upstream-test-vectors/AGENTS.md) | Vendored upstream vectors (must not be hand-edited) |
+| [.claude/AGENTS.md](.claude/AGENTS.md) | Claude Code harness config: session-start hook, permissions, Stop hook |
 
 ## Commands
 
 Workspace aliases (defined in [.cargo/config.toml](.cargo/config.toml)):
 
 ```bash
-cargo check-all   # cargo check --workspace --all-targets
-cargo test-all    # cargo test --workspace --all-features
-cargo lint        # cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check                   # rustfmt gate
+cargo check-all                              # cargo check --workspace --all-targets
+cargo test-all                               # cargo test  --workspace --all-features
+cargo lint                                   # cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-All four (`fmt --all -- --check`, `check-all`, `test-all`, `lint`) are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
+All four are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
 
-Running a single test:
+### Codespace setup (Claude Code on the web)
+
+[`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh), registered in [`.claude/settings.json`](.claude/settings.json), runs at session start in the web environment (gated on `$CLAUDE_CODE_REMOTE`):
+
+- Provisions the pinned `1.95.0` toolchain via [`rust-toolchain.toml`](rust-toolchain.toml).
+- Ensures `pkg-config` / `build-essential` are present.
+- Pre-fetches workspace dependencies with `cargo fetch --locked`.
+- Runs async (`{"async": true, "asyncTimeout": 300000}`); the agent loop may begin before the hook finishes.
+
+`.claude/settings.json` also allow-lists the cargo/git commands needed for the four verification gates and adds a `Stop` hook that re-prints the verification reminder. Local sessions are unaffected.
+
+### Running a single test
 
 ```bash
 cargo test -p yggdrasil-ledger --test <integration_test_name>      # one integration test file
@@ -92,22 +109,13 @@ The `node/` crate **must stay an integration layer**. Reusable policy, peer-sele
 - **Dependencies:** new dependencies must be justified in [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) before being treated as accepted.
 - **No FFI:** FFI cryptography and hidden native dependencies are forbidden.
 
-### Official IntersectMBO Upstream References
+### Upstream References
 
-Anchor every parity-sensitive change to one of these:
-
-- **Node integration** — [`IntersectMBO/cardano-node`](https://github.com/IntersectMBO/cardano-node) (`cardano-node/`, `cardano-submit-api/`, `configuration/`).
-- **Ledger** — [`IntersectMBO/cardano-ledger`](https://github.com/IntersectMBO/cardano-ledger) (`eras/`, `libs/cardano-ledger-binary/`, `libs/`).
-- **Formal specs** — [`IntersectMBO/formal-ledger-specifications`](https://github.com/IntersectMBO/formal-ledger-specifications) and the [published spec site](https://intersectmbo.github.io/formal-ledger-specifications/site).
-- **Consensus** — [`IntersectMBO/ouroboros-consensus`](https://github.com/IntersectMBO/ouroboros-consensus) (`ouroboros-consensus/`, `ouroboros-consensus-protocol/`, `ouroboros-consensus-cardano/`, `ouroboros-consensus-diffusion/`, `docs/agda-spec`).
-- **Consensus storage** — LedgerDB [`openDB` Haddock](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus/Ouroboros-Consensus-Storage-LedgerDB.html), [caught-up node storage model](https://ouroboros-consensus.cardano.intersectmbo.org/docs/explanations/node_tasks/), and [UTxO-HD rollback/snapshot design](https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/utxo-hd/utxo-hd_in_depth/).
-- **Network** — [`IntersectMBO/ouroboros-network`](https://github.com/IntersectMBO/ouroboros-network) (`network-mux/`, `ouroboros-network-framework/`, `ouroboros-network-protocols/`, `ouroboros-network/`, `cardano-diffusion/`).
-- **Crypto** — [`IntersectMBO/cardano-base`](https://github.com/IntersectMBO/cardano-base) (`cardano-crypto-class/`, `cardano-crypto-praos/`, `cardano-crypto-peras/`).
-- **Plutus** — [`IntersectMBO/plutus`](https://github.com/IntersectMBO/plutus) (`plutus-core/`, CEK machine and cost model).
-- **Haddock docs** — [ledger](https://cardano-ledger.cardano.intersectmbo.org/), [consensus](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/), [network](https://ouroboros-network.cardano.intersectmbo.org/), [base](https://base.cardano.intersectmbo.org/).
-- **Operations** — [Cardano Operations Book](https://book.world.dev.cardano.org/) ([env-mainnet](https://book.world.dev.cardano.org/env-mainnet.html), [env-preprod](https://book.world.dev.cardano.org/env-preprod.html), [env-preview](https://book.world.dev.cardano.org/env-preview.html)).
-
-The root [AGENTS.md](AGENTS.md) carries per-crate references to the exact upstream subdirectory each crate mirrors.
+The full IntersectMBO repo + Haddock + ops-book reference list and the
+per-crate mapping (which Haskell module each Rust crate mirrors) live in
+[AGENTS.md](AGENTS.md). Anchor every parity-sensitive change to one of
+those upstream sources before introducing local terminology, behavior,
+or design.
 
 ## Workspace Lints
 
