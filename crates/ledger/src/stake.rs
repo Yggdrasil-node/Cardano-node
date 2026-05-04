@@ -543,7 +543,7 @@ pub fn compute_stake_snapshot(
                     StakeCredential::AddrKeyHash(b) => &b[..5],
                     StakeCredential::ScriptHash(b) => &b[..5],
                 };
-                if staking_bytes == &target_prefix {
+                if staking_bytes == target_prefix {
                     diag_target_67ecde65 = diag_target_67ecde65.saturating_add(txout.coin());
                 }
             }

@@ -994,6 +994,52 @@ pub fn compute_pool_reward(
             "DIAG_POOL_LEADER pool=a8e65680 profit={} m_num={} m_den={} owner={} pool={} combined_num={} combined_den={} leader_extra={} leader_reward={}",
             p, m_num, m_den, own, pool, combined_num, combined_den, leader_extra, leader_reward,
         );
+
+        // Probe whether the leader-reward credential bc636ae… is itself
+        // delegated to this pool, and what stake it carries in the
+        // reward snapshot. If yes, it earns a member reward on top of the
+        // leader reward, and that's where the missing 885 lovelace lives.
+        let target = StakeCredential::AddrKeyHash([
+            0xbc, 0x63, 0x6a, 0xe4, 0x51, 0xa7, 0x31, 0xec, 0x4f, 0xeb, 0x1e, 0x6f, 0xf8, 0x13,
+            0x2b, 0x1b, 0x6b, 0xf5, 0x19, 0xf6, 0xc8, 0x97, 0xcd, 0xb5, 0x2e, 0x7d, 0xb6, 0x61,
+        ]);
+        let delegated_to_us = snapshot.delegations.get(&target) == Some(pool_hash);
+        let target_stake = snapshot.stake.get(&target);
+        let in_owners = owner_set.contains(&target);
+        let target_pool = snapshot.delegations.get(&target).copied();
+        let delegated_pool_str = match target_pool {
+            Some(p) => format!(
+                "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+                p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
+            ),
+            None => "none".to_string(),
+        };
+        eprintln!(
+            "DIAG_BC636AE_PROBE delegated_to_pool={} stake={} in_pool_owners={} actual_delegated_to={}",
+            delegated_to_us, target_stake, in_owners, delegated_pool_str,
+        );
+
+        // Also dump per-owner stake and delegation status for every
+        // declared pool_owner so we can compare against upstream's
+        // `selfDelegatedOwnersStake`.
+        for owner_hash in pool_params.pool_owners.iter() {
+            let owner_cred = StakeCredential::AddrKeyHash(*owner_hash);
+            let owner_delegated_to_us = snapshot.delegations.get(&owner_cred) == Some(pool_hash);
+            let owner_cred_stake = snapshot.stake.get(&owner_cred);
+            eprintln!(
+                "DIAG_OWNER_PROBE pool=a8e65680 owner_hash={:02x}{:02x}{:02x}{:02x} delegated_to_pool={} stake={}",
+                owner_hash[0],
+                owner_hash[1],
+                owner_hash[2],
+                owner_hash[3],
+                owner_delegated_to_us,
+                owner_cred_stake,
+            );
+        }
+        eprintln!(
+            "DIAG_OWNER_PROBE_SUMMARY pool=a8e65680 num_pool_owners={}",
+            pool_params.pool_owners.len(),
+        );
     }
 
     // -- Member rewards (upstream `calcStakePoolMemberReward`) --
@@ -1107,8 +1153,10 @@ pub fn compute_epoch_rewards(
     );
     // Dump per-pool stake for diff against upstream pstakeGo.
     for (pool, stake) in pool_dist.iter() {
-        eprintln!("DIAG_POOL_STAKE pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} stake={}",
-            pool[0], pool[1], pool[2], pool[3], pool[4], pool[5], pool[6], pool[7], stake);
+        eprintln!(
+            "DIAG_POOL_STAKE pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} stake={}",
+            pool[0], pool[1], pool[2], pool[3], pool[4], pool[5], pool[6], pool[7], stake
+        );
     }
 
     let mut reward_deltas: BTreeMap<StakeCredential, u64> = BTreeMap::new();

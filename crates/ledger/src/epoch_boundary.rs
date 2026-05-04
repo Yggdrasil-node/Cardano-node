@@ -315,7 +315,16 @@ fn derive_pool_performance(
         let pool_stake = stake_dist.pool_stake(pool);
         eprintln!(
             "DIAG_BLOCKS_PER_POOL pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} blocks={} pool_stake={}",
-            pool[0], pool[1], pool[2], pool[3], pool[4], pool[5], pool[6], pool[7], blks, pool_stake,
+            pool[0],
+            pool[1],
+            pool[2],
+            pool[3],
+            pool[4],
+            pool[5],
+            pool[6],
+            pool[7],
+            blks,
+            pool_stake,
         );
     }
 
@@ -332,10 +341,20 @@ fn derive_pool_performance(
             // bisect the 885-lovelace shortfall against upstream.
             eprintln!(
                 "DIAG_PERFORMANCE pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} blocks={} pool_stake={} total_stake={} total_blocks={} perf_num={} perf_den={}",
-                pool_hash[0], pool_hash[1], pool_hash[2], pool_hash[3],
-                pool_hash[4], pool_hash[5], pool_hash[6], pool_hash[7],
-                blocks_produced, pool_stake, total_stake, total_blocks,
-                ratio.numerator, ratio.denominator,
+                pool_hash[0],
+                pool_hash[1],
+                pool_hash[2],
+                pool_hash[3],
+                pool_hash[4],
+                pool_hash[5],
+                pool_hash[6],
+                pool_hash[7],
+                blocks_produced,
+                pool_stake,
+                total_stake,
+                total_blocks,
+                ratio.numerator,
+                ratio.denominator,
             );
             performance.insert(*pool_hash, ratio);
         }
@@ -389,31 +408,27 @@ pub fn apply_epoch_boundary(
         .protocol_params()
         .ok_or(LedgerError::MissingProtocolParameters)?;
 
-    // Extract non-reward values from current params before any mutable borrows.
-    // `min_pool_cost` and `drep_activity` are not part of the reward formula —
-    // they govern admission/governance and use the active values.
+    // Extract values from params before any mutable borrows.
+    //
+    // NOTE on prevPP vs curPP timing: upstream `startStep` reads
+    // `pr = es ^. prevPParamsEpochStateL`, but in our model the
+    // `protocol_params` field at the START of `apply_epoch_boundary`
+    // already corresponds to "the epoch that just ended" (i.e. epoch E's
+    // params when entering boundary B(E+1)) because UPEC fires at the END
+    // of each boundary, AFTER the reward calc here. So reading the
+    // current `protocol_params` here is equivalent to upstream reading
+    // prevPP DURING the epoch E+1 (which equals our protocol_params just
+    // before our UPEC at B(E+1) line 577).
+    //
+    // The eta calc (compute_eta below) DOES read prevPP.d explicitly
+    // because the d=1→d=0 overlay-era transition at preview B(3) needs
+    // the pre-update d=1 value to keep the monetary-expansion bit set.
+    let rho = params.rho;
+    let tau = params.tau;
+    let a0 = params.a0;
+    let n_opt = params.n_opt;
     let min_pool_cost = params.min_pool_cost;
     let drep_activity = params.drep_activity.unwrap_or(u64::MAX);
-
-    // Reward-formula inputs (`rho`, `tau`, `a0`, `n_opt`) MUST be read from
-    // the *previous* protocol parameters, matching upstream `startStep`:
-    //   pr = es ^. prevPParamsEpochStateL
-    //   deltaR1 = floor(min(1, eta) * (pr ^. ppRhoL) * reserves)
-    //   deltaT1 = floor((pr ^. ppTauL) * rPot)
-    //   maxPool = maxPool' (pr ^. ppA0L) (pr ^. ppNOptL) ...
-    //
-    // Reading curPParams (post-PPUP) at a boundary that lands a parameter
-    // update would silently use the new ρ/τ/a0/n_opt one epoch too early.
-    //
-    // Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward.startStep`
-    //   and `Cardano.Ledger.Shelley.Rewards.mkPoolRewardInfo`.
-    let prev_params = ledger.previous_protocol_params().cloned().ok_or(
-        LedgerError::MissingProtocolParameters,
-    )?;
-    let rho = prev_params.rho;
-    let tau = prev_params.tau;
-    let a0 = prev_params.a0;
-    let n_opt = prev_params.n_opt;
 
     // -----------------------------------------------------------------------
     // 1. RUPD — compute and distribute rewards from the *go* snapshot.
