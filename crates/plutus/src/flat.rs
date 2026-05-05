@@ -51,6 +51,43 @@ use crate::types::{Constant, DefaultFun, Program, Term, Type};
 /// explicit.
 pub const MAX_TERM_DECODE_DEPTH: usize = 512;
 
+/// Recursion bound for the constant-type-tag and constant-value
+/// sub-decoders, which still use recursive descent.
+///
+/// Constant types (`PlutusCore.Core.Type.Type`) compose via `List`, `Pair`,
+/// and applications of `ProtoList` / `ProtoPair`. Real on-chain constants
+/// nest no more than a handful of levels (typically `List (Pair Data Data)`
+/// at most), but a malicious script could try to recurse unbounded; we cap
+/// at the same value as the legacy term bound for defence-in-depth.
+const MAX_TYPE_DECODE_DEPTH: usize = MAX_TERM_DECODE_DEPTH;
+
+/// Work-stack frame for the iterative `decode_term` loop.
+enum Frame {
+    /// Read the next 4-bit term tag and dispatch.
+    ReadTerm,
+    /// Pop one finished term and wrap it as Delay/LamAbs/Force.
+    Wrap1(Wrap1Op),
+    /// Pop two finished terms and wrap them as `Apply(fun, arg)`.
+    WrapApply,
+    /// Read a Flat list-continuation bit; if 1, queue the next element;
+    /// if 0, finalize the parent (Constr/Case) by collecting all items
+    /// pushed since `marker`.
+    ReadListContinuation { build: ListBuild, marker: usize },
+}
+
+/// Single-child wrappers handled by `Frame::Wrap1`.
+enum Wrap1Op {
+    Delay,
+    LamAbs,
+    Force,
+}
+
+/// Parents that read a Flat list of child terms after they're queued.
+enum ListBuild {
+    Constr(u64),
+    Case,
+}
+
 /// Decode a UPLC program from raw Flat bytes.
 pub fn decode_flat_program(bytes: &[u8]) -> Result<Program, MachineError> {
     let mut dec = FlatDecoder::new(bytes);
@@ -295,92 +332,160 @@ impl<'a> FlatDecoder<'a> {
         })
     }
 
-    fn decode_term(&mut self) -> Result<Term, MachineError> {
-        self.decode_term_with_depth(MAX_TERM_DECODE_DEPTH)
-    }
-
-    /// Recursive flat decoder for [`Term`] with an explicit depth budget.
+    /// Iterative Flat decoder for [`Term`].
     ///
     /// Untrusted Plutus scripts arrive in witness sets and are decoded
-    /// directly from on-chain bytes; without a depth bound a malicious
-    /// script with deeply nested `Apply` / `LamAbs` / `Constr` could
-    /// overflow the runtime stack. The bound is enforced on every recursive
-    /// entry; exceeding it returns
-    /// [`MachineError::FlatDecodeError`]. Per-frame size of `decode_term`
-    /// is small (no `Vec` accumulator on the stack), so the chosen
-    /// [`MAX_TERM_DECODE_DEPTH`] avoids rejecting known on-chain scripts
-    /// while still bounding malicious recursive inputs.
+    /// directly from on-chain bytes; a recursive descent decoder hits
+    /// Rust's native stack limit on legitimately deep on-chain scripts
+    /// (preview reference script `b89b0443…bc5a` exceeds 6,000 levels of
+    /// `Apply`/`LamAbs` nesting). This implementation drives the decode
+    /// from a heap-allocated work stack so depth is bounded only by
+    /// available memory, matching upstream Haskell's stack-safe `Flat`
+    /// decoder.
     ///
-    /// Reference: defensive bound. Upstream Haskell relies on its lazy
-    /// `Flat` decoder being stack-safe by construction; the Rust port
-    /// makes the limit explicit.
-    fn decode_term_with_depth(&mut self, depth_remaining: usize) -> Result<Term, MachineError> {
-        if depth_remaining == 0 {
+    /// Reference: `PlutusCore.Flat.dTerm` — recursive on the heap via
+    /// GHC's lazy stack; we emulate that behaviour with an explicit
+    /// `Vec<Frame>`.
+    fn decode_term(&mut self) -> Result<Term, MachineError> {
+        let mut work: Vec<Frame> = vec![Frame::ReadTerm];
+        let mut results: Vec<Term> = Vec::new();
+        while let Some(frame) = work.pop() {
+            match frame {
+                Frame::ReadTerm => self.dispatch_term_tag(&mut work, &mut results)?,
+                Frame::Wrap1(op) => {
+                    let body = results.pop().ok_or_else(|| {
+                        MachineError::FlatDecodeError("term build underflow".into())
+                    })?;
+                    let term = match op {
+                        Wrap1Op::Delay => Term::Delay(Box::new(body)),
+                        Wrap1Op::LamAbs => Term::LamAbs(Box::new(body)),
+                        Wrap1Op::Force => Term::Force(Box::new(body)),
+                    };
+                    results.push(term);
+                }
+                Frame::WrapApply => {
+                    let arg = results.pop().ok_or_else(|| {
+                        MachineError::FlatDecodeError("apply arg underflow".into())
+                    })?;
+                    let fun = results.pop().ok_or_else(|| {
+                        MachineError::FlatDecodeError("apply fun underflow".into())
+                    })?;
+                    results.push(Term::Apply(Box::new(fun), Box::new(arg)));
+                }
+                Frame::ReadListContinuation { build, marker } => {
+                    if self.read_bit()? {
+                        // Another item: re-arm the continuation, then read the next term.
+                        work.push(Frame::ReadListContinuation { build, marker });
+                        work.push(Frame::ReadTerm);
+                    } else {
+                        // List terminator: collect items pushed since `marker`.
+                        if results.len() < marker {
+                            return Err(MachineError::FlatDecodeError(
+                                "list build underflow".into(),
+                            ));
+                        }
+                        let items = results.split_off(marker);
+                        let term = match build {
+                            ListBuild::Constr(tag_val) => Term::Constr(tag_val, items),
+                            ListBuild::Case => {
+                                let mut iter = items.into_iter();
+                                let scrutinee = iter.next().ok_or_else(|| {
+                                    MachineError::FlatDecodeError("case missing scrutinee".into())
+                                })?;
+                                let branches: Vec<Term> = iter.collect();
+                                Term::Case(Box::new(scrutinee), branches)
+                            }
+                        };
+                        results.push(term);
+                    }
+                }
+            }
+        }
+        if results.len() != 1 {
             return Err(MachineError::FlatDecodeError(format!(
-                "term nesting exceeded depth budget {MAX_TERM_DECODE_DEPTH}"
+                "term decoder finished with {} results on stack (expected 1)",
+                results.len(),
             )));
         }
-        let next = depth_remaining - 1;
+        Ok(results.pop().expect("len==1 guaranteed"))
+    }
+
+    /// Read a single term tag and update the work/result stacks. Inlined
+    /// from `decode_term`'s loop so the dispatch branch can append to the
+    /// work stack instead of recursing.
+    fn dispatch_term_tag(
+        &mut self,
+        work: &mut Vec<Frame>,
+        results: &mut Vec<Term>,
+    ) -> Result<(), MachineError> {
         let tag = self.read_bits8(4)?;
         match tag {
             0 => {
-                // Var — de Bruijn index (natural).
                 let index = self.read_natural()?;
-                Ok(Term::Var(index))
+                results.push(Term::Var(index));
             }
             1 => {
-                // Delay
-                let body = self.decode_term_with_depth(next)?;
-                Ok(Term::Delay(Box::new(body)))
+                work.push(Frame::Wrap1(Wrap1Op::Delay));
+                work.push(Frame::ReadTerm);
             }
             2 => {
-                // LamAbs
-                let body = self.decode_term_with_depth(next)?;
-                Ok(Term::LamAbs(Box::new(body)))
+                work.push(Frame::Wrap1(Wrap1Op::LamAbs));
+                work.push(Frame::ReadTerm);
             }
             3 => {
-                // Apply
-                let fun = self.decode_term_with_depth(next)?;
-                let arg = self.decode_term_with_depth(next)?;
-                Ok(Term::Apply(Box::new(fun), Box::new(arg)))
+                // Apply: read fun first, then arg, then wrap.
+                work.push(Frame::WrapApply);
+                work.push(Frame::ReadTerm); // arg (decoded second, popped first)
+                work.push(Frame::ReadTerm); // fun (decoded first, popped second)
             }
             4 => {
-                // Constant — type list then value.
-                let ty = self.decode_type_list_with_depth(next)?;
-                let constant = self.decode_constant_with_depth(&ty, next)?;
-                Ok(Term::Constant(constant))
+                // Constant — type list then value. Both inner decoders are
+                // bounded by the type tag list size, so they can stay
+                // recursive without risking stack overflow.
+                let ty = self.decode_type_list_with_depth(MAX_TYPE_DECODE_DEPTH)?;
+                let constant = self.decode_constant_with_depth(&ty, MAX_TYPE_DECODE_DEPTH)?;
+                results.push(Term::Constant(constant));
             }
             5 => {
-                // Force
-                let body = self.decode_term_with_depth(next)?;
-                Ok(Term::Force(Box::new(body)))
+                work.push(Frame::Wrap1(Wrap1Op::Force));
+                work.push(Frame::ReadTerm);
             }
             6 => {
-                // Error
-                Ok(Term::Error)
+                results.push(Term::Error);
             }
             7 => {
-                // Builtin — 7 bits.
                 let b = self.read_bits8(7)?;
                 let fun = DefaultFun::from_tag(b)?;
-                Ok(Term::Builtin(fun))
+                results.push(Term::Builtin(fun));
             }
             8 => {
-                // Constr (UPLC 1.1.0+)
+                // Constr (UPLC 1.1.0+): natural tag, then list of fields.
                 let tag_val = self.read_natural()?;
-                let fields = self.read_list(|d| d.decode_term_with_depth(next))?;
-                Ok(Term::Constr(tag_val, fields))
+                let marker = results.len();
+                work.push(Frame::ReadListContinuation {
+                    build: ListBuild::Constr(tag_val),
+                    marker,
+                });
             }
             9 => {
-                // Case (UPLC 1.1.0+)
-                let scrutinee = self.decode_term_with_depth(next)?;
-                let branches = self.read_list(|d| d.decode_term_with_depth(next))?;
-                Ok(Term::Case(Box::new(scrutinee), branches))
+                // Case (UPLC 1.1.0+): scrutinee, then list of branches. The
+                // continuation frame collects scrutinee + branches starting
+                // at `marker`, so the scrutinee read is queued AFTER the
+                // continuation (popped first).
+                let marker = results.len();
+                work.push(Frame::ReadListContinuation {
+                    build: ListBuild::Case,
+                    marker,
+                });
+                work.push(Frame::ReadTerm); // scrutinee
             }
-            _ => Err(MachineError::FlatDecodeError(format!(
-                "unknown term tag {tag}"
-            ))),
+            _ => {
+                return Err(MachineError::FlatDecodeError(format!(
+                    "unknown term tag {tag}"
+                )));
+            }
         }
+        Ok(())
     }
 
     fn decode_type_list_with_depth(
@@ -1067,51 +1172,38 @@ mod tests {
     // -- depth bound ----------------------------------------------------
 
     #[test]
-    fn test_decode_term_rejects_pathologically_deep_lambda_chain() {
+    fn test_decode_term_handles_deep_lambda_chain_iteratively() {
         // A chain of `LamAbs` (term tag 2 = `0010`) terms, then a final
-        // `Error` (term tag 6 = `0110`) at the bottom. Each LamAbs adds
-        // one level of recursion; building `MAX_TERM_DECODE_DEPTH + 16`
-        // of them must trigger the depth-bound check rather than
-        // overflow the runtime stack.
+        // `Error` (term tag 6 = `0110`) at the bottom. Real preview
+        // reference scripts (e.g. `b89b0443…bc5a`) nest beyond 6,000
+        // levels, so `decode_term` is iterative and must accept
+        // arbitrary depth without stack-overflowing.
         //
-        // Run on a generously-sized thread stack (64 MB) because debug
-        // builds on Rust 1.95+ use larger per-frame storage than the
-        // default 2 MB cargo-test stack can safely accommodate at the
-        // depth budget.  Release builds (which is what production runs)
-        // have frames small enough to stay under 2 MB at the same
-        // budget; this is purely a test-harness allowance.
-        std::thread::Builder::new()
-            .stack_size(64 * 1024 * 1024)
-            .spawn(|| {
-                let depth = MAX_TERM_DECODE_DEPTH + 16;
-                // Each `LamAbs` is a 4-bit tag `0010`. We pack two tags
-                // per byte: `0010_0010 = 0x22` → two LamAbs prefixes.
-                // Final `Error` is `0110`. If `depth` is even, the
-                // trailing nibble for Error follows alone in the next
-                // byte's high nibble; we encode explicitly using the
-                // bit reader's MSB-first scheme.
-                //
-                // Use the FlatDecoder bit reader's expected byte order:
-                // first bit read is MSB of byte 0. So the first 4-bit
-                // nibble decoded is the high nibble of byte 0.
-                let mut bytes = Vec::with_capacity(depth / 2 + 4);
-                let mut nibbles: Vec<u8> = vec![0b0010; depth]; // LamAbs chain
-                nibbles.push(0b0110); // Error tag
-                for chunk in nibbles.chunks(2) {
-                    let hi = chunk[0] << 4;
-                    let lo = chunk.get(1).copied().unwrap_or(0);
-                    bytes.push(hi | lo);
-                }
-                let mut dec = FlatDecoder::new(&bytes);
-                let res = dec.decode_term();
-                assert!(
-                    matches!(&res, Err(MachineError::FlatDecodeError(msg)) if msg.contains("depth budget")),
-                    "expected depth-budget FlatDecodeError, got {res:?}"
-                );
-            })
-            .expect("spawn deep-decode test thread")
-            .join()
-            .expect("deep-decode test thread completed");
+        // Reference: this test guards the regression behind the
+        // iterative-decoder rewrite — previously the recursive descent
+        // capped at `MAX_TERM_DECODE_DEPTH = 512` and rejected legitimate
+        // on-chain scripts.
+        let depth = MAX_TERM_DECODE_DEPTH * 4 + 7; // well past the old budget
+        let mut bytes = Vec::with_capacity(depth / 2 + 4);
+        let mut nibbles: Vec<u8> = vec![0b0010; depth]; // LamAbs chain
+        nibbles.push(0b0110); // Error tag at the bottom
+        for chunk in nibbles.chunks(2) {
+            let hi = chunk[0] << 4;
+            let lo = chunk.get(1).copied().unwrap_or(0);
+            bytes.push(hi | lo);
+        }
+        let mut dec = FlatDecoder::new(&bytes);
+        let term = dec.decode_term().expect("iterative decode succeeds");
+        // Walk the term to confirm we built `depth` LamAbs wrappers
+        // around a final Error.
+        let mut levels = 0usize;
+        let mut cursor = &term;
+        while let Term::LamAbs(body) = cursor {
+            levels += 1;
+            cursor = body;
+        }
+        assert_eq!(levels, depth, "LamAbs chain length");
+        assert!(matches!(cursor, Term::Error));
     }
 
     // -- decode_script_bytes -------------------------------------------
