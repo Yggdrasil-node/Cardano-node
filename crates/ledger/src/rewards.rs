@@ -1255,6 +1255,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         }
     }
 
@@ -1382,6 +1384,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
         let pool = test_pool(1);
         let member = test_cred(2);
@@ -1441,6 +1445,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
         let pool = test_pool(1);
         let owner_cred = test_cred(1);
@@ -1503,6 +1509,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         let pool = test_pool(1);
@@ -1575,6 +1583,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         let pool = test_pool(1);
@@ -1645,6 +1655,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
         let params_with_fees = RewardParams {
             fee_pot: 50_000,
@@ -1836,6 +1848,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         let breakdown =
@@ -1930,6 +1944,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         let breakdown =
@@ -2000,6 +2016,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         let breakdown =
@@ -2060,6 +2078,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         // With max_lovelace_supply → circulation = 10B - 1B = 9B.
@@ -2120,6 +2140,8 @@ mod tests {
                 numerator: 1,
                 denominator: 1,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         let params_half = RewardParams {
@@ -2263,6 +2285,8 @@ mod tests {
                 numerator: 2,
                 denominator: 3,
             },
+            prefilter_unregistered: false,
+            registered_credentials: std::collections::BTreeSet::new(),
         };
 
         // Single floor: floor(2/3 × 1/3 × 100) = floor(200/9) = floor(22.222...) = 22.

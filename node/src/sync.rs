@@ -31,9 +31,9 @@ use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_ledger::{
     AlonzoBlock, BYRON_SLOTS_PER_EPOCH, BabbageBlock, Block, BlockHeader, BlockNo, ByronBlock,
     CborDecode, CborEncode, ChainDepStateContext, ConwayBlock, Decoder, EpochBoundaryEvent, Era,
-    GenesisDelegationState, GenesisHash, HeaderHash, LedgerError, LedgerState, Nonce, Point,
-    PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader, ShelleyHeaderBody,
-    ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
+    GenesisDelegationState, GenesisHash, HeaderHash, LedgerError, LedgerState, MultiEraUtxo, Nonce,
+    Point, PoolKeyHash, PraosHeader, PraosHeaderBody, ShelleyBlock, ShelleyHeader,
+    ShelleyHeaderBody, ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
     apply_epoch_boundary, compute_block_body_hash, compute_stake_snapshot,
 };
 use yggdrasil_mempool::Mempool;
@@ -2050,6 +2050,14 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
             *cursor = next;
         }
 
+        // Compute fees BEFORE applying the block so collateral inputs of
+        // any Phase-2 invalid transaction (Alonzo+) can still be resolved
+        // against the pre-application UTxO.  Upstream
+        // `updateUTxOStateByTxValidity` uses `collAdaBalance` (= sum of
+        // collateral inputs minus collateral_return) as the fee for invalid
+        // txs; we mirror that in `total_transaction_fees_with_utxo`.
+        let block_fees = block.total_transaction_fees_with_utxo(ledger_state.multi_era_utxo());
+
         ledger_state.apply_block_validated(&converted, evaluator)?;
 
         // Track pool block production after successful ledger application.
@@ -2060,12 +2068,12 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
             *pool_block_counts.entry(pool_hash).or_insert(0) += 1;
         }
 
-        // Accumulate declared transaction fees into the snapshot fee pot.
-        // This feeds `compute_epoch_rewards()` at the next epoch boundary
-        // so that rewards reflect actual on-chain fee revenue.
-        // Byron fees are implicit and pre-date the Shelley reward system,
-        // so `total_transaction_fees()` returns 0 for Byron blocks.
-        let block_fees = block.total_transaction_fees();
+        // Accumulate transaction fees (valid: tx.fee; invalid Plutus:
+        // collAdaBalance) into the snapshot fee pot. This feeds
+        // `compute_epoch_rewards()` at the next epoch boundary so that
+        // rewards reflect actual on-chain fee revenue. Byron fees are
+        // implicit and pre-date the Shelley reward system, so the
+        // helper returns 0 for Byron blocks.
         if block_fees > 0 {
             snapshots.accumulate_fees(block_fees);
         }
@@ -3426,6 +3434,13 @@ impl MultiEraBlock {
     /// minus output sum) and pre-date the Shelley reward system.  For
     /// Shelley through Conway every transaction body carries an explicit
     /// `fee` field that is summed here.
+    ///
+    /// NOTE: For Alonzo+ blocks containing Phase-2 invalid transactions,
+    /// upstream collects the **collateral** (sum of collateral inputs minus
+    /// `collateral_return`) as the actual fee, not the declared `tx.fee`.
+    /// Use [`Self::total_transaction_fees_with_utxo`] for production fee
+    /// accumulation; this method assumes all transactions are valid and is
+    /// retained only for tests and Shelley/Byron callers where it is exact.
     pub fn total_transaction_fees(&self) -> u64 {
         match self {
             Self::Byron { .. } => 0,
@@ -3433,6 +3448,96 @@ impl MultiEraBlock {
             Self::Alonzo(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
             Self::Babbage(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
             Self::Conway(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
+        }
+    }
+
+    /// Sum the actual fees collected by upstream `updateUTxOStateByTxValidity`
+    /// across all transactions in this block, given the pre-block UTxO state.
+    ///
+    /// Mirrors the Babbage UTXO transition's two-arm fee accounting:
+    ///
+    /// - **Valid transactions**: `fees += tx.fee`.
+    /// - **Invalid (Phase-2 failed Plutus) transactions**: `fees += collAdaBalance`,
+    ///   computed as `Σ(collateral_input.coin) − collateral_return.coin`. When a
+    ///   Babbage/Conway transaction declares `total_collateral` explicitly, that
+    ///   value is used directly (equivalent by feesOK Part 6, and avoids the UTxO
+    ///   lookup).
+    ///
+    /// The pre-block UTxO is required so collateral input coins can be resolved
+    /// before `apply_block_validated` consumes them.
+    ///
+    /// Reference: `Cardano.Ledger.Babbage.Rules.Utxo.updateUTxOStateByTxValidity`
+    /// — `collAdaBalance txBody utxoDel` for `IsValid False`.
+    pub fn total_transaction_fees_with_utxo(&self, utxo: &MultiEraUtxo) -> u64 {
+        match self {
+            Self::Byron { .. } => 0,
+            Self::Shelley(b) => b.transaction_bodies.iter().map(|tx| tx.fee).sum(),
+            Self::Alonzo(b) => {
+                let invalid: std::collections::HashSet<u64> =
+                    b.invalid_transactions.iter().copied().collect();
+                b.transaction_bodies
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tx)| {
+                        if invalid.contains(&(i as u64)) {
+                            // Alonzo predates `total_collateral` and `collateral_return`,
+                            // so the collateral fee is just the sum of the collateral
+                            // inputs' coins resolved against the pre-block UTxO.
+                            tx.collateral
+                                .as_ref()
+                                .map(|inputs| {
+                                    inputs
+                                        .iter()
+                                        .filter_map(|input| utxo.get(input).map(|out| out.coin()))
+                                        .sum::<u64>()
+                                })
+                                .unwrap_or(0)
+                        } else {
+                            tx.fee
+                        }
+                    })
+                    .sum()
+            }
+            Self::Babbage(b) => {
+                let invalid: std::collections::HashSet<u64> =
+                    b.invalid_transactions.iter().copied().collect();
+                b.transaction_bodies
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tx)| {
+                        if invalid.contains(&(i as u64)) {
+                            babbage_collateral_fee(
+                                tx.total_collateral,
+                                tx.collateral.as_deref(),
+                                tx.collateral_return.as_ref().map(|o| o.amount.coin()),
+                                utxo,
+                            )
+                        } else {
+                            tx.fee
+                        }
+                    })
+                    .sum()
+            }
+            Self::Conway(b) => {
+                let invalid: std::collections::HashSet<u64> =
+                    b.invalid_transactions.iter().copied().collect();
+                b.transaction_bodies
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tx)| {
+                        if invalid.contains(&(i as u64)) {
+                            babbage_collateral_fee(
+                                tx.total_collateral,
+                                tx.collateral.as_deref(),
+                                tx.collateral_return.as_ref().map(|o| o.amount.coin()),
+                                utxo,
+                            )
+                        } else {
+                            tx.fee
+                        }
+                    })
+                    .sum()
+            }
         }
     }
 
@@ -3481,6 +3586,32 @@ impl MultiEraBlock {
             Self::Conway(_) => Era::Conway,
         }
     }
+}
+
+/// Compute the collateral fee (`collAdaBalance`) for a Babbage- or Conway-era
+/// invalid transaction.  Prefers the explicit `total_collateral` declaration
+/// when present; otherwise derives it from collateral inputs resolved against
+/// the supplied pre-block UTxO minus the optional `collateral_return` coin.
+///
+/// Reference: `Cardano.Ledger.Babbage.Rules.Utxo.updateUTxOStateByTxValidity`.
+fn babbage_collateral_fee(
+    total_collateral: Option<u64>,
+    collateral_inputs: Option<&[ShelleyTxIn]>,
+    collateral_return_coin: Option<u64>,
+    utxo: &MultiEraUtxo,
+) -> u64 {
+    if let Some(tc) = total_collateral {
+        return tc;
+    }
+    let in_sum: u64 = collateral_inputs
+        .map(|inputs| {
+            inputs
+                .iter()
+                .filter_map(|input| utxo.get(input).map(|out| out.coin()))
+                .sum::<u64>()
+        })
+        .unwrap_or(0);
+    in_sum.saturating_sub(collateral_return_coin.unwrap_or(0))
 }
 
 /// Cardano mainnet era tags used in the multi-era block envelope.

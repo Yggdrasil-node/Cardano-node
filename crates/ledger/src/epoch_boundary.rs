@@ -352,18 +352,6 @@ pub fn apply_epoch_boundary(
 ) -> Result<EpochBoundaryEvent, LedgerError> {
     ledger.set_current_epoch(new_epoch);
 
-    // DIAG: emit the (epoch, reserves, treasury) tuple at the START of every
-    // boundary so we can byte-diff against upstream `cardano-cli debug
-    // log-epoch-state` JSONL `(currentEpoch, esChainAccountState.reserves,
-    // .treasury)` records and localize the first boundary at which our
-    // reserves trajectory diverges from upstream.
-    eprintln!(
-        "DIAG_RESERVES_BOUNDARY epoch={} reserves={} treasury={}",
-        new_epoch.0,
-        ledger.accounting().reserves,
-        ledger.accounting().treasury,
-    );
-
     // -----------------------------------------------------------------------
     // Capture the *previous* epoch's protocol parameters BEFORE any
     // PPUP/UPEC update.  Upstream `startStep` reads `prevPParams` for
@@ -380,23 +368,44 @@ pub fn apply_epoch_boundary(
 
     // Extract values from params before any mutable borrows.
     //
-    // NOTE on prevPP vs curPP timing: upstream `startStep` reads
-    // `pr = es ^. prevPParamsEpochStateL`, but in our model the
-    // `protocol_params` field at the START of `apply_epoch_boundary`
-    // already corresponds to "the epoch that just ended" (i.e. epoch E's
-    // params when entering boundary B(E+1)) because UPEC fires at the END
-    // of each boundary, AFTER the reward calc here. So reading the
-    // current `protocol_params` here is equivalent to upstream reading
-    // prevPP DURING the epoch E+1 (which equals our protocol_params just
-    // before our UPEC at B(E+1) line 577).
+    // Reward-formula inputs (rho, tau, a0, n_opt, d) MUST be read from the
+    // *previous* protocol parameters, mirroring upstream
+    // `Cardano.Ledger.Shelley.LedgerState.PulsingReward.startStep` which
+    // pulses with `pr = es.prevPParamsEpochStateL`:
     //
-    // The eta calc (compute_eta below) DOES read prevPP.d explicitly
-    // because the d=1→d=0 overlay-era transition at preview B(3) needs
-    // the pre-update d=1 value to keep the monetary-expansion bit set.
-    let rho = params.rho;
-    let tau = params.tau;
-    let a0 = params.a0;
-    let n_opt = params.n_opt;
+    //   pr = es ^. prevPParamsEpochStateL
+    //   deltaR1 = floor (min 1 eta * (pr ^. ppRhoL) * reserves)
+    //   deltaT1 = floor ((pr ^. ppTauL) * rPot)
+    //   maxPool = maxPool' (pr ^. ppA0L) (pr ^. ppNOptL) ...
+    //
+    // The verify17/19/20 chain-replay diff against upstream's
+    // /tmp/upstream-epoch-state.jsonl pinned the n_opt mismatch at preview
+    // B(10): upstream's prevPParams.stakePoolTargetNum = 150 (= the
+    // pre-Vasil-PPUP value) while curPParams.stakePoolTargetNum = 500.
+    // The PPUP that bumped k from 150 → 500 was effective at the start of
+    // epoch 9; at B(10)'s startStep upstream still reads prevPP.n_opt = 150,
+    // which uncaps σ' = min(σ, 1/n_opt) for the bootstrap pools (σ ≈
+    // 0.0033 < 1/150 ≈ 0.0067) and produces a per-pool maxPool of
+    // 74,314 ADA vs our 54,088 ADA — a +60,679 ADA total under-payment
+    // surfacing as the +228-lovelace withdrawal surplus at slot 1.04M.
+    //
+    // Reading prevPP here is *only* parity-correct because the prefilter
+    // fix above (`prefilter_unregistered`) already drops unregistered
+    // rewards into reserves for PV<7, matching upstream's `collectLRs`
+    // behaviour. Without that fix, the B(4) over-drain bug would mask
+    // (and require unwinding) the n_opt fix.
+    //
+    // `min_pool_cost` and `drep_activity` are admission/governance
+    // parameters, not reward-formula inputs, so they keep their active
+    // (curPP) values.
+    let prev_params_for_rewards = ledger
+        .previous_protocol_params()
+        .cloned()
+        .ok_or(LedgerError::MissingProtocolParameters)?;
+    let rho = prev_params_for_rewards.rho;
+    let tau = prev_params_for_rewards.tau;
+    let a0 = prev_params_for_rewards.a0;
+    let n_opt = prev_params_for_rewards.n_opt;
     let min_pool_cost = params.min_pool_cost;
     let drep_activity = params.drep_activity.unwrap_or(u64::MAX);
 
@@ -475,15 +484,16 @@ pub fn apply_epoch_boundary(
         .map(|(major, _)| major)
         .unwrap_or(0);
     let prefilter_unregistered = prev_pv_major < 7;
-    let registered_credentials: std::collections::BTreeSet<crate::types::StakeCredential> = if prefilter_unregistered {
-        ledger
-            .reward_accounts()
-            .iter()
-            .map(|(account, _)| account.credential)
-            .collect()
-    } else {
-        std::collections::BTreeSet::new()
-    };
+    let registered_credentials: std::collections::BTreeSet<crate::types::StakeCredential> =
+        if prefilter_unregistered {
+            ledger
+                .reward_accounts()
+                .iter()
+                .map(|(account, _)| account.credential)
+                .collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
 
     let reward_params = RewardParams {
         rho,
@@ -514,69 +524,7 @@ pub fn apply_epoch_boundary(
 
     let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, &effective_performance);
 
-    // DIAG: at the boundary entering epoch 4 (= B(4)) and the boundary
-    // entering epoch 10 (= B(10), the next divergence locus exposed once the
-    // B(4) prefilter fix landed), dump the rewards-distribution shape so we
-    // can byte-diff against the upstream JSONL dump.
-    if new_epoch.0 == 4 || new_epoch.0 == 10 {
-        let total_reward_deltas: u64 = reward_dist.reward_deltas.values().sum();
-        let total_leader_deltas: u64 = reward_dist.leader_deltas.values().sum();
-        eprintln!(
-            "DIAG_B{}_REWARD_DIST rewards_pot={} delta_reserves={} treasury_cut={} \
-             unclaimed={} distributed={} leader_count={} member_count={} \
-             leader_total={} member_total={} go_pool_params={} \
-             go_pool_dist={} previous_blocks_made={} performance_entries={}",
-            new_epoch.0,
-            reward_dist
-                .delta_reserves
-                .saturating_add(reward_params.fee_pot)
-                .saturating_sub(reward_dist.treasury_cut),
-            reward_dist.delta_reserves,
-            reward_dist.treasury_cut,
-            reward_dist.unclaimed,
-            reward_dist.distributed,
-            reward_dist.leader_deltas.len(),
-            reward_dist.reward_deltas.len(),
-            total_leader_deltas,
-            total_reward_deltas,
-            snapshots.go.pool_params.len(),
-            snapshots.go.pool_stake_distribution().iter().count(),
-            ledger.previous_blocks_made().len(),
-            effective_performance.len(),
-        );
-        for (pool_hash, &amount) in reward_dist.leader_deltas.iter() {
-            eprintln!(
-                "DIAG_B{}_LEADER pool_reward_account_cred={:02x}{:02x}{:02x}{:02x} \
-                 amount={}",
-                new_epoch.0,
-                pool_hash.credential.hash()[0],
-                pool_hash.credential.hash()[1],
-                pool_hash.credential.hash()[2],
-                pool_hash.credential.hash()[3],
-                amount,
-            );
-        }
-        for (cred, &amount) in reward_dist.reward_deltas.iter() {
-            eprintln!(
-                "DIAG_B{}_MEMBER cred={:02x}{:02x}{:02x}{:02x} amount={}",
-                new_epoch.0,
-                cred.hash()[0],
-                cred.hash()[1],
-                cred.hash()[2],
-                cred.hash()[3],
-                amount,
-            );
-        }
-    }
-
     let (accounts_rewarded, unregistered_rewards) = distribute_rewards(ledger, &reward_dist);
-
-    if new_epoch.0 == 4 || new_epoch.0 == 10 {
-        eprintln!(
-            "DIAG_B{}_DISTRIBUTE accounts_rewarded={} unregistered_rewards={}",
-            new_epoch.0, accounts_rewarded, unregistered_rewards,
-        );
-    }
 
     // -----------------------------------------------------------------------
     // 1b. MIR — apply accumulated Move Instantaneous Rewards.

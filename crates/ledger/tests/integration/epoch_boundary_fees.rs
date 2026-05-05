@@ -71,6 +71,8 @@ fn fee_pot_feeds_epoch_reward_computation() {
             numerator: 1,
             denominator: 1,
         },
+        prefilter_unregistered: false,
+        registered_credentials: std::collections::BTreeSet::new(),
     };
 
     // Empty snapshot — no pools, no delegations
@@ -131,6 +133,8 @@ fn zero_fee_pot_produces_smaller_treasury_delta() {
             numerator: 1,
             denominator: 1,
         },
+        prefilter_unregistered: false,
+        registered_credentials: std::collections::BTreeSet::new(),
     };
 
     let without_fees = RewardParams {
@@ -155,6 +159,8 @@ fn zero_fee_pot_produces_smaller_treasury_delta() {
             numerator: 1,
             denominator: 1,
         },
+        prefilter_unregistered: false,
+        registered_credentials: std::collections::BTreeSet::new(),
     };
 
     let go_snapshot = StakeSnapshot::default();
