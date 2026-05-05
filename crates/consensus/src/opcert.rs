@@ -111,21 +111,55 @@ pub fn check_kes_period(
 /// pool (keyed by the Blake2b-224 hash of the issuer cold key).
 ///
 /// When a new block arrives the counter is validated using the same rules as
-/// the upstream `currentIssueNo` helper in
-/// `Ouroboros.Consensus.Protocol.Praos`:
+/// the upstream `currentIssueNo` helper. The exact rule depends on the era:
 ///
-/// 1. If the pool is already in the counter map, the new sequence number
-///    `n` must satisfy  `stored ≤ n ≤ stored + 1`.
+/// - **TPraos (Shelley/Allegra/Mary, pre-Babbage)** — `Cardano.Protocol.TPraos.Rules.OCert`
+///   only enforces `stored ≤ new_seq` (lower bound). The upper bound is
+///   not checked, so a pool may "skip" counter values.
+/// - **Praos (Babbage+, Vasil HF onward)** — `Ouroboros.Consensus.Protocol.Praos`
+///   tightens the rule to `stored ≤ new_seq ≤ stored + 1` (both bounds), so
+///   counters increment in lock-step with KES rotations.
+///
+/// Pool-initialization rules (when not yet in counter map):
+///
+/// 1. If the pool is already in the counter map, validate per the era's rule.
 /// 2. If the pool is **not** in the counter map but **is** present in the
 ///    stake distribution, the counter is initialized — the block is the
 ///    first we have seen from this pool.
 /// 3. If the pool is in neither, `NoCounterForKeyHash` is returned.
 ///
-/// Reference: `PraosState.csCounters` and `currentIssueNo` in
-/// `Ouroboros.Consensus.Protocol.Praos`.
+/// Reference:
+/// - TPraos: [`Cardano.Protocol.TPraos.Rules.OCert`](https://github.com/IntersectMBO/cardano-ledger/blob/master/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/Rules/OCert.hs)
+/// - Praos: [`Ouroboros.Consensus.Protocol.Praos`](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos.hs)
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OcertCounters {
     counters: BTreeMap<[u8; 28], u64>,
+}
+
+/// Selects which OpCert counter rule to apply.
+///
+/// The strictness changed at the Vasil hard fork (protocol major version 7).
+/// Use [`Self::for_pv_major`] to derive this from a protocol version.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OcertCounterRule {
+    /// Pre-Babbage: only `stored ≤ new_seq` is enforced.
+    TPraos,
+    /// Babbage+ (Vasil onward): both bounds enforced — `stored ≤ new_seq ≤ stored + 1`.
+    Praos,
+}
+
+impl OcertCounterRule {
+    /// Picks the correct rule for a protocol-major version.
+    ///
+    /// Vasil HF activated at PV major 7 on mainnet (epoch 365). PV ≥ 7 ⇒ Praos.
+    /// Lower PVs (Shelley/Allegra/Mary/Alonzo) use TPraos.
+    pub fn for_pv_major(pv_major: u64) -> Self {
+        if pv_major >= 7 {
+            Self::Praos
+        } else {
+            Self::TPraos
+        }
+    }
 }
 
 impl OcertCounters {
@@ -134,16 +168,12 @@ impl OcertCounters {
         Self::default()
     }
 
-    /// Validates a block's OpCert sequence number and updates the map on
-    /// success.
+    /// Validates a block's OpCert sequence number under the **Praos**
+    /// (Babbage+) rule and updates the map on success.
     ///
-    /// # Arguments
-    ///
-    /// * `pool_key_hash` — Blake2b-224 of the block issuer's cold
-    ///   verification key.
-    /// * `new_seq` — The `sequence_number` from the block's `OpCert`.
-    /// * `pool_in_dist` — Whether the pool appears in the current stake
-    ///   distribution (used only when the pool is not yet tracked).
+    /// Equivalent to calling [`Self::validate_and_update_with_rule`] with
+    /// [`OcertCounterRule::Praos`]. Retained for callers that always operate
+    /// on Praos-era chains (e.g. preview, post-Vasil mainnet).
     ///
     /// # Errors
     ///
@@ -157,6 +187,34 @@ impl OcertCounters {
         new_seq: u64,
         pool_in_dist: bool,
     ) -> Result<(), ConsensusError> {
+        self.validate_and_update_with_rule(
+            pool_key_hash,
+            new_seq,
+            pool_in_dist,
+            OcertCounterRule::Praos,
+        )
+    }
+
+    /// Validates a block's OpCert sequence number under the supplied era rule
+    /// and updates the map on success.
+    ///
+    /// Use [`OcertCounterRule::for_pv_major`] to pick the right rule for the
+    /// chain's current protocol version.
+    ///
+    /// # Errors
+    ///
+    /// * `OcertCounterTooOld` — `new_seq < stored` (always enforced).
+    /// * `OcertCounterTooFar` — `new_seq > stored + 1` (Praos only;
+    ///   TPraos accepts arbitrary forward jumps).
+    /// * `NoCounterForKeyHash` — pool is in neither the counter map nor the
+    ///   stake distribution.
+    pub fn validate_and_update_with_rule(
+        &mut self,
+        pool_key_hash: [u8; 28],
+        new_seq: u64,
+        pool_in_dist: bool,
+        rule: OcertCounterRule,
+    ) -> Result<(), ConsensusError> {
         if let Some(&stored) = self.counters.get(&pool_key_hash) {
             if new_seq < stored {
                 return Err(ConsensusError::OcertCounterTooOld {
@@ -164,13 +222,14 @@ impl OcertCounters {
                     received: new_seq,
                 });
             }
-            if new_seq > stored.saturating_add(1) {
+            if matches!(rule, OcertCounterRule::Praos) && new_seq > stored.saturating_add(1) {
                 return Err(ConsensusError::OcertCounterTooFar {
                     stored,
                     received: new_seq,
                 });
             }
-            // stored ≤ new_seq ≤ stored + 1 — accept.
+            // Accept — under TPraos any `new_seq ≥ stored` passes; under Praos
+            // we already enforced `new_seq ≤ stored + 1` above.
             self.counters.insert(pool_key_hash, new_seq);
             Ok(())
         } else if pool_in_dist {
@@ -695,5 +754,103 @@ mod tests {
         b.validate_and_update([0x99; 28], 1, true).unwrap();
 
         assert_eq!(a.to_cbor_bytes(), b.to_cbor_bytes());
+    }
+
+    // ── Era-aware counter rule tests ──────────────────────────────────────
+
+    #[test]
+    fn ocert_rule_for_pv_major_picks_tpraos_below_vasil() {
+        // PV majors 2..=6 = Shelley/Allegra/Mary/Alonzo (TPraos era).
+        for pv in 2..=6u64 {
+            assert_eq!(
+                OcertCounterRule::for_pv_major(pv),
+                OcertCounterRule::TPraos,
+                "PV {} should be TPraos",
+                pv
+            );
+        }
+    }
+
+    #[test]
+    fn ocert_rule_for_pv_major_picks_praos_at_and_above_vasil() {
+        // PV major 7 = Babbage/Vasil onward = Praos.
+        for pv in 7..=12u64 {
+            assert_eq!(
+                OcertCounterRule::for_pv_major(pv),
+                OcertCounterRule::Praos,
+                "PV {} should be Praos",
+                pv
+            );
+        }
+    }
+
+    #[test]
+    fn tpraos_counter_accepts_arbitrary_forward_jump() {
+        // Pre-Babbage TPraos rule: only `stored ≤ new_seq` is enforced.
+        // A jump of more than +1 should pass under TPraos.
+        // Reference: `Cardano.Protocol.TPraos.Rules.OCert.ocertTransition`:
+        //   m <= n ?! CounterTooSmallOCERT m n
+        // (no upper-bound check, unlike Praos).
+        let mut c = OcertCounters::new();
+        c.validate_and_update_with_rule([0x42; 28], 5, true, OcertCounterRule::TPraos)
+            .expect("initial registration");
+        // Jump 5 → 10 (delta = 5) — Praos would reject, TPraos accepts.
+        c.validate_and_update_with_rule([0x42; 28], 10, true, OcertCounterRule::TPraos)
+            .expect("forward jump should be accepted under TPraos");
+        assert_eq!(c.get(&[0x42; 28]), Some(10));
+    }
+
+    #[test]
+    fn praos_counter_rejects_forward_jump_over_one() {
+        // Babbage+ Praos rule: `stored ≤ new_seq ≤ stored + 1`.
+        // Same forward jump from the test above must fail under Praos.
+        // Reference: `Ouroboros.Consensus.Protocol.Praos`:
+        //   m <= n ?! CounterTooSmallOCERT m n
+        //   n <= m + 1 ?! CounterOverIncrementedOCERT m n
+        let mut c = OcertCounters::new();
+        c.validate_and_update_with_rule([0x42; 28], 5, true, OcertCounterRule::Praos)
+            .expect("initial registration");
+        let err = c
+            .validate_and_update_with_rule([0x42; 28], 10, true, OcertCounterRule::Praos)
+            .expect_err("forward jump should be rejected under Praos");
+        assert!(matches!(err, ConsensusError::OcertCounterTooFar { .. }));
+        // Counter must NOT advance after a rejected update.
+        assert_eq!(c.get(&[0x42; 28]), Some(5));
+    }
+
+    #[test]
+    fn tpraos_counter_still_rejects_backwards_movement() {
+        // Lower-bound check `stored ≤ new_seq` is enforced under BOTH rules.
+        let mut c = OcertCounters::new();
+        c.validate_and_update_with_rule([0x42; 28], 10, true, OcertCounterRule::TPraos)
+            .unwrap();
+        let err = c
+            .validate_and_update_with_rule([0x42; 28], 9, true, OcertCounterRule::TPraos)
+            .expect_err("backward move should be rejected");
+        assert!(matches!(err, ConsensusError::OcertCounterTooOld { .. }));
+    }
+
+    #[test]
+    fn praos_counter_accepts_increment_by_one() {
+        // The standard valid case under Praos: counter advances by exactly 1.
+        let mut c = OcertCounters::new();
+        c.validate_and_update_with_rule([0x42; 28], 5, true, OcertCounterRule::Praos)
+            .unwrap();
+        c.validate_and_update_with_rule([0x42; 28], 6, true, OcertCounterRule::Praos)
+            .expect("increment-by-one should be accepted under Praos");
+        assert_eq!(c.get(&[0x42; 28]), Some(6));
+    }
+
+    #[test]
+    fn validate_and_update_alias_uses_praos_rule() {
+        // The unparametrised `validate_and_update` MUST behave identically to
+        // the Praos branch — this protects existing callers (preview / post-
+        // Vasil mainnet) from accidental relaxation.
+        let mut c = OcertCounters::new();
+        c.validate_and_update([0x42; 28], 5, true).unwrap();
+        let err = c
+            .validate_and_update([0x42; 28], 7, true)
+            .expect_err("unparametrised validate_and_update must enforce the Praos upper bound");
+        assert!(matches!(err, ConsensusError::OcertCounterTooFar { .. }));
     }
 }

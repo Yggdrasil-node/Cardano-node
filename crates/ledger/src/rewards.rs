@@ -413,6 +413,37 @@ pub struct RewardParams {
     /// Reference: `startStep` in
     /// `Cardano.Ledger.Shelley.LedgerState.PulsingReward`.
     pub eta: UnitInterval,
+    /// Whether to **pre-filter** rewards to only those whose recipient
+    /// credential is registered, in the spirit of `hardforkBabbageForgoRewardPrefilter`.
+    ///
+    /// Upstream `Cardano.Ledger.Shelley.LedgerState.PulsingReward.startStep`
+    /// invokes `collectLRs` (for leader rewards) and `rewardOnePoolMember`
+    /// (for member rewards) which both gate the reward on the recipient
+    /// credential being in `dState.accounts` *before* the reward enters the
+    /// pulsing `RewardUpdate.rs` map. The gate is bypassed only when
+    /// `hardforkBabbageForgoRewardPrefilter pv = pvMajor pv >= 7`. So:
+    ///
+    /// - **PV ≥ 7 (Babbage / Vasil onward):** prefilter disabled — every
+    ///   reward enters `rs`, and unregistered amounts are routed to the
+    ///   treasury as `frTotalUnregistered` by `applyRUpdFiltered`.
+    /// - **PV < 7 (Shelley / Allegra / Mary / Alonzo):** prefilter active —
+    ///   leader / member rewards for unregistered credentials are dropped
+    ///   *before* the pulser computes `sumRewards`. This means the dropped
+    ///   amount stays in the reward pot `R` and flows back to reserves via
+    ///   `deltaR2 = R − sumRewards`, **not** to treasury.
+    ///
+    /// Set this from the **previous** protocol-version's major number
+    /// (`pr ^. ppProtocolVersionL` in upstream's `startStep`), since RUPD
+    /// pulses with `prevPP` not `curPP`.
+    pub prefilter_unregistered: bool,
+    /// Set of registered staking credentials (= `dState.accounts` keys).
+    ///
+    /// Used together with `prefilter_unregistered = true` (= PV < 7) to
+    /// gate per-credential leader and member rewards. Unused when
+    /// `prefilter_unregistered = false` (= PV ≥ 7) since the post-pulser
+    /// `applyRUpdFiltered` filter handles registered/unregistered routing
+    /// in that case.
+    pub registered_credentials: std::collections::BTreeSet<crate::types::StakeCredential>,
 }
 
 // ---------------------------------------------------------------------------
@@ -906,33 +937,6 @@ pub fn compute_pool_reward(
     // inflate supply if the performance ratio is very large.
     let apparent = mul_rational_capped(optimal, performance, rewards_pot);
 
-    // Diagnostic: dump every input and intermediate for the failing pool
-    // a8e65680… so we can bisect the 885-lovelace shortfall byte-for-byte
-    // against upstream's `mkPoolRewardInfo` evaluation.
-    if pool_hash[0] == 0xa8 && pool_hash[1] == 0xe6 && pool_hash[2] == 0x56 && pool_hash[3] == 0x80
-    {
-        eprintln!(
-            "DIAG_POOL_REWARD pool=a8e65680 R={} n_opt={} a0_n={} a0_d={} pool_stake={} pledge={} total_stake_for_sigma={} max_lovelace_supply={} reserves={} owner_delegated={} optimal={} perf_num={} perf_den={} apparent={} cost={} margin_n={} margin_d={}",
-            rewards_pot,
-            params.n_opt,
-            params.a0.numerator,
-            params.a0.denominator,
-            pool_stake,
-            pool_params.pledge,
-            total_stake_for_sigma,
-            params.max_lovelace_supply,
-            params.reserves,
-            owner_delegated_stake,
-            optimal,
-            performance.numerator,
-            performance.denominator,
-            apparent,
-            pool_params.cost,
-            pool_params.margin.numerator,
-            pool_params.margin.denominator,
-        );
-    }
-
     // Upstream uses the cost stored in the stake-pool snapshot (`spssCost`)
     // directly. Minimum-pool-cost is an admission/update constraint; reward
     // calculation does not re-max a historical snapshot cost against the
@@ -986,61 +990,28 @@ pub fn compute_pool_reward(
     let combined_den = m_den.saturating_mul(pool);
 
     let leader_extra = floor_mul_div(p, combined_num, combined_den) as u64;
-    let leader_reward = cost.saturating_add(leader_extra).min(apparent);
+    let leader_reward_raw = cost.saturating_add(leader_extra).min(apparent);
 
-    if pool_hash[0] == 0xa8 && pool_hash[1] == 0xe6 && pool_hash[2] == 0x56 && pool_hash[3] == 0x80
+    // Pre-Babbage `collectLRs` filter: when `hardforkBabbageForgoRewardPrefilter
+    // pv = pvMajor pv >= 7` is False (= PV < 7), upstream's `startStep` drops
+    // leader rewards whose reward-account credential is not registered, so the
+    // pulser never sees them. The dropped amount stays in the reward pot R and
+    // returns to reserves via `deltaR2 = R − sumRewards`. From PV ≥ 7 onward
+    // (Babbage / Vasil), the prefilter is bypassed and unregistered amounts
+    // are routed to the treasury via `applyRUpdFiltered.frTotalUnregistered`.
+    //
+    // Reference: `Cardano.Ledger.Shelley.LedgerState.PulsingReward.startStep`
+    //   `collectLRs acc poolRI = … if hardforkBabbageForgoRewardPrefilter pv
+    //                              || isAccountRegistered account accounts then …`
+    let leader_reward = if params.prefilter_unregistered
+        && !params
+            .registered_credentials
+            .contains(&pool_params.reward_account.credential)
     {
-        eprintln!(
-            "DIAG_POOL_LEADER pool=a8e65680 profit={} m_num={} m_den={} owner={} pool={} combined_num={} combined_den={} leader_extra={} leader_reward={}",
-            p, m_num, m_den, own, pool, combined_num, combined_den, leader_extra, leader_reward,
-        );
-
-        // Probe whether the leader-reward credential bc636ae… is itself
-        // delegated to this pool, and what stake it carries in the
-        // reward snapshot. If yes, it earns a member reward on top of the
-        // leader reward, and that's where the missing 885 lovelace lives.
-        let target = StakeCredential::AddrKeyHash([
-            0xbc, 0x63, 0x6a, 0xe4, 0x51, 0xa7, 0x31, 0xec, 0x4f, 0xeb, 0x1e, 0x6f, 0xf8, 0x13,
-            0x2b, 0x1b, 0x6b, 0xf5, 0x19, 0xf6, 0xc8, 0x97, 0xcd, 0xb5, 0x2e, 0x7d, 0xb6, 0x61,
-        ]);
-        let delegated_to_us = snapshot.delegations.get(&target) == Some(pool_hash);
-        let target_stake = snapshot.stake.get(&target);
-        let in_owners = owner_set.contains(&target);
-        let target_pool = snapshot.delegations.get(&target).copied();
-        let delegated_pool_str = match target_pool {
-            Some(p) => format!(
-                "{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-                p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7],
-            ),
-            None => "none".to_string(),
-        };
-        eprintln!(
-            "DIAG_BC636AE_PROBE delegated_to_pool={} stake={} in_pool_owners={} actual_delegated_to={}",
-            delegated_to_us, target_stake, in_owners, delegated_pool_str,
-        );
-
-        // Also dump per-owner stake and delegation status for every
-        // declared pool_owner so we can compare against upstream's
-        // `selfDelegatedOwnersStake`.
-        for owner_hash in pool_params.pool_owners.iter() {
-            let owner_cred = StakeCredential::AddrKeyHash(*owner_hash);
-            let owner_delegated_to_us = snapshot.delegations.get(&owner_cred) == Some(pool_hash);
-            let owner_cred_stake = snapshot.stake.get(&owner_cred);
-            eprintln!(
-                "DIAG_OWNER_PROBE pool=a8e65680 owner_hash={:02x}{:02x}{:02x}{:02x} delegated_to_pool={} stake={}",
-                owner_hash[0],
-                owner_hash[1],
-                owner_hash[2],
-                owner_hash[3],
-                owner_delegated_to_us,
-                owner_cred_stake,
-            );
-        }
-        eprintln!(
-            "DIAG_OWNER_PROBE_SUMMARY pool=a8e65680 num_pool_owners={}",
-            pool_params.pool_owners.len(),
-        );
-    }
+        0
+    } else {
+        leader_reward_raw
+    };
 
     // -- Member rewards (upstream `calcStakePoolMemberReward`) --
     //
@@ -1058,6 +1029,20 @@ pub fn compute_pool_reward(
         // is folded into the leader reward via the `s/σ` term.
         // Reference: `notPoolOwner` check in `rewardOnePoolMember`.
         if owner_set.contains(cred) {
+            continue;
+        }
+        // Pre-Babbage `rewardOnePoolMember` filter: when
+        // `hardforkBabbageForgoRewardPrefilter pv = False` (= PV < 7), upstream
+        // drops member rewards whose recipient credential is not registered,
+        // so the dropped amount stays in `R` and returns to reserves via
+        // `deltaR2`. From PV ≥ 7 onward, the prefilter is bypassed and the
+        // post-pulser `applyRUpdFiltered` routes unregistered amounts to
+        // treasury via `frTotalUnregistered`.
+        //
+        // Reference: `Cardano.Ledger.Shelley.Rewards.rewardOnePoolMember`:
+        //   `prefilter = hardforkBabbageForgoRewardPrefilter pv
+        //              || hk `Set.member` addrsRew`
+        if params.prefilter_unregistered && !params.registered_credentials.contains(cred) {
             continue;
         }
         let member_stake = snapshot.stake.get(cred);
@@ -1144,20 +1129,6 @@ pub fn compute_epoch_rewards(
 ) -> EpochRewardDistribution {
     let pot = compute_epoch_reward_pot(params);
     let pool_dist = go_snapshot.pool_stake_distribution();
-    eprintln!(
-        "DIAG_REWARD_INPUT total_active_stake={} num_pools_with_stake={} num_pool_params={} num_perf_entries={}",
-        pool_dist.total_active_stake(),
-        pool_dist.iter().count(),
-        go_snapshot.pool_params.len(),
-        pool_performance.len(),
-    );
-    // Dump per-pool stake for diff against upstream pstakeGo.
-    for (pool, stake) in pool_dist.iter() {
-        eprintln!(
-            "DIAG_POOL_STAKE pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} stake={}",
-            pool[0], pool[1], pool[2], pool[3], pool[4], pool[5], pool[6], pool[7], stake
-        );
-    }
 
     let mut reward_deltas: BTreeMap<StakeCredential, u64> = BTreeMap::new();
     let mut leader_deltas: BTreeMap<RewardAccount, u64> = BTreeMap::new();

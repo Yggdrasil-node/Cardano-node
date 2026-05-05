@@ -305,29 +305,6 @@ fn derive_pool_performance(
         return BTreeMap::new();
     }
 
-    eprintln!(
-        "DIAG_BLOCKS_MADE total_blocks={} num_block_makers={} total_active_stake={}",
-        total_blocks,
-        blocks_made.len(),
-        total_stake,
-    );
-    for (pool, blks) in blocks_made.iter() {
-        let pool_stake = stake_dist.pool_stake(pool);
-        eprintln!(
-            "DIAG_BLOCKS_PER_POOL pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} blocks={} pool_stake={}",
-            pool[0],
-            pool[1],
-            pool[2],
-            pool[3],
-            pool[4],
-            pool[5],
-            pool[6],
-            pool[7],
-            blks,
-            pool_stake,
-        );
-    }
-
     let mut performance = BTreeMap::new();
     for (pool_hash, &blocks_produced) in blocks_made {
         let pool_stake = stake_dist.pool_stake(pool_hash);
@@ -337,25 +314,6 @@ fn derive_pool_performance(
         if let Some(ratio) =
             apparent_performance_ratio(blocks_produced, total_stake, pool_stake, total_blocks)
         {
-            // Diagnostic: dump exact rational performance ratio so we can
-            // bisect the 885-lovelace shortfall against upstream.
-            eprintln!(
-                "DIAG_PERFORMANCE pool={:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x} blocks={} pool_stake={} total_stake={} total_blocks={} perf_num={} perf_den={}",
-                pool_hash[0],
-                pool_hash[1],
-                pool_hash[2],
-                pool_hash[3],
-                pool_hash[4],
-                pool_hash[5],
-                pool_hash[6],
-                pool_hash[7],
-                blocks_produced,
-                pool_stake,
-                total_stake,
-                total_blocks,
-                ratio.numerator,
-                ratio.denominator,
-            );
             performance.insert(*pool_hash, ratio);
         }
     }
@@ -393,6 +351,18 @@ pub fn apply_epoch_boundary(
     pool_performance: &BTreeMap<PoolKeyHash, UnitInterval>,
 ) -> Result<EpochBoundaryEvent, LedgerError> {
     ledger.set_current_epoch(new_epoch);
+
+    // DIAG: emit the (epoch, reserves, treasury) tuple at the START of every
+    // boundary so we can byte-diff against upstream `cardano-cli debug
+    // log-epoch-state` JSONL `(currentEpoch, esChainAccountState.reserves,
+    // .treasury)` records and localize the first boundary at which our
+    // reserves trajectory diverges from upstream.
+    eprintln!(
+        "DIAG_RESERVES_BOUNDARY epoch={} reserves={} treasury={}",
+        new_epoch.0,
+        ledger.accounting().reserves,
+        ledger.accounting().treasury,
+    );
 
     // -----------------------------------------------------------------------
     // Capture the *previous* epoch's protocol parameters BEFORE any
@@ -488,6 +458,33 @@ pub fn apply_epoch_boundary(
         ledger.previous_blocks_made(),
     );
 
+    // Whether to apply upstream's pre-Vasil "drop unregistered rewards before
+    // they enter the pulser" filter. Mirrors `hardforkBabbageForgoRewardPrefilter`:
+    //
+    //   prefilter_active <==> pvMajor (pr ^. ppProtocolVersionL) < 7
+    //
+    // upstream `startStep` reads `pr = es.prevPParams` so we compare against
+    // the **previous** protocol-version's major. For PV < 7 the unregistered
+    // rewards stay in `R` and flow back to reserves via `deltaR2`, matching
+    // upstream's `collectLRs`/`rewardOnePoolMember` semantics. From Vasil
+    // (PV ≥ 7) onward the gate is bypassed and unregistered amounts route
+    // through `frTotalUnregistered` to the treasury via `applyRUpdFiltered`.
+    let prev_pv_major = ledger
+        .previous_protocol_params()
+        .and_then(|pp| pp.protocol_version)
+        .map(|(major, _)| major)
+        .unwrap_or(0);
+    let prefilter_unregistered = prev_pv_major < 7;
+    let registered_credentials: std::collections::BTreeSet<crate::types::StakeCredential> = if prefilter_unregistered {
+        ledger
+            .reward_accounts()
+            .iter()
+            .map(|(account, _)| account.credential)
+            .collect()
+    } else {
+        std::collections::BTreeSet::new()
+    };
+
     let reward_params = RewardParams {
         rho,
         tau,
@@ -498,6 +495,8 @@ pub fn apply_epoch_boundary(
         fee_pot,
         max_lovelace_supply: ledger.max_lovelace_supply(),
         eta,
+        prefilter_unregistered,
+        registered_credentials,
     };
 
     // Derive effective performance: caller-provided or from delayed blocks_made.
@@ -514,7 +513,70 @@ pub fn apply_epoch_boundary(
         };
 
     let reward_dist = compute_epoch_rewards(&reward_params, &snapshots.go, &effective_performance);
+
+    // DIAG: at the boundary entering epoch 4 (= B(4)) and the boundary
+    // entering epoch 10 (= B(10), the next divergence locus exposed once the
+    // B(4) prefilter fix landed), dump the rewards-distribution shape so we
+    // can byte-diff against the upstream JSONL dump.
+    if new_epoch.0 == 4 || new_epoch.0 == 10 {
+        let total_reward_deltas: u64 = reward_dist.reward_deltas.values().sum();
+        let total_leader_deltas: u64 = reward_dist.leader_deltas.values().sum();
+        eprintln!(
+            "DIAG_B{}_REWARD_DIST rewards_pot={} delta_reserves={} treasury_cut={} \
+             unclaimed={} distributed={} leader_count={} member_count={} \
+             leader_total={} member_total={} go_pool_params={} \
+             go_pool_dist={} previous_blocks_made={} performance_entries={}",
+            new_epoch.0,
+            reward_dist
+                .delta_reserves
+                .saturating_add(reward_params.fee_pot)
+                .saturating_sub(reward_dist.treasury_cut),
+            reward_dist.delta_reserves,
+            reward_dist.treasury_cut,
+            reward_dist.unclaimed,
+            reward_dist.distributed,
+            reward_dist.leader_deltas.len(),
+            reward_dist.reward_deltas.len(),
+            total_leader_deltas,
+            total_reward_deltas,
+            snapshots.go.pool_params.len(),
+            snapshots.go.pool_stake_distribution().iter().count(),
+            ledger.previous_blocks_made().len(),
+            effective_performance.len(),
+        );
+        for (pool_hash, &amount) in reward_dist.leader_deltas.iter() {
+            eprintln!(
+                "DIAG_B{}_LEADER pool_reward_account_cred={:02x}{:02x}{:02x}{:02x} \
+                 amount={}",
+                new_epoch.0,
+                pool_hash.credential.hash()[0],
+                pool_hash.credential.hash()[1],
+                pool_hash.credential.hash()[2],
+                pool_hash.credential.hash()[3],
+                amount,
+            );
+        }
+        for (cred, &amount) in reward_dist.reward_deltas.iter() {
+            eprintln!(
+                "DIAG_B{}_MEMBER cred={:02x}{:02x}{:02x}{:02x} amount={}",
+                new_epoch.0,
+                cred.hash()[0],
+                cred.hash()[1],
+                cred.hash()[2],
+                cred.hash()[3],
+                amount,
+            );
+        }
+    }
+
     let (accounts_rewarded, unregistered_rewards) = distribute_rewards(ledger, &reward_dist);
+
+    if new_epoch.0 == 4 || new_epoch.0 == 10 {
+        eprintln!(
+            "DIAG_B{}_DISTRIBUTE accounts_rewarded={} unregistered_rewards={}",
+            new_epoch.0, accounts_rewarded, unregistered_rewards,
+        );
+    }
 
     // -----------------------------------------------------------------------
     // 1b. MIR — apply accumulated Move Instantaneous Rewards.
