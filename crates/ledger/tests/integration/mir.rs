@@ -509,22 +509,38 @@ fn mir_epoch_boundary_send_to_opposite_pot_always_applied() {
 }
 
 #[test]
-fn mir_epoch_boundary_pot_transfer_applied_even_when_rewards_insufficient() {
+fn mir_epoch_boundary_no_pot_transfer_when_rewards_insufficient() {
+    // Upstream `Cardano.Ledger.Shelley.Rules.Mir.mirTransition`:
+    //
+    //   if totR <= availableReserves && totT <= availableTreasury
+    //     then …apply…
+    //     else
+    //       tellEvent $ NoMirTransfer …
+    //       pure $ EpochState chainAccountState …  -- chainAccountState UNCHANGED
+    //
+    // When the all-or-nothing sufficiency check fails (computed against
+    // `reserves + delta_reserves`, not against `reserves` alone), upstream
+    // returns the *original* `chainAccountState` — neither the per-credential
+    // MIR rewards NOR the SendToOppositePot delta are applied. Only the IR
+    // map itself is cleared. We mirror that exactly.
     let cred = test_credential(1);
     let mut state = mir_test_state(
         &[(cred, 0)],
-        50_000, // reserves: only 50K — insufficient for reward
+        50_000, // reserves: only 50K
         500_000_000,
     );
 
-    // Reserves reward request exceeds pot.
+    // Reserves reward request (100K) exceeds available reserves even after
+    // a tiny positive pot-to-pot delta of 10K (totals 60K, still < 100K).
     state
         .instantaneous_rewards_mut()
         .ir_reserves
         .insert(cred, 100_000);
-    // Also request pot-to-pot transfer.
-    state.instantaneous_rewards_mut().delta_reserves = 1_000_000;
-    state.instantaneous_rewards_mut().delta_treasury = -1_000_000;
+    state.instantaneous_rewards_mut().delta_reserves = 10_000;
+    state.instantaneous_rewards_mut().delta_treasury = -10_000;
+
+    let reserves_before = state.accounting().reserves;
+    let treasury_before = state.accounting().treasury;
 
     let mut snapshots = empty_snapshots();
     let event =
@@ -534,9 +550,73 @@ fn mir_epoch_boundary_pot_transfer_applied_even_when_rewards_insufficient() {
     assert!(event.mir_pots_insufficient);
     assert_eq!(event.mir_accounts_credited, 0);
 
-    // But pot-to-pot deltas should still be applied.
-    assert_eq!(event.mir_pot_delta_reserves, 1_000_000);
-    assert_eq!(event.mir_pot_delta_treasury, -1_000_000);
+    // Upstream parity: when MIR fails sufficiency, ChainAccountState stays
+    // unchanged FROM THE MIR RULE (= no pot-to-pot delta, no per-cred debit).
+    // The boundary's monetary-expansion / treasury-cut accounting still
+    // runs independently before MIR and produces a baseline reserves/
+    // treasury delta — we factor it out and only check that MIR contributed
+    // no further change.
+    let expected_reserves =
+        (reserves_before - event.delta_reserves).saturating_add(event.unclaimed_rewards);
+    let expected_treasury = treasury_before.saturating_add(event.treasury_delta);
+    assert_eq!(
+        state.accounting().reserves,
+        expected_reserves,
+        "MIR should not modify reserves when sufficiency fails",
+    );
+    assert_eq!(
+        state.accounting().treasury,
+        expected_treasury,
+        "MIR should not modify treasury when sufficiency fails",
+    );
+    // IR state IS cleared regardless (matches upstream).
+    assert!(state.instantaneous_rewards().is_empty());
+}
+
+#[test]
+fn mir_epoch_boundary_pot_delta_makes_payment_sufficient() {
+    // The sufficiency check uses `availableReserves = reserves + delta_reserves`
+    // (upstream `Cardano.Ledger.Shelley.Rules.Mir.mirTransition`):
+    //
+    //   availableReserves = reserves `addDeltaCoin` deltaReserves (dsIRewards ds)
+    //   if totR <= availableReserves && totT <= availableTreasury
+    //
+    // Here pre-delta reserves (50K) < required reward (100K), but the pot-to-pot
+    // delta (+1M) lifts available to 1,050K, so payment proceeds.
+    let cred = test_credential(1);
+    let mut state = mir_test_state(
+        &[(cred, 0)],
+        50_000, // reserves: 50K (smaller than the 100K reward)
+        2_000_000_000,
+    );
+
+    state
+        .instantaneous_rewards_mut()
+        .ir_reserves
+        .insert(cred, 100_000);
+    state.instantaneous_rewards_mut().delta_reserves = 1_000_000;
+    state.instantaneous_rewards_mut().delta_treasury = -1_000_000;
+
+    let mut snapshots = empty_snapshots();
+    let event =
+        apply_epoch_boundary(&mut state, EpochNo(1), &mut snapshots, &BTreeMap::new()).unwrap();
+
+    // Rewards distributed: 100K paid to the credential.
+    assert!(!event.mir_pots_insufficient);
+    assert_eq!(event.mir_accounts_credited, 1);
+    assert_eq!(event.mir_from_reserves, 100_000);
+
+    // reserves = (reserves_before + delta_reserves - totR) — apply also
+    // the baseline reward expansion / treasury cut from the boundary.
+    //   casReserves = availableReserves <-> totR  (= reserves + delta_reserves - 100K)
+    // Then subtract the boundary's monetary-expansion delta and add back
+    // any unclaimed rewards.
+    let expected_reserves = 50_000u64
+        .saturating_sub(event.delta_reserves)
+        .saturating_add(event.unclaimed_rewards)
+        + 1_000_000  // pot-to-pot delta
+        - 100_000; // MIR per-cred reward
+    assert_eq!(state.accounting().reserves, expected_reserves);
     assert!(state.instantaneous_rewards().is_empty());
 }
 

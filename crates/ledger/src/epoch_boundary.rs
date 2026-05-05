@@ -939,12 +939,24 @@ fn apply_mir_at_epoch_boundary(ledger: &mut LedgerState) -> MirEpochResult {
     let total_reserves: i64 = filtered_reserves.values().sum();
     let total_treasury: i64 = filtered_treasury.values().sum();
 
-    // 2. All-or-nothing: both pots must be sufficient, or neither pays.
+    // 2. All-or-nothing: both pots must be sufficient AGAINST the
+    //    POST-pot-to-pot-delta values, or neither pays. Matching upstream
+    //    `Cardano.Ledger.Shelley.Rules.Mir`:
+    //
+    //      availableReserves = reserves `addDeltaCoin` deltaReserves
+    //      availableTreasury = treasury `addDeltaCoin` deltaTreasury
+    //      if totR <= availableReserves && totT <= availableTreasury
+    //
+    //    The pot-to-pot delta is applied BEFORE the sufficiency check, so a
+    //    SendToOppositePot cert can make rewards payable that wouldn't be
+    //    against the pre-delta values.
     let reserves = ledger.accounting().reserves;
     let treasury = ledger.accounting().treasury;
+    let available_reserves = (reserves as i128 + delta_reserves as i128).max(0) as u64;
+    let available_treasury = (treasury as i128 + delta_treasury as i128).max(0) as u64;
 
-    let reserves_ok = total_reserves <= 0 || reserves >= total_reserves as u64;
-    let treasury_ok = total_treasury <= 0 || treasury >= total_treasury as u64;
+    let reserves_ok = total_reserves <= 0 || available_reserves >= total_reserves as u64;
+    let treasury_ok = total_treasury <= 0 || available_treasury >= total_treasury as u64;
     let can_pay = reserves_ok && treasury_ok;
 
     let mut accounts_credited = 0usize;
@@ -992,17 +1004,28 @@ fn apply_mir_at_epoch_boundary(ledger: &mut LedgerState) -> MirEpochResult {
         };
     }
 
-    // 4. Update pots: debit reward sums (if paid) + apply delta transfers.
-    {
+    // 4. Update pots: ONLY when sufficiency passes do we apply
+    //    (delta_reserves, -totR) and (delta_treasury, -totT). When the
+    //    sufficiency check fails, upstream's `Mir` rule returns the
+    //    UNCHANGED `chainAccountState` (= no pot-to-pot delta is applied
+    //    either) — only the IR state itself is cleared, which we already
+    //    do via the `std::mem::take` above.
+    //
+    //    Reference: `Cardano.Ledger.Shelley.Rules.Mir.mirTransition` —
+    //      else do
+    //        tellEvent $ NoMirTransfer ...
+    //        pure $ EpochState chainAccountState (ls & ... .~ emptyInstantaneousRewards) ...
+    if can_pay {
         let acct = ledger.accounting_mut();
-        // Debit for distributed MIR rewards.
-        if can_pay {
-            apply_signed_delta(&mut acct.reserves, -total_reserves);
-            apply_signed_delta(&mut acct.treasury, -total_treasury);
-        }
-        // Pot-to-pot delta transfers (always applied).
+        // Order matches upstream `Mir`:
+        //   casReserves = availableReserves <-> totR
+        //              = (reserves + delta_reserves) - totR
+        // Apply pot-to-pot delta FIRST so the saturating debit doesn't
+        // underflow when delta brings the pot above the debit threshold.
         apply_signed_delta(&mut acct.reserves, delta_reserves);
         apply_signed_delta(&mut acct.treasury, delta_treasury);
+        apply_signed_delta(&mut acct.reserves, -total_reserves);
+        apply_signed_delta(&mut acct.treasury, -total_treasury);
     }
 
     MirEpochResult {
