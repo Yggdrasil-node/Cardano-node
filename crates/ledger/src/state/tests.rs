@@ -5,8 +5,8 @@
 use super::*;
 use crate::eras::conway::{GovAction, Vote, Voter};
 use crate::eras::shelley::ShelleyTxOut;
-use crate::protocol_params::{ProtocolParameterUpdate, ProtocolParameters};
-use crate::types::{BlockNo, HeaderHash, Relay, RewardAccount, SlotNo, UnitInterval};
+use crate::protocol_params::{PoolVotingThresholds, ProtocolParameterUpdate, ProtocolParameters};
+use crate::types::{BlockNo, HeaderHash, PoolParams, Relay, RewardAccount, SlotNo, UnitInterval};
 
 fn sample_pool_params(relays: Vec<Relay>, operator: u8) -> PoolParams {
     PoolParams {
@@ -570,7 +570,7 @@ fn test_enact_update_committee_preserves_member_expirations_verbatim() {
     members_to_add.insert(add_now, 10);
     members_to_add.insert(add_future, 11);
 
-    let outcome = enact_gov_action_at_epoch(
+    let outcome = super::enact::enact_gov_action_at_epoch(
         &mut es,
         EpochNo(10),
         sample_gov_action_id(41),
@@ -621,7 +621,7 @@ fn test_enact_update_committee_does_not_filter_by_term_limit() {
     members_to_add.insert(add_within_limit, 12); // epoch 10 + 2 => accepted
     members_to_add.insert(add_beyond_limit, 13); // beyond term limit => ignored
 
-    let outcome = enact_gov_action_at_epoch(
+    let outcome = super::enact::enact_gov_action_at_epoch(
         &mut es,
         EpochNo(10),
         sample_gov_action_id(43),
