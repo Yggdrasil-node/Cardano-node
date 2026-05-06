@@ -15,6 +15,6 @@ This directory is a vendored mirror root for upstream `cardano-base` fixture con
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- `cardano-base` repository root: <https://github.com/IntersectMBO/cardano-base/>
-- `cardano-crypto-praos` vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/test_vectors/>
-- `cardano-crypto-class` BLS12-381 vectors: <https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>
+- `cardano-base` repository root: <.reference-haskell-cardano-node/deps/cardano-base/>
+- `cardano-crypto-praos` vectors: <.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-praos/test_vectors/>
+- `cardano-crypto-class` BLS12-381 vectors: <.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>

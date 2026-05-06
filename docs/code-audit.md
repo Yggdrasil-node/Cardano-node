@@ -282,7 +282,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 #### M-7 — Mempool re-sorts on every insert, O(n log n) per admit
 
-- **Location:** `crates/mempool/src/queue.rs:408-409`
+- **Location:** `crates/consensus/src/mempool/src/queue.rs:408-409`
 - **Severity:** Medium (CPU exhaustion vector under TxSubmission flooding)
 
 **Description.** Each `MempoolQueue::insert` performs `entries.sort_by(|l, r| r.entry.fee.cmp(&l.entry.fee))` over the entire vector. For a mempool capped at, say, 8 MB with 2 KB transactions (≈ 4 000 entries), filling the mempool from empty is O(n² log n) ≈ 60 million ops. A peer flooding TxSubmission can sustain this CPU load.
@@ -372,7 +372,7 @@ Both fields are `i64`. If `cost.cpu` is supplied as `i64::MIN` (which would requ
 
 #### L-9 — `mempool` `current_bytes + entry.size_bytes` is bare add
 
-- **Location:** `crates/mempool/src/queue.rs:389`, `:397`, `:450`
+- **Location:** `crates/consensus/src/mempool/src/queue.rs:389`, `:397`, `:450`
 - **Severity:** Low (theoretical)
 
 Same pattern as L-8. `usize::MAX` boundary unreachable in practice (would require petabyte-class inputs), but `checked_add` is the defensive form.
@@ -587,7 +587,7 @@ This section covers every non-trivial file. Files marked `(read in full)` were r
 | `test_vectors.rs` (read structurally — many hardcoded RFC 8032 / IOG vectors) | Vectors + drift guards cross-checked against vendored upstream files. |
 | `tests/upstream_vectors.rs`, `tests/integration.rs` | Cross-reference fixture tests. |
 
-### `crates/cddl-codegen`
+### `tools/cddl-codegen`
 
 | File | Notes |
 |---|---|
@@ -620,7 +620,7 @@ This section covers every non-trivial file. Files marked `(read in full)` were r
 | `stake.rs` | StakeSnapshot + PoolStakeDistribution. |
 | `tests/integration/*` (41 files) | Comprehensive integration coverage: deposit preservation, governance updates, witness validation, reference scripts, treasury donation, era transitions, MIR, etc. |
 
-### `crates/mempool`
+### `crates/consensus/src/mempool`
 
 | File | Notes |
 |---|---|
@@ -779,9 +779,9 @@ rustfmt.toml                            edition 2024 placeholder
 
 ```
 crates/AGENTS.md
-crates/cddl-codegen/{Cargo.toml,AGENTS.md}
-crates/cddl-codegen/src/{AGENTS.md,generator.rs,lib.rs,main.rs,parser.rs}
-crates/cddl-codegen/tests/{AGENTS.md,integration.rs}
+tools/cddl-codegen/{Cargo.toml,AGENTS.md}
+tools/cddl-codegen/src/{AGENTS.md,generator.rs,lib.rs,main.rs,parser.rs}
+tools/cddl-codegen/tests/{AGENTS.md,integration.rs}
 crates/consensus/{Cargo.toml,AGENTS.md}
 crates/consensus/src/{AGENTS.md,chain_selection.rs,chain_state.rs,
                       diffusion_pipelining.rs,epoch.rs,error.rs,
@@ -803,9 +803,9 @@ crates/ledger/src/eras/{AGENTS.md,allegra.rs,alonzo.rs,babbage.rs,
                         byron.rs,conway.rs,mary.rs,mod.rs,shelley.rs}
 crates/ledger/tests/{AGENTS.md,generated_intake.rs,integration.rs}
 crates/ledger/tests/integration/  41 .rs files
-crates/mempool/{Cargo.toml,AGENTS.md}
-crates/mempool/src/{AGENTS.md,lib.rs,queue.rs,tx_state.rs}
-crates/mempool/tests/{AGENTS.md,integration.rs}
+crates/consensus/src/mempool/{Cargo.toml,AGENTS.md}
+crates/consensus/src/mempool/src/{AGENTS.md,lib.rs,queue.rs,tx_state.rs}
+crates/consensus/src/mempool/tests/{AGENTS.md,integration.rs}
 crates/network/{Cargo.toml,AGENTS.md}
 crates/network/src/{AGENTS.md, ~30 .rs files (bearer, blockfetch_*, chainsync_*,
                     connection, connection_manager, diffusion, governor,

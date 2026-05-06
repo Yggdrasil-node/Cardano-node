@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use std::net::SocketAddr;
 
+use yggdrasil_consensus::mempool::{Mempool, MempoolEntry};
 use yggdrasil_consensus::{ChainState, SecurityParam};
 use yggdrasil_ledger::{
     AlonzoBlock, BabbageBlock, BabbageTxBody, BabbageTxOut, Block, BlockHeader, BlockNo,
@@ -9,7 +10,6 @@ use yggdrasil_ledger::{
     ShelleyOpCert, ShelleyTxBody, ShelleyTxIn, ShelleyVrfCert, ShelleyWitnessSet, SlotNo,
     StakeCredential, Tip, Tx, TxId, UnitInterval, compute_block_body_hash,
 };
-use yggdrasil_mempool::{Mempool, MempoolEntry};
 use yggdrasil_network::{
     BlockFetchMessage, ChainSyncMessage, HandshakeVersion, KeepAliveMessage, MiniProtocolNum,
     peer_accept,
@@ -3010,6 +3010,7 @@ fn nonce_test_config() -> NonceEvolutionConfig {
         epoch_size: EpochSize(100),
         stability_window: 30,
         extra_entropy: Nonce::Neutral,
+        byron_shelley_transition: None,
     }
 }
 

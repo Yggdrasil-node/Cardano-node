@@ -35,8 +35,7 @@ In scope:
 
 Out of scope:
 
-- Unmaintained or experimental crates (`crates/cddl-codegen` test fixtures,
-  development-only tooling).
+- Development-only tooling (operator scripts, harnesses, fixtures).
 - Issues requiring physical access to the operator's machine.
 - Self-DoS by misconfiguration that the operator could correct.
 - Reports against vendored upstream test vectors (`specs/upstream-test-vectors/`)

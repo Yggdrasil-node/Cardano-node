@@ -36,7 +36,7 @@ This file defines how dependencies are introduced into Yggdrasil.
 - Any new cryptography crate.
 - Any dependency that enables native code, assembly, or bundled C libraries.
 - Any storage dependency that constrains on-disk format or migration strategy.
-- Any parser or code generation framework used by `cddl-codegen`.
+- Any new CBOR encoding/decoding library or framework used by `crates/ledger`.
 
 ## Forbidden
 - Haskell runtime bindings.

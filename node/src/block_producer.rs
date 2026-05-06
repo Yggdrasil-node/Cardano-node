@@ -16,6 +16,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use yggdrasil_consensus::mempool::MempoolEntry;
 use yggdrasil_consensus::{
     ActiveSlotCoeff, HeaderBody, OpCert, VrfMode, check_is_leader, check_kes_period,
     kes_period_of_slot,
@@ -30,7 +31,6 @@ use yggdrasil_ledger::{
     BlockNo, CborEncode, Encoder, Era, HeaderHash, Nonce, PraosHeader, PraosHeaderBody,
     ShelleyOpCert, ShelleyVrfCert, SlotNo, TxId,
 };
-use yggdrasil_mempool::MempoolEntry;
 
 use thiserror::Error;
 

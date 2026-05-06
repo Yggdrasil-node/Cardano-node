@@ -1342,14 +1342,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yggdrasil-cddl-codegen"
-version = "0.2.0"
-dependencies = [
- "eyre",
- "thiserror",
-]
-
-[[package]]
 name = "yggdrasil-consensus"
 version = "0.2.0"
 dependencies = [
@@ -1358,6 +1350,7 @@ dependencies = [
  "num-traits",
  "tempfile",
  "thiserror",
+ "tokio",
  "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-storage",
@@ -1391,17 +1384,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "yggdrasil-cddl-codegen",
  "yggdrasil-crypto",
-]
-
-[[package]]
-name = "yggdrasil-mempool"
-version = "0.2.0"
-dependencies = [
- "thiserror",
- "tokio",
- "yggdrasil-ledger",
 ]
 
 [[package]]
@@ -1434,7 +1417,6 @@ dependencies = [
  "yggdrasil-consensus",
  "yggdrasil-crypto",
  "yggdrasil-ledger",
- "yggdrasil-mempool",
  "yggdrasil-network",
  "yggdrasil-plutus",
  "yggdrasil-storage",

@@ -212,7 +212,7 @@ fn ppup_slot_context_before_no_return_this_epoch() {
     // slot=4320000 (first slot of epoch 10) < 4622400 → this epoch
     let ctx = PpupSlotContext {
         slot: 4320000,
-        epoch_size: 432000,
+        first_slot_next_epoch: 4_752_000, // current_epoch=10, fixed-length: 11*432000
         stability_window: 129600,
     };
     let update = make_update(genesis_key, 10, ProtocolParameterUpdate::default());
@@ -227,7 +227,7 @@ fn ppup_slot_context_before_no_return_rejects_next_epoch() {
     let state = make_state_with_gen_delegs(&[genesis_key]);
     let ctx = PpupSlotContext {
         slot: 4320000,
-        epoch_size: 432000,
+        first_slot_next_epoch: 4_752_000, // current_epoch=10, fixed-length: 11*432000
         stability_window: 129600,
     };
     // Before slot-of-no-return: target must be current (10), not next (11).
@@ -258,7 +258,7 @@ fn ppup_slot_context_after_no_return_next_epoch() {
     // After slot-of-no-return: slot=4622400 >= too_late=4622400
     let ctx = PpupSlotContext {
         slot: 4622400,
-        epoch_size: 432000,
+        first_slot_next_epoch: 4_752_000, // current_epoch=10, fixed-length: 11*432000
         stability_window: 129600,
     };
     let update = make_update(genesis_key, 11, ProtocolParameterUpdate::default());
@@ -272,8 +272,8 @@ fn ppup_slot_context_after_no_return_rejects_this_epoch() {
     let genesis_key = [0x01; 28];
     let state = make_state_with_gen_delegs(&[genesis_key]);
     let ctx = PpupSlotContext {
-        slot: 4700000, // well past no-return
-        epoch_size: 432000,
+        slot: 4700000,                    // well past no-return
+        first_slot_next_epoch: 4_752_000, // current_epoch=10, fixed-length: 11*432000
         stability_window: 129600,
     };
     // After slot-of-no-return: target must be next (11), not current (10).
@@ -318,7 +318,7 @@ fn ppup_slot_context_builds_from_stability_window() {
     // match what ppup_slot_context(4_320_000) produces.
     let ctx = PpupSlotContext {
         slot: 4_320_000,
-        epoch_size: 432_000,
+        first_slot_next_epoch: 4_752_000, // current_epoch=10, fixed-length: 11*432000
         stability_window: 129_600,
     };
     state

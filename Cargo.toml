@@ -6,8 +6,6 @@ members = [
     "crates/plutus",
     "crates/network",
     "crates/storage",
-    "crates/mempool",
-    "crates/cddl-codegen",
     "node",
 ]
 resolver = "2"
@@ -63,7 +61,6 @@ tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync", "
 yggdrasil-consensus = { path = "crates/consensus" }
 yggdrasil-crypto = { path = "crates/crypto" }
 yggdrasil-ledger = { path = "crates/ledger" }
-yggdrasil-mempool = { path = "crates/mempool" }
 yggdrasil-network = { path = "crates/network" }
 yggdrasil-plutus = { path = "crates/plutus" }
 yggdrasil-storage = { path = "crates/storage" }

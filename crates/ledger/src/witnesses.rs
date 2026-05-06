@@ -65,12 +65,51 @@ pub fn verify_vkey_signatures(
     for w in witnesses {
         let vk = yggdrasil_crypto::ed25519::VerificationKey::from_bytes(w.vkey);
         let sig = yggdrasil_crypto::ed25519::Signature::from_bytes(w.signature);
-        vk.verify(tx_body_hash, &sig)
-            .map_err(|_| LedgerError::InvalidVKeyWitnessSignature {
+        if let Err(e) = vk.verify(tx_body_hash, &sig) {
+            // Diagnostic dump of the rejected (vkey, msg, sig) so the
+            // forensic investigation can decode the exact bytes upstream
+            // accepted but our verifier rejected. Gated on `YGG_DUMP_VKEY_FAIL`
+            // so production paths aren't spammed.
+            if std::env::var_os("YGG_DUMP_VKEY_FAIL").is_some() {
+                let path = std::env::var("YGG_DUMP_VKEY_FAIL_FILE")
+                    .unwrap_or_else(|_| "/tmp/ygg-vkey-fail.txt".to_string());
+                let mut buf = String::new();
+                buf.push_str("# Yggdrasil VKey witness verification failure\n");
+                buf.push_str(&format!("error: {e:?}\n"));
+                buf.push_str(&format!("vkey_hex: {}\n", hex_encode(&w.vkey)));
+                buf.push_str(&format!(
+                    "vkey_hash_hex: {}\n",
+                    hex_encode(&vkey_hash(&w.vkey))
+                ));
+                buf.push_str(&format!("msg_hex: {}\n", hex_encode(tx_body_hash)));
+                buf.push_str(&format!("signature_hex: {}\n", hex_encode(&w.signature)));
+                buf.push_str(&format!(
+                    "signature_R_hex: {}\n",
+                    hex_encode(&w.signature[0..32])
+                ));
+                buf.push_str(&format!(
+                    "signature_S_hex: {}\n",
+                    hex_encode(&w.signature[32..64])
+                ));
+                let _ = std::fs::write(&path, buf);
+            }
+            return Err(LedgerError::InvalidVKeyWitnessSignature {
                 hash: vkey_hash(&w.vkey),
-            })?;
+            });
+        }
     }
     Ok(())
+}
+
+/// Lowercase-hex encoder for diagnostic output. Avoids pulling in `hex` crate
+/// just for the failure path.
+fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(&mut s, "{b:02x}");
+    }
+    s
 }
 
 /// Verifies bootstrap witness signatures and attributes against the tx body hash.

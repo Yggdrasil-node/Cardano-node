@@ -21,8 +21,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tempfile::tempdir;
+use yggdrasil_consensus::mempool::{Mempool, SharedMempool};
 use yggdrasil_ledger::{CborEncode, Decoder, Encoder, Era, HeaderHash, LedgerState, Point, SlotNo};
-use yggdrasil_mempool::{Mempool, SharedMempool};
 use yggdrasil_network::{
     AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
 };

@@ -145,7 +145,7 @@ Cardano-specific terminology used throughout this manual and the code.
 
 ## Yggdrasil-specific
 
-**`max_concurrent_block_fetch_peers`** — Operator knob. Default `1` (legacy single-peer pipeline). Set to `2` (mainnet operator-friendly) after running §6.5 rehearsal to enable multi-peer parallel fetch.
+**`max_concurrent_block_fetch_peers`** — Operator knob. Default `2` (matches upstream `bfcMaxConcurrencyBulkSync`; graduated R258 based on R218 mainnet evidence showing 67% throughput delta). Set to `1` for strict single-peer audit/replay parity, or `> 2` to push beyond the BulkSync cap on rich topologies.
 
 **ChainDb** — The coordinated immutable + volatile + ledger-state storage facade in `crates/storage`.
 

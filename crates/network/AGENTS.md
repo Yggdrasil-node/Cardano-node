@@ -18,15 +18,19 @@ Focus on typed protocol state machines, connection lifecycle, and exact wire-beh
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Networking repository root](https://github.com/IntersectMBO/ouroboros-network/)
-- [Multiplexer package (`network-mux`):](https://github.com/IntersectMBO/ouroboros-network/tree/main/network-mux/)
-- [Framework, handshake, connection manager, inbound governor (`ouroboros-network-framework`):](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework/)
-- [Mini-protocol implementations — ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing (`ouroboros-network-protocols`):](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/)
-- [Outbound governor, peer selection, diffusion integration (`ouroboros-network`):](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/)
-- [Cardano diffusion layer (`cardano-diffusion`):](https://github.com/IntersectMBO/ouroboros-network/tree/main/cardano-diffusion/)
-- [Shelley networking protocol specification:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec)
-- [Network design document:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design)
-- [Network Haddock documentation:](https://ouroboros-network.cardano.intersectmbo.org/)
+
+Upstream `ouroboros-network` was restructured into a single package with internal subdirectories. Use these local paths:
+
+- [Networking repository root](.reference-haskell-cardano-node/deps/ouroboros-network/)
+- [Multiplexer package (`network-mux`)](.reference-haskell-cardano-node/deps/ouroboros-network/network-mux/)
+- [Protocol API (state machines, codecs)](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/api/lib/Ouroboros/Network/Protocol/)
+- [Framework, handshake, connection manager, inbound governor](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/)
+- [Mini-protocol implementations — ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/lib/Ouroboros/Network/Protocol/)
+- [Outbound governor, peer selection, diffusion integration](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/lib/Ouroboros/Network/)
+- [Cardano diffusion layer (`cardano-diffusion`)](.reference-haskell-cardano-node/deps/ouroboros-network/cardano-diffusion/)
+- Shelley networking protocol specification: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec>
+- Network design document: <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design>
+- Network Haddock documentation: <https://ouroboros-network.cardano.intersectmbo.org/>
 
 ## Current Phase
 - Multiplexer framing (SDU header encode/decode, MiniProtocolNum, MiniProtocolDir) is implemented and tested.

@@ -57,16 +57,16 @@ the safer route — overflow is the more dangerous failure mode than a
 clamp.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Ledger repository root:](https://github.com/IntersectMBO/cardano-ledger/)
-- [Era-specific sources:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/) — each era has `impl/`, `formal-spec/`, `test-suite/`, and `cddl/` subdirectories
-  - [Byron ledger rules and CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/)
-  - [Shelley rules (`impl/src/`), design spec, formal spec, CDDL (`impl/cddl/data/`):](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley/)
-  - [Allegra/Mary rules and shared formal spec:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley-ma/)
-  - [Alonzo rules, formal spec, CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/)
-  - [Babbage rules, formal spec, CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/)
-  - [Conway rules (governance, DRep, voting), formal spec, CDDL:](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway/)
-- [Ledger support libraries (binary serialization, core types):](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/)
-- [Binary serialization library:](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/cardano-ledger-binary/)
+- [Ledger repository root:](.reference-haskell-cardano-node/deps/cardano-ledger/)
+- [Era-specific sources:](.reference-haskell-cardano-node/deps/cardano-ledger/eras/) — each era has `impl/`, `formal-spec/`, `test-suite/`, and `cddl/` subdirectories
+  - [Byron ledger rules and CDDL:](.reference-haskell-cardano-node/deps/cardano-ledger/eras/byron/)
+  - [Shelley rules (`impl/src/`), design spec, formal spec, CDDL (`impl/cddl/data/`):](.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/)
+  - [Allegra/Mary rules and shared formal spec:](.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley-ma/)
+  - [Alonzo rules, formal spec, CDDL:](.reference-haskell-cardano-node/deps/cardano-ledger/eras/alonzo/)
+  - [Babbage rules, formal spec, CDDL:](.reference-haskell-cardano-node/deps/cardano-ledger/eras/babbage/)
+  - [Conway rules (governance, DRep, voting), formal spec, CDDL:](.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway/)
+- [Ledger support libraries (binary serialization, core types):](.reference-haskell-cardano-node/deps/cardano-ledger/libs/)
+- [Binary serialization library:](.reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-binary/)
 - [Formal ledger specifications (Agda, Conway-complete):](https://github.com/IntersectMBO/formal-ledger-specifications/)
 - [Published formal spec site:](https://intersectmbo.github.io/formal-ledger-specifications/site/)
 - [Haddock documentation:](https://cardano-ledger.cardano.intersectmbo.org/)

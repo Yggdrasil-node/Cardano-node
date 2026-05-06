@@ -16,7 +16,6 @@ yggdrasil-crypto.workspace = true
 [dev-dependencies]
 hex.workspace = true
 serde_json.workspace = true
-yggdrasil-cddl-codegen = { path = "../cddl-codegen" }
 
 [lints]
 workspace = true

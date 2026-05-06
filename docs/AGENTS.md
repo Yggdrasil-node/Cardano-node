@@ -86,18 +86,18 @@ Keep these documents synchronized with the implemented workspace, not with specu
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Node integration and operational behavior: <https://github.com/IntersectMBO/cardano-node/>
+- Node integration and operational behavior: <.reference-haskell-cardano-node/cardano-node/>
 - Node system/E2E parity harness: <https://github.com/IntersectMBO/cardano-node-tests/> and <https://tests.cardano.intersectmbo.org/>
-- Ledger implementation, per-era rules and CDDL: <https://github.com/IntersectMBO/cardano-ledger/>
+- Ledger implementation, per-era rules and CDDL: <.reference-haskell-cardano-node/deps/cardano-ledger/>
 - Formal ledger specifications (Agda, Conway-complete): <https://github.com/IntersectMBO/formal-ledger-specifications>
 - Published formal spec site: <https://intersectmbo.github.io/formal-ledger-specifications/site>
-- Consensus implementation, tech report, and architecture docs: <https://github.com/IntersectMBO/ouroboros-consensus/>
+- Consensus implementation, tech report, and architecture docs: <.reference-haskell-cardano-node/deps/ouroboros-consensus/>
 - LedgerDB/openDB restore-replay semantics: <https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/ouroboros-consensus/Ouroboros-Consensus-Storage-LedgerDB.html>
 - Caught-up node storage model: <https://ouroboros-consensus.cardano.intersectmbo.org/docs/explanations/node_tasks/>
 - UTxO-HD rollback/snapshot design: <https://ouroboros-consensus.cardano.intersectmbo.org/docs/references/miscellaneous/utxo-hd/utxo-hd_in_depth/>
-- Networking implementation and protocol specification: <https://github.com/IntersectMBO/ouroboros-network/>
-- Cryptographic primitives (hashing, VRF, KES, BLS): <https://github.com/IntersectMBO/cardano-base/>
-- Plutus core and CEK machine: <https://github.com/IntersectMBO/plutus/>
+- Networking implementation and protocol specification: <.reference-haskell-cardano-node/deps/ouroboros-network/>
+- Cryptographic primitives (hashing, VRF, KES, BLS): <.reference-haskell-cardano-node/deps/cardano-base/>
+- Plutus core and CEK machine: <.reference-haskell-cardano-node/deps/plutus/>
 - Haddock docs: ledger (<https://cardano-ledger.cardano.intersectmbo.org/>), consensus (<https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/>), network (<https://ouroboros-network.cardano.intersectmbo.org/>), base (<https://base.cardano.intersectmbo.org/>)
 
 ## Maintenance Guidance

@@ -18,10 +18,10 @@ Focus on pure Rust implementations for hashing, signatures, VRF, and KES.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Crypto class abstractions (hashing, signatures, VRF, KES)](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-class/)
-- [Praos VRF and KES implementations and test vectors](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-praos/)
-- [Peras-era crypto extensions](https://github.com/IntersectMBO/cardano-base/tree/master/cardano-crypto-peras/)
-- [Shared Cardano base packages](https://github.com/IntersectMBO/cardano-base/)
+- [Crypto class abstractions (hashing, signatures, VRF, KES)](.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/)
+- [Praos VRF and KES implementations and test vectors](.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-praos/)
+- [Peras-era crypto extensions](.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-peras/)
+- [Shared Cardano base packages](.reference-haskell-cardano-node/deps/cardano-base/)
 - [Haddock documentation](https://base.cardano.intersectmbo.org/)
 - [VRF batch-verification fork of libsodium](https://github.com/input-output-hk/libsodium/tree/iquerejeta/vrf_batchverify) (behavioral reference only — this crate uses pure Rust)
 

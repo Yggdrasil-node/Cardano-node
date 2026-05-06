@@ -63,7 +63,7 @@ The installer verifies the downloaded archive against the published
 
 ### Implemented
 
-- Cargo workspace with stable crate boundaries for crypto, cddl-codegen, ledger, storage, consensus, mempool, network, and node integration.
+- Cargo workspace with stable crate boundaries for crypto, ledger, storage, consensus, mempool, network, and node integration.
 - **Crypto**: Blake2b-256/512, Ed25519, VRF (standard + batchcompat), SimpleKES, SumKES (depth 0–6+), with upstream vector-backed coverage and zeroize hardening.
 - **Ledger**: Full era type coverage Byron through Conway. Hand-rolled CBOR codec. Multi-era UTxO (`MultiEraUtxo`, `MultiEraTxOut`) with era-aware `apply_block()` dispatch, coin/multi-asset preservation, TTL/validity-interval checks. PlutusData AST with full CBOR support. Certificate hierarchy (19 variants). Credential, address, and governance types. Epoch-boundary processing includes stake-snapshot rotation, reward distribution, governance ratification/enactment, and Shelley PPUP protocol-parameter update application with genesis-delegate quorum.
 - **Network**: SDU framing, async bearer transport, mux/demux, handshake, peer lifecycle, reusable peer candidate ordering, upstream-aligned topology domain types for local and public roots, a root-provider layer that resolves, tracks, and refreshes local, bootstrap, and public roots with upstream-style precedence, a DNS-backed provider for local roots, bootstrap peers, and configured public roots with optional time-gated refresh policy (exponential backoff, upstream-aligned 60 s / 900 s clamps), a minimal peer registry that tracks peer source and cold/cooling/warm/hot status in the crate instead of `node`, including crate-owned reconciliation helpers for root, ledger, big-ledger, and peer-share source sets, and a ledger peer provider layer with `LedgerPeerProvider` trait, `LedgerPeerSnapshot` normalization (deduplicates and enforces disjoint ledger/big-ledger sets), `LedgerPeerProviderRefresh` (combined/per-kind), `apply_ledger_peer_refresh()` helper, `refresh_ledger_peer_registry()` orchestration, and `ScriptedLedgerPeerProvider` for testing. All five mini-protocol state machines + CBOR wire codecs + typed client/server drivers (ChainSync, BlockFetch, KeepAlive, TxSubmission2, PeerSharing). SDU segmentation/reassembly for large protocol messages.
@@ -100,11 +100,10 @@ The workspace is a strict bottom-up dependency stack — see [crates/AGENTS.md](
 | Crate / path | Purpose |
 | --- | --- |
 | [crates/crypto](crates/crypto) | Blake2b, Ed25519, VRF (std + batchcompat), KES (Simple + Sum 0–6+), BLS12-381, secp256k1. |
-| [crates/cddl-codegen](crates/cddl-codegen) | Parses pinned Cardano CDDL, emits Rust + reproducible CBOR codecs. |
-| [crates/ledger](crates/ledger) | Era types Byron→Conway, multi-era UTxO, per-era apply rules, governance, PPUP, MIR, ratification. |
+| [crates/ledger](crates/ledger) | Era types Byron→Conway, multi-era UTxO, per-era apply rules, governance, PPUP, MIR, ratification. Per-era CBOR codecs hand-coded against upstream CDDL. |
 | [crates/storage](crates/storage) | `ImmutableStore` / `VolatileStore` / `LedgerStore` traits + file-backed impls + `ChainDb` coordinator. |
 | [crates/consensus](crates/consensus) | Praos leader election, KES/OpCert checks, `ChainState`, nonce evolution. |
-| [crates/mempool](crates/mempool) | Fee-ordered queue with TTL, eviction, ledger revalidation. |
+| [crates/consensus/src/mempool](crates/consensus/src/mempool) | Fee-ordered queue with TTL, eviction, ledger revalidation. |
 | [crates/network](crates/network) | Mux, mini-protocols, governor, peer registry, root + ledger-peer providers, diffusion types. |
 | [crates/plutus](crates/plutus) | CEK machine, builtin semantics, cost model. |
 | [node](node) | `yggdrasil-node` binary — CLI, config, sync runtime, inbound server, governor loop, block producer, NtC. |

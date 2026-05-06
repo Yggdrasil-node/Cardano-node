@@ -16,13 +16,13 @@ Focus on runtime composition of network clients and orchestration helpers that r
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [`cardano-node` runtime (run, config, toplevel)](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node)
-- [`cardano-node` configuration handling](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node/Configuration)
-- [`cardano-node` tracing system](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node/Tracing)
-- [Consensus diffusion integration](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion)
-- [Cardano-specific consensus integration](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/)
-- [Transaction submit API](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-submit-api)
-- [Node official configuration files](https://github.com/IntersectMBO/cardano-node/tree/master/configuration)
+- [`cardano-node` runtime (run, config, toplevel)](.reference-haskell-cardano-node/cardano-node/src/Cardano/Node)
+- [`cardano-node` configuration handling](.reference-haskell-cardano-node/cardano-node/src/Cardano/Node/Configuration)
+- [`cardano-node` tracing system](.reference-haskell-cardano-node/cardano-node/src/Cardano/Node/Tracing)
+- [Consensus diffusion integration](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-diffusion)
+- [Cardano-specific consensus integration](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/)
+- [Transaction submit API](.reference-haskell-cardano-node/cardano-submit-api)
+- [Node official configuration files](.reference-haskell-cardano-node/configuration)
 - [Cardano Operations Book](https://book.play.dev.cardano.org/)
 
 ## Current Phase

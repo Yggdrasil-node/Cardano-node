@@ -14,20 +14,19 @@ Keep this directory as a crate index, not as a place for cross-cutting implement
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Workspace architecture anchor](https://github.com/IntersectMBO/cardano-node/)
-- [Ledger era package layout](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/)
-- [Ledger support libraries](https://github.com/IntersectMBO/cardano-ledger/tree/master/libs/)
-- [Consensus package layout](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/)
-- [Consensus protocol modules](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/)
-- [Networking package layout](https://github.com/IntersectMBO/ouroboros-network/)
-- [Network mini-protocol packages](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/)
-- [Crypto package layout](https://github.com/IntersectMBO/cardano-base/)
-- [Plutus core and CEK machine](https://github.com/IntersectMBO/plutus/)
+- [Workspace architecture anchor](.reference-haskell-cardano-node/cardano-node/)
+- [Ledger era package layout](.reference-haskell-cardano-node/deps/cardano-ledger/eras/)
+- [Ledger support libraries](.reference-haskell-cardano-node/deps/cardano-ledger/libs/)
+- [Consensus package layout](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/)
+- [Consensus protocol modules](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/)
+- [Networking package layout](.reference-haskell-cardano-node/deps/ouroboros-network/)
+- [Network mini-protocol packages](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/)
+- [Crypto package layout](.reference-haskell-cardano-node/deps/cardano-base/)
+- [Plutus core and CEK machine](.reference-haskell-cardano-node/deps/plutus/)
 
 ## Current Layout
 - `crypto`: cryptographic primitives and encodings.
-- `cddl-codegen`: pinned CDDL parsing and code generation.
-- `ledger`: era modeling and state transitions.
+- `ledger`: era modeling and state transitions. Per-era `CborEncode`/`CborDecode` impls under `crates/ledger/src/eras/*/cbor.rs` are hand-coded against upstream CDDL (`.reference-haskell-cardano-node/deps/cardano-ledger/eras/<era>/impl/cddl/data/`); CDDL is treated as authoritative documentation. Codegen scaffolding was removed in favor of hand-coding because real upstream parity needs Byron / array-vs-map / optional-field semantics that CDDL underspecifies.
 - `storage`: durable storage and snapshots.
 - `consensus`: chain selection, rollback, and epoch math.
 - `mempool`: transaction intake, ordering, and eviction.

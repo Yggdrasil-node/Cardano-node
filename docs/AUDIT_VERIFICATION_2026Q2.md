@@ -18,7 +18,7 @@ nav_order: 4
 | Gap | Documented in | Status | Evidence |
 |---|---|---|---|
 | Plomin V3 cost-model tail | `crates/plutus/AGENTS.md:70` | `misattributed-file` | Logic lives in `node/src/genesis.rs:843-865`, not `crates/plutus/src/cost_model.rs`. The supported-length set is the literal `&[251, 302]` at line 851; the `UnsupportedConwayV3ArrayLength` and `IncompleteConwayV3Mapping` errors at lines 102/113 already fail-fast on drift. Closure: pin `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS` against the literal in a fail-loud test. |
-| CDDL parser range constraints (`N..M`, `.le`) and inline groups | `crates/cddl-codegen/AGENTS.md:42` | `confirmed-active` | grep for `RangeConstraint`, `InlineGroup`, `\.le\b` in `crates/cddl-codegen/src/parser.rs` and `generator.rs` returns nothing. Parser AST has no range-constraint node. |
+| CDDL parser range constraints (`N..M`, `.le`) and inline groups | `tools/cddl-codegen/AGENTS.md:42` | `confirmed-active` | grep for `RangeConstraint`, `InlineGroup`, `\.le\b` in `tools/cddl-codegen/src/parser.rs` and `generator.rs` returns nothing. Parser AST has no range-constraint node. |
 | Live ledger-peer snapshot refresh from consensus | `crates/network/AGENTS.md:57` step 1 | `closed-already` | `live_refresh_ledger_peer_registry_observed` (defined at `crates/network/src/ledger_peers_provider.rs:577`) is called from `node/src/runtime.rs:1188` inside `refresh_ledger_peer_sources_from_chain_db`. That helper is invoked at 4 sites in runtime.rs (lines 1855, 2033, 2419, 6676) covering initial seed, governor tick, on-demand reconnect refresh, and chain-db replay. The "step 1" note is stale; doc correction required. |
 | Hot-peer multi-peer scheduling refinement | `crates/network/AGENTS.md:57` step 2 | `confirmed-active` | grep for `set_hot_protocol_weight`, `hot_peers_remote`, `HotPeerScheduling`, `evaluate_hot_promotions` in `crates/network/src/governor.rs` and `node/src/runtime.rs` returns nothing. Hot-peer logic stays at "promote one leader" semantics. |
 | Genesis density tracking | `docs/PARITY_PLAN.md:606`, `docs/PARITY_SUMMARY.md:160` | `confirmed-active` | grep for `genesis.*density`, `GenesisDensity`, `chainsync.*density` in `crates/network/src/` and `crates/consensus/src/` returns nothing. Explicit "future milestone"; deferred per plan. |
@@ -49,7 +49,7 @@ Two AGENTS.md notes are stale and must be corrected as part of this slice (match
 grep -n "SUPPORTED_CONWAY_V3_ARRAY_LENGTHS\|UnsupportedConwayV3ArrayLength" node/src/genesis.rs
 
 # CDDL parser ranges
-grep -nE "RangeConstraint|InlineGroup|\.le\b" crates/cddl-codegen/src/parser.rs crates/cddl-codegen/src/generator.rs
+grep -nE "RangeConstraint|InlineGroup|\.le\b" tools/cddl-codegen/src/parser.rs tools/cddl-codegen/src/generator.rs
 
 # Live ledger-peer refresh wiring
 grep -n "live_refresh_ledger_peer_registry_observed\|refresh_ledger_peer_sources_from_chain_db" node/src/runtime.rs

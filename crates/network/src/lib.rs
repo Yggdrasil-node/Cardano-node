@@ -151,10 +151,11 @@ pub use ledger_peers_provider::{
     LedgerPeerRegistryUpdate, LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateAgeInputs,
     LedgerStateJudgement, LiveLedgerPeerRefreshObservation, PeerSnapshotFileObservation,
     PeerSnapshotFileSource, PeerSnapshotFreshness, ScriptedLedgerPeerProvider,
-    apply_ledger_peer_refresh, derive_peer_snapshot_freshness, eligible_ledger_peer_candidates,
-    judge_ledger_peer_usage, judge_ledger_state_age, live_refresh_ledger_peer_registry,
-    live_refresh_ledger_peer_registry_observed, merge_ledger_peer_snapshots,
-    reconcile_ledger_peer_registry_with_policy, refresh_ledger_peer_registry,
+    always_eligible_snapshot_peers, apply_ledger_peer_refresh, derive_peer_snapshot_freshness,
+    eligible_ledger_peer_candidates, judge_ledger_peer_usage, judge_ledger_state_age,
+    live_refresh_ledger_peer_registry, live_refresh_ledger_peer_registry_observed,
+    merge_ledger_peer_snapshots, reconcile_ledger_peer_registry_with_policy,
+    refresh_ledger_peer_registry,
 };
 pub use listener::{PeerListener, PeerListenerError};
 #[cfg(unix)]

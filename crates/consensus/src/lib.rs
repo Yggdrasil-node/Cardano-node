@@ -21,6 +21,9 @@ pub mod genesis_density;
 pub mod header;
 /// Blocks-from-the-future detection (ChainSync InFutureCheck).
 pub mod in_future;
+/// Mempool — fee-ordered queue, TTL eviction, cross-peer TxId dedup,
+/// ledger revalidation.  Mirrors upstream `Ouroboros.Consensus.Mempool.*`.
+pub mod mempool;
 /// Epoch nonce evolution state machine (UPDN + TICKN rules).
 pub mod nonce;
 /// Operational certificate (OpCert) types and verification.

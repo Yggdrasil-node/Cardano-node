@@ -570,13 +570,21 @@ conditions.
 
 ### Parallel BlockFetch default flip
 
-The multi-peer dispatch path is implemented and observable, but
-`max_concurrent_block_fetch_peers` defaults to `1` until
-[`MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) §6.5 signs off
-2- and 4-peer rehearsals with restart-resilience evidence. R240 adds
-`node/scripts/parallel_blockfetch_soak.sh`, which starts the node with
-the requested concurrency knob, captures Prometheus snapshots, asserts
-worker migration metrics, optionally runs Haskell tip comparison, and
+**Graduated at R258 (2026-05-06).** `max_concurrent_block_fetch_peers`
+now defaults to `2`, matching upstream
+`Ouroboros.Network.BlockFetch.Decision::bfcMaxConcurrencyBulkSync = 2`.
+R218 (`docs/operational-runs/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`)
+measured the multi-peer path on mainnet at knob=4: 67% throughput
+delta, 2 active workers (saturating the BulkSync cap). R258
+graduates this empirical evidence into the shipped default while
+preserving operator override (`MaxConcurrentBlockFetchPeers = 1` for
+strict single-peer audit/replay parity).
+
+R240 (`node/scripts/parallel_blockfetch_soak.sh`) remains the
+operator-facing soak harness for stress-testing knob > 2 or running
+endurance verification: starts the node with the requested
+concurrency knob, captures Prometheus snapshots, asserts worker
+migration metrics, optionally runs Haskell tip comparison, and
 preserves a summary under `$LOG_DIR/summary.txt`.
 
 ---

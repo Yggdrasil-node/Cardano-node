@@ -74,7 +74,7 @@ The keys below are the Yggdrasil-specific snake_case names. PascalCase aliases m
 
 | Key                                      | Type | Default | Upstream alias                   | Description |
 |------------------------------------------|------|---------|----------------------------------|-------------|
-| `max_concurrent_block_fetch_peers`       | u8   | 1       | (none)                           | Maximum hot peers fetching in parallel during sync. Default `1` keeps the proven single-peer pipeline. After running the §6.5 rehearsal, an operator can flip to `2` to mirror upstream `bfcMaxConcurrencyBulkSync = 2`. |
+| `max_concurrent_block_fetch_peers`       | u8   | 2       | `bfcMaxConcurrencyBulkSync`      | Maximum hot peers fetching in parallel during initial sync. Default `2` matches upstream `Ouroboros.Network.BlockFetch.Decision::bfcMaxConcurrencyBulkSync = 2`. Operators wanting strict single-peer behaviour for replay or byte-for-byte audit comparison can set `1`; rich-topology operators can set `> 2` to push beyond the BulkSync cap. R218 measured a 67% throughput delta on mainnet vs single-peer. |
 
 ### Genesis files
 

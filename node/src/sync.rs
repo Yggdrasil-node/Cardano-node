@@ -17,6 +17,7 @@ use std::time::Instant;
 use crate::config::MAINNET_NETWORK_MAGIC;
 #[cfg(test)]
 use yggdrasil_consensus::EpochSize;
+use yggdrasil_consensus::mempool::Mempool;
 use yggdrasil_consensus::{
     ActiveSlotCoeff, ChainEntry, ChainState, ClockSkew, ConsensusError, EpochSchedule,
     FutureSlotJudgement, Header as ConsensusHeader, HeaderBody as ConsensusHeaderBody,
@@ -36,7 +37,6 @@ use yggdrasil_ledger::{
     ShelleyHeaderBody, ShelleyOpCert, ShelleyTxIn, SlotNo, StakeSnapshots, Tx, TxId, UnitInterval,
     apply_epoch_boundary, compute_block_body_hash, compute_stake_snapshot,
 };
-use yggdrasil_mempool::Mempool;
 use yggdrasil_network::{
     BlockFetchClient, BlockFetchClientError, BlockFetchInstrumentation, ChainRange,
     ChainSyncClient, ChainSyncClientError, DecodedHeaderNextResponse, KeepAliveClient,
@@ -1455,6 +1455,54 @@ impl VerifiedSyncServiceConfig {
     }
 }
 
+/// Sync-only escape hatch for catching up past Plutus parity gaps.
+///
+/// When `YGG_SKIP_PHASE2` is set in the environment, returns `None` so the
+/// ledger applies blocks based on the on-chain `is_valid` tag alone,
+/// without re-running Plutus scripts. Phase-1 validation (fees, witnesses,
+/// UTxO state, signatures, protocol-parameter updates, certificate
+/// processing, withdrawals) remains in force; only Phase-2 script
+/// re-execution is skipped, and the block author's `is_valid` tag is
+/// trusted because the block was already accepted by the network majority.
+///
+/// **Block-producing nodes must NEVER set this** — re-validation is the
+/// only way to catch CEK divergence before forging.
+///
+/// Reference: upstream `Cardano.Ledger.Alonzo.Rules.Bbody`'s
+/// `validatePhase2` is a consensus rule every fully-validating node runs;
+/// this helper is the documented escape hatch for sync-only catch-up
+/// while a CEK parity gap is being investigated (e.g. R249 Gap BP).
+pub(crate) fn phase2_evaluator_or_trust_block(
+    eval: &crate::plutus_eval::CekPlutusEvaluator,
+) -> Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator> {
+    if std::env::var_os("YGG_SKIP_PHASE2").is_some() {
+        warn_phase2_skip_once();
+        None
+    } else {
+        Some(eval)
+    }
+}
+
+/// Emit a one-time WARN trace when `YGG_SKIP_PHASE2` is honored, so the
+/// operator sees clearly that re-validation is disabled. Subsequent calls
+/// are silent to avoid flooding the log on every applied block.
+fn warn_phase2_skip_once() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static WARNED: AtomicBool = AtomicBool::new(false);
+    if WARNED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        eprintln!(
+            "[ygg-sync] WARN: YGG_SKIP_PHASE2 is set — Plutus Phase-2 \
+             re-validation is DISABLED. Phase-1 validation (fees, \
+             witnesses, pparam updates, UTxO state) remains enforced; \
+             on-chain `is_valid` tags are trusted. Use only for sync-only \
+             catch-up; a block-producing node MUST NOT set this."
+        );
+    }
+}
+
 /// Outcome returned when the verified sync service finishes.
 ///
 /// Includes the final `NonceEvolutionState` so the caller can persist or
@@ -2021,7 +2069,13 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
                 Some(TpraosOverlaySlot::Active {
                     genesis_hash: _,
                     delegation,
-                }) => verify_block_vrf_with_genesis_delegate(block, epoch_nonce, delegation)?,
+                }) => verify_block_vrf_with_genesis_delegate(block, epoch_nonce, delegation)
+                    .map_err(|source| SyncError::VrfVerification {
+                        slot: block.slot().0,
+                        era: block.era_label(),
+                        epoch_nonce,
+                        source,
+                    })?,
                 None => {
                     let stake_dist = snapshots.set.pool_stake_distribution();
                     if stake_dist.total_active_stake() == 0 {
@@ -2157,7 +2211,7 @@ where
                 chain_db,
                 tracking.base_ledger_state.clone(),
                 epoch_size,
-                Some(&tracking.plutus_evaluator),
+                phase2_evaluator_or_trust_block(&tracking.plutus_evaluator),
                 tracking.stake_snapshots.clone(),
             )?;
             tracking.ledger_state = recovery.ledger_state;
@@ -2257,7 +2311,7 @@ where
                     snapshots,
                     epoch_size,
                     progress,
-                    Some(&tracking.plutus_evaluator),
+                    phase2_evaluator_or_trust_block(&tracking.plutus_evaluator),
                     vrf_ctx,
                     &mut tracking.pool_block_counts,
                 )?;
@@ -2265,7 +2319,7 @@ where
                 advance_ledger_state_with_progress(
                     &mut tracking.ledger_state,
                     progress,
-                    Some(&tracking.plutus_evaluator),
+                    phase2_evaluator_or_trust_block(&tracking.plutus_evaluator),
                 )?;
             }
         }
@@ -2277,7 +2331,7 @@ where
             snapshots,
             epoch_size,
             progress,
-            Some(&tracking.plutus_evaluator),
+            phase2_evaluator_or_trust_block(&tracking.plutus_evaluator),
             vrf_ctx,
             &mut tracking.pool_block_counts,
         )?;
@@ -2285,7 +2339,7 @@ where
         advance_ledger_state_with_progress(
             &mut tracking.ledger_state,
             progress,
-            Some(&tracking.plutus_evaluator),
+            phase2_evaluator_or_trust_block(&tracking.plutus_evaluator),
         )?;
     }
 
@@ -2372,11 +2426,12 @@ where
         let epoch_schedule = config
             .epoch_schedule
             .unwrap_or_else(|| EpochSchedule::fixed(nonce_cfg.epoch_size));
+        let evaluator = config.build_plutus_evaluator();
         let recovery = recover_ledger_state_chaindb_with_epoch_boundary(
             chain_db,
             base_ledger_state,
             epoch_schedule,
-            Some(&config.build_plutus_evaluator()),
+            phase2_evaluator_or_trust_block(&evaluator),
             None,
         )?;
         return Ok(LedgerCheckpointTracking {
@@ -4498,21 +4553,35 @@ pub fn verify_block_vrf_with_stake(
 /// for the slot.
 ///
 /// Reference: `Cardano.Protocol.TPraos.Rules.Overlay` `pbftVrfChecks`.
+/// Verify a TPraos active-overlay block's VRF proofs against the
+/// genesis delegate selected by `lookup_tpraos_overlay_schedule`.
+///
+/// Returns errors as `ConsensusError` so the caller can wrap them in
+/// `SyncError::VrfVerification { slot, era, epoch_nonce, source }`,
+/// preserving slot/era context in the trace. This matches the
+/// non-overlay (Praos pool-leader) path, which already emits
+/// VrfVerification with full context.
+///
+/// R253 diagnostic enrichment: prior to this change, an active-overlay
+/// VRF failure surfaced as bare `consensus error: invalid VRF proof`
+/// with no slot/era/nonce — making preprod overlay-VRF gap analysis
+/// blind. Wrapping at the call site restores the same diagnostic
+/// surface area as the non-overlay path.
 fn verify_block_vrf_with_genesis_delegate(
     block: &MultiEraBlock,
     epoch_nonce: Nonce,
     delegation: &GenesisDelegationState,
-) -> Result<bool, SyncError> {
+) -> Result<bool, ConsensusError> {
     let issuer_vkey_bytes = match block_issuer_vkey(block) {
         Some(vk) => vk,
         None => return Ok(true), // Byron
     };
     let issuer_hash = yggdrasil_crypto::blake2b::hash_bytes_224(&issuer_vkey_bytes).0;
     if issuer_hash != delegation.delegate {
-        return Err(SyncError::Consensus(ConsensusError::WrongGenesisColdKey {
+        return Err(ConsensusError::WrongGenesisColdKey {
             expected: delegation.delegate,
             actual: issuer_hash,
-        }));
+        });
     }
 
     let Some(vrf_vkey_bytes) = block_vrf_vkey(block) else {
@@ -4520,10 +4589,10 @@ fn verify_block_vrf_with_genesis_delegate(
     };
     let vrf_hash_block = yggdrasil_crypto::blake2b::hash_bytes_256(&vrf_vkey_bytes).0;
     if vrf_hash_block != delegation.vrf {
-        return Err(SyncError::Consensus(ConsensusError::VrfKeyMismatch {
+        return Err(ConsensusError::VrfKeyMismatch {
             expected: delegation.vrf,
             actual: vrf_hash_block,
-        }));
+        });
     }
 
     let vk = VrfVerificationKey(vrf_vkey_bytes);
@@ -4536,10 +4605,8 @@ fn verify_block_vrf_with_genesis_delegate(
                 epoch_nonce,
                 &s.header.body.leader_vrf.proof,
                 VrfMode::TPraos,
-            )
-            .map_err(SyncError::Consensus)?;
-            verify_nonce_proof(&vk, slot, epoch_nonce, &s.header.body.nonce_vrf.proof)
-                .map_err(SyncError::Consensus)?;
+            )?;
+            verify_nonce_proof(&vk, slot, epoch_nonce, &s.header.body.nonce_vrf.proof)?;
             Ok(true)
         }
         MultiEraBlock::Alonzo(a) => {
@@ -4550,10 +4617,8 @@ fn verify_block_vrf_with_genesis_delegate(
                 epoch_nonce,
                 &a.header.body.leader_vrf.proof,
                 VrfMode::TPraos,
-            )
-            .map_err(SyncError::Consensus)?;
-            verify_nonce_proof(&vk, slot, epoch_nonce, &a.header.body.nonce_vrf.proof)
-                .map_err(SyncError::Consensus)?;
+            )?;
+            verify_nonce_proof(&vk, slot, epoch_nonce, &a.header.body.nonce_vrf.proof)?;
             Ok(true)
         }
         _ => Ok(false),
@@ -7057,6 +7122,107 @@ mod tests {
         assert!(selected.is_none());
     }
 
+    /// Pin yggdrasil's overlay classification against upstream
+    /// `Cardano.Protocol.TPraos.Rules.Overlay::lookupInOverlaySchedule`
+    /// for preprod's exact gen_delegs map across the 429460-429540
+    /// active-overlay window — the region where R249 surfaced
+    /// `invalid VRF proof`.
+    ///
+    /// Preprod's shelley-genesis: `activeSlotsCoeff=0.05`,
+    /// `decentralisationParam=1`, 7 genesis delegates, Byron→Shelley
+    /// at slot 86400/epoch 4. With d=1 the overlay schedule is full;
+    /// active slots are every 20th slot (positions 0, 20, 40, ...);
+    /// the genesis-delegate index cycles `(position/20) mod 7`.
+    ///
+    /// Reference math (from upstream `classifyOverlaySlot`):
+    /// | slot   | offset | position | active | idx | delegate prefix |
+    /// |--------|--------|----------|--------|-----|------------------|
+    /// | 429460 | 343060 | 343060   | T      | 3   | `b260ff...`      |
+    /// | 429470 | 343070 | 343070   | F      | -   | NonActive        |
+    /// | 429480 | 343080 | 343080   | T      | 4   | `ced159...`      |
+    /// | 429500 | 343100 | 343100   | T      | 5   | `dd2a7d...`      |
+    /// | 429520 | 343120 | 343120   | T      | 6   | `f3b9e7...`      |
+    /// | 429540 | 343140 | 343140   | T      | 0   | `637f2e...` (cycle) |
+    ///
+    /// Source: `.reference-haskell-cardano-node/install/share/preprod/shelley-genesis.json`
+    /// genDelegs map, sorted lexicographically by 28-byte
+    /// genesis-key-hash (`Set.elemAt i` semantics).
+    ///
+    /// **R259 finding:** Yggdrasil's classification matches upstream
+    /// byte-for-byte across this window. The R249 preprod failure
+    /// is therefore NOT in overlay classification; the bug must lie
+    /// in VRF input/output bytes, proof verification, gen_delegs
+    /// decode, or epoch-boundary VRF-key activation. R253 root-cause
+    /// scope narrows to those four candidates.
+    #[test]
+    fn tpraos_overlay_matches_upstream_classifyoverlayslot_preprod_429460_window() {
+        // The 7 preprod genesis delegate keys, sorted by Ord on byte
+        // hash (matches Haskell `Set.elemAt i`).
+        let preprod_gen_keys = [
+            "637f2e950b0fd8f8e3e811c5fbeb19e411e7a2bf37272b84b29c1a0b",
+            "8a4b77c4f534f8b8cc6f269e5ebb7ba77fa63a476e50e05e66d7051c",
+            "b00470cd193d67aac47c373602fccd4195aad3002c169b5570de1126",
+            "b260ffdb6eba541fcf18601923457307647dce807851b9d19da133ab",
+            "ced1599fd821a39593e00592e5292bdc1437ae0f7af388ef5257344a",
+            "dd2a7d71a05bed11db61555ba4c658cb1ce06c8024193d064f2a66ae",
+            "f3b9e74f7d0f24d2314ea5dfbca94b65b2059d1ff94d97436b82d5b4",
+        ];
+        let mut gen_delegs = BTreeMap::new();
+        for hex_key in &preprod_gen_keys {
+            let bytes = hex::decode(hex_key).expect("valid hex");
+            let arr: [u8; 28] = bytes.try_into().expect("28-byte hash");
+            gen_delegs.insert(arr, genesis_delegation(0));
+        }
+
+        let d = UnitInterval {
+            numerator: 1,
+            denominator: 1,
+        };
+        let asc = ActiveSlotCoeff::from_rational(1, 20).expect("valid asc");
+        let first_slot = SlotNo(86_400);
+
+        // Active slots in the 429460-429540 window with their
+        // upstream-computed indices.
+        let cases = [
+            (429_460u64, 3usize),
+            (429_480, 4),
+            (429_500, 5),
+            (429_520, 6),
+            (429_540, 0), // cycle wraps
+        ];
+        for (slot, expected_idx) in cases {
+            let expected_hash = hex::decode(preprod_gen_keys[expected_idx]).expect("valid hex");
+            let expected_arr: [u8; 28] = expected_hash.try_into().expect("28 bytes");
+            match lookup_tpraos_overlay_schedule(first_slot, &gen_delegs, d, &asc, SlotNo(slot)) {
+                Some(TpraosOverlaySlot::Active { genesis_hash, .. }) => assert_eq!(
+                    genesis_hash, expected_arr,
+                    "preprod slot {slot} must select gen_delegs[{expected_idx}]; \
+                     drift here would explain R249 'invalid VRF proof'",
+                ),
+                other => panic!(
+                    "expected active overlay at preprod slot {slot} (upstream idx {expected_idx}), \
+                     got {other:?}",
+                ),
+            }
+        }
+
+        // Sanity: NonActive slots between active ones.
+        for nonactive_slot in [429_461u64, 429_470, 429_479, 429_481, 429_500 - 1] {
+            let res = lookup_tpraos_overlay_schedule(
+                first_slot,
+                &gen_delegs,
+                d,
+                &asc,
+                SlotNo(nonactive_slot),
+            );
+            assert!(
+                matches!(res, Some(TpraosOverlaySlot::NonActive)),
+                "preprod slot {nonactive_slot} must be NonActive (position % 20 != 0); \
+                 got {res:?}",
+            );
+        }
+    }
+
     /// Build a snapshot where each pool has the specified stake via a
     /// dedicated fake credential.
     fn make_snapshot_with_pools(pools: &[(PoolKeyHash, u64)]) -> StakeSnapshot {
@@ -8489,6 +8655,7 @@ mod tests {
             epoch_size: EpochSize(10),
             stability_window: 0,
             extra_entropy: Nonce::Neutral,
+            byron_shelley_transition: None,
         };
         let mut cursor = NonceEvolutionState::new(Nonce::Neutral);
         apply_nonce_evolution(&mut cursor, &babbage_nonce_test_block(9, 1), &cfg);
@@ -8646,6 +8813,7 @@ mod tests {
             epoch_size: EpochSize(BYRON_SLOTS_PER_EPOCH),
             stability_window: 10,
             extra_entropy: Nonce::Neutral,
+            byron_shelley_transition: None,
         };
         let mut nonce_state = Some(test_nonce_state(0x99));
         let mut counter_state = Some(test_ocert_counters_through(pool, 5));

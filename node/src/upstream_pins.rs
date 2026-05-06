@@ -33,8 +33,9 @@
 /// Reference: `crates/crypto/tests/upstream_vectors.rs::CARDANO_BASE_SHA`.
 pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "7a8a991945d401d89e27f53b3d3bb464a354ad4c";
 
-/// `cardano-ledger` — era-specific rules and CDDL schemas ported into
-/// `crates/ledger/` and `crates/cddl-codegen/`.
+/// `cardano-ledger` — era-specific rules and CDDL schemas mirrored into
+/// the hand-coded `CborEncode`/`CborDecode` impls under
+/// `crates/ledger/src/eras/*/cbor.rs`.
 ///
 /// R201 audit baseline (2026-04-30) — advanced from
 /// `9ae77d611ad8…` to live HEAD reported by
@@ -54,8 +55,27 @@ pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "7a8a991945d401d89e27f53b3d3bb464
 /// temporarily disabled for testnets until Dijkstra (protocol major 12),
 /// mirrored in `node/src/sync.rs`.
 ///
+/// R249 audit-baseline refresh (2026-05-05) — advanced from
+/// `b90b97488da3…` to live HEAD.  Upstream changes in this range
+/// (34 commits, 124 files) are dominated by (a) a workspace-wide
+/// `StAnnTx` threading refactor that pre-computes per-tx annotations
+/// once in LEDGERS and passes them into LEDGER (PRs #5789, #5777) —
+/// Haskell-internal type signatures only, no on-wire CBOR or rule
+/// semantic change for active eras (Shelley through Conway);
+/// (b) Dijkstra-era (PV12) preparation including `MemoBytes`
+/// serialization for `DijkstraBlockBody`, `invalid_transactions`
+/// becoming a non-empty set, and `IsValid`-disallowed BlockBody Txs
+/// (PR #5733) — only the Dijkstra CDDL is touched, no active-era CDDL
+/// changes; (c) a `blockBodySize` method added to `EraBlockBody`
+/// replacing the legacy `bBodySize` standalone — Yggdrasil already
+/// computes block body size locally per R84 (`apply_block_validated`)
+/// so this is a Haskell-side rename only; (d) `queryConstitution`
+/// golden-test additions and example refactors. No active-era CBOR
+/// codec, validation rule, or transition-system semantic change
+/// requires a code update.
+///
 /// Reference: <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/>
-pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "b90b97488da3cbdc01c5c4a610c674a22d467882";
+pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "ca9b8c285e4493f2d25354914f8aae5483595507";
 
 /// `ouroboros-consensus` — Praos protocol, ChainDB, mempool, and storage
 /// design rationale ported into `crates/consensus/`, `crates/storage/`,
@@ -72,15 +92,42 @@ pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "b90b97488da3cbdc01c5c4a610c674
 /// verification (preview Conway, preprod Allegra, mainnet Byron→Shelley
 /// all pass cardano-cli end-to-end queries with the existing port).
 ///
+/// R249 audit-baseline refresh (2026-05-05) — advanced from
+/// `b047aca4a731…` to live HEAD.  Upstream changes in this range (24 commits, 134 files) are
+/// dominated by (a) Peras voting-committee implementations: `wFA^LS` and `EveryoneVotes`
+/// instances (PR #1975), aggregatable voting committee crypto interface (PR #2014), and
+/// `VotesWithSameTarget` duplicate check (PR #2020) — all post-Conway Peras protocol surface,
+/// not active on any current network; (b) a `LedgerTables` and `TxIn`/`TxOut` type indexing
+/// refactor that eta-expands `l` over `blk` workspace-wide (PR #2016) — pure Haskell type
+/// machinery touching `LedgerSupports*LedgerDB`, `BackingStore` API, and `LedgerSeq` — Yggdrasil
+/// uses different storage abstractions (`ImmutableStore`/`VolatileStore`/`LedgerStore` traits)
+/// so the Haskell type-index churn does not propagate; (c) `Ticking` documentation page added
+/// (docs only). The Praos hot-path, ChainDB volatile/immutable split, mempool revalidation, and
+/// HardForkCombinator semantics for active eras (through Conway) remain unchanged.
+///
 /// Reference: <https://github.com/IntersectMBO/ouroboros-consensus/tree/main/>
 #[rustfmt::skip]
-pub const UPSTREAM_OUROBOROS_CONSENSUS_COMMIT: &str = "b047aca4a731d3282b1dab012d3669e9395328cc";
+pub const UPSTREAM_OUROBOROS_CONSENSUS_COMMIT: &str = "8c2475c253ab53fc2f0998a57a161b6778b54e43";
 
 /// `ouroboros-network` — multiplexer, handshake, mini-protocols, peer
 /// governor ported into `crates/network/`.
 ///
+/// R249 audit-baseline refresh (2026-05-05) — advanced from
+/// `0e84bced45c7…` to live HEAD.  Upstream changes in this range
+/// (4 commits) are: (a) PR #5357 "tx-submission v2: return results
+/// in submitTxToMempool" — modifies only
+/// `ouroboros-network/lib/Ouroboros/Network/TxSubmission/Inbound/V2/Registry.hs`
+/// (an internal Haskell function signature consumed by the sister
+/// `dmq-node` project); the `TxSubmission2` wire codec
+/// (`Codec.hs`, `Type.hs`) and the public mini-protocol state machine
+/// are unchanged, so a node implementing the existing TxSubmission2
+/// wire protocol — including Yggdrasil — remains compatible without
+/// modification; (b) PR #5359 drops `x86_64-darwin` Nix support
+/// (build-system only).  No mux, handshake, peer-governor, or
+/// mini-protocol behavior change.
+///
 /// Reference: <https://github.com/IntersectMBO/ouroboros-network/tree/main/>
-pub const UPSTREAM_OUROBOROS_NETWORK_COMMIT: &str = "0e84bced45c7fc64252d576fbce55864d75e722a";
+pub const UPSTREAM_OUROBOROS_NETWORK_COMMIT: &str = "8fe0f8ebc2623079edc7d708f19a0154b963f371";
 
 /// `plutus` — CEK machine, builtins, cost model, Flat codec ported into
 /// `crates/plutus/`.
@@ -95,8 +142,36 @@ pub const UPSTREAM_OUROBOROS_NETWORK_COMMIT: &str = "0e84bced45c7fc64252d576fbce
 /// integration tests + 4 745-test workspace gate continues to pass
 /// against the existing port.
 ///
+/// R249 audit-baseline refresh (2026-05-05) — advanced from
+/// `4cd40a14e364…` to live HEAD.  Upstream changes in this range
+/// (9 commits) are dominated by post-Conway protocol-version (D/E)
+/// preparation, with no semantic change for active protocol versions
+/// (Conway PV9–11): (a) PR #7754 "update default universe plumbing
+/// and tidy builtin handling" — adds `CInteger`/`CByteString` newtype
+/// wrappers (with bounds `±2^262143` for integers and 65 536 bytes for
+/// byte-strings, defined in new `PlutusCore.Default.Universe.Cardano`)
+/// and `TextCostedByByteLength` whose memory cost is `lenInBytes / 4`
+/// (vs. legacy `Text` 100-char chunking).  The bounds-checked semantics
+/// are gated on `BuiltinSemanticsVariant` via an `ensurable semvar`
+/// predicate in `PlutusCore.Default.Builtins`, so existing semantics
+/// variants (Conway and earlier) keep their unchanged `AddInteger`,
+/// `SubtractInteger`, etc. denotations; (b) the `untyped-plutus-core`
+/// Flat decoder gains additive `constantPred` and `constrPred`
+/// validation hooks alongside the existing `builtinPred`, with the
+/// default `UnrestrictedProgram` decoder passing `const Nothing` for
+/// all three — no behavioral change for current-protocol Plutus
+/// scripts; (c) two new cost-model JSONs `builtinCostModelD.json` /
+/// `builtinCostModelE.json` plus matching `cekMachineCostsD/E.json`
+/// for protocol versions D and E (post-Dijkstra) — Conway continues
+/// to use cost model C; (d) `benching-conway.csv` benchmark output
+/// refresh (regenerated by the existing cost-model derivation, not
+/// runtime parameters); (e) error-message detail for unsupported
+/// `case` on `Integer` (PR #7766).  No CEK reduction, builtin
+/// denotation, cost-model parameter, or Flat encoding shape used by
+/// Conway-era scripts is altered.
+///
 /// Reference: <https://github.com/IntersectMBO/plutus/tree/master/>
-pub const UPSTREAM_PLUTUS_COMMIT: &str = "4cd40a14e36431019414fad519c1a6d426a55509";
+pub const UPSTREAM_PLUTUS_COMMIT: &str = "c8f962ae75d0b4871401ecc2e8c4ed259cafadac";
 
 /// `cardano-node` — node runtime, CLI, configuration patterns ported into
 /// `node/`.
@@ -104,8 +179,28 @@ pub const UPSTREAM_PLUTUS_COMMIT: &str = "4cd40a14e36431019414fad519c1a6d426a555
 /// R201 audit baseline (2026-04-30) — advanced from
 /// `60af1c23bc20…` to live HEAD.
 ///
+/// R249 audit-baseline refresh (2026-05-05) — advanced from
+/// `799325937a45…` to live HEAD.  Upstream changes in this range
+/// (15 commits) are dominated by `cardano-testnet` CLI restructuring
+/// (PR #6552 splits testnet creation/startup/runtime options into
+/// purpose-specific types, replaces `Either` with a `ModeOptions`
+/// sum type, renames `StartFromScratch` → `NoUserProvidedEnv`) — none
+/// of which are exposed by Yggdrasil's CLI surface (`yggdrasil-node
+/// run` and the wrapped `cardano-cli`/`query`/`submit-tx`/`status`
+/// subcommands).  Other changes: (a) `npcExperimentalHardForksEnabled`-
+/// gated `ProtVer` bumped to 12 (post-Conway experimental flag, not
+/// honored by default and not exposed in Yggdrasil's config); (b) the
+/// `ExperimentalHardForksEnabled` flag is removed from the default
+/// `hardforkViaConfig` path so default-config testnets don't reject
+/// Conway-era blocks — Yggdrasil's network presets and
+/// `validate-config` already enforce Conway protocol-version bounds
+/// per `MaxMajorProtVer`; (c) `cardano-api`/`cardano-cli` major version
+/// bump to 11.0 — Yggdrasil's pure-Rust `cardano-cli` subset is
+/// API-stable and unaffected; (d) `iohkNix` flake input bump for `blst`
+/// — Yggdrasil uses native Rust `bls12_381` instead.
+///
 /// Reference: <https://github.com/IntersectMBO/cardano-node/tree/master/>
-pub const UPSTREAM_CARDANO_NODE_COMMIT: &str = "799325937a4598899c8cab61f4c957662a0aeb53";
+pub const UPSTREAM_CARDANO_NODE_COMMIT: &str = "97036a66bcf8c89f687ae57a048eecc0389977ef";
 
 /// All pinned upstream commits, keyed by repository name.
 ///

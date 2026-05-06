@@ -12,11 +12,11 @@ This directory contains reference configuration files and per-network presets us
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Official configuration tree](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano)
-- [Mainnet configuration](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/mainnet)
-- [Preprod configuration](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preprod)
-- [Preview configuration](https://github.com/IntersectMBO/cardano-node/tree/master/configuration/cardano/preview)
-- [Node runtime configuration usage](https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/)
+- [Official configuration tree](.reference-haskell-cardano-node/configuration/cardano)
+- [Mainnet configuration](.reference-haskell-cardano-node/configuration/cardano/mainnet)
+- [Preprod configuration](.reference-haskell-cardano-node/configuration/cardano/preprod)
+- [Preview configuration](.reference-haskell-cardano-node/configuration/cardano/preview)
+- [Node runtime configuration usage](.reference-haskell-cardano-node/cardano-node/)
 - [Cardano Operations Book — mainnet](https://book.world.dev.cardano.org/env-mainnet.html)
 - [Cardano Operations Book — preprod](https://book.world.dev.cardano.org/env-preprod.html)
 - [Cardano Operations Book — preview](https://book.world.dev.cardano.org/env-preview.html)

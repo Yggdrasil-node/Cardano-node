@@ -273,7 +273,7 @@ Logs land at `$LOG_ROOT/cycle-NN.log` (default `/tmp/ygg-restart/`). Preserve th
 
 ## 6.5 Parallel BlockFetch soak (multi-peer dispatch)
 
-Yggdrasil's runtime supports the upstream-faithful per-peer BlockFetch worker architecture (mirrors `Ouroboros.Network.BlockFetch.ClientRegistry`). When `max_concurrent_block_fetch_peers > 1`, the governor migrates each warm peer's `BlockFetchClient` into a per-peer worker task and the sync loop dispatches fetch ranges in parallel via the shared `FetchWorkerPool`. **Default ships at `1`** to keep the legacy single-peer path active until this rehearsal is complete.
+Yggdrasil's runtime supports the upstream-faithful per-peer BlockFetch worker architecture (mirrors `Ouroboros.Network.BlockFetch.ClientRegistry`). When `max_concurrent_block_fetch_peers > 1`, the governor migrates each warm peer's `BlockFetchClient` into a per-peer worker task and the sync loop dispatches fetch ranges in parallel via the shared `FetchWorkerPool`. **Default is `2` as of R258** (matches upstream `bfcMaxConcurrencyBulkSync = 2`; graduated from `1` based on R218 mainnet evidence — 67% throughput delta). This rehearsal remains the operator-facing soak procedure for stress-testing knob > 2 or running endurance verification on rich-topology deployments.
 
 Preferred automation for §6.5 is the repository harness:
 

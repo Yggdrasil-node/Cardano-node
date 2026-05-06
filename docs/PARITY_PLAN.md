@@ -63,7 +63,7 @@ The Rust Cardano node (Yggdrasil) has achieved (post-R247 status):
 
 **To achieve full 1:1 parity** (per the plan at `/home/vscode/.claude/plans/clever-shimmying-quokka.md`), the remaining deferred items are:
 1. **Phase E.2 24h+ mainnet rehearsal** — sustained operator wall-clock observation; sync infrastructure is end-to-end working post-R211/R213
-2. **Parallel BlockFetch default flip sign-off** — runbook §6.5 must pass with `parallel_blockfetch_soak.sh` at knob=2/4 before changing `max_concurrent_block_fetch_peers` from `1`
+2. ~~**Parallel BlockFetch default flip sign-off**~~ — ✅ **Done at R258 (2026-05-06)** based on R218 mainnet evidence; default graduated `1 → 2` matching upstream `bfcMaxConcurrencyBulkSync`
 3. **Plutus CEK drift monitoring** (ongoing — keep Conway/Plomin cost-model key mapping in sync)
 
 **Recently completed parity items**:
@@ -539,7 +539,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 | Major types | 0-7 encoding | ✅ | ✅ | Complete | CborEncode/CborDecode traits
 | Compact constructor tags | 121-127 for PlutusData | ✅ | ✅ | Complete | Constr compact encoding
 | General constructor tags | Tag 102 for PlutusData | ✅ | ✅ | Complete | Constr general form
-| Map encoding | Integer-keyed + string-keyed | ✅ | ✅ | Complete | cddl-codegen generates codecs
+| Map encoding | Integer-keyed + string-keyed | ✅ | ✅ | Complete | hand-coded per-era CBOR codecs
 | Bignum encoding | Tags 2-3 for large integers | ✅ | ✅ | Complete | PlutusData Integer support
 | Tag-24 double encoding | inline datums/scripts | ✅ | ✅ | Complete | DatumOption::Inline, ScriptRef
 | **Bech32 & Base58** |
@@ -696,7 +696,7 @@ For pre-R164 rounds, see `docs/PARITY_SUMMARY.md` audit-history table.
 
 ---
 
-### 5. MEMPOOL (`crates/mempool`)
+### 5. MEMPOOL (`crates/consensus/src/mempool`)
 
 **Current State**: ✅ Functional, with script budget checking pending
 
@@ -1178,7 +1178,7 @@ TX expires (TTL):
 - ✅ Canonical CBOR ordering
 
 **Timeline**: Ongoing in all phases  
-**Owner**: `crates/ledger` + `crates/cddl-codegen`
+**Owner**: `crates/ledger` (per-era CBOR codecs hand-coded against upstream CDDL)
 
 ---
 

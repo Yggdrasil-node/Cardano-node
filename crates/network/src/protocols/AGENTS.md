@@ -15,15 +15,15 @@ Focus on explicit node-to-node and node-to-client protocol state machines, messa
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [ChainSync protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/ChainSync)
-- [BlockFetch protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/BlockFetch)
-- [TxSubmission2 protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/TxSubmission2)
-- [KeepAlive protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/KeepAlive)
-- [PeerSharing protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/PeerSharing)
-- [LocalStateQuery protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalStateQuery)
-- [LocalTxSubmission protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxSubmission)
-- [LocalTxMonitor protocol:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxMonitor)
-- [Framework and handshake layer:](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-framework)
+- [ChainSync protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/ChainSync)
+- [BlockFetch protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/BlockFetch)
+- [TxSubmission2 protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/TxSubmission2)
+- [KeepAlive protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/KeepAlive)
+- [PeerSharing protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/PeerSharing)
+- [LocalStateQuery protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalStateQuery)
+- [LocalTxSubmission protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxSubmission)
+- [LocalTxMonitor protocol:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxMonitor)
+- [Framework and handshake layer:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-framework)
 - [Shelley networking spec PDF:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec)
 
 ## Current Phase

@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use yggdrasil_consensus::TentativeState;
+use yggdrasil_consensus::mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_ledger::{
     AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, Block, BlockHeader, BlockNo,
     ByronBlock, CborEncode, Encoder, Era, HeaderHash, LedgerError, LedgerState,
@@ -12,7 +13,6 @@ use yggdrasil_ledger::{
     ShelleyTxIn, ShelleyTxOut, ShelleyVrfCert, ShelleyWitnessSet, SlotNo, StakeCredential, Tip,
     TxId, UnitInterval, Value,
 };
-use yggdrasil_mempool::{Mempool, MempoolEntry, SharedMempool};
 use yggdrasil_network::{
     AfterSlot, BlockFetchMessage, ChainSyncMessage, HandshakeVersion, MiniProtocolNum,
     TxSubmissionMessage, UseLedgerPeers, peer_accept,
@@ -1964,7 +1964,7 @@ fn runtime_add_tx_to_shared_mempool_with_eviction_no_op_when_under_capacity() {
 /// a worse cumulative-fee state.
 #[test]
 fn runtime_add_tx_to_shared_mempool_with_eviction_displaces_lowest_fee_entry() {
-    use yggdrasil_mempool::MempoolEntry;
+    use yggdrasil_consensus::mempool::MempoolEntry;
 
     let mut ledger = LedgerState::new(Era::Shelley);
     seed_shelley_input(&mut ledger, 0xB1, 2_150_000);

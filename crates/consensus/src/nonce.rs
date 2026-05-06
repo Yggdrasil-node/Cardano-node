@@ -107,7 +107,7 @@ pub fn derive_vrf_nonce(output: &[u8], derivation: NonceDerivation) -> Nonce {
 /// configuration).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NonceEvolutionConfig {
-    /// Number of slots per epoch (mainnet: 432000).
+    /// Number of slots per epoch (mainnet: 432000) — Shelley-era length.
     pub epoch_size: EpochSize,
     /// Stability window in slots: `3k/f` where `k` = `SecurityParam` and
     /// `f` = `ActiveSlotCoeff` (mainnet: 129600).
@@ -115,6 +115,64 @@ pub struct NonceEvolutionConfig {
     /// Extra entropy injected at epoch transitions (protocol parameter;
     /// `NeutralNonce` from Babbage onward).
     pub extra_entropy: Nonce,
+    /// Byron→Shelley transition `(boundary_slot, first_shelley_epoch)`.
+    /// `None` for Shelley-only chains (preview, fixed-length test
+    /// fixtures); `Some` for chains with a Byron prefix (mainnet,
+    /// preprod).
+    ///
+    /// When set, `apply_block`'s slot→epoch and epoch→first_slot math
+    /// uses the era-aware schedule so block at slot
+    /// `boundary_slot + N * epoch_size` is correctly classified as
+    /// epoch `first_shelley_epoch + N` instead of `EpochNo(N + 1)`
+    /// from fixed-length math anchored at slot 0. Without this, the
+    /// `tick_epoch_transition` rule fires at the wrong slots for any
+    /// chain with a Byron prefix — producing a divergent active
+    /// `epoch_nonce` and a downstream `InvalidVrfProof` failure
+    /// (R262 root cause).
+    ///
+    /// Reference:
+    /// `crates/consensus/src/epoch.rs::EpochSchedule::with_byron_shelley`.
+    pub byron_shelley_transition: Option<(u64, u64)>,
+}
+
+impl NonceEvolutionConfig {
+    /// Era-aware `slot → epoch`. Mirrors
+    /// `EpochSchedule::slot_to_epoch` so nonce evolution uses the
+    /// same epoch boundaries as `apply_block_validated` and overlay
+    /// classification.
+    pub(crate) fn slot_to_epoch(&self, slot: SlotNo) -> EpochNo {
+        match self.byron_shelley_transition {
+            Some((boundary_slot, first_shelley_epoch)) if slot.0 >= boundary_slot => {
+                let post = slot.0 - boundary_slot;
+                EpochNo(first_shelley_epoch + post / self.epoch_size.0)
+            }
+            // Note: Byron-prefix epochs are 21600 slots upstream, but
+            // for nonce-evolution purposes Byron blocks don't
+            // contribute (`apply_nonce_evolution` skips them), so the
+            // exact pre-boundary epoch label only matters for
+            // change-detection. Treat the entire Byron prefix as a
+            // single conceptual epoch (label 0) so `tick_epoch_transition`
+            // does not fire spuriously inside Byron.
+            Some(_) => EpochNo(0),
+            None => slot_to_epoch(slot, self.epoch_size),
+        }
+    }
+
+    /// Era-aware `epoch → first_slot`. Mirrors
+    /// `EpochSchedule::epoch_first_slot`.
+    pub(crate) fn epoch_first_slot(&self, epoch: EpochNo) -> SlotNo {
+        match self.byron_shelley_transition {
+            Some((boundary_slot, first_shelley_epoch)) if epoch.0 >= first_shelley_epoch => {
+                let post_epoch = epoch.0 - first_shelley_epoch;
+                SlotNo(boundary_slot + post_epoch * self.epoch_size.0)
+            }
+            // Byron-prefix epochs collapse to label 0 here (matching
+            // `slot_to_epoch` above); the exact first slot of Byron
+            // epoch 0 is slot 0.
+            Some(_) => SlotNo(0),
+            None => epoch_first_slot(epoch, self.epoch_size),
+        }
+    }
 }
 
 /// State machine tracking epoch nonce evolution.
@@ -209,7 +267,15 @@ impl NonceEvolutionState {
         config: &NonceEvolutionConfig,
         derivation: NonceDerivation,
     ) {
-        let block_epoch = slot_to_epoch(slot, config.epoch_size);
+        // R262 fix: use era-aware slot→epoch so chains with a Byron
+        // prefix (mainnet, preprod) classify slot `boundary +
+        // N*epoch_size` as Shelley epoch `first_shelley_epoch + N`
+        // instead of fixed-length `EpochNo(N + 1)` anchored at slot 0.
+        // Without this, `tick_epoch_transition` fires at slots that
+        // are mid-epoch upstream (e.g. preprod's slot 432000 sits in
+        // Shelley epoch 4, NOT at an epoch-5 boundary), producing a
+        // divergent active `epoch_nonce` and `InvalidVrfProof`.
+        let block_epoch = config.slot_to_epoch(slot);
 
         // Detect epoch transition and apply TICKN rule.
         if block_epoch > self.current_epoch {
@@ -226,7 +292,7 @@ impl NonceEvolutionState {
 
         // candidate_nonce update: freeze in stability window.
         let next_epoch = EpochNo(block_epoch.0 + 1);
-        let first_slot_next = epoch_first_slot(next_epoch, config.epoch_size);
+        let first_slot_next = config.epoch_first_slot(next_epoch);
         let in_stability_window = slot.0 + config.stability_window >= first_slot_next.0;
 
         if !in_stability_window {
@@ -366,6 +432,7 @@ mod tests {
             epoch_size: EpochSize(100),
             stability_window: 30, // last 30 slots of each epoch
             extra_entropy: Nonce::Neutral,
+            byron_shelley_transition: None,
         }
     }
 
@@ -511,6 +578,96 @@ mod tests {
         state.apply_block(SlotNo(100), &[0xFF; 64], None, &c, d);
         // prev_hash_nonce should be what lab_nonce was before the transition
         assert_eq!(state.prev_hash_nonce, lab_before_transition);
+    }
+
+    /// R263 regression pin: with `byron_shelley_transition = Some((86400, 4))`
+    /// (preprod), a block at slot 432000 (offset 345600 from Shelley
+    /// boundary) MUST be classified as Shelley epoch 4 — NOT EpochNo(1)
+    /// from fixed-length math. The bug this guards: pre-R263 `apply_block`
+    /// used `slot_to_epoch(slot, epoch_size)` which for preprod would
+    /// fire `tick_epoch_transition` at slot 432000 (= 1 * epoch_size),
+    /// rotating the active `epoch_nonce` to a wrong value and producing
+    /// `InvalidVrfProof` on the next active-overlay block.
+    ///
+    /// Reference: `docs/operational-runs/2026-05-06-round-263-r253-fix-byron-aware-nonce.md`.
+    #[test]
+    fn preprod_byron_shelley_transition_no_spurious_epoch_tick_at_slot_432000() {
+        let c = NonceEvolutionConfig {
+            epoch_size: EpochSize(432_000),
+            stability_window: 129_600,
+            extra_entropy: Nonce::Neutral,
+            byron_shelley_transition: Some((86_400, 4)), // preprod
+        };
+        // slot 432000 → preprod Shelley epoch 4 (offset 345600,
+        // post=345600/432000=0, epoch=4+0=4).
+        assert_eq!(c.slot_to_epoch(SlotNo(432_000)), EpochNo(4));
+        // slot 86400 (Byron→Shelley boundary) → Shelley epoch 4.
+        assert_eq!(c.slot_to_epoch(SlotNo(86_400)), EpochNo(4));
+        // slot 518400 (= 86400 + 432000) → epoch 5.
+        assert_eq!(c.slot_to_epoch(SlotNo(518_400)), EpochNo(5));
+        // Pre-Shelley slot 0 → conceptual Byron epoch 0 (no tick).
+        assert_eq!(c.slot_to_epoch(SlotNo(0)), EpochNo(0));
+
+        // epoch_first_slot inverse for the same boundaries.
+        assert_eq!(c.epoch_first_slot(EpochNo(4)), SlotNo(86_400));
+        assert_eq!(c.epoch_first_slot(EpochNo(5)), SlotNo(518_400));
+
+        // End-to-end: apply blocks across the prior failure window
+        // and confirm `tick_epoch_transition` does NOT fire at slot
+        // 432000. The `current_epoch` should remain 4 after the slot
+        // 432000 block, and `epoch_nonce` should be unchanged from
+        // the value carried into Shelley.
+        let mut state = NonceEvolutionState::new(Nonce::Hash([0x16; 32]));
+        state.current_epoch = EpochNo(4); // post Byron→Shelley boundary
+        let eta_before = state.epoch_nonce;
+        // Apply a block at slot 86_420 (first active overlay slot in
+        // Shelley) to seed evolving/candidate.
+        state.apply_block(
+            SlotNo(86_420),
+            &[0x42; 64],
+            Some(HeaderHash([0xCC; 32])),
+            &c,
+            NonceDerivation::TPraos,
+        );
+        // Active epoch_nonce must NOT have rotated.
+        assert_eq!(state.epoch_nonce, eta_before);
+        assert_eq!(state.current_epoch, EpochNo(4));
+
+        // Apply a block at slot 432_000 (the prior failure point).
+        // Pre-R263 this fired `tick_epoch_transition`; post-R263 it
+        // must remain mid-epoch-4.
+        state.apply_block(
+            SlotNo(432_000),
+            &[0x42; 64],
+            Some(HeaderHash([0xDD; 32])),
+            &c,
+            NonceDerivation::TPraos,
+        );
+        assert_eq!(
+            state.current_epoch,
+            EpochNo(4),
+            "preprod slot 432000 must stay in Shelley epoch 4 — \
+             a tick fired here would rotate epoch_nonce and break VRF",
+        );
+        assert_eq!(
+            state.epoch_nonce, eta_before,
+            "preprod active epoch_nonce must NOT rotate at slot 432000 \
+             (this is the R249/R262 bug class)",
+        );
+
+        // Apply a block at slot 518_400 (the actual Shelley epoch 4→5
+        // boundary). NOW `tick_epoch_transition` should fire.
+        state.apply_block(
+            SlotNo(518_400),
+            &[0x42; 64],
+            Some(HeaderHash([0xEE; 32])),
+            &c,
+            NonceDerivation::TPraos,
+        );
+        assert_eq!(state.current_epoch, EpochNo(5));
+        // At the actual epoch boundary, epoch_nonce SHOULD differ
+        // (rotation fired with candidate ⭒ prev_hash ⭒ extra_entropy).
+        assert_ne!(state.epoch_nonce, eta_before);
     }
 
     #[test]

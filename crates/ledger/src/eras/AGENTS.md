@@ -15,14 +15,14 @@ Focus on per-era differences, transition boundaries, and keeping era-local detai
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Era sources root](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/)
-- [Byron CDDL spec](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron/cddl-spec)
-- [Shelley era (`impl/`, `formal-spec/`, `cddl/`)](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/shelley)
-- [Allegra era](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/allegra)
-- [Mary era](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/mary)
-- [Alonzo era](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo)
-- [Babbage era](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage)
-- [Conway era](https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway)
+- [Era sources root](.reference-haskell-cardano-node/deps/cardano-ledger/eras/)
+- [Byron CDDL spec](.reference-haskell-cardano-node/deps/cardano-ledger/eras/byron/cddl-spec)
+- [Shelley era (`impl/`, `formal-spec/`, `cddl/`)](.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley)
+- [Allegra era](.reference-haskell-cardano-node/deps/cardano-ledger/eras/allegra)
+- [Mary era](.reference-haskell-cardano-node/deps/cardano-ledger/eras/mary)
+- [Alonzo era](.reference-haskell-cardano-node/deps/cardano-ledger/eras/alonzo)
+- [Babbage era](.reference-haskell-cardano-node/deps/cardano-ledger/eras/babbage)
+- [Conway era](.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway)
 - [Formal ledger specification site](https://intersectmbo.github.io/formal-ledger-specifications/site/)
 - [Formal ledger specification repository (Agda)](https://github.com/IntersectMBO/formal-ledger-specifications/)
 

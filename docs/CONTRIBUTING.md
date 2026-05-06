@@ -28,10 +28,11 @@ CI ([.github/workflows/ci.yml](https://github.com/yggdrasil-node/Cardano-node/bl
 - Add tests for new domain logic, especially in consensus, ledger, and crypto code.
 - Keep `AGENTS.md`, `README.md`, and docs in sync with implemented behavior whenever milestones shift.
 
-## Generated Code
-- Treat generated files as outputs of `cddl-codegen`.
-- Do not edit generated code by hand.
-- Document the upstream spec revision used for regeneration.
+## CBOR Codecs
+- Per-era `CborEncode`/`CborDecode` impls under `crates/ledger/src/eras/*/cbor.rs` are hand-coded against upstream CDDL.
+- Upstream CDDL is the authoritative spec source: `.reference-haskell-cardano-node/deps/cardano-ledger/eras/<era>/impl/cddl/data/<era>.cddl`.
+- Cite the relevant CDDL rule (and the Haskell `Cardano.Ledger.<Era>.<Module>` module) in the doc comment of each codec.
+- Pin canonical-encoding behavior with golden round-trip tests against upstream test vectors under `specs/upstream-test-vectors/` and `crates/ledger/tests/`.
 
 ## Unsafe Code
 - Unsafe code is not expected during the foundation phase.

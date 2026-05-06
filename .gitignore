@@ -69,6 +69,14 @@ Thumbs.db
 *.tar.gz.sha256
 yggdrasil-db-*.tar.gz
 
+# Vendored reference checkouts of upstream IntersectMBO source / binaries.
+# These are local-only references for parity research (see
+# docs/REFACTOR_BLUEPRINT.md). They MUST NOT enter the index — Yggdrasil
+# is a clean-room port and treats upstream code as documentation only.
+**/.reference-haskell-cardano-node/
+**/.referance-haskell-install/
+**/.reference-haskell-install/
+
 # Local logs
 *.log
 logs/

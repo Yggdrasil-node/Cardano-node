@@ -1130,6 +1130,7 @@ fn test_nonce_config() -> NonceEvolutionConfig {
         epoch_size: EpochSize(10),
         stability_window: 3,
         extra_entropy: Nonce::Neutral,
+        byron_shelley_transition: None,
     }
 }
 
@@ -1336,6 +1337,7 @@ fn epoch_transition_with_extra_entropy() {
         epoch_size: EpochSize(10),
         stability_window: 3,
         extra_entropy: extra,
+        byron_shelley_transition: None,
     };
     let init = Nonce::Hash([0u8; 32]);
     let mut state = NonceEvolutionState::new(init);
@@ -1854,11 +1856,13 @@ fn nonce_evolution_neutral_vs_zero_extra_entropy() {
         epoch_size: EpochSize(10),
         stability_window: 3,
         extra_entropy: Nonce::Neutral,
+        byron_shelley_transition: None,
     };
     let config_zero = NonceEvolutionConfig {
         epoch_size: EpochSize(10),
         stability_window: 3,
         extra_entropy: Nonce::Hash([0u8; 32]),
+        byron_shelley_transition: None,
     };
     let init = Nonce::Hash([0x33; 32]);
 
@@ -1922,6 +1926,7 @@ fn cross_epoch_nonce_deterministic_tickn() {
         epoch_size: EpochSize(100),
         stability_window: 30,
         extra_entropy: Nonce::Neutral,
+        byron_shelley_transition: None,
     };
     let initial = Nonce::Hash([0xAA; 32]);
     let mut state = NonceEvolutionState::new(initial);
@@ -2079,6 +2084,7 @@ fn two_epoch_transitions_nonce_chain() {
         epoch_size: EpochSize(100),
         stability_window: 30,
         extra_entropy: Nonce::Neutral,
+        byron_shelley_transition: None,
     };
     let initial = Nonce::Hash([0x01; 32]);
     let mut state = NonceEvolutionState::new(initial);
@@ -2154,6 +2160,7 @@ fn tickn_with_non_neutral_extra_entropy() {
         epoch_size: EpochSize(100),
         stability_window: 30,
         extra_entropy: extra,
+        byron_shelley_transition: None,
     };
     let initial = Nonce::Hash([0x01; 32]);
     let mut state = NonceEvolutionState::new(initial);

@@ -319,6 +319,7 @@ impl CekMachine {
                     let result =
                         evaluate_builtin(builtin, &args, &self.cost_model, &mut self.logs)?;
                     let cost = self.cost_model.builtin_cost(builtin, &args)?;
+                    self.dump_builtin_cost(builtin, &args, cost);
                     self.spend_budget(format!("builtin {builtin:?}").as_str(), cost)?;
                     Ok(State::Returning(result))
                 } else {
@@ -353,6 +354,7 @@ impl CekMachine {
                 if new_forces >= needed_forces && args.len() >= needed_args {
                     let result = evaluate_builtin(fun, &args, &self.cost_model, &mut self.logs)?;
                     let cost = self.cost_model.builtin_cost(fun, &args)?;
+                    self.dump_builtin_cost(fun, &args, cost);
                     self.spend_budget(format!("builtin {fun:?}").as_str(), cost)?;
                     Ok(State::Returning(result))
                 } else {
@@ -377,14 +379,85 @@ impl CekMachine {
                 self.max_steps
             )));
         }
-        self.pending_step_counts[kind.index()] =
-            self.pending_step_counts[kind.index()].saturating_add(1);
+        let kind_ix = kind.index();
+        self.pending_step_counts[kind_ix] = self.pending_step_counts[kind_ix].saturating_add(1);
         self.pending_steps_total = self.pending_steps_total.saturating_add(1);
+
+        // R252 diagnostic — gated on `YGG_DUMP_CEK_STEPS=1`, append per-step
+        // (kind, cumulative-total) traces to `YGG_DUMP_CEK_STEPS_FILE`
+        // (default `/tmp/ygg-cek-steps.log`). Used to compare the per-StepKind
+        // accumulation against an upstream replay (`db-analyser
+        // --repro-mempool-and-forge` or cardano-cli) when investigating Gap BP
+        // (preview Plutus V2 budget overrun by 306,309 CPU at slot ~1,462,057
+        // — corresponds to ~13 step charges out of ~72 K total). The same
+        // pattern as the R249 `YGG_DUMP_VKEY_FAIL` infrastructure that
+        // unblocked Gap BQ. Production-safe: zero overhead unless the env
+        // var is set.
+        if std::env::var_os("YGG_DUMP_CEK_STEPS").is_some() {
+            use std::fmt::Write as _;
+            use std::io::Write as _;
+            let path = std::env::var("YGG_DUMP_CEK_STEPS_FILE")
+                .unwrap_or_else(|_| "/tmp/ygg-cek-steps.log".to_string());
+            // Append a single line: "kind=<kind> total=<n> kind_total=<n>".
+            // We open-append to avoid rewriting the file on every step.
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let mut line = String::with_capacity(64);
+                let _ = writeln!(
+                    &mut line,
+                    "kind={kind:?} total={} kind_total={}",
+                    self.steps, self.pending_step_counts[kind_ix],
+                );
+                let _ = f.write_all(line.as_bytes());
+            }
+        }
 
         if self.pending_steps_total >= self.step_slippage {
             self.spend_accumulated_step_budget()
         } else {
             Ok(())
+        }
+    }
+
+    /// R266b diagnostic — gated on `YGG_DUMP_BUILTIN_COSTS=1`, append per-builtin
+    /// `(fun, arg_sizes, charged_cost, cumulative_cost)` traces to
+    /// `YGG_DUMP_BUILTIN_COSTS_FILE` (default `/tmp/ygg-builtin-costs.log`).
+    /// Used to compare yggdrasil's per-builtin charge against the upstream
+    /// formulas in `PlutusCore.Default.Builtins` /
+    /// `Cardano.Ledger.Plutus.CostModels` when investigating Gap BP
+    /// (preview Plutus V2 budget overrun by 306,309 CPU at slot ~1,462,057).
+    /// Same pattern as `YGG_DUMP_CEK_STEPS` above. Production-safe: zero
+    /// overhead unless the env var is set.
+    fn dump_builtin_cost(&self, fun: crate::types::DefaultFun, args: &[Value], cost: ExBudget) {
+        if std::env::var_os("YGG_DUMP_BUILTIN_COSTS").is_none() {
+            return;
+        }
+        use std::fmt::Write as _;
+        use std::io::Write as _;
+        let path = std::env::var("YGG_DUMP_BUILTIN_COSTS_FILE")
+            .unwrap_or_else(|_| "/tmp/ygg-builtin-costs.log".to_string());
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let mut sizes = String::with_capacity(64);
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    sizes.push(',');
+                }
+                let _ = write!(&mut sizes, "{}", crate::cost_model::ex_memory(arg));
+            }
+            let mut line = String::with_capacity(128);
+            let _ = writeln!(
+                &mut line,
+                "fun={fun:?} args=[{sizes}] cpu={} mem={} remaining_cpu={} remaining_mem={}",
+                cost.cpu, cost.mem, self.budget.cpu, self.budget.mem,
+            );
+            let _ = f.write_all(line.as_bytes());
         }
     }
 

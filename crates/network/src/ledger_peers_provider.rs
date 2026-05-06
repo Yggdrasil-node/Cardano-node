@@ -269,8 +269,50 @@ pub fn derive_peer_snapshot_freshness(
     }
 }
 
-/// Return currently eligible ledger-derived peer candidates while excluding
-/// peers already covered by other bootstrap or reconnect sources.
+/// Return snapshot-overlay peers that are always eligible regardless of the
+/// `useLedgerAfterSlot` gate.
+///
+/// Upstream `Ouroboros.Network.PeerSelection.LedgerPeers` uses peers loaded
+/// from the configured `peerSnapshotFile` immediately at startup as
+/// `bigLedgerPeers`; only peers derived from the LIVE chain wait for the
+/// `useLedgerAfterSlot` gate to fire. Yggdrasil R250 splits the snapshot path
+/// from the live-ledger path so initial sync can multi-peer-fetch from
+/// genesis (closing the dominant perf gap surfaced by the R249 side-by-side
+/// soak: Yggdrasil 1,653 slot/s vs reference Haskell 5,296 slot/s on
+/// preview).
+///
+/// Filters by `blocked_peers` and deduplicates while preserving order
+/// (ledger peers first, then big-ledger peers — same order as
+/// [`eligible_ledger_peer_candidates`]).
+pub fn always_eligible_snapshot_peers(
+    snapshot_overlay: Option<&LedgerPeerSnapshot>,
+    blocked_peers: &[SocketAddr],
+) -> Vec<SocketAddr> {
+    let Some(overlay) = snapshot_overlay else {
+        return Vec::new();
+    };
+    let mut eligible = Vec::new();
+    for peer in overlay
+        .ledger_peers
+        .iter()
+        .chain(overlay.big_ledger_peers.iter())
+        .copied()
+    {
+        if !blocked_peers.contains(&peer) && !eligible.contains(&peer) {
+            eligible.push(peer);
+        }
+    }
+    eligible
+}
+
+/// Return currently eligible LIVE-ledger-derived peer candidates while
+/// excluding peers already covered by other bootstrap or reconnect sources.
+///
+/// Snapshot-overlay peers (loaded from `peerSnapshotFile`) are NOT honored
+/// here — the gate in [`judge_ledger_peer_usage`] applies. To emit those
+/// peers regardless of the gate (matching upstream parity), call
+/// [`always_eligible_snapshot_peers`] on the overlay separately and combine
+/// the results.
 ///
 /// The returned order preserves the normalized snapshot order: ledger peers
 /// first, then big-ledger peers.
@@ -1333,5 +1375,64 @@ mod tests {
             now_unix_secs: 150.0,
         });
         assert_eq!(zero_slot_length, LedgerStateJudgement::Unavailable);
+    }
+
+    /// R250 — peer-snapshot peers loaded from the configured `peerSnapshotFile`
+    /// MUST be eligible immediately at startup, **before** the live-ledger
+    /// `useLedgerAfterSlot` gate fires. Upstream
+    /// `Ouroboros.Network.PeerSelection.LedgerPeers` populates `bigLedgerPeers`
+    /// from the snapshot file at process start; only LIVE-chain-derived peers
+    /// wait for the gate. Pre-R250 Yggdrasil conflated the two sources, which
+    /// kept initial sync single-peer until preview slot ~102 M (3.2 ×
+    /// throughput gap vs reference Haskell on R249 side-by-side soak).
+    #[test]
+    fn snapshot_peers_eligible_before_use_ledger_after_slot() {
+        let snapshot_ledger: SocketAddr = "10.0.0.1:3001".parse().expect("addr");
+        let snapshot_big: SocketAddr = "10.0.0.2:3001".parse().expect("addr");
+        let blocked: SocketAddr = "10.0.0.3:3001".parse().expect("addr");
+
+        let overlay = LedgerPeerSnapshot::new([snapshot_ledger], [snapshot_big]);
+
+        // No gate input is consulted: snapshot peers ride alongside the gate.
+        let eligible = always_eligible_snapshot_peers(Some(&overlay), &[blocked]);
+        assert_eq!(eligible, vec![snapshot_ledger, snapshot_big]);
+
+        // No overlay → empty.
+        let none = always_eligible_snapshot_peers(None, &[]);
+        assert!(none.is_empty());
+
+        // Blocked peers are filtered out even when they appear in the overlay.
+        let overlay_with_blocked = LedgerPeerSnapshot::new([blocked], [snapshot_big]);
+        let filtered = always_eligible_snapshot_peers(Some(&overlay_with_blocked), &[blocked]);
+        assert_eq!(filtered, vec![snapshot_big]);
+    }
+
+    /// R250 — even though `always_eligible_snapshot_peers` bypasses the gate
+    /// for the snapshot path, `eligible_ledger_peer_candidates` MUST still gate
+    /// LIVE-ledger-derived peers behind `useLedgerAfterSlot`. The two paths
+    /// are intentionally separate so callers combine the results: snapshot
+    /// peers always, live peers only when `decision == Eligible`.
+    #[test]
+    fn live_ledger_peers_remain_gated_when_snapshot_eligible() {
+        let live_peer: SocketAddr = "10.0.0.4:3001".parse().expect("addr");
+        let live = LedgerPeerSnapshot::new(Vec::<SocketAddr>::new(), [live_peer]);
+
+        let (decision, eligible) = eligible_ledger_peer_candidates(
+            &live,
+            &[],
+            UseLedgerPeers::UseLedgerPeers(AfterSlot::After(1_000_000)),
+            Some(500_000), // before the gate
+            LedgerStateJudgement::YoungEnough,
+            PeerSnapshotFreshness::Fresh,
+        );
+        assert!(matches!(
+            decision,
+            LedgerPeerUseDecision::BeforeUseLedgerAfterSlot { .. }
+        ));
+        assert_eq!(
+            eligible,
+            Vec::<SocketAddr>::new(),
+            "live-ledger peers must stay gated until useLedgerAfterSlot fires"
+        );
     }
 }
