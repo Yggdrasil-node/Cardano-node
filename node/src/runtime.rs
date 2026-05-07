@@ -13,20 +13,17 @@ use crate::config::load_peer_snapshot_file;
 use crate::sync::VerifiedSyncServiceConfig;
 use crate::sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, SyncError, TypedIntersectResult,
-    recover_ledger_state_chaindb, recover_ledger_state_chaindb_epoch_boundary,
     typed_find_intersect,
 };
 use crate::tracer::{NodeTracer, trace_fields};
 use serde_json::Value;
 use serde_json::json;
 use yggdrasil_consensus::{ChainState, EpochSchedule, SecurityParam};
-use yggdrasil_ledger::{EpochBoundaryEvent, LedgerState, Point, SlotNo};
+use yggdrasil_ledger::{EpochBoundaryEvent, LedgerState, Point};
 use yggdrasil_network::{
-    AfterSlot, ChainSyncClient, ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource,
-    LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
-    LiveLedgerPeerRefreshObservation, PeerAccessPoint, PeerRegistry, PeerSnapshotFileObservation,
-    PeerSnapshotFileSource, PeerSnapshotFreshness, TopologyConfig, UseLedgerPeers,
-    always_eligible_snapshot_peers, derive_peer_snapshot_freshness,
+    AfterSlot, ChainSyncClient, LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
+    LiveLedgerPeerRefreshObservation, PeerAccessPoint, PeerRegistry, PeerSnapshotFreshness,
+    TopologyConfig, UseLedgerPeers, always_eligible_snapshot_peers, derive_peer_snapshot_freshness,
     eligible_ledger_peer_candidates, live_refresh_ledger_peer_registry_observed,
     merge_ledger_peer_snapshots, resolve_peer_access_points,
 };
@@ -53,8 +50,7 @@ use peer_management::{
     reconnect_preferred_peer, reconnect_preferred_peer_with_source,
 };
 use peer_management::{
-    OutboundPeerManager, RuntimeRootPeerSources, apply_control_close,
-    ledger_peer_snapshot_from_ledger_state, peer_share_request_amount, point_slot,
+    OutboundPeerManager, RuntimeRootPeerSources, apply_control_close, peer_share_request_amount,
     preferred_hot_peer_handoff_target, prepare_reconnect_attempt_state, reconnect_storage_tip,
     registry_reserve_bootstrap_attempt_peers, reserve_bootstrap_sync_peers,
 };
@@ -80,197 +76,15 @@ use forge::{
     tip_context_from_chain_db,
 };
 
-/// Live consensus-fed ledger-peer source backed by `ChainDb`.
-///
-/// Implements the network crate's `ConsensusLedgerPeerSource` trait so the
-/// network-owned `live_refresh_ledger_peer_registry` orchestration can pull
-/// authoritative `(latest_slot, judgement, ledger_snapshot)` inputs from the
-/// node's storage layer without the network crate depending on storage types.
-///
-/// Carries the genesis timing inputs (`system_start_unix_secs`,
-/// `slot_length_secs`) plus the configured `max_ledger_state_age_secs`
-/// threshold so each `observe()` call can derive a real
-/// [`LedgerStateJudgement`] from the recovered tip's wall-clock age,
-/// matching upstream `mkLedgerStateJudgement` from
-/// `Cardano.Node.Diffusion.Configuration` instead of hardcoding
-/// `YoungEnough`.
-struct ChainDbConsensusLedgerSource<'a, I, V, L>
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    chain_db: &'a Arc<RwLock<ChainDb<I, V, L>>>,
-    base_ledger_state: &'a LedgerState,
-    tracer: &'a NodeTracer,
-    /// Seconds since the Unix epoch of `ShelleyGenesis.system_start`.
-    /// `None` falls back to the legacy `YoungEnough` behaviour to keep
-    /// no-genesis test paths working.
-    system_start_unix_secs: Option<f64>,
-    /// Slot duration in seconds from `ShelleyGenesis.slot_length`.
-    /// `None` falls back to the legacy `YoungEnough` behaviour.
-    slot_length_secs: Option<f64>,
-    /// Maximum tolerated tip age in seconds before the judgement flips to
-    /// `TooOld`. Upstream uses `stabilityWindow * slotLength` (≈
-    /// `3 * k / f * slotLength`).
-    max_ledger_state_age_secs: f64,
-    /// Era-aware epoch schedule for boundary-aware ChainDb recovery.
-    epoch_schedule: Option<EpochSchedule>,
-}
-
-impl<I, V, L> ConsensusLedgerPeerSource for ChainDbConsensusLedgerSource<'_, I, V, L>
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    fn observe(&mut self) -> ConsensusLedgerPeerInputs {
-        let chain_db = self.chain_db.read().expect("chain db lock poisoned");
-        let tip = chain_db.recovery().tip;
-        let recovery_result = match self.epoch_schedule {
-            Some(epoch_schedule) => recover_ledger_state_chaindb_epoch_boundary(
-                &chain_db,
-                self.base_ledger_state.clone(),
-                epoch_schedule,
-                None,
-            ),
-            None => recover_ledger_state_chaindb(&chain_db, self.base_ledger_state.clone()),
-        };
-        match recovery_result {
-            Ok(recovery) => {
-                let latest_slot = point_slot(&recovery.point).or_else(|| point_slot(&tip));
-                let judgement = derive_judgement_for_observe(
-                    latest_slot,
-                    self.system_start_unix_secs,
-                    self.slot_length_secs,
-                    self.max_ledger_state_age_secs,
-                );
-                ConsensusLedgerPeerInputs {
-                    latest_slot,
-                    judgement,
-                    ledger_snapshot: ledger_peer_snapshot_from_ledger_state(&recovery.ledger_state),
-                }
-            }
-            Err(err) => {
-                self.tracer.trace_runtime(
-                    "Net.PeerSelection",
-                    "Warning",
-                    "failed to recover ledger peers from chain db",
-                    trace_fields([("error", json!(err.to_string()))]),
-                );
-                ConsensusLedgerPeerInputs {
-                    latest_slot: point_slot(&tip),
-                    judgement: LedgerStateJudgement::Unavailable,
-                    ledger_snapshot: LedgerPeerSnapshot::default(),
-                }
-            }
-        }
-    }
-}
-
-/// Derives a [`LedgerStateJudgement`] for [`ChainDbConsensusLedgerSource::observe`].
-///
-/// Falls back to `YoungEnough` (the historical pre-slice behaviour) when
-/// either of the genesis timing inputs is `None`, so tests and other
-/// non-production paths that don't configure genesis aren't disturbed.
-/// When both inputs are present, delegates to
-/// [`yggdrasil_network::judge_ledger_state_age`] for the upstream-aligned
-/// comparison.
-fn derive_judgement_for_observe(
-    tip_slot: Option<u64>,
-    system_start_unix_secs: Option<f64>,
-    slot_length_secs: Option<f64>,
-    max_age_secs: f64,
-) -> LedgerStateJudgement {
-    derive_judgement_at(
-        tip_slot,
-        system_start_unix_secs,
-        slot_length_secs,
-        max_age_secs,
-        wall_clock_unix_secs(),
-    )
-}
-
-/// Pure variant of [`derive_judgement_for_observe`] that takes an explicit
-/// `now_unix_secs` for deterministic testing. The production helper above
-/// is a thin wrapper that supplies the real wall-clock value.
-pub(crate) fn derive_judgement_at(
-    tip_slot: Option<u64>,
-    system_start_unix_secs: Option<f64>,
-    slot_length_secs: Option<f64>,
-    max_age_secs: f64,
-    now_unix_secs: f64,
-) -> LedgerStateJudgement {
-    if system_start_unix_secs.is_none() || slot_length_secs.is_none() {
-        return LedgerStateJudgement::YoungEnough;
-    }
-    yggdrasil_network::judge_ledger_state_age(yggdrasil_network::LedgerStateAgeInputs {
-        tip_slot,
-        system_start_unix_secs,
-        slot_length_secs,
-        max_age_secs,
-        now_unix_secs,
-    })
-}
-
-fn wall_clock_unix_secs() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
-fn block_producer_ledger_state_judgement(
-    tip_slot: Option<SlotNo>,
-    config: &RuntimeBlockProducerConfig,
-) -> LedgerStateJudgement {
-    match config.max_ledger_state_age_secs {
-        Some(max_age_secs) => derive_judgement_at(
-            tip_slot.map(|slot| slot.0),
-            config.system_start_unix_secs,
-            Some(config.slot_length.as_secs_f64()),
-            max_age_secs,
-            wall_clock_unix_secs(),
-        ),
-        None => LedgerStateJudgement::YoungEnough,
-    }
-}
-
-/// Live `peerSnapshotFile` source that re-reads the configured snapshot path
-/// each tick.
-struct FilePeerSnapshotSource<'a> {
-    path: Option<&'a str>,
-    tracer: &'a NodeTracer,
-}
-
-impl PeerSnapshotFileSource for FilePeerSnapshotSource<'_> {
-    fn observe(&mut self) -> PeerSnapshotFileObservation {
-        let Some(path) = self.path else {
-            return PeerSnapshotFileObservation::not_configured();
-        };
-
-        match load_peer_snapshot_file(Path::new(path)) {
-            Ok(loaded_snapshot) => {
-                PeerSnapshotFileObservation::loaded(loaded_snapshot.slot, loaded_snapshot.snapshot)
-            }
-            Err(err) => {
-                self.tracer.trace_runtime(
-                    "Net.PeerSelection",
-                    "Warning",
-                    "failed to refresh configured peer snapshot",
-                    trace_fields([
-                        ("snapshotPath", json!(path)),
-                        ("error", json!(err.to_string())),
-                    ]),
-                );
-                PeerSnapshotFileObservation::unavailable()
-            }
-        }
-    }
-}
-
 pub mod ledger_judgement;
 pub use ledger_judgement::LedgerJudgementSettings;
+
+pub mod ledger_peer_source;
+use ledger_peer_source::{
+    ChainDbConsensusLedgerSource, FilePeerSnapshotSource, block_producer_ledger_state_judgement,
+};
+#[cfg(test)]
+use ledger_peer_source::{derive_judgement_at, wall_clock_unix_secs};
 
 fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
     registry: &mut PeerRegistry,
