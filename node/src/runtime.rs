@@ -3,20 +3,11 @@
 //!
 //! Reference: `cardano-node/src/Cardano/Node/Run.hs`.
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use crate::sync::LedgerCheckpointTracking;
 #[cfg(test)]
 use crate::sync::VerifiedSyncServiceConfig;
-use crate::tracer::{NodeTracer, trace_fields};
-use serde_json::json;
-use yggdrasil_consensus::{ChainState, EpochSchedule, SecurityParam};
-use yggdrasil_ledger::{LedgerState, Point};
-use yggdrasil_network::{
-    LedgerPeerUseDecision, LedgerStateJudgement, LiveLedgerPeerRefreshObservation, PeerRegistry,
-    PeerSnapshotFreshness, TopologyConfig, live_refresh_ledger_peer_registry_observed,
-};
-use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
 /// Notification used to wake ChainSync servers when the chain tip advances.
 /// This is the Rust equivalent of the upstream ChainDB follower notification
@@ -70,72 +61,10 @@ pub use ledger_judgement::LedgerJudgementSettings;
 
 pub mod ledger_peer_source;
 use ledger_peer_source::{
-    ChainDbConsensusLedgerSource, FilePeerSnapshotSource, block_producer_ledger_state_judgement,
+    block_producer_ledger_state_judgement, refresh_ledger_peer_sources_from_chain_db,
 };
 #[cfg(test)]
 use ledger_peer_source::{derive_judgement_at, wall_clock_unix_secs};
-
-fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
-    registry: &mut PeerRegistry,
-    chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
-    base_ledger_state: &LedgerState,
-    topology: &TopologyConfig,
-    tracer: &NodeTracer,
-    judgement_settings: LedgerJudgementSettings,
-    epoch_schedule: Option<EpochSchedule>,
-) -> LiveLedgerPeerRefreshObservation
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    if !topology.use_ledger_peers.enabled() {
-        return LiveLedgerPeerRefreshObservation {
-            update: yggdrasil_network::LedgerPeerRegistryUpdate {
-                decision: LedgerPeerUseDecision::Disabled,
-                changed: false,
-            },
-            latest_slot: None,
-            judgement: LedgerStateJudgement::Unavailable,
-            peer_snapshot_freshness: PeerSnapshotFreshness::NotConfigured,
-        };
-    }
-
-    let mut consensus_source = ChainDbConsensusLedgerSource {
-        chain_db,
-        base_ledger_state,
-        tracer,
-        system_start_unix_secs: judgement_settings.system_start_unix_secs,
-        slot_length_secs: judgement_settings.slot_length_secs,
-        max_ledger_state_age_secs: judgement_settings.max_ledger_state_age_secs,
-        epoch_schedule,
-    };
-    let mut snapshot_source = FilePeerSnapshotSource {
-        path: topology.peer_snapshot_file.as_deref(),
-        tracer,
-    };
-
-    let observation = live_refresh_ledger_peer_registry_observed(
-        registry,
-        topology.use_ledger_peers,
-        &mut consensus_source,
-        &mut snapshot_source,
-    );
-
-    if observation.update.changed {
-        tracer.trace_runtime(
-            "Net.PeerSelection",
-            "Info",
-            "ledger peer registry refreshed",
-            trace_fields([(
-                "decision",
-                json!(format!("{:?}", observation.update.decision)),
-            )]),
-        );
-    }
-
-    observation
-}
 
 pub mod block_producer_loop;
 pub use block_producer_loop::run_block_producer_loop;
@@ -206,60 +135,6 @@ mod tracing;
 use tracing::session_established_trace_fields;
 use tracing::{sync_error_trace_fields, verified_sync_batch_trace_fields};
 mod keep_alive;
-
-/// Polymorphic seed of the volatile-window `ChainState` that works whether
-/// the caller holds the chain DB as `&mut ChainDb<I, V, L>` (the
-/// non-shared variant) or `&Arc<RwLock<ChainDb<I, V, L>>>` (the shared
-/// variant).  Without this, the post-restart `ChainState` was always
-/// `ChainState::new(k)` — empty — and the next ChainSync session's
-/// `RollBackward(recovered_tip)` confirmation failed with
-/// `RollbackPointNotFound` (surfaced by §6 restart-resilience cycle 2).
-fn seed_chain_state_via_chain_db<S: ChainDbVolatileAccess>(
-    chain_db: &S,
-    security_param: Option<SecurityParam>,
-) -> Option<ChainState> {
-    security_param
-        .map(|k| chain_db.with_volatile(|v| crate::sync::seed_chain_state_from_volatile(v, k)))
-}
-
-/// Trait abstracting "give me a borrow of the volatile store" across the
-/// two ChainDb access modes used by the reconnecting sync entry points.
-trait ChainDbVolatileAccess {
-    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R;
-    fn best_tip(&self) -> Point;
-}
-
-impl<I, V, L> ChainDbVolatileAccess for ChainDb<I, V, L>
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
-        f(self.volatile())
-    }
-
-    fn best_tip(&self) -> Point {
-        self.tip()
-    }
-}
-
-impl<I, V, L> ChainDbVolatileAccess for std::sync::Arc<std::sync::RwLock<ChainDb<I, V, L>>>
-where
-    I: ImmutableStore,
-    V: VolatileStore,
-    L: LedgerStore,
-{
-    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
-        let guard = self.read().expect("chain db lock poisoned");
-        f(guard.volatile())
-    }
-
-    fn best_tip(&self) -> Point {
-        let guard = self.read().expect("chain db lock poisoned");
-        guard.tip()
-    }
-}
 
 #[cfg(test)]
 mod tests;

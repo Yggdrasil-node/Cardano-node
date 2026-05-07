@@ -57,13 +57,13 @@ use super::reconnecting::{
     registry_mark_bootstrap_hot,
 };
 use super::{
-    ChainDbVolatileAccess, bootstrap_with_attempt_state, handle_reconnect_batch_error,
-    preferred_hot_peer_handoff_target, prepare_reconnect_attempt_state, reconnect_storage_tip,
+    bootstrap_with_attempt_state, handle_reconnect_batch_error, preferred_hot_peer_handoff_target,
+    prepare_reconnect_attempt_state, reconnect_storage_tip,
     refresh_chain_db_reconnect_fallback_peers, registry_reserve_bootstrap_attempt_peers,
-    seed_chain_state_via_chain_db, shared_chaindb_lock_error, synchronize_chain_sync_to_point,
-    trace_checkpoint_outcome, trace_epoch_boundary_events, trace_reconnectable_sync_error,
-    trace_session_established, trace_shutdown_before_bootstrap, trace_shutdown_during_session,
-    update_bp_state_nonce, update_bp_state_sigma,
+    shared_chaindb_lock_error, synchronize_chain_sync_to_point, trace_checkpoint_outcome,
+    trace_epoch_boundary_events, trace_reconnectable_sync_error, trace_session_established,
+    trace_shutdown_before_bootstrap, trace_shutdown_during_session, update_bp_state_nonce,
+    update_bp_state_sigma,
 };
 
 async fn run_reconnecting_verified_sync_service_chaindb_inner<I, V, L, F>(
@@ -2062,4 +2062,58 @@ where
         shutdown,
     )
     .await
+}
+
+/// Polymorphic seed of the volatile-window `ChainState` that works whether
+/// the caller holds the chain DB as `&mut ChainDb<I, V, L>` (the
+/// non-shared variant) or `&Arc<RwLock<ChainDb<I, V, L>>>` (the shared
+/// variant).  Without this, the post-restart `ChainState` was always
+/// `ChainState::new(k)` — empty — and the next ChainSync session's
+/// `RollBackward(recovered_tip)` confirmation failed with
+/// `RollbackPointNotFound` (surfaced by §6 restart-resilience cycle 2).
+pub(super) fn seed_chain_state_via_chain_db<S: ChainDbVolatileAccess>(
+    chain_db: &S,
+    security_param: Option<yggdrasil_consensus::SecurityParam>,
+) -> Option<yggdrasil_consensus::ChainState> {
+    security_param
+        .map(|k| chain_db.with_volatile(|v| crate::sync::seed_chain_state_from_volatile(v, k)))
+}
+
+/// Trait abstracting "give me a borrow of the volatile store" across the
+/// two ChainDb access modes used by the reconnecting sync entry points.
+pub(super) trait ChainDbVolatileAccess {
+    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R;
+    fn best_tip(&self) -> Point;
+}
+
+impl<I, V, L> ChainDbVolatileAccess for ChainDb<I, V, L>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
+        f(self.volatile())
+    }
+
+    fn best_tip(&self) -> Point {
+        self.tip()
+    }
+}
+
+impl<I, V, L> ChainDbVolatileAccess for std::sync::Arc<std::sync::RwLock<ChainDb<I, V, L>>>
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    fn with_volatile<R>(&self, f: impl FnOnce(&dyn VolatileStore) -> R) -> R {
+        let guard = self.read().expect("chain db lock poisoned");
+        f(guard.volatile())
+    }
+
+    fn best_tip(&self) -> Point {
+        let guard = self.read().expect("chain db lock poisoned");
+        guard.tip()
+    }
 }

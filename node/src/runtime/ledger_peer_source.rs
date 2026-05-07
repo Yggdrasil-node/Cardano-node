@@ -221,3 +221,65 @@ impl PeerSnapshotFileSource for FilePeerSnapshotSource<'_> {
         }
     }
 }
+
+pub(super) fn refresh_ledger_peer_sources_from_chain_db<I, V, L>(
+    registry: &mut yggdrasil_network::PeerRegistry,
+    chain_db: &Arc<RwLock<ChainDb<I, V, L>>>,
+    base_ledger_state: &LedgerState,
+    topology: &yggdrasil_network::TopologyConfig,
+    tracer: &NodeTracer,
+    judgement_settings: super::ledger_judgement::LedgerJudgementSettings,
+    epoch_schedule: Option<EpochSchedule>,
+) -> yggdrasil_network::LiveLedgerPeerRefreshObservation
+where
+    I: ImmutableStore,
+    V: VolatileStore,
+    L: LedgerStore,
+{
+    if !topology.use_ledger_peers.enabled() {
+        return yggdrasil_network::LiveLedgerPeerRefreshObservation {
+            update: yggdrasil_network::LedgerPeerRegistryUpdate {
+                decision: yggdrasil_network::LedgerPeerUseDecision::Disabled,
+                changed: false,
+            },
+            latest_slot: None,
+            judgement: LedgerStateJudgement::Unavailable,
+            peer_snapshot_freshness: yggdrasil_network::PeerSnapshotFreshness::NotConfigured,
+        };
+    }
+
+    let mut consensus_source = ChainDbConsensusLedgerSource {
+        chain_db,
+        base_ledger_state,
+        tracer,
+        system_start_unix_secs: judgement_settings.system_start_unix_secs,
+        slot_length_secs: judgement_settings.slot_length_secs,
+        max_ledger_state_age_secs: judgement_settings.max_ledger_state_age_secs,
+        epoch_schedule,
+    };
+    let mut snapshot_source = FilePeerSnapshotSource {
+        path: topology.peer_snapshot_file.as_deref(),
+        tracer,
+    };
+
+    let observation = yggdrasil_network::live_refresh_ledger_peer_registry_observed(
+        registry,
+        topology.use_ledger_peers,
+        &mut consensus_source,
+        &mut snapshot_source,
+    );
+
+    if observation.update.changed {
+        tracer.trace_runtime(
+            "Net.PeerSelection",
+            "Info",
+            "ledger peer registry refreshed",
+            trace_fields([(
+                "decision",
+                json!(format!("{:?}", observation.update.decision)),
+            )]),
+        );
+    }
+
+    observation
+}
