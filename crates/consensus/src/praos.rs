@@ -1,211 +1,39 @@
+//! Praos / TPraos protocol implementation.
+//!
+//! Top-level entry points for slot leader election:
+//!
+//! - [`check_is_leader`] — full pipeline: VRF proof + threshold check.
+//! - [`check_leader_value`] — threshold check on a known VRF output.
+//! - [`verify_leader_proof`] / [`verify_leader_proof_output`] — verifier-side
+//!   leader VRF proof check.
+//! - [`verify_nonce_proof`] — verifier-side nonce VRF proof check.
+//!
+//! Sub-modules:
+//!
+//! - [`vrf`] — VRF input construction (TPraos `mkSeed` / Praos `mkInputVRF`).
+//! - [`common`] — `ActiveSlotCoeff` + Taylor-series math primitives for
+//!   deterministic leader-value comparisons.
+//!
+//! Mirrors upstream `Ouroboros.Consensus.Protocol.Praos` (entry points) +
+//! `.../Praos/VRF.hs` (VRF input + leader-value math) +
+//! `Cardano.Ledger.BaseTypes::ActiveSlotCoeff` (preprocessed `f`).
+
+pub mod common;
+pub mod vrf;
+
+pub use common::{ActiveSlotCoeff, leadership_threshold};
+pub use vrf::{VrfMode, VrfUsage, praos_vrf_input, tpraos_vrf_seed, vrf_input};
+
 use num_bigint::BigUint;
-use num_integer::Integer;
-use num_traits::{One, Zero};
+use num_traits::One;
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_crypto::vrf::{VrfOutput, VrfSecretKey, VrfVerificationKey};
 use yggdrasil_ledger::{Nonce, SlotNo};
 
 use crate::ConsensusError;
-
-/// Distinguishes the two VRF protocol modes used across Cardano eras.
-///
-/// - **TPraos** (Shelley–Alonzo): uses `mkSeed` with a per-purpose XOR tag
-///   and checks the raw 512-bit VRF output against `2^512`.
-/// - **Praos** (Babbage/Conway): uses `mkInputVRF` (Blake2b-256 of slot||nonce)
-///   and applies range extension (`Blake2b-256("L" || output)`) to check a
-///   256-bit value against `2^256`.
-///
-/// Reference: `Ouroboros.Consensus.Protocol.TPraos` vs
-/// `Ouroboros.Consensus.Protocol.Praos`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VrfMode {
-    /// Shelley through Alonzo: `mkSeed` construction, raw 512-bit leader check.
-    TPraos,
-    /// Babbage and Conway: `mkInputVRF` construction, range-extended 256-bit
-    /// leader check.
-    Praos,
-}
-
-/// Distinguishes the two VRF proof purposes within a TPraos block header.
-///
-/// TPraos headers carry two VRF proofs (`nonce_vrf` and `leader_vrf`), each
-/// produced over a different seed.  Praos headers carry only one unified VRF
-/// proof that serves both purposes.
-///
-/// Reference: `seedEta` / `seedL` in `Cardano.Protocol.TPraos.BHeader`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum VrfUsage {
-    /// Leader election proof (TPraos `seedL`, tag = `mkNonceFromNumber 1`).
-    Leader,
-    /// Nonce contribution proof (TPraos `seedEta`, tag = `mkNonceFromNumber 0`).
-    Nonce,
-}
-
-/// Pre-computed active slot coefficient for deterministic leader election.
-///
-/// Internally stores `-ln(1 - f)` as a rational number (numerator /
-/// denominator) computed to at least 512 bits of precision, enabling
-/// exact integer comparisons against 512-bit VRF outputs without any
-/// floating-point arithmetic in the consensus-critical path.
-///
-/// Reference: `ActiveSlotCoeff` in `Cardano.Ledger.BaseTypes`, specifically
-/// the `activeSlotLog` field.
-#[derive(Clone, Debug)]
-pub struct ActiveSlotCoeff {
-    /// The original coefficient for display/diagnostics.
-    f_val: f64,
-    /// Numerator of `-ln(1 - f)` (positive when 0 < f ≤ 1).
-    log_num: BigUint,
-    /// Denominator of `-ln(1 - f)`.
-    log_den: BigUint,
-}
-
-/// Number of Taylor-series terms used when pre-computing `-ln(1 - p/q)`.
-///
-/// Each term contributes `(p/q)^k / k` to the sum.  With `p/q ≤ 1`,
-/// the truncation error after `N` terms is bounded by `(p/q)^(N+1) / (N+1)`.
-/// For the mainnet value `p/q = 1/20`, `(1/20)^201 / 201 < 2^{-512}`.
-const LN_SERIES_TERMS: u64 = 260;
-
-/// Number of Taylor-series terms used inside `taylor_exp_cmp` to decide
-/// the leader-value comparison.  With `|x| = σ * activeSlotLog` bounded
-/// by `activeSlotLog < 1`, 80 terms give truncation error far below
-/// `2^{-512}`.
-const EXP_SERIES_TERMS: u64 = 80;
-
-impl ActiveSlotCoeff {
-    /// Creates an `ActiveSlotCoeff` from a rational `numerator / denominator`
-    /// in `(0, 1]`.
-    ///
-    /// This is the preferred constructor because it avoids any floating-point
-    /// imprecision. For mainnet, use `from_rational(1, 20)` for `f = 0.05`.
-    pub fn from_rational(num: u64, den: u64) -> Result<Self, ConsensusError> {
-        if den == 0 || num == 0 || num > den {
-            return Err(ConsensusError::InvalidActiveSlotCoeff);
-        }
-        let f_val = num as f64 / den as f64;
-        let (log_num, log_den) = compute_neg_ln_one_minus(num, den, LN_SERIES_TERMS);
-        Ok(Self {
-            f_val,
-            log_num,
-            log_den,
-        })
-    }
-
-    /// Creates an `ActiveSlotCoeff` from an `f64` value in `(0, 1]`.
-    ///
-    /// The float is converted to a rational approximation with denominator
-    /// `10^9`, which is sufficient for genesis-level precision.
-    pub fn new(f: f64) -> Result<Self, ConsensusError> {
-        if !f.is_finite() || f <= 0.0 || f > 1.0 {
-            return Err(ConsensusError::InvalidActiveSlotCoeff);
-        }
-        // Convert to rational: round(f * 10^9) / 10^9.
-        let scale: u64 = 1_000_000_000;
-        let num = (f * scale as f64).round() as u64;
-        let den = scale;
-        // Reduce.
-        let g = gcd_u64(num, den);
-        Self::from_rational(num / g, den / g)
-    }
-
-    /// Returns the original coefficient as `f64` (for diagnostics only).
-    pub fn to_f64(&self) -> f64 {
-        self.f_val
-    }
-}
-
-impl PartialEq for ActiveSlotCoeff {
-    fn eq(&self, other: &Self) -> bool {
-        // Two coefficients are equal when their log rationals are equal.
-        self.log_num.clone() * other.log_den.clone() == other.log_num.clone() * self.log_den.clone()
-    }
-}
-
-/// Computes the Praos leadership threshold φ_f(σ) = 1 − (1 − f)^σ
-/// using floating-point arithmetic.
-///
-/// This function is **not** used in the consensus-critical leader check;
-/// it exists for diagnostics, tests, and human-readable threshold display.
-///
-/// Reference: Section 4.1 of the Praos paper.
-pub fn leadership_threshold(active_slot_coeff: &ActiveSlotCoeff, sigma: f64) -> f64 {
-    1.0 - (1.0 - active_slot_coeff.f_val).powf(sigma)
-}
-
-// ---------------------------------------------------------------------------
-// VRF input construction
-// ---------------------------------------------------------------------------
-
-/// Builds the raw VRF input bytes from a slot number and an epoch nonce
-/// (pre-hash concatenation, no Blake2b-256, no seed tag).
-///
-/// This is the base concatenation `slot_be8 || nonce_bytes` before any
-/// protocol-specific hashing or XOR.  Callers that need upstream-compatible
-/// VRF inputs should use [`praos_vrf_input`] or [`tpraos_vrf_seed`] instead.
-fn raw_vrf_input_bytes(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(40);
-    buf.extend_from_slice(&slot.0.to_be_bytes());
-    if let Nonce::Hash(h) = epoch_nonce {
-        buf.extend_from_slice(&h);
-    }
-    buf
-}
-
-/// Builds the Praos (Babbage/Conway) VRF input: `Blake2b-256(slot_be8 || nonce_bytes)`.
-///
-/// The result is a 32-byte hash matching upstream `mkInputVRF` from
-/// `Ouroboros.Consensus.Protocol.Praos.VRF`, which is used as
-/// `getSignableRepresentation` for the single unified VRF proof.
-pub fn praos_vrf_input(slot: SlotNo, epoch_nonce: Nonce) -> Vec<u8> {
-    hash_bytes_256(&raw_vrf_input_bytes(slot, epoch_nonce))
-        .0
-        .to_vec()
-}
-
-/// Pre-computed seed tag hashes for TPraos VRF input construction.
-///
-/// Upstream `mkNonceFromNumber n` = `Nonce (Blake2b-256(word64be(n)))`.
-///
-/// Reference: `mkNonceFromNumber` in `Cardano.Ledger.BaseTypes`.
-fn tpraos_seed_tag_hash(usage: VrfUsage) -> [u8; 32] {
-    let tag = match usage {
-        VrfUsage::Nonce => 0u64,  // seedEta
-        VrfUsage::Leader => 1u64, // seedL
-    };
-    hash_bytes_256(&tag.to_be_bytes()).0
-}
-
-/// Builds a TPraos (Shelley–Alonzo) VRF seed: `Blake2b-256(slot_be8 || nonce_bytes) XOR tag_hash`.
-///
-/// `usage` selects the seed tag:
-/// - `VrfUsage::Leader` → `seedL` (tag 1): used for the leader VRF proof.
-/// - `VrfUsage::Nonce`  → `seedEta` (tag 0): used for the nonce VRF proof.
-///
-/// The result is a 32-byte value matching upstream `mkSeed` from
-/// `Cardano.Protocol.TPraos.BHeader`.
-pub fn tpraos_vrf_seed(slot: SlotNo, epoch_nonce: Nonce, usage: VrfUsage) -> Vec<u8> {
-    let base_hash = hash_bytes_256(&raw_vrf_input_bytes(slot, epoch_nonce)).0;
-    let tag_hash = tpraos_seed_tag_hash(usage);
-    // XOR the two 32-byte hashes.
-    let mut result = [0u8; 32];
-    for i in 0..32 {
-        result[i] = base_hash[i] ^ tag_hash[i];
-    }
-    result.to_vec()
-}
-
-/// Builds the VRF input for the given mode and usage.
-///
-/// - `VrfMode::Praos` ignores `usage` (single unified VRF) and returns
-///   `praos_vrf_input()`.
-/// - `VrfMode::TPraos` returns `tpraos_vrf_seed()` with the given usage.
-pub fn vrf_input(slot: SlotNo, epoch_nonce: Nonce, mode: VrfMode, usage: VrfUsage) -> Vec<u8> {
-    match mode {
-        VrfMode::Praos => praos_vrf_input(slot, epoch_nonce),
-        VrfMode::TPraos => tpraos_vrf_seed(slot, epoch_nonce, usage),
-    }
-}
+use common::taylor_exp_cmp;
+#[cfg(test)]
+use vrf::{raw_vrf_input_bytes, tpraos_seed_tag_hash};
 
 // ---------------------------------------------------------------------------
 // Leader check — deterministic integer arithmetic
@@ -276,100 +104,6 @@ pub fn check_leader_value(
     let x_den = BigUint::from(sigma_den) * &active_slot_coeff.log_den;
 
     taylor_exp_cmp(&cert_nat_max, &target, &x_num, &x_den)
-}
-
-/// Computes `exp(−x)` where `x = x_num/x_den > 0` via Taylor expansion,
-/// and checks whether `target > q × exp(−x)`.
-///
-/// Returns `Ok(true)` (is leader) when `target > q × exp(−x)`, meaning the
-/// VRF value is small enough to qualify.
-///
-/// The Taylor series of `exp(−x) = Σ_{k=0}^∞ (−x)^k / k!` alternates in
-/// sign, so partial sums after an even number of terms overestimate
-/// (upper bound) and after an odd number underestimate (lower bound).
-///
-/// Reference: `taylorExpCmp` in `Ouroboros.Consensus.Protocol.Praos.VRF`.
-fn taylor_exp_cmp(
-    q: &BigUint,
-    target: &BigUint,
-    x_num: &BigUint,
-    x_den: &BigUint,
-) -> Result<bool, ConsensusError> {
-    // We maintain the partial sum and current term as rationals with a
-    // common denominator, scaled by q.
-    //
-    // sum_scaled = q × partial_sum, tracked as (sum_num / sum_den).
-    // term_scaled = q × current_term_magnitude.
-    //
-    // Initially: sum = q (the k=0 term), term = q.
-    // At step k (1-based): term *= x / k, then sum += (-1)^k * term.
-
-    let mut sum_num: BigUint = q.clone() * x_den; // q * x_den / x_den = q
-    let mut sum_den: BigUint = x_den.clone();
-    let mut term_num: BigUint = q.clone(); // magnitude of current term (numerator over term_den)
-    let mut term_den: BigUint = BigUint::one();
-
-    // target_scaled for comparison: target * sum_den (recomputed per step).
-    for k in 1..=EXP_SERIES_TERMS {
-        // term_{k} = term_{k-1} * x / k
-        term_num *= x_num;
-        term_den = term_den * x_den * BigUint::from(k);
-
-        // Reduce to prevent unbounded growth.
-        let g = term_num.gcd(&term_den);
-        if !g.is_zero() && !g.is_one() {
-            term_num /= &g;
-            term_den /= &g;
-        }
-
-        // Bring sum and term to common denominator for add/subtract.
-        // sum_num/sum_den  ±  term_num/term_den
-        // = (sum_num*term_den ± term_num*sum_den) / (sum_den*term_den)
-        let common_add = &sum_num * &term_den;
-        let common_term = &term_num * &sum_den;
-        let new_den = &sum_den * &term_den;
-
-        if k % 2 == 1 {
-            // Odd k: subtract (term is negative in exp(-x) expansion).
-            // sum is now a lower bound.
-            if common_add >= common_term {
-                sum_num = common_add - &common_term;
-            } else {
-                // exp(-x) partial sum went negative — target > 0 → leader.
-                return Ok(true);
-            }
-            sum_den = new_den;
-
-            // Lower bound: if target * sum_den > sum_num * 1 → target > sum → leader.
-            let target_scaled = target * &sum_den;
-            if target_scaled > sum_num {
-                return Ok(true);
-            }
-        } else {
-            // Even k: add (term is positive).
-            // sum is now an upper bound.
-            sum_num = common_add + common_term;
-            sum_den = new_den;
-
-            // Upper bound: if target * sum_den <= sum_num → target ≤ sum → not leader.
-            let target_scaled = target * &sum_den;
-            if target_scaled <= sum_num {
-                return Ok(false);
-            }
-        }
-
-        // Reduce sum fraction.
-        let g = sum_num.gcd(&sum_den);
-        if !g.is_zero() && !g.is_one() {
-            sum_num /= &g;
-            sum_den /= &g;
-        }
-    }
-
-    // If we exhaust the series without deciding, the value is extremely
-    // close to the boundary.  The upstream Haskell returns `MaxReached`
-    // which is treated as "not leader" (conservative).
-    Ok(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -508,69 +242,6 @@ pub fn verify_nonce_proof(
 
 // ---------------------------------------------------------------------------
 // Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Computes `-ln(1 - p/q)` as a rational `(numerator, denominator)` using
-/// the Taylor series `-ln(1-x) = x + x²/2 + x³/3 + …` where `x = p/q`.
-///
-/// Accumulates `terms` terms of the series.
-fn compute_neg_ln_one_minus(p: u64, q: u64, terms: u64) -> (BigUint, BigUint) {
-    // -ln(1 - p/q) = Σ_{k=1}^{N} (p/q)^k / k
-    //              = Σ (p^k) / (k * q^k)
-    //
-    // We compute this as a single rational: sum_num / sum_den.
-    let bp = BigUint::from(p);
-    let bq = BigUint::from(q);
-
-    let mut sum_num = BigUint::zero();
-    let mut sum_den = BigUint::one();
-
-    // p_pow_k = p^k, q_pow_k = q^k, accumulated across iterations.
-    let mut p_pow_k = BigUint::one();
-    let mut q_pow_k = BigUint::one();
-
-    for k in 1..=terms {
-        p_pow_k *= &bp;
-        q_pow_k *= &bq;
-
-        // term = p^k / (k * q^k)
-        let term_num = &p_pow_k;
-        let term_den = BigUint::from(k) * &q_pow_k;
-
-        // sum += term: sum_num/sum_den + term_num/term_den
-        sum_num = sum_num * &term_den + term_num * &sum_den;
-        sum_den *= term_den;
-
-        // Reduce every 20 iterations to keep numerators manageable.
-        if k % 20 == 0 {
-            let g = sum_num.gcd(&sum_den);
-            if !g.is_zero() && !g.is_one() {
-                sum_num /= &g;
-                sum_den /= &g;
-            }
-        }
-    }
-
-    // Final reduction.
-    let g = sum_num.gcd(&sum_den);
-    if !g.is_zero() && !g.is_one() {
-        sum_num /= &g;
-        sum_den /= &g;
-    }
-
-    (sum_num, sum_den)
-}
-
-/// Simple GCD for u64 values.
-fn gcd_u64(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        let t = b;
-        b = a % b;
-        a = t;
-    }
-    a
-}
-
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
