@@ -8,6 +8,12 @@ Keep these documents synchronized with the implemented workspace, not with specu
   `AUDIT_VERIFICATION_*.md`, `MANUAL_TEST_RUNBOOK.md`,
   `UPSTREAM_PARITY.md`, `UPSTREAM_RESEARCH.md`,
   `REAL_PREPROD_POOL_VERIFICATION.md`).
+- `parity-matrix.json` — machine-readable Rust ↔ Haskell parity inventory
+  (validated by `scripts/check-parity-matrix.py`). The `reference.tag`
+  tracks the latest IntersectMBO/cardano-node release; bump it whenever
+  upstream ships a new tag and re-validate every `haskell_reference.path`
+  (paths can move across releases). See `intersectmbo_version_policy.md`
+  in agent memory for the full bump checklist.
 - The user-facing manual under `docs/manual/` rendered as the operator
   documentation site (Jekyll + just-the-docs remote theme; built by
   `.github/workflows/pages.yml`).
@@ -75,8 +81,28 @@ Keep these documents synchronized with the implemented workspace, not with specu
   `README.md`, `PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
   `PARITY_PROOF.md`, `UPSTREAM_PARITY.md`, and
   `MANUAL_TEST_RUNBOOK.md`.
+- Filename convention is `YYYY-MM-DD-round-NNN-<slug>.md`; the
+  `/round-doc` slash command (defined in
+  `.claude/commands/round-doc.md`) authors the skeleton.
 - If a run record itself has a typo or incorrect fact about that same
   run, correct it narrowly and leave the rest of the record intact.
+
+## Parity matrix maintenance
+- `parity-matrix.json` is operational evidence, not a rolling work log.
+  Update an entry when its `status`, `implemented_evidence`,
+  `remaining_work`, or `acceptance` set genuinely changes — not on
+  every code edit.
+- Allowed `status` values: `verified_<TAG>`,
+  `implemented_needs_<TAG>_evidence`, `partial`, `absent`, where
+  `<TAG>` is the underscore-encoded latest IntersectMBO release
+  (currently `11_0_1`).
+- Every `haskell_reference[*].path` MUST exist under
+  `.reference-haskell-cardano-node/...` at validation time; every
+  `rust_surface[*].path` MUST exist in the workspace. The
+  `scripts/check-parity-matrix.py` gate enforces both.
+- Status transitions tied to operator-time gates (e.g. R267 mainnet
+  endurance) only flip to `verified_<TAG>` when the gate has been
+  signed off, not when the implementation is "ready".
 
 ##  Rules *Non-Negotiable*
 - Documentation in this directory MUST describe current behavior or explicitly labeled near-term policy, not aspirational features.

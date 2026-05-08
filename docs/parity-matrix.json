@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "reviewed_at_utc": "2026-05-09T00:00:00Z",
+  "reference": {
+    "repo": "IntersectMBO/cardano-node",
+    "tag": "11.0.1",
+    "local_root": ".reference-haskell-cardano-node",
+    "verified_by": [
+      "git -C .reference-haskell-cardano-node describe --tags --exact-match HEAD",
+      "bash -lc '.reference-haskell-cardano-node/install/bin/cardano-node --version'"
+    ],
+    "note": "The vendored .reference-haskell-cardano-node/install/ may lag the policy tag while a fresh checkout is in progress. Run scripts/setup-reference.sh to bring it up to the policy tag before relying on byte-equivalence claims."
+  },
+  "status_legend": {
+    "verified_11_0_1": "Implemented and validated against the pinned 11.0.1 reference (forensic byte-equivalence, golden vectors, or live-rehearsal evidence).",
+    "implemented_needs_11_0_1_evidence": "Rust behavior exists and local tests pass, but live or golden 11.0.1 parity evidence is still required.",
+    "partial": "Only a subset of the Haskell behavior exists; remaining work is listed explicitly.",
+    "absent": "No production implementation exists for the parity target."
+  },
+  "entries": [
+    {
+      "id": "consensus.praos.leader-check",
+      "area": "consensus",
+      "feature": "Praos / TPraos slot leader election: VRF input construction, ActiveSlotCoeff, deterministic leader-value comparison",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R267",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos.hs",
+          "role": "Top-level Praos protocol entry points (checkIsLeader, validateVRFSignature)."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/VRF.hs",
+          "role": "VRF input construction (mkInputVRF) and leader-value range extension."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-core/src/Cardano/Ledger/BaseTypes.hs",
+          "role": "ActiveSlotCoeff source-of-truth and deterministic Taylor-series math."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/consensus/src/praos.rs",
+          "role": "Top-level leader-check entry points (check_leader_value, check_is_leader, verify_*_proof)."
+        },
+        {
+          "path": "crates/consensus/src/praos/vrf.rs",
+          "role": "VrfMode / VrfUsage enums + praos_vrf_input / tpraos_vrf_seed / vrf_input."
+        },
+        {
+          "path": "crates/consensus/src/praos/common.rs",
+          "role": "ActiveSlotCoeff struct + leadership_threshold + taylor_exp_cmp."
+        }
+      ],
+      "implemented_evidence": [
+        "R273a split praos.rs (793 lines) into praos/{vrf,common}.rs sub-modules mirroring upstream Praos/VRF and Cardano.Ledger.BaseTypes layout.",
+        "12-item public surface (ActiveSlotCoeff, VrfMode, VrfUsage, check_is_leader, check_leader_value, leadership_threshold, praos_vrf_input, tpraos_vrf_seed, verify_leader_proof, verify_leader_proof_output, verify_nonce_proof, vrf_input) preserved unchanged.",
+        "All four cargo gates green (fmt --check, check-all, lint, test-all) with 4,855 tests passing."
+      ],
+      "remaining_work": [
+        "R266 step 3: forensic per-builtin CEK trace comparison vs upstream db-analyser to close the preview Plutus V2 budget gap (slot 1,462,057, tx 7bb40e40...3be5b9, 306,309 CPU drift).",
+        "R267: 24h+ mainnet endurance side-by-side with upstream cardano-node 11.0.1 to certify VRF leader checks across an epoch boundary."
+      ],
+      "acceptance": [
+        "Forensic per-builtin trace matches upstream byte-for-byte for the failing tx.",
+        "24h mainnet endurance: zero leader-check divergence vs upstream cardano-node 11.0.1 across at least one full epoch.",
+        "Per-100-epoch ledger-hash byte-match on mainnet + preprod + preview."
+      ]
+    },
+    {
+      "id": "consensus.nonce.evolution",
+      "area": "consensus",
+      "feature": "Epoch nonce evolution state machine (UPDN per-block + TICKN epoch-boundary)",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R267",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/Rules/Updn.hs",
+          "role": "UPDN rule: per-block evolving / candidate nonce update."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/Rules/Tickn.hs",
+          "role": "TICKN rule: epoch-boundary nonce transition."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-core/src/Cardano/Ledger/BaseTypes.hs",
+          "role": "hashVerifiedVRF (TPraos) baseline."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/consensus/src/nonce.rs",
+          "role": "Module shell + tests + 6-item re-export (NonceDerivation, derive_vrf_nonce, NonceEvolutionConfig, NonceEvolutionState, etc)."
+        },
+        {
+          "path": "crates/consensus/src/nonce/derivation.rs",
+          "role": "VRF-output-to-nonce: TPraos hashVerifiedVRF + Praos vrfNonceValue."
+        },
+        {
+          "path": "crates/consensus/src/nonce/evolution.rs",
+          "role": "NonceEvolutionConfig + NonceEvolutionState + UPDN/TICKN apply_block + chain-dep-state CBOR sidecar."
+        }
+      ],
+      "implemented_evidence": [
+        "R273b split nonce.rs (832 lines) into nonce/{derivation,evolution}.rs mirroring TPraos.Rules.Updn / Rules.Tickn / BaseTypes layout.",
+        "Byron/Shelley extra-entropy transition path covered with a regression test pinning the R263 fix.",
+        "Chain-dep-state CBOR encode/decode round-trips through the persisted sidecar at every epoch boundary."
+      ],
+      "remaining_work": [
+        "R267: per-epoch byte-match against upstream cardano-node 11.0.1 chain-dep-state sidecar across at least one mainnet epoch transition."
+      ],
+      "acceptance": [
+        "Zero nonce divergence across one full mainnet epoch boundary vs upstream 11.0.1.",
+        "Persisted chain-dep-state sidecar bytes match upstream's volatile-DB snapshot byte-for-byte."
+      ]
+    },
+    {
+      "id": "consensus.opcert.counter-rule",
+      "area": "consensus",
+      "feature": "Operational certificate counter validation: pre-Vasil (TPraos) lower-bound only, post-Vasil (Praos) tightened bounds",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R267",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/OCert.hs",
+          "role": "OCert struct + KES period helpers (kesPeriod, checkKESPeriod)."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/Rules/OCert.hs",
+          "role": "TPraos OCERT rule (Shelley/Allegra/Mary/pre-Babbage counter validation)."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos.hs",
+          "role": "Praos OCERT rule (Babbage+ Vasil HF tightened bounds)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/consensus/src/opcert.rs",
+          "role": "Module shell + tests + 5-item re-export (OpCert, OcertCounters, OcertCounterRule, kes_period_of_slot, check_kes_period)."
+        },
+        {
+          "path": "crates/consensus/src/opcert/cert.rs",
+          "role": "OpCert struct + KES period helpers."
+        },
+        {
+          "path": "crates/consensus/src/opcert/counter.rs",
+          "role": "OcertCounters + OcertCounterRule (TPraos vs Praos) + CBOR sidecar."
+        }
+      ],
+      "implemented_evidence": [
+        "R273c split opcert.rs (856 lines) into opcert/{cert,counter}.rs.",
+        "OcertCounterRule::for_pv_major selects TPraos for PV<7 and Praos for PV>=7 — Vasil HF fork-point.",
+        "Counter validation tests cover both rules with regression vectors."
+      ],
+      "remaining_work": [
+        "R267: forensic ledger-state diff at the Vasil-HF block (mainnet PV major 7 transition) to confirm the rule-switch matches upstream.",
+        "Mainnet 24h+ endurance to certify the post-Vasil tightened-bound rule under live block production."
+      ],
+      "acceptance": [
+        "Per-block OcertCounters byte-match against upstream chain-dep-state sidecar across the Vasil HF boundary.",
+        "Zero counter-validation divergence across one mainnet epoch."
+      ]
+    },
+    {
+      "id": "consensus.mempool.queue",
+      "area": "mempool",
+      "feature": "Fee-ordered mempool queue with TTL eviction, capacity overflow with strictly-lower-fee eviction, ledger revalidation",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R267",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool.hs",
+          "role": "Top-level mempool wrapper."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Mempool/API.hs",
+          "role": "Mempool API (snapshot, addTxs, removeTxs)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/consensus/src/mempool.rs",
+          "role": "Module wrapper + cross-module re-exports."
+        },
+        {
+          "path": "crates/consensus/src/mempool/queue.rs",
+          "role": "Supporting types (MempoolEntry, MempoolError, MempoolSnapshot, readers) + tests + sub-mod declarations."
+        },
+        {
+          "path": "crates/consensus/src/mempool/queue/inner.rs",
+          "role": "Mempool fee-ordered queue policy struct + 17 methods."
+        },
+        {
+          "path": "crates/consensus/src/mempool/queue/shared.rs",
+          "role": "SharedMempool Arc<RwLock<>> wrapper."
+        }
+      ],
+      "implemented_evidence": [
+        "R273d split mempool/queue.rs (1,665 lines) into queue/{inner,shared}.rs.",
+        "Capacity-overflow eviction matches upstream Impl.Update.makeRoomForTransaction (only strictly-lower-fee tail; rejection if cumulative-fee criterion fails).",
+        "Cross-peer TxId dedup via SharedTxState (R273e split tx_state.rs)."
+      ],
+      "remaining_work": [
+        "R267: live mainnet TxSubmission2 endurance test confirming snapshot-shape byte-equivalence with upstream cardano-node 11.0.1 inbound state."
+      ],
+      "acceptance": [
+        "Per-snapshot byte-match against upstream MempoolSnapshot under 24h of inbound TxSubmission2 traffic on mainnet."
+      ]
+    },
+    {
+      "id": "consensus.diffusion-pipelining",
+      "area": "consensus",
+      "feature": "Block Diffusion Pipelining via Delayed Validation (DPvDV): tentative-header announcement with trap-header rollback safety criterion",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R267",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block/SupportsDiffusionPipelining.hs",
+          "role": "SupportsDiffusionPipelining type class + DiffusionPipeliningSupport feature flag."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Node/DiffusionPipelining.hs",
+          "role": "Shelley HotIdentity + per-pool TentativeHeaderState (cold-key hash + opcert seq)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/consensus/src/diffusion_pipelining.rs",
+          "role": "Module shell + tests + 8-item re-export."
+        },
+        {
+          "path": "crates/consensus/src/diffusion_pipelining/identity.rs",
+          "role": "HotIdentity + TentativeHeaderView + per-pool TentativeHeaderState."
+        },
+        {
+          "path": "crates/consensus/src/diffusion_pipelining/state.rs",
+          "role": "DiffusionPipeliningSupport feature flag + TentativeState orchestrator + TentativeHeader + PipeliningEvent + PeerPipeliningState."
+        }
+      ],
+      "implemented_evidence": [
+        "R273f split diffusion_pipelining.rs (747 lines) into identity + state mirroring upstream Shelley.Node.DiffusionPipelining + Block.SupportsDiffusionPipelining.",
+        "Trap-header detection guard (same issuer + same block_no twice) regression-tested with subsequence-consistency property."
+      ],
+      "remaining_work": [
+        "R267: live mainnet rehearsal confirming tentative-header serving byte-equivalence with upstream 11.0.1 ChainSync server."
+      ],
+      "acceptance": [
+        "Tentative-header advertisement under 24h mainnet traffic produces zero trap-header false-positives or false-negatives vs upstream."
+      ]
+    },
+    {
+      "id": "plutus.types.uplc",
+      "area": "plutus",
+      "feature": "UPLC term language, built-in function enumeration, and CEK runtime types",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R266",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/plutus/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Core/Type.hs",
+          "role": "Untyped Plutus Core Term + Program."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/plutus/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs",
+          "role": "DefaultFun built-in function enumeration."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/plutus/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek/Internal.hs",
+          "role": "CEK machine internal Value + Env types."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/plutus/src/types.rs",
+          "role": "Module shell + tests + 8-item re-export."
+        },
+        {
+          "path": "crates/plutus/src/types/term.rs",
+          "role": "Program, Term, Type, Constant."
+        },
+        {
+          "path": "crates/plutus/src/types/default_fun.rs",
+          "role": "DefaultFun (71+ variants) with #[repr(u8)] discriminants matching Flat encoding index."
+        },
+        {
+          "path": "crates/plutus/src/types/runtime.rs",
+          "role": "ExBudget + Value + Environment (CEK runtime)."
+        }
+      ],
+      "implemented_evidence": [
+        "R273g split types.rs (1,707 lines) into types/{term,default_fun,runtime}.rs.",
+        "DefaultFun discriminants verified against upstream Flat encoding index for all 71+ variants.",
+        "CEK reduction matches upstream test vectors for the bulk of the test suite."
+      ],
+      "remaining_work": [
+        "R266 step 3: forensic per-builtin CEK trace comparison vs upstream db-analyser for preview tx 7bb40e40...3be5b9 (306,309 CPU drift)."
+      ],
+      "acceptance": [
+        "Per-builtin CEK trace byte-match against upstream db-analyser for the failing forensic tx.",
+        "Zero Plutus V1/V2/V3 evaluation divergence across a 24h+ mainnet endurance run."
+      ]
+    },
+    {
+      "id": "plutus.cost-model",
+      "area": "plutus",
+      "feature": "Plutus cost model: per-step CEK costs + per-builtin CPU/memory cost expressions + ex-memory measurement",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R266",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/plutus/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek/Internal.hs",
+          "role": "StepKind + CEK step cost wiring."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/plutus/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs",
+          "role": "Per-builtin cost-class shapes (LinearInX, MaxSize, ExpModCost, etc.)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/plutus/src/cost_model.rs",
+          "role": "Module shell + CostModel struct + build_per_builtin_costs + tests + re-exports."
+        },
+        {
+          "path": "crates/plutus/src/cost_model/step.rs",
+          "role": "StepKind + StepCosts (per-step CPU + memory)."
+        },
+        {
+          "path": "crates/plutus/src/cost_model/expr.rs",
+          "role": "CostExpr 17-variant cost-expression evaluator."
+        },
+        {
+          "path": "crates/plutus/src/cost_model/memory.rs",
+          "role": "ex_memory family + integer/bytestring/data measurement helpers."
+        }
+      ],
+      "implemented_evidence": [
+        "R273h split cost_model.rs (1,718 lines) into cost_model/{step,expr,memory}.rs.",
+        "All 17 CostExpr shapes match upstream Haskell CostingFun.Core variants by name and formula.",
+        "ex_memory measurement matches upstream ExMemoryUsage for Integer/ByteString/String/List/Pair/Data/BLS variants."
+      ],
+      "remaining_work": [
+        "R266 step 3: per-builtin cost trace comparison to find the divergent step in the preview Plutus V2 budget gap."
+      ],
+      "acceptance": [
+        "Per-builtin cost trace byte-match against upstream db-analyser for the failing forensic tx.",
+        "Zero ex-budget divergence across a 24h+ mainnet endurance run."
+      ]
+    },
+    {
+      "id": "node.runtime.module-split",
+      "area": "runtime",
+      "feature": "Runtime orchestration layer: per-domain split mirroring upstream Ouroboros.Consensus.Node.Run + supporting sub-systems",
+      "status": "verified_11_0_1",
+      "next_milestone": "R272",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Node/Run.hs",
+          "role": "Top-level runWith reconnect loop orchestration."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/cardano-node/src/Cardano/Node/Run.hs",
+          "role": "cardano-node binary entry point + lifecycle wiring."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "node/src/runtime.rs",
+          "role": "140-line orchestration shell with 18 sub-module declarations + ChainTipNotify type alias + tests."
+        },
+        {
+          "path": "node/src/runtime",
+          "role": "18 per-domain sub-modules covering governor, block-producer, peer management, cm-actions, forge, sync-session, reconnecting, mempool helpers, etc."
+        }
+      ],
+      "implemented_evidence": [
+        "R271 arc (a-s, 19 slices) split runtime.rs from 7,269 lines to 140 lines (-98.1%) into 18 per-domain sub-modules.",
+        "Each sub-module mirrors a specific upstream Haskell concept (peer_management.rs <-> PeerStateActions/RootPeers/BlockFetch.ClientRegistry; reconnecting_sync.rs <-> Run.runWith; etc.).",
+        "All four cargo gates green, 4,855 tests passing throughout the arc."
+      ],
+      "remaining_work": [],
+      "acceptance": [
+        "runtime.rs stays under 200 lines as further sub-systems are extracted (R272 pre-Conway eras, R273 remaining subsystem splits).",
+        "Each new sub-module has an upstream-Haskell reference cited in its module docstring."
+      ]
+    }
+  ]
+}

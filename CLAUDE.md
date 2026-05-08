@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-Pure-Rust port of `cardano-node` targeting **100% protocol parity** **100% nameing parity** **100% functionality parity** and **100% filename parity** with the Haskell reference (IntersectMBO 10.7.1). Byte-for-byte equivalence is mandatory at every observable boundary — CBOR, hashes, signatures, network framing, leader-check arithmetic. Internals are negotiable; *wire formats are not*.
+Pure-Rust port of `cardano-node` targeting **100% protocol parity**, **100% naming parity**, **100% functionality parity**, and **100% filename parity** with the Haskell reference. The reference is **always the latest IntersectMBO/cardano-node release tag** — currently `11.0.1`; bump in lockstep across `docs/parity-matrix.json`, `scripts/check-parity-matrix.py`, `scripts/setup-reference.sh` (`CARDANO_NODE_VERSION`), and prose mentions in `AGENTS.md` and this file. The locally-vendored install at `.reference-haskell-cardano-node/install/` may lag the policy tag; run `bash scripts/setup-reference.sh --force` to bring it up. Byte-for-byte equivalence is mandatory at every observable boundary — CBOR, hashes, signatures, network framing, leader-check arithmetic. Internals are negotiable; *wire formats are not*.
 
 ## Project
 
@@ -52,7 +52,7 @@ A full Haskell `cardano-node` checkout (with all dependency repos AND a working 
 | `.reference-haskell-cardano-node/install/run/<network>/socket/` | NtC socket of the running Haskell node |
 | `.reference-haskell-cardano-node/install/run/<network>/log/` | the Haskell node's log output |
 | `.reference-haskell-cardano-node/install/run-node.sh` | startup script wired to `share/<network>/` |
-| `.reference-haskell-cardano-node/install/cardano-node-10.7.1-sha256sums.txt` | binary-bundle checksum manifest (current pinned version) |
+| `.reference-haskell-cardano-node/install/cardano-node-<VERSION>-sha256sums.txt` | binary-bundle checksum manifest for the locally-vendored install (may lag the policy tag tracked in `docs/parity-matrix.json`) |
 
 The vendored checkout is gitignored and authoritative for upstream Haskell module references. When reading or grepping upstream code, use these paths so the agent operates on a stable, locally-versioned tree rather than HEAD-of-master at GitHub. The compiled binaries under `install/bin/` are the canonical reference for running a Haskell node in parallel during a parity rehearsal — see `node/scripts/parallel_blockfetch_soak.sh` and `node/scripts/compare_tip_to_haskell.sh` for harnesses that wire to them. **Do not edit anything under `.reference-haskell-cardano-node/`.**
 
@@ -77,7 +77,7 @@ Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept cu
 | [docs/AGENTS.md](docs/AGENTS.md) | Architecture/dependency/spec/contributing docs policy |
 | [specs/AGENTS.md](specs/AGENTS.md) | Pinned CDDL fixtures and provenance |
 | [specs/upstream-test-vectors/AGENTS.md](specs/upstream-test-vectors/AGENTS.md) | Vendored upstream vectors (must not be hand-edited) |
-| [.claude/AGENTS.md](.claude/AGENTS.md) | Claude Code harness config: session-start hook, permissions, Stop hook |
+| [.claude/AGENTS.md](.claude/AGENTS.md) | Claude Code harness config: session-start hook, permissions, Stop hook, subagents, skills, filetree, slash commands |
 
 ## Commands
 
@@ -91,6 +91,22 @@ cargo lint                                   # cargo clippy --workspace --all-ta
 ```
 
 All four are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
+
+Parity-flow gates (run when the touched area is in scope):
+
+```bash
+python3 scripts/check-parity-matrix.py            # validates docs/parity-matrix.json schema + on-disk paths
+python3 .claude/scripts/filetree.py check         # reports stale .claude/filetree/manifest.json entries
+bash    scripts/setup-reference.sh                # refresh .reference-haskell-cardano-node/ to the policy tag
+```
+
+Parity-flow surfaces:
+
+- [`docs/parity-matrix.json`](docs/parity-matrix.json) — Rust ↔ Haskell parity inventory (validated by `scripts/check-parity-matrix.py`; reference tag tracked at `reference.tag`, currently `11.0.1`).
+- [`.claude/agents/haskell-reference-auditor.md`](.claude/agents/haskell-reference-auditor.md) — read-heavy parity-comparison subagent; delegate to it before claiming parity.
+- [`.claude/agents/filetree-reviewer.md`](.claude/agents/filetree-reviewer.md) — filetree-description maintainer subagent.
+- [`.claude/skills/cardano-filetree-maintainer/SKILL.md`](.claude/skills/cardano-filetree-maintainer/SKILL.md) — invoke for filetree maintenance.
+- Slash commands: `/parity-check`, `/filetree-check`, `/parity-plan <feature>`.
 
 ### Codespace setup (Claude Code on the web)
 

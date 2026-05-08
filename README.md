@@ -112,15 +112,41 @@ The workspace is a strict bottom-up dependency stack — see [crates/AGENTS.md](
 
 ## Verification
 
-The required gates before declaring work done are the same three workflow CI runs:
+The required gates before declaring work done are the four workflow CI runs:
 
 ```bash
-cargo check-all   # cargo check --workspace --all-targets
-cargo test-all    # cargo test --workspace --all-features
-cargo lint        # cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check   # rustfmt gate
+cargo check-all              # cargo check --workspace --all-targets
+cargo lint                   # cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test-all               # cargo test --workspace --all-features
 ```
 
-All three must pass. The release build also runs `cargo doc --workspace --no-deps`. Aliases live in [.cargo/config.toml](.cargo/config.toml); CI lives in [.github/workflows/ci.yml](.github/workflows/ci.yml).
+All four must pass. The release build also runs `cargo doc --workspace --no-deps`. Aliases live in [.cargo/config.toml](.cargo/config.toml); CI lives in [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+### Parity-flow gates
+
+Yggdrasil tracks the **latest IntersectMBO/cardano-node release tag** as the parity target (currently `11.0.1`). Three additional gates surface parity-risk early:
+
+```bash
+python3 scripts/check-parity-matrix.py   # validates docs/parity-matrix.json
+python3 .claude/scripts/filetree.py check # flags stale .claude/filetree manifest entries
+bash    scripts/setup-reference.sh        # refresh .reference-haskell-cardano-node/ to policy tag
+```
+
+Run `check-parity-matrix.py` whenever `docs/parity-matrix.json` changes or upstream paths move between releases. Run `filetree.py check` after filename-mirror restructures (R271-style runtime split, R273-style subsystem split). Run `setup-reference.sh` to upgrade the local Haskell tree when upstream ships a new release.
+
+### Claude Code workflow
+
+Slash commands wired in [.claude/commands/](.claude/commands/):
+
+- `/four-gates` — runs the four cargo gates and reports outcomes.
+- `/parity-check` — runs the parity-matrix validator.
+- `/filetree-check` — runs the filetree staleness check.
+- `/parity-plan <feature>` — authors a parity plan before substantive code edits.
+- `/round-doc <round-id> <slug>` — authors `docs/operational-runs/YYYY-MM-DD-round-NNN-<slug>.md` for the just-completed R-arc round.
+- `/setup-reference` — refresh the pinned IntersectMBO/cardano-node reference.
+
+Sub-agents and skills under [.claude/agents/](.claude/agents/) + [.claude/skills/](.claude/skills/) encode the R-arc patterns confirmed across R271 (runtime split: 7,269 → 140 lines) and R273 (consensus + plutus subsystem splits).
 
 For fast preview-network block-producer rehearsal, the ignored harness bundle can generate upstream `cardano-cli` credentials, a funding wallet, registration certificates, configs, and bounded relay/producer smoke runs:
 

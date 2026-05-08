@@ -105,12 +105,34 @@
 - Cryptographic, protocol, and serialization parity with the official node is a non-negotiable long-term target even when an implementation slice is still incomplete.
 - When you do not know how to proceed after researching the official node and upstream IntersectMBO repositories, you may review [Amaru Rust node github repo](https://github.com/pragma-org/amaru/) and [Dolos Data-node github repo](https://github.com/txpipe/dolos/) for examples of how other Rust Cardano projects have approached similar problems, but do not treat them as authoritative sources for design or behavior decisions.
 - Refer to and update `docs/ARCHITECTURE.md`, `docs/DEPENDENCIES.md`, `docs/SPECS.md`, `docs/CONTRIBUTING.md`, `docs/UPSTREAM_RESEARCH.md`, `docs/UPSTREAM_PARITY.md`, `docs/PARITY_SUMMARY.md`, `docs/PARITY_PROOF.md`, `docs/PARITY_PLAN.md`, and `docs/MANUAL_TEST_RUNBOOK.md` for project details and keep `./README.md` updated.
+- The reference parity target is **always the latest IntersectMBO/cardano-node release tag** (currently `11.0.1`). When upstream ships a new tag, bump in lockstep across `scripts/setup-reference.sh` (`CARDANO_NODE_VERSION`), `scripts/check-parity-matrix.py` (`REFERENCE_TAG` + `ALLOWED_STATUS`), `docs/parity-matrix.json` (`reference.tag` + every `haskell_reference.path`), and prose mentions in `CLAUDE.md` / this file. Pinning to a stale tag silently invalidates parity claims.
 
 
 ## Verification Expectations
+
+Cargo gates (every round MUST pass all four before declaring work done):
+
+- `cargo fmt --all -- --check`
 - `cargo check-all`
-- `cargo test-all`
 - `cargo lint`
+- `cargo test-all`
+
+Parity-flow gates (run when the touched area is in scope):
+
+- `python3 scripts/check-parity-matrix.py` — validates `docs/parity-matrix.json` schema + every `haskell_reference.path` and `rust_surface.path` exists on disk. Required when matrix entries, status, or paths change.
+- `python3 .claude/scripts/filetree.py check` — flags stale `.claude/filetree/manifest.json` description entries. Required when filename-mirror restructures (R271-style) move tracked files.
+- `bash scripts/setup-reference.sh [--force]` — refreshes `.reference-haskell-cardano-node/` to the policy IntersectMBO tag. Required when the tag bumps or the local checkout drifts.
+
+Parity-flow surfaces:
+
+- [`docs/parity-matrix.json`](docs/parity-matrix.json) — Rust ↔ Haskell parity inventory; `reference.tag` tracks the latest IntersectMBO/cardano-node release.
+- [`.claude/agents/haskell-reference-auditor.md`](.claude/agents/haskell-reference-auditor.md) — read-heavy parity-comparison subagent; delegate before claiming parity, before recommending implementation, or when a fix needs upstream evidence cited.
+- [`.claude/agents/round-extractor.md`](.claude/agents/round-extractor.md) — filename-mirror extraction specialist for one R-arc round.
+- [`.claude/skills/round-extraction/SKILL.md`](.claude/skills/round-extraction/SKILL.md), [`.claude/skills/parity-plan/SKILL.md`](.claude/skills/parity-plan/SKILL.md), [`.claude/skills/continuous-agent-loop/SKILL.md`](.claude/skills/continuous-agent-loop/SKILL.md) — encoded recipes from R271/R273 arcs.
+- Slash commands: `/four-gates`, `/parity-check`, `/filetree-check`, `/parity-plan <feature>`, `/round-doc <round-id> <slug>`, `/setup-reference`.
+
+Codespace bootstrap:
+
 - Claude Code on the web: [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) (registered in [`.claude/settings.json`](.claude/settings.json)) provisions the pinned 1.95.0 toolchain and pre-fetches workspace dependencies before the agent starts. Gated on `$CLAUDE_CODE_REMOTE`; local sessions run unchanged.
 
 ## Current Phase
