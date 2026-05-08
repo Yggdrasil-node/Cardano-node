@@ -7,6 +7,13 @@
 //! Single public type: `SharedTxState`.
 //!
 //! Extracted from `mempool/tx_state.rs` in R273e (Phase γ §R273 fifth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. The Arc<RwLock<TxState>> wrapper exists
+//! only in Yggdrasil's runtime model — upstream's `State.hs` embeds
+//! STM-wrapped state directly. Yggdrasil isolates the wrapper for
+//! clarity.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};

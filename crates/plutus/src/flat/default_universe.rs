@@ -13,6 +13,12 @@
 //!   universe-tag list and produces a `Type`.
 //!
 //! Extracted from `flat.rs` in R273i (Phase γ §R273 ninth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `PlutusCore.Default.Universe.hs` (upstream's
+//! Flat universe-tag instance). File renamed `universe.rs` →
+//! `default_universe.rs` in R273-rename to match upstream filename.
 
 use crate::error::MachineError;
 use crate::types::Type;

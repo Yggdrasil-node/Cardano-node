@@ -5,7 +5,7 @@
 // regardless of where the source file physically lives.
 
 use super::*;
-use crate::cost_model::memory::data_ex_memory;
+use crate::cost_model::ex_memory_usage::data_ex_memory;
 use num_bigint::BigInt;
 
 // ── CostModelError Display-content tests ───────────────────────────

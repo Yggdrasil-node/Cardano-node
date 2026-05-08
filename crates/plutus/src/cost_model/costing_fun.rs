@@ -11,6 +11,13 @@
 //!   per-builtin argument sizes to produce CPU or memory cost.
 //!
 //! Extracted from `cost_model.rs` in R273h (Phase γ §R273 eighth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `PlutusCore.Evaluation.Machine.CostingFun.Core.hs`
+//! (upstream's per-builtin cost-function shapes). File renamed
+//! `expr.rs` → `costing_fun.rs` in R273-rename to match the upstream
+//! leaf filename `CostingFun/Core.hs`.
 
 /// A single-dimension cost expression (CPU or memory) for a builtin.
 ///

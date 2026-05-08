@@ -36,6 +36,36 @@ Mirror the upstream layout. **Do not invent new sub-module names** —
 match upstream's discrimination (e.g. `Praos.hs` + `Praos/VRF.hs` +
 `Praos/Common.hs` → `praos.rs` + `praos/{vrf,common}.rs`).
 
+**Filename-mirror rules (ironclad — R273-rename lesson):**
+
+- Sub-module file names MUST be the snake_case form of the upstream
+  Haskell **leaf filename** (the `.hs` basename), not a Yggdrasil-
+  invented descriptor. `OCert.hs` → `ocert.rs` (NOT `cert.rs`);
+  `Builtins.hs` → `default_builtins.rs` when the parent dir is
+  `Default/` (NOT `default_fun.rs` or `builtins.rs`); `Internal.hs` →
+  `cek_internal.rs` when the parent dir is `Cek/` (NOT `runtime.rs`).
+- When two upstream `.hs` files would collapse to the same Rust filename
+  (e.g. sibling `OCert.hs` + `Rules/OCert.hs`), prefix with the parent
+  directory: `ocert.rs` + `rules_ocert.rs`. Do NOT pick a synonym; the
+  prefix preserves traceability.
+- If upstream truly has no separate file (e.g. the helper lives inside
+  a kitchen-sink `BaseTypes.hs` or `Cek/Internal.hs`) and you still
+  want a focused Rust sub-module, that is allowed BUT: the new file's
+  module docstring MUST include a `## Naming parity` section stating
+  `**Strict mirror:** none.` plus the upstream file/symbol the helper
+  surfaces. Future readers and the parity drift-guard need this
+  honesty signal.
+- Two upstream files genuinely combined into one Rust file (e.g.
+  `Updn.hs` + `Tickn.hs` → `evolution.rs`) similarly requires a
+  `## Naming parity` block listing both upstream files and the reason
+  for the merge. Prefer splitting unless the merge avoids non-trivial
+  duplication of shared state.
+
+**Pre-flight check before authoring any sub-module:** for every
+intended new filename, run `find .reference-haskell-cardano-node
+-name "<PascalCase>.hs"` and confirm the result. If no match, the
+file needs the parity-caveat docstring above.
+
 ### 3. Plan the slice ranges
 
 Read item boundaries with `Read offset=...`. Identify:
@@ -168,6 +198,11 @@ Co-Authored-By: ...
   the naming-parity sweep (R268), a separate arc.
 - Do NOT skip the operational-runs doc; it is the public evidence the
   round shipped cleanly.
+- Do NOT invent sub-module filenames that have no upstream `.hs`
+  counterpart unless the file's module docstring carries an explicit
+  `## Naming parity` block stating `**Strict mirror:** none.` and
+  naming the upstream symbol/file the helper surfaces. (R273-rename
+  lesson — applies to every sub-module created by an R-arc round.)
 
 ## Stop conditions
 

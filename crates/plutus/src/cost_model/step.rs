@@ -11,6 +11,13 @@
 //! - `StepCosts` — per-step CPU + memory charges, indexed by `StepKind`.
 //!
 //! Extracted from `cost_model.rs` in R273h (Phase γ §R273 eighth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. `StepKind` and `StepCosts` live inside
+//! upstream's kitchen-sink `Cek/Internal.hs` rather than a separate
+//! file. This Yggdrasil-side file isolates the per-step cost wiring
+//! for cohesion.
 
 use crate::types::ExBudget;
 

@@ -11,6 +11,12 @@
 //!   certificate's validity window.
 //!
 //! Extracted from `opcert.rs` in R273c (Phase γ §R273 third slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `Cardano.Protocol.TPraos.OCert.hs` (upstream's
+//! OCert struct + KES period helpers). File renamed `cert.rs` →
+//! `ocert.rs` in R273-rename to match upstream leaf filename.
 
 use yggdrasil_crypto::ed25519::{Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::SumKesVerificationKey;

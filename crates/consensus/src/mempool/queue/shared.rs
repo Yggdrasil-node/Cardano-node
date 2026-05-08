@@ -12,6 +12,13 @@
 //!   mempool snapshot has changed.
 //!
 //! Extracted from `mempool/queue.rs` in R273d (Phase γ §R273 fourth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. The Arc<RwLock<Mempool>> wrapper exists
+//! only in Yggdrasil's runtime model — upstream uses STM `TVar` and
+//! embeds the wrapping in `Mempool.hs` directly. This Yggdrasil-side
+//! file isolates the concurrency wrapper for clarity.
 
 use std::sync::{Arc, RwLock};
 

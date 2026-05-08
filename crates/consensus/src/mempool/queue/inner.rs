@@ -10,6 +10,14 @@
 //!   the highest-fee transaction first.
 //!
 //! Extracted from `mempool/queue.rs` in R273d (Phase γ §R273 fourth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. The `Mempool` struct and its Impl/Common +
+//! Impl/Update logic live across `Mempool/Impl/Common.hs` and
+//! `Mempool/Impl/Update.hs` upstream. This Yggdrasil-side file
+//! aggregates them under one name. Splitting along upstream's
+//! two-file boundary is deferred to R268.
 
 use std::collections::{HashMap, HashSet};
 

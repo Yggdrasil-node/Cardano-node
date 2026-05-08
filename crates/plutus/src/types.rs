@@ -11,13 +11,13 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core>
 
-pub mod default_fun;
-pub mod runtime;
-pub mod term;
+pub mod cek_internal;
+pub mod core_type;
+pub mod default_builtins;
 
-pub use default_fun::DefaultFun;
-pub use runtime::{Environment, ExBudget, Value};
-pub use term::{Constant, Program, Term, Type};
+pub use cek_internal::{Environment, ExBudget, Value};
+pub use core_type::{Constant, Program, Term, Type};
+pub use default_builtins::DefaultFun;
 
 // ===========================================================================
 // Tests

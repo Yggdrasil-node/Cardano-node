@@ -18,6 +18,13 @@
 //! Plus the `SizeInBytes` alias used throughout the inbound bookkeeping.
 //!
 //! Extracted from `mempool/tx_state.rs` in R273e (Phase γ §R273 fifth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** `Ouroboros.Network.TxSubmission.Inbound.V2.State.hs`
+//! (combines `PeerTxState` and `SharedTxState` upstream). This file
+//! holds the data + global state machine; the concurrent wrapper is in
+//! the sibling `shared.rs`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;

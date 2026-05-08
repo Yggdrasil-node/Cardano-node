@@ -18,6 +18,16 @@
 //! `updateChainDepState`.
 //!
 //! Extracted from `nonce.rs` in R273b (Phase γ §R273 second slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Combines the UPDN per-block update rule
+//! from `Cardano.Protocol.TPraos.Rules.Updn.hs` and the TICKN epoch-
+//! boundary rule from `Cardano.Protocol.TPraos.Rules.Tickn.hs` into a
+//! single Yggdrasil-side file because both rules mutate the same
+//! `NonceEvolutionState`. Splitting along upstream's two-file boundary
+//! is deferred to R268 (naming-parity sweep) where the full TPraos
+//! rules tree is restructured.
 
 use yggdrasil_ledger::{EpochNo, HeaderHash, Nonce, SlotNo};
 

@@ -11,6 +11,14 @@
 //! - `derive_vrf_nonce` — era-aware dispatcher.
 //!
 //! Extracted from `nonce.rs` in R273b (Phase γ §R273 second slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. The `hashVerifiedVRF` helper that this file
+//! wraps lives inside `Cardano.Ledger.BaseTypes` (one of upstream's
+//! kitchen-sink modules); there is no `Derivation.hs` upstream. This
+//! file is a Yggdrasil-side aggregation that surfaces the upstream
+//! helpers under a focused name.
 
 use yggdrasil_crypto::hash_bytes_256;
 use yggdrasil_ledger::Nonce;

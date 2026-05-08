@@ -10,6 +10,14 @@
 //!   `decode_term` loop.
 //!
 //! Extracted from `flat.rs` in R273i (Phase γ §R273 ninth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `UntypedPlutusCore.Core.Instance.Flat.hs`
+//! (upstream's Term/Program Flat decoder instance). File renamed
+//! `decoder.rs` → `instance_flat.rs` in R273-rename to match
+//! upstream's `Core/Instance/Flat.hs` (flattened with directory
+//! prefix).
 
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
@@ -19,7 +27,7 @@ use yggdrasil_ledger::plutus::PlutusData;
 use crate::error::MachineError;
 use crate::types::{Constant, DefaultFun, Program, Term, Type};
 
-use super::universe::{DecodedUni, TypeTagParser};
+use super::default_universe::{DecodedUni, TypeTagParser};
 use super::{MAX_TERM_DECODE_DEPTH, MAX_TYPE_DECODE_DEPTH};
 
 /// Work-stack frame for the iterative `decode_term` loop.

@@ -28,10 +28,10 @@ use yggdrasil_ledger::cbor::Decoder;
 use crate::error::MachineError;
 use crate::types::{Program, Term};
 
-pub mod decoder;
-pub mod universe;
+pub mod default_universe;
+pub mod instance_flat;
 
-use decoder::FlatDecoder;
+use instance_flat::FlatDecoder;
 
 /// Maximum nesting depth permitted when decoding a UPLC `Term` or its
 /// constituent `Type` / `Constant` values from Flat-encoded bytes.

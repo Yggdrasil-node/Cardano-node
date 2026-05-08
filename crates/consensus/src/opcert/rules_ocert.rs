@@ -14,6 +14,14 @@
 //!   aware counter validation.
 //!
 //! Extracted from `opcert.rs` in R273c (Phase γ §R273 third slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `Cardano.Protocol.TPraos.Rules.OCert.hs`
+//! (upstream's OCERT counter rule). File renamed `counter.rs` →
+//! `rules_ocert.rs` in R273-rename to match upstream's `Rules/OCert.hs`
+//! path (flattened with directory prefix to disambiguate from
+//! sibling `ocert.rs`).
 
 use std::collections::BTreeMap;
 

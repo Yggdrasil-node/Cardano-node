@@ -14,6 +14,12 @@
 //!   helper accessors used by the CEK machine when applying builtins.
 //!
 //! Extracted from `types.rs` in R273g (Phase γ §R273 seventh slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `PlutusCore.Default.Builtins.hs` (upstream's
+//! `DefaultFun` enum). File renamed `default_fun.rs` →
+//! `default_builtins.rs` in R273-rename to match upstream filename.
 
 use crate::error::MachineError;
 

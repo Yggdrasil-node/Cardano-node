@@ -14,11 +14,18 @@
 //!   Unit, Bool, ProtoList, ProtoPair, Data, Bls12_381*).
 //!
 //! Extracted from `types.rs` in R273g (Phase γ §R273 seventh slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `UntypedPlutusCore.Core.Type.hs` (upstream's
+//! Term, Program, Type, Constant types). File renamed `term.rs` →
+//! `core_type.rs` in R273-rename to match upstream leaf filename
+//! (`Core/Type.hs` flattened with directory prefix).
 
 use num_bigint::BigInt;
 use yggdrasil_ledger::plutus::PlutusData;
 
-use super::default_fun::DefaultFun;
+use super::default_builtins::DefaultFun;
 
 // ---------------------------------------------------------------------------
 // Program

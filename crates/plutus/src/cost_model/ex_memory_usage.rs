@@ -16,6 +16,13 @@
 //!   computation in the parent module.
 //!
 //! Extracted from `cost_model.rs` in R273h (Phase γ §R273 eighth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `PlutusCore.Evaluation.Machine.ExMemoryUsage.hs`
+//! (upstream's `ExMemoryUsage` type class + helpers). File renamed
+//! `memory.rs` → `ex_memory_usage.rs` in R273-rename to match
+//! upstream filename.
 
 use num_bigint::BigInt;
 

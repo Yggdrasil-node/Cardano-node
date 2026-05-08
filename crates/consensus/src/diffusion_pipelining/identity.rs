@@ -15,6 +15,11 @@
 //!
 //! Extracted from `diffusion_pipelining.rs` in R273f (Phase γ §R273
 //! sixth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** `Ouroboros.Consensus.Shelley.Node.DiffusionPipelining.hs`
+//! (`HotIdentity` + per-pool tentative-header tracking).
 
 use std::collections::BTreeSet;
 

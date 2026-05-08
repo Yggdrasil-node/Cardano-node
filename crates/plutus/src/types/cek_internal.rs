@@ -15,13 +15,21 @@
 //! - `EnvNode` (private) — internal cons-cell linking `Environment` chains.
 //!
 //! Extracted from `types.rs` in R273g (Phase γ §R273 seventh slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** `UntypedPlutusCore.Evaluation.Machine.Cek.Internal.hs`
+//! (upstream's `Value`, `Env`, plus `StepKind` and CEK runtime
+//! internals). File renamed `runtime.rs` → `cek_internal.rs` in
+//! R273-rename to match upstream filename (`Cek/Internal.hs`
+//! flattened with directory prefix).
 
 use std::sync::Arc;
 
 use crate::error::MachineError;
 
-use super::default_fun::DefaultFun;
-use super::term::{Constant, Term};
+use super::core_type::{Constant, Term};
+use super::default_builtins::DefaultFun;
 
 // ---------------------------------------------------------------------------
 // ExBudget

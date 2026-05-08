@@ -33,12 +33,12 @@ use thiserror::Error;
 
 use crate::types::{DefaultFun, ExBudget, Value};
 
-pub mod expr;
-pub mod memory;
+pub mod costing_fun;
+pub mod ex_memory_usage;
 pub mod step;
 
-pub use expr::CostExpr;
-pub use memory::{bytestring_ex_memory, ex_memory, integer_ex_memory};
+pub use costing_fun::CostExpr;
+pub use ex_memory_usage::{bytestring_ex_memory, ex_memory, integer_ex_memory};
 pub use step::{StepCosts, StepKind};
 
 /// Errors arising while building or applying a `CostModel`.

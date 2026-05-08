@@ -16,11 +16,11 @@
 //! `Cardano.Protocol.TPraos.Rules.OCert` (TPraos counter rule) +
 //! `Ouroboros.Consensus.Protocol.Praos` (Praos counter rule).
 
-pub mod cert;
-pub mod counter;
+pub mod ocert;
+pub mod rules_ocert;
 
-pub use cert::{OpCert, check_kes_period, kes_period_of_slot};
-pub use counter::{OcertCounterRule, OcertCounters};
+pub use ocert::{OpCert, check_kes_period, kes_period_of_slot};
+pub use rules_ocert::{OcertCounterRule, OcertCounters};
 
 #[cfg(test)]
 mod tests {

@@ -20,6 +20,13 @@
 //!
 //! Extracted from `diffusion_pipelining.rs` in R273f (Phase γ §R273
 //! sixth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** `Ouroboros.Consensus.Block.SupportsDiffusionPipelining.hs`
+//! (`DiffusionPipeliningSupport` flag) + `Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining.hs`
+//! (per-peer state). Two upstream files combined here under the more
+//! general `state.rs` name.
 
 use yggdrasil_ledger::BlockNo;
 
