@@ -96,6 +96,8 @@ Parity-flow gates (run when the touched area is in scope):
 
 ```bash
 python3 scripts/check-parity-matrix.py            # validates docs/parity-matrix.json schema + on-disk paths
+python3 scripts/check-strict-mirror.py            # strict 1:1 file-mirror drift-guard (warn-only R275; fail-build R288)
+python3 scripts/audit-strict-mirror.py            # rebuild docs/strict-mirror-audit.tsv after Phase B graduates rows
 python3 .claude/scripts/filetree.py check         # reports stale .claude/filetree/manifest.json entries
 bash    scripts/setup-reference.sh                # refresh .reference-haskell-cardano-node/ to the policy tag
 ```
@@ -103,6 +105,9 @@ bash    scripts/setup-reference.sh                # refresh .reference-haskell-c
 Parity-flow surfaces:
 
 - [`docs/parity-matrix.json`](docs/parity-matrix.json) — Rust ↔ Haskell parity inventory (validated by `scripts/check-parity-matrix.py`; reference tag tracked at `reference.tag`, currently `11.0.1`).
+- [`docs/strict-mirror-audit.tsv`](docs/strict-mirror-audit.tsv) — per-file strict 1:1 verdict table (a/c verified, c-needed scheduled, NEEDS-REVIEW pending hand-grade). The CI drift-guard reads this as its allowlist.
+- [`docs/upstream-haskell-files.txt`](docs/upstream-haskell-files.txt) — flat-file index of every `.hs` under the vendored upstream tree, rebuilt by `scripts/setup-reference.sh`.
+- [`.claude/skills/round-extraction/SKILL.md`](.claude/skills/round-extraction/SKILL.md) — authoring-time strict-mirror skill; CI drift-guard is its runtime counterpart. Every new sub-module file MUST have either a strict upstream `.hs` mirror OR a `## Naming parity` docstring stanza ending with `**Strict mirror:** none.` plus the upstream symbols/files surfaced.
 - [`.claude/agents/haskell-reference-auditor.md`](.claude/agents/haskell-reference-auditor.md) — read-heavy parity-comparison subagent; delegate to it before claiming parity.
 - [`.claude/agents/filetree-reviewer.md`](.claude/agents/filetree-reviewer.md) — filetree-description maintainer subagent.
 - [`.claude/skills/cardano-filetree-maintainer/SKILL.md`](.claude/skills/cardano-filetree-maintainer/SKILL.md) — invoke for filetree maintenance.

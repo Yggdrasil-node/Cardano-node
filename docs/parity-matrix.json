@@ -140,17 +140,17 @@
           "role": "Module shell + tests + 5-item re-export (OpCert, OcertCounters, OcertCounterRule, kes_period_of_slot, check_kes_period)."
         },
         {
-          "path": "crates/consensus/src/opcert/cert.rs",
+          "path": "crates/consensus/src/opcert/ocert.rs",
           "role": "OpCert struct + KES period helpers."
         },
         {
-          "path": "crates/consensus/src/opcert/counter.rs",
+          "path": "crates/consensus/src/opcert/rules_ocert.rs",
           "role": "OcertCounters + OcertCounterRule (TPraos vs Praos) + CBOR sidecar."
         }
       ],
       "implemented_evidence": [
         "R273c split opcert.rs (856 lines) into opcert/{cert,counter}.rs.",
-        "OcertCounterRule::for_pv_major selects TPraos for PV<7 and Praos for PV>=7 — Vasil HF fork-point.",
+        "OcertCounterRule::for_pv_major selects TPraos for PV<7 and Praos for PV>=7 \u2014 Vasil HF fork-point.",
         "Counter validation tests cover both rules with regression vectors."
       ],
       "remaining_work": [
@@ -275,15 +275,15 @@
           "role": "Module shell + tests + 8-item re-export."
         },
         {
-          "path": "crates/plutus/src/types/term.rs",
+          "path": "crates/plutus/src/types/core_type.rs",
           "role": "Program, Term, Type, Constant."
         },
         {
-          "path": "crates/plutus/src/types/default_fun.rs",
+          "path": "crates/plutus/src/types/default_builtins.rs",
           "role": "DefaultFun (71+ variants) with #[repr(u8)] discriminants matching Flat encoding index."
         },
         {
-          "path": "crates/plutus/src/types/runtime.rs",
+          "path": "crates/plutus/src/types/cek_internal.rs",
           "role": "ExBudget + Value + Environment (CEK runtime)."
         }
       ],
@@ -326,11 +326,11 @@
           "role": "StepKind + StepCosts (per-step CPU + memory)."
         },
         {
-          "path": "crates/plutus/src/cost_model/expr.rs",
+          "path": "crates/plutus/src/cost_model/costing_fun.rs",
           "role": "CostExpr 17-variant cost-expression evaluator."
         },
         {
-          "path": "crates/plutus/src/cost_model/memory.rs",
+          "path": "crates/plutus/src/cost_model/ex_memory_usage.rs",
           "role": "ex_memory family + integer/bytestring/data measurement helpers."
         }
       ],
