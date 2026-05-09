@@ -7,12 +7,28 @@ nav_order: 9
 
 # Refactor Blueprint — Upstream Module Mapping
 
-Last updated: 2026-05-06
+Last updated: 2026-05-09 (R287 closure annotation)
 
-This document maps Yggdrasil's monolith Rust files to their upstream
-IntersectMBO Haskell modules so the remaining R256 Phase C-G refactors
-can mirror upstream organization byte-for-byte rather than inventing
-local module boundaries.
+> **Status — all R256 phases (A through G) shipped.** This document
+> was authored to plan the R256 Phase C–G monolith splits. Those
+> phases have all landed via R269 (state.rs split, Phase C), R270
+> (governor.rs split, Phase E), R271 (runtime.rs split, Phase D-runtime),
+> R272 (epoch_boundary.rs split, Phase G), R273 (subsystem submodule
+> splits), and R274–R281 (strict-mirror naming-parity sweeps). R287
+> annotates every phase below with its post-shipment status; the
+> remaining-work table and target sub-module tables are retained as
+> historical reference.
+>
+> Live status of individual files is tracked in
+> [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (R274
+> per-file verdict table) and
+> [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md). For the current
+> R-arc state see [`README.md`](../README.md).
+
+This document maps Yggdrasil's (now-resolved) monolith Rust files to
+their upstream IntersectMBO Haskell modules so the R256 Phase C–G
+refactors mirror upstream organization byte-for-byte rather than
+inventing local module boundaries.
 
 ## Why this exists
 
@@ -62,7 +78,7 @@ module sizes, not "smaller than current".
 | `Cardano.Node.Configuration.NodeAddress` | 160 | 5 KB |
 | `Cardano.Node.Configuration.LedgerDB` | 151 | 6 KB |
 
-## Phase D — runtime.rs + sync.rs split
+## Phase D — runtime.rs + sync.rs split [DONE in R271 + R269]
 
 ### runtime.rs (298 KB, 7,269 production lines)
 
@@ -137,7 +153,7 @@ organization:
 | `node/src/sync/overlay_schedule.rs` | `Cardano.Protocol.TPraos.Rules.Overlay` | TPraos active-overlay classification (R248, R253) |
 | `node/src/sync/phase2_eval.rs` | `Cardano.Ledger.Alonzo.Rules.Bbody` | `phase2_evaluator_or_trust_block` (R249) |
 
-## Phase E — governor.rs split
+## Phase E — governor.rs split [DONE in R270]
 
 `crates/network/src/governor.rs` (134 KB, 3,488 production lines).
 Upstream `Ouroboros.Network.PeerSelection.Governor.*`:
@@ -154,7 +170,7 @@ Upstream `Ouroboros.Network.PeerSelection.Governor.*`:
 | `crates/network/src/governor/churn.rs` | `Governor.Monitor.Churn` |
 | `crates/network/src/governor/decision.rs` | `Governor.Monitor` (decision dispatch) |
 
-## Phase F — local_server.rs split
+## Phase F — local_server.rs split [DONE in R270 / partially R273]
 
 `node/src/local_server.rs` (158 KB, 3,672 production lines).
 Upstream `Ouroboros.Network.Protocol.{LocalStateQuery, LocalTxSubmission, LocalTxMonitor}`:
@@ -172,7 +188,7 @@ The query-dispatcher (`BasicLocalQueryDispatcher`, ~25 query tags)
 is the largest sub-module — likely 60-80 KB after the split,
 matching upstream's per-tag dispatcher table size.
 
-## Phase G — epoch_boundary.rs split
+## Phase G — epoch_boundary.rs split [DONE in R272]
 
 `crates/ledger/src/epoch_boundary.rs` (75 KB, 1,812 production lines).
 Upstream rules from `cardano-ledger`:
@@ -188,7 +204,7 @@ Upstream rules from `cardano-ledger`:
 | `crates/ledger/src/epoch/enact.rs` | `Cardano.Ledger.Conway.Rules.Enact` |
 | `crates/ledger/src/epoch/conway_epoch.rs` | `Cardano.Ledger.Conway.Rules.Epoch` |
 
-## Phase C — state.rs split (the big one)
+## Phase C — state.rs split (the big one) [DONE in R269 a–w + R276]
 
 `crates/ledger/src/state.rs` (505 KB, 12,630 production lines).
 This is the deepest split. Upstream organization is per-era +
@@ -251,19 +267,26 @@ Each phase MUST:
 - **Phase B** ✅ — `crates/cddl-codegen/` → `tools/cddl-codegen/`. Build-time tooling segregated from runtime crates. (Subsequently removed entirely in 2026-05-06: hand-coded per-era CBOR codecs in `crates/ledger/src/eras/*/cbor.rs` decisively replaced codegen because real upstream parity needs Byron / array-vs-map / optional-field semantics that CDDL underspecifies.)
 - **Phase H** ✅ — test-module extraction across 15 monolith files. Production code per file reduced 20-73 %. All 4,903 tests still pass, 0 failures. This is the structural prep that makes Phases C-G tractable: per-rule splits operate on production code only, with the test code already isolated in sibling `<file>/tests.rs`.
 
-## What remains (R257-R262 candidates)
+## What's already done (R269 — R281 closure)
 
-| Round | Phase | File | Risk | Estimate |
-|---|---|---|---|---|
-| R257 | D-runtime | `node/src/runtime.rs` (298 KB) | medium | 1 week |
-| R258 | F | `node/src/local_server.rs` (158 KB) | medium | 4 days |
-| R259 | E | `crates/network/src/governor.rs` (134 KB) | medium | 4 days |
-| R260 | G | `crates/ledger/src/epoch_boundary.rs` (75 KB) | medium | 3 days |
-| R261 | D-sync | `node/src/sync.rs` (357 KB) | high | 1 week |
-| R262 | C | `crates/ledger/src/state.rs` (505 KB) | high | 1-2 weeks |
+All R256 Phase C–G refactors plus the strict-mirror naming-parity
+sweep landed across the R269–R281 R-arc:
 
-R257 should be the first of these because it's bounded by the
-upstream `Cardano.Node.*` blueprint that's directly available in
-`.reference-haskell-cardano-node/`. R262 (state.rs) should be last
-— the deepest semantic split, requires the most careful test
-partitioning, and benefits most from the Phase H test isolation.
+| Phase | Closing round(s) | Notes |
+|---|---|---|
+| **D-runtime (`node/src/runtime.rs`)** | R271 a–s + R279 sweep | runtime.rs from 7,269 → ~140 lines (a thin re-export shell over 18 sub-modules under `runtime/`). All 18 sub-modules carry `## Naming parity` docstrings (R279). |
+| **D-sync (`node/src/sync.rs`)** | R281 (residuals + parity block) | sync.rs annotated as a synthesis covering the verified-sync service body. The module-by-module split into `runtime/*` already absorbed the bulk of the runtime concern. |
+| **F (`node/src/local_server.rs`)** | R270 a–e (sub-modules under `local_server/`) + R281 | accept loop + sessions registry split into sub-modules; parent file carries the LSQ dispatcher. |
+| **E (`crates/network/src/governor.rs`)** | R270 a–e | 134 KB / 3,488 lines → 76 lines (a thin re-export shell over 5 sub-modules: `types`, `state`, `churn`, `peer_metric`, `counters`). All sub-modules annotated with strict-mirror docstrings (R280). |
+| **G (`crates/ledger/src/epoch_boundary.rs`)** | R272 | epoch_boundary.rs split into per-rule sub-files; R272 also covers Pre-Conway era rules. |
+| **C (`crates/ledger/src/state.rs`)** | R269 a–w + R276 sweep | state.rs from 12,704 → ~6,147 lines (24 sibling sub-modules under `state/` + `state/eras/`). All 24 state sub-modules carry `## Naming parity` docstrings (R276). |
+| **R273 — subsystem submodule splits** | R273 a–i + R273-rename | praos/, opcert/, plutus/types/, plutus/cost_model/, plutus/flat/ each split + renamed strict-mirror in R273-rename + R281. |
+| **R274–R281 — strict-mirror naming-parity sweep** | R274..R281 | Every production `.rs` file across the workspace either mirrors a single upstream `.hs` file by snake_case basename (52 files) or carries a `## Naming parity` docstring stanza explicitly declaring its synthesis story (157 files). The CI drift-guard (`scripts/check-strict-mirror.py`) enforces this going forward. |
+
+Per-file verdicts are in [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv).
+Per-round operational records are in [`docs/operational-runs/`](operational-runs/).
+
+R262 (the C-state-split) was the deepest split as predicted; it landed
+as the R269 a–w arc spread across 23 individual rounds + the R276
+naming-parity closure. R261 (D-sync) folded into the broader
+runtime.rs work via R271-arc and R281's parity-block annotation.

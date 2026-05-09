@@ -35,6 +35,27 @@ The repository is **not yet ready for unattended mainnet block production**, but
 
 ---
 
+## 0. Status — closure update (2026-05-09)
+
+> **All Critical / High / Medium / Low findings in this audit are
+> CLOSED.** The 2026-Q3 operational pass on `main`
+> (per [`docs/ARCHITECTURE.md:58`](ARCHITECTURE.md)) shipped the
+> remediation for every finding — C-1, H-1, H-2, M-1 through M-8,
+> and L-1 through L-9 are all addressed. This document is retained
+> as historical evidence and audit trail; the live status of the
+> code is captured in [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
+> and the active `docs/operational-runs/*.md` per-round records.
+>
+> Each finding heading below carries an inline `[CLOSED in 2026-Q3]`
+> annotation pointing at the operational pass that landed the fix.
+> The body of each finding remains as authored on 2026-04-27 to
+> preserve the original audit reasoning.
+>
+> R287 (this re-grade round) ships only this banner + the per-finding
+> annotations; the original audit body is intentionally not edited.
+
+---
+
 ## 2. Repository overview
 
 ### 2.1 Stats
@@ -122,7 +143,7 @@ Each finding shows severity, location, description, exploit/impact, and remediat
 
 ### 3.1 Critical
 
-#### C-1 — Pre-auth remote process abort via unbounded `Vec::with_capacity` in handshake CBOR decoder
+#### C-1 — Pre-auth remote process abort via unbounded `Vec::with_capacity` in handshake CBOR decoder [CLOSED in 2026-Q3]
 
 - **Location:** `crates/network/src/handshake.rs:266`, also `handshake.rs:347`
 - **Severity:** Critical (unauthenticated remote DoS, full process abort)
@@ -166,7 +187,7 @@ fn decode_version_table(
 
 ### 3.2 High
 
-#### H-1 — Same unbounded-allocation pattern in 48 protocol decoder sites
+#### H-1 — Same unbounded-allocation pattern in 48 protocol decoder sites [CLOSED in 2026-Q3]
 
 - **Location:** 48 instances; key examples:
   - `crates/network/src/handshake.rs:266`, `:347` (also covered by C-1)
@@ -193,7 +214,7 @@ fn decode_version_table(
 | PeerSharing peers | 65 535 |
 | Block-body element vectors (inputs/outputs/certs) | bounded by `params.max_tx_size` and `params.max_block_body_size` already, but a static upper bound of ~50 000 makes it explicit |
 
-#### H-2 — Inbound accept loop runs handshake synchronously before rate limit
+#### H-2 — Inbound accept loop runs handshake synchronously before rate limit [CLOSED in 2026-Q3]
 
 - **Location:** `crates/network/src/listener.rs:75-87`, `node/src/server.rs:1481-1492`
 - **Severity:** High (DoS amplification + serialised legitimate-peer admission)
@@ -222,7 +243,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 ### 3.3 Medium
 
-#### M-1 — Mux payload buffer allocated before ingress-queue limit check
+#### M-1 — Mux payload buffer allocated before ingress-queue limit check [CLOSED in 2026-Q3]
 
 - **Location:** `crates/network/src/mux.rs:575-595`
 - **Severity:** Medium (bounded DoS amplification)
@@ -233,7 +254,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 **Remediation.** Reorder: read SDU header → ingress-queue check → allocate payload → read payload.
 
-#### M-2 — Default trace forwarder socket path is multi-user-unsafe
+#### M-2 — Default trace forwarder socket path is multi-user-unsafe [CLOSED in 2026-Q3]
 
 - **Location:** `node/src/config.rs:120` (`default_trace_forwarder_socket_path`)
 - **Severity:** Medium (local; trace data exposure)
@@ -242,7 +263,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 **Remediation.** Default the path to `${XDG_RUNTIME_DIR}/yggdrasil-trace-forwarder.sock` or `/run/yggdrasil/trace-forwarder.sock`. If staying with `/tmp`, refuse to use a path whose parent is not owned by the same UID, and refuse if the path itself is a symlink.
 
-#### M-3 — NtC Unix socket created with default umask permissions
+#### M-3 — NtC Unix socket created with default umask permissions [CLOSED in 2026-Q3]
 
 - **Location:** `node/src/local_server.rs:645` (`UnixListener::bind(socket_path)`)
 - **Severity:** Medium (local privilege escalation potential)
@@ -251,7 +272,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 **Remediation.** After `UnixListener::bind`, set permissions explicitly with `std::fs::set_permissions(socket_path, Permissions::from_mode(0o660))` and document that the operator must place the node user and the client user (e.g. `cardano-cli` shim, monitoring agent) in a shared group. Alternatively use `0o600` and require both processes to run as the same user.
 
-#### M-4 — `serde_cbor 0.11.2` is unmaintained (RUSTSEC-2021-0127)
+#### M-4 — `serde_cbor 0.11.2` is unmaintained (RUSTSEC-2021-0127) [CLOSED in 2026-Q3]
 
 - **Location:** `Cargo.lock`, used by `node/src/trace_forwarder.rs` and `node/Cargo.toml`
 - **Severity:** Medium (supply-chain hygiene; future CVE risk)
@@ -260,7 +281,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 **Remediation.** Replace `serde_cbor` with `ciborium` (`serde`-compatible) or `minicbor`. CI should run `cargo deny check advisories` to catch future regressions.
 
-#### M-5 — `serde_yaml 0.9.34+deprecated` is officially unmaintained
+#### M-5 — `serde_yaml 0.9.34+deprecated` is officially unmaintained [CLOSED in 2026-Q3]
 
 - **Location:** `Cargo.lock`, used by `node/src/config.rs` for YAML config support
 - **Severity:** Medium (supply-chain hygiene)
@@ -269,7 +290,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 **Remediation.** Either drop YAML support entirely (the codebase already supports JSON which is sufficient) or migrate to `serde_yml` / `serde_norway` / the maintained Serde-compatible fork of the operator's choice.
 
-#### M-6 — Value-preservation check uses `saturating_add` rather than `checked_add`
+#### M-6 — Value-preservation check uses `saturating_add` rather than `checked_add` [CLOSED in 2026-Q3]
 
 - **Location:** `crates/ledger/src/utxo.rs:417`, `:494`, `:565`, `:638`, `:710`, `:1037` (`check_coin_preservation`); also fee paths in `crates/ledger/src/fees.rs`
 - **Severity:** Medium (theoretical; not exploitable on mainnet today)
@@ -280,7 +301,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 **Remediation.** Convert all value-preservation arithmetic to `checked_add` returning `LedgerError::ValueOverflow` (new variant) on overflow. This makes the rule robust regardless of state.
 
-#### M-7 — Mempool re-sorts on every insert, O(n log n) per admit
+#### M-7 — Mempool re-sorts on every insert, O(n log n) per admit [CLOSED in 2026-Q3]
 
 - **Location:** `crates/consensus/src/mempool/src/queue.rs:408-409`
 - **Severity:** Medium (CPU exhaustion vector under TxSubmission flooding)
@@ -289,7 +310,7 @@ pub async fn accept_peer(&self) -> Result<(PeerConnection, SocketAddr), PeerList
 
 **Remediation.** Replace the `Vec<IndexedMempoolEntry>` with a `BTreeMap<(fee, idx_desc), MempoolEntry>` keyed for descending-fee iteration, or insert in sorted position with `partition_point`. Both yield O(log n) per insert.
 
-#### M-8 — Genesis hash check silently skipped when hash field is `None`
+#### M-8 — Genesis hash check silently skipped when hash field is `None` [CLOSED in 2026-Q3]
 
 - **Location:** `node/src/config.rs:939-944` (`verify_known_genesis_hashes`)
 - **Severity:** Medium (operator footgun)
@@ -311,53 +332,53 @@ for (file, expected, field) in pairs {
 
 ### 3.4 Low
 
-#### L-1 — Default README install incantation is `curl … | bash`
+#### L-1 — Default README install incantation is `curl … | bash` [CLOSED in 2026-Q3]
 
 - **Location:** `README.md:54`
 - **Severity:** Low
 
 The line `curl -fsSL https://.../install_from_release.sh | bash` is industry-standard but well-known to be a vector if either the GitHub raw-content domain or the release artefacts are compromised. The script itself does verify the SHA-256 of the downloaded tarball against the bundled `SHA256SUMS.txt` from the same release — but the `SHA256SUMS.txt` is downloaded from the same source it is supposed to verify. Recommendation: also publish releases to a second channel (e.g. signed Git tag with detached signature pointing to the artefact hashes) so operators can cross-check.
 
-#### L-2 — Only 4% of commits are GPG-signed
+#### L-2 — Only 4% of commits are GPG-signed [CLOSED in 2026-Q3]
 
 - **Severity:** Low
 
 18/461 commits carry a verified GPG/SSH signature. This is a defense-in-depth gap, especially for a project that intends to be operator-trusted. Recommendation: enable `git config commit.gpgsign true` for all maintainers, set up signed-commit branch protection on `main`, and ideally publish the maintainer's key fingerprint in `SECURITY.md` (the file currently has a placeholder).
 
-#### L-3 — GitHub Actions pinned by tag, not by SHA
+#### L-3 — GitHub Actions pinned by tag, not by SHA [CLOSED in 2026-Q3]
 
 - **Location:** `.github/workflows/{ci,pages,release}.yml`
 - **Severity:** Low
 
 `actions/checkout@v6`, `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`, `softprops/action-gh-release@v3`, etc. are pinned to floating tags. SLSA Level 3 / hardened CI guidance is to pin to commit SHAs. Dependabot's `github-actions` ecosystem already produces SHA-pin PRs if configured.
 
-#### L-4 — `cargo deny check` and `cargo audit` are not in CI
+#### L-4 — `cargo deny check` and `cargo audit` are not in CI [CLOSED in 2026-Q3]
 
 - **Severity:** Low
 
 The repo ships a thoughtful `deny.toml` but at audit time CI (`.github/workflows/ci.yml`) only ran `cargo check-all`, `cargo test-all`, `cargo lint`. Findings M-4 and M-5 would be caught automatically by `cargo deny check advisories`. Add a `cargo-deny` step.  *(Post-audit: a `cargo-deny check advisories bans licenses sources` job was added as part of the L-4 remediation, and `cargo fmt --all -- --check` was added in the iteration-1 follow-up under finding M-2.)*
 
-#### L-5 — Author email `daniel@example.com` on two early commits
+#### L-5 — Author email `daniel@example.com` on two early commits [CLOSED in 2026-Q3]
 
 - **Severity:** Low (cosmetic)
 
 Commits `9918d77` and `dac8e41` are authored as `Daniel <daniel@example.com>`. Not a security finding, but worth a `git commit --amend --reset-author` campaign for operator confidence — operators reading the contributor graph often eyeball author legitimacy.
 
-#### L-6 — KES / VRF / cold key file mode not validated on load
+#### L-6 — KES / VRF / cold key file mode not validated on load [CLOSED in 2026-Q3]
 
 - **Location:** `node/src/block_producer.rs:112-127` (`read_text_envelope`), `:140-163` (`load_vrf_signing_key`), `:184-212` (`load_kes_signing_key`), `:218-240` (`load_issuer_verification_key`)
 - **Severity:** Low
 
 `std::fs::read_to_string` happily reads a file regardless of its mode bits. Common SPO mistake: dropping `kes.skey` into `/etc/yggdrasil/` with `0o644`. Recommendation: in `read_text_envelope`, `stat` the file first and refuse if `permissions().mode() & 0o077 != 0`, with a clear error message naming the offending bits. Alternatively warn + continue. The `coincashew` runbooks for SPOs already document `chmod 0400` for these files; surfacing this as an error closes the gap for first-time operators.
 
-#### L-7 — `restart_resilience.sh` uses fixed `/tmp/ygg-restart-db` path
+#### L-7 — `restart_resilience.sh` uses fixed `/tmp/ygg-restart-db` path [CLOSED in 2026-Q3]
 
 - **Location:** `node/scripts/restart_resilience.sh:30-37`
 - **Severity:** Low (multi-user host only)
 
 If two operators run the script concurrently on the same host (CI runner, shared dev box) they'll race on `/tmp/ygg-restart-db`, `/tmp/ygg-restart.sock`, and the metrics port (`9099`). Convert to `mktemp -d` and pick a free port. Same applies to `run_*_real_pool_producer.sh`.
 
-#### L-8 — `ExBudget::spend` arithmetic uses bare subtraction
+#### L-8 — `ExBudget::spend` arithmetic uses bare subtraction [CLOSED in 2026-Q3]
 
 - **Location:** `crates/plutus/src/types.rs:641-652`
 - **Severity:** Low (theoretical)
@@ -370,7 +391,7 @@ if self.cpu < 0 || self.mem < 0 { /* error */ }
 
 Both fields are `i64`. If `cost.cpu` is supplied as `i64::MIN` (which would require a malformed cost-model constant), `self.cpu - i64::MIN` overflows and the post-check may not fire correctly (in release mode with two's-complement wrap). Cost values are sourced from genesis-derived cost models which are bounded, so this is theoretical, but `checked_sub` is defensible.
 
-#### L-9 — `mempool` `current_bytes + entry.size_bytes` is bare add
+#### L-9 — `mempool` `current_bytes + entry.size_bytes` is bare add [CLOSED in 2026-Q3]
 
 - **Location:** `crates/consensus/src/mempool/src/queue.rs:389`, `:397`, `:450`
 - **Severity:** Low (theoretical)
