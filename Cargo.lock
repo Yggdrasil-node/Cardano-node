@@ -1342,6 +1342,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-bech32"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
 name = "yggdrasil-cardano-cli"
 version = "0.2.0"
 dependencies = [
@@ -1350,6 +1358,30 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "yggdrasil-cardano-submit-api"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
+name = "yggdrasil-cardano-testnet"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
+name = "yggdrasil-cardano-tracer"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
 ]
 
 [[package]]
@@ -1383,6 +1415,54 @@ dependencies = [
  "subtle",
  "thiserror",
  "zeroize",
+]
+
+[[package]]
+name = "yggdrasil-db-analyser"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
+name = "yggdrasil-db-synthesizer"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
+name = "yggdrasil-db-truncater"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
+name = "yggdrasil-dmq-node"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
+name = "yggdrasil-kes-agent"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
+name = "yggdrasil-kes-agent-control"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
 ]
 
 [[package]]
@@ -1451,6 +1531,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-snapshot-converter"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+]
+
+[[package]]
 name = "yggdrasil-storage"
 version = "0.2.0"
 dependencies = [
@@ -1460,6 +1548,14 @@ dependencies = [
  "tempfile",
  "thiserror",
  "yggdrasil-ledger",
+]
+
+[[package]]
+name = "yggdrasil-tx-generator"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
 ]
 
 [[package]]
