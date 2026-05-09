@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `kes-agent-control`.
 //!
 //! ## Naming parity
@@ -6,11 +7,23 @@
 //! file-mirror + CLI-parser skeleton for the `kes-agent-control` sister-tool crate.
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
+//!
+//! Layout mapping (R355 ships types.rs; later rounds populate the rest):
+//!
+//! | Upstream `cli/ControlMain.hs` section                | Yggdrasil `.rs`              |
+//! |------------------------------------------------------|------------------------------|
+//! | `data CommonOptions` + per-subcommand option types   | `types.rs`                   |
+//! | `pCommonOptions` + `pProgramOptions` + per-subcommand parsers | `parser.rs`         |
+//! | `humanFriendlyControlTracer` / status reporting      | `tracer.rs` (pending)        |
+//! | `runGenKey` / `runQueryKey` / `runDropKey` / etc     | per-subcommand `.rs` (pending)|
+//! | `Cardano.KESAgent.Processes.ControlClient` socket    | `control_client.rs` (pending) |
+//! | `main`                                               | `main.rs`                    |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {

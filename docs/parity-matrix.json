@@ -518,15 +518,13 @@
       "rust_surface": [
         {
           "path": "crates/kes-agent-control/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.4 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R355 typed-config surface (full ControlMain.hs option-types port). Per-subcommand runtime ControlClient socket logic pending kes-agent server mini-arc."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for kes-agent-control.",
         "Byte-equivalent --help and --version captured from upstream kes-agent-control binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
-        "Workspace test contribution: +8.",
-        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+        "R355 typed-config surface: types.rs ports the full upstream ControlMain.hs option types \u2014 CommonOptions (5-field record: control_path, verbosity, retry_delay, retry_exponential, retry_attempts; all optional with merge() method mirroring the Haskell Semigroup instance); GenKeyOptions / QueryKeyOptions / DropStagedKeyOptions / DropKeyOptions / InstallKeyOptions per-subcommand records (each carries CommonOptions + subcommand-specific paths); ProgramOptions 6-variant sum (RunGenKey / RunQueryKey / RunDropStagedKey / RunInstallKey / RunDropKey / RunGetInfo); with_common_options method mirroring upstream's WithCommonOptions typeclass + programOptionsWithCommonOptions dispatcher. Defaults match upstream's defXyzOptions byte-for-byte (control_path = '/tmp/kes-agent-control.socket', verbosity = 0, kes_verification_key_file = 'kes.vkey', etc.). 17 kes-agent-control tests at R355 (was 8 at R335 + 9 types unit tests)."
       ],
       "remaining_work": [
         "Skeleton round at R355: file-tree mirror + CLI parser scaffolding.",

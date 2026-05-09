@@ -274,6 +274,42 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R355 — kes-agent-control: typed config surface (port of ControlMain.hs option types).**
+  Lands the typed configuration surface for kes-agent-control. New
+  types.rs module ports the full upstream ControlMain.hs option types:
+  - CommonOptions (5-field record: control_path, verbosity,
+    retry_delay, retry_exponential, retry_attempts; all Option<_>
+    so env-var-derived defaults can merge with CLI-flag-derived
+    overrides via `merge()` mirror of the Haskell Semigroup instance).
+  - GenKeyOptions, QueryKeyOptions, DropStagedKeyOptions,
+    DropKeyOptions, InstallKeyOptions per-subcommand records (each
+    carries CommonOptions + subcommand-specific paths).
+  - ProgramOptions 6-variant sum (RunGenKey / RunQueryKey /
+    RunDropStagedKey / RunInstallKey / RunDropKey / RunGetInfo).
+  - with_common_options method mirroring upstream's WithCommonOptions
+    typeclass + programOptionsWithCommonOptions dispatcher.
+  Defaults match upstream's defXyzOptions byte-for-byte:
+  control_path = "/tmp/kes-agent-control.socket", verbosity = 0,
+  kes_verification_key_file = "kes.vkey", op_cert_file = "kes.vkey"
+  (the latter is preserved verbatim from upstream — likely an
+  upstream bug since logically it should default to a node.cert
+  path; documented as such in the variant docstring).
+  Carve-outs documented:
+  - Haskell Semigroup instance for CommonOptions / GenKey / etc.
+    replaced by explicit `merge()` inherent method (left wins per
+    field; first non-None wins).
+  - WithCommonOptions typeclass replaced by per-options-struct
+    `with_common_options` helpers (each implementation is one-line;
+    a trait would be over-engineering).
+  Tests: kes-agent-control 8 → 17 (+9: 1 CommonOptions defaults
+  match upstream + 1 merge-left-priority + 4 per-subcommand defaults
+  + 1 install-key-options upstream-quirk preservation + 2
+  ProgramOptions round-trips + 2 with_common_options applications).
+  Workspace: 5,183 → 5,194.
+  Parity-matrix entry sister-tool.kes-agent-control: rust_surface
+  description + implemented_evidence refreshed; next_milestone stays
+  at R356 (per-subcommand runtime ControlClient socket logic still
+  pending — gated on kes-agent server mini-arc).
 - **R354 — db-synthesizer: typed config surface (port of Types.hs).**
   Lands the typed configuration surface for db-synthesizer. New types.rs
   module ports the full upstream Cardano.Tools.DBSynthesizer.Types
