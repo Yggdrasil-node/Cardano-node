@@ -42,12 +42,30 @@ fi
 echo "==> cloning upstream library sources into deps/"
 mkdir -p deps
 cd deps
-for repo in cardano-base cardano-cli cardano-ledger ouroboros-consensus ouroboros-network plutus; do
+# Format: "<dirname>|<git-url>"
+# IntersectMBO repos use the canonical org URL; kes-agent lives under the legacy
+# input-output-hk org. bech32, kes-agent, and dmq-node are sister-tool sources
+# vendored for the R326-R459 sister-tools port arc — they're consumed via
+# cardano-haskell-packages (CHaP) by upstream cardano-node, not via git
+# submodules, but Yggdrasil needs the source for strict 1:1 file-mirror parity.
+for entry in \
+    "cardano-base|https://github.com/IntersectMBO/cardano-base.git" \
+    "cardano-cli|https://github.com/IntersectMBO/cardano-cli.git" \
+    "cardano-ledger|https://github.com/IntersectMBO/cardano-ledger.git" \
+    "ouroboros-consensus|https://github.com/IntersectMBO/ouroboros-consensus.git" \
+    "ouroboros-network|https://github.com/IntersectMBO/ouroboros-network.git" \
+    "plutus|https://github.com/IntersectMBO/plutus.git" \
+    "bech32|https://github.com/IntersectMBO/bech32.git" \
+    "kes-agent|https://github.com/input-output-hk/kes-agent.git" \
+    "dmq-node|https://github.com/IntersectMBO/dmq-node.git" \
+; do
+    repo="${entry%%|*}"
+    url="${entry##*|}"
     if [[ -d "$repo/.git" ]]; then
         echo "    deps/$repo already present, refreshing tags"
         git -C "$repo" fetch --tags --depth 1 origin
     else
-        git clone --depth 1 "https://github.com/IntersectMBO/$repo.git"
+        git clone --depth 1 "$url"
     fi
 done
 cd ..
