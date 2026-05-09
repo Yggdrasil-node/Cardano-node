@@ -8,10 +8,11 @@ nav_order: 1
 # Yggdrasil Parity Proof Report
 
 **Document round**: §1–§9 evidence captured at R248 (2026-05-02);
-header refreshed R308 (2026-05-09).
-**Cumulative arc**: R1 → R307+
+header refreshed R308 (2026-05-09); R313–R320 docstring-classification
+arc note added R321 (2026-05-09).
+**Cumulative arc**: R1 → R320+
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4,855 passing, 0 failing. Five gates clean
+**Workspace tests**: 4,856 passing, 0 failing. Five gates clean
 (`cargo fmt --check`, `cargo check-all`, `cargo lint`, `cargo test-all`,
 `python3 scripts/check-strict-mirror.py --fail-on-violation`); the
 parity-flow validators clean too (`check-parity-matrix.py` over 8
@@ -19,14 +20,16 @@ entries against tag `11.0.1`; `check-fixture-manifest.py` over the
 `cardano-base` SHA pin matrix; `check-reference-artifacts.py` over the
 `11.0.1` install with 9 binaries + 3 network bundles).
 
-> **R273-rename + R274–R307 file-mirror & tech-debt arc** (closed
-> 2026-05-09). The vendored upstream tree was refreshed to policy tag
-> `11.0.1`. A strict 1:1 file-mirror CI drift-guard
+> **R273-rename + R274–R311 file-mirror & tech-debt arc + R313–R320
+> docstring-classification cleanup** (closed 2026-05-09). The
+> vendored upstream tree was refreshed to policy tag `11.0.1`. A
+> strict 1:1 file-mirror CI drift-guard
 > (`scripts/check-strict-mirror.py`) landed warn-only at R275 and was
 > promoted to fail-build at R288; the per-file allowlist lives in
-> [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (230 `(a)
-> DIRECT_MIRROR` + 215 `(c) NO_MIRROR_NEEDS_DOCSTRING` = 445 graded
-> files; zero `(b)` rename-needed; zero `(d)` clash-regrade). Every
+> [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (post-R320:
+> 262 `(a) DIRECT_MIRROR` + 186 `(c) NO_MIRROR_NEEDS_DOCSTRING` = 448
+> graded files; **zero `(c) strict-partial`** after R320 closure; zero
+> `(b)` rename-needed; zero `(d)` clash-regrade). Every
 > production `.rs` either mirrors a single upstream `.hs` by
 > snake_case basename or carries a `## Naming parity` docstring
 > stanza. All production `#[allow(dead_code)]` sites and the lone
