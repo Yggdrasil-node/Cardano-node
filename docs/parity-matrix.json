@@ -586,7 +586,7 @@
       "area": "sister-tools",
       "feature": "ChainDB rollback utility \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBTruncater.* + app/db-truncater.hs.",
       "status": "partial",
-      "next_milestone": "R350",
+      "next_milestone": "R351",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBTruncater/",
@@ -607,8 +607,7 @@
         "R349 Run.hs equivalent: run.rs lands the open-ChainDB + dispatch + report procedure. resolve_target maps TruncateAfter::TruncateAfterSlot through verbatim and TruncateAfter::TruncateAfterBlock to a slot via immutable-DB scan (errors on BlockNumberNotFound). run_with_store generic over ImmutableStore for unit-testability against InMemoryImmutable. run() opens FileImmutable at db_dir + delegates. lib.rs::run() now calls run::run + reports `truncated immutable DB at slot N: K block(s) removed` to stderr (verbose-mode adds open-trace + resolve-trace lines). 30 db-truncater tests (was 22 at R348, +8 in run.rs: 3 resolve_target + 4 run_with_store + 1 tempdir-backed FileImmutable smoke). Workspace: 5,142 → 5,150."
       ],
       "remaining_work": [
-        "R350 integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-truncater (storage-format divergence acknowledged: yggdrasil's ChainDB format differs from upstream, so this is semantic parity not byte-format parity).",
-        "R351 closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R351 closeout: parity-matrix promotion to verified_11_0_1 (gated on operator running node/scripts/compare_db_truncater_to_upstream.sh against synthesized upstream + yggdrasil ChainDBs and reporting all stages passed; storage-format divergence acknowledged: yggdrasil's ChainDB format differs from upstream so this is semantic parity not byte-format parity)."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-truncater --help` (modulo program name).",

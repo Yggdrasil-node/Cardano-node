@@ -274,6 +274,28 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R350 — db-truncater: comparison harness for operator soak vs upstream.**
+  Ships node/scripts/compare_db_truncater_to_upstream.sh — 200-line
+  bash script for verification of yggdrasil-db-truncater against the
+  upstream Haskell binary across the canonical surface. Three stages:
+  (1) byte-equivalent --help / --version (already pinned by R335
+  golden tests; re-checked here as smoke); (2) error-input rejection
+  shape parity (missing --db, missing truncate target, conflicting
+  truncate targets); (3) post-truncate semantic parity — operator
+  supplies an upstream-format ChainDB + a yggdrasil-format ChainDB,
+  the script copies both, runs the corresponding binary's truncate,
+  and verifies both report completion. Storage-format divergence
+  acknowledged: yggdrasil's ChainDB on-disk format diverges from
+  upstream's chunked-binary-index layout, so the two binaries
+  cannot operate on the same DB; semantic parity (both truncate
+  successfully, both report a count) is verified instead. The
+  script is operator-runnable, not CI-runnable: it requires the
+  vendored upstream binary plus per-format synthesized ChainDBs.
+  Promotion of the parity-matrix entry to verified_11_0_1 (R351
+  closeout) is gated on operator running this script and reporting
+  all stages passed. Stage 3 is skip-able (UPSTREAM_DB / YGGDRASIL_DB
+  unset → CLI-only smoke). Parity-matrix entry sister-tool.db-
+  truncater advanced: next_milestone R350 → R351.
 - **R349 — db-truncater: Run.hs equivalent (functional binary).**
   Lands the operator-facing run procedure for db-truncater. New run.rs
   module mirrors upstream Cardano.Tools.DBTruncater.Run: resolve_target
