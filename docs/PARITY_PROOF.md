@@ -1,5 +1,5 @@
 ---
-title: Parity Proof Report (Round 248)
+title: Parity Proof Report
 layout: default
 parent: Reference
 nav_order: 1
@@ -7,14 +7,40 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: R248 refresh (2026-05-02)
-**Cumulative arc**: R1 → R248
+**Document round**: §1–§9 evidence captured at R248 (2026-05-02);
+header refreshed R308 (2026-05-09).
+**Cumulative arc**: R1 → R307+
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4.7K+ passing, 0 failing; focused R246 tests,
-release build, focused R247 BlockFetch-prefix regression and bounded
-clean preview replay, focused R248 TPraos overlay tests, live preview
-resume to Babbage slot `868687`, `cargo check-all`, `cargo test-all`,
-and `cargo lint` pass after the latest patches
+**Workspace tests**: 4,855 passing, 0 failing. Five gates clean
+(`cargo fmt --check`, `cargo check-all`, `cargo lint`, `cargo test-all`,
+`python3 scripts/check-strict-mirror.py --fail-on-violation`); the
+parity-flow validators clean too (`check-parity-matrix.py` over 8
+entries against tag `11.0.1`; `check-fixture-manifest.py` over the
+`cardano-base` SHA pin matrix; `check-reference-artifacts.py` over the
+`11.0.1` install with 9 binaries + 3 network bundles).
+
+> **R273-rename + R274–R307 file-mirror & tech-debt arc** (closed
+> 2026-05-09). The vendored upstream tree was refreshed to policy tag
+> `11.0.1`. A strict 1:1 file-mirror CI drift-guard
+> (`scripts/check-strict-mirror.py`) landed warn-only at R275 and was
+> promoted to fail-build at R288; the per-file allowlist lives in
+> [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (230 `(a)
+> DIRECT_MIRROR` + 215 `(c) NO_MIRROR_NEEDS_DOCSTRING` = 445 graded
+> files; zero `(b)` rename-needed; zero `(d)` clash-regrade). Every
+> production `.rs` either mirrors a single upstream `.hs` by
+> snake_case basename or carries a `## Naming parity` docstring
+> stanza. All production `#[allow(dead_code)]` sites and the lone
+> production `TODO` were resolved. A new `crates/cardano-cli/`
+> workspace member (R289–R295) mirrors the full upstream `Cardano.CLI.*`
+> surface (~237 Rust files mirroring 180 upstream `.hs`); concrete
+> migration kicked off via R296 (`Version`) + R297
+> (`ShowUpstreamConfig`) with byte-equivalent output verified against
+> `.reference-haskell-cardano-node/install/bin/cardano-cli`. Two new
+> validators (`check-fixture-manifest.py` + `check-reference-artifacts.py`)
+> joined the parity-flow surface at R303. The §1–§9 evidence below
+> from R248 closure remains valid — the strict-mirror arc tightened
+> the file-naming policy and reduced tech debt without changing any
+> closure status.
 
 This report documents yggdrasil's parity status against upstream
 IntersectMBO Cardano node / cardano-cli behavior. It is the

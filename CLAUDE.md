@@ -76,6 +76,7 @@ Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept cu
 | [node/src/AGENTS.md](node/src/AGENTS.md) | CLI, config, sync, server, block production |
 | [node/configuration/AGENTS.md](node/configuration/AGENTS.md) | Vendored mainnet/preprod/preview operator configs |
 | [docs/AGENTS.md](docs/AGENTS.md) | Architecture/dependency/spec/contributing docs policy |
+| [scripts/AGENTS.md](scripts/AGENTS.md) | CI parity validators (`check-strict-mirror`, `check-parity-matrix`, `check-fixture-manifest`, `check-reference-artifacts`) + `setup-reference.sh` |
 | [specs/AGENTS.md](specs/AGENTS.md) | Pinned CDDL fixtures and provenance |
 | [specs/upstream-test-vectors/AGENTS.md](specs/upstream-test-vectors/AGENTS.md) | Vendored upstream vectors (must not be hand-edited) |
 | [.claude/AGENTS.md](.claude/AGENTS.md) | Claude Code harness config: session-start hook, permissions, Stop hook, subagents, skills, filetree, slash commands |

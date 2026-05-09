@@ -45,6 +45,8 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use yggdrasil_ledger::{LedgerState, Point, PoolRelayAccessPoint};
+#[cfg(test)]
+use yggdrasil_network::BlockFetchClient;
 use yggdrasil_network::{
     ControlMessage, DnsRefreshPolicy, DnsRootPeerProvider, GovernorState, GovernorTargets,
     LedgerPeerSnapshot, LocalRootConfig, LocalRootTargets, MiniProtocolNum, PeerAccessPoint,
@@ -52,8 +54,6 @@ use yggdrasil_network::{
     TemperatureBundle, TopologyConfig, peer_attempt_state, refresh_root_peer_state_and_registry,
     resolve_peer_access_points,
 };
-#[cfg(test)]
-use yggdrasil_network::BlockFetchClient;
 
 use crate::sync::SyncError;
 use crate::tracer::{NodeTracer, trace_fields};

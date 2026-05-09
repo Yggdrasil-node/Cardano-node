@@ -17,5 +17,8 @@
 /// version string is the Yggdrasil crate version with a "(pure-rust)"
 /// suffix to disambiguate from the upstream Haskell binary.
 pub fn version_info() -> String {
-    format!("yggdrasil-cardano-cli (pure-rust) {}", env!("CARGO_PKG_VERSION"))
+    format!(
+        "yggdrasil-cardano-cli (pure-rust) {}",
+        env!("CARGO_PKG_VERSION")
+    )
 }
