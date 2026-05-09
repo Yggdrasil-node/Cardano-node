@@ -2,11 +2,16 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror:** none. R327 skeleton — minimal binary wrapper
-//! that delegates to `yggdrasil_cardano_submit_api::run()`. The upstream binary's
-//! `Main.hs` (or per-app launcher) is mirrored into the lib's
-//! `run.rs` module across subsequent rounds.
+//! **Strict mirror:** cardano-submit-api/app/Main.hs. The Rust
+//! `main.rs` is the canonical 1:1 mirror of upstream
+//! `cardano-submit-api/app/Main.hs` — the executable entry point
+//! that parses command-line arguments, loads the config file, and
+//! starts the web + tracing + metrics servers.
+//!
+//! R335 ships this skeleton wrapper with byte-equivalent
+//! `--help` / `--version` handling. R336-R342 land the concrete
+//! REST + Web + Metrics dispatch.
 
-fn main() -> eyre::Result<()> {
-    yggdrasil_cardano_submit_api::run()
+fn main() -> std::process::ExitCode {
+    yggdrasil_cardano_submit_api::run_main()
 }

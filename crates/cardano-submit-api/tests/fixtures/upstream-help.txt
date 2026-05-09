@@ -1,0 +1,32 @@
+Usage: cardano-submit-api 
+  --config FILEPATH
+    [--cardano-mode [--epoch-slots SLOTS]]
+    (--mainnet | --testnet-magic NATURAL)
+    --socket-path FILEPATH
+    [--listen-address HOST]
+    [--port INT]
+    [--metrics-port PORT]
+
+  Cardano transaction submission web API.
+
+Available options:
+  --config FILEPATH        Path to the tx-submit web API configuration file
+  --cardano-mode           For talking to a node running in full Cardano mode
+                           (default).
+  --epoch-slots SLOTS      The number of slots per epoch for the Byron era.
+                           (default: 21600)
+  --mainnet                Use the mainnet magic id. This overrides the
+                           CARDANO_NODE_NETWORK_ID environment variable
+  --testnet-magic NATURAL  Specify a testnet magic id. This overrides the
+                           CARDANO_NODE_NETWORK_ID environment variable
+  --socket-path FILEPATH   Path to a cardano-node socket
+  --listen-address HOST    Specification of which host to the bind API server
+                           to. Can be an IPv[46] address, hostname, or '*'.
+                           (default: "127.0.0.1")
+  --port INT               Port used for the API server. (default: 8090)
+  --metrics-port PORT      Port for exposing metrics. If unavailable, the next
+                           free port is used. If no port can be allocated, the
+                           transaction submission API starts without metrics
+                           endpoint. (default: 8081)
+  --version                Show the cardano-submit-api version
+  -h,--help                Show this help text

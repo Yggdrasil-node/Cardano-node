@@ -1,0 +1,2 @@
+cardano-submit-api 11.0.0 - linux-x86_64 - ghc-9.6
+git rev 97036a66bcf8c89f687ae57a048eecc0389977ef

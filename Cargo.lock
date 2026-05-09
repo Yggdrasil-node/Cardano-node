@@ -1400,6 +1400,7 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "eyre",
+ "thiserror",
 ]
 
 [[package]]
