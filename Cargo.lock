@@ -1484,6 +1484,8 @@ dependencies = [
  "clap",
  "eyre",
  "thiserror",
+ "yggdrasil-ledger",
+ "yggdrasil-storage",
 ]
 
 [[package]]

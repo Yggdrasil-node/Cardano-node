@@ -274,6 +274,23 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R348 — db-truncater: typed config surface + into_config validation.**
+  Lands the typed CLI surface for db-truncater. New types.rs module
+  mirrors upstream Cardano.Tools.DBTruncater.Types: DBTruncaterConfig
+  (db_dir, truncate_after, verbose) + TruncateAfter (TruncateAfterSlot
+  | TruncateAfterBlock) reusing yggdrasil_ledger::SlotNo + BlockNo as
+  the canonical workspace types. parser.rs replaces the R335 raw-
+  passthrough Args with typed fields (--db PATH, --truncate-after-slot
+  SLOT_NUMBER, --truncate-after-block BLOCK_NUMBER, --verbose) +
+  into_config(args) validation: errors on MissingDb, MissingTruncate-
+  Target (neither truncate flag), or ConflictingTruncateTargets (both).
+  lib.rs::run_main now invokes into_config after parsing to surface
+  missing-flag errors clearly; lib.rs::run() returns a sentinel
+  noting that R349 (Run.hs equivalent) is pending. Cargo deps:
+  yggdrasil-ledger + yggdrasil-storage added (the storage dep is for
+  R349; included now to keep dep wiring in one round). Tests: db-
+  truncater 8 → 22 (+14: 3 types.rs round-trip + 11 parser unit + new
+  into_config validation cases). Workspace: 5,126 → 5,142.
 - **R347 — storage: ImmutableStore::trim_after_slot extension (db-truncater unblock).**
   Extends the ImmutableStore trait with trim_after_slot — the inverse
   of the existing trim_before_slot GC primitive. Removes all immutable
