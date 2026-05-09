@@ -35,13 +35,14 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors the density-comparison
-//! logic from upstream
-//! `Ouroboros.Consensus.Genesis.Governor.hs` (sliding-window
-//! header density per peer). Yggdrasil's `genesis_density.rs`
-//! isolates this estimator since it's consumed by the network
-//! governor's chain-quality signal independent of the rest of
-//! the Genesis.Governor module body.
+//! **Strict mirror:** none. Yggdrasil-side density-comparison
+//! estimator for Genesis chain selection. Surfaces the
+//! sliding-window header-density-per-peer math from upstream
+//! `Ouroboros.Consensus.Genesis.Governor` (`densityComparison`)
+//! as a focused module the network governor's chain-quality
+//! signal can call into without pulling in the rest of the
+//! upstream Genesis.Governor wiring (which carries additional
+//! consensus-side state machinery yggdrasil hasn't ported).
 
 use yggdrasil_ledger::SlotNo;
 

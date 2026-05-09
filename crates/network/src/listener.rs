@@ -16,11 +16,15 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors the inbound-accept
-//! side of upstream `Ouroboros.Network.Server2.hs` (accept
-//! loop + handshake-on-accepted-stream). Yggdrasil's
-//! `PeerListener` carries the `accept_tcp` / `handshake_on` /
-//! `accept_peer` triplet for rate-limiting before handshake.
+//! **Strict mirror:** none. Yggdrasil-side TCP listener +
+//! pre-handshake rate-limit gate. Surfaces the accept-loop
+//! pattern from upstream `Ouroboros.Network.Server2`
+//! (`runServer` / `socketAccept` / `acceptedConnectionsLimit`)
+//! as a focused `PeerListener` triplet (`accept_tcp`,
+//! `handshake_on`, `accept_peer`). Upstream's `Server2.hs`
+//! additionally carries connection-manager + inbound-governor
+//! wiring (Yggdrasil's equivalents live in
+//! `connection.rs` + `inbound_governor.rs`).
 
 use crate::handshake::HandshakeVersion;
 use crate::peer::{self, PeerConnection, PeerError};

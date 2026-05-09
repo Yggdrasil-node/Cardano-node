@@ -15,16 +15,16 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors the sync-side KeepAlive
-//! client behavior of upstream
-//! `Ouroboros.Network.Protocol.KeepAlive.Client.hs`. Yggdrasil's
-//! `KeepAliveScheduler` is a runtime-side type that issues
-//! periodic `MsgKeepAlive` (20 s cadence vs upstream's ~97 s
-//! timeout); the upstream `Client.hs` defines the protocol state
-//! machine, while Yggdrasil's scheduler wraps the protocol's
-//! client driver. Companion sub-module of the upstream protocol;
-//! filename `keep_alive.rs` does not strictly mirror `Client.hs`
-//! (no `keep_alive/client.rs` split is currently warranted).
+//! **Strict mirror:** none. Yggdrasil-side runtime adaptor
+//! that wraps the protocol-side `KeepAliveClient` driver in a
+//! `KeepAliveScheduler` issuing periodic `MsgKeepAlive` at a
+//! 20s cadence. Surfaces the runtime callsite for upstream
+//! `Ouroboros.Network.Protocol.KeepAlive.Client::keepAliveClient`
+//! (which handles the protocol state machine itself); the
+//! cadence + per-peer scheduling logic is Yggdrasil-specific
+//! and has no upstream parallel — upstream embeds the schedule
+//! directly inside `runKeepAliveClient` rather than as a
+//! separate type.
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};

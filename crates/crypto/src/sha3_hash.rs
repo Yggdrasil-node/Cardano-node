@@ -8,12 +8,14 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors the SHA3-256 facet of
-//! upstream `Cardano.Crypto.Hashing.hs::abstractHash` (used for
-//! Byron address roots). Upstream parameterizes hashing over
-//! the type class; Yggdrasil's `sha3_hash.rs` is a focused
-//! wrapper around `sha3::Sha3_256` for Byron's `ADDRHASH =
-//! Blake2b-224(SHA3-256(spending data))` formula.
+//! **Strict mirror:** none. Yggdrasil-side SHA3-256 wrapper
+//! around `sha3::Sha3_256`, used to compute Byron's
+//! `ADDRHASH = Blake2b-224(SHA3-256(spending data))` formula.
+//! Surfaces the SHA3-256 facet of upstream
+//! `Cardano.Crypto.Hashing::abstractHash` (the Haskell file is
+//! a class-parameterized hashing module covering SHA-256, SHA3,
+//! Blake2b, and Keccak; Yggdrasil splits each algorithm into
+//! its own focused module).
 
 use sha3::{Digest, Sha3_256};
 

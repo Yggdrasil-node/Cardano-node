@@ -17,13 +17,16 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Cardano.Ledger.Shelley.Rewards.hs` (`reward`, `maxPool`)
-//! from the Shelley reward formula (formal spec §10).
-//! Yggdrasil keeps the per-pool reward + treasury / monetary-
-//! expansion split + member-distribution math in one module;
-//! upstream organizes the same logic across `Rewards.hs`
-//! with helpers spread into `LedgerState` and `EpochBoundary`.
+//! **Strict mirror:** none. Yggdrasil-side cross-era
+//! reward-calculation aggregator. Surfaces the reward formula
+//! from the formal Shelley ledger spec §10 — `reward`,
+//! `maxPool`, and the per-pool / member-distribution math from
+//! upstream `Cardano.Ledger.Shelley.Rewards` plus the
+//! treasury / monetary-expansion split that upstream spreads
+//! across `LedgerState`, `EpochBoundary`, and per-era reward
+//! refinements. The cross-era aggregation is a Yggdrasil
+//! convenience; per-era reward overrides (if any) live under
+//! `crates/ledger/src/eras/<era>/`.
 
 use std::collections::BTreeMap;
 

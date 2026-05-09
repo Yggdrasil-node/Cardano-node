@@ -28,13 +28,18 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.BlockFetch.ClientState.hs` (`FetchClientStateVars`)
-//! + the fetch-decision policy from
-//! `Ouroboros.Network.BlockFetch.Decision.hs`. Yggdrasil's
-//! `blockfetch_pool.rs` keeps the per-peer state + policy in
-//! one module without I/O; upstream splits state vs decision
-//! across two files.
+//! **Strict mirror:** none. Yggdrasil-side multi-peer
+//! BlockFetch scheduler. Surfaces three upstream concepts in
+//! one cohesive policy module: per-peer fetch state from
+//! `Ouroboros.Network.BlockFetch.ClientState`
+//! (`FetchClientStateVars`), the fetch-decision policy from
+//! `Ouroboros.Network.BlockFetch.Decision` (`fetchDecisions`),
+//! and a Yggdrasil-specific in-order reorder buffer that has
+//! no upstream parallel (Haskell relies on STM ordering
+//! semantics where Yggdrasil needs explicit `(slot, hash)`
+//! gating ahead of the validator). Pure data + decision logic
+//! with no I/O; the runtime wiring lives in
+//! `node/src/runtime/`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;

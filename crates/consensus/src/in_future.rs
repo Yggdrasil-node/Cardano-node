@@ -12,12 +12,14 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors
-//! `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck.hs`
-//! (blocks-from-the-future detection during ChainSync). Yggdrasil
-//! isolates the `ClockSkew` tolerance + slot-vs-wallclock check
-//! into a focused module; upstream's `InFutureCheck.hs` carries
-//! additional ChainSync-client wiring not yet ported.
+//! **Strict mirror:** none. Yggdrasil-side `ClockSkew`
+//! tolerance + slot-vs-wallclock check used by the verified-sync
+//! pipeline to reject blocks-from-the-future. Surfaces the
+//! `clockSkew` / `inFutureCheck` predicates from upstream
+//! `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`
+//! as a focused module; the upstream `.hs` additionally carries
+//! ChainSync-client wiring (the Yggdrasil equivalent lives in
+//! `node/src/runtime/sync_session.rs`).
 
 use std::time::Duration;
 

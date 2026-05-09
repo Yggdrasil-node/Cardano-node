@@ -9,13 +9,15 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Cardano.Ledger.UTxO::UTxO`. Yggdrasil's `MultiEraUtxo`
-//! is era-generalized so it carries `MultiEraTxOut` values
-//! (preserving full era-specific output data); upstream
-//! re-uses `UTxO` per-era with era-specific `TxOut` instances.
-//! The reference-script size cap (Conway) is also carried
-//! here since it gates output validation cross-era.
+//! **Strict mirror:** none. Yggdrasil-side cross-era UTxO
+//! aggregator. Surfaces the `UTxO` set type from upstream
+//! `Cardano.Ledger.UTxO` plus the per-era `TxOut` parametric
+//! refinements that upstream re-uses through Haskell type-class
+//! polymorphism — Yggdrasil materialises this as a single
+//! `MultiEraUtxo` carrying `MultiEraTxOut` enum variants. The
+//! Conway reference-script size cap is also gated here since
+//! it applies cross-era. Per-era UTxO logic (era-specific
+//! `apply_<era>_tx` methods) lives under `crates/ledger/src/eras/<era>/`.
 
 use std::collections::HashMap;
 
