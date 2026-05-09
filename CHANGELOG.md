@@ -274,6 +274,22 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R345 — cardano-submit-api comparison harness: operator-runnable soak vs upstream.**
+  Ships node/scripts/compare_submit_api_to_upstream.sh — 175-line bash
+  script that POSTs canonical inputs (empty body, malformed CBOR) to
+  both upstream and yggdrasil binaries and diffs HTTP status + response
+  body, then scrapes /metrics from both and diffs the # HELP / # TYPE
+  shape. Counter line ordering and inner-reason-bytes for malformed-
+  CBOR failures are documented as legitimate divergences (counter
+  emit-order vs registry-insertion-order; mempool-reason hex bytes vs
+  rendered cardano-api Show string). The script is operator-runnable,
+  not CI-runnable: it requires a live cardano-node socket + the
+  upstream binary, neither available in CI. Promotion of the parity-
+  matrix entry to verified_11_0_1 (R346 closeout) is gated on an
+  operator running this script and reporting an empty diff. Round-doc
+  documents the procedure with a sample bringup (preview testnet) and
+  expected output. Parity-matrix entry `sister-tool.cardano-submit-api`
+  `next_milestone` advanced R345 → R346.
 - **R344 — cardano-submit-api Prometheus metrics: registry, port-retry server, tracer composition.**
   Lands the Prometheus metrics surface for cardano-submit-api,
   mirroring upstream Cardano.TxSubmit.Metrics. New metrics.rs

@@ -427,7 +427,7 @@
       "area": "sister-tools",
       "feature": "HTTP API for transaction submission \u2014 pure-Rust port mirroring upstream cardano-submit-api/src/Cardano/TxSubmit/*.hs.",
       "status": "partial",
-      "next_milestone": "R345",
+      "next_milestone": "R346",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-submit-api/",
@@ -454,8 +454,7 @@
         "Binary runs end-to-end against a real cardano-node socket with /metrics scraping; subject to live-rehearsal validation at R345."
       ],
       "remaining_work": [
-        "R345 integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api (drop-in replacement test).",
-        "R346 closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R346 closeout: parity-matrix promotion to verified_11_0_1 (gated on operator running node/scripts/compare_submit_api_to_upstream.sh against a live cardano-node and reporting an empty diff)."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-submit-api --help` (modulo program name).",
