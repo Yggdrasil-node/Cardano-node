@@ -24,12 +24,14 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** none. Yggdrasil-side documentation +
-//! drift-tracking for the 6 pinned IntersectMBO repo SHAs
-//! (cardano-base / cardano-ledger / cardano-node / cardano-cli /
-//! ouroboros-consensus / ouroboros-network / plutus). No
-//! upstream Haskell parallel — this is purely Yggdrasil's
-//! audit-time provenance manifest consumed by
-//! `node/scripts/check_upstream_drift.sh`.
+//! drift-tracking for the 9 pinned IntersectMBO/IOHK repo SHAs
+//! (cardano-base / cardano-ledger / ouroboros-consensus /
+//! ouroboros-network / plutus / cardano-node — the 6 cardano-node
+//! support repos audited since 2026-Q2; plus bech32 / kes-agent /
+//! dmq-node — the 3 sister-tool repos vendored at R326b for the
+//! R326–R459 sister-tools port arc). No upstream Haskell parallel
+//! — this is purely Yggdrasil's audit-time provenance manifest
+//! consumed by `node/scripts/check_upstream_drift.sh`.
 
 /// `cardano-base` — already pinned via vendored test vectors under
 /// `specs/upstream-test-vectors/cardano-base/`. The SHA below mirrors
@@ -212,20 +214,61 @@ pub const UPSTREAM_PLUTUS_COMMIT: &str = "c8f962ae75d0b4871401ecc2e8c4ed259cafad
 /// Reference: <https://github.com/IntersectMBO/cardano-node/tree/master/>
 pub const UPSTREAM_CARDANO_NODE_COMMIT: &str = "97036a66bcf8c89f687ae57a048eecc0389977ef";
 
+/// `bech32` — sister-tool source vendored at R326b under
+/// `.reference-haskell-cardano-node/deps/bech32/`. Provides the
+/// canonical Haskell implementation of BIP-0173 Bech32 / Bech32m
+/// encoding used by Cardano addresses (`addr_test1…`, `stake1…`,
+/// etc.). Yggdrasil's pure-Rust port lands at `crates/bech32/`
+/// across R331–R334 (Phase A.1 of the sister-tools port arc).
+///
+/// Reference: <https://github.com/IntersectMBO/bech32/tree/master/>
+pub const UPSTREAM_BECH32_COMMIT: &str = "4624d3a84606615c1ca1410d6dd3fd9213211215";
+
+/// `kes-agent` — sister-tool source vendored at R326b under
+/// `.reference-haskell-cardano-node/deps/kes-agent/` (lives under
+/// the legacy `input-output-hk` GitHub org, NOT `IntersectMBO`).
+/// Provides the KES key custody + period-rotation agent used by
+/// stake pool operators in production. Yggdrasil's pure-Rust port
+/// lands at `crates/kes-agent/` (the daemon, R344–R354) and
+/// `crates/kes-agent-control/` (the companion CLI, R355–R359),
+/// both Phase A.3/A.4 of the sister-tools port arc.
+///
+/// Reference: <https://github.com/input-output-hk/kes-agent/tree/master/>
+pub const UPSTREAM_KES_AGENT_COMMIT: &str = "6d54ac2ee325aadeeb3659cfefcd58035f69acd9";
+
+/// `dmq-node` — sister-tool source vendored at R326b under
+/// `.reference-haskell-cardano-node/deps/dmq-node/`. Provides the
+/// DMQ (Delegated Mempool Queue) diffusion-layer node used as a
+/// sidecar for Mithril certificates. Yggdrasil's pure-Rust port
+/// lands at `crates/dmq-node/` across R450–R459 (Phase D of the
+/// sister-tools port arc — Tier 4 sister project).
+///
+/// Reference: <https://github.com/IntersectMBO/dmq-node/tree/main/>
+pub const UPSTREAM_DMQ_NODE_COMMIT: &str = "bd5fbf69fcdeaa9d8b4a3d2b4554016d546b17ea";
+
 /// All pinned upstream commits, keyed by repository name.
 ///
 /// Used by `node/scripts/check_upstream_drift.sh` to iterate every pin
 /// and compare against live `git ls-remote HEAD` output. A future
 /// upstream addition that's worth auditing must extend BOTH this slice
 /// AND a top-level constant above; the drift-guard test below pins the
-/// length to 6 so a missed extension fails CI.
+/// length to 9 so a missed extension fails CI.
+///
+/// Order: 6 canonical cardano-node support repos (audited since R201,
+/// matching the historical Phase E.1 cadence), then 3 sister-tool
+/// repos vendored at R326b for the R326–R459 sister-tools port arc.
 pub const UPSTREAM_PINS: &[(&str, &str)] = &[
+    // Canonical cardano-node support repos (audited since R201).
     ("cardano-base", UPSTREAM_CARDANO_BASE_COMMIT),
     ("cardano-ledger", UPSTREAM_CARDANO_LEDGER_COMMIT),
     ("ouroboros-consensus", UPSTREAM_OUROBOROS_CONSENSUS_COMMIT),
     ("ouroboros-network", UPSTREAM_OUROBOROS_NETWORK_COMMIT),
     ("plutus", UPSTREAM_PLUTUS_COMMIT),
     ("cardano-node", UPSTREAM_CARDANO_NODE_COMMIT),
+    // Sister-tool repos (vendored R326b; ports land R331–R459).
+    ("bech32", UPSTREAM_BECH32_COMMIT),
+    ("kes-agent", UPSTREAM_KES_AGENT_COMMIT),
+    ("dmq-node", UPSTREAM_DMQ_NODE_COMMIT),
 ];
 
 #[cfg(test)]
@@ -253,35 +296,44 @@ mod tests {
     }
 
     /// Pin the cardinality of `UPSTREAM_PINS` against the canonical set
-    /// of 6 IntersectMBO repos this project ports from. A future addition
-    /// (e.g. a new upstream support repo) must extend both this set AND
-    /// `docs/UPSTREAM_PARITY.md`'s pinning table; pinning the length here
-    /// surfaces the omission as a clear CI failure.
+    /// of 9 IntersectMBO/IOHK repos this project ports from: 6
+    /// cardano-node support repos audited since R201 + 3 sister-tool
+    /// repos vendored at R326b. A future addition must extend both this
+    /// set AND `docs/UPSTREAM_PARITY.md`'s pinning table; pinning the
+    /// length here surfaces the omission as a clear CI failure.
     ///
-    /// Reference: `docs/archive/AUDIT_VERIFICATION_2026Q2.md` mapping table.
+    /// Reference: `docs/archive/AUDIT_VERIFICATION_2026Q2.md` mapping table
+    /// + `docs/operational-runs/2026-05-09-round-326b-vendor-bech32-kes-agent-dmq-node.md`.
     #[test]
-    fn upstream_pins_cover_all_six_canonical_repos() {
+    fn upstream_pins_cover_all_nine_canonical_repos() {
         assert_eq!(
             UPSTREAM_PINS.len(),
-            6,
-            "UPSTREAM_PINS must cover the 6 canonical IntersectMBO repos: \
+            9,
+            "UPSTREAM_PINS must cover the 9 canonical IntersectMBO/IOHK repos: \
              cardano-base, cardano-ledger, ouroboros-consensus, \
-             ouroboros-network, plutus, cardano-node. Update both this \
+             ouroboros-network, plutus, cardano-node (the 6 cardano-node \
+             support repos), plus bech32, kes-agent, dmq-node (the 3 \
+             sister-tool repos vendored at R326b). Update both this \
              constant and docs/UPSTREAM_PARITY.md when adding/removing.",
         );
 
         let expected_repos = [
+            // Canonical cardano-node support repos.
             "cardano-base",
             "cardano-ledger",
             "ouroboros-consensus",
             "ouroboros-network",
             "plutus",
             "cardano-node",
+            // Sister-tool repos.
+            "bech32",
+            "kes-agent",
+            "dmq-node",
         ];
         let actual_repos: Vec<&str> = UPSTREAM_PINS.iter().map(|(r, _)| *r).collect();
         assert_eq!(
             actual_repos, expected_repos,
-            "UPSTREAM_PINS must list the 6 canonical repos in the documented order",
+            "UPSTREAM_PINS must list the 9 canonical repos in the documented order",
         );
     }
 

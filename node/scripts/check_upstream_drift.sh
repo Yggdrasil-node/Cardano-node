@@ -58,6 +58,12 @@ pinned[ouroboros-consensus]="$(parse_pin UPSTREAM_OUROBOROS_CONSENSUS_COMMIT)"
 pinned[ouroboros-network]="$(parse_pin UPSTREAM_OUROBOROS_NETWORK_COMMIT)"
 pinned[plutus]="$(parse_pin UPSTREAM_PLUTUS_COMMIT)"
 pinned[cardano-node]="$(parse_pin UPSTREAM_CARDANO_NODE_COMMIT)"
+# Sister-tool repos (R326b vendor). kes-agent is the only repo under
+# the legacy input-output-hk org; bech32 + dmq-node remain under
+# IntersectMBO. The URL table below handles the cross-org case.
+pinned[bech32]="$(parse_pin UPSTREAM_BECH32_COMMIT)"
+pinned[kes-agent]="$(parse_pin UPSTREAM_KES_AGENT_COMMIT)"
+pinned[dmq-node]="$(parse_pin UPSTREAM_DMQ_NODE_COMMIT)"
 
 for repo in "${!pinned[@]}"; do
   if [[ -z "${pinned[$repo]}" ]]; then
@@ -66,10 +72,41 @@ for repo in "${!pinned[@]}"; do
   fi
 done
 
+# Per-repo URL map. kes-agent lives under the legacy input-output-hk
+# org; everything else under IntersectMBO. Used by fetch_head below.
+declare -A repo_url
+repo_url[cardano-base]="https://github.com/IntersectMBO/cardano-base.git"
+repo_url[cardano-ledger]="https://github.com/IntersectMBO/cardano-ledger.git"
+repo_url[ouroboros-consensus]="https://github.com/IntersectMBO/ouroboros-consensus.git"
+repo_url[ouroboros-network]="https://github.com/IntersectMBO/ouroboros-network.git"
+repo_url[plutus]="https://github.com/IntersectMBO/plutus.git"
+repo_url[cardano-node]="https://github.com/IntersectMBO/cardano-node.git"
+repo_url[bech32]="https://github.com/IntersectMBO/bech32.git"
+repo_url[kes-agent]="https://github.com/input-output-hk/kes-agent.git"
+repo_url[dmq-node]="https://github.com/IntersectMBO/dmq-node.git"
+
+# Canonical iteration order — pinned to the same order as
+# UPSTREAM_PINS in node/src/upstream_pins.rs so output rows match
+# row-by-row. The Rust drift-guard test pins cardinality at 9.
+PIN_ORDER=(
+  cardano-base
+  cardano-ledger
+  ouroboros-consensus
+  ouroboros-network
+  plutus
+  cardano-node
+  bech32
+  kes-agent
+  dmq-node
+)
+
 # Fetch live HEAD for each repo. We try main first, then master.
 fetch_head() {
   local repo="$1"
-  local url="https://github.com/IntersectMBO/${repo}.git"
+  local url="${repo_url[$repo]}"
+  if [[ -z "$url" ]]; then
+    return 1
+  fi
   for branch in main master; do
     local sha
     sha="$(git ls-remote --heads "$url" 2>/dev/null \
@@ -84,7 +121,7 @@ fetch_head() {
 
 declare -A live
 fetch_failed=0
-for repo in cardano-base cardano-ledger ouroboros-consensus ouroboros-network plutus cardano-node; do
+for repo in "${PIN_ORDER[@]}"; do
   if sha="$(fetch_head "$repo")"; then
     live[$repo]="$sha"
   else
@@ -99,7 +136,7 @@ json="{\"timestamp\":\"$ts\",\"pins\":["
 first=1
 drifted_count=0
 unreachable_count=0
-for repo in cardano-base cardano-ledger ouroboros-consensus ouroboros-network plutus cardano-node; do
+for repo in "${PIN_ORDER[@]}"; do
   pinned_sha="${pinned[$repo]}"
   live_sha="${live[$repo]}"
   drifted="false"
@@ -118,14 +155,15 @@ for repo in cardano-base cardano-ledger ouroboros-consensus ouroboros-network pl
   first=0
   json+="{\"repo\":\"$repo\",\"pinned_sha\":\"$pinned_sha\",\"live_sha\":\"$live_sha\",\"reachable\":$reachable,\"drifted\":$drifted}"
 done
-json+="],\"summary\":{\"total\":6,\"drifted\":$drifted_count,\"unreachable\":$unreachable_count}}"
+total_count="${#PIN_ORDER[@]}"
+json+="],\"summary\":{\"total\":$total_count,\"drifted\":$drifted_count,\"unreachable\":$unreachable_count}}"
 
 if [[ "$JSON_ONLY" -eq 1 ]]; then
   echo "$json"
 else
   echo "[upstream-drift] timestamp=$ts"
   printf "  %-22s  %-7s  %s\n" "repo" "status" "pinned -> live"
-  for repo in cardano-base cardano-ledger ouroboros-consensus ouroboros-network plutus cardano-node; do
+  for repo in "${PIN_ORDER[@]}"; do
     pinned_sha="${pinned[$repo]}"
     live_sha="${live[$repo]}"
     if [[ -z "$live_sha" ]]; then
@@ -137,7 +175,7 @@ else
     fi
   done
   echo ""
-  echo "[summary] drifted=$drifted_count unreachable=$unreachable_count total=6"
+  echo "[summary] drifted=$drifted_count unreachable=$unreachable_count total=$total_count"
   echo ""
   echo "Drift is informational. To advance a pin: edit"
   echo "node/src/upstream_pins.rs, run the audit cadence against the new"

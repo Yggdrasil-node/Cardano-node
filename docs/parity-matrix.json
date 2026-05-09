@@ -383,6 +383,402 @@
         "runtime.rs stays under 200 lines as further sub-systems are extracted (R272 pre-Conway eras, R273 remaining subsystem splits).",
         "Each new sub-module has an upstream-Haskell reference cited in its module docstring."
       ]
+    },
+    {
+      "id": "sister-tool.bech32",
+      "area": "sister-tools",
+      "feature": "BIP-0173 / Bech32m address encoding tool \u2014 pure-Rust port mirroring upstream IntersectMBO/bech32.",
+      "status": "absent",
+      "next_milestone": "R331",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/bech32/bech32/",
+          "role": "Upstream Haskell source root for bech32 (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/bech32/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.1 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R331: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/bech32.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/bech32 --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/bech32/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh bech32` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-bech32 --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.cardano-submit-api",
+      "area": "sister-tools",
+      "feature": "HTTP API for transaction submission \u2014 pure-Rust port mirroring upstream cardano-submit-api/src/Cardano/TxSubmit/*.hs.",
+      "status": "absent",
+      "next_milestone": "R335",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/cardano-submit-api/",
+          "role": "Upstream Haskell source root for cardano-submit-api (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/cardano-submit-api/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.2 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R335: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-submit-api --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/cardano-submit-api/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh cardano-submit-api` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-cardano-submit-api --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.kes-agent",
+      "area": "sister-tools",
+      "feature": "KES key custody + period-rotation daemon \u2014 pure-Rust port mirroring upstream input-output-hk/kes-agent (daemon binary).",
+      "status": "absent",
+      "next_milestone": "R344",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/kes-agent/kes-agent/",
+          "role": "Upstream Haskell source root for kes-agent (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/kes-agent/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.3 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R344: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/kes-agent.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/kes-agent --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/kes-agent/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh kes-agent` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-kes-agent --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.kes-agent-control",
+      "area": "sister-tools",
+      "feature": "kes-agent control CLI \u2014 pure-Rust port mirroring upstream input-output-hk/kes-agent (control binary).",
+      "status": "absent",
+      "next_milestone": "R355",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/kes-agent/kes-agent/",
+          "role": "Upstream Haskell source root for kes-agent-control (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/kes-agent-control/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.4 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R355: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/kes-agent-control.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/kes-agent-control --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/kes-agent-control/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh kes-agent-control` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-kes-agent-control --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.cardano-tracer",
+      "area": "sister-tools",
+      "feature": "Standalone trace-forwarder + log + metrics aggregator \u2014 pure-Rust port mirroring upstream cardano-tracer/src/Cardano/Tracer/*.hs.",
+      "status": "absent",
+      "next_milestone": "R360",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/cardano-tracer/",
+          "role": "Upstream Haskell source root for cardano-tracer (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/cardano-tracer/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.5 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R360: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-tracer.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-tracer --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/cardano-tracer/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh cardano-tracer` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-cardano-tracer --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.db-truncater",
+      "area": "sister-tools",
+      "feature": "ChainDB rollback utility \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBTruncater.* + app/db-truncater.hs.",
+      "status": "absent",
+      "next_milestone": "R386",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBTruncater/",
+          "role": "Upstream Haskell source root for db-truncater (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/db-truncater/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.1 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R386: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-truncater.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-truncater --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/db-truncater/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh db-truncater` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-db-truncater --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.db-analyser",
+      "area": "sister-tools",
+      "feature": "ChainDB forensic analyser \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBAnalyser.* + app/db-analyser.hs.",
+      "status": "absent",
+      "next_milestone": "R391",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/",
+          "role": "Upstream Haskell source root for db-analyser (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/db-analyser/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.2 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R391: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-analyser.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-analyser --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/db-analyser/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh db-analyser` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-db-analyser --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.snapshot-converter",
+      "area": "sister-tools",
+      "feature": "Ledger snapshot format converter (mem \u2194 lmdb \u2194 lsm) \u2014 pure-Rust port mirroring upstream snapshot-converter.hs.",
+      "status": "absent",
+      "next_milestone": "R401",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs",
+          "role": "Upstream Haskell source root for snapshot-converter (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/snapshot-converter/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.3 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R401: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/snapshot-converter.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/snapshot-converter --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/snapshot-converter/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh snapshot-converter` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-snapshot-converter --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.db-synthesizer",
+      "area": "sister-tools",
+      "feature": "Synthetic chain generator \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBSynthesizer.* + app/db-synthesizer.hs.",
+      "status": "absent",
+      "next_milestone": "R408",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/",
+          "role": "Upstream Haskell source root for db-synthesizer (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/db-synthesizer/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.1 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R408: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-synthesizer.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-synthesizer --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/db-synthesizer/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh db-synthesizer` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-db-synthesizer --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.cardano-testnet",
+      "area": "sister-tools",
+      "feature": "Local testnet harness \u2014 pure-Rust port mirroring upstream cardano-testnet/src/Testnet/*.hs.",
+      "status": "absent",
+      "next_milestone": "R416",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/cardano-testnet/",
+          "role": "Upstream Haskell source root for cardano-testnet (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/cardano-testnet/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.2 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R416: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-testnet.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-testnet --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/cardano-testnet/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh cardano-testnet` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-cardano-testnet --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.tx-generator",
+      "area": "sister-tools",
+      "feature": "Transaction-stream load generator \u2014 pure-Rust port mirroring upstream bench/tx-generator/src/Cardano/Benchmarking/*.hs.",
+      "status": "absent",
+      "next_milestone": "R434",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/bench/tx-generator/",
+          "role": "Upstream Haskell source root for tx-generator (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/tx-generator/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.3 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R434: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/tx-generator.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/tx-generator --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/tx-generator/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh tx-generator` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-tx-generator --test integration` green."
+      ]
+    },
+    {
+      "id": "sister-tool.dmq-node",
+      "area": "sister-tools",
+      "feature": "Delegated Mempool Queue diffusion-layer node (sister project for Mithril) \u2014 pure-Rust port mirroring upstream IntersectMBO/dmq-node.",
+      "status": "absent",
+      "next_milestone": "R450",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/dmq-node/dmq-node/",
+          "role": "Upstream Haskell source root for dmq-node (vendored R326b)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/dmq-node/",
+          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the D.1 sub-arc per the R326\u2013R459 sister-tools port plan."
+        }
+      ],
+      "implemented_evidence": [],
+      "remaining_work": [
+        "Skeleton round at R450: file-tree mirror + CLI parser scaffolding.",
+        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/dmq-node.",
+        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+      ],
+      "acceptance": [
+        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/dmq-node --help` (modulo program name).",
+        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/dmq-node/AGENTS.md` as semantically-equivalent.",
+        "`node/scripts/run-tools.sh dmq-node` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "`cargo test -p yggdrasil-dmq-node --test integration` green."
+      ]
     }
   ]
 }

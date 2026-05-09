@@ -51,8 +51,31 @@ ALLOWED_AREAS = {
     "producer",
     "observability",
     "fixtures",
+    # R328+ sister-tools port arc (R326–R459).
+    "sister-tools",
 }
-ALLOWED_MILESTONES = {"R266", "R267", "R268", "R272", "R273", "R274", "R275"}
+ALLOWED_MILESTONES = {
+    # Pre-arc milestones (R266-R275).
+    "R266", "R267", "R268", "R272", "R273", "R274", "R275",
+    # Sister-tools port arc skeleton-round milestones (R331–R450).
+    # See docs/operational-runs/2026-05-09-round-327-twelve-skeleton-crates.md
+    # for the full arc plan; each `next_milestone` is the per-tool
+    # skeleton round opener, after which subsequent rounds in the same
+    # phase implement the CLI parser, per-subcommand impls, integration,
+    # and closeout.
+    "R331",  # bech32 (Phase A.1)
+    "R335",  # cardano-submit-api (Phase A.2)
+    "R344",  # kes-agent (Phase A.3)
+    "R355",  # kes-agent-control (Phase A.4)
+    "R360",  # cardano-tracer (Phase A.5)
+    "R386",  # db-truncater (Phase B.1)
+    "R391",  # db-analyser (Phase B.2)
+    "R401",  # snapshot-converter (Phase B.3)
+    "R408",  # db-synthesizer (Phase C.1)
+    "R416",  # cardano-testnet (Phase C.2)
+    "R434",  # tx-generator (Phase C.3)
+    "R450",  # dmq-node (Phase D.1)
+}
 
 
 def fail(message: str) -> None:
