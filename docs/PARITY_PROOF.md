@@ -26,10 +26,14 @@ entries against tag `11.0.1`; `check-fixture-manifest.py` over the
 > strict 1:1 file-mirror CI drift-guard
 > (`scripts/check-strict-mirror.py`) landed warn-only at R275 and was
 > promoted to fail-build at R288; the per-file allowlist lives in
-> [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (post-R320:
-> 262 `(a) DIRECT_MIRROR` + 186 `(c) NO_MIRROR_NEEDS_DOCSTRING` = 448
-> graded files; **zero `(c) strict-partial`** after R320 closure; zero
-> `(b)` rename-needed; zero `(d)` clash-regrade). Every
+> [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (post-R324
+> final: 246 `(a) DIRECT_MIRROR` + 202 `(c) NO_MIRROR_NEEDS_DOCSTRING`
+> = 448 graded files; **zero `(c) strict-partial`** after R320 closure;
+> **zero `(a) auto`** + **zero `(a) auto (affinity-filtered)`** after
+> R323/R324 closure — every (a) row has an explicit
+> `**Strict mirror:** <upstream/path.hs>` declaration with no
+> basename-heuristic reliance; zero `(b)` rename-needed; zero `(d)`
+> clash-regrade). Every
 > production `.rs` either mirrors a single upstream `.hs` by
 > snake_case basename or carries a `## Naming parity` docstring
 > stanza. All production `#[allow(dead_code)]` sites and the lone

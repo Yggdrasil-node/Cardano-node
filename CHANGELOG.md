@@ -25,9 +25,14 @@ new CI parity validators (`check-fixture-manifest.py` +
 reclassifications to canonical synthesis, 1 file merge (`multiplexer
 .rs` → `mux.rs`), 2 file splits (`handshake.rs` → 3 leaves;
 `inbound_governor.rs` → 2 leaves), and 2 final docstring tightens.
-Workspace tests: **4,856 passing, 0 failing**. Final audit table:
-**262 `(a) DIRECT_MIRROR`** + **186 `(c) strict-none`** = **448
-graded files**; **zero `(c) strict-partial`**; zero ambiguity.
+Workspace tests: **4,856 passing, 0 failing**. Final audit table
+(post-R324): **246 `(a) DIRECT_MIRROR`** + **202 `(c) strict-none`**
+= **448 graded files**; **zero `(c) strict-partial`** (R320);
+**zero `(a) auto`** + **zero `(a) auto (affinity-filtered)`**
+(R323/R324 — every (a) row has explicit
+`**Strict mirror:** <upstream/path.hs>` declaration). The audit
+table has exactly two canonical verdicts; zero ambiguity, zero
+basename-heuristic reliance.
 
 ### Added
 
@@ -276,6 +281,45 @@ graded files**; **zero `(c) strict-partial`**; zero ambiguity.
   classification cleanup arc. Status banner round count `306+ →
   320+`, test count `4,855 → 4,856`, audit table `230 (a) +
   215 (c) = 445 → 262 (a) + 186 (c) = 448`.
+- **R322 — CHANGELOG.md backfill for R303–R321.** The CHANGELOG's
+  `[Unreleased]` section's last comprehensive update was R302
+  (covering R273–R301). After R302–R321 (20 rounds), R322 adds
+  19 new bullets (one per round, ordered chronologically after
+  the existing R302 bullet) and refreshes the `[Unreleased]`
+  header summary. Without these entries the next tagged release
+  would have shipped without mention of operationally-important
+  rounds like R310 (gitignore CI failure fix) and R311
+  (drift-detection hardening).
+- **R323 — eliminate `(a) DIRECT_MIRROR (auto)` bucket via
+  explicit declarations.** Closes the gap where the audit grader
+  was relying on basename-match heuristic + crate-affinity filter
+  alone for 25 files. Each file hand-audited against actual
+  content: 17 promoted to canonical strict-mirror declarations
+  (`blake2b.rs`, `bls12_381.rs`, `collateral.rs`, era files,
+  state-rule files, `bearer.rs`, `root_peers.rs`, storage layer,
+  protocol Type files); 8 reclassified to synthesis where the
+  basename match was misleading (`secp256k1.rs` aggregating ECDSA
+  + Schnorr, `epoch_boundary.rs` cross-era processor not Byron
+  block boundary, `cost_model.rs` runtime parameter table not
+  Agda metatheory, etc.). After R323, the `(a) auto` sub-bucket
+  is empty.
+- **R324 — eliminate `(a) DIRECT_MIRROR (auto (affinity-filtered))`
+  bucket; audit table now binary.** Closes the last auto-graded
+  sub-bucket of 18 files. 10 promoted to canonical strict-mirror
+  declarations (Praos `Header.hs` + `VRF.hs`, `Ed25519.hs`,
+  `KES/Sum.hs`, `VRF.hs` umbrella, `Alonzo.hs` + `Shelley.hs`
+  era files, `LocalStateQuery/Type.hs`, `ChainDB.hs` + `LedgerDB.hs`
+  storage). 8 reclassified to synthesis (`kes.rs` aggregator over
+  Single + CompactSingle + Simple variants; `cbor.rs` workspace-
+  wide helper not Byron-only; node-binary integration files).
+  After R324 the audit table has **exactly two canonical
+  verdicts**: `(a) declares strict mirror` (246 files) and
+  `(c) declares synthesis` (202 files); 448 graded files total;
+  zero auto-graded-by-basename. Cumulative R313–R324 closure:
+  `(c) unspecified` 41 → 0; `(c) strict-partial` peaked at 17 → 0;
+  `(a) auto` 25 → 0; `(a) auto (affinity-filtered)` 18 → 0;
+  `(a) declares strict mirror` 187 → 246; `(c) strict-none`
+  174 → 202.
 
 ## [0.2.0] - 2026-05-01
 
