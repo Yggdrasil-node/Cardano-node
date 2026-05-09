@@ -54,28 +54,34 @@ ALLOWED_AREAS = {
     # R328+ sister-tools port arc (R326–R459).
     "sister-tools",
 }
+def _arc_range(start: int, end_inclusive: int) -> set[str]:
+    """Helper to build a set of `R<n>` strings over a closed range."""
+    return {f"R{n}" for n in range(start, end_inclusive + 1)}
+
+
 ALLOWED_MILESTONES = {
     # Pre-arc milestones (R266-R275).
     "R266", "R267", "R268", "R272", "R273", "R274", "R275",
-    # Sister-tools port arc skeleton-round milestones (R331–R450).
-    # See docs/operational-runs/2026-05-09-round-327-twelve-skeleton-crates.md
-    # for the full arc plan; each `next_milestone` is the per-tool
-    # skeleton round opener, after which subsequent rounds in the same
-    # phase implement the CLI parser, per-subcommand impls, integration,
-    # and closeout.
-    "R331",  # bech32 (Phase A.1)
-    "R335",  # cardano-submit-api (Phase A.2)
-    "R344",  # kes-agent (Phase A.3)
-    "R355",  # kes-agent-control (Phase A.4)
-    "R360",  # cardano-tracer (Phase A.5)
-    "R386",  # db-truncater (Phase B.1)
-    "R391",  # db-analyser (Phase B.2)
-    "R401",  # snapshot-converter (Phase B.3)
-    "R408",  # db-synthesizer (Phase C.1)
-    "R416",  # cardano-testnet (Phase C.2)
-    "R434",  # tx-generator (Phase C.3)
-    "R450",  # dmq-node (Phase D.1)
 }
+# Sister-tools port arc per-mini-arc rounds (R326–R459).
+# See `/home/daniel/.claude/plans/playful-tickling-plum.md` for the
+# full plan; each tool's `next_milestone` advances through its mini-arc
+# (skeleton → CLI parser → per-subcommand impls → integration → closeout).
+# We allow every round in every mini-arc so a parity-matrix entry can
+# advance freely without repeated allowlist edits.
+ALLOWED_MILESTONES |= _arc_range(326, 330)  # Prep block.
+ALLOWED_MILESTONES |= _arc_range(331, 334)  # Phase A.1 — bech32.
+ALLOWED_MILESTONES |= _arc_range(335, 343)  # Phase A.2 — cardano-submit-api.
+ALLOWED_MILESTONES |= _arc_range(344, 354)  # Phase A.3 — kes-agent.
+ALLOWED_MILESTONES |= _arc_range(355, 359)  # Phase A.4 — kes-agent-control.
+ALLOWED_MILESTONES |= _arc_range(360, 385)  # Phase A.5 — cardano-tracer.
+ALLOWED_MILESTONES |= _arc_range(386, 390)  # Phase B.1 — db-truncater.
+ALLOWED_MILESTONES |= _arc_range(391, 400)  # Phase B.2 — db-analyser.
+ALLOWED_MILESTONES |= _arc_range(401, 407)  # Phase B.3 — snapshot-converter.
+ALLOWED_MILESTONES |= _arc_range(408, 415)  # Phase C.1 — db-synthesizer.
+ALLOWED_MILESTONES |= _arc_range(416, 433)  # Phase C.2 — cardano-testnet.
+ALLOWED_MILESTONES |= _arc_range(434, 449)  # Phase C.3 — tx-generator.
+ALLOWED_MILESTONES |= _arc_range(450, 459)  # Phase D.1 — dmq-node.
 
 
 def fail(message: str) -> None:

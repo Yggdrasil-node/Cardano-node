@@ -7,10 +7,18 @@ version.workspace = true
 publish = false
 description = "Pure-Rust port of the upstream bech32 binary (BIP-0173 / CIP-0019 address encoding)."
 
-# R327 skeleton — bootstrap of the bech32 sister-tool crate per the
-# R326–R459 sister-tools port arc plan.
-# Upstream source vendored at:
+# R327 skeleton + R331 file-mirror skeleton — bootstrap of the
+# bech32 sister-tool crate per the R326–R459 sister-tools port arc
+# plan.  Upstream source vendored at:
 # .reference-haskell-cardano-node/deps/bech32/bech32/
+#
+# Strict 1:1 file-mirror mapping:
+#   src/lib.rs       <-> Codec/Binary/Bech32.hs       (public API)
+#   src/internal.rs  <-> Codec/Binary/Bech32/Internal.hs (helpers)
+#   src/main.rs      <-> bech32/app/Main.hs            (binary entry)
+#
+# Upstream's bech32-th/Codec/Binary/Bech32/TH.hs (Template Haskell)
+# has no Rust analog — Rust uses macro_rules!/proc-macros directly.
 
 [lints]
 workspace = true
@@ -24,5 +32,8 @@ name = "bech32"
 path = "src/main.rs"
 
 [dependencies]
+# Pure-Rust BIP-0173 / Bech32m implementation foundation.
+# Audited at R330; landed as workspace dep in `Cargo.toml` root.
+bech32 = { workspace = true }
 clap = { workspace = true }
 eyre = { workspace = true }

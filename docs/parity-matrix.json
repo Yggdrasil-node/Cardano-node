@@ -388,8 +388,8 @@
       "id": "sister-tool.bech32",
       "area": "sister-tools",
       "feature": "BIP-0173 / Bech32m address encoding tool \u2014 pure-Rust port mirroring upstream IntersectMBO/bech32.",
-      "status": "absent",
-      "next_milestone": "R331",
+      "status": "partial",
+      "next_milestone": "R332",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/bech32/bech32/",
@@ -402,7 +402,12 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.1 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R331 skeleton: file-mirror tree wired (lib.rs <-> Codec/Binary/Bech32.hs, internal.rs <-> Codec/Binary/Bech32/Internal.hs, main.rs <-> bech32/app/Main.hs).",
+        "Placeholder types declared (DataPart, HumanReadablePart, EncodingError, DecodingError, HumanReadablePartError, CharPosition, Word5, EncodingSpec, charset constant).",
+        "Workspace dep `bech32 = \"0.11\"` wired into crates/bech32/Cargo.toml.",
+        "Binary compiles + dispatches via node/scripts/run-tools.sh; returns R331 sentinel pending R332/R333."
+      ],
       "remaining_work": [
         "Skeleton round at R331: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
