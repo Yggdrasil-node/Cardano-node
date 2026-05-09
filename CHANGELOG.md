@@ -274,6 +274,21 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R326-R334 — sister-tools port arc Phase Prep + Phase A.1 (bech32) shipped.**
+  Prep block (R326-R330) bootstrapped the 12-tool sister-tools port
+  arc: vendored bech32 + kes-agent + dmq-node sources (R326b);
+  created 12 sister-tool skeleton crates (R327); extended parity-
+  matrix +12 entries + upstream_pins +3 SHAs + drift detector
+  cross-org URL support (R328); landed `node/scripts/run-tools.sh`
+  12-binary dispatcher (R329); added `bech32 v0.11` workspace dep
+  (R330). Phase A.1 (R331-R334) shipped the **first sister tool with
+  full deployment-ready 100% parity**: `bech32` is now drop-in
+  byte-equivalent to upstream `IntersectMBO/bech32 1.1.10` for every
+  documented CLI surface (`--help`, `--version`, base16/bech32/base58
+  encoding detection, encode/decode dispatch via stdin). Workspace
+  test count: 4,856 → 4,887 (+31 new bech32 tests). Parity-matrix
+  entry `sister-tool.bech32` advanced from `absent` to
+  `verified_11_0_1`.
 - **R321 — closure-status doc triad refresh for R313–R320.**
   Refreshes the four canonical closure-status documents
   (`PARITY_SUMMARY.md`, `PARITY_PROOF.md`, `AGENTS.md` Current

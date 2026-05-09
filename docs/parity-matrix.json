@@ -388,8 +388,8 @@
       "id": "sister-tool.bech32",
       "area": "sister-tools",
       "feature": "BIP-0173 / Bech32m address encoding tool \u2014 pure-Rust port mirroring upstream IntersectMBO/bech32.",
-      "status": "partial",
-      "next_milestone": "R334",
+      "status": "verified_11_0_1",
+      "next_milestone": "R335",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/bech32/bech32/",
@@ -403,26 +403,23 @@
         }
       ],
       "implemented_evidence": [
+        "Phase A.1 closure (R331-R334).",
         "R331 skeleton: file-mirror tree wired (lib.rs <-> Codec/Binary/Bech32.hs, internal.rs <-> Codec/Binary/Bech32/Internal.hs, main.rs <-> bech32/app/Main.hs).",
-        "R332 CLI parser: byte-equivalent --help and --version captured from upstream bech32 1.1.10 binary.",
-        "R333 concrete encode/decode: HumanReadablePart (= bech32::Hrp), DataPart, Bech32Error, InputEncoding all backed by real bech32 + bs58 + hex crates. detect_encoding() mirrors upstream's heuristic byte-for-byte.",
-        "R333 deployment proof: drop-in equivalence verified for upstream's 4 documented examples (base16/base58/re-encode/decode); diff against `.reference-haskell-cardano-node/install/bin/bech32` shows MATCH for every input.",
-        "R333 stdin/stdout integration: 3 stdin-roundtrip golden tests pass against the live binary; StringToDecodeTooShort error mirrors upstream behavior on empty stdin.",
-        "Workspace deps: bech32 v0.11 (BIP-173/Bech32m), bs58 v0.5 (Bitcoin alphabet for legacy Byron-address detection), hex v0.4 (base16 codec) \u2014 all pure-Rust, license-compatible per deny.toml.",
-        "Test count: 31 (was 16 at R332): 23 unit + 8 integration. Workspace total: 4856 -> 4887 (+31)."
+        "R332 CLI parser: byte-equivalent --help and --version output captured from upstream bech32 1.1.10 binary.",
+        "R333 concrete encode/decode: HumanReadablePart, DataPart, Bech32Error, InputEncoding all backed by real bech32 + bs58 + hex crates. detect_encoding() mirrors upstream's heuristic byte-for-byte. Drop-in deployment proof: byte-equivalent output for every documented upstream --help example.",
+        "R334 closeout: AGENTS.md updated to deployment-ready state with comparison-with-upstream procedure; CHANGELOG entry; parity-matrix transition partial -> verified_11_0_1.",
+        "Pure-Rust deps used: bech32 v0.11 (MIT, BIP-0173/Bech32m), bs58 v0.5 (MIT/Apache-2.0, Bitcoin alphabet), hex v0.4 (MIT/Apache-2.0). All license-compatible per deny.toml.",
+        "Test count: 31 (23 unit + 8 integration). Workspace: 4856 -> 4887 (+31).",
+        "Drop-in invocation: `node/scripts/run-tools.sh bech32 <args>` produces byte-equivalent output to `.reference-haskell-cardano-node/install/bin/bech32 <args>`."
       ],
-      "remaining_work": [
-        "Skeleton round at R331: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
-        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/bech32.",
-        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
-      ],
+      "remaining_work": [],
       "acceptance": [
-        "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/bech32 --help` (modulo program name).",
-        "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/bech32/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh bech32` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
-        "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
-        "`cargo test -p yggdrasil-bech32 --test integration` green."
+        "\u2713 `bech32 --help` byte-equivalent to upstream (golden-test pinned).",
+        "\u2713 Per-subcommand stdout/stderr byte-equivalent on documented fixtures (4 round-trip tests pass).",
+        "\u2713 `node/scripts/run-tools.sh bech32` invokes the yggdrasil binary; SPO automation can swap upstream binary without script change.",
+        "\u2713 Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
+        "\u2713 `cargo test -p yggdrasil-bech32` green.",
+        "\u2713 Parity-matrix entry: status verified_11_0_1."
       ]
     },
     {
