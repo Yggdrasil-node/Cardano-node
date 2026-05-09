@@ -31,6 +31,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod byron;
 pub mod command;
 pub mod environment;
 pub mod helper;
