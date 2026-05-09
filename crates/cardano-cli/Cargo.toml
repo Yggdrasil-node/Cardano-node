@@ -1,0 +1,23 @@
+[package]
+name = "yggdrasil-cardano-cli"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream cardano-cli operator-tooling surface."
+
+# Mirrors upstream `cardano-cli/cardano-cli/cardano-cli.cabal` library
+# component. Maintains 1:1 file-mirror parity with
+# `Cardano.CLI.{Command,Run,Parser,Render,Option,Helper,Environment,Orphan}`
+# plus the per-era / Compatible / Byron sub-trees populated in R290–R295.
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/cardano-cli",
     "crates/crypto",
     "crates/consensus",
     "crates/ledger",
