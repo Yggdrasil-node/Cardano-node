@@ -2,8 +2,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.ChainSync.Type.hs` (state-machine
+//! **Strict mirror:** Ouroboros/Network/Protocol/ChainSync/Type.hs. (state-machine
 //! + message types). Yggdrasil's `protocols/chain_sync.rs`
 //! carries the typed protocol model that the client / server
 //! drivers consume.

@@ -13,8 +13,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.BlockFetch.Client.hs` (typed
+//! **Strict mirror:** Ouroboros/Network/Protocol/BlockFetch/Client.hs. (typed
 //! client driver for the BlockFetch state machine). Yggdrasil's
 //! filename `blockfetch_client.rs` flattens the upstream
 //! directory `BlockFetch/Client.hs` for cohesion; the protocol

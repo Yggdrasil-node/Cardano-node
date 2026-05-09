@@ -9,8 +9,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.TxSubmission2.Server.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/TxSubmission2/Server.hs.
 //! Filename flattens the upstream directory.
 
 use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;

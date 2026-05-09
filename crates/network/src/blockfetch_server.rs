@@ -8,8 +8,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.BlockFetch.Server.hs` (typed
+//! **Strict mirror:** Ouroboros/Network/Protocol/BlockFetch/Server.hs. (typed
 //! server driver for the BlockFetch state machine). Yggdrasil's
 //! filename flattens the upstream directory.
 

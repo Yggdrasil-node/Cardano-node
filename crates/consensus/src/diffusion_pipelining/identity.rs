@@ -18,7 +18,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** `Ouroboros.Consensus.Shelley.Node.DiffusionPipelining.hs`
+//! **Strict mirror:** Ouroboros/Consensus/Shelley/Node/DiffusionPipelining.hs.
 //! (`HotIdentity` + per-pool tentative-header tracking).
 
 use std::collections::BTreeSet;

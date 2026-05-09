@@ -2,8 +2,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.LocalTxSubmission.Type.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/LocalTxSubmission/Type.hs.
 
 /// States of the LocalTxSubmission mini-protocol state machine.
 ///

@@ -23,7 +23,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** `Ouroboros.Consensus.Block.SupportsDiffusionPipelining.hs`
+//! **Strict mirror:** Ouroboros/Consensus/Block/SupportsDiffusionPipelining.hs.
 //! (`DiffusionPipeliningSupport` flag) + `Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining.hs`
 //! (per-peer state). Two upstream files combined here under the more
 //! general `state.rs` name.

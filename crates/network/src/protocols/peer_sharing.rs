@@ -2,8 +2,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.PeerSharing.Type.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/PeerSharing/Type.hs.
 
 /// States of the PeerSharing mini-protocol state machine.
 ///

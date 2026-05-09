@@ -155,7 +155,7 @@ PARITY_PATTERN = re.compile(r"##\s+Naming parity", re.IGNORECASE)
 STRICT_NONE_PATTERN = re.compile(r"\*\*Strict mirror:\*\*\s+none\.", re.IGNORECASE)
 STRICT_MIRROR_DECL = re.compile(r"\*\*Strict mirror:\*\*\s+", re.IGNORECASE)
 STRICT_PARTIAL_PATTERN = re.compile(
-    r"\*\*Strict mirror\s*\(partial\)\*\*", re.IGNORECASE
+    r"\*\*Strict mirror\s*\(partial\):?\*\*", re.IGNORECASE
 )
 
 # Path fragments that indicate an upstream file is NOT a canonical

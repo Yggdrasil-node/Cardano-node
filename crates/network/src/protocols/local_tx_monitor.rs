@@ -2,8 +2,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.LocalTxMonitor.Type.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/LocalTxMonitor/Type.hs.
 
 /// States of the LocalTxMonitor mini-protocol state machine.
 ///

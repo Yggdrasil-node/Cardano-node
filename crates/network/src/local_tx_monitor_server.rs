@@ -12,8 +12,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.LocalTxMonitor.Server.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/LocalTxMonitor/Server.hs.
 //! Filename flattens the upstream directory.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};

@@ -9,8 +9,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.LocalTxSubmission.Client.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/LocalTxSubmission/Client.hs.
 //! Filename flattens the upstream directory.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};

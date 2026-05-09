@@ -11,8 +11,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.PeerSelection.PeerStateActions.hs` —
+//! **Strict mirror:** Ouroboros/Network/PeerSelection/PeerStateActions.hs. —
 //! per-peer warm / hot state-transition actions consumed by
 //! the governor.
 

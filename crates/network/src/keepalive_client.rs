@@ -12,8 +12,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.KeepAlive.Client.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/KeepAlive/Client.hs.
 //! Filename flattens the upstream directory.
 
 use std::time::Duration;

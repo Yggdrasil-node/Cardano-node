@@ -13,8 +13,7 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.Protocol.ChainSync.Client.hs`.
+//! **Strict mirror:** Ouroboros/Network/Protocol/ChainSync/Client.hs.
 //! Filename flattens the upstream directory.
 
 use std::time::Duration;
