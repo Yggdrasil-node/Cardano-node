@@ -103,20 +103,79 @@ fn unknown_flag_exits_non_zero() {
 }
 
 #[test]
-fn no_args_returns_r332_sentinel_until_r333() {
-    // R332 boundary: the CLI parser is functional but the
-    // encode/decode dispatch hasn't landed yet. With no args, the
-    // binary should fail with the R332 sentinel — NOT crash.
-    let output = Command::new(cargo_bin())
-        .output()
-        .expect("yggdrasil bech32 binary failed to start");
+fn empty_stdin_emits_string_too_short_error() {
+    // R333: the binary now does real encode/decode. With no args
+    // and empty stdin, it should emit the upstream-equivalent
+    // `StringToDecodeTooShort` error (mirrors upstream Haskell's
+    // `bech32: user error (StringToDecodeTooShort)` behavior).
+    let mut child = std::process::Command::new(cargo_bin())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn yggdrasil bech32");
+    drop(child.stdin.take()); // close stdin (EOF)
+    let output = child.wait_with_output().expect("wait yggdrasil bech32");
     assert!(
         !output.status.success(),
-        "R332 sentinel: bech32 with no args must fail until R333 lands encode/decode",
+        "bech32 with empty stdin must fail",
     );
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(
-        stderr.contains("R332"),
-        "R332 sentinel must mention the round number; got stderr: {stderr}",
+        stderr.contains("StringToDecodeTooShort"),
+        "must emit StringToDecodeTooShort error matching upstream; got: {stderr}",
     );
+}
+
+#[test]
+fn upstream_example_base16_to_bech32_via_stdin() {
+    // From upstream `bech32 --help`: `$ bech32 base16_ <<< 706174617465`
+    // expected stdout: `base16_1wpshgct5v5r5mxh0\n`
+    use std::io::Write;
+    let mut child = std::process::Command::new(cargo_bin())
+        .arg("base16_")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn yggdrasil bech32");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"706174617465")
+        .expect("write stdin");
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait");
+    assert!(
+        output.status.success(),
+        "must succeed: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert_eq!(stdout, "base16_1wpshgct5v5r5mxh0\n");
+}
+
+#[test]
+fn upstream_example_decode_to_base16_via_stdin() {
+    // From upstream `bech32 --help`: `$ bech32 <<< base16_1wpshgct5v5r5mxh0`
+    // expected stdout: `706174617465\n`
+    use std::io::Write;
+    let mut child = std::process::Command::new(cargo_bin())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(b"base16_1wpshgct5v5r5mxh0")
+        .expect("write stdin");
+    drop(child.stdin.take());
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).expect("stdout is UTF-8");
+    assert_eq!(stdout, "706174617465\n");
 }

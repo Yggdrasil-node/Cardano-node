@@ -78,6 +78,11 @@ tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync", "
 # replicates the upstream IntersectMBO/bech32 binary's CLI surface
 # byte-for-byte.
 bech32 = "0.11"
+# R333 — pure-Rust Base58 codec from `Nullus157/bs58-rs`.  MIT/Apache-2.0,
+# zero transitive deps under `default = ["std"]`.  Used by `crates/bech32/`
+# to mirror upstream's Base58 input-encoding detection (Cardano legacy
+# Byron address parsing path).
+bs58 = "0.5"
 
 yggdrasil-cardano-cli = { path = "crates/cardano-cli" }
 yggdrasil-consensus = { path = "crates/consensus" }

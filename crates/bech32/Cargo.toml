@@ -35,6 +35,10 @@ path = "src/main.rs"
 # Pure-Rust BIP-0173 / Bech32m implementation foundation.
 # Audited at R330; landed as workspace dep in `Cargo.toml` root.
 bech32 = { workspace = true }
+# Base58 (Bitcoin alphabet) for the legacy Byron-address detection
+# path in `run_encode`.  Audited at R333.
+bs58 = { workspace = true }
 clap = { workspace = true }
 eyre = { workspace = true }
+hex = { workspace = true }
 thiserror = { workspace = true }
