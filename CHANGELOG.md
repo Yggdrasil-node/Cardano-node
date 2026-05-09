@@ -274,6 +274,35 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R340 — cardano-submit-api type bridges: cli/types, cli/parsers, rest/types, rest/parsers.**
+  Bridges Yggdrasil's flat `parser::Args` argv representation to
+  upstream's typed parser surface (`TxSubmitCommand`/`TxSubmitNodeParams`).
+  Four production modules graduate from R335 stub-only to full upstream
+  port: `cli/types.rs` (ConfigFile/GenesisFile/SocketPath PathBuf
+  newtypes; ConsensusModeParams Cardano-only enum with `#[default]`;
+  NetworkId Mainnet|Testnet sum with From<NetworkMagic> glue;
+  TxSubmitNodeParams 6-field record; TxSubmitCommand Run|Version sum);
+  `cli/parsers.rs` (`into_command(&Args) → Result<TxSubmitCommand,
+  CommandError>` mirroring upstream `pTxSubmit envCli`; per-field
+  bridge fns `config_file_from_args` / `socket_path_from_args` /
+  `network_id_from_args` / `metrics_port_from_args`; default
+  constants `DEFAULT_WEBSERVER_PORT=8090`, `DEFAULT_METRICS_PORT=8081`);
+  `rest/types.rs` (`WebserverConfig { host, port }` + `to_socket_addr`
+  with wildcard support `*`/`0.0.0.0`/`::` → unspecified IPv4); `rest/
+  parsers.rs` (`from_args(&Args, default_port) → WebserverConfig`
+  mirroring `pWebserverConfig`). `lib.rs::run()` now validates argv
+  → TxSubmitCommand before its sentinel error so missing-flag errors
+  surface clearly to operators even before R341 lands the actual
+  HTTP listener. Carve-outs documented in strict-mirror docstrings:
+  `Cardano.CLI.Environment.EnvCli` (Yggdrasil parser is environment-
+  blind), `Options.Applicative.Parser` combinators (centralized in
+  `parse_args`), `Warp.HostPreference`/`Warp.Settings` (axum uses
+  SocketAddr), `Cardano.Api.SocketPath`'s polymorphic `File 'Out`
+  envelope (collapsed to direct PathBuf newtype). Workspace tests:
+  5,023 → 5,052 (+29: 7 cli/types.rs + 11 cli/parsers.rs + 7
+  rest/types.rs + 4 rest/parsers.rs). Parity-matrix entry
+  `sister-tool.cardano-submit-api` `next_milestone` advanced
+  R340 → R341.
 - **R339 — cardano-submit-api foundations: Types, Util, TraceSubmitApi data enum.**
   Lands the dependency-closed foundation of the cardano-submit-api
   crate ahead of the R340 web round. Three production modules graduate

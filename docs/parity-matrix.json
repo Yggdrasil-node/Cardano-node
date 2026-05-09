@@ -427,7 +427,7 @@
       "area": "sister-tools",
       "feature": "HTTP API for transaction submission \u2014 pure-Rust port mirroring upstream cardano-submit-api/src/Cardano/TxSubmit/*.hs.",
       "status": "partial",
-      "next_milestone": "R340",
+      "next_milestone": "R341",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-submit-api/",
@@ -444,16 +444,17 @@
         "R335 skeleton: 14 file-mirror tree under crates/cardano-submit-api/src/{lib,cli/*,rest/*,tracing/*,types,util,orphans,metrics,web,parser,main}.rs.",
         "R335 CLI parser: byte-equivalent --help and --version captured from upstream cardano-submit-api 11.0.0 (1627 + 100 bytes); 7-flag parsing surface (--config, --socket-path, --mainnet, --testnet-magic, --listen-address, --port, --metrics-port, --epoch-slots).",
         "R339 foundations: types.rs (TxSubmitPort, RawCborDecodeError, DecoderError, EnvSocketError, TxCmdError, TxSubmitWebApiError, render_tx_cmd_error) byte-equivalent JSON shapes via serde tag/content + transparent + untagged. tracing/trace_submit_api.rs (TraceSubmitApi data enum + MediumTxId + render_human). util.rs (log_exception generic over FnOnce(TraceSubmitApi)).",
-        "Tests: 51 unit tests (24 in types.rs, 13 in trace_submit_api.rs, 10 in parser.rs, 4 in util.rs) + 4 golden tests + 1 doctest. Workspace test contribution: +41 vs R338 baseline (4982 → 5023).",
-        "Carve-outs documented: TxSubmitApi/TxSubmitApiRecord/CBORStream Servant types not ported (axum-router replaces at R340).",
-        "Trace surface: data-only enum landed at R339; LogFormatting/MetaTrace/forMachine/forHuman/asMetrics tables + namespace/severity/metricsDoc land R340.",
-        "HTTP server (R340) + Rest/{Types,Parsers,Web} implementation pending axum dep audit."
+        "R340 type bridges: cli/types.rs (ConfigFile, GenesisFile, SocketPath, ConsensusModeParams, NetworkId, TxSubmitNodeParams, TxSubmitCommand). cli/parsers.rs (into_command + per-field bridge fns + DEFAULT_WEBSERVER_PORT/METRICS_PORT). rest/types.rs (WebserverConfig + to_socket_addr supporting wildcards `*`/`0.0.0.0`/`::`). rest/parsers.rs (from_args bridge to WebserverConfig with 127.0.0.1 default). lib.rs::run() now validates argv → TxSubmitCommand before its sentinel error so missing-flag errors surface clearly.",
+        "Tests: 80 unit tests (24 types.rs, 13 trace_submit_api.rs, 10 parser.rs, 4 util.rs, 7 cli/types.rs, 11 cli/parsers.rs, 7 rest/types.rs, 4 rest/parsers.rs) + 4 golden tests + 1 doctest. Workspace test contribution: +70 vs R338 baseline (4982 → 5052).",
+        "Carve-outs documented: TxSubmitApi/TxSubmitApiRecord/CBORStream Servant types not ported (axum-router replaces at R341). Cardano.CLI.Environment.EnvCli not ported (Yggdrasil parser is environment-blind for this binary).",
+        "Trace surface: data-only enum landed at R339; LogFormatting/MetaTrace/forMachine/forHuman/asMetrics tables + namespace/severity/metricsDoc land R341.",
+        "HTTP server (R341) + Rest/Web implementation pending axum dep audit."
       ],
       "remaining_work": [
-        "R340 Rest types + parsers + web (axum router; CBOR content-type negotiation; LocalTxSubmission client wired via crates/network/src/local_tx_submission_client.rs).",
-        "R341 Metrics.hs Prometheus surface (port-occupied retry + metrics endpoint).",
-        "R342 integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api.",
-        "R343 closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R341 Rest/Web + Web.hs (axum router + handler; CBOR content-type negotiation; LocalTxSubmission client wired via crates/network/src/local_tx_submission_client.rs; full TraceSubmitApi LogFormatting/MetaTrace/asMetrics tables).",
+        "R342 Metrics.hs Prometheus surface (port-occupied retry + metrics endpoint).",
+        "R343 integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api.",
+        "R344 closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-submit-api --help` (modulo program name).",

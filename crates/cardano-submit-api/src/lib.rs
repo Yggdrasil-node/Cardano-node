@@ -66,13 +66,31 @@ pub fn run_main() -> ExitCode {
     }
 }
 
-/// Concrete run-loop entry. R335 skeleton: returns the
-/// "not-yet-implemented" sentinel pending R336-R342 implementation
-/// rounds. The CLI parser surface (--help / --version) IS functional
-/// at R335 and byte-equivalent to upstream cardano-submit-api 11.0.0.
+/// Concrete run-loop entry.
+///
+/// R340 lands argv → [`cli::types::TxSubmitCommand`] validation. The
+/// [`run`] entrypoint now produces a fully-resolved
+/// [`cli::types::TxSubmitNodeParams`] before failing with the
+/// "web server not yet implemented" sentinel — operators still see the
+/// previous behavior at the binary level (no HTTP listener) but
+/// `--config`/`--socket-path`/`--mainnet|--testnet-magic` are now
+/// validated and missing-flag errors are surfaced clearly.
+///
+/// R341 will replace the trailing sentinel with the real axum server.
 pub fn run() -> eyre::Result<()> {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let args = match parser::parse_args(&argv) {
+        Ok(args) => args,
+        Err(parser::ParseError::HelpRequested | parser::ParseError::VersionRequested) => {
+            return Ok(());
+        }
+        Err(err) => return Err(eyre::eyre!("CLI parse error: {err}")),
+    };
+    let _command = cli::parsers::into_command(&args)
+        .map_err(|err| eyre::eyre!("CLI validation error: {err}"))?;
     Err(eyre::eyre!(
         "yggdrasil-cardano-submit-api: web server not yet implemented \
-         (R335 skeleton; concrete REST + Web dispatch lands at R336-R342)."
+         (R340 ships argv → TxSubmitCommand validation; R341 lands the \
+         axum HTTP listener)."
     ))
 }
