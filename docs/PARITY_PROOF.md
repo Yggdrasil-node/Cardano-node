@@ -12,7 +12,7 @@ header refreshed R308 (2026-05-09); R313–R320 docstring-classification
 arc note added R321 (2026-05-09).
 **Cumulative arc**: R1 → R320+
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4,856 passing, 0 failing. Five gates clean
+**Workspace tests**: 4,982 passing, 0 failing (post-R336 sister-tools Phase A skeleton milestone; +126 since R325 baseline). Five gates clean
 (`cargo fmt --check`, `cargo check-all`, `cargo lint`, `cargo test-all`,
 `python3 scripts/check-strict-mirror.py --fail-on-violation`); the
 parity-flow validators clean too (`check-parity-matrix.py` over 8

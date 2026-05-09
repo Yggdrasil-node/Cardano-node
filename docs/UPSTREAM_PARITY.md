@@ -20,7 +20,7 @@ This document tracks concrete parity alignment against official IntersectMBO rep
 - `cargo fmt --all -- --check`: clean.
 - `cargo check --workspace --all-targets`: clean.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean.
-- `cargo test --workspace --all-features`: 4,856 passing / 0 failing.
+- `cargo test --workspace --all-features`: 4,982 passing / 0 failing (post-R336 sister-tools Phase A skeleton milestone; +126 from R325 baseline of 4,856).
 - `python3 scripts/check-strict-mirror.py --fail-on-violation`: 0 violations (mirror/docstring + R311 index-vs-tree drift checks both clean).
 - Parity-flow validators: `check-parity-matrix.py` (8 entries against tag `11.0.1`), `check-fixture-manifest.py` (`cardano-base` SHA pin matrix), `check-reference-artifacts.py` (`cardano-node 11.0.1` install) — all clean.
 
