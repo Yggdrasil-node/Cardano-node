@@ -7,7 +7,122 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-No unreleased changes.
+Strict 1:1 file-mirror arc (R273-rename + R274–R301). Refreshes the
+vendored upstream Haskell tree to policy tag `11.0.1`, lands a
+strict-mirror CI drift-guard, sweeps every production `.rs` to either
+mirror an upstream `.hs` filename or carry an explicit `## Naming
+parity` docstring stanza, purges all production `#[allow(dead_code)]`
+sites + the lone production TODO, expands a new `crates/cardano-cli/`
+workspace member mirroring the full upstream cardano-cli surface
+(~237 files), and trims `docs/` from 23 to 11 top-level markdown
+files (5 archived to `docs/archive/`). Workspace tests: **4,855
+passing, 0 failing** across all 30 rounds.
+
+### Added
+
+- **R274 — strict-mirror audit infrastructure.** Refreshes vendored
+  install to `cardano-node 11.0.1`. Adds `scripts/audit-strict-mirror.py`
+  (walks production `.rs` files, derives candidate upstream basenames
+  via snake_case<->PascalCase, applies crate-to-repo affinity filter
+  for ambiguous matches), `docs/upstream-haskell-files.txt` (4,676-path
+  upstream `.hs` index), and `docs/strict-mirror-audit.tsv` (per-file
+  verdict table; every Rust file graded `(a) DIRECT_MIRROR` or
+  `(c) NO_MIRROR_NEEDS_DOCSTRING`).
+- **R275 — strict-mirror drift-guard (warn-only).** Adds
+  `scripts/check-strict-mirror.py` as a CI gate counterpart to the
+  authoring-time skill at `.claude/skills/round-extraction/SKILL.md`.
+  Flags any new file lacking either an upstream `.hs` mirror or a
+  `## Naming parity` docstring stanza.
+- **R288 — drift-guard promoted to fail-build.** After R281 closed
+  the last violation, the drift-guard flips from `continue-on-error:
+  true` to `--fail-on-violation`. Promoted to the named baseline gate
+  set ("the five verification expectations").
+- **R285 — Phase 6 wiring closure.** Phase 6 multi-peer BlockFetch
+  was already shipped via alternative paths in R258; R285 cleans up
+  5 stale `#[allow(dead_code)]` annotations on the original
+  scaffolding helpers (3 marked `#[cfg(test)]` for test-only seam
+  use; 1 routed via `unregister_worker`; 1 already wired but
+  carrying a stale allow).
+- **R289–R295 — `crates/cardano-cli/` workspace crate.** New
+  `yggdrasil-cardano-cli` crate strict-mirrors all 180 upstream
+  `Cardano.CLI.*` modules (~237 Rust files including parent shells).
+  Sub-trees: Byron (10), Compatible (21), EraBased (57),
+  EraIndependent (34), Type (33), Legacy (5), plus IO/Json/OS/Read/
+  Run/Option (~10) and the 8 top-level Cardano.CLI namespace files.
+  Each leaf carries a strict-mirror `## Naming parity` block;
+  parent shells carry synthesis declarations.
+- **R296–R297 — concrete cardano-cli migration kickoff.** Wires the
+  new crate into the `yggdrasil-node cardano-cli` subcommand:
+  R296 routes the `Version` banner through
+  `yggdrasil_cardano_cli::helper::version_info()`; R297 migrates
+  `ShowUpstreamConfig`'s path resolution + JSON output into
+  `yggdrasil_cardano_cli::environment::*`. `QueryTip` remains in
+  the node binary pending an LSQ-client trait abstraction.
+
+### Changed
+
+- **R273-rename — strict naming parity for R273b–i sub-modules.**
+  9 `git mv` renames in `consensus/opcert/`, `plutus/types/`,
+  `plutus/cost_model/`, `plutus/flat/` aligning sub-file basenames
+  with upstream (`OCert.hs`, `Builtins.hs`, `Internal.hs` etc.). The
+  authoring-time skill at `.claude/skills/round-extraction/SKILL.md`
+  is hardened with explicit filename-mirror rules.
+- **R276–R281 — Phase B sub-module docstring sweep.** Adds
+  `## Naming parity` blocks to 161 sub-module files across
+  `crates/ledger/src/state/` (24), `consensus/{nonce,opcert,
+  diffusion_pipelining}/` (9), `consensus/mempool/` (7),
+  `node/src/runtime/` (18), `network/governor/` (6), and the
+  R281 sweeper (97 residuals). Includes 3 `git mv` renames
+  (`opcert.rs`/`opcert/` -> `ocert.rs`/`ocert/` for upstream
+  `Cardano.Protocol.TPraos.OCert`).
+- **R283 — era_tag wiring.** Drops the stale `#[allow(dead_code)]`
+  on `node/src/sync.rs::mod era_tag`. Introduces a new named-
+  constant module `lsq_era_index` in `node/src/local_server.rs`
+  (collapses Byron into a single LSQ ordinal vs the wire-tag's two)
+  and replaces magic-number era arms in `GetCurrentPParams`
+  dispatch with named constants.
+- **R287 — closure annotations on planning docs.** `docs/code-audit.md`
+  C-1/H-1/H-2/M-1..M-8/L-1..L-9 findings each receive an inline
+  `[CLOSED in 2026-Q3]` annotation. `docs/REFACTOR_BLUEPRINT.md`
+  Phase C–G headers each receive a `[DONE in RNNN]` annotation.
+- **Phase D + R288 — living-doc parity-language sweep + drift-guard
+  fail-build.** Adds strict-1:1-policy citations to every per-crate
+  AGENTS.md (13 files); registers `check-strict-mirror.py` as the
+  fifth named verification gate in CLAUDE.md and root AGENTS.md.
+
+### Removed
+
+- **R282 — unused `TextEnvelope::description` field.** Drops the
+  `#[allow(dead_code)]` field in `node/src/block_producer.rs`. Serde's
+  default behavior silently ignores unknown JSON keys, so wire-format
+  compatibility with upstream-produced text-envelope files is
+  preserved.
+- **R286 — `_runstate_impl_marker` + unused `mk_txout`.** Deletes
+  `node/src/runtime/reconnecting.rs::_runstate_impl_marker` (replaced
+  with a comment line carrying the same visual seam) and the unused
+  `crates/ledger/src/eras/shelley.rs::mk_txout` test helper.
+
+### Documentation
+
+- **R298–R300 — `docs/` cleanup arc.** Top-level markdown reduced
+  23 -> 11 (-52%). Archived `docs/code-audit.md`,
+  `docs/REFACTOR_BLUEPRINT.md`, `docs/AUDIT_VERIFICATION_2026Q2.md`,
+  `docs/PARITY_PLAN.md`, `docs/UPSTREAM_RESEARCH.md` to
+  `docs/archive/` with explicit Jekyll permalinks preserving
+  published URLs. Trimmed `docs/PARITY_SUMMARY.md` from 485 -> 392
+  lines by retiring six pre-execution planning sections superseded
+  by the R269–R299 execution arc. Relocated `docs/poolMetaData.json`
+  (operator artifact, not a doc) to `node/configuration/`.
+- **R301 — SPECS.md improvements.** Adds CIPs repository link,
+  a new "Local parity surfaces (machine-readable)" section pointing
+  at `parity-matrix.json` + `strict-mirror-audit.tsv` +
+  `upstream-haskell-files.txt`, and a new Usage Rule capturing the
+  R274+ strict 1:1 file-mirror policy.
+- **R302 — CLAUDE.md gate-count consistency.** Lines 12 + 127
+  updated from "four verification gates" to "five verification
+  gates" to match the post-R288 fail-build flip and the existing
+  "All five are the required verification expectations" wording in
+  the Commands section (line 96).
 
 ## [0.2.0] - 2026-05-01
 

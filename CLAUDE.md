@@ -9,7 +9,7 @@ Pure-Rust port of `cardano-node` targeting **100% protocol parity**, **100% nami
 
 For the architectural picture see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). For the running implementation journal and operational rules see [AGENTS.md](AGENTS.md). Current implementation status, the rolling parity journal, and open operator-side gates live in [AGENTS.md](AGENTS.md) (Current Phase) and [docs/PARITY_SUMMARY.md](docs/PARITY_SUMMARY.md) — read those for the in-flight slice rather than relying on this file.
 
-The four verification gates in [Commands](#commands) below must all pass before declaring work done.
+The five verification gates in [Commands](#commands) below must all pass before declaring work done.
 
 ## Upstream Reference Repo
 
@@ -124,7 +124,7 @@ Parity-flow surfaces:
 - Pre-fetches workspace dependencies with `cargo fetch --locked`.
 - Runs async (`{"async": true, "asyncTimeout": 300000}`); the agent loop may begin before the hook finishes.
 
-`.claude/settings.json` also allow-lists the cargo/git commands needed for the four verification gates and adds a `Stop` hook that re-prints the verification reminder. Local sessions are unaffected.
+`.claude/settings.json` also allow-lists the cargo/git commands needed for the five verification gates and adds a `Stop` hook that re-prints the verification reminder. Local sessions are unaffected.
 
 ### Running a single test
 
