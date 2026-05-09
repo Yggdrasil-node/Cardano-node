@@ -586,7 +586,7 @@
       "area": "sister-tools",
       "feature": "ChainDB rollback utility \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBTruncater.* + app/db-truncater.hs.",
       "status": "partial",
-      "next_milestone": "R349",
+      "next_milestone": "R350",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBTruncater/",
@@ -603,11 +603,10 @@
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test.",
         "Byte-equivalent --help and --version captured from upstream db-truncater binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
         "R347 storage extension: ImmutableStore::trim_after_slot trait method + InMemoryImmutable + FileImmutable impls + ChainDb::truncate_immutable_after_slot wrapper. 11 storage-layer tests landed.",
-        "R348 typed config surface: types.rs (DBTruncaterConfig, TruncateAfter mirroring upstream Types.hs); parser.rs typed Args (--db PATH, --truncate-after-slot SLOT_NUMBER, --truncate-after-block BLOCK_NUMBER, --verbose); into_config validation (mandatory --db, mutually-exclusive truncate target). 22 db-truncater tests at R348 (was 8 at R335 + 0 types/config).",
-        "Run.hs equivalent (R349) pending: open ChainDB at db_dir + dispatch to ChainDb::truncate_immutable_after_slot + commit + report removed-block count."
+        "R348 typed config surface: types.rs (DBTruncaterConfig, TruncateAfter mirroring upstream Types.hs); parser.rs typed Args (--db PATH, --truncate-after-slot SLOT_NUMBER, --truncate-after-block BLOCK_NUMBER, --verbose); into_config validation (mandatory --db, mutually-exclusive truncate target).",
+        "R349 Run.hs equivalent: run.rs lands the open-ChainDB + dispatch + report procedure. resolve_target maps TruncateAfter::TruncateAfterSlot through verbatim and TruncateAfter::TruncateAfterBlock to a slot via immutable-DB scan (errors on BlockNumberNotFound). run_with_store generic over ImmutableStore for unit-testability against InMemoryImmutable. run() opens FileImmutable at db_dir + delegates. lib.rs::run() now calls run::run + reports `truncated immutable DB at slot N: K block(s) removed` to stderr (verbose-mode adds open-trace + resolve-trace lines). 30 db-truncater tests (was 22 at R348, +8 in run.rs: 3 resolve_target + 4 run_with_store + 1 tempdir-backed FileImmutable smoke). Workspace: 5,142 → 5,150."
       ],
       "remaining_work": [
-        "R349 Run.hs equivalent: open ChainDB + dispatch truncate via ChainDb::truncate_immutable_after_slot + report removed-block count.",
         "R350 integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-truncater (storage-format divergence acknowledged: yggdrasil's ChainDB format differs from upstream, so this is semantic parity not byte-format parity).",
         "R351 closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],

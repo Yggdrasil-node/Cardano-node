@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `db-truncater`.
 //!
 //! ## Naming parity
@@ -13,13 +14,14 @@
 //! |------------------------------------------------------|------------------------------|
 //! | `Tools/DBTruncater/Types.hs`                         | `types.rs`                   |
 //! | `app/DBTruncater/Parsers.hs`                         | `parser.rs`                  |
-//! | `Tools/DBTruncater/Run.hs`                           | `run.rs` (R349 — pending)    |
+//! | `Tools/DBTruncater/Run.hs`                           | `run.rs`                     |
 //! | `app/db-truncater.hs::main`                          | `main.rs`                    |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod run;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -27,7 +29,7 @@ pub fn run_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match parser::parse_args(&argv) {
         Ok(args) => match parser::into_config(&args) {
-            Ok(_config) => match run() {
+            Ok(config) => match self::run(&config) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     let _ = writeln!(std::io::stderr(), "Error: {err}");
@@ -54,15 +56,30 @@ pub fn run_main() -> ExitCode {
     }
 }
 
-/// Concrete run-loop entry.
+/// Concrete run-loop entry. Opens the configured ChainDB and applies
+/// the requested truncation, reporting the resolved slot + the number
+/// of blocks removed to stderr.
 ///
-/// R348 lands argv → `DBTruncaterConfig` validation; the actual
-/// `Run.hs`-equivalent ChainDB-open + truncate dispatch lands at R349
-/// using the `ImmutableStore::trim_after_slot` primitive added at R347.
-pub fn run() -> eyre::Result<()> {
-    Err(eyre::eyre!(
-        "yggdrasil-db-truncater: ChainDB open + truncate dispatch not yet \
-         implemented (R348 ships argv → DBTruncaterConfig validation; R349 \
-         lands the Run.hs equivalent using ImmutableStore::trim_after_slot)."
-    ))
+/// Mirror of upstream `Cardano.Tools.DBTruncater.Run.run`.
+pub fn run(config: &types::DBTruncaterConfig) -> eyre::Result<()> {
+    if config.verbose {
+        eprintln!(
+            "[db-truncater] opening ChainDB at {}",
+            config.db_dir.display()
+        );
+    }
+
+    let outcome = run::run(config).map_err(|err| eyre::eyre!("truncate failed: {err}"))?;
+
+    if config.verbose {
+        eprintln!(
+            "[db-truncater] resolved truncate target → slot {}",
+            outcome.resolved_slot.0
+        );
+    }
+    eprintln!(
+        "[db-truncater] truncated immutable DB at slot {}: {} block(s) removed",
+        outcome.resolved_slot.0, outcome.blocks_removed
+    );
+    Ok(())
 }

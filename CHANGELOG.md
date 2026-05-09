@@ -274,6 +274,27 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R349 — db-truncater: Run.hs equivalent (functional binary).**
+  Lands the operator-facing run procedure for db-truncater. New run.rs
+  module mirrors upstream Cardano.Tools.DBTruncater.Run: resolve_target
+  maps TruncateAfter::TruncateAfterSlot through verbatim, scans the
+  immutable DB for the matching block on TruncateAfter::TruncateAfterBlock
+  (errors on BlockNumberNotFound). run_with_store is generic over any
+  ImmutableStore impl for unit-testability against InMemoryImmutable;
+  run() opens FileImmutable at config.db_dir and delegates. lib.rs::run()
+  now calls run::run() and reports `truncated immutable DB at slot N:
+  K block(s) removed` to stderr (verbose-mode adds open + resolve
+  trace lines). The binary is now end-to-end functional: an operator
+  can invoke `db-truncater --db /path --truncate-after-slot N` (or
+  --truncate-after-block N) and the on-disk immutable DB is rewound
+  to that point. Carve-outs documented: upstream's async ChainDB
+  bracket collapsed (FileImmutable is sync); upstream's
+  Ouroboros.Consensus.Block.Abstract.Cardano type-level dispatch
+  collapsed (Yggdrasil operates on era-tagged CBOR pass-through).
+  Cargo deps: tempfile dev-dep added for the tempdir-backed
+  FileImmutable smoke test. Tests: db-truncater 22 → 30 (+8: 3
+  resolve_target + 4 run_with_store + 1 tempdir-backed FileImmutable
+  smoke). Workspace: 5,142 → 5,150.
 - **R348 — db-truncater: typed config surface + into_config validation.**
   Lands the typed CLI surface for db-truncater. New types.rs module
   mirrors upstream Cardano.Tools.DBTruncater.Types: DBTruncaterConfig
