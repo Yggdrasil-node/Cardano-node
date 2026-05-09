@@ -11,6 +11,17 @@
 //! Reference: `Ouroboros.Consensus.Mempool` (top-level re-export),
 //! `Ouroboros.Consensus.Mempool.{API, Capacity, Impl.{Common, Update},
 //! Init, Query, TxSeq, Update}`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell that
+//! aggregates upstream `Ouroboros.Consensus.Mempool.*` modules:
+//! `API`, `Capacity`, `Impl/Common`, `Impl/Update`, `Init`,
+//! `Query`, `TxSeq`, `Update`. Yggdrasil collapses these into a
+//! single namespace with two sub-modules: `queue.rs` (mempool
+//! data + capacity tracking + entry/error types) and `tx_state.rs`
+//! (cross-peer shared state for TxId deduplication, mirroring
+//! `Ouroboros.Network.TxSubmission.Inbound.V2.State`).
 
 mod queue;
 /// Cross-peer shared TxId deduplication state.

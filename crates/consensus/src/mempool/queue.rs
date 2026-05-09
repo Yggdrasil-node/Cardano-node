@@ -1,3 +1,17 @@
+//! Mempool queue, transaction entry type, and error types.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side aggregation of upstream
+//! `Ouroboros.Consensus.Mempool.{API, Capacity, Impl.Common,
+//! Impl.Update, Init, Query, TxSeq, Update}` — the API,
+//! fee-ordered queue data structure, capacity tracking, and entry
+//! types are spread across those modules upstream. Yggdrasil
+//! unifies them in `queue.rs` with sub-modules `inner.rs` (the
+//! Mempool struct + impl) and `shared.rs` (the Arc<RwLock<...>>
+//! wrapper for the runtime). The cross-peer dedup state lives in
+//! the sibling `tx_state.rs`.
+
 use std::collections::HashMap;
 
 use yggdrasil_ledger::{Era, LedgerError, MultiEraSubmittedTx, ShelleyTxIn, SlotNo, TxId};

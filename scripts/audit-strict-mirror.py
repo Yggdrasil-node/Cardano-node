@@ -170,6 +170,13 @@ NON_PRODUCTION_FRAGMENTS = (
     "/testlib/",
     "/bench/",
     "/benchmarks/",
+    "/benchmark/",
+    "-benchmark/",
+    "/nofib/",
+    "/plutus-benchmark/",
+    "/cardano-benchmarking/",
+    "/cardano-recon-framework/",
+    "/cardano-timeseries-io/",
     "/golden/",
     "/demo/",
     "/notes/",
@@ -177,7 +184,11 @@ NON_PRODUCTION_FRAGMENTS = (
     "/docusaurus/",
     "/sample/",
     "/example/",
+    "/examples/",
     "/app/",
+    "/sim-tests/",
+    "/sim-bench/",
+    "/cardano-tools/",
 )
 
 

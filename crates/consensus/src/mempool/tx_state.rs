@@ -9,6 +9,16 @@
 //!
 //! Reference: `Ouroboros.Network.TxSubmission.Inbound.V2.State` —
 //! `SharedTxState`, `PeerTxState`, `TxDecision`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell that
+//! mirrors `Ouroboros.Network.TxSubmission.Inbound.V2.State.hs`
+//! (combines `SharedTxState`, `PeerTxState`, and `TxDecision`).
+//! Yggdrasil splits the upstream single-file state machine into
+//! two sub-modules: `state.rs` (data + global state machine)
+//! and `shared.rs` (concurrent Arc<RwLock<...>> wrapper for the
+//! runtime).
 
 /// Maximum number of recently-known TxIds retained in the `known` ring.
 ///
