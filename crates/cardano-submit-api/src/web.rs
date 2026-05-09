@@ -45,6 +45,7 @@ use std::sync::Arc;
 use yggdrasil_network::{LocalTxSubmissionClient, LocalTxSubmissionClientError, MiniProtocolNum};
 
 use crate::cli::types::{ConsensusModeParams, NetworkId, SocketPath, TxSubmitNodeParams};
+use crate::metrics::{MetricsRegistry, register_metrics_server};
 use crate::rest::types::WebserverConfig;
 use crate::rest::web::{Handler, HttpRequest, HttpResponse, Tracer, run_settings};
 use crate::tracing::trace_submit_api::TraceSubmitApi;
@@ -90,20 +91,51 @@ pub async fn run_tx_submit_server(
 }
 
 /// Variant of [`run_tx_submit_server`] that takes a
-/// [`TxSubmitNodeParams`] bundle. Convenience for callers that have
-/// already validated the CLI flags.
+/// [`TxSubmitNodeParams`] bundle and spins both the HTTP server and
+/// the Prometheus metrics server concurrently.
+///
+/// Uses [`make_metrics_aware_tracer`] to wire counter updates into
+/// the supplied [`MetricsRegistry`] before forwarding events to the
+/// caller's tracer. Both servers run forever (or until either errors);
+/// returns when the HTTP server's listener exits.
 pub async fn run_tx_submit_server_from_params(
     tracer: Tracer,
     params: TxSubmitNodeParams,
 ) -> std::io::Result<()> {
-    run_tx_submit_server(
-        tracer,
+    let registry = MetricsRegistry::new();
+    let observing_tracer = make_metrics_aware_tracer(tracer, Arc::clone(&registry));
+
+    let metrics_tracer = Arc::clone(&observing_tracer);
+    let metrics_registry = Arc::clone(&registry);
+    let metrics_port = params.metrics_port;
+    let metrics_handle = tokio::spawn(async move {
+        let _ = register_metrics_server(metrics_tracer, metrics_registry, metrics_port).await;
+    });
+
+    let result = run_tx_submit_server(
+        observing_tracer,
         &params.webserver_config,
         params.protocol,
         params.network_id,
         &params.socket_path,
     )
-    .await
+    .await;
+
+    metrics_handle.abort();
+    result
+}
+
+/// Wrap a [`Tracer`] so every emitted [`TraceSubmitApi`] event also
+/// updates the [`MetricsRegistry`] counters before being forwarded
+/// to the inner tracer.
+///
+/// Mirrors upstream's `bracket`-pattern where the metrics server
+/// observes the same trace stream the operator-facing logger sees.
+pub fn make_metrics_aware_tracer(inner: Tracer, registry: Arc<MetricsRegistry>) -> Tracer {
+    Arc::new(move |evt: TraceSubmitApi| {
+        registry.observe(&evt);
+        inner(evt);
+    })
 }
 
 /// Build the request-dispatch handler. Mirrors upstream `txSubmitApp`.
@@ -372,5 +404,48 @@ mod tests {
     #[test]
     fn mainnet_network_magic_constant_matches_upstream() {
         assert_eq!(MAINNET_NETWORK_MAGIC, 764824073);
+    }
+
+    #[test]
+    fn metrics_aware_tracer_observes_and_forwards() {
+        use std::sync::Mutex;
+        let registry = MetricsRegistry::new();
+        let inner_events: Arc<Mutex<Vec<TraceSubmitApi>>> = Arc::new(Mutex::new(Vec::new()));
+        let inner_clone = Arc::clone(&inner_events);
+        let inner: Tracer = Arc::new(move |evt| inner_clone.lock().expect("lock").push(evt));
+
+        let wrapped = make_metrics_aware_tracer(inner, Arc::clone(&registry));
+
+        // Submitted event → tx_submit counter ++ + forwarded to inner.
+        wrapped(TraceSubmitApi::EndpointSubmittedTransaction(
+            crate::tracing::trace_submit_api::MediumTxId::from_rendered("a"),
+        ));
+        // Failed event → tx_submit_fail counter ++ + forwarded to inner.
+        wrapped(TraceSubmitApi::EndpointFailedToSubmitTransaction(
+            TxCmdError::TxCmdTxSubmitConnectionError("x".to_string()),
+        ));
+        // Listener event → no counter update + forwarded.
+        wrapped(TraceSubmitApi::EndpointListeningOnPort(
+            "127.0.0.1:0".parse().expect("addr"),
+        ));
+
+        assert_eq!(registry.snapshot(), (1, 1));
+        assert_eq!(inner_events.lock().expect("lock").len(), 3);
+    }
+
+    #[test]
+    fn metrics_aware_tracer_initialize_event_zeros_counters() {
+        let registry = MetricsRegistry::new();
+        registry.apply(&[
+            crate::tracing::trace_submit_api::MetricUpdate::counter_set("tx_submit", 99),
+            crate::tracing::trace_submit_api::MetricUpdate::counter_set("tx_submit_fail", 99),
+        ]);
+        assert_eq!(registry.snapshot(), (99, 99));
+
+        let nop: Tracer = Arc::new(|_| {});
+        let wrapped = make_metrics_aware_tracer(nop, Arc::clone(&registry));
+        wrapped(TraceSubmitApi::ApplicationInitializeMetrics);
+
+        assert_eq!(registry.snapshot(), (0, 0));
     }
 }

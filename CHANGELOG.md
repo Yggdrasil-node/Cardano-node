@@ -274,6 +274,33 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R344 — cardano-submit-api Prometheus metrics: registry, port-retry server, tracer composition.**
+  Lands the Prometheus metrics surface for cardano-submit-api,
+  mirroring upstream Cardano.TxSubmit.Metrics. New metrics.rs
+  module: MetricsRegistry with atomic AtomicU64 counters for
+  tx_submit / tx_submit_fail; apply(MetricUpdate[]) +
+  observe(TraceSubmitApi) wiring; render_prometheus emits
+  `# HELP / # TYPE counter / <name> <value>` shape byte-equivalent
+  to upstream serveMetrics; register_metrics_server with port-
+  occupied retry up to MAX_PORT_OFFSET=1000 adjacent ports + tracing
+  of MetricsServerError/Started/PortOccupied/PortNotBound events
+  (matches upstream's "metrics endpoint disabled" semantic if every
+  retry fails); spawned per-request tokio task serving
+  GET /metrics → 200 OK with text/plain; version=0.0.4 / other → 404.
+  web.rs::run_tx_submit_server_from_params now spawns both the HTTP
+  server and the metrics server concurrently;
+  make_metrics_aware_tracer wraps the operator tracer with registry
+  observation so counter updates ride the same trace stream the
+  operator's logger sees — no separate counter-bumping path. The
+  ApplicationInitializeMetrics event applies a counter zero-set at
+  startup matching upstream's forMachine semantic. Carve-outs
+  documented: System.Metrics.Prometheus.Http.Scrape.serveMetrics +
+  RegistrySample replaced by raw-tokio HTTP + AtomicU64 — no
+  prometheus-client ecosystem dependency. Workspace tests:
+  5,100 → 5,115 (+15: 13 metrics.rs tests + 2 web.rs
+  metrics_aware_tracer tests). Crate total: 133 → 148.
+  Parity-matrix entry `sister-tool.cardano-submit-api`
+  `next_milestone` advanced R344 → R345.
 - **R343 — cardano-submit-api LocalTxSubmission wiring: async Handler + ntc_connect integration.**
   Completes the Phase A.2 web round: the placeholder 503 response from
   R342 is replaced with real NtC LocalTxSubmission integration, and
