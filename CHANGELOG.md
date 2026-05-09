@@ -274,6 +274,50 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R353 — snapshot-converter: typed config surface from CLI shape.**
+  Lands the typed configuration surface for snapshot-converter. New
+  types.rs module ports the operator-facing data declarations from
+  upstream's app/snapshot-converter.hs:
+  - SnapshotsDirectory(PathBuf), LsmDatabaseFilePath(PathBuf) PathBuf
+    newtypes (re-exported upstream from
+    Ouroboros.Consensus.Storage.LedgerDB.Snapshots).
+  - StandaloneFormat (Mem [default] | Lsm) — only Mem is currently
+    CLI-reachable; Lsm reserved for future parity.
+  - SnapshotsDirectoryWithFormat (LsmSnapshot { directory, database })
+    used by daemon mode.
+  - SnapshotSpec (Standalone { path, format } | Lsm { path, database })
+    — renamed from upstream's `Snapshot'` (with prime; Rust does not
+    allow apostrophes in identifiers). The upstream `Snapshot`
+    (no prime) is a different type defined in the LedgerDB module
+    and is carved out — yggdrasil's parser-side surface stops at
+    SnapshotSpec; the slot-name parsing + Snapshot pairing lands
+    when the conversion logic is ported.
+  - Config (Daemon { watch, output } | Oneshot { input, output }).
+  Carve-outs documented:
+  - convertSnapshot mem↔lsm logic carved-out — operates on upstream's
+    ledger-DB on-disk format which yggdrasil does not implement
+    (yggdrasil's LedgerStore uses a different on-disk layout under
+    data_dir/ledger/). Future round paths: (a) yggdrasil-format ↔
+    upstream-mem-format converter (semantic parity); or (b) implement
+    upstream LSM/mem readers/writers as separate compat-snapshot crate.
+  - Daemon-mode filesystem watcher (withManager / watchTree from
+    System.FSNotify) — port-able but needs Rust `notify` crate
+    equivalent. Tracked separately.
+  Tests: snapshot-converter 8 → 23 (+15: 1 SnapshotsDirectory + 1
+  LsmDatabaseFilePath + 1 StandaloneFormat default + 1
+  SnapshotsDirectoryWithFormat + 2 SnapshotSpec constructors + 1
+  SnapshotSpec path accessor + 2 Config round-trips + 7 implicit
+  round-trip checks). Workspace: 5,164 → 5,173.
+
+  Parity-matrix entry sister-tool.snapshot-converter advanced:
+  next_milestone R402 → R354; remaining_work refreshed with the
+  per-module roadmap (Parsers → Conversion → Daemon → Run +
+  integration + closeout).
+- **R352 — closure-status refresh for R346-R351 multi-arc work.**
+  Updates docs/PARITY_SUMMARY.md Status banner: 345+ → 351+ rounds,
+  prepared/updated date 2026-05-10, R347-R350 db-truncater Phase B.1
+  + R351 db-analyser Phase B.2 added to closed-arcs list. Workspace
+  test count refreshed 5,115 → 5,164. Audit table unchanged.
 - **R351 — db-analyser: typed config surface (port of Types.hs).**
   Lands the typed configuration surface for db-analyser. New types.rs
   module ports the full upstream Cardano.Tools.DBAnalyser.Types

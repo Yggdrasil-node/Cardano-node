@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `snapshot-converter`.
 //!
 //! ## Naming parity
@@ -6,11 +7,22 @@
 //! file-mirror + CLI-parser skeleton for the `snapshot-converter` sister-tool crate.
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
+//!
+//! Layout mapping (R353 ships types.rs; later rounds populate the rest):
+//!
+//! | Upstream `app/snapshot-converter.hs` section          | Yggdrasil `.rs`                 |
+//! |-------------------------------------------------------|---------------------------------|
+//! | `data Config` / `data Snapshot'` / supporting types   | `types.rs`                      |
+//! | `parseConfig` (optparse-applicative)                  | `parser.rs`                     |
+//! | `convertSnapshot` (LedgerDB conversion logic)         | `convert.rs` (pending; carve-out)|
+//! | `withManager` / `watchTree` daemon                    | `daemon.rs` (pending)           |
+//! | `main`                                                | `main.rs`                       |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {

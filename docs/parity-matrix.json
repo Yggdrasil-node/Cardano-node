@@ -662,7 +662,7 @@
       "area": "sister-tools",
       "feature": "Ledger snapshot format converter (mem \u2194 lmdb \u2194 lsm) \u2014 pure-Rust port mirroring upstream snapshot-converter.hs.",
       "status": "partial",
-      "next_milestone": "R402",
+      "next_milestone": "R354",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs",
@@ -672,21 +672,21 @@
       "rust_surface": [
         {
           "path": "crates/snapshot-converter/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.3 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R353 typed-config surface (full Config/SnapshotSpec/SnapshotsDirectoryWithFormat port; mem\u2194lsm conversion logic carved-out pending yggdrasil-format LedgerStore reader/writer)."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for snapshot-converter.",
         "Byte-equivalent --help and --version captured from upstream snapshot-converter binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
-        "Workspace test contribution: +8.",
-        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+        "R353 typed-config surface: types.rs ports Config (Daemon | Oneshot), SnapshotSpec (Standalone | Lsm; renamed from upstream Snapshot' for Rust-identifier compatibility), SnapshotsDirectoryWithFormat (LsmSnapshot variant), SnapshotsDirectory + LsmDatabaseFilePath PathBuf newtypes, StandaloneFormat (Mem [default] | Lsm). 23 snapshot-converter tests at R353 (was 8 at R335 + 9 types unit + 6 SnapshotSpec/Config round-trips)."
       ],
       "remaining_work": [
-        "Skeleton round at R401: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
-        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/snapshot-converter.",
-        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R354+ Parsers.hs port: clap-based parser dispatching --monitor-lsm-snapshots-in / --lsm-database / --output-mem-snapshots-in (daemon mode) vs --input-mem / --input-lsm-snapshot / --input-lsm-database / --output-mem / --output-lsm-snapshot / --output-lsm-database (oneshot mode). Mutually-exclusive flag combinations.",
+        "R355+ Conversion logic carve-out: upstream's Ouroboros.Consensus.Cardano.SnapshotConversion.convertSnapshot operates on upstream's ledger-DB on-disk format which yggdrasil does not currently implement (yggdrasil's LedgerStore uses a different on-disk layout under data_dir/ledger/). Future round can either ship a yggdrasil-format \u2194 upstream-mem-format converter (semantic parity) or implement upstream's LSM/mem readers/writers as a separate compat-snapshot crate.",
+        "R356+ Daemon mode: notify-crate-based filesystem watcher mirroring upstream's withManager/watchTree from System.FSNotify.",
+        "R357+ Run.rs entry-point: main dispatch hooking config + conversion + daemon paths.",
+        "Integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/snapshot-converter (storage-format divergence acknowledged: this is semantic parity not byte-format parity).",
+        "Closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/snapshot-converter --help` (modulo program name).",
