@@ -274,6 +274,27 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R339 — cardano-submit-api foundations: Types, Util, TraceSubmitApi data enum.**
+  Lands the dependency-closed foundation of the cardano-submit-api
+  crate ahead of the R340 web round. Three production modules graduate
+  from R335 stub-only to full upstream port: `types.rs` (TxSubmitPort,
+  RawCborDecodeError, DecoderError, EnvSocketError, TxCmdError,
+  TxSubmitWebApiError, render_tx_cmd_error — JSON shapes byte-
+  equivalent to upstream Aeson via serde tag/content + transparent +
+  untagged); `tracing/trace_submit_api.rs` (data-only TraceSubmitApi
+  enum + MediumTxId helper + render_human strings byte-matching
+  upstream forHuman); `util.rs` (log_exception generic over
+  FnOnce(TraceSubmitApi)). Servant API types (`TxSubmitApi`,
+  `TxSubmitApiRecord`, `CBORStream`) carved out under a `**Strict
+  mirror:** none.` synthesis docstring with rationale: axum's
+  router-based design has no Servant analog; CBOR content-type
+  negotiation is handled inline at handler in R340. The
+  `LogFormatting`/`MetaTrace`/`forMachine`/`asMetrics` tables for
+  TraceSubmitApi are intentionally deferred to R340 alongside web
+  round (when trace-receiver wiring is decided). Workspace tests:
+  4,982 → 5,023 (+41: 24 in types.rs + 13 in trace_submit_api.rs +
+  4 in util.rs). Parity-matrix entry `sister-tool.cardano-submit-api`
+  evidence/remaining_work refreshed.
 - **R335-R336 — Phase A skeleton milestone: 12/12 sister tools deployable.**
   R335 lands cardano-submit-api skeleton + parser (14 file-mirror
   tree, byte-equivalent --help/--version, 7-flag parser). The bulk
