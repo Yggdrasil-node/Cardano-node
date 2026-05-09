@@ -7,16 +7,27 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-Strict 1:1 file-mirror arc (R273-rename + R274–R301). Refreshes the
-vendored upstream Haskell tree to policy tag `11.0.1`, lands a
-strict-mirror CI drift-guard, sweeps every production `.rs` to either
-mirror an upstream `.hs` filename or carry an explicit `## Naming
-parity` docstring stanza, purges all production `#[allow(dead_code)]`
-sites + the lone production TODO, expands a new `crates/cardano-cli/`
-workspace member mirroring the full upstream cardano-cli surface
-(~237 files), and trims `docs/` from 23 to 11 top-level markdown
-files (5 archived to `docs/archive/`). Workspace tests: **4,855
-passing, 0 failing** across all 30 rounds.
+Strict 1:1 file-mirror arc (R273-rename + R274–R311) plus
+docstring-classification cleanup sub-arc (R313–R320) plus closure-
+status triad refresh (R321). Refreshes the vendored upstream Haskell
+tree to policy tag `11.0.1`, lands a strict-mirror CI drift-guard
+(warn-only at R275 → fail-build at R288 → index-vs-tree drift check
+added R311), sweeps every production `.rs` to declare exactly one of
+two canonical docstring forms (`**Strict mirror:** <upstream/path.hs>`
+or `**Strict mirror:** none.`), purges all production
+`#[allow(dead_code)]` sites + the lone production TODO, expands a
+new `crates/cardano-cli/` workspace member mirroring the full
+upstream cardano-cli surface (~237 files), trims `docs/` from 23 to
+11 top-level markdown files (5 archived to `docs/archive/`), adds two
+new CI parity validators (`check-fixture-manifest.py` +
+`check-reference-artifacts.py`), and eliminates the entire
+`(c) strict-partial` bucket via 24 docstring promotions, 11
+reclassifications to canonical synthesis, 1 file merge (`multiplexer
+.rs` → `mux.rs`), 2 file splits (`handshake.rs` → 3 leaves;
+`inbound_governor.rs` → 2 leaves), and 2 final docstring tightens.
+Workspace tests: **4,856 passing, 0 failing**. Final audit table:
+**262 `(a) DIRECT_MIRROR`** + **186 `(c) strict-none`** = **448
+graded files**; **zero `(c) strict-partial`**; zero ambiguity.
 
 ### Added
 
@@ -123,6 +134,148 @@ passing, 0 failing** across all 30 rounds.
   gates" to match the post-R288 fail-build flip and the existing
   "All five are the required verification expectations" wording in
   the Commands section (line 96).
+- **R303 — two new CI parity validators.** Adds
+  `scripts/check-fixture-manifest.py` (cross-checks the
+  `cardano-base` SHA pin across `node/src/upstream_pins.rs::
+  UPSTREAM_CARDANO_BASE_COMMIT`, `specs/upstream-test-vectors/
+  cardano-base/<SHA>/`, `docs/SPECS.md`, `docs/UPSTREAM_PARITY.md`;
+  verifies 2 required corpora present) and
+  `scripts/check-reference-artifacts.py` (validates
+  `.reference-haskell-cardano-node/install/`: `cardano-node
+  --version` matches policy tag, 9 binaries present, 3 networks ×
+  8 config files). The fixture-manifest validator wired to CI;
+  reference-artifacts kept local-only (CI doesn't carry the 1.3 GB
+  vendored install).
+- **R304 — refine strict-mirror citation in non-Rust dirs.**
+  Adjusts `specs/AGENTS.md` and `node/configuration/AGENTS.md`
+  to clarify the strict-mirror policy applies to production `.rs`
+  files only (vendored fixtures + operator config files don't
+  fall under R274's file-naming policy).
+- **R305 — Reference landing + index + docs/AGENTS.md cleanup.**
+  Reorganizes `docs/reference.md` to group docs into "Architecture
+  & parity", "Specs & dependencies", "Validation & release", and
+  "Archived planning docs" sections. Updates `docs/AGENTS.md`
+  policy + manual chapter inventory.
+- **R306 — `crates/cardano-cli/AGENTS.md`.** Adds operational guide
+  for the new workspace crate: directory shape, strict-mirror policy
+  recap, current status (R289–R295 bootstrap, R296+R297 migration
+  kickoff), R298+ migration roadmap, integration with the `node`
+  binary. Registers the new AGENTS.md in `crates/AGENTS.md` and
+  `CLAUDE.md`.
+- **R307 — PARITY_SUMMARY.md round-count + test-badge refresh.**
+  Bumps round count from 251 to 306+; updates README test badge
+  4.7K+ → 4.8K+ to reflect post-R273 baseline.
+- **R308 — PARITY_PROOF.md header refresh + `scripts/AGENTS.md`.**
+  Front-matter title `(Round 248)` → ``; document-round line
+  refreshed; test-count line refreshed (4.7K+ → 4,855); five-gate
+  snapshot added; R273-rename + R274–R307 arc summary blockquote
+  added at the top of the body. New `scripts/AGENTS.md` registered
+  in `CLAUDE.md`. Tail repair: `cargo fmt` auto-fix on 3 files
+  with pre-R308 rustfmt drift.
+- **R309 — AGENTS.md Current Phase R273-R308 arc closure.**
+  Appends single arc-closure sentence to `AGENTS.md`'s Current
+  Phase paragraph; long round-by-round notes (lines 540+) remain
+  unchanged per existing line 159 guidance.
+- **R310 — `.gitignore` over-broad `debug` pattern fix (CI
+  failure).** Root `.gitignore` line 2 was a bare `debug` pattern
+  intended for Cargo's `target/debug/` build output. Without a
+  leading slash or `**/` prefix, gitignore rules match files or
+  dirs with that basename anywhere in the tree, silently swallowing
+  `crates/cardano-cli/src/era_independent/debug/` (12 R294 files
+  never tracked despite existing locally and being graded in
+  `docs/strict-mirror-audit.tsv`). Fixed: replace bare `debug` and
+  redundant bare `target` with anchored `/target/`. Stage the 12
+  previously-invisible files. Surveyed all other bare-basename
+  ignore patterns; only `debug` had a current source-tree
+  collision.
+- **R311 — strict-mirror index-vs-tree drift check.** Closes the
+  failure-detection gap that R310 exposed.
+  `scripts/check-strict-mirror.py` previously walked only the local
+  filesystem; an over-broad `.gitignore` pattern that silently
+  swallowed production `.rs` files (R310's failure mode) was
+  invisible to the gate, manifesting only as an opaque `cargo fmt`
+  module-resolution error on a fresh CI clone. Adds a second pass
+  cross-checking every production `.rs` against `git ls-files`;
+  files present locally but not tracked surface as a distinct
+  drift-violation class with actionable wording.
+- **R312 — `docs/UPSTREAM_PARITY.md` arc-closure cross-walk.**
+  Closes the canonical-status doc triad refresh by adding a top-
+  of-document arc-closure blockquote covering R273-R311 and
+  splitting Verification Baseline into "Five-gate snapshot
+  (post-R311)" + "Historical R244–R249 closure evidence" subheads.
+- **R313 — synthesis-file census.** Read-only census of the 215
+  production `.rs` files that carry no 1:1 upstream mirror under
+  `.reference-haskell-cardano-node/`. Re-runs
+  `scripts/audit-strict-mirror.py` (TSV byte-identical to committed
+  allowlist), groups the synthesis bucket by subsystem, sample-
+  verifies docstring stanzas. Headline: 230 `(a) DIRECT_MIRROR` +
+  215 `(c) NO_MIRROR_NEEDS_DOCSTRING` = 445 graded files; zero
+  `(b)` rename-needed; zero `(d)` clash-regrade.
+- **R314 — promote partial-mirror docstrings to canonical strict-
+  mirror.** Closes the docstring-classification gap from R313's
+  census: audit regex bug fix
+  (`STRICT_PARTIAL_PATTERN` didn't match `**Strict mirror
+  (partial):**` with the trailing colon — only without — so 41
+  files fell through to "unspecified" instead of being recognized
+  as "strict-partial"); 24 files promoted to canonical
+  `**Strict mirror:** <upstream/path.hs>.` form.
+- **R315 — reclassify Yggdrasil-side aggregator/glue files to
+  synthesis.** R314 left 17 files in `(c) strict-partial` form. Of
+  those, 8 were misclassified — they have no upstream 1:1 parallel
+  and should declare canonical synthesis form
+  (`**Strict mirror:** none.`) rather than the misleading
+  `**Strict mirror (partial):**` form. Reclassified:
+  `consensus/genesis_density.rs`, `consensus/in_future.rs`,
+  `crypto/sha3_hash.rs`, `ledger/rewards.rs`, `ledger/utxo.rs`,
+  `network/blockfetch_pool.rs`, `network/listener.rs`, `node/runtime/keep_alive.rs`.
+- **R316 — reclassify 3 more partial-mirrors after content audit.**
+  Operator asked whether the 9 remaining files could be promoted
+  to direct mirrors. Content-vs-name audit revealed 3 more files
+  where the basename matches an upstream `.hs` but the content
+  diverges (`governor/churn.rs`, `governor/peer_metric.rs`,
+  `praos/common.rs`). Reclassified to synthesis with explicit
+  upstream symbol cross-references preserved.
+- **R317 — merge `multiplexer.rs` into `mux.rs` (1:1 with
+  `Mux.hs`).** Promotes `mux.rs` from `(c) strict-partial` to
+  `(a) DIRECT_MIRROR` of upstream `Ouroboros.Network.Mux.hs` by
+  merging the previously-separate `multiplexer.rs` types module
+  back in. Upstream's `Mux.hs` carries SDU framing types +
+  per-channel state machine + multiplexer/demultiplexer runtime
+  in a single file; Yggdrasil's earlier split was a code-
+  organization choice with no upstream basis. multiplexer.rs
+  deleted; 9 importing files bulk-updated to use `crate::mux`.
+- **R318 — split `handshake.rs` into 3 leaves matching upstream
+  `Type/Version/Codec`.** Promotes 3 new leaves to
+  `(a) DIRECT_MIRROR`. Split-impl pattern: `codec.rs` adds
+  `impl HandshakeMessage` methods (to_cbor / from_cbor) for the
+  type defined in `type.rs` — both modules in the same crate so
+  Rust coherence accepts. Parent shell `handshake.rs` preserves
+  the flat `crate::handshake::Foo` API via `pub use` re-exports;
+  no caller in the workspace needs an import path update.
+- **R319 — split `inbound_governor.rs` to mirror upstream
+  `State.hs` separation.** Promotes 2 files to `(a) DIRECT_MIRROR`
+  of upstream `InboundGovernor.hs` + `InboundGovernor/State.hs` by
+  splitting Yggdrasil's previous monolithic file along the same
+  axis upstream uses (data definitions vs runtime decision engine).
+  Same split-impl pattern as R318.
+- **R320 — promote 2 plutus partial-mirrors; strict-partial bucket
+  now 0.** Closes the `(c) strict-partial` bucket entirely. The 2
+  remaining files (`plutus/builtins.rs` + `plutus/machine.rs`) are
+  promoted via docstring tighten with sibling-file rationale
+  documented as implementation detail. Both files carrying
+  `**Strict mirror (partial):**` because Yggdrasil's idiomatic
+  split places supporting concerns (data types in `types/*.rs`,
+  cost-model parameters in `cost_model/*.rs`) in sibling modules —
+  but the primary runtime denotation logic each file carries IS a
+  1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
+  obscuring this.
+- **R321 — closure-status doc triad refresh for R313–R320.**
+  Refreshes the four canonical closure-status documents
+  (`PARITY_SUMMARY.md`, `PARITY_PROOF.md`, `AGENTS.md` Current
+  Phase, `UPSTREAM_PARITY.md`) to reflect the R313–R320 docstring-
+  classification cleanup arc. Status banner round count `306+ →
+  320+`, test count `4,855 → 4,856`, audit table `230 (a) +
+  215 (c) = 445 → 262 (a) + 186 (c) = 448`.
 
 ## [0.2.0] - 2026-05-01
 
