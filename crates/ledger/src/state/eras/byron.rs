@@ -15,6 +15,20 @@
 //!
 //! Reference: `.reference-haskell-cardano-node/deps/cardano-ledger/eras/byron/`
 //! and `.reference-haskell-cardano-node/cardano-node/src/Cardano/Node/`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Aggregates Byron-era apply-path helpers
+//! that upstream organizes across
+//! `cardano-ledger/eras/byron/ledger/impl/src/Cardano/Chain/`
+//! (per-rule files: `Block/Validation.hs`, `UTxO/UTxO.hs`,
+//! `Genesis/Config.hs`, etc.). There is no upstream `Byron.hs`
+//! monolith under cardano-ledger; the closest mirror would be
+//! `cardano-ledger/eras/byron/impl/src/Cardano/Chain/` as a tree.
+//! Yggdrasil's per-era apply-rule file is a synthesis. Upstream's
+//! `cardano-node/src/Cardano/Node/Protocol/Byron.hs` covers a
+//! different concern (configuration + tracing) and is not the
+//! mirror for this file.
 
 use super::super::LedgerState;
 use crate::eras::byron::ByronTx;

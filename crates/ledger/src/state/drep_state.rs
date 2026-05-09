@@ -10,6 +10,14 @@
 //! Extracted from `state.rs` in R269 ninth slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269i-state-drep-state-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Combines `DRepState` and the `vsDReps`
+//! map from `VState` — both defined inline in
+//! `Cardano.Ledger.Conway.Governance`. Yggdrasil unifies them under
+//! `DrepState`; upstream keeps the deposit struct and the voting-
+//! state map separate.
 
 use super::{decode_optional_anchor, encode_optional_anchor};
 use crate::types::{Anchor, DRep, EpochNo};

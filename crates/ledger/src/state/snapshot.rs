@@ -13,6 +13,18 @@
 //! Extracted from `state.rs` in R269 thirteenth slice as part of the strict
 //! 1:1 filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269m-state-snapshot-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side LSQ-friendly read-only
+//! capture aggregating fields from `LedgerState` for
+//! `Ouroboros.Consensus.Shelley.Ledger.Query` answer paths. **Name
+//! clashes with** upstream's
+//! `Ouroboros.Consensus.Storage.LedgerDB.Snapshots` (on-disk codec,
+//! different concept). Yggdrasil's filename intentionally diverges
+//! from upstream to surface the LSQ-side role; the on-disk codec
+//! lives in `crates/storage/src/file_ledger.rs` and
+//! `ocert_sidecar.rs`.
 
 use super::{
     AccountingState, ChainDepStateContext, CommitteeMemberState, CommitteeState, DepositPot,

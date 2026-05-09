@@ -9,6 +9,16 @@
 //! Extracted from `state.rs` in R269 seventh slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269g-state-reward-accounts-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Combines `AccountState` (per-account
+//! balance, defined inline in `Cardano.Ledger.State.CertState`) with
+//! the `dsUnified` reward-account portion of
+//! `Cardano.Ledger.Shelley.LedgerState::DState`. Yggdrasil splits the
+//! DState upstream concept into per-component sub-modules
+//! (`reward_accounts.rs`, `stake_credentials.rs`) for cohesion;
+//! upstream keeps the unified map under one struct.
 
 use super::{decode_optional_pool_key_hash, encode_optional_pool_key_hash};
 use crate::types::{PoolKeyHash, RewardAccount, StakeCredential};

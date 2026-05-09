@@ -14,6 +14,15 @@
 //! Extracted from `state.rs` in R269 tenth slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269j-state-governance-action-state-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Reduced subset of upstream's
+//! `Cardano.Ledger.Conway.Governance::GovActionState` — Yggdrasil
+//! carries only the fields currently inspected by RATIFY and EPOCH
+//! (submitted `ProposalProcedure`, votes by `Voter`, lifetime epochs).
+//! Upstream's `GovActionState` carries additional fields used by
+//! deeper governance machinery not yet ported.
 
 use super::{decode_optional_epoch_no, encode_optional_epoch_no};
 use crate::types::EpochNo;

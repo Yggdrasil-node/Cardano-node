@@ -13,6 +13,15 @@
 //! Extracted from `state.rs` in R269 twelfth slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269l-state-treasury-chaindep-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side sidecar that mirrors the
+//! `crates/consensus`-owned `NonceEvolutionState` + `OcertCounters` so
+//! LSQ dispatchers can answer `query protocol-state` without inverting
+//! the `crates → consensus` dependency direction. Upstream's analogous
+//! data lives in `Ouroboros.Consensus.Protocol.Praos.PraosState` (in
+//! the praos protocol module, not a separate file in 11.0.1).
 
 use crate::types::Nonce;
 use std::collections::BTreeMap;

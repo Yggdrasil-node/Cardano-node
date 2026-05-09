@@ -16,6 +16,15 @@
 //! Extracted from `state.rs` in R269 eleventh slice as part of the strict
 //! 1:1 filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269k-state-committee-state-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Combines two upstream maps from
+//! `Cardano.Ledger.Conway.Governance`: `committeeMembers` (cold-
+//! credential -> term epoch) and `csCommitteeCreds` (cold -> hot
+//! authorization / resignation). Yggdrasil unifies them under one
+//! `CommitteeState` map keyed by cold credential; upstream keeps them
+//! as parallel maps inside the `Conway.Governance` struct.
 
 use super::{decode_optional_anchor, encode_optional_anchor};
 use crate::types::{Anchor, EpochNo, StakeCredential};

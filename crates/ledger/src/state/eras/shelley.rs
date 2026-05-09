@@ -11,6 +11,18 @@
 //!
 //! Reference:
 //! `.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/src/Cardano/Ledger/Shelley/Rules/{Bbody,Ledger,Utxow,Utxo,Pool,Deleg,Cert}.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Aggregates the Shelley apply-path
+//! across upstream `Cardano.Ledger.Shelley.Rules.Bbody`,
+//! `Rules.Ledger`, `Rules.Utxow`, `Rules.Utxo`, `Rules.Deleg`,
+//! `Rules.Pool`, `Rules.PoolReap`, `Rules.NewEpoch`, `Rules.Epoch`,
+//! `Rules.Mir`, `Rules.PPUP`, `Rules.Ratify`, plus the witness +
+//! MIR-genesis-quorum + network-id + PPUP proposal collection
+//! checks. Yggdrasil's per-era apply file is a synthesis that
+//! orchestrates these per-rule helpers in one place; upstream
+//! splits per-rule into separate Rules/*.hs files.
 
 use std::collections::HashSet;
 

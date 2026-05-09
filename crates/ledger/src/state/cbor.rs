@@ -14,6 +14,16 @@
 //! Extracted from `state.rs` in R269 sixteenth slice as part of the strict
 //! 1:1 filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269p-state-cbor-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. The `LedgerState` 24-element-array codec
+//! is defined inline in upstream's
+//! `Cardano.Ledger.Shelley.LedgerState` via the `EncCBOR`/`DecCBOR`
+//! instances. Yggdrasil isolates the codec for cohesion (the
+//! mechanical 24-element layout would dominate the apply-path
+//! module). Forward-compatible with legacy 9-, 10-, and 12-23-
+//! element layouts produced by older Yggdrasil releases.
 
 use super::{
     AccountingState, CommitteeState, DepositPot, DrepState, EnactState, GenesisDelegationState,

@@ -13,6 +13,14 @@
 //! Extracted from `state.rs` in R269 fourteenth slice as part of the strict
 //! 1:1 filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269n-state-checkpoint-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-specific restorable-checkpoint
+//! concept used by `crates/storage/src/chain_db.rs` for rollback and
+//! recovery. Upstream's on-disk snapshot codec lives in
+//! `Ouroboros.Consensus.Storage.LedgerDB.Snapshots` and serves a
+//! different role (file format, not in-memory restore copy).
 
 use super::LedgerState;
 use crate::types::Point;

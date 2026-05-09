@@ -290,9 +290,14 @@ def iter_rust_files() -> list[Path]:
             parts = set(path.parts)
             if "tests" in parts or "target" in parts:
                 continue
-            # Skip lib.rs / main.rs / mod.rs / build.rs - those are crate-roots
-            # or wiring shells, not strict-mirror candidates.
+            # Skip crate-roots and wiring shells (not strict-mirror candidates).
             if path.name in {"lib.rs", "main.rs", "mod.rs", "build.rs"}:
+                continue
+            # Skip unit-test modules at any level. Convention: `tests.rs`
+            # (sibling to a module file) and `*_tests.rs` (e.g.
+            # `node/src/main_tests.rs`). Tests are inline #[cfg(test)]
+            # modules in Yggdrasil and never strict-mirror upstream files.
+            if path.name == "tests.rs" or path.name.endswith("_tests.rs"):
                 continue
             out.append(path)
     out.sort()

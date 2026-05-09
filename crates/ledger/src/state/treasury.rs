@@ -10,6 +10,14 @@
 //! Extracted from `state.rs` in R269 twelfth slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269l-state-treasury-chaindep-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Mirrors the `esAccountState` field of
+//! upstream `Cardano.Ledger.Shelley.LedgerState::EpochState`
+//! (treasury + reserves accounting). Defined inline upstream;
+//! Yggdrasil isolates for cohesion since the two pots are operated
+//! as a unit by rewards distribution + MIR + treasury withdrawals.
 
 use crate::{CborDecode, CborEncode, Decoder, Encoder, LedgerError};
 

@@ -11,6 +11,15 @@
 //! Reference:
 //! `.reference-haskell-cardano-node/deps/cardano-ledger/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/Rules/{Bbody,Ledger,Utxow,Utxo,Utxos,Pool,Deleg,Cert}.hs`
 //! `.reference-haskell-cardano-node/deps/cardano-ledger/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/Plutus/TxInfo.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Synthesis: per-rule Alonzo apply-path
+//! across upstream `Cardano.Ledger.Alonzo.Rules.{Bbody,Ledger,Ledgers,Utxow,Utxo,Utxos,Deleg,Pool,Cert,Certs,NewEpoch,Epoch,Mir,PPUP}.hs`
+//! (Plutus phase-2 evaluation, ExUnits, redeemer / datum binding,
+//! is_valid bifurcation are the new Alonzo surface). Yggdrasil
+//! aggregates per-rule logic in one file per-era; upstream splits
+//! per-rule.
 
 use std::collections::HashSet;
 

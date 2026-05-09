@@ -9,6 +9,15 @@
 //!
 //! Reference:
 //! `.reference-haskell-cardano-node/deps/cardano-ledger/eras/babbage/impl/src/Cardano/Ledger/Babbage/Rules/{Bbody,Ledger,Utxow,Utxo,Utxos}.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Synthesis: per-rule Babbage apply-path
+//! across upstream `Cardano.Ledger.Babbage.Rules.{Bbody,Ledger,Ledgers,Utxow,Utxo,Utxos,Deleg,Pool,Cert,Certs,NewEpoch,Epoch,Mir,PPUP}.hs`
+//! (reference inputs, inline datums, reference scripts, native-
+//! asset value preservation are the new Babbage surface). Yggdrasil
+//! aggregates per-rule logic in one file per-era; upstream splits
+//! per-rule.
 
 use std::collections::HashSet;
 

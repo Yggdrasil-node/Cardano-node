@@ -15,6 +15,14 @@
 //! Extracted from `state.rs` in R269 eighth slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269h-state-stake-credentials-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Subset of
+//! `Cardano.Ledger.Shelley.LedgerState::DState::dsUnified` —
+//! specifically the per-credential delegation-target + deposit map.
+//! Yggdrasil splits the DState upstream concept into per-component
+//! sub-modules; upstream keeps the unified map under one struct.
 
 use super::{
     DrepState, decode_optional_drep, decode_optional_pool_key_hash, encode_optional_drep,

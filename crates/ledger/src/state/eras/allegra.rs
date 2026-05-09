@@ -9,6 +9,14 @@
 //!
 //! Reference:
 //! `.reference-haskell-cardano-node/deps/cardano-ledger/eras/allegra/impl/src/Cardano/Ledger/Allegra/Rules/{Bbody,Ledger,Utxow,Utxo}.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Synthesis: per-rule Allegra apply-path
+//! across upstream `Cardano.Ledger.Allegra.Rules.{Bbody,Ledger,Utxow,Utxo,Deleg,Pool,Cert,Certs,NewEpoch,Epoch,Mir,PPUP}.hs`
+//! (timelock script support is the new Allegra surface). Yggdrasil
+//! aggregates per-rule logic in one file per-era; upstream splits
+//! per-rule.
 
 use std::collections::HashSet;
 

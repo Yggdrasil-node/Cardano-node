@@ -8,6 +8,15 @@
 //!
 //! Reference:
 //! `.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway/impl/src/Cardano/Ledger/Conway/Rules/{Bbody,Ledger,Utxow,Utxo,Utxos,Gov,GovCert,Cert,Certs,Deleg,Pool,NewEpoch,Epoch,Tickf,Mempool,HardFork,Enact,Ratify}.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Synthesis: per-rule Conway apply-path
+//! across upstream `Cardano.Ledger.Conway.Rules.{Bbody,Ledger,Ledgers,Utxow,Utxo,Utxos,Deleg,Pool,Cert,Certs,Gov,GovCert,NewEpoch,Epoch,Tickf,Mempool,HardFork,Enact,Ratify}.hs`
+//! (governance pipeline, DRep delegation, reference-input /
+//! spending-input disjointness, treasury withdrawals, constitutional
+//! updates are the new Conway surface). Yggdrasil aggregates per-
+//! rule logic in one file per-era; upstream splits per-rule.
 
 use std::collections::HashSet;
 

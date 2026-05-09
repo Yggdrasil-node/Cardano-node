@@ -15,6 +15,17 @@
 //! Extracted from `state.rs` in R269 fifteenth slice as part of the strict
 //! 1:1 filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269o-state-ppup-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Aggregates per-era `Ppup` rule helpers
+//! (`Cardano.Ledger.Allegra/Alonzo/Babbage.Rules.Ppup`) plus the
+//! `pvCanFollow` protocol-version successor predicate from
+//! `Cardano.Ledger.Shelley.PParams`, plus the d-overlay-slot helpers
+//! for the pre-Praos blocks-made counting rule. Yggdrasil keeps a
+//! single named place for the upstream PPUP gating predicates so
+//! `LedgerState` apply paths and `epoch_boundary.rs` call into one
+//! module.
 
 use crate::types::UnitInterval;
 

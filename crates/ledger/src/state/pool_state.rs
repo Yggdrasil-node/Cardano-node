@@ -13,6 +13,17 @@
 //! Extracted from `state.rs` in R269 sixth slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269f-state-pool-state-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil's `PoolState` aggregates
+//! fields that upstream organizes across `Cardano.Ledger.State.CertState`
+//! (`StakePoolState` struct: `spsParams`, `spsRetiring`,
+//! `spsFutureParams`) and per-era `Cardano.Ledger.<Era>.State`
+//! modules. Yggdrasil's `entries` map matches `psStakePoolParams +
+//! psRetiring`; `future_params` matches `psFutureStakePoolParams`;
+//! the fourth upstream map (`psVRFKeyHashes`) is computed on demand
+//! via `find_pool_by_vrf_key`.
 
 use super::phase1_validation::relay_access_points_from_relays;
 use super::{decode_optional_epoch_no, encode_optional_epoch_no};

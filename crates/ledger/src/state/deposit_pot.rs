@@ -12,6 +12,15 @@
 //!
 //! Extracted from `state.rs` in R269 fourth slice as part of the strict 1:1
 //! filename-mirror refactor — see `docs/operational-runs/2026-05-06-round-269d-state-deposit-pot-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Combines upstream's `Obligations`
+//! (`oblStake`/`oblPool`/`oblDRep`/`oblProposal`) defined inline in
+//! `Cardano.Ledger.State.CertState` with the `utxosDeposited` field
+//! from `Cardano.Ledger.Shelley.LedgerState`. Yggdrasil isolates the
+//! aggregate accounting for cohesion; upstream organizes it by
+//! deposit-source (cert state vs UTxO state).
 
 use crate::{CborDecode, CborEncode, Decoder, Encoder, LedgerError};
 

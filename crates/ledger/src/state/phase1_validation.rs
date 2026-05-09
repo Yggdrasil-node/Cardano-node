@@ -17,6 +17,16 @@
 //! Extracted from `state.rs` in R269 fifth slice as part of the strict 1:1
 //! filename-mirror refactor — see
 //! `docs/operational-runs/2026-05-06-round-269e-state-phase1-validation-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Aggregates the phase-1 predicates that
+//! upstream organizes by-rule across
+//! `Cardano.Ledger.Shelley.Rules.Utxow`,
+//! `Cardano.Ledger.Alonzo.Rules.Utxo`, and
+//! `Cardano.Ledger.Alonzo.Rules.Utxow`. Yggdrasil isolates the
+//! phase-1 helper functions in one file; the per-era
+//! `apply_*_block` paths in `state.rs` sequence them.
 
 use super::PoolRelayAccessPoint;
 use crate::eras::mary::MultiAsset;

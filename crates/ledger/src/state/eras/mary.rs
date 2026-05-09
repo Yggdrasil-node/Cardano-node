@@ -9,6 +9,14 @@
 //!
 //! Reference:
 //! `.reference-haskell-cardano-node/deps/cardano-ledger/eras/mary/impl/src/Cardano/Ledger/Mary/Rules/{Bbody,Ledger,Utxow,Utxo}.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Synthesis: per-rule Mary apply-path
+//! across upstream `Cardano.Ledger.Mary.Rules.{Bbody,Ledger,Utxow,Utxo,Deleg,Pool,Cert,Certs,NewEpoch,Epoch,Mir,PPUP}.hs`
+//! (multi-asset values + native script policy minting are the new
+//! Mary surface). Yggdrasil aggregates per-rule logic in one file
+//! per-era; upstream splits per-rule.
 
 use std::collections::HashSet;
 
