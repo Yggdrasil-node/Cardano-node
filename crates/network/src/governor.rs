@@ -9,6 +9,17 @@
 //! pure decision function separated from effectful connection management.
 //!
 //! Reference: `Ouroboros.Network.PeerSelection.Governor`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell that splits
+//! upstream `Ouroboros.Network.PeerSelection.Governor.hs` into
+//! five sub-modules: `types.rs`, `state.rs`, `churn.rs`,
+//! `peer_metric.rs`, `counters.rs`. The upstream module is a
+//! single ~3000-line file containing all governor state + decision
+//! functions; Yggdrasil splits along functional seams (state +
+//! tick orchestration / churn cycle / peer scoring / view-layer
+//! counters) for cohesion.
 
 // `governor.rs` is a thin orchestration shell after R270a–R270e split
 // the per-domain implementation into `governor/{types,churn,peer_metric,state,counters}.rs`.

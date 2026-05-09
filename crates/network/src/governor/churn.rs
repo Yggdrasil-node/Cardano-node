@@ -13,6 +13,17 @@
 //! "remove 20% or at least one peer per cycle".
 //!
 //! Extracted from `governor.rs` in R270b.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.PeerSelection.Churn.hs` (peerChurnGovernor +
+//! ChurnMode + ChurnRegime). Yggdrasil's `churn.rs` also folds in
+//! `Ouroboros.Network.BlockFetch.ConsensusInterface::FetchMode` and
+//! `Cardano.Node.Diffusion.mkReadFetchMode` (mode derivation) so
+//! the two-phase churn cycle has direct access to the fetch mode
+//! input it conditions on. Upstream wires those across separate
+//! modules.
 
 use std::time::{Duration, Instant};
 

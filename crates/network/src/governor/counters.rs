@@ -16,6 +16,18 @@
 //! per-domain governor split. After R270e, `governor.rs` is a thin
 //! orchestration shell (just imports + `pub mod ... ; pub use ...`
 //! re-export blocks + the `mod tests;` declaration).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side aggregation of governor
+//! view-layer types from upstream
+//! `Ouroboros.Network.PeerSelection.Governor.Types`
+//! (PeerSelectionView / PeerSelectionCounters pattern synonym,
+//! OutboundConnectionsState, PeerSelectionTimeouts) plus
+//! `Ouroboros.Network.ConnectionManager.Types::ConnectionManagerCounters`.
+//! Upstream organizes these by-domain (peer-selection vs
+//! connection-manager); Yggdrasil unifies the observability +
+//! orchestration-timing layer in one module.
 
 use std::time::Duration;
 

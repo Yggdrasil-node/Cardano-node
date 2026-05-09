@@ -9,6 +9,18 @@
 //!
 //! Extracted from `governor.rs` in R270a as the first slice of the
 //! per-domain governor split mirroring upstream `Ouroboros.Network.PeerSelection.*`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side synthesis combining
+//! `Ouroboros.Network.PeerSelection.Governor.Types`
+//! (PeerSelectionTargets, AssociationMode),
+//! `Ouroboros.Network.PeerSelection.PeerSharing` (PeerSharing flag),
+//! and `Cardano.Network.PeerSelection.Bootstrap` (requiresBootstrapPeers
+//! predicate). The three upstream files cover related but separate
+//! config / mode / predicate concerns; Yggdrasil unifies them in
+//! one types module that the rest of the governor cluster
+//! consumes.
 
 use std::net::SocketAddr;
 

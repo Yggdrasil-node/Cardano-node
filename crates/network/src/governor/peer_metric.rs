@@ -16,6 +16,19 @@
 //! per-protocol egress weights for hot peers.
 //!
 //! Extracted from `governor.rs` in R270c.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.PeerSelection.PeerMetric.hs` (PeerMetric,
+//! HeaderMetricsTracer, BlockFetchMetricsTracer). Yggdrasil also
+//! folds in
+//! `Ouroboros.Network.PeerSelection.LedgerPeers.Utils`
+//! (peer-pick randomized policy) and
+//! `Ouroboros.Network.PeerSelection.Governor.RootPeers`
+//! (failure-backoff bookkeeping) into the same file because all
+//! three feed the same scheduling decisions. Upstream splits these
+//! across three modules.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;

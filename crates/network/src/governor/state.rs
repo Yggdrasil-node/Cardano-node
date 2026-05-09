@@ -13,6 +13,18 @@
 //! Extracted from `governor.rs` in R270d as the fourth slice of the
 //! per-domain governor split — this is the bulk of the governor and the
 //! largest single peel-off in the R270 arc.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side synthesis combining
+//! upstream `Ouroboros.Network.PeerSelection.Governor.PeerSelectionState.hs`
+//! (PeerSelectionState data), `Ouroboros.Network.PeerSelection.Governor.Monitor.hs`
+//! (decision-evaluator family), and
+//! `Ouroboros.Network.PeerSelection.Governor.PeerSelectionActions.hs`
+//! (action emitter). Yggdrasil's `governor_tick` orchestrator and
+//! the family of `evaluate_*` decision functions live in one module
+//! for cohesion; upstream splits state vs decision-eval vs action-
+//! emit across three files.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
