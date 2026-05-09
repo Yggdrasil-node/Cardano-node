@@ -46,12 +46,14 @@ use serde_json::json;
 
 use yggdrasil_ledger::{LedgerState, Point, PoolRelayAccessPoint};
 use yggdrasil_network::{
-    BlockFetchClient, ControlMessage, DnsRefreshPolicy, DnsRootPeerProvider, GovernorState,
-    GovernorTargets, LedgerPeerSnapshot, LocalRootConfig, LocalRootTargets, MiniProtocolNum,
-    PeerAccessPoint, PeerAttemptState, PeerRegistry, PeerSource, PeerStatus, RootPeerProviderState,
+    ControlMessage, DnsRefreshPolicy, DnsRootPeerProvider, GovernorState, GovernorTargets,
+    LedgerPeerSnapshot, LocalRootConfig, LocalRootTargets, MiniProtocolNum, PeerAccessPoint,
+    PeerAttemptState, PeerRegistry, PeerSource, PeerStatus, RootPeerProviderState,
     TemperatureBundle, TopologyConfig, peer_attempt_state, refresh_root_peer_state_and_registry,
     resolve_peer_access_points,
 };
+#[cfg(test)]
+use yggdrasil_network::BlockFetchClient;
 
 use crate::sync::SyncError;
 use crate::tracer::{NodeTracer, trace_fields};
@@ -263,7 +265,6 @@ impl OutboundPeerManager {
     /// Mirrors upstream `bracketSyncWithFetchClient` lifecycle: the
     /// per-peer fetch state is owned by a dedicated thread/task for
     /// the connection's lifetime.
-    #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
     pub(super) async fn migrate_session_to_worker(&mut self, peer: SocketAddr) -> bool {
         let Some(managed) = self.warm_peers.get_mut(&peer) else {
             return false;
@@ -284,11 +285,9 @@ impl OutboundPeerManager {
     }
 
     /// Remove and shut down the worker for `peer` (graceful exit).
-    /// Returns `true` if a worker was registered.  Used when a peer
-    /// disconnects: the runtime calls this before dropping the
-    /// session so the worker task exits cleanly without affecting
-    /// siblings.
-    #[allow(dead_code)] // Phase 6 scaffolding — runtime branch caller pending.
+    /// Returns `true` if a worker was registered.  Called from
+    /// [`Self::demote_to_cold`] before dropping the session so the
+    /// worker task exits cleanly without affecting siblings.
     pub(super) async fn unregister_worker(&mut self, peer: &SocketAddr) -> bool {
         match self.fetch_worker_pool.write().await.unregister(peer) {
             Some(handle) => {
@@ -299,12 +298,16 @@ impl OutboundPeerManager {
         }
     }
 
-    /// Clone of the shared fetch-worker pool handle.  Runtime
-    /// startup calls this once and threads the clone into
-    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`]
-    /// so the sync loop can dispatch through the same pool the
-    /// governor populates.
-    #[allow(dead_code)] // Phase 6 scaffolding — runtime startup wiring pending.
+    /// Clone of the shared fetch-worker pool handle. Test-only seam:
+    /// production runtime startup constructs the pool once via
+    /// [`new_shared_fetch_worker_pool`] and threads the same `Arc`
+    /// directly into both the manager (via
+    /// [`Self::with_fetch_worker_pool`]) and the sync config (via
+    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`]),
+    /// so the getter is not needed on the production code path.
+    /// Tests use it to inspect the manager-side pool without
+    /// reaching into private fields.
+    #[cfg(test)]
     pub(super) fn shared_fetch_worker_pool(&self) -> SharedFetchWorkerPool {
         self.fetch_worker_pool.clone()
     }
@@ -380,7 +383,7 @@ impl OutboundPeerManager {
                 // task exits cleanly without affecting siblings.  No-op
                 // when no worker was migrated for this peer.  Mirrors
                 // upstream `bracketSyncWithFetchClient` exit path.
-                let _ = self.fetch_worker_pool.write().await.unregister(&peer);
+                let _ = self.unregister_worker(&peer).await;
                 true
             }
             None => false,
@@ -412,7 +415,14 @@ impl OutboundPeerManager {
     /// holds long-lived per-peer `FetchClientStateVars` shared with the
     /// fetch-decision policy via `TVar`; this accessor is the Rust-side
     /// borrow-checked equivalent for the synchronous schedule step.
-    #[allow(dead_code)] // Phase 6 scaffolding — sync-loop consumer pending.
+    ///
+    /// Test-only seam: the production sync loop reaches per-peer
+    /// `BlockFetchClient` handles via `SharedFetchWorkerPool::dispatch_plan`
+    /// (multi-peer mode) or directly through the leader session's
+    /// `block_fetch` field (single-peer mode). This accessor exists for
+    /// runtime-tests that exercise the borrow-checked closure pattern
+    /// without spinning up a full sync session.
+    #[cfg(test)]
     pub(super) fn with_hot_block_fetch_clients<R>(
         &mut self,
         f: impl FnOnce(&mut [(SocketAddr, &mut BlockFetchClient)]) -> R,
@@ -440,9 +450,15 @@ impl OutboundPeerManager {
     }
 
     /// Return the list of currently-hot peer addresses.  Cheap snapshot
-    /// used by the sync loop to size the dispatcher's effective
-    /// concurrency without holding a `&mut` borrow on the manager.
-    #[allow(dead_code)] // Phase 6 scaffolding — sync-loop consumer pending.
+    /// to size a dispatcher's effective concurrency without holding a
+    /// `&mut` borrow on the manager.
+    ///
+    /// Test-only seam: the production sync loop sizes its dispatcher
+    /// concurrency via `SharedFetchWorkerPool::worker_count()` (which
+    /// counts registered workers in the pool) rather than via the
+    /// manager-side warm-peer iteration. This accessor exists for
+    /// runtime-tests that exercise the manager-side hot-peer view.
+    #[cfg(test)]
     pub(super) fn hot_peer_addrs(&self) -> Vec<SocketAddr> {
         self.warm_peers
             .iter()
