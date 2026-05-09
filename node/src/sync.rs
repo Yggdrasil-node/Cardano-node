@@ -3688,7 +3688,6 @@ fn babbage_collateral_fee(
 /// where `era_tag` is a small integer.
 ///
 /// Reference: `CardanoBlock` in `Ouroboros.Consensus.Cardano.Block`.
-#[allow(dead_code)]
 mod era_tag {
     pub const BYRON_EBB: u64 = 0;
     pub const BYRON_MAIN: u64 = 1;

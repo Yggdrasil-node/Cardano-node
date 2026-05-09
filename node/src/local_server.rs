@@ -123,6 +123,24 @@ mod accept;
 #[cfg(unix)]
 pub use accept::{run_local_accept_loop, run_local_client_session};
 
+/// LSQ-protocol era ordinal used by `QueryHardFork::GetCurrentEra` and
+/// the `[era_index, era_specific_query]` envelope.
+///
+/// This is distinct from the on-wire `era_tag` in `node/src/sync.rs`
+/// (which numbers Byron-EBB and Byron-Main separately) because the LSQ
+/// protocol collapses Byron into a single ordinal. The mapping here
+/// matches upstream `Ouroboros.Consensus.Cardano.Block::CardanoEras`
+/// indexing.
+mod lsq_era_index {
+    pub const BYRON: u32 = 0;
+    pub const SHELLEY: u32 = 1;
+    pub const ALLEGRA: u32 = 2;
+    pub const MARY: u32 = 3;
+    pub const ALONZO: u32 = 4;
+    pub const BABBAGE: u32 = 5;
+    pub const CONWAY: u32 = 6;
+}
+
 // ---------------------------------------------------------------------------
 // BasicLocalQueryDispatcher
 // ---------------------------------------------------------------------------
@@ -725,25 +743,36 @@ fn dispatch_upstream_query(
                                     let pp = match era_index {
                                         // Shelley/Allegra/Mary share the
                                         // 17-element Shelley PP shape.
-                                        1..=3 => encode_shelley_pparams_for_lsq(params),
+                                        i if i == lsq_era_index::SHELLEY
+                                            || i == lsq_era_index::ALLEGRA
+                                            || i == lsq_era_index::MARY =>
+                                        {
+                                            encode_shelley_pparams_for_lsq(params)
+                                        }
                                         // Alonzo: 24-element list adding
                                         // cost models, ex-unit prices,
                                         // ex-unit limits, max-val-size,
                                         // collateral percentage, max
                                         // collateral inputs.
-                                        4 => encode_alonzo_pparams_for_lsq(params),
+                                        i if i == lsq_era_index::ALONZO => {
+                                            encode_alonzo_pparams_for_lsq(params)
+                                        }
                                         // Babbage: 22-element list dropping
                                         // `d` and `extraEntropy`, renaming
                                         // `coinsPerUtxoWord` to
                                         // `coinsPerUtxoByte`.
-                                        5 => encode_babbage_pparams_for_lsq(params),
+                                        i if i == lsq_era_index::BABBAGE => {
+                                            encode_babbage_pparams_for_lsq(params)
+                                        }
                                         // Conway: 31-element list adding
                                         // governance fields (DRep / pool
                                         // voting thresholds, committee
                                         // params, gov-action lifetime/deposit,
                                         // DRep deposit/activity, tiered
                                         // ref-script fee constant).
-                                        6 => encode_conway_pparams_for_lsq(params),
+                                        i if i == lsq_era_index::CONWAY => {
+                                            encode_conway_pparams_for_lsq(params)
+                                        }
                                         _ => return null_response(),
                                     };
                                     encode_query_if_current_match(&pp)
@@ -1316,13 +1345,13 @@ fn effective_era_index_for_lsq(snapshot: &LedgerStateSnapshot) -> u32 {
         );
     }
     let pv_era_index: u32 = match pv_major {
-        0..=1 => 0, // Byron
-        2 => 1,     // Shelley
-        3 => 2,     // Allegra
-        4 => 3,     // Mary
-        5..=6 => 4, // Alonzo
-        7..=8 => 5, // Babbage
-        _ => 6,     // Conway+
+        0..=1 => lsq_era_index::BYRON,
+        2 => lsq_era_index::SHELLEY,
+        3 => lsq_era_index::ALLEGRA,
+        4 => lsq_era_index::MARY,
+        5..=6 => lsq_era_index::ALONZO,
+        7..=8 => lsq_era_index::BABBAGE,
+        _ => lsq_era_index::CONWAY,
     };
     // Always promote to the higher of the two (wire-tag vs PV-derived).
     // Never demote, which would confuse cardano-cli's era-progression
