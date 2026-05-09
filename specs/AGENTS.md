@@ -1,15 +1,25 @@
 # Guidance for vendored upstream test vectors and pinned specification artifacts under specs/.
 This directory holds vendored upstream test corpora that drive parity tests in the workspace.
 
-## Strict 1:1 file-mirror policy (R274+)
+## Validators that protect this tree
 
-Every production `.rs` here either mirrors a single canonical upstream
-`.hs` file by snake_case basename (with directory-prefix fallback for
-sibling collisions) OR carries a `## Naming parity` docstring stanza
-ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
-file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
-(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
-[`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv).
+`specs/` carries vendored upstream test fixtures, not Rust code, so
+the workspace strict-mirror file-policy (R274+) does not apply
+directly here. Two CI / on-demand validators guard the invariants
+that matter for this directory:
+
+- `python3 scripts/check-fixture-manifest.py` (CI gate since R303) —
+  cross-checks the `cardano-base` SHA pin across
+  `node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
+  `specs/upstream-test-vectors/cardano-base/<SHA>/` directory name,
+  `docs/SPECS.md`, and `docs/UPSTREAM_PARITY.md`. Asserts every
+  expected upstream-vendored corpus is present + non-empty.
+- `python3 scripts/check-reference-artifacts.py` (local/operator) —
+  validates the vendored Haskell `cardano-node` install at
+  `.reference-haskell-cardano-node/install/` against the policy tag
+  in `docs/parity-matrix.json::reference.tag`. Adjacent to specs/
+  because both depend on the same upstream-tag policy bump in
+  lockstep.
 
 ## Scope
 - `upstream-test-vectors/`: pinned official upstream vector corpora (cardano-base BLS12-381 + Praos VRF/KES vectors). See child `AGENTS.md` for per-tree provenance.

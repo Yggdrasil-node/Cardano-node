@@ -1,19 +1,29 @@
 # Guidance for node configuration references and preset layout.
 This directory contains reference configuration files and per-network presets used to align Yggdrasil configuration handling with the official node.
 
-## Strict 1:1 file-mirror policy (R274+)
+## Validators that protect this tree
 
-Every production `.rs` here either mirrors a single canonical upstream
-`.hs` file by snake_case basename (with directory-prefix fallback for
-sibling collisions) OR carries a `## Naming parity` docstring stanza
-ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
-file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
-(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
-[`docs/strict-mirror-audit.tsv`](../../docs/strict-mirror-audit.tsv).
+`node/configuration/` carries vendored operator-config presets, not
+Rust code, so the workspace strict-mirror file-policy (R274+) does
+not apply directly here. The CI/local validator for this directory
+is:
+
+- `python3 scripts/check-reference-artifacts.py` (local/operator) —
+  validates that each per-network share directory under
+  `.reference-haskell-cardano-node/install/share/<network>/`
+  carries the canonical operator-config bundle (`config.json`,
+  `topology.json`, `byron-genesis.json`, `shelley-genesis.json`,
+  `alonzo-genesis.json`, `conway-genesis.json`, `peer-snapshot.json`,
+  `tracer-config.json`). The Yggdrasil-side mirrors at
+  `node/configuration/<network>/` are operator-facing copies that
+  must keep parity with this canonical bundle.
 
 ## Scope
 - `mainnet/`, `preprod/`, and `preview/` preset directories.
 - Reference `config.json`, `topology.json`, and genesis files used to mirror official network layout.
+- `poolMetaData.json` — sample stake-pool metadata bundle (`name:
+  "WORLDS FIRST RUST FULLNODE"`, `ticker: "RUST"`); operator artifact
+  relocated here from `docs/` in R298.
 
 ##  Rules *Non-Negotiable*
 - Treat the vendored configuration files here as reference inputs, not as the source of truth for local runtime configuration code.
