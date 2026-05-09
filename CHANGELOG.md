@@ -274,6 +274,35 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R342 — cardano-submit-api web server: raw-tokio HTTP listener + tx_submit_app dispatch.**
+  Lands the HTTP server core for cardano-submit-api. Two production
+  modules graduate from R335 stub-only to working web server:
+  `rest/web.rs` (HttpRequest, HttpResponse types with response
+  constructors for 202/400/404/405/413/503; parse_request scanning
+  Content-Length / Content-Type / Transfer-Encoding with chunked-
+  rejection + 32 KiB MAX_REQUEST_BYTES cap; encode emitting RFC 7230
+  wire format with Connection: close; run_settings TCP listener
+  tracing EndpointListeningOnPort + spawning per-connection handlers);
+  `web.rs` (run_tx_submit_server outer supervisor mirroring
+  runTxSubmitServer; tx_submit_app dispatch closure routing
+  POST /api/submit/tx and emitting 404/405 for off-path / wrong-method;
+  tx_submit_post placeholder returning 503 with byte-equivalent
+  TxSubmitFail JSON for non-empty bodies and 400 TxSubmitEmpty for
+  empty bodies). The raw-tokio TCP approach matches the existing
+  node/src/metrics_server.rs pattern; NO axum / hyper / tower / warp
+  dependency added — just the workspace tokio dep already present.
+  Carve-outs documented in strict-mirror docstrings:
+  Network.Wai.Handler.Warp.runSettingsSocket / bindPortTCP →
+  tokio::net::TcpListener::bind; Servant.Application → Handler type
+  alias + path-prefix dispatch; chunked transfer-encoding rejected
+  (clients always send Content-Length). Real LocalTxSubmission
+  integration deferred to R343 (currently a placeholder body wired
+  with byte-equivalent JSON shape so client integrations can be
+  tested against this binary now). Workspace tests: 5,076 → 5,099
+  (+23: 4 encode + 11 parse + 2 run_settings #[tokio::test] + 6
+  web.rs handlers/routing). Crate total: 109 → 132. Parity-matrix
+  entry `sister-tool.cardano-submit-api` `next_milestone` advanced
+  R342 → R343.
 - **R341 — cardano-submit-api trace surface: for_machine, as_metrics, Namespace tables.**
   Completes the trace surface for cardano-submit-api by porting upstream
   `LogFormatting` and `MetaTrace` instance methods. R339 had landed

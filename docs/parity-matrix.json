@@ -427,7 +427,7 @@
       "area": "sister-tools",
       "feature": "HTTP API for transaction submission \u2014 pure-Rust port mirroring upstream cardano-submit-api/src/Cardano/TxSubmit/*.hs.",
       "status": "partial",
-      "next_milestone": "R342",
+      "next_milestone": "R343",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-submit-api/",
@@ -446,15 +446,16 @@
         "R339 foundations: types.rs (TxSubmitPort, RawCborDecodeError, DecoderError, EnvSocketError, TxCmdError, TxSubmitWebApiError, render_tx_cmd_error) byte-equivalent JSON shapes via serde tag/content + transparent + untagged. tracing/trace_submit_api.rs (TraceSubmitApi data enum + MediumTxId + render_human). util.rs (log_exception generic over FnOnce(TraceSubmitApi)).",
         "R340 type bridges: cli/types.rs (ConfigFile, GenesisFile, SocketPath, ConsensusModeParams, NetworkId, TxSubmitNodeParams, TxSubmitCommand). cli/parsers.rs (into_command + per-field bridge fns + DEFAULT_WEBSERVER_PORT/METRICS_PORT). rest/types.rs (WebserverConfig + to_socket_addr supporting wildcards `*`/`0.0.0.0`/`::`). rest/parsers.rs (from_args bridge to WebserverConfig with 127.0.0.1 default). lib.rs::run() now validates argv → TxSubmitCommand before its sentinel error so missing-flag errors surface clearly.",
         "R341 trace surface complete: TraceSubmitApi::for_machine (forMachine JSON shape per event matching upstream Aeson output byte-equivalent), TraceSubmitApi::as_metrics (counter increment instructions), TraceSubmitApi::namespace_for + Namespace enum (11 variants) with segments() / severity() / metrics_doc() inherent methods mirroring upstream MetaTrace.namespaceFor/severityFor/metricsDocFor. ALL_NAMESPACES const mirroring upstream allNamespaces. MetricUpdate enum (CounterInc | CounterSet) for counter operations. Severity enum (Debug/Info/Warning/Error) mirroring Cardano.Logging.SeverityS.",
-        "Tests: 104 unit tests (24 types.rs, 38 trace_submit_api.rs, 10 parser.rs, 4 util.rs, 7 cli/types.rs, 11 cli/parsers.rs, 7 rest/types.rs, 4 rest/parsers.rs) + 4 golden tests + 1 doctest = 109 cardano-submit-api tests. Workspace test contribution: +94 vs R338 baseline (4982 → 5076).",
-        "Carve-outs documented: TxSubmitApi/TxSubmitApiRecord/CBORStream Servant types not ported (axum-router replaces at R342). Cardano.CLI.Environment.EnvCli not ported (Yggdrasil parser is environment-blind for this binary). LogFormatting/MetaTrace typeclasses not ported (no Rust analog; data exposed via inherent methods + constants).",
-        "HTTP server (R342) + Rest/Web implementation pending axum dep audit."
+        "R342 web round: tokio dep added; rest/web.rs (HttpRequest, HttpResponse with constructors for 202/400/404/405/413/503, parse_request scanning Content-Length/Content-Type/Transfer-Encoding with chunked-rejection + 32 KiB MAX_REQUEST_BYTES cap, encode emitting RFC 7230 wire format with Connection: close, run_settings TCP listener tracing EndpointListeningOnPort + spawning per-connection handlers). web.rs (run_tx_submit_server outer supervisor mirroring runTxSubmitServer; tx_submit_app dispatch closure routing POST /api/submit/tx → 405-other-methods → 404-other-paths; tx_submit_post stub that returns 503 with byte-equivalent TxSubmitFail JSON for non-empty bodies and 400 TxSubmitEmpty for empty bodies). Real LocalTxSubmission integration deferred to R343.",
+        "Tests: 127 unit tests + 4 golden tests + 1 doctest = 132 cardano-submit-api tests (was 109 at R341, +23). Workspace test contribution: +117 vs R338 baseline (4982 → 5099).",
+        "Carve-outs documented: TxSubmitApi/TxSubmitApiRecord/CBORStream Servant types not ported (raw-tokio HTTP routing replaces). Cardano.CLI.Environment.EnvCli not ported (Yggdrasil parser is environment-blind). LogFormatting/MetaTrace typeclasses not ported (data exposed via inherent methods). Network.Wai.Handler.Warp.runSettingsSocket / Data.Streaming.Network.bindPortTCP replaced by tokio::net::TcpListener::bind. Servant.Application replaced by Handler type alias + path-prefix dispatch.",
+        "Real LocalTxSubmission integration (R343) + multi-era CBOR Tx decode pending."
       ],
       "remaining_work": [
-        "R342 Rest/Web + Web.hs (axum router + handler; CBOR content-type negotiation; LocalTxSubmission client wired via crates/network/src/local_tx_submission_client.rs).",
-        "R343 Metrics.hs Prometheus surface (port-occupied retry + metrics endpoint).",
-        "R344 integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api.",
-        "R345 closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R343 LocalTxSubmission wiring: replace tx_submit_post placeholder with real submission via crates/network/src/local_tx_submission_client.rs. Multi-era CBOR Tx decode via yggdrasil-ledger.",
+        "R344 Metrics.hs Prometheus surface (port-occupied retry + metrics endpoint).",
+        "R345 integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api.",
+        "R346 closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-submit-api --help` (modulo program name).",
