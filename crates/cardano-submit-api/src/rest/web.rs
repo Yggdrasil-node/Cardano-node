@@ -32,7 +32,9 @@
 //! - Body framing: Content-Length only (no chunked transfer-encoding
 //!   support). cardano-submit-api clients always send Content-Length.
 
+use std::future::Future;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -259,8 +261,15 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
-/// Dispatch handler: maps an [`HttpRequest`] to an [`HttpResponse`].
-pub type Handler = Arc<dyn Fn(&HttpRequest) -> HttpResponse + Send + Sync>;
+/// Dispatch handler: takes an owned [`HttpRequest`] and returns a
+/// future that resolves to an [`HttpResponse`].
+///
+/// The async return is required because the canonical handler
+/// (`tx_submit_post`) does NtC LocalTxSubmission I/O. Synchronous
+/// handlers (404/405 fallback, in-memory routing) can wrap a plain
+/// value in `Box::pin(async move { value })`.
+pub type Handler =
+    Arc<dyn Fn(HttpRequest) -> Pin<Box<dyn Future<Output = HttpResponse> + Send>> + Send + Sync>;
 
 /// Trace forwarder: invoked synchronously per event (must not block).
 pub type Tracer = Arc<dyn Fn(TraceSubmitApi) + Send + Sync>;
@@ -315,7 +324,7 @@ async fn handle_connection(mut stream: TcpStream, handler: &Handler) -> std::io:
         if find_header_end(&buf).is_some() {
             // Reached end of headers; check if Content-Length body is fully buffered.
             if let Ok(req) = parse_request(&buf) {
-                let response = handler(&req);
+                let response = handler(req).await;
                 stream.write_all(&response.encode()).await?;
                 return Ok(());
             }
@@ -326,7 +335,7 @@ async fn handle_connection(mut stream: TcpStream, handler: &Handler) -> std::io:
     // Connection closed before request completed — emit a Bad Request
     // response. (Real clients always send Content-Length headers.)
     let response = match parse_request(&buf) {
-        Ok(req) => handler(&req),
+        Ok(req) => handler(req).await,
         Err(_) => HttpResponse::bad_request_json(b"{\"tag\":\"TxSubmitEmpty\"}".to_vec()),
     };
     stream.write_all(&response.encode()).await?;
@@ -339,6 +348,17 @@ mod tests {
 
     fn fake_request_line() -> Vec<u8> {
         b"POST /api/submit/tx HTTP/1.1\r\nContent-Length: 0\r\n\r\n".to_vec()
+    }
+
+    /// Wrap a sync closure into the async `Handler` type.
+    fn sync_handler<F>(f: F) -> Handler
+    where
+        F: Fn(HttpRequest) -> HttpResponse + Send + Sync + 'static,
+    {
+        Arc::new(move |req| {
+            let response = f(req);
+            Box::pin(async move { response })
+        })
     }
 
     // -- HttpResponse encode --
@@ -466,7 +486,7 @@ mod tests {
                 port_for_tracer.store(addr.port() as usize, Ordering::SeqCst);
             }
         });
-        let handler: Handler = Arc::new(|req| {
+        let handler = sync_handler(|req: HttpRequest| {
             assert_eq!(req.method, "POST");
             assert_eq!(req.path, "/api/submit/tx");
             HttpResponse::service_unavailable_json(b"{\"tag\":\"placeholder\"}".to_vec())
@@ -511,7 +531,7 @@ mod tests {
         let tracer: Tracer = Arc::new(move |evt| {
             events_for_tracer.lock().expect("lock").push(evt);
         });
-        let handler: Handler = Arc::new(|_| HttpResponse::not_found());
+        let handler = sync_handler(|_| HttpResponse::not_found());
 
         let server = tokio::spawn(async move {
             let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");

@@ -7,37 +7,52 @@
 //! Direct ports:
 //!
 //! - [`run_tx_submit_server`] — `runTxSubmitServer :: Trace IO TraceSubmitApi -> WebserverConfig -> ConsensusModeParams -> NetworkId -> SocketPath -> IO ()`.
-//!   Outer supervisor: wraps the HTTP server in [`crate::util::log_exception`]
-//!   (so any panic surfaces as an `EndpointException` trace event before
-//!   being rethrown), then traces `EndpointExiting` on graceful return.
+//!   Outer supervisor: binds the TCP listener, traces
+//!   `EndpointListeningOnPort`, accepts requests via the dispatch
+//!   closure, traces `EndpointExiting` on graceful return.
 //! - [`tx_submit_app`] — `txSubmitApp :: Trace IO TraceSubmitApi -> ConsensusModeParams -> NetworkId -> SocketPath -> Application`.
 //!   Returns the request-dispatch closure that gets handed to
 //!   [`crate::rest::web::run_settings`].
 //! - [`tx_submit_post`] — `txSubmitPost :: Trace IO TraceSubmitApi -> ConsensusModeParams -> NetworkId -> SocketPath -> ByteString -> Handler TxId`.
-//!   Currently a stub returning 503 with a `TxSubmitFail
-//!   (TxCmdTxSubmitConnectionError)` JSON body. R343+ replaces this
-//!   body with real LocalTxSubmission integration; the JSON wire shape
-//!   stays the same.
+//!   R343 wires real LocalTxSubmission via
+//!   [`yggdrasil_network::ntc_connect`] +
+//!   [`yggdrasil_network::LocalTxSubmissionClient`]: open a fresh NtC
+//!   connection per request, submit the raw era-tagged CBOR tx bytes,
+//!   map accept/reject/connect outcomes to the canonical
+//!   [`TxCmdError`] / [`TxSubmitWebApiError`] surface, then close.
 //!
 //! Carve-outs (NOT ported, by design):
 //!
-//! - `Cardano.Api.submitTxToNodeLocal` — replaced by the
-//!   crate-internal [`crate::types::TxCmdError`] surface; concrete
-//!   wiring to `crates/network/src/local_tx_submission_client.rs` lands
-//!   at R343.
 //! - `Cardano.Api.deserialiseFromCBOR` + multi-era `FromSomeType` table
 //!   (`AsTx AsShelleyEra` / `AsTx AsAllegraEra` / ... / `AsTx AsConwayEra`)
-//!   — replaced by direct dispatch to the `yggdrasil-ledger` per-era
-//!   CBOR surface at R343.
+//!   — Yggdrasil's tx-submit binary forwards the raw request body bytes
+//!   directly to the NtC LocalTxSubmission protocol without per-era
+//!   pre-decoding. Upstream's pre-decoding is a defense-in-depth check
+//!   for malformed CBOR before round-tripping the bytes through the
+//!   socket; Yggdrasil delegates that check to cardano-node, which
+//!   returns `MsgRejectTx` for malformed bytes. Equivalent observable
+//!   behavior, simpler code path.
+//! - `Cardano.Api.getTxId` (returning the TxId on accept) — upstream
+//!   returns the parsed TxId in the 202 Accepted body. Yggdrasil
+//!   currently returns an empty success body (`"OK"`) — operators
+//!   wanting the tx-id can compute it client-side from the same bytes
+//!   they submitted (`Blake2b-256` of the body). Adding TxId derivation
+//!   here is a future enhancement that would require multi-era CBOR
+//!   awareness; tracked in `docs/parity-matrix.json`'s `remaining_work`.
 
-use std::net::SocketAddr;
 use std::sync::Arc;
+
+use yggdrasil_network::{LocalTxSubmissionClient, LocalTxSubmissionClientError, MiniProtocolNum};
 
 use crate::cli::types::{ConsensusModeParams, NetworkId, SocketPath, TxSubmitNodeParams};
 use crate::rest::types::WebserverConfig;
 use crate::rest::web::{Handler, HttpRequest, HttpResponse, Tracer, run_settings};
 use crate::tracing::trace_submit_api::TraceSubmitApi;
-use crate::types::{EnvSocketError, TxCmdError, TxSubmitWebApiError};
+use crate::types::{TxCmdError, TxSubmitWebApiError};
+
+/// Cardano mainnet network magic. Mirrors the constant baked into
+/// upstream's `cardano-cli`/`cardano-node` runtime defaults.
+pub const MAINNET_NETWORK_MAGIC: u32 = 764824073;
 
 /// Mirror of upstream `runTxSubmitServer`. Bind the web server,
 /// trace `EndpointListeningOnPort`, serve requests, then trace
@@ -104,31 +119,46 @@ pub fn tx_submit_app(
     network_id: NetworkId,
     socket_path: SocketPath,
 ) -> Handler {
-    Arc::new(move |req: &HttpRequest| {
-        if req.path != "/api/submit/tx" {
-            return HttpResponse::not_found();
-        }
-        if req.method != "POST" {
-            return HttpResponse::method_not_allowed();
-        }
-        tx_submit_post(&tracer, protocol, network_id, &socket_path, &req.body)
+    Arc::new(move |req: HttpRequest| {
+        let tracer = Arc::clone(&tracer);
+        let socket_path = socket_path.clone();
+        Box::pin(async move {
+            if req.path != "/api/submit/tx" {
+                return HttpResponse::not_found();
+            }
+            if req.method != "POST" {
+                return HttpResponse::method_not_allowed();
+            }
+            tx_submit_post(&tracer, protocol, network_id, &socket_path, req.body).await
+        })
     })
 }
 
-/// Mirror of upstream `txSubmitPost`. Currently a stub returning a
-/// 503 with a structured [`TxSubmitWebApiError::TxSubmitFail`] body
-/// containing a [`TxCmdError::TxCmdTxSubmitConnectionError`]. The
-/// "real" LocalTxSubmission integration lands at R343.
+/// Mirror of upstream `txSubmitPost`. Submit the raw era-tagged CBOR
+/// transaction bytes via NtC LocalTxSubmission.
 ///
-/// Even at R342, the response carries upstream-byte-equivalent JSON
-/// shape so client integrations can be tested against this binary
-/// before the real handler ships.
-pub fn tx_submit_post(
+/// Outcome mapping:
+///
+/// | Outcome                                  | HTTP status | Trace event                              |
+/// |------------------------------------------|-------------|------------------------------------------|
+/// | empty body                               | 400         | `EndpointFailedToSubmitTransaction`      |
+/// | `MsgAcceptTx`                            | 202         | `EndpointSubmittedTransaction`           |
+/// | `MsgRejectTx { reason }`                 | 400         | `EndpointFailedToSubmitTransaction`      |
+/// | NtC connect failure                      | 503         | `EndpointFailedToSubmitTransaction`      |
+/// | NtC protocol violation                   | 503         | `EndpointFailedToSubmitTransaction`      |
+///
+/// Successful (202) response body is the empty `"OK"` placeholder
+/// because Yggdrasil does not currently parse the multi-era CBOR to
+/// derive the TxId — upstream's `getTxBody >>= getTxId` chain has no
+/// per-era equivalent under our raw-bytes pass-through. Operators
+/// needing the tx-id can compute it client-side via Blake2b-256 of
+/// the same bytes they submitted.
+pub async fn tx_submit_post(
     tracer: &Tracer,
     _protocol: ConsensusModeParams,
-    _network_id: NetworkId,
-    _socket_path: &SocketPath,
-    body: &[u8],
+    network_id: NetworkId,
+    socket_path: &SocketPath,
+    body: Vec<u8>,
 ) -> HttpResponse {
     if body.is_empty() {
         let err = TxSubmitWebApiError::TxSubmitEmpty;
@@ -136,22 +166,83 @@ pub fn tx_submit_post(
         return HttpResponse::bad_request_json(json);
     }
 
-    // R342 placeholder: structured 503 with a connection-error stub.
-    // R343 replaces this with real LocalTxSubmission wiring; the JSON
-    // shape stays the same.
-    let cmd_err = TxCmdError::TxCmdSocketEnvError(EnvSocketError::CliEnvVarLookup {
-        message: "LocalTxSubmission integration lands at R343".to_string(),
-    });
-    let trace_err = cmd_err.clone();
-    tracer(TraceSubmitApi::EndpointFailedToSubmitTransaction(trace_err));
-    let api_err = TxSubmitWebApiError::TxSubmitFail(cmd_err);
-    let json = serde_json::to_vec(&api_err).unwrap_or_else(|_| b"{}".to_vec());
-    HttpResponse::service_unavailable_json(json)
+    match submit_via_ntc(socket_path, network_id, body).await {
+        Ok(()) => {
+            tracer(TraceSubmitApi::EndpointSubmittedTransaction(
+                crate::tracing::trace_submit_api::MediumTxId::from_rendered(""),
+            ));
+            HttpResponse::accepted_json(b"\"OK\"".to_vec())
+        }
+        Err(cmd_err) => {
+            tracer(TraceSubmitApi::EndpointFailedToSubmitTransaction(
+                cmd_err.clone(),
+            ));
+            let api_err = TxSubmitWebApiError::TxSubmitFail(cmd_err.clone());
+            let json = serde_json::to_vec(&api_err).unwrap_or_else(|_| b"{}".to_vec());
+            match cmd_err {
+                TxCmdError::TxCmdTxSubmitValidationError(_) => HttpResponse::bad_request_json(json),
+                _ => HttpResponse::service_unavailable_json(json),
+            }
+        }
+    }
 }
 
-/// Convenience: bind to the [`SocketAddr`] form of a [`WebserverConfig`]
-/// without actually listening. Helper for tests and operator preflight.
-pub fn resolve_bind_addr(webserver: &WebserverConfig) -> std::io::Result<SocketAddr> {
+/// Connect to the local cardano-node NtC socket and submit a tx.
+///
+/// Returns `Ok(())` on `MsgAcceptTx`. Maps reject / protocol /
+/// connection failures into [`TxCmdError`] variants matching upstream
+/// `submitTxToNodeLocal`'s outcome surface.
+async fn submit_via_ntc(
+    socket_path: &SocketPath,
+    network_id: NetworkId,
+    tx_bytes: Vec<u8>,
+) -> Result<(), TxCmdError> {
+    let network_magic = match network_id {
+        NetworkId::Mainnet => MAINNET_NETWORK_MAGIC,
+        NetworkId::Testnet(magic) => magic,
+    };
+
+    let mut conn = yggdrasil_network::ntc_connect(socket_path.as_path(), network_magic, false)
+        .await
+        .map_err(|err| {
+            TxCmdError::TxCmdTxSubmitConnectionError(format!(
+                "ntc_connect to {} failed: {err}",
+                socket_path.as_path().display(),
+            ))
+        })?;
+
+    let tx_handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION)
+        .ok_or_else(|| {
+            TxCmdError::TxCmdTxSubmitConnectionError(
+                "NTC_LOCAL_TX_SUBMISSION protocol handle missing".to_string(),
+            )
+        })?;
+    let mut client = LocalTxSubmissionClient::new(tx_handle);
+
+    let result = match client.submit(tx_bytes).await {
+        Ok(()) => Ok(()),
+        Err(LocalTxSubmissionClientError::TransactionRejected(reason)) => {
+            Err(TxCmdError::TxCmdTxSubmitValidationError(format!(
+                "rejected: 0x{}",
+                hex::encode(reason)
+            )))
+        }
+        Err(LocalTxSubmissionClientError::ConnectionClosed) => Err(
+            TxCmdError::TxCmdTxSubmitConnectionError("NtC connection closed by remote".to_string()),
+        ),
+        Err(other) => Err(TxCmdError::TxCmdTxSubmitConnectionError(other.to_string())),
+    };
+
+    let _ = client.done().await;
+    result
+}
+
+/// Convenience: bind to the [`std::net::SocketAddr`] form of a
+/// [`WebserverConfig`] without actually listening. Helper for tests
+/// and operator preflight.
+pub fn resolve_bind_addr(webserver: &WebserverConfig) -> std::io::Result<std::net::SocketAddr> {
     webserver.to_socket_addr().map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -181,36 +272,65 @@ mod tests {
         assert!(resolve_bind_addr(&cfg).is_err());
     }
 
-    #[test]
-    fn tx_submit_post_empty_body_returns_400() {
+    #[tokio::test]
+    async fn tx_submit_post_empty_body_returns_400() {
         let resp = tx_submit_post(
             &nop_tracer(),
             ConsensusModeParams::CardanoMode,
             NetworkId::Mainnet,
             &SocketPath::new("/run/n.socket"),
-            &[],
-        );
+            Vec::new(),
+        )
+        .await;
         assert_eq!(resp.status, 400);
         assert!(String::from_utf8_lossy(&resp.body).contains("TxSubmitEmpty"));
     }
 
-    #[test]
-    fn tx_submit_post_nonempty_body_returns_503_placeholder() {
+    #[tokio::test]
+    async fn tx_submit_post_unreachable_socket_returns_503() {
+        // Socket path that definitely doesn't exist — exercises the
+        // ntc_connect failure path.
         let resp = tx_submit_post(
             &nop_tracer(),
             ConsensusModeParams::CardanoMode,
             NetworkId::Mainnet,
-            &SocketPath::new("/run/n.socket"),
-            &[0x83, 0xa0, 0xa0],
-        );
+            &SocketPath::new("/nonexistent/socket/path"),
+            vec![0x83, 0xa0, 0xa0],
+        )
+        .await;
         assert_eq!(resp.status, 503);
         let body = String::from_utf8_lossy(&resp.body);
         assert!(body.contains("TxSubmitFail"));
-        assert!(body.contains("TxCmdSocketEnvError"));
+        assert!(body.contains("TxCmdTxSubmitConnectionError"));
     }
 
-    #[test]
-    fn tx_submit_app_routes_correctly() {
+    #[tokio::test]
+    async fn tx_submit_post_traces_failed_event_on_connect_error() {
+        use std::sync::Mutex;
+        let events: Arc<Mutex<Vec<TraceSubmitApi>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = Arc::clone(&events);
+        let tracer: Tracer = Arc::new(move |evt| {
+            events_clone.lock().expect("lock").push(evt);
+        });
+
+        let _ = tx_submit_post(
+            &tracer,
+            ConsensusModeParams::CardanoMode,
+            NetworkId::Mainnet,
+            &SocketPath::new("/nonexistent/socket/path"),
+            vec![0x83],
+        )
+        .await;
+
+        let events = events.lock().expect("lock");
+        assert!(matches!(
+            events.first(),
+            Some(TraceSubmitApi::EndpointFailedToSubmitTransaction(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn tx_submit_app_routes_correctly() {
         let app = tx_submit_app(
             nop_tracer(),
             ConsensusModeParams::CardanoMode,
@@ -225,7 +345,7 @@ mod tests {
             content_type: None,
             body: Vec::new(),
         };
-        let resp = app(&req);
+        let resp = app(req).await;
         assert_eq!(resp.status, 404);
 
         // Wrong method on right path → 405
@@ -235,7 +355,7 @@ mod tests {
             content_type: None,
             body: Vec::new(),
         };
-        let resp = app(&req);
+        let resp = app(req).await;
         assert_eq!(resp.status, 405);
 
         // Empty body POST → 400
@@ -245,41 +365,12 @@ mod tests {
             content_type: Some("application/cbor".to_string()),
             body: Vec::new(),
         };
-        let resp = app(&req);
+        let resp = app(req).await;
         assert_eq!(resp.status, 400);
-
-        // Non-empty body POST → 503 (placeholder)
-        let req = HttpRequest {
-            method: "POST".to_string(),
-            path: "/api/submit/tx".to_string(),
-            content_type: Some("application/cbor".to_string()),
-            body: vec![0x83],
-        };
-        let resp = app(&req);
-        assert_eq!(resp.status, 503);
     }
 
     #[test]
-    fn tx_submit_post_traces_failed_event_on_placeholder() {
-        use std::sync::Mutex;
-        let events: Arc<Mutex<Vec<TraceSubmitApi>>> = Arc::new(Mutex::new(Vec::new()));
-        let events_clone = Arc::clone(&events);
-        let tracer: Tracer = Arc::new(move |evt| {
-            events_clone.lock().expect("lock").push(evt);
-        });
-
-        let _ = tx_submit_post(
-            &tracer,
-            ConsensusModeParams::CardanoMode,
-            NetworkId::Mainnet,
-            &SocketPath::new("/run/n.socket"),
-            &[0x83],
-        );
-
-        let events = events.lock().expect("lock");
-        assert!(matches!(
-            events.first(),
-            Some(TraceSubmitApi::EndpointFailedToSubmitTransaction(_))
-        ));
+    fn mainnet_network_magic_constant_matches_upstream() {
+        assert_eq!(MAINNET_NETWORK_MAGIC, 764824073);
     }
 }

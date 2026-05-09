@@ -1400,10 +1400,12 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "eyre",
+ "hex",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
+ "yggdrasil-network",
 ]
 
 [[package]]

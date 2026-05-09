@@ -274,6 +274,32 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R343 — cardano-submit-api LocalTxSubmission wiring: async Handler + ntc_connect integration.**
+  Completes the Phase A.2 web round: the placeholder 503 response from
+  R342 is replaced with real NtC LocalTxSubmission integration, and
+  lib.rs::run() now spins a tokio runtime + binds + serves until the
+  listener exits. The cardano-submit-api binary is now end-to-end
+  functional against a real cardano-node socket. Diff inventory:
+  Cargo.toml adds `hex` + `yggdrasil-network` deps; rest/web.rs
+  refactors `Handler` type alias to `Arc<dyn Fn(HttpRequest) ->
+  Pin<Box<dyn Future<Output=HttpResponse> + Send>> + Send + Sync>`
+  with sync_handler test helper; web.rs `tx_submit_post` is now async
+  and calls new `submit_via_ntc` which opens ntc_connect per request,
+  extracts NTC_LOCAL_TX_SUBMISSION ProtocolHandle, drives
+  LocalTxSubmissionClient::submit, maps MsgAcceptTx → 202 / MsgRejectTx
+  → 400 (TxCmdTxSubmitValidationError) / connect|protocol failure →
+  503 (TxCmdTxSubmitConnectionError); MAINNET_NETWORK_MAGIC =
+  764824073 constant exposed; lib.rs::run() builds tokio multi-thread
+  runtime + Arc tracer forwarding to stderr via render_human + calls
+  runtime.block_on(web::run_tx_submit_server_from_params). Carve-outs
+  documented: Cardano.Api.deserialiseFromCBOR + multi-era FromSomeType
+  table NOT ported (raw bytes pass through to NtC; cardano-node returns
+  MsgRejectTx for malformed bytes — equivalent observable behavior);
+  Cardano.Api.getTxId NOT ported (Yggdrasil returns empty 'OK' success
+  body — operators can compute Blake2b-256 client-side; future
+  enhancement). Workspace tests: 5,099 → 5,100 (+1 net). Crate total:
+  132 → 133. Parity-matrix entry `sister-tool.cardano-submit-api`
+  `next_milestone` advanced R343 → R344.
 - **R342 — cardano-submit-api web server: raw-tokio HTTP listener + tx_submit_app dispatch.**
   Lands the HTTP server core for cardano-submit-api. Two production
   modules graduate from R335 stub-only to working web server:

@@ -68,15 +68,18 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// R340 lands argv → [`cli::types::TxSubmitCommand`] validation. The
-/// [`run`] entrypoint now produces a fully-resolved
-/// [`cli::types::TxSubmitNodeParams`] before failing with the
-/// "web server not yet implemented" sentinel — operators still see the
-/// previous behavior at the binary level (no HTTP listener) but
-/// `--config`/`--socket-path`/`--mainnet|--testnet-magic` are now
-/// validated and missing-flag errors are surfaced clearly.
+/// R343 wires the tokio runtime + real LocalTxSubmission integration.
+/// argv → [`cli::types::TxSubmitCommand`] validation runs first; on
+/// `TxSubmitRun(params)` the runtime spins
+/// [`web::run_tx_submit_server_from_params`] which binds the HTTP
+/// listener, routes `POST /api/submit/tx` to a NtC LocalTxSubmission
+/// client, and runs until the listener exits or the operator sends
+/// SIGINT/SIGTERM.
 ///
-/// R341 will replace the trailing sentinel with the real axum server.
+/// Tracer routing: events are forwarded to stderr via
+/// [`TraceSubmitApi::render_human`]. R344 will swap stderr forwarding
+/// for the cardano-tracer NtN protocol once that crate ships its
+/// receiver.
 pub fn run() -> eyre::Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let args = match parser::parse_args(&argv) {
@@ -86,11 +89,31 @@ pub fn run() -> eyre::Result<()> {
         }
         Err(err) => return Err(eyre::eyre!("CLI parse error: {err}")),
     };
-    let _command = cli::parsers::into_command(&args)
+    let command = cli::parsers::into_command(&args)
         .map_err(|err| eyre::eyre!("CLI validation error: {err}"))?;
-    Err(eyre::eyre!(
-        "yggdrasil-cardano-submit-api: web server not yet implemented \
-         (R340 ships argv → TxSubmitCommand validation; R341 lands the \
-         axum HTTP listener)."
-    ))
+
+    let params = match command {
+        cli::types::TxSubmitCommand::TxSubmitRun(params) => params,
+        cli::types::TxSubmitCommand::TxSubmitVersion => {
+            // Already handled by parser::ParseError::VersionRequested
+            // above; this branch is unreachable in practice.
+            return Ok(());
+        }
+    };
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| eyre::eyre!("failed to build tokio runtime: {err}"))?;
+
+    let tracer: rest::web::Tracer = std::sync::Arc::new(|evt| {
+        let line = evt.render_human();
+        let _ = writeln!(std::io::stderr(), "[cardano-submit-api] {line}");
+    });
+
+    runtime.block_on(async {
+        web::run_tx_submit_server_from_params(tracer, params)
+            .await
+            .map_err(|err| eyre::eyre!("tx-submit server: {err}"))
+    })
 }
