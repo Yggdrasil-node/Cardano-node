@@ -7,7 +7,7 @@ nav_order: 8
 
 # Manual Test Runbook — Yggdrasil Real-Life Operations
 
-**Purpose**: ordered checklist for the operator running `yggdrasil-node` against real Cardano networks (preprod first, then mainnet) with the supporting scripts created in Slices L–N. This is the document referenced as the bring-up runbook in `docs/AUDIT_VERIFICATION_2026Q2.md`.
+**Purpose**: ordered checklist for the operator running `yggdrasil-node` against real Cardano networks (preprod first, then mainnet) with the supporting scripts created in Slices L–N. This is the document referenced as the bring-up runbook in `archive/AUDIT_VERIFICATION_2026Q2.md`.
 
 **Audience**: someone with shell access to a host that can reach the public Cardano relay set, optionally with a real pool's KES/VRF/OpCert/issuer-vkey credentials, and (optionally) a running upstream Haskell `cardano-node` for hash comparison.
 
@@ -796,7 +796,7 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 
 ## References
 
-- `docs/AUDIT_VERIFICATION_2026Q2.md` — gap status that this runbook closes
+- `archive/AUDIT_VERIFICATION_2026Q2.md` — gap status that this runbook closes
 - `docs/PARITY_SUMMARY.md` lines 303–307 — "Next Steps" defining the rehearsal cadence
 - `node/scripts/run_preprod_real_pool_producer.sh` — preprod rehearsal template
 - `node/scripts/run_mainnet_real_pool_producer.sh` — mainnet rehearsal (Slice L)

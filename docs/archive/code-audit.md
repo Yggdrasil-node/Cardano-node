@@ -1,3 +1,12 @@
+---
+title: Code Audit (2026-04-27)
+layout: default
+parent: Archive
+grand_parent: Reference
+nav_order: 3
+permalink: /code-audit/
+---
+
 # Yggdrasil Cardano-node — Code Audit Report
 
 **Repository:** `https://github.com/Yggdrasil-node/Cardano-node`

@@ -1391,7 +1391,7 @@ pub struct VerifiedSyncServiceConfig {
     /// safely even when only one session is currently active.
     ///
     /// Closes the audit gap "config knob is read by no production path"
-    /// (Slice E in `docs/AUDIT_VERIFICATION_2026Q2.md`).
+    /// (Slice E in `docs/archive/AUDIT_VERIFICATION_2026Q2.md`).
     ///
     /// Reference: `Ouroboros.Network.BlockFetch.Decision` —
     /// `bfcMaxConcurrencyDeadline = 1`, `bfcMaxConcurrencyBulkSync = 2`.

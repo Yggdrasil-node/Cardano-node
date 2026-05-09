@@ -19,7 +19,7 @@
 //! the new SHA, then update `docs/UPSTREAM_PARITY.md` with the rationale
 //! for the bump.
 //!
-//! Audit baseline established: 2026-Q2 (`docs/AUDIT_VERIFICATION_2026Q2.md`).
+//! Audit baseline established: 2026-Q2 (`docs/archive/AUDIT_VERIFICATION_2026Q2.md`).
 //!
 //! ## Naming parity
 //!
@@ -258,7 +258,7 @@ mod tests {
     /// `docs/UPSTREAM_PARITY.md`'s pinning table; pinning the length here
     /// surfaces the omission as a clear CI failure.
     ///
-    /// Reference: `docs/AUDIT_VERIFICATION_2026Q2.md` mapping table.
+    /// Reference: `docs/archive/AUDIT_VERIFICATION_2026Q2.md` mapping table.
     #[test]
     fn upstream_pins_cover_all_six_canonical_repos() {
         assert_eq!(

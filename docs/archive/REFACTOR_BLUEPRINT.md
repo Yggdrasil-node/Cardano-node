@@ -1,8 +1,10 @@
 ---
 title: Refactor Blueprint — Upstream Module Mapping
 layout: default
-parent: Reference
-nav_order: 9
+parent: Archive
+grand_parent: Reference
+nav_order: 2
+permalink: /REFACTOR_BLUEPRINT/
 ---
 
 # Refactor Blueprint — Upstream Module Mapping

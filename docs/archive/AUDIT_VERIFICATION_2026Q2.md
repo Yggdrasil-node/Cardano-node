@@ -1,8 +1,10 @@
 ---
 title: Audit Verification 2026-Q2
 layout: default
-parent: Reference
-nav_order: 4
+parent: Archive
+grand_parent: Reference
+nav_order: 1
+permalink: /AUDIT_VERIFICATION_2026Q2/
 ---
 
 # Audit Verification — 2026-Q2

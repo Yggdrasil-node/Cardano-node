@@ -188,7 +188,7 @@ crash point:
 
 ### Audit linkage
 
-This bug was **not** flagged in [`docs/code-audit.md`](code-audit.md)
+This bug was **not** flagged in [`docs/code-audit.md`](archive/code-audit.md)
 because the audit's static-review pass did not exercise live preprod
 block validation across the Byron→Shelley boundary; it surfaced only
 during the operational quality-check pass on 2026-04-27.  The audit

@@ -310,7 +310,7 @@ path active until that closes.
 ### Documentation
 
 - **CI-gate prose alignment.**  `CLAUDE.md`, `docs/CONTRIBUTING.md`, and
-  `docs/code-audit.md` now list all four CI gates
+  `docs/archive/code-audit.md` now list all four CI gates
   (`fmt --all -- --check`, `check-all`, `test-all`, `lint`) — previously
   three files claimed only the trio (`check-all` / `test-all` / `lint`)
   even though `cargo fmt --check` has been a CI step since iteration 1.
@@ -478,7 +478,7 @@ path active until that closes.
     the wire boundary (~4× the protocol max for headroom), reject
     with structured reason before any decode.
 - **Code audit C-1/H-1/H-2 + M-1..M-8 + L-1..L-9 closed.**  See
-  [`docs/code-audit.md`](docs/code-audit.md) for the source audit;
+  [`docs/archive/code-audit.md`](docs/archive/code-audit.md) for the source audit;
   remediation summary:
   - **C-1 / H-1** — every CBOR decoder that allocates from a
     peer-supplied `count` field now goes through

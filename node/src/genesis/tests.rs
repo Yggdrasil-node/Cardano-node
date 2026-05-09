@@ -844,7 +844,7 @@ fn build_plutus_cost_model_rejects_partial_bitwise_tail_array() {
 }
 
 /// Drift-pin for the Plomin-tail watch (Slice A of the audit/bring-up plan,
-/// `docs/AUDIT_VERIFICATION_2026Q2.md`).
+/// `docs/archive/AUDIT_VERIFICATION_2026Q2.md`).
 ///
 /// Pins `CONWAY_V3_PARAM_NAMES.len()` to exactly 302. A future
 /// contributor that extends `SUPPORTED_CONWAY_V3_ARRAY_LENGTHS` to
@@ -878,7 +878,7 @@ fn conway_v3_param_names_table_size_pinned_to_max_supported_length() {
              — restore the missing entries; or (b) upstream shipped a Plomin V3+ \
              tail and this test must be bumped IN LOCKSTEP with extending \
              SUPPORTED_CONWAY_V3_ARRAY_LENGTHS in genesis.rs and the named-table \
-             entries 302..N. See docs/AUDIT_VERIFICATION_2026Q2.md (Slice A).",
+             entries 302..N. See docs/archive/AUDIT_VERIFICATION_2026Q2.md (Slice A).",
     );
 }
 
