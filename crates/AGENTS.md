@@ -38,9 +38,9 @@ file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
 - `crypto`: cryptographic primitives and encodings.
 - `ledger`: era modeling and state transitions. Per-era `CborEncode`/`CborDecode` impls under `crates/ledger/src/eras/*/cbor.rs` are hand-coded against upstream CDDL (`.reference-haskell-cardano-node/deps/cardano-ledger/eras/<era>/impl/cddl/data/`); CDDL is treated as authoritative documentation. Codegen scaffolding was removed in favor of hand-coding because real upstream parity needs Byron / array-vs-map / optional-field semantics that CDDL underspecifies.
 - `storage`: durable storage and snapshots.
-- `consensus`: chain selection, rollback, and epoch math.
-- `mempool`: transaction intake, ordering, and eviction.
+- `consensus`: chain selection, rollback, and epoch math. Includes the `mempool` submodule (transaction intake, ordering, eviction; consolidated into consensus in R256 to mirror upstream `Ouroboros.Consensus.Mempool.*`).
 - `network`: mux, mini-protocols, codecs, and peer management.
+- `cardano-cli` (R289+): pure-Rust port of upstream `cardano-cli` (~237 Rust files mirroring 180 upstream `.hs`). Workspace-internal library consumed by `yggdrasil-node`; no separate binary today. See [`cardano-cli/AGENTS.md`](cardano-cli/AGENTS.md) for the Phase F bootstrap state and R298+ migration roadmap.
 
 ## Maintenance Guidance
 - When a crate boundary changes, update the child crate AGENTS file, `docs/ARCHITECTURE.md`, and the workspace root `AGENTS.md` together.
