@@ -19,7 +19,7 @@ scripts/
 
 ## Validators
 
-### `check-strict-mirror.py` (R275 warn-only → R288 fail-build)
+### `check-strict-mirror.py` (R275 warn-only → R288 fail-build, R311 drift-aware)
 
 Walks every production `.rs` under `crates/<crate>/src/` + `node/src/`
 (excluding `**/tests/**` + `target/`) and verifies each file either:
@@ -30,16 +30,31 @@ Walks every production `.rs` under `crates/<crate>/src/` + `node/src/`
    `**Strict mirror:** none.` plus the upstream symbol(s)/file(s) the
    helper surfaces.
 
+Also cross-checks the working tree against the git index (R311+):
+any production `.rs` that exists locally but is NOT tracked in
+`git ls-files` is flagged as an index-vs-tree drift violation.
+Catches the R310 failure mode where an over-broad `.gitignore`
+pattern silently swallowed an entire strict-mirror subtree (the
+local tree built clean but a fresh CI clone failed module
+resolution).
+
 Allowlist source-of-truth: [`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv).
 The `--fail-on-violation` flag flips exit code on violation (CI mode).
 Imports the audit module via importlib so the verdict heuristics stay
-in one place.
+in one place. The drift check degrades gracefully if `git` is
+unavailable (returns `None` from `get_tracked_rust_files()`).
 
-Runs on every push via `.github/workflows/ci.yml`. Failure means a new
-production `.rs` was added without either an upstream filename mirror
-or the explicit `## Naming parity` block — author the docstring
-(see `.claude/skills/round-extraction/SKILL.md` for the pattern) or
-rename the file to mirror an upstream `.hs`.
+Runs on every push via `.github/workflows/ci.yml`. Failure modes:
+
+- **Mirror/docstring violation**: a new production `.rs` was added
+  without either an upstream filename mirror or the explicit
+  `## Naming parity` block. Author the docstring (see
+  `.claude/skills/round-extraction/SKILL.md` for the pattern) or
+  rename the file to mirror an upstream `.hs`.
+- **Index-vs-tree drift**: a production `.rs` exists locally but is
+  not tracked. Check `.gitignore` for over-broad bare patterns
+  (e.g., `debug` instead of `/target/debug/`) and `git add` the file
+  once the ignore rule is fixed.
 
 ### `check-parity-matrix.py` (CI gate)
 

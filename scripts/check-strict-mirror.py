@@ -6,6 +6,15 @@ production `.rs` file that lacks both:
   - an upstream `.hs` mirror (by snake_case basename match), AND
   - a `## Naming parity` docstring stanza.
 
+Also cross-checks the local working tree against the git index
+(R311+): any production `.rs` file that exists locally but is NOT
+tracked in `git ls-files` is flagged as an index-vs-tree drift
+violation. This catches the R310 failure mode where an over-broad
+`.gitignore` pattern silently swallowed an entire strict-mirror
+subtree (`crates/cardano-cli/src/era_independent/debug/`) — the
+local tree built clean but a fresh CI clone failed module
+resolution.
+
 In warn-only mode (default — R275 onwards), violations emit GitHub
 Actions `::warning::` lines and the script exits 0. In fail-build
 mode (R288 onwards), violations exit 1.
@@ -19,7 +28,6 @@ gate.
 Usage:
     python3 scripts/check-strict-mirror.py
     python3 scripts/check-strict-mirror.py --fail-on-violation
-    cargo parity-strict-mirror
 
 Exit codes:
   0 - no NEW violations beyond the committed allowlist (or fail-on-violation
@@ -31,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -51,6 +60,26 @@ def load_audit_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def get_tracked_rust_files() -> set[str] | None:
+    """Return tracked production `.rs` paths from `git ls-files`.
+
+    Returns None if `git` is unavailable or the cwd is not a git
+    repository (so the caller can skip the index-vs-tree cross-check
+    rather than emitting noise).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--", "crates/*.rs", "node/*.rs"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    return {line for line in result.stdout.splitlines() if line}
 
 
 def load_allowlist() -> dict[str, str]:
@@ -89,10 +118,17 @@ def main() -> None:
     allowlist = load_allowlist()
     index = audit.load_index()
     rust_files = audit.iter_rust_files()
+    tracked = get_tracked_rust_files()
 
     violations: list[tuple[str, str]] = []
+    drift_violations: list[str] = []
     for rust_path in rust_files:
         rel = rust_path.relative_to(ROOT).as_posix()
+        # Index-vs-tree drift check (R311). Skip when git is unavailable
+        # or `git ls-files` returned nothing usable.
+        if tracked is not None and rel not in tracked:
+            drift_violations.append(rel)
+
         candidates = audit.derive_candidates(rust_path.stem)
         hits: list[str] = []
         seen: set[str] = set()
@@ -117,24 +153,40 @@ def main() -> None:
         # New file with neither upstream mirror nor docstring stanza.
         violations.append((rel, final_verdict))
 
-    if not violations:
+    if not violations and not drift_violations:
         print("strict-mirror: 0 violations (clean)", file=sys.stderr)
         return
 
     # Emit warnings in GitHub Actions format. The `::warning file=...::`
     # syntax surfaces as an annotation on the file in the PR review UI.
-    print(
-        f"strict-mirror: {len(violations)} new file(s) violate the policy "
-        "(neither upstream `.hs` mirror nor `## Naming parity` docstring stanza):",
-        file=sys.stderr,
-    )
-    for rel, verdict in violations:
+    if violations:
         print(
-            f"::warning file={rel}::{verdict} - "
-            "must either rename to an upstream `.hs` basename or add a "
-            "`## Naming parity` docstring block",
+            f"strict-mirror: {len(violations)} new file(s) violate the policy "
+            "(neither upstream `.hs` mirror nor `## Naming parity` docstring stanza):",
             file=sys.stderr,
         )
+        for rel, verdict in violations:
+            print(
+                f"::warning file={rel}::{verdict} - "
+                "must either rename to an upstream `.hs` basename or add a "
+                "`## Naming parity` docstring block",
+                file=sys.stderr,
+            )
+
+    if drift_violations:
+        print(
+            f"strict-mirror: {len(drift_violations)} file(s) exist locally "
+            "but are NOT tracked in `git ls-files` (R311 index-vs-tree drift "
+            "— typically caused by an over-broad `.gitignore` pattern):",
+            file=sys.stderr,
+        )
+        for rel in drift_violations:
+            print(
+                f"::warning file={rel}::index-vs-tree drift - "
+                "file exists locally but is not tracked in git; "
+                "check `.gitignore` patterns and `git add` if needed",
+                file=sys.stderr,
+            )
 
     if args.fail_on_violation:
         raise SystemExit(1)
