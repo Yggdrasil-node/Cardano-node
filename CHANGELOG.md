@@ -274,6 +274,20 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R335-R336 — Phase A skeleton milestone: 12/12 sister tools deployable.**
+  R335 lands cardano-submit-api skeleton + parser (14 file-mirror
+  tree, byte-equivalent --help/--version, 7-flag parser). The bulk
+  skeleton commit brings 10 more sister-tool crates from `absent`
+  → `partial`: cardano-testnet, cardano-tracer, db-analyser,
+  db-synthesizer, db-truncater, dmq-node, kes-agent,
+  kes-agent-control, snapshot-converter, tx-generator. Each ships
+  lib.rs + main.rs + parser.rs (with `HELP_TEXT`/`VERSION_TEXT`
+  fixtures captured from upstream binary) + golden test pinning
+  byte-equivalence. R336 round-doc records the milestone:
+  **all 12 sister tools have deployable Rust binaries** with
+  byte-equivalent --help/--version output, 126 sister-tool tests
+  total (31 bech32 + 15 cardano-submit-api + 80 bulk skeleton),
+  workspace test count 4,856 → 4,982 (+126).
 - **R326-R334 — sister-tools port arc Phase Prep + Phase A.1 (bech32) shipped.**
   Prep block (R326-R330) bootstrapped the 12-tool sister-tools port
   arc: vendored bech32 + kes-agent + dmq-node sources (R326b);
