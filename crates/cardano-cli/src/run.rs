@@ -12,6 +12,7 @@
 //! (`byron::run`, `compatible::run`, `shelley::run`, etc.) land in
 //! R290–R295 and the dispatch arms grow alongside.
 
+pub mod mnemonic;
 use eyre::Result;
 
 use crate::command::Command;

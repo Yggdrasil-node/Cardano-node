@@ -38,11 +38,18 @@ pub mod environment;
 pub mod era_based;
 pub mod era_independent;
 pub mod helper;
+pub mod io;
+pub mod json;
+pub mod legacy;
 pub mod option;
 pub mod orphan;
+pub mod os;
 pub mod parser;
+pub mod read;
 pub mod render;
 pub mod run;
+pub mod top_handler;
+pub mod r#type;
 
 pub use command::Command;
 pub use run::run_command;

@@ -1342,6 +1342,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-cardano-cli"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "yggdrasil-consensus"
 version = "0.2.0"
 dependencies = [

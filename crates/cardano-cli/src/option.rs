@@ -11,6 +11,7 @@
 //! the per-cluster rounds since they are consumed in tandem with the
 //! runners.
 
+pub mod flag;
 use std::path::PathBuf;
 
 /// Parse a `--socket-path /path/to/sock` argument. Reusable across
