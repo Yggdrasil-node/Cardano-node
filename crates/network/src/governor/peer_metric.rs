@@ -19,22 +19,23 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.PeerSelection.PeerMetric.hs` (PeerMetric,
-//! HeaderMetricsTracer, BlockFetchMetricsTracer). Yggdrasil also
-//! folds in
-//! `Ouroboros.Network.PeerSelection.LedgerPeers.Utils`
-//! (peer-pick randomized policy) and
-//! `Ouroboros.Network.PeerSelection.Governor.RootPeers`
-//! (failure-backoff bookkeeping) into the same file because all
-//! three feed the same scheduling decisions. Upstream splits these
-//! across three modules.
+//! **Strict mirror:** none. Yggdrasil-side peer-scheduling
+//! support module. Surfaces `PickPolicy` (peer-pick randomized
+//! policy from upstream `Ouroboros.Network.PeerSelection.LedgerPeers.Utils`),
+//! `RequestBackoffState` + `PeerFailureRecord` (failure-backoff
+//! bookkeeping conceptually from `Governor.RootPeers`), an
+//! embedded `Xorshift64` PRNG (avoids a `rand` crate dependency),
+//! and Yggdrasil's `PeerMetrics` scoring struct (upstreamyness /
+//! fetchyness combined score). The upstream `PeerMetric` PSQ-
+//! based metrics module is a different concept — Yggdrasil's
+//! peer scoring works directly off `PeerRegistry` rather than
+//! a slot-PSQ.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use crate::multiplexer::MiniProtocolNum;
+use crate::mux::MiniProtocolNum;
 use crate::peer_registry::{PeerRegistry, PeerSource, PeerStatus};
 
 /// Per-peer failure record with timestamps for time-based backoff.

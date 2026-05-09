@@ -16,14 +16,18 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Ouroboros.Network.PeerSelection.Churn.hs` (peerChurnGovernor +
-//! ChurnMode + ChurnRegime). Yggdrasil's `churn.rs` also folds in
-//! `Ouroboros.Network.BlockFetch.ConsensusInterface::FetchMode` and
-//! `Cardano.Node.Diffusion.mkReadFetchMode` (mode derivation) so
-//! the two-phase churn cycle has direct access to the fetch mode
-//! input it conditions on. Upstream wires those across separate
-//! modules.
+//! **Strict mirror:** none. Yggdrasil-side churn-cycle policy
+//! configuration + mode classification. Surfaces three upstream
+//! concepts in one focused module: `ChurnMode` / `ChurnRegime`
+//! enums (originally from `Ouroboros.Network.PeerSelection.Churn`),
+//! the `decrease` / `decreaseWithMin` policy helpers (also from
+//! `Churn.hs`), and `FetchMode` derivation (from
+//! `Ouroboros.Network.BlockFetch.ConsensusInterface` +
+//! `Cardano.Node.Diffusion.mkReadFetchMode`). The actual
+//! `peerChurnGovernor` driver loop lives in
+//! `crates/network/src/governor.rs` (the strict mirror of
+//! `Ouroboros.Network.PeerSelection.Governor`); this file is the
+//! configuration / policy half it consumes.
 
 use std::time::{Duration, Instant};
 

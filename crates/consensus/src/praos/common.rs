@@ -24,13 +24,17 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors upstream
-//! `Cardano.Ledger.BaseTypes::ActiveSlotCoeff` plus the
-//! `taylorExpCmp` / `boundedRationalFromRational` helpers in
-//! `Ouroboros.Consensus.Protocol.Praos.VRF`. Yggdrasil isolates
-//! the AS-coefficient + bounded-rational math primitives in one
-//! module that the leader-check pipeline calls into; upstream
-//! spreads them across `BaseTypes` (data) and `Praos.VRF` (math).
+//! **Strict mirror:** none. Yggdrasil-side ActiveSlotCoeff +
+//! bounded-rational math primitives feeding the Praos leader
+//! check. Surfaces `ActiveSlotCoeff` from upstream
+//! `Cardano.Ledger.BaseTypes` plus the `taylorExpCmp` and
+//! `boundedRationalFromRational` math helpers from
+//! `Ouroboros.Consensus.Protocol.Praos.VRF`. The upstream
+//! `Ouroboros.Consensus.Protocol.Praos.Common` file is a
+//! different concept (carries `MaxMajorProtVer`,
+//! `PraosTiebreakerView`, `PraosCanBeLeader` data + protocol
+//! classes) — Yggdrasil's `praos/common.rs` is named for its
+//! role as shared math primitives, not as a strict mirror.
 
 use num_bigint::BigUint;
 use num_integer::Integer;
