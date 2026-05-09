@@ -116,13 +116,17 @@ pub enum BlockProducerError {
 /// Standard Cardano text-envelope format used for signing key and
 /// certificate files.
 ///
-/// Reference: `Cardano.Api.SerialiseTextEnvelope`.
+/// Reference: `Cardano.Api.SerialiseTextEnvelope`. Upstream's
+/// `TextEnvelope` carries three fields: `type` / `description` /
+/// `cborHex`. Yggdrasil's block-producer never inspects the operator-
+/// supplied free-text `description` (it's informational), so the field
+/// is intentionally absent here. Serde silently ignores the JSON key
+/// during deserialization, preserving wire-format compatibility with
+/// upstream-produced envelopes.
 #[derive(serde::Deserialize)]
 struct TextEnvelope {
     #[serde(rename = "type")]
     type_tag: String,
-    #[allow(dead_code)]
-    description: String,
     #[serde(rename = "cborHex")]
     cbor_hex: String,
 }
