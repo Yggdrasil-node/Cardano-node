@@ -724,11 +724,22 @@ fn dispatch_upstream_query(
             }
         },
         UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent { inner_cbor }) => {
-            // Round 156 — decode `[era_index, era_specific_query]` and
-            // dispatch the recognised subset.  Falls through to
-            // `null_response()` for queries we don't yet handle, which
-            // produces the same behaviour as before (cardano-cli will
-            // still print `DeserialiseFailure` for those — TODO follow-ups).
+            // Round 156 onwards — decode `[era_index, era_specific_query]`
+            // and dispatch every recognised `EraSpecificQuery` variant
+            // (28+ subqueries covering pparams, epoch/era state, UTxO,
+            // stake distribution, pool state, governance, DRep state,
+            // ledger peers, etc.).
+            //
+            // The `EraSpecificQuery::Unknown { .. }` arm catches LSQ
+            // queries Yggdrasil's decoder does not recognize (e.g. new
+            // queries added in a future cardano-node release that
+            // pre-date a Yggdrasil upgrade) and replies with
+            // `null_response()` — matching the on-wire shape for "no
+            // result available". cardano-cli surfaces this as a
+            // `DeserialiseFailure` on its end, which is the upstream-
+            // intended diagnostic for unknown queries. New LSQ queries
+            // are added by extending `decode_query_if_current` plus the
+            // dispatch arm below.
             match decode_query_if_current(&inner_cbor) {
                 Ok((era_index, era_q)) => {
                     let snapshot_era_ordinal = effective_era_index_for_lsq(snapshot);
