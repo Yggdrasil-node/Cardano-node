@@ -274,6 +274,29 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R341 — cardano-submit-api trace surface: for_machine, as_metrics, Namespace tables.**
+  Completes the trace surface for cardano-submit-api by porting upstream
+  `LogFormatting` and `MetaTrace` instance methods. R339 had landed
+  the data-only TraceSubmitApi enum + render_human (mirror of
+  `forHuman`); R341 adds: `for_machine` (forMachine — JSON shape per
+  event byte-equivalent to upstream Aeson), `as_metrics` (asMetrics —
+  counter increment instructions), `namespace_for` (namespaceFor — 11-
+  variant Namespace enum), Namespace::segments / severity / metrics_doc
+  inherent methods (mirror of MetaTrace.segments/severityFor/metricsDocFor),
+  ALL_NAMESPACES const (allNamespaces). Three supporting types:
+  `Severity` (Debug | Info | Warning | Error mirroring
+  Cardano.Logging.SeverityS), `Namespace` (11-variant closed enum),
+  `MetricUpdate` (CounterInc | CounterSet mirroring
+  Cardano.Logging.MetricM's CounterM name (Maybe v) shape). The Rust
+  port intentionally does not implement `LogFormatting` /
+  `MetaTrace` typeclasses (no Rust analog under our backend-agnostic
+  tracing layer); data is exposed via inherent methods + constants
+  so callers can map to whatever tracing backend (`tracing`, `slog`,
+  cardano-tracer NtN protocol) is wired at runtime. Workspace tests:
+  5,052 → 5,076 (+24: 7 for_machine + 4 as_metrics + 3 namespace +
+  8 severity/metrics_doc + 2 MetricUpdate). Parity-matrix entry
+  `sister-tool.cardano-submit-api` `next_milestone` advanced R341 →
+  R342.
 - **R340 — cardano-submit-api type bridges: cli/types, cli/parsers, rest/types, rest/parsers.**
   Bridges Yggdrasil's flat `parser::Args` argv representation to
   upstream's typed parser surface (`TxSubmitCommand`/`TxSubmitNodeParams`).
