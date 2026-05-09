@@ -27,6 +27,8 @@ for what is currently true.
 | [`code-audit.md`](code-audit.md) | R287 | 2026-04-27 audit; all C-1, H-1, H-2, M-1..M-8, L-1..L-9 findings closed in the 2026-Q3 operational pass. Each finding heading carries an inline `[CLOSED in 2026-Q3]` annotation; body preserved verbatim as audit-trail evidence. |
 | [`REFACTOR_BLUEPRINT.md`](REFACTOR_BLUEPRINT.md) | R287 | R256 Phase A–G monolith-split planning doc; all phases shipped via R269–R281. Each phase header carries a `[DONE in RNNN]` annotation pointing at its closing round. |
 | [`AUDIT_VERIFICATION_2026Q2.md`](AUDIT_VERIFICATION_2026Q2.md) | R287 (implicitly) | 2026-Q2 sanity audit verifying every gap flagged in the parity documentation. Closed once the audit's conclusions were absorbed into the live `PARITY_*.md` docs and the R270–R273 work shipped against them. |
+| [`PARITY_PLAN.md`](PARITY_PLAN.md) | R299 | Original 2026-03-26 pre-execution planning doc. Phases A–F all shipped via R269–R298; the roadmap, dependency graph, and risk matrix are now historical context. Live status: `docs/PARITY_PROOF.md`, `docs/UPSTREAM_PARITY.md`, `docs/PARITY_SUMMARY.md`. |
+| [`UPSTREAM_RESEARCH.md`](UPSTREAM_RESEARCH.md) | R299 | Pre-execution upstream Haskell research (2026-05-01) used to inform the parity plan. The R1–R298 execution arc has now validated or superseded its guidance; new contributors should read `docs/ARCHITECTURE.md` and `docs/PARITY_PROOF.md` instead. |
 
 ## Archive policy
 

@@ -31,7 +31,7 @@
 //! ## Reference
 //!
 //! - [`Ouroboros.Consensus.Genesis.Governor`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Genesis/Governor.hs)
-//! - [`docs/PARITY_PLAN.md`](../../../docs/PARITY_PLAN.md) — Slice GD entry.
+//! - [`docs/archive/PARITY_PLAN.md`](../../../docs/archive/PARITY_PLAN.md) — Slice GD entry.
 //!
 //! ## Naming parity
 //!

@@ -942,7 +942,7 @@ preprod (Shelley-era chain) without requiring `YGG_LSQ_ERA_FLOOR`.
 - Per-round summaries:
   [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
 - Roadmap:
-  [`docs/PARITY_PLAN.md`](PARITY_PLAN.md)
+  [`docs/PARITY_PLAN.md`](archive/PARITY_PLAN.md)
 - Workspace journal:
   [`AGENTS.md`](../AGENTS.md)
 

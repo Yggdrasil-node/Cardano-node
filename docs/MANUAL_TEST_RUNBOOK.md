@@ -790,7 +790,7 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 | Stuck at `bootstrap peer connected` with no further sync | `/metrics` `yggdrasil_active_peers` (if 0, peer governor never promoted; check topology) |
 | `invalid VRF proof` | header verification mismatch; capture log + a `cardano-cli query tip` snapshot from a known-good Haskell node and compare slot/hash |
 | Non-monotonic tip during restart | `restart_resilience.sh` exit 1; logs preserved in `$LOG_ROOT`. Likely a storage WAL recovery bug — file a parity-audit issue and attach all `cycle-NN.log` files |
-| Hash divergence persists | run `compare_tip_to_haskell.sh` 3× over 90s; if all three diverge with `slot equal, hash different`, capture both snapshot JSONs and report against `docs/PARITY_PLAN.md` |
+| Hash divergence persists | run `compare_tip_to_haskell.sh` 3× over 90s; if all three diverge with `slot equal, hash different`, capture both snapshot JSONs and report against `archive/PARITY_PLAN.md` |
 
 ---
 

@@ -1,9 +1,24 @@
 ---
-title: Upstream Research
+title: Upstream Research (2026-05-01 archive)
 layout: default
-parent: Reference
-nav_order: 10
+parent: Archive
+grand_parent: Reference
+nav_order: 5
+permalink: /UPSTREAM_RESEARCH/
 ---
+
+> **Archived 2026-05-09 (R299).** This document is the pre-execution
+> upstream Haskell research compiled to inform the 2026-03-26
+> parity plan. The R1–R298 execution arc has now validated or
+> superseded its guidance; new contributors should read:
+> - [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) — current Yggdrasil
+>   architecture overview.
+> - [`docs/PARITY_PROOF.md`](../PARITY_PROOF.md) — what works today.
+> - [`docs/UPSTREAM_PARITY.md`](../UPSTREAM_PARITY.md) — current
+>   subsystem status + drift-guard pins.
+> - [`docs/strict-mirror-audit.tsv`](../strict-mirror-audit.tsv) —
+>   per-file Yggdrasil ↔ upstream `.hs` verdict table.
+> Body preserved verbatim as historical research record.
 
 # Comprehensive Upstream Research: Cardano Haskell Implementation
 

@@ -125,4 +125,4 @@ The Yggdrasil code surface remains tested against the audit-baseline behavior; t
 
 - Update this file whenever a parity milestone or blocker status changes.
 - Keep claims evidence-based: include command output or test references for any status changes.
-- Keep this file synchronized with `docs/PARITY_PLAN.md`, `docs/PARITY_SUMMARY.md`, `docs/ARCHITECTURE.md`, and `README.md`.
+- Keep this file synchronized with `archive/PARITY_PLAN.md`, `docs/PARITY_SUMMARY.md`, `docs/ARCHITECTURE.md`, and `README.md`.

@@ -21,7 +21,7 @@
 //!   Required because parallel fetches can complete out of order.
 //!
 //! The actual wiring into the node runtime / sync pipeline is deliberately
-//! deferred to a follow-up slice (see `docs/PARITY_PLAN.md` Phase 3 item 5)
+//! deferred to a follow-up slice (see `docs/archive/PARITY_PLAN.md` Phase 3 item 5)
 //! so that the proven single-peer pipeline is not regressed.  The default
 //! `BlockFetchPool::new(FetchMode::FetchModeBulkSync)` with a single registered peer
 //! is byte-for-byte equivalent to the existing single-peer fetch behaviour.

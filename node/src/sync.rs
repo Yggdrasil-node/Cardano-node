@@ -1378,7 +1378,7 @@ pub struct VerifiedSyncServiceConfig {
     ///
     /// The pool is currently single-peer-equivalent: concurrency is gated
     /// by the existing single-session pipeline.  A future slice (see
-    /// `docs/PARITY_PLAN.md` Phase 3 item 5) will lift this to N≥2 peers
+    /// `docs/archive/PARITY_PLAN.md` Phase 3 item 5) will lift this to N≥2 peers
     /// via [`crate::sync::BlockFetchInstrumentation`]-driven scheduling.
     pub block_fetch_pool: Option<BlockFetchInstrumentation>,
     /// Operator-configured upper bound on concurrent BlockFetch peers.

@@ -1,9 +1,25 @@
 ---
-title: Parity Plan
+title: Parity Plan (2026-03-26 archive)
 layout: default
-parent: Reference
-nav_order: 2
+parent: Archive
+grand_parent: Reference
+nav_order: 4
+permalink: /PARITY_PLAN/
 ---
+
+> **Archived 2026-05-09 (R299).** This document is the original
+> 2026-03-26 pre-execution planning doc. Phases A–F all shipped via
+> R269–R298 and the plan's roadmap, dependency graph, and risk
+> matrix are now historical context rather than current direction.
+> Live status sources:
+> - [`docs/PARITY_PROOF.md`](../PARITY_PROOF.md) — operational
+>   verification reference (25/25 cardano-cli LSQ subcommands,
+>   consensus sidecar persistence, remaining gaps, runbook).
+> - [`docs/UPSTREAM_PARITY.md`](../UPSTREAM_PARITY.md) — drift-guard
+>   matrix and pin baseline.
+> - [`docs/PARITY_SUMMARY.md`](../PARITY_SUMMARY.md) — management
+>   summary with current subsystem status table.
+> Body preserved verbatim for audit-trail purposes.
 
 # Full Parity Plan: Rust Cardano Node vs. Official Haskell Implementation
 

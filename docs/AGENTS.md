@@ -14,9 +14,9 @@ file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
 
 ## Scope
 - `ARCHITECTURE.md`, `DEPENDENCIES.md`, `SPECS.md`, `CONTRIBUTING.md`, and the
-  per-cycle audit/parity docs (`PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
+  per-cycle audit/parity docs (`archive/PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
   `AUDIT_VERIFICATION_*.md`, `MANUAL_TEST_RUNBOOK.md`,
-  `UPSTREAM_PARITY.md`, `UPSTREAM_RESEARCH.md`,
+  `UPSTREAM_PARITY.md`, `archive/UPSTREAM_RESEARCH.md`,
   `REAL_PREPROD_POOL_VERIFICATION.md`).
 - `parity-matrix.json` — machine-readable Rust ↔ Haskell parity inventory
   (validated by `scripts/check-parity-matrix.py`). The `reference.tag`
@@ -88,7 +88,7 @@ file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
   Do not rewrite historical "open follow-up" wording in old run
   records just because later rounds closed the follow-up. Add a new
   operational run record for new evidence, then update living status in
-  `README.md`, `PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
+  `README.md`, `archive/PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
   `PARITY_PROOF.md`, `UPSTREAM_PARITY.md`, and
   `MANUAL_TEST_RUNBOOK.md`.
 - Filename convention is `YYYY-MM-DD-round-NNN-<slug>.md`; the
