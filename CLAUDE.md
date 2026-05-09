@@ -81,23 +81,25 @@ Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept cu
 
 ## Commands
 
-Workspace aliases (defined in [.cargo/config.toml](.cargo/config.toml)):
+Workspace aliases (defined in [.cargo/config.toml](.cargo/config.toml))
+plus the strict-mirror drift-guard:
 
 ```bash
 cargo fmt --all -- --check                   # rustfmt gate
 cargo check-all                              # cargo check --workspace --all-targets
 cargo test-all                               # cargo test  --workspace --all-features
 cargo lint                                   # cargo clippy --workspace --all-targets --all-features -- -D warnings
+python3 scripts/check-strict-mirror.py --fail-on-violation
+                                             # strict 1:1 file-mirror drift-guard (R288: fail-build)
 ```
 
-All four are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
+All five are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
 
-Parity-flow gates (run when the touched area is in scope):
+Other parity-flow gates (run when the touched area is in scope):
 
 ```bash
 python3 scripts/check-parity-matrix.py            # validates docs/parity-matrix.json schema + on-disk paths
-python3 scripts/check-strict-mirror.py            # strict 1:1 file-mirror drift-guard (warn-only R275; fail-build R288)
-python3 scripts/audit-strict-mirror.py            # rebuild docs/strict-mirror-audit.tsv after Phase B graduates rows
+python3 scripts/audit-strict-mirror.py            # rebuild docs/strict-mirror-audit.tsv after a rename/annotate change
 python3 .claude/scripts/filetree.py check         # reports stale .claude/filetree/manifest.json entries
 bash    scripts/setup-reference.sh                # refresh .reference-haskell-cardano-node/ to the policy tag
 ```

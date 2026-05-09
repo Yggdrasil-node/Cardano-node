@@ -33,7 +33,7 @@ jobs:
       - name: Lint workspace
         run: cargo lint
 
-      # Strict-mirror drift-guard (R275: warn-only; R288: fail-build).
+      # Strict-mirror drift-guard (fifth verification gate).
       # Counterpart to .claude/skills/round-extraction/SKILL.md (the
       # authoring-time guard). Walks production .rs files, looks each
       # up against the upstream basename index at
@@ -42,12 +42,14 @@ jobs:
       # stanza. The committed docs/strict-mirror-audit.tsv is the
       # allowlist; only NEW violations are reported.
       #
-      # Warn-only initially: emits ::warning:: lines but exits 0 so
-      # Phase B (R276-R281) rounds can land their fixes without red CI.
-      # R288 flips this to fail-build by passing --fail-on-violation.
-      - name: Strict-mirror drift-guard (warn-only)
-        run: python3 scripts/check-strict-mirror.py
-        continue-on-error: true
+      # R275 landed this in warn-only mode (continue-on-error: true)
+      # to let Phase B (R276-R281) close existing violations without
+      # red CI. R281 closed the last (b)/(d) row in the audit table.
+      # R288 (this round) flips to fail-build via --fail-on-violation:
+      # any new file lacking an upstream mirror or `## Naming parity`
+      # docstring stanza fails the build.
+      - name: Strict-mirror drift-guard
+        run: python3 scripts/check-strict-mirror.py --fail-on-violation
 
   # cargo-deny gate — supply-chain hygiene.  Surfaces unmaintained,
   # vulnerable, or copyleft transitive dependencies as a CI failure.
