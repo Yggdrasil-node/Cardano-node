@@ -24,6 +24,15 @@
 //!   `CmAction`s by whether they currently apply to a governor-known peer.
 //!
 //! Extracted from `runtime.rs` in R271o (Phase γ §R271 fifteenth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side glue between the network
+//! crate's `GovernorAction` enum and the upstream
+//! `Ouroboros.Network.ConnectionManager.Core` per-peer state
+//! machine. Upstream's connection-manager actions are issued inline
+//! from the governor body; Yggdrasil isolates the dispatch glue
+//! here for testability.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};

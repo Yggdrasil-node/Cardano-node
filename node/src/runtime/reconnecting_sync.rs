@@ -17,6 +17,17 @@
 //! descendants-see-private-ancestors rule confirmed in R271k/R271l.
 //!
 //! Extracted from `runtime.rs` in R271m (Phase γ §R271 thirteenth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side public entry points
+//! for the four (run/resume) × (volatile-store/chaindb) ×
+//! (default-tracer/with-tracer) combinations of the reconnect-
+//! verified-sync service. Mirrors the high-level orchestration
+//! of upstream `Ouroboros.Consensus.Node.Run.runWith` reconnect
+//! loop; Haskell expresses each combination via type-class
+//! polymorphism inline, Yggdrasil ships per-combination Rust
+//! entry points.
 
 use std::collections::BTreeMap;
 use std::future::Future;

@@ -10,6 +10,17 @@
 //!
 //! Extracted from `runtime.rs` in R271a as the first slice of the
 //! per-domain runtime split.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side configuration-overlay
+//! layer aggregating tick interval, keep-alive cadence, target
+//! peer counts, and cross-task shared handles. Mirrors the
+//! configuration prep that upstream
+//! `Cardano.Node.Run.checkPointsAndApplyChunkOptions` does before
+//! handing off to `Ouroboros.Network.PeerSelection.Governor`;
+//! Haskell wires those parameters inline, Yggdrasil isolates them
+//! in a struct.
 
 use std::time::Duration;
 

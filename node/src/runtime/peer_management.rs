@@ -25,6 +25,17 @@
 //! derivation.
 //!
 //! Extracted from `runtime.rs` in R271n (Phase γ §R271 fourteenth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side runtime structures for
+//! outbound peer management. Mirrors glue around upstream
+//! `Ouroboros.Network.PeerSelection.PeerStateActions` (per-peer
+//! warm/hot state), `Ouroboros.Network.RootPeers` (root peer
+//! providers), and `Ouroboros.Network.BlockFetch.ClientRegistry`
+//! (per-peer fetch-worker pool). Upstream wires these inline in
+//! the diffusion config; Yggdrasil isolates the runtime-side
+//! structures here for testability.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

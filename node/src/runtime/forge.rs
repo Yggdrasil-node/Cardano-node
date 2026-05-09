@@ -17,6 +17,16 @@
 //!   of expiry.
 //!
 //! Extracted from `runtime.rs` in R271p (Phase γ §R271 sixteenth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side helpers for the slot-
+//! driven block-producer body assembly + self-validation + KES
+//! expiry surveillance. Mirrors upstream `Cardano.Node.Forge`
+//! block-producer helpers; the helpers are spread across
+//! `Cardano.Node.Forge.{Configuration, Run}` and
+//! `Ouroboros.Consensus.Block.Forging` upstream. Yggdrasil unifies
+//! the runtime-side pieces here.
 
 use yggdrasil_consensus::kes_period_of_slot;
 use yggdrasil_consensus::mempool::{MEMPOOL_ZERO_IDX, MempoolEntry, SharedMempool};

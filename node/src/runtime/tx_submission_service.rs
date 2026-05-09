@@ -20,6 +20,15 @@
 //! serve logic is identical.
 //!
 //! Extracted from `runtime.rs` in R271e.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side managed-loop wrapper
+//! around the inbound TxSubmission2 server side. Mirrors upstream
+//! `Ouroboros.Network.TxSubmission.Inbound.Server` request-handling
+//! loop; Haskell expresses the loop inline within the server type-
+//! class instance, Yggdrasil isolates the loop body for tracing +
+//! back-pressure observation.
 
 use std::future::Future;
 

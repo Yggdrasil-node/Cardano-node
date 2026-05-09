@@ -17,6 +17,15 @@
 //! ledger state — used by R157+ slip-batch eviction handling.
 //!
 //! Extracted from `runtime.rs` in R271d.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side glue between the
+//! TxSubmission2 inbound server and the mempool. Mirrors upstream
+//! `Ouroboros.Network.TxSubmission.Inbound.Server` + 
+//! `Ouroboros.Consensus.Mempool.Update`; Haskell wires this inline
+//! in the server, Yggdrasil exposes parallel mempool-add APIs
+//! (per-tx and batched) for trace + back-pressure observation.
 
 use yggdrasil_consensus::mempool::{Mempool, MempoolEntry, MempoolError, SharedMempool};
 use yggdrasil_ledger::{

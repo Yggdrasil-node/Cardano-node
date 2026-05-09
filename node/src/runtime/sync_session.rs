@@ -29,6 +29,16 @@
 //!   boundary trace event surface.
 //!
 //! Extracted from `runtime.rs` in R271r (Phase γ §R271 eighteenth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-session helpers
+//! (traces, reconnect orchestration, fallback-peer refresh,
+//! epoch-boundary trace events). Mirrors glue around upstream
+//! `Ouroboros.Consensus.Node.Run.runWith` shutdown traces,
+//! `Ouroboros.Network.Protocol.ChainSync.Client.chainSyncClientPeer`
+//! intersection sync, and ChainDb tip refresh; Haskell wires this
+//! inline, Yggdrasil isolates the runtime-side glue.
 
 use serde_json::Value;
 use serde_json::json;

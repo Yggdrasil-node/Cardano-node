@@ -15,6 +15,19 @@
 //! from the node configuration and stays immutable across the run.
 //!
 //! Extracted from `runtime.rs` in R271b.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side bundle aggregating
+//! upstream `Ouroboros.Consensus.Node.Forking.forkBlockForging`
+//! runtime config parameters (slot length, system start, max
+//! ledger age, active slot coefficient, KES expiry warning
+//! thresholds, max block body size, protocol version) plus
+//! `SharedKernelState` per-slot live inputs (epoch nonce, per-pool
+//! relative stake sigma). Upstream wires these inline in
+//! `forkBlockForging`; Yggdrasil isolates them in a struct so the
+//! block-producer slot loop has a single named place for the
+//! configuration surface.
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;

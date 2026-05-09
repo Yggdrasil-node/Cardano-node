@@ -12,6 +12,19 @@
 //! wrapping `u16` values.
 //!
 //! Extracted from `runtime.rs` in R271h.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the sync-side KeepAlive
+//! client behavior of upstream
+//! `Ouroboros.Network.Protocol.KeepAlive.Client.hs`. Yggdrasil's
+//! `KeepAliveScheduler` is a runtime-side type that issues
+//! periodic `MsgKeepAlive` (20 s cadence vs upstream's ~97 s
+//! timeout); the upstream `Client.hs` defines the protocol state
+//! machine, while Yggdrasil's scheduler wraps the protocol's
+//! client driver. Companion sub-module of the upstream protocol;
+//! filename `keep_alive.rs` does not strictly mirror `Client.hs`
+//! (no `keep_alive/client.rs` split is currently warranted).
 
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};

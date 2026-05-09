@@ -26,6 +26,14 @@
 //!   on-disk snapshot each tick.
 //!
 //! Extracted from `runtime.rs` in R271q (Phase γ §R271 seventeenth slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side glue between consensus
+//! state and the network crate's peer-source traits. Upstream
+//! `Cardano.Node.Diffusion.Configuration` wires this in-place;
+//! Yggdrasil isolates the bridges here so the runtime orchestrator
+//! doesn't carry the peer-source plumbing.
 
 use std::path::Path;
 use std::sync::{Arc, RwLock};

@@ -31,6 +31,14 @@
 //! prelude for the upcoming async-fn extractions
 //! (`run_reconnecting_verified_sync_service*` family + `governor_loop`
 //! + `block_producer_loop`).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side reconnect-loop state
+//! machine. Mirrors the runtime-state portion of upstream
+//! `Ouroboros.Consensus.Node.Run.runWith` not captured by per-
+//! protocol mini-protocol clients themselves. Haskell uses STM
+//! TVars to express this state; Yggdrasil uses Rust async types.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

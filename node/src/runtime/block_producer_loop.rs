@@ -19,6 +19,16 @@
 //!    `Ouroboros.Consensus.Node.Tracers` taxonomy.
 //!
 //! Extracted from `runtime.rs` in R271k.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side async slot-by-slot
+//! block-producer loop. Mirrors the runtime body of upstream
+//! `Ouroboros.Consensus.Node.NodeKernel.forkBlockForging`, but
+//! Haskell wires the leader-check + forge thread inline inside
+//! `forkBlockForging` rather than as a separate file. Yggdrasil
+//! isolates the slot loop here so the runtime orchestrator stays
+//! thin.
 
 use std::future::Future;
 use std::sync::{Arc, RwLock};

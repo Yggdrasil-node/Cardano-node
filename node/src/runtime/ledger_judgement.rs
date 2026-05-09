@@ -14,6 +14,15 @@
 //! genesis still resolve to `YoungEnough`.
 //!
 //! Extracted from `runtime.rs` in R271c.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side bundle of the three
+//! configuration parameters that upstream's
+//! `Cardano.Node.Diffusion.Configuration.mkLedgerStateJudgement`
+//! consumes inline (system start, slot length, max-ledger-state-age).
+//! Yggdrasil isolates them in a struct so the call sites for the
+//! judgement flip have a single named place to look.
 
 /// Genesis-derived inputs that drive the live `LedgerStateJudgement`
 /// computation in `ChainDbConsensusLedgerSource`. Bundled into a single

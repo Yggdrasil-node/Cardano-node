@@ -22,6 +22,15 @@
 //!   pattern for the long list of optional cross-task shared handles.
 //!
 //! Extracted from `runtime.rs` in R271f.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-peer session bundle
+//! (NodeConfig + PeerSession + verified-sync reconnect-request
+//! shapes). Upstream `Ouroboros.Network.NodeToNode` and
+//! `Ouroboros.Consensus.Node.Run` carry this state across multiple
+//! structs/threads; Yggdrasil unifies them in one async-runtime
+//! session bundle.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

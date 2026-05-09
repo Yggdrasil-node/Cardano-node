@@ -22,6 +22,17 @@
 //! Extracted from `runtime.rs` in R271i (revised) as the prelude for
 //! subsequent extractions of `ReconnectingRunState` and the
 //! orchestration async fns.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side trace-field builders
+//! aggregating the data side of upstream
+//! `Cardano.Node.Tracing.Tracers.NodeToNode.*` (ChainSync session,
+//! batch application progress, reconnect events). Upstream
+//! spreads field-builder logic across multiple `Tracers/*.hs`
+//! files; Yggdrasil unifies the sync-event taxonomy into one
+//! module of `BTreeMap<String, Value>` builders consumed by
+//! `NodeTracer::trace_runtime`.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

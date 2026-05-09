@@ -21,6 +21,16 @@
 //!   resetting the duplicate-skip filter.
 //!
 //! Extracted from `runtime.rs` in R271g.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-peer connection
+//! bring-up function aggregating upstream
+//! `Ouroboros.Network.NodeToNode.connectTo` (TCP + mux + version
+//! negotiation), `Ouroboros.Network.Mux` (protocol bundle wiring),
+//! and `Ouroboros.Network.Subscription.Worker` (fallback iteration)
+//! into a single async entry point. Upstream splits these across
+//! multiple modules; Yggdrasil unifies the bring-up sequence.
 
 use std::net::SocketAddr;
 

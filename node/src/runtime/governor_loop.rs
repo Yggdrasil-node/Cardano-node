@@ -14,6 +14,15 @@
 //! 6. Exports counters/gauges for `/metrics` and emits per-action traces.
 //!
 //! Extracted from `runtime.rs` in R271l.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side async slot-tick body
+//! for the peer governor. Mirrors the loop body of upstream
+//! `Ouroboros.Network.PeerSelection.Governor.peerSelectionGovernor`
+//! plus `Cardano.Node.Diffusion`'s outer wiring loop. Haskell wires
+//! the governor loop inline; Yggdrasil isolates it for testability
+//! and per-tick instrumentation.
 
 use std::collections::BTreeMap;
 use std::future::Future;
