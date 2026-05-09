@@ -23,6 +23,14 @@
 //!   [`MuxError::EgressBufferOverflow`].
 //!
 //! Reference: `network-mux/src/Network/Mux.hs`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the SDU framing + per-
+//! channel state-machine half of upstream
+//! `Ouroboros.Network.Mux.hs` (the lower-level facet). The
+//! high-level bundle wiring lives in `multiplexer.rs`.
+//! Upstream keeps both in one module.
 
 use std::collections::HashMap;
 use std::sync::Arc;

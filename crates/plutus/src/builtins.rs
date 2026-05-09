@@ -5,6 +5,19 @@
 //! integer/bytestring conversions, and extra hash functions.
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/PlutusCore/Default/Builtins.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the runtime side of
+//! upstream `PlutusCore.Default.Builtins.hs` —
+//! `evaluate_builtin` is the per-builtin dispatch matching
+//! upstream's `denoteBuiltin`. The cost / argument-shape side
+//! lives in sibling `cost_model/*.rs`; the type-side definition
+//! (`DefaultFun` enum) is in `types/default_builtins.rs`.
+//! Yggdrasil keeps runtime semantics, costing, and type
+//! definitions in three files; upstream's `Default.Builtins.hs`
+//! carries the type-class machinery and inline denotations for
+//! all three concerns.
 
 use num_bigint::{BigInt, Sign};
 use num_integer::Integer as NumInteger;

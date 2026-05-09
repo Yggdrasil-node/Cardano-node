@@ -6,6 +6,12 @@
 //! queries against that snapshot.
 //!
 //! Reference: `Ouroboros.Network.Protocol.LocalStateQuery.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.LocalStateQuery.Client.hs`.
+//! Filename flattens the upstream directory.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{

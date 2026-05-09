@@ -45,6 +45,14 @@
 //!   — `encodeQueryHfc` / `decodeQueryHfc`.
 //! - QueryHardFork inner: `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`
 //!   — `encodeQueryHardFork` / `decodeQueryHardFork`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side LSQ-upstream client
+//! (used by NtN-driven LSQ where Yggdrasil is the client
+//! querying another node). Upstream's LocalStateQuery is
+//! exclusively NtC; Yggdrasil's `local_state_query_upstream.rs`
+//! is a Yggdrasil-only addition for NtN diagnostic queries.
 
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
 use yggdrasil_ledger::{LedgerError, Point};

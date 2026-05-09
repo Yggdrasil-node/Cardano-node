@@ -4,6 +4,16 @@
 //! peer-selection governor observing their current values. This module defines
 //! the provider-side seam for Yggdrasil without coupling it to any particular
 //! DNS or ledger implementation yet.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side provider seam for
+//! DNS-resolved root peers (local-roots, public-roots, bootstrap-
+//! peers). Mirrors upstream
+//! `Ouroboros.Network.RootPeersProvider.hs` (DNS lookup loop).
+//! Yggdrasil isolates the trait + DNS-lookup glue here so the
+//! governor can consume root-peers without owning the DNS
+//! concern.
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;

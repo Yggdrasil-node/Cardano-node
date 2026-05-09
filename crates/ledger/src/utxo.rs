@@ -6,6 +6,16 @@
 //! preserve full era-specific output data.
 //!
 //! Reference: `Cardano.Ledger.UTxO` — `UTxO`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Cardano.Ledger.UTxO::UTxO`. Yggdrasil's `MultiEraUtxo`
+//! is era-generalized so it carries `MultiEraTxOut` values
+//! (preserving full era-specific output data); upstream
+//! re-uses `UTxO` per-era with era-specific `TxOut` instances.
+//! The reference-script size cap (Conway) is also carried
+//! here since it gates output validation cross-era.
 
 use std::collections::HashMap;
 

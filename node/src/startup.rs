@@ -10,6 +10,16 @@
 //! it from a `ProtocolInfo` record.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Run.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side runtime startup
+//! helpers — banner emission, network-magic resolution, config
+//! validation, and ChainDb / mempool / governor / block-producer
+//! construction wiring. Mirrors upstream
+//! `Cardano.Node.Run::initNodeConfig` + `runNode`. Upstream
+//! wires these inline; Yggdrasil isolates the bring-up steps
+//! for testability.
 
 use eyre::{Result, WrapErr};
 use serde_json::json;

@@ -50,6 +50,16 @@
 //! [`Ouroboros.Network.BlockFetch.ClientRegistry`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/ClientRegistry.hs);
 //! [`Ouroboros.Network.BlockFetch.Decision.fetchDecisions`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision.hs);
 //! [`docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) Phase 6.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-peer BlockFetch
+//! worker task body. Mirrors the runtime body of upstream
+//! `Ouroboros.Network.BlockFetch.ClientState::FetchClientCtx`
+//! plus `Ouroboros.Network.BlockFetch.Client::blockFetchClient`.
+//! Haskell wires the worker inline as a single async task;
+//! Yggdrasil isolates the worker body for testability and
+//! per-request instrumentation.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

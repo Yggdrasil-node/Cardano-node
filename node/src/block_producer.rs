@@ -12,6 +12,17 @@
 //!   `PraosCanBeLeader`, `PraosIsLeader`, `praosCheckCanForge`.
 //! - `Ouroboros.Consensus.Protocol.Ledger.HotKey` — evolving KES key
 //!   management.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side block-producer
+//! binary entry helpers — KES key loading, OCert loading,
+//! VRF key loading, and the TextEnvelope deserializer for
+//! operator key files. Mirrors upstream
+//! `Cardano.CLI.Shelley.Run.Node.runIssueOpCert` plus the
+//! key-loading utilities in `Cardano.Api.SerialiseTextEnvelope`.
+//! Upstream wires these in cardano-cli; Yggdrasil's runtime
+//! loads operator keys directly via this module.
 
 use std::path::Path;
 use std::time::{Duration, Instant};

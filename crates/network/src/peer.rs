@@ -11,6 +11,17 @@
 //!    (ChainSync, BlockFetch, TxSubmission2, KeepAlive) are ready for use.
 //!
 //! Reference: `ouroboros-network-framework/src/Ouroboros/Network/Protocol/Handshake/`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-peer state +
+//! registry types (peer-key, address, peer-share-flag, hot/
+//! warm/cold tier, last-success / last-failure timestamps).
+//! Mirrors data from upstream
+//! `Ouroboros.Network.PeerSelection.Types.hs`,
+//! `Ouroboros.Network.PeerSelection.PeerStateActions.hs`, and
+//! `Ouroboros.Network.RootPeers.hs`. Upstream organizes per-
+//! concern; Yggdrasil unifies the per-peer struct here.
 
 use std::collections::HashMap;
 

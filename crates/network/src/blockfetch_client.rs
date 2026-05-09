@@ -10,6 +10,15 @@
 //! `Ouroboros.Network.Protocol.BlockFetch.Codec.timeLimitsBlockFetch`.
 //!
 //! Reference: `Ouroboros.Network.Protocol.BlockFetch.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.BlockFetch.Client.hs` (typed
+//! client driver for the BlockFetch state machine). Yggdrasil's
+//! filename `blockfetch_client.rs` flattens the upstream
+//! directory `BlockFetch/Client.hs` for cohesion; the protocol
+//! state machine itself lives in `protocols/block_fetch.rs`.
 
 use std::time::Duration;
 

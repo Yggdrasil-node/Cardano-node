@@ -26,8 +26,10 @@ pub mod in_future;
 pub mod mempool;
 /// Epoch nonce evolution state machine (UPDN + TICKN rules).
 pub mod nonce;
-/// Operational certificate (OpCert) types and verification.
-pub mod opcert;
+/// Operational certificate (OCert) types and verification.
+///
+/// Mirrors upstream `Cardano.Protocol.TPraos.OCert`.
+pub mod ocert;
 /// Praos-specific threshold and leader-election helpers.
 pub mod praos;
 
@@ -59,7 +61,7 @@ pub use nonce::{
     praos_vrf_output_to_nonce, vrf_output_to_nonce,
 };
 /// Operational certificate type and helpers.
-pub use opcert::{OcertCounterRule, OcertCounters, OpCert, check_kes_period, kes_period_of_slot};
+pub use ocert::{OcertCounterRule, OcertCounters, OpCert, check_kes_period, kes_period_of_slot};
 /// Active slot coefficient wrapper, threshold, and leader check helpers.
 pub use praos::{
     ActiveSlotCoeff, VrfMode, VrfUsage, check_is_leader, check_leader_value, leadership_threshold,

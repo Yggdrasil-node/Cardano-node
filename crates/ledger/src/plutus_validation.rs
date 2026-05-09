@@ -14,6 +14,16 @@
 //! delegates to the injected evaluator.
 //!
 //! Reference: `Cardano.Ledger.Alonzo.PlutusScriptApi`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `PlutusEvaluator`
+//! trait + script-resolution orchestration that bridges the
+//! ledger crate (which cannot depend on yggdrasil-plutus) to
+//! the CEK machine. Upstream wires Phase-2 validation directly
+//! in `Cardano.Ledger.Alonzo.Rules.Utxos`; Yggdrasil keeps the
+//! evaluator behind a trait so the ledger crate can be tested
+//! independently of the Plutus crate.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

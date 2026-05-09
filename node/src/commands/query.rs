@@ -16,6 +16,15 @@
 //! Unix-only because the transport is a Unix domain socket.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-cli/blob/master/cardano-cli/src/Cardano/CLI/Shelley/Run/Query.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `query` subcommand
+//! dispatcher (LSQ-side: tip, protocol-parameters, utxo,
+//! epoch-state, etc.). Mirrors the dispatch half of upstream
+//! `Cardano.CLI.Compatible.Run::runQueryCmds`. Yggdrasil's
+//! binary covers a subset of the upstream cardano-cli query
+//! surface; Phase F (R289-R295) expands the coverage.
 
 #![cfg(unix)]
 

@@ -6,6 +6,16 @@
 //! (`scIPC = ShutdownConfig`) which Yggdrasil does not yet implement.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Handlers/Shutdown.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side OS-signal +
+//! graceful-shutdown handler (CTRL-C / SIGTERM) running on a
+//! dedicated tokio task that signals the runtime supervisor.
+//! Mirrors the shutdown-signal half of upstream
+//! `Cardano.Node.Run.runNode` + `Ouroboros.Consensus.Node.exit`.
+//! Upstream wires this inline; Yggdrasil isolates the tokio-
+//! specific signal handling.
 
 /// Wait for the operator's shutdown signal (`SIGINT` or `SIGTERM` on
 /// Unix; `Ctrl-C` on non-Unix). Returns the human-readable name of the

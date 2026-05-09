@@ -25,6 +25,16 @@
 //! so that the proven single-peer pipeline is not regressed.  The default
 //! `BlockFetchPool::new(FetchMode::FetchModeBulkSync)` with a single registered peer
 //! is byte-for-byte equivalent to the existing single-peer fetch behaviour.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.BlockFetch.ClientState.hs` (`FetchClientStateVars`)
+//! + the fetch-decision policy from
+//! `Ouroboros.Network.BlockFetch.Decision.hs`. Yggdrasil's
+//! `blockfetch_pool.rs` keeps the per-peer state + policy in
+//! one module without I/O; upstream splits state vs decision
+//! across two files.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;

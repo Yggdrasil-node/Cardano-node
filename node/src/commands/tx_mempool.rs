@@ -16,6 +16,14 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-cli/blob/master/cardano-cli/src/Cardano/CLI/Shelley/Run/Query.hs>
 //! and `Ouroboros.Network.Protocol.LocalTxMonitor.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `query tx-mempool`
+//! subcommand (NtC LocalTxMonitor client: info / next-tx /
+//! tx-exists). Mirrors the dispatch half of upstream
+//! `Cardano.CLI.Compatible.Run::runQueryTxMempool`. Yggdrasil's
+//! binary mirrors the core tx-mempool query flow.
 
 #![cfg(unix)]
 

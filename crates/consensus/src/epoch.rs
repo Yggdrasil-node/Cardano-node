@@ -1,3 +1,15 @@
+//! epoch - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Era-aware epoch schedule covering
+//! the Byron→Shelley hard-fork. Mirrors upstream
+//! `Cardano.Slotting.EpochInfo::EpochSize` plus the network-
+//! specific epoch-boundary metadata that upstream organizes
+//! across `Ouroboros.Consensus.HardFork.History.Summary` and
+//! the genesis JSON loaders. Yggdrasil unifies the epoch
+//! schedule in one struct.
+
 use yggdrasil_ledger::{EpochNo, SlotNo};
 
 /// Number of slots per epoch.

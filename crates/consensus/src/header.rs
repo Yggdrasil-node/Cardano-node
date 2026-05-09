@@ -13,7 +13,7 @@ use yggdrasil_crypto::vrf::VrfVerificationKey;
 use yggdrasil_ledger::{BlockNo, HeaderHash, SlotNo};
 
 use crate::error::ConsensusError;
-use crate::opcert::{OpCert, check_kes_period, kes_period_of_slot};
+use crate::ocert::{OpCert, check_kes_period, kes_period_of_slot};
 
 /// The body of a block header, containing chain-indexing fields, VRF
 /// outputs, the operational certificate, and protocol version.

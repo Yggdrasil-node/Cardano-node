@@ -3,6 +3,16 @@
 //! These newtypes match upstream Cardano naming from `cardano-slotting` and
 //! `ouroboros-network` so that cross-referencing against the official node
 //! remains straightforward.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side core protocol-level
+//! types (slot / block / pool key / stake credential / DRep /
+//! etc.). Upstream organizes these across `cardano-slotting`
+//! (slot/epoch/block numbering), `cardano-ledger-core`
+//! (credentials, DRep, addresses), and `ouroboros-network`
+//! (Point). Yggdrasil unifies them in one module for cross-
+//! crate sharing without dependency-direction inversions.
 
 use std::fmt;
 

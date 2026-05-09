@@ -136,15 +136,15 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/consensus/src/opcert.rs",
+          "path": "crates/consensus/src/ocert.rs",
           "role": "Module shell + tests + 5-item re-export (OpCert, OcertCounters, OcertCounterRule, kes_period_of_slot, check_kes_period)."
         },
         {
-          "path": "crates/consensus/src/opcert/ocert.rs",
+          "path": "crates/consensus/src/ocert/ocert.rs",
           "role": "OpCert struct + KES period helpers."
         },
         {
-          "path": "crates/consensus/src/opcert/rules_ocert.rs",
+          "path": "crates/consensus/src/ocert/rules_ocert.rs",
           "role": "OcertCounters + OcertCounterRule (TPraos vs Praos) + CBOR sidecar."
         }
       ],

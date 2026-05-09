@@ -5,6 +5,13 @@
 //! requests from a client and streams blocks from storage.
 //!
 //! Reference: `Ouroboros.Network.Protocol.BlockFetch.Server`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.BlockFetch.Server.hs` (typed
+//! server driver for the BlockFetch state machine). Yggdrasil's
+//! filename flattens the upstream directory.
 
 use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};

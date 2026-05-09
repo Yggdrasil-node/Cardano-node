@@ -1,3 +1,14 @@
+//! error - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side error enum for the
+//! ledger crate (CBOR / era / fee / witness / phase-1 / etc.).
+//! Upstream raises these as STS predicate failures inside per-
+//! era / per-rule modules; Yggdrasil unifies them in one
+//! `LedgerError` enum since the runtime translates them
+//! uniformly into trace events and HTTP error responses.
+
 use thiserror::Error;
 
 use crate::types::{AddrKeyHash, DRep, EpochNo, PoolKeyHash, RewardAccount, StakeCredential};

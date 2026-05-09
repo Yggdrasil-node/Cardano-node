@@ -1,3 +1,15 @@
+//! tx - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `compute_tx_id`
+//! helper plus per-era TxBody / WitnessSet re-export shell.
+//! Upstream's `Cardano.Ledger.Core::txIdTxBody` is a per-era
+//! type-class method; Yggdrasil's `compute_tx_id` is a single
+//! function consuming pre-encoded body bytes. The per-era
+//! TxBody / WitnessSet types live in `eras/*.rs`; this file
+//! is the cross-era transaction ID + bundling shell.
+
 use std::sync::Arc;
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};

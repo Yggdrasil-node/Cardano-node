@@ -1,3 +1,16 @@
+//! test_vectors - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side compatibility-vector
+//! harness consumed by Ed25519 / VRF / KES / BLS round-trip
+//! tests. Upstream's vectors live under per-class testlib trees
+//! (`Test/Crypto/Vector/Vectors.hs` for Ed25519,
+//! `Test/Crypto/VRF/*` for VRF, etc.). Yggdrasil aggregates the
+//! vector data into one production-side module so production
+//! code paths can be re-validated against the same inputs at
+//! any time.
+
 /// An Ed25519 compatibility vector.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Ed25519TestVector {

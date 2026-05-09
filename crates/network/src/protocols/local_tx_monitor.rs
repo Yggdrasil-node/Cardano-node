@@ -1,3 +1,10 @@
+//! local_tx_monitor - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.LocalTxMonitor.Type.hs`.
+
 /// States of the LocalTxMonitor mini-protocol state machine.
 ///
 /// The LocalTxMonitor protocol allows local clients (wallets, tooling) to

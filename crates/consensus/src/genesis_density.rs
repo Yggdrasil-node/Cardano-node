@@ -32,6 +32,16 @@
 //!
 //! - [`Ouroboros.Consensus.Genesis.Governor`](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Genesis/Governor.hs)
 //! - [`docs/PARITY_PLAN.md`](../../../docs/PARITY_PLAN.md) — Slice GD entry.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the density-comparison
+//! logic from upstream
+//! `Ouroboros.Consensus.Genesis.Governor.hs` (sliding-window
+//! header density per peer). Yggdrasil's `genesis_density.rs`
+//! isolates this estimator since it's consumed by the network
+//! governor's chain-quality signal independent of the rest of
+//! the Genesis.Governor module body.
 
 use yggdrasil_ledger::SlotNo;
 

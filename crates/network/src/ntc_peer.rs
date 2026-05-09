@@ -35,6 +35,15 @@
 //! Version data carries `{network_magic: u32, query: bool}`.
 //!
 //! Reference: <https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/NodeToClient>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-NtC-session
+//! peer state — inbound NtC peer registration, per-session
+//! mini-protocol handles, capability negotiation. Mirrors
+//! the per-peer state half of upstream
+//! `Ouroboros.Network.NodeToClient.hs`. Upstream wires this
+//! inline; Yggdrasil isolates the per-peer registry struct.
 
 use std::collections::HashMap;
 use std::path::Path;

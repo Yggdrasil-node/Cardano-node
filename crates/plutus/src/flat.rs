@@ -22,6 +22,19 @@
 //! - Lists: 1-bit continuation flag per element
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/plutus-core/src/UntypedPlutusCore/Core/Instance/Flat.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell over
+//! the Flat-codec sub-modules (`flat/instance_flat.rs` mirrors
+//! `UntypedPlutusCore.Core.Instance.Flat.hs`;
+//! `flat/default_universe.rs` mirrors
+//! `PlutusCore.Default.Universe.hs`). The shell exposes the
+//! Flat decode entry point that the CEK machine consumes.
+//! Upstream organizes the Flat instance + universe across
+//! `flat/src/PlutusCore/Flat.hs` and `Default/Universe.hs`
+//! with all instances inline; Yggdrasil splits along universe-
+//! tag vs term-tag boundaries.
 
 use yggdrasil_ledger::cbor::Decoder;
 

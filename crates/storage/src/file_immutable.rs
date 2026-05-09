@@ -5,6 +5,17 @@
 //! On startup the index is rebuilt by scanning the data directory.
 //!
 //! Reference: `Ouroboros.Consensus.Storage.ImmutableDB` in the official node.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side file-backed
+//! implementation of `ImmutableStore`, mirroring the on-disk
+//! format defined by upstream
+//! `Ouroboros.Consensus.Storage.ImmutableDB.Impl.*`
+//! (chunk + secondary-index + primary-index files). Upstream
+//! splits the impl across `Impl/{Chunks,Index,Iterator}.hs` and
+//! the `ImmutableDB.API.hs` trait; Yggdrasil's `file_immutable`
+//! is the file-backend half (the trait is in `immutable_db.rs`).
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::fs;

@@ -9,6 +9,12 @@
 //! The node layer translates between mempool entries and wire-format bytes.
 //!
 //! Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Server`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.LocalTxMonitor.Server.hs`.
+//! Filename flattens the upstream directory.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError};

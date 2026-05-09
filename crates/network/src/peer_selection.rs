@@ -4,6 +4,15 @@
 //! This module intentionally stays below any governor-style state machine. It
 //! provides deterministic candidate ordering and hostname resolution so node
 //! runtime code can stay focused on orchestration.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell for the
+//! peer-selection facade (root-peers, ledger-peers,
+//! peer-snapshot loaders, target-peers types). Mirrors the
+//! broader upstream `Ouroboros.Network.PeerSelection.*`
+//! module hierarchy; the focused governor decision logic lives
+//! in sibling `governor/` cluster.
 
 use std::net::{SocketAddr, ToSocketAddrs};
 

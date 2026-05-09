@@ -1,3 +1,15 @@
+//! error - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side error enum for the
+//! storage crate (immutable / volatile / ledger-DB / chain-DB /
+//! ocert sidecar failure cases). Upstream raises these as
+//! exception variants inside per-store modules under
+//! `Ouroboros.Consensus.Storage.{ChainDB,LedgerDB,VolatileDB,ImmutableDB}.*`;
+//! Yggdrasil unifies them in one `StorageError` enum since the
+//! runtime translates them uniformly into trace events.
+
 use thiserror::Error;
 use yggdrasil_ledger::HeaderHash;
 

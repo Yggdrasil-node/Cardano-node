@@ -5,6 +5,17 @@
 //!
 //! Reference:
 //! `Cardano.Ledger.Shelley.Rules.Utxow` — `validateNeededWitnesses`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side witness-sufficiency
+//! checks aggregating upstream
+//! `Cardano.Ledger.Shelley.Rules.Utxow::validateNeededWitnesses`
+//! plus per-era extensions (Alonzo / Conway add datum + script
+//! + governance witness checks). Upstream wires witness
+//! validation as part of the per-era UTXOW rule; Yggdrasil
+//! isolates the cross-era witness predicates here so the per-
+//! era apply paths in `state/eras/*.rs` call into one module.
 
 use std::collections::HashSet;
 

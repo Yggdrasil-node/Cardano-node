@@ -8,6 +8,14 @@
 //! accepted connection.
 //!
 //! Reference: <https://github.com/IntersectMBO/ouroboros-network/blob/master/ouroboros-network/src/Ouroboros/Network/NodeToClient.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side TCP-/Unix-socket
+//! accept-loop body for the local NtC server. Mirrors the
+//! accept half of upstream `Ouroboros.Network.NodeToClient.runServer`.
+//! Upstream wires this inline; Yggdrasil isolates the loop
+//! body for tracing + per-connection instrumentation.
 
 #![cfg(unix)]
 

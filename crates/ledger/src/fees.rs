@@ -20,6 +20,17 @@
 //! in [`crate::utxo`] use `checked_*` and surface
 //! [`LedgerError::ValueOverflow`] because their inputs include
 //! peer-supplied UTxO coin values which lack such guarantees.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side fee-calculation
+//! module aggregating per-era fee formulas across upstream
+//! `Cardano.Ledger.Shelley.Rules.Utxo::validateFeeTooSmallUTxO`,
+//! `Cardano.Ledger.Alonzo.Rules.Utxo::validateExUnitsTooBigUTxO`,
+//! and `Cardano.Ledger.Conway.Tx::getConwayMinFeeTx` /
+//! `tierRefScriptFee`. Upstream splits per-era; Yggdrasil
+//! unifies the linear + script + ref-script fee tiers in one
+//! module since they share the saturating-arithmetic discipline.
 
 use crate::eras::alonzo::ExUnits;
 use crate::error::LedgerError;

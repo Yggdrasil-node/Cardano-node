@@ -8,6 +8,13 @@
 //!
 //! Reference:
 //! `ouroboros-network/src/Ouroboros/Network/PeerSelection/PeerStateActions.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.PeerSelection.PeerStateActions.hs` —
+//! per-peer warm / hot state-transition actions consumed by
+//! the governor.
 
 use std::net::SocketAddr;
 

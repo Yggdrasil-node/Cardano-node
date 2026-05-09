@@ -7,6 +7,14 @@
 //! `Cardano.Node.Run.run`.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Run.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `run` subcommand —
+//! the canonical node run-loop entry point. Mirrors upstream
+//! `Cardano.Node.Run.runNode`. Upstream's `runNode` is the
+//! main entry; Yggdrasil's `run.rs` parses the CLI flag-set
+//! and delegates to `run_node.rs`.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

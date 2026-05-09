@@ -5,6 +5,17 @@
 //! peers. This module defines a crate-owned seam for Yggdrasil so ledger-driven
 //! peer discovery can reconcile into the networking peer registry without
 //! pushing source bookkeeping into `node`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side provider seam for
+//! ledger-driven peer discovery. Mirrors upstream
+//! `Ouroboros.Network.PeerSelection.LedgerPeers` (provider /
+//! thread boundary). Upstream organizes the provider type-
+//! class and the runtime thread inline; Yggdrasil isolates
+//! the trait + reconciliation glue here so consensus-driven
+//! peer discovery feeds the registry without dependency-direction
+//! inversion.
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;

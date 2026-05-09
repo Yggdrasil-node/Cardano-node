@@ -15,6 +15,16 @@
 //! Reference: `Cardano.Ledger.Shelley.LedgerState` — `SnapShots`,
 //! `SnapShot`, `Stake`, and the SNAP transition rule in the formal
 //! specification.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side three-snapshot
+//! (`go ← set ← mark`) rotation aggregating upstream
+//! `Cardano.Ledger.Shelley.LedgerState::SnapShots` + `SnapShot`
+//! data plus `Cardano.Ledger.Shelley.Rules.Snap::SNAP` rule.
+//! Upstream splits the data structure (LedgerState) from the
+//! rotation rule (Rules.Snap); Yggdrasil unifies them in one
+//! file since the rotation operates atomically on the data.
 
 use std::collections::BTreeMap;
 

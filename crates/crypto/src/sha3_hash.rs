@@ -5,6 +5,15 @@
 //!
 //! Reference: `Cardano.Crypto.Hashing` — `abstractHash` uses SHA3-256 for
 //! Byron-era address roots.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the SHA3-256 facet of
+//! upstream `Cardano.Crypto.Hashing.hs::abstractHash` (used for
+//! Byron address roots). Upstream parameterizes hashing over
+//! the type class; Yggdrasil's `sha3_hash.rs` is a focused
+//! wrapper around `sha3::Sha3_256` for Byron's `ADDRHASH =
+//! Blake2b-224(SHA3-256(spending data))` formula.
 
 use sha3::{Digest, Sha3_256};
 

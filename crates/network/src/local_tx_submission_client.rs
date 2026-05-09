@@ -6,6 +6,12 @@
 //! reject response.
 //!
 //! Reference: `Ouroboros.Network.Protocol.LocalTxSubmission.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.LocalTxSubmission.Client.hs`.
+//! Filename flattens the upstream directory.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{

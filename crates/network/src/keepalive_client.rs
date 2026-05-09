@@ -9,6 +9,12 @@
 //! `Ouroboros.Network.Protocol.KeepAlive.Codec.timeLimitsKeepAlive`.
 //!
 //! Reference: `Ouroboros.Network.Protocol.KeepAlive.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.KeepAlive.Client.hs`.
+//! Filename flattens the upstream directory.
 
 use std::time::Duration;
 

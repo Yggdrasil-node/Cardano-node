@@ -17,6 +17,17 @@
 //! Mirrors upstream `Ouroboros.Consensus.Protocol.Praos` (entry points) +
 //! `.../Praos/VRF.hs` (VRF input + leader-value math) +
 //! `Cardano.Ledger.BaseTypes::ActiveSlotCoeff` (preprocessed `f`).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell that
+//! splits upstream `Ouroboros.Consensus.Protocol.Praos.hs` (top-
+//! level Praos protocol module) into focused sub-modules:
+//! `vrf.rs` (VRF input construction — TPraos `mkSeed` + Praos
+//! `mkInputVRF`) and `common.rs` (active-slot-coefficient + math
+//! primitives). Upstream keeps everything in `Praos.hs` and
+//! `Praos/Common.hs` (a separate file); Yggdrasil's `praos.rs`
+//! is the leader-check entry-point shell.
 
 pub mod common;
 pub mod vrf;

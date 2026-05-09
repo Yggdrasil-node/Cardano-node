@@ -20,6 +20,16 @@
 //! for the bump.
 //!
 //! Audit baseline established: 2026-Q2 (`docs/AUDIT_VERIFICATION_2026Q2.md`).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side documentation +
+//! drift-tracking for the 6 pinned IntersectMBO repo SHAs
+//! (cardano-base / cardano-ledger / cardano-node / cardano-cli /
+//! ouroboros-consensus / ouroboros-network / plutus). No
+//! upstream Haskell parallel — this is purely Yggdrasil's
+//! audit-time provenance manifest consumed by
+//! `node/scripts/check_upstream_drift.sh`.
 
 /// `cardano-base` — already pinned via vendored test vectors under
 /// `specs/upstream-test-vectors/cardano-base/`. The SHA below mirrors

@@ -19,6 +19,19 @@
 //!   (`PeerConnectionHandle`, `PeerStateActions`)
 //! - `ouroboros-network-framework/src/Ouroboros/Network/InboundGovernor.hs`
 //!   (`RethrowPolicy`, `ErrorPolicy`)
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side data types for
+//! server-side protocol multiplexing, per-connection lifecycle,
+//! and accept-loop rate-limiting. Mirrors the type-side of
+//! upstream `Ouroboros.Network.Mux.hs` (TemperatureBundle,
+//! OuroborosBundle, ControlMessage),
+//! `Ouroboros.Network.ConnectionHandler.hs` (Handle,
+//! MkMuxConnectionHandler), and `Cardano.Network.Diffusion`
+//! config types. Upstream spreads these across
+//! `network-framework`; Yggdrasil collapses the data-only
+//! subset here since the runtime composes them.
 
 use std::net::SocketAddr;
 use std::time::Duration;

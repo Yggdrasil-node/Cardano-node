@@ -19,17 +19,22 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** none. Yggdrasil-side parent re-export shell
-//! over the strict-mirror sub-modules `opcert/ocert.rs` (mirrors
-//! `Cardano.Protocol.TPraos.OCert.hs`) and `opcert/rules_ocert.rs`
-//! (mirrors `Cardano.Protocol.TPraos.Rules.OCert.hs`). The parent
-//! filename `opcert` itself is a Yggdrasil-invented spelling of
-//! the `OCert` upstream namespace; strict 1:1 would rename this
-//! file + its child directory to `ocert.rs` / `ocert/`.
-//! **Rename to `ocert.rs` is scheduled for R281** (sweeper), since
-//! it changes the public API surface (`yggdrasil_consensus::opcert::*`
-//! becomes `yggdrasil_consensus::ocert::*`) and needs coordinated
-//! downstream-consumer updates.
+//! over the strict-mirror sub-modules `ocert/ocert.rs` (mirrors
+//! `Cardano.Protocol.TPraos.OCert.hs`) and `ocert/rules_ocert.rs`
+//! (mirrors `Cardano.Protocol.TPraos.Rules.OCert.hs`). Parent file +
+//! directory renamed `opcert.rs` -> `ocert.rs` and `opcert/` ->
+//! `ocert/` in R281 to match upstream's `OCert` spelling. The
+//! public API surface moved from `yggdrasil_consensus::opcert::*`
+//! to `yggdrasil_consensus::ocert::*`; downstream consumers updated
+//! at the same time.
 
+// `ocert::ocert` is intentional: the inner `ocert.rs` file mirrors
+// upstream `Cardano.Protocol.TPraos.OCert.hs` strictly. Clippy's
+// module-inception preference would force a different inner filename,
+// breaking the 1:1 file-mirror policy. The public API path stays
+// `yggdrasil_consensus::ocert::OpCert` (single ocert, no inception)
+// because of the `pub use` re-export below.
+#[allow(clippy::module_inception)]
 pub mod ocert;
 pub mod rules_ocert;
 

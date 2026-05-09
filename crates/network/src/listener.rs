@@ -13,6 +13,14 @@
 //!
 //! Reference: `ouroboros-network-framework` inbound-governor socket
 //! accept path (`Ouroboros.Network.Server2`).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the inbound-accept
+//! side of upstream `Ouroboros.Network.Server2.hs` (accept
+//! loop + handshake-on-accepted-stream). Yggdrasil's
+//! `PeerListener` carries the `accept_tcp` / `handshake_on` /
+//! `accept_peer` triplet for rate-limiting before handshake.
 
 use crate::handshake::HandshakeVersion;
 use crate::peer::{self, PeerConnection, PeerError};

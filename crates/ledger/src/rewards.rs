@@ -14,6 +14,16 @@
 //!
 //! Reference: `Cardano.Ledger.Shelley.Rewards` — `reward`, `maxPool`,
 //! `memberRew`, `leaderRew`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Cardano.Ledger.Shelley.Rewards.hs` (`reward`, `maxPool`)
+//! from the Shelley reward formula (formal spec §10).
+//! Yggdrasil keeps the per-pool reward + treasury / monetary-
+//! expansion split + member-distribution math in one module;
+//! upstream organizes the same logic across `Rewards.hs`
+//! with helpers spread into `LedgerState` and `EpochBoundary`.
 
 use std::collections::BTreeMap;
 

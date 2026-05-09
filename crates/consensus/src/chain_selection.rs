@@ -1,3 +1,14 @@
+//! chain_selection - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. VRF tiebreaker logic for chain
+//! selection — mirrors `VRFTiebreakerFlavor` from upstream
+//! `Ouroboros.Consensus.Protocol.Praos.Common.hs`. Yggdrasil
+//! isolates the tiebreaker enum into a dedicated module since
+//! the chain-selection comparator is consumed by both consensus
+//! and storage; upstream defines it inline in Praos.Common.
+
 use yggdrasil_ledger::{BlockNo, SlotNo};
 
 /// Controls how VRF tiebreakers are applied when comparing equal-length chains.

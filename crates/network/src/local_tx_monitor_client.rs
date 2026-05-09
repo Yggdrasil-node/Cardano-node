@@ -6,6 +6,12 @@
 //! transactions, check membership, and query size/capacity.
 //!
 //! Reference: `Ouroboros.Network.Protocol.LocalTxMonitor.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.LocalTxMonitor.Client.hs`.
+//! Filename flattens the upstream directory.
 
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};
 use crate::protocols::{LocalTxMonitorMessage, LocalTxMonitorState, LocalTxMonitorTransitionError};

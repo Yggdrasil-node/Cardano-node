@@ -6,6 +6,15 @@
 //! retention. Keeping the layout opaque mirrors the way `LedgerStore` stores
 //! ledger snapshots as raw bytes while `LedgerStateCheckpoint` owns the typed
 //! encoding.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-pool OpCert
+//! counter sidecar storage. Upstream tracks OCert counters
+//! inline inside the consensus protocol state
+//! (`Cardano.Protocol.TPraos.OCertCounters.hs`); Yggdrasil
+//! isolates the on-disk file-backed counter sidecar in this
+//! module so the storage crate owns the persistence concern.
 
 use std::fs;
 use std::io::Write;

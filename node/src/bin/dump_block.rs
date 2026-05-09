@@ -38,6 +38,15 @@
 //! cargo run --release -p yggdrasil-node --bin dump_block -- \
 //!     /path/to/preview/db/immutable/00017.chunk 1525057
 //! ```
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side CLI binary that
+//! dumps a single block's CBOR + decoded form to stdout for
+//! forensic inspection. Operator-tooling-side equivalent of
+//! upstream `cardano-tools/db-analyser --dump-block`. No
+//! single-file upstream parallel; Yggdrasil keeps the dumper
+//! alongside the node binary.
 
 use std::env;
 use std::fs;

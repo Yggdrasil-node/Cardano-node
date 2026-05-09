@@ -12,6 +12,14 @@
 //!
 //! Reference: `ouroboros-network-framework/src/Ouroboros/Network/InboundGovernor.hs`
 //! and `InboundGovernor/State.hs`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.InboundGovernor.hs` +
+//! `Ouroboros.Network.InboundGovernor.State.hs` (state-machine
+//! step-function). Upstream splits state vs decision-eval;
+//! Yggdrasil unifies them in one pure step function.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

@@ -11,6 +11,16 @@
 //! `DDetailed`, `DMaximum`) matching upstream `DetailLevel`.  Callsites can
 //! query the resolved detail via [`NodeTracer::detail_for`] and conditionally
 //! include extra data fields.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `NodeTracer` —
+//! structured tracing facade that emits namespaced events to
+//! stdout / log files / the trace-forwarder client. Mirrors
+//! the data side of upstream `Cardano.Node.Tracing` plus the
+//! trace-tree machinery from `Cardano.Logging.Tracer`. Upstream
+//! uses a contravariant-tracer type-class hierarchy; Yggdrasil
+//! uses Rust closures + structured-fields BTreeMaps.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};

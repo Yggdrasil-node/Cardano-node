@@ -5,6 +5,17 @@
 //! partial application with arity tracking.
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core/untyped-plutus-core/src/UntypedPlutusCore/Evaluation/Machine/Cek.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the CEK machine driver
+//! from upstream
+//! `UntypedPlutusCore.Evaluation.Machine.Cek.Internal.hs`
+//! (`runCek`, `cekMachine`). Yggdrasil isolates the driver
+//! loop here while the data types (`Value`, `Env`, `StepKind`)
+//! live in `types/cek_internal.rs`. The cost-model wiring
+//! (`spend_step`, `spend_budget`) lives in `cost_model/step.rs`.
+//! Upstream's `Cek.Internal.hs` carries everything inline.
 
 use crate::builtins::evaluate_builtin;
 use crate::cost_model::{CostModel, StepKind};

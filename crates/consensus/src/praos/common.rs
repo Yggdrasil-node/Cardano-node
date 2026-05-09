@@ -21,6 +21,16 @@
 //! - `EXP_SERIES_TERMS` — series-truncation constant.
 //!
 //! Extracted from `praos.rs` in R273a (Phase γ §R273 first slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Cardano.Ledger.BaseTypes::ActiveSlotCoeff` plus the
+//! `taylorExpCmp` / `boundedRationalFromRational` helpers in
+//! `Ouroboros.Consensus.Protocol.Praos.VRF`. Yggdrasil isolates
+//! the AS-coefficient + bounded-rational math primitives in one
+//! module that the leader-check pipeline calls into; upstream
+//! spreads them across `BaseTypes` (data) and `Praos.VRF` (math).
 
 use num_bigint::BigUint;
 use num_integer::Integer;

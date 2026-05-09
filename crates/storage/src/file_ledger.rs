@@ -4,6 +4,18 @@
 //! data directory. The most recently saved snapshot is tracked in memory.
 //!
 //! Reference: `Ouroboros.Consensus.Storage.LedgerDB` in the official node.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side file-backed
+//! implementation of `LedgerStore`, mirroring the on-disk
+//! format defined by upstream
+//! `Ouroboros.Consensus.Storage.LedgerDB.Snapshots.hs` plus
+//! `Cardano.Ledger.Binary` for CBOR codec layers. Upstream
+//! splits snapshot serialization (Snapshots.hs) from in-memory
+//! ledger-DB state (LedgerDB/InMemory.hs); Yggdrasil's
+//! `file_ledger.rs` is the file-backend half (the trait is in
+//! `ledger_db.rs`).
 
 use std::fs;
 use std::io::Write;

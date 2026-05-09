@@ -16,6 +16,16 @@
 //! - <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/shelley/impl/src/Cardano/Ledger/Shelley/Genesis.hs>
 //! - <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/Genesis.hs>
 //! - <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/conway/impl/src/Cardano/Ledger/Conway/Genesis.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side genesis-config
+//! loaders for Byron / Shelley / Alonzo / Conway. Mirrors
+//! upstream `Cardano.Node.Protocol.{Byron,Shelley,Alonzo,Conway}.hs`
+//! loaders that build the per-era `ProtocolInfo`. Upstream
+//! splits per-era; Yggdrasil unifies the JSON loaders here so
+//! the runtime startup can resolve the per-network genesis
+//! bundle in one place.
 
 use std::collections::BTreeMap;
 use std::fs;

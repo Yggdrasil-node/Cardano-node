@@ -5,6 +5,12 @@
 //! server receives peer-address requests and replies with known peers.
 //!
 //! Reference: `Ouroboros.Network.Protocol.PeerSharing.Server`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.PeerSharing.Server.hs`.
+//! Filename flattens the upstream directory.
 
 use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};

@@ -1,3 +1,10 @@
+//! peer_sharing - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.PeerSharing.Type.hs`.
+
 /// States of the PeerSharing mini-protocol state machine.
 ///
 /// The PeerSharing protocol lets a client request peer addresses from a

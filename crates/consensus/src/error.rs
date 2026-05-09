@@ -1,3 +1,14 @@
+//! error - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side error enum aggregating
+//! consensus-facing failure cases (VRF proof, opcert signature,
+//! active slot coefficient, KES). Upstream throws these as STS
+//! predicate failures inside per-rule modules; Yggdrasil unifies
+//! them in one `ConsensusError` enum since the runtime translates
+//! them uniformly into trace events.
+
 use yggdrasil_ledger::HeaderHash;
 
 use thiserror::Error;

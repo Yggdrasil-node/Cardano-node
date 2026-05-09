@@ -38,6 +38,16 @@
 //! Reference: `cardano-node:trace-dispatcher`, the `trace-forward`
 //! Hackage package, and `Codec.Serialise` / `Codec.CBOR.Encoding` for
 //! the application-layer codec primitives.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side cardano-tracer
+//! trace-forwarder client (Phase D R274 work — defers the
+//! actual mini-protocol implementation). Mirrors upstream
+//! `Cardano.Logging.Forwarding.hs` (cardano-tracer side) plus
+//! `Ouroboros.Network.Protocol.TraceForwarding.Client.hs`.
+//! Upstream-side splits client / protocol / types into separate
+//! modules; Yggdrasil collapses into one file pending Phase D.
 
 use std::os::unix::net::UnixDatagram;
 use std::path::Path;

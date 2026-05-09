@@ -9,6 +9,15 @@
 //! sync gets multi-peer fanout immediately.
 //!
 //! Reference: <https://github.com/IntersectMBO/ouroboros-network/blob/master/ouroboros-network/src/Ouroboros/Network/PeerSelection/LedgerPeers.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side runtime hookup that
+//! feeds ledger-derived peer information into the network
+//! crate's peer registry. Mirrors upstream
+//! `Cardano.Node.Diffusion.Configuration.LedgerPeers` glue.
+//! Upstream wires this inline; Yggdrasil isolates the runtime-
+//! side peer-source bridge here.
 
 use std::net::SocketAddr;
 

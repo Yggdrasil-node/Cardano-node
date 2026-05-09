@@ -7,6 +7,16 @@
 //! shutdown signal arrives.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Run.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side runtime entry
+//! point that bridges the CLI `run` subcommand to the verified-
+//! sync service + governor + block-producer threads. Mirrors
+//! upstream `Cardano.Node.Run::runNode`. Haskell wires the
+//! entry-point inline; Yggdrasil isolates the entry shell from
+//! the runtime body (in `runtime/*.rs`) so CLI dispatch stays
+//! thin.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

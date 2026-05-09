@@ -1,3 +1,10 @@
+//! local_tx_submission - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.LocalTxSubmission.Type.hs`.
+
 /// States of the LocalTxSubmission mini-protocol state machine.
 ///
 /// The LocalTxSubmission protocol is a simple request-response exchange used

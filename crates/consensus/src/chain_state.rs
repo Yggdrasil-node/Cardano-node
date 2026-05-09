@@ -8,6 +8,16 @@
 //! Reference: the upstream volatile DB and `SecurityParam` in
 //! `Ouroboros.Consensus.Config.SecurityParam` and
 //! `Ouroboros.Consensus.Storage.VolatileDB`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side volatile chain-state
+//! tracker that enforces the Ouroboros security parameter `k`.
+//! Mirrors the volatile-DB rollback-window concept from upstream
+//! `Ouroboros.Consensus.Storage.VolatileDB` plus `SecurityParam`
+//! from `Ouroboros.Consensus.Config.SecurityParam`. Upstream
+//! spreads this across the volatile-DB module hierarchy;
+//! Yggdrasil unifies the sliding-window logic in one file.
 
 use yggdrasil_ledger::{BlockNo, HeaderHash, Point, SlotNo};
 

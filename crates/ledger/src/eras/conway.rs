@@ -17,6 +17,18 @@
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/conway>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side Conway-era
+//! transaction types (Voter, Vote, GovActionId, VotingProcedure,
+//! Anchor, GovAction, Constitution, ProposalProcedure,
+//! ConwayTxBody). Upstream organizes these across
+//! `Cardano.Ledger.Conway.Governance.hs`,
+//! `Cardano.Ledger.Conway.Tx.hs`, and `Cardano.Ledger.Conway.TxBody.hs`
+//! as part of the broader Conway era types module hierarchy.
+//! Yggdrasil unifies the Conway-introduced governance types in
+//! one file alongside `ConwayTxBody`.
 
 use std::collections::{BTreeMap, HashMap};
 

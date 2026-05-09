@@ -9,6 +9,17 @@
 //! Reference:
 //! `Cardano.Ledger.Shelley.Rules.Utxo` — `validateOutputTooSmallUTxO`
 //! `Cardano.Ledger.Alonzo.Rules.Utxo` — `validateOutputTooBigUTxO`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side min-UTxO validation
+//! aggregating Shelley-Mary `validateOutputTooSmallUTxO` from
+//! `Cardano.Ledger.Shelley.Rules.Utxo` and Alonzo+
+//! `validateOutputTooBigUTxO` from
+//! `Cardano.Ledger.Alonzo.Rules.Utxo`. Upstream splits per-era;
+//! Yggdrasil's `min_utxo.rs` carries both the flat
+//! `min_utxo_value` (Shelley-Mary) and `coins_per_utxo_byte ×
+//! (serialized_size + overhead)` (Alonzo+) computations.
 
 use crate::cbor::CborEncode;
 use crate::error::LedgerError;

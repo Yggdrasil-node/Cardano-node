@@ -9,6 +9,17 @@
 //! safe to run during a sync.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Run.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `status` subcommand —
+//! introspection of the on-disk storage and reporting of sync
+//! position, block counts, checkpoint state, ledger counts.
+//! Yggdrasil-specific operator UX; upstream cardano-cli does
+//! not have an equivalent because the `cardano-cli query tip`
+//! / `query ledger-state` flow covers the same information
+//! via NtC LSQ. Yggdrasil's `status` reads the on-disk DB
+//! directly without requiring a running node.
 
 use std::path::PathBuf;
 

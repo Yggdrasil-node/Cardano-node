@@ -6,6 +6,17 @@
 //! Reference:
 //! `Cardano.Ledger.Allegra.Scripts` — `evalTimelock`
 //! `Cardano.Ledger.Core.NativeScript` — `validateNativeScript`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side native-script
+//! evaluator aggregating upstream
+//! `Cardano.Ledger.Allegra.Scripts::evalTimelock` plus
+//! `Cardano.Ledger.Core.NativeScript::validateNativeScript`.
+//! Upstream splits the timelock evaluator (Allegra-introduced)
+//! from the multi-sig evaluator (Shelley-introduced); Yggdrasil
+//! unifies them since both consume the same VKey-witness-set +
+//! current-slot context.
 
 use crate::eras::allegra::NativeScript;
 use std::collections::HashSet;

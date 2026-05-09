@@ -1,4 +1,14 @@
 //! Error types for UPLC evaluation.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side error enum for the
+//! Plutus crate (CEK budget exhaustion / builtin-arg shape /
+//! Flat decode / cost-model / etc.). Upstream raises these as
+//! exception variants inside `PlutusCore.Error.hs` +
+//! `PlutusCore.Evaluation.Error.hs` +
+//! `PlutusCore.Crypto.BLS12_381.Error.hs`; Yggdrasil unifies
+//! them in one `PlutusError` enum.
 
 use thiserror::Error;
 

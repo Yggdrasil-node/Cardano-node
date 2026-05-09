@@ -1,3 +1,13 @@
+//! chain_sync - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.ChainSync.Type.hs` (state-machine
+//! + message types). Yggdrasil's `protocols/chain_sync.rs`
+//! carries the typed protocol model that the client / server
+//! drivers consume.
+
 /// States of the ChainSync mini-protocol state machine.
 ///
 /// The ChainSync protocol lets a consumer (client) follow the chain of a

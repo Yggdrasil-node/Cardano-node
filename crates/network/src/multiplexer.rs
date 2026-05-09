@@ -1,3 +1,14 @@
+//! multiplexer - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors the high-level mux
+//! wiring half of upstream `Ouroboros.Network.Mux.hs` —
+//! Yggdrasil's `multiplexer.rs` is the bundle / context layer
+//! that composes per-protocol channels. The low-level frame /
+//! SDU / mini-protocol state-machine parts live in `mux.rs`.
+//! Upstream's `Mux.hs` carries everything inline.
+
 /// Size of a serialized SDU header in bytes.
 ///
 /// The Ouroboros multiplexer frames every payload with an 8-byte header:

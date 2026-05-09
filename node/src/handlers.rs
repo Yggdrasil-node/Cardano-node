@@ -7,5 +7,13 @@
 //! top-level handler dispatch lands.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/tree/master/cardano-node/src/Cardano/Node/Handlers>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell over
+//! `handlers/shutdown.rs` (the only sub-module currently). The
+//! shell exists to allow further runtime-handler sub-modules to
+//! land without churning the public path. Upstream wires
+//! shutdown / OS-signal handling inline in `Cardano.Node.Run.runNode`.
 
 pub mod shutdown;

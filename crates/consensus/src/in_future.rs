@@ -9,6 +9,15 @@
 //! Reference: `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`
 //! and the design note `handling_blocks_from_the_future.md` in
 //! `ouroboros-consensus`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors
+//! `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck.hs`
+//! (blocks-from-the-future detection during ChainSync). Yggdrasil
+//! isolates the `ClockSkew` tolerance + slot-vs-wallclock check
+//! into a focused module; upstream's `InFutureCheck.hs` carries
+//! additional ChainSync-client wiring not yet ported.
 
 use std::time::Duration;
 

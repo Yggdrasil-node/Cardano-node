@@ -6,6 +6,17 @@
 //!
 //! Reference: `ouroboros-network-framework/src/Ouroboros/Network/ConnectionManager/Types.hs`
 //! and `State.hs`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side connection-manager
+//! type model — per-connection lifecycle states from
+//! reservation through negotiation, active, and termination.
+//! Mirrors upstream `Ouroboros.Network.ConnectionManager.Types.hs`
+//! + `Ouroboros.Network.ConnectionManager.State.hs`. Upstream
+//! splits types vs state across two files; Yggdrasil unifies
+//! them in `connection.rs` since they are operationally one
+//! state machine.
 
 use std::net::SocketAddr;
 use std::time::Duration;

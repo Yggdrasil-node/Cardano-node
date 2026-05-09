@@ -15,6 +15,12 @@
 //! `Ouroboros.Network.Protocol.TxSubmission2.Codec.timeLimitsTxSubmission2`.
 //!
 //! Reference: `Ouroboros.Network.Protocol.TxSubmission2.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.TxSubmission2.Client.hs`.
+//! Filename flattens the upstream directory.
 
 use std::time::Duration;
 

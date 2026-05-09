@@ -2,6 +2,17 @@
 //! into a cohesive sync lifecycle.
 //!
 //! Reference: `cardano-node/src/Cardano/Node/Run.hs`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side runtime shell that
+//! re-exports the sub-modules under `runtime/` and exposes the
+//! verified-sync service entry points the CLI consumes. R271-
+//! arc rounds reduced this file from a 7,269-line monolith to
+//! a thin re-export shell. Upstream wires the equivalent
+//! across `Ouroboros.Consensus.Node.Run`, `Cardano.Node.Run`,
+//! and `Cardano.Node.Diffusion`; Yggdrasil isolates each
+//! concern in its own runtime/* sub-module.
 
 use std::sync::Arc;
 

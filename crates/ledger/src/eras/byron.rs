@@ -24,6 +24,18 @@
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/byron>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side Byron-era block
+//! envelope decoder. Aggregates the EBB-vs-Main-block tag
+//! discrimination, header consensus-data extraction, and
+//! previous-hash / chain-difficulty / raw-byte-range helpers.
+//! Upstream organizes these across
+//! `Cardano.Chain.Block.{Header,Body}.hs`,
+//! `Cardano.Chain.UTxO.UTxO.hs`, etc.; Yggdrasil keeps the
+//! envelope-level logic in one Byron-era file. There is no
+//! upstream `Byron.hs` that strictly mirrors this concept.
 
 use crate::cbor::{
     BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, vec_with_safe_capacity,

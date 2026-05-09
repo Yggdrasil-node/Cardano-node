@@ -10,6 +10,19 @@
 //! - [`runtime`] — `ExBudget`, `Value`, `Environment`.
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell over
+//! the Plutus-types sub-modules (`types/core_type.rs` →
+//! `UntypedPlutusCore.Core.Type.hs`,
+//! `types/default_builtins.rs` →
+//! `PlutusCore.Default.Builtins.hs`,
+//! `types/cek_internal.rs` →
+//! `UntypedPlutusCore.Evaluation.Machine.Cek.Internal.hs`).
+//! Upstream organizes types + builtins + CEK runtime into
+//! three separate file hierarchies; Yggdrasil collapses them
+//! under `types/`.
 
 pub mod cek_internal;
 pub mod core_type;

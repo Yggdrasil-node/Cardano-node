@@ -10,6 +10,15 @@
 //! socket; non-Unix targets do not expose the `SubmitTx` clap arm.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-cli/blob/master/cardano-cli/src/Cardano/CLI/Run/Transaction.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `submit-tx` subcommand
+//! (NtC LocalTxSubmission client). Mirrors the dispatch half of
+//! upstream `Cardano.CLI.Compatible.Transaction::runSubmitTxCmd`.
+//! Yggdrasil's binary covers the core submit-tx flow; the
+//! broader cardano-cli transaction-construction surface is
+//! scheduled for Phase F (R289-R295).
 
 #![cfg(unix)]
 

@@ -7,6 +7,16 @@
 //! Reference: `Ouroboros.Network.Protocol.Limits` (`shortWait`, `longWait`,
 //! `waitForever`) and per-protocol codec modules in
 //! `ouroboros-network-protocols`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-protocol time
+//! limits. Mirrors data from upstream
+//! `Ouroboros.Network.Protocol.{ChainSync,BlockFetch,KeepAlive,...}.Codec.timeLimits*`.
+//! Upstream's per-protocol Codec module defines `timeLimits<Foo>`
+//! inline; Yggdrasil collapses the per-protocol time-limit
+//! constants in one module since they are consumed uniformly
+//! by the typed driver wrappers.
 
 use std::time::Duration;
 

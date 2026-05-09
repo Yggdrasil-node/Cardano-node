@@ -1,3 +1,13 @@
+//! handshake - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.Handshake.{Type,Version,Codec}.hs`.
+//! Yggdrasil's `handshake.rs` carries the version-number type,
+//! the negotiation state machine, and the CDDL-aligned codec
+//! in one module; upstream splits across three files.
+
 /// A network protocol version number used during handshake negotiation.
 ///
 /// Node-to-node versions 14 and 15 are currently defined.

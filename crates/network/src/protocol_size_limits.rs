@@ -11,6 +11,16 @@
 //!
 //! See [`yggdrasil_ledger::vec_with_safe_capacity`] for the soft helper
 //! and [`yggdrasil_ledger::vec_with_strict_capacity`] for the hard one.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-protocol max
+//! message size limits. Mirrors data from upstream
+//! `Ouroboros.Network.Protocol.{Foo}.Codec.maxMessageSize`.
+//! Upstream's per-protocol Codec module defines
+//! `maxMessageSize` inline; Yggdrasil collapses the size-limit
+//! constants in one module since they are consumed uniformly
+//! by the SDU framer.
 
 // ---------------------------------------------------------------------------
 // Handshake bounds

@@ -1,3 +1,14 @@
+//! error - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side error enum for the
+//! crypto crate (Ed25519 / KES / VRF / BLS / SHA / Blake2b
+//! failure cases). Upstream's `cardano-crypto-class` raises these
+//! as exceptions inside `Cardano.Crypto.{DSIGN,KES,VRF}.*`
+//! instances; Yggdrasil unifies them in one `CryptoError` enum
+//! for uniform error-trace surfacing.
+
 use thiserror::Error;
 
 /// Errors returned by cryptographic helpers and protocol-facing wrappers.

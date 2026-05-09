@@ -12,6 +12,16 @@
 //! works with `&Path` directly.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Configuration/NodeAddress.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side filesystem-path
+//! resolution helpers (config-relative paths, network-name
+//! to-share-dir, default operator-key locations). Mirrors the
+//! path-resolution glue that upstream
+//! `Cardano.Node.Configuration.POM.hs` does inline; Yggdrasil
+//! isolates the helpers here so config-loading code stays
+//! purely about parsing.
 
 use std::path::{Path, PathBuf};
 

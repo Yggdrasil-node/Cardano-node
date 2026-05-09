@@ -5,6 +5,16 @@
 //! rollback point. An in-memory ordered chain vector tracks current state.
 //!
 //! Reference: `Ouroboros.Consensus.Storage.VolatileDB` in the official node.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side file-backed
+//! implementation of `VolatileStore`, mirroring the on-disk
+//! format defined by upstream
+//! `Ouroboros.Consensus.Storage.VolatileDB.Impl.*`. Upstream
+//! splits the impl across `Impl/{State,Util}.hs` and
+//! `VolatileDB.API.hs`; Yggdrasil's `file_volatile.rs` is the
+//! file-backend half (the trait is in `volatile_db.rs`).
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::fs;

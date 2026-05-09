@@ -21,6 +21,16 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/blob/master/plutus-core>
 //! Reference: <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/PlutusScripts.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `PlutusEvaluator`
+//! trait implementation that invokes the CEK machine from the
+//! ledger crate. Mirrors the Phase-2 evaluator half of upstream
+//! `Cardano.Ledger.Alonzo.Rules.Utxos::ledgerEvalScripts`. The
+//! ledger crate cannot depend on yggdrasil-plutus directly,
+//! so the trait lives in `crates/ledger/src/plutus_validation.rs`
+//! and the impl + ScriptContext construction lives here.
 
 use yggdrasil_ledger::{
     Address, CborEncode, DCert, LedgerError, Script, StakeCredential,

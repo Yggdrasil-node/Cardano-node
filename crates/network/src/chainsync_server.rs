@@ -5,6 +5,12 @@
 //! requests and intersection queries from the client.
 //!
 //! Reference: `Ouroboros.Network.Protocol.ChainSync.Server`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.ChainSync.Server.hs`.
+//! Filename flattens the upstream directory.
 
 use crate::connection::timeouts::PROTOCOL_RECV_TIMEOUT;
 use crate::mux::{MessageChannel, MuxError, ProtocolHandle};

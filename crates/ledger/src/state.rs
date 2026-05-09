@@ -1,3 +1,17 @@
+//! state - module-level docstring.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `LedgerState`
+//! orchestrator + per-era apply-path entry points. The
+//! structural state lives in sibling sub-modules under `state/`
+//! (see e.g. `state/treasury.rs`, `state/pool_state.rs`, etc.)
+//! and the per-era apply paths live in `state/eras/*.rs`.
+//! Upstream's `Cardano.Ledger.Shelley.LedgerState.hs` is a
+//! single ~3000-line module that Yggdrasil splits along
+//! structural seams; this file is the orchestrator shell that
+//! ties everything together.
+
 use crate::eras::mary::Value;
 use crate::eras::shelley::{ShelleyTxIn, ShelleyUtxo};
 use crate::protocol_params::DRepVotingThresholds;

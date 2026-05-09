@@ -4,6 +4,19 @@
 //! `ChainSyncClient` and `BlockFetchClient` drivers from `yggdrasil-network`.
 //! It intentionally keeps ledger and consensus validation out of the node
 //! crate and focuses only on protocol sequencing.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side verified-sync
+//! service body — sync session orchestration, batch
+//! application, validation pipeline, and ChainDb integration.
+//! Mirrors the runtime body of upstream
+//! `Ouroboros.Consensus.Node.Run::runWith` sync side plus
+//! `Ouroboros.Consensus.MiniProtocol.{ChainSync,BlockFetch}.Client`
+//! drivers. Upstream is split across the consensus / mini-
+//! protocol / storage trees; Yggdrasil collapses the runtime
+//! service into one large module that R271-arc rounds split
+//! incrementally into `runtime/*.rs` sub-files.
 
 use std::time::Duration;
 

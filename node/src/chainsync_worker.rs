@@ -35,6 +35,16 @@
 //! Reference:
 //! [`Ouroboros.Network.ChainSync.Client`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/ChainSync/Client.hs);
 //! [`Ouroboros.Network.BlockFetch.Decision.fetchDecisions`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision.hs).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-peer ChainSync
+//! worker task body. Mirrors the runtime body of upstream
+//! `Ouroboros.Network.Protocol.ChainSync.Client::chainSyncClient`
+//! wrapping logic that drives header pulls and intersection
+//! synchronization. Haskell wires this inline as part of the
+//! ChainSync client driver; Yggdrasil isolates the worker body
+//! for tracing + per-message instrumentation.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;

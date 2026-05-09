@@ -9,6 +9,12 @@
 //! `Ouroboros.Network.Protocol.PeerSharing.Codec.timeLimitsPeerSharing`.
 //!
 //! Reference: `Ouroboros.Network.Protocol.PeerSharing.Client`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror (partial):** mirrors upstream
+//! `Ouroboros.Network.Protocol.PeerSharing.Client.hs`.
+//! Filename flattens the upstream directory.
 
 use std::time::Duration;
 

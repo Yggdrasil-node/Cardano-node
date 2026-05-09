@@ -15,6 +15,15 @@
 //! - <https://github.com/IntersectMBO/ouroboros-network/tree/master/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxSubmission>
 //! - <https://github.com/IntersectMBO/ouroboros-network/tree/master/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalStateQuery>
 //! - <https://github.com/IntersectMBO/ouroboros-network/tree/master/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxMonitor>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side per-NtC-session
+//! registry and per-session driver bundle. Mirrors the
+//! session half of upstream `Ouroboros.Network.NodeToClient.runServer`
+//! plus `Ouroboros.Network.Mux::handleMux`. Upstream wires this
+//! inline; Yggdrasil isolates the registry plus drivers for
+//! testability.
 
 use std::path::Path;
 use std::sync::{Arc, RwLock};
