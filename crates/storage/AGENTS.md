@@ -1,6 +1,16 @@
 # Guidance for durable storage and snapshot work
 Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 
+## Strict 1:1 file-mirror policy (R274+)
+
+Every production `.rs` here either mirrors a single canonical upstream
+`.hs` file by snake_case basename (with directory-prefix fallback for
+sibling collisions) OR carries a `## Naming parity` docstring stanza
+ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
+file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
+(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
+[`docs/strict-mirror-audit.tsv`](../../docs/strict-mirror-audit.tsv).
+
 ## Scope
 - Immutable storage, volatile rollback windows, and snapshot persistence.
 - Interfaces that consensus and node integration can build on without file-format lock-in.

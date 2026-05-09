@@ -120,12 +120,29 @@ Cargo gates (every round MUST pass all four before declaring work done):
 Parity-flow gates (run when the touched area is in scope):
 
 - `python3 scripts/check-parity-matrix.py` — validates `docs/parity-matrix.json` schema + every `haskell_reference.path` and `rust_surface.path` exists on disk. Required when matrix entries, status, or paths change.
+- `python3 scripts/check-strict-mirror.py` — strict 1:1 file-mirror drift-guard. Walks production `.rs` files and flags any new file lacking either an upstream `.hs` mirror (by snake_case-of-PascalCase basename match) or a `## Naming parity` docstring stanza. Reads `docs/strict-mirror-audit.tsv` as the allowlist. Warn-only since R275 (`continue-on-error: true` in CI); flips to fail-build at R288.
+- `python3 scripts/audit-strict-mirror.py` — rebuilds `docs/strict-mirror-audit.tsv` after Phase B graduates rows. Required when the audit-table verdict for a Rust file changes (e.g., `git mv` rename, new `## Naming parity` block, or a new file lands).
 - `python3 .claude/scripts/filetree.py check` — flags stale `.claude/filetree/manifest.json` description entries. Required when filename-mirror restructures (R271-style) move tracked files.
 - `bash scripts/setup-reference.sh [--force]` — refreshes `.reference-haskell-cardano-node/` to the policy IntersectMBO tag. Required when the tag bumps or the local checkout drifts.
+
+**Strict 1:1 file-mirror policy (R274 onward).** Every production `.rs`
+under `crates/<crate>/src/` and `node/src/` either mirrors a single
+canonical upstream `.hs` file by snake_case basename (with directory-
+prefix fallback for sibling collisions like `Rules/OCert.hs` →
+`rules_ocert.rs`), OR carries a `## Naming parity` docstring stanza
+ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
+file(s) the helper surfaces and the reason a strict file mirror does
+not exist. The authoring-time skill is at
+[`.claude/skills/round-extraction/SKILL.md`](.claude/skills/round-extraction/SKILL.md);
+the CI counterpart is `python3 scripts/check-strict-mirror.py`. The
+allowlist source-of-truth is
+[`docs/strict-mirror-audit.tsv`](docs/strict-mirror-audit.tsv).
 
 Parity-flow surfaces:
 
 - [`docs/parity-matrix.json`](docs/parity-matrix.json) — Rust ↔ Haskell parity inventory; `reference.tag` tracks the latest IntersectMBO/cardano-node release.
+- [`docs/strict-mirror-audit.tsv`](docs/strict-mirror-audit.tsv) — per-file strict 1:1 verdict table (a/c verified, c-needed scheduled, NEEDS-REVIEW pending hand-grade). The CI drift-guard reads this as its allowlist.
+- [`docs/upstream-haskell-files.txt`](docs/upstream-haskell-files.txt) — flat-file index of every `.hs` under the vendored upstream tree, rebuilt by `scripts/setup-reference.sh`.
 - [`.claude/agents/haskell-reference-auditor.md`](.claude/agents/haskell-reference-auditor.md) — read-heavy parity-comparison subagent; delegate before claiming parity, before recommending implementation, or when a fix needs upstream evidence cited.
 - [`.claude/agents/round-extractor.md`](.claude/agents/round-extractor.md) — filename-mirror extraction specialist for one R-arc round.
 - [`.claude/skills/round-extraction/SKILL.md`](.claude/skills/round-extraction/SKILL.md), [`.claude/skills/parity-plan/SKILL.md`](.claude/skills/parity-plan/SKILL.md), [`.claude/skills/continuous-agent-loop/SKILL.md`](.claude/skills/continuous-agent-loop/SKILL.md) — encoded recipes from R271/R273 arcs.

@@ -1,6 +1,16 @@
 # Guidance for maintaining crate boundaries and shared conventions across the Rust workspace crates.
 Keep this directory as a crate index, not as a place for cross-cutting implementation logic.
 
+## Strict 1:1 file-mirror policy (R274+)
+
+Every production `.rs` here either mirrors a single canonical upstream
+`.hs` file by snake_case basename (with directory-prefix fallback for
+sibling collisions) OR carries a `## Naming parity` docstring stanza
+ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
+file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
+(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
+[`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv).
+
 ## Scope
 - Adding, removing, or renaming workspace crates.
 - Maintaining crate boundaries, ownership, and dependency direction.

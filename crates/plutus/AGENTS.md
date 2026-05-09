@@ -1,6 +1,16 @@
 # Guidance for the UPLC evaluator and Plutus script execution engine
 Focus on deterministic CEK machine behavior, cost model accuracy, and upstream parity with the official Plutus evaluator.
 
+## Strict 1:1 file-mirror policy (R274+)
+
+Every production `.rs` here either mirrors a single canonical upstream
+`.hs` file by snake_case basename (with directory-prefix fallback for
+sibling collisions) OR carries a `## Naming parity` docstring stanza
+ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
+file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
+(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
+[`docs/strict-mirror-audit.tsv`](../../docs/strict-mirror-audit.tsv).
+
 ## Scope
 - UPLC term language, Flat binary decoding, CEK machine evaluation.
 - Built-in function implementations for PlutusV1/V2/V3.

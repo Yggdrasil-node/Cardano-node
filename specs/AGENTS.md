@@ -1,6 +1,16 @@
 # Guidance for vendored upstream test vectors and pinned specification artifacts under specs/.
 This directory holds vendored upstream test corpora that drive parity tests in the workspace.
 
+## Strict 1:1 file-mirror policy (R274+)
+
+Every production `.rs` here either mirrors a single canonical upstream
+`.hs` file by snake_case basename (with directory-prefix fallback for
+sibling collisions) OR carries a `## Naming parity` docstring stanza
+ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
+file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
+(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
+[`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv).
+
 ## Scope
 - `upstream-test-vectors/`: pinned official upstream vector corpora (cardano-base BLS12-381 + Praos VRF/KES vectors). See child `AGENTS.md` for per-tree provenance.
 - Provenance tracking for pinned revisions used by parity tests.

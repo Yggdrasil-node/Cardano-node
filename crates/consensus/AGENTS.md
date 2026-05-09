@@ -1,6 +1,16 @@
 # Guidance for Ouroboros consensus work
 Focus on deterministic chain selection, epoch math, rollback handling, and leader-election boundaries.
 
+## Strict 1:1 file-mirror policy (R274+)
+
+Every production `.rs` here either mirrors a single canonical upstream
+`.hs` file by snake_case basename (with directory-prefix fallback for
+sibling collisions) OR carries a `## Naming parity` docstring stanza
+ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
+file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
+(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
+[`docs/strict-mirror-audit.tsv`](../../docs/strict-mirror-audit.tsv).
+
 ## Scope
 - Praos and future Genesis-specific consensus behavior.
 - Chain selection, rollback coordination, and epoch or slot math.
