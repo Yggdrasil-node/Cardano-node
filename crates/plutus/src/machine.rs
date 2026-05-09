@@ -8,14 +8,17 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors the CEK machine driver
-//! from upstream
-//! `UntypedPlutusCore.Evaluation.Machine.Cek.Internal.hs`
-//! (`runCek`, `cekMachine`). Yggdrasil isolates the driver
-//! loop here while the data types (`Value`, `Env`, `StepKind`)
-//! live in `types/cek_internal.rs`. The cost-model wiring
-//! (`spend_step`, `spend_budget`) lives in `cost_model/step.rs`.
-//! Upstream's `Cek.Internal.hs` carries everything inline.
+//! **Strict mirror:** UntypedPlutusCore/Evaluation/Machine/Cek/Internal.hs.
+//! Filename flattens the upstream directory; the file carries
+//! the CEK machine driver loop (`runCek` / `cekMachine` /
+//! `compute` / `return_value`) matching upstream's `Cek.Internal`.
+//! Yggdrasil's idiomatic split places the supporting data types
+//! (`Value`, `Env`, `StepKind`, `Frame`, `State`) in
+//! `types/cek_internal.rs` and the cost-model wiring
+//! (`spend_step`, `spend_budget`) in `cost_model/step.rs` —
+//! these are sibling modules carrying the inputs the upstream
+//! Haskell file interleaves inline. The driver loop itself
+//! stays here as the canonical `Cek/Internal.hs` mirror.
 
 use crate::builtins::evaluate_builtin;
 use crate::cost_model::{CostModel, StepKind};

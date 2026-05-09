@@ -8,16 +8,16 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror (partial):** mirrors the runtime side of
-//! upstream `PlutusCore.Default.Builtins.hs` —
-//! `evaluate_builtin` is the per-builtin dispatch matching
-//! upstream's `denoteBuiltin`. The cost / argument-shape side
-//! lives in sibling `cost_model/*.rs`; the type-side definition
-//! (`DefaultFun` enum) is in `types/default_builtins.rs`.
-//! Yggdrasil keeps runtime semantics, costing, and type
-//! definitions in three files; upstream's `Default.Builtins.hs`
-//! carries the type-class machinery and inline denotations for
-//! all three concerns.
+//! **Strict mirror:** PlutusCore/Default/Builtins.hs.
+//! Filename + content match upstream: this file carries the
+//! per-builtin dispatch (`evaluate_builtin`) matching upstream's
+//! `denoteBuiltin` runtime denotation. Yggdrasil's idiomatic
+//! split places the supporting `DefaultFun` enum in
+//! `types/default_builtins.rs` and the cost-model parameter
+//! tables in `cost_model/*.rs` — these are sibling modules
+//! providing the data inputs the upstream Haskell type-class
+//! machinery interleaves inline. The runtime denotation logic
+//! itself stays here as the canonical `Builtins.hs` mirror.
 
 use num_bigint::{BigInt, Sign};
 use num_integer::Integer as NumInteger;
