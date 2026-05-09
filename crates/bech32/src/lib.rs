@@ -22,6 +22,7 @@
 //! `Setup.hs` / `Orphans.hs` precedents.
 
 pub mod internal;
+pub mod parser;
 
 // -----------------------------------------------------------------------
 // Core type placeholders (R331 skeleton)
@@ -81,13 +82,27 @@ pub struct CharPositionPlaceholder(pub usize);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Word5Placeholder(pub u8);
 
-/// Placeholder run-loop entry called by the binary `main`.
+/// Placeholder run-loop entry called by legacy callers (R327 era).
 ///
-/// R333 replaces this stub with the concrete CLI dispatcher matching
-/// the upstream binary's encode/decode/HRP/data subcommand surface.
+/// R333 replaces the inner stub with the concrete CLI dispatcher
+/// matching the upstream binary's encode/decode subcommand surface.
+/// New callers should use [`run_with`] which takes parsed [`parser::Args`].
 pub fn run() -> eyre::Result<()> {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let args = parser::parse_args(&argv).map_err(|e| eyre::eyre!("{e}"))?;
+    run_with(args)
+}
+
+/// Concrete run-loop entry called by `main` after argument parsing.
+///
+/// R332 stub: returns "encode/decode not yet implemented (R333)" sentinel
+/// because the actual encode/decode dispatch lands at R333. The argument
+/// parser surface IS functional at R332 — `bech32 --help` and
+/// `bech32 --version` both produce byte-equivalent output via
+/// `parser::HELP_TEXT` / `parser::VERSION_TEXT`.
+pub fn run_with(_args: parser::Args) -> eyre::Result<()> {
     Err(eyre::eyre!(
-        "yggdrasil-bech32: not yet implemented (R331 skeleton); \
+        "yggdrasil-bech32: encode/decode not yet implemented (R332 skeleton; R333 lands it); \
          see docs/operational-runs/ for the bech32 port progress."
     ))
 }

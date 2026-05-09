@@ -389,7 +389,7 @@
       "area": "sister-tools",
       "feature": "BIP-0173 / Bech32m address encoding tool \u2014 pure-Rust port mirroring upstream IntersectMBO/bech32.",
       "status": "partial",
-      "next_milestone": "R332",
+      "next_milestone": "R333",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/bech32/bech32/",
@@ -404,9 +404,11 @@
       ],
       "implemented_evidence": [
         "R331 skeleton: file-mirror tree wired (lib.rs <-> Codec/Binary/Bech32.hs, internal.rs <-> Codec/Binary/Bech32/Internal.hs, main.rs <-> bech32/app/Main.hs).",
-        "Placeholder types declared (DataPart, HumanReadablePart, EncodingError, DecodingError, HumanReadablePartError, CharPosition, Word5, EncodingSpec, charset constant).",
-        "Workspace dep `bech32 = \"0.11\"` wired into crates/bech32/Cargo.toml.",
-        "Binary compiles + dispatches via node/scripts/run-tools.sh; returns R331 sentinel pending R332/R333."
+        "R332 CLI parser: byte-equivalent --help and --version output captured from upstream bech32 1.1.10 binary into tests/fixtures/upstream-{help,version}.txt; parser::HELP_TEXT + VERSION_TEXT include_str! both fixtures (single source of truth).",
+        "R332 parser::parse_args: handles -h/--help, -v/--version, single positional PREFIX, rejects unknown flags + multiple positionals.",
+        "R332 golden tests (6): help_long/short_flag_matches_upstream_byte_for_byte, version_long/short_flag_matches_upstream_byte_for_byte, unknown_flag_exits_non_zero, no_args_returns_r332_sentinel_until_r333.",
+        "R332 unit tests (10): parser arg-parsing surface fully covered.",
+        "Workspace dep `bech32 = \"0.11\"` wired; concrete encode/decode lands at R333."
       ],
       "remaining_work": [
         "Skeleton round at R331: file-tree mirror + CLI parser scaffolding.",

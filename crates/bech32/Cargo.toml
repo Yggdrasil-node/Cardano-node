@@ -37,3 +37,4 @@ path = "src/main.rs"
 bech32 = { workspace = true }
 clap = { workspace = true }
 eyre = { workspace = true }
+thiserror = { workspace = true }

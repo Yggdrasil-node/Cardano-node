@@ -1,0 +1,27 @@
+Usage: bech32 [PREFIX]
+
+  Convert to and from bech32 strings. Data are read from standard input.
+
+Available options:
+  -h,--help                Show this help text
+  PREFIX                   An optional human-readable prefix (e.g. 'addr').
+                             - When provided, the input text is decoded from various encoding formats and re-encoded to bech32 using the given prefix.
+                             - When omitted, the input text is decoded from bech32 to base16.
+  -v,--version             output version information and exit
+
+Supported encoding formats: Base16, Bech32 & Base58.
+
+Examples:
+  [0;4mTo[0m Bech32:
+    [0;1m$ bech32 base16_ <<< 706174617465[0m
+    base16_1wpshgct5v5r5mxh0
+
+    [0;1m$ bech32 base58_ <<< Ae2tdPwUPEYy[0m
+    base58_1p58rejhd9592uusa8pzj2
+
+    [0;1m$ bech32 new_prefix <<< old_prefix1wpshgcg2s33x3[0m
+    new_prefix1wpshgcgeak9mv
+
+  [0;4mFrom[0m Bech32:
+    [0;1m$ bech32 <<< base16_1wpshgct5v5r5mxh0[0m
+    706174617465

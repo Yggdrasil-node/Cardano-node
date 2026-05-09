@@ -8,10 +8,40 @@
 //! (`HRP` + base16 input on stdin), dispatches to the encoder /
 //! decoder, and prints the resulting Bech32 / base16 string.
 //!
-//! R331 ships this skeleton wrapper; R332 lands the optparse-applicative-
-//! equivalent CLI parser (clap) and R333 lands the concrete
+//! R332 lands the CLI parser + byte-equivalent `--help` / `--version`
+//! handling. R333 will replace `run()`'s sentinel with the concrete
 //! encode/decode dispatch.
 
-fn main() -> eyre::Result<()> {
-    yggdrasil_bech32::run()
+use std::io::Write;
+use std::process::ExitCode;
+
+use yggdrasil_bech32::parser::{HELP_TEXT, ParseError, VERSION_TEXT, parse_args};
+
+fn main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    match parse_args(&argv) {
+        Ok(args) => match yggdrasil_bech32::run_with(args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                let _ = writeln!(std::io::stderr(), "Error: {err:?}");
+                ExitCode::FAILURE
+            }
+        },
+        Err(ParseError::HelpRequested) => {
+            // Upstream emits help on stdout; mirror byte-for-byte.
+            let _ = std::io::stdout().write_all(HELP_TEXT.as_bytes());
+            ExitCode::SUCCESS
+        }
+        Err(ParseError::VersionRequested) => {
+            // Upstream emits "1.1.10\n" on stdout.
+            let _ = std::io::stdout().write_all(VERSION_TEXT.as_bytes());
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            // Unknown flag / too many positionals — upstream prints a
+            // short error to stderr and exits 1.
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }
