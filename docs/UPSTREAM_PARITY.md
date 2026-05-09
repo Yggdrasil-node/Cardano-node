@@ -7,11 +7,24 @@ nav_order: 5
 
 # Upstream Parity Matrix
 
-Last updated: 2026-05-05
+Last updated: 2026-05-05; header + verification-baseline refreshed 2026-05-09 (R312)
 
 This document tracks concrete parity alignment against official IntersectMBO repositories and highlights remaining gaps that block a full parity claim.
 
+> **R273-rename + R274–R311 (closed 2026-05-09) — strict 1:1 file-mirror & tech-debt arc.** The vendored upstream tree was refreshed to policy tag `11.0.1` and a strict 1:1 file-mirror CI drift-guard (`scripts/check-strict-mirror.py`, warn-only at R275 → fail-build at R288) landed. Every production `.rs` either mirrors a single canonical upstream `.hs` file by snake_case basename or carries a `## Naming parity` docstring stanza ending in `**Strict mirror:** none.` plus the upstream symbol(s)/file(s) the helper surfaces; per-file allowlist in [`docs/strict-mirror-audit.tsv`](strict-mirror-audit.tsv) (230 `(a) DIRECT_MIRROR` + 215 `(c) NO_MIRROR_NEEDS_DOCSTRING` = 445 graded files; zero `(b)` rename-needed; zero `(d)` clash-regrade). All production `#[allow(dead_code)]` sites and the lone production `TODO` resolved. New `crates/cardano-cli/` workspace member (R289–R295) mirrors the full upstream `Cardano.CLI.*` surface (~237 Rust files mirroring 180 upstream `.hs`); concrete migration kicked off via R296 (`Version`) + R297 (`ShowUpstreamConfig`) with byte-equivalent output verified against `.reference-haskell-cardano-node/install/bin/cardano-cli`. Two new validators (`check-fixture-manifest.py` + `check-reference-artifacts.py`) joined the parity-flow surface at R303. R308 + R309 backfilled `scripts/AGENTS.md` and refreshed `docs/PARITY_PROOF.md` + `AGENTS.md` Current Phase. R310 fixed a `.gitignore` over-broad pattern that had silently swallowed 12 R294 cardano-cli files; R311 added an index-vs-tree drift check to `check-strict-mirror.py` so the same failure class can no longer surface as an opaque CI module-resolution error. None of the R273–R311 work changed parity status for any subsystem in the table below — it tightened the file-naming and tech-debt surface, not the wire/codec/rule surface. The Open Gaps below (BO, BP, perf sidefinding, R250 partial close) remain unchanged.
+
 ## Verification Baseline
+
+### Five-gate snapshot (post-R311, 2026-05-09)
+
+- `cargo fmt --all -- --check`: clean.
+- `cargo check --workspace --all-targets`: clean.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: clean.
+- `cargo test --workspace --all-features`: 4,855 passing / 0 failing.
+- `python3 scripts/check-strict-mirror.py --fail-on-violation`: 0 violations (mirror/docstring + R311 index-vs-tree drift checks both clean).
+- Parity-flow validators: `check-parity-matrix.py` (8 entries against tag `11.0.1`), `check-fixture-manifest.py` (`cardano-base` SHA pin matrix), `check-reference-artifacts.py` (`cardano-node 11.0.1` install) — all clean.
+
+### Historical R244–R249 closure evidence
 
 - `cargo fmt --all -- --check`: passing after the latest R248 patches
 - Focused R246 Plutus/ledger/node tests and `cargo build -p yggdrasil-node --release`: passing
