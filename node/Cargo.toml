@@ -16,6 +16,7 @@ serde_json.workspace = true
 serde_norway.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+yggdrasil-cardano-cli.workspace = true
 yggdrasil-consensus.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true

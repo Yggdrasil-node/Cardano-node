@@ -59,6 +59,7 @@ thiserror = "2.0.12"
 zeroize = { version = "1.8.2", features = ["derive"] }
 tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal"] }
 
+yggdrasil-cardano-cli = { path = "crates/cardano-cli" }
 yggdrasil-consensus = { path = "crates/consensus" }
 yggdrasil-crypto = { path = "crates/crypto" }
 yggdrasil-ledger = { path = "crates/ledger" }

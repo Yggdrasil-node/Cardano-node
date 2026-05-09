@@ -121,10 +121,11 @@ pub(crate) fn run_cardano_cli_command(
 
     match action {
         CardanoCliCommand::Version => {
-            println!(
-                "yggdrasil-cardano-cli (pure-rust) {}",
-                env!("CARGO_PKG_VERSION")
-            );
+            // R296: Version output now sources its banner from
+            // `yggdrasil_cardano_cli::helper::version_info()` so the
+            // pure-Rust subset and any future Phase-F-implemented
+            // commands print a consistent version string.
+            println!("{}", yggdrasil_cardano_cli::helper::version_info());
             println!("network preset default: {}", network);
             Ok(())
         }
