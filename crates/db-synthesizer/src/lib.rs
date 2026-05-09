@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `db-synthesizer`.
 //!
 //! ## Naming parity
@@ -6,11 +7,22 @@
 //! file-mirror + CLI-parser skeleton for the `db-synthesizer` sister-tool crate.
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
+//!
+//! Layout mapping (R354 ships types.rs; later rounds populate the rest):
+//!
+//! | Upstream `.hs`                                | Yggdrasil `.rs`              |
+//! |-----------------------------------------------|------------------------------|
+//! | `Tools/DBSynthesizer/Types.hs`                | `types.rs`                   |
+//! | `app/DBSynthesizer/Parsers.hs`                | `parser.rs`                  |
+//! | `Tools/DBSynthesizer/Forging.hs`              | `forging.rs` (pending)       |
+//! | `Tools/DBSynthesizer/Run.hs`                  | `run.rs` (pending)           |
+//! | `Tools/DBSynthesizer/Orphans.hs`              | `orphans.rs` (synthesis)     |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {

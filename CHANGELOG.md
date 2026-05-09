@@ -274,6 +274,39 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R354 — db-synthesizer: typed config surface (port of Types.hs).**
+  Lands the typed configuration surface for db-synthesizer. New types.rs
+  module ports the full upstream Cardano.Tools.DBSynthesizer.Types
+  surface:
+  - NodeConfigStub (6-field record: node_config, alonzo/shelley/byron/
+    conway/dijkstra-genesis-file paths; dijkstra optional).
+  - NodeFilePaths (config + chain_db PathBufs).
+  - NodeCredentials (cert/VRF/KES/bulk Option<PathBuf> 4-tuple, default
+    all None).
+  - ForgeLimit (Block u64 | Slot SlotNo | Epoch u64).
+  - ForgeResult newtype (forged: i64).
+  - DBSynthesizerOpenMode (OpenCreate [default] | OpenCreateForce |
+    OpenAppend).
+  - DBSynthesizerOptions (limit + open_mode).
+  - DBSynthesizerConfig (5-field record: config_stub, options,
+    protocol_credentials, shelley_genesis, db_dir).
+  Carve-outs documented in module docstring:
+  - Aeson.Value → serde_json::Value (untyped JSON storage).
+  - ProtocolFilepaths (from Cardano.Node.Types) collapsed to
+    NodeCredentials struct of optional paths — db-synthesizer only
+    consumes path values, not the typed credential machinery.
+  - ShelleyGenesis (from Ouroboros.Consensus.Shelley.Node) kept as
+    serde_json::Value at the surface layer; typed parsing happens in
+    yggdrasil-ledger's genesis module at use-site.
+  Cargo deps: yggdrasil-ledger added (for SlotNo); serde_json added
+  (for the untyped JSON fields).
+  Tests: db-synthesizer 8 → 16 (+8: 1 NodeConfigStub + 1 NodeFilePaths
+  + 1 NodeCredentials default + 3 ForgeLimit variants + 1 ForgeResult
+  + 1 default-impl + 1 DBSynthesizerOptions + 1 DBSynthesizerConfig).
+  Workspace: 5,173 → 5,183.
+  Parity-matrix entry sister-tool.db-synthesizer advanced:
+  next_milestone R409 → R355; remaining_work refreshed with the
+  per-module roadmap (Parsers → Forging → Run + integration + closeout).
 - **R353 — snapshot-converter: typed config surface from CLI shape.**
   Lands the typed configuration surface for snapshot-converter. New
   types.rs module ports the operator-facing data declarations from

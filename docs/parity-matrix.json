@@ -701,7 +701,7 @@
       "area": "sister-tools",
       "feature": "Synthetic chain generator \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBSynthesizer.* + app/db-synthesizer.hs.",
       "status": "partial",
-      "next_milestone": "R409",
+      "next_milestone": "R355",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/",
@@ -711,21 +711,21 @@
       "rust_surface": [
         {
           "path": "crates/db-synthesizer/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.1 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R354 typed-config surface (full Types.hs port). Forging.hs/Run.hs/Parsers.hs implementation pending; gated on Phase C entry per the plan."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for db-synthesizer.",
         "Byte-equivalent --help and --version captured from upstream db-synthesizer binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
-        "Workspace test contribution: +8.",
-        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+        "R354 typed-config surface: types.rs ports the full upstream Types.hs surface \u2014 NodeConfigStub (6-field record with serde_json::Value for the untyped node-config JSON, optional Dijkstra-genesis-file), NodeFilePaths (config + chain_db), NodeCredentials (cert/VRF/KES/bulk Option<PathBuf> 4-tuple), ForgeLimit (Block u64 | Slot SlotNo | Epoch u64), ForgeResult newtype (forged: i64), DBSynthesizerOpenMode (OpenCreate [default] | OpenCreateForce | OpenAppend), DBSynthesizerOptions (limit + open_mode), DBSynthesizerConfig (5-field record). Carve-outs documented: Aeson.Value \u2192 serde_json::Value; ProtocolFilepaths collapsed to NodeCredentials struct of paths; ShelleyGenesis kept as serde_json::Value at the surface layer (typed parsing happens in yggdrasil-ledger when actually loaded). 16 db-synthesizer tests at R354 (was 8 at R335 + 8 types unit + 0 changes to parser tests)."
       ],
       "remaining_work": [
-        "Skeleton round at R408: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
-        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-synthesizer.",
-        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R355+ Parsers.hs port: clap-based parser dispatching --db PATH, --node-config PATH, --shelley-genesis PATH, --byron-genesis PATH, --conway-genesis PATH, --alonzo-genesis PATH, --signing-key PATH, --kes-signing-key PATH, --vrf-signing-key PATH, --opcert PATH, --bulk-cred-file PATH, --slots N, --blocks N, --epochs N, --append, --force.",
+        "R356+ Forging.hs port: leverages node/src/block_producer.rs for the per-block forge dispatch + KES/Praos signing path.",
+        "R357+ Run.hs port: opens ChainDB at db_dir + forge-loop + write-back.",
+        "R358+ Parsers final wiring: into_config (Args \u2192 DBSynthesizerConfig).",
+        "Integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-synthesizer.",
+        "Closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-synthesizer --help` (modulo program name).",
