@@ -25,7 +25,7 @@ use yggdrasil_ledger::{
     ByronBlock, CborDecode, CborEncode, Decoder, Encoder, MultiEraSubmittedTx, Point, SlotNo, Tip,
     TxId,
 };
-use yggdrasil_network::multiplexer::MiniProtocolNum;
+use yggdrasil_network::mux::MiniProtocolNum;
 use yggdrasil_network::{
     AcceptedConnectionsLimit, BlockFetchServer, BlockFetchServerError, BlockFetchServerRequest,
     ChainSyncServer, ChainSyncServerError, ChainSyncServerRequest, CmAction, ConnectionId,

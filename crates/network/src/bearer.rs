@@ -11,7 +11,7 @@ use std::io;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum, SDU_HEADER_SIZE, SduHeader};
+use crate::mux::{MiniProtocolDir, MiniProtocolNum, SDU_HEADER_SIZE, SduHeader};
 
 // ---------------------------------------------------------------------------
 // Errors

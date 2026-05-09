@@ -29,7 +29,7 @@
 #[cfg(test)]
 use crate::ledger_peers_provider::LedgerStateJudgement;
 #[cfg(test)]
-use crate::multiplexer::MiniProtocolNum;
+use crate::mux::MiniProtocolNum;
 #[cfg(test)]
 use crate::peer_registry::{PeerRegistry, PeerSource, PeerStatus};
 #[cfg(test)]

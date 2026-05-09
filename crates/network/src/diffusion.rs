@@ -37,7 +37,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crate::connection::{AcceptedConnectionsLimit, ConnectionId, DataFlow};
-use crate::multiplexer::MiniProtocolNum;
+use crate::mux::MiniProtocolNum;
 
 // ---------------------------------------------------------------------------
 // Temperature tiers

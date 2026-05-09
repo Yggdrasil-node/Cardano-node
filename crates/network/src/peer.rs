@@ -26,8 +26,8 @@
 use std::collections::HashMap;
 
 use crate::handshake::{HandshakeMessage, HandshakeVersion, NodeToNodeVersionData, RefuseReason};
-use crate::multiplexer::MiniProtocolDir;
-use crate::multiplexer::MiniProtocolNum;
+use crate::mux::MiniProtocolDir;
+use crate::mux::MiniProtocolNum;
 use crate::mux::{self, MuxError, MuxHandle, ProtocolHandle};
 
 // ---------------------------------------------------------------------------
@@ -254,7 +254,7 @@ pub async fn accept(
 #[cfg(test)]
 mod tests {
     use super::N2N_PROTOCOLS;
-    use crate::multiplexer::MiniProtocolNum;
+    use crate::mux::MiniProtocolNum;
 
     #[test]
     fn n2n_protocols_include_peer_sharing() {

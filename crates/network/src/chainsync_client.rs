@@ -547,8 +547,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn send_failure_does_not_advance_protocol_state() {
-        use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum};
         use crate::mux::start_unix;
+        use crate::mux::{MiniProtocolDir, MiniProtocolNum};
         use tokio::net::UnixStream;
 
         let (client_stream, _server_stream) = UnixStream::pair().expect("unix stream pair");
@@ -574,8 +574,8 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn request_next_typed_pipelined_sends_all_requests_before_collecting() {
-        use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum};
         use crate::mux::start_unix;
+        use crate::mux::{MiniProtocolDir, MiniProtocolNum};
         use tokio::net::UnixStream;
 
         let (client_stream, server_stream) = UnixStream::pair().expect("unix stream pair");

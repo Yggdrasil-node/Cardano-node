@@ -1182,7 +1182,7 @@ fn promote_to_hot_applies_upstream_canonical_weights() {
     // upstream `defaultMiniProtocolParameters` values
     // (BlockFetch=10, ChainSync=3, TxSubmission=2, KeepAlive=1).
     use super::OutboundPeerManager;
-    use yggdrasil_network::multiplexer::MiniProtocolNum;
+    use yggdrasil_network::mux::MiniProtocolNum;
 
     let addr: std::net::SocketAddr = "1.2.3.4:3050".parse().unwrap();
     let mut mgr = OutboundPeerManager::new();
@@ -1217,7 +1217,7 @@ fn promote_to_hot_honours_runtime_weight_overrides() {
     // `set_hot_protocol_weight` — `apply_hot_weights` must read the
     // overridden value, not fall back to the upstream default.
     use super::OutboundPeerManager;
-    use yggdrasil_network::multiplexer::MiniProtocolNum;
+    use yggdrasil_network::mux::MiniProtocolNum;
 
     let addr: std::net::SocketAddr = "1.2.3.4:3051".parse().unwrap();
     let mut mgr = OutboundPeerManager::new();
@@ -1864,7 +1864,7 @@ fn fake_peer_session(addr: std::net::SocketAddr) -> super::PeerSession {
 }
 
 async fn fake_peer_session_async(addr: std::net::SocketAddr) -> super::PeerSession {
-    use yggdrasil_network::multiplexer::MiniProtocolNum;
+    use yggdrasil_network::mux::MiniProtocolNum;
     use yggdrasil_network::{HandshakeVersion, NodeToNodeVersionData};
 
     // Async entry point usable from `#[tokio::test]` callers.
@@ -1886,14 +1886,14 @@ async fn fake_peer_session_async(addr: std::net::SocketAddr) -> super::PeerSessi
 
         let (mut handles, mux) = yggdrasil_network::mux::start(
             client_stream,
-            yggdrasil_network::multiplexer::MiniProtocolDir::Initiator,
+            yggdrasil_network::mux::MiniProtocolDir::Initiator,
             &protocols,
             4096,
         );
         // Also start the server side so the mux doesn't immediately fail.
         let (_server_handles, server_mux) = yggdrasil_network::mux::start(
             server_stream,
-            yggdrasil_network::multiplexer::MiniProtocolDir::Responder,
+            yggdrasil_network::mux::MiniProtocolDir::Responder,
             &protocols,
             4096,
         );

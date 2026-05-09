@@ -32,7 +32,6 @@ pub mod ledger_peers_provider;
 /// TCP listener for inbound peer connections.
 pub mod listener;
 /// Multiplexer framing, SDU header, and protocol numbering.
-pub mod multiplexer;
 /// Multiplexer / demultiplexer — SDU routing between bearer and protocol channels.
 pub mod mux;
 /// Peer connection lifecycle — handshake negotiation and data-protocol setup.
@@ -128,19 +127,16 @@ pub use handshake::{
     NodeToNodeVersionData, RefuseReason,
 };
 
-// -- Multiplexer re-exports ---------------------------------------------------
-pub use multiplexer::{
-    MiniProtocolDir, MiniProtocolNum, MuxChannel, SDU_HEADER_SIZE, SduDecodeError, SduHeader,
-};
-
-// -- Mux re-exports -----------------------------------------------------------
+// -- Mux re-exports (R317 merged the previously-separate `multiplexer` module
+// into `mux`, matching upstream `Ouroboros.Network.Mux` single-file layout) --
 #[cfg(unix)]
 pub use mux::start_unix as start_mux_unix;
 #[cfg(unix)]
 pub use mux::start_unix_configured as start_mux_unix_configured;
 pub use mux::{
     DEFAULT_INGRESS_LIMIT, DEFAULT_PROTOCOL_WEIGHT, EGRESS_SOFT_LIMIT, MAX_SEGMENT_SIZE,
-    MessageChannel, MuxError, MuxHandle, ProtocolConfig, ProtocolHandle, WeightHandle,
+    MessageChannel, MiniProtocolDir, MiniProtocolNum, MuxChannel, MuxError, MuxHandle,
+    ProtocolConfig, ProtocolHandle, SDU_HEADER_SIZE, SduDecodeError, SduHeader, WeightHandle,
     start as start_mux, start_configured as start_mux_configured,
 };
 

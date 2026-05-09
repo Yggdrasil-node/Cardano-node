@@ -53,8 +53,8 @@ use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
 use crate::handshake::HandshakeVersion;
-use crate::multiplexer::{MiniProtocolDir, MiniProtocolNum};
 use crate::mux::{self, MuxHandle, ProtocolHandle};
+use crate::mux::{MiniProtocolDir, MiniProtocolNum};
 
 // ---------------------------------------------------------------------------
 // NtC version data
