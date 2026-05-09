@@ -211,128 +211,35 @@ nav_order: 3
 - Hardware metrics (CPU%, memory%) — Kernel-level only
 
 ---
+---
 
-## Implementation Dependencies
+## Planning-doc artifacts (retired R300)
 
-### Strict Ordering
-1. **Cryptography** ← All else depends on correct verification
-2. **Ledger Types** ← Consensus & network need types
-3. **Consensus & Ledger Rules** ← Storage & network consume validating blocks
-4. **Network Protocols** ← Runtime orchestration depends on working protocols
-5. **Mempool** ← TX relay needs queue
-6. **Storage** ← Persistence needed for recovery
-7. **Monitoring** ← Can be added post-MVP
+The original April 2026 management summary carried five planning
+sections (Implementation Dependencies, Key Risks & Mitigations,
+Deliverables by Phase, Success Criteria, Why This Plan, Next Steps).
+The R273-rename + Phase A–F + R296–R299 execution arc shipped the
+plan; the live successors are:
 
-### Can Parallelize
-- Peer governor refinement (network) ← independent of ledger
-- CLI wrappers (node) ← independent of network polish
-- Monitoring/tracing (node) ← independent of core functions
+| Retired section | Live successor |
+|---|---|
+| Implementation Dependencies | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) workspace topology + crate dependency direction |
+| Key Risks & Mitigations | [`docs/UPSTREAM_PARITY.md::Open Gaps`](UPSTREAM_PARITY.md) (current) + [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) per-gap forensics |
+| Deliverables by Phase | [`docs/operational-runs/`](operational-runs/) per-round records (the actual shipped deliverables) |
+| Success Criteria | [`docs/MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) operator gate sign-offs (§2–9, §6.5) |
+| Why This Plan | (Self-evident from shipped state; ~99% feature complete per the §1 table above.) |
+| Next Steps | [`docs/MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) + remaining gaps in [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md) |
 
-**Critical Path**: Ledger rules → Plutus → Peer governance → Storage robustness (13 weeks)
+The original planning-section text is preserved in the R300 closure
+round-doc + the archived [`PARITY_PLAN.md`](archive/PARITY_PLAN.md).
 
 ---
 
-## Key Risks & Mitigations
-
-| Risk | Severity | Mitigation | Effort |
-|------|----------|-----------|--------|
-| Plutus execution divergence | 🔴 High | Cross-check CEK impl against upstream; test vectors | 2 weeks |
-| Governance state fork | 🟡 Medium | Deposit lifecycle + subtree pruning + CC term-expiry filtering complete; DRep pulser deferred | Done |
-| Peer selection thrashing | 🟡 Medium | Implement upstream governor scoring; load test | 1.5 weeks |
-| Storage crash corruption | � Low | Atomic checkpoints + fsync durability + verification on open | Done |
-| CBOR bytes mismatch | 🟡 Medium | Roundtrip golden tests (already passing) | Ongoing |
-| Missing CLI commands | 🟢 Low | Implement wrappers after APIs stable | 0.5 weeks |
-
----
-
-## Deliverables by Phase
-
-### Phase 1: Ledger Rules (Weeks 1-3)
-- ✅ Collateral validation (all edge cases)
-- ✅ Reward calculation (upstream RUPD→SNAP ordering + reserves accounting)
-- ✅ Governance ratification tally (AlwaysNoConfidence auto-yes, deposit lifecycle, lineage subtree pruning complete)
-- 📊 **Validation**: Workspace test baseline currently at 4640 discovered tests (`cargo test-all`), all passing
-- 📊 **Testnet**: Sync 50+ epochs without error
-
-### Phase 2: Plutus (Weeks 3-5)
-- ✅ CEK machine (36 builtins)
-- ✅ Script execution in apply_block()
-- ✅ Mempool script pre-checks
-- 📊 **Validation**: 100+ builtin tests + 1000 mainnet blocks
-- 📊 **Testnet**: 100% of Alonzo+ blocks apply
-
-### Phase 3: Peer Governor (Weeks 5-7)
-- ✅ Promotion/demotion scoring
-- ✅ Churn + anti-churn policy
-- ✅ Connection pooling
-- 📊 **Validation**: 50+ peer simulation tests
-- 📊 **Testnet**: Sustain 50+ peer set + fork recovery
-
-### Phase 4: Storage (Weeks 7-9)
-- ✅ Garbage collection + pruning
-- ✅ Crash recovery + dirty detection
-- ✅ Slot indexing
-- 📊 **Validation**: Kill -9 simulations + recovery tests
-- 📊 **Testnet**: 4-week retention without growth
-
-### Phase 5: Monitoring (Weeks 9-11)
-- ✅ JSON trace output
-- ✅ EKG + Prometheus endpoints
-- ✅ All 50+ trace points
-- 📊 **Validation**: Metrics completeness test
-- 📊 **Testnet**: Full observability dashboard
-
-### Phase 6: Integration (Weeks 11-13)
-- ✅ Mainnet genesis → tip sync
-- ✅ Fork recovery (3k blocks)
-- ✅ High-throughput relay (1000 TX/s)
-- ✅ Interop with Haskell nodes
-- 📊 **Validation**: Bytes match Haskell node
-- 📊 **Production**: Ready for testnet operations
-
----
-
-## Success Criteria (Go/No-Go Gates)
-
-| Gate | Condition | Phase |
-|------|-----------|-------|
-| **Ledger Correctness** | 100% of locally-valid blocks apply; state matches Haskell node | Phase 1 |
-| **Plutus Ready** | All V1/V2/V3 scripts execute; 0 budget violations | Phase 2 |
-| **Peer Stability** | 50+ peer set, <5% churn per hour | Phase 3 |
-| **Storage Survivable** | Crash recovery < 10s; no data loss | Phase 4 |
-| **Observable** | Full JSON + Prometheus; <5ms trace overhead | Phase 5 |
-| **Mainnet Compatible** | Sync from genesis → tip; identical state | Phase 6 |
-
----
-
-## Why This Plan Achieves Full Parity
-
-✅ **Ledger**: All era types + rules + epoch boundary → feature parity  
-✅ **Consensus**: All Praos + nonce + chain selection → algorithm parity  
-✅ **Network**: All mini-protocols + peer management → protocol parity  
-✅ **Mempool**: All admission + ordering + eviction → queue parity  
-✅ **Storage**: All checkpoint + recovery + GC → persistence parity  
-✅ **Crypto**: All verification + signatures + hashes → cryptography parity  
-✅ **Monitoring**: All trace points + metrics + transport → observability parity  
-
-**Outcome**: A production-capable Rust Cardano node that can replace Haskell for validator operations.
-
----
-
-## Next Steps (Systematic Execution Plan)
-
-1. **Mainnet endurance rehearsal**: run `yggdrasil-node run --network mainnet --config node/configuration/mainnet/config.json --metrics-port <port>` against at least two upstream relay targets and collect 24h+ trace/metrics artifacts.
-2. **Interoperability checkpointing**: compare chain tip and selected block/body hashes against an upstream Haskell node at fixed intervals (15 min, 60 min, 6 h).
-3. **Restart resilience pass**: execute kill/restart cycles at 5-min and 30-min intervals and verify storage WAL + dirty-flag recovery leaves tip progression monotonic.
-4. **Plutus drift watch**: on each Conway genesis refresh, re-run 302-key V3 array mapping assertions and strict builtin-cost completeness checks.
-5. **Weekly parity audit cadence**: continue rule-by-rule upstream audits and append only evidence-backed deltas.
-
----
-
-**Document Owner**: Planning & Research  
-**Review Cycle**: Weekly  
-**Target Completion**: June 15, 2026  
-**Questions?** See archive/UPSTREAM_RESEARCH.md + archive/PARITY_PLAN.md
+**Document Owner**: Planning & Research
+**Review Cycle**: Weekly (status table at top + audit history below)
+**Questions?** See [`docs/PARITY_PROOF.md`](PARITY_PROOF.md) for
+operational verification + [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md)
+for upstream alignment.
 
 ---
 
