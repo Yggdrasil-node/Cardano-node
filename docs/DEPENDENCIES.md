@@ -31,6 +31,17 @@ This file defines how dependencies are introduced into Yggdrasil.
 - `subtle`: constant-time comparisons for secret material.
 - `tokio`: async runtime for networking and orchestration work.
 - `zeroize`: deterministic zeroing of secret material on drop; already a transitive dependency via `curve25519-dalek` and `ed25519-dalek`, so adding it directly introduces no new supply chain surface.
+- `bech32` (R330, added for the R326-R459 sister-tools port arc): pure Rust BIP-0173 / Bech32m encoding from `rust-bitcoin/rust-bech32` v0.11.0. MIT-licensed (allowed by `deny.toml`), zero transitive dependencies (only `std` feature on its own implementation). Foundation for `crates/bech32/` which replicates the upstream `IntersectMBO/bech32` binary's CLI surface byte-for-byte; consumed across R331-R334 (Phase A.1 of the sister-tools port arc). Rejected alternatives were (1) reimplementing Bech32m locally — error-prone for a checksum format with subtle BIP-0173/Bech32m polynomial differences, and (2) FFI to the Haskell `bech32` package (forbidden per the no-FFI policy). No native build requirements.
+
+## Sister-tools port arc — deferred candidates (R340+, R367+)
+
+The R326-R459 sister-tools port arc will eventually need an HTTP server crate for `cardano-submit-api` (the `/api/submit/tx` endpoint) and a log-rotation crate for `cardano-tracer`. Per the R330 dependency-audit policy, those are NOT pre-added to `[workspace.dependencies]` — they'll land at the round that actually consumes them, with the transitive-dep audit done in context.
+
+- **HTTP server (deferred to R340 — `cardano-submit-api` Web.hs port)**: candidates are (a) `axum` + `tokio` (workspace already has `tokio`; axum adds ~5 transitive deps including `tower`, `hyper`), or (b) raw `tokio::net::TcpListener` matching the existing `node/src/metrics_server.rs` pattern (zero new deps). Decision deferred until R340; rationale will be documented in that round's operational-runs entry.
+- **Log rotation (deferred to R367 — `cardano-tracer` Logs/Rotator.hs port)**: candidate is `tracing-appender` (~3-5 transitive deps including `tracing`, `parking_lot`). Decision deferred until R367.
+- **Optional fuzz-distribution (deferred to R434 — `tx-generator` Tx fuzz)**: candidate is `rand` (already a transitive dep via `ed25519-dalek`/`curve25519-dalek`, so promoting to a direct workspace dep would not add transitive surface).
+
+Each deferred candidate will be added to `[workspace.dependencies]` only when its consumer round lands, with the `cargo deny check` + `cargo audit` checks run against the actual transitive tree rather than against speculative additions.
 
 ## Review Required
 - Any new cryptography crate.
