@@ -13,6 +13,13 @@
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/babbage/impl/cddl-files>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Babbage.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Ledger/Babbage.hs` module.
 
 use std::collections::{BTreeMap, HashMap};
 

@@ -7,6 +7,13 @@
 //!
 //! Extracted from `state.rs` in R269 first slice as part of the strict 1:1
 //! filename-mirror refactor — see `docs/operational-runs/2026-05-06-round-269-state-mir-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Shelley/Rules/Mir.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Ledger/Shelley/Rules/Mir.hs` module.
 
 use crate::types::StakeCredential;
 use crate::{CborDecode, CborEncode, Decoder, Encoder, LedgerError};

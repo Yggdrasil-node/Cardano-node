@@ -35,6 +35,13 @@
 //! References:
 //! - <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/alonzo/impl/cddl/data/alonzo.cddl>
 //! - <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/conway/impl/cddl/data/conway.cddl>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Plutus.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Ledger/Plutus.hs` module.
 
 use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
 use crate::eras::allegra::NativeScript;

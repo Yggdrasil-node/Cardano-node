@@ -7,6 +7,10 @@
 //! config types.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-cli/blob/master/cardano-cli/src/Cardano/CLI/Environment.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side dispatcher for the `yggdrasil-node cardano-cli <subcommand>` integration. Wraps `yggdrasil_cardano_cli::*` library calls; the actual subcommand runtime logic lives in `crates/cardano-cli/`. No upstream parallel — upstream `cardano-cli` is a separate binary, not a node-binary subcommand.
 
 use std::path::PathBuf;
 

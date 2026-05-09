@@ -18,6 +18,10 @@
 //! - `vk`:  32 bytes (x-only public key per BIP-340)
 //! - `msg`: arbitrary-length message
 //! - `sig`: 64 bytes (BIP-340 Schnorr signature)
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side aggregator over upstream `Cardano.Crypto.DSIGN.EcdsaSecp256k1` + `Cardano.Crypto.DSIGN.SchnorrSecp256k1` (both algorithms in one module). Upstream splits ECDSA and Schnorr Secp256k1 into separate `.hs` files; Yggdrasil unifies for consumer convenience since both share the underlying secp256k1 curve.
 
 use crate::CryptoError;
 

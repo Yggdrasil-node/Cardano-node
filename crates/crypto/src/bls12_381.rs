@@ -5,6 +5,13 @@
 //!
 //! Reference: CIP-0381 and
 //! <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/plutus-core/src/PlutusCore/Crypto/BLS12_381>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Crypto/EllipticCurve/BLS12_381.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Crypto/EllipticCurve/BLS12_381.hs` module.
 
 use bls12_381::{
     G1Affine, G1Projective, G2Affine, G2Prepared, G2Projective, Gt, MillerLoopResult, Scalar,

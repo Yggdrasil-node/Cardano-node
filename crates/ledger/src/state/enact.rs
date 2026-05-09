@@ -13,6 +13,13 @@
 //!
 //! Extracted from `state.rs` in R269 third slice as part of the strict 1:1
 //! filename-mirror refactor — see `docs/operational-runs/2026-05-06-round-269c-state-enact-extraction.md`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Conway/Rules/Enact.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Ledger/Conway/Rules/Enact.hs` module.
 
 use super::{
     AccountingState, CommitteeState, ConwayGovActionPurpose, RewardAccounts,

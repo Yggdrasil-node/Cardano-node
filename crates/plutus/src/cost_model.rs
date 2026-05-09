@@ -25,6 +25,10 @@
 //! are measured by spine length.
 //!
 //! Reference: <https://github.com/IntersectMBO/plutus/tree/master/plutus-core/cost-model>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side cost-model surface. Upstream's runtime cost model lives in `PlutusCore.Evaluation.Machine.MachineParameters` + `PlutusCore.Evaluation.Machine.BuiltinCostModel` + `PlutusCore.Evaluation.Machine.ExBudget` across multiple files; Yggdrasil unifies the runtime parameter table + CEK step costs + per-builtin parameterized cost expressions in one focused module that the CEK machine consumes.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;

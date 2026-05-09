@@ -6,6 +6,13 @@
 //! header + variable-length payload).
 //!
 //! Reference: `network-mux/src/Network/Mux/Bearer.hs`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Network/Mux/Bearer.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Network/Mux/Bearer.hs` module.
 
 use std::io;
 

@@ -10,6 +10,13 @@
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/allegra/impl/cddl>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Allegra.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Ledger/Allegra.hs` module.
 
 use std::collections::BTreeMap;
 

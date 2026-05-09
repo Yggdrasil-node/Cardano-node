@@ -4,6 +4,10 @@
 //! peer source and peer status independently from node orchestration, and it
 //! can reconcile the current root-provider snapshot into canonical root-peer
 //! sources.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side peer registry tracking `PeerSource` + `PeerStatus` per peer. Upstream's equivalent functionality is folded into `Ouroboros.Network.PeerSelection.Governor` (the governor.hs) and split across `KnownPeers`, `EstablishedPeers`, `LocalRootPeers`, etc.; Yggdrasil aggregates into a single `PeerRegistry` map for coherent reconciliation against root-set provider snapshots.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;

@@ -10,6 +10,13 @@
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/mary/impl/cddl>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Mary.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Ledger/Mary.hs` module.
 
 use std::collections::BTreeMap;
 

@@ -13,6 +13,10 @@
 //! connection management stays in `node/`.
 //!
 //! Reference: `ouroboros-network-framework/src/Ouroboros/Network/ConnectionManager/Core.hs`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side connection-manager surface. Upstream's `Ouroboros.Network.ConnectionManager.Core` is a large IO-effectful module; Yggdrasil exposes a smaller pure surface (`Provenance`, `DataFlow`, `AbstractState`, `ConnectionState`, error variants) consumed by `inbound_governor.rs` and `peer.rs`. The full I/O-effectful CM behaviors live inside `node/src/runtime/`.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

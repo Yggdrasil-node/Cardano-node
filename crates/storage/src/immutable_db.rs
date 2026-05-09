@@ -1,3 +1,11 @@
+//! Append-only store for immutable (finalized) blocks.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Consensus/Storage/ImmutableDB.hs.
+//! Filename matches upstream basename; the module is
+//! the canonical 1:1 mirror of upstream's `Ouroboros/Consensus/Storage/ImmutableDB.hs`.
+
 use yggdrasil_ledger::{Block, HeaderHash, Point, SlotNo};
 
 use crate::error::StorageError;

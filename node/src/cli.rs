@@ -15,6 +15,10 @@
 //!  - `submit-tx` (Unix) — NtC `LocalTxSubmission` driver
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Parsers.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `clap`-based CLI parser. Upstream's `cardano-cli` carries its own optparse-applicative-based parser tree split across `cardano-cli/src/Cardano/CLI/Parser.hs` + per-cluster sub-parsers; Yggdrasil's `cli.rs` is the binary-side `clap` parser specific to the `yggdrasil-node` binary's subcommand surface (`run`, `validate-config`, `status`, `default-config`, `cardano-cli`, `query`, `submit-tx`).
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

@@ -1,3 +1,12 @@
+//! BlockFetch mini-protocol type-level definitions (state machine + message types).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Network/Protocol/BlockFetch/Type.hs.
+//! Filename flattens the upstream directory; the file
+//! carries the protocol's typed state machine and message
+//! envelope, mirroring upstream's `Type.hs`.
+
 /// States of the BlockFetch mini-protocol state machine.
 ///
 /// The BlockFetch protocol lets a client request ranges of blocks from a

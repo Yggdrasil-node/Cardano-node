@@ -1,3 +1,12 @@
+//! TxSubmission2 mini-protocol type-level definitions (state machine + message types).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Network/Protocol/TxSubmission2/Type.hs.
+//! Filename flattens the upstream directory; the file
+//! carries the protocol's typed state machine and message
+//! envelope, mirroring upstream's `Type.hs`.
+
 /// States of the TxSubmission2 mini-protocol state machine.
 ///
 /// The TxSubmission2 protocol is a pull-based protocol where the server

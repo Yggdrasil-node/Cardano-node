@@ -23,6 +23,13 @@
 //! `Cardano.Ledger.Alonzo.Rules.Utxo` — `validateTotalCollateral`
 //! `Cardano.Ledger.Babbage.Rules.Utxo` — `validateTotalCollateral`,
 //!     `validateCollateralContainsNonADA`, `validateCollateralEqBalance`
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Babbage/Collateral.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Cardano/Ledger/Babbage/Collateral.hs` module.
 
 use crate::eras::shelley::ShelleyTxIn;
 use crate::error::LedgerError;

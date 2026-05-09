@@ -10,6 +10,10 @@
 //!
 //! Reference: `Cardano.Ledger.Shelley.PParams` and per-era extensions
 //! in `cardano-ledger`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side cross-era protocol-parameters aggregator. Upstream parameterizes `PParams` per-era via Haskell type-class polymorphism (`Cardano.Ledger.Core.PParams` + per-era refinements in `Shelley.PParams`, `Alonzo.PParams`, `Babbage.PParams`, `Conway.PParams`); Yggdrasil materialises this as a single `ProtocolParameters` struct with per-era CBOR codec dispatch.
 
 use std::collections::BTreeMap;
 

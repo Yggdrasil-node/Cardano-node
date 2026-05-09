@@ -1,3 +1,11 @@
+//! Rollback-aware store for blocks that have not yet been finalized.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Consensus/Storage/VolatileDB.hs.
+//! Filename matches upstream basename; the module is
+//! the canonical 1:1 mirror of upstream's `Ouroboros/Consensus/Storage/VolatileDB.hs`.
+
 use yggdrasil_ledger::{Block, HeaderHash, Point, SlotNo};
 
 use crate::error::StorageError;

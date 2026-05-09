@@ -23,6 +23,10 @@
 //!
 //! Reference: `Cardano.Ledger.Shelley.Rules.NewEpoch`,
 //! `Cardano.Ledger.Shelley.Rules.Epoch`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side cross-era epoch-boundary processor implementing NEWEPOCH + RUPD + MIR + SNAP rule orchestration. Upstream spreads this logic across `Cardano.Ledger.Shelley.Rules.Tick`, `Cardano.Ledger.Shelley.Rules.NewEpoch`, `Cardano.Ledger.Shelley.Rules.Rupd`, `Cardano.Ledger.Shelley.Rules.Snap`, `Cardano.Ledger.Shelley.Rules.Mir`, and `Cardano.Ledger.Conway.Rules.Epoch`.
 
 use std::collections::{BTreeMap, BTreeSet};
 

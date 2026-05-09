@@ -3,6 +3,13 @@
 //! This module keeps the topology-root model in the network crate so node code
 //! can remain focused on orchestration. It mirrors the upstream Cardano split
 //! between local roots, public roots, bootstrap peers, and ledger-peer gating.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Network/PeerSelection/Governor/RootPeers.hs.
+//! Filename matches upstream basename; the module is the canonical
+//! 1:1 mirror surface for the per-concern Rust port of upstream's
+//! `Ouroboros/Network/PeerSelection/Governor/RootPeers.hs` module.
 
 use std::fmt;
 use std::net::{SocketAddr, ToSocketAddrs};

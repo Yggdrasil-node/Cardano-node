@@ -1,3 +1,11 @@
+//! Blake2b hash digests (Blake2b-512, Blake2b-256, Blake2b-224).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Crypto/Hash/Blake2b.hs.
+//! Filename matches upstream basename; the module is
+//! the canonical 1:1 mirror of upstream's `Cardano/Crypto/Hash/Blake2b.hs`.
+
 use blake2::digest::consts::{U28, U32};
 use blake2::{Blake2b512, Digest};
 
