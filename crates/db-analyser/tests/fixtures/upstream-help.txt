@@ -1,0 +1,71 @@
+Usage: db-analyser --db PATH [--verbose] [--analyse-from SLOT_NUMBER] 
+                   [--db-validation ARG] 
+                   [--show-slot-block-no | --count-tx-outputs | 
+                     --show-block-header-size | --show-block-txs-size | 
+                     --show-ebbs | --store-ledger SLOT_NUMBER 
+                     [--full-ledger-validation] |
+                     --count-blocks | --checkThunks BLOCK_COUNT | 
+                     --trace-ledger | --repro-mempool-and-forge INT | 
+                     --benchmark-ledger-ops [--out-file FILE] [--reapply] | 
+                     --get-block-application-metrics NUM [--out-file FILE]] 
+                   [--num-blocks-to-process INT] (--lmdb | --in-mem | --lsm)
+                   --config PATH [--threshold THRESHOLD]
+
+  Simple framework used to analyse a Chain DB
+
+Available options:
+  --db PATH                Path to the Chain DB
+  --verbose                Enable verbose logging
+  --analyse-from SLOT_NUMBER
+                           Start analysis from ledger state stored at specific
+                           slot number
+  --db-validation ARG      The extent of the ChainDB on-disk files validation.
+                           This is completely unrelated to validation of the
+                           ledger rules. Possible values: validate-all-blocks,
+                           minimum-block-validation.
+  --show-slot-block-no     Show slot and block number and hash of all blocks
+  --count-tx-outputs       Show number of transaction outputs per block
+  --show-block-header-size Show the header sizes of all blocks
+  --show-block-txs-size    Show the total transaction sizes per block
+  --show-ebbs              Show all EBBs and their predecessors
+  --store-ledger SLOT_NUMBER
+                           Store ledger state at specific slot number
+  --full-ledger-validation Use full block application while applying blocks to
+                           ledger states, also validating signatures and
+                           scripts. This is much slower than block reapplication
+                           (the default).
+  --count-blocks           Count number of blocks processed
+  --checkThunks BLOCK_COUNT
+                           Check the ledger state for thunks every n blocks
+  --trace-ledger           Maintain ledger state and trace ledger phases in the
+                           GHC event log. The db-analyser tool performs
+                           era-specific analysis of the ledger state and inserts
+                           markers for 'significant' events, such as for example
+                           epoch transitions.
+  --repro-mempool-and-forge INT
+                           Maintain ledger state and mempool trafficking the
+                           transactions of each block. The integer is how
+                           manyblocks to put in the mempool at once.
+  --benchmark-ledger-ops   Maintain ledger state and benchmark the main ledger
+                           calculations for each block. Prints one line of stats
+                           per block to the given output file (defaults to
+                           stdout).
+  --out-file FILE          Optional output file. Default is to write to stdout.
+  --reapply                Measure header/block *re*application instead of full
+                           application.
+  --get-block-application-metrics NUM
+                           Compute block application metrics every 'NUM' blocks
+                           (it currently supports slot and block numbers and
+                           UTxO size). Stores the result to the given output
+                           file (defaults to stdout).
+  --out-file FILE          Optional output file. Default is to write to stdout.
+  --num-blocks-to-process INT
+                           Maximum number of blocks we want to process
+  --lmdb                   use v1 LMDB backing store
+  --in-mem                 use v2 in-memory backend
+  --lsm                    use v2 LSM backend
+  --config PATH            Path to config file
+  --threshold THRESHOLD    PBftSignatureThreshold
+  -h,--help                Show this help text
+
+ouroboros-consensus commit: unavailable (git info missing at build time)

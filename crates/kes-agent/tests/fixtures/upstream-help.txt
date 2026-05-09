@@ -1,0 +1,14 @@
+Usage: kes-agent COMMAND [-F|--config|--config-file FILE]
+
+Available options:
+  -F,--config,--config-file FILE
+                           Load configuration from FILE
+  --version                Show version information
+  -h,--help                Show this help text
+
+Available commands:
+  start                    
+  stop                     
+  restart                  
+  status                   
+  run                      

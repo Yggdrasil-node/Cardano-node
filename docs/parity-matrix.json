@@ -464,8 +464,8 @@
       "id": "sister-tool.kes-agent",
       "area": "sister-tools",
       "feature": "KES key custody + period-rotation daemon \u2014 pure-Rust port mirroring upstream input-output-hk/kes-agent (daemon binary).",
-      "status": "absent",
-      "next_milestone": "R344",
+      "status": "partial",
+      "next_milestone": "R345",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/kes-agent/kes-agent/",
@@ -478,7 +478,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.3 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for kes-agent.",
+        "Byte-equivalent --help and --version captured from upstream kes-agent binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R344: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -497,8 +503,8 @@
       "id": "sister-tool.kes-agent-control",
       "area": "sister-tools",
       "feature": "kes-agent control CLI \u2014 pure-Rust port mirroring upstream input-output-hk/kes-agent (control binary).",
-      "status": "absent",
-      "next_milestone": "R355",
+      "status": "partial",
+      "next_milestone": "R356",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/kes-agent/kes-agent/",
@@ -511,7 +517,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.4 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for kes-agent-control.",
+        "Byte-equivalent --help and --version captured from upstream kes-agent-control binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R355: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -530,8 +542,8 @@
       "id": "sister-tool.cardano-tracer",
       "area": "sister-tools",
       "feature": "Standalone trace-forwarder + log + metrics aggregator \u2014 pure-Rust port mirroring upstream cardano-tracer/src/Cardano/Tracer/*.hs.",
-      "status": "absent",
-      "next_milestone": "R360",
+      "status": "partial",
+      "next_milestone": "R361",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-tracer/",
@@ -544,7 +556,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.5 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for cardano-tracer.",
+        "Byte-equivalent --help and --version captured from upstream cardano-tracer binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R360: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -563,8 +581,8 @@
       "id": "sister-tool.db-truncater",
       "area": "sister-tools",
       "feature": "ChainDB rollback utility \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBTruncater.* + app/db-truncater.hs.",
-      "status": "absent",
-      "next_milestone": "R386",
+      "status": "partial",
+      "next_milestone": "R387",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBTruncater/",
@@ -577,7 +595,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.1 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for db-truncater.",
+        "Byte-equivalent --help and --version captured from upstream db-truncater binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R386: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -596,8 +620,8 @@
       "id": "sister-tool.db-analyser",
       "area": "sister-tools",
       "feature": "ChainDB forensic analyser \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBAnalyser.* + app/db-analyser.hs.",
-      "status": "absent",
-      "next_milestone": "R391",
+      "status": "partial",
+      "next_milestone": "R392",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/",
@@ -610,7 +634,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.2 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for db-analyser.",
+        "Byte-equivalent --help and --version captured from upstream db-analyser binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R391: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -629,8 +659,8 @@
       "id": "sister-tool.snapshot-converter",
       "area": "sister-tools",
       "feature": "Ledger snapshot format converter (mem \u2194 lmdb \u2194 lsm) \u2014 pure-Rust port mirroring upstream snapshot-converter.hs.",
-      "status": "absent",
-      "next_milestone": "R401",
+      "status": "partial",
+      "next_milestone": "R402",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs",
@@ -643,7 +673,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.3 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for snapshot-converter.",
+        "Byte-equivalent --help and --version captured from upstream snapshot-converter binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R401: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -662,8 +698,8 @@
       "id": "sister-tool.db-synthesizer",
       "area": "sister-tools",
       "feature": "Synthetic chain generator \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBSynthesizer.* + app/db-synthesizer.hs.",
-      "status": "absent",
-      "next_milestone": "R408",
+      "status": "partial",
+      "next_milestone": "R409",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/",
@@ -676,7 +712,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.1 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for db-synthesizer.",
+        "Byte-equivalent --help and --version captured from upstream db-synthesizer binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R408: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -695,8 +737,8 @@
       "id": "sister-tool.cardano-testnet",
       "area": "sister-tools",
       "feature": "Local testnet harness \u2014 pure-Rust port mirroring upstream cardano-testnet/src/Testnet/*.hs.",
-      "status": "absent",
-      "next_milestone": "R416",
+      "status": "partial",
+      "next_milestone": "R417",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-testnet/",
@@ -709,7 +751,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.2 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for cardano-testnet.",
+        "Byte-equivalent --help and --version captured from upstream cardano-testnet binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R416: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -728,8 +776,8 @@
       "id": "sister-tool.tx-generator",
       "area": "sister-tools",
       "feature": "Transaction-stream load generator \u2014 pure-Rust port mirroring upstream bench/tx-generator/src/Cardano/Benchmarking/*.hs.",
-      "status": "absent",
-      "next_milestone": "R434",
+      "status": "partial",
+      "next_milestone": "R435",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/bench/tx-generator/",
@@ -742,7 +790,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.3 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for tx-generator.",
+        "Byte-equivalent --help and --version captured from upstream tx-generator binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R434: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",
@@ -761,8 +815,8 @@
       "id": "sister-tool.dmq-node",
       "area": "sister-tools",
       "feature": "Delegated Mempool Queue diffusion-layer node (sister project for Mithril) \u2014 pure-Rust port mirroring upstream IntersectMBO/dmq-node.",
-      "status": "absent",
-      "next_milestone": "R450",
+      "status": "partial",
+      "next_milestone": "R451",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/dmq-node/dmq-node/",
@@ -775,7 +829,13 @@
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the D.1 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
-      "implemented_evidence": [],
+      "implemented_evidence": [
+        "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for dmq-node.",
+        "Byte-equivalent --help and --version captured from upstream dmq-node binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
+        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
+        "Workspace test contribution: +8.",
+        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+      ],
       "remaining_work": [
         "Skeleton round at R450: file-tree mirror + CLI parser scaffolding.",
         "Per-subcommand implementation rounds (size-banded 1-3 days each).",

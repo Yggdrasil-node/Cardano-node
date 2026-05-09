@@ -1,0 +1,10 @@
+Usage: cardano-testnet (cardano | create-env | version | help)
+
+Available options:
+  -h,--help                Show this help text
+
+Available commands:
+  cardano                  Start a testnet and keep it running until stopped
+  create-env               Create a sandbox for Cardano testnet
+  version                  Show cardano-testnet version
+  help                     Show cardano-testnet help

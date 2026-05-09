@@ -2,11 +2,11 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror:** none. R327 skeleton — minimal binary wrapper
-//! that delegates to `yggdrasil_kes_agent_control::run()`. The upstream binary's
-//! `Main.hs` (or per-app launcher) is mirrored into the lib's
-//! `run.rs` module across subsequent rounds.
+//! **Strict mirror:** none. R335-pattern minimal binary wrapper that
+//! delegates to `yggdrasil_kes_agent_control::run_main()`. The upstream binary's
+//! entry point is mirrored at the lib level via the per-tool parser
+//! and run-loop dispatch.
 
-fn main() -> eyre::Result<()> {
-    yggdrasil_kes_agent_control::run()
+fn main() -> std::process::ExitCode {
+    yggdrasil_kes_agent_control::run_main()
 }

@@ -1,0 +1,34 @@
+Usage: dmq-node [--host-addr IPv4] [--host-ipv6-addr IPv6] 
+                [-p|--port PORT_NUMBER] [--local-socket FILENAME] 
+                [-c|--configuration-file FILENAME] [-t|--topology-file FILENAME]
+                [--cardano-node-socket FILENAME] 
+                [--cardano-network-magic CARDANO_NETWORK_MAGIC] 
+                [--dmq-network-magic DMQ_NETWORK_MAGIC] [-v|--version]
+
+  Run the DMQ-Node
+
+Available options:
+  --host-addr IPv4         IPv4 that the node will bind to
+  --host-ipv6-addr IPv6    IPv6 that the node will bind to
+  -p,--port PORT_NUMBER    Port number that the node will bind to
+                           (default: 3141)
+  --local-socket FILENAME  Unix socket for node-to-client communication
+                           (default: "dmq-node.socket")
+  -c,--configuration-file FILENAME
+                           Configuration file for DMQ Node
+                           (default: "dmq.config.json")
+  -t,--topology-file FILENAME
+                           Topology file for DMQ Node
+                           (default: "dmq.topology.json")
+  --cardano-node-socket FILENAME
+                           Used for local connections to Cardano node
+                           (default: "cardano-node.socket")
+  --cardano-network-magic CARDANO_NETWORK_MAGIC
+                           The network magic of cardano-node client for local
+                           connections
+                           (default: 764824073)
+  --dmq-network-magic DMQ_NETWORK_MAGIC
+                           The network magic of the dmq network
+                           (default: 3141592)
+  -v,--version             Show dmq-node version
+  -h,--help                Show this help text

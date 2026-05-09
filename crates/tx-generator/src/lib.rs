@@ -1,23 +1,45 @@
-//! Transaction-stream load generator — pure-Rust port mirroring upstream bench/tx-generator/src/Cardano/Benchmarking/*.hs.
+//! Pure-Rust port of upstream `tx-generator`.
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror:** none. Yggdrasil-side parent shell + R327
-//! skeleton entry point for the `tx-generator` sister-tool crate. Per-file
-//! mirror tree under `src/` will be populated incrementally per the
-//! sister-tools port arc plan (R326–R459); each leaf module landed
-//! in subsequent rounds carries its own `## Naming parity` block.
-//!
-//! Upstream source vendored at:
-//! `.reference-haskell-cardano-node/bench/tx-generator/`.
+//! **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern
+//! file-mirror + CLI-parser skeleton for the `tx-generator` sister-tool crate.
+//! Per-leaf module mirrors land in subsequent rounds per the
+//! Sister-Tools Pure-Rust Port plan.
 
-/// Placeholder run-loop entry called by the binary `main`.
-///
-/// Subsequent rounds replace this stub with the concrete subcommand
-/// dispatcher matching the upstream binary's CLI surface.
+use std::io::Write;
+use std::process::ExitCode;
+
+pub mod parser;
+
+/// Process-exit-code wrapper around the run-loop dispatch.
+pub fn run_main() -> ExitCode {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    match parser::parse_args(&argv) {
+        Ok(_args) => match run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                let _ = writeln!(std::io::stderr(), "Error: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        Err(parser::ParseError::HelpRequested) => {
+            let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
+            ExitCode::SUCCESS
+        }
+        Err(parser::ParseError::VersionRequested) => {
+            let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
+            ExitCode::SUCCESS
+        }
+    }
+}
+
+/// Concrete run-loop entry. R335-pattern skeleton: returns the
+/// "not-yet-implemented" sentinel pending later round implementation.
+/// The CLI parser surface (--help / --version) IS functional and
+/// byte-equivalent to upstream.
 pub fn run() -> eyre::Result<()> {
     Err(eyre::eyre!(
-        "yggdrasil-tx-generator: not yet implemented (R327 skeleton); \
-         see docs/operational-runs/ for the tx-generator port progress."
+        "yggdrasil-tx-generator: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
     ))
 }

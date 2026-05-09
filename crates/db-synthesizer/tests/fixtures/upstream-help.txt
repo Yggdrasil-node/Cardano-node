@@ -1,0 +1,8 @@
+Invalid option `--help'
+
+Usage: db-synthesizer --config FILE --db PATH 
+                      [--shelley-operational-certificate FILE] 
+                      [--shelley-vrf-key FILE] [--shelley-kes-key FILE] 
+                      [--bulk-credentials-file FILE] 
+                      ((-s|--slots NUMBER) | (-b|--blocks NUMBER) | 
+                        (-e|--epochs NUMBER)) [-f | -a]

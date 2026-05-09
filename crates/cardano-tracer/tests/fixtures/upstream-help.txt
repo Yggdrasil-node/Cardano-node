@@ -1,0 +1,16 @@
+cardano-tracer/without RTView - the logging and monitoring service for Cardano
+nodes.
+
+Usage: cardano-tracer (-c|--config FILEPATH) [--state-dir FILEPATH] 
+                      [--min-log-severity SEVERITY] [-v|--version]
+
+Available options:
+  -c,--config FILEPATH     Configuration file for cardano-tracer
+  --state-dir FILEPATH     If specified, RTView saves its state in this
+                           directory
+  --min-log-severity SEVERITY
+                           Drop messages less severe than this.
+                           <Debug|Info|Notice|Warning|Error|Critical|Alert|Emergency>
+                           (default: Info)
+  -h,--help                Show this help text
+  -v,--version             Show version

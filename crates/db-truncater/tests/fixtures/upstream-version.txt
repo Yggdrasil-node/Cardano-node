@@ -1,0 +1,8 @@
+Invalid option `--version'
+
+Usage: db-truncater --db PATH 
+                    (--truncate-after-slot SLOT_NUMBER | 
+                      --truncate-after-block BLOCK_NUMBER) [--verbose]
+                    --config PATH [--threshold THRESHOLD]
+
+  Utility for truncating an ImmutableDB

@@ -1,0 +1,25 @@
+Usage: kes-agent-control [-c|--control-address ADDR] [-v|--verbose ARG] 
+                         [--retry-delay|--retry-interval ARG] 
+                         [--retry-exponential] [--retry-attempts ARG] COMMAND
+
+Available options:
+  -c,--control-address ADDR
+                           Socket address for 'control' connections to a running
+                           kes-agent process. ($KES_AGENT_CONTROL_PATH)
+  -v,--verbose ARG         Set verbosity
+  --retry-delay,--retry-interval ARG
+                           Connection retry interval (milliseconds).
+                           ($KES_AGENT_CONTROL_RETRY_INTERVAL)
+  --retry-exponential      Exponentially increase retry interval
+  --retry-attempts ARG     Number of connection retry attempts.
+                           ($KES_AGENT_CONTROL_RETRY_ATTEMPTS)
+  --version                Show version information
+  -h,--help                Show this help text
+
+Available commands:
+  gen-staged-key           
+  drop-staged-key          
+  export-staged-vkey       
+  install-key              
+  drop-key                 
+  info                     

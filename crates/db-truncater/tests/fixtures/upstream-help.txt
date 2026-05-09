@@ -1,0 +1,18 @@
+Usage: db-truncater --db PATH 
+                    (--truncate-after-slot SLOT_NUMBER | 
+                      --truncate-after-block BLOCK_NUMBER) [--verbose]
+                    --config PATH [--threshold THRESHOLD]
+
+  Utility for truncating an ImmutableDB
+
+Available options:
+  --db PATH                Path of the chain DB
+  --truncate-after-slot SLOT_NUMBER
+                           Remove all blocks with a higher slot number
+  --truncate-after-block BLOCK_NUMBER
+                           The block number of the intended new tip of the chain
+                           after truncation
+  --verbose                Enable verbose logging
+  --config PATH            Path to config file
+  --threshold THRESHOLD    PBftSignatureThreshold
+  -h,--help                Show this help text

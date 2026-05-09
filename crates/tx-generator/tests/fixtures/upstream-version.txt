@@ -1,0 +1,6 @@
+Invalid option `--version'
+
+Did you mean this?
+    version
+
+Usage: tx-generator COMMAND

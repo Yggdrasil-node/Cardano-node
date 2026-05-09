@@ -1,0 +1,68 @@
+Utility for converting snapshots among the different snapshot formats used by
+cardano-node.
+
+Usage: snapshot-converter (
+                            (--monitor-lsm-snapshots-in ARG --lsm-database ARG |
+                              --monitor-lmdb-snapshots-in ARG)
+                            --output-mem-snapshots-in ARG |
+                            (--input-lsm-snapshot ARG --input-lsm-database ARG |
+                              --input-mem ARG | --input-lmdb ARG) 
+                            (--output-lsm-snapshot ARG
+                              --output-lsm-database ARG |
+                              --output-mem ARG | --output-lmdb ARG))
+                          --config PATH [--threshold THRESHOLD]
+
+  # Running in oneshot mode
+
+      `snapshot-converter` can be invoked to convert a single snapshot to a different
+      format. The three formats supported at the moment are: Mem, LMDB and LSM.
+
+      As snapshots in Mem and LMDB are fully contained in one directory, providing
+      that one is enough. On the other hand, converting an LSM snapshot requires a
+      reference to the snapshot directory as well as the LSM database directory.
+
+      To run in oneshot mode, you have to provide input and output parameters as in:
+      ```
+      # mem to lsm
+      $ snapshot-converter --input-mem <PATH> --output-lsm-snapshot <PATH> --output-lsm-database <PATH> --config <PATH>
+      # mem to lmdb
+      $ snapshot-converter --input-mem <PATH> --output-lmdb <PATH> --config <PATH>
+
+      # lmdb to lsm
+      $ snapshot-converter --input-lmdb <PATH> --output-lsm-snapshot <PATH> --output-lsm-database --config <PATH>
+      # lmdb to mem
+      $ snapshot-converter --input-lmdb <PATH> --output-mem <PATH> --config <PATH>
+
+      # lsm to mem
+      $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-mem <PATH> --config <PATH>
+      # lsm to mem
+      $ snapshot-converter --input-lsm-snapshot <PATH> --input-lsm-database <PATH> --output-lmdb <PATH> --config <PATH>
+      ```
+
+      Note that the input and output paths need to be named after the slot number
+      of the contained ledger state, this means for example that a snapshot for
+      slot 100 has to be contained in a directory `100[_suffix]` and has to be
+      written to a directory `100[_some_other_suffix]`. Providing a wrong slot
+      number will throw an error.
+
+      This naming convention is the same expected by `cardano-node`.
+
+  # Running in daemon mode
+
+      `snapshot-converter` can be invoked as a daemon to monitor and convert
+      snapshots produced by a `cardano-node` into Mem format as they are
+      written by the node. This is only meaningful to run if your node
+      produces LMDB or LSM snapshots:
+
+      ```
+      # lsm to mem
+      $ snapshot-converter --monitor-lsm-snapshots-in <PATH> --lsm-database <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
+      # lmdb to mem
+      $ snapshot-converter --monitor-lmdb-snapshots-in <PATH> --output-mem-snapshots-in <PATH> --config <PATH>
+      ```
+
+
+Available options:
+  --config PATH            Path to config file
+  --threshold THRESHOLD    PBftSignatureThreshold
+  -h,--help                Show this help text
