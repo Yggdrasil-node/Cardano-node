@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-bech32"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream bech32 binary (BIP-0173 / CIP-0019 address encoding)."
+
+# R327 skeleton — bootstrap of the bech32 sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/deps/bech32/bech32/
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_bech32"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bech32"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }

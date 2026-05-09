@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-db-analyser"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream db-analyser ChainDB forensic analyser."
+
+# R327 skeleton — bootstrap of the db-analyser sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_db_analyser"
+path = "src/lib.rs"
+
+[[bin]]
+name = "db-analyser"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }

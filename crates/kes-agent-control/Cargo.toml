@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-kes-agent-control"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream kes-agent-control CLI for the kes-agent socket protocol."
+
+# R327 skeleton — bootstrap of the kes-agent-control sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/deps/kes-agent/kes-agent/
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_kes_agent_control"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kes-agent-control"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }

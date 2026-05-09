@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    # Existing crates (R273-R325 strict-mirror arc).
     "crates/cardano-cli",
     "crates/crypto",
     "crates/consensus",
@@ -8,6 +9,19 @@ members = [
     "crates/network",
     "crates/storage",
     "node",
+    # Sister-tool crates (R327 skeleton; R326-R459 sister-tools port arc).
+    "crates/bech32",
+    "crates/cardano-submit-api",
+    "crates/cardano-testnet",
+    "crates/cardano-tracer",
+    "crates/db-analyser",
+    "crates/db-synthesizer",
+    "crates/db-truncater",
+    "crates/dmq-node",
+    "crates/kes-agent",
+    "crates/kes-agent-control",
+    "crates/snapshot-converter",
+    "crates/tx-generator",
 ]
 resolver = "2"
 

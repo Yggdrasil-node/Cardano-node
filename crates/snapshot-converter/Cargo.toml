@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-snapshot-converter"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream snapshot-converter ledger snapshot format converter (mem ↔ lmdb ↔ lsm)."
+
+# R327 skeleton — bootstrap of the snapshot-converter sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_snapshot_converter"
+path = "src/lib.rs"
+
+[[bin]]
+name = "snapshot-converter"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }

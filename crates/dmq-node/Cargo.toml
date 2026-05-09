@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-dmq-node"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream dmq-node Delegated Mempool Queue diffusion layer (sister project for Mithril)."
+
+# R327 skeleton — bootstrap of the dmq-node sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/deps/dmq-node/
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_dmq_node"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dmq-node"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }

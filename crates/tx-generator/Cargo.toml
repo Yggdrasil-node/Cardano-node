@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-tx-generator"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator."
+
+# R327 skeleton — bootstrap of the tx-generator sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/bench/tx-generator/
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_tx_generator"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tx-generator"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }

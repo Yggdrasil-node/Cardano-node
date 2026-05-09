@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-cardano-testnet"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream cardano-testnet local multi-node testnet harness."
+
+# R327 skeleton — bootstrap of the cardano-testnet sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/cardano-testnet/
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_cardano_testnet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cardano-testnet"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }

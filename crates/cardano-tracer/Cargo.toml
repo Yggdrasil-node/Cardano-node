@@ -1,0 +1,28 @@
+[package]
+name = "yggdrasil-cardano-tracer"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+description = "Pure-Rust port of the upstream cardano-tracer standalone trace-forwarder + log + metrics aggregator."
+
+# R327 skeleton — bootstrap of the cardano-tracer sister-tool crate per the
+# R326–R459 sister-tools port arc plan.
+# Upstream source vendored at:
+# .reference-haskell-cardano-node/cardano-tracer/
+
+[lints]
+workspace = true
+
+[lib]
+name = "yggdrasil_cardano_tracer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cardano-tracer"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+eyre = { workspace = true }
