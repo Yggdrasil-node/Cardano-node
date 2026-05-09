@@ -98,11 +98,15 @@ All five are the required verification expectations before declaring work done. 
 Other parity-flow gates (run when the touched area is in scope):
 
 ```bash
-python3 scripts/check-parity-matrix.py            # validates docs/parity-matrix.json schema + on-disk paths
+python3 scripts/check-parity-matrix.py            # validates docs/parity-matrix.json schema + on-disk paths (CI gate)
+python3 scripts/check-fixture-manifest.py         # cross-checks cardano-base SHA pin + vendored corpus (CI gate)
+python3 scripts/check-reference-artifacts.py      # validates .reference-haskell-cardano-node/install/ tree (local only)
 python3 scripts/audit-strict-mirror.py            # rebuild docs/strict-mirror-audit.tsv after a rename/annotate change
 python3 .claude/scripts/filetree.py check         # reports stale .claude/filetree/manifest.json entries
 bash    scripts/setup-reference.sh                # refresh .reference-haskell-cardano-node/ to the policy tag
 ```
+
+The first two (`check-parity-matrix.py` + `check-fixture-manifest.py`) run in CI on every build because they operate on checked-in files. `check-reference-artifacts.py` requires the vendored 1.3 GB upstream install tree (built by `setup-reference.sh`); it's a local/operator check, not a CI gate.
 
 Parity-flow surfaces:
 

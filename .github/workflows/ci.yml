@@ -51,6 +51,30 @@ jobs:
       - name: Strict-mirror drift-guard
         run: python3 scripts/check-strict-mirror.py --fail-on-violation
 
+      # Parity-matrix path/schema validator.
+      # Walks docs/parity-matrix.json and asserts every entry's
+      # `haskell_reference[*].path` and `rust_surface[*].path` exists
+      # on disk + every status / area / milestone is in the allowed
+      # set. Required when matrix entries change; cheap to run on
+      # every CI build.
+      - name: Parity-matrix validator
+        run: python3 scripts/check-parity-matrix.py
+
+      # Fixture-manifest validator. Cross-checks the cardano-base
+      # SHA pin across `node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
+      # `specs/upstream-test-vectors/cardano-base/<SHA>/`,
+      # `docs/SPECS.md`, and `docs/UPSTREAM_PARITY.md`. Asserts every
+      # required upstream-vendored fixture corpus is present.
+      - name: Fixture-manifest validator
+        run: python3 scripts/check-fixture-manifest.py
+
+      # Reference-artifacts validator runs locally only:
+      # `scripts/check-reference-artifacts.py` requires the vendored
+      # `.reference-haskell-cardano-node/install/` tree (~1.3 GB,
+      # rebuilt by `bash scripts/setup-reference.sh`). CI does not
+      # carry the install tree; operators run the check before parity
+      # rehearsals.
+
   # cargo-deny gate — supply-chain hygiene.  Surfaces unmaintained,
   # vulnerable, or copyleft transitive dependencies as a CI failure.
   # Audit finding L-4.
