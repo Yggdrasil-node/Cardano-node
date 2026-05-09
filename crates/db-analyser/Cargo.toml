@@ -27,3 +27,4 @@ path = "src/main.rs"
 clap = { workspace = true }
 eyre = { workspace = true }
 thiserror = { workspace = true }
+yggdrasil-ledger = { path = "../ledger" }

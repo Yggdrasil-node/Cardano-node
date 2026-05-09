@@ -622,7 +622,7 @@
       "area": "sister-tools",
       "feature": "ChainDB forensic analyser \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBAnalyser.* + app/db-analyser.hs.",
       "status": "partial",
-      "next_milestone": "R392",
+      "next_milestone": "R352",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/",
@@ -632,21 +632,22 @@
       "rust_surface": [
         {
           "path": "crates/db-analyser/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the B.2 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R351 typed config surface. Per-era HasAnalysis + Analysis.hs ledger-replay logic pending."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for db-analyser.",
         "Byte-equivalent --help and --version captured from upstream db-analyser binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
-        "Workspace test contribution: +8.",
-        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+        "R351 typed config surface: types.rs ports the full upstream Types.hs surface \u2014 DBAnalyserConfig (7-field record), AnalysisName (13-variant sum covering ShowSlotBlockNo / CountTxOutputs / ShowBlockHeaderSize / ShowBlockTxsSize / ShowEBBs / OnlyValidation / StoreLedgerStateAt / CountBlocks / CheckNoThunksEvery / TraceLedgerProcessing / BenchmarkLedgerOps / ReproMempoolAndForge / GetBlockApplicationMetrics), AnalysisResult (ResultCountBlock | ResultMaxHeaderSize), NumberOfBlocks newtype, Limit (Limit u64 | Unlimited), LedgerDBBackend (V2InMem | V2LSM), ValidateBlocks (ValidateAllBlocks | MinimumBlockValidation), LedgerApplicationMode (LedgerReapply | LedgerApply), SelectDB (SelectImmutableDB), WithOrigin<A> (Origin | At a). Reuses yggdrasil_ledger::SlotNo. 14 types.rs unit tests + 6 parser tests + 2 golden = 22 db-analyser tests."
       ],
       "remaining_work": [
-        "Skeleton round at R391: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
-        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-analyser.",
-        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R352+ Parsers.hs port: clap-based parser for the 13-variant AnalysisName + Limit + LedgerDBBackend + ValidateBlocks + per-mode flag combinations (--analyse-from, --analyse, --num-blocks-validation, --store-ledger, etc.). Mutually-exclusive analysis modes need careful flag arbitration.",
+        "R353+ HasAnalysis.hs port: per-era block iteration via yggdrasil-ledger eras (Byron/Shelley/Allegra/Mary/Alonzo/Babbage/Conway).",
+        "R354+ Analysis.hs port: 13 analysis dispatch arms (1057-line upstream module \u2014 likely needs sub-rounds).",
+        "R355+ CSV.hs port: structured output writers for BenchmarkLedgerOps + GetBlockApplicationMetrics.",
+        "R356+ Run.hs port: open ChainDB + dispatch + report.",
+        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-analyser (storage-format divergence).",
+        "Closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-analyser --help` (modulo program name).",

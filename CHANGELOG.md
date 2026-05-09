@@ -274,6 +274,31 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R351 — db-analyser: typed config surface (port of Types.hs).**
+  Lands the typed configuration surface for db-analyser. New types.rs
+  module ports the full upstream Cardano.Tools.DBAnalyser.Types
+  surface: DBAnalyserConfig (7-field record: db_dir, verbose, select_db,
+  validation, analysis, conf_limit, ldb_backend), AnalysisName (13-variant
+  sum covering every analysis mode the upstream binary exposes —
+  ShowSlotBlockNo / CountTxOutputs / ShowBlockHeaderSize /
+  ShowBlockTxsSize / ShowEBBs / OnlyValidation / StoreLedgerStateAt /
+  CountBlocks / CheckNoThunksEvery / TraceLedgerProcessing /
+  BenchmarkLedgerOps / ReproMempoolAndForge / GetBlockApplicationMetrics),
+  AnalysisResult (ResultCountBlock | ResultMaxHeaderSize), NumberOfBlocks
+  newtype, Limit (Limit u64 | Unlimited), LedgerDBBackend (V2InMem |
+  V2LSM), ValidateBlocks (ValidateAllBlocks | MinimumBlockValidation),
+  LedgerApplicationMode (LedgerReapply | LedgerApply), SelectDB
+  (SelectImmutableDB), WithOrigin<A> (Origin | At a). Reuses
+  yggdrasil_ledger::SlotNo. Default impls match upstream's documented
+  semantics (LedgerDBBackend=V2InMem, ValidateBlocks=
+  MinimumBlockValidation, LedgerApplicationMode=LedgerReapply). Cargo
+  deps: yggdrasil-ledger added. db-analyser tests: 8 → 22 (+14: 1
+  WithOrigin + 1 SelectDB + 1 Limit + 3 default-impl + 4 AnalysisName
+  variants + 2 AnalysisResult + 1 DBAnalyserConfig + 1 NumberOfBlocks
+  ord). Workspace: 5,150 → 5,164. Parity-matrix entry
+  sister-tool.db-analyser advanced: next_milestone R392 → R352;
+  remaining_work refreshed with the per-module roadmap (Parsers →
+  HasAnalysis → Analysis → CSV → Run + integration + closeout).
 - **R350 — db-truncater: comparison harness for operator soak vs upstream.**
   Ships node/scripts/compare_db_truncater_to_upstream.sh — 200-line
   bash script for verification of yggdrasil-db-truncater against the

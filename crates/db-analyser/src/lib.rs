@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `db-analyser`.
 //!
 //! ## Naming parity
@@ -6,11 +7,23 @@
 //! file-mirror + CLI-parser skeleton for the `db-analyser` sister-tool crate.
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
+//!
+//! Layout mapping (R351 ships types.rs; later rounds populate the rest):
+//!
+//! | Upstream `.hs`                                       | Yggdrasil `.rs`              |
+//! |------------------------------------------------------|------------------------------|
+//! | `Tools/DBAnalyser/Types.hs`                          | `types.rs`                   |
+//! | `app/DBAnalyser/Parsers.hs`                          | `parser.rs`                  |
+//! | `Tools/DBAnalyser/HasAnalysis.hs`                    | `has_analysis.rs` (pending)  |
+//! | `Tools/DBAnalyser/Analysis.hs`                       | `analysis.rs` (pending)      |
+//! | `Tools/DBAnalyser/CSV.hs`                            | `csv.rs` (pending)           |
+//! | `Tools/DBAnalyser/Run.hs`                            | `run.rs` (pending)           |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {
