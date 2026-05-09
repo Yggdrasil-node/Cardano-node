@@ -15,6 +15,10 @@
 //! emitted — no pipelining — which is fine for monitoring scrapers.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Tracing/Tracers/Startup.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side Prometheus metrics HTTP server. Exposes `/metrics` endpoint with the workspace's `MetricsSnapshot` exposition. Upstream's equivalent is `cardano-tracer` (separate process via the trace-forwarder mini-protocol); Yggdrasil's binary-side server is in-process for operational simplicity.
 
 use std::sync::Arc;
 

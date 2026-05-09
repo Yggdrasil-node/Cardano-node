@@ -28,6 +28,10 @@
 //! Reference:
 //! `ouroboros-network-protocols` — `LocalTxSubmission`, `LocalStateQuery`,
 //! and `LocalTxMonitor`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side NtC local socket dispatcher. Owns the LocalStateQuery + LocalTxMonitor + LocalTxSubmission server-side handlers that wire to `LedgerStateSnapshot` and the `SharedMempool`. Upstream's equivalent functionality is split across `Ouroboros.Network.NodeToClient` + per-protocol server drivers + `Cardano.Node.Run`; Yggdrasil's `local_server.rs` is the binary-side orchestrator.
 
 use std::sync::Arc;
 

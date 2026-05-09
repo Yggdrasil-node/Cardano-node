@@ -1,3 +1,11 @@
+//! VRF (Verifiable Random Function) primitives — Praos VRF (ietfdraft03/13) + std/batchcompat variants.
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Crypto/VRF.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Cardano/Crypto/VRF.hs` module.
+
 use crate::{CryptoError, SigningKey};
 use curve25519_dalek::traits::IsIdentity;
 use curve25519_dalek::{

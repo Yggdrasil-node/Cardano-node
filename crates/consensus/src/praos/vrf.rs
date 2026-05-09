@@ -15,6 +15,13 @@
 //! - `vrf_input` — mode-aware dispatcher.
 //!
 //! Extracted from `praos.rs` in R273a (Phase γ §R273 first slice).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Consensus/Protocol/Praos/VRF.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Ouroboros/Consensus/Protocol/Praos/VRF.hs` module.
 
 use yggdrasil_crypto::blake2b::hash_bytes_256;
 use yggdrasil_ledger::{Nonce, SlotNo};

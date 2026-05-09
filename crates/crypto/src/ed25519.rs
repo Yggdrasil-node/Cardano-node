@@ -1,3 +1,11 @@
+//! Ed25519 DSIGN primitives (signing key, verification key, signature, sign/verify).
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Crypto/DSIGN/Ed25519.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Cardano/Crypto/DSIGN/Ed25519.hs` module.
+
 use crate::CryptoError;
 use ed25519_dalek::{
     Signature as DalekSignature, Signer, SigningKey as DalekSigningKey, VerifyingKey,

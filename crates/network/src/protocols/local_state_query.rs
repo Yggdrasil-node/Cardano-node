@@ -1,3 +1,11 @@
+//! LocalStateQuery mini-protocol type-level definitions (state machine + message types).
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Network/Protocol/LocalStateQuery/Type.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Ouroboros/Network/Protocol/LocalStateQuery/Type.hs` module.
+
 /// States of the LocalStateQuery mini-protocol state machine.
 ///
 /// The LocalStateQuery protocol lets a local client acquire a ledger-state

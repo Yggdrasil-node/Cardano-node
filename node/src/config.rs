@@ -6,6 +6,10 @@
 //! protocol versions, and consensus parameters.
 //!
 //! Reference: `cardano-node/configuration/` in the IntersectMBO repository.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side binary `NodeConfigFile` struct + JSON-first deserializer (with YAML fallback) + PascalCase upstream key aliases (`TargetNumberOfKnownPeers`, `MaxKnownMajorProtocolVersion`, `ShelleyGenesisHash`, etc.). Upstream's equivalent is split across `Cardano.Node.Configuration.POM` + `Cardano.Tracing.Config` + per-subsystem configs; Yggdrasil unifies into a single struct that the binary's CLI override layer applies on top of.
 
 use std::collections::BTreeMap;
 use std::fs;

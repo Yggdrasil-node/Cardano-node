@@ -22,6 +22,13 @@
 //! | 1     | 2       | 32 B    | 64 + 2×32 = 128 B            |
 //! | d     | 2^d     | 32 B    | 64 + d×64 B                  |
 //! | 6     | 64      | 32 B    | 64 + 6×64 = 448 B (mainnet)  |
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Crypto/KES/Sum.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Cardano/Crypto/KES/Sum.hs` module.
 
 use crate::blake2b::hash_bytes_256;
 use crate::ed25519::SigningKey;

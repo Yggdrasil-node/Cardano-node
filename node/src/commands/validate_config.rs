@@ -20,6 +20,10 @@
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Configuration/POM.hs>
 //!  +         <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Configuration/Logging.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `validate-config` runner. Wires the binary's `validate-config` subcommand entry point to the actual validation logic in sibling `commands/configuration.rs`. No upstream parallel.
 
 use std::path::PathBuf;
 

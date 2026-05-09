@@ -1,3 +1,8 @@
+//! Single-period Key-Evolving Signatures (Single + CompactSingle + Simple variants).
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side single-period KES aggregator. Carries the Single, CompactSingle, and Simple variants from upstream `Cardano.Crypto.KES.{Single,CompactSingle,Simple}` in one focused module; the multi-period Sum composition lives in sibling `sum_kes.rs` (a strict mirror of `Cardano/Crypto/KES/Sum.hs`). Upstream's `Cardano.Crypto.KES` is just a re-export umbrella module — Yggdrasil's `kes.rs` carries actual implementation, so the basename match would be misleading.
+
 use crate::{CryptoError, Signature, SigningKey, VerificationKey};
 use std::fmt;
 use subtle::ConstantTimeEq;

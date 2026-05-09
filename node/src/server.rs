@@ -11,6 +11,10 @@
 //!
 //! Reference: `ouroboros-network-framework`'s inbound-governor session
 //! lifecycle.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side inbound server. Accepts NtN connections, runs the per-peer protocol bundle (handshake → mux → ChainSync server + BlockFetch server + KeepAlive server + TxSubmission server + PeerSharing server). Upstream's `Cardano.Diffusion.NodeToNode.runDiffusionM` carries this concern; Yggdrasil's `server.rs` is the binary-side equivalent.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

@@ -2,6 +2,13 @@
 //!
 //! Types match the Shelley CDDL specification:
 //! <https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/shelley/impl/cddl/data/shelley.cddl>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Shelley.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Cardano/Ledger/Shelley.hs` module.
 
 use std::collections::{BTreeMap, HashMap};
 

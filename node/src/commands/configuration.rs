@@ -9,6 +9,10 @@
 //! one giant monoid.
 //!
 //! Reference: <https://github.com/IntersectMBO/cardano-node/blob/master/cardano-node/src/Cardano/Node/Configuration/POM.hs>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side `validate-config` subcommand handler. Performs operator preflight against `NodeConfigFile` (config + peer-snapshot inputs, recovery state, genesis-hash integrity, governor sanity, KES/Praos invariants). No upstream parallel — `cardano-node`'s equivalent is a runtime-startup check, not a separate subcommand.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

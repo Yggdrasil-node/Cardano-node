@@ -14,6 +14,13 @@
 //!
 //! Reference:
 //! <https://github.com/IntersectMBO/cardano-ledger/tree/master/eras/alonzo/impl/cddl>
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Cardano/Ledger/Alonzo.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Cardano/Ledger/Alonzo.hs` module.
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;

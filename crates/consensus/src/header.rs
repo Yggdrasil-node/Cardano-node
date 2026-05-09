@@ -6,6 +6,13 @@
 //! the KES period window, and the KES signature itself.
 //!
 //! Reference: `Cardano.Protocol.TPraos.BHeader` in `cardano-ledger`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Consensus/Protocol/Praos/Header.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Ouroboros/Consensus/Protocol/Praos/Header.hs` module.
 
 use yggdrasil_crypto::ed25519::VerificationKey;
 use yggdrasil_crypto::sum_kes::{SumKesSignature, verify_sum_kes};

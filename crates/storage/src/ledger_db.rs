@@ -1,3 +1,11 @@
+//! LedgerDB — restorable ledger snapshots with file-backed persistence.
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Consensus/Storage/LedgerDB.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Ouroboros/Consensus/Storage/LedgerDB.hs` module.
+
 use yggdrasil_ledger::SlotNo;
 
 use crate::error::StorageError;

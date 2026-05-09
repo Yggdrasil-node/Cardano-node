@@ -5,6 +5,10 @@
 //! definite- and indefinite-length arrays/maps, and simple values.
 //!
 //! Reference: RFC 8949 — Concise Binary Object Representation (CBOR).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side workspace-wide CBOR helper module. Surfaces `Encoder` / `Decoder` types + reusable encoding/decoding combinators (e.g. `vec_with_strict_capacity`, `nullable`, `signed_integer_*`) consumed by every per-era ledger codec. Upstream's `Cardano.Binary` (cardano-base) covers this concern across multiple sub-modules; Yggdrasil aggregates into one `cbor.rs` for ergonomics. The Byron-specific `Cardano.Chain.Common.CBOR.hs` audit basename hit was wrong (Byron-only scope, while Yggdrasil's helpers serve all eras).
 
 use crate::error::LedgerError;
 

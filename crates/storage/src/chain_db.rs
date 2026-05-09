@@ -1,3 +1,11 @@
+//! ChainDB coordinator — manages immutable + volatile + ledger stores together.
+//! ## Naming parity
+//!
+//! **Strict mirror:** Ouroboros/Consensus/Storage/ChainDB.hs.
+//! Filename matches upstream basename (or flattens upstream
+//! directory); the module is the canonical 1:1 mirror surface
+//! for the Rust port of upstream's `Ouroboros/Consensus/Storage/ChainDB.hs` module.
+
 use yggdrasil_ledger::{
     Block, CborDecode, CborEncode, LedgerState, LedgerStateCheckpoint, Point, SlotNo,
 };
