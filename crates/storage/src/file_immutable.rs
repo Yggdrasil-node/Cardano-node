@@ -360,6 +360,31 @@ impl ImmutableStore for FileImmutable {
         self.mark_clean()?;
         Ok(removed)
     }
+
+    fn trim_after_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
+        self.mark_dirty()?;
+        let to_remove: Vec<HeaderHash> = self
+            .chain
+            .iter()
+            .filter(|hash| self.index[hash].header.slot_no > slot)
+            .copied()
+            .collect();
+        let removed = to_remove.len();
+        for hash in &to_remove {
+            let cbor_path = self.block_path(hash);
+            if cbor_path.exists() {
+                fs::remove_file(&cbor_path)?;
+            }
+            let json_path = self.legacy_json_block_path(hash);
+            if json_path.exists() {
+                fs::remove_file(&json_path)?;
+            }
+            self.index.remove(hash);
+        }
+        self.chain.retain(|hash| !to_remove.contains(hash));
+        self.mark_clean()?;
+        Ok(removed)
+    }
 }
 
 /// Encode a byte slice as lowercase hex.

@@ -274,6 +274,33 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R347 — storage: ImmutableStore::trim_after_slot extension (db-truncater unblock).**
+  Extends the ImmutableStore trait with trim_after_slot — the inverse
+  of the existing trim_before_slot GC primitive. Removes all immutable
+  blocks with slots strictly after the given slot; blocks at the slot
+  or earlier are retained. Implementations on both InMemoryImmutable
+  (simple retain) and FileImmutable (full crash-safe variant with
+  mark-dirty / delete CBOR + legacy-JSON / mark-clean ceremony,
+  mirroring the existing trim_before_slot pattern). ChainDb wrapper:
+  truncate_immutable_after_slot delegates to the storage primitive
+  with a docstring warning that callers must coordinate volatile +
+  ledger cleanup separately. This unblocks Phase B.1 (db-truncater)
+  by providing the storage-level truncation primitive that
+  db-truncater's Run.hs-equivalent implementation needs at R388+.
+  Tests: +11 (7 InMemoryImmutable cases including
+  inverse_of_trim_before_slot invariant; 2 FileImmutable cases with
+  crash-safe re-open verification; 2 ChainDb cases including
+  volatile/ledger isolation contract). Workspace: 5,115 → 5,126.
+- **R346 — closure-status refresh for R338-R345 cardano-submit-api Phase A.2 arc.**
+  Updates docs/PARITY_SUMMARY.md Status banner: 336+ → 345+ rounds,
+  prepared/updated date 2026-05-10, Phase A.2 cardano-submit-api
+  implementation arc added to closed-arcs list. Workspace test count
+  refreshed 4,982 → 5,115 (+133 in this session). Audit table
+  unchanged at 257 (a) + 215 (c) = 472 graded files (R338-R345
+  populated already-tracked stub files rather than adding new ones).
+  Notes: cardano-submit-api closeout to verified_11_0_1 gated on
+  operator running node/scripts/compare_submit_api_to_upstream.sh
+  and reporting an empty diff.
 - **R345 — cardano-submit-api comparison harness: operator-runnable soak vs upstream.**
   Ships node/scripts/compare_submit_api_to_upstream.sh — 175-line bash
   script that POSTs canonical inputs (empty body, malformed CBOR) to

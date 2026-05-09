@@ -86,6 +86,19 @@ pub trait ImmutableStore {
     /// the official node periodically garbage-collects immutable chunks that
     /// are no longer needed for chain recovery or ledger replay.
     fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError>;
+
+    /// Removes all immutable blocks with slots strictly **after** `slot`.
+    ///
+    /// Returns the number of blocks removed. Blocks at `slot` or earlier are
+    /// retained. This is the inverse of [`Self::trim_before_slot`] and is
+    /// the storage primitive used by the `db-truncater` operator tool to
+    /// rewind a ChainDB to an earlier point.
+    ///
+    /// Reference: `Ouroboros.Consensus.Storage.ImmutableDB.Tools.DBTruncater`
+    /// — upstream's `db-truncater` rewinds a ChainDB by truncating the
+    /// immutable-DB to a specified slot, dropping all blocks beyond that
+    /// point. The operation is destructive and irreversible.
+    fn trim_after_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError>;
 }
 
 /// In-memory immutable store for tests and interface stabilization.
@@ -161,6 +174,12 @@ impl ImmutableStore for InMemoryImmutable {
     fn trim_before_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
         let before = self.blocks.len();
         self.blocks.retain(|b| b.header.slot_no >= slot);
+        Ok(before - self.blocks.len())
+    }
+
+    fn trim_after_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
+        let before = self.blocks.len();
+        self.blocks.retain(|b| b.header.slot_no <= slot);
         Ok(before - self.blocks.len())
     }
 }

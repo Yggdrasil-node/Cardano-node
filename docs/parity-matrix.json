@@ -427,7 +427,7 @@
       "area": "sister-tools",
       "feature": "HTTP API for transaction submission \u2014 pure-Rust port mirroring upstream cardano-submit-api/src/Cardano/TxSubmit/*.hs.",
       "status": "partial",
-      "next_milestone": "R346",
+      "next_milestone": "R354",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-submit-api/",

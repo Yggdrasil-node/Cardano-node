@@ -402,6 +402,29 @@ where
         self.immutable.trim_before_slot(slot)
     }
 
+    /// Truncates the immutable chain to slots <= `slot`, removing all
+    /// blocks with strictly larger slot numbers.
+    ///
+    /// This is the coordinated counterpart to `ImmutableStore::trim_after_slot`
+    /// and the storage primitive used by the `db-truncater` operator tool
+    /// to rewind a ChainDB to an earlier point. Unlike
+    /// [`Self::gc_immutable_before_slot`] (which is GC), this is
+    /// destructive *forward* truncation: blocks beyond `slot` are
+    /// permanently removed.
+    ///
+    /// **Warning:** the operator must coordinate this with the volatile-DB
+    /// and ledger-store state — leaving stale ledger snapshots ahead of
+    /// the truncation point would put the ChainDB into an inconsistent
+    /// state. The `db-truncater` tool wraps this call with the
+    /// appropriate volatile/ledger cleanup at R388+.
+    ///
+    /// Returns the number of blocks removed.
+    ///
+    /// Reference: `Ouroboros.Consensus.Storage.ImmutableDB.Tools.DBTruncater`.
+    pub fn truncate_immutable_after_slot(&mut self, slot: SlotNo) -> Result<usize, StorageError> {
+        self.immutable.trim_after_slot(slot)
+    }
+
     /// Garbage-collects volatile blocks with slots strictly before `slot`.
     ///
     /// This is the coordinated counterpart to `VolatileStore::garbage_collect`
