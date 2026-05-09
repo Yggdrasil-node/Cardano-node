@@ -93,3 +93,7 @@ logs/
 *.profraw
 coverage/
 lcov.info
+
+# Python tooling artifacts
+__pycache__/
+*.pyc
