@@ -29,38 +29,55 @@ description: "Architecture, parity, and contributing references for developers a
     </a>
   </li>
   <li>
-    <a class="yg-card" href="{{ '/PARITY_PLAN/' | relative_url }}">
+    <a class="yg-card" href="{{ '/PARITY_PROOF/' | relative_url }}">
       <span class="yg-card-arrow">→</span>
-      <span class="yg-card-title">Parity plan</span>
-      <span class="yg-card-desc">Exhaustive subsystem-by-subsystem comparison against upstream Haskell.</span>
+      <span class="yg-card-title">Parity proof</span>
+      <span class="yg-card-desc">Operational verification reference: 25/25 cardano-cli LSQ subcommands, consensus sidecar persistence, remaining gaps, runbook.</span>
     </a>
   </li>
   <li>
     <a class="yg-card" href="{{ '/PARITY_SUMMARY/' | relative_url }}">
       <span class="yg-card-arrow">→</span>
       <span class="yg-card-title">Parity summary</span>
-      <span class="yg-card-desc">High-level parity status for management and non-engineering audiences.</span>
-    </a>
-  </li>
-  <li>
-    <a class="yg-card" href="{{ '/AUDIT_VERIFICATION_2026Q2/' | relative_url }}">
-      <span class="yg-card-arrow">→</span>
-      <span class="yg-card-title">2026-Q2 audit</span>
-      <span class="yg-card-desc">The audit document driving the closure cycle, with the per-slice closure-status table.</span>
+      <span class="yg-card-desc">Subsystem status table + per-function inventory + cumulative round audit history (management + stakeholder facing).</span>
     </a>
   </li>
   <li>
     <a class="yg-card" href="{{ '/UPSTREAM_PARITY/' | relative_url }}">
       <span class="yg-card-arrow">→</span>
       <span class="yg-card-title">Upstream parity matrix</span>
-      <span class="yg-card-desc">Pinned IntersectMBO commit SHAs and subsystem references.</span>
+      <span class="yg-card-desc">Pinned IntersectMBO commit SHAs, subsystem-reference table, drift snapshot, open gaps.</span>
+    </a>
+  </li>
+</ul>
+
+### Archived planning docs
+
+These documents drove the project's planning + audit cycles before
+the R273-rename + Phase A–F (R274–R301) execution arc shipped. They
+are preserved as audit-trail evidence; for current state, follow the
+live links above.
+
+<ul class="yg-cards" markdown="0">
+  <li>
+    <a class="yg-card" href="{{ '/PARITY_PLAN/' | relative_url }}">
+      <span class="yg-card-arrow">→</span>
+      <span class="yg-card-title">Parity plan (2026-03 archive)</span>
+      <span class="yg-card-desc">Original 2026-03-26 pre-execution planning doc. Phases A–F shipped via R274–R298 — see live successors above.</span>
+    </a>
+  </li>
+  <li>
+    <a class="yg-card" href="{{ '/AUDIT_VERIFICATION_2026Q2/' | relative_url }}">
+      <span class="yg-card-arrow">→</span>
+      <span class="yg-card-title">2026-Q2 audit (archive)</span>
+      <span class="yg-card-desc">2026-Q2 sanity audit. R287 confirmed every C-1/H-1/H-2/M-1..M-8/L-1..L-9 finding closed in the 2026-Q3 operational pass.</span>
     </a>
   </li>
   <li>
     <a class="yg-card" href="{{ '/UPSTREAM_RESEARCH/' | relative_url }}">
       <span class="yg-card-arrow">→</span>
-      <span class="yg-card-title">Upstream research</span>
-      <span class="yg-card-desc">Research notes on the Haskell node subsystems consumed during the port.</span>
+      <span class="yg-card-title">Upstream research (archive)</span>
+      <span class="yg-card-desc">Pre-plan Haskell node research (2026-05-01). Superseded by Architecture, Parity proof, and the per-file strict-mirror audit TSV.</span>
     </a>
   </li>
 </ul>

@@ -2,15 +2,33 @@
 
 Keep these documents synchronized with the implemented workspace, not with speculative future goals.
 
-## Strict 1:1 file-mirror policy (R274+)
+## Validators that protect this tree
 
-Every production `.rs` here either mirrors a single canonical upstream
-`.hs` file by snake_case basename (with directory-prefix fallback for
-sibling collisions) OR carries a `## Naming parity` docstring stanza
-ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
-file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
-(warn-only since R275; fail-build at R288). Allowlist source-of-truth:
-[`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv).
+`docs/` carries policy + parity + operator-facing markdown, not Rust
+code, so the workspace strict-mirror file-policy (R274+) does not
+apply directly here. Three validators guard this tree's invariants:
+
+- `python3 scripts/check-parity-matrix.py` (CI gate since R303) —
+  validates `parity-matrix.json` schema + every
+  `haskell_reference.path` and `rust_surface.path` exists on disk.
+  This directory hosts the source-of-truth `parity-matrix.json`.
+- `python3 scripts/check-fixture-manifest.py` (CI gate since R303) —
+  cross-checks the `cardano-base` SHA pin across
+  `node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
+  `specs/upstream-test-vectors/cardano-base/<SHA>/`, `SPECS.md`,
+  and `UPSTREAM_PARITY.md` (this directory's own pin matrix).
+- `python3 scripts/check-strict-mirror.py --fail-on-violation`
+  (R288) — uses [`strict-mirror-audit.tsv`](strict-mirror-audit.tsv)
+  as its allowlist; this directory is the source of truth for the
+  audit table.
+
+When adding a new top-level `.md` to `docs/`, decide its role first
+(see [`reference.md`](reference.md) for the "Architecture & parity"
++ "Specs & dependencies" + "Validation & release" + "Archived
+planning docs" sections). Closed/historical docs go in
+[`archive/`](archive/) with explicit Jekyll permalinks; per-round
+records go in [`operational-runs/`](operational-runs/) and are
+immutable once committed.
 
 ## Scope
 - `ARCHITECTURE.md`, `DEPENDENCIES.md`, `SPECS.md`, `CONTRIBUTING.md`, and the
