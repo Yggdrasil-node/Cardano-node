@@ -376,13 +376,14 @@ pub(super) fn registry_mark_bootstrap_cooling(
     }
 }
 
-#[allow(dead_code)]
-mod _runstate_impl_marker {
-    // Marker module — keeps the split impl-block boundary visible and
-    // prevents accidental insertion of unrelated items between the two
-    // halves of `impl ReconnectingRunState`.
-}
-
+// === Second `impl ReconnectingRunState` block — progress tracking + ===
+// === reconnect-cycle counters + sync-step trace surfaces.            ===
+//
+// Splitting the impl into two blocks (constructor / lifecycle, then
+// progress tracking) keeps each block focused. The previous
+// `_runstate_impl_marker` module served the same purpose; replaced
+// with a comment line in R286 since a marker module has the same
+// visual effect without carrying a `dead_code` allow.
 impl ReconnectingRunState {
     pub(super) fn record_progress(&mut self, progress: &MultiEraSyncProgress) {
         self.total_blocks += progress.fetched_blocks;

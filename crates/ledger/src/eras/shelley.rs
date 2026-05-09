@@ -1884,14 +1884,6 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
-    fn mk_txout(amt: u64) -> ShelleyTxOut {
-        ShelleyTxOut {
-            address: vec![0x61; 29],
-            amount: amt,
-        }
-    }
-
     fn mk_witness_set_empty() -> ShelleyWitnessSet {
         ShelleyWitnessSet {
             vkey_witnesses: vec![],
