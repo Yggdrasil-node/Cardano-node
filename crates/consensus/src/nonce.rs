@@ -28,6 +28,19 @@
 //! Reference: `Cardano.Protocol.TPraos.Rules.Updn` (UPDN rule),
 //! `Cardano.Protocol.TPraos.Rules.Tickn` (TICKN rule),
 //! `Cardano.Protocol.TPraos.API` (`tickChainDepState`, `updateChainDepState`).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Aggregates two upstream rule files
+//! (`Cardano.Protocol.TPraos.Rules.Updn.hs` for the per-block
+//! UPDN rule, `Cardano.Protocol.TPraos.Rules.Tickn.hs` for the
+//! epoch-boundary TICKN rule) plus the VRF-output-to-nonce helpers
+//! from `Cardano.Ledger.BaseTypes::hashVerifiedVRF` (TPraos) and
+//! `Ouroboros.Consensus.Protocol.Praos.VRF::vrfNonceValue`
+//! (Praos). Yggdrasil unifies all three concerns under the
+//! `NonceEvolutionState` type so the per-block update and
+//! epoch-boundary roll act on the same struct; upstream keeps
+//! them as separate STS rules.
 
 pub mod derivation;
 pub mod evolution;

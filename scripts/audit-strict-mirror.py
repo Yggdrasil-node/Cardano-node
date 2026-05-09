@@ -153,6 +153,10 @@ def load_index() -> dict[str, list[str]]:
 
 PARITY_PATTERN = re.compile(r"##\s+Naming parity", re.IGNORECASE)
 STRICT_NONE_PATTERN = re.compile(r"\*\*Strict mirror:\*\*\s+none\.", re.IGNORECASE)
+STRICT_MIRROR_DECL = re.compile(r"\*\*Strict mirror:\*\*\s+", re.IGNORECASE)
+STRICT_PARTIAL_PATTERN = re.compile(
+    r"\*\*Strict mirror\s*\(partial\)\*\*", re.IGNORECASE
+)
 
 # Path fragments that indicate an upstream file is NOT a canonical
 # production-code mirror (test harnesses, benchmarks, demo apps,
@@ -228,19 +232,30 @@ def affinity_filter(rust_path: str, hits: list[str]) -> list[str]:
 def auto_grade(
     rust_path: str, hits: list[str], parity_state: str, initial_verdict: str
 ) -> tuple[str, str]:
-    """Produce a provisional final verdict + notes for a row."""
-    if parity_state == "yes(strict-none)":
+    """Produce a provisional final verdict + notes for a row.
+
+    Authoring-side `## Naming parity` blocks are treated as authoritative:
+    the file's authors explicitly declared the naming-parity story, so the
+    auto-grader does not second-guess. The block's `**Strict mirror:**`
+    declaration determines the verdict bucket:
+      - `**Strict mirror:** <upstream-path>` -> (a) DIRECT_MIRROR
+      - `**Strict mirror (partial)** ...`    -> (c) partial-synthesis
+      - `**Strict mirror:** none.`           -> (c) synthesis
+      - heading without declaration line     -> (c) unspecified-but-acknowledged
+    """
+    if parity_state == "yes(strict-mirror)":
         return (
-            "(c) NO_MIRROR_NEEDS_DOCSTRING (auto: docstring present)",
-            "verified at audit time",
+            "(a) DIRECT_MIRROR (auto: docstring declares strict mirror)",
+            "verified at audit time; `## Naming parity` block names the upstream `.hs`",
+        )
+    if parity_state.startswith("yes"):
+        kind = parity_state[len("yes"):]  # "(strict-none)", "(strict-partial)", "(unspecified)"
+        return (
+            f"(c) NO_MIRROR_NEEDS_DOCSTRING (auto: docstring present {kind})",
+            "verified at audit time; `## Naming parity` block declares synthesis story",
         )
     production_hits = filter_production_hits(hits)
     if initial_verdict == "no_candidate_match":
-        if parity_state.startswith("yes"):
-            return (
-                "(c) NO_MIRROR_NEEDS_DOCSTRING (auto: docstring present)",
-                "no upstream candidate but docstring already declares synthesis",
-            )
         return (
             "(c-needed) NO_MIRROR_NEEDS_DOCSTRING (auto: no upstream + no docstring)",
             "needs `## Naming parity` block in Phase B or rename if a sibling upstream exists",
@@ -271,13 +286,26 @@ def auto_grade(
 
 
 def has_naming_parity_block(rust_path: Path) -> str:
-    """Return 'yes', 'yes(strict-none)', or 'no'."""
+    """Return one of: 'no', 'yes(strict-none)', 'yes(strict-partial)',
+    'yes(strict-mirror)', 'yes(unspecified)'.
+
+    The four 'yes' variants distinguish how the docstring author
+    declared the mirror story:
+      - strict-none      -> `**Strict mirror:** none.` (synthesis)
+      - strict-partial   -> `**Strict mirror (partial)**` (subset/combine)
+      - strict-mirror    -> `**Strict mirror:** <upstream-path>` (direct)
+      - unspecified      -> heading present but no `**Strict mirror:**` line
+    """
     text = rust_path.read_text(encoding="utf-8", errors="replace")
     if not PARITY_PATTERN.search(text):
         return "no"
     if STRICT_NONE_PATTERN.search(text):
         return "yes(strict-none)"
-    return "yes"
+    if STRICT_PARTIAL_PATTERN.search(text):
+        return "yes(strict-partial)"
+    if STRICT_MIRROR_DECL.search(text):
+        return "yes(strict-mirror)"
+    return "yes(unspecified)"
 
 
 def iter_rust_files() -> list[Path]:

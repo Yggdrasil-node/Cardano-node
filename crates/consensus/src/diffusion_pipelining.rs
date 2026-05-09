@@ -12,6 +12,21 @@
 //!
 //! Reference: `Ouroboros.Consensus.Block.SupportsDiffusionPipelining`
 //! and `Ouroboros.Consensus.Shelley.Node.DiffusionPipelining`.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent shell that
+//! combines three upstream `DiffusionPipelining.hs` files:
+//! `Ouroboros.Consensus.Block.SupportsDiffusionPipelining.hs`
+//! (feature flag), `Ouroboros.Consensus.Shelley.Node.DiffusionPipelining.hs`
+//! (per-pool tentative-header tracking), and
+//! `Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining.hs`
+//! (per-peer state for the hard-fork combinator). The three
+//! upstream `.hs` are spread across different module trees but
+//! operate on the same conceptual data, so Yggdrasil unifies
+//! them under one `diffusion_pipelining` namespace with
+//! sub-modules `identity.rs` (per-pool tracking) and `state.rs`
+//! (feature flag + per-peer state).
 
 pub mod identity;
 pub mod state;

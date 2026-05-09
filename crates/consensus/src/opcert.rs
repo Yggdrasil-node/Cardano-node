@@ -15,6 +15,20 @@
 //! Reference: `Cardano.Protocol.TPraos.OCert` (struct + helpers) +
 //! `Cardano.Protocol.TPraos.Rules.OCert` (TPraos counter rule) +
 //! `Ouroboros.Consensus.Protocol.Praos` (Praos counter rule).
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** none. Yggdrasil-side parent re-export shell
+//! over the strict-mirror sub-modules `opcert/ocert.rs` (mirrors
+//! `Cardano.Protocol.TPraos.OCert.hs`) and `opcert/rules_ocert.rs`
+//! (mirrors `Cardano.Protocol.TPraos.Rules.OCert.hs`). The parent
+//! filename `opcert` itself is a Yggdrasil-invented spelling of
+//! the `OCert` upstream namespace; strict 1:1 would rename this
+//! file + its child directory to `ocert.rs` / `ocert/`.
+//! **Rename to `ocert.rs` is scheduled for R281** (sweeper), since
+//! it changes the public API surface (`yggdrasil_consensus::opcert::*`
+//! becomes `yggdrasil_consensus::ocert::*`) and needs coordinated
+//! downstream-consumer updates.
 
 pub mod ocert;
 pub mod rules_ocert;
