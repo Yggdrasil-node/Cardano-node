@@ -33,6 +33,7 @@
 
 pub mod byron;
 pub mod command;
+pub mod compatible;
 pub mod environment;
 pub mod helper;
 pub mod option;
