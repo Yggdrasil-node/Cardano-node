@@ -274,6 +274,50 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R374 — db-analyser: BenchmarkLedgerOps SlotDataPoint record
+  (port of SlotDataPoint.hs).** Lands the per-slot timing/allocation
+  data-point record fed into the BenchmarkLedgerOps analysis CSV/JSON
+  output streams. New analysis/benchmark_ledger_ops/slot_data_point.rs
+  module ports the upstream
+  Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
+  surface:
+  - SlotDataPoint 15-field struct (slot, slot_gap, total_time, mut_,
+    gc, maj_gc_count, min_gc_count, allocated_bytes, mut_forecast,
+    mut_header_tick, mut_header_apply, mut_block_tick, mut_block_apply,
+    block_byte_size, block_stats). Field-order preserves the upstream
+    record-syntax declaration so JSON output emits keys in the same
+    order. `#[serde(rename = "...")]` annotations preserve upstream's
+    camelCase JSON key names (slotGap, totalTime, majGcCount, etc.).
+  - BlockStats(Vec<String>) newtype mirroring upstream
+    `newtype BlockStats = BlockStats { unBlockStats :: [TextBuilder] }`.
+    `#[serde(transparent)]` ensures byte-identical JSON-array output
+    matching upstream's `toJSON . fmap Builder.toText . unBlockStats`.
+    Inherent constructors: empty(), from_strings(IntoIterator),
+    as_slice(), len(), is_empty().
+  - SlotDataPoint::empty(slot) inherent helper for zero-initialized
+    construction at a given slot.
+  - Adds analysis.rs + analysis/benchmark_ledger_ops.rs parent-shell
+    modules with `**Strict mirror:** none.` synthesis declarations.
+    Analysis.hs body (1057 lines, 13-variant dispatch) is pending.
+    The BenchmarkLedgerOps namespace has no upstream aggregate
+    module — it's a directory of three peer leaves — so the shell
+    has no .hs counterpart.
+  - Adds `serde` + `serde_json` workspace dependencies to db-analyser
+    Cargo.toml (mirroring the existing usage in yggdrasil-ledger and
+    other crates).
+  Carve-outs documented:
+  - TextBuilder → String (consistent with csv.rs).
+  - Cardano.Slotting.Slot.SlotNo → yggdrasil_ledger::SlotNo (already
+    pinned by types::DBAnalyserConfig from R351).
+  - Aeson.genericToEncoding → serde_json with `#[derive(Serialize)]`,
+    declaration-order-preserving for the field set, with decimal
+    integer formatting matching upstream Aeson defaults.
+  Tests: db-analyser 72 → 82 (+10: BlockStats default/empty-helper/
+  from_strings round-trip + 2 JSON-serialization edges [string array,
+  empty array]; SlotDataPoint default zeroes/empty-helper/round-trip-
+  through-struct/full JSON with camelCase renames/negative-timing
+  serialization). Workspace: 5,409 → 5,419. Parity-matrix entry
+  sister-tool.db-analyser advanced: next_milestone R374 → R375.
 - **R373 — db-analyser: HasAnalysis trait surface (port of
   HasAnalysis.hs).** Lands the per-block analysis trait that every
   era-specific block must satisfy for the db-analyser dispatch arms

@@ -8,20 +8,25 @@
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
 //!
-//! Layout mapping (R373 ships has_analysis.rs; later rounds populate the rest):
+//! Layout mapping (R374 ships analysis/benchmark_ledger_ops/slot_data_point.rs;
+//! later rounds populate the rest):
 //!
-//! | Upstream `.hs`                                       | Yggdrasil `.rs`              |
-//! |------------------------------------------------------|------------------------------|
-//! | `Tools/DBAnalyser/Types.hs`                          | `types.rs`                   |
-//! | `app/DBAnalyser/Parsers.hs`                          | `parser.rs`                  |
-//! | `Tools/DBAnalyser/HasAnalysis.hs`                    | `has_analysis.rs`            |
-//! | `Tools/DBAnalyser/Analysis.hs`                       | `analysis.rs` (pending)      |
-//! | `Tools/DBAnalyser/CSV.hs`                            | `csv.rs`                     |
-//! | `Tools/DBAnalyser/Run.hs`                            | `run.rs` (pending)           |
+//! | Upstream `.hs`                                                          | Yggdrasil `.rs`                                       |
+//! |-------------------------------------------------------------------------|-------------------------------------------------------|
+//! | `Tools/DBAnalyser/Types.hs`                                             | `types.rs`                                            |
+//! | `app/DBAnalyser/Parsers.hs`                                             | `parser.rs`                                           |
+//! | `Tools/DBAnalyser/HasAnalysis.hs`                                       | `has_analysis.rs`                                     |
+//! | `Tools/DBAnalyser/Analysis.hs`                                          | `analysis.rs` shell (body pending)                    |
+//! | `Tools/DBAnalyser/CSV.hs`                                               | `csv.rs`                                              |
+//! | `Tools/DBAnalyser/Run.hs`                                               | `run.rs` (pending)                                    |
+//! | `Tools/DBAnalyser/Analysis/BenchmarkLedgerOps/SlotDataPoint.hs`         | `analysis/benchmark_ledger_ops/slot_data_point.rs`    |
+//! | `Tools/DBAnalyser/Analysis/BenchmarkLedgerOps/Metadata.hs`              | `analysis/benchmark_ledger_ops/metadata.rs` (pending) |
+//! | `Tools/DBAnalyser/Analysis/BenchmarkLedgerOps/FileWriting.hs`           | `analysis/benchmark_ledger_ops/file_writing.rs` (pending) |
 
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod analysis;
 pub mod csv;
 pub mod has_analysis;
 pub mod parser;
