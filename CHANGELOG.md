@@ -274,6 +274,49 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R363 — snapshot-converter: typed CLI parser (port of snapshot-converter.hs::parseConfig).**
+  Lands the typed parser dispatcher for snapshot-converter, replacing
+  the R335 passthrough Args. parser.rs ports upstream's
+  `parseConfig :: Parser Config` — the mutually-exclusive daemon-vs-
+  oneshot mode dispatch.
+
+  Daemon mode (3 required flags):
+  - `--monitor-lsm-snapshots-in PATH` — directory to watch
+  - `--lsm-database PATH` — backing LSM database file
+  - `--output-mem-snapshots-in PATH` — output directory
+
+  Oneshot mode (input + output, each from mutually-exclusive forms):
+  - input: `--input-mem PATH` OR `--input-lsm-snapshot PATH +
+    --input-lsm-database PATH`
+  - output: `--output-mem PATH` OR `--output-lsm-snapshot PATH +
+    --output-lsm-database PATH`
+
+  ParseError variants for the dispatch failure modes:
+  MissingMode / ConflictingModes / MissingDaemonFlag /
+  MissingOneshotInput / MissingOneshotOutput /
+  ConflictingOneshotInput / ConflictingOneshotOutput /
+  LsmInputMissingDatabase / LsmOutputMissingDatabase / UnknownFlag /
+  MissingValue. lib.rs::run_main() wires parser → Config → run()
+  chain end-to-end. lib.rs::run() returns a sentinel reporting which
+  mode was selected + roadmap pointer (convertSnapshot LSM/Mem
+  conversion logic + filesystem-watcher daemon land in subsequent
+  rounds gated on yggdrasil-format LedgerStore reader/writer being
+  available).
+
+  Tests: snapshot-converter 23 → 30 (+7 net after the 7 unused-pre-R363
+  passthrough tests dropped + 14 new parser unit tests):
+  - 3 help/version detection
+  - 1 missing-mode (empty argv) + 1 unknown-flag + 1 missing-value
+  - 1 daemon canonical 3-flag invocation + 2 daemon-missing-flag rejections
+  - 4 oneshot canonical: mem-to-lsm / lsm-to-mem / mem-to-mem /
+    lsm-to-lsm
+  - 6 oneshot rejection paths: conflicting-modes /
+    conflicting-input / conflicting-output /
+    lsm-input-missing-database /
+    lsm-output-missing-database / missing-output
+
+  Workspace: 5,279 → 5,294. Parity-matrix entry sister-tool.snapshot-
+  converter advanced: next_milestone R354 → R364.
 - **R362 — kes-agent-control: typed CLI parser (port of ControlMain.hs::pProgramOptions).**
   Lands the typed parser dispatcher for kes-agent-control, replacing
   the R335 passthrough Args. parser.rs ports upstream's

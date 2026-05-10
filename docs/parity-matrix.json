@@ -664,7 +664,7 @@
       "area": "sister-tools",
       "feature": "Ledger snapshot format converter (mem \u2194 lmdb \u2194 lsm) \u2014 pure-Rust port mirroring upstream snapshot-converter.hs.",
       "status": "partial",
-      "next_milestone": "R354",
+      "next_milestone": "R364",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs",
