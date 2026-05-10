@@ -16,7 +16,7 @@
 //!
 //! | Upstream                                      | Yggdrasil                |
 //! |-----------------------------------------------|--------------------------|
-//! | `Logs/File.hs`                                | `file.rs` (pending)      |
+//! | `Logs/File.hs`                                | `file.rs`                |
 //! | `Logs/Rotator.hs`                             | `rotator.rs`             |
 //! | `Logs/Journal.hs`                             | `journal.rs`             |
 //! | `Logs/Journal/Systemd.hs`                     | (carve-out — Yggdrasil's  policy bans systemd-specific deps; see `journal::no_systemd`) |
@@ -24,6 +24,7 @@
 //! | `Logs/TraceObjects.hs`                        | `trace_objects.rs` (pending) |
 //! | `Logs/Utils.hs`                               | `utils.rs`               |
 
+pub mod file;
 pub mod journal;
 pub mod rotator;
 pub mod utils;

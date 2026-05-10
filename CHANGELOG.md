@@ -274,6 +274,46 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R400 — cardano-tracer: Logs/File.hs port (bounded subset; pure
+  line-encoders).** Lands the per-format trace-object converters
+  + line-encoding helpers used by the file-rotation IO orchestration.
+  New handlers/logs/file.rs module ports the upstream
+  Cardano.Tracer.Handlers.Logs.File bounded subset:
+  - trace_text_for_human(&TraceObject) → &str — wraps R399's
+    TraceObject::render_for_human (which falls back to to_machine
+    when to_human is None, mirroring upstream's
+    `fromMaybe toMachine toHuman`).
+  - trace_text_for_machine(&TraceObject) → &str — always returns
+    to_machine.
+  - prepare_lines(LogFormat, &[TraceObject]) → Vec<u8> — UTF-8
+    payload that would be appended to the log file: leading `\n`
+    + per-format-converted lines joined with `\n` (mirror of
+    upstream's `preparedLines = TE.encodeUtf8 (nl `T.append`
+    T.intercalate nl itemsToWrite)`). Returns empty Vec for empty
+    input (matches upstream's `unless (null itemsToWrite) do ...`
+    guard).
+  - WriteTraceObjectsToFileStatus + helper exposing the deferred-
+    orchestration rationale programmatically.
+  Carve-outs documented:
+  - writeTraceObjectsToFile IO orchestration deferred — depends on
+    super::utils::log_rotation_status (createOrUpdateEmptyLog)
+    which is itself blocked on Cardano.Tracer.Utils.modifyRegistry_;
+    resolves at R402 per the R398 plan.
+  - Cardano.Tracer.Utils.nl replaced with crate::utils::NL (`"\n"`
+    Unix; matches upstream Unix-only operational convention).
+  Tests: cardano-tracer 282 → 294 (+12: trace_text_for_human uses
+  to_human when present + falls back to machine when None;
+  trace_text_for_machine always returns machine for both kinds;
+  prepare_lines empty input returns empty; human starts with
+  newline; human renders to_human text [excludes machine];
+  machine renders to_machine text [excludes human]; intercalates
+  multi-event with newline; human falls back per object;
+  single-event byte-exact round-trip; handles empty to_machine;
+  status describes deferral). Workspace: 5,686 → 5,698. Parity-
+  matrix entry sister-tool.cardano-tracer advanced: next_milestone
+  R400 → R401. Per the R398 plan, this leaves R401
+  (Logs/TraceObjects.hs) unblocked next; R402 closes the
+  WriteTraceObjectsToFileStatus + LogRotationStatus carve-outs.
 - **R399 — cardano-tracer: TraceObject 6-field inline port (D3 from
   R398 plan; unblocks Logs/{File, TraceObjects} + acceptors).**
   Lands the canonical TraceObject record replacing R382's unit-
