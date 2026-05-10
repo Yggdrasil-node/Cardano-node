@@ -821,7 +821,7 @@
       "area": "sister-tools",
       "feature": "Delegated Mempool Queue diffusion-layer node (sister project for Mithril) \u2014 pure-Rust port mirroring upstream IntersectMBO/dmq-node.",
       "status": "partial",
-      "next_milestone": "R362",
+      "next_milestone": "R370",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/dmq-node/dmq-node/",

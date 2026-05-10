@@ -33,10 +33,13 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 /// Path to a Unix domain socket for node-to-client communication.
 ///
 /// Upstream: `newtype LocalAddress = LocalAddress { getFilePath :: FilePath }`.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct LocalAddress(pub PathBuf);
 
 impl LocalAddress {
@@ -59,7 +62,8 @@ impl AsRef<std::path::Path> for LocalAddress {
 
 /// Cardano network magic discriminator. Mirrors upstream
 /// `Ouroboros.Network.Magic.NetworkMagic`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct NetworkMagic(pub u32);
 
 /// CLI-derived partial configuration. Every field is `Option<_>` so
@@ -68,7 +72,16 @@ pub struct NetworkMagic(pub u32);
 /// happens via [`PartialConfig::resolve`] which fills in defaults.
 ///
 /// Upstream: `PartialConfig = Configuration' Last`.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
+///
+/// `Serialize` / `Deserialize` derives match upstream's
+/// Generic-derived `FromJSON` instance for the `Configuration' Last`
+/// shape: every field is optional and may be omitted from the JSON
+/// document. Field names use camelCase to match upstream
+/// (`hostAddr` / `hostIPv6Addr` / `portNumber` / `localSocket` /
+/// `configurationFile` / `topologyFile` / `cardanoNodeSocket` /
+/// `cardanoNetworkMagic` / `networkMagic` / `showVersion`).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PartialConfig {
     /// `--host-addr IPv4` — IPv4 bind address.
     pub host_addr: Option<String>,

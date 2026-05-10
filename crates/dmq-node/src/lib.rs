@@ -24,6 +24,7 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod configuration;
 pub mod parser;
 pub mod types;
 
@@ -60,7 +61,16 @@ pub fn run_main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let config = args.resolve();
+    // R369: if --configuration-file was supplied, load it and merge
+    // CLI-derived overrides on top before resolving to the fully-
+    // applied Configuration.
+    let config = match configuration::resolve_configuration(args) {
+        Ok(c) => c,
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
     match run(&config) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

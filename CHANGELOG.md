@@ -274,6 +274,40 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R369 — dmq-node: configuration-file load + CLI/file/defaults resolution (port of Configuration.hs::readConfigurationFile).**
+  Lands the configuration-file loader for dmq-node. New
+  configuration.rs module ports upstream's `readConfigurationFile`
+  and the resolution-order helper. PartialConfig + LocalAddress +
+  NetworkMagic gain Serialize/Deserialize derives with
+  `serde(rename_all = "camelCase")` to match upstream's
+  Generic-derived FromJSON field names exactly (hostAddr / hostIpv6Addr
+  / portNumber / localAddress / configFile / topologyFile /
+  cardanoNodeSocket / cardanoNetworkMagic / networkMagic / showVersion).
+  Resolution order (left-priority merge):
+  1. CLI-derived PartialConfig (highest priority)
+  2. File-derived PartialConfig if cli.config_file is set
+  3. Configuration::defaults for any field still unset
+  ConfigError variants: Io { path, source } / Parse { path, source }.
+  lib.rs::run_main() now invokes resolve_configuration(args) which
+  reads the file (if --configuration-file was supplied), merges
+  with CLI overrides, and resolves to a fully-applied Configuration.
+  Carve-outs documented:
+  - mkDiffusionConfiguration (builds upstream
+    Ouroboros.Network.Diffusion.DiffusionConfiguration record with
+    peer-selection / connection-manager / churn-interval tunables)
+    deferred to the diffusion mux wiring round.
+  - YAML parsing not yet wired (only JSON); serde_yaml can be
+    layered on when an operator workflow needs it.
+  Cargo deps: serde + serde_json added.
+  Tests: dmq-node 33 → 43 (+10: 2 read-config-file round-trips
+  [minimal + full 10-field JSON] + 2 read-config-file error paths
+  [missing file → Io / malformed JSON → Parse] + 4 resolve-
+  configuration cases [no-file uses cli+defaults / cli-overrides-
+  file-overrides-defaults / config-file-missing-error / local-
+  address-from-file] + 2 PartialConfig serde behavior [camelCase
+  field names + JSON round-trip]). Workspace: 5,358 → 5,368.
+  Parity-matrix entry sister-tool.dmq-node advanced: next_milestone
+  R362 → R370.
 - **R367 — cardano-testnet: typed CLI parser (subcommand dispatch from Parsers/Run.hs::commands).**
   Lands the top-level subcommand dispatch for cardano-testnet,
   replacing the R335 passthrough Args. parser.rs ports upstream's
