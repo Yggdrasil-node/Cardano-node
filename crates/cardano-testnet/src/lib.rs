@@ -25,6 +25,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod status;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -67,16 +68,28 @@ pub fn run_main() -> ExitCode {
 /// (gated on yggdrasil-ledger's era surface being exposed at crate
 /// boundaries; Process/Property carve-out per the plan).
 pub fn run(command: &parser::Command) -> eyre::Result<()> {
-    use parser::Command;
-    let subcommand_name = match command {
-        Command::Cardano(_) => "cardano",
-        Command::CreateEnv(_) => "create-env",
-        Command::Version(_) => "version",
+    let subcommand = match command {
+        parser::Command::Cardano(_) => status::Subcommand::Cardano,
+        parser::Command::CreateEnv(_) => status::Subcommand::CreateEnv,
+        parser::Command::Version(_) => status::Subcommand::Version,
     };
-    Err(eyre::eyre!(
-        "yggdrasil-cardano-testnet: `{subcommand_name}' subcommand era-aware \
-         dispatch not yet implemented (R367 ships argv → Command subcommand \
-         recognition; per-subcommand era-aware option records land in \
-         subsequent rounds gated on yggdrasil-ledger's era surface)."
-    ))
+    Err(RunError::SubcommandEraDispatchDeferred { subcommand }.into())
+}
+
+/// Errors from the cardano-testnet `run` entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// Per-subcommand era-aware dispatch is deferred. Mirror of
+    /// upstream `cardano-testnet/src/Testnet/{Defaults, Runtime,
+    /// Start, Components, Process}.hs` — gated on yggdrasil-
+    /// ledger's era surface being exposed at crate boundaries.
+    #[error(
+        "yggdrasil-cardano-testnet: `{subcommand}' subcommand era-aware dispatch deferred (see \
+         crates/cardano-testnet/src/status.rs::era_dispatch_status for the full deferral \
+         rationale)."
+    )]
+    SubcommandEraDispatchDeferred {
+        /// The subcommand the operator invoked.
+        subcommand: status::Subcommand,
+    },
 }

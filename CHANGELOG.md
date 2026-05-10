@@ -274,6 +274,38 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R445 — cardano-testnet: structured deferral surface
+  (replicates the R439-R444 `*_status()` pattern for the era-
+  aware-dispatch carve-out; completes the sister-tools structural-
+  deferral sweep started at R439).** Lands
+  `crates/cardano-testnet/src/status.rs` (new) + `lib.rs`
+  refactor:
+  - **status::Subcommand enum**: `Cardano | CreateEnv | Version` —
+    3-variant identifier for the cardano-testnet top-level
+    subcommands. `cli_verb()` returns the canonical CLI verb.
+  - **status::EraDispatchStatus**: 4-field descriptor + helper
+    `era_dispatch_status()`. Documents that the per-subcommand
+    era-aware dispatch is gated on the cardano-testnet mini-arc
+    (R416-R433 — LARGE; Hedgehog Process/Property modules approved
+    as Rust-idiomatic carve-out using `tokio::process` + `proptest`)
+    AND on yggdrasil-ledger's era surface being exposed at crate
+    boundaries.
+  - **RunError::SubcommandEraDispatchDeferred { subcommand }**:
+    replaces the prior raw `eyre!` string.
+  Tests: yggdrasil-cardano-testnet +4 from new status module
+  (subcommand cli_verbs match upstream-canonical 3 verbs; Display
+  matches cli_verb; era_dispatch_status describes deferral with
+  cardano-testnet-mini-arc + Hedgehog + yggdrasil-ledger markers;
+  status is Clone+Eq+Hash-round-trip via HashSet insertion).
+  Workspace: 5,946 → 5,950. Parity-matrix entry sister-
+  tool.cardano-testnet advanced: next_milestone R368 → R446.
+  Completes the sister-tools structural-deferral sweep —
+  cardano-tracer (R424-R429), snapshot-converter (R439),
+  kes-agent-control (R440), db-synthesizer (R441), db-analyser
+  (R442), kes-agent (R443), dmq-node (R444), cardano-testnet
+  (R445). All sister tools with raw `eyre::eyre!` stubs now have
+  structured `RunError` enums + programmatic `*_status()`
+  introspection helpers.
 - **R444 — dmq-node: structured deferral surface (replicates
   the R439-R443 `*_status()` pattern for the dmq-node Diffusion
   / NodeKernel / PeerSelection wiring carve-out).** Lands

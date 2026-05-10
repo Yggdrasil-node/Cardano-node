@@ -766,7 +766,7 @@
       "area": "sister-tools",
       "feature": "Local testnet harness \u2014 pure-Rust port mirroring upstream cardano-testnet/src/Testnet/*.hs.",
       "status": "partial",
-      "next_milestone": "R368",
+      "next_milestone": "R446",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-testnet/",
