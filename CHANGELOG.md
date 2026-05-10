@@ -274,6 +274,34 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R414 — cardano-tracer: MetricsStore::render_ekg_html +
+  monitoring.rs handle_per_node wiring (closes per-node EKG
+  monitoring carve-out).** Phase 1 round 4 of R411-R430 arc. Three
+  primary deliverables:
+  - **MetricsStore::render_ekg_html(node_name)**: emits an EKG-style
+    HTML monitoring page with a meta-refresh header (5-second
+    auto-refresh), styled table of `metric name | kind | value`,
+    and node name in the title. Mirror of upstream's
+    `EKG.Wai`-rendered `/<slug>/?` request handler.
+  - **html_escape helper**: pure-function HTML-escape for `<`, `>`,
+    `&`, `"`, `'` characters. Used to escape node names + label
+    values in the EKG page (since maud's compile-time templating
+    doesn't compose neatly with the unbounded-N table-row loop).
+  - **monitoring.rs::handle_per_node wired through**: AppState
+    gains `accepted_metrics: AcceptedMetrics`. Per-node route
+    resolves slug → NodeName via R407's compute_routes, then
+    NodeName → NodeId via the connected_nodes_names snapshot, then
+    looks up the per-node MetricsStore and renders. Run-monitoring-
+    server signature gains the new `accepted_metrics` arg.
+  Tests: cardano-tracer 373 → 379 (+6: html_escape replaces special
+  chars + passes through safe chars; render_ekg_html emits valid
+  HTML with meta-refresh + escapes node name in title + escapes
+  label values + renders empty store without table rows;
+  run_monitoring_server binds with new arg). Workspace:
+  5,777 → 5,783. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R414 → R415. Per the R411 plan, R415
+  lands the metrics_help.json parser + Run.hs::loadMetricsHelp
+  mirror, completing Phase 1 of the R411-R430 arc.
 - **R413 — cardano-tracer: MetricsStore::render_prometheus + wire
   into prometheus.rs handle_per_node (closes ExpositionStatus
   carve-out from R408).** Phase 1 round 3 of R411-R430 arc. Three

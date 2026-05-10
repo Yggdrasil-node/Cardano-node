@@ -55,6 +55,11 @@ use super::utils::{CONTENT_HDR_JSON, CONTENT_HDR_UTF8_HTML};
 struct AppState {
     /// Connected-nodes-names for `/` route + `/<slug>` lookup.
     connected_nodes_names: ConnectedNodesNames,
+    /// Per-node metrics-store registry — wired in at R414 to
+    /// replace the placeholder per-node body. The per-node route
+    /// renders a real EKG-style HTML page from the corresponding
+    /// store via [`crate::metrics_store::MetricsStore::render_ekg_html`].
+    accepted_metrics: crate::metrics_store::AcceptedMetrics,
 }
 
 /// Run the EKG-style monitoring HTTP server. Mirror of upstream
@@ -70,6 +75,7 @@ struct AppState {
 pub async fn run_monitoring_server(
     connected_nodes_names: ConnectedNodesNames,
     endpoint: Endpoint,
+    accepted_metrics: crate::metrics_store::AcceptedMetrics,
 ) -> std::io::Result<tokio::task::JoinHandle<()>> {
     // Stagger to avoid concurrent listening-banner collisions
     // (R409 Prometheus uses 0.1; R410 Monitoring uses 0.2 to keep
@@ -78,6 +84,7 @@ pub async fn run_monitoring_server(
 
     let state = AppState {
         connected_nodes_names,
+        accepted_metrics,
     };
 
     let app = Router::new()
@@ -111,24 +118,40 @@ async fn handle_root(State(state): State<AppState>, headers: HeaderMap) -> Respo
 
 async fn handle_per_node(State(state): State<AppState>, Path(slug): Path<String>) -> Response {
     use super::utils::compute_routes;
-    use crate::environment::AcceptedMetrics;
+    use crate::environment::AcceptedMetrics as AcceptedMetricsPlaceholder;
 
-    let dict = compute_routes(&state.connected_nodes_names, &AcceptedMetrics).await;
+    let dict = compute_routes(&state.connected_nodes_names, &AcceptedMetricsPlaceholder).await;
     let matched = dict.get_route_dictionary.iter().find(|(s, _)| s == &slug);
-    if matched.is_none() {
+    let Some((_slug, node_name)) = matched else {
         let body = b"<html><body><p>Node not found.</p></body></html>".to_vec();
         return ([(CONTENT_TYPE, CONTENT_HDR_UTF8_HTML.1)], body).into_response();
-    }
-    // Per-node EKG monitoring page deferred — return an HTML
-    // placeholder pointing at the deferral status.
-    let body = format!(
-        "<html><body><h1>Cardano Tracer Monitoring</h1>\
-         <p>Node slug: {slug}</p>\
-         <p>Per-node EKG monitoring page pending — see\
-         <code>crate::handlers::metrics::prometheus::exposition_status</code>\
-         (same EKG-equivalent dependency).</p>\
-         </body></html>",
-    );
+    };
+    // R414: resolve slug → NodeId via the connected_nodes_names
+    // snapshot, then render the per-node EKG-style page from the
+    // matched MetricsStore.
+    let node_pairs = state.connected_nodes_names.snapshot();
+    let node_id = node_pairs
+        .iter()
+        .find_map(|(id, name)| (name == node_name).then_some(id.clone()));
+    let body = match node_id {
+        Some(id) => {
+            let stores = state.accepted_metrics.read().await;
+            match stores.get(&id) {
+                Some(store) => store.render_ekg_html(node_name).await,
+                None => format!(
+                    "<html><body><h1>Cardano Tracer Monitoring</h1>\
+                     <p>Node: {node_name}</p>\
+                     <p>No metrics ingested yet for this node.</p>\
+                     </body></html>",
+                ),
+            }
+        }
+        None => format!(
+            "<html><body><h1>Cardano Tracer Monitoring</h1>\
+             <p>Could not resolve NodeId for slug: {slug}</p>\
+             </body></html>",
+        ),
+    };
     ([(CONTENT_TYPE, CONTENT_HDR_UTF8_HTML.1)], body).into_response()
 }
 
@@ -171,6 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_monitoring_server_binds_and_serves() {
+        use crate::metrics_store::new_accepted_metrics;
         let names = ConnectedNodesNames::new();
         names.insert(crate::types::NodeId::new("n1"), "alpha-pool".to_string());
         let endpoint = Endpoint {
@@ -178,7 +202,8 @@ mod tests {
             port: 0,
             force_ssl: None,
         };
-        let result = run_monitoring_server(names, endpoint).await;
+        let accepted = new_accepted_metrics();
+        let result = run_monitoring_server(names, endpoint, accepted).await;
         assert!(result.is_ok(), "server should bind: {:?}", result.err());
         if let Ok(handle) = result {
             handle.abort();

@@ -240,6 +240,57 @@ impl MetricsStore {
         out
     }
 
+    /// Render the store contents as an EKG-style HTML monitoring
+    /// page: a table of `metric name → value` with a meta-refresh
+    /// every 5 seconds. Mirror of upstream's `EKG.Wai`-rendered
+    /// page (the URL `/<slug>/?` request handler in
+    /// `Cardano.Tracer.Handlers.Metrics.Monitoring::renderEkg`).
+    ///
+    /// `node_name` is rendered into the page title for operator
+    /// navigation between multiple monitoring pages.
+    pub async fn render_ekg_html(&self, node_name: &str) -> String {
+        let snapshot = self.snapshot().await;
+        let mut rows = String::new();
+        for (name, value) in snapshot.iter() {
+            let value_text = match value {
+                MetricValue::Counter(v) | MetricValue::Gauge(v) => v.to_string(),
+                MetricValue::Label(s) => html_escape(s),
+            };
+            let kind = value.prometheus_kind();
+            rows.push_str(&format!(
+                "<tr><td>{name}</td><td>{kind}</td><td>{value_text}</td></tr>\n",
+                name = html_escape(name),
+            ));
+        }
+        format!(
+            "<!DOCTYPE html>\n\
+             <html>\n\
+             <head>\n\
+             <meta charset=\"utf-8\">\n\
+             <meta http-equiv=\"refresh\" content=\"5\">\n\
+             <title>{title} — Cardano Tracer Monitoring</title>\n\
+             <style>\n\
+             body {{ font-family: monospace; padding: 1em; }}\n\
+             table {{ border-collapse: collapse; }}\n\
+             th, td {{ border: 1px solid #ccc; padding: 0.25em 0.5em; }}\n\
+             th {{ background: #eee; text-align: left; }}\n\
+             </style>\n\
+             </head>\n\
+             <body>\n\
+             <h1>{title}</h1>\n\
+             <p>Auto-refresh every 5 seconds.</p>\n\
+             <table>\n\
+             <thead><tr><th>Metric</th><th>Kind</th><th>Value</th></tr></thead>\n\
+             <tbody>\n\
+             {rows}\
+             </tbody>\n\
+             </table>\n\
+             </body>\n\
+             </html>\n",
+            title = html_escape(node_name),
+        )
+    }
+
     /// Insert a batch of metrics from an upstream
     /// `Response::ResponseMetrics(Vec<(MetricName, MetricValue)>)`
     /// payload. Mirror of upstream
@@ -294,6 +345,30 @@ impl MetricsStore {
         }
         delta
     }
+}
+
+/// HTML-escape a string for safe rendering in
+/// [`MetricsStore::render_ekg_html`]. Replaces `<`, `>`, `&`, `"`,
+/// `'` with their entity references. Mirror of the same auto-escape
+/// behavior provided by maud's compile-time templating used in
+/// [`super::handlers::metrics::utils::RouteDictionary::render_html`]
+/// — duplicated here as a pure function since the per-node EKG
+/// page is constructed via `format!` rather than maud (the inner
+/// table loop's variable structure is awkward in maud's macro
+/// syntax for unbounded N rows).
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// Strip upstream EKG's type-tagging suffix from a metric name
@@ -806,5 +881,58 @@ mod tests {
         let store = MetricsStore::new();
         let output = store.render_prometheus(false, &[]).await;
         assert!(output.is_empty());
+    }
+
+    #[test]
+    fn html_escape_replaces_special_chars() {
+        assert_eq!(
+            html_escape("<script>alert('x' & \"y\")</script>"),
+            "&lt;script&gt;alert(&#x27;x&#x27; &amp; &quot;y&quot;)&lt;/script&gt;",
+        );
+    }
+
+    #[test]
+    fn html_escape_passes_through_safe_chars() {
+        assert_eq!(html_escape("alpha-pool 123"), "alpha-pool 123");
+    }
+
+    #[tokio::test]
+    async fn render_ekg_html_emits_valid_html_with_meta_refresh() {
+        let store = MetricsStore::new();
+        store.register_gauge("Mem_resident_int", 100_000).await;
+        store.register_counter("RTS_gcMajorNum_int", 5).await;
+        let html = store.render_ekg_html("alpha-pool").await;
+        assert!(html.starts_with("<!DOCTYPE html>"));
+        assert!(html.contains("<meta http-equiv=\"refresh\" content=\"5\">"));
+        assert!(html.contains("<title>alpha-pool — Cardano Tracer Monitoring</title>"));
+        assert!(html.contains("Mem_resident_int"));
+        assert!(html.contains("100000"));
+        assert!(html.contains("RTS_gcMajorNum_int"));
+        assert!(html.contains(">5</td>"));
+    }
+
+    #[tokio::test]
+    async fn render_ekg_html_escapes_node_name_in_title() {
+        let store = MetricsStore::new();
+        let html = store.render_ekg_html("<script>alert(1)</script>").await;
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+    }
+
+    #[tokio::test]
+    async fn render_ekg_html_escapes_label_values() {
+        let store = MetricsStore::new();
+        store
+            .register_label("malicious_label", "<img src=x onerror=alert(1)>")
+            .await;
+        let html = store.render_ekg_html("test").await;
+        assert!(html.contains("&lt;img src=x onerror=alert(1)&gt;"));
+    }
+
+    #[tokio::test]
+    async fn render_ekg_html_renders_empty_store_without_table_rows() {
+        let store = MetricsStore::new();
+        let html = store.render_ekg_html("alpha-pool").await;
+        assert!(html.contains("<tbody>\n</tbody>"));
     }
 }
