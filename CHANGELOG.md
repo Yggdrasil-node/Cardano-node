@@ -274,6 +274,63 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R433 — network: trace_object_forward_handshake.rs — wire-
+  level codec for trace-forwarder ProposeVersions / AcceptVersion
+  / Refuse / QueryReply messages.** Builds on R432's
+  `ForwardingVersion` + `ForwardingVersionData` primitives to
+  ship the full handshake message envelope. Lands in
+  `crates/network/src/protocols/trace_object_forward_handshake.rs`.
+  The wire format is byte-identical to upstream's
+  `handshake-node-to-node-v14.cddl` (the same envelope is reused
+  for trace-forwarder), with the version-data slot specialized
+  to a single CBOR-encoded unsigned u32 (network-magic).
+  Public surface:
+  - **TraceForwardHandshakeMessage**: 4-variant message enum
+    (ProposeVersions, AcceptVersion, Refuse, QueryReply) carrying
+    `ForwardingVersion` + `ForwardingVersionData` payloads.
+  - **TraceForwardRefuseReason**: 3-variant refuse-reason enum
+    (VersionMismatch, HandshakeDecodeError, Refused) — wire shape
+    matches upstream's `RefuseReason` ADT.
+  - **to_cbor() / from_cbor()** message-codec methods. Handles
+    the canonical wire format including unknown-version + out-of-
+    bound network-magic decode errors, surfacing the upstream's
+    exact error messages (`unknown tag: N`, `networkMagic out of
+    bound: N`).
+  - **simple_singleton_versions(version, data) →
+    TraceForwardHandshakeMessage**: builder mirror of upstream's
+    `Handshake.simpleSingletonVersions` — produces a
+    ProposeVersions message with a single version-data entry.
+  Carve-outs documented in module docstring:
+  - **`Codec.CBOR.Term.Term` value-CBOR type**: collapses since
+    Yggdrasil emits canonical bytes directly.
+  - **`CodecCBORTerm` typeclass parameterization**: collapses to
+    inline trace-forwarder-specific encoding (the existing
+    `crates/network/src/handshake/codec.rs` is hardcoded for
+    NodeToNodeVersionData; refactoring it generic across
+    handshake variants is out of scope for R433 — Yggdrasil
+    duplicates the message-envelope structure here for the
+    bounded trace-forwarder use case).
+  - **Handshake state-machine driver**: this round ships only the
+    message codec, not the full state-machine driver. Wiring the
+    codec into R424's `do_listen_to_forwarder_local` pre-mux
+    handshake step is the third advisor-flagged gap and lands
+    in a follow-on round.
+  Updates `protocols/mod.rs` with module declaration + 3 re-
+  exports for `TraceForwardHandshakeMessage`,
+  `TraceForwardRefuseReason`, `simple_singleton_versions`.
+  Tests: yggdrasil-network 781 → 795 (+14: ProposeVersions
+  singleton round-trip; full version-table round-trip;
+  AcceptVersion round-trip; all 3 Refuse variants round-trip;
+  QueryReply round-trip; simple_singleton_versions builds
+  ProposeVersions with single entry; unknown outer tag errors;
+  unknown version tag in propose errors; out-of-bound magic
+  errors; trailing bytes errors; ProposeVersions wire format
+  byte-stable [0x82, 0x00, 0xA1, 0x01, 0x01]; AcceptVersion wire
+  format byte-stable [0x83, 0x01, 0x01, 0x01]). Workspace:
+  5,901 → 5,915. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R433 → R434. R433 closes the wire-
+  encoding half of the third advisor-flagged gap; the remaining
+  half (state-machine driver wiring into R424) lands in R434+.
 - **R432 — network: trace_object_forward_version.rs port of
   Trace.Forward.Utils.Version.hs (post-R430 follow-on, closes 1
   of 3 advisor-flagged gaps).** Strict-mirror port of the

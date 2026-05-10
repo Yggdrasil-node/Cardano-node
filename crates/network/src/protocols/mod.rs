@@ -24,6 +24,9 @@ mod trace_object_forward;
 /// TraceObjectForward mini-protocol configuration types
 /// (Acceptor / Forwarder side configuration records).
 mod trace_object_forward_configuration;
+/// Trace-forwarder handshake message envelope codec —
+/// ProposeVersions / AcceptVersion / Refuse / QueryReply.
+mod trace_object_forward_handshake;
 /// Helpers for the trace-forwarder TraceObject mini-protocol —
 /// sink initialization + reply-list extractor.
 mod trace_object_forward_utils;
@@ -65,6 +68,9 @@ pub use trace_object_forward::{
 };
 pub use trace_object_forward_configuration::{
     AcceptorConfiguration, ForwarderConfiguration, TraceForwardTracer,
+};
+pub use trace_object_forward_handshake::{
+    TraceForwardHandshakeMessage, TraceForwardRefuseReason, simple_singleton_versions,
 };
 pub use trace_object_forward_utils::{
     get_trace_objects_from_reply, init_forward_sink, read_from_sink_status, write_to_sink_status,
