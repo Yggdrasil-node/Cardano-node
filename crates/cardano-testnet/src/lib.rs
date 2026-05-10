@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `cardano-testnet`.
 //!
 //! ## Naming parity
@@ -6,11 +7,25 @@
 //! file-mirror + CLI-parser skeleton for the `cardano-testnet` sister-tool crate.
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
+//!
+//! Layout mapping (R359 ships types.rs covering simple option types;
+//! later rounds populate the deeper era-aware records):
+//!
+//! | Upstream `.hs`                                       | Yggdrasil `.rs`              |
+//! |------------------------------------------------------|------------------------------|
+//! | `Testnet/Start/Types.hs` (simple option types)       | `types.rs`                   |
+//! | `Testnet/Types.hs` (runtime/key types)               | `runtime_types.rs` (pending) |
+//! | `Testnet/Start/{Byron,Cardano}.hs` (era startup)     | `start/*.rs` (pending)       |
+//! | `Testnet/Components/{Query,Configuration}.hs`        | `components/*.rs` (pending)  |
+//! | `Testnet/Process/Cli/*.hs` (SPO/Tx/Keys/DRep dispatch) | `process/cli/*.rs` (pending) |
+//! | `Testnet/Property/*.hs`                              | **CARVE-OUT** (Hedgehog → proptest synthesis) |
+//! | `Testnet/Process/{Run,RunIO}.hs`                     | **CARVE-OUT** (Hedgehog → tokio::process synthesis) |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {

@@ -274,6 +274,45 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R359 — cardano-testnet: simple-types port (operator-facing knobs from Start/Types.hs).**
+  Lands the simple operator-facing types from upstream's
+  Testnet/Start/Types.hs that don't pull in the deeper Cardano.Api /
+  Cardano.Ledger.* machinery. New types.rs module ports:
+  - DEFAULT_TESTNET_MAGIC = 42 const (matches upstream
+    defaultTestnetMagic).
+  - NodeId(i32), NumPools(i32), NumRelays(i32), NumDReps(i32) — numeric
+    newtypes with Ord/PartialOrd for natural sorting.
+  - InputNodeConfigFile(PathBuf) — user-provided node-config file path.
+  - UpdateTimestamps (UpdateTimestamps [default] | DontUpdateTimestamps).
+  - RpcSupport (RpcDisabled [default] | RpcEnabled).
+  - NodeLoggingFormat (AsJson [default] | AsText) with from_string
+    mirroring upstream readNodeLoggingFormat (case-insensitive
+    "json"/"text" parse, error otherwise).
+  - GenesisHashesPolicy (WithHashes [default] | WithoutHashes).
+  - PraosCredentialsSource (UseKesKeyFile [default] | UseKesSocket).
+  - UserProvidedData<A> generic wrapper (UserProvidedData a |
+    NoUserProvidedData [default]) with as_ref + into_option helpers.
+  Carve-outs documented in module docstring:
+  - Cardano.Api era machinery (cardanoEra / AnyShelleyBasedEra /
+    AnyCardanoEra) — port lands when yggdrasil-ledger era surface is
+    exposed at crate boundaries.
+  - Cardano.Ledger.Alonzo.Genesis.AlonzoGenesis +
+    Cardano.Ledger.Conway.Genesis.ConwayGenesis — kept as
+    serde_json::Value at this surface; typed parsing happens at
+    use-site in yggdrasil-ledger.
+  - Hedgehog.MonadTest — carved out per the plan's pre-approved
+    Process/Property module carve-out (Rust uses tokio::process +
+    proptest equivalents at R363+).
+  Tests: cardano-testnet 8 → 22 (+14: 1 default-magic + 4 numeric-
+  newtype round-trips + 1 NodeId-Ord + 1 InputNodeConfigFile + 5
+  default-impl checks + 3 NodeLoggingFormat::from_string + 2
+  UserProvidedData round-trips). Workspace: 5,225 → 5,241.
+  Parity-matrix entry sister-tool.cardano-testnet advanced:
+  next_milestone R417 → R360; rust_surface description updated to
+  reflect R359 simple-types + per-module-roadmap; remaining_work
+  refreshed (Filepath/Conf/Process → era-aware records →
+  Testnet/Types.hs runtime types → Process/Property carve-outs →
+  per-subcommand wiring → integration + closeout).
 - **R358 — cardano-tracer: typed configuration surface (port of Configuration.hs).**
   Lands the typed configuration surface for cardano-tracer. New
   configuration.rs module ports the full upstream

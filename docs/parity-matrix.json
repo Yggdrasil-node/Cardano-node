@@ -741,7 +741,7 @@
       "area": "sister-tools",
       "feature": "Local testnet harness \u2014 pure-Rust port mirroring upstream cardano-testnet/src/Testnet/*.hs.",
       "status": "partial",
-      "next_milestone": "R417",
+      "next_milestone": "R360",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-testnet/",
@@ -751,21 +751,22 @@
       "rust_surface": [
         {
           "path": "crates/cardano-testnet/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.2 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R359 simple-types port (NumPools/NumRelays/NumDReps/NodeId/InputNodeConfigFile/UpdateTimestamps/RpcSupport/NodeLoggingFormat/GenesisHashesPolicy/PraosCredentialsSource/UserProvidedData<A>). Era-aware records + Hedgehog/Process/Property modules pending (Cardano.Api dependency + Hedgehog\u2192proptest/tokio::process synthesis carve-out per the plan)."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for cardano-testnet.",
         "Byte-equivalent --help and --version captured from upstream cardano-testnet binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
-        "Workspace test contribution: +8.",
-        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+        "R359 simple-types port: types.rs ports the operator-facing simple types from upstream's Testnet/Start/Types.hs that don't pull in the Cardano.Api/Cardano.Ledger.* machinery \u2014 DEFAULT_TESTNET_MAGIC=42 const; NodeId(i32) / NumPools(i32) / NumRelays(i32) / NumDReps(i32) numeric newtypes with Ord; InputNodeConfigFile(PathBuf) newtype; UpdateTimestamps (UpdateTimestamps [default] | DontUpdateTimestamps); RpcSupport (RpcDisabled [default] | RpcEnabled); NodeLoggingFormat (AsJson [default] | AsText) with from_string mirroring upstream readNodeLoggingFormat; GenesisHashesPolicy (WithHashes [default] | WithoutHashes); PraosCredentialsSource (UseKesKeyFile [default] | UseKesSocket); UserProvidedData<A> generic wrapper (UserProvidedData a | NoUserProvidedData [default]) with as_ref + into_option helpers. Carve-outs: Cardano.Api era machinery (lands when yggdrasil-ledger era surface exposed at crate boundaries); Cardano.Ledger.Alonzo/Conway.Genesis records (kept as serde_json::Value at use-sites for now); Hedgehog.MonadTest (carved out per plan \u2014 Process/Property modules use tokio::process + proptest synthesis). 22 cardano-testnet tests at R359 (was 8 at R335 + 14 types unit tests)."
       ],
       "remaining_work": [
-        "Skeleton round at R416: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
-        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-testnet.",
-        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R360+ Filepath helpers + Conf/Process types from Testnet/Start/Types.hs.",
+        "R361+ Era-aware records (CardanoTestnetCliOptions / CardanoTestnetCreateEnvOptions / TestnetCreationOptions / GenesisOptions / NodeOption etc.) \u2014 gated on yggdrasil-ledger era surface exposure.",
+        "R362+ Testnet/Types.hs runtime types (TestnetRuntime / TestnetNode / KeyPair<k> / per-key-role phantom types) \u2014 depends on era surface + Cardano.Api equivalent.",
+        "R363+ Process/Property carve-outs (synthesis docstrings; tokio::process + proptest equivalents per the plan's pre-approved carve-out).",
+        "R364+ Per-subcommand wiring (cardano subcommand multi-node spinup; create-env; version/help).",
+        "Integration: full preview-network synthesis using only yggdrasil binaries.",
+        "Closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-testnet --help` (modulo program name).",

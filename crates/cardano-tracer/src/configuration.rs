@@ -402,9 +402,7 @@ pub fn well_formed(config: &TracerConfig) -> Result<(), WellFormedError> {
         Network::AcceptAt { accept_at } if accept_at.is_null() => {
             problems.push("AcceptAt is empty");
         }
-        Network::ConnectTo { connect_to }
-            if connect_to.iter().all(HowToConnect::is_null) =>
-        {
+        Network::ConnectTo { connect_to } if connect_to.iter().all(HowToConnect::is_null) => {
             problems.push("ConnectTo are empty");
         }
         _ => {}
