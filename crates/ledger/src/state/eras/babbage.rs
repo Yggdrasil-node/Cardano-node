@@ -94,7 +94,9 @@ impl LedgerState {
         let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
         let cert_ctx = self.certificate_validation_context();
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
-        for (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid) in &decoded {
+        for (tx_index, (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid)) in
+            decoded.iter().enumerate()
+        {
             let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -449,6 +451,7 @@ impl LedgerState {
                     body.certificates.as_deref(),
                     body.withdrawals.as_ref(),
                     slot,
+                    tx_index as u64,
                     self.stability_window,
                     self.mir_validation_context(slot, true).as_ref(),
                 )?;

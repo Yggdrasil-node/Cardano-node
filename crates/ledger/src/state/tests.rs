@@ -9446,6 +9446,7 @@ fn test_cert_genesis_delegation_scheduled_and_adopted() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         None,
     )
@@ -9517,6 +9518,7 @@ fn test_cert_genesis_delegation_duplicate_checks_future_map() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         None,
     )
@@ -12432,6 +12434,7 @@ fn test_mir_too_late_in_epoch() {
         Some(&certs),
         None,
         500,
+        0,
         Some(5),
         Some(&mir_ctx),
     );
@@ -12496,6 +12499,7 @@ fn test_mir_negatives_not_allowed_pre_alonzo() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         Some(&mir_ctx),
     );
@@ -12551,6 +12555,7 @@ fn test_mir_produces_negative_update_alonzo() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         Some(&mir_ctx),
     );
@@ -12609,6 +12614,7 @@ fn test_mir_insufficient_pot_balance() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         Some(&mir_ctx),
     );
@@ -12667,6 +12673,7 @@ fn test_mir_transfer_not_allowed_pre_alonzo() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         Some(&mir_ctx),
     );
@@ -12725,6 +12732,7 @@ fn test_mir_insufficient_for_transfer() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         Some(&mir_ctx),
     );
@@ -12779,6 +12787,7 @@ fn test_mir_alonzo_positive_deltas_accepted() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         Some(&mir_ctx),
     );
@@ -12827,6 +12836,7 @@ fn test_mir_alonzo_transfer_accepted() {
         Some(&certs),
         None,
         100,
+        0,
         Some(5),
         Some(&mir_ctx),
     );

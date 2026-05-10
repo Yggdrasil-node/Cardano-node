@@ -191,7 +191,9 @@ impl LedgerState {
             .unwrap_or(0);
         let current_treasury = self.accounting.treasury;
         let cert_ctx = self.certificate_validation_context();
-        for (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid) in &decoded {
+        for (tx_index, (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid)) in
+            decoded.iter().enumerate()
+        {
             let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -735,6 +737,7 @@ impl LedgerState {
                     body.certificates.as_deref(),
                     body.withdrawals.as_ref(),
                     slot,
+                    tx_index as u64,
                     self.stability_window,
                     None, // Conway: MIR certs rejected as UnsupportedCertificate
                 )?;
