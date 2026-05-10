@@ -26,6 +26,7 @@ use std::process::ExitCode;
 
 pub mod configuration;
 pub mod parser;
+pub mod status;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -87,19 +88,48 @@ pub fn run_main() -> ExitCode {
 /// per-tool roadmap. Until then, this returns a sentinel error
 /// describing what's missing.
 pub fn run(config: &types::Configuration) -> eyre::Result<()> {
-    Err(eyre::eyre!(
-        "yggdrasil-dmq-node: Diffusion/NodeKernel/PeerSelection wiring \
-         not yet implemented (R361 ships argv → Configuration validation; \
-         later rounds wire the diffusion layer per the per-tool roadmap). \
-         Resolved config: host={}:{}, local_socket={}, config_file={}, \
-         topology_file={}, cardano_socket={}, cardano_magic={}, dmq_magic={}.",
-        config.host_addr,
-        config.port_number,
-        config.local_address.as_path().display(),
-        config.config_file.display(),
-        config.topology_file.display(),
-        config.cardano_node_socket.display(),
-        config.cardano_network_magic.0,
-        config.network_magic.0,
-    ))
+    Err(RunError::DiffusionWiringDeferred {
+        host: format!("{}:{}", config.host_addr, config.port_number),
+        local_socket: config.local_address.as_path().display().to_string(),
+        config_file: config.config_file.display().to_string(),
+        topology_file: config.topology_file.display().to_string(),
+        cardano_socket: config.cardano_node_socket.display().to_string(),
+        cardano_magic: config.cardano_network_magic.0,
+        dmq_magic: config.network_magic.0,
+    }
+    .into())
+}
+
+/// Errors from the dmq-node `run` entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// Diffusion / NodeKernel / PeerSelection wiring is deferred.
+    /// Mirror of upstream's DMQ.Node.{Diffusion, Run, NodeKernel}
+    /// — gated on the dmq-node mini-arc per the
+    /// playful-tickling-plum.md plan (R450-R459 — Tier 4 sister
+    /// project).
+    #[error(
+        "yggdrasil-dmq-node: Diffusion / NodeKernel / PeerSelection wiring deferred (see \
+         crates/dmq-node/src/status.rs::diffusion_wiring_status for the full deferral \
+         rationale). Resolved CLI: host={host}, local_socket={local_socket}, \
+         config_file={config_file}, topology_file={topology_file}, \
+         cardano_socket={cardano_socket}, cardano_magic={cardano_magic}, \
+         dmq_magic={dmq_magic}."
+    )]
+    DiffusionWiringDeferred {
+        /// Host:port the dmq-node would bind to.
+        host: String,
+        /// Local Unix socket path.
+        local_socket: String,
+        /// Operator-supplied config-file path.
+        config_file: String,
+        /// Operator-supplied topology-file path.
+        topology_file: String,
+        /// Cardano-node socket path for upstream connection.
+        cardano_socket: String,
+        /// Cardano-network magic.
+        cardano_magic: u32,
+        /// DMQ-specific network magic.
+        dmq_magic: u32,
+    },
 }

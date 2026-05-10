@@ -274,6 +274,25 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R444 — dmq-node: structured deferral surface (replicates
+  the R439-R443 `*_status()` pattern for the dmq-node Diffusion
+  / NodeKernel / PeerSelection wiring carve-out).** Lands
+  `crates/dmq-node/src/status.rs` (new) + `lib.rs` refactor:
+  - **status::DiffusionWiringStatus**: 4-field descriptor +
+    helper `diffusion_wiring_status()`. Documents that the
+    diffusion wiring is gated on the dmq-node mini-arc
+    (R450-R459 — Tier 4 sister project per the
+    playful-tickling-plum.md plan).
+  - **RunError::DiffusionWiringDeferred**: replaces the prior
+    raw `eyre!` string. Preserves all 7 CLI-resolution markers
+    (host:port, local_socket, config_file, topology_file,
+    cardano_socket, cardano_magic, dmq_magic) as structured
+    fields.
+  Tests: yggdrasil-dmq-node +2 from new status module
+  (diffusion_wiring_status describes deferral with dmq-node-mini-
+  arc + R450-R459 markers; status is Clone+Eq+Hash-round-trip
+  via HashSet insertion). Workspace: 5,944 → 5,946. Parity-matrix
+  entry sister-tool.dmq-node advanced: next_milestone R370 → R445.
 - **R443 — kes-agent: structured deferral surface (replicates
   the R439-R442 `*_status()` pattern for the kes-agent daemon
   carve-out).** Lands `crates/kes-agent/src/status.rs` (new) +
