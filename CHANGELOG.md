@@ -274,6 +274,39 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R430 — cardano-tracer: R411-R430 arc closeout (Phase 4 round 2,
+  final round of the 20-round arc).** Structural completion of the
+  cardano-tracer port:
+  - `docs/operational-runs/2026-05-10-round-430-r411-r430-closure.md`
+    captures the 20-round arc summary across 4 phases (Phase 1:
+    R411-R415 EKG-equivalent; Phase 2: R416-R426 trace-forwarder
+    mini-arc + Acceptors leaves; Phase 3: R427-R428 supervisor +
+    closure doc; Phase 4: R429-R430 TLS plan + closeout). Documents
+    the 15-row carve-out inventory with `*_status()` helper
+    pointers, parity-matrix delta, operational rehearsal recipe,
+    and follow-on arc plan (handshake codec, TraceObject CBOR codec,
+    cardano-node forwarder side).
+  - `crates/cardano-tracer/AGENTS.md` refreshed: status block
+    advanced from "post-R335-pattern skeleton" to "post-R411-R430
+    arc — trace-forwarder TraceObject sub-protocol fully wired";
+    functional-surface bullet list replaced with the 11-row
+    shipped/deferred status (5 ✅ + 6 ❌); round roadmap fast-
+    forwarded across all 4 phases of the arc; follow-on items
+    enumerated.
+  - `docs/parity-matrix.json` `sister-tool.cardano-tracer`:
+    `next_milestone` advanced R430 → R430 (closeout marker;
+    follow-on arcs receive their own R-numbers when scheduled).
+    Status remains `partial` — `verified_11_0_1` promotion defers
+    until the trace-forwarder handshake codec + TraceObject CBOR
+    codec + cardano-node forwarder side land in follow-on arcs.
+  Workspace tests unchanged at 5,884 (no new test code; this is a
+  documentation/closure round).
+  R411-R430 cumulative delivery: 20 rounds, 4 phases, +201 tests,
+  13 documented carve-outs, 0 failing gates throughout. The
+  yggdrasil cardano-tracer binary is now operationally bootable
+  via `cargo run --bin cardano-tracer -- -c <config>` without
+  falling through to the previous "unimplemented" stub. Closes the
+  cardano-tracer track of the R326-R459 sister-tools port arc.
 - **R429 — cardano-tracer: TLS termination integration plan +
   status descriptors (Phase 4 round 1 of R411-R430 arc).** Lands
   the TLS bind-plan documentation + `force_ssl` operator-facing
