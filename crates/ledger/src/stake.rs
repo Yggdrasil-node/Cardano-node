@@ -515,30 +515,44 @@ impl CborDecode for StakeSnapshots {
 /// stake credentials, reward account balances, and pool registry.
 ///
 /// This walks the UTxO set once, extracting the staking credential from
-/// each output address (base addresses only — enterprise, pointer, Byron,
-/// and reward addresses do not contribute to the UTxO-based stake).
+/// each output address. Base addresses contribute directly; pointer addresses
+/// are resolved via `ptr_map` (mirroring upstream `DState.ptrMap` /
+/// `addShelleyInstantStake`). Enterprise, Byron, and reward addresses do not
+/// contribute to the UTxO-based stake.
 /// Reward account balances are then added on top.
 ///
-/// Reference: SNAP rule — `stakeDistr` in the formal specification.
+/// Reference: SNAP rule — `stakeDistr` / `addShelleyInstantStake` in
+/// `Cardano.Ledger.Shelley.State.Stake`.
 pub fn compute_stake_snapshot(
     utxo: &MultiEraUtxo,
     stake_creds: &StakeCredentials,
     reward_accounts: &RewardAccounts,
     pool_state: &PoolState,
+    ptr_map: &BTreeMap<(u64, u64, u64), StakeCredential>,
 ) -> StakeSnapshot {
     let mut stake = IndividualStake::new();
     let mut delegations = Delegations::new();
     let mut pool_params_map: BTreeMap<PoolKeyHash, PoolParams> = BTreeMap::new();
 
-    // 1. Walk the UTxO to accumulate per-credential stake. Only base addresses
-    //    contribute — enterprise, pointer, Byron, and reward addresses do not
-    //    feed `stakeDistr` per the formal SNAP rule.
+    // 1. Walk the UTxO to accumulate per-credential stake. Base addresses
+    //    contribute directly; pointer addresses are resolved via ptr_map
+    //    (upstream StakeRefPtr / addShelleyInstantStake). Enterprise, Byron,
+    //    and reward addresses do not feed `stakeDistr`.
     for (_txin, txout) in utxo.iter() {
         let addr_bytes = txout.address();
-        if let Some(Address::Base(base)) = Address::from_bytes(addr_bytes) {
-            if stake_creds.is_registered(&base.staking) {
+        match Address::from_bytes(addr_bytes) {
+            Some(Address::Base(base)) if stake_creds.is_registered(&base.staking) => {
                 stake.add(base.staking, txout.coin());
             }
+            Some(Address::Pointer(ptr_addr)) => {
+                let key = (ptr_addr.slot, ptr_addr.tx_index, ptr_addr.cert_index);
+                if let Some(cred) = ptr_map.get(&key) {
+                    if stake_creds.is_registered(cred) {
+                        stake.add(*cred, txout.coin());
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

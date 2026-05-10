@@ -561,6 +561,7 @@ pub fn apply_epoch_boundary(
         ledger.stake_credentials(),
         ledger.reward_accounts(),
         ledger.pool_state(),
+        ledger.ptr_map(),
     );
     // Rotate the just-ended epoch's fees into `previous_fee_pot` for the next
     // reward update.  The current boundary has already consumed the old

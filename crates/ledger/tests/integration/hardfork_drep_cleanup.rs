@@ -281,6 +281,7 @@ fn snapshots_with_stake(state: &LedgerState) -> StakeSnapshots {
         state.stake_credentials(),
         state.reward_accounts(),
         state.pool_state(),
+        state.ptr_map(),
     );
     StakeSnapshots {
         mark,

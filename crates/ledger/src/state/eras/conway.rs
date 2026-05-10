@@ -184,6 +184,7 @@ impl LedgerState {
         let mut staged_governance_actions = self.governance_actions.clone();
         let mut staged_utxos_donation: u64 = 0;
         let mut staged_num_dormant = self.num_dormant_epochs;
+        let mut staged_ptr_map = self.ptr_map.clone();
         let drep_activity = self
             .protocol_params
             .as_ref()
@@ -191,7 +192,10 @@ impl LedgerState {
             .unwrap_or(0);
         let current_treasury = self.accounting.treasury;
         let cert_ctx = self.certificate_validation_context();
-        for (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid) in &decoded {
+        for (tx_index, (tx_id, tx_size, body, output_sizes, witness_bytes, aux_data, is_valid)) in
+            decoded.iter().enumerate()
+        {
+            let tx_index = tx_index as u64;
             let tx_is_valid = is_valid.unwrap_or(true);
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
@@ -737,6 +741,8 @@ impl LedgerState {
                     slot,
                     self.stability_window,
                     None, // Conway: MIR certs rejected as UnsupportedCertificate
+                    tx_index,
+                    Some(&mut staged_ptr_map),
                 )?;
                 // Track DRep activity for registration and update certificates.
                 touch_drep_activity_for_certs(
@@ -809,6 +815,7 @@ impl LedgerState {
         self.governance_actions = staged_governance_actions;
         self.utxos_donation = self.utxos_donation.saturating_add(staged_utxos_donation);
         self.num_dormant_epochs = staged_num_dormant;
+        self.ptr_map = staged_ptr_map;
         Ok(())
     }
 }

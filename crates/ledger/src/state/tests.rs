@@ -9448,6 +9448,8 @@ fn test_cert_genesis_delegation_scheduled_and_adopted() {
         100,
         Some(5),
         None,
+        0,
+        None,
     )
     .unwrap();
 
@@ -9518,6 +9520,8 @@ fn test_cert_genesis_delegation_duplicate_checks_future_map() {
         None,
         100,
         Some(5),
+        None,
+        0,
         None,
     )
     .unwrap_err();
@@ -12434,6 +12438,8 @@ fn test_mir_too_late_in_epoch() {
         500,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(matches!(
         err,
@@ -12498,6 +12504,8 @@ fn test_mir_negatives_not_allowed_pre_alonzo() {
         100,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(matches!(
         err,
@@ -12553,6 +12561,8 @@ fn test_mir_produces_negative_update_alonzo() {
         100,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(matches!(err, Err(LedgerError::MIRProducesNegativeUpdate)));
 }
@@ -12611,6 +12621,8 @@ fn test_mir_insufficient_pot_balance() {
         100,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(matches!(
         err,
@@ -12669,6 +12681,8 @@ fn test_mir_transfer_not_allowed_pre_alonzo() {
         100,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(matches!(
         err,
@@ -12727,6 +12741,8 @@ fn test_mir_insufficient_for_transfer() {
         100,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(matches!(
         err,
@@ -12781,6 +12797,8 @@ fn test_mir_alonzo_positive_deltas_accepted() {
         100,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(result.is_ok());
 }
@@ -12829,6 +12847,8 @@ fn test_mir_alonzo_transfer_accepted() {
         100,
         Some(5),
         Some(&mir_ctx),
+        0,
+        None,
     );
     assert!(result.is_ok());
 }

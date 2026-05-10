@@ -2591,6 +2591,7 @@ fn stake_snapshots_from_ledger_state(ledger_state: &LedgerState) -> StakeSnapsho
         ledger_state.stake_credentials(),
         ledger_state.reward_accounts(),
         ledger_state.pool_state(),
+        ledger_state.ptr_map(),
     );
     StakeSnapshots {
         mark: current.clone(),

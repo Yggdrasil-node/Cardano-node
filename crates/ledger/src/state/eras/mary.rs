@@ -72,9 +72,13 @@ impl LedgerState {
         let mut staged_deposit_pot = self.deposit_pot.clone();
         let mut staged_gen_delegs = self.gen_delegs.clone();
         let mut staged_future_gen_delegs = self.future_gen_delegs.clone();
+        let mut staged_ptr_map = self.ptr_map.clone();
         let cert_ctx = self.certificate_validation_context();
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
-        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+        for (tx_index, (tx_id, tx_size, body, witness_bytes, aux_data)) in
+            decoded.iter().enumerate()
+        {
+            let tx_index = tx_index as u64;
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
@@ -184,6 +188,8 @@ impl LedgerState {
                 slot,
                 self.stability_window,
                 self.mir_validation_context(slot, false).as_ref(),
+                tx_index,
+                Some(&mut staged_ptr_map),
             )?;
             staged.apply_mary_tx_withdrawals(
                 tx_id.0,
@@ -203,6 +209,7 @@ impl LedgerState {
         self.deposit_pot = staged_deposit_pot;
         self.gen_delegs = staged_gen_delegs;
         self.future_gen_delegs = staged_future_gen_delegs;
+        self.ptr_map = staged_ptr_map;
         // Collect protocol parameter update proposals (PPUP rule) and
         // accumulate MIR certificates (Shelley through Babbage only).
         let ppup_ctx = self.ppup_slot_context(slot);

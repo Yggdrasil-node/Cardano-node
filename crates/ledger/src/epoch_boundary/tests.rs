@@ -3142,6 +3142,7 @@ fn test_member_reward_credited_to_individual_account() {
         ledger.stake_credentials(),
         ledger.reward_accounts(),
         ledger.pool_state(),
+        ledger.ptr_map(),
     );
     let mut snapshots = StakeSnapshots::new();
     snapshots.go = go_snapshot;

@@ -461,6 +461,20 @@ pub struct LedgerState {
     /// `NewEpochState.nesBprev`.
     blocks_made_prev: BTreeMap<PoolKeyHash, u64>,
 
+    /// Pointer-address reverse lookup: `Ptr → Credential`.
+    ///
+    /// Populated during stake-key registration when the registering
+    /// transaction provides slot + tx-index + cert-index context.
+    /// Used by `compute_stake_snapshot` to resolve `Address::Pointer`
+    /// UTxO outputs, matching upstream `DState.ptrMap` in
+    /// `Cardano.Ledger.Shelley.LedgerState`.
+    ///
+    /// Key: `(slot, tx_index, cert_index)` — the `Ptr` triple of the
+    /// registration certificate.  Value: the registered `StakeCredential`.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `DState.ptrMap`.
+    ptr_map: BTreeMap<(u64, u64, u64), StakeCredential>,
+
     /// Maximum lovelace supply from genesis (mainnet: 45 000 000 000 000 000).
     ///
     /// Used to compute `circulation = max_lovelace_supply - reserves` for the
@@ -553,6 +567,7 @@ impl LedgerState {
             num_dormant_epochs: 0,
             blocks_made: BTreeMap::new(),
             blocks_made_prev: BTreeMap::new(),
+            ptr_map: BTreeMap::new(),
             max_lovelace_supply: 0,
             slots_per_epoch: 0,
             active_slot_coeff: UnitInterval {
@@ -1024,6 +1039,16 @@ impl LedgerState {
     /// so that block application works correctly.
     pub fn utxo_mut(&mut self) -> &mut ShelleyUtxo {
         &mut self.shelley_utxo
+    }
+
+    /// Returns a reference to the pointer-address reverse lookup map.
+    ///
+    /// Key: `(slot, tx_index, cert_index)` — the `Ptr` triple of the
+    /// registration certificate.  Value: the registered `StakeCredential`.
+    ///
+    /// Reference: `Cardano.Ledger.Shelley.LedgerState` — `DState.ptrMap`.
+    pub fn ptr_map(&self) -> &BTreeMap<(u64, u64, u64), StakeCredential> {
+        &self.ptr_map
     }
 
     /// Returns a reference to the multi-era UTxO set.
@@ -1869,6 +1894,8 @@ impl LedgerState {
                     current_slot.0,
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
+                    0,
+                    None,
                 )?;
                 staged.apply_tx_with_withdrawals(
                     crate::tx::compute_tx_id(&tx.raw_body).0,
@@ -2032,6 +2059,8 @@ impl LedgerState {
                     current_slot.0,
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
+                    0,
+                    None,
                 )?;
                 staged.apply_allegra_tx_withdrawals(
                     tx.tx_id().0,
@@ -2197,6 +2226,8 @@ impl LedgerState {
                     current_slot.0,
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
+                    0,
+                    None,
                 )?;
                 staged.apply_mary_tx_withdrawals(
                     tx.tx_id().0,
@@ -2554,6 +2585,8 @@ impl LedgerState {
                     current_slot.0,
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, true).as_ref(),
+                    0,
+                    None,
                 )?;
                 staged.apply_alonzo_tx_withdrawals(
                     tx.tx_id().0,
@@ -2955,6 +2988,8 @@ impl LedgerState {
                     current_slot.0,
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, true).as_ref(),
+                    0,
+                    None,
                 )?;
                 staged.apply_babbage_tx_withdrawals(
                     tx.tx_id().0,
@@ -3566,6 +3601,8 @@ impl LedgerState {
                     current_slot.0,
                     self.stability_window,
                     None, // Conway: MIR certs rejected as UnsupportedCertificate
+                    0,
+                    None,
                 )?;
                 // Track DRep activity for registration and update certificates.
                 touch_drep_activity_for_certs(
@@ -5062,6 +5099,8 @@ fn apply_certificates_and_withdrawals(
         0,
         None,
         None,
+        0,
+        None,
     )
 }
 
@@ -5082,6 +5121,8 @@ fn apply_certificates_and_withdrawals_with_future(
     current_slot: u64,
     stability_window: Option<u64>,
     mir_ctx: Option<&MirValidationContext<'_>>,
+    tx_index: u64,
+    mut ptr_map: Option<&mut BTreeMap<(u64, u64, u64), StakeCredential>>,
 ) -> Result<CertBalanceAdjustment, LedgerError> {
     let key_deposit = ctx.key_deposit;
     let pool_deposit = ctx.pool_deposit;
@@ -5152,7 +5193,8 @@ fn apply_certificates_and_withdrawals_with_future(
     let mut total_deposits: u64 = 0;
     let mut total_refunds: u64 = 0;
     if let Some(certs) = certificates {
-        for cert in certs {
+        for (cert_index, cert) in certs.iter().enumerate() {
+            let cert_index = cert_index as u64;
             // -- Era-gate: Conway-only certs (CDDL tags 7–18) must be
             // rejected in Shelley–Babbage, and Shelley-only certs (tags 5–6:
             // GenesisDelegation, MoveInstantaneousReward) must be rejected
@@ -5190,6 +5232,9 @@ fn apply_certificates_and_withdrawals_with_future(
             match cert {
                 DCert::AccountRegistration(credential) => {
                     register_stake_credential(stake_credentials, *credential, key_deposit)?;
+                    if let Some(ref mut pm) = ptr_map {
+                        pm.insert((current_slot, tx_index, cert_index), *credential);
+                    }
                     register_reward_account_for_credential(
                         reward_accounts,
                         *credential,
@@ -5225,6 +5270,9 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        if let Some(ref mut pm) = ptr_map {
+                            pm.insert((current_slot, tx_index, cert_index), *credential);
+                        }
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,
@@ -5236,6 +5284,9 @@ fn apply_certificates_and_withdrawals_with_future(
                 }
                 DCert::AccountUnregistration(credential) => {
                     unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
+                    if let Some(ref mut pm) = ptr_map {
+                        pm.retain(|_, v| v != credential);
+                    }
                     deposit_pot.return_key_deposit(key_deposit);
                     total_refunds = total_refunds.saturating_add(key_deposit);
                 }
@@ -5280,6 +5331,9 @@ fn apply_certificates_and_withdrawals_with_future(
                     // `StakeKeyHasNonZeroAccountBalanceDELEG` — reward balance
                     // must be zero before unregistering.
                     unregister_stake_credential(stake_credentials, reward_accounts, *credential)?;
+                    if let Some(ref mut pm) = ptr_map {
+                        pm.retain(|_, v| v != credential);
+                    }
                     deposit_pot.return_key_deposit(*refund);
                     total_refunds = total_refunds.saturating_add(*refund);
                 }
@@ -5320,6 +5374,9 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        if let Some(ref mut pm) = ptr_map {
+                            pm.insert((current_slot, tx_index, cert_index), *credential);
+                        }
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,
@@ -5386,6 +5443,9 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        if let Some(ref mut pm) = ptr_map {
+                            pm.insert((current_slot, tx_index, cert_index), *credential);
+                        }
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,
@@ -5430,6 +5490,9 @@ fn apply_certificates_and_withdrawals_with_future(
                     }
                     if !stake_credentials.is_registered(credential) {
                         register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        if let Some(ref mut pm) = ptr_map {
+                            pm.insert((current_slot, tx_index, cert_index), *credential);
+                        }
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,

@@ -31,14 +31,16 @@ use super::{
     StakeCredentials,
 };
 use crate::eras::shelley::ShelleyUtxo;
-use crate::types::{EpochNo, GenesisDelegateHash, GenesisHash, Point, UnitInterval, VrfKeyHash};
+use crate::types::{
+    EpochNo, GenesisDelegateHash, GenesisHash, Point, StakeCredential, UnitInterval, VrfKeyHash,
+};
 use crate::utxo::MultiEraUtxo;
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
 use std::collections::BTreeMap;
 
 impl CborEncode for LedgerState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(24);
+        enc.array(25);
         self.current_era.encode_cbor(enc);
         self.tip.encode_cbor(enc);
         match self.expected_network_id {
@@ -112,16 +114,26 @@ impl CborEncode for LedgerState {
             enc.bytes(pool_hash);
             enc.unsigned(count);
         }
+        // ptr_map: pointer-address reverse lookup (slot, tx_index, cert_index) → credential.
+        // Reference: DState.ptrMap in Cardano.Ledger.Shelley.LedgerState.
+        enc.map(self.ptr_map.len() as u64);
+        for ((slot, tx_idx, cert_idx), cred) in &self.ptr_map {
+            enc.array(3);
+            enc.unsigned(*slot);
+            enc.unsigned(*tx_idx);
+            enc.unsigned(*cert_idx);
+            cred.encode_cbor(enc);
+        }
     }
 }
 
 impl CborDecode for LedgerState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        // Accept legacy 9/10-element arrays and current 12-24-element arrays.
-        if len != 9 && len != 10 && !(12..=24).contains(&len) {
+        // Accept legacy 9/10-element arrays and current 12-25-element arrays.
+        if len != 9 && len != 10 && !(12..=25).contains(&len) {
             return Err(LedgerError::CborInvalidLength {
-                expected: 24,
+                expected: 25,
                 actual: len as usize,
             });
         }
@@ -301,6 +313,28 @@ impl CborDecode for LedgerState {
             BTreeMap::new()
         };
 
+        let ptr_map = if len >= 25 {
+            let map_len = dec.map()?;
+            let mut pm: BTreeMap<(u64, u64, u64), StakeCredential> = BTreeMap::new();
+            for _ in 0..map_len {
+                let inner_len = dec.array()?;
+                if inner_len != 3 {
+                    return Err(LedgerError::CborInvalidLength {
+                        expected: 3,
+                        actual: inner_len as usize,
+                    });
+                }
+                let slot = dec.unsigned()?;
+                let tx_idx = dec.unsigned()?;
+                let cert_idx = dec.unsigned()?;
+                let cred = StakeCredential::decode_cbor(dec)?;
+                pm.insert((slot, tx_idx, cert_idx), cred);
+            }
+            pm
+        } else {
+            BTreeMap::new()
+        };
+
         Ok(Self {
             current_era,
             tip,
@@ -335,6 +369,7 @@ impl CborDecode for LedgerState {
             num_dormant_epochs,
             blocks_made,
             blocks_made_prev,
+            ptr_map,
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
             pending_shelley_genesis_delegs: None,
