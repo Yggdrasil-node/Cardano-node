@@ -274,6 +274,52 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R394 — cardano-tracer: Logs/Rotator.hs port (bounded subset:
+  pure rotation policy helpers).** Lands the pure rotation-policy
+  surface — log-mode filtering, sort-by-timestamp, retention-count,
+  age-threshold removal candidate selection. New
+  handlers/logs/rotator.rs module ports the upstream
+  Cardano.Tracer.Handlers.Logs.Rotator surface:
+  - logging_params_for_files(&[LoggingParams]) — filters to
+    FileMode-only entries and dedups (mirror of upstream
+    `nub (NE.filter filesOnly logging)`).
+  - log_is_full(current_size_bytes, max_size_in_bytes) — pure size
+    threshold check (mirror of upstream's `logIsFull`); IO-bound
+    `hTell handle >>= ...` chain split out.
+  - check_if_there_are_old_logs(sorted_logs, max_age_minutes,
+    keep_files_num, now_ms) — full removal-candidate computation
+    with retention-count + age-threshold + early-exit-on-young-log
+    (mirror of upstream's `checkIfThereAreOldLogs` walk lines
+    153-172). Skip-on-malformed-timestamp matches upstream's
+    continue-on-Nothing fall-through.
+  - logs_to_remove(sorted_logs, keep_n) — drops the newest N from
+    a list (mirror of upstream's `dropEnd keepFilesNum`).
+  - sort_logs_oldest_first(logs) — orders by parsed timestamp
+    with unparseable entries pushed last (mirror of upstream's
+    `sort logs` over timestamp-bearing names).
+  - RunLogsRotatorStatus + run_logs_rotator_status() helper
+    exposing the deferred-orchestration rationale programmatically.
+  Carve-outs documented:
+  - runLogsRotator / launchRotator / checkRootDir / checkLogs /
+    checkIfCurrentLogIsFull (IO-bound) — depend on
+    Cardano.Tracer.Utils.{showProblemIfAny, readRegistry} (both
+    unported), tracer-trace channel from MetaTrace.hs (unported),
+    + the deferred createOrUpdateEmptyLog from super::utils.
+  - Data.Time.diffUTCTime → Unix-epoch milliseconds (matches
+    super::utils::get_timestamp_from_log convention; eliminates
+    upstream's `NominalDiffTime` / picosecond intermediate).
+  Tests: cardano-tracer 217 → 234 (+17: 3 logging_params_for_files
+  cases [keeps FileMode only / dedups identical / empty when no
+  FileMode]; 2 log_is_full cases [true at threshold / false below];
+  4 logs_to_remove cases [drops N newest / keep>=total returns
+  empty / keep==total returns empty / keep=0 returns all]; 5
+  check_if_there_are_old_logs cases [removes old files at correct
+  threshold / keeps newest N / empty input / skips unparseable
+  timestamps / stops at first young log]; 2 sort_logs_oldest_first
+  cases [orders by timestamp / pushes unparseable to end];
+  run_logs_rotator_status describes deferral). Workspace: 5,621 →
+  5,638. Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R394 → R395.
 - **R393 — cardano-tracer: Environment.hs port (TracerEnv 14-field
   record, unblocks downstream subsystems).** Lands the runtime
   environment record threaded through every cardano-tracer
