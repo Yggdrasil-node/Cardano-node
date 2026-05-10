@@ -30,6 +30,7 @@ pub mod analysis;
 pub mod csv;
 pub mod has_analysis;
 pub mod parser;
+pub mod status;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -71,14 +72,37 @@ pub fn run_main() -> ExitCode {
 /// lines covering 13 analysis-name variants) + CSV writers + Run.hs
 /// supervisor land in subsequent rounds per the per-tool roadmap.
 pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
-    Err(eyre::eyre!(
-        "yggdrasil-db-analyser: per-era HasAnalysis + Analysis.hs dispatch \
-         not yet implemented (R365 ships argv → DBAnalyserConfig validation; \
-         later rounds wire the per-era block iterator + 13-variant analysis \
-         dispatch). Resolved: db={}, analysis={:?}, backend={:?}, limit={:?}.",
-        config.db_dir.display(),
-        config.analysis,
-        config.ldb_backend,
-        config.conf_limit,
-    ))
+    Err(RunError::AnalysisDispatchDeferred {
+        db: config.db_dir.display().to_string(),
+        analysis: format!("{:?}", config.analysis),
+        backend: format!("{:?}", config.ldb_backend),
+        limit: format!("{:?}", config.conf_limit),
+    }
+    .into())
+}
+
+/// Errors from the db-analyser `run` entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// Per-era HasAnalysis + Analysis.hs dispatch is deferred.
+    /// Mirror of upstream `Cardano.Tools.DBAnalyser.{HasAnalysis,
+    /// Analysis, Run}` — gated on yggdrasil's per-era
+    /// ImmutableStore block-iteration surface (Phase B.2 per the
+    /// playful-tickling-plum.md plan).
+    #[error(
+        "yggdrasil-db-analyser: per-era HasAnalysis + Analysis.hs dispatch deferred \
+         (see crates/db-analyser/src/status.rs::analysis_dispatch_status for the full \
+         deferral rationale). Resolved CLI: db={db}, analysis={analysis}, backend={backend}, \
+         limit={limit}."
+    )]
+    AnalysisDispatchDeferred {
+        /// Path to the ChainDB the operator supplied.
+        db: String,
+        /// Analysis-name rendering.
+        analysis: String,
+        /// Ledger-DB backend rendering.
+        backend: String,
+        /// Conf-limit rendering.
+        limit: String,
+    },
 }

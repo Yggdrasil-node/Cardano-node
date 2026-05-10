@@ -274,6 +274,26 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R442 — db-analyser: structured deferral surface (replicates
+  the R439-R441 `*_status()` pattern for the
+  `Cardano.Tools.DBAnalyser.{HasAnalysis, Analysis, Run}`
+  carve-outs).** Lands in `crates/db-analyser/src/status.rs`
+  (new) + `lib.rs` refactor:
+  - **status::AnalysisDispatchStatus**: 4-field descriptor
+    (status, depends_on, deferred_round, upstream_reference)
+    returned by [`status::analysis_dispatch_status`]. Documents
+    that the per-era HasAnalysis + 13-variant Analysis.hs dispatch
+    is gated on yggdrasil's per-era ImmutableStore block-iteration
+    surface (Phase B.2 R391-R400 per the playful-tickling-plum.md
+    plan).
+  - **RunError enum**: `AnalysisDispatchDeferred { db, analysis,
+    backend, limit }` — replaces the prior raw `eyre!` string,
+    preserves the CLI-resolution markers as structured fields.
+  Tests: yggdrasil-db-analyser 105 → 107 (+2: analysis_dispatch_status
+  describes deferral with ImmutableStore + Phase-B.2 markers;
+  status is Clone+Eq+Hash-round-trip via HashSet insertion).
+  Workspace: 5,940 → 5,942. Parity-matrix entry sister-tool.db-
+  analyser advanced: next_milestone R377 → R443.
 - **R441 — db-synthesizer: structured deferral surface
   (replicates the R439-R440 `*_status()` pattern for the
   `Cardano.Tools.DBSynthesizer.{Forging, Run}` carve-outs).**
