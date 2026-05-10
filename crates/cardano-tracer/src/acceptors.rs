@@ -18,5 +18,6 @@
 //!   `Cardano.Tracer.Acceptors.Run`.
 
 pub mod client;
+pub mod run;
 pub mod server;
 pub mod utils;

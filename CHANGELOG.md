@@ -274,6 +274,67 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R426 — cardano-tracer: acceptors/run.rs port of
+  Cardano.Tracer.Acceptors.Run.hs (Phase 2 round 11 of R411-R430
+  arc, completes the Acceptors leaves quartet).** Strict-mirror
+  port of `runAcceptors` — the trace-forwarder acceptors supervisor.
+  Decides between server-mode (`AcceptAt`) and client-mode
+  (`ConnectTo`) based on `TracerConfig.network`, runs per-instance
+  acceptor loops with auto-restart on transport interruption,
+  matches upstream's exact retry intervals (1s initial pause; 10s
+  server retry; 30s client retry). Lands in
+  `crates/cardano-tracer/src/acceptors/run.rs`. Public API:
+  - **run_acceptors(state, config, lo_handler) →
+    Result&lt;(), AcceptorsSupervisorError&gt;**: top-level supervisor.
+    Mirror of upstream's `runAcceptors`. Per the R398 plan's
+    TracerEnv option (b), takes the state slice + the operator's
+    `TracerConfig` directly rather than coupling to TracerEnv.
+  - **acceptors_configs(lo_request_num) → AcceptorConfiguration**:
+    builder for the trace-objects sub-protocol's
+    `AcceptorConfiguration` (R420). Mirror of upstream's
+    `acceptorsConfigs p` — only the TOF tuple element is built;
+    EKG + DPF slots are deferred carve-outs (see R424's server.rs).
+  - **run_in_loop(state, config, lo_handler, initial_pause,
+    interval, mode) → Result&lt;(), AcceptorsSupervisorError&gt;**:
+    auto-restart loop body. Mirror of upstream's
+    `runInLoop action onException initialPause interval`. The loop
+    races against the brake flag; on transient transport errors,
+    sleeps `interval`, then re-enters the body.
+  - **ServerOrClient enum**: dispatch token (Server / Client) for
+    `run_in_loop`'s mode arg. Public so external callers can wrap
+    the loop body if needed.
+  - **AcceptorsSupervisorError**: 3-variant error enum (NoTargets,
+    JoinError, Server).
+  - **dedup_connect_targets()**: helper deduplicating `ConnectTo`
+    target lists. Mirror of upstream's `NE.nub localSocks`.
+  - **INITIAL_PAUSE = 1s / SERVER_RETRY_INTERVAL = 10s /
+    CLIENT_RETRY_INTERVAL = 30s / DEFAULT_LO_REQUEST_NUM = 100**:
+    pub consts locking down upstream's hardcoded values.
+  Carve-outs documented in module docstring:
+  - **mkVerbosity** tracer wiring (depends on contra-tracer's
+    Tracer typeclass — operationally an stdout closure can be
+    wired by the caller).
+  - EKG (`EKGF.AcceptorConfiguration`) + DataPoint
+    (`DPF.AcceptorConfiguration`) configs — sub-protocols deferred.
+  - `secondsToNominalDiffTime` for `requestFrequency` — applies
+    only to deferred EKG config.
+  - `forwarderEndpoint = EKGF.LocalPipe p` — applies only to
+    deferred EKG config; upstream comment notes it's "unused in the
+    context of ouroboros-network mini-protocol application".
+  Updates `crates/cardano-tracer/src/acceptors.rs` with `pub mod
+  run`.
+  Tests: yggdrasil-cardano-tracer 403 → 408 (+5: acceptors_configs
+  uses supplied lo_request_num; acceptors_configs default brake
+  state is running; dedup_connect_targets collapses duplicates;
+  constants match upstream intervals; run_acceptors connect_to
+  empty list errors with `NoTargets`). Workspace: 5,870 → 5,875.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R426 → R427. The Acceptors leaves quartet (Server
+  + Client + Utils + Run) is now structurally complete. Per the
+  R411 plan, R427 ports `Cardano.Tracer.Run` — the top-level
+  supervisor that wires everything (Acceptors + Logs + Metrics +
+  Notifications + RTView) into the `cardano-tracer` binary entry,
+  followed by R428 closeout.
 - **R425 — cardano-tracer: acceptors/client.rs port of
   Cardano.Tracer.Acceptors.Client.hs (Phase 2 round 10 of R411-R430
   arc).** Strict-mirror port of `runAcceptorsClient` — the trace-
