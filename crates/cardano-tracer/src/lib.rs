@@ -29,33 +29,53 @@ pub mod configuration;
 pub mod parser;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
+///
+/// R366 wires the typed parser dispatcher end-to-end. On successful
+/// parse the resolved [`parser::Args`] is handed to [`run`]; `--help`
+/// and `--version` short-circuit with byte-equivalent upstream output.
 pub fn run_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    match parser::parse_args(&argv) {
-        Ok(_args) => match run() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                let _ = writeln!(std::io::stderr(), "Error: {err}");
-                ExitCode::FAILURE
-            }
-        },
+    let args = match parser::parse_args(&argv) {
+        Ok(args) => args,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
         }
         Err(parser::ParseError::VersionRequested) => {
             let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            ExitCode::FAILURE
         }
     }
 }
 
-/// Concrete run-loop entry. R335-pattern skeleton: returns the
-/// "not-yet-implemented" sentinel pending later round implementation.
-/// The CLI parser surface (--help / --version) IS functional and
-/// byte-equivalent to upstream.
-pub fn run() -> eyre::Result<()> {
+/// Concrete run-loop entry.
+///
+/// R366 lands argv → [`parser::Args`] dispatch. The actual config-file
+/// load + Acceptors/Handlers/Logs/Metrics wiring lands in subsequent
+/// rounds per the per-tool roadmap.
+pub fn run(args: &parser::Args) -> eyre::Result<()> {
     Err(eyre::eyre!(
-        "yggdrasil-cardano-tracer: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
+        "yggdrasil-cardano-tracer: config-file load + Acceptors/Handlers \
+         not yet implemented (R366 ships argv → Args dispatch; later \
+         rounds wire the trace-forwarder mini-protocol acceptor + log \
+         writers + metrics endpoints + notifications dispatcher). \
+         Resolved: config={}, state-dir={}, min-log-severity={:?}.",
+        args.tracer_config.display(),
+        args.state_dir
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<none>".to_string()),
+        args.log_severity,
     ))
 }

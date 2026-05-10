@@ -274,6 +274,40 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R366 — cardano-tracer: typed CLI parser (port of CLI.hs::parseTracerParams).**
+  Lands the typed parser dispatcher for cardano-tracer. parser.rs ports
+  upstream's `parseTracerParams :: Parser TracerParams` — a thin
+  3-flag CLI shell since the bulk of the operator surface lives in
+  the YAML config file (parsed at startup via
+  configuration::parse_tracer_config_json).
+  Flags:
+  - `-c` / `--config FILEPATH` — mandatory; tracer's YAML/JSON config.
+  - `--state-dir FILEPATH` — optional; RTView state directory (RTView
+    itself is carved out per the plan; the flag is parsed verbatim).
+  - `--min-log-severity SEVERITY` — optional; per-message severity
+    floor.
+  New SeverityS enum (Debug | Info | Notice | Warning | Error |
+  Critical | Alert | Emergency) mirroring upstream
+  Cardano.Logging.SeverityS — distinct from the existing
+  configuration::Verbosity (Minimum | ErrorsOnly | Maximum) which
+  controls the tracer's own verbosity rather than per-message
+  severity floor. SeverityS::from_str_strict parses the
+  upstream-canonical Haskell constructor names case-sensitively
+  (matching `option auto`'s Read instance).
+  ParseError variants: MissingConfig / InvalidSeverity /
+  UnknownFlag / MissingValue / HelpRequested / VersionRequested.
+  lib.rs::run_main() wires parser → Args → run() chain end-to-end.
+  lib.rs::run() returns a sentinel reporting the resolved config /
+  state-dir / min-log-severity + roadmap pointer (config-file load +
+  Acceptors/Handlers/Logs/Metrics wiring land in subsequent rounds).
+  Tests: cardano-tracer 21 → 40 (+19: 3 help/version + 1 minimal-
+  config-only + 1 config-short-form + 1 state-dir + 1 all-8-severity-
+  levels [single test that loops] + 2 unknown-severity / case-
+  sensitive-rejection + 1 full-canonical + 3 error rejections
+  [missing-config / unknown-flag / missing-value] + 2 SeverityS
+  default+ordering checks). Workspace: 5,337 → 5,348. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone R359 →
+  R367.
 - **R365 — db-analyser: typed CLI parser (port of DBAnalyser/Parsers.hs::parseDBAnalyserConfig).**
   Lands the typed parser dispatcher for db-analyser, replacing
   the R335 passthrough Args. parser.rs ports upstream's
