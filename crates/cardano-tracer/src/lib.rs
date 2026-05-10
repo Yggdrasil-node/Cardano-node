@@ -8,12 +8,13 @@
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
 //!
-//! Layout mapping (R358 ships configuration.rs; later rounds populate the rest):
+//! Layout mapping (R379 ships time.rs; later rounds populate the rest):
 //!
 //! | Upstream `.hs`                                       | Yggdrasil `.rs`              |
 //! |------------------------------------------------------|------------------------------|
 //! | `Cardano/Tracer/Configuration.hs`                    | `configuration.rs`           |
-//! | `Cardano/Tracer/Types.hs`                            | `types.rs` (pending)         |
+//! | `Cardano/Tracer/Types.hs`                            | `types.rs`                   |
+//! | `Cardano/Tracer/Time.hs`                             | `time.rs`                    |
 //! | `Cardano/Tracer/CLI.hs`                              | `cli.rs` (pending)           |
 //! | `Cardano/Tracer/Run.hs`                              | `run.rs` (pending)           |
 //! | `Cardano/Tracer/Acceptors/*`                         | `acceptors/*.rs` (pending)   |
@@ -27,6 +28,7 @@ use std::process::ExitCode;
 
 pub mod configuration;
 pub mod parser;
+pub mod time;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.

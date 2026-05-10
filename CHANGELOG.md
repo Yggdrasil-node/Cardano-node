@@ -274,6 +274,23 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R379 — cardano-tracer: Time.hs port (EKG epoch-millis helper).**
+  Lands the small wall-clock helper used by the cardano-tracer EKG
+  metric backend. New time.rs module ports the upstream
+  Cardano.Tracer.Time surface verbatim:
+  - `get_time_ms() -> i64` mirror of upstream
+    `getTimeMs :: IO Int64; getTimeMs = (round . (* 1000)) `fmap`
+    getPOSIXTime`. Uses std::time::SystemTime::now().duration_since(
+    UNIX_EPOCH).as_millis() with i64 cast for upstream Int64 width
+    parity.
+  - Upstream's `--` docstring linking to ekg-wai's
+    System/Remote/Monitoring/Wai.hs source preserved verbatim in the
+    module docstring for context.
+  Tests: cardano-tracer 52 → 56 (+4: positive-integer past 1999-12-31
+  + sandwich-within-2-seconds-of-system-now + monotonic-within-short-
+  window + i64-return-type assertion). Workspace: 5,456 → 5,460.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R372 → R380.
 - **R378 — db-synthesizer: Orphans.hs port (JSON deserialization +
   AdjustFilePaths trait).** Lands the JSON-deserialization +
   file-path-adjustment surface used by the db-synthesizer typed config
