@@ -24,7 +24,7 @@
 //! | `contentHdrUtf8Text`                                           | [`CONTENT_HDR_UTF8_TEXT`]              |
 //! | `contentHdrPrometheus`                                         | [`CONTENT_HDR_PROMETHEUS`]             |
 //! | `computeRoutes :: TracerEnv -> IO RouteDictionary`             | (deferred — see [`compute_routes_status`]) |
-//! | `renderListOfConnectedNodes`                                   | (deferred — see [`render_html_status`])    |
+//! | `renderListOfConnectedNodes`                                   | [`RouteDictionary::render_html`]       |
 //!
 //! Carve-outs (NOT ported, by design):
 //!
@@ -35,12 +35,10 @@
 //!   plucks the two fields and calls a [`RouteDictionary`]
 //!   constructor that takes maps directly.
 //! - **`Text.Blaze.Html`-rendered `renderListOfConnectedNodes`**:
-//!   upstream emits an HTML index page using the `blaze-html`
-//!   combinator library. The Rust port defers this until either
-//!   (a) a workspace-approved HTML library lands (e.g. `maud`,
-//!   `markup`, or `horrorshow`), or (b) the renderer is hand-rolled
-//!   inline. The JSON variant ([`RouteDictionary::render_json`])
-//!   ships now since serde_json is already a workspace dep.
+//!   landed at R406 with the maud 0.27 workspace dep. The
+//!   [`RouteDictionary::render_html`] renderer auto-escapes user
+//!   content + matches upstream's empty-dictionary
+//!   "There are no connected nodes yet." short-circuit verbatim.
 //! - **`Network.HTTP.Types.ResponseHeaders`** (`[(HeaderName,
 //!   ByteString)]` representation): the Rust port emits each
 //!   constant as a tuple `(&'static str, &'static str)` of
@@ -134,6 +132,44 @@ impl RouteDictionary {
             .collect();
         serde_json::to_vec(&map).unwrap_or_default()
     }
+
+    /// Render the dictionary as an HTML index page listing each
+    /// connected node with a link to its per-node metrics route.
+    /// Mirror of upstream
+    /// `renderListOfConnectedNodes :: Text -> RouteDictionary -> Lazy.ByteString`.
+    ///
+    /// `metrics_title` is the page title (rendered in `<title>`).
+    /// Returns the page as a byte vector. When the dictionary is
+    /// empty, returns the canonical "no nodes yet" message verbatim
+    /// matching upstream's
+    /// `"There are no connected nodes yet."` short-circuit.
+    pub fn render_html(&self, metrics_title: &str) -> Vec<u8> {
+        if self.get_route_dictionary.is_empty() {
+            return b"There are no connected nodes yet.".to_vec();
+        }
+        let names: Vec<String> = self
+            .get_route_dictionary
+            .iter()
+            .map(|(_, name)| name.clone())
+            .collect();
+        let page = maud::html! {
+            html {
+                head {
+                    title { (metrics_title) }
+                }
+                body {
+                    ul {
+                        @for name in &names {
+                            li {
+                                a href={ "/" (slugify(name)) } { (name) }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        page.into_string().into_bytes()
+    }
 }
 
 /// URL-friendly slug from a free-form node-name. Mirror of upstream's
@@ -184,24 +220,24 @@ pub fn compute_routes_status() -> ComputeRoutesStatus {
     }
 }
 
-/// Status descriptor for the carve-out `renderListOfConnectedNodes`
-/// HTML renderer.
+/// Status descriptor for the previously-carved-out
+/// `renderListOfConnectedNodes` HTML renderer. Closed at R406 with
+/// the maud 0.27 dep land + [`RouteDictionary::render_html`].
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct RenderHtmlStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary of the closure status.
     pub status: &'static str,
-    /// Reason — references the missing dependency.
-    pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
-    pub deferred_round: &'static str,
+    /// Round at which the renderer landed.
+    pub closed_at_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for the HTML renderer.
+/// Get the closure-status descriptor for the HTML renderer. R406
+/// closes the carve-out: the actual renderer is
+/// [`RouteDictionary::render_html`].
 pub fn render_html_status() -> RenderHtmlStatus {
     RenderHtmlStatus {
-        status: "deferred",
-        depends_on: "Text.Blaze.Html equivalent (e.g. maud / markup / horrorshow) — pending docs/DEPENDENCIES.md justification, OR hand-rolled inline renderer",
-        deferred_round: "R392+",
+        status: "closed at R406",
+        closed_at_round: "R406",
     }
 }
 
@@ -347,10 +383,55 @@ mod tests {
     }
 
     #[test]
-    fn render_html_status_describes_deferral() {
+    fn render_html_status_describes_closure() {
         let s = render_html_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("Blaze") || s.depends_on.contains("blaze"));
-        assert_eq!(s.deferred_round, "R392+");
+        assert_eq!(s.status, "closed at R406");
+        assert_eq!(s.closed_at_round, "R406");
+    }
+
+    #[test]
+    fn render_html_empty_dictionary_returns_no_nodes_message() {
+        let rd = RouteDictionary::default();
+        let html = rd.render_html("Yggdrasil Tracer");
+        let s = String::from_utf8(html).expect("utf8");
+        assert_eq!(s, "There are no connected nodes yet.");
+    }
+
+    #[test]
+    fn render_html_with_one_node_emits_canonical_html_page() {
+        let rd = RouteDictionary::new(vec![("alpha".to_string(), "alpha-pool".to_string())]);
+        let html = rd.render_html("Yggdrasil Tracer");
+        let s = String::from_utf8(html).expect("utf8");
+        // Title + body + per-node link.
+        assert!(s.contains("<title>Yggdrasil Tracer</title>"));
+        assert!(s.contains("<a href=\"/alpha-pool\">alpha-pool</a>"));
+    }
+
+    #[test]
+    fn render_html_with_multiple_nodes_emits_each_link() {
+        let rd = RouteDictionary::new(vec![
+            ("alpha".to_string(), "alpha-pool".to_string()),
+            ("beta".to_string(), "beta pool!".to_string()),
+        ]);
+        let html = rd.render_html("Yggdrasil Tracer");
+        let s = String::from_utf8(html).expect("utf8");
+        assert!(s.contains("alpha-pool"));
+        assert!(s.contains("beta pool!"));
+        // The slug for the link uses slugify (so "beta pool!" → "beta-pool").
+        assert!(s.contains("/beta-pool"));
+    }
+
+    #[test]
+    fn render_html_escapes_user_supplied_node_names() {
+        // maud auto-escapes content; verify a script-tagged name doesn't
+        // produce raw <script>.
+        let rd = RouteDictionary::new(vec![(
+            "x".to_string(),
+            "<script>alert(1)</script>".to_string(),
+        )]);
+        let html = rd.render_html("Title");
+        let s = String::from_utf8(html).expect("utf8");
+        assert!(!s.contains("<script>alert(1)</script>"));
+        assert!(s.contains("&lt;script&gt;"));
     }
 }

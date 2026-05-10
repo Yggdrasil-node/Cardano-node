@@ -274,6 +274,37 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R406 — cardano-tracer: maud HTML renderer (D2-prime from R398
+  plan; closes R391 RenderHtmlStatus carve-out).** Lands the
+  `renderListOfConnectedNodes` HTML index page. Three workspace
+  surfaces touched:
+  - **Cargo.toml workspace.dependencies**: adds `maud = "0.27"`.
+    License: MIT. Verified zero transitive deps via
+    `cargo tree` — only adds `maud_macros` (proc-macro).
+  - **RouteDictionary::render_html(&str) → Vec<u8>** in
+    `handlers/metrics/utils.rs`: emits an HTML page with `<title>`
+    (operator-supplied) + `<ul>` of `<li><a href="/<slug>">name</a></li>`
+    per connected node. Empty-dictionary short-circuit returns the
+    canonical upstream
+    `"There are no connected nodes yet."` text verbatim. Auto-
+    escapes user-supplied node names via maud's compile-time
+    template syntax (no XSS risk from operator-supplied node-name
+    strings).
+  - **RenderHtmlStatus** struct upgraded from a deferral descriptor
+    to a closure marker: `status: "closed at R406"`.
+  Note: the broader R398 D2 (axum + hyper + tower + rustls-pemfile)
+  HTTP server suite is split off to a separate round (R407) since
+  it requires more careful TLS/feature integration. R406 ships
+  D2-prime (maud) standalone since the maud audit is genuinely
+  zero-deps and closes the RenderHtmlStatus carve-out cleanly.
+  Tests: cardano-tracer 312 → 316 (+4: render_html with empty
+  dictionary returns no-nodes message; with one node emits
+  canonical HTML page with title + per-node link; with multiple
+  nodes emits each link with slugified hrefs; auto-escapes
+  user-supplied node names [`<script>` becomes `&lt;script&gt;`];
+  status describes closure). Workspace: 5,716 → 5,720. Parity-
+  matrix entry sister-tool.cardano-tracer advanced: next_milestone
+  R406 → R407.
 - **R405 — cardano-tracer: initEventsQueues orchestration (closes
   R385 InitEventsQueuesStatus carve-out — Notifications subsystem
   fully complete).** Lands the entry-point that bootstraps the
