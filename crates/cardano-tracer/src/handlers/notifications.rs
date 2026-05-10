@@ -22,8 +22,9 @@
 //! | `Notifications/Timer.hs`                            | `timer.rs` (pending)     |
 //! | `Notifications/Send.hs`                             | `send.rs` (pending)      |
 //! | `Notifications/Email.hs`                            | `email.rs` (pending)     |
-//! | `Notifications/Utils.hs`                            | `utils.rs` (pending)     |
+//! | `Notifications/Utils.hs`                            | `utils.rs`               |
 
 pub mod check;
 pub mod settings;
 pub mod types;
+pub mod utils;

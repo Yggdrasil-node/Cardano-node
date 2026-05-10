@@ -274,6 +274,50 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R385 — cardano-tracer: Notifications/Utils.hs port (bounded
+  subset).** Lands the bounded subset of upstream's notification-engine
+  utility helpers — the two functions whose dependencies are already
+  ported (`addNewEvent`, `getNewEvents`) plus stub-and-defer markers
+  for the timer-bound entries. New handlers/notifications/utils.rs
+  module ports the upstream
+  Cardano.Tracer.Handlers.Notifications.Utils surface:
+  - add_new_event(&EventsSenders, EventGroup, Event) async → bool —
+    push event to per-group queue; returns true if routed, false if
+    group has no registered sender (mirror of upstream's silent
+    no-op when M.lookup eventGroup queues = Nothing). Takes the
+    EventsSenders auxiliary type added in R381 (producer side)
+    rather than upstream's bidirectional EventsQueues.
+  - get_new_events(&EventsQueues, EventGroup) async → Vec<Event> —
+    drains all currently-queued events for a group in FIFO order
+    via try_recv loop (mirror of upstream's `atomically $
+    flushTBQueue queue`).
+  - InitEventsQueuesStatus struct + init_events_queues_status()
+    helper exposing the deferral rationale programmatically; sites
+    wiring up a partial cardano-tracer runtime can reference this
+    type to surface "feature deferred" status without duplicating
+    the rationale string.
+  Stub-and-defer markers documented for:
+  - initEventsQueues — depends on full Timer surface (forkIO +
+    killThread closures + setCallPeriod), pending in a future round.
+  - updateNotificationsEvents / updateNotificationsPeriods /
+    changeTimerState — same Timer dependency.
+  Carve-outs documented:
+  - Cardano.Tracer.MetaTrace.TracerTrace channel not yet ported;
+    upstream's initEventsQueues writes trace events during init
+    that Yggdrasil-side equivalents will eventually consume.
+  - isFullTBQueue bounded-queue check not applicable; Yggdrasil's
+    EventsQueue is mpsc::UnboundedSender (per the R380 carve-out
+    documentation). If a future round needs strict bounded-queue
+    semantics, swap to mpsc::Receiver<Event> (bounded) and observe
+    try_send Err(Full) at the add_new_event call site.
+  Tests: cardano-tracer 114 → 121 (+7: add_new_event returns true
+  when group registered + false when not registered; get_new_events
+  drains all queued events FIFO; returns empty when group not
+  registered; returns empty when queue is empty; second drain after
+  first yields empty; init_events_queues_status describes deferral
+  with Timer dependency). Workspace: 5,518 → 5,525. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone R385 →
+  R386.
 - **R384 — cardano-tracer: Notifications/Settings.hs port (settings
   persistence).** Lands the persistence layer for the notification
   engine. New handlers/notifications/settings.rs module ports the
