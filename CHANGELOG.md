@@ -274,6 +274,40 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R362 — kes-agent-control: typed CLI parser (port of ControlMain.hs::pProgramOptions).**
+  Lands the typed parser dispatcher for kes-agent-control, replacing
+  the R335 passthrough Args. parser.rs ports upstream's
+  pProgramOptions + per-subcommand parsers (pCommonOptions /
+  pGenKeyOptions / pQueryKeyOptions / pDropStagedKeyOptions /
+  pDropKeyOptions / pInstallKeyOptions). Two-pass walk:
+  (1) Locate the subcommand keyword (gen-staged-key /
+      export-staged-vkey / drop-staged-key / install-key / drop-key /
+      info); split argv into before/subcommand/after windows.
+  (2) Parse common options from both before- and after- windows
+      (filtering per-subcommand flags out of the after-window before
+      passing to the common-options parser).
+  (3) Apply common-options overrides to the chosen subcommand via
+      ProgramOptions::with_common_options.
+  Common options dispatched from any position around the subcommand:
+  -c / --control-address, -v / --verbose, --retry-interval (alias
+  --retry-delay), --retry-exponential (boolean switch),
+  --retry-attempts. Per-subcommand options: --kes-vkey for
+  gen-staged-key + export-staged-vkey; --op-cert for install-key.
+  --help and --version short-circuit at parse time matching upstream's
+  helper combinator behavior. lib.rs::run_main() wires parser →
+  ProgramOptions → run() chain end-to-end. lib.rs::run() returns a
+  sentinel reporting the chosen subcommand + roadmap pointer
+  (per-subcommand ControlClient socket I/O lands when the kes-agent
+  server mini-arc completes). Tests: kes-agent-control 17 → 36 (+19:
+  3 help/version detection + 1 missing-subcommand + 1 unknown-
+  subcommand + 6 per-subcommand-minimal parses + 4 common-options-
+  before/after/short-form/retry-exponential + 3 retry-interval /
+  retry-delay alias / retry-attempts + 3 missing-value /
+  invalid-verbosity / unknown-flag rejections + 1 full canonical
+  install-key invocation). Workspace: 5,260 → 5,279. Parity-matrix
+  entry sister-tool.kes-agent-control advanced: next_milestone R356
+  → R363; runtime ControlClient socket I/O still pending kes-agent
+  server mini-arc per the per-tool roadmap.
 - **R361 — dmq-node: typed CLI parser (port of CLIOptions.hs::parseCLIOptions).**
   Lands the typed parser dispatcher for dmq-node, replacing the R335
   passthrough Args. parser.rs ports upstream's

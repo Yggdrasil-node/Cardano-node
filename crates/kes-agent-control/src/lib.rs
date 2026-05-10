@@ -26,33 +26,57 @@ pub mod parser;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
+///
+/// R362 wires the typed parser dispatcher end-to-end. On successful
+/// parse the resolved [`types::ProgramOptions`] is handed to [`run`];
+/// `--help` and `--version` short-circuit with byte-equivalent
+/// upstream output.
 pub fn run_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    match parser::parse_args(&argv) {
-        Ok(_args) => match run() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                let _ = writeln!(std::io::stderr(), "Error: {err}");
-                ExitCode::FAILURE
-            }
-        },
+    let program_options = match parser::parse_args(&argv) {
+        Ok(opts) => opts,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
         }
         Err(parser::ParseError::VersionRequested) => {
             let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    match run(&program_options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            ExitCode::FAILURE
         }
     }
 }
 
-/// Concrete run-loop entry. R335-pattern skeleton: returns the
-/// "not-yet-implemented" sentinel pending later round implementation.
-/// The CLI parser surface (--help / --version) IS functional and
-/// byte-equivalent to upstream.
-pub fn run() -> eyre::Result<()> {
+/// Concrete run-loop entry.
+///
+/// R362 lands argv → [`types::ProgramOptions`] dispatch. The actual
+/// per-subcommand ControlClient socket I/O lands in subsequent rounds
+/// per the per-tool roadmap (gated on the kes-agent server mini-arc).
+pub fn run(program_options: &types::ProgramOptions) -> eyre::Result<()> {
+    use types::ProgramOptions;
+    let subcommand = match program_options {
+        ProgramOptions::RunGenKey(_) => "gen-staged-key",
+        ProgramOptions::RunQueryKey(_) => "export-staged-vkey",
+        ProgramOptions::RunDropStagedKey(_) => "drop-staged-key",
+        ProgramOptions::RunInstallKey(_) => "install-key",
+        ProgramOptions::RunDropKey(_) => "drop-key",
+        ProgramOptions::RunGetInfo(_) => "info",
+    };
     Err(eyre::eyre!(
-        "yggdrasil-kes-agent-control: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
+        "yggdrasil-kes-agent-control: ControlClient socket I/O for `{subcommand}' \
+         not yet implemented (R362 ships argv → ProgramOptions dispatch; \
+         per-subcommand runtime lands in subsequent rounds gated on the \
+         kes-agent server mini-arc)."
     ))
 }
