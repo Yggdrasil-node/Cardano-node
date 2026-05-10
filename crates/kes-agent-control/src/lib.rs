@@ -27,13 +27,22 @@ pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 ///
-/// R362 wires the typed parser dispatcher end-to-end. On successful
-/// parse the resolved [`types::ProgramOptions`] is handed to [`run`];
-/// `--help` and `--version` short-circuit with byte-equivalent
-/// upstream output.
+/// R362 wires the typed parser dispatcher end-to-end; R370 layers
+/// in environment-variable threading: the CLI-derived
+/// [`types::ProgramOptions`] inherits env-derived defaults from
+/// `KES_AGENT_CONTROL_PATH` / `KES_AGENT_CONTROL_RETRY_INTERVAL` /
+/// `KES_AGENT_CONTROL_RETRY_ATTEMPTS` before being handed off to
+/// [`run`]. `--help` and `--version` short-circuit with byte-
+/// equivalent upstream output.
+///
+/// Resolution order (mirrors upstream's WithCommonOptions threading):
+/// 1. CLI-derived options (highest priority).
+/// 2. Environment-derived options.
+/// 3. [`types::CommonOptions::defaults`] (lowest priority — fills
+///    in any field still unset).
 pub fn run_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let program_options = match parser::parse_args(&argv) {
+    let cli_options = match parser::parse_args(&argv) {
         Ok(opts) => opts,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
@@ -48,6 +57,11 @@ pub fn run_main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // R370: layer env-derived options + defaults under the CLI overrides.
+    let env_options = types::CommonOptions::from_env();
+    let resolved_common = env_options.merge(types::CommonOptions::defaults());
+    let program_options = cli_options.with_common_options(resolved_common);
 
     match run(&program_options) {
         Ok(()) => ExitCode::SUCCESS,

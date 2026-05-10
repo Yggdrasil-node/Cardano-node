@@ -98,6 +98,50 @@ impl CommonOptions {
             retry_attempts: self.retry_attempts.or(other.retry_attempts),
         }
     }
+
+    /// Derive a `CommonOptions` from process environment variables.
+    /// Mirrors upstream `optFromEnv :: IO CommonOptions`.
+    ///
+    /// Reads:
+    ///
+    /// - `KES_AGENT_CONTROL_PATH` → [`Self::control_path`].
+    /// - `KES_AGENT_CONTROL_RETRY_INTERVAL` → [`Self::retry_delay`]
+    ///   (fails open: malformed numeric values are silently dropped,
+    ///   matching upstream's `(>>= readMaybe)` behavior).
+    /// - `KES_AGENT_CONTROL_RETRY_ATTEMPTS` → [`Self::retry_attempts`]
+    ///   (same fail-open behavior).
+    ///
+    /// Verbosity and retry-exponential are NOT env-derivable
+    /// upstream — those fields stay `None` here. The result is
+    /// designed to be merged into the CLI-derived options as a
+    /// lower-priority overlay before the defaults pass.
+    pub fn from_env() -> Self {
+        Self::from_env_lookup(|key| std::env::var(key).ok())
+    }
+
+    /// Test-friendly variant of [`Self::from_env`] that takes a
+    /// closure for the variable lookup. Useful for unit tests that
+    /// need to seed specific environment-variable values without
+    /// mutating the process-wide environment.
+    pub fn from_env_lookup<F>(lookup: F) -> Self
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let control_path = lookup("KES_AGENT_CONTROL_PATH");
+        let retry_delay = lookup("KES_AGENT_CONTROL_RETRY_INTERVAL")
+            .as_deref()
+            .and_then(|s| s.parse::<i64>().ok());
+        let retry_attempts = lookup("KES_AGENT_CONTROL_RETRY_ATTEMPTS")
+            .as_deref()
+            .and_then(|s| s.parse::<i64>().ok());
+        CommonOptions {
+            control_path,
+            verbosity: None,
+            retry_delay,
+            retry_exponential: None,
+            retry_attempts,
+        }
+    }
 }
 
 /// `gen-staged-key` subcommand options. Mirrors upstream
@@ -299,6 +343,97 @@ mod tests {
         assert_eq!(merged.retry_delay, Some(500));
         assert_eq!(merged.retry_exponential, Some(true));
         assert_eq!(merged.retry_attempts, Some(5));
+    }
+
+    #[test]
+    fn from_env_lookup_returns_all_none_when_no_vars_set() {
+        let env = CommonOptions::from_env_lookup(|_| None);
+        assert!(env.control_path.is_none());
+        assert!(env.verbosity.is_none());
+        assert!(env.retry_delay.is_none());
+        assert!(env.retry_exponential.is_none());
+        assert!(env.retry_attempts.is_none());
+    }
+
+    #[test]
+    fn from_env_lookup_reads_control_path() {
+        let env = CommonOptions::from_env_lookup(|key| match key {
+            "KES_AGENT_CONTROL_PATH" => Some("/var/run/k.sock".to_string()),
+            _ => None,
+        });
+        assert_eq!(env.control_path.as_deref(), Some("/var/run/k.sock"));
+    }
+
+    #[test]
+    fn from_env_lookup_reads_retry_interval() {
+        let env = CommonOptions::from_env_lookup(|key| match key {
+            "KES_AGENT_CONTROL_RETRY_INTERVAL" => Some("750".to_string()),
+            _ => None,
+        });
+        assert_eq!(env.retry_delay, Some(750));
+    }
+
+    #[test]
+    fn from_env_lookup_reads_retry_attempts() {
+        let env = CommonOptions::from_env_lookup(|key| match key {
+            "KES_AGENT_CONTROL_RETRY_ATTEMPTS" => Some("10".to_string()),
+            _ => None,
+        });
+        assert_eq!(env.retry_attempts, Some(10));
+    }
+
+    #[test]
+    fn from_env_lookup_silently_drops_malformed_numbers() {
+        // Mirrors upstream's `(>>= readMaybe)` behavior: malformed
+        // numeric env values are silently dropped, NOT propagated as
+        // an error.
+        let env = CommonOptions::from_env_lookup(|key| match key {
+            "KES_AGENT_CONTROL_RETRY_INTERVAL" => Some("not-a-number".to_string()),
+            "KES_AGENT_CONTROL_RETRY_ATTEMPTS" => Some("also-not-a-number".to_string()),
+            _ => None,
+        });
+        assert!(env.retry_delay.is_none());
+        assert!(env.retry_attempts.is_none());
+    }
+
+    #[test]
+    fn from_env_lookup_does_not_set_verbosity_or_retry_exponential() {
+        // Upstream's optFromEnv does NOT consult env vars for verbosity
+        // or retry-exponential — those are CLI/default-only.
+        let env = CommonOptions::from_env_lookup(|key| match key {
+            "KES_AGENT_CONTROL_PATH" => Some("/k.sock".to_string()),
+            "KES_AGENT_CONTROL_RETRY_INTERVAL" => Some("100".to_string()),
+            "KES_AGENT_CONTROL_RETRY_ATTEMPTS" => Some("5".to_string()),
+            _ => None,
+        });
+        assert!(env.verbosity.is_none());
+        assert!(env.retry_exponential.is_none());
+    }
+
+    #[test]
+    fn from_env_lookup_full_resolution_chain() {
+        // Simulate the lib.rs::run_main() resolution order:
+        //   cli.merge(env).merge(defaults)
+        // CLI sets control_path; env sets retry_attempts; defaults
+        // fill in everything else.
+        let cli = CommonOptions {
+            control_path: Some("/cli.sock".to_string()),
+            verbosity: Some(3),
+            ..CommonOptions::default()
+        };
+        let env = CommonOptions::from_env_lookup(|key| match key {
+            "KES_AGENT_CONTROL_RETRY_ATTEMPTS" => Some("7".to_string()),
+            _ => None,
+        });
+        let resolved = cli.merge(env).merge(CommonOptions::defaults());
+        // CLI wins on control_path + verbosity.
+        assert_eq!(resolved.control_path.as_deref(), Some("/cli.sock"));
+        assert_eq!(resolved.verbosity, Some(3));
+        // Env wins on retry_attempts (CLI didn't set it).
+        assert_eq!(resolved.retry_attempts, Some(7));
+        // Defaults fill in retry_delay (None from CLI + None from env)
+        // — defaults also has None for retry_delay so it stays None.
+        assert!(resolved.retry_delay.is_none());
     }
 
     #[test]

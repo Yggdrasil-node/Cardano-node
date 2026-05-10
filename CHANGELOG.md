@@ -274,6 +274,38 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R370 — kes-agent-control: env-var derivation (port of optFromEnv).**
+  Lands the environment-variable threading layer for kes-agent-control.
+  CommonOptions gains two helpers mirroring upstream's
+  `optFromEnv :: IO CommonOptions`:
+  - `from_env()` — reads the process environment.
+  - `from_env_lookup<F>(lookup)` — test-friendly variant accepting a
+    closure for the lookup, useful for unit tests that need to seed
+    specific values without mutating the process-wide environment.
+  Reads:
+  - `KES_AGENT_CONTROL_PATH` → control_path
+  - `KES_AGENT_CONTROL_RETRY_INTERVAL` → retry_delay (fails open
+    on malformed numbers, matching upstream's `(>>= readMaybe)`)
+  - `KES_AGENT_CONTROL_RETRY_ATTEMPTS` → retry_attempts (same
+    fail-open behavior)
+  Verbosity and retry-exponential are NOT env-derivable upstream;
+  those fields stay None.
+  lib.rs::run_main() now layers the resolution order:
+  1. CLI-derived ProgramOptions (highest priority)
+  2. Environment-derived CommonOptions (mid-priority)
+  3. CommonOptions::defaults (lowest priority — fills any field
+     still unset)
+  Resolution wired via:
+    let env_options = types::CommonOptions::from_env();
+    let resolved_common = env_options.merge(CommonOptions::defaults());
+    let program_options = cli_options.with_common_options(resolved_common);
+  Tests: kes-agent-control 36 → 43 (+7: 1 from-env-no-vars-set
+  all-None + 1 control-path-from-env + 1 retry-interval-from-env +
+  1 retry-attempts-from-env + 1 silently-drops-malformed-numbers
+  [matches upstream readMaybe semantics] + 1 verbosity-and-retry-
+  exponential-not-env-derivable + 1 full-resolution-chain CLI >
+  env > defaults). Workspace: 5,368 → 5,375. Parity-matrix entry
+  sister-tool.kes-agent-control advanced: next_milestone R363 → R371.
 - **R369 — dmq-node: configuration-file load + CLI/file/defaults resolution (port of Configuration.hs::readConfigurationFile).**
   Lands the configuration-file loader for dmq-node. New
   configuration.rs module ports upstream's `readConfigurationFile`
