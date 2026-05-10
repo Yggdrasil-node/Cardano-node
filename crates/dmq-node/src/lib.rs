@@ -28,33 +28,68 @@ pub mod parser;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
+///
+/// R361 wires the typed parser surface end-to-end:
+/// - `--help` / `-h` → emits the upstream-byte-equivalent HELP_TEXT and
+///   exits 0.
+/// - `--version` / `-v` (in-grammar switch — flips
+///   `args.show_version`) → emits VERSION_TEXT and exits 0.
+/// - parse error → emits the error to stderr and exits non-zero.
+/// - parse success without `--version` → resolves the partial config
+///   to a full [`types::Configuration`] and hands off to [`run`].
 pub fn run_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    match parser::parse_args(&argv) {
-        Ok(_args) => match run() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                let _ = writeln!(std::io::stderr(), "Error: {err}");
-                ExitCode::FAILURE
-            }
-        },
+    let args = match parser::parse_args(&argv) {
+        Ok(args) => args,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
         }
         Err(parser::ParseError::VersionRequested) => {
             let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if args.show_version == Some(true) {
+        let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
+        return ExitCode::SUCCESS;
+    }
+
+    let config = args.resolve();
+    match run(&config) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            ExitCode::FAILURE
         }
     }
 }
 
-/// Concrete run-loop entry. R335-pattern skeleton: returns the
-/// "not-yet-implemented" sentinel pending later round implementation.
-/// The CLI parser surface (--help / --version) IS functional and
-/// byte-equivalent to upstream.
-pub fn run() -> eyre::Result<()> {
+/// Concrete run-loop entry.
+///
+/// R361 lands the parser → resolve → run() chain; the actual
+/// Diffusion/NodeKernel/PeerSelection wiring lands at R357+ per the
+/// per-tool roadmap. Until then, this returns a sentinel error
+/// describing what's missing.
+pub fn run(config: &types::Configuration) -> eyre::Result<()> {
     Err(eyre::eyre!(
-        "yggdrasil-dmq-node: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
+        "yggdrasil-dmq-node: Diffusion/NodeKernel/PeerSelection wiring \
+         not yet implemented (R361 ships argv → Configuration validation; \
+         later rounds wire the diffusion layer per the per-tool roadmap). \
+         Resolved config: host={}:{}, local_socket={}, config_file={}, \
+         topology_file={}, cardano_socket={}, cardano_magic={}, dmq_magic={}.",
+        config.host_addr,
+        config.port_number,
+        config.local_address.as_path().display(),
+        config.config_file.display(),
+        config.topology_file.display(),
+        config.cardano_node_socket.display(),
+        config.cardano_network_magic.0,
+        config.network_magic.0,
     ))
 }

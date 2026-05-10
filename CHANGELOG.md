@@ -274,6 +274,35 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R361 — dmq-node: typed CLI parser (port of CLIOptions.hs::parseCLIOptions).**
+  Lands the typed parser dispatcher for dmq-node, replacing the R335
+  passthrough Args. parser.rs ports upstream's
+  `parseCLIOptions :: Parser PartialConfig` — the 10-flag grammar
+  (--host-addr, --host-ipv6-addr, -p/--port, --local-socket,
+  -c/--configuration-file, -t/--topology-file, --cardano-node-socket,
+  --cardano-network-magic, --dmq-network-magic, -v/--version,
+  -h/--help) maps each flag to the matching field in
+  types::PartialConfig. `--version` is an in-grammar switch (sets
+  show_version: Some(true) for downstream dispatch; not a parser
+  short-circuit) matching upstream's optparse-applicative behavior;
+  `--help` short-circuits via ParseError::HelpRequested. ParseError
+  enum gains UnknownFlag/MissingValue/InvalidValue variants for
+  the typed-flag dispatch failure modes. lib.rs::run_main() now
+  wires the parser → resolve → run() chain: HelpRequested emits
+  HELP_TEXT and exits 0; show_version emits VERSION_TEXT and exits
+  0; otherwise resolves PartialConfig → Configuration via
+  PartialConfig::resolve and hands off to run(&Configuration).
+  lib.rs::run() returns a sentinel reporting resolved-config field
+  values + roadmap pointer (R362+ for Diffusion/NodeKernel/
+  PeerSelection wiring). Tests: dmq-node 14 → 33 (+19: 1 detect-help-
+  long + 1 detect-help-short + 2 version-flag-sets-show-version +
+  9 individual-flag round-trips + 1 full canonical invocation + 4
+  rejection paths [unknown-flag / missing-value / invalid-port /
+  invalid-network-magic] + 2 resolve-end-to-end checks). Workspace:
+  5,241 → 5,260. Parity-matrix entry sister-tool.dmq-node advanced:
+  next_milestone R357 → R362; remaining_work narrowed
+  (Configuration.hs port → mux wiring → Diffusion/NodeKernel +
+  Tracer + integration + closeout).
 - **R359 — cardano-testnet: simple-types port (operator-facing knobs from Start/Types.hs).**
   Lands the simple operator-facing types from upstream's
   Testnet/Start/Types.hs that don't pull in the deeper Cardano.Api /

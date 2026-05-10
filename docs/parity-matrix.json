@@ -820,7 +820,7 @@
       "area": "sister-tools",
       "feature": "Delegated Mempool Queue diffusion-layer node (sister project for Mithril) \u2014 pure-Rust port mirroring upstream IntersectMBO/dmq-node.",
       "status": "partial",
-      "next_milestone": "R357",
+      "next_milestone": "R362",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/dmq-node/dmq-node/",
@@ -836,13 +836,13 @@
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for dmq-node.",
         "Byte-equivalent --help and --version captured from upstream dmq-node binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "R356 typed-config surface: types.rs ports the operator-facing CLI shape from upstream's CLIOptions.hs \u2014 PartialConfig (10-field record with Option<_> fields for env-var/file/CLI merge), Configuration (fully-resolved 10-field record), LocalAddress(PathBuf) newtype, NetworkMagic(u32) newtype, PartialConfig::merge / resolve methods. Defaults match upstream's defaultConfiguration: host=0.0.0.0/IPv6=::, port=3001, local_address=dmq-node.socket, config_file=dmq-node.json, topology_file=dmq-node-topology.json, cardano_node_socket=node.socket, cardano_network_magic=mainnet (764824073), network_magic=0. Carve-outs: Generic-derived Semigroup \u2192 explicit merge() helper; Data.Act gpact action machinery \u2192 straight field-level merging; Configuration.hs's mkDiffusionConfiguration / readConfigurationFile deferred to subsequent rounds. 14 dmq-node tests at R356 (was 8 at R335 + 6 types unit tests)."
+        "R356 typed-config surface: types.rs ports the operator-facing CLI shape from upstream's CLIOptions.hs \u2014 PartialConfig (10-field record with Option<_> fields for env-var/file/CLI merge), Configuration (fully-resolved 10-field record), LocalAddress(PathBuf) newtype, NetworkMagic(u32) newtype, PartialConfig::merge / resolve methods. Defaults match upstream's defaultConfiguration: host=0.0.0.0/IPv6=::, port=3001, local_address=dmq-node.socket, config_file=dmq-node.json, topology_file=dmq-node-topology.json, cardano_node_socket=node.socket, cardano_network_magic=mainnet (764824073), network_magic=0. Carve-outs: Generic-derived Semigroup \u2192 explicit merge() helper; Data.Act gpact action machinery \u2192 straight field-level merging; Configuration.hs's mkDiffusionConfiguration / readConfigurationFile deferred to subsequent rounds.",
+        "R361 typed parser: parser.rs ports upstream's parseCLIOptions :: Parser PartialConfig dispatcher \u2014 the 10-flag grammar (--host-addr, --host-ipv6-addr, -p/--port, --local-socket, -c/--configuration-file, -t/--topology-file, --cardano-node-socket, --cardano-network-magic, --dmq-network-magic, -v/--version, -h/--help). `--version` is an in-grammar switch (sets show_version: Some(true) for downstream dispatch; not a parser short-circuit) matching upstream's optparse-applicative behavior; `--help` short-circuits. lib.rs::run_main() now wires parser \u2192 resolve \u2192 run() chain: HelpRequested emits HELP_TEXT; show_version emits VERSION_TEXT; otherwise resolves PartialConfig\u2192Configuration via PartialConfig::resolve and hands off to run(&Configuration). lib.rs::run() returns a sentinel reporting the resolved-config field values + roadmap pointer (R357+ for Diffusion/NodeKernel/PeerSelection wiring). 33 dmq-node tests at R361 (was 14 at R356 + 19 parser unit tests for each flag + full canonical invocation + missing-value/unknown-flag/invalid-port-number/invalid-network-magic error paths + parsed_args_resolve_to_full_configuration end-to-end + empty_args_resolve_to_full_defaults)."
       ],
       "remaining_work": [
-        "R357+ Parsers: clap-based parser dispatching the 10-flag CLI surface (--host-addr, --host-ipv6-addr, --port, --local-socket, --configuration-file, --topology-file, --cardano-node-socket, --cardano-network-magic, --dmq-network-magic, --version).",
-        "R358+ Configuration.hs port: readConfigurationFile + mkDiffusionConfiguration (touches Ouroboros.Network.Diffusion which is a substantial separate port).",
-        "R359+ NodeToNode + NodeToClient mux wiring (via crates/network).",
-        "R360+ Diffusion/NodeKernel + PeerSelection.",
+        "R362+ Configuration.hs port: readConfigurationFile + mkDiffusionConfiguration (touches Ouroboros.Network.Diffusion which is a substantial separate port).",
+        "R363+ NodeToNode + NodeToClient mux wiring (via crates/network).",
+        "R364+ Diffusion/NodeKernel + PeerSelection.",
         "Tracer + integration + closeout."
       ],
       "acceptance": [
