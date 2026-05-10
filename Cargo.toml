@@ -117,6 +117,13 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 # RouteDictionary::render_html. Zero transitive deps (proc-macro only).
 # License: MIT.
 maud = "0.27"
+# R408 audit (R398 plan D2 main): HTTP server stack for cardano-tracer
+# Metrics/{Prometheus, Monitoring, TimeseriesServer, Servers}. Pinned
+# default-features = false to avoid pulling in `native-tls` blocked by
+# `deny.toml:90`. License: all MIT.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
+rustls-pemfile = "2"
 # R330 — pure-Rust BIP-0173 / Bech32m encoding from rust-bitcoin/rust-bech32.
 # MIT-licensed, zero transitive deps. Foundation for `crates/bech32/`
 # (R331-R334 file-mirror skeleton + functional implementation), which

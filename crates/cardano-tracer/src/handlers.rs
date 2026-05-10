@@ -22,6 +22,7 @@
 //! | `Cardano/Tracer/Handlers/RTView/*.hs`           | **CARVE-OUT** (synthesis per plan) |
 //! | `Cardano/Tracer/Handlers/Utils.hs`              | `utils.rs` (pending)               |
 
+pub mod http_server;
 pub mod logs;
 pub mod metrics;
 pub mod notifications;

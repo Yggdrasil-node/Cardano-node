@@ -69,7 +69,29 @@ sets.
   client (massive RFC 5321 + STARTTLS + SASL scope, security
   risk); skip SMTP entirely (cardano-tracer never matches upstream's
   email-notification surface).
-- **`axum` 0.7 + `hyper` 1 + `tower` 0.5 + `rustls-pemfile` 2 (R406
+- **`axum` 0.8 + `tower` 0.5 + `rustls-pemfile` 2 (LANDED at R408)**:
+  HTTP server stack for `cardano-tracer/src/handlers/metrics/{prometheus,
+  monitoring, timeseries_server, servers}` — 4 separate HTTP servers
+  per upstream's design + per-server TLS termination via
+  `tlsSettingsChain` + `Accept`-header content negotiation. Final
+  pin: `axum = { version = "0.8", default-features = false,
+  features = ["http1", "tokio", "json"] }`; `tower = { version =
+  "0.5", default-features = false, features = ["util"] }`;
+  `rustls-pemfile = "2"`. License: all MIT. The R398 audit document
+  recommended axum 0.7; at R408 land time the workspace landed
+  axum 0.8 (the latest stable release; same default-features-off
+  + http1+tokio+json feature pin). `hyper` is a transitive
+  dependency of axum 0.8 (no direct workspace entry needed).
+  Verified at R408 via
+  `cargo tree -p yggdrasil-cardano-tracer | grep -iE "openssl|native-tls"`
+  — zero hits, transitive tree clean of all three banned crates per
+  `deny.toml:88-91`. Rejected alternatives: raw-tokio matching
+  `cardano-submit-api/src/rest/web.rs` (rejected because
+  cardano-tracer's per-server TLS + 4-route dispatch + content
+  negotiation makes hand-rolling rustls integration four times
+  structurally wrong; the cardano-submit-api precedent does not
+  carry over).
+- **(R398 audit version, kept as historical record)**: `axum` 0.7
   land)**: HTTP server stack for
   `cardano-tracer/src/handlers/metrics/{prometheus, monitoring,
   timeseries_server, servers}` — 4 separate HTTP servers per

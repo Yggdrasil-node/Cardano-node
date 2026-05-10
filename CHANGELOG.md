@@ -274,6 +274,47 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R408 — cardano-tracer: axum + tower + rustls-pemfile workspace
+  deps + HTTP-server skeleton (D2 main land per R398 plan).** Lands
+  the HTTP server stack that R398 carved out for the Metrics
+  handler suite (Prometheus / Monitoring / TimeseriesServer /
+  Servers). Three workspace surfaces touched:
+  - **Cargo.toml workspace.dependencies**: adds `axum = "0.8"`
+    (default-features off, features `["http1", "tokio", "json"]`),
+    `tower = "0.5"` (default-features off, features `["util"]`),
+    and `rustls-pemfile = "2"`. License: all MIT. Note the version
+    bump to axum 0.8 from the R398-recommended 0.7 (latest stable
+    release; same feature pin). hyper 1 is a transitive dep of
+    axum 0.8.
+  - **Audit verification**:
+    `cargo tree -p yggdrasil-cardano-tracer | grep -iE "openssl|native-tls"`
+    returned zero hits — transitive tree clean of all three banned
+    crates per `deny.toml:88-91`.
+  - **handlers/http_server.rs**: new synthesis-shell module with
+    common HTTP-server scaffolding for the upcoming Metrics handler
+    suite. Ships:
+    - `build_router()` — empty `axum::Router` builder.
+    - `serve_router(SocketAddr, Router)` — binds + spawns a tokio
+      task serving until aborted.
+    - `load_pem_certs(&Path)` / `load_pem_key(&Path)` — rustls-pemfile
+      helpers for upcoming per-server TLS termination per upstream's
+      `tlsSettingsChain` semantics.
+    - `PemLoadError` enum.
+  Carve-outs documented:
+  - Strict mirror: none — upstream has no single HTTP-server module;
+    each Metrics handler ships its own warp setup. Yggdrasil's port
+    consolidates the scaffolding here so each per-server impl
+    (R409+) focuses on its routing/handler logic.
+  Tests: cardano-tracer 318 → 325 (+7: build_router returns empty
+  Router type-shape; serve_router binds and aborts cleanly;
+  load_pem_certs returns IO error for missing file; returns empty
+  Vec for empty PEM file; parses valid PEM block; load_pem_key
+  returns error for missing file + when no key found in file).
+  Workspace: 5,722 → 5,729. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R408 → R409.
+  Per the R398 plan, this leaves R409 (Metrics/Prometheus.hs port)
+  + R410 (Metrics/Monitoring.hs + TimeseriesServer + Servers
+  orchestration) unblocked next.
 - **R407 — cardano-tracer: compute_routes direct-arg pass-through
   (closes R391 ComputeRoutesStatus carve-out per R398 plan option
   b).** Lands the per-node URL routing-table builder. New
