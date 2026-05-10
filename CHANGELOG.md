@@ -274,6 +274,33 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R364 — db-synthesizer: typed CLI parser (port of DBSynthesizer/Parsers.hs::parserCommandLine).**
+  Lands the typed parser dispatcher for db-synthesizer, replacing
+  the R335 passthrough Args. parser.rs ports upstream's
+  `parserCommandLine :: Parser (NodeFilePaths, NodeCredentials,
+  DBSynthesizerOptions)`. Args struct collapses the upstream tuple
+  into a single record. Mandatory flags: --config FILE + --db PATH.
+  Mutually-exclusive forge-limit flags: -s/--slots / -b/--blocks /
+  -e/--epochs. Mutually-exclusive open-mode flags: -f (force) / -a
+  (append); default OpenCreate. Optional credential flags:
+  --shelley-operational-certificate, --shelley-vrf-key,
+  --shelley-kes-key, --bulk-credentials-file. ParseError variants:
+  MissingConfig, MissingDb, MissingForgeLimit,
+  ConflictingForgeLimits, ConflictingOpenModes, plus the standard
+  HelpRequested/VersionRequested/UnknownFlag/MissingValue/
+  InvalidValue. lib.rs::run_main() wires parser → Args → run() chain
+  end-to-end. lib.rs::run() returns a sentinel reporting the
+  resolved config/db/limit/open-mode + roadmap pointer (Forging.hs +
+  Run.hs land in subsequent rounds gated on Phase C entry per the
+  plan's Phase C authorization checkpoint).
+  Tests: db-synthesizer 16 → 29 (+13: 3 help/version + 1 minimal
+  canonical + 2 alternate-forge-limit forms [blocks / epochs short-
+  form] + 2 open-mode-overrides [force / append] + 1 all-credentials
+  + 4 missing-flag rejections [config / db / forge-limit / conflict
+  ing-forge-limits + conflicting-open-modes] + 3 unknown-flag /
+  missing-value / invalid-slot-number rejections). Workspace:
+  5,294 → 5,307. Parity-matrix entry sister-tool.db-synthesizer
+  advanced: next_milestone R355 → R365.
 - **R363 — snapshot-converter: typed CLI parser (port of snapshot-converter.hs::parseConfig).**
   Lands the typed parser dispatcher for snapshot-converter, replacing
   the R335 passthrough Args. parser.rs ports upstream's
