@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `cardano-tracer`.
 //!
 //! ## Naming parity
@@ -6,10 +7,25 @@
 //! file-mirror + CLI-parser skeleton for the `cardano-tracer` sister-tool crate.
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
+//!
+//! Layout mapping (R358 ships configuration.rs; later rounds populate the rest):
+//!
+//! | Upstream `.hs`                                       | Yggdrasil `.rs`              |
+//! |------------------------------------------------------|------------------------------|
+//! | `Cardano/Tracer/Configuration.hs`                    | `configuration.rs`           |
+//! | `Cardano/Tracer/Types.hs`                            | `types.rs` (pending)         |
+//! | `Cardano/Tracer/CLI.hs`                              | `cli.rs` (pending)           |
+//! | `Cardano/Tracer/Run.hs`                              | `run.rs` (pending)           |
+//! | `Cardano/Tracer/Acceptors/*`                         | `acceptors/*.rs` (pending)   |
+//! | `Cardano/Tracer/Handlers/Logs/*`                     | `handlers/logs/*.rs` (pending)|
+//! | `Cardano/Tracer/Handlers/RTView/*`                   | **CARVE-OUT** (synthesis)    |
+//! | `Cardano/Tracer/Handlers/Notifications/*`            | `handlers/notifications/*.rs` (pending) |
+//! | `Cardano/Tracer/Handlers/Metrics/*`                  | `handlers/metrics/*.rs` (pending) |
 
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod configuration;
 pub mod parser;
 
 /// Process-exit-code wrapper around the run-loop dispatch.

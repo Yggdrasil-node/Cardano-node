@@ -274,6 +274,66 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R358 — cardano-tracer: typed configuration surface (port of Configuration.hs).**
+  Lands the typed configuration surface for cardano-tracer. New
+  configuration.rs module ports the full upstream
+  Cardano.Tracer.Configuration surface:
+  - TracerConfig (17-field record with serde renames matching
+    upstream's Aeson-derived FromJSON field names exactly:
+    networkMagic, loRequestNum, ekgRequestFreq, hasEKG,
+    hasPrometheus, hasRTView, hasTimeseries, tlsCertificate,
+    hasForwarding, logging, rotation, verbosity, metricsNoSuffix,
+    metricsHelp, resourceFreq, ekgRequestFull, prometheusLabels).
+  - HowToConnect (LocalPipe FilePath | RemoteSocket host port)
+    untagged sum mirroring Cardano.Logging.Types.HowToConnect; type
+    alias Address = HowToConnect.
+  - Endpoint (host + port + optional force_ssl); is_null predicate
+    mirroring upstream's nullEndpoint.
+  - Certificate (file + key_file + optional chain).
+  - RotationParams (frequency_secs / log_limit_bytes /
+    max_age_minutes / keep_files_num) with defaults matching
+    upstream's hand-written FromJSON: frequency_secs = 60,
+    max_age_minutes = 24 * 60.
+  - LogMode (FileMode | JournalMode), LogFormat (ForHuman | ForMachine).
+  - LoggingParams (root + mode + format) with is_invalid_file_mode
+    predicate.
+  - Network (AcceptAt accept_at | ConnectTo connect_to) untagged sum.
+  - Verbosity (Minimum | ErrorsOnly | Maximum).
+  - FileOrMap untagged sum (File PathBuf | Map BTreeMap<String,
+    String>).
+  - HasForwarding (network + optional path-prefixes + options).
+  - TraceOptionForwarder JsonValue placeholder; typed parsing lands
+    when the trace-forwarder mini-protocol port is wired.
+  - well_formed validator mirroring upstream's wellFormed:
+    catMaybes-then-intercalate ', '-shaped problem-list reporting
+    AcceptAt-not-empty + ConnectTo-not-all-empty + logRoot-non-empty-
+    when-FileMode + duplicate-port-detection + non-empty-hosts on
+    hasEKG/hasPrometheus/hasRTView.
+  - parse_tracer_config_json runs serde_json + nubLogging dedup +
+    well_formed validation.
+  Carve-outs documented in module docstring:
+  - Network.Wai.Handler.Warp.HostPreference/Port/Settings replaced
+    by String/u16 + std::net::SocketAddr at use-sites.
+  - Cardano.Logging.Types.TraceOptionForwarder kept as
+    serde_json::Value at this layer.
+  - readTracerConfig IO-with-die replaced by parse_tracer_config_json
+    returning a Result.
+  - YAML parsing not yet wired (only JSON); serde_yaml can be added
+    when operator-side wiring lands.
+  Cargo deps: serde + serde_json added (eyre/thiserror were already
+  present).
+  Tests: cardano-tracer 8 → 21 (+13: 2 HowToConnect is_null + 1
+  Endpoint is_null + 2 RotationParams serde-with-defaults + 2
+  LoggingParams invalid-mode + 7 well_formed cases + 2
+  parse_tracer_config_json round-trips/error-paths + 4 serde
+  round-trips for FileOrMap/Verbosity/LogMode/LogFormat).
+  Workspace: 5,202 → 5,225.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R361 → R359; rust_surface description updated to
+  reflect R358 + per-module roadmap; remaining_work refreshed
+  (Types.hs → CLI.hs → Acceptors → Handlers/Logs → Handlers/Metrics
+  → Handlers/Notifications → Run.hs → RTView carve-out → integration
+  + closeout).
 - **R356 — dmq-node: typed config surface (port of CLIOptions.hs CLI shape).**
   Lands the operator-facing CLI shape for dmq-node. New types.rs
   module ports the partial-vs-resolved Configuration distinction:
