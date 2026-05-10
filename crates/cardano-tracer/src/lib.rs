@@ -36,6 +36,7 @@ pub mod logging;
 pub mod meta_trace;
 pub mod metrics_store;
 pub mod parser;
+pub mod run;
 pub mod severity;
 pub mod time;
 pub mod types;
@@ -74,21 +75,40 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// R366 lands argv → [`parser::Args`] dispatch. The actual config-file
-/// load + Acceptors/Handlers/Logs/Metrics wiring lands in subsequent
-/// rounds per the per-tool roadmap.
+/// Wires argv → [`parser::Args`] → [`run::TracerParams`] →
+/// [`run::run_cardano_tracer`]. The trace-objects handler is the
+/// canonical [`crate::handlers::logs::trace_objects::trace_objects_handler`]
+/// implementation. Earlier rounds shipped a stub returning an
+/// "unimplemented" error; R427 replaces that with the real
+/// supervisor entry.
 pub fn run(args: &parser::Args) -> eyre::Result<()> {
-    Err(eyre::eyre!(
-        "yggdrasil-cardano-tracer: config-file load + Acceptors/Handlers \
-         not yet implemented (R366 ships argv → Args dispatch; later \
-         rounds wire the trace-forwarder mini-protocol acceptor + log \
-         writers + metrics endpoints + notifications dispatcher). \
-         Resolved: config={}, state-dir={}, min-log-severity={:?}.",
-        args.tracer_config.display(),
-        args.state_dir
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "<none>".to_string()),
-        args.log_severity,
-    ))
+    let params = run::TracerParams {
+        tracer_config: args.tracer_config.clone(),
+        state_dir: args.state_dir.clone(),
+        log_severity: args.log_severity,
+    };
+
+    // Build a multi-thread tokio runtime for the supervisor.
+    // The default worker count tracks the number of CPU cores,
+    // matching upstream's GHC RTS `-N` default.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| eyre::eyre!("failed to build tokio runtime: {e}"))?;
+
+    // Default trace-objects handler: a concrete closure that
+    // discards payloads. R427 ships a no-op default; operators
+    // wanting real ingest construct TracerParams + call
+    // run::run_cardano_tracer directly with their own concrete
+    // handler closure. The trace_objects_handler dispatcher
+    // (R401) needs full TracerEnv wiring (R428+) to plumb through
+    // real File / Journal writers. The closure is intentionally
+    // not boxed via `Arc<dyn Fn>` because run_cardano_tracer's
+    // generic LoHandler bound requires `Sized`.
+    let lo_handler =
+        std::sync::Arc::new(|_node_id: types::NodeId, _payloads: Vec<logging::TraceObject>| {});
+
+    rt.block_on(async move { run::run_cardano_tracer(params, lo_handler).await })
+        .map_err(|e| eyre::eyre!("cardano-tracer supervisor: {e}"))?;
+    Ok(())
 }

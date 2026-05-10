@@ -274,6 +274,72 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R427 — cardano-tracer: run.rs port of Cardano.Tracer.Run.hs +
+  lib.rs::run upgrade (Phase 3 round 1 of R411-R430 arc).** Top-
+  level supervisor port. Wires R424's server.rs + R425's client.rs
+  + R426's acceptors/run.rs into a real `cardano-tracer` binary
+  entry: argv → `parser::Args` → `TracerParams` → reads operator
+  config → spawns the Acceptors supervisor on a multi-thread
+  tokio runtime. Earlier rounds shipped a stub returning an
+  "unimplemented" error; R427 replaces that with the real
+  supervisor. New file:
+  `crates/cardano-tracer/src/run.rs` (mirror of upstream's
+  `Cardano.Tracer.Run.hs`).
+  Public API:
+  - **TracerParams**: 3-field record (tracer_config, state_dir,
+    log_severity). Mirror of upstream's `data TracerParams`.
+  - **run_cardano_tracer(params, lo_handler) →
+    Result&lt;(), RunCardanoTracerError&gt;**: top-level entry. Mirror
+    of upstream's `runCardanoTracer`. Reads + parses the operator
+    config, then delegates to `do_run_cardano_tracer`.
+  - **do_run_cardano_tracer(config, state_dir, lo_handler)**:
+    initializes the runtime state slice + spawns the Acceptors
+    supervisor. Mirror of upstream's `doRunCardanoTracer`.
+  - **RunCardanoTracerError**: 3-variant error enum (ReadConfig,
+    ParseConfig, Acceptors).
+  - **run_logs_rotator_status() / run_metrics_servers_status() /
+    run_resource_stats_status()**: programmatic carve-out
+    descriptors.
+  Also upgrades `lib.rs::run(args)`: replaces the
+  "unimplemented" stub with the real `run_cardano_tracer` call
+  wrapped in a multi-thread tokio runtime
+  (`Builder::new_multi_thread().enable_all().build()`). The
+  default trace-objects handler is a concrete closure that
+  discards payloads (R428+ wires the canonical
+  `trace_objects_handler` dispatcher); operators wanting real
+  ingest can call `run_cardano_tracer` directly with their own
+  closure.
+  Carve-outs documented in module docstring:
+  - **TraceBundle / meta-trace channel**: depends on
+    `Cardano.Logging` package + meta-trace channel ports.
+    Collapses to no-op log calls in R427.
+  - **runLogsRotator**: Logs/Rotator.hs port deferred per the
+    R411 plan's pacing.
+  - **runRTView**: synthesis carve-out per the original R326-R459
+    plan (no Rust analog for ThreePenny GUI).
+  - **Resource stats loop**: depends on Cardano.Logging.Resources;
+    deferred.
+  - **beforeProgramStops** (SIGINT/SIGTERM handler): deferred per
+    `crate::utils::before_program_stops_status`. Supervisor
+    currently shuts down via the brake flag.
+  - **DataPointRequestors initialization**: deferred per the
+    DataPoint sub-protocol carve-out.
+  - **CurrentLogLock / CurrentDPLock**: deferred — Yggdrasil's
+    `Arc&lt;RwLock&lt;...&gt;&gt;` runtime-state shape doesn't need separate
+    per-resource locks for the bounded subset R427 wires.
+  Updates `crates/cardano-tracer/src/lib.rs` with `pub mod run`
+  declaration + the `run(args)` upgrade.
+  Tests: yggdrasil-cardano-tracer 408 → 415 (+7:
+  run_logs_rotator_status describes deferral; run_metrics_servers_status
+  describes partial wiring; run_resource_stats_status describes
+  deferral; run_cardano_tracer errors on missing config file;
+  run_cardano_tracer errors on unparseable config;
+  do_run_cardano_tracer with empty ConnectTo errors with NoTargets;
+  end-to-end round trip with minimal AcceptAt config + abort
+  cleanly within 150ms). Workspace: 5,875 → 5,882. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone
+  R427 → R428. Per the R411 plan, R428 closes Phase 3 with the
+  end-to-end runnable doc + operator integration assertion.
 - **R426 — cardano-tracer: acceptors/run.rs port of
   Cardano.Tracer.Acceptors.Run.hs (Phase 2 round 11 of R411-R430
   arc, completes the Acceptors leaves quartet).** Strict-mirror

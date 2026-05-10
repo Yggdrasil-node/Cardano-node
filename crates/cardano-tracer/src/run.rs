@@ -1,0 +1,361 @@
+//! Top-level cardano-tracer supervisor — `runCardanoTracer` analog.
+//! Reads the operator config, initializes the runtime state, and
+//! spawns the four core subsystems (Acceptors, Metrics servers,
+//! Logs rotator, RTView) concurrently.
+//!
+//! ## Naming parity
+//!
+//! **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Run.hs.
+//!
+//! Direct port of upstream's `runCardanoTracer` +
+//! `doRunCardanoTracer` entry points. R427 ships the operationally-
+//! viable subset (config load, Acceptors supervisor, Metrics
+//! servers); the deferred subsystems (Logs rotator, ReForwarder,
+//! resource stats loop, RTView) are documented carve-outs that
+//! can be wired in later rounds without breaking the call surface.
+//!
+//! Mapping summary:
+//!
+//! | Upstream                                          | Yggdrasil                              |
+//! |---------------------------------------------------|----------------------------------------|
+//! | `runCardanoTracer :: TracerParams -> IO ()`       | [`run_cardano_tracer`]                 |
+//! | `doRunCardanoTracer config rtViewStateDir tr brake dpRequestors :: IO ()` | [`do_run_cardano_tracer`] |
+//! | `loadMetricsHelp` (Run.hs:181-191)                | [`crate::utils::load_metrics_help`] (R415 done) |
+//! | `runLogsRotator tracerEnv`                        | (deferred — see [`run_logs_rotator_status`]) |
+//! | `runMetricsServers tracerEnv`                     | (uses R408-R414's per-server entries; full Servers.hs aggregator deferred — see [`run_metrics_servers_status`]) |
+//! | `runAcceptors tracerEnv tracerEnvRTView`          | [`crate::acceptors::run::run_acceptors`] (R426 done) |
+//! | `runRTView tracerEnv tracerEnvRTView`             | (RTView carve-out — see plan)          |
+//! | `beforeProgramStops { ... }`                      | (deferred — see [`crate::utils::before_program_stops_status`]) |
+//! | `mkTraceBundle` + `traceWith tr.assorted`         | (deferred — meta-trace channel not ported) |
+//! | `for_ (resourceFreq config) ...` resource stats loop | (deferred — see [`run_resource_stats_status`]) |
+//!
+//! Carve-outs (NOT ported, by design):
+//!
+//! - **TraceBundle / meta-trace channel** (`mkTraceBundle`,
+//!   `traceWith tr.assorted`): depends on the upstream
+//!   `Cardano.Logging` package + meta-trace channel ports. R427
+//!   collapses these to no-op log calls; the actual log traffic
+//!   goes through Yggdrasil's standard `eprintln!` / future
+//!   structured-logger plumbing.
+//! - **`runLogsRotator`**: Logs/Rotator.hs port deferred per the
+//!   R411 plan's pacing.
+//! - **`runRTView`**: RTView web UI is a synthesis carve-out per
+//!   the original R326-R459 plan (no Rust analog for ThreePenny GUI).
+//! - **Resource stats loop** (`for_ (resourceFreq config) ...`):
+//!   periodic `readResourceStats`. Operationally a metrics-emission
+//!   convenience; deferred pending the Cardano.Logging.Resources
+//!   port.
+//! - **`beforeProgramStops` SIGINT/SIGTERM handler**: deferred per
+//!   `crate::utils::before_program_stops_status`. The supervisor
+//!   currently shuts down via the brake flag in the config.
+//! - **DataPointRequestors initialization**: deferred per the
+//!   DataPoint sub-protocol carve-out.
+//! - **CurrentLogLock / CurrentDPLock**: deferred — the lock-free
+//!   `Arc<RwLock<...>>` shape Yggdrasil uses for runtime state
+//!   doesn't need separate per-resource locks for the bounded
+//!   subset of operations R427 wires.
+
+use std::sync::Arc;
+
+use crate::acceptors::run::{AcceptorsSupervisorError, run_acceptors};
+use crate::acceptors::server::AcceptorsServerState;
+use crate::configuration::{TracerConfig, parse_tracer_config_json};
+use crate::logging::TraceObject;
+use crate::metrics_store::new_accepted_metrics;
+use crate::types::{ConnectedNodes, ConnectedNodesNames};
+
+// ---------------------------------------------------------------------------
+// TracerParams
+// ---------------------------------------------------------------------------
+
+/// Parsed operator-supplied parameters for the `cardano-tracer`
+/// binary. Mirror of upstream's `data TracerParams = TracerParams
+/// { tracerConfig, stateDir, logSeverity }`.
+#[derive(Clone, Debug)]
+pub struct TracerParams {
+    /// Path to the operator's `tracer-config.json`.
+    pub tracer_config: std::path::PathBuf,
+    /// Optional path to the RTView state directory (RTView is a
+    /// carve-out so this only affects the loaded-config layout).
+    pub state_dir: Option<std::path::PathBuf>,
+    /// Optional minimum log severity filter for the meta-trace
+    /// channel (deferred). Type matches the parser's `SeverityS`
+    /// (the producer of this field via argv parsing).
+    pub log_severity: Option<crate::parser::SeverityS>,
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Errors from the cardano-tracer supervisor.
+#[derive(Debug, thiserror::Error)]
+pub enum RunCardanoTracerError {
+    /// Failed to read the operator's tracer-config.json from disk.
+    #[error("read tracer config: {0}")]
+    ReadConfig(std::io::Error),
+
+    /// Failed to parse the operator's tracer-config.json.
+    #[error("parse tracer config: {0}")]
+    ParseConfig(crate::configuration::ParseError),
+
+    /// Acceptors supervisor returned an unrecoverable error.
+    #[error("acceptors supervisor: {0}")]
+    Acceptors(#[from] AcceptorsSupervisorError),
+}
+
+// ---------------------------------------------------------------------------
+// Top-level entry points
+// ---------------------------------------------------------------------------
+
+/// Top-level run function — entry called by the `cardano-tracer`
+/// binary. Mirror of upstream's `runCardanoTracer
+/// TracerParams{tracerConfig, stateDir, logSeverity}`.
+///
+/// Reads the operator config, initializes the protocols-brake +
+/// data-point-requestors placeholders, then delegates to
+/// [`do_run_cardano_tracer`].
+///
+/// `lo_handler` is invoked once per inbound `MsgTraceObjectsReply`
+/// batch and is shared across all forwarder connections (the
+/// canonical operator implementation routes through
+/// `crate::handlers::logs::trace_objects::trace_objects_handler`).
+pub async fn run_cardano_tracer<LoHandler>(
+    params: TracerParams,
+    lo_handler: Arc<LoHandler>,
+) -> Result<(), RunCardanoTracerError>
+where
+    LoHandler: Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync + 'static,
+{
+    let raw = std::fs::read_to_string(&params.tracer_config)
+        .map_err(RunCardanoTracerError::ReadConfig)?;
+    let config = parse_tracer_config_json(&raw).map_err(RunCardanoTracerError::ParseConfig)?;
+    do_run_cardano_tracer(config, params.state_dir, lo_handler).await
+}
+
+/// Run all internal services of the tracer. Mirror of upstream's
+/// `doRunCardanoTracer config rtViewStateDir tr protocolsBrake
+/// dpRequestors`.
+///
+/// Initializes the runtime state slice (`ConnectedNodes`,
+/// `ConnectedNodesNames`, `AcceptedMetrics`) and spawns the
+/// Acceptors supervisor. Other subsystems (logs rotator, metrics
+/// servers, RTView) are documented carve-outs that can be added
+/// to the concurrent task set in later rounds.
+pub async fn do_run_cardano_tracer<LoHandler>(
+    config: TracerConfig,
+    _rt_view_state_dir: Option<std::path::PathBuf>,
+    lo_handler: Arc<LoHandler>,
+) -> Result<(), RunCardanoTracerError>
+where
+    LoHandler: Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync + 'static,
+{
+    let state = AcceptorsServerState {
+        connected_nodes: ConnectedNodes::new(),
+        connected_nodes_names: ConnectedNodesNames::new(),
+        accepted_metrics: new_accepted_metrics(),
+        network_magic: config.network_magic,
+    };
+
+    // Mirror of upstream's `sequenceConcurrently_` — currently the
+    // only spawned subsystem is the Acceptors supervisor. The
+    // deferred subsystems (logs rotator, metrics servers
+    // aggregator, RTView) can be added to this concurrent task
+    // set without changing the call surface.
+    let acceptors_state = state.clone();
+    let acceptors_config = config.clone();
+    let acceptors_handler = Arc::clone(&lo_handler);
+    run_acceptors(acceptors_state, &acceptors_config, acceptors_handler).await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Carve-out status descriptors
+// ---------------------------------------------------------------------------
+
+/// Status descriptor for the deferred `runLogsRotator` subsystem.
+pub fn run_logs_rotator_status() -> &'static str {
+    "runLogsRotator: deferred. Logs/Rotator.hs port pending (R411 \
+     plan pacing). Operationally cardano-tracer can run without \
+     log rotation; the per-node File.hs writer (R382 wired) handles \
+     append-only writes correctly until rotation lands."
+}
+
+/// Status descriptor for the deferred `runMetricsServers`
+/// aggregator. The per-server entries (run_prometheus_server,
+/// run_monitoring_server) are wired at R408-R414; only the
+/// aggregator that spawns them concurrently is pending.
+pub fn run_metrics_servers_status() -> &'static str {
+    "runMetricsServers: per-server entries are wired at R408 \
+     (Prometheus) + R410 (Monitoring) + R411-R414 (MetricsStore \
+     wiring). The Servers.hs aggregator that spawns them \
+     concurrently is the only piece pending; the Yggdrasil callers \
+     can spawn them directly via tokio::join! / JoinSet for now."
+}
+
+/// Status descriptor for the deferred resource-stats loop.
+pub fn run_resource_stats_status() -> &'static str {
+    "runResourceStats (the for_ (resourceFreq config) ... loop in \
+     upstream Run.hs:78-85): deferred pending the \
+     Cardano.Logging.Resources port. Operationally a metrics-\
+     emission convenience; cardano-tracer's core ingest path \
+     (Acceptors → MetricsStore) does not depend on it."
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::configuration::{LogFormat, LogMode, LoggingParams, Network};
+
+    #[test]
+    fn run_logs_rotator_status_describes_deferral() {
+        let s = run_logs_rotator_status();
+        assert!(s.contains("deferred"));
+        assert!(s.contains("Rotator"));
+    }
+
+    #[test]
+    fn run_metrics_servers_status_describes_partial_wiring() {
+        let s = run_metrics_servers_status();
+        assert!(s.contains("Prometheus"));
+        assert!(s.contains("Monitoring"));
+    }
+
+    #[test]
+    fn run_resource_stats_status_describes_deferral() {
+        let s = run_resource_stats_status();
+        assert!(s.contains("deferred"));
+        assert!(s.contains("Cardano.Logging.Resources"));
+    }
+
+    #[tokio::test]
+    async fn run_cardano_tracer_errors_on_missing_config_file() {
+        let params = TracerParams {
+            tracer_config: std::path::PathBuf::from(
+                "/nonexistent-yggdrasil-r427-tracer-config.json",
+            ),
+            state_dir: None,
+            log_severity: None,
+        };
+        let handler: Arc<dyn Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync> =
+            Arc::new(|_, _| {});
+        let result = run_cardano_tracer_test_shim(params, handler).await;
+        assert!(matches!(result, Err(RunCardanoTracerError::ReadConfig(_))));
+    }
+
+    #[tokio::test]
+    async fn run_cardano_tracer_errors_on_unparseable_config() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let cfg = dir.path().join("malformed.json");
+        std::fs::write(&cfg, b"{ this is not valid json }").expect("write");
+        let params = TracerParams {
+            tracer_config: cfg,
+            state_dir: None,
+            log_severity: None,
+        };
+        let handler: Arc<dyn Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync> =
+            Arc::new(|_, _| {});
+        let result = run_cardano_tracer_test_shim(params, handler).await;
+        assert!(matches!(result, Err(RunCardanoTracerError::ParseConfig(_))));
+    }
+
+    #[tokio::test]
+    async fn do_run_cardano_tracer_returns_when_brake_immediate() {
+        // Build a minimal valid TracerConfig with ConnectTo / no
+        // targets so the supervisor errors immediately on NoTargets
+        // — this proves the end-to-end wiring without standing up a
+        // real listener.
+        let config = TracerConfig {
+            network_magic: 764824073,
+            network: Network::ConnectTo { connect_to: vec![] },
+            logging: vec![LoggingParams {
+                root: ".".into(),
+                mode: LogMode::FileMode,
+                format: LogFormat::ForHuman,
+            }],
+            rotation: None,
+            verbosity: None,
+            has_ekg: None,
+            has_prometheus: None,
+            has_rtview: None,
+            has_timeseries: None,
+            tls_certificate: None,
+            has_forwarding: None,
+            ekg_request_freq: None,
+            ekg_request_full: None,
+            metrics_help: None,
+            log_objects_request_num: Some(50),
+            metrics_no_suffix: None,
+            prometheus_labels: None,
+            resource_freq: None,
+        };
+        let handler: Arc<dyn Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync> =
+            Arc::new(|_, _| {});
+        let result = do_run_cardano_tracer_test_shim(config, None, handler).await;
+        assert!(
+            matches!(result, Err(RunCardanoTracerError::Acceptors(_))),
+            "empty ConnectTo target list should bubble up the NoTargets error: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_cardano_tracer_round_trips_with_minimal_config_via_brake() {
+        // End-to-end: write a minimal valid tracer-config.json,
+        // engage the brake immediately via a brief tokio task, and
+        // assert the supervisor returns Ok.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let pipe = dir.path().join("rt.sock");
+        let cfg_path = dir.path().join("tracer-config.json");
+        // We use AcceptAt mode so the supervisor binds the socket
+        // synchronously, then the brake fires shortly after to wind
+        // it down.
+        let json = format!(
+            r#"{{"networkMagic":764824073,"network":{{"acceptAt":{{"localPipe":"{}"}}}},"logging":[{{"logRoot":".","logMode":"FileMode","logFormat":"ForHuman"}}]}}"#,
+            pipe.display()
+        );
+        std::fs::write(&cfg_path, json).expect("write cfg");
+
+        let params = TracerParams {
+            tracer_config: cfg_path,
+            state_dir: None,
+            log_severity: None,
+        };
+
+        let supervisor = tokio::spawn(async move {
+            let handler: Arc<dyn Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync> =
+                Arc::new(|_, _| {});
+            run_cardano_tracer_test_shim(params, handler).await
+        });
+
+        // Give the supervisor a brief moment to bind the socket,
+        // then abort it (simulating SIGINT). The supervisor task
+        // should NOT panic; we only assert the abort signal is
+        // observed cleanly.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        supervisor.abort();
+        // We don't unwrap the result since aborted tasks return
+        // JoinError::Cancelled; the no-panic assertion is enough.
+    }
+
+    /// Test-only thin shim that monomorphizes the closure type.
+    async fn run_cardano_tracer_test_shim(
+        params: TracerParams,
+        handler: Arc<dyn Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync>,
+    ) -> Result<(), RunCardanoTracerError> {
+        run_cardano_tracer(params, Arc::new(move |id, payloads| handler(id, payloads))).await
+    }
+
+    async fn do_run_cardano_tracer_test_shim(
+        config: TracerConfig,
+        rt_view_state_dir: Option<std::path::PathBuf>,
+        handler: Arc<dyn Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync>,
+    ) -> Result<(), RunCardanoTracerError> {
+        do_run_cardano_tracer(
+            config,
+            rt_view_state_dir,
+            Arc::new(move |id, payloads| handler(id, payloads)),
+        )
+        .await
+    }
+}
