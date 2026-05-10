@@ -274,6 +274,59 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R396 — cardano-tracer: Utils.hs port (bounded subset; runtime-state
+  init helpers + connection-id sanitizer + Registry wrappers).**
+  Lands the cross-cutting helper surface used by every cardano-tracer
+  subsystem. New utils.rs module ports the upstream
+  Cardano.Tracer.Utils bounded subset:
+  - NL constant (`"\n"` for Unix; the Windows `"\r\n"` variant
+    deferred per the cardano-tracer-is-Unix-only operational
+    convention).
+  - init_connected_nodes / init_connected_nodes_names /
+    init_accepted_metrics / init_data_point_requestors /
+    init_protocols_brake — return-default constructors for each
+    runtime-state type.
+  - apply_brake(&ProtocolsBrake) — engages the protocols brake.
+  - conn_id_to_node_id(&str) → NodeId — string-sanitization for
+    upstream's `connIdToNodeId`. Strips LocalAddress prefix +
+    pipe/. (Windows) substrings, replaces \ / " space with `-`,
+    collapses `--` runs, trims leading/trailing dashes.
+  - get_process_id() — std::process::id() wrapper mirroring
+    upstream's `getProcessId :: IO Word32`.
+  - new_registry / member_registry / lookup_registry / read_registry
+    / modify_registry — generic Registry<K, V> wrappers mirroring
+    upstream's `newRegistry / memberRegistry / lookupRegistry /
+    readRegistry / modifyRegistry_`.
+  - Registry::snapshot() inherent method added to types.rs's R371
+    Registry to support the new wrappers.
+  - 3 deferral status descriptors (AskNodeNameStatus,
+    BeforeProgramStopsStatus, SequenceConcurrentlyStatus) +
+    helpers for downstream sites that surface deferral state.
+  Carve-outs documented:
+  - askNodeName / askNodeNameRaw / askNodeId — depend on data-point
+    mini-protocol surface (askDataPoint, DataPointRequestor) +
+    tracer-trace channel (Trace IO TracerTrace from MetaTrace.hs).
+  - showProblemIfAny — same tracer-trace dependency.
+  - beforeProgramStops — Unix signal handler installation; needs
+    Run.hs supervisor task lifetime in scope.
+  - sequenceConcurrently_ — no clean Rust 1:1 mirror; Rust uses
+    tokio::join! / futures::future::join_all instead.
+  - clearRegistry / elemsRegistry / showRegistry — depend on
+    System.IO.hClose semantics (close stored file handle); deferred
+    until Logs/File.hs ports a real handle type.
+  - forMM / forMM_ — Rust uses native `for x in iter { ... }`;
+    synthesis-only.
+  Tests: cardano-tracer 234 → 256 (+22: NL canonical Unix newline;
+  6 init_* default-state checks; apply_brake engages brake; 5
+  conn_id_to_node_id sanitization edges [strip LocalAddress / drop
+  path separators / strip leading-trailing dashes / drop quotes /
+  collapse double-dashes]; get_process_id positive; 6 Registry
+  wrapper tests [new empty / member false-empty / member true-after-
+  insert / lookup composite-key returns value / lookup composite-key
+  returns None / read snapshot / modify replaces contents / modify
+  no-op preserves]; 3 deferral-status descriptors). Workspace:
+  5,638 → 5,660. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R395 → R397.
 - **R395 — closure-status doc refresh covering R378–R394.** Updates
   the [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md) banner +
   current-implementation-status preamble to reflect the 17-round

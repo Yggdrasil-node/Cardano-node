@@ -35,6 +35,7 @@ pub mod parser;
 pub mod severity;
 pub mod time;
 pub mod types;
+pub mod utils;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 ///

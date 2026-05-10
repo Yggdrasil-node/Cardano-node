@@ -275,6 +275,18 @@ where
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Snapshot the registry contents as a `Vec<(Key, Value)>`.
+    /// Order is unspecified (HashMap iteration order). Used by
+    /// [`crate::utils::read_registry`] / [`crate::utils::modify_registry`]
+    /// to mirror upstream's `readRegistry :: Registry a b -> IO (Map.Map a b)`
+    /// snapshot semantics.
+    pub fn snapshot(&self) -> Vec<(Key, Value)> {
+        match self.inner.lock() {
+            Ok(g) => g.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
 }
 
 /// Composite key for the log-handle registry.
