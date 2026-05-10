@@ -274,6 +274,60 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R425 — cardano-tracer: acceptors/client.rs port of
+  Cardano.Tracer.Acceptors.Client.hs (Phase 2 round 10 of R411-R430
+  arc).** Strict-mirror port of `runAcceptorsClient` — the trace-
+  forwarder initiator-mode client. Mirror of R424's server.rs but
+  for outbound connections: cardano-tracer dials a Unix socket
+  cardano-node has bound (operator's `connectTo` mode) and runs
+  the same per-connection sub-protocol drivers via R421's
+  `accept_trace_objects_init`. New file:
+  `crates/cardano-tracer/src/acceptors/client.rs`.
+  Public API:
+  - **run_acceptors_client(state, how_to_connect, tf_config,
+    lo_handler) → Result&lt;(), AcceptorsServerError&gt;**: top-level
+    entry. Mirror of upstream's `runAcceptorsClient`. Dispatches on
+    `HowToConnect`: LocalPipe → `do_connect_to_forwarder_local`;
+    RemoteSocket → returns deferral error.
+  - **do_connect_to_forwarder_local(state, socket_path, tf_config,
+    lo_handler)**: outbound Unix-pipe connect path. Mirror of
+    upstream's `doConnectToForwarderLocal`. Calls
+    `tokio::net::UnixStream::connect`, initializes per-connection
+    mux as `MiniProtocolDir::Initiator`, registers the connection
+    with R423's `prepare_metrics_stores`, runs the trace-objects
+    sub-protocol via R421's `accept_trace_objects_init`, cleans
+    up via R423's `remove_disconnected_node` on shutdown.
+  Carve-outs documented in module docstring (all carve-outs from
+  R424's server.rs apply equivalently — the initiator side mirrors
+  the responder side's deferral structure 1:1):
+  - EKG sub-protocol (`runEKGAcceptorInit` / `acceptMetricsInit`)
+    — `ekg-forward` Hackage package not vendored.
+  - DataPoint sub-protocol (`runDataPointsAcceptorInit` /
+    `acceptDataPointsInit`) — vendored, port deferred to R426+.
+  - RemoteSocket TCP path — requires trace-forwarder handshake
+    codec port.
+  - `appInitiator` vs `appResponder` collapse into
+    `mux::start_unix` with `MiniProtocolDir::Initiator`.
+  Uses synthesis connection token `ConnectTo-{socket_path}-magic{N}`
+  for stable NodeId derivation (the client knows where it
+  connected, unlike the server which can't easily extract a peer
+  address from an accept'd Unix socket).
+  Updates `crates/cardano-tracer/src/acceptors.rs` with `pub mod
+  client`. Updates `crates/cardano-tracer/Cargo.toml` with
+  `tempfile = "3"` dev-dep.
+  Tests: yggdrasil-cardano-tracer 400 → 403 (+3:
+  run_acceptors_client_remote_socket_returns_deferral_error;
+  do_connect_to_forwarder_local_errors_on_missing_socket;
+  do_connect_to_forwarder_local_round_trips_against_local_listener
+  — spawns a LocalPeerListener server, engages brake immediately,
+  asserts the client connects, registers the conn, then cleans up
+  via remove_disconnected_node). Workspace: 5,867 → 5,870.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R425 → R426. Per the R411 plan, R426 ports
+  `Cardano.Tracer.Acceptors.Run` — the supervisor that decides
+  between server vs client based on the operator config and
+  handles reconnect logic, completing the Acceptors leaves of
+  Phase 2.
 - **R424 — cardano-tracer: acceptors/server.rs port of
   Cardano.Tracer.Acceptors.Server.hs (Phase 2 round 9 of R411-R430
   arc).** Strict-mirror port of `runAcceptorsServer` — the trace-

@@ -37,3 +37,6 @@ tokio = { workspace = true }
 tower = { workspace = true }
 yggdrasil-ledger = { workspace = true }
 yggdrasil-network = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

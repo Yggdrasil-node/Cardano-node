@@ -17,5 +17,6 @@
 //! - `run` (R426 pending) will mirror
 //!   `Cardano.Tracer.Acceptors.Run`.
 
+pub mod client;
 pub mod server;
 pub mod utils;
