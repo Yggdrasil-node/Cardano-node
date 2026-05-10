@@ -274,6 +274,25 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R428 — cardano-tracer: R411-R427 closure documentation
+  (Phase 3 round 2 of R411-R430 arc).** Operational-runs doc
+  capturing the 17-round Phase 1 + Phase 2 + Phase 3-round-1
+  delivery: `docs/operational-runs/2026-05-10-round-428-r411-r427-closure.md`.
+  Documents:
+  - Per-round delivery table (Phase 1: R411-R415 EKG-equivalent;
+    Phase 2: R416-R426 trace-forwarder mini-arc + Acceptors
+    leaves; Phase 3 round 1: R427 supervisor entry).
+  - Workspace test growth: 5,683 → 5,882 (+199).
+  - Verification-gates checkpoint at HEAD commit 67d4621.
+  - 13-row carve-out inventory mapping deferred upstream surfaces
+    to the corresponding `*_status()` helper functions for
+    programmatic introspection.
+  - Remaining R428-R430 work breakdown (R429 TLS termination via
+    axum-server; R430 parity-matrix promotion).
+  - Operational rehearsal recipe: minimal AcceptAt tracer-config
+    boot via `cargo run --bin cardano-tracer -- -c <config>`.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R428 → R429.
 - **R427 — cardano-tracer: run.rs port of Cardano.Tracer.Run.hs +
   lib.rs::run upgrade (Phase 3 round 1 of R411-R430 arc).** Top-
   level supervisor port. Wires R424's server.rs + R425's client.rs
