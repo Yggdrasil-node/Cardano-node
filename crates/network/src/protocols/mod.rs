@@ -2,6 +2,9 @@
 mod block_fetch;
 /// ChainSync protocol state machine and messages.
 mod chain_sync;
+/// `ForwardSink` — bounded queue + overflow callback used by the
+/// trace-forwarder forwarder side.
+mod forward_sink;
 /// KeepAlive protocol state machine and messages.
 mod keep_alive;
 /// LocalStateQuery mini-protocol state machine and messages (Node-to-Client).
@@ -21,11 +24,15 @@ mod trace_object_forward;
 /// TraceObjectForward mini-protocol configuration types
 /// (Acceptor / Forwarder side configuration records).
 mod trace_object_forward_configuration;
+/// Helpers for the trace-forwarder TraceObject mini-protocol —
+/// sink initialization + reply-list extractor.
+mod trace_object_forward_utils;
 /// TxSubmission2 protocol state machine and messages.
 mod tx_submission;
 
 pub use block_fetch::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
 pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
+pub use forward_sink::{ForwardSink, ForwardSinkOverflowCallback};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
 pub use local_state_query::{
     AcquireFailure, AcquireTarget, LocalStateQueryMessage, LocalStateQueryState,
@@ -55,6 +62,9 @@ pub use trace_object_forward::{
 };
 pub use trace_object_forward_configuration::{
     AcceptorConfiguration, ForwarderConfiguration, TraceForwardTracer,
+};
+pub use trace_object_forward_utils::{
+    get_trace_objects_from_reply, init_forward_sink, read_from_sink_status, write_to_sink_status,
 };
 pub use tx_submission::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,

@@ -274,6 +274,71 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R422 — network: ForwardSink + trace_object_forward_utils.rs
+  port of Trace.Forward.Utils.{ForwardSink, TraceObject}.hs
+  (Phase 2 round 7 of R411-R430 arc).** Strict-mirror port of the
+  trace-forwarder buffering primitives (ForwardSink) + reply-list
+  extractor (getTraceObjectsFromReply) + sink-init helper
+  (initForwardSink). Lands two new files in
+  `crates/network/src/protocols/`:
+  - **forward_sink.rs** (mirror of upstream's 11-line
+    `Utils/ForwardSink.hs`): `ForwardSink&lt;TraceObj&gt;` 2-field struct
+    + `ForwardSinkOverflowCallback&lt;TraceObj&gt;` type alias for
+    closure type (factored out to dodge clippy's
+    `type_complexity`). Backing storage is `Arc&lt;Mutex&lt;VecDeque&lt;...&gt;&gt;&gt;`
+    — synthesis carve-out for upstream's `TBQueue lo`. `Clone`
+    impl shares the queue across clones via Arc; `Debug` impl
+    redacts the callback as `&lt;Fn&gt;`. `new(callback)` constructor +
+    `queue_len()` helper.
+  - **trace_object_forward_utils.rs** (mirror of upstream's 138-
+    line `Utils/TraceObject.hs`): three new public functions —
+    - **init_forward_sink(config, overflow_callback) →
+      ForwardSink&lt;TraceObj&gt;**: mirror of upstream's
+      `initForwardSink :: ForwarderConfiguration lo -&gt; ([lo] -&gt; IO ())
+      -&gt; IO (ForwardSink lo)`. Honours operator's `queue_size` from
+      [`ForwarderConfiguration`] by preallocating the VecDeque
+      capacity (mirror of `fromIntegral queueSize`).
+    - **get_trace_objects_from_reply(reply: BlockingReplyList) →
+      Vec&lt;TraceObj&gt;**: pure pub-fn wrapper around
+      [`BlockingReplyList::into_items`]. Mirror of upstream's
+      `getTraceObjectsFromReply`. Provides the upstream-named call-
+      site form for parity grep across cardano-tracer's
+      Acceptors/Server.hs analog.
+    - **write_to_sink_status() / read_from_sink_status()**: status
+      descriptors surfacing the deferred forwarder-side helpers
+      (`writeToSink` / `writeToSinkSTM` / `readFromSink` /
+      `readFromSinkSTM`) programmatically. The full TBQueue blocking-
+      transactional semantics translate to `Arc&lt;Mutex&lt;VecDeque&gt;&gt; +
+      CondVar`, but the call surface is only consumed by the
+      cardano-node forwarder side (out of R411-R430 cardano-tracer
+      arc scope) — port land R424+.
+  Carve-outs documented in module docstrings:
+  - **`Control.Concurrent.STM.TBQueue.TBQueue lo`** (bounded
+    transactional queue): replaced with `Arc&lt;Mutex&lt;VecDeque&gt;&gt;` for
+    R422's read-mostly use; full bounded-queue + STM blocking-write
+    arrives with `writeToSink` / `readFromSink` ports later.
+  - **`writeToSink` / `writeToSinkSTM` / `readFromSink` /
+    `readFromSinkSTM`**: deferred per scope rationale (cardano-node
+    forwarder side, not in R411-R430 scope).
+  - **`Cardano.Logging.Utils.tryEvalNF`**: collapses since
+    Yggdrasil's `TraceObject` is `Clone + Eq` and rendering errors
+    don't surface as Haskell exceptions.
+  Updates `protocols/mod.rs` with two new module declarations +
+  re-exports for `ForwardSink`, `ForwardSinkOverflowCallback`,
+  `get_trace_objects_from_reply`, `init_forward_sink`,
+  `read_from_sink_status`, `write_to_sink_status`.
+  Tests: yggdrasil-network 756 → 767 (+11: forward_sink starts
+  empty; clone shares queue via Arc; overflow_callback invokable
+  multiple times; Debug redacts callback; init_forward_sink creates
+  empty queue; preallocates queue capacity per config; gets trace
+  objects from blocking variant; gets trace objects from non-
+  blocking variant; handles empty non-blocking; write_to_sink_status
+  describes deferral; read_from_sink_status describes deferral).
+  Workspace: 5,841 → 5,852. Parity-matrix entry sister-tool.cardano-
+  tracer advanced: next_milestone R422 → R423. Per the R411 plan,
+  R423 starts the EKG ReqResp sub-protocol port (number 1 of the
+  3 trace-forwarder sub-protocols per upstream's
+  `Cardano.Tracer.Acceptors.Server`).
 - **R421 — network: trace_object_run_acceptor.rs port of
   Trace.Forward.Run.TraceObject.Acceptor.hs (Phase 2 round 6 of
   R411-R430 arc).** Strict-mirror port of the trace-forwarder
