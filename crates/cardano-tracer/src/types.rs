@@ -34,7 +34,10 @@ use crate::configuration::LoggingParams;
 /// `ouroboros-network`.
 ///
 /// Upstream: `newtype NodeId = NodeId Text`.
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
 pub struct NodeId(pub String);
 
 impl NodeId {

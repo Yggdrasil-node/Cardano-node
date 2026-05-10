@@ -274,6 +274,58 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R397 — cardano-tracer: MetaTrace.hs port (TracerTrace 25-variant
+  enum + supporting types).** Lands the trace-event taxonomy for
+  the cardano-tracer's own self-tracing — the enum that every
+  emit site dispatches through. New meta_trace.rs module ports
+  the upstream Cardano.Tracer.MetaTrace surface:
+  - TracerTrace enum with all 25 variants (TracerBuildInfo,
+    TracerParamsAre, TracerConfigIs, TracerInitStarted, ...,
+    TracerForwardingInterrupted) carrying upstream's exact field
+    set + JSON `kind`-discriminated tag (`#[serde(tag = "kind")]`)
+    and per-field upstream-name renames (`builtWithRTView`,
+    `connectionIncomingAt`, `AcceptorsAddr`, etc.).
+  - TraceBundle struct (assorted + timeseries) with closure-based
+    Trace<T> tracers; default = null tracers.
+  - Trace<T> = Arc<dyn Fn(&T) + Send + Sync> placeholder type
+    alias mirroring upstream's `Trace IO TracerTrace`.
+  - null_tracer<T>() constructor for default no-op tracer fields.
+  - RT_VIEW_CONFIG_WARNING constant matching upstream verbatim.
+  - ResourceStats + TimeseriesTrace placeholder types (full
+    Cardano.Logging.Resources / Cardano.Timeseries.Component.Trace
+    not vendored).
+  - TracerTrace::for_human() — matches upstream's selective
+    forHuman behavior (only emits non-empty for ConfigIs +
+    ForwardingInterrupted variants).
+  - TracerTrace::for_machine() — JSON value via serde
+    serialization.
+  - NodeId gains `serde::Serialize` + `serde::Deserialize` derives
+    (with `#[serde(transparent)]`) to support the
+    TracerAddNewNodeIdMapping variant.
+  Carve-outs documented:
+  - MetaTrace TracerTrace typeclass instance (severity +
+    documentation classification per variant) deferred — Rust
+    equivalent would be a trait with severity()/docs() methods;
+    full table lands when trace-dispatcher is vendored.
+  - Trace IO TracerTrace replaced with Arc<dyn Fn> closure
+    (sync-only — async sinks would require BoxFuture upgrade).
+  - ResourceStats + TimeseriesTrace placeholder types.
+  - JSON forMachine flattening for TracerResource variant — Rust
+    keeps the `"kind"` discriminant for serde tagging consistency
+    (sites that need byte-equivalent flattened output post-process
+    the JSON manually).
+  Tests: cardano-tracer 256 → 272 (+16: RT_VIEW_CONFIG_WARNING
+  matches upstream verbatim; null_tracer doesn't panic;
+  TracerTrace serializes with kind discriminant + camelCase fields
+  + error field + listenAt field + AddNewNodeIdMapping; for_human
+  empty for init events / returns warning for ConfigIs / renders
+  ForwardingInterrupted; for_machine returns JSON value; round-trips
+  through JSON for 5 simple variants; SockConnecting uses upstream-
+  typo'd `connectionIncomingAt` key; TraceBundle default uses null
+  tracers + Debug renders closures as placeholders;
+  meta_trace_instance_status describes deferral). Workspace: 5,660
+  → 5,676. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R397 → R398.
 - **R396 — cardano-tracer: Utils.hs port (bounded subset; runtime-state
   init helpers + connection-id sanitizer + Registry wrappers).**
   Lands the cross-cutting helper surface used by every cardano-tracer
