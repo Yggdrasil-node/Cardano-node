@@ -274,6 +274,45 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R412 — cardano-tracer: MetricsStore::insert_resp + MetricsLocalStore
+  delta tracking (Phase 1 round 2 of R411-R430 arc).** Lands the
+  Response::ResponseMetrics ingestion path that
+  `Acceptors/Utils.hs::store` (R422 pending) calls per incoming
+  EKG ReqResp protocol response. Three primary deliverables:
+  - **MetricsStore::insert_resp(Vec<(String, MetricValue)>)**:
+    accepts an upstream `Response::ResponseMetrics` batch and
+    replaces all matching entries. Mirror of upstream
+    `System.Metrics.Store.Acceptor::storeMetrics`. Always
+    populates the synthetic `ekg.server_timestamp_ms` counter
+    using `crate::time::get_time_ms()` (mirror of upstream's
+    `Acceptors/Utils.hs:70` `getTimeMs >>= EKG.set` invocation —
+    the EKG Wai frontend expects this counter in every store).
+  - **MetricsStore::delta_since(&previous_snapshot)**: returns a
+    delta map of entries that have been added or modified since
+    the supplied snapshot. The synthetic `ekg.server_timestamp_ms`
+    counter is excluded from the diff (it always changes;
+    surfacing it would mask other-metric churn).
+  - **MetricsLocalStore struct + diff_and_advance + reset
+    methods**: per-node delta-tracking state for the
+    `GetUpdatedMetrics` mode of the EKG ReqResp protocol. Holds
+    the most recent snapshot returned to the upstream forwarder.
+    First-call returns full contents (minus synthetic timestamp);
+    subsequent calls return only diffs. Reset on node disconnect
+    + reconnect.
+  - **EKG_SERVER_TIMESTAMP_MS const**: the canonical synthetic-
+    counter name (`"ekg.server_timestamp_ms"`) populated by every
+    `insert_resp` call.
+  Tests: cardano-tracer 352 → 362 (+10: insert_resp writes batch
+  + synthetic timestamp; replaces prior values; empty batch still
+  updates timestamp; delta_since excludes synthetic timestamp +
+  includes changed value + includes new metric;
+  metrics_local_store first-call returns full contents +
+  subsequent-call returns only changes + reset clears snapshot;
+  EKG_SERVER_TIMESTAMP_MS constant matches upstream).
+  Workspace: 5,756 → 5,766. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R412 → R413.
+  Per the R411 plan, R413 lands MetricsStore::render_prometheus
+  (closes ExpositionStatus carve-out from R408).
 - **R411 — cardano-tracer: EKG-equivalent MetricsStore (R411-R430
   arc plan + Phase 1 round 1; D3 from R411 plan; closes EKG-store-shape
   carve-out).** Lands the per-node metrics aggregator that the

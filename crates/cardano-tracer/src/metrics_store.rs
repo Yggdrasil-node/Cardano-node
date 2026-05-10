@@ -186,6 +186,112 @@ impl MetricsStore {
     pub async fn is_empty(&self) -> bool {
         self.inner.read().await.is_empty()
     }
+
+    /// Insert a batch of metrics from an upstream
+    /// `Response::ResponseMetrics(Vec<(MetricName, MetricValue)>)`
+    /// payload. Mirror of upstream
+    /// `System.Metrics.Store.Acceptor::storeMetrics`. Each entry's
+    /// MetricValue replaces any existing value at that name.
+    ///
+    /// Always populates the synthetic `ekg.server_timestamp_ms`
+    /// counter with the current wall-clock time (mirroring
+    /// upstream's `Acceptors/Utils.hs:70` invocation of
+    /// `Cardano.Tracer.Time.getTimeMs >>= EKG.set timestampCounter`).
+    /// The synthetic counter is needed because EKG's Wai frontend
+    /// expects every store to expose it.
+    pub async fn insert_resp(&self, batch: Vec<(String, MetricValue)>) {
+        let now_ms = crate::time::get_time_ms();
+        let mut guard = self.inner.write().await;
+        for (name, value) in batch {
+            guard.insert(name, value);
+        }
+        guard.insert(
+            EKG_SERVER_TIMESTAMP_MS.to_string(),
+            MetricValue::Counter(now_ms),
+        );
+    }
+
+    /// Return a delta of metrics that have been added or modified
+    /// since the supplied `previous_snapshot`. Mirror of upstream's
+    /// `MetricsLocalStore::derive` flow used when the
+    /// `Response::ResponseMetrics` came back via `GetUpdatedMetrics`
+    /// mode (per-node delta tracking).
+    ///
+    /// The returned map contains only entries whose name was not
+    /// in `previous_snapshot` *or* whose MetricValue differs from
+    /// the previous snapshot. The synthetic `ekg.server_timestamp_ms`
+    /// counter is excluded from the diff (it always changes; surfacing
+    /// it would mask other-metric churn).
+    pub async fn delta_since(
+        &self,
+        previous_snapshot: &BTreeMap<String, MetricValue>,
+    ) -> BTreeMap<String, MetricValue> {
+        let current = self.inner.read().await;
+        let mut delta = BTreeMap::new();
+        for (name, value) in current.iter() {
+            if name == EKG_SERVER_TIMESTAMP_MS {
+                continue;
+            }
+            match previous_snapshot.get(name) {
+                Some(prior) if prior == value => {}
+                _ => {
+                    delta.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        delta
+    }
+}
+
+/// Canonical synthetic-counter name populated by every
+/// [`MetricsStore::insert_resp`] call. Mirror of upstream EKG's
+/// `ekg.server_timestamp_ms` metric (the Wai frontend expects this
+/// in every store; see `Cardano.Tracer.Time::getTimeMs` for the
+/// upstream value source).
+pub const EKG_SERVER_TIMESTAMP_MS: &str = "ekg.server_timestamp_ms";
+
+/// Per-node delta-tracking state for the EKG ReqResp protocol's
+/// `GetUpdatedMetrics` mode. Holds the most recent snapshot
+/// returned to upstream so the next request can compute the delta.
+/// Mirror of upstream `MetricsLocalStore`.
+#[derive(Clone, Debug, Default)]
+pub struct MetricsLocalStore {
+    /// Most recent snapshot returned to the upstream forwarder.
+    /// Empty on first request.
+    last_snapshot: Arc<RwLock<BTreeMap<String, MetricValue>>>,
+}
+
+impl MetricsLocalStore {
+    /// Construct an empty local store.
+    pub fn new() -> Self {
+        MetricsLocalStore::default()
+    }
+
+    /// Compute the delta since the previous request and update the
+    /// local snapshot to the current contents of `store`. Returns
+    /// the entries that have changed since the last invocation.
+    ///
+    /// On first invocation (empty `last_snapshot`), returns the
+    /// full store contents minus the synthetic timestamp counter
+    /// (mirror of upstream's `MetricsLocalStore::initial` first-call
+    /// behavior).
+    pub async fn diff_and_advance(&self, store: &MetricsStore) -> BTreeMap<String, MetricValue> {
+        let prior = self.last_snapshot.read().await.clone();
+        let delta = store.delta_since(&prior).await;
+        // Update the snapshot to the current store contents
+        // (excluding the synthetic timestamp).
+        let mut next = store.snapshot().await;
+        next.remove(EKG_SERVER_TIMESTAMP_MS);
+        *self.last_snapshot.write().await = next;
+        delta
+    }
+
+    /// Reset the local snapshot. Used when a node disconnects and
+    /// reconnects — the next `diff_and_advance` will return the
+    /// full store contents.
+    pub async fn reset(&self) {
+        self.last_snapshot.write().await.clear();
+    }
 }
 
 /// Per-node `MetricsStore` registry. Mirror of upstream
@@ -382,5 +488,139 @@ mod tests {
         let accepted = new_accepted_metrics();
         let removed = remove_store(&accepted, &NodeId::new("missing")).await;
         assert!(removed.is_none());
+    }
+
+    #[tokio::test]
+    async fn insert_resp_writes_batch_and_synthetic_timestamp() {
+        let store = MetricsStore::new();
+        store
+            .insert_resp(vec![
+                ("Mem_resident_int".to_string(), MetricValue::Gauge(100_000)),
+                ("RTS_gcMajorNum_int".to_string(), MetricValue::Counter(7)),
+            ])
+            .await;
+        // All batch entries present + synthetic timestamp counter.
+        assert_eq!(
+            store.get("Mem_resident_int").await,
+            Some(MetricValue::Gauge(100_000)),
+        );
+        assert_eq!(
+            store.get("RTS_gcMajorNum_int").await,
+            Some(MetricValue::Counter(7)),
+        );
+        let ts = store.get(EKG_SERVER_TIMESTAMP_MS).await;
+        assert!(matches!(ts, Some(MetricValue::Counter(_))));
+    }
+
+    #[tokio::test]
+    async fn insert_resp_replaces_prior_values() {
+        let store = MetricsStore::new();
+        store
+            .insert_resp(vec![("c".to_string(), MetricValue::Counter(1))])
+            .await;
+        store
+            .insert_resp(vec![("c".to_string(), MetricValue::Counter(99))])
+            .await;
+        assert_eq!(store.get("c").await, Some(MetricValue::Counter(99)));
+    }
+
+    #[tokio::test]
+    async fn insert_resp_empty_batch_still_updates_timestamp() {
+        let store = MetricsStore::new();
+        store.insert_resp(vec![]).await;
+        let ts = store.get(EKG_SERVER_TIMESTAMP_MS).await;
+        assert!(matches!(ts, Some(MetricValue::Counter(_))));
+        // No other metrics.
+        assert_eq!(store.len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn delta_since_excludes_synthetic_timestamp() {
+        let store = MetricsStore::new();
+        store
+            .insert_resp(vec![("c".to_string(), MetricValue::Counter(1))])
+            .await;
+        let snap1 = store.snapshot().await;
+        // Wait a moment then insert again; the timestamp will change.
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        store
+            .insert_resp(vec![("c".to_string(), MetricValue::Counter(1))])
+            .await;
+        // Delta from snap1 should be empty since `c` didn't change
+        // and the synthetic timestamp is excluded from the diff.
+        let delta = store.delta_since(&snap1).await;
+        assert!(delta.is_empty(), "delta = {delta:?}");
+    }
+
+    #[tokio::test]
+    async fn delta_since_includes_changed_value() {
+        let store = MetricsStore::new();
+        store.register_counter("c", 1).await;
+        let snap = store.snapshot().await;
+        store.set_counter("c", 99).await;
+        let delta = store.delta_since(&snap).await;
+        assert_eq!(delta.len(), 1);
+        assert_eq!(delta.get("c"), Some(&MetricValue::Counter(99)));
+    }
+
+    #[tokio::test]
+    async fn delta_since_includes_new_metric() {
+        let store = MetricsStore::new();
+        store.register_counter("c1", 1).await;
+        let snap = store.snapshot().await;
+        store.register_counter("c2", 2).await;
+        let delta = store.delta_since(&snap).await;
+        assert_eq!(delta.len(), 1);
+        assert_eq!(delta.get("c2"), Some(&MetricValue::Counter(2)));
+    }
+
+    #[tokio::test]
+    async fn metrics_local_store_first_call_returns_full_contents() {
+        let store = MetricsStore::new();
+        store
+            .insert_resp(vec![
+                ("c1".to_string(), MetricValue::Counter(1)),
+                ("c2".to_string(), MetricValue::Counter(2)),
+            ])
+            .await;
+        let local = MetricsLocalStore::new();
+        let delta = local.diff_and_advance(&store).await;
+        // First call returns full contents (minus synthetic timestamp).
+        assert_eq!(delta.len(), 2);
+        assert_eq!(delta.get("c1"), Some(&MetricValue::Counter(1)));
+        assert!(!delta.contains_key(EKG_SERVER_TIMESTAMP_MS));
+    }
+
+    #[tokio::test]
+    async fn metrics_local_store_subsequent_call_returns_only_changes() {
+        let store = MetricsStore::new();
+        store.register_counter("c", 1).await;
+        let local = MetricsLocalStore::new();
+        let _initial = local.diff_and_advance(&store).await;
+        // No change yet — second diff is empty.
+        let no_change = local.diff_and_advance(&store).await;
+        assert!(no_change.is_empty());
+        // Mutate; third diff returns only the change.
+        store.set_counter("c", 99).await;
+        let change = local.diff_and_advance(&store).await;
+        assert_eq!(change.len(), 1);
+        assert_eq!(change.get("c"), Some(&MetricValue::Counter(99)));
+    }
+
+    #[tokio::test]
+    async fn metrics_local_store_reset_clears_snapshot() {
+        let store = MetricsStore::new();
+        store.register_counter("c", 1).await;
+        let local = MetricsLocalStore::new();
+        let _initial = local.diff_and_advance(&store).await;
+        local.reset().await;
+        // After reset, the next diff returns the full contents again.
+        let delta = local.diff_and_advance(&store).await;
+        assert_eq!(delta.len(), 1);
+    }
+
+    #[test]
+    fn ekg_server_timestamp_ms_constant_matches_upstream() {
+        assert_eq!(EKG_SERVER_TIMESTAMP_MS, "ekg.server_timestamp_ms");
     }
 }
