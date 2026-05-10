@@ -29,6 +29,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod configuration;
+pub mod environment;
 pub mod handlers;
 pub mod parser;
 pub mod severity;

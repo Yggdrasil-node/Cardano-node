@@ -274,6 +274,57 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R393 — cardano-tracer: Environment.hs port (TracerEnv 14-field
+  record, unblocks downstream subsystems).** Lands the runtime
+  environment record threaded through every cardano-tracer
+  subsystem. New environment.rs module ports the upstream
+  Cardano.Tracer.Environment surface:
+  - TracerEnv 14-field struct with each field tagged to its
+    upstream `te*` name + Haskell type. Reuses already-ported
+    types from R358 (TracerConfig) + R371 (ConnectedNodes,
+    ConnectedNodesNames, ProtocolsBrake, HandleRegistry).
+  - Placeholder types for 4 unported field types (AcceptedMetrics,
+    DataPointRequestors, TracerTrace, TimeseriesHandle) — each
+    documented as a deferred carve-out with the upstream
+    Haskell type signature on file.
+  - Lock fields use `Arc<tokio::sync::Mutex<()>>` (single-acquirer
+    semantics matching upstream's Control.Concurrent.Extra.Lock).
+  - ReforwardTraceObjects type alias around
+    `Arc<dyn Fn(&[TraceObject]) + Send + Sync>` mirroring upstream's
+    `[TraceObject] -> IO ()` callback. no_op_reforward() default
+    constructor returns a stub that's safe in all sites.
+  - TracerEnv::new(TracerConfig) constructor + with_state_dir()
+    builder method. Production wiring in the future Run.hs
+    supervisor will populate the runtime-state fields after
+    construction.
+  - Custom Debug impl that renders Mutex + closure fields as
+    `<Mutex>` / `<closure>` placeholders (since neither derives
+    Debug naturally).
+  - TracerEnvRTView intentionally empty (mirrors upstream's
+    `#else` branch when RTVIEW build flag is off — the entire
+    RTView UI is the workspace-wide carve-out).
+  Carve-outs documented:
+  - 4 unported field types: AcceptedMetrics (TVar Map NodeId TVar
+    EKG.Store; pending EKG-equivalent), DataPointRequestors (TVar
+    Map NodeId DataPointRequestor IO; pending datapoint mini-
+    protocol), TracerTrace (Trace IO TracerTrace; pending
+    MetaTrace.hs port), TimeseriesHandle (Cardano.Timeseries.Component;
+    pending cardano-timeseries-io vendoring).
+  - reforward closure ships as no-op until Acceptors/Run.hs lands.
+  Tests: cardano-tracer 207 → 217 (+10: tracer_env_new uses
+  supplied config + default-initializes runtime-state fields;
+  locks acquire independently [tokio::test]; with_state_dir
+  override + clear-to-None; Debug renders all fields with
+  `<Mutex>` / `<closure>` placeholders for non-derivable fields;
+  no_op_reforward doesn't panic on empty + non-empty input;
+  placeholder unit-struct types construct; clone produces
+  independent value sharing the same Mutex Arc). Workspace:
+  5,611 → 5,621. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R392 → R394. Unblocks computeRoutes
+  (Metrics/Utils) + Logs/Rotator + Acceptors/* + Run.hs supervisor
+  + Metrics handlers (Servers / Monitoring / Prometheus /
+  TimeseriesServer) — all of which take TracerEnv as their
+  primary parameter.
 - **R392 — workspace structure cleanup (architecture review
   follow-through).** Operator-requested critical review of the 19
   workspace crates concluded that the count is correct (each crate

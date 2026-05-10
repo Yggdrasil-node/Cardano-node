@@ -546,7 +546,7 @@
       "area": "sister-tools",
       "feature": "Standalone trace-forwarder + log + metrics aggregator \u2014 pure-Rust port mirroring upstream cardano-tracer/src/Cardano/Tracer/*.hs.",
       "status": "partial",
-      "next_milestone": "R392",
+      "next_milestone": "R394",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-tracer/",
@@ -556,7 +556,7 @@
       "rust_surface": [
         {
           "path": "crates/cardano-tracer/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R358 typed-config + R366 typed-parser + R371 runtime-state types + R379 Time + R380 SeverityS + Notifications/Types + R381 Notifications/Check + R382 Logs/Journal + R383 Handlers/System + R384 Notifications/Settings + R385+R387 Notifications/Utils (full) + R386 Notifications/Timer + R388 Notifications/Email + R389 Notifications/Send + R390 Logs/Utils + R391 Metrics/Utils (bounded; Content-Type constants + RouteDictionary + slugify). Notifications subsystem structurally complete; Acceptors/CLI/Run + SMTP send + log-rotation IO + Metrics servers land in subsequent rounds; RTView UI carve-out per the plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R358 typed-config + R366 typed-parser + R371 runtime-state types + R379 Time + R380 SeverityS + Notifications/Types + R381 Notifications/Check + R382 Logs/Journal + R383 Handlers/System + R384 Notifications/Settings + R385+R387 Notifications/Utils + R386 Notifications/Timer + R388 Notifications/Email + R389 Notifications/Send + R390 Logs/Utils + R391 Metrics/Utils + R393 Environment.hs (TracerEnv 14-field record). Notifications subsystem structurally complete; Acceptors/CLI/Run + Metrics servers + log-rotation IO unblocked by R393's TracerEnv; RTView UI carve-out per the plan."
         }
       ],
       "implemented_evidence": [
