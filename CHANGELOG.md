@@ -274,6 +274,57 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R434 — network: handshake codec generic-refactor (operator-
+  approved direction).** Refactors the handshake message-envelope
+  wire encoding to be generic over a `HandshakeWireCodec` trait,
+  closing the duplication R433 acknowledged in its commit
+  message. Both NtN and trace-forwarder handshake variants now
+  share the same version-table encode/decode logic via
+  trait-dispatched per-entry codecs. New file:
+  `crates/network/src/handshake/wire.rs`.
+  Public surface (small, focused trait):
+  - **HandshakeWireCodec trait**: 2 associated types (Version,
+    VersionData) + 4 encode/decode methods. Mirror of upstream's
+    `codecHandshake` parameterization over a `CodecCBORTerm`.
+    Each handshake variant (NtN, trace-forwarder) supplies an
+    impl plugging in the variant-specific per-entry CBOR
+    encoding.
+  - **encode_version_table&lt;C&gt;(enc, versions)**: shared structural
+    encoder for the `{version → versionData}` CBOR map. Replaces
+    the previously-duplicated logic in NtN + trace-forwarder.
+  - **decode_version_table&lt;C&gt;(dec, max) → DecodeVersionTableResult&lt;C&gt;**:
+    shared structural decoder, bounded by `max`.
+    `DecodeVersionTableResult` type alias dodges clippy's
+    `type_complexity` lint on the underlying generic shape.
+  Refactored sites:
+  - **handshake/codec.rs**: introduces `NtNHandshakeCodec` impl.
+    `encode_version_table` + `decode_version_table` private fns
+    now delegate to `wire::encode_version_table::&lt;NtNHandshakeCodec&gt;`
+    + `wire::decode_version_table::&lt;NtNHandshakeCodec&gt;`. The
+    helper functions `encode_version_data` + `decode_version_data`
+    keep the upstream-faithful 2/3/4-element backward-compat
+    decode logic in their existing form (called from the trait
+    impl).
+  - **protocols/trace_object_forward_handshake.rs**: introduces
+    `TraceForwardHandshakeCodec` impl. The previously-hand-rolled
+    `encode_version_table` + `decode_version_table` private fns
+    now delegate to the same generic helpers. The duplicate
+    structural logic from R433 is gone.
+  - **handshake.rs**: re-exports the new `HandshakeWireCodec`
+    trait at the public API surface so both call sites can
+    reference the trait by short path.
+  Tests: yggdrasil-network unchanged at 795 (R434 is a behavior-
+  preserving refactor). Workspace unchanged at 5,915. NtN
+  handshake's 31 existing tests + trace-forward handshake's 14
+  existing tests all pass — verifying the trait dispatch is
+  byte-identical to the previous hand-rolled codecs.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R434 → R435. R434 closes the duplication debt
+  R433 introduced; the trait now gives a clean foundation for a
+  future round to wire the trace-forwarder handshake state-
+  machine driver into R424's `do_listen_to_forwarder_local`
+  (the third advisor-flagged gap, deferred per the operator's
+  R434 direction-decision).
 - **R433 — network: trace_object_forward_handshake.rs — wire-
   level codec for trace-forwarder ProposeVersions / AcceptVersion
   / Refuse / QueryReply messages.** Builds on R432's

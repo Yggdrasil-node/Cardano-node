@@ -42,6 +42,45 @@ use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 use super::trace_object_forward_version::{ForwardingVersion, ForwardingVersionData};
+use crate::handshake::wire::{self, HandshakeWireCodec};
+
+/// Maximum number of (version, version-data) entries in a
+/// trace-forwarder version table. The trace-forwarder only has 2
+/// versions in practice; the bound is set generously to absorb
+/// future expansion while still fending off a malicious peer
+/// shipping a 2^32-entry table.
+const TRACE_FORWARD_VERSION_TABLE_MAX: usize = 64;
+
+/// Trace-forwarder handshake-codec impl of
+/// [`HandshakeWireCodec`]. Plugs the
+/// [`encode_forwarding_version`]-style per-tag (CBOR unsigned 1-2) +
+/// per-version-data (CBOR unsigned u32 network-magic) wire encodings
+/// into the generic version-table helpers from
+/// [`crate::handshake::wire`].
+pub struct TraceForwardHandshakeCodec;
+
+impl HandshakeWireCodec for TraceForwardHandshakeCodec {
+    type Version = ForwardingVersion;
+    type VersionData = ForwardingVersionData;
+
+    fn encode_version(enc: &mut Encoder, version: &Self::Version) {
+        enc.unsigned(u64::from(version.tag()));
+    }
+
+    fn decode_version(dec: &mut Decoder<'_>) -> Result<Self::Version, LedgerError> {
+        let tag = dec.unsigned()?;
+        decode_version_tag(tag)
+    }
+
+    fn encode_version_data(enc: &mut Encoder, data: &Self::VersionData) {
+        enc.unsigned(u64::from(data.network_magic));
+    }
+
+    fn decode_version_data(dec: &mut Decoder<'_>) -> Result<Self::VersionData, LedgerError> {
+        let magic = dec.unsigned()?;
+        decode_version_data(magic)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Message envelope
@@ -159,36 +198,20 @@ impl TraceForwardHandshakeMessage {
 }
 
 // ---------------------------------------------------------------------------
-// Version-table helpers
+// Version-table helpers — R434: route through generic helpers
 // ---------------------------------------------------------------------------
 
 fn encode_version_table(
     enc: &mut Encoder,
     versions: &[(ForwardingVersion, ForwardingVersionData)],
 ) {
-    enc.map(versions.len() as u64);
-    for (ver, data) in versions {
-        enc.unsigned(u64::from(ver.tag()));
-        enc.unsigned(u64::from(data.network_magic));
-    }
+    wire::encode_version_table::<TraceForwardHandshakeCodec>(enc, versions);
 }
 
 fn decode_version_table(
     dec: &mut Decoder<'_>,
 ) -> Result<Vec<(ForwardingVersion, ForwardingVersionData)>, LedgerError> {
-    let count = dec.map()?;
-    // Bound the table size — the trace-forwarder only has 2
-    // versions, but a malicious peer could ship a huge table.
-    let cap = count.min(64) as usize;
-    let mut versions = Vec::with_capacity(cap);
-    for _ in 0..count {
-        let ver_tag = dec.unsigned()?;
-        let version = decode_version_tag(ver_tag)?;
-        let magic = dec.unsigned()?;
-        let data = decode_version_data(magic)?;
-        versions.push((version, data));
-    }
-    Ok(versions)
+    wire::decode_version_table::<TraceForwardHandshakeCodec>(dec, TRACE_FORWARD_VERSION_TABLE_MAX)
 }
 
 fn decode_version_tag(tag: u64) -> Result<ForwardingVersion, LedgerError> {

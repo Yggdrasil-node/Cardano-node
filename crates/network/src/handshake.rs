@@ -16,6 +16,7 @@
 pub mod codec;
 pub mod r#type;
 pub mod version;
+pub mod wire;
 
 // Re-exports preserve the existing flat `crate::handshake::Foo` API for
 // callers in the workspace; the actual definitions live in the per-concern
@@ -26,3 +27,4 @@ pub use r#type::{
     HandshakeMessage, HandshakeRequest, HandshakeState, HandshakeTransitionError, RefuseReason,
 };
 pub use version::{HandshakeVersion, NodeToNodeVersionData};
+pub use wire::HandshakeWireCodec;

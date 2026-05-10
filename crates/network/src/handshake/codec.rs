@@ -15,6 +15,34 @@ use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
 use super::r#type::{HandshakeMessage, RefuseReason};
 use super::version::{HandshakeVersion, NodeToNodeVersionData};
+use super::wire::HandshakeWireCodec;
+
+/// NtN handshake-codec impl of [`HandshakeWireCodec`]. Plugs the
+/// per-version-tag (u16) + per-version-data (NtN multi-field
+/// array) wire encodings into the generic version-table helpers
+/// from [`super::wire`].
+pub struct NtNHandshakeCodec;
+
+impl HandshakeWireCodec for NtNHandshakeCodec {
+    type Version = HandshakeVersion;
+    type VersionData = NodeToNodeVersionData;
+
+    fn encode_version(enc: &mut Encoder, version: &Self::Version) {
+        enc.unsigned(u64::from(version.0));
+    }
+
+    fn decode_version(dec: &mut Decoder<'_>) -> Result<Self::Version, LedgerError> {
+        Ok(HandshakeVersion(dec.unsigned()? as u16))
+    }
+
+    fn encode_version_data(enc: &mut Encoder, data: &Self::VersionData) {
+        encode_version_data(enc, data);
+    }
+
+    fn decode_version_data(dec: &mut Decoder<'_>) -> Result<Self::VersionData, LedgerError> {
+        decode_version_data(dec)
+    }
+}
 
 /// Encode a version data value as a CBOR array:
 /// `[networkMagic, initiatorOnlyDiffusionMode, peerSharing, query]`.
@@ -57,26 +85,19 @@ pub(super) fn decode_version_data(
 }
 
 /// Encode a version table as a CBOR map: `{version: versionData, ...}`.
+/// R434: routes through [`super::wire::encode_version_table`] +
+/// [`NtNHandshakeCodec`] for shared structural encoding across
+/// handshake variants.
 fn encode_version_table(enc: &mut Encoder, versions: &[(HandshakeVersion, NodeToNodeVersionData)]) {
-    enc.map(versions.len() as u64);
-    for (ver, vd) in versions {
-        enc.unsigned(u64::from(ver.0));
-        encode_version_data(enc, vd);
-    }
+    super::wire::encode_version_table::<NtNHandshakeCodec>(enc, versions);
 }
 
-/// Decode a version table from a CBOR map.
+/// Decode a version table from a CBOR map. R434: routes through
+/// [`super::wire::decode_version_table`] + [`NtNHandshakeCodec`].
 fn decode_version_table(
     dec: &mut Decoder<'_>,
 ) -> Result<Vec<(HandshakeVersion, NodeToNodeVersionData)>, LedgerError> {
-    let count = dec.map()?;
-    let mut versions = vec_with_strict_capacity(count, handshake_limits::VERSION_TABLE_MAX)?;
-    for _ in 0..count {
-        let ver_num = dec.unsigned()? as u16;
-        let vd = decode_version_data(dec)?;
-        versions.push((HandshakeVersion(ver_num), vd));
-    }
-    Ok(versions)
+    super::wire::decode_version_table::<NtNHandshakeCodec>(dec, handshake_limits::VERSION_TABLE_MAX)
 }
 
 impl HandshakeMessage {
