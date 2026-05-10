@@ -37,11 +37,63 @@ This file defines how dependencies are introduced into Yggdrasil.
 
 The R326-R459 sister-tools port arc will eventually need an HTTP server crate for `cardano-submit-api` (the `/api/submit/tx` endpoint) and a log-rotation crate for `cardano-tracer`. Per the R330 dependency-audit policy, those are NOT pre-added to `[workspace.dependencies]` — they'll land at the round that actually consumes them, with the transitive-dep audit done in context.
 
-- **HTTP server (deferred to R340 — `cardano-submit-api` Web.hs port)**: candidates are (a) `axum` + `tokio` (workspace already has `tokio`; axum adds ~5 transitive deps including `tower`, `hyper`), or (b) raw `tokio::net::TcpListener` matching the existing `node/src/metrics_server.rs` pattern (zero new deps). Decision deferred until R340; rationale will be documented in that round's operational-runs entry.
-- **Log rotation (deferred to R367 — `cardano-tracer` Logs/Rotator.hs port)**: candidate is `tracing-appender` (~3-5 transitive deps including `tracing`, `parking_lot`). Decision deferred until R367.
+- **HTTP server for cardano-submit-api (R338-R345 land)**: chose raw `tokio::net::TcpListener` matching `node/src/metrics_server.rs` — single endpoint, no TLS, no content negotiation. Zero new deps. Closed at R345.
+- **HTTP server for cardano-tracer (R406 audit; R408+ land)**: chose `axum` 0.7 (different decision from cardano-submit-api). Driven by the 4-server complexity + per-server TLS termination + content negotiation. See `docs/operational-runs/2026-05-10-round-398-dep-audit-tracerenv-decision.md` D2 audit for the side-by-side justification.
+- **Log rotation for cardano-tracer (deferred — R394 shipped pure-Rust rotation policy helpers without any external rotation crate)**: `tracing-appender` not needed; rotation policy is a thin `tokio::time::interval` over the existing `crates/cardano-tracer/src/handlers/logs/rotator.rs` pure helpers when the IO orchestration round lands.
 - **Optional fuzz-distribution (deferred to R434 — `tx-generator` Tx fuzz)**: candidate is `rand` (already a transitive dep via `ed25519-dalek`/`curve25519-dalek`, so promoting to a direct workspace dep would not add transitive surface).
 
 Each deferred candidate will be added to `[workspace.dependencies]` only when its consumer round lands, with the `cargo deny check` + `cargo audit` checks run against the actual transitive tree rather than against speculative additions.
+
+## Sister-tools port arc — R398 audit (cardano-tracer R398-R410 sub-arc)
+
+Three new dependencies approved at R398 for landing during the
+R398-R410 cardano-tracer subsystem build-out. Each has a full
+audit-evidence + rejected-alternatives section in
+`docs/operational-runs/2026-05-10-round-398-dep-audit-tracerenv-decision.md`;
+the summary entries below cite the canonical recommended feature
+sets.
+
+- **`lettre` 0.11 (R403 land)**: pure-Rust SMTP client for
+  `cardano-tracer/src/handlers/notifications/email::create_and_send_email`
+  (closes the R388 `SmtpSendStatus` carve-out). Pin
+  `default-features = false, features = ["smtp-transport",
+  "tokio1-rustls", "builder"]` — **MANDATORY** to avoid the default
+  `tokio1-native-tls` feature which would pull in `native-tls` →
+  blocked by `deny.toml:90`. License: MIT/Apache-2.0 dual. ~30
+  transitive deps (rustls + webpki-roots + email-encoding +
+  email_address + idna + quoted_printable + base64 + hyper-util).
+  Rejected alternatives: hand-rolled SMTP client (massive RFC 5321
+  + STARTTLS + SASL scope, security risk); skip SMTP entirely
+  (cardano-tracer never matches upstream's email-notification
+  surface). `cargo deny check` audit happens at R403 against the
+  actual `Cargo.lock`, not speculative additions.
+- **`axum` 0.7 + `hyper` 1 + `tower` 0.5 + `rustls-pemfile` 2 (R406
+  land)**: HTTP server stack for
+  `cardano-tracer/src/handlers/metrics/{prometheus, monitoring,
+  timeseries_server, servers}` — 4 separate HTTP servers per
+  upstream's design + per-server TLS termination via
+  `tlsSettingsChain` + `Accept`-header content negotiation. Pin
+  `axum = { version = "0.7", default-features = false, features =
+  ["http1", "tokio", "json"] }`; `hyper = { version = "1", features
+  = ["http1", "server"] }`; `tower = { version = "0.5", features =
+  ["util"] }`; `rustls-pemfile = "2"`. License: all MIT.
+  Combined transitive surface ~10 unique TLS-stack crates after
+  rustls deduplication with lettre's `tokio1-rustls`. Rejected
+  alternatives: raw-tokio matching `cardano-submit-api/src/rest/web.rs`
+  (rejected because cardano-tracer's per-server TLS + 4-route
+  dispatch + content negotiation makes hand-rolling rustls
+  integration four times structurally wrong; the cardano-submit-api
+  precedent does not carry over).
+- **`maud` 0.27 (R406 land alongside axum)**: compile-time HTML
+  templating for `RouteDictionary::render_html` (closes the R391
+  `RenderHtmlStatus` carve-out — replaces upstream's
+  `Text.Blaze.Html` `renderListOfConnectedNodes`). License: MIT.
+  Zero transitive deps (proc-macro only). Rejected alternative:
+  hand-rolled inline renderer (viable since the HTML page is small,
+  ≤ 100 LOC, but maud's compile-time template syntax catches typos
+  + auto-escapes user content + zero runtime cost). Fallback if
+  maud audit fails at R406: hand-rolled inline renderer kept as
+  a documented carve-out option.
 
 ## Review Required
 - Any new cryptography crate.

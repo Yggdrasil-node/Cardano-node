@@ -274,6 +274,51 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R398 — cardano-tracer: dependency audit + TracerEnv decision
+  (R398-R410 sub-arc prep).** Documentation-only round preparing
+  the next 12 rounds of cardano-tracer subsystem build-out. Three
+  architectural decisions identified by the advisor + planning
+  agent for the R398-R410 sub-arc:
+  - **D1 — `lettre` 0.11 SMTP client (R403)**: closes
+    `SmtpSendStatus` (R388). Pin features to `["smtp-transport",
+    "tokio1-rustls", "builder"]` (default-features off) —
+    mandatory to avoid `native-tls` blocked by `deny.toml`.
+    ~30 transitive deps; MIT.
+  - **D2 — `axum` 0.7 + `hyper` 1 + `tower` 0.5 + `rustls-pemfile`
+    2 (R406)**: chosen over raw-tokio (the cardano-submit-api
+    precedent) because cardano-tracer ships 4 separate HTTP servers
+    + per-server TLS termination + content negotiation + per-node
+    dynamic routing. Hand-rolling rustls integration 4 times is
+    structurally wrong here. Closes `RenderHtmlStatus` (R391) +
+    `ComputeRoutesStatus` (R391) at R406+R407.
+  - **D2-prime — `maud` 0.27 HTML templating (R406)**: zero
+    transitive deps (proc-macro only); replaces upstream's
+    `Text.Blaze.Html` for `RouteDictionary::render_html`.
+    Fallback: hand-rolled inline renderer if maud audit fails.
+  - **D3 — TraceObject 6-field inline port (R399, no new deps)**:
+    chosen over Option B (vendor `trace-dispatcher`, multi-quarter)
+    + Option C (defer entirely, blocks too much). 6 fields:
+    to_human / to_machine / to_severity / to_namespace /
+    to_thread_id / to_timestamp_ms.
+  - **TracerEnv 14-field record sub-decision**: option (b)
+    tactical direct-arg pass-through chosen over (a) full record
+    port. Per-helper signatures take only the slice of state they
+    need; full record port deferred until `Cardano.Logging` +
+    `Cardano.Timeseries` vendor.
+  Adds 3 entries to `docs/DEPENDENCIES.md` under a new "Sister-tools
+  port arc — R398 audit" section + a comprehensive operational-runs
+  entry at `docs/operational-runs/2026-05-10-round-398-dep-audit-tracerenv-decision.md`
+  with the per-decision audit + rejected-alternatives + side-by-side
+  comparison vs cardano-submit-api precedent + risk register +
+  R398-R410 round-by-round breakdown.
+  No code changes; no `[workspace.dependencies]` bumps yet (those
+  land at R403 / R406 with the actual `cargo deny check` against
+  the resolved Cargo.lock). Workspace tests held at 5,676 (same
+  as R397). All 5 cargo gates clean; all 3 parity validators clean.
+  Phase A.5 cardano-tracer arc end-of-arc target shifts from R385
+  (original) to R415 (post-buffer absorption); end-of-plan target
+  shifts R459 → R464 (+5 rounds, within ±10 buffer per plan
+  acceptance).
 - **R397 — cardano-tracer: MetaTrace.hs port (TracerTrace 25-variant
   enum + supporting types).** Lands the trace-event taxonomy for
   the cardano-tracer's own self-tracing — the enum that every
