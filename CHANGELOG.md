@@ -274,6 +274,83 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R417 — network: protocols/trace_object_forward.rs port of
+  Trace.Forward.Protocol.TraceObject.Type.hs (Phase 2 round 2 of
+  R411-R430 arc).** Strict-mirror port of the trace-forwarder
+  TraceObject sub-protocol's typed state machine + message envelope.
+  Lands in `crates/network/src/protocols/trace_object_forward.rs`
+  alongside the existing KeepAlive / ChainSync / BlockFetch /
+  TxSubmission / PeerSharing / LocalStateQuery / LocalTxMonitor /
+  LocalTxSubmission state machines. Single new module:
+  - **NumberOfTraceObjects(u16)**: `pub struct` newtype mirror of
+    upstream's `newtype NumberOfTraceObjects { nTraceObjects :: Word16 }`
+    with `new`/`n_trace_objects` accessors matching the upstream
+    record-syntax shape.
+  - **StBlockingStyle**: 2-variant enum `StBlocking | StNonBlocking`
+    that collapses upstream's `data StBlockingStyle` + `data
+    TokBlockingStyle (k :: StBlockingStyle)` (Rust enums *are*
+    runtime tokens; the GADT/Singletons separation has no Rust
+    analog).
+  - **BlockingReplyList&lt;TraceObj&gt;**: 2-variant enum
+    `Blocking(Vec) | NonBlocking(Vec)` with constructor-level
+    `NonEmpty` invariant validation via `BlockingReplyList::blocking()`
+    returning `Result&lt;Self, BlockingReplyListEmptyError&gt;` (mirror
+    of upstream's type-level `NonEmpty lo` constraint). Helper
+    methods: `style()`, `items()`, `into_items()`.
+  - **TraceObjectForwardState**: 3-variant state enum
+    `StIdle | StBusy(StBlockingStyle) | StDone` mirroring upstream's
+    `data TraceObjectForward lo where StIdle :: ... | StBusy ::
+    StBlockingStyle -> ... | StDone :: ...`.
+  - **Agency**: 3-variant enum `Acceptor | Forwarder | Nobody`
+    paired with `TraceObjectForwardState::agency()` reflecting
+    upstream's `StateAgency` type-family clauses (StIdle →
+    ClientAgency = Acceptor; StBusy _ → ServerAgency = Forwarder;
+    StDone → NobodyAgency).
+  - **TraceObjectForwardMessage&lt;TraceObj&gt;**: 3-variant message
+    enum `MsgTraceObjectsRequest { blocking, n_trace_objects } |
+    MsgTraceObjectsReply { reply } | MsgDone`. `tag()` accessor
+    returning the upstream constructor name as `&'static str`.
+  - **TraceObjectForwardTransitionError**: 2-variant error enum
+    `IllegalTransition { from, msg_tag } | BlockingStyleMismatch
+    { expected, actual }`. The mismatch variant catches
+    `MsgTraceObjectsReply` arrived in `StBusy(b)` whose
+    `BlockingReplyList` style disagrees with the originating request
+    (a wire-level invariant upstream enforces at the type level via
+    GADTs).
+  - **TraceObjectForwardState::transition()**: exhaustive-match
+    validator returning the next state OR a transition error.
+    Matches the precedent set by `keep_alive.rs::transition`.
+  Carve-outs documented in module docstring: GADT + DataKinds +
+  Singletons type-level encoding (collapses to value-level enum +
+  exhaustive transition validator); `Protocol` typeclass +
+  `StateAgency` type family (collapses to runtime `agency()`
+  method); `ShowProxy` instances (collapse to standard `Debug`
+  derivation). The CBOR codec lands in R418
+  (`Trace.Forward.Protocol.TraceObject.Codec` mirror), the
+  responder driver in R419
+  (`Trace.Forward.Protocol.TraceObject.Acceptor` mirror), and the
+  `RunMiniProtocol` aggregator in R420
+  (`Trace.Forward.Run.TraceObject.Acceptor` mirror).
+  Updates `protocols/mod.rs` to declare the new module + re-export
+  the public surface (`BlockingReplyList`, `BlockingReplyListEmptyError`,
+  `NumberOfTraceObjects`, `StBlockingStyle`, `TraceObjectForwardAgency`,
+  `TraceObjectForwardMessage`, `TraceObjectForwardState`,
+  `TraceObjectForwardTransitionError`).
+  Tests: yggdrasil-network 712 → 728 (+16: NumberOfTraceObjects
+  round trip; BlockingReplyList::blocking rejects empty + accepts
+  one or more; non_blocking accepts empty; style matches variant;
+  into_items unifies variants; agency matches all 4 upstream
+  StateAgency clauses; message tag strings match upstream
+  constructor names; idle+request→busy for both blocking styles;
+  idle+done→done; busy+matching-style-reply→idle; busy+mismatched-
+  style→BlockingStyleMismatch; idle+reply illegal; busy+request
+  illegal; done state terminal for all messages). Workspace:
+  5,797 → 5,813. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R417 → R418. Per the R411 plan, R418
+  ports `Trace.Forward.Protocol.TraceObject.Codec` — the CBOR
+  encoder/decoder pairing for the message types, completing the
+  protocol-level wire contract before R419 wires the responder
+  driver.
 - **R416 — network: local_listener.rs Unix-pipe LocalPeerListener
   (Phase 2 round 1 of R411-R430 arc, foundation for trace-forwarder
   Acceptors mini-arc).** Phase 2 of R411-R430 arc opens with a

@@ -15,6 +15,9 @@ mod local_tx_monitor;
 mod local_tx_submission;
 /// PeerSharing protocol state machine and messages.
 mod peer_sharing;
+/// TraceObjectForward mini-protocol state machine and messages
+/// (used by cardano-tracer's Acceptors/Server.hs).
+mod trace_object_forward;
 /// TxSubmission2 protocol state machine and messages.
 mod tx_submission;
 
@@ -41,6 +44,11 @@ pub use local_tx_submission::{
 };
 pub use peer_sharing::{
     PeerSharingMessage, PeerSharingState, PeerSharingTransitionError, SharedPeerAddress,
+};
+pub use trace_object_forward::{
+    Agency as TraceObjectForwardAgency, BlockingReplyList, BlockingReplyListEmptyError,
+    NumberOfTraceObjects, StBlockingStyle, TraceObjectForwardMessage, TraceObjectForwardState,
+    TraceObjectForwardTransitionError,
 };
 pub use tx_submission::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,
