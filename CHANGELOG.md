@@ -274,6 +274,50 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R388 — cardano-tracer: Notifications/Email.hs port (bounded
+  subset; SMTP send carved out pending lettre approval).** Lands the
+  notification-engine email helpers — bounded subset that doesn't
+  require an SMTP transport. New handlers/notifications/email.rs
+  module ports the upstream
+  Cardano.Tracer.Handlers.Notifications.Email surface:
+  - StatusMessage = String type alias.
+  - STATUS_SUCCESS + STATUS_TIMEOUT constants matching upstream's
+    exact `✓ Yay! Notification is sent.` + `✗ Unable to send:
+    timeout` strings (preserved verbatim so status_is_ok can grep
+    for the same substring).
+  - status_is_ok(&str) -> bool — case-sensitive `Yay` substring
+    match mirroring upstream's `T.isInfixOf "Yay"` semantics.
+  - test_notification_body() returning upstream's exact
+    "Congrats: your email settings are correct!" template.
+  - run_io_with_watchdog<F: Future, T>(timeout_secs: f64,
+    timeout_value: T, action: F) async helper using
+    tokio::time::timeout (mirror of upstream's
+    `Control.Concurrent.Async.race` pattern).
+  - SmtpSendStatus struct + smtp_send_status() helper exposing the
+    deferred-SMTP-send rationale programmatically.
+  Carve-outs documented:
+  - Network.Mail.SMTP + Network.Mail.Mime full SMTP transport
+    (createAndSendEmail / createAndSendTestEmail / sendEmail with
+    TLS/STARTTLS/NoSSL dispatch) deferred pending lettre crate (or
+    equivalent SMTP client) workspace-dependency approval per
+    docs/DEPENDENCIES.md. lettre is ~30 transitive deps, MIT,
+    pure-Rust; once approved, the SMTP send-path lands in a
+    follow-up round without changing the rest of this module's
+    surface.
+  - Upstream's getAddrInfo / "user error" Haskell-specific
+    error-string matching deferred — Rust's lettre crate will
+    surface error categories more cleanly via lettre::error::Error
+    variants when added.
+  Tests: cardano-tracer 138 → 149 (+11: STATUS_SUCCESS contains
+  "Yay"; STATUS_TIMEOUT does not; status_is_ok true for
+  STATUS_SUCCESS + false for STATUS_TIMEOUT + false for error
+  message + case-sensitive [lowercase "yay" rejected];
+  test_notification_body matches upstream verbatim;
+  run_io_with_watchdog passes through fast result + returns
+  timeout_value when slow + works with full STATUS_TIMEOUT string;
+  smtp_send_status describes deferral with lettre dependency).
+  Workspace: 5,542 → 5,553. Parity-matrix entry sister-tool.cardano-
+  tracer advanced: next_milestone R388 → R389.
 - **R387 — cardano-tracer: re-enable Notifications/Utils.hs
   timer-bound helpers (now unblocked by R386).** Lands the three
   Utils.hs helpers that R385 had stub-and-deferred pending the full
