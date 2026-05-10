@@ -33,6 +33,7 @@ pub mod environment;
 pub mod handlers;
 pub mod logging;
 pub mod meta_trace;
+pub mod metrics_store;
 pub mod parser;
 pub mod severity;
 pub mod time;

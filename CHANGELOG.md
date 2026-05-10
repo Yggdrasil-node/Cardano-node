@@ -274,6 +274,66 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R411 — cardano-tracer: EKG-equivalent MetricsStore (R411-R430
+  arc plan + Phase 1 round 1; D3 from R411 plan; closes EKG-store-shape
+  carve-out).** Lands the per-node metrics aggregator that the
+  R422+ Acceptors mini-arc + the per-node Prometheus + Monitoring
+  exposition bodies depend on. Operator-approved planning at the
+  R411 entry: see `docs/operational-runs/2026-05-10-round-411-arc-plan-r411-r430.md`
+  for the full 20-round R411-R430 plan with per-decision tradeoff
+  matrices + risk register. Three primary deliverables:
+  - **`crates/cardano-tracer/src/metrics_store.rs`**: new
+    synthesis-stand-in for upstream's `System.Metrics.Store` (from
+    the unvendored Hackage `ekg-core`). MetricValue enum
+    (Counter/Gauge/Label) mirroring upstream's
+    `System.Metrics.ReqResp.MetricValue` typed-message surface.
+    MetricsStore = `Arc<RwLock<BTreeMap<String, MetricValue>>>`
+    schema-flexible aggregator (cardano-tracer is *passive* —
+    stores whatever names the forwarder delivers; no name-locked
+    schema needed). 8 inherent methods: register_counter,
+    register_gauge, register_label, set_counter, set_gauge,
+    get, snapshot, len/is_empty.
+  - **AcceptedMetrics type**: alias
+    `Arc<RwLock<BTreeMap<NodeId, MetricsStore>>>` mirroring upstream's
+    `TVar (Map NodeId (TVar EKG.Store))`. Replaces R393's unit-struct
+    placeholder. Companion helpers: `new_accepted_metrics`,
+    `get_or_insert_store` (mirror of `Acceptors/Utils.hs::prepareMetricsStores`),
+    `remove_store` (mirror of `removeDisconnectedNode`).
+  - **MetricValue rendering helpers**: prometheus_kind() returns
+    "counter"/"gauge" for the Prometheus exposition `# TYPE` line;
+    prometheus_value() returns the i64 value (Labels render as 0
+    since Prometheus has no native string-metric type).
+  Carve-outs documented:
+  - `System.Metrics.Distribution` distribution-histogram metric
+    type deferred — wait for ekg-core vendor; meanwhile any
+    incoming Distribution variants surface as synthetic Label
+    entries.
+  - `sampleAll` Sample-frozen-snapshot semantics replaced with
+    direct cloned-map snapshot — same semantics, simpler shape.
+  Tests: cardano-tracer 336 → 352 (+16: store default empty;
+  register_counter inserts then replaces; register_gauge round-trip;
+  register_label round-trip; set_counter updates existing + returns
+  false when not-a-counter / when missing; set_gauge updates;
+  snapshot clones full map; prometheus_kind matches variant;
+  prometheus_value returns i64 for each kind; new_accepted_metrics
+  starts empty; get_or_insert_store creates then reuses + separates
+  per-node; remove_store returns then drops node + returns None for
+  unknown). Workspace: 5,740 → 5,756. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R411 → R412.
+
+  R411-R430 arc plan (full details in operational-runs):
+  - Phase 1 R411-R415: EKG MetricsStore (D3 inline; critical path)
+  - Phase 2 R416-R424: Acceptors mini-arc (9 rounds — Unix-pipe
+    responder + trace-forward 4 sub-protocols + EKG ReqResp + 4
+    Acceptors leaves)
+  - Phase 3 R425-R428: Run.hs supervisor + closeout (cardano-tracer
+    end-to-end runnable at R428)
+  - Phase 4 R429-R430: TLS termination via axum-server + closeout
+
+  Decisions: D1 Timeseries → defer (Option C; routing-only shell at
+  R426); D2 TLS → axum-server 0.7 at R429; D3 EKG-equivalent →
+  inline MetricsStore (this round). Only R429 bumps
+  workspace.dependencies in the entire 20-round arc.
 - **R410 — cardano-tracer: Metrics/Monitoring.hs port (EKG-style
   monitoring HTTP server).** Lands the EKG-style monitoring server
   using R408's axum 0.8 stack + R407's compute_routes + R406's
