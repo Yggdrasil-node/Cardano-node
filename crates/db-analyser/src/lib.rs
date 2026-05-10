@@ -26,33 +26,52 @@ pub mod parser;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
+///
+/// R365 wires the typed parser dispatcher end-to-end. On successful
+/// parse the resolved [`types::DBAnalyserConfig`] is handed to
+/// [`run`]; `--help` and `--version` short-circuit with byte-equivalent
+/// upstream output.
 pub fn run_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    match parser::parse_args(&argv) {
-        Ok(_args) => match run() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                let _ = writeln!(std::io::stderr(), "Error: {err}");
-                ExitCode::FAILURE
-            }
-        },
+    let config = match parser::parse_args(&argv) {
+        Ok(config) => config,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
         }
         Err(parser::ParseError::VersionRequested) => {
             let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(&config) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            ExitCode::FAILURE
         }
     }
 }
 
-/// Concrete run-loop entry. R335-pattern skeleton: returns the
-/// "not-yet-implemented" sentinel pending later round implementation.
-/// The CLI parser surface (--help / --version) IS functional and
-/// byte-equivalent to upstream.
-pub fn run() -> eyre::Result<()> {
+/// Concrete run-loop entry.
+///
+/// R365 lands argv → [`types::DBAnalyserConfig`] dispatch. The actual
+/// per-era HasAnalysis surface + Analysis.hs dispatch (1057 upstream
+/// lines covering 13 analysis-name variants) + CSV writers + Run.hs
+/// supervisor land in subsequent rounds per the per-tool roadmap.
+pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
     Err(eyre::eyre!(
-        "yggdrasil-db-analyser: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
+        "yggdrasil-db-analyser: per-era HasAnalysis + Analysis.hs dispatch \
+         not yet implemented (R365 ships argv → DBAnalyserConfig validation; \
+         later rounds wire the per-era block iterator + 13-variant analysis \
+         dispatch). Resolved: db={}, analysis={:?}, backend={:?}, limit={:?}.",
+        config.db_dir.display(),
+        config.analysis,
+        config.ldb_backend,
+        config.conf_limit,
     ))
 }

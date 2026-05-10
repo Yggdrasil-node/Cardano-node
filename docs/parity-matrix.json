@@ -624,7 +624,7 @@
       "area": "sister-tools",
       "feature": "ChainDB forensic analyser \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBAnalyser.* + app/db-analyser.hs.",
       "status": "partial",
-      "next_milestone": "R352",
+      "next_milestone": "R366",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/",

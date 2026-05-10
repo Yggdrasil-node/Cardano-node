@@ -274,6 +274,61 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R365 — db-analyser: typed CLI parser (port of DBAnalyser/Parsers.hs::parseDBAnalyserConfig).**
+  Lands the typed parser dispatcher for db-analyser, replacing
+  the R335 passthrough Args. parser.rs ports upstream's
+  `parseDBAnalyserConfig :: Parser DBAnalyserConfig` and the per-section
+  helpers (parseSelectDB / parseValidationPolicy / parseAnalysis /
+  parseLimit + per-analysis sub-parsers).
+
+  Mandatory flag: `--db PATH`.
+
+  Optional flags: `--verbose`, `--analyse-from SLOT_NUMBER`
+  (default Origin), `--db-validation {validate-all-blocks,
+  minimum-block-validation}`, `--num-blocks-to-process INT`
+  (default Limit::Unlimited).
+
+  LedgerDB backend (mutually exclusive; one required):
+  `--in-mem` (V2InMem) | `--lsm` (V2LSM).
+
+  Analysis-name dispatch (mutually exclusive; default OnlyValidation
+  when none supplied — matches upstream's `pure OnlyValidation`
+  last-resort branch):
+  --show-slot-block-no / --count-tx-outputs / --show-block-header-size
+  / --show-block-txs-size / --show-ebbs / --count-blocks /
+  --trace-ledger / --store-ledger SLOT [--full-ledger-validation] /
+  --checkThunks N / --repro-mempool-and-forge INT /
+  --benchmark-ledger-ops [--out-file PATH] [--full-ledger-validation] /
+  --get-block-application-metrics N [--out-file PATH].
+
+  Carve-out documented: parseCardanoArgs / CardanoBlockArgs (era-aware
+  Byron/Shelley/Cardano block-construction args) deferred until
+  yggdrasil-ledger's era surface is exposed at crate boundaries; the
+  current parser ignores any era-specific flags and the deeper round
+  wires them in alongside per-era HasAnalysis dispatch.
+
+  ParseError variants: MissingDb / MissingLedgerDbBackend /
+  ConflictingLedgerDbBackend / ConflictingAnalysisName /
+  InvalidDbValidation / UnknownFlag / MissingValue / InvalidValue.
+
+  lib.rs::run_main() wires parser → DBAnalyserConfig → run() chain
+  end-to-end. lib.rs::run() returns a sentinel reporting the
+  resolved db/analysis/backend/limit + roadmap pointer (per-era
+  HasAnalysis + Analysis.hs dispatch land in subsequent rounds).
+
+  Tests: db-analyser 22 → 50 (+28: 3 help/version + 13 analysis-name
+  variants [show-slot-block-no, count-tx-outputs, show-block-header-
+  size, show-block-txs-size, show-ebbs, count-blocks, trace-ledger,
+  store-ledger default-reapply, store-ledger with-full-validation,
+  check-thunks, repro-mempool-and-forge, benchmark-ledger-ops with
+  and without --out-file/--full-ledger-validation,
+  get-block-application-metrics with and without --out-file] + 5
+  optional-flag round-trips [verbose, lsm-backend, analyse-from,
+  db-validation modes, num-blocks-to-process] + 7 rejection paths
+  [missing-db, missing-backend, conflicting-backends, conflicting-
+  analysis-flags, invalid-db-validation, unknown-flag, missing-value,
+  invalid-slot-value]). Workspace: 5,307 → 5,337. Parity-matrix
+  entry sister-tool.db-analyser advanced: next_milestone R352 → R366.
 - **R364 — db-synthesizer: typed CLI parser (port of DBSynthesizer/Parsers.hs::parserCommandLine).**
   Lands the typed parser dispatcher for db-synthesizer, replacing
   the R335 passthrough Args. parser.rs ports upstream's
