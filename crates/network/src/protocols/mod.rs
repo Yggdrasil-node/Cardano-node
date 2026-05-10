@@ -18,6 +18,9 @@ mod peer_sharing;
 /// TraceObjectForward mini-protocol state machine and messages
 /// (used by cardano-tracer's Acceptors/Server.hs).
 mod trace_object_forward;
+/// TraceObjectForward mini-protocol configuration types
+/// (Acceptor / Forwarder side configuration records).
+mod trace_object_forward_configuration;
 /// TxSubmission2 protocol state machine and messages.
 mod tx_submission;
 
@@ -49,6 +52,9 @@ pub use trace_object_forward::{
     Agency as TraceObjectForwardAgency, BlockingReplyList, BlockingReplyListEmptyError,
     NumberOfTraceObjects, StBlockingStyle, TraceObjectForwardMessage, TraceObjectForwardState,
     TraceObjectForwardTransitionError,
+};
+pub use trace_object_forward_configuration::{
+    AcceptorConfiguration, ForwarderConfiguration, TraceForwardTracer,
 };
 pub use tx_submission::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,

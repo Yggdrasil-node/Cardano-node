@@ -274,6 +274,62 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R420 — network: trace_object_forward_configuration.rs port of
+  Trace.Forward.Configuration.TraceObject.hs (Phase 2 round 5 of
+  R411-R430 arc).** Strict-mirror port of the trace-forwarder
+  configuration records used by the Run-side aggregators (R421+).
+  Lands in `crates/network/src/protocols/
+  trace_object_forward_configuration.rs` alongside R417's
+  `trace_object_forward.rs` (type + codec). Single new module:
+  - **AcceptorConfiguration**: 3-field record (acceptor_tracer,
+    what_to_request, should_we_stop) mirroring upstream's
+    `data AcceptorConfiguration lo`. The Yggdrasil port is payload-
+    agnostic — the consuming `TraceObjectAcceptor&lt;TraceObj&gt;`
+    driver carries the type parameter, so the configuration record
+    can stay generic-free for ergonomic reuse. `new(n)` constructor
+    creates a default-state config (no tracer, fresh stop-flag in
+    the running state). `request_stop()` async helper engages the
+    brake. `is_stopped()` async helper reads the brake.
+  - **ForwarderConfiguration**: 2-field record (forwarder_tracer,
+    queue_size) mirroring upstream's `data ForwarderConfiguration
+    lo`. Used by the forwarder side (cardano-node feeding trace-
+    objects to cardano-tracer); not directly exercised by R411-R430
+    arc but ported in the same round to keep the two configuration
+    records colocated as upstream does.
+  - **TraceForwardTracer**: type alias for
+    `Option&lt;Arc&lt;dyn Fn(&str) + Send + Sync&gt;&gt;` — the synthesis
+    carve-out for upstream's `Tracer IO (TraceSendRecv ...)` debug-
+    trace channel. Factored out as a type alias to avoid clippy's
+    `type_complexity` lint on the underlying function-pointer-in-
+    Option-in-Arc shape.
+  Carve-outs documented in module docstring:
+  - **`Tracer IO (TraceSendRecv (TraceObjectForward lo))` debug
+    channel**: collapses to `TraceForwardTracer` — `contra-tracer`'s
+    `Tracer` typeclass has no Rust analog without a workspace-wide
+    trace-dispatcher port. Operational use cases (logging codec
+    send/recv events) can be served by a closure.
+  - **`TVar Bool` stop-flag**: replaced with
+    `Arc&lt;tokio::sync::RwLock&lt;bool&gt;&gt;` mirroring R371's
+    `ProtocolsBrake` pattern. The atomic-read semantics carry across
+    cleanly; both forms are read-mostly.
+  Updates `protocols/mod.rs` with module declaration + re-exports
+  for `AcceptorConfiguration`, `ForwarderConfiguration`, and the
+  `TraceForwardTracer` type alias.
+  Tests: yggdrasil-network 743 → 750 (+7: AcceptorConfiguration
+  default state — what_to_request matches, stop flag false, tracer
+  None; request_stop engages brake (verified via is_stopped); clone
+  shares brake state via Arc; Debug impl redacts brake value with
+  `&lt;TVar Bool&gt;` placeholder; Debug shows `acceptor_tracer: true`
+  when set; ForwarderConfiguration default state — queue_size
+  matches, tracer None; ForwarderConfiguration Debug includes
+  queue_size + redacted tracer flag). Workspace: 5,828 → 5,835.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R420 → R421. Per the R411 plan, R421 ports
+  `Trace.Forward.Run.TraceObject.Acceptor` — the
+  `acceptTraceObjectsResp` `RunMiniProtocol` aggregator that wires
+  codec + acceptor driver + tracer-env handlers + the `acceptorActions`
+  loop + `timeoutWhenStopped` semantics into something a mux can
+  spawn.
 - **R419 — network: trace_object_acceptor.rs port of
   Trace.Forward.Protocol.TraceObject.Acceptor.hs (Phase 2 round 4
   of R411-R430 arc).** Strict-mirror port of the trace-forwarder
