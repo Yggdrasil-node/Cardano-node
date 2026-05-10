@@ -274,6 +274,54 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R390 — cardano-tracer: Logs/Utils.hs port (bounded subset:
+  pure log-naming + timestamp parser).** Lands the log-file naming
+  + timestamp-parsing helpers shared between the file-writer and
+  rotator subsystems. New handlers/logs/utils.rs module ports the
+  upstream Cardano.Tracer.Handlers.Logs.Utils surface:
+  - LOG_PREFIX const ("node-") + TIMESTAMP_FORMAT const
+    ("%Y-%m-%dT%H-%M-%S") matching upstream verbatim.
+  - log_extension(LogFormat) → &'static str (.log for ForHuman,
+    .json for ForMachine).
+  - sym_link_name(LogFormat) → String ("node.log" / "node.json").
+  - is_it_log(LogFormat, &Path) → bool — validates prefix +
+    extension + parseable timestamp + valid calendar date
+    (mirror of upstream's `isItLog`).
+  - get_timestamp_from_log(&Path) → Option<i64> — extracts the
+    timestamp portion from a rotated log filename and parses it to
+    Unix-epoch milliseconds.
+  - parse_log_timestamp + ymd_to_days_since_epoch helpers using
+    Howard Hinnant's public-domain `days_from_civil` (inverse of
+    R389's `format_event_timestamp` epoch-arithmetic) for
+    chrono-free date math.
+  - is_valid_date with the standard Gregorian leap-year rule
+    (`year % 4 == 0 && year % 100 != 0 || year % 400 == 0`).
+  - LogRotationStatus + log_rotation_status() helper exposing the
+    deferred-rotation rationale programmatically.
+  Carve-outs documented:
+  - createEmptyLogRotation / createOrUpdateEmptyLog deferred —
+    depend on Cardano.Tracer.Utils.modifyRegistry_ (atomic
+    read-modify-write under Lock) which isn't ported. Yggdrasil's
+    HandleRegistry from R371 is Arc<RwLock<HashMap<...>>> — once
+    modifyRegistry_ ships, the rotation helpers will use
+    tokio::sync::RwLock::write_lock().
+  - Data.Time.Clock.UTCTime → Option<i64> Unix-epoch ms (matches
+    crate::time::get_time_ms convention; same information content;
+    sites that need a structured datetime can use R389's
+    format_event_timestamp).
+  Tests: cardano-tracer 164 → 188 (+24: LOG_PREFIX + TIMESTAMP_FORMAT
+  canonical strings; log_extension for ForHuman + ForMachine;
+  sym_link_name for both formats; is_it_log accepts canonical
+  human/machine logs + rejects wrong extension / missing prefix /
+  malformed timestamp / invalid calendar date / invalid hour / no
+  extension; get_timestamp_from_log Unix epoch + 2023-11-14 known
+  value + with directory prefix + returns None for malformed /
+  invalid date / missing prefix; leap-year Feb 29 round-trips on
+  2020 + rejects Feb 29 in non-leap 2021; ymd_to_days round-trips
+  with R389's format_event_timestamp; log_rotation_status
+  describes deferral). Workspace: 5,568 → 5,592. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone R390 →
+  R391.
 - **R389 — cardano-tracer: Notifications/Send.hs port (bounded
   subset; orchestration deferred).** Lands the notification-send
   body-formatting layer. Notifications subsystem is now structurally
