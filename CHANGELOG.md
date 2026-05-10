@@ -274,6 +274,55 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R383 — cardano-tracer: Handlers/System.hs port (path-resolution
+  helpers with XDG fallback).** Lands the path-resolution surface
+  that future Notifications/Settings + RTView state-management
+  sites need to locate per-tracer config + data directories. New
+  handlers/system.rs module ports the upstream
+  Cardano.Tracer.Handlers.System surface:
+  - RT_VIEW_ROOT_DIR const ("cardano-rt-view") mirroring upstream
+    `rtViewRootDir :: FilePath`.
+  - XdgKind enum (Config | Data) — narrow subset of upstream's
+    System.Directory.XdgDirectory used by cardano-tracer (cache +
+    state variants intentionally omitted; upstream doesn't use
+    them either).
+  - get_state_dir(Option<&Path>, XdgKind) → PathBuf returning the
+    operator-supplied state dir if set, else falling back to the
+    XDG-base-dir for the requested kind. Mirror of upstream
+    `getStateDir`.
+  - xdg_dir_with_env_lookup<E, H>(XdgKind, env_lookup, home_lookup)
+    test-friendly helper that decouples env/home resolution from
+    the live process environment (mirroring R370's optFromEnv
+    closure-injection pattern).
+  - get_path_to_config_dir / get_paths_to_notifications_settings /
+    get_path_to_charts_config / get_path_to_theme_config /
+    get_path_to_logs_live_view_font_config /
+    get_path_to_chart_colors_dir / get_path_to_backup_dir — direct
+    ports of the 6 upstream `getPathTo*` helpers, each calling
+    `std::fs::create_dir_all` for the directory variants and
+    returning the resolved path.
+  Carve-outs documented:
+  - TracerEnv-record-arg replaced with Option<&Path> directly. The
+    upstream helpers take `TracerEnv` and pluck `teStateDir` out;
+    Yggdrasil's TracerEnv 14-field record is pending (depends on
+    Cardano.Logging + Timeseries vendoring). Once TracerEnv lands,
+    thin wrappers can pluck `te_state_dir` and call into these
+    lower-level helpers without changing their signatures.
+  - System.Directory.XdgDirectory replaced with manual
+    $XDG_CONFIG_HOME / $XDG_DATA_HOME env-var lookup with
+    $HOME/.config + $HOME/.local/share fallback. Linux/Unix subset
+    only — cardano-tracer is Unix-only in operator practice.
+    Empty-string XDG vars are treated as unset (matches POSIX
+    env-var semantics).
+  Tests: cardano-tracer 85 → 101 (+16: RT_VIEW_ROOT_DIR canonical-
+  string + 2 get_state_dir override tests for both XdgKind variants
+  + 7 xdg_dir_with_env_lookup tests covering both XDG vars set,
+  both fallbacks to $HOME suffix, missing-HOME relative fallback,
+  empty-XDG-var-as-unset handling + 6 path-helper integration tests
+  using ephemeral tempdirs that verify ends_with + exists + is_dir
+  invariants for each helper). Workspace: 5,489 → 5,505. Parity-
+  matrix entry sister-tool.cardano-tracer advanced: next_milestone
+  R383 → R384. Unblocks Notifications/Settings.hs port for R384.
 - **R382 — cardano-tracer: Logs/Journal pair port (CPP-dispatcher +
   no_systemd no-op).** Lands the journal log-sink surface as a
   bounded pair: handlers/logs.rs (parent-shell synthesis), the
