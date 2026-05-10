@@ -274,6 +274,38 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R415 — cardano-tracer: utils.rs::load_metrics_help port
+  (closes Phase 1 of R411-R430 arc).** Phase 1 round 5 (final) of
+  R411-R430 arc. Single deliverable:
+  - **load_metrics_help(Option<&FileOrMap>) → Vec<(String, String)>**:
+    mirror of upstream `Cardano.Tracer.Run::loadMetricsHelp`
+    (Run.hs:181-191). Three branches matching upstream verbatim:
+    `None` returns empty; `Some(File(path))` reads + JSON-decodes
+    via `serde_json::from_slice` with all IO/parse errors swallowed
+    (mirroring upstream's `try $ decodeFileStrict'` shape) and falls
+    back to empty on failure; `Some(Map(map))` clones the inline
+    BTreeMap directly. Filters out entries with empty values per
+    upstream's `M.filter (not . T.null)`. Returns BTreeMap-sorted
+    (alphabetical key order) per upstream's `M.toList`. The result
+    feeds the `metrics_help: Vec<(String, String)>` arg already
+    threaded through `run_prometheus_server` (R413) and
+    `MetricsStore::render_prometheus` per-metric `# HELP` lines.
+  Tests: cardano-tracer 379 → 385 (+6: load_metrics_help returns
+  empty for None + reads valid JSON file + falls back to empty for
+  missing file + falls back to empty for malformed JSON + filters
+  out empty values from File variant + uses inline Map directly +
+  filters out empty values from Map variant + returns alphabetical
+  key order). Workspace: 5,783 → 5,789. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R415 → R416.
+  Phase 1 of the R411-R430 arc — EKG-equivalent MetricsStore +
+  per-node Prometheus + per-node EKG monitoring + metrics_help
+  parser — is now structurally complete; the metrics surface is
+  ready for the R416-R424 Acceptors mini-arc to feed it real
+  trace-forwarder ingest. R416 begins Phase 2: port
+  `crates/network/src/local_listener.rs` — `LocalPeerListener` Unix-pipe
+  analog of TCP `PeerListener`, mirror of
+  `Ouroboros.Network.Snocket.localSnocket` + `Server.with` (synthesis
+  carve-out documented; foundation for trace-forwarder Acceptors).
 - **R414 — cardano-tracer: MetricsStore::render_ekg_html +
   monitoring.rs handle_per_node wiring (closes per-node EKG
   monitoring carve-out).** Phase 1 round 4 of R411-R430 arc. Three

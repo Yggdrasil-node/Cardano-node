@@ -235,6 +235,46 @@ where
 }
 
 // =====================================================================
+// metrics_help loader
+// =====================================================================
+
+/// Load the operator-supplied per-metric HELP text. Mirror of upstream
+/// `Cardano.Tracer.Run::loadMetricsHelp` (Run.hs:181-191).
+///
+/// The upstream surface is `Maybe FileOrMap -> IO [(Text, Builder)]`;
+/// the Yggdrasil port returns `Vec<(String, String)>` directly
+/// (Builder→String per the workspace TextBuilder carve-out).
+///
+/// Behavior:
+/// - `None` returns `vec![]`.
+/// - `Some(FileOrMap::File(path))` reads + decodes the file as JSON
+///   `Map<String, String>`. On any IO/parse error, returns `vec![]`
+///   (mirror of upstream's `try $ decodeFileStrict'` swallowed-error
+///   semantics).
+/// - `Some(FileOrMap::Map(map))` uses the inline map directly.
+/// - The result excludes entries with empty values (mirror of
+///   upstream's `M.filter (not . T.null)` filter step).
+///
+/// Result is sorted by metric-name for deterministic output (mirror
+/// of upstream's `M.toList` over `Data.Map` which iterates in
+/// insertion-sorted order).
+pub fn load_metrics_help(
+    metrics_help: Option<&crate::configuration::FileOrMap>,
+) -> Vec<(String, String)> {
+    let raw_map: std::collections::BTreeMap<String, String> = match metrics_help {
+        None => return Vec::new(),
+        Some(crate::configuration::FileOrMap::File(path)) => {
+            let Ok(bytes) = std::fs::read(path) else {
+                return Vec::new();
+            };
+            serde_json::from_slice(&bytes).unwrap_or_default()
+        }
+        Some(crate::configuration::FileOrMap::Map(map)) => map.clone(),
+    };
+    raw_map.into_iter().filter(|(_, v)| !v.is_empty()).collect()
+}
+
+// =====================================================================
 // Deferral status descriptors
 // =====================================================================
 
@@ -466,5 +506,90 @@ mod tests {
         let s = sequence_concurrently_status();
         assert_eq!(s.status, "deferred");
         assert!(s.depends_on.contains("tokio") || s.depends_on.contains("futures"));
+    }
+
+    #[test]
+    fn load_metrics_help_none_returns_empty() {
+        let result = load_metrics_help(None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn load_metrics_help_inline_map_round_trips() {
+        use crate::configuration::FileOrMap;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(
+            "Mem_resident_int".to_string(),
+            "Kernel-reported RSS".to_string(),
+        );
+        map.insert(
+            "RTS_gcMajorNum_int".to_string(),
+            "Major GC count".to_string(),
+        );
+        let result = load_metrics_help(Some(&FileOrMap::Map(map)));
+        assert_eq!(result.len(), 2);
+        // BTreeMap iteration is alphabetical → Mem first.
+        assert_eq!(result[0].0, "Mem_resident_int");
+        assert_eq!(result[0].1, "Kernel-reported RSS");
+    }
+
+    #[test]
+    fn load_metrics_help_inline_map_filters_empty_values() {
+        use crate::configuration::FileOrMap;
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("with_help".to_string(), "Description".to_string());
+        map.insert("empty_help".to_string(), String::new());
+        let result = load_metrics_help(Some(&FileOrMap::Map(map)));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "with_help");
+    }
+
+    #[test]
+    fn load_metrics_help_file_read_swallows_io_error() {
+        use crate::configuration::FileOrMap;
+        let result = load_metrics_help(Some(&FileOrMap::File(std::path::PathBuf::from(
+            "/nonexistent/path/to/help.json",
+        ))));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn load_metrics_help_file_swallows_invalid_json() {
+        use crate::configuration::FileOrMap;
+        let tmp = std::env::temp_dir().join(format!(
+            "yggdrasil-load-metrics-help-bad-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        std::fs::write(&tmp, b"this is not valid JSON").expect("write");
+        let result = load_metrics_help(Some(&FileOrMap::File(tmp.clone())));
+        assert!(result.is_empty());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn load_metrics_help_file_round_trips_valid_json() {
+        use crate::configuration::FileOrMap;
+        let tmp = std::env::temp_dir().join(format!(
+            "yggdrasil-load-metrics-help-good-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        ));
+        let json = r#"{"Mem_resident_int":"RSS","RTS_gcMajorNum_int":"Major GCs"}"#;
+        std::fs::write(&tmp, json).expect("write");
+        let result = load_metrics_help(Some(&FileOrMap::File(tmp.clone())));
+        assert_eq!(result.len(), 2);
+        assert!(
+            result
+                .iter()
+                .any(|(k, v)| k == "Mem_resident_int" && v == "RSS"),
+        );
+        let _ = std::fs::remove_file(&tmp);
     }
 }
