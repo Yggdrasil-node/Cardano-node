@@ -106,7 +106,7 @@ sha3 = "0.11"
 subtle = "2.6.1"
 thiserror = "2.0.12"
 zeroize = { version = "1.8.2", features = ["derive"] }
-tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal"] }
+tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal", "fs"] }
 # R330 — pure-Rust BIP-0173 / Bech32m encoding from rust-bitcoin/rust-bech32.
 # MIT-licensed, zero transitive deps. Foundation for `crates/bech32/`
 # (R331-R334 file-mirror skeleton + functional implementation), which

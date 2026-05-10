@@ -5,11 +5,12 @@
 //!
 //! **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Logs/Utils.hs.
 //!
-//! Direct port of upstream's bounded subset. The pure helpers
-//! ship now; the IO-bound `createEmptyLogRotation` +
-//! `createOrUpdateEmptyLog` defer pending the
-//! `Cardano.Tracer.Utils.modifyRegistry_` port (which itself
-//! requires the full `HandleRegistry` lock-hold semantics).
+//! Direct port of upstream's surface. As of R402, both the pure
+//! helpers + the IO-bound `createEmptyLogRotation` +
+//! `createOrUpdateEmptyLog` ship — the latter using
+//! `Arc<tokio::sync::Mutex<()>>` for the write-lock and the
+//! upgraded `Registry<_, (SharedLogFile, PathBuf)>` from R402's
+//! `crate::types::HandleRegistry` upgrade.
 //!
 //! Mapping summary:
 //!
@@ -21,18 +22,12 @@
 //! | `isItLog :: LogFormat -> FilePath -> Bool`                     | [`is_it_log`]                          |
 //! | `getTimeStampFromLog :: FilePath -> Maybe UTCTime`             | [`get_timestamp_from_log`]             |
 //! | `timeStampFormat = "%Y-%m-%dT%H-%M-%S"`                        | [`TIMESTAMP_FORMAT`]                   |
-//! | `createEmptyLogRotation`                                       | (deferred — see [`log_rotation_status`]) |
-//! | `createOrUpdateEmptyLog`                                       | (deferred — see [`log_rotation_status`]) |
+//! | `createEmptyLogRotation`                                       | [`create_empty_log_rotation`]          |
+//! | `createOrUpdateEmptyLog`                                       | [`create_or_update_empty_log`]         |
+//! | `updateSymlinkAtomically` (private)                            | inline within [`create_or_update_empty_log`] |
 //!
 //! Carve-outs (NOT ported, by design):
 //!
-//! - **`createEmptyLogRotation` / `createOrUpdateEmptyLog`**: depend
-//!   on `Cardano.Tracer.Utils.modifyRegistry_` (atomic
-//!   read-modify-write under a `Control.Concurrent.Extra.Lock`)
-//!   which isn't ported yet. The Yggdrasil-side `HandleRegistry` is
-//!   `Arc<RwLock<HashMap<...>>>` from R371, so the equivalent
-//!   would use `tokio::sync::RwLock::write_lock()`. Status
-//!   surfaced via [`log_rotation_status`] for downstream callers.
 //! - **`Data.Time.Clock.UTCTime`**: upstream returns a
 //!   `Maybe UTCTime`; Yggdrasil returns `Option<i64>` (Unix epoch
 //!   milliseconds, matching the [`crate::time::get_time_ms`]
@@ -40,6 +35,13 @@
 //!   structured datetime can render via
 //!   [`super::super::notifications::send::format_event_timestamp`]
 //!   in reverse.
+//! - **Windows `createFileLink` (NTFS junctions)**: upstream uses
+//!   `System.Directory.createFileLink` which on Windows creates a
+//!   directory junction. Yggdrasil's
+//!   [`update_symlink_atomically`] uses `std::os::unix::fs::symlink`
+//!   on Unix; the non-Unix branch falls back to writing the target
+//!   path as plain text (cardano-tracer is operationally Unix-only
+//!   per workspace policy).
 
 use std::path::Path;
 
@@ -196,23 +198,192 @@ fn is_valid_date(year: i64, month: i64, day: i64) -> bool {
     (1..=days_in_month).contains(&day)
 }
 
-/// Status descriptor for the deferred IO-bound rotation helpers.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct LogRotationStatus {
-    /// One-line summary of the deferral.
-    pub status: &'static str,
-    /// Reason — references the missing upstream port.
-    pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
-    pub deferred_round: &'static str,
+/// Format a Unix-epoch-millisecond timestamp into upstream's
+/// rotated-log timestamp shape (`%Y-%m-%dT%H-%M-%S`). Inverse of
+/// [`get_timestamp_from_log`]'s parser. Used by
+/// [`create_or_update_empty_log`] when minting a fresh log filename.
+pub fn format_log_timestamp(time_ms: i64) -> String {
+    let total_secs = time_ms.div_euclid(1000);
+    let days = total_secs.div_euclid(86_400);
+    let secs_within_day = total_secs.rem_euclid(86_400);
+    let h = secs_within_day / 3_600;
+    let m = (secs_within_day % 3_600) / 60;
+    let s = secs_within_day % 60;
+    let (year, month, day) = days_since_epoch_to_ymd(days);
+    format!("{year:04}-{month:02}-{day:02}T{h:02}-{m:02}-{s:02}")
 }
 
-/// Get the deferral-status descriptor for the rotation helpers.
+fn days_since_epoch_to_ymd(days: i64) -> (i32, u32, u32) {
+    // Mirror of crate::handlers::notifications::send::days_since_epoch_to_ymd
+    // (Howard Hinnant's civil_from_days). Duplicated here rather than
+    // exposed publicly because the function is implementation detail
+    // of the timestamp formatters in two unrelated subsystems.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    (year as i32, m as u32, d as u32)
+}
+
+/// Errors returned by the log-rotation helpers.
+#[derive(Debug, thiserror::Error)]
+pub enum LogRotationError {
+    /// I/O error during file open / creation / symlink update.
+    #[error("log-rotation IO failed: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Create a fresh log file under `sub_dir_for_logs` with the current
+/// timestamp embedded in the filename, register the resulting handle
+/// in the [`crate::types::HandleRegistry`], and update the
+/// `node.<ext>` symlink atomically. Mirror of upstream
+/// `createOrUpdateEmptyLog`.
+///
+/// The function:
+/// 1. Mints `<sub_dir>/node-YYYY-MM-DDTHH-MM-SS.<ext>` using
+///    [`format_log_timestamp`] for the timestamp + [`log_extension`]
+///    for the format-specific extension.
+/// 2. Opens the file write-only, truncating any pre-existing file.
+/// 3. If a previous handle was registered under `key`, drops it
+///    (the underlying file descriptor is closed when the last `Arc`
+///    reference goes out of scope).
+/// 4. Inserts the new `(handle, path)` pair into the registry.
+/// 5. Atomically swaps the `<sub_dir>/node.<ext>` symlink to point at
+///    the new file.
+///
+/// Acquires `current_log_lock` for the duration of the operation
+/// (matches upstream's `withLock currentLogLock do ...`).
+pub async fn create_or_update_empty_log(
+    current_log_lock: &std::sync::Arc<tokio::sync::Mutex<()>>,
+    key: &crate::types::HandleRegistryKey,
+    registry: &crate::types::HandleRegistry,
+    sub_dir_for_logs: &Path,
+    now_ms: i64,
+) -> Result<std::path::PathBuf, LogRotationError> {
+    let _guard = current_log_lock.lock().await;
+    let format = key.1.format;
+    let ts = format_log_timestamp(now_ms);
+    let filename = format!("{LOG_PREFIX}{ts}{}", log_extension(format));
+    let path_to_log = sub_dir_for_logs.join(&filename);
+
+    // Ensure the parent directory exists (mirror of upstream's
+    // `createDirectoryIfMissing True subDirForLogs` from
+    // `createEmptyLogRotation`).
+    if let Some(parent) = path_to_log.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    // Open the new log file for writing (truncate semantics match
+    // upstream's `openFile WriteMode`).
+    let new_handle = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path_to_log)
+        .await?;
+    let shared_handle: crate::types::SharedLogFile =
+        std::sync::Arc::new(tokio::sync::Mutex::new(new_handle));
+
+    // Replace the existing registry entry (if any). Dropping the
+    // previous Arc<Mutex<File>> closes the old file descriptor.
+    let _previous = registry.insert(key.clone(), (shared_handle, path_to_log.clone()));
+
+    // Atomically swap the convenience symlink — wrap in spawn_blocking
+    // since std::fs::rename / symlink are blocking.
+    let symlink_format = format;
+    let path_for_symlink = path_to_log.clone();
+    let sub_dir_owned = sub_dir_for_logs.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        update_symlink_atomically(symlink_format, &sub_dir_owned, &path_for_symlink)
+    })
+    .await
+    .map_err(|join_err| std::io::Error::other(format!("spawn_blocking: {join_err}")))??;
+
+    Ok(path_to_log)
+}
+
+/// Convenience wrapper mirroring upstream `createEmptyLogRotation`:
+/// ensures the sub-directory exists, then delegates to
+/// [`create_or_update_empty_log`].
+pub async fn create_empty_log_rotation(
+    current_log_lock: &std::sync::Arc<tokio::sync::Mutex<()>>,
+    key: &crate::types::HandleRegistryKey,
+    registry: &crate::types::HandleRegistry,
+    sub_dir_for_logs: &Path,
+    now_ms: i64,
+) -> Result<std::path::PathBuf, LogRotationError> {
+    tokio::fs::create_dir_all(sub_dir_for_logs).await?;
+    create_or_update_empty_log(current_log_lock, key, registry, sub_dir_for_logs, now_ms).await
+}
+
+/// Atomic symlink swap — mirror of upstream
+/// `updateSymlinkAtomically`. Removes the `node.<ext>.tmp` file if
+/// present, creates a fresh symlink at that path pointing at
+/// `path_to_log`, then renames the tmp link onto `node.<ext>`. The
+/// rename is atomic on POSIX filesystems; mid-operation crash
+/// recovery is safe (operators only ever see either the old symlink
+/// or the new one, never a missing or half-written link).
+fn update_symlink_atomically(
+    format: crate::configuration::LogFormat,
+    sub_dir_for_logs: &Path,
+    path_to_log: &Path,
+) -> Result<(), LogRotationError> {
+    let symlink_name = sym_link_name(format);
+    let symlink = sub_dir_for_logs.join(&symlink_name);
+    let symlink_tmp = sub_dir_for_logs.join(format!("{symlink_name}.tmp"));
+
+    // Best-effort cleanup of any stale tmp file.
+    match std::fs::remove_file(&symlink_tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(LogRotationError::Io(e)),
+    }
+
+    // Create the new tmp symlink.
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(path_to_log, &symlink_tmp)?;
+    #[cfg(not(unix))]
+    {
+        // Windows fallback: createFileLink in upstream uses NTFS
+        // junctions. Rust's std::os::windows::fs::symlink_file
+        // requires admin privileges in some configurations. For now,
+        // copy the path to avoid a hard symlink failure on non-Unix
+        // hosts; the node is operationally Unix-only per workspace
+        // policy.
+        std::fs::write(&symlink_tmp, path_to_log.to_string_lossy().as_bytes())?;
+    }
+
+    // Atomically rename onto the canonical symlink path.
+    std::fs::rename(&symlink_tmp, &symlink)?;
+    Ok(())
+}
+
+/// Status descriptor for the previously-deferred IO-bound rotation
+/// helpers. Kept around so call sites that still query for the
+/// status can see the round at which the closure landed.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct LogRotationStatus {
+    /// One-line summary of the deferral status.
+    pub status: &'static str,
+    /// Round at which the helpers landed.
+    pub closed_at_round: &'static str,
+}
+
+/// Get the closure-status descriptor for the rotation helpers.
+/// Returns the R402 closure marker (was a deferred status until
+/// R402; the helpers now ship as
+/// [`create_empty_log_rotation`] + [`create_or_update_empty_log`] +
+/// [`update_symlink_atomically`]).
 pub fn log_rotation_status() -> LogRotationStatus {
     LogRotationStatus {
-        status: "deferred",
-        depends_on: "Cardano.Tracer.Utils.modifyRegistry_ (atomic registry update under Lock); HandleRegistry surface from R371",
-        deferred_round: "R391+",
+        status: "closed at R402",
+        closed_at_round: "R402",
     }
 }
 
@@ -382,10 +553,137 @@ mod tests {
     }
 
     #[test]
-    fn log_rotation_status_describes_deferral() {
+    fn log_rotation_status_describes_closure() {
         let s = log_rotation_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("modifyRegistry_"));
-        assert_eq!(s.deferred_round, "R391+");
+        assert_eq!(s.status, "closed at R402");
+        assert_eq!(s.closed_at_round, "R402");
+    }
+
+    #[test]
+    fn format_log_timestamp_is_inverse_of_parser() {
+        // 1700000000000 ms = 2023-11-14T22-13-20.
+        assert_eq!(
+            format_log_timestamp(1_700_000_000_000),
+            "2023-11-14T22-13-20"
+        );
+        // Round-trip: format → embed in filename → parse back.
+        let fname = format!(
+            "{LOG_PREFIX}{}.json",
+            format_log_timestamp(1_700_000_000_000),
+        );
+        let parsed = get_timestamp_from_log(std::path::Path::new(&fname));
+        assert_eq!(parsed, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn format_log_timestamp_unix_epoch() {
+        assert_eq!(format_log_timestamp(0), "1970-01-01T00-00-00");
+    }
+
+    /// Helper: spawn a one-shot tempdir under std::env::temp_dir().
+    fn rotation_tempdir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = std::env::temp_dir().join(format!(
+            "yggdrasil-cardano-tracer-rotation-test-{pid}-{nanos}-{id}",
+        ));
+        std::fs::create_dir_all(&path).expect("create tempdir root");
+        path
+    }
+
+    #[tokio::test]
+    async fn create_or_update_empty_log_creates_file_and_symlink() {
+        use crate::configuration::{LogFormat, LogMode, LoggingParams};
+        use crate::types::{HandleRegistry, Registry};
+
+        let tmp = rotation_tempdir();
+        let registry: HandleRegistry = Registry::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let params = LoggingParams {
+            root: tmp.clone(),
+            mode: LogMode::FileMode,
+            format: LogFormat::ForMachine,
+        };
+        let key = ("node-7".to_string(), params);
+
+        let result =
+            create_or_update_empty_log(&lock, &key, &registry, &tmp, 1_700_000_000_000).await;
+        assert!(result.is_ok(), "rotation: {:?}", result.err());
+        let path = result.expect("path");
+        assert!(path.exists());
+        assert!(
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .starts_with("node-2023-11-14T22-13-20")
+        );
+
+        // Symlink should exist + point at the new file.
+        let symlink = tmp.join("node.json");
+        assert!(symlink.exists());
+
+        // Registry should contain the new entry.
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn create_empty_log_rotation_creates_subdir_if_missing() {
+        use crate::configuration::{LogFormat, LogMode, LoggingParams};
+        use crate::types::{HandleRegistry, Registry};
+
+        let tmp = rotation_tempdir();
+        let sub = tmp.join("missing").join("nested");
+        let registry: HandleRegistry = Registry::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let params = LoggingParams {
+            root: sub.clone(),
+            mode: LogMode::FileMode,
+            format: LogFormat::ForHuman,
+        };
+        let key = ("node-x".to_string(), params);
+
+        let result =
+            create_empty_log_rotation(&lock, &key, &registry, &sub, 1_700_000_000_000).await;
+        assert!(result.is_ok(), "rotation: {:?}", result.err());
+        assert!(sub.exists());
+    }
+
+    #[tokio::test]
+    async fn create_or_update_empty_log_replaces_previous_handle() {
+        use crate::configuration::{LogFormat, LogMode, LoggingParams};
+        use crate::types::{HandleRegistry, Registry};
+
+        let tmp = rotation_tempdir();
+        let registry: HandleRegistry = Registry::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let params = LoggingParams {
+            root: tmp.clone(),
+            mode: LogMode::FileMode,
+            format: LogFormat::ForMachine,
+        };
+        let key = ("node-7".to_string(), params);
+
+        // First rotation.
+        let first = create_or_update_empty_log(&lock, &key, &registry, &tmp, 1_700_000_000_000)
+            .await
+            .expect("first");
+        // Second rotation at a different timestamp.
+        let second = create_or_update_empty_log(&lock, &key, &registry, &tmp, 1_700_000_060_000)
+            .await
+            .expect("second");
+        assert_ne!(first, second);
+
+        // Registry holds a single entry pointing at the second file.
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        let (_, (_, registered_path)) = snapshot.into_iter().next().expect("entry");
+        assert_eq!(registered_path, second);
     }
 }

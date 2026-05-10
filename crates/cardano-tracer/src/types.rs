@@ -297,16 +297,27 @@ where
 /// Upstream: `type HandleRegistryKey = (NodeName, LoggingParams)`.
 pub type HandleRegistryKey = (NodeName, LoggingParams);
 
+/// Shared, mutex-guarded file handle suitable for storage in the
+/// [`HandleRegistry`] (which requires `Value: Clone`). Cloning the
+/// `Arc` is cheap; per-write operations acquire the inner
+/// `tokio::sync::Mutex<tokio::fs::File>` to serialize bytes onto
+/// the underlying file descriptor.
+///
+/// Mirror of upstream's `Handle` from `System.IO` — wrapped in
+/// `Arc<Mutex<...>>` to satisfy Yggdrasil's Registry value-clone
+/// requirement (Rust's `std::fs::File` doesn't impl `Clone`).
+pub type SharedLogFile = Arc<tokio::sync::Mutex<tokio::fs::File>>;
+
 /// Open-file-handle registry. Keys are `(NodeName, LoggingParams)`;
-/// values pair an opaque OS file handle (placeholder) with the
-/// resolved file path. Mirror of upstream
+/// values pair an Arc-shared, Mutex-guarded `tokio::fs::File` with
+/// the resolved file path. Mirror of upstream
 /// `type HandleRegistry = Registry HandleRegistryKey (Handle, FilePath)`.
 ///
-/// **Carve-out:** the upstream `System.IO.Handle` is replaced by
-/// `()` here as a placeholder until the file-rotator round wires
-/// real file-handle plumbing. Operators reading this layer should
-/// expect the value to gain a real handle once the rotator lands.
-pub type HandleRegistry = Registry<HandleRegistryKey, ((), std::path::PathBuf)>;
+/// Upgraded at R402: previously the `Handle` slot was `()` as a
+/// placeholder until file-rotator plumbing landed. The R398 plan's
+/// D3 (TraceObject inline port) + R402 createOrUpdateEmptyLog work
+/// together require a real handle here.
+pub type HandleRegistry = Registry<HandleRegistryKey, (SharedLogFile, std::path::PathBuf)>;
 
 #[cfg(test)]
 mod tests {
@@ -428,8 +439,8 @@ mod tests {
         assert!(r.is_empty());
     }
 
-    #[test]
-    fn handle_registry_key_round_trip() {
+    #[tokio::test]
+    async fn handle_registry_key_round_trip() {
         let key: HandleRegistryKey = (
             "node-1".to_string(),
             LoggingParams {
@@ -439,8 +450,28 @@ mod tests {
             },
         );
         let registry = HandleRegistry::new();
-        let value = ((), std::path::PathBuf::from("/var/log/node-1.log"));
+        // Open a real but tiny file in the OS tempdir so the
+        // SharedLogFile field has a meaningful value.
+        let path = std::env::temp_dir().join("yggdrasil-handle-registry-roundtrip.log");
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .await
+            .expect("open temp log");
+        let value: (SharedLogFile, std::path::PathBuf) = (
+            std::sync::Arc::new(tokio::sync::Mutex::new(file)),
+            path.clone(),
+        );
         registry.insert(key.clone(), value.clone());
-        assert_eq!(registry.get(&key), Some(value));
+        // The registry now holds the (Arc, PathBuf) pair; verify
+        // by snapshot rather than direct equality (Arc<Mutex<File>>
+        // doesn't impl PartialEq).
+        let snapshot = registry.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        let (got_key, (_, got_path)) = snapshot.into_iter().next().expect("entry");
+        assert_eq!(got_key, key);
+        assert_eq!(got_path, path);
     }
 }

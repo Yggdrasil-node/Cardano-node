@@ -274,6 +274,57 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R402 — cardano-tracer: createOrUpdateEmptyLog real impl (closes
+  R390 LogRotationStatus carve-out + upgrades HandleRegistry to hold
+  real file handles).** Lands the IO orchestration that was deferred
+  at R390. Three workspace surfaces touched:
+  - **HandleRegistry value-type upgrade** in `crates/cardano-tracer/src/types.rs`:
+    previously `Registry<HandleRegistryKey, ((), PathBuf)>`; now
+    `Registry<HandleRegistryKey, (SharedLogFile, PathBuf)>` where
+    `SharedLogFile = Arc<tokio::sync::Mutex<tokio::fs::File>>`. Arc
+    cloning is cheap; per-write operations acquire the inner Mutex
+    to serialize bytes onto the underlying file descriptor.
+  - **`format_log_timestamp(i64) → String`** in `handlers/logs/utils.rs`:
+    inverse of `get_timestamp_from_log`'s parser. Mirrors upstream's
+    `formatTime defaultTimeLocale timeStampFormat` shape.
+  - **`create_or_update_empty_log` + `create_empty_log_rotation`**:
+    full IO orchestration mirroring upstream. Acquires
+    `Arc<tokio::sync::Mutex<()>>` (matches upstream's
+    `Control.Concurrent.Extra.Lock`); mints `node-YYYY-MM-DDTHH-MM-SS.<ext>`
+    filename; opens file write-only with truncation;
+    drops any previous registry entry (closes old fd via Arc
+    drop); inserts new entry; atomically swaps the `node.<ext>`
+    symlink via `update_symlink_atomically` helper (uses
+    `std::os::unix::fs::symlink` on Unix; non-Unix branch falls
+    back to writing the target path as plain text per the
+    cardano-tracer-is-Unix-only operational convention).
+  - **`update_symlink_atomically` helper** runs symlink replace +
+    rename inside `tokio::task::spawn_blocking` (since
+    `std::fs::rename` and `std::os::unix::fs::symlink` are blocking).
+  - **`LogRotationStatus`** struct upgraded from a deferral
+    descriptor to a closure marker: `status: "closed at R402"` +
+    `closed_at_round: "R402"`.
+  - **Workspace `tokio` features** gain `"fs"` (was missing) — needed
+    for `tokio::fs::File` + `tokio::fs::OpenOptions`.
+  Carve-outs documented:
+  - Windows `createFileLink` (NTFS junctions) replaced with
+    plain-text fallback per workspace Unix-only convention.
+  - Data.Time.Clock.UTCTime → Unix-epoch ms (consistent with
+    `crate::time::get_time_ms`).
+  Tests: cardano-tracer 303 → 308 (+5: log_rotation_status describes
+  closure; format_log_timestamp is inverse of parser
+  [round-trip via filename]; format_log_timestamp at Unix epoch;
+  create_or_update_empty_log creates file + symlink + registers in
+  registry; create_empty_log_rotation creates missing subdir;
+  create_or_update_empty_log replaces previous handle [verifies
+  registry holds new entry pointing at second file]).
+  Workspace tests: 5,707 → 5,712. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R401 → R403.
+  Per the R398 plan, this closes the R390 LogRotationStatus
+  carve-out + the R400 WriteTraceObjectsToFileStatus carve-out's
+  upstream blocker; the file-side write path can now be wired in a
+  follow-up tightening round once `Arc<Mutex<File>>` write semantics
+  are exercised in production.
 - **R401 — cardano-tracer: Logs/TraceObjects.hs port (dispatcher
   routing).** Lands the per-LoggingParams trace-object dispatcher
   that fans out incoming objects to the appropriate sink (journal
