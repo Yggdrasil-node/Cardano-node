@@ -274,6 +274,44 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R395 — closure-status doc refresh covering R378–R394.** Updates
+  the [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md) banner +
+  current-implementation-status preamble to reflect the 17-round
+  cardano-tracer subsystem build-out shipped since the R377 banner.
+  Banner reads "**394+ parity rounds completed**" (was "376+") with
+  workspace-test count refreshed from 5,443 → 5,638 (+195 across
+  17 rounds: R378 +13, R379 +4, R380 +19, R381 +6, R382 +4, R383
+  +16, R384 +13, R385 +7, R386 +11, R387 +6, R388 +11, R389 +15,
+  R390 +24, R391 +19, R392 +0 [doc-only], R393 +10, R394 +17).
+  Per-round summary added inline:
+  - R378 db-synthesizer Orphans (JSON deserialization +
+    AdjustFilePaths trait).
+  - R379 cardano-tracer Time helper (EKG epoch-millis).
+  - R380-R381 Notifications/{Types, Check} + SeverityS synthesis.
+  - R382 Logs/Journal pair (CPP-dispatcher + no_systemd).
+  - R383 Handlers/System path-resolution (XDG fallback).
+  - R384-R385+R387 Notifications/{Settings, Utils — full surface}.
+  - R386 Notifications/Timer (full periodic-action scheduler with
+    tokio task + Mutex-shared state).
+  - R388-R389 Notifications/{Email, Send} bounded subsets (SMTP
+    send + orchestration deferred).
+  - R390 Logs/Utils (log-naming + timestamp parser).
+  - R391 Metrics/Utils (Content-Type constants + RouteDictionary +
+    slugify).
+  - R392 workspace structure cleanup (architecture review
+    follow-through; AGENTS.md inventory + Cargo.toml semantic
+    grouping + skeleton-only crate annotations).
+  - R393 Environment.hs (TracerEnv 14-field record — unblocks
+    downstream subsystems).
+  - R394 Logs/Rotator pure rotation policy helpers.
+  Status of cardano-tracer subsystem coverage: Notifications
+  structurally complete (all 7 leaves: Types + Check + Settings +
+  Utils + Timer + Email + Send); Logs has Journal pair + Utils +
+  Rotator (3 of ~6 leaves); Metrics has Utils (1 of 5 leaves);
+  System + Time + SeverityS + Environment foundational helpers
+  shipped. RTView UI is the workspace-wide carve-out per plan.
+  No code changes; doc-only round mirroring the cadence of R346 /
+  R352 / R357 / R360 / R368 / R377 closure refreshes.
 - **R394 — cardano-tracer: Logs/Rotator.hs port (bounded subset:
   pure rotation policy helpers).** Lands the pure rotation-policy
   surface — log-mode filtering, sort-by-timestamp, retention-count,
