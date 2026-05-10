@@ -689,7 +689,7 @@
       "area": "sister-tools",
       "feature": "Ledger snapshot format converter (mem \u2194 lmdb \u2194 lsm) \u2014 pure-Rust port mirroring upstream snapshot-converter.hs.",
       "status": "partial",
-      "next_milestone": "R440",
+      "next_milestone": "R447",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/app/snapshot-converter.hs",
@@ -705,7 +705,8 @@
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for snapshot-converter.",
         "Byte-equivalent --help and --version captured from upstream snapshot-converter binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "R353 typed-config surface: types.rs ports Config (Daemon | Oneshot), SnapshotSpec (Standalone | Lsm; renamed from upstream Snapshot' for Rust-identifier compatibility), SnapshotsDirectoryWithFormat (LsmSnapshot variant), SnapshotsDirectory + LsmDatabaseFilePath PathBuf newtypes, StandaloneFormat (Mem [default] | Lsm). 23 snapshot-converter tests at R353 (was 8 at R335 + 9 types unit + 6 SnapshotSpec/Config round-trips)."
+        "R353 typed-config surface: types.rs ports Config (Daemon | Oneshot), SnapshotSpec (Standalone | Lsm; renamed from upstream Snapshot' for Rust-identifier compatibility), SnapshotsDirectoryWithFormat (LsmSnapshot variant), SnapshotsDirectory + LsmDatabaseFilePath PathBuf newtypes, StandaloneFormat (Mem [default] | Lsm). 23 snapshot-converter tests at R353 (was 8 at R335 + 9 types unit + 6 SnapshotSpec/Config round-trips).",
+        "R446 format-version scaffolding: adds LedgerSnapshotVersion(u32) newtype + MAGIC/V1/LATEST constants + detect_version() helper + LedgerStore::latest_snapshot_version() trait method (default impl, no per-implementation wiring required). V1 snapshots (current) remain plain CBOR blobs without a header for backwards compatibility; V2+ snapshots will prepend a [b\"YgLS\" magic][u32 big-endian version] header. 12 tests cover the version-tag surface (canonical constants, has_header predicate, detect_version on legacy/empty/short/v2-shaped/unknown-future/almost-magic payloads, InMemoryLedgerStore latest_snapshot_version dispatch). Closes the format-design half of the convert_snapshot_status deferral; actual V1\u2192V2 migration body lands when the snapshot format evolves."
       ],
       "remaining_work": [
         "R354+ Parsers.hs port: clap-based parser dispatching --monitor-lsm-snapshots-in / --lsm-database / --output-mem-snapshots-in (daemon mode) vs --input-mem / --input-lsm-snapshot / --input-lsm-database / --output-mem / --output-lsm-snapshot / --output-lsm-database (oneshot mode). Mutually-exclusive flag combinations.",

@@ -274,6 +274,57 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R446 — storage: snapshot-converter format-version design
+  scaffolding (operator-approved design round).** Lands the
+  Yggdrasil-format ledger-snapshot version-tag scheme +
+  `LedgerStore` trait extension that gates the snapshot-converter's
+  actual conversion logic (currently surfaced as a
+  `convert_snapshot_status` deferral via R439).
+  Two new public surfaces in `crates/storage/src/ledger_db.rs`:
+  - **LedgerSnapshotVersion(u32) newtype** with named constants:
+    `MAGIC = *b"YgLS"` (4-byte sentinel for V2+ snapshots);
+    `V1 = 1` (current Yggdrasil format, no header); `LATEST = V1`
+    (alias bumps in future rounds). `has_header() → bool`
+    predicate distinguishes V1 (no magic prefix) from V2+
+    (carries header). `new(u32)` constructor preserves unknown
+    future-version tags verbatim for diagnostic surface.
+  - **detect_version(data: &amp;[u8]) → LedgerSnapshotVersion**: pure,
+    allocation-free header-detection helper. Inspects the first
+    8 bytes for the `MAGIC` prefix; falls back to V1 for
+    absent / shorter-than-8-byte / non-matching input. Safe to
+    call in hot loops (snapshot-converter directory scans).
+  - **LedgerStore::latest_snapshot_version() → Option&lt;LedgerSnapshotVersion&gt;**:
+    new trait method with default impl delegating to
+    `detect_version()` over the latest snapshot's bytes.
+    `InMemoryLedgerStore` + `FileLedgerStore` inherit it
+    automatically.
+  Wire format for V2+ snapshots (V1 stays plain CBOR):
+  `[b"YgLS" (4-byte magic)][version u32 big-endian][payload bytes]`.
+  Forward-compatible: future versions can carry richer headers
+  behind the magic without breaking V1 readers.
+  Honest re-scoping vs upstream documented in the design doc:
+  upstream's 3×3 mem↔lmdb↔lsm conversion matrix collapses for
+  Yggdrasil (single backend); real Yggdrasil snapshot-converter
+  scope is format-version migration over time (e.g. era
+  extensions). The R446 scaffolding gates that future work.
+  Out-of-scope for R446 (documented as follow-on roadmap in the
+  design doc): actual V1→V2 migration body (lands when V2
+  format is defined); snapshot-converter binary wiring (stays
+  on R439's deferral surface until V2 exists);
+  `FileLedgerStore` on-disk header writing (V1 has no header for
+  backwards compat).
+  Tests: yggdrasil-storage 95 → 107 (+12: version constants
+  canonical; has_header false for V1; has_header true for V2+;
+  detect_version V1 for legacy/empty/short payloads; V2 for
+  shaped header; preserves unknown future version; rejects
+  almost-magic prefix; latest_snapshot_version None/V1/V2
+  dispatch via `InMemoryLedgerStore`). Workspace: 5,950 → 5,962.
+  Ships `docs/operational-runs/2026-05-11-round-446-snapshot-converter-format-design.md`
+  with the design rationale + carve-out inventory + follow-on
+  roadmap.
+  Parity-matrix entry sister-tool.snapshot-converter advanced:
+  next_milestone R440 → R447 + implemented_evidence bullet added
+  referencing R446's scaffolding.
 - **R445 — cardano-testnet: structured deferral surface
   (replicates the R439-R444 `*_status()` pattern for the era-
   aware-dispatch carve-out; completes the sister-tools structural-
