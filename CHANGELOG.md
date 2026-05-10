@@ -274,6 +274,52 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R375 — db-analyser: BenchmarkLedgerOps Metadata record (port of
+  Metadata.hs).** Lands the run-environment metadata record
+  accompanying the BenchmarkLedgerOps JSON output. New
+  analysis/benchmark_ledger_ops/metadata.rs module ports the upstream
+  Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
+  surface:
+  - Metadata 10-field struct (rts_gc_max_stk_size,
+    rts_gc_max_heap_size, rts_concurrent_ctxt_switch_time,
+    rts_par_n_capabilities, compiler_version, compiler_name,
+    operating_system, machine_architecture, git_revison,
+    ledger_application_mode). Field-order preserves the upstream
+    record-syntax declaration; `#[serde(rename = "...")]` annotations
+    preserve upstream's exact JSON key names — including the
+    upstream typo `gitRevison` (sic), preserved for byte-equivalent
+    output.
+  - Metadata::collect(LedgerApplicationMode) constructor mirroring
+    upstream's `getMetadata :: LedgerApplicationMode -> IO Metadata`.
+  - render_ledger_application_mode(LedgerApplicationMode) helper
+    rendering LedgerApply → "full-application" and LedgerReapply →
+    "reapplication" (matching upstream's exact strings).
+  - rustc_version_string() helper reading option_env!(
+    "YGGDRASIL_RUSTC_VERSION") with the rust-toolchain.toml-pinned
+    "rustc 1.95.0 (yggdrasil pinned toolchain)" fallback.
+  - git_rev_string() helper reading option_env!("YGGDRASIL_GIT_REV")
+    with upstream's exact "unavailable (git info missing at build
+    time)" fallback for byte-equivalent output.
+  - Reuses LedgerApplicationMode from types.rs (R351 surface).
+  Carve-outs documented:
+  - GHC.RTS.Flags has no Rust analog. The four RTS-flag fields
+    (rts_gc_max_stk_size, rts_gc_max_heap_size,
+    rts_concurrent_ctxt_switch_time, rts_par_n_capabilities) are
+    kept for JSON key-shape parity but zero-populated. Future round
+    can wire to crates such as `tikv-jemalloc-ctl` if RSS-pressure
+    observability becomes relevant.
+  - Cardano.Tools.GitRev.gitRev (TemplateHaskell tGitInfoCwdTry
+    splice) → option_env!("YGGDRASIL_GIT_REV") read at build time.
+  - Data.Version.showVersion System.Info.compilerVersion (Haskell
+    compiler version) → option_env!("YGGDRASIL_RUSTC_VERSION")
+    capturing the rustc version at build time.
+  Tests: db-analyser 82 → 89 (+7: Metadata default zeroes/empty
+  strings + render_ledger_application_mode for both LedgerApply +
+  LedgerReapply variants + Metadata::collect() round-trip for both
+  modes + camelCase JSON serialization with gitRevison typo
+  preserved + field-order preservation across the RTS group).
+  Workspace: 5,419 → 5,426. Parity-matrix entry
+  sister-tool.db-analyser advanced: next_milestone R375 → R376.
 - **R374 — db-analyser: BenchmarkLedgerOps SlotDataPoint record
   (port of SlotDataPoint.hs).** Lands the per-slot timing/allocation
   data-point record fed into the BenchmarkLedgerOps analysis CSV/JSON
