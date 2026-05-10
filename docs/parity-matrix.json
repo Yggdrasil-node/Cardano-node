@@ -728,7 +728,7 @@
       "area": "sister-tools",
       "feature": "Synthetic chain generator \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBSynthesizer.* + app/db-synthesizer.hs.",
       "status": "partial",
-      "next_milestone": "R379",
+      "next_milestone": "R442",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/",

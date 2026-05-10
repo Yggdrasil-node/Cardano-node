@@ -23,6 +23,7 @@ use std::process::ExitCode;
 
 pub mod orphans;
 pub mod parser;
+pub mod status;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -76,14 +77,37 @@ pub fn run(args: &parser::Args) -> eyre::Result<()> {
         types::DBSynthesizerOpenMode::OpenCreateForce => "create-force",
         types::DBSynthesizerOpenMode::OpenAppend => "append",
     };
-    Err(eyre::eyre!(
-        "yggdrasil-db-synthesizer: forge loop not yet implemented \
-         (R364 ships argv → Args dispatch; Forging.hs + Run.hs land in \
-         subsequent rounds gated on Phase C entry). Resolved: \
-         config={}, db={}, limit={}, mode={}.",
-        args.paths.config.display(),
-        args.paths.chain_db.display(),
+    Err(RunError::ForgeLoopDeferred {
+        config: args.paths.config.display().to_string(),
+        chain_db: args.paths.chain_db.display().to_string(),
         limit,
-        mode,
-    ))
+        mode: mode.to_string(),
+    }
+    .into())
+}
+
+/// Errors from the db-synthesizer `run` entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// Forge loop + Run.hs supervisor are deferred. Mirror of
+    /// upstream `Cardano.Tools.DBSynthesizer.{Forging, Run}`.
+    /// Yggdrasil's port is gated on the Phase C authorization
+    /// checkpoint per the playful-tickling-plum.md plan (the
+    /// cardano-cli MVS in the parallel C-arc must complete first).
+    #[error(
+        "yggdrasil-db-synthesizer: forge loop deferred — gated on Phase C authorization \
+         checkpoint (see crates/db-synthesizer/src/status.rs::forge_loop_status for the \
+         full deferral rationale). Resolved CLI: config={config}, db={chain_db}, \
+         limit={limit}, mode={mode}."
+    )]
+    ForgeLoopDeferred {
+        /// Path to the config file the operator supplied.
+        config: String,
+        /// Path to the ChainDB the operator supplied.
+        chain_db: String,
+        /// Forge-limit rendering (slots / blocks / epochs).
+        limit: String,
+        /// DB-open-mode rendering (create / create-force / append).
+        mode: String,
+    },
 }

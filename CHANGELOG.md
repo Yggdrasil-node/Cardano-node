@@ -274,6 +274,26 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R441 — db-synthesizer: structured deferral surface
+  (replicates the R439-R440 `*_status()` pattern for the
+  `Cardano.Tools.DBSynthesizer.{Forging, Run}` carve-outs).**
+  Lands in `crates/db-synthesizer/src/status.rs` (new) +
+  `lib.rs` refactor:
+  - **status::ForgeLoopStatus**: 4-field descriptor (status,
+    depends_on, deferred_round, upstream_reference) returned by
+    [`status::forge_loop_status`]. Documents that the forge-loop
+    + Run.hs supervisor are gated on the Phase C authorization
+    checkpoint per the playful-tickling-plum.md plan (cardano-cli
+    MVS in the parallel C-arc must complete first).
+  - **RunError enum**: `ForgeLoopDeferred { config, chain_db,
+    limit, mode }` — replaces the prior raw `eyre!` string.
+    Preserves the operator-visible CLI-resolution markers
+    (config + chain-db paths + limit + mode) as structured fields.
+  Tests: yggdrasil-db-synthesizer 41 → 43 (+2: forge_loop_status
+  describes deferral with Phase-C + block-producer markers;
+  status is Clone+Eq+Hash-round-trip via HashSet insertion).
+  Workspace: 5,938 → 5,940. Parity-matrix entry sister-
+  tool.db-synthesizer advanced: next_milestone R379 → R442.
 - **R440 — kes-agent-control: structured deferral surface
   (replicates the R439 `*_status()` pattern for the
   `Cardano.KESAgent.Processes.ControlClient` socket I/O carve-
