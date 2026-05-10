@@ -274,6 +274,49 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R405 — cardano-tracer: initEventsQueues orchestration (closes
+  R385 InitEventsQueuesStatus carve-out — Notifications subsystem
+  fully complete).** Lands the entry-point that bootstraps the
+  notification engine on tracer start. Uses every prior round's
+  surface: R384's settings persistence + R386's Timer + R403's
+  lettre + R404's makeAndSendNotification. New entry-point in
+  `crates/cardano-tracer/src/handlers/notifications/utils.rs`:
+  - init_events_queues(Option<&Path>, NodeIdResolver)
+    async → (EventsQueues, EventsSenders). Mirror of upstream
+    `initEventsQueues`.
+  - Reads EmailSettings from disk (R384's read_saved_email_settings).
+  - Returns empty queues + senders when email config is incomplete
+    (mirror of upstream's `if incompleteEmailSettings emailSettings
+    then pure []`).
+  - Reads EventsSettings from disk (R384's
+    read_saved_events_settings).
+  - Creates 6 per-group queues (Warnings / Errors / Criticals /
+    Alerts / Emergencies / NodeDisconnected), each backed by a
+    Timer (R386) whose periodic action calls
+    make_and_send_notification (R404) on the corresponding queue.
+  - Timer action wraps the async make_and_send_notification call
+    in a `tokio::spawn` since Timer's action signature is
+    `Fn() + Send + Sync + 'static` (sync). Each spawn closes over
+    cloned Arc-shared state (resolver / settings / last_time /
+    queues / group).
+  - InitEventsQueuesStatus struct upgraded from a deferral
+    descriptor to a closure marker: `status: "closed at R405"`.
+  Carve-outs documented:
+  - askNodeNameRaw chain (upstream's `nodesNames` + `dpReqs` +
+    `curDPLock` triple) replaced with a `Fn(&NodeId) -> NodeName +
+    Clone + Send + Sync + 'static` closure injection per R398's
+    plan option (b).
+  - Upstream's `newTBQueueIO 2000` (bounded queue with capacity
+    2000) replaced with `tokio::sync::mpsc::unbounded_channel`
+    per the existing R380 EventsQueue carve-out — bounded-queue
+    swap available if a future round needs back-pressure semantics.
+  Tests: cardano-tracer 311 → 312 (+1: init_events_queues returns
+  empty when email is incomplete; status describes closure).
+  Workspace: 5,715 → 5,716. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R405 → R406.
+  **Notifications subsystem now structurally + functionally
+  complete**: all 7 leaves (Types, Check, Settings, Utils, Timer,
+  Email, Send) ported with all carve-outs closed.
 - **R404 — cardano-tracer: makeAndSendNotification orchestration
   (closes R389 MakeAndSendNotificationStatus carve-out, unblocked
   by R403's lettre).** Lands the orchestration that drains

@@ -149,30 +149,133 @@ pub async fn update_notifications_periods(
     .await
 }
 
-/// Status struct describing why [`init_events_queues`]-equivalent
-/// is not yet available — exposed as a public type so downstream
-/// callers can reference it in their own deferred-work tracking
-/// without duplicating the rationale string.
+/// Status descriptor for the previously-carved-out
+/// `initEventsQueues` orchestration. Closed at R405 with R386's
+/// Timer + R403's lettre + R404's makeAndSendNotification all
+/// landed.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct InitEventsQueuesStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary of the closure status.
     pub status: &'static str,
-    /// Reason — references the upstream module dependency.
-    pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
-    pub deferred_round: &'static str,
+    /// Round at which the orchestration landed.
+    pub closed_at_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for `initEventsQueues`. Used
-/// by sites that want to surface the deferral programmatically
-/// (e.g. when wiring up a partial cardano-tracer runtime that needs
-/// to skip the notification-engine init path).
+/// Get the closure-status descriptor for `initEventsQueues`. R405
+/// closes the carve-out: the actual orchestration is
+/// [`init_events_queues`].
 pub fn init_events_queues_status() -> InitEventsQueuesStatus {
     InitEventsQueuesStatus {
-        status: "deferred",
-        depends_on: "super::types::Timer (upstream Notifications/Timer.hs)",
-        deferred_round: "R385+",
+        status: "closed at R405",
+        closed_at_round: "R405",
     }
+}
+
+/// Initialize the per-event-group queues + senders + timers for a
+/// running cardano-tracer instance. Mirror of upstream
+/// `initEventsQueues`.
+///
+/// On entry:
+/// 1. Reads `EmailSettings` from disk via R384's
+///    [`super::settings::read_saved_email_settings`].
+/// 2. If the email config is incomplete (no SMTP host configured),
+///    returns empty queues + senders — the notification engine is
+///    effectively disabled. Mirror of upstream's
+///    `if incompleteEmailSettings emailSettings then pure [] else ...`.
+/// 3. Otherwise reads `EventsSettings` from disk via
+///    [`super::settings::read_saved_events_settings`] and creates 6
+///    per-group queues, each backed by a [`super::types::Timer`]
+///    (R386) that periodically calls
+///    [`super::send::make_and_send_notification`] (R404).
+///
+/// `state_dir` is the operator-supplied state directory; passed
+/// through to the settings loaders.
+///
+/// `node_name_resolver` resolves `NodeId` → `NodeName` for the
+/// notification body. Per R398's plan option (b), this is a closure
+/// rather than coupling to TracerEnv. Production sites build it from
+/// a snapshot of `ConnectedNodesNames`.
+///
+/// Returns the populated `(EventsQueues, EventsSenders)` pair.
+/// Empty pair when the email config is incomplete.
+pub async fn init_events_queues<F>(
+    state_dir: Option<&std::path::Path>,
+    node_name_resolver: F,
+) -> (EventsQueues, super::check::EventsSenders)
+where
+    F: Fn(&crate::types::NodeId) -> crate::types::NodeName + Clone + Send + Sync + 'static,
+{
+    use super::check::new_events_senders;
+    use super::send::make_and_send_notification;
+    use super::settings::{
+        incomplete_email_settings, read_saved_email_settings, read_saved_events_settings,
+    };
+    use super::types::{Timer, new_events_queues};
+    use std::sync::Arc;
+
+    let email_settings = read_saved_email_settings(state_dir);
+    let queues = new_events_queues();
+    let senders = new_events_senders();
+
+    if incomplete_email_settings(&email_settings) {
+        return (queues, senders);
+    }
+
+    let events_settings = read_saved_events_settings(state_dir);
+    let last_time = Arc::new(tokio::sync::Mutex::new(0_i64));
+
+    let groups: [(EventGroup, (bool, u32)); 6] = [
+        (EventGroup::EventWarnings, events_settings.warnings),
+        (EventGroup::EventErrors, events_settings.errors),
+        (EventGroup::EventCriticals, events_settings.criticals),
+        (EventGroup::EventAlerts, events_settings.alerts),
+        (EventGroup::EventEmergencies, events_settings.emergencies),
+        (
+            EventGroup::EventNodeDisconnected,
+            events_settings.node_disconnected,
+        ),
+    ];
+
+    for (group, (initial_running, period_secs)) in groups {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+
+        // Each timer's periodic action calls
+        // make_and_send_notification on the corresponding group's
+        // queue. Clone all owned state so the closure can run
+        // independently.
+        let resolver_for_timer = node_name_resolver.clone();
+        let settings_for_timer = email_settings.clone();
+        let last_time_for_timer = Arc::clone(&last_time);
+        let queues_for_timer = Arc::clone(&queues);
+        let group_for_timer = group;
+
+        let timer_action = move || {
+            // Spawn an async task — Timer's action signature is
+            // `Fn() + Send + Sync + 'static`, but
+            // make_and_send_notification is async.
+            let resolver = resolver_for_timer.clone();
+            let settings = settings_for_timer.clone();
+            let lt = Arc::clone(&last_time_for_timer);
+            let queues_inner = Arc::clone(&queues_for_timer);
+            tokio::spawn(async move {
+                let _ = make_and_send_notification(
+                    &settings,
+                    &queues_inner,
+                    group_for_timer,
+                    &lt,
+                    move |id| resolver(id),
+                )
+                .await;
+            });
+        };
+
+        let timer = Timer::new_stderr(timer_action, initial_running, period_secs);
+
+        senders.write().await.insert(group, tx);
+        queues.write().await.insert(group, (rx, timer));
+    }
+
+    (queues, senders)
 }
 
 #[cfg(test)]
@@ -304,11 +407,28 @@ mod tests {
     }
 
     #[test]
-    fn init_events_queues_status_describes_deferral() {
+    fn init_events_queues_status_describes_closure() {
         let s = init_events_queues_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("Timer"));
-        assert_eq!(s.deferred_round, "R385+");
+        assert_eq!(s.status, "closed at R405");
+        assert_eq!(s.closed_at_round, "R405");
+    }
+
+    #[tokio::test]
+    async fn init_events_queues_returns_empty_when_email_incomplete() {
+        // No state-dir → falls back to default EmailSettings which
+        // is incomplete → empty queues.
+        let tmp = std::env::temp_dir().join(format!(
+            "yggdrasil-init-events-empty-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).expect("tempdir");
+        let (queues, senders) = init_events_queues(Some(&tmp), |id| id.as_str().to_string()).await;
+        assert!(queues.read().await.is_empty());
+        assert!(senders.read().await.is_empty());
     }
 
     #[tokio::test]
