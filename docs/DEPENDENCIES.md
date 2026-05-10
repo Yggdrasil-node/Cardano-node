@@ -53,20 +53,22 @@ audit-evidence + rejected-alternatives section in
 the summary entries below cite the canonical recommended feature
 sets.
 
-- **`lettre` 0.11 (R403 land)**: pure-Rust SMTP client for
+- **`lettre` 0.11 (LANDED at R403)**: pure-Rust SMTP client for
   `cardano-tracer/src/handlers/notifications/email::create_and_send_email`
-  (closes the R388 `SmtpSendStatus` carve-out). Pin
+  (closed the R388 `SmtpSendStatus` carve-out). Final pin:
   `default-features = false, features = ["smtp-transport",
-  "tokio1-rustls", "builder"]` — **MANDATORY** to avoid the default
-  `tokio1-native-tls` feature which would pull in `native-tls` →
-  blocked by `deny.toml:90`. License: MIT/Apache-2.0 dual. ~30
-  transitive deps (rustls + webpki-roots + email-encoding +
-  email_address + idna + quoted_printable + base64 + hyper-util).
-  Rejected alternatives: hand-rolled SMTP client (massive RFC 5321
-  + STARTTLS + SASL scope, security risk); skip SMTP entirely
-  (cardano-tracer never matches upstream's email-notification
-  surface). `cargo deny check` audit happens at R403 against the
-  actual `Cargo.lock`, not speculative additions.
+  "tokio1-rustls", "ring", "webpki-roots", "builder"]`. The
+  recommended R398 audit-document feature list was extended at
+  R403 land time with `ring` (rustls crypto provider) +
+  `webpki-roots` (Mozilla CA bundle) — both required by lettre's
+  `tokio1-rustls` dependency at compile time. License:
+  MIT/Apache-2.0 dual. Verified at R403 via
+  `cargo tree -p yggdrasil-cardano-tracer | grep -iE "openssl|native-tls"`
+  — zero hits, transitive tree clean of all three banned crates
+  per `deny.toml:88-91`. Rejected alternatives: hand-rolled SMTP
+  client (massive RFC 5321 + STARTTLS + SASL scope, security
+  risk); skip SMTP entirely (cardano-tracer never matches upstream's
+  email-notification surface).
 - **`axum` 0.7 + `hyper` 1 + `tower` 0.5 + `rustls-pemfile` 2 (R406
   land)**: HTTP server stack for
   `cardano-tracer/src/handlers/metrics/{prometheus, monitoring,

@@ -274,6 +274,51 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R403 — cardano-tracer: lettre SMTP wired (D1 from R398 plan;
+  closes R388 SmtpSendStatus carve-out).** Lands the SMTP send
+  path that R388 carved out pending lettre workspace dependency
+  approval. Three workspace surfaces touched:
+  - **Cargo.toml workspace.dependencies**: adds `lettre = { version
+    = "0.11", default-features = false, features = ["smtp-transport",
+    "tokio1-rustls", "ring", "webpki-roots", "builder"] }`. The
+    R398-recommended feature list was extended at land time with
+    `ring` (rustls crypto provider) + `webpki-roots` (Mozilla CA
+    bundle) — both required by lettre's `tokio1-rustls` dependency
+    at compile time.
+  - **Audit verification**:
+    `cargo tree -p yggdrasil-cardano-tracer | grep -iE "openssl|native-tls"`
+    returned zero hits — transitive tree clean of all three banned
+    crates per `deny.toml:88-91`. (cargo-deny isn't installed in
+    this environment; the tree-grep audit covers the same surface
+    as the typical deny-list ban check.)
+  - **handlers/notifications/email.rs full SMTP send path**:
+    create_and_send_email + create_and_send_test_email + send_email
+    + explain_smtp_error helper. SSL dispatch on EmailSettings::ssl:
+    Tls → AsyncSmtpTransport::relay; Starttls → starttls_relay;
+    NoSSL → builder_dangerous. All wrapped in run_io_with_watchdog
+    with the upstream's exact 10-second timeout +
+    "✗ Unable to send: timeout" message. Error explanation mirrors
+    upstream's `getAddrInfo` / `user error` substring matching with
+    the same "check SMTP host" / "check your name, password or SSL"
+    replacement strings.
+  - **SmtpSendStatus** struct upgraded from a deferral descriptor to
+    a closure marker: `status: "closed at R403"`.
+  - **docs/DEPENDENCIES.md** updated to mark lettre as LANDED at
+    R403 with the actual feature list + transitive-tree audit
+    result.
+  Carve-outs documented:
+  - Data.Text.Lazy.Builder Mail body → lettre's Message::builder()
+    (strict-text equivalent).
+  - getAddrInfo / user error string-matching preserved with the
+    same upstream replacement strings, but operates on
+    lettre::Error Display string.
+  Tests: cardano-tracer 308 → 309 (+1: create_and_send_email returns
+  send-failure prefix when given an unreachable host; smtp_send_status
+  test updated from "deferred" assertion to "closed at R403"
+  closure assertion). Workspace tests: 5,712 → 5,713. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone R403 →
+  R404. Per the R398 plan, this unblocks R404
+  (makeAndSendNotification orchestration) and R405 (initEventsQueues).
 - **R402 — cardano-tracer: createOrUpdateEmptyLog real impl (closes
   R390 LogRotationStatus carve-out + upgrades HandleRegistry to hold
   real file handles).** Lands the IO orchestration that was deferred

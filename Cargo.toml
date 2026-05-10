@@ -107,6 +107,12 @@ subtle = "2.6.1"
 thiserror = "2.0.12"
 zeroize = { version = "1.8.2", features = ["derive"] }
 tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util", "signal", "fs"] }
+# R403 audit (R398 plan D1): SMTP client for cardano-tracer
+# Notifications/Email::sendEmail. Pinned to rustls-only to avoid the
+# default `tokio1-native-tls` feature which would pull in `native-tls`
+# blocked by `deny.toml:90`. ~30 transitive deps; MIT/Apache-2.0
+# dual-licensed; pure Rust.
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls", "ring", "webpki-roots", "builder"] }
 # R330 — pure-Rust BIP-0173 / Bech32m encoding from rust-bitcoin/rust-bech32.
 # MIT-licensed, zero transitive deps. Foundation for `crates/bech32/`
 # (R331-R334 file-mirror skeleton + functional implementation), which

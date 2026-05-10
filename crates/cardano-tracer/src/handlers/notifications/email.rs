@@ -5,12 +5,13 @@
 //!
 //! **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Notifications/Email.hs.
 //!
-//! Direct port of upstream's notification-engine email module —
-//! bounded subset. The actual SMTP-send paths (`createAndSendEmail`
-//! / `createAndSendTestEmail` / `sendEmail`) are carved out pending
-//! `lettre` (or equivalent SMTP client) workspace dependency
-//! approval per `docs/DEPENDENCIES.md`. This round ships the
-//! pure-Rust bounded subset that doesn't require an SMTP transport:
+//! Direct port of upstream's notification-engine email module. The
+//! full surface ships as of R403 — the previously-carved-out SMTP
+//! send paths (`createAndSendEmail` / `createAndSendTestEmail` /
+//! `sendEmail`) are now wired through the `lettre` 0.11 crate per
+//! the R398 plan's D1 audit (rustls-only feature pin; transitive
+//! tree clean of `native-tls` / `openssl` / `openssl-sys` per
+//! `deny.toml`).
 //!
 //! Mapping summary:
 //!
@@ -20,31 +21,29 @@
 //! | `statusIsOK :: StatusMessage -> Bool`                    | [`status_is_ok`]                       |
 //! | `runIOWithWatchdog :: Double -> a -> IO a -> IO a`       | [`run_io_with_watchdog`]               |
 //! | `createAndSendTestEmail` body template                   | [`test_notification_body`]             |
-//! | `createAndSendEmail` (SMTP send)                         | (carve-out — see [`SmtpSendStatus`])   |
-//! | `createAndSendEmail` (SMTP send)                         | (carve-out — see [`SmtpSendStatus`])   |
-//! | `sendEmail` SSL dispatch                                 | (carve-out — see [`SmtpSendStatus`])   |
+//! | `createAndSendEmail :: EmailSettings -> Text -> IO StatusMessage` | [`create_and_send_email`]   |
+//! | `createAndSendTestEmail :: EmailSettings -> IO StatusMessage` | [`create_and_send_test_email`] |
+//! | `sendEmail` SSL dispatch (TLS / STARTTLS / NoSSL)        | [`send_email`] (private helper)        |
+//! | `explanation` error-string helper                        | [`explain_smtp_error`] (private)       |
 //!
 //! Carve-outs (NOT ported, by design):
 //!
-//! - **`Network.Mail.SMTP` + `Network.Mail.Mime`**: upstream uses
-//!   the Haskell `mail` + `smtp-mail` packages for SMTP transport.
-//!   The Rust equivalent is `lettre` (~30 transitive deps, MIT,
-//!   pure Rust). Adding it requires `docs/DEPENDENCIES.md`
-//!   justification per the workspace policy. Until then, the SMTP
-//!   send-path is exposed as [`SmtpSendStatus`] — a status
-//!   descriptor sites can reference programmatically. Once `lettre`
-//!   lands, the actual `createAndSendEmail` + `sendEmail` functions
-//!   will be added without changing the rest of this module's
-//!   surface (StatusMessage / status_is_ok / run_io_with_watchdog).
+//! - **`Data.Text.Lazy.Builder` Mail body**: upstream builds the
+//!   `Mail` value via `simpleMail'`. Yggdrasil's port uses lettre's
+//!   `Message::builder()` API which produces a strict-text
+//!   equivalent.
 //! - **`getAddrInfo` / `user error` Haskell-specific error string
 //!   matching**: upstream's `explanation` helper greps the show'd
-//!   exception for substrings. The Rust port will surface SMTP
-//!   error categories more cleanly via `lettre::error::Error`
-//!   variants when the SMTP client is added.
+//!   exception for substrings. The Rust port preserves the same
+//!   replacement strings ("check SMTP host" / "check your name,
+//!   password or SSL") but operates on the `lettre::Error` Display
+//!   string instead of a Haskell `SomeException`.
 
 use std::time::Duration;
 
 use tokio::time::timeout;
+
+use super::types::{EmailSSL, EmailSettings};
 
 /// Free-form status message returned by send-attempts. Mirror of
 /// upstream `type StatusMessage = Text`. The leading `✓ Yay!` /
@@ -91,26 +90,131 @@ where
     timeout(dur, action).await.unwrap_or(timeout_value)
 }
 
-/// Status descriptor for the carve-out SMTP send-path. Sites that
-/// want to surface the deferral programmatically can call
-/// [`smtp_send_status`] and reference the returned struct rather
-/// than duplicating the rationale string.
+/// Status descriptor for the previously-carved-out SMTP send-path.
+/// Closed at R403 with the lettre 0.11 dep land. Kept around so
+/// call sites that previously queried for the status can see the
+/// closure round.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SmtpSendStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary of the closure status.
     pub status: &'static str,
-    /// Reason — references the missing workspace dependency.
-    pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
-    pub deferred_round: &'static str,
+    /// Round at which the SMTP send-path landed.
+    pub closed_at_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for the SMTP send-path.
+/// Get the closure-status descriptor for the SMTP send-path. R403
+/// closes the carve-out: the actual send functions are
+/// [`create_and_send_email`] / [`create_and_send_test_email`] /
+/// [`send_email`].
 pub fn smtp_send_status() -> SmtpSendStatus {
     SmtpSendStatus {
-        status: "deferred",
-        depends_on: "lettre crate (or equivalent SMTP client) — pending docs/DEPENDENCIES.md justification",
-        deferred_round: "R389+",
+        status: "closed at R403",
+        closed_at_round: "R403",
+    }
+}
+
+/// Send an email to the configured recipient with the given body.
+/// Mirror of upstream
+/// `createAndSendEmail :: EmailSettings -> Text -> IO StatusMessage`.
+///
+/// Wraps the underlying [`send_email`] call in
+/// [`run_io_with_watchdog`] (10-second timeout matching upstream's
+/// `runIOWithWatchdog 10.0 ...` invocation). Returns
+/// [`STATUS_SUCCESS`] on success, an error message on failure, or
+/// [`STATUS_TIMEOUT`] if the send didn't complete within 10s.
+pub async fn create_and_send_email(settings: &EmailSettings, body_message: &str) -> StatusMessage {
+    use lettre::Message;
+    let from = format!("Cardano RTView <{}>", settings.email_from);
+    let parsed_to = match settings.email_to.parse() {
+        Ok(addr) => addr,
+        Err(e) => return format!("✗ Unable to send: {e}"),
+    };
+    let parsed_from = match from.parse() {
+        Ok(addr) => addr,
+        Err(e) => return format!("✗ Unable to send: {e}"),
+    };
+    let mail = match Message::builder()
+        .to(parsed_to)
+        .from(parsed_from)
+        .subject(&settings.subject)
+        .body(body_message.to_string())
+    {
+        Ok(m) => m,
+        Err(e) => return format!("✗ Unable to send: {e}"),
+    };
+    run_io_with_watchdog(10.0, STATUS_TIMEOUT.to_string(), send_email(settings, mail)).await
+}
+
+/// Send the canonical test notification. Mirror of upstream
+/// `createAndSendTestEmail`. Convenience wrapper around
+/// [`create_and_send_email`] with [`test_notification_body`].
+pub async fn create_and_send_test_email(settings: &EmailSettings) -> StatusMessage {
+    create_and_send_email(settings, test_notification_body()).await
+}
+
+/// Send a pre-built `lettre::Message` via the configured transport.
+/// Mirror of upstream `sendEmail`. Dispatches on
+/// [`EmailSettings::ssl`] to pick the matching SMTP transport
+/// constructor (TLS / STARTTLS / NoSSL).
+async fn send_email(settings: &EmailSettings, mail: lettre::Message) -> StatusMessage {
+    use lettre::transport::smtp::AsyncSmtpTransport;
+    use lettre::transport::smtp::authentication::Credentials;
+    use lettre::{AsyncTransport, Tokio1Executor};
+
+    let creds = Credentials::new(settings.username.clone(), settings.password.clone());
+    let transport_result: Result<
+        AsyncSmtpTransport<Tokio1Executor>,
+        lettre::transport::smtp::Error,
+    > = match settings.ssl {
+        EmailSSL::Tls => {
+            AsyncSmtpTransport::<Tokio1Executor>::relay(&settings.smtp_host).map(|builder| {
+                builder
+                    .credentials(creds)
+                    .port(settings.smtp_port as u16)
+                    .build()
+            })
+        }
+        EmailSSL::Starttls => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(
+            &settings.smtp_host,
+        )
+        .map(|builder| {
+            builder
+                .credentials(creds)
+                .port(settings.smtp_port as u16)
+                .build()
+        }),
+        EmailSSL::NoSSL => Ok(AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+            &settings.smtp_host,
+        )
+        .credentials(creds)
+        .port(settings.smtp_port as u16)
+        .build()),
+    };
+    let transport = match transport_result {
+        Ok(t) => t,
+        Err(e) => return format!("✗ Unable to send: {}", explain_smtp_error(&e.to_string())),
+    };
+    match transport.send(mail).await {
+        Ok(_) => STATUS_SUCCESS.to_string(),
+        Err(e) => format!("✗ Unable to send: {}", explain_smtp_error(&e.to_string())),
+    }
+}
+
+/// Mirror of upstream's `explanation` helper: greps the show'd
+/// exception for known patterns and returns a friendlier message.
+/// Yggdrasil's port operates on the lettre error string but
+/// preserves upstream's exact replacement text for byte-equivalent
+/// status output.
+fn explain_smtp_error(msg: &str) -> String {
+    if msg.contains("getAddrInfo") || msg.contains("dns") || msg.contains("DNS") {
+        "check SMTP host".to_string()
+    } else if msg.contains("user error")
+        || msg.contains("authentication")
+        || msg.contains("unauthorized")
+    {
+        "check your name, password or SSL".to_string()
+    } else {
+        msg.to_string()
     }
 }
 
@@ -191,10 +295,43 @@ mod tests {
     }
 
     #[test]
-    fn smtp_send_status_describes_deferral() {
+    fn smtp_send_status_describes_closure() {
         let s = smtp_send_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("lettre"));
-        assert_eq!(s.deferred_round, "R389+");
+        assert_eq!(s.status, "closed at R403");
+        assert_eq!(s.closed_at_round, "R403");
+    }
+
+    #[test]
+    fn create_and_send_email_returns_send_failure_for_invalid_host() {
+        // Use a synthetic settings block pointing at an unreachable
+        // host so the send fails fast. The dispatch should produce
+        // a "✗ Unable to send" prefix without panicking.
+        let settings = EmailSettings {
+            smtp_host: "nonexistent.invalid.test.example".to_string(),
+            smtp_port: 587,
+            username: "user".to_string(),
+            password: "pass".to_string(),
+            ssl: EmailSSL::Starttls,
+            email_from: "from@example.com".to_string(),
+            email_to: "to@example.com".to_string(),
+            subject: "test".to_string(),
+        };
+        // run with extremely short timeout to avoid hanging on DNS.
+        let result = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("rt")
+            .block_on(async {
+                run_io_with_watchdog(
+                    0.5,
+                    STATUS_TIMEOUT.to_string(),
+                    create_and_send_email(&settings, "body"),
+                )
+                .await
+            });
+        // Either timeout or unable-to-send; both indicate the send
+        // path executed without panicking.
+        assert!(!status_is_ok(&result));
+        assert!(result.starts_with('✗'));
     }
 }
