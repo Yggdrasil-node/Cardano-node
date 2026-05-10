@@ -23,17 +23,17 @@
 //! | `contentHdrUtf8Html`                                           | [`CONTENT_HDR_UTF8_HTML`]              |
 //! | `contentHdrUtf8Text`                                           | [`CONTENT_HDR_UTF8_TEXT`]              |
 //! | `contentHdrPrometheus`                                         | [`CONTENT_HDR_PROMETHEUS`]             |
-//! | `computeRoutes :: TracerEnv -> IO RouteDictionary`             | (deferred — see [`compute_routes_status`]) |
+//! | `computeRoutes :: TracerEnv -> IO RouteDictionary`             | [`compute_routes`]                     |
 //! | `renderListOfConnectedNodes`                                   | [`RouteDictionary::render_html`]       |
 //!
 //! Carve-outs (NOT ported, by design):
 //!
-//! - **`computeRoutes`**: depends on the unported `TracerEnv`
-//!   14-field record (R383+ remaining-work item) — specifically
-//!   `teConnectedNodesNames` + `teAcceptedMetrics` TVars. Once
-//!   `TracerEnv` ports, the function lands as a thin wrapper that
-//!   plucks the two fields and calls a [`RouteDictionary`]
-//!   constructor that takes maps directly.
+//! - **`computeRoutes`**: landed at R407 with the R398 plan's
+//!   option (b) direct-arg pass-through pattern (each helper takes
+//!   only the slice of state it needs, rather than coupling to the
+//!   full `TracerEnv` 14-field record). When the EKG-equivalent
+//!   metrics surface ships, the function will gain a per-node
+//!   metrics filter via the `_accepted_metrics` parameter.
 //! - **`Text.Blaze.Html`-rendered `renderListOfConnectedNodes`**:
 //!   landed at R406 with the maud 0.27 workspace dep. The
 //!   [`RouteDictionary::render_html`] renderer auto-escapes user
@@ -200,24 +200,53 @@ pub fn slugify(input: &str) -> String {
     out
 }
 
-/// Status descriptor for the carve-out `computeRoutes` entry-point.
+/// Status descriptor for the previously-carved-out `computeRoutes`
+/// entry-point. Closed at R407 with the direct-arg pass-through
+/// pattern (R398 plan option (b)). Kept around for sites that
+/// previously queried for the deferral status.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ComputeRoutesStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary of the closure status.
     pub status: &'static str,
-    /// Reason — references the missing upstream port.
-    pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
-    pub deferred_round: &'static str,
+    /// Round at which the routes-computation entry landed.
+    pub closed_at_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for `computeRoutes`.
+/// Get the closure-status descriptor for `computeRoutes`. R407 closes
+/// the carve-out: the actual entry-point is [`compute_routes`].
 pub fn compute_routes_status() -> ComputeRoutesStatus {
     ComputeRoutesStatus {
-        status: "deferred",
-        depends_on: "TracerEnv 14-field record (teConnectedNodesNames + teAcceptedMetrics TVars); EKG.Store equivalent",
-        deferred_round: "R392+",
+        status: "closed at R407",
+        closed_at_round: "R407",
     }
+}
+
+/// Build the per-node URL routing table from a [`ConnectedNodesNames`]
+/// snapshot. Mirror of upstream
+/// `computeRoutes :: TracerEnv -> IO RouteDictionary`.
+///
+/// Per the R398 plan's TracerEnv option (b), this function takes the
+/// connected-nodes-names slice directly rather than the full
+/// 14-field `TracerEnv` record. The `_accepted_metrics` parameter is
+/// reserved for the upcoming EKG-equivalent metrics surface — until
+/// that ships, the function returns routes for *all* connected nodes
+/// (upstream's `Map.intersectionWith` filter is a no-op when
+/// AcceptedMetrics is a placeholder).
+///
+/// The returned [`RouteDictionary`] preserves snapshot iteration
+/// order; each entry is `(slugified-node-name, node-name)`. The
+/// metrics-server callers thread this through downstream
+/// per-route dispatch.
+pub async fn compute_routes(
+    connected_nodes_names: &crate::types::ConnectedNodesNames,
+    _accepted_metrics: &crate::environment::AcceptedMetrics,
+) -> RouteDictionary {
+    let pairs = connected_nodes_names.snapshot();
+    let routes: Vec<(String, crate::types::NodeName)> = pairs
+        .into_iter()
+        .map(|(_id, name)| (slugify(&name), name))
+        .collect();
+    RouteDictionary::new(routes)
 }
 
 /// Status descriptor for the previously-carved-out
@@ -375,11 +404,42 @@ mod tests {
     }
 
     #[test]
-    fn compute_routes_status_describes_deferral() {
+    fn compute_routes_status_describes_closure() {
         let s = compute_routes_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("TracerEnv"));
-        assert_eq!(s.deferred_round, "R392+");
+        assert_eq!(s.status, "closed at R407");
+        assert_eq!(s.closed_at_round, "R407");
+    }
+
+    #[tokio::test]
+    async fn compute_routes_returns_empty_dictionary_when_no_nodes_connected() {
+        use crate::environment::AcceptedMetrics;
+        use crate::types::ConnectedNodesNames;
+
+        let names = ConnectedNodesNames::new();
+        let metrics = AcceptedMetrics;
+        let routes = compute_routes(&names, &metrics).await;
+        assert!(routes.get_route_dictionary.is_empty());
+    }
+
+    #[tokio::test]
+    async fn compute_routes_emits_one_entry_per_connected_node() {
+        use crate::environment::AcceptedMetrics;
+        use crate::types::{ConnectedNodesNames, NodeId};
+
+        let names = ConnectedNodesNames::new();
+        names.insert(NodeId::new("n1"), "alpha-pool".to_string());
+        names.insert(NodeId::new("n2"), "beta pool!".to_string());
+        let metrics = AcceptedMetrics;
+        let routes = compute_routes(&names, &metrics).await;
+        assert_eq!(routes.get_route_dictionary.len(), 2);
+        // Each entry's slug is slugified, name is preserved verbatim.
+        let slugs: Vec<String> = routes
+            .get_route_dictionary
+            .iter()
+            .map(|(s, _)| s.clone())
+            .collect();
+        assert!(slugs.contains(&"alpha-pool".to_string()));
+        assert!(slugs.contains(&"beta-pool".to_string()));
     }
 
     #[test]

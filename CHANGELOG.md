@@ -274,6 +274,33 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R407 — cardano-tracer: compute_routes direct-arg pass-through
+  (closes R391 ComputeRoutesStatus carve-out per R398 plan option
+  b).** Lands the per-node URL routing-table builder. New
+  entry-point in `handlers/metrics/utils.rs`:
+  - compute_routes(&ConnectedNodesNames, &AcceptedMetrics) async
+    → RouteDictionary. Mirror of upstream
+    `computeRoutes :: TracerEnv -> IO RouteDictionary`.
+  - Per the R398 plan's TracerEnv option (b), takes the
+    connected-nodes-names slice directly rather than the full
+    14-field TracerEnv record. The `_accepted_metrics` parameter
+    is reserved for the upcoming EKG-equivalent metrics surface
+    — until that ships, the function returns routes for *all*
+    connected nodes (upstream's `Map.intersectionWith` filter is
+    a no-op when AcceptedMetrics is a placeholder).
+  - Uses R391's slugify for the per-node URL slug; preserves
+    snapshot iteration order from R371's ConnectedNodesNames.
+  - ComputeRoutesStatus struct upgraded from a deferral
+    descriptor to a closure marker: `status: "closed at R407"`.
+  Carve-outs documented:
+  - TracerEnv coupling deferred per R398 option (b); function
+    takes Arc-shared state directly.
+  - Per-node metrics-presence filter deferred until EKG-equivalent
+    metrics surface ships.
+  Tests: cardano-tracer 316 → 318 (+2: empty-when-no-nodes-connected;
+  one-entry-per-connected-node with slugified URLs). Workspace:
+  5,720 → 5,722. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R407 → R408.
 - **R406 — cardano-tracer: maud HTML renderer (D2-prime from R398
   plan; closes R391 RenderHtmlStatus carve-out).** Lands the
   `renderListOfConnectedNodes` HTML index page. Three workspace
