@@ -274,6 +274,70 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R435 — network: trace_object_forward_handshake_driver.rs —
+  state-machine driver for the trace-forwarder handshake exchange.**
+  Builds on R432-R434's codec foundation to ship the runtime
+  driver that runs the ProposeVersions / AcceptVersion / Refuse
+  exchange on a mux'd HANDSHAKE channel. Mirror of upstream's
+  `Server.with` (responder) + `connectToNode` (initiator)
+  handshake-loop semantics for the trace-forwarder pipe. New file:
+  `crates/network/src/trace_object_forward_handshake_driver.rs`.
+  Public surface:
+  - **HandshakeOutcome**: 2-field record (version, version_data)
+    returned on a successful negotiation.
+  - **HandshakeError**: 8-variant error enum (Mux,
+    ConnectionClosed, Decode, Unexpected, Refused, NoCompatibleVersion,
+    MagicMismatch, Timeout). The `MagicMismatch` variant is new —
+    surfaces upstream's `ForwardingVersionData mismatch` failure
+    case as a structured value carrying both magic numbers for
+    operator diagnosis.
+  - **HANDSHAKE_DEADLINE = 5 seconds**: pub const matching the
+    operationally-canonical 5-second budget upstream uses for the
+    NtN handshake (Yggdrasil applies the same to trace-forwarder
+    for symmetry).
+  - **run_handshake_responder(handle, local_versions, our_magic)
+    → Result&lt;HandshakeOutcome, HandshakeError&gt;**: receives
+    `ProposeVersions` from the remote, picks the highest version
+    we support whose network-magic matches ours (sorted highest-
+    to-lowest by tag), sends `AcceptVersion` (or `Refuse`).
+    Wrapped in `tokio::time::timeout(HANDSHAKE_DEADLINE, ...)`.
+  - **run_handshake_initiator(handle, proposals) → Result&lt;...&gt;**:
+    sends `ProposeVersions` carrying the supplied (version, data)
+    table, awaits the remote's response, returns the agreed
+    `HandshakeOutcome` or surfaces the remote's refuse-reason.
+  Carve-outs documented in module docstring:
+  - **HandshakeArguments record**: 6-field upstream config
+    collapses to plain function args + module-level constants
+    (codec pinned by R433/R434, accept logic by R432, tracers
+    deferred).
+  - **timeLimitsHandshake / noTimeLimitsHandshake**: collapses
+    to a single 5-second end-to-end deadline applied on both
+    sides via `HANDSHAKE_DEADLINE`.
+  - **HandshakeException / Refuse exception path**: collapses to
+    `Result&lt;_, HandshakeError&gt;` — callers decide whether to drop
+    the connection or retry.
+  Updates `lib.rs` with `pub mod trace_object_forward_handshake_driver`
+  declaration + `pub use ...` re-exports for `HANDSHAKE_DEADLINE`,
+  `HandshakeError as TraceForwardHandshakeError`,
+  `HandshakeOutcome`, `run_handshake_initiator`,
+  `run_handshake_responder`.
+  Tests: yggdrasil-network 795 → 802 (+7: deadline matches
+  upstream 5s; responder accepts matching version + magic;
+  responder picks highest overlapping version; responder refuses
+  on no overlap (initiator sees VersionMismatch); responder
+  refuses on magic mismatch (initiator sees Refused with the
+  upstream-faithful "ForwardingVersionData mismatch" message);
+  initiator errors on unexpected-message-shape response;
+  responder errors on unexpected-first-message). Workspace:
+  5,915 → 5,922.
+  R435 ships the driver primitives but does NOT yet wire them
+  into R424's `do_listen_to_forwarder_local` — that's the final
+  integration step requiring HANDSHAKE_NUM to be added to the
+  mux protocol list AND the handshake to gate the trace-objects
+  acceptor spawn. That integration round lands separately to keep
+  R435's test surface focused on the driver itself.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R435 → R436.
 - **R434 — network: handshake codec generic-refactor (operator-
   approved direction).** Refactors the handshake message-envelope
   wire encoding to be generic over a `HandshakeWireCodec` trait,

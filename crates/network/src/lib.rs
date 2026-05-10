@@ -57,6 +57,10 @@ pub mod root_peers_provider;
 /// TraceObjectForward mini-protocol acceptor driver
 /// (cardano-tracer side of the trace-forwarder pipe).
 pub mod trace_object_acceptor;
+/// Trace-forwarder handshake state-machine driver — runs the
+/// ProposeVersions / AcceptVersion / Refuse exchange on a mux'd
+/// HANDSHAKE channel for both responder and initiator roles.
+pub mod trace_object_forward_handshake_driver;
 /// TraceObjectForward mini-protocol acceptor runtime aggregator
 /// (cardano-tracer's `acceptTraceObjects{Init,Resp}` analog).
 pub mod trace_object_run_acceptor;
@@ -189,6 +193,10 @@ pub use root_peers_provider::{
     refresh_root_peer_state, refresh_root_peer_state_and_registry,
 };
 pub use trace_object_acceptor::{TraceObjectAcceptor, TraceObjectAcceptorError};
+pub use trace_object_forward_handshake_driver::{
+    HANDSHAKE_DEADLINE, HandshakeError as TraceForwardHandshakeError, HandshakeOutcome,
+    run_handshake_initiator, run_handshake_responder,
+};
 pub use trace_object_run_acceptor::{
     AcceptTimeout, AcceptTraceObjectsError, SHUTDOWN_TIMEOUT, accept_trace_objects_init,
     accept_trace_objects_resp, timeout_when_stopped,

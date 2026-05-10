@@ -80,7 +80,10 @@ pub fn encode_version_table<C: HandshakeWireCodec>(
 /// clippy's `type_complexity` lint on the underlying generic
 /// `Result<Vec<(...)>, _>` shape.
 pub type DecodeVersionTableResult<C> = Result<
-    Vec<(<C as HandshakeWireCodec>::Version, <C as HandshakeWireCodec>::VersionData)>,
+    Vec<(
+        <C as HandshakeWireCodec>::Version,
+        <C as HandshakeWireCodec>::VersionData,
+    )>,
     LedgerError,
 >;
 
