@@ -79,6 +79,24 @@ impl SeverityS {
                 | SeverityS::Emergency,
         )
     }
+
+    /// Reverse of [`SeverityS::syslog_code`] — parse a syslog-code
+    /// `u8` back into a `SeverityS` variant. Used by R437's
+    /// CBOR-decode path to round-trip the severity field.
+    /// Returns `None` for codes outside the canonical 0-7 range.
+    pub fn from_syslog_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(SeverityS::Emergency),
+            1 => Some(SeverityS::Alert),
+            2 => Some(SeverityS::Critical),
+            3 => Some(SeverityS::Error),
+            4 => Some(SeverityS::Warning),
+            5 => Some(SeverityS::Notice),
+            6 => Some(SeverityS::Info),
+            7 => Some(SeverityS::Debug),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]

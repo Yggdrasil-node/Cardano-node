@@ -357,13 +357,64 @@ where
     .await
 }
 
-/// Stub decoder for `TraceObject`s on the wire. The full CBOR
-/// codec for `Cardano.Logging.TraceObject` lands when the
-/// trace-dispatcher upstream package is ported. R424 returns an
-/// empty list to keep the protocol loop alive without panicking;
-/// real ingestion needs the codec port.
-fn decode_trace_objects(_dec: &mut Decoder<'_>) -> Result<Vec<TraceObject>, LedgerError> {
-    Ok(Vec::new())
+/// Decoder for `TraceObject`s on the wire. R437 wired the
+/// Yggdrasil-canonical CBOR codec from
+/// [`crate::logging::TraceObject::from_cbor`] (synthesis carve-out
+/// — see that module's R437 codec docs for the operator caveat
+/// about upstream-byte-equivalence). The wire format is a CBOR
+/// array of per-trace-object 6-field arrays; the decoder reads
+/// the outer array length, then decodes each entry.
+fn decode_trace_objects(dec: &mut Decoder<'_>) -> Result<Vec<TraceObject>, LedgerError> {
+    let count = dec.array()?;
+    // Bound the per-batch count: even on a busy node, a single
+    // request rarely produces more than ~10k events (the operator's
+    // `lo_request_num` defaults to 100 per R426); 64k is a generous
+    // ceiling that fends off a malicious peer shipping
+    // 2^32 entries.
+    let cap = (count as usize).min(65_536);
+    let mut out = Vec::with_capacity(cap);
+    for _ in 0..count {
+        // Decode each TraceObject as its own 6-field CBOR array.
+        // The outer array context means we can't use the standalone
+        // `from_cbor` (which checks `is_empty` at the end) — instead
+        // we replicate its body inline against the shared decoder.
+        let len = dec.array()?;
+        if len != 6 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 6,
+                actual: len as usize,
+            });
+        }
+        let to_human = if dec.peek_is_null() {
+            dec.null()?;
+            None
+        } else {
+            Some(dec.text()?.to_owned())
+        };
+        let to_machine = dec.text()?.to_owned();
+        let code = dec.unsigned()? as u8;
+        let to_severity = crate::severity::SeverityS::from_syslog_code(code).ok_or_else(|| {
+            LedgerError::CborDecodeError(format!(
+                "TraceObject: invalid syslog severity code {code} (must be 0-7)"
+            ))
+        })?;
+        let ns_len = dec.array()?;
+        let mut to_namespace = Vec::with_capacity(ns_len as usize);
+        for _ in 0..ns_len {
+            to_namespace.push(dec.text()?.to_owned());
+        }
+        let to_thread_id = dec.text()?.to_owned();
+        let to_timestamp_ms = dec.signed()?;
+        out.push(TraceObject {
+            to_human,
+            to_machine,
+            to_severity,
+            to_namespace,
+            to_thread_id,
+            to_timestamp_ms,
+        });
+    }
+    Ok(out)
 }
 
 async fn wait_for_global_stop(stop_flag: &Arc<tokio::sync::RwLock<bool>>) {

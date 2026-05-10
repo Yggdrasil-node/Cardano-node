@@ -254,11 +254,53 @@ where
     .await
 }
 
-/// Stub decoder for `TraceObject`s on the wire — same placeholder
-/// as `super::server::decode_trace_objects`. The real codec lands
-/// when the trace-dispatcher upstream package is ported.
-fn decode_trace_objects(_dec: &mut Decoder<'_>) -> Result<Vec<TraceObject>, LedgerError> {
-    Ok(Vec::new())
+/// Decoder for `TraceObject`s on the wire. R437 mirror of
+/// [`super::server::decode_trace_objects`]'s body — the same
+/// CBOR-array-of-6-field-arrays shape decoded for the initiator
+/// side. Both sides route through
+/// [`crate::logging::TraceObject::from_cbor`]'s wire format.
+fn decode_trace_objects(dec: &mut Decoder<'_>) -> Result<Vec<TraceObject>, LedgerError> {
+    let count = dec.array()?;
+    let cap = (count as usize).min(65_536);
+    let mut out = Vec::with_capacity(cap);
+    for _ in 0..count {
+        let len = dec.array()?;
+        if len != 6 {
+            return Err(LedgerError::CborInvalidLength {
+                expected: 6,
+                actual: len as usize,
+            });
+        }
+        let to_human = if dec.peek_is_null() {
+            dec.null()?;
+            None
+        } else {
+            Some(dec.text()?.to_owned())
+        };
+        let to_machine = dec.text()?.to_owned();
+        let code = dec.unsigned()? as u8;
+        let to_severity = crate::severity::SeverityS::from_syslog_code(code).ok_or_else(|| {
+            LedgerError::CborDecodeError(format!(
+                "TraceObject: invalid syslog severity code {code} (must be 0-7)"
+            ))
+        })?;
+        let ns_len = dec.array()?;
+        let mut to_namespace = Vec::with_capacity(ns_len as usize);
+        for _ in 0..ns_len {
+            to_namespace.push(dec.text()?.to_owned());
+        }
+        let to_thread_id = dec.text()?.to_owned();
+        let to_timestamp_ms = dec.signed()?;
+        out.push(TraceObject {
+            to_human,
+            to_machine,
+            to_severity,
+            to_namespace,
+            to_thread_id,
+            to_timestamp_ms,
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
