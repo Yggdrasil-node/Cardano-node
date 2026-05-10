@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Pure-Rust port of upstream `dmq-node`.
 //!
 //! ## Naming parity
@@ -6,11 +7,25 @@
 //! file-mirror + CLI-parser skeleton for the `dmq-node` sister-tool crate.
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
+//!
+//! Layout mapping (R356 ships types.rs; later rounds populate the rest):
+//!
+//! | Upstream `.hs`                                            | Yggdrasil `.rs`              |
+//! |-----------------------------------------------------------|------------------------------|
+//! | `src/DMQ/Configuration/CLIOptions.hs` + `Configuration.hs` (CLI shape) | `types.rs`         |
+//! | `src/DMQ/Configuration/CLIOptions.hs::parseCLIOptions`    | `parser.rs`                  |
+//! | `src/DMQ/Configuration.hs::readConfigurationFile`         | `config_file.rs` (pending)   |
+//! | `src/DMQ/Configuration/Topology.hs`                       | `topology.rs` (pending)      |
+//! | `src/DMQ/NodeToNode.hs` + `NodeToClient.hs`               | `mux/{ntn,ntc}.rs` (pending; via crates/network) |
+//! | `src/DMQ/Diffusion/*`                                     | `diffusion/*.rs` (pending)   |
+//! | `src/DMQ/Tracer.hs`                                       | `tracer.rs` (pending)        |
+//! | `app/Main.hs`                                             | `main.rs`                    |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {

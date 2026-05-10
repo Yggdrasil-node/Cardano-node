@@ -274,6 +274,44 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R356 — dmq-node: typed config surface (port of CLIOptions.hs CLI shape).**
+  Lands the operator-facing CLI shape for dmq-node. New types.rs
+  module ports the partial-vs-resolved Configuration distinction:
+  - LocalAddress(PathBuf) newtype (mirrors upstream's
+    `LocalAddress` from Configuration.hs).
+  - NetworkMagic(u32) newtype.
+  - PartialConfig (10-field record, all Option<_>) — represents the
+    CLI-derived partial configuration before merging with file-derived
+    defaults. Mirrors upstream's `Configuration' Last`.
+  - Configuration (10-field record, all concrete) — the fully-resolved
+    runtime config. Mirrors upstream's `Configuration' Identity`.
+  - PartialConfig::merge: left-priority field-level merge mirroring
+    the Haskell Generic-derived Semigroup instance.
+  - PartialConfig::resolve: fills in defaults for missing fields,
+    yielding a fully-applied Configuration.
+  - Configuration::defaults: matches upstream's defaultConfiguration
+    (host=0.0.0.0/IPv6=::, port=3001, local_address=dmq-node.socket,
+    config_file=dmq-node.json, topology_file=dmq-node-topology.json,
+    cardano_node_socket=node.socket, cardano_network_magic=mainnet,
+    network_magic=0).
+  Carve-outs documented:
+  - Generic-derived Semigroup/Monoid via gmappend/gmempty replaced by
+    explicit merge() helper (one line per field; same shape as
+    kes-agent-control's CommonOptions).
+  - Data.Act action-on-types machinery (gpact derivation) replaced by
+    straight field-level merging — the action abstraction has no
+    semantic role at this surface.
+  - Higher-level Configuration.hs functions (mkDiffusionConfiguration,
+    readConfigurationFile, etc.) deferred — they touch
+    Ouroboros.Network.Diffusion which is a substantial separate port.
+  Tests: dmq-node 8 → 14 (+6: 1 LocalAddress round-trip + 1 NetworkMagic
+  + 1 PartialConfig default-all-None + 1 merge-left-priority + 1
+  defaults-match-upstream + 1 resolve-uses-defaults + 1 round-trip-all-
+  supplied + 1 resolve-empty-yields-defaults). Workspace: 5,194 → 5,202.
+  Parity-matrix entry sister-tool.dmq-node advanced: next_milestone
+  R451 → R357; remaining_work refreshed with the per-module roadmap
+  (Parsers → Configuration.hs port → mux wiring → Diffusion/NodeKernel
+  → Tracer + integration + closeout).
 - **R355 — kes-agent-control: typed config surface (port of ControlMain.hs option types).**
   Lands the typed configuration surface for kes-agent-control. New
   types.rs module ports the full upstream ControlMain.hs option types:

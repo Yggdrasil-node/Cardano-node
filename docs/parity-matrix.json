@@ -816,7 +816,7 @@
       "area": "sister-tools",
       "feature": "Delegated Mempool Queue diffusion-layer node (sister project for Mithril) \u2014 pure-Rust port mirroring upstream IntersectMBO/dmq-node.",
       "status": "partial",
-      "next_milestone": "R451",
+      "next_milestone": "R357",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/dmq-node/dmq-node/",
@@ -826,21 +826,20 @@
       "rust_surface": [
         {
           "path": "crates/dmq-node/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the D.1 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R356 typed-config surface (CLIOptions.hs port: PartialConfig + Configuration + LocalAddress + NetworkMagic). Diffusion + NodeToNode + NodeToClient + NodeKernel implementation pending."
         }
       ],
       "implemented_evidence": [
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for dmq-node.",
         "Byte-equivalent --help and --version captured from upstream dmq-node binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
-        "8 tests per tool: 6 parser unit tests + 2 byte-equivalence golden tests.",
-        "Workspace test contribution: +8.",
-        "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan."
+        "R356 typed-config surface: types.rs ports the operator-facing CLI shape from upstream's CLIOptions.hs \u2014 PartialConfig (10-field record with Option<_> fields for env-var/file/CLI merge), Configuration (fully-resolved 10-field record), LocalAddress(PathBuf) newtype, NetworkMagic(u32) newtype, PartialConfig::merge / resolve methods. Defaults match upstream's defaultConfiguration: host=0.0.0.0/IPv6=::, port=3001, local_address=dmq-node.socket, config_file=dmq-node.json, topology_file=dmq-node-topology.json, cardano_node_socket=node.socket, cardano_network_magic=mainnet (764824073), network_magic=0. Carve-outs: Generic-derived Semigroup \u2192 explicit merge() helper; Data.Act gpact action machinery \u2192 straight field-level merging; Configuration.hs's mkDiffusionConfiguration / readConfigurationFile deferred to subsequent rounds. 14 dmq-node tests at R356 (was 8 at R335 + 6 types unit tests)."
       ],
       "remaining_work": [
-        "Skeleton round at R450: file-tree mirror + CLI parser scaffolding.",
-        "Per-subcommand implementation rounds (size-banded 1-3 days each).",
-        "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/dmq-node.",
-        "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
+        "R357+ Parsers: clap-based parser dispatching the 10-flag CLI surface (--host-addr, --host-ipv6-addr, --port, --local-socket, --configuration-file, --topology-file, --cardano-node-socket, --cardano-network-magic, --dmq-network-magic, --version).",
+        "R358+ Configuration.hs port: readConfigurationFile + mkDiffusionConfiguration (touches Ouroboros.Network.Diffusion which is a substantial separate port).",
+        "R359+ NodeToNode + NodeToClient mux wiring (via crates/network).",
+        "R360+ Diffusion/NodeKernel + PeerSelection.",
+        "Tracer + integration + closeout."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/dmq-node --help` (modulo program name).",
