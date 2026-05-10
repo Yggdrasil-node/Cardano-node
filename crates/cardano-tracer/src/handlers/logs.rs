@@ -21,10 +21,11 @@
 //! | `Logs/Journal.hs`                             | `journal.rs`             |
 //! | `Logs/Journal/Systemd.hs`                     | (carve-out — Yggdrasil's  policy bans systemd-specific deps; see `journal::no_systemd`) |
 //! | `Logs/Journal/NoSystemd.hs`                   | `journal/no_systemd.rs`  |
-//! | `Logs/TraceObjects.hs`                        | `trace_objects.rs` (pending) |
+//! | `Logs/TraceObjects.hs`                        | `trace_objects.rs`       |
 //! | `Logs/Utils.hs`                               | `utils.rs`               |
 
 pub mod file;
 pub mod journal;
 pub mod rotator;
+pub mod trace_objects;
 pub mod utils;

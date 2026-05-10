@@ -274,6 +274,50 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R401 — cardano-tracer: Logs/TraceObjects.hs port (dispatcher
+  routing).** Lands the per-LoggingParams trace-object dispatcher
+  that fans out incoming objects to the appropriate sink (journal
+  or file). New handlers/logs/trace_objects.rs module ports the
+  upstream Cardano.Tracer.Handlers.Logs.TraceObjects bounded subset:
+  - DispatchOutcome enum (Journal | FilePending | Skipped) describing
+    the routing outcome per LoggingParams entry.
+  - trace_objects_handler(&NodeName, &[LoggingParams],
+    &[TraceObject]) async → Vec<DispatchOutcome> mirroring upstream's
+    `traceObjectsHandler` dispatcher. Skips dispatch on empty
+    trace-object input (returns vec![Skipped]); otherwise routes
+    each LoggingParams to the matching sink:
+    - JournalMode → calls write_trace_objects_to_journal (R382 no-op
+      currently; preserved in the call graph for when the
+      systemd-binding port lands).
+    - FileMode → computes the line-encoded payload via R400's
+      prepare_lines + returns FilePending with the byte count
+      (actual file write defers to R402).
+  - DeregisterNodeIdStatus + helper exposing the deferred-
+    `deregisterNodeId` rationale programmatically.
+  Carve-outs documented:
+  - TracerEnv-record-arg + askNodeName lookup → caller passes
+    pre-resolved NodeName (per R398's TracerEnv option (b)
+    decision).
+  - forConcurrently_ parallel fan-out → sequential per-LoggingParams
+    iteration (acceptable until R402's actual file write happens;
+    swap to tokio::task::join_all if soak shows contention).
+  - teReforwardTraceObjects callback → deferred (depends on
+    trace-forwarder mini-protocol acceptors at R411+).
+  - #if RTVIEW saveTraceObjects arm → workspace RTView UI carve-out;
+    never ported.
+  - deregisterNodeId → deferred to R402 alongside the
+    createOrUpdateEmptyLog port (depends on modifyRegistry_ +
+    System.IO.hClose on registry-stored handles).
+  Tests: cardano-tracer 294 → 303 (+9: empty trace_objects returns
+  Skipped; empty logging_params with events returns no outcomes;
+  JournalMode dispatches to Journal outcome; FileMode dispatches to
+  FilePending with prepared_bytes matching prepare_lines output;
+  mixed logging_params routes each independently; multi-event
+  batches preserve count; ForMachine vs ForHuman produce different
+  byte counts; deregister_node_id_status describes deferral;
+  Skipped equality). Workspace: 5,698 → 5,707. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone R401
+  → R402.
 - **R400 — cardano-tracer: Logs/File.hs port (bounded subset; pure
   line-encoders).** Lands the per-format trace-object converters
   + line-encoding helpers used by the file-rotation IO orchestration.
