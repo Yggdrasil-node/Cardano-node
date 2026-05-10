@@ -22,6 +22,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod status;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -57,20 +58,60 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// R363 lands argv → [`types::Config`] dispatch. The actual mem↔lsm
-/// conversion + filesystem-watcher daemon land in subsequent rounds
-/// per the per-tool roadmap (gated on yggdrasil-format LedgerStore
-/// reader/writer being available).
+/// R363 wires argv → [`types::Config`] dispatch. The actual
+/// mem↔lsm conversion logic + filesystem-watcher daemon are
+/// documented carve-outs (see [`status::ConvertSnapshotStatus`])
+/// — gated on yggdrasil-format LedgerStore reader/writer being
+/// available, which is itself a separate parity arc.
+///
+/// R439 surfaces the deferral via the [`RunError`] enum +
+/// [`status::convert_snapshot_status`] introspection helper rather
+/// than a raw `eyre::eyre!` string. Callers can match on the
+/// specific deferral variant for programmatic dispatch.
 pub fn run(config: &types::Config) -> eyre::Result<()> {
-    use types::Config;
     let mode = match config {
-        Config::Daemon { .. } => "daemon",
-        Config::Oneshot { .. } => "oneshot",
+        types::Config::Daemon { .. } => RunMode::Daemon,
+        types::Config::Oneshot { .. } => RunMode::Oneshot,
     };
-    Err(eyre::eyre!(
-        "yggdrasil-snapshot-converter: {mode} mode dispatch not yet implemented \
-         (R363 ships argv → Config dispatch; convertSnapshot LSM/Mem logic + \
-         filesystem-watcher daemon land in subsequent rounds gated on \
-         yggdrasil-format LedgerStore reader/writer being available)."
-    ))
+    Err(RunError::ConvertSnapshotDeferred { mode }.into())
+}
+
+/// Operating-mode tag for [`RunError::ConvertSnapshotDeferred`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum RunMode {
+    /// Daemon mode — `--monitor-lsm-snapshots-in` filesystem-watcher loop.
+    Daemon,
+    /// Oneshot mode — single `--input-mem`/`--input-lsm` →
+    /// `--output-mem`/`--output-lsm` conversion.
+    Oneshot,
+}
+
+impl std::fmt::Display for RunMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Daemon => "daemon",
+            Self::Oneshot => "oneshot",
+        })
+    }
+}
+
+/// Errors from the snapshot-converter `run` entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// The `convertSnapshot` mem↔lsm logic + filesystem-watcher
+    /// daemon are deferred carve-outs gated on yggdrasil-format
+    /// LedgerStore reader/writer being available. Mirror of upstream
+    /// `Ouroboros.Consensus.Cardano.SnapshotConversion.convertSnapshot`
+    /// — the conversion operates on the upstream ledger-DB on-disk
+    /// format, which differs from yggdrasil's storage layout.
+    #[error(
+        "yggdrasil-snapshot-converter: {mode} mode dispatch deferred — convertSnapshot LSM/Mem \
+         logic + filesystem-watcher daemon land when the yggdrasil-format LedgerStore reader/\
+         writer is wired (see crates/snapshot-converter/src/status.rs::convert_snapshot_status \
+         for the full deferral rationale)."
+    )]
+    ConvertSnapshotDeferred {
+        /// The mode the operator's config selected.
+        mode: RunMode,
+    },
 }

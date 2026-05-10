@@ -274,6 +274,38 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R439 — snapshot-converter: structured deferral surface
+  (replaces the `Err(eyre::eyre!)` stub with a typed `RunError`
+  enum + programmatic `*_status()` introspection helpers).** Lands
+  in `crates/snapshot-converter/src/status.rs` (new) +
+  `lib.rs` refactor:
+  - **RunMode enum**: `Daemon | Oneshot` — extracted from the
+    inline string match in `run()`.
+  - **RunError enum**: `ConvertSnapshotDeferred { mode }` — replaces
+    the prior raw `eyre::eyre!` string. Callers can now match on
+    the specific deferral variant for programmatic dispatch (e.g.
+    a future operator-CLI shim wanting to print a structured
+    "feature unavailable" page rather than a free-text error).
+  - **status::ConvertSnapshotStatus**: 4-field descriptor (status,
+    depends_on, deferred_round, upstream_reference) used by both
+    `convert_snapshot_status()` (the mem↔lsm conversion logic) +
+    `daemon_watcher_status()` (the filesystem-watcher daemon
+    around it). Mirror of cardano-tracer's R424
+    `TlsTerminationStatus` / R424's `*_status()` precedent.
+  - **lib.rs::run** rewired: no behavior change (still returns
+    Err) but the error is now a structured `RunError` rather than
+    a free-text `eyre!` string. The error message references the
+    `convert_snapshot_status` helper for the full deferral
+    rationale.
+  Tests: yggdrasil-snapshot-converter 30 → 33 (+3:
+  convert_snapshot_status describes deferral with LedgerStore +
+  upstream-reference markers; daemon_watcher_status describes
+  deferral with notify-crate marker; statuses are
+  Clone+Eq+Hash-round-trip via HashSet insertion). Workspace:
+  5,931 → 5,934. Parity-matrix entry sister-tool.snapshot-
+  converter advanced: next_milestone R363+ → R440 (the deferral
+  is now structurally surfaced; further forward motion needs the
+  yggdrasil-format LedgerStore reader/writer arc to land).
 - **R438 — cardano-tracer: parity-matrix entry refresh
   (documentation cleanup; closes the R411-R437 documentation
   loop).** The `sister-tool.cardano-tracer` entry's
