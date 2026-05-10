@@ -8,7 +8,7 @@
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
 //!
-//! Layout mapping (R354 ships types.rs; later rounds populate the rest):
+//! Layout mapping (R378 ships orphans.rs; later rounds populate the rest):
 //!
 //! | Upstream `.hs`                                | Yggdrasil `.rs`              |
 //! |-----------------------------------------------|------------------------------|
@@ -16,11 +16,12 @@
 //! | `app/DBSynthesizer/Parsers.hs`                | `parser.rs`                  |
 //! | `Tools/DBSynthesizer/Forging.hs`              | `forging.rs` (pending)       |
 //! | `Tools/DBSynthesizer/Run.hs`                  | `run.rs` (pending)           |
-//! | `Tools/DBSynthesizer/Orphans.hs`              | `orphans.rs` (synthesis)     |
+//! | `Tools/DBSynthesizer/Orphans.hs`              | `orphans.rs`                 |
 
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod orphans;
 pub mod parser;
 pub mod types;
 

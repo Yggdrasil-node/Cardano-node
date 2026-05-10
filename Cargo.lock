@@ -1479,6 +1479,7 @@ version = "0.2.0"
 dependencies = [
  "clap",
  "eyre",
+ "serde",
  "serde_json",
  "thiserror",
  "yggdrasil-ledger",

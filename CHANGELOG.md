@@ -274,6 +274,53 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R378 — db-synthesizer: Orphans.hs port (JSON deserialization +
+  AdjustFilePaths trait).** Lands the JSON-deserialization +
+  file-path-adjustment surface used by the db-synthesizer typed config
+  types. New orphans.rs module ports the upstream
+  Cardano.Tools.DBSynthesizer.Orphans surface:
+  - AdjustFilePaths trait mirroring upstream's
+    `class AdjustFilePaths a where adjustFilePaths :: (FilePath -> FilePath) -> a -> a`.
+    The single `adjust_file_paths<F: Fn(PathBuf) -> PathBuf>` method
+    walks every embedded `PathBuf` and returns a new value with the
+    transform applied — used to canonicalize relative paths inside a
+    parsed node-config JSON against the directory the JSON file
+    itself lives in.
+  - AdjustFilePaths impl on NodeConfigStub adjusting alonzo /
+    shelley / byron / conway / dijkstra (Option) paths.
+  - AdjustFilePaths impl on NodeCredentials adjusting cert / VRF /
+    KES / bulk (all Option<PathBuf>) paths.
+  - Custom serde::Deserialize for NodeConfigStub enforcing upstream's
+    `Protocol = Cardano` assertion. Error messages match upstream's
+    exact wording ("nodeConfig.Protocol expected: Cardano; found: X").
+  - parse_node_config_stub(serde_json::Value) public entry-point
+    mirroring upstream's `parseJSON val = withObject "NodeConfigStub"
+    (parse' val) val` pattern.
+  - NodeConfigStubParseError enum (5 variants: ProtocolMissing,
+    ProtocolMismatch(String), RequiredPathMissing { field },
+    InvalidPathType { field }, NotAnObject(String)) with
+    thiserror::Error derives.
+  Carve-outs documented:
+  - NodeHardForkProtocolConfiguration + NodeByronProtocolConfiguration
+    FromJSON instances are NOT ported. Upstream's own comment marks
+    them as DUPLICATE — a re-implementation to avoid an import
+    dependency on Cardano.Node.Configuration.POM. Yggdrasil-side
+    parallels live in node/src/config.rs. db-synthesizer operates on
+    the raw serde_json::Value stashed in
+    NodeConfigStub::node_config and feeds that to the runtime layer.
+  - The hard-coded Byron application name "cardano-sl" carve-out
+    documented for the eventual node-runtime-side
+    NodeByronProtocolConfiguration port.
+  Tests: db-synthesizer 29 → 42 (+13: complete-stub round-trip,
+  missing-Dijkstra, explicit-null-Dijkstra, non-object rejection,
+  wrong-Protocol with upstream-exact error wording, missing-Protocol,
+  missing-required-genesis, non-string-path, node_config preservation
+  on the raw Value, adjust_file_paths for NodeConfigStub
+  all-paths-applied + None-Dijkstra pass-through, adjust_file_paths
+  for NodeCredentials all-present + all-None pass-through). Workspace:
+  5,443 → 5,456. Adds serde workspace dependency to db-synthesizer
+  Cargo.toml (was serde_json-only). Parity-matrix entry
+  sister-tool.db-synthesizer advanced: next_milestone R365 → R379.
 - **R377 — closure-status doc refresh covering R369–R376.** Updates
   the [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md) banner +
   current-implementation-status preamble to reflect the deeper-layer
