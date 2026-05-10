@@ -274,6 +274,50 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R389 — cardano-tracer: Notifications/Send.hs port (bounded
+  subset; orchestration deferred).** Lands the notification-send
+  body-formatting layer. Notifications subsystem is now structurally
+  complete (all 7 leaves ported as bounded subsets where dependencies
+  warrant). New handlers/notifications/send.rs module ports the
+  upstream Cardano.Tracer.Handlers.Notifications.Send surface:
+  - format_notification_body(&[Event], &[(NodeId, NodeName)]) →
+    String — mirror of upstream `sendNotification`'s `preface <>
+    events` body-construction with singular/plural "event/events"
+    word + per-event `[ts] [node-name] [sev] [msg]` line + canonical
+    "This is a notification from Cardano RTView service." preface
+    + no trailing newline (matching upstream's `T.intercalate nl`).
+  - format_event_timestamp(i64) → String — emits upstream's
+    `%F %T %Z` shape as "YYYY-MM-DD HH:MM:SS UTC" using a manual
+    format string + an inline days-since-epoch-to-(year, month, day)
+    algorithm based on Howard Hinnant's public-domain
+    `civil_from_days` (no chrono workspace dependency needed).
+  - get_node_name(NodeId, &[(NodeId, NodeName)]) → String — pure
+    lookup-with-fallback helper mirroring upstream's `getNodeName`
+    inline closure inside `sendNotification`.
+  - format_severity(SeverityS) → &'static str — maps each of the
+    8 severity variants to its variant-name string (mirrors
+    upstream's `showT sev`).
+  - MakeAndSendNotificationStatus + make_and_send_notification_status()
+    helper exposing the deferred-orchestration rationale
+    programmatically.
+  Carve-outs documented:
+  - makeAndSendNotification orchestration deferred — depends on
+    DataPointRequestors (unported), Trace IO TracerTrace
+    (unported), Cardano.Tracer.Utils.askNodeNameRaw (unported),
+    and the SMTP send-path which is itself a carve-out per
+    super::email::smtp_send_status.
+  - Upstream's locale-dependent `%Z` timezone abbreviation
+    hard-coded to "UTC" for parity (operational tracer hosts run
+    in UTC; chrono-free implementation avoids extra workspace dep).
+  Tests: cardano-tracer 149 → 164 (+15: format_event_timestamp at
+  Unix epoch + 2023-11-14 known value + Y2038 threshold;
+  get_node_name registered + unregistered + empty-map; 7
+  format_notification_body cases [empty events, singular,
+  plural, name-when-registered, name-when-unregistered, canonical-
+  preface, no-trailing-newline]; make_and_send_notification_status
+  deferral; format_severity for all 8 variants). Workspace: 5,553
+  → 5,568. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R389 → R390.
 - **R388 — cardano-tracer: Notifications/Email.hs port (bounded
   subset; SMTP send carved out pending lettre approval).** Lands the
   notification-engine email helpers — bounded subset that doesn't
