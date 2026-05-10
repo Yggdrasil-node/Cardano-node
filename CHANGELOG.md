@@ -274,6 +274,43 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R371 — cardano-tracer: runtime-state types (port of Types.hs).**
+  Lands the runtime-state types for cardano-tracer. New types.rs
+  module ports the upstream Cardano.Tracer.Types surface — type
+  aliases + newtypes describing the tracer's mutable runtime state:
+  - NodeId(String) newtype mirroring upstream NodeId Text.
+  - NodeName = String type alias.
+  - ProtocolsBrake (Arc<RwLock<bool>>) — stop-signal for protocols
+    on the acceptor's side; engage() / is_engaged() inherent methods.
+  - ConnectedNodes (Arc<RwLock<HashSet<NodeId>>>) — canonical
+    source-of-truth set with insert/remove/contains/snapshot helpers.
+  - ConnectedNodesNames — bidirectional NodeId↔NodeName map mirroring
+    upstream's `Bimap NodeId NodeName`. Replaces the bimap ecosystem
+    crate with two parallel HashMaps (forward + reverse), preserving
+    Data.Bimap.insert's replace-both-sides semantic.
+  - Registry<Key, Value> generic — Mutex<HashMap<Key, Value>> wrapper
+    mirroring upstream `newtype Registry a b = Registry { getRegistry
+    :: MVar (Map a b) }`. Used by the logs-handler subsystem.
+  - HandleRegistryKey = (NodeName, LoggingParams) type alias.
+  - HandleRegistry = Registry<HandleRegistryKey, ((), PathBuf)> —
+    open-log-file-handle registry; the upstream System.IO.Handle is
+    a `()` placeholder pending the file-rotator round.
+  Carve-outs documented:
+  - System.Metrics.EKG.Store + MetricsLocalStore: lands when the
+    EKG-equivalent metrics aggregation layer is ported.
+  - Trace.Forward.Utils.DataPoint.DataPointRequestor: lands when
+    the trace-forwarder mini-protocol port is wired.
+  - Data.Bimap.Bimap: replaced by ConnectedNodesNames forward+reverse
+    HashMap pair (no `bimap` ecosystem dep).
+  Tests: cardano-tracer 40 → 52 (+12: NodeId round-trip + ord
+  lexicographic; ProtocolsBrake disengaged-default + engage; 4
+  ConnectedNodes operations [insert / re-insert returns false /
+  remove / snapshot]; 5 ConnectedNodesNames operations [bidirectional-
+  lookup / replace-id-clears-old-name / replace-name-clears-old-id /
+  remove-id-clears-both-directions]; 1 Registry insert/get/remove +
+  1 HandleRegistry round-trip with LoggingParams key). Workspace:
+  5,375 → 5,387. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R367 → R372.
 - **R370 — kes-agent-control: env-var derivation (port of optFromEnv).**
   Lands the environment-variable threading layer for kes-agent-control.
   CommonOptions gains two helpers mirroring upstream's

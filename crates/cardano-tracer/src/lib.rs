@@ -27,6 +27,7 @@ use std::process::ExitCode;
 
 pub mod configuration;
 pub mod parser;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 ///
