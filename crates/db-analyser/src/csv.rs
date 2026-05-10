@@ -165,6 +165,7 @@ pub enum CsvWriteError<E: std::error::Error> {
 }
 
 #[cfg(test)]
+#[allow(clippy::type_complexity)]
 mod tests {
     use super::*;
 

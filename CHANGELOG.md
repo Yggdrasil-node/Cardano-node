@@ -274,6 +274,47 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R373 — db-analyser: HasAnalysis trait surface (port of
+  HasAnalysis.hs).** Lands the per-block analysis trait that every
+  era-specific block must satisfy for the db-analyser dispatch arms
+  to operate on it. New has_analysis.rs module ports the upstream
+  Cardano.Tools.DBAnalyser.HasAnalysis surface:
+  - WithLedgerState<Blk, State> struct mirroring upstream
+    `data WithLedgerState blk = WithLedgerState { wlsBlk, wlsStateBefore, wlsStateAfter }`,
+    generic over the block type and the ledger-state-with-values
+    type (era-specific instantiation deferred to per-era rounds).
+  - SizeInBytes type alias (u64) mirroring upstream's `Word32`
+    re-export from Ouroboros.Consensus.Storage.Serialisation; widened
+    to u64 for headroom on per-tx-size measurements.
+  - HasAnalysis trait declaring count_tx_outputs / block_tx_sizes /
+    known_ebbs / emit_traces / block_stats / block_application_metrics,
+    with associated types HeaderHash / ChainHash / LedgerStateValues.
+    The trait is left open (no superclass bounds) — concrete per-era
+    implementors will add their own HasAnnTip / GetPrevHash / Condense
+    bounds when the era-aware ledger surface is exposed at crate
+    boundaries.
+  - BlockApplicationMetric<Blk> closure-tuple type mirroring
+    upstream's `(TextBuilder, WithLedgerState blk -> IO TextBuilder)`,
+    feeding directly into csv.rs's compute_and_write_line_io.
+  - HasProtocolInfo trait with associated types Args / ProtocolInfo /
+    Error and a make_protocol_info constructor mirroring upstream's
+    `class HasProtocolInfo blk where { data Args blk; mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk) }`.
+    The data-family Args becomes an associated type; ProtocolInfo
+    stays opaque pending the consensus-layer surface exposure.
+  Carve-outs documented in module docstring:
+  - HasAnnTip / GetPrevHash / Condense (HeaderHash blk) superclass
+    constraints — left open, picked up by per-era HasAnalysis
+    implementors when era-aware ledger types are exposed.
+  - Ouroboros.Consensus.Node.ProtocolInfo blk — collapsed to an
+    opaque associated type until the era surface lands.
+  - TextBuilder → String, same carve-out as csv.rs.
+  Tests: db-analyser 63 → 72 (+9: WithLedgerState round-trip,
+  count_tx_outputs / block_tx_sizes / known_ebbs / block_stats trait
+  method exercises against a StubBlock, emit_traces state-diff
+  rendering, block_application_metrics CSV-emission with positive +
+  negative deltas, HasProtocolInfo args pass-through).
+  Workspace: 5,400 → 5,409. Parity-matrix entry sister-tool.db-analyser
+  advanced: next_milestone R373 → R374.
 - **R372 — db-analyser: CSV output writers (port of CSV.hs).**
   Lands the CSV-emission helpers used by db-analyser's
   BenchmarkLedgerOps and GetBlockApplicationMetrics analyses. New

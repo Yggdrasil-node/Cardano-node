@@ -8,21 +8,22 @@
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
 //!
-//! Layout mapping (R351 ships types.rs; later rounds populate the rest):
+//! Layout mapping (R373 ships has_analysis.rs; later rounds populate the rest):
 //!
 //! | Upstream `.hs`                                       | Yggdrasil `.rs`              |
 //! |------------------------------------------------------|------------------------------|
 //! | `Tools/DBAnalyser/Types.hs`                          | `types.rs`                   |
 //! | `app/DBAnalyser/Parsers.hs`                          | `parser.rs`                  |
-//! | `Tools/DBAnalyser/HasAnalysis.hs`                    | `has_analysis.rs` (pending)  |
+//! | `Tools/DBAnalyser/HasAnalysis.hs`                    | `has_analysis.rs`            |
 //! | `Tools/DBAnalyser/Analysis.hs`                       | `analysis.rs` (pending)      |
-//! | `Tools/DBAnalyser/CSV.hs`                            | `csv.rs` (pending)           |
+//! | `Tools/DBAnalyser/CSV.hs`                            | `csv.rs`                     |
 //! | `Tools/DBAnalyser/Run.hs`                            | `run.rs` (pending)           |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod csv;
+pub mod has_analysis;
 pub mod parser;
 pub mod types;
 
