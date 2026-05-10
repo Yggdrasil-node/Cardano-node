@@ -18,11 +18,12 @@
 //! |-----------------------------------------------------|--------------------------|
 //! | `Notifications/Types.hs`                            | `types.rs`               |
 //! | `Notifications/Check.hs`                            | `check.rs`               |
-//! | `Notifications/Settings.hs`                         | `settings.rs` (pending)  |
+//! | `Notifications/Settings.hs`                         | `settings.rs`            |
 //! | `Notifications/Timer.hs`                            | `timer.rs` (pending)     |
 //! | `Notifications/Send.hs`                             | `send.rs` (pending)      |
 //! | `Notifications/Email.hs`                            | `email.rs` (pending)     |
 //! | `Notifications/Utils.hs`                            | `utils.rs` (pending)     |
 
 pub mod check;
+pub mod settings;
 pub mod types;

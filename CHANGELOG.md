@@ -274,6 +274,48 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R384 — cardano-tracer: Notifications/Settings.hs port (settings
+  persistence).** Lands the persistence layer for the notification
+  engine. New handlers/notifications/settings.rs module ports the
+  upstream Cardano.Tracer.Handlers.Notifications.Settings surface
+  (now unblocked by R383's Handlers/System.hs):
+  - read_saved_email_settings(Option<&Path>) → EmailSettings —
+    loads from `{config}/notifications/email`, falling back to
+    [`default_email_settings`] on any IO or parse error (matches
+    upstream's `try_` + `decodeStrict'` cascade).
+  - read_saved_events_settings(Option<&Path>) → EventsSettings —
+    same pattern for `{config}/notifications/events`.
+  - save_email_settings_on_disk(Option<&Path>, &EmailSettings) —
+    writes JSON-encoded settings to disk; IO errors silently
+    ignored (matches upstream's `ignore do ...` wrapper).
+  - save_events_settings_on_disk(Option<&Path>, &EventsSettings) —
+    same pattern for events settings.
+  - incomplete_email_settings(&EmailSettings) → bool — true when
+    smtp_host is empty (mirror of upstream's
+    `T.null $ esSMTPHost emailSettings`).
+  - default_email_settings() — port=-1 sentinel + empty strings +
+    Tls.
+  - default_events_settings() — all 6 groups set to (false, 1800).
+  - default_events_state() — (false, 1800) helper.
+  Carve-outs documented:
+  - TracerEnv-record-arg → Option<&Path> per R383's pattern.
+  - Control.Exception.Extra.try_ + ignore → Result::ok() / `let _
+    = ...` mirroring upstream's silent-ignore behavior on missing /
+    unwritable settings file.
+  - Encryption layer (commented out in upstream Settings.hs) NOT
+    ported — Yggdrasil mirrors upstream's actual plain-JSON
+    behavior. If a future round adds encryption it lands as a
+    separate port + carve-out close.
+  Tests: cardano-tracer 101 → 114 (+13: default_events_state matches
+  upstream sentinel; default_events_settings uses default_state for
+  all 6 groups; default_email_settings sentinels [port=-1, ssl=Tls,
+  all-empty strings]; incomplete_email_settings true-for-default +
+  false-when-host-set; read fallback when no file + on unparsable
+  JSON; save+read round-trip for both EmailSettings and
+  EventsSettings; save creates notifications subdir for both kinds;
+  save overwrites previous file). Workspace: 5,505 → 5,518.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R384 → R385.
 - **R383 — cardano-tracer: Handlers/System.hs port (path-resolution
   helpers with XDG fallback).** Lands the path-resolution surface
   that future Notifications/Settings + RTView state-management
