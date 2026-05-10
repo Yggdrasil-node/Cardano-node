@@ -469,7 +469,7 @@
       "area": "sister-tools",
       "feature": "KES key custody + period-rotation daemon \u2014 pure-Rust port mirroring upstream input-output-hk/kes-agent (daemon binary).",
       "status": "partial",
-      "next_milestone": "R345",
+      "next_milestone": "R444",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/kes-agent/kes-agent/",

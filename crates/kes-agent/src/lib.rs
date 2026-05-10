@@ -11,6 +11,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod status;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {
@@ -34,12 +35,24 @@ pub fn run_main() -> ExitCode {
     }
 }
 
-/// Concrete run-loop entry. R335-pattern skeleton: returns the
-/// "not-yet-implemented" sentinel pending later round implementation.
-/// The CLI parser surface (--help / --version) IS functional and
-/// byte-equivalent to upstream.
+/// Concrete run-loop entry. R335-pattern skeleton with R443
+/// structured deferral. The CLI parser surface (--help /
+/// --version) IS functional and byte-equivalent to upstream.
 pub fn run() -> eyre::Result<()> {
-    Err(eyre::eyre!(
-        "yggdrasil-kes-agent: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
-    ))
+    Err(RunError::DaemonDispatchDeferred.into())
+}
+
+/// Errors from the kes-agent `run` entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// Daemon dispatch is deferred. Mirror of upstream's
+    /// `Cardano.KESAgent.Processes.{ServiceMain, ServiceClient, RunCommands}`
+    /// — gated on the named kes-agent mini-arc per the
+    /// playful-tickling-plum.md plan (R344-R354).
+    #[error(
+        "yggdrasil-kes-agent: daemon dispatch deferred (see crates/kes-agent/src/status.rs::\
+         daemon_status for the full deferral rationale). Help/version output IS \
+         byte-equivalent to upstream."
+    )]
+    DaemonDispatchDeferred,
 }

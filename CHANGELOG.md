@@ -274,6 +274,24 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R443 — kes-agent: structured deferral surface (replicates
+  the R439-R442 `*_status()` pattern for the kes-agent daemon
+  carve-out).** Lands `crates/kes-agent/src/status.rs` (new) +
+  `lib.rs` refactor:
+  - **status::DaemonStatus**: 4-field descriptor + helper
+    `daemon_status()`. Documents that the daemon dispatch is
+    gated on the kes-agent mini-arc (R344-R354 — highest-stakes
+    parity since the socket protocol must be byte-equivalent or
+    live SPO setups break).
+  - **RunError::DaemonDispatchDeferred**: replaces the prior
+    raw `eyre!` string. No fields — the deferral is global
+    rather than per-subcommand at this skeleton stage.
+  Tests: yggdrasil-kes-agent unchanged → +2 from new status
+  module (daemon_status describes deferral with kes-agent-mini-
+  arc + crates/crypto/src/kes markers; status is
+  Clone+Eq+Hash-round-trip via HashSet insertion).
+  Workspace: 5,942 → 5,944. Parity-matrix entry sister-
+  tool.kes-agent advanced: next_milestone R345 → R444.
 - **R442 — db-analyser: structured deferral surface (replicates
   the R439-R441 `*_status()` pattern for the
   `Cardano.Tools.DBAnalyser.{HasAnalysis, Analysis, Run}`
