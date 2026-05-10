@@ -274,6 +274,40 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R404 — cardano-tracer: makeAndSendNotification orchestration
+  (closes R389 MakeAndSendNotificationStatus carve-out, unblocked
+  by R403's lettre).** Lands the orchestration that drains
+  per-event-group queues, filters by last-seen timestamp, resolves
+  node names, and sends notifications through R403's lettre-backed
+  SMTP path. New entry-point in
+  `crates/cardano-tracer/src/handlers/notifications/send.rs`:
+  - make_and_send_notification(EmailSettings, EventsQueues,
+    EventGroup, &Arc<Mutex<i64>>, NodeIdResolver) async →
+    StatusMessage. Mirror of upstream `makeAndSendNotification`.
+  - Drains the per-group queue via R385's get_new_events.
+  - Filters to events strictly newer than `*last_time_ms.lock()`.
+  - Builds a unique (NodeId, NodeName) pair list via the
+    caller-supplied resolver closure (mirror of upstream's
+    askNodeNameRaw chain — kept as a closure per R398 plan's
+    option (b) TracerEnv decision).
+  - Formats the body via R389's format_notification_body.
+  - Updates last_time_ms to max(event.time_ms) before send.
+  - Calls R403's create_and_send_email and returns the
+    StatusMessage.
+  Carve-outs documented:
+  - askNodeNameRaw data-point requestor chain replaced with
+    closure injection (R398 option (b)).
+  - Two short-circuits return STATUS_SUCCESS without an SMTP send:
+    empty queue + all-events-older-than-last-seen.
+  - MakeAndSendNotificationStatus struct upgraded from a deferral
+    descriptor to a closure marker: `status: "closed at R404"`.
+  Tests: cardano-tracer 309 → 311 (+2: short-circuits on empty
+  queue [unchanged last_time]; skips events older than last-seen
+  [unchanged last_time]; status describes closure).
+  Workspace: 5,713 → 5,715. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R404 → R405.
+  Per the R398 plan, this leaves R405 (initEventsQueues, the
+  Notifications/Utils.hs entry deferred at R385) unblocked next.
 - **R403 — cardano-tracer: lettre SMTP wired (D1 from R398 plan;
   closes R388 SmtpSendStatus carve-out).** Lands the SMTP send
   path that R388 carved out pending lettre workspace dependency
