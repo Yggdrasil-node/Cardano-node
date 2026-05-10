@@ -266,12 +266,14 @@ pub struct TlsTerminationStatus {
 }
 
 /// Get the deferral-status descriptor for the TLS termination
-/// wiring.
+/// wiring. R429 tightens the integration recipe — see
+/// [`crate::handlers::http_server::tls_bind_plan_status`] for the
+/// authoritative deferral plan + integration recipe.
 pub fn tls_termination_status() -> TlsTerminationStatus {
     TlsTerminationStatus {
-        status: "deferred",
-        depends_on: "axum-server-rustls (or hyper-rustls direct) integration with R408's load_pem_certs / load_pem_key — needs a separate workspace dep for the rustls server adapter",
-        deferred_round: "R411+",
+        status: "deferred — R429 documents the integration recipe",
+        depends_on: "axum-server-rustls (or hyper-rustls direct) integration with R408's load_pem_certs / load_pem_key. R429 documents the integration recipe in http_server::tls_bind_plan_status; see also docs/DEPENDENCIES.md for the audit checklist when adding axum-server.",
+        deferred_round: "R429+",
     }
 }
 
@@ -340,7 +342,10 @@ mod tests {
     #[test]
     fn tls_termination_status_describes_deferral() {
         let s = tls_termination_status();
-        assert_eq!(s.status, "deferred");
+        // R429 tightened the status descriptor — check substring
+        // rather than exact match so future round refinements
+        // don't churn the test.
+        assert!(s.status.contains("deferred"));
         assert!(s.depends_on.contains("rustls"));
     }
 

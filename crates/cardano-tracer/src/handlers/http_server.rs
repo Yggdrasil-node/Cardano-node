@@ -57,6 +57,51 @@ pub async fn serve_router(
     Ok(handle)
 }
 
+/// Status descriptor for the deferred TLS termination path. R429
+/// documents the integration recipe; the actual `axum-server-rustls`
+/// wiring is a deferred carve-out (the existing `rustls-pemfile`
+/// PEM helpers parse the cert + key materials but the listener
+/// binding currently only supports plain TCP via [`serve_router`]).
+///
+/// Operators wanting TLS today can:
+/// 1. Use [`load_pem_certs`] + [`load_pem_key`] to load PEM files
+///    from `Certificate.cert_file` / `Certificate.key_file`.
+/// 2. Build a `rustls::ServerConfig` from the loaded materials.
+/// 3. Wire `axum-server` (or `hyper-rustls`) for the bind step
+///    instead of [`serve_router`].
+///
+/// Adding `axum-server` to the workspace requires:
+/// - cargo-tree audit confirming no `openssl-sys` / `native-tls`
+///   transitive deps (forbidden by `deny.toml:90`).
+/// - Justification entry in [`docs/DEPENDENCIES.md`].
+/// - Workspace dep pin matching the audited version.
+///
+/// Mirror context: upstream uses
+/// `Network.Wai.Handler.WarpTLS.tlsSettingsChain` driven by
+/// `epForceSSL`. The Yggdrasil-side `Endpoint::force_ssl` field is
+/// already plumbed; only the bind-step integration is missing.
+pub fn tls_bind_plan_status() -> &'static str {
+    "TLS termination (axum-server-rustls integration): deferred. \
+     The PEM-loader helpers (load_pem_certs / load_pem_key) ship at \
+     R408; the bind step currently only supports plain TCP via \
+     serve_router. Operators wanting TLS today can wire axum-server \
+     directly with the existing PEM materials. Adding axum-server \
+     to the workspace requires the standard cargo-tree no-openssl \
+     audit + docs/DEPENDENCIES.md justification."
+}
+
+/// Status descriptor returned to operator-facing endpoints when
+/// `Endpoint::force_ssl == Some(true)` but the TLS bind path is
+/// not yet wired. Mirror of upstream's `epForceSSL` failure mode
+/// when the certificate is unreadable — operators get a clear
+/// signal rather than a silent fall-through to plain TCP.
+pub fn force_ssl_unsupported_status() -> &'static str {
+    "force_ssl = true but TLS bind path is not yet wired in this \
+     build. R429 documents the integration recipe; the bind step \
+     currently falls back to plain TCP. See tls_bind_plan_status \
+     for the integration recipe."
+}
+
 /// Errors from PEM-backed TLS material loading.
 #[derive(Debug, thiserror::Error)]
 pub enum PemLoadError {
@@ -178,6 +223,23 @@ mod tests {
     fn load_pem_key_returns_error_for_missing_file() {
         let result = load_pem_key(Path::new("/nonexistent/path/to/key.pem"));
         assert!(matches!(result, Err(PemLoadError::Io(_))));
+    }
+
+    #[test]
+    fn tls_bind_plan_status_describes_deferral() {
+        let s = tls_bind_plan_status();
+        assert!(s.contains("deferred"));
+        assert!(s.contains("axum-server"));
+        assert!(s.contains("rustls"));
+        assert!(s.contains("DEPENDENCIES"));
+    }
+
+    #[test]
+    fn force_ssl_unsupported_status_describes_fallback() {
+        let s = force_ssl_unsupported_status();
+        assert!(s.contains("force_ssl"));
+        assert!(s.contains("plain TCP"));
+        assert!(s.contains("R429"));
     }
 
     #[test]

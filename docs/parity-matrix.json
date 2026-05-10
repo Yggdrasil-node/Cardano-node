@@ -546,7 +546,7 @@
       "area": "sister-tools",
       "feature": "Standalone trace-forwarder + log + metrics aggregator \u2014 pure-Rust port mirroring upstream cardano-tracer/src/Cardano/Tracer/*.hs.",
       "status": "partial",
-      "next_milestone": "R429",
+      "next_milestone": "R430",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-tracer/",

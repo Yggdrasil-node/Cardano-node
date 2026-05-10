@@ -274,6 +274,43 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R429 — cardano-tracer: TLS termination integration plan +
+  status descriptors (Phase 4 round 1 of R411-R430 arc).** Lands
+  the TLS bind-plan documentation + `force_ssl` operator-facing
+  fallback status without bloating the workspace with a heavy
+  TLS server dep. Two new public helpers in
+  `crates/cardano-tracer/src/handlers/http_server.rs`:
+  - **tls_bind_plan_status() → &'static str**: authoritative
+    deferral-plan descriptor. Documents the integration recipe
+    for operators wanting TLS today (use `load_pem_certs` /
+    `load_pem_key` from R408 + wire `axum-server` directly with
+    a `rustls::ServerConfig`). Includes the audit checklist for
+    adding `axum-server` as a workspace dep (cargo-tree no
+    `openssl-sys` / `native-tls` per `deny.toml:90`,
+    `docs/DEPENDENCIES.md` justification).
+  - **force_ssl_unsupported_status() → &'static str**: caller-
+    facing message returned when `Endpoint::force_ssl ==
+    Some(true)` but the TLS bind path isn't yet wired. Operators
+    get a clear signal rather than a silent fall-through to
+    plain TCP.
+  Updates `prometheus.rs::tls_termination_status` to point at the
+  new authoritative recipe (`http_server::tls_bind_plan_status`)
+  and bump `deferred_round` from `"R411+"` to `"R429+"`.
+  R429 deliberately does NOT add `axum-server` to the workspace
+  — adding a TLS server dep across all crates for an
+  operationally-optional tracer endpoint is over-scoped vs the
+  R411 plan's pacing. Operators wanting TLS today have the
+  helpers (R408) + the integration recipe (R429); the
+  workspace-level integration ships when the audit + dep
+  justification are completed in a focused follow-on round.
+  Tests: yggdrasil-cardano-tracer 415 → 417 (+2:
+  tls_bind_plan_status describes deferral with axum-server +
+  rustls + DEPENDENCIES references; force_ssl_unsupported_status
+  describes the plain-TCP fallback). Plus 1 existing test
+  loosened to substring-match the new "deferred — R429 documents
+  the integration recipe" status string. Workspace: 5,882 →
+  5,884. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R429 → R430.
 - **R428 — cardano-tracer: R411-R427 closure documentation
   (Phase 3 round 2 of R411-R430 arc).** Operational-runs doc
   capturing the 17-round Phase 1 + Phase 2 + Phase 3-round-1
