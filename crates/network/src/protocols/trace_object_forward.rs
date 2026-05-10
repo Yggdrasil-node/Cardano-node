@@ -351,6 +351,159 @@ impl TraceObjectForwardState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CBOR wire codec
+// ---------------------------------------------------------------------------
+//
+// **Strict mirror:** trace-forward/src/Trace/Forward/Protocol/TraceObject/Codec.hs.
+//
+// Wire format mirrors upstream's `codecTraceObjectForward`:
+//
+// | Wire tag | Wire shape                                | Message                  |
+// |----------|-------------------------------------------|--------------------------|
+// |    1     | `[1, blocking_bool, n_trace_objects]`     | MsgTraceObjectsRequest   |
+// |    2     | `[2]`                                     | MsgDone                  |
+// |    3     | `[3, [trace_object, …]]`                  | MsgTraceObjectsReply     |
+//
+// Note: wire tags differ from the documentation ordinal in
+// [`TraceObjectForwardMessage`]. They follow upstream's `encodeWord`
+// values (1 / 2 / 3) — kept verbatim for byte-for-byte parity.
+//
+// The codec is generic over the trace-object payload via a
+// caller-supplied closure, mirroring upstream's
+// `([lo] -> CBOR.Encoding) + (forall s. CBOR.Decoder s [lo])` pair.
+// `NumberOfTraceObjects` is hardcoded to `Word16` unsigned encoding
+// (upstream parameterizes it on principle, but every operational call
+// site uses `encodeWord16`).
+//
+// Carve-outs (NOT ported, by design):
+//
+// - **`MonadST` constraint + `MonadST m` bound**: upstream threads
+//   the `m` monad through `Codec` for ST-state-thread parametricity.
+//   Yggdrasil's [`yggdrasil_ledger::cbor::Encoder`] / `Decoder` pair
+//   is concrete (no monad transformer), matching the existing
+//   pattern in [`super::keep_alive`] and other Yggdrasil mini-
+//   protocol codecs.
+// - **`SomeMessage st` existential**: upstream's `decode` returns a
+//   `SomeMessage st` because the result type is dependent on the
+//   state token. Yggdrasil returns
+//   `TraceObjectForwardMessage<TraceObj>` directly + relies on
+//   [`TraceObjectForwardState::transition`] for state-validation —
+//   matching the precedent in `keep_alive::from_cbor`.
+
+use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+
+impl<TraceObj> TraceObjectForwardMessage<TraceObj> {
+    /// Encode this message to CBOR bytes.
+    ///
+    /// The trace-object reply list is encoded by the caller-supplied
+    /// `encode_reply_list` closure, mirroring upstream's
+    /// `([lo] -> CBOR.Encoding)` parameter.
+    ///
+    /// `MsgTraceObjectsRequest`'s `n_trace_objects` field is encoded
+    /// as a CBOR unsigned integer (Word16), matching every
+    /// operational upstream call site.
+    pub fn to_cbor<F>(&self, mut encode_reply_list: F) -> Vec<u8>
+    where
+        F: FnMut(&mut Encoder, &[TraceObj]),
+    {
+        let mut enc = Encoder::new();
+        match self {
+            Self::MsgTraceObjectsRequest {
+                blocking,
+                n_trace_objects,
+            } => {
+                enc.array(3).unsigned(1);
+                enc.bool(matches!(blocking, StBlockingStyle::StBlocking));
+                enc.unsigned(u64::from(n_trace_objects.0));
+            }
+            Self::MsgDone => {
+                enc.array(1).unsigned(2);
+            }
+            Self::MsgTraceObjectsReply { reply } => {
+                enc.array(2).unsigned(3);
+                encode_reply_list(&mut enc, reply.items());
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes given the current protocol
+    /// state. The `state` parameter is required because the wire
+    /// format of `MsgTraceObjectsReply` does NOT carry the blocking
+    /// flag — it is inferred from the originating
+    /// `MsgTraceObjectsRequest`'s blocking style stored in
+    /// [`TraceObjectForwardState::StBusy`]. Mirror of upstream's
+    /// `stateToken :: StateToken st` decode argument.
+    ///
+    /// The trace-object reply list is decoded by the caller-supplied
+    /// `decode_reply_list` closure, mirroring upstream's
+    /// `(forall s. CBOR.Decoder s [lo])` parameter.
+    pub fn from_cbor_in_state<F>(
+        state: TraceObjectForwardState,
+        data: &[u8],
+        mut decode_reply_list: F,
+    ) -> Result<Self, LedgerError>
+    where
+        F: FnMut(&mut Decoder<'_>) -> Result<Vec<TraceObj>, LedgerError>,
+    {
+        let mut dec = Decoder::new(data);
+        let len = dec.array()?;
+        let key = dec.unsigned()?;
+        let msg = match (key, len, state) {
+            // (1, 3, StIdle): MsgTraceObjectsRequest
+            (1, 3, TraceObjectForwardState::StIdle) => {
+                let blocking_bool = dec.bool()?;
+                let n_raw = dec.unsigned()?;
+                let blocking = if blocking_bool {
+                    StBlockingStyle::StBlocking
+                } else {
+                    StBlockingStyle::StNonBlocking
+                };
+                Self::MsgTraceObjectsRequest {
+                    blocking,
+                    n_trace_objects: NumberOfTraceObjects(n_raw as u16),
+                }
+            }
+            // (2, 1, StIdle): MsgDone
+            (2, 1, TraceObjectForwardState::StIdle) => Self::MsgDone,
+            // (3, 2, StBusy(blocking)): MsgTraceObjectsReply
+            (3, 2, TraceObjectForwardState::StBusy(blocking)) => {
+                let los = decode_reply_list(&mut dec)?;
+                let reply = match (blocking, los.is_empty()) {
+                    (StBlockingStyle::StBlocking, true) => {
+                        // Mirror upstream's
+                        // `fail "codecTraceObjectForward: MsgTraceObjectsReply: empty list not permitted"`.
+                        return Err(LedgerError::CborDecodeError(String::from(
+                            "codecTraceObjectForward: \
+                             MsgTraceObjectsReply: empty list not permitted",
+                        )));
+                    }
+                    (StBlockingStyle::StBlocking, false) => BlockingReplyList::Blocking(los),
+                    (StBlockingStyle::StNonBlocking, _) => BlockingReplyList::NonBlocking(los),
+                };
+                Self::MsgTraceObjectsReply { reply }
+            }
+            // Any other (key, len, state) is illegal in this codec.
+            // Upstream's StDone branch hits `notActiveState`; we
+            // surface that as a CBOR-level invariant failure so the
+            // caller's protocol driver doesn't silently accept a
+            // post-terminal message.
+            _ => {
+                return Err(LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: key as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(LedgerError::CborTrailingBytes(dec.remaining()));
+        }
+        Ok(msg)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,5 +724,227 @@ mod tests {
         assert!(done.transition(&rep).is_err());
         let d: TraceObjectForwardMessage<TestPayload> = TraceObjectForwardMessage::MsgDone;
         assert!(done.transition(&d).is_err());
+    }
+
+    // ----- Codec round-trip tests ------------------------------------------
+
+    /// Encodes the test payload as a CBOR `[u32]` array — sufficient
+    /// for round-trip parity tests; not the production payload codec
+    /// (production uses cardano-tracer's TraceObject CBOR shape).
+    fn encode_test_payloads(enc: &mut Encoder, list: &[TestPayload]) {
+        enc.array(list.len() as u64);
+        for p in list {
+            enc.unsigned(u64::from(p.0));
+        }
+    }
+
+    fn decode_test_payloads(dec: &mut Decoder<'_>) -> Result<Vec<TestPayload>, LedgerError> {
+        let len = dec.array()?;
+        let mut out = Vec::with_capacity(len as usize);
+        for _ in 0..len {
+            out.push(TestPayload(dec.unsigned()? as u32));
+        }
+        Ok(out)
+    }
+
+    #[test]
+    fn codec_request_blocking_round_trip() {
+        let msg: TraceObjectForwardMessage<TestPayload> =
+            TraceObjectForwardMessage::MsgTraceObjectsRequest {
+                blocking: StBlockingStyle::StBlocking,
+                n_trace_objects: NumberOfTraceObjects(7),
+            };
+        let bytes = msg.to_cbor(encode_test_payloads);
+        let decoded = TraceObjectForwardMessage::from_cbor_in_state(
+            TraceObjectForwardState::StIdle,
+            &bytes,
+            decode_test_payloads,
+        )
+        .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_request_non_blocking_round_trip() {
+        let msg: TraceObjectForwardMessage<TestPayload> =
+            TraceObjectForwardMessage::MsgTraceObjectsRequest {
+                blocking: StBlockingStyle::StNonBlocking,
+                n_trace_objects: NumberOfTraceObjects(0),
+            };
+        let bytes = msg.to_cbor(encode_test_payloads);
+        let decoded = TraceObjectForwardMessage::from_cbor_in_state(
+            TraceObjectForwardState::StIdle,
+            &bytes,
+            decode_test_payloads,
+        )
+        .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_msg_done_round_trip() {
+        let msg: TraceObjectForwardMessage<TestPayload> = TraceObjectForwardMessage::MsgDone;
+        let bytes = msg.to_cbor(encode_test_payloads);
+        let decoded = TraceObjectForwardMessage::from_cbor_in_state(
+            TraceObjectForwardState::StIdle,
+            &bytes,
+            decode_test_payloads,
+        )
+        .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_reply_blocking_round_trip() {
+        let msg: TraceObjectForwardMessage<TestPayload> =
+            TraceObjectForwardMessage::MsgTraceObjectsReply {
+                reply: BlockingReplyList::blocking(vec![
+                    TestPayload(10),
+                    TestPayload(20),
+                    TestPayload(30),
+                ])
+                .expect("seed"),
+            };
+        let bytes = msg.to_cbor(encode_test_payloads);
+        let decoded = TraceObjectForwardMessage::from_cbor_in_state(
+            TraceObjectForwardState::StBusy(StBlockingStyle::StBlocking),
+            &bytes,
+            decode_test_payloads,
+        )
+        .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_reply_non_blocking_round_trip_empty_ok() {
+        let msg: TraceObjectForwardMessage<TestPayload> =
+            TraceObjectForwardMessage::MsgTraceObjectsReply {
+                reply: BlockingReplyList::non_blocking(vec![]),
+            };
+        let bytes = msg.to_cbor(encode_test_payloads);
+        let decoded = TraceObjectForwardMessage::from_cbor_in_state(
+            TraceObjectForwardState::StBusy(StBlockingStyle::StNonBlocking),
+            &bytes,
+            decode_test_payloads,
+        )
+        .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_reply_blocking_empty_list_rejected() {
+        // Construct an on-the-wire MsgTraceObjectsReply with an empty
+        // list by encoding the envelope manually — the safe
+        // constructor BlockingReplyList::blocking would reject this
+        // upfront, but a malicious peer could send an empty-list reply
+        // claiming blocking style. The decoder must reject it.
+        let mut enc = Encoder::new();
+        enc.array(2).unsigned(3);
+        enc.array(0); // empty payload list
+        let bytes = enc.into_bytes();
+
+        let result = TraceObjectForwardMessage::<TestPayload>::from_cbor_in_state(
+            TraceObjectForwardState::StBusy(StBlockingStyle::StBlocking),
+            &bytes,
+            decode_test_payloads,
+        );
+        match result {
+            Err(LedgerError::CborDecodeError(s)) => {
+                assert!(
+                    s.contains("empty list not permitted"),
+                    "unexpected error message: {s}"
+                );
+            }
+            other => panic!("expected CborDecodeError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn codec_request_in_busy_state_rejected() {
+        // The wire bytes for a valid MsgTraceObjectsRequest, but
+        // attempting to decode in StBusy state (which only accepts
+        // MsgTraceObjectsReply) — must error.
+        let req: TraceObjectForwardMessage<TestPayload> =
+            TraceObjectForwardMessage::MsgTraceObjectsRequest {
+                blocking: StBlockingStyle::StBlocking,
+                n_trace_objects: NumberOfTraceObjects(5),
+            };
+        let bytes = req.to_cbor(encode_test_payloads);
+        let result = TraceObjectForwardMessage::<TestPayload>::from_cbor_in_state(
+            TraceObjectForwardState::StBusy(StBlockingStyle::StBlocking),
+            &bytes,
+            decode_test_payloads,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::CborTypeMismatch { .. })),
+            "expected CborTypeMismatch in StBusy, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn codec_reply_in_idle_state_rejected() {
+        // The wire bytes for a valid MsgTraceObjectsReply, but
+        // attempting to decode in StIdle state — must error.
+        let rep: TraceObjectForwardMessage<TestPayload> =
+            TraceObjectForwardMessage::MsgTraceObjectsReply {
+                reply: BlockingReplyList::non_blocking(vec![TestPayload(99)]),
+            };
+        let bytes = rep.to_cbor(encode_test_payloads);
+        let result = TraceObjectForwardMessage::<TestPayload>::from_cbor_in_state(
+            TraceObjectForwardState::StIdle,
+            &bytes,
+            decode_test_payloads,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::CborTypeMismatch { .. })),
+            "expected CborTypeMismatch in StIdle, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn codec_decode_in_done_state_always_errors() {
+        // Encode a valid MsgDone, then try to decode in StDone state
+        // — upstream's `notActiveState` branch. Yggdrasil surfaces
+        // this as a CborTypeMismatch (inactive-state decode).
+        let done: TraceObjectForwardMessage<TestPayload> = TraceObjectForwardMessage::MsgDone;
+        let bytes = done.to_cbor(encode_test_payloads);
+        let result = TraceObjectForwardMessage::<TestPayload>::from_cbor_in_state(
+            TraceObjectForwardState::StDone,
+            &bytes,
+            decode_test_payloads,
+        );
+        assert!(
+            matches!(result, Err(LedgerError::CborTypeMismatch { .. })),
+            "expected CborTypeMismatch in StDone, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn codec_request_wire_format_is_byte_stable() {
+        // Lock down the upstream wire format for MsgTraceObjectsRequest
+        // (blocking=true, n=1):
+        //   [1, true, 1] in CBOR is:
+        //     0x83  array(3)
+        //     0x01  unsigned 1 (key)
+        //     0xF5  bool true
+        //     0x01  unsigned 1 (n_trace_objects)
+        let msg: TraceObjectForwardMessage<TestPayload> =
+            TraceObjectForwardMessage::MsgTraceObjectsRequest {
+                blocking: StBlockingStyle::StBlocking,
+                n_trace_objects: NumberOfTraceObjects(1),
+            };
+        let bytes = msg.to_cbor(encode_test_payloads);
+        assert_eq!(bytes, vec![0x83, 0x01, 0xF5, 0x01]);
+    }
+
+    #[test]
+    fn codec_msg_done_wire_format_is_byte_stable() {
+        // [2] → 0x81 array(1), 0x02 unsigned 2.
+        let msg: TraceObjectForwardMessage<TestPayload> = TraceObjectForwardMessage::MsgDone;
+        let bytes = msg.to_cbor(encode_test_payloads);
+        assert_eq!(bytes, vec![0x81, 0x02]);
     }
 }

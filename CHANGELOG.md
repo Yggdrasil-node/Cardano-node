@@ -274,6 +274,66 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R418 — network: trace_object_forward.rs CBOR codec port of
+  Trace.Forward.Protocol.TraceObject.Codec.hs (Phase 2 round 3 of
+  R411-R430 arc).** Strict-mirror port of the trace-forwarder
+  TraceObject CBOR encoder/decoder pair, completing the protocol-
+  level wire contract before R419 wires the responder driver.
+  Lands as `to_cbor` + `from_cbor_in_state` methods on
+  `TraceObjectForwardMessage<TraceObj>` in the same file as R417's
+  type port (matching the precedent set by `keep_alive.rs` —
+  type + codec in one file). Two new methods + one new dependency
+  pin:
+  - **TraceObjectForwardMessage::to_cbor(&amp;self, encode_reply_list:
+    F) → Vec&lt;u8&gt;**: emits the upstream wire format byte-for-byte —
+    `[1, blocking_bool, n_trace_objects]` for `MsgTraceObjectsRequest`,
+    `[2]` for `MsgDone`, `[3, [trace_object,…]]` for
+    `MsgTraceObjectsReply`. The reply-list payload is encoded by the
+    caller-supplied closure (mirror of upstream's
+    `[lo] -&gt; CBOR.Encoding` parameter). `NumberOfTraceObjects` is
+    hardcoded to Word16 unsigned encoding (every operational upstream
+    call site uses `encodeWord16`).
+  - **TraceObjectForwardMessage::from_cbor_in_state(state, data,
+    decode_reply_list: F) → Result&lt;Self, LedgerError&gt;**: decodes
+    according to the protocol state. The state arg is required
+    because `MsgTraceObjectsReply`'s wire format does NOT carry the
+    blocking flag — it is inferred from the originating
+    `MsgTraceObjectsRequest`'s blocking style stored in
+    `StBusy(blocking)`. Mirror of upstream's
+    `stateToken :: StateToken st` decoder argument. The empty-list-
+    in-blocking-reply case returns `LedgerError::CborDecodeError`
+    with upstream's exact failure message
+    (`codecTraceObjectForward: MsgTraceObjectsReply: empty list not
+    permitted`) for byte-equivalent diagnostics. State-mismatched
+    decodes (`MsgTraceObjectsRequest` in `StBusy`,
+    `MsgTraceObjectsReply` in `StIdle`, any message in `StDone`) all
+    surface as `CborTypeMismatch` — same information as upstream's
+    `notActiveState` + per-state failure branches.
+  Carve-outs documented inline:
+  - **`MonadST` constraint**: collapses since
+    `yggdrasil_ledger::cbor::{Encoder, Decoder}` are concrete (no
+    monad-transformer). Matches the precedent set by
+    `keep_alive::to_cbor` and the rest of Yggdrasil's mini-protocol
+    codecs.
+  - **`SomeMessage st` existential**: collapses since
+    `from_cbor_in_state` returns
+    `TraceObjectForwardMessage&lt;TraceObj&gt;` directly + relies on
+    `TraceObjectForwardState::transition` (R417) for state-validation.
+  Tests: yggdrasil-network 728 → 739 (+11: blocking-request round
+  trip; non-blocking-request round trip; MsgDone round trip;
+  blocking-reply round trip; non-blocking-reply with empty list ok;
+  blocking-reply with empty list on the wire rejected with upstream's
+  exact diagnostic; request-bytes-in-StBusy rejected; reply-bytes-
+  in-StIdle rejected; decode-in-StDone always errors; request wire
+  format byte-stable [0x83, 0x01, 0xF5, 0x01]; MsgDone wire format
+  byte-stable [0x81, 0x02]). Workspace: 5,813 → 5,824. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone
+  R418 → R419. Per the R411 plan, R419 ports
+  `Trace.Forward.Protocol.TraceObject.Acceptor` — the responder side
+  of the protocol's typed-protocol driver loop, wiring the codec
+  into a peer-thread that consumes incoming
+  `MsgTraceObjectsRequest`s and produces
+  `MsgTraceObjectsReply`s on demand.
 - **R417 — network: protocols/trace_object_forward.rs port of
   Trace.Forward.Protocol.TraceObject.Type.hs (Phase 2 round 2 of
   R411-R430 arc).** Strict-mirror port of the trace-forwarder
