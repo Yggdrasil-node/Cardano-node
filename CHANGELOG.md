@@ -274,6 +274,79 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R423 — cardano-tracer: acceptors/utils.rs port of
+  Cardano.Tracer.Acceptors.Utils.hs (Phase 2 round 8 of R411-R430
+  arc).** Strict-mirror port of the connecting tissue between
+  cardano-tracer's runtime state (TracerEnv) and the trace-forwarder
+  acceptor protocol drivers. Wires the existing Yggdrasil primitives
+  (`ConnectedNodes`, `ConnectedNodesNames`, `AcceptedMetrics`,
+  `MetricsStore`, `MetricsLocalStore`) into the upstream-named call
+  surface used by `Acceptors/Server.hs` (R424 pending) and
+  `Acceptors/Client.hs` (R425 pending). Two new files:
+  - **crates/cardano-tracer/src/acceptors.rs**: parent shell module
+    with synthesis docstring documenting the
+    `Cardano.Tracer.Acceptors.{Server, Client, Utils, Run}` namespace
+    layout.
+  - **crates/cardano-tracer/src/acceptors/utils.rs** (mirror of
+    upstream's 140-line `Acceptors/Utils.hs`): four public functions
+    + 2 status descriptors:
+    - **add_connected_node(connected_nodes, remote_address) → bool**:
+      mirror of upstream's `addConnectedNode`. Returns true on first
+      insert, false on reconnect-race no-op.
+    - **prepare_metrics_stores(connected_nodes, accepted_metrics,
+      remote_address) → (MetricsStore, MetricsLocalStore)**: mirror
+      of upstream's `prepareMetricsStores`. Adds the new NodeId to
+      connected_nodes, looks up (or creates) the per-node
+      MetricsStore via R412's `get_or_insert_store`, returns the
+      pair. The synthetic `ekg.server_timestamp_ms` counter
+      registration is folded into `MetricsStore::insert_resp` (R412),
+      so this function doesn't need an explicit registration step.
+    - **remove_disconnected_node(connected_nodes,
+      connected_nodes_names, accepted_metrics, remote_address)**:
+      mirror of upstream's `removeDisconnectedNode`. Removes the
+      NodeId from all three relevant maps. Yggdrasil performs the
+      removals sequentially (each map independently locked); safe
+      because the disconnect signal is the unique terminator for
+      the NodeId's lifecycle. `te_dp_requestors` removal is no-op
+      pending the DataPointRequestors port.
+    - **store(metrics_store, metrics_local, response_metrics)**:
+      mirror of upstream's `store tracerEnv (NodeId nodeId)
+      (ekgStore, localStore) resp@(ResponseMetrics ms)`. Threads the
+      batch through R412's `insert_resp` + the local-store delta
+      tracking via `diff_and_advance`. Time-series forwarding is
+      no-op pending R411 D1's deferred Option C decision.
+    - **prepare_data_point_requestor_status() / notify_about_node_disconnected_status()**:
+      programmatic carve-out descriptors.
+  Carve-outs documented in module docstring:
+  - **`prepareDataPointRequestor`**: depends on
+    `Trace.Forward.Utils.DataPoint.initDataPointRequestor` (port
+    deferred to R425+).
+  - **`notifyAboutNodeDisconnected`** (RTView-conditional): non-
+    RTView path is `pure ()`, matching Yggdrasil's no-op default.
+  - **`Cardano.Timeseries.Component`**: optional time-series sink
+    (R411 D1 Option C deferred).
+  - **TracerEnv-record-arg**: per the R398 plan's TracerEnv
+    option (b) decision, helpers take the slice of state they need
+    directly rather than coupling to the full TracerEnv record.
+  Updates `crates/cardano-tracer/src/lib.rs` with `pub mod acceptors`
+  declaration.
+  Tests: yggdrasil-cardano-tracer 385 → 394 (+9: add_connected_node
+  inserts new + reports duplicate; conn-id sanitization strips
+  pipe/quote chars; prepare_metrics_stores creates store for new
+  node; returns existing store for reconnect (verified via
+  Arc-shared inner BTreeMap); remove_disconnected_node clears all
+  3 maps; idempotent on missing NodeId; store inserts response
+  metrics + auto-populates synthetic timestamp counter;
+  prepare_data_point_requestor_status describes deferral;
+  notify_about_node_disconnected_status describes RTView carve-out).
+  Workspace: 5,852 → 5,861. Parity-matrix entry sister-tool.cardano-
+  tracer advanced: next_milestone R423 → R424. Per the R411 plan,
+  R424 ports `Cardano.Tracer.Acceptors.Server` — the `runAcceptorsServer`
+  responder-mode entry that wires R421's `accept_trace_objects_resp`
+  + R423's `prepare_metrics_stores` / `remove_disconnected_node` /
+  `store` into a top-level mux dispatcher. EKG + DataPoint sub-
+  protocols are deferred carve-outs (the trace-object sub-protocol
+  is fully wired and will exercise the end-to-end pipe).
 - **R422 — network: ForwardSink + trace_object_forward_utils.rs
   port of Trace.Forward.Utils.{ForwardSink, TraceObject}.hs
   (Phase 2 round 7 of R411-R430 arc).** Strict-mirror port of the
