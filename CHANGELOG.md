@@ -274,6 +274,43 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R440 — kes-agent-control: structured deferral surface
+  (replicates the R439 `*_status()` pattern for the
+  `Cardano.KESAgent.Processes.ControlClient` socket I/O carve-
+  out).** Lands in `crates/kes-agent-control/src/status.rs` (new)
+  + `lib.rs` refactor. Three new public types + helpers:
+  - **status::ControlClientStatus**: 4-field descriptor (status,
+    depends_on, deferred_round, upstream_reference) returned by
+    [`status::control_client_status`]. Documents that the socket
+    I/O surface is gated on the kes-agent server mini-arc landing
+    first (R344-R354 per the playful-tickling-plum.md plan —
+    highest-stakes parity in the sister-tools arc since the
+    socket protocol must be byte-equivalent or live SPO setups
+    break).
+  - **status::Subcommand enum**: `GenStagedKey | ExportStagedVkey
+    | DropStagedKey | InstallKey | DropKey | Info` — stable
+    identifier for one of the 6 kes-agent-control subcommands.
+    `cli_verb() → &'static str` returns the canonical CLI verb
+    (mirror of upstream's optparse-applicative `command`
+    keyword); `Display` impl uses it. Used by
+    `RunError::SubcommandSocketIoDeferred` to surface the
+    operator's selected subcommand without coupling to the full
+    `types::ProgramOptions` payload.
+  - **RunError enum**: `SubcommandSocketIoDeferred { subcommand:
+    status::Subcommand }` — replaces the prior raw `eyre!`
+    string. Callers can now match on the specific subcommand for
+    programmatic dispatch.
+  `lib.rs::run` is rewired: no behavior change (still returns
+  Err) but the error is now a structured `RunError` rather than
+  a free-text `eyre!` string. The error message references
+  `control_client_status` for the full deferral rationale.
+  Tests: yggdrasil-kes-agent-control 43 → 47 (+4:
+  control_client_status describes deferral with kes-agent-server-
+  arc + ControlClient markers; subcommand cli_verbs match
+  upstream-canonical 6 verbs; Display impl matches cli_verb;
+  status is Clone+Eq+Hash-round-trip via HashSet insertion).
+  Workspace: 5,934 → 5,938. Parity-matrix entry sister-
+  tool.kes-agent-control advanced: next_milestone R371 → R441.
 - **R439 — snapshot-converter: structured deferral surface
   (replaces the `Err(eyre::eyre!)` stub with a typed `RunError`
   enum + programmatic `*_status()` introspection helpers).** Lands

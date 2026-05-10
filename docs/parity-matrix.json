@@ -508,7 +508,7 @@
       "area": "sister-tools",
       "feature": "kes-agent control CLI \u2014 pure-Rust port mirroring upstream input-output-hk/kes-agent (control binary).",
       "status": "partial",
-      "next_milestone": "R371",
+      "next_milestone": "R441",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/kes-agent/kes-agent/",

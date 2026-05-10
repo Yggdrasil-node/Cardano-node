@@ -23,6 +23,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod parser;
+pub mod status;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -74,23 +75,47 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// R362 lands argv → [`types::ProgramOptions`] dispatch. The actual
-/// per-subcommand ControlClient socket I/O lands in subsequent rounds
-/// per the per-tool roadmap (gated on the kes-agent server mini-arc).
+/// R362 wires argv → [`types::ProgramOptions`] dispatch. The actual
+/// per-subcommand ControlClient socket I/O is deferred to a
+/// follow-on round gated on the kes-agent server mini-arc landing
+/// first (highest-stakes parity per the R326-R459 plan — the
+/// socket protocol must be byte-equivalent or live SPO setups
+/// break).
+///
+/// R440 surfaces the deferral via the [`RunError`] enum +
+/// [`status::control_client_status`] introspection helper rather
+/// than a raw `eyre::eyre!` string. Callers can match on the
+/// specific subcommand for programmatic dispatch.
 pub fn run(program_options: &types::ProgramOptions) -> eyre::Result<()> {
-    use types::ProgramOptions;
     let subcommand = match program_options {
-        ProgramOptions::RunGenKey(_) => "gen-staged-key",
-        ProgramOptions::RunQueryKey(_) => "export-staged-vkey",
-        ProgramOptions::RunDropStagedKey(_) => "drop-staged-key",
-        ProgramOptions::RunInstallKey(_) => "install-key",
-        ProgramOptions::RunDropKey(_) => "drop-key",
-        ProgramOptions::RunGetInfo(_) => "info",
+        types::ProgramOptions::RunGenKey(_) => status::Subcommand::GenStagedKey,
+        types::ProgramOptions::RunQueryKey(_) => status::Subcommand::ExportStagedVkey,
+        types::ProgramOptions::RunDropStagedKey(_) => status::Subcommand::DropStagedKey,
+        types::ProgramOptions::RunInstallKey(_) => status::Subcommand::InstallKey,
+        types::ProgramOptions::RunDropKey(_) => status::Subcommand::DropKey,
+        types::ProgramOptions::RunGetInfo(_) => status::Subcommand::Info,
     };
-    Err(eyre::eyre!(
-        "yggdrasil-kes-agent-control: ControlClient socket I/O for `{subcommand}' \
-         not yet implemented (R362 ships argv → ProgramOptions dispatch; \
-         per-subcommand runtime lands in subsequent rounds gated on the \
-         kes-agent server mini-arc)."
-    ))
+    Err(RunError::SubcommandSocketIoDeferred { subcommand }.into())
+}
+
+/// Errors from the kes-agent-control `run` entry point.
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    /// ControlClient socket I/O for the selected subcommand is
+    /// deferred. Mirror of upstream
+    /// `Cardano.KESAgent.Processes.ControlClient` — connects to
+    /// a running kes-agent daemon over its Unix-domain socket and
+    /// drives the per-subcommand runner. Yggdrasil's port is
+    /// gated on the kes-agent server mini-arc landing first
+    /// (highest-stakes parity per the R326-R459 plan; socket
+    /// protocol must be byte-equivalent or live SPO setups break).
+    #[error(
+        "yggdrasil-kes-agent-control: ControlClient socket I/O for `{subcommand}' deferred — \
+         gated on the kes-agent server mini-arc (see crates/kes-agent-control/src/status.rs::\
+         control_client_status for the full deferral rationale)."
+    )]
+    SubcommandSocketIoDeferred {
+        /// The subcommand the operator invoked.
+        subcommand: status::Subcommand,
+    },
 }
