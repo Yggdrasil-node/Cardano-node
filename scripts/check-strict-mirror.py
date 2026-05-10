@@ -11,7 +11,7 @@ Also cross-checks the local working tree against the git index
 tracked in `git ls-files` is flagged as an index-vs-tree drift
 violation. This catches the R310 failure mode where an over-broad
 `.gitignore` pattern silently swallowed an entire strict-mirror
-subtree (`crates/cardano-cli/src/era_independent/debug/`) — the
+subtree (`crates/tools/cardano-cli/src/era_independent/debug/`) — the
 local tree built clean but a fresh CI clone failed module
 resolution.
 

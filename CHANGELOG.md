@@ -274,6 +274,57 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R447 — workspace: sister-tools relocated under `crates/tools/`
+  (organizational restructure; zero functional change).** Operator-
+  requested cleanup that groups the 13 sister tools (bech32,
+  cardano-cli, cardano-submit-api, cardano-testnet, cardano-tracer,
+  db-analyser, db-synthesizer, db-truncater, dmq-node, kes-agent,
+  kes-agent-control, snapshot-converter, tx-generator) under a
+  single `crates/tools/<tool>/` subdirectory. After R447, `crates/`
+  has 8 entries instead of 19 (6 core crates + 1 `tools/` grouping
+  + `AGENTS.md`).
+  Path changes:
+  - Each `crates/<tool>/` → `crates/tools/<tool>/` via `git mv` (13
+    moves; preserves git history per file).
+  - Workspace `Cargo.toml` `[workspace.members]` entries rewritten
+    to the new paths + reorganized with a "Sister tools" comment
+    block introducing the grouping.
+  - Workspace dep entry `yggdrasil-cardano-cli = { path = "..." }`
+    rewritten to `crates/tools/cardano-cli`.
+  - 5 sister-tool `Cargo.toml` files with `path = "../<core>"`
+    workspace-internal dep entries updated to `path = "../../<core>"`
+    (cardano-submit-api, db-truncater, db-analyser, db-synthesizer
+    — all referencing core crates one directory up).
+  - `docs/parity-matrix.json` — 12 `rust_surface` entries rewritten
+    to `crates/tools/<tool>/` (validated by `check-parity-matrix.py`).
+  - `docs/strict-mirror-audit.tsv` — regenerated via
+    `audit-strict-mirror.py`; 321 rows under the new `crates/tools/`
+    prefix, 0 stale rows under the old `crates/<tool>/` paths.
+  - `crates/AGENTS.md` — Current Layout section gains a "Directory
+    grouping (R447 restructure)" block explaining the 6 core +
+    `tools/` split; LOC-count helper bash block updated to iterate
+    `crates/{core...}/` + `crates/tools/*/`.
+  - `scripts/check-strict-mirror.py` — single comment-only path
+    reference updated.
+  Note: the strict-mirror gate's `git ls-files -- "crates/*.rs"`
+  pathspec recurses correctly through `crates/tools/<tool>/src/`
+  without modification — pathspec `*` in git ls-files is recursive,
+  unlike shell glob. `scripts/audit-strict-mirror.py`'s `RUST_ROOTS`
+  already used `ROOT / "crates"` which walks all subdirs.
+  Functional impact: zero. Workspace tests unchanged at 5,962
+  passing (every test that ran before R447 still runs + passes
+  post-R447). All 5 verification gates clean:
+  - `cargo fmt --all -- --check`
+  - `cargo check-all`
+  - `cargo test-all` (5,962 passing, 0 failing)
+  - `cargo lint`
+  - `python3 scripts/check-strict-mirror.py --fail-on-violation`
+  - Plus `python3 scripts/check-parity-matrix.py` (20 entries
+    validated against reference tag 11.0.1).
+  Organizational benefit: `crates/` is now visually compact —
+  scanning the directory listing surfaces the 6 core runtime
+  crates immediately, with the sister-tools grouped under a single
+  `tools/` entry rather than interleaved among the runtime crates.
 - **R446 — storage: snapshot-converter format-version design
   scaffolding (operator-approved design round).** Lands the
   Yggdrasil-format ledger-snapshot version-tag scheme +

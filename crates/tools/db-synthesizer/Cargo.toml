@@ -29,4 +29,4 @@ eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-yggdrasil-ledger = { path = "../ledger" }
+yggdrasil-ledger = { path = "../../ledger" }

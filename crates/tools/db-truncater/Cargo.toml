@@ -27,8 +27,8 @@ path = "src/main.rs"
 clap = { workspace = true }
 eyre = { workspace = true }
 thiserror = { workspace = true }
-yggdrasil-ledger = { path = "../ledger" }
-yggdrasil-storage = { path = "../storage" }
+yggdrasil-ledger = { path = "../../ledger" }
+yggdrasil-storage = { path = "../../storage" }
 
 [dev-dependencies]
 tempfile = "3"

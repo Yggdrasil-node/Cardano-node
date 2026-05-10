@@ -43,6 +43,27 @@ gate's file-level parity intact. **Do not merge crates** even when
 individual ones look small; the parity contract is per-upstream-package,
 not per-LOC.
 
+### Directory grouping (R447 restructure)
+
+- `crates/{crypto, ledger, storage, consensus, network, plutus}/` —
+  **core runtime crates** (6 entries). Foundational subsystems
+  imported by every other crate; dependency direction is strictly
+  downward through this list.
+- `crates/tools/<tool>/` — **sister tools** (13 entries: bech32,
+  cardano-cli, cardano-submit-api, cardano-testnet, cardano-tracer,
+  db-analyser, db-synthesizer, db-truncater, dmq-node, kes-agent,
+  kes-agent-control, snapshot-converter, tx-generator). Operator-facing
+  binaries / SPO tooling; each remains its own workspace crate with
+  its own `Cargo.toml`, binary target, and `AGENTS.md`. The
+  `crates/tools/` grouping captures their shared role (operator
+  binaries) without altering the per-tool parity contract.
+
+The grouping is purely organizational — the strict-mirror gate, parity-
+matrix, CI workflows, and run-tools harness all reference paths under
+`crates/tools/<tool>/` (R447 path rewrite). Cargo workspace members
++ workspace dependency `path = "..."` entries point at the new
+locations.
+
 ### Core crates — foundational subsystems
 
 These mirror the upstream `cardano-base` / `cardano-ledger` /
@@ -126,7 +147,13 @@ LOC counts above are approximate (rounded to the nearest 100 lines). For
 exact current values:
 
 ```bash
-for d in crates/*/; do
+# Core crates
+for d in crates/{crypto,ledger,storage,consensus,network,plutus}/; do
+  loc=$(find "$d/src" -name "*.rs" 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
+  printf "%-25s %s\n" "$(basename "$d")" "$loc"
+done
+# Sister tools (R447 grouping)
+for d in crates/tools/*/; do
   loc=$(find "$d/src" -name "*.rs" 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
   printf "%-25s %s\n" "$(basename "$d")" "$loc"
 done

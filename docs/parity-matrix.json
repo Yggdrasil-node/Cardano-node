@@ -398,7 +398,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/bech32/",
+          "path": "crates/tools/bech32/",
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.1 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
@@ -436,7 +436,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/cardano-submit-api/",
+          "path": "crates/tools/cardano-submit-api/",
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.2 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
@@ -478,7 +478,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/kes-agent/",
+          "path": "crates/tools/kes-agent/",
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.3 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
@@ -517,7 +517,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/kes-agent-control/",
+          "path": "crates/tools/kes-agent-control/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R355 typed-config surface (full ControlMain.hs option-types port). Per-subcommand runtime ControlClient socket logic pending kes-agent server mini-arc."
         }
       ],
@@ -555,7 +555,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/cardano-tracer/",
+          "path": "crates/tools/cardano-tracer/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R358 typed-config + R366 typed-parser + R371 runtime-state types + R379 Time + R380 SeverityS + Notifications/Types + R381 Notifications/Check + R382 Logs/Journal + R383 Handlers/System + R384 Notifications/Settings + R385+R387 Notifications/Utils + R386 Notifications/Timer + R388 Notifications/Email + R389 Notifications/Send + R390 Logs/Utils + R391 Metrics/Utils + R393 Environment.hs (TracerEnv 14-field record). Notifications subsystem structurally complete; Acceptors/CLI/Run + Metrics servers + log-rotation IO unblocked by R393's TracerEnv; RTView UI carve-out per the plan."
         }
       ],
@@ -618,7 +618,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/db-truncater/",
+          "path": "crates/tools/db-truncater/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R348 typed config surface. Run.hs equivalent (R349) pending."
         }
       ],
@@ -654,7 +654,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/db-analyser/",
+          "path": "crates/tools/db-analyser/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R351 typed config + R372 CSV writers + R373 HasAnalysis trait surface + R374 SlotDataPoint record + R375 Metadata record + R376 FileWriting OutputFormat dispatch (full BenchmarkLedgerOps leaf trio shipped). Per-era HasAnalysis instances + Analysis.hs ledger-replay logic pending."
         }
       ],
@@ -698,7 +698,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/snapshot-converter/",
+          "path": "crates/tools/snapshot-converter/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R353 typed-config surface (full Config/SnapshotSpec/SnapshotsDirectoryWithFormat port; mem\u2194lsm conversion logic carved-out pending yggdrasil-format LedgerStore reader/writer)."
         }
       ],
@@ -738,7 +738,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/db-synthesizer/",
+          "path": "crates/tools/db-synthesizer/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R354 typed-config surface + R364 typed-parser sweep + R378 Orphans (JSON deserialization + AdjustFilePaths trait). Forging.hs/Run.hs implementation pending; gated on Phase C entry per the plan."
         }
       ],
@@ -776,7 +776,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/cardano-testnet/",
+          "path": "crates/tools/cardano-testnet/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R359 simple-types port (NumPools/NumRelays/NumDReps/NodeId/InputNodeConfigFile/UpdateTimestamps/RpcSupport/NodeLoggingFormat/GenesisHashesPolicy/PraosCredentialsSource/UserProvidedData<A>). Era-aware records + Hedgehog/Process/Property modules pending (Cardano.Api dependency + Hedgehog\u2192proptest/tokio::process synthesis carve-out per the plan)."
         }
       ],
@@ -816,7 +816,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/tx-generator/",
+          "path": "crates/tools/tx-generator/",
           "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the C.3 sub-arc per the R326\u2013R459 sister-tools port plan."
         }
       ],
@@ -855,7 +855,7 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/dmq-node/",
+          "path": "crates/tools/dmq-node/",
           "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R356 typed-config surface (CLIOptions.hs port: PartialConfig + Configuration + LocalAddress + NetworkMagic). Diffusion + NodeToNode + NodeToClient + NodeKernel implementation pending."
         }
       ],
