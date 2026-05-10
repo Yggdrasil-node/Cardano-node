@@ -274,6 +274,78 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R421 — network: trace_object_run_acceptor.rs port of
+  Trace.Forward.Run.TraceObject.Acceptor.hs (Phase 2 round 6 of
+  R411-R430 arc).** Strict-mirror port of the trace-forwarder
+  TraceObject acceptor *runtime aggregator* — wires R420's
+  `AcceptorConfiguration` + R418's codec + R419's
+  `TraceObjectAcceptor` driver + caller-supplied trace-object
+  handler into a single async function spawnable by the trace-
+  forwarder mini-protocol layer. Implements upstream's
+  `acceptorActions` recursive request-loop + `timeoutWhenStopped`
+  graceful-shutdown semantics. Lands in
+  `crates/network/src/trace_object_run_acceptor.rs`. Three new
+  public entry points + supporting types:
+  - **accept_trace_objects_resp(config, handle, decode_reply_list,
+    lo_handler, peer_error_handler) → Result&lt;(),
+    AcceptTraceObjectsError&gt;**: responder-mode runtime entry. Mirror
+    of upstream's `acceptTraceObjectsResp`. Drives the recursive
+    request → handle → check-brake loop until the brake fires; then
+    sends `MsgDone` within the [`SHUTDOWN_TIMEOUT`] grace budget.
+    Invokes `peer_error_handler` exactly once on transport-level
+    failure (mirror of upstream's `finally peerErrorHandler ctx`
+    finalizer).
+  - **accept_trace_objects_init(...)**: initiator-mode entry. Mirror
+    of upstream's `acceptTraceObjectsInit`. Operationally identical
+    to `*_resp` — Yggdrasil's mux layer doesn't carry the
+    initiator/responder role distinction in the function signature
+    (upstream uses `RunMiniProtocol`'s GADT branches for that
+    purpose). Both paths route through the same internal
+    `run_acceptor_loop`.
+  - **timeout_when_stopped(stop_flag, timeout, action) →
+    Result&lt;T, AcceptTimeout&gt;**: standalone race-against-brake-flag
+    helper. Mirror of upstream's `timeoutWhenStopped stopVar delay
+    action`. Exposed publicly for callers that want to wrap their
+    own loops in the same shutdown semantics.
+  - **SHUTDOWN_TIMEOUT (15 seconds)**: pub const matching upstream's
+    hardcoded `15_000` ms in `timeoutWhenStopped`.
+  - **AcceptTimeout**: type-level marker (synthesis of upstream's
+    `data Timeout = Timeout` exception type) surfaced through
+    `AcceptTraceObjectsError::Timeout` + `timeout_when_stopped`'s
+    error variant.
+  - **AcceptTraceObjectsError**: 2-variant error enum
+    (`Acceptor(TraceObjectAcceptorError)` + `Timeout { timeout }`).
+  Carve-outs documented in module docstring:
+  - **`InitiatorProtocolOnly` / `ResponderProtocolOnly`
+    `RunMiniProtocol` shapes**: collapse since Yggdrasil's mux layer
+    doesn't carry role distinction in the function signature.
+  - **`Network.Mux.MiniProtocolCb`**: collapses to a plain
+    `async fn`; callers spawn via `tokio::task::spawn` after
+    acquiring the protocol handle from the mux.
+  - **`Ouroboros.Network.Driver.Simple.runPeer` typed-protocol
+    driver loop**: collapses since R419's `TraceObjectAcceptor`
+    already exposes the per-state driver methods directly.
+  Updates `lib.rs` with `pub mod trace_object_run_acceptor`
+  declaration + `pub use ...` re-exports for `AcceptTimeout`,
+  `AcceptTraceObjectsError`, `SHUTDOWN_TIMEOUT`,
+  `accept_trace_objects_init`, `accept_trace_objects_resp`,
+  `timeout_when_stopped`.
+  Tests: yggdrasil-network 750 → 756 (+6: round-trip one batch
+  through `accept_trace_objects_resp` then engage brake, verify
+  forwarder receives MsgDone after exactly 1 batch round-trip;
+  `timeout_when_stopped` returns action value when brake clear;
+  completes action after brake within budget; errors when action
+  overruns budget; `SHUTDOWN_TIMEOUT` matches upstream 15s; type-
+  level `AcceptTimeout` marker round-trips via Debug). Workspace:
+  5,835 → 5,841. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R421 → R422. Per the R411 plan, R422
+  ports `Trace.Forward.Utils.TraceObject` — the
+  `getTraceObjectsFromReply` helper + the forwarder-side write
+  path utilities. After R422, the trace-forwarder TraceObject sub-
+  protocol port is structurally complete; R423-R424 wire the EKG
+  ReqResp + DataPoint sub-protocols, and R425+ wires everything
+  through the cardano-tracer Acceptors/{Server, Client, Utils, Run}
+  leaves.
 - **R420 — network: trace_object_forward_configuration.rs port of
   Trace.Forward.Configuration.TraceObject.hs (Phase 2 round 5 of
   R411-R430 arc).** Strict-mirror port of the trace-forwarder
