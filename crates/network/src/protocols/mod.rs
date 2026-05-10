@@ -27,6 +27,9 @@ mod trace_object_forward_configuration;
 /// Helpers for the trace-forwarder TraceObject mini-protocol —
 /// sink initialization + reply-list extractor.
 mod trace_object_forward_utils;
+/// Trace-forwarder handshake version codec — `ForwardingVersion`
+/// + `ForwardingVersionData` types and CBOR encoders / decoders.
+mod trace_object_forward_version;
 /// TxSubmission2 protocol state machine and messages.
 mod tx_submission;
 
@@ -65,6 +68,11 @@ pub use trace_object_forward_configuration::{
 };
 pub use trace_object_forward_utils::{
     get_trace_objects_from_reply, init_forward_sink, read_from_sink_status, write_to_sink_status,
+};
+pub use trace_object_forward_version::{
+    AcceptForwardingVersionData, ForwardingVersion, ForwardingVersionData,
+    ForwardingVersionDataDecodeError, ForwardingVersionDecodeError, decode_forwarding_version,
+    decode_forwarding_version_data, encode_forwarding_version, encode_forwarding_version_data,
 };
 pub use tx_submission::{
     TxIdAndSize, TxSubmissionMessage, TxSubmissionState, TxSubmissionTransitionError,

@@ -274,6 +274,64 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R432 — network: trace_object_forward_version.rs port of
+  Trace.Forward.Utils.Version.hs (post-R430 follow-on, closes 1
+  of 3 advisor-flagged gaps).** Strict-mirror port of the
+  trace-forwarder handshake version codec. Lands the 2-version
+  namespace (V1, V2) + the `ForwardingVersionData` payload with
+  network-magic + the `Acceptable` semantics. New file:
+  `crates/network/src/protocols/trace_object_forward_version.rs`.
+  Public surface:
+  - **ForwardingVersion enum**: `V1` (wire tag 1) + `V2` (wire
+    tag 2). `ALL` const for canonical iteration order. `tag()`
+    accessor returning the upstream `TInt` wire tag.
+  - **encode_forwarding_version(v) → Vec&lt;u8&gt;** /
+    **decode_forwarding_version(bytes) → Result&lt;_, ...&gt;**:
+    CBOR `TInt` encoder/decoder pair. Mirror of upstream's
+    `forwardingVersionCodec`. Emits 1 byte (`0x01` / `0x02`) per
+    CBOR canonical-form for unsigned integers.
+  - **ForwardingVersionData**: 1-field record (`network_magic:
+    u32`). Mirror of upstream's
+    `newtype ForwardingVersionData { networkMagic :: NetworkMagic }`.
+  - **ForwardingVersionData::accept(local, remote) →
+    AcceptForwardingVersionData**: equality-comparison-based
+    negotiator. Mirror of upstream's `Acceptable
+    ForwardingVersionData` instance. Returns `Accept` on match,
+    `Refuse` with a human-readable mismatch message on disagreement.
+  - **ForwardingVersionData::is_queryable() → bool**: always
+    false. Mirror of upstream's `Queryable
+    ForwardingVersionData; queryVersion _ = False`.
+  - **encode_forwarding_version_data(v, data) → Vec&lt;u8&gt;** /
+    **decode_forwarding_version_data(v, bytes) → Result&lt;_, ...&gt;**:
+    CBOR `TInt` encoder/decoder for the version-data payload.
+    Mirror of upstream's `forwardingCodecCBORTerm`. Range-checks
+    the network-magic to `[0, 0xffff_ffff]` per upstream's
+    explicit bound check.
+  - **ForwardingVersionDecodeError** + **ForwardingVersionDataDecodeError**:
+    error enums surfacing upstream's specific failure messages
+    (`unknown tag: N`, `unexpected term`, `networkMagic out of
+    bound: N`, `unknown encoding`).
+  Carve-outs documented in module docstring:
+  - **`Codec.CBOR.Term.Term` value-CBOR type**: collapses since
+    Yggdrasil's port emits canonical bytes directly.
+  - **`CodecCBORTerm` typeclass**: collapses to free functions.
+  - **NFData / Generic deriving**: collapses to standard Rust
+    derives.
+  Updates `protocols/mod.rs` with module declaration + 8 re-
+  exports for the public surface.
+  Tests: yggdrasil-network 767 → 781 (+14: tags match upstream;
+  ALL in canonical order; V1 round-trips with byte-stable
+  [0x01]; V2 round-trips with byte-stable [0x02]; unknown-tag
+  errors with the offending value; non-int term errors;
+  matching-magic accept; mismatched-magic refuse with human-
+  readable message; is_queryable always false; mainnet-magic
+  round-trip; zero round-trip; max-u32 round-trip; out-of-bound
+  errors at 2^32; non-int term errors). Workspace: 5,887 →
+  5,901. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R432 → R433. R432 closes the second
+  of advisor's three named gaps; the remaining gap (full
+  trace-forwarder handshake codec + integration with R424's
+  Acceptors/Server.hs) lands in R433+.
 - **R431 — cardano-tracer: default lo_handler factory wired into
   the binary entry (post-R430 follow-on, closes 1 of 3
   advisor-flagged gaps).** R427 shipped a no-op default
