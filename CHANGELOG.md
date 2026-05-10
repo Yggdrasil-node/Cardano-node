@@ -274,6 +274,42 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R381 — cardano-tracer: Notifications/Check.hs port (severity
+  dispatcher).** Lands the per-event-group severity dispatcher that
+  routes incoming trace events to the correct event-group queue. New
+  handlers/notifications/check.rs module ports the single-function
+  upstream Notifications/Check.hs surface (now unblocked by R380's
+  SeverityS + Event + EventGroup foundation):
+  - EventsSenders auxiliary type (Arc<RwLock<BTreeMap<EventGroup,
+    mpsc::UnboundedSender<Event>>>>) bridging upstream's
+    bidirectional STM TBQueue to tokio's split-channel pattern. The
+    sender side lives separately because tokio's
+    mpsc::UnboundedSender must be cloned to be sharable across
+    producers; upstream's TBQueue is bidirectional and stored once.
+  - new_events_senders() empty-map constructor.
+  - check_common_errors(node_id, message, severity, time_ms,
+    &EventsSenders) async dispatcher mirroring upstream's
+    `checkCommonErrors :: NodeId -> TraceObjectInfo -> EventsQueues
+    -> IO ()`. Returns bool: true if routed to a queue, false if
+    severity is below Warning OR if the corresponding event-group
+    isn't registered.
+  Carve-outs documented:
+  - TraceObjectInfo (msg, sev, ts) tuple flattened to 3 separate
+    parameters since upstream's TraceObject type is not yet ported
+    (deferred per types.rs's docstring).
+  - addNewEvent from Notifications/Utils inlined since Utils.hs port
+    lands in a later round; once Utils.hs lands the Rust function
+    will be refactored to call the helper.
+  Tests: cardano-tracer 75 → 81 (+6: routes Warning to EventWarnings
+  queue with full event-payload assertions; routes each high severity
+  [Error/Critical/Alert/Emergency] to its correct group via parametric
+  loop; drops low-severity events [Info] leaving rx empty checked via
+  TryRecvError::Empty; drops Debug/Info/Notice sweep; returns false
+  when group is not registered; new_events_senders starts empty).
+  Workspace: 5,479 → 5,485. Parity-matrix entry sister-tool.cardano
+  -tracer advanced: next_milestone R381 → R382. The Notifications
+  subsystem now has Types + Check ported; remaining leaves
+  (Settings, Send, Email, Timer, Utils) follow in subsequent rounds.
 - **R380 — cardano-tracer: SeverityS synthesis + Notifications/Types.hs
   port.** Lands the trace-event severity ladder + notification-engine
   data-record surface. New severity.rs synthesizes the
