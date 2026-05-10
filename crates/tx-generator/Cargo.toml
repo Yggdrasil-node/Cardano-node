@@ -5,10 +5,18 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
-description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator."
+description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. SKELETON STUB gated on Phase C entry at R408+ — entry depends on the cardano-cli C-arc CLI-MVS subset (keys / tx / query / genesis / governance) reaching verified_11_0_1 status before tx-generator's submit driver can be wired."
 
 # R327 skeleton — bootstrap of the tx-generator sister-tool crate per the
-# R326–R459 sister-tools port arc plan.
+# R326–R459 sister-tools port arc plan. The crate currently ships only
+# the lib.rs / main.rs / parser.rs / golden-test surface. Phase C entry
+# is the hardest gate in the sister-tools plan because tx-generator's
+# operational surface depends on cardano-cli's transaction-construction
+# subcommands being byte-equivalent to upstream — see the R326-R459 plan
+# (Phase C authorization checkpoint) and the cardano-cli C-arc roadmap.
+# Three Calibrate sub-trees (Compiler.hs + Benchmarking/Script/* +
+# TxGenerator/PureExample.hs) are pre-approved synthesis carve-outs per
+# the same plan.
 # Upstream source vendored at:
 # .reference-haskell-cardano-node/bench/tx-generator/
 

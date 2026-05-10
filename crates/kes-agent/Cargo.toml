@@ -5,10 +5,14 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
-description = "Pure-Rust port of the upstream kes-agent KES key custody + period-rotation agent."
+description = "Pure-Rust port of the upstream kes-agent KES key custody + period-rotation agent. SKELETON STUB awaiting Phase A.3 entry at R344+ — HIGHEST-STAKES sister-tool work; gated on upstream socket-protocol byte-equivalence fixture capture per the R344 risk register entry."
 
 # R327 skeleton — bootstrap of the kes-agent sister-tool crate per the
-# R326–R459 sister-tools port arc plan.
+# R326–R459 sister-tools port arc plan. The crate currently ships only
+# the lib.rs / main.rs / parser.rs / golden-test surface; the operational
+# port (start / stop / restart / status / run subcommands + KES key
+# lifecycle wiring) is HARD-GATED on capturing the upstream socket
+# protocol as a byte-equivalence fixture before any code lands.
 # Upstream source vendored at:
 # .reference-haskell-cardano-node/deps/kes-agent/kes-agent/
 

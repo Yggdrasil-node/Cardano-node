@@ -1,27 +1,62 @@
 [workspace]
 members = [
-    # Existing crates (R273-R325 strict-mirror arc).
-    "crates/cardano-cli",
+    # ──────────────────────────────────────────────────────────────────
+    # Core crates — foundational subsystems mirroring upstream
+    # cardano-base / cardano-ledger / ouroboros-consensus /
+    # ouroboros-network / plutus packages. Dependency direction is
+    # strictly downward through this list (see docs/ARCHITECTURE.md).
+    # ──────────────────────────────────────────────────────────────────
     "crates/crypto",
-    "crates/consensus",
     "crates/ledger",
-    "crates/plutus",
-    "crates/network",
     "crates/storage",
+    "crates/consensus",
+    "crates/network",
+    "crates/plutus",
+
+    # ──────────────────────────────────────────────────────────────────
+    # cardano-cli — pure-Rust port of the upstream operator CLI
+    # (~237 mirror files; ~3.9 KLOC). Library consumed by yggdrasil-node
+    # plus the eventual standalone binary. C-arc parallel port runs its
+    # own R-numbering and gates Phase C of the sister-tools plan.
+    # ──────────────────────────────────────────────────────────────────
+    "crates/cardano-cli",
+
+    # ──────────────────────────────────────────────────────────────────
+    # Main node binary — orchestration layer wrapping the core crates.
+    # ──────────────────────────────────────────────────────────────────
     "node",
-    # Sister-tool crates (R327 skeleton; R326-R459 sister-tools port arc).
-    "crates/bech32",
-    "crates/cardano-submit-api",
-    "crates/cardano-testnet",
-    "crates/cardano-tracer",
-    "crates/db-analyser",
-    "crates/db-synthesizer",
-    "crates/db-truncater",
-    "crates/dmq-node",
-    "crates/kes-agent",
-    "crates/kes-agent-control",
-    "crates/snapshot-converter",
-    "crates/tx-generator",
+
+    # ──────────────────────────────────────────────────────────────────
+    # Tier 1 sister tools — deployment-essential SPO operations
+    # (R331-R385 arc). bech32 closeout shipped at R334.
+    # ──────────────────────────────────────────────────────────────────
+    "crates/bech32",                # R334 verified_11_0_1
+    "crates/cardano-submit-api",    # partial — R338-R345 implementation arc
+    "crates/kes-agent",             # skeleton — R344+ HIGHEST-STAKES (gated on socket-protocol fixture capture)
+    "crates/kes-agent-control",     # partial — R355-R359 typed-config + R362+R370 typed-parser + env-var derivation
+    "crates/cardano-tracer",        # partial — R358+R366+R371+R379-R391 deep port arc
+
+    # ──────────────────────────────────────────────────────────────────
+    # Tier 2 sister tools — operator forensics + maintenance
+    # (R386-R407 arc).
+    # ──────────────────────────────────────────────────────────────────
+    "crates/db-truncater",          # partial — R347-R350 implementation arc
+    "crates/db-analyser",           # partial — R351+R365+R372-R376 typed-config + CSV + HasAnalysis + BenchmarkLedgerOps
+    "crates/snapshot-converter",    # partial — R353+R363 typed-config + typed-parser
+
+    # ──────────────────────────────────────────────────────────────────
+    # Tier 3 sister tools — testing + benchmarking
+    # (R408-R449 arc; HARD-GATED on cardano-cli C-arc CLI-MVS).
+    # ──────────────────────────────────────────────────────────────────
+    "crates/db-synthesizer",        # partial — R354+R364+R378 typed-config + typed-parser + Orphans
+    "crates/cardano-testnet",       # partial — R359+R367 typed-config + typed-parser
+    "crates/tx-generator",          # skeleton — Phase C entry-gated on CLI-MVS at R408+
+
+    # ──────────────────────────────────────────────────────────────────
+    # Tier 4 sister project — Delegated Mempool Queue
+    # (R450-R459 arc).
+    # ──────────────────────────────────────────────────────────────────
+    "crates/dmq-node",              # partial — R356+R361+R369 typed-config + typed-parser + config-file load
 ]
 resolver = "2"
 

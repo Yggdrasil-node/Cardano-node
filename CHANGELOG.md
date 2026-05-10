@@ -274,6 +274,43 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R392 — workspace structure cleanup (architecture review
+  follow-through).** Operator-requested critical review of the 19
+  workspace crates concluded that the count is correct (each crate
+  mirrors a separate upstream Haskell package per the strict 1:1
+  file-mirror policy) but readability could be improved without
+  touching any code. Three concrete cleanups shipped:
+  1. **`crates/AGENTS.md` expanded** with a full 19-crate inventory
+     table (was: 6 core crates only). Each crate row carries
+     LOC + upstream-package mapping + current status (skeleton /
+     partial / verified_11_0_1) grouped by Tier 1 / 2 / 3 / 4 per
+     the R326-R459 sister-tools plan. Adds a "do not propose
+     merging crates" rule to maintenance guidance — the parity
+     contract is per-upstream-package, not per-LOC.
+  2. **Workspace `members` list reordered semantically** in the
+     root `Cargo.toml`. Previously two arbitrary blocks ("Existing
+     crates" + "Sister-tool crates"); now grouped as
+     core / cardano-cli / node binary / Tier 1 / Tier 2 / Tier 3 /
+     Tier 4 with per-block heading comments showing the R-arc
+     ownership and per-crate status comments at line-end. The file
+     reads as a status board now without cross-referencing the
+     parity-matrix.
+  3. **Skeleton-only outliers documented in `Cargo.toml`
+     description fields**. `kes-agent` (~150 LOC) now reads
+     "SKELETON STUB awaiting Phase A.3 entry at R344+ —
+     HIGHEST-STAKES sister-tool work; gated on upstream
+     socket-protocol byte-equivalence fixture capture per the R344
+     risk register entry." `tx-generator` (~150 LOC) reads
+     "SKELETON STUB gated on Phase C entry at R408+ — entry
+     depends on the cardano-cli C-arc CLI-MVS subset (keys / tx /
+     query / genesis / governance) reaching verified_11_0_1
+     status before tx-generator's submit driver can be wired."
+     The package-level comment block on each crate's Cargo.toml
+     also now cites the specific gating dependency.
+  No code changes; doc + workspace-structure round. All 5 cargo
+  gates clean; workspace tests held at 5,611 (same as R391
+  closeout). Strict-mirror gate clean (0 violations); parity-matrix
+  clean (20 entries validated against tag 11.0.1).
 - **R391 — cardano-tracer: Metrics/Utils.hs port (bounded subset:
   Content-Type constants + RouteDictionary + slugify).** Lands the
   metrics-server utility surface — Content-Type response headers,

@@ -35,13 +35,108 @@ file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
 - [Plutus core and CEK machine](.reference-haskell-cardano-node/deps/plutus/)
 
 ## Current Layout
-- `crypto`: cryptographic primitives and encodings.
-- `ledger`: era modeling and state transitions. Per-era `CborEncode`/`CborDecode` impls under `crates/ledger/src/eras/*/cbor.rs` are hand-coded against upstream CDDL (`.reference-haskell-cardano-node/deps/cardano-ledger/eras/<era>/impl/cddl/data/`); CDDL is treated as authoritative documentation. Codegen scaffolding was removed in favor of hand-coding because real upstream parity needs Byron / array-vs-map / optional-field semantics that CDDL underspecifies.
-- `storage`: durable storage and snapshots.
-- `consensus`: chain selection, rollback, and epoch math. Includes the `mempool` submodule (transaction intake, ordering, eviction; consolidated into consensus in R256 to mirror upstream `Ouroboros.Consensus.Mempool.*`).
-- `network`: mux, mini-protocols, codecs, and peer management.
-- `cardano-cli` (R289+): pure-Rust port of upstream `cardano-cli` (~237 Rust files mirroring 180 upstream `.hs`). Workspace-internal library consumed by `yggdrasil-node`; no separate binary today. See [`cardano-cli/AGENTS.md`](cardano-cli/AGENTS.md) for the Phase F bootstrap state and R298+ migration roadmap.
+
+The workspace ships 19 crates plus the `yggdrasil-node` binary. Each crate
+mirrors a single upstream Haskell package — the layout intentionally
+preserves upstream's package decomposition to keep the strict-mirror
+gate's file-level parity intact. **Do not merge crates** even when
+individual ones look small; the parity contract is per-upstream-package,
+not per-LOC.
+
+### Core crates — foundational subsystems
+
+These mirror the upstream `cardano-base` / `cardano-ledger` /
+`ouroboros-consensus` / `ouroboros-network` / `plutus` packages.
+Dependency direction is strictly downward through this list (see
+[`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)).
+
+| Crate          | LOC     | Upstream package                                              | Status     |
+|----------------|---------|---------------------------------------------------------------|------------|
+| `crypto`       | ~5.5k   | `cardano-base/cardano-crypto-class` + `-praos` + bls + secp   | complete   |
+| `ledger`       | ~65.2k  | `cardano-ledger/eras/{byron..conway}` + libs                  | complete   |
+| `storage`      | ~2.7k   | `ouroboros-consensus/Storage/{Immutable,Volatile,LedgerDB}`   | complete   |
+| `consensus`    | ~8.9k   | `ouroboros-consensus/{Protocol,Praos,Mempool,Forge}`          | complete   |
+| `network`      | ~34.6k  | `ouroboros-network` + `-framework` + `-protocols` + Diffusion | complete   |
+| `plutus`       | ~11.2k  | `plutus/plutus-core/{CEK,builtins,cost-model}`                | complete   |
+
+Per-era `CborEncode`/`CborDecode` impls under
+`crates/ledger/src/eras/*/cbor.rs` are hand-coded against upstream CDDL
+(`.reference-haskell-cardano-node/deps/cardano-ledger/eras/<era>/impl/cddl/data/`);
+CDDL is treated as authoritative documentation. Codegen scaffolding was
+removed in favor of hand-coding because real upstream parity needs Byron
+/ array-vs-map / optional-field semantics that CDDL underspecifies.
+
+`consensus/mempool` consolidates upstream's `Ouroboros.Consensus.Mempool.*`
+sub-tree into this crate (R256), mirroring upstream's package layout.
+
+### Operator CLI
+
+| Crate          | LOC     | Upstream package | Status                                       |
+|----------------|---------|------------------|----------------------------------------------|
+| `cardano-cli`  | ~3.9k   | `cardano-cli`    | partial (~237 mirror files; 2 of ~100+ subcommands functional) |
+
+C-arc parallel port runs its own R-numbering and gates Phase C of the
+sister-tools plan. See [`cardano-cli/AGENTS.md`](cardano-cli/AGENTS.md)
+for the Phase F bootstrap state and R298+ migration roadmap.
+
+### Sister-tools — Tier 1 (deployment-essential SPO operations)
+
+R331-R385 arc per the R326-R459 sister-tools plan.
+
+| Crate                | LOC    | Upstream package        | Status                                                                  |
+|----------------------|--------|-------------------------|-------------------------------------------------------------------------|
+| `bech32`             | ~0.7k  | `IntersectMBO/bech32`   | **verified_11_0_1** (R334 closeout)                                     |
+| `cardano-submit-api` | ~4.0k  | `cardano-submit-api`    | partial — R338-R345 implementation arc (HTTP server + LocalTxSubmission + Prometheus) |
+| `kes-agent`          | ~0.2k  | `IntersectMBO/kes-agent`| **skeleton** — Phase A.3 entry-gated on socket-protocol fixture capture (R344 risk register; HIGHEST-STAKES) |
+| `kes-agent-control`  | ~1.2k  | `IntersectMBO/kes-agent`| partial — R355-R359 typed-config + R362+R370 typed-parser + env-var derivation |
+| `cardano-tracer`     | ~5.6k  | `cardano-tracer`        | partial — Configuration + types + Notifications subsystem (Types, Check, Settings, Utils, Timer, Email, Send) + Logs/{Journal pair, Utils} + Metrics/Utils + System path-resolution. RTView UI carved-out per plan. |
+
+### Sister-tools — Tier 2 (operator forensics + maintenance)
+
+R386-R407 arc.
+
+| Crate                | LOC    | Upstream package                                          | Status                                                                  |
+|----------------------|--------|-----------------------------------------------------------|-------------------------------------------------------------------------|
+| `db-truncater`       | ~0.8k  | `ouroboros-consensus-cardano/Tools/DBTruncater`           | partial — R347-R350 implementation arc (storage.trim_after_slot + Run.hs) |
+| `db-analyser`        | ~2.9k  | `ouroboros-consensus-cardano/Tools/DBAnalyser`            | partial — R351 typed-config + R365 typed-parser + R372 CSV + R373 HasAnalysis + R374-R376 BenchmarkLedgerOps trio (SlotDataPoint + Metadata + FileWriting) |
+| `snapshot-converter` | ~0.9k  | `ouroboros-consensus-cardano/app/snapshot-converter.hs`   | partial — R353 typed-config + R363 typed-parser; convertSnapshot LSM/Mem logic deferred pending yggdrasil-format LedgerStore |
+
+### Sister-tools — Tier 3 (testing + benchmarking)
+
+R408-R449 arc. **Hard-gated** on cardano-cli C-arc CLI-MVS reaching
+verified_11_0_1.
+
+| Crate                | LOC    | Upstream package        | Status                                                                  |
+|----------------------|--------|-------------------------|-------------------------------------------------------------------------|
+| `db-synthesizer`     | ~1.3k  | `ouroboros-consensus-cardano/Tools/DBSynthesizer` | partial — R354 typed-config + R364 typed-parser + R378 Orphans (JSON deserialization + AdjustFilePaths) |
+| `cardano-testnet`    | ~0.7k  | `cardano-testnet`       | partial — R359 typed-config + R367 typed-parser; Hedgehog Process/Property carve-out per plan |
+| `tx-generator`       | ~0.2k  | `bench/tx-generator`    | **skeleton** — Phase C entry-gated on cardano-cli CLI-MVS at R408+; Calibrate sub-trees pre-approved synthesis carve-out |
+
+### Sister-tools — Tier 4 (sister project)
+
+R450-R459 arc.
+
+| Crate                | LOC    | Upstream package | Status                                                                  |
+|----------------------|--------|------------------|-------------------------------------------------------------------------|
+| `dmq-node`           | ~1.1k  | `IntersectMBO/dmq-node` | partial — R356 typed-config + R361 typed-parser + R369 config-file load |
+
+### LOC + status reading instructions
+
+LOC counts above are approximate (rounded to the nearest 100 lines). For
+exact current values:
+
+```bash
+for d in crates/*/; do
+  loc=$(find "$d/src" -name "*.rs" 2>/dev/null | xargs wc -l 2>/dev/null | tail -1 | awk '{print $1}')
+  printf "%-25s %s\n" "$(basename "$d")" "$loc"
+done
+```
+
+For per-crate next-milestone status, consult
+[`docs/parity-matrix.json`](../docs/parity-matrix.json) and the
+`next_milestone` field on each entry.
 
 ## Maintenance Guidance
-- When a crate boundary changes, update the child crate AGENTS file, `docs/ARCHITECTURE.md`, and the workspace root `AGENTS.md` together.
+- When a crate boundary changes, update the child crate AGENTS file, `docs/ARCHITECTURE.md`, the workspace root `AGENTS.md`, and the layout tables in this file together.
 - Do not add umbrella instructions here that conflict with more specific crate-local guidance.
+- The 19-crate count is intentional and matches upstream's package decomposition. Do not propose merging crates as a "cleanup" step — merging breaks the strict 1:1 file-mirror contract that the entire R273+ arc has been built to enforce. Cleanups should target documentation (this file), workspace member ordering (root `Cargo.toml`), or per-crate Cargo.toml description fields, not the crate count itself.
