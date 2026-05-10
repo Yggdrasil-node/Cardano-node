@@ -96,19 +96,14 @@ pub fn run(args: &parser::Args) -> eyre::Result<()> {
         .build()
         .map_err(|e| eyre::eyre!("failed to build tokio runtime: {e}"))?;
 
-    // Default trace-objects handler: a concrete closure that
-    // discards payloads. R427 ships a no-op default; operators
-    // wanting real ingest construct TracerParams + call
-    // run::run_cardano_tracer directly with their own concrete
-    // handler closure. The trace_objects_handler dispatcher
-    // (R401) needs full TracerEnv wiring (R428+) to plumb through
-    // real File / Journal writers. The closure is intentionally
-    // not boxed via `Arc<dyn Fn>` because run_cardano_tracer's
-    // generic LoHandler bound requires `Sized`.
-    let lo_handler =
-        std::sync::Arc::new(|_node_id: types::NodeId, _payloads: Vec<logging::TraceObject>| {});
-
-    rt.block_on(async move { run::run_cardano_tracer(params, lo_handler).await })
+    // R431 wires `run_cardano_tracer_default` which builds the
+    // canonical trace-objects handler via
+    // `run::default_lo_handler_factory` — the closure dispatches
+    // each batch to `handlers::logs::trace_objects::trace_objects_handler`
+    // (R401), routing per the operator's `LoggingParams` configuration.
+    // Operators wanting custom handlers can call
+    // `run::run_cardano_tracer` directly with their own closure.
+    rt.block_on(async move { run::run_cardano_tracer_default(params).await })
         .map_err(|e| eyre::eyre!("cardano-tracer supervisor: {e}"))?;
     Ok(())
 }

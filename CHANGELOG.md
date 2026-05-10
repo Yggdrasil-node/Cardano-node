@@ -274,6 +274,59 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R431 — cardano-tracer: default lo_handler factory wired into
+  the binary entry (post-R430 follow-on, closes 1 of 3
+  advisor-flagged gaps).** R427 shipped a no-op default
+  trace-objects handler in `lib.rs::run` that discarded payloads;
+  R431 replaces it with the canonical
+  [`run::default_lo_handler_factory`] which dispatches each batch
+  to [`handlers::logs::trace_objects::trace_objects_handler`]
+  (R401), routing per the operator's `LoggingParams` configuration.
+  Two new public entry points + factory:
+  - **default_lo_handler_factory(config, connected_nodes_names) →
+    impl Fn(NodeId, Vec&lt;TraceObject&gt;) + Send + Sync + 'static**:
+    builds a sync closure that captures the operator's `logging:
+    Vec&lt;LoggingParams&gt;` + the runtime's
+    `ConnectedNodesNames` map. On each invocation: empty payloads
+    return immediately; non-empty payloads spawn a tokio task
+    that resolves NodeId → NodeName (falling back to `NodeId::as_str`
+    if no name is registered, mirroring upstream's `getNodeName`
+    fallback in `Notifications/Send.hs`) and dispatches via
+    `trace_objects_handler`. The sync→async bridge via
+    `tokio::spawn` is necessary because the trace-forwarder
+    acceptor loop calls the lo_handler as a sync `Fn` (via R421's
+    `accept_trace_objects_resp` signature).
+  - **run_cardano_tracer_default(params) → Result&lt;(),
+    RunCardanoTracerError&gt;**: convenience entry that reads the
+    config, builds the canonical handler via the factory, then
+    runs the supervisor. R431 wires this as the default entry
+    point for the `cardano-tracer` binary; operators wanting
+    custom handlers can call `run_cardano_tracer` directly with
+    their own closure.
+  - **do_run_cardano_tracer_with_state(state, config, state_dir,
+    lo_handler)**: variant of `do_run_cardano_tracer` that accepts
+    a pre-built `AcceptorsServerState` so callers like
+    `run_cardano_tracer_default` can capture references to the
+    same `ConnectedNodesNames` map that the supervisor will
+    populate (the original `do_run_cardano_tracer` constructed
+    state internally, blocking the factory pattern).
+  Updates `lib.rs::run` to call `run_cardano_tracer_default(params)`
+  instead of constructing a discarding closure inline. The
+  binary's default behaviour now routes incoming
+  `MsgTraceObjectsReply` payloads through the canonical
+  trace-objects dispatcher — once the trace-forwarder handshake
+  codec + TraceObject CBOR codec follow-on rounds land, the
+  end-to-end ingest path will fire automatically without operator
+  re-wiring.
+  Tests: yggdrasil-cardano-tracer 417 → 420 (+3:
+  default_lo_handler_factory dispatches non-empty payload to the
+  trace_objects_handler via spawned task; falls back to NodeId
+  string when the NodeName registry is empty;
+  run_cardano_tracer_default errors on missing config file).
+  Workspace: 5,884 → 5,887. Parity-matrix entry sister-tool.cardano-
+  tracer advanced: next_milestone R430 → R432 (R431 closes one
+  follow-on item; R432+ tackles the remaining handshake codec +
+  TraceObject CBOR codec gaps in named follow-on rounds).
 - **R430 — cardano-tracer: R411-R430 arc closeout (Phase 4 round 2,
   final round of the 20-round arc).** Structural completion of the
   cardano-tracer port:

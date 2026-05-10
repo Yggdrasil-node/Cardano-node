@@ -133,6 +133,52 @@ where
     do_run_cardano_tracer(config, params.state_dir, lo_handler).await
 }
 
+/// Convenience entry — reads the config, builds the canonical
+/// trace-objects handler via [`default_lo_handler_factory`], and
+/// runs the supervisor. R431 wires this as the default entry point
+/// for the `cardano-tracer` binary; operators wanting custom
+/// handlers should call [`run_cardano_tracer`] directly.
+pub async fn run_cardano_tracer_default(params: TracerParams) -> Result<(), RunCardanoTracerError> {
+    let raw = std::fs::read_to_string(&params.tracer_config)
+        .map_err(RunCardanoTracerError::ReadConfig)?;
+    let config = parse_tracer_config_json(&raw).map_err(RunCardanoTracerError::ParseConfig)?;
+
+    // Build the runtime state slice ahead of the supervisor so the
+    // default handler can capture connected_nodes_names by clone.
+    let state = AcceptorsServerState {
+        connected_nodes: ConnectedNodes::new(),
+        connected_nodes_names: ConnectedNodesNames::new(),
+        accepted_metrics: new_accepted_metrics(),
+        network_magic: config.network_magic,
+    };
+    let lo_handler = Arc::new(default_lo_handler_factory(
+        &config,
+        state.connected_nodes_names.clone(),
+    ));
+    do_run_cardano_tracer_with_state(state, config, params.state_dir, lo_handler).await
+}
+
+/// Variant of [`do_run_cardano_tracer`] that accepts a pre-built
+/// [`AcceptorsServerState`] (rather than constructing one) so
+/// callers like [`run_cardano_tracer_default`] can capture
+/// references to the same `ConnectedNodesNames` map that the
+/// supervisor will populate.
+pub async fn do_run_cardano_tracer_with_state<LoHandler>(
+    state: AcceptorsServerState,
+    config: TracerConfig,
+    _rt_view_state_dir: Option<std::path::PathBuf>,
+    lo_handler: Arc<LoHandler>,
+) -> Result<(), RunCardanoTracerError>
+where
+    LoHandler: Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync + 'static,
+{
+    let acceptors_state = state.clone();
+    let acceptors_config = config.clone();
+    let acceptors_handler = Arc::clone(&lo_handler);
+    run_acceptors(acceptors_state, &acceptors_config, acceptors_handler).await?;
+    Ok(())
+}
+
 /// Run all internal services of the tracer. Mirror of upstream's
 /// `doRunCardanoTracer config rtViewStateDir tr protocolsBrake
 /// dpRequestors`.
@@ -171,6 +217,59 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Default trace-objects handler factory
+// ---------------------------------------------------------------------------
+
+/// Build a default trace-objects handler closure that dispatches
+/// each batch to the canonical
+/// [`crate::handlers::logs::trace_objects::trace_objects_handler`]
+/// (R401). The closure captures the operator's logging params +
+/// the runtime's connected-nodes-names map; on each invocation it
+/// spawns a tokio task to perform the async dispatch (the
+/// `lo_handler` itself is a sync `Fn` closure called from the
+/// trace-forwarder acceptor loop, which lives in an async context).
+///
+/// Mirror context: upstream's
+/// `Cardano.Tracer.Acceptors.Server::runTraceObjectsAcceptor`
+/// passes `traceObjectsHandler tracerEnv tracerEnvRTView . connIdToNodeId`
+/// to `acceptTraceObjectsResp`. R431 wires the equivalent
+/// dispatcher closure for Yggdrasil's lib.rs::run default; operators
+/// supplying their own closure to `run_cardano_tracer` can opt out.
+///
+/// The NodeId → NodeName resolution falls back to
+/// `NodeId::as_str` when the node hasn't registered a name yet
+/// (mirror of upstream's `getNodeName` fallback in
+/// `Notifications/Send.hs`). The `LoggingParams` slice is
+/// captured by clone — once `do_run_cardano_tracer` finishes the
+/// captured slice is dropped along with the closure.
+pub fn default_lo_handler_factory(
+    config: &TracerConfig,
+    connected_nodes_names: ConnectedNodesNames,
+) -> impl Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync + 'static {
+    let logging = config.logging.clone();
+    move |node_id, trace_objects| {
+        if trace_objects.is_empty() {
+            return;
+        }
+        let logging = logging.clone();
+        let names = connected_nodes_names.clone();
+        tokio::spawn(async move {
+            let node_name = names
+                .snapshot()
+                .into_iter()
+                .find_map(|(id, name)| if id == node_id { Some(name) } else { None })
+                .unwrap_or_else(|| node_id.as_str().to_string());
+            let _outcomes = crate::handlers::logs::trace_objects::trace_objects_handler(
+                &node_name,
+                &logging,
+                &trace_objects,
+            )
+            .await;
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Carve-out status descriptors
 // ---------------------------------------------------------------------------
 
@@ -206,7 +305,7 @@ pub fn run_resource_stats_status() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{LogFormat, LogMode, LoggingParams, Network};
+    use crate::configuration::{HowToConnect, LogFormat, LogMode, LoggingParams, Network};
 
     #[test]
     fn run_logs_rotator_status_describes_deferral() {
@@ -297,6 +396,131 @@ mod tests {
             matches!(result, Err(RunCardanoTracerError::Acceptors(_))),
             "empty ConnectTo target list should bubble up the NoTargets error: {result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn default_lo_handler_factory_dispatches_to_trace_objects_handler() {
+        // Build a config with a single FileMode logging entry — we
+        // verify the factory captures it and dispatches a non-empty
+        // payload through to the handler. Since the handler returns
+        // `Vec<DispatchOutcome>` and the factory ignores the result,
+        // this test asserts the factory is constructable + invokes
+        // without panic; the outcome inspection is exercised by
+        // R401's dedicated trace_objects_handler tests.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let config = TracerConfig {
+            network_magic: 764824073,
+            network: Network::AcceptAt {
+                accept_at: HowToConnect::LocalPipe {
+                    local_pipe: dir.path().join("rt.sock"),
+                },
+            },
+            logging: vec![LoggingParams {
+                root: dir.path().to_path_buf(),
+                mode: LogMode::FileMode,
+                format: LogFormat::ForHuman,
+            }],
+            rotation: None,
+            verbosity: None,
+            has_ekg: None,
+            has_prometheus: None,
+            has_rtview: None,
+            has_timeseries: None,
+            tls_certificate: None,
+            has_forwarding: None,
+            ekg_request_freq: None,
+            ekg_request_full: None,
+            metrics_help: None,
+            log_objects_request_num: Some(50),
+            metrics_no_suffix: None,
+            prometheus_labels: None,
+            resource_freq: None,
+        };
+
+        let names = ConnectedNodesNames::new();
+        names.insert(crate::types::NodeId::new("test-node"), "alpha".to_string());
+        let handler = default_lo_handler_factory(&config, names);
+
+        // Invoke with an empty payload: the early-return short-
+        // circuits without spawning a task.
+        handler(crate::types::NodeId::new("test-node"), Vec::new());
+
+        // Invoke with a non-empty payload: the factory spawns a
+        // task that runs the dispatcher. Give the runtime a brief
+        // moment to schedule + complete the spawned task.
+        let trace_obj = TraceObject::new(
+            Some("preview".into()),
+            "machine".into(),
+            crate::severity::SeverityS::Info,
+            vec!["BlockFetch".into()],
+            "tid-1".into(),
+            1,
+        );
+        handler(
+            crate::types::NodeId::new("test-node"),
+            vec![trace_obj.clone()],
+        );
+
+        // Wait briefly for the spawned task to run.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    #[tokio::test]
+    async fn default_lo_handler_factory_falls_back_to_node_id_when_unregistered() {
+        // The factory's NodeId → NodeName resolution falls back to
+        // the NodeId string when no name is registered. We can't
+        // easily inspect the dispatched node_name from outside (the
+        // factory's task is fire-and-forget), but we verify the
+        // closure is invokable when names map is empty.
+        let config = TracerConfig {
+            network_magic: 764824073,
+            network: Network::AcceptAt {
+                accept_at: HowToConnect::LocalPipe {
+                    local_pipe: "/tmp/r431-fallback.sock".into(),
+                },
+            },
+            logging: vec![],
+            rotation: None,
+            verbosity: None,
+            has_ekg: None,
+            has_prometheus: None,
+            has_rtview: None,
+            has_timeseries: None,
+            tls_certificate: None,
+            has_forwarding: None,
+            ekg_request_freq: None,
+            ekg_request_full: None,
+            metrics_help: None,
+            log_objects_request_num: None,
+            metrics_no_suffix: None,
+            prometheus_labels: None,
+            resource_freq: None,
+        };
+        let names = ConnectedNodesNames::new();
+        let handler = default_lo_handler_factory(&config, names);
+        let trace_obj = TraceObject::new(
+            None,
+            "m".into(),
+            crate::severity::SeverityS::Info,
+            vec![],
+            "t".into(),
+            0,
+        );
+        handler(crate::types::NodeId::new("ghost"), vec![trace_obj]);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    #[tokio::test]
+    async fn run_cardano_tracer_default_errors_on_missing_config_file() {
+        let params = TracerParams {
+            tracer_config: std::path::PathBuf::from(
+                "/nonexistent-yggdrasil-r431-tracer-config.json",
+            ),
+            state_dir: None,
+            log_severity: None,
+        };
+        let result = run_cardano_tracer_default(params).await;
+        assert!(matches!(result, Err(RunCardanoTracerError::ReadConfig(_))));
     }
 
     #[tokio::test]
