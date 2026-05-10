@@ -16,6 +16,7 @@ yggdrasil-ledger.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
+tempfile = "3"
 
 [lints]
 workspace = true

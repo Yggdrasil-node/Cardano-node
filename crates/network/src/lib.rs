@@ -31,6 +31,9 @@ pub mod keepalive_client;
 pub mod ledger_peers_provider;
 /// TCP listener for inbound peer connections.
 pub mod listener;
+/// Unix-pipe listener for inbound trace-forwarder connections.
+#[cfg(unix)]
+pub mod local_listener;
 /// Multiplexer framing, SDU header, and protocol numbering.
 /// Multiplexer / demultiplexer — SDU routing between bearer and protocol channels.
 pub mod mux;
@@ -154,6 +157,8 @@ pub use ledger_peers_provider::{
     refresh_ledger_peer_registry,
 };
 pub use listener::{PeerListener, PeerListenerError};
+#[cfg(unix)]
+pub use local_listener::{LocalPeerListener, LocalPeerListenerError};
 #[cfg(unix)]
 pub use ntc_peer::{
     NodeToClientVersionData, NtcPeerConnection, NtcPeerError, ntc_accept, ntc_connect,

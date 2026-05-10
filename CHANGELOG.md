@@ -274,6 +274,56 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R416 — network: local_listener.rs Unix-pipe LocalPeerListener
+  (Phase 2 round 1 of R411-R430 arc, foundation for trace-forwarder
+  Acceptors mini-arc).** Phase 2 of R411-R430 arc opens with a
+  synthesis carve-out in `crates/network/`: the `LocalPeerListener`
+  Unix-pipe analog of TCP `PeerListener`, mirror of the operational
+  shape of `Ouroboros.Network.Snocket.localSnocket` +
+  `Ouroboros.Network.Server.Simple.with` (used by upstream
+  `Cardano.Tracer.Acceptors.Server::doListenToForwarderLocal`,
+  Server.hs:114-143). Single new module:
+  - **crates/network/src/local_listener.rs**: `LocalPeerListener`
+    struct wrapping `tokio::net::UnixListener` + bound path. `bind`
+    constructor performs stale-socket cleanup (mirrors
+    `node/src/local_server/accept.rs`), binds via `UnixListener::bind`,
+    and applies `chmod 0o660` (`SOCKET_PERMISSIONS = 0o660` const) so
+    a non-root user on a multi-tenant host cannot speak trace-forward
+    against a tracer running as a privileged user. `from_listener`
+    constructor for tests + adoption from already-bound listeners.
+    `local_path()` getter. `accept_unix()` returns a single
+    `UnixStream` per call without performing the trace-forwarder
+    handshake (the handshake codec lands in R420+). `Drop` impl
+    removes the socket file on listener teardown so subsequent binds
+    on the same path succeed cleanly. `LocalPeerListenerError` enum
+    with three variants: `Bind { path, source }`,
+    `SetPermissions { path, source }`, `Accept(io::Error)`.
+  - **crates/network/Cargo.toml**: adds `tempfile = "3"` dev-dep
+    matching the existing pin in `consensus`/`storage`/`db-truncater`/
+    `node` crates.
+  - **crates/network/src/lib.rs**: adds `#[cfg(unix)] pub mod
+    local_listener` declaration + `#[cfg(unix)] pub use ...` re-export
+    of `LocalPeerListener` and `LocalPeerListenerError`. Module is
+    Unix-gated since `tokio::net::UnixListener` is Unix-only and
+    cardano-tracer is operationally Unix-only.
+  Carve-outs documented in module docstring: `Snocket` typeclass
+  abstraction (collapses for Yggdrasil since property tests use
+  `tokio::net::UnixStream::pair()` directly); `HandshakeArguments`
+  threading (the trace-forwarder handshake codec lands in R420+);
+  `Server.with` blocks-until-async-exception loop semantics
+  (`accept_unix` returns one connection per call — caller owns the
+  loop, matching `listener.rs::accept_tcp` for symmetric API design
+  between the TCP and Unix-pipe listeners). Tests: yggdrasil-network
+  704 → 712 (+8: bind creates socket file + bind removes stale socket
+  + bind sets permissions to 0o660 + accept_unix returns connected
+  stream + drop removes socket file + from_listener round trip +
+  socket_permissions constant locks down 0o660 + bind error carries
+  path for operator diagnosis). Workspace: 5,789 → 5,797.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R416 → R417. Per the R411 plan, R417 wires the
+  trace-forward responder (Acceptor side of the trace-forwarder
+  mini-protocol's TraceObject sub-protocol) on top of this listener,
+  mirroring upstream's `Trace.Forward.Run.TraceObject.Acceptor::acceptTraceObjectsResp`.
 - **R415 — cardano-tracer: utils.rs::load_metrics_help port
   (closes Phase 1 of R411-R430 arc).** Phase 1 round 5 (final) of
   R411-R430 arc. Single deliverable:
