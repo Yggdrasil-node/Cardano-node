@@ -274,6 +274,50 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R391 — cardano-tracer: Metrics/Utils.hs port (bounded subset:
+  Content-Type constants + RouteDictionary + slugify).** Lands the
+  metrics-server utility surface — Content-Type response headers,
+  per-node URL routing table, slug helper. New
+  handlers/metrics.rs parent-shell module + handlers/metrics/utils.rs
+  port the upstream Cardano.Tracer.Handlers.Metrics.Utils surface:
+  - 5 Content-Type response-header constants
+    (CONTENT_HDR_JSON / CONTENT_HDR_OPEN_METRICS /
+    CONTENT_HDR_UTF8_HTML / CONTENT_HDR_UTF8_TEXT /
+    CONTENT_HDR_PROMETHEUS) as `(&'static str, &'static str)`
+    tuples carrying upstream's exact MIME strings.
+  - RouteDictionary newtype (slug → node-name pair list) with
+    new() constructor + node_names() + render_json() returning a
+    BTreeMap-sorted `node_name → "/slug"` JSON object (matches
+    upstream's Data.Map.fromList semantics).
+  - slugify(&str) → String inline implementation — lowercases
+    ASCII alphanumeric, replaces non-alphanumeric runs with `-`,
+    strips leading/trailing dashes, drops non-ASCII chars (matches
+    upstream Text.Slugify default settings).
+  - ComputeRoutesStatus + RenderHtmlStatus + helpers exposing the
+    deferred entry-point rationale programmatically.
+  Carve-outs documented:
+  - computeRoutes — depends on the unported TracerEnv 14-field
+    record (teConnectedNodesNames + teAcceptedMetrics TVars) and
+    EKG.Store equivalent.
+  - renderListOfConnectedNodes HTML page — depends on a Text.Blaze
+    equivalent (e.g. maud / markup / horrorshow) pending
+    docs/DEPENDENCIES.md justification, OR hand-rolled inline
+    renderer.
+  - System.Metrics.Store dropped from RouteDictionary tuple
+    pending EKG-equivalent metrics surface.
+  - Network.HTTP.Types.ResponseHeaders → `(&str, &str)` (name,
+    value) tuples; callers wrap to axum/hyper HeaderMap at use
+    site.
+  Tests: cardano-tracer 188 → 207 (+19: 5 content-header
+  constants verbatim; RouteDictionary default empty + new
+  round-trip; render_json node→route mapping + empty dictionary +
+  alphabetical key ordering; slugify lowercases + replaces spaces
+  + collapses non-alphanumeric runs + strips leading/trailing
+  dashes + drops non-ASCII [café→caf, ümlaut→mlaut] + empty
+  string + only-punctuation yields empty; 2 deferral-status
+  helpers describe carve-outs). Workspace: 5,592 → 5,611.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R391 → R392.
 - **R390 — cardano-tracer: Logs/Utils.hs port (bounded subset:
   pure log-naming + timestamp parser).** Lands the log-file naming
   + timestamp-parsing helpers shared between the file-writer and

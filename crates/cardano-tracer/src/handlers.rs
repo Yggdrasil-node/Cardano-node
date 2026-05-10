@@ -23,5 +23,6 @@
 //! | `Cardano/Tracer/Handlers/Utils.hs`              | `utils.rs` (pending)               |
 
 pub mod logs;
+pub mod metrics;
 pub mod notifications;
 pub mod system;
