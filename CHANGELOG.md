@@ -274,6 +274,70 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R438 — cardano-tracer: parity-matrix entry refresh
+  (documentation cleanup; closes the R411-R437 documentation
+  loop).** The `sister-tool.cardano-tracer` entry's
+  `implemented_evidence` and `remaining_work` arrays were stale —
+  still listing R388+ Acceptors / R389+ Logs writers / R391+
+  Run.hs as outstanding work despite all three being shipped at
+  R424-R427. R438 refreshes both arrays:
+  - **implemented_evidence**: gains 5 new entries summarizing
+    Phase 1 (R411-R415 EKG-equivalent), Phase 2 (R416-R426
+    trace-forwarder + Acceptors), Phase 3 (R427-R428 supervisor),
+    Phase 4 (R429-R430 TLS + closeout), and the R431-R437 follow-
+    on rounds (lo_handler factory + handshake codec primitives +
+    state-machine driver + Acceptors integration + TraceObject
+    CBOR codec).
+  - **remaining_work**: rewritten to 10 entries reflecting actual
+    open carve-outs (upstream-byte-equivalence for TraceObject
+    Serialise; EKG ReqResp sub-protocol; DataPoint sub-protocol;
+    RemoteSocket TCP path; Logs Rotator full impl; RTView UI;
+    TLS termination via axum-server-rustls; Cardano.Logging.Resources
+    loop; beforeProgramStops handler; live-rehearsal +
+    verified_11_0_1 promotion). Each entry references the
+    corresponding `*_status()` helper for programmatic
+    introspection.
+  Advances `next_milestone` from R438 → R439. Workspace test
+  count unchanged at 5,931 (R438 is a pure documentation round;
+  no test surface change).
+  Verification: `python3 scripts/check-parity-matrix.py` clean —
+  20 entries validated against `.reference-haskell-cardano-node/`
+  (reference tag 11.0.1).
+- **R437 — cardano-tracer: TraceObject CBOR codec (synthesis
+  carve-out, closes the third advisor-flagged R430 gap).**
+  Yggdrasil-canonical wire codec for the upstream
+  `Cardano.Logging.TraceObject` Serialise instance. Source isn't
+  vendored under `.reference-haskell-cardano-node/` (the
+  cardano-logging package is a Hackage dep of cardano-node, not a
+  vendored sibling); R437 ships a Yggdrasil-canonical 6-field
+  CBOR-array shape that round-trips internally without claiming
+  byte-equivalence to upstream. Documented as a synthesis
+  carve-out with operator-facing caveat.
+  Three surfaces updated:
+  - **crates/cardano-tracer/src/logging.rs**: adds
+    `TraceObject::to_cbor` / `TraceObject::from_cbor` methods.
+    Wire format: 6-element CBOR array carrying `[to_human (text or
+    null), to_machine (text), to_severity_code (uint 0-7 per RFC
+    5424), to_namespace (text array), to_thread_id (text),
+    to_timestamp_ms (signed int)]`. Pre-1970 timestamps round-trip
+    via CBOR's negative-integer encoding.
+  - **crates/cardano-tracer/src/severity.rs**: adds
+    `SeverityS::from_syslog_code(u8) → Option&lt;SeverityS&gt;` as the
+    reverse of `syslog_code()`. Used by `from_cbor` to round-trip
+    the severity field.
+  - **crates/cardano-tracer/src/acceptors/{server, client}.rs**:
+    replaces the R424 stub `decode_trace_objects` (which returned
+    `Vec::new()`) with real per-batch decoding. Each decoder reads
+    the outer CBOR array's count, then decodes each entry using
+    the same 6-field shape. Bounded at 65,536 entries per batch
+    to fend off a malicious peer.
+  Tests: yggdrasil-cardano-tracer 420 → 429 (+9: full event
+  round-trip; null `to_human` round-trip; default event round-
+  trip; each of 8 severity levels round-trips; pre-epoch negative
+  timestamp round-trip; empty namespace round-trip; rejects wrong
+  array length; rejects invalid severity code 99; rejects trailing
+  bytes). Workspace: 5,922 → 5,931. Parity-matrix entry advanced:
+  next_milestone R437 → R438.
 - **R436 — cardano-tracer: handshake-driver wired into Acceptors/
   Server + Client (closes advisor gap #3 — full trace-forwarder
   handshake state-machine integration).** Final integration round
