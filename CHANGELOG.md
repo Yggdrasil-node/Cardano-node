@@ -274,6 +274,64 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R419 — network: trace_object_acceptor.rs port of
+  Trace.Forward.Protocol.TraceObject.Acceptor.hs (Phase 2 round 4
+  of R411-R430 arc).** Strict-mirror port of the trace-forwarder
+  TraceObject acceptor-side typed-protocol driver. Lands as
+  `TraceObjectAcceptor&lt;TraceObj&gt;` in `crates/network/src/
+  trace_object_acceptor.rs` alongside `chainsync_client.rs`,
+  `keepalive_client.rs`, and the other mini-protocol drivers.
+  Single new module + one lib.rs re-export:
+  - **TraceObjectAcceptor&lt;TraceObj&gt;**: driver struct holding
+    `MessageChannel`, current `TraceObjectForwardState`, and a
+    `PhantomData&lt;TraceObj&gt;` for the trace-object payload type.
+    `new(handle)` constructor binds the protocol to a `ProtocolHandle`
+    and starts in `StIdle`.
+  - **request_blocking(n_trace_objects, decode_reply_list) →
+    Result&lt;Vec&lt;TraceObj&gt;, TraceObjectAcceptorError&gt;**: sends
+    `MsgTraceObjectsRequest { blocking: StBlocking, n }` and
+    awaits the matching `MsgTraceObjectsReply`. Mirror of upstream's
+    `SendMsgTraceObjectsRequest TokBlocking n cont` data
+    constructor + the `Yield (MsgTraceObjectsRequest TokBlocking
+    request) (Await ... )` peer interpretation in
+    `traceObjectAcceptorPeer`.
+  - **request_non_blocking(n_trace_objects, decode_reply_list) →
+    Result&lt;Vec&lt;TraceObj&gt;, TraceObjectAcceptorError&gt;**: same as
+    blocking variant but with `StNonBlocking`. The forwarder is
+    bound to reply promptly; the reply may be empty.
+  - **done(self) → Result&lt;(), TraceObjectAcceptorError&gt;**: sends
+    `MsgDone` and consumes the driver. Mirror of upstream's
+    `SendMsgDone (m a)` data constructor.
+  - **TraceObjectAcceptorError**: 6-variant error enum (Mux,
+    ConnectionClosed, Protocol, Decode, UnexpectedMessage,
+    InvalidState). The InvalidState variant guards each public
+    method against being called outside `StIdle` — defensive guard
+    duplicating the state-machine check.
+  Carve-outs documented in module docstring:
+  - **Continuation-passing-style API**: upstream's
+    `(BlockingReplyList blocking lo -&gt; m (TraceObjectAcceptor lo m
+    a))` continuation parameter encodes a "next acceptor program"
+    as an inversion-of-control callback. Rust's `async fn` makes
+    this inversion unnecessary — callers just `.await`
+    `request_blocking` and inspect the returned reply directly.
+  - **`Network.TypedProtocol.Peer.Client` machinery**: upstream's
+    `Yield`/`Await`/`Effect`/`Done` peer-construction primitives
+    collapse into direct mux send/recv calls.
+  Updates `lib.rs` with `pub mod trace_object_acceptor` declaration
+  + `pub use TraceObjectAcceptor, TraceObjectAcceptorError`
+  re-exports.
+  Tests: yggdrasil-network 739 → 743 (+4: acceptor starts in
+  StIdle; request_blocking round-trip with multi-element reply;
+  request_non_blocking with empty reply; done terminates cleanly).
+  Mux pair plumbed via `UnixStream::pair` + `start_unix` matching
+  the precedent in `chainsync_client.rs`'s tests; mux handles are
+  bound to `_a_mux` / `_f_mux` so they live to scope-end (drop
+  aborts the mux tasks). Workspace: 5,824 → 5,828. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone
+  R419 → R420. Per the R411 plan, R420 ports
+  `Trace.Forward.Run.TraceObject.Acceptor` — the `RunMiniProtocol`
+  aggregator that wires the codec + acceptor driver + tracer-env
+  handlers into something a mux can spawn.
 - **R418 — network: trace_object_forward.rs CBOR codec port of
   Trace.Forward.Protocol.TraceObject.Codec.hs (Phase 2 round 3 of
   R411-R430 arc).** Strict-mirror port of the trace-forwarder

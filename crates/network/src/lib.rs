@@ -54,6 +54,9 @@ pub mod protocols;
 pub mod root_peers;
 /// Refresh-oriented provider interfaces for time-varying root peers.
 pub mod root_peers_provider;
+/// TraceObjectForward mini-protocol acceptor driver
+/// (cardano-tracer side of the trace-forwarder pipe).
+pub mod trace_object_acceptor;
 /// TxSubmission2 client driver — typed, state-machine-correct protocol loop.
 pub mod txsubmission_client;
 
@@ -182,6 +185,7 @@ pub use root_peers_provider::{
     RootPeerProviderError, RootPeerProviderKind, RootPeerProviderRefresh, ScriptedRootPeerProvider,
     refresh_root_peer_state, refresh_root_peer_state_and_registry,
 };
+pub use trace_object_acceptor::{TraceObjectAcceptor, TraceObjectAcceptorError};
 
 // -- Protocol re-exports ------------------------------------------------------
 pub use protocols::{
