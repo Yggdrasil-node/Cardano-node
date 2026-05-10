@@ -274,6 +274,48 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R409 — cardano-tracer: Metrics/Prometheus.hs port (HTTP server
+  with content negotiation + per-node routes).** Lands the
+  Prometheus exporter HTTP server using R408's axum 0.8 stack +
+  R407's compute_routes + R406's render_html / render_json. New
+  `handlers/metrics/prometheus.rs` module ports the upstream
+  Cardano.Tracer.Handlers.Metrics.Prometheus surface:
+  - run_prometheus_server(ConnectedNodesNames, Endpoint,
+    BTreeMap<String, String>, bool) async →
+    std::io::Result<JoinHandle<()>>. Mirror of upstream's
+    runPrometheusServer signature; takes the slice of state per
+    R398 plan option (b) rather than full TracerEnv.
+  - 100ms `tokio::time::sleep` stagger before listener bind to
+    avoid concurrent listening-banner collisions (mirrors
+    upstream's `sleep 0.1`).
+  - Three routes attached to an axum::Router:
+    - `GET /` — content-negotiated index (HTML or JSON based on
+      `Accept` header). Uses R406's render_html / render_json.
+    - `GET /targets` — Prometheus HTTP-SD service-discovery JSON.
+    - `GET /{slug}` — per-node OpenMetrics exposition (placeholder
+      pending EKG-equivalent metrics surface).
+  - PrometheusServiceDiscovery newtype with serde-derived JSON.
+  - wants_json(&HeaderMap) helper for content negotiation.
+  - ExpositionStatus + TlsTerminationStatus deferral descriptors
+    + helpers exposing the two pending pieces programmatically.
+  Carve-outs documented:
+  - Per-node OpenMetrics exposition body deferred — depends on
+    EKG-equivalent metrics surface (Cardano.Tracer.Types.AcceptedMetrics
+    + Cardano.Logging.Prometheus.Exposition.renderExpositionFromSampleWith;
+    both unported).
+  - TLS termination via tlsCertificate.epForceSSL deferred —
+    needs axum-server-rustls (or hyper-rustls) integration with
+    R408's load_pem_certs / load_pem_key.
+  Tests: cardano-tracer 325 → 333 (+8: PrometheusServiceDiscovery
+  serializes with targets + labels; wants_json content-negotiation
+  for application/json + text/html + missing Accept + combined
+  Accept; exposition_status describes deferral; tls_termination_status
+  describes deferral; run_prometheus_server binds on ephemeral
+  port without panicking). Workspace: 5,729 → 5,737. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone R409 →
+  R410. Per the R398 plan, this leaves R410 (Metrics/Monitoring +
+  TimeseriesServer + Servers orchestration) as the final round in
+  the cardano-tracer R398-R410 sub-arc.
 - **R408 — cardano-tracer: axum + tower + rustls-pemfile workspace
   deps + HTTP-server skeleton (D2 main land per R398 plan).** Lands
   the HTTP server stack that R398 carved out for the Metrics

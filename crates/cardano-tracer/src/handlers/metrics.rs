@@ -20,6 +20,7 @@
 //! | `Metrics/Servers.hs`                               | `servers.rs` (pending)   |
 //! | `Metrics/Monitoring.hs`                            | `monitoring.rs` (pending)|
 //! | `Metrics/TimeseriesServer.hs`                      | `timeseries_server.rs` (pending) |
-//! | `Metrics/Prometheus.hs`                            | `prometheus.rs` (pending) |
+//! | `Metrics/Prometheus.hs`                            | `prometheus.rs`          |
 
+pub mod prometheus;
 pub mod utils;
