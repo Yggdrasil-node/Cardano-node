@@ -274,6 +274,38 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R372 — db-analyser: CSV output writers (port of CSV.hs).**
+  Lands the CSV-emission helpers used by db-analyser's
+  BenchmarkLedgerOps and GetBlockApplicationMetrics analyses. New
+  csv.rs module ports the upstream Cardano.Tools.DBAnalyser.CSV
+  surface:
+  - Separator(String) newtype mirroring upstream
+    `newtype Separator = Separator { unSeparator :: TextBuilder }`
+    with `comma()` / `tab()` / `from(impl Into<String>)` constructors.
+  - write_header_line(writer, separator, headers): writeHeaderLine.
+  - write_line(writer, separator, columns): writeLine.
+  - compute_and_write_line_pure(writer, separator, builders, value):
+    computeAndWriteLinePure.
+  - compute_and_write_line_io(writer, separator, builders, value):
+    computeAndWriteLine (Result-based; short-circuits on first
+    builder error).
+  - compute_columns_pure / compute_columns_io: same Pure / IO
+    counterparts for column-only computation.
+  - CsvWriteError<E> enum (Builder | Io) for the fallible emit path.
+  Carve-out documented:
+  - TextBuilder (upstream's `text-builder` crate) replaced by plain
+    String. Adequate for the analyzers' output volume (~hundreds of
+    thousands of rows max). Higher-throughput backends can be layered
+    on without changing the public API.
+  Tests: db-analyser 50 → 63 (+13: 4 Separator constructors and
+  defaults + 2 write_header_line variants [comma + tab separators] +
+  1 write_line emits data row + 1 compute_columns_pure applies
+  builders + 1 compute_and_write_line_pure full row + 1
+  compute_columns_io short-circuits on first error + 1
+  compute_and_write_line_io propagates builder error + 2 edge cases
+  [empty columns list, single-column header]). Workspace:
+  5,387 → 5,400. Parity-matrix entry sister-tool.db-analyser
+  advanced: next_milestone R366 → R373.
 - **R371 — cardano-tracer: runtime-state types (port of Types.hs).**
   Lands the runtime-state types for cardano-tracer. New types.rs
   module ports the upstream Cardano.Tracer.Types surface — type

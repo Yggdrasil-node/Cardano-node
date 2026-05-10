@@ -22,6 +22,7 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod csv;
 pub mod parser;
 pub mod types;
 
