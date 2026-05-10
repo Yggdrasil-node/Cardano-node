@@ -28,33 +28,55 @@ pub mod parser;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
+///
+/// R367 wires the typed parser dispatcher end-to-end. On successful
+/// parse the resolved [`parser::Command`] is handed to [`run`];
+/// `--help` / `--version` short-circuit with byte-equivalent
+/// upstream output.
 pub fn run_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    match parser::parse_args(&argv) {
-        Ok(_args) => match run() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(err) => {
-                let _ = writeln!(std::io::stderr(), "Error: {err}");
-                ExitCode::FAILURE
-            }
-        },
+    let command = match parser::parse_args(&argv) {
+        Ok(cmd) => cmd,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
         }
         Err(parser::ParseError::VersionRequested) => {
             let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
-            ExitCode::SUCCESS
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match run(&command) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            let _ = writeln!(std::io::stderr(), "Error: {err}");
+            ExitCode::FAILURE
         }
     }
 }
 
-/// Concrete run-loop entry. R335-pattern skeleton: returns the
-/// "not-yet-implemented" sentinel pending later round implementation.
-/// The CLI parser surface (--help / --version) IS functional and
-/// byte-equivalent to upstream.
-pub fn run() -> eyre::Result<()> {
+/// Concrete run-loop entry.
+///
+/// R367 lands argv → [`parser::Command`] subcommand dispatch. The
+/// per-subcommand era-aware option records + Process/Property
+/// modules + multi-node testnet runtime land in subsequent rounds
+/// (gated on yggdrasil-ledger's era surface being exposed at crate
+/// boundaries; Process/Property carve-out per the plan).
+pub fn run(command: &parser::Command) -> eyre::Result<()> {
+    use parser::Command;
+    let subcommand_name = match command {
+        Command::Cardano(_) => "cardano",
+        Command::CreateEnv(_) => "create-env",
+        Command::Version(_) => "version",
+    };
     Err(eyre::eyre!(
-        "yggdrasil-cardano-testnet: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
+        "yggdrasil-cardano-testnet: `{subcommand_name}' subcommand era-aware \
+         dispatch not yet implemented (R367 ships argv → Command subcommand \
+         recognition; per-subcommand era-aware option records land in \
+         subsequent rounds gated on yggdrasil-ledger's era surface)."
     ))
 }

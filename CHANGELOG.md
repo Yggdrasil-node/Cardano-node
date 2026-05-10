@@ -274,6 +274,34 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R367 — cardano-testnet: typed CLI parser (subcommand dispatch from Parsers/Run.hs::commands).**
+  Lands the top-level subcommand dispatch for cardano-testnet,
+  replacing the R335 passthrough Args. parser.rs ports upstream's
+  `commands :: EnvCli -> Parser CardanoTestnetCommands` — a 4-way
+  subcommand recognition layer covering `cardano`, `create-env`,
+  `version`, `help`. Each subcommand variant currently carries an
+  opaque PassthroughArgs (raw post-subcommand argv tail); the deep
+  era-aware option records (CardanoTestnetCliOptions,
+  CardanoTestnetCreateEnvOptions, VersionOptions) are carved out
+  pending yggdrasil-ledger's era surface being exposed at crate
+  boundaries — subsequent rounds will replace PassthroughArgs with
+  the typed records. Top-level --help / --version short-circuit
+  anywhere in argv (matches upstream's helper combinator behavior).
+  ParseError variants: HelpRequested / VersionRequested /
+  MissingSubcommand / UnknownSubcommand. Carve-outs documented:
+  CardanoTestnetCliOptions/CreateEnvOptions payloads (era-aware
+  records depending on Cardano.Api machinery); EnvCli env-var
+  threading. lib.rs::run_main() wires parser → Command → run() chain
+  end-to-end. lib.rs::run() returns a sentinel reporting which
+  subcommand was selected + roadmap pointer.
+  Tests: cardano-testnet 22 → 32 (+10: 3 help/version detection +
+  1 missing-subcommand + 1 unknown-subcommand + 4 subcommand-
+  dispatch verifications [cardano, create-env, version, help] +
+  3 passthrough-args round-trips [cardano with flags, create-env
+  with flags, version with no args] + 1 help-inside-subcommand-
+  window short-circuits + 1 PassthroughArgs default check).
+  Workspace: 5,348 → 5,358. Parity-matrix entry sister-tool.cardano-
+  testnet advanced: next_milestone R360 → R368.
 - **R366 — cardano-tracer: typed CLI parser (port of CLI.hs::parseTracerParams).**
   Lands the typed parser dispatcher for cardano-tracer. parser.rs ports
   upstream's `parseTracerParams :: Parser TracerParams` — a thin
