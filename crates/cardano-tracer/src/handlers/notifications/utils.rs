@@ -142,7 +142,7 @@ mod tests {
         queues
             .write()
             .await
-            .insert(EventGroup::EventWarnings, (rx, Timer));
+            .insert(EventGroup::EventWarnings, (rx, Timer::placeholder()));
 
         let routed = add_new_event(
             &senders,
@@ -174,7 +174,7 @@ mod tests {
         queues
             .write()
             .await
-            .insert(EventGroup::EventErrors, (rx, Timer));
+            .insert(EventGroup::EventErrors, (rx, Timer::placeholder()));
 
         // Push 3 events, then drain.
         for i in 0..3 {
@@ -210,7 +210,7 @@ mod tests {
         queues
             .write()
             .await
-            .insert(EventGroup::EventCriticals, (rx, Timer));
+            .insert(EventGroup::EventCriticals, (rx, Timer::placeholder()));
 
         let drained = get_new_events(&queues, EventGroup::EventCriticals).await;
         assert!(drained.is_empty());
@@ -225,7 +225,7 @@ mod tests {
         queues
             .write()
             .await
-            .insert(EventGroup::EventAlerts, (rx, Timer));
+            .insert(EventGroup::EventAlerts, (rx, Timer::placeholder()));
 
         let _routed = add_new_event(
             &senders,

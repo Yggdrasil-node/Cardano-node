@@ -110,7 +110,10 @@ mod tests {
         // `(EventsQueue, Timer)` pairs. The actual rx returned to
         // the test is fresh — we don't store the same one.
         let (_, fresh_rx) = mpsc::unbounded_channel::<Event>();
-        queues.write().await.insert(group, (fresh_rx, Timer));
+        queues
+            .write()
+            .await
+            .insert(group, (fresh_rx, Timer::placeholder()));
         rx
     }
 

@@ -274,6 +274,61 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R386 — cardano-tracer: Notifications/Timer.hs port (full
+  periodic-action scheduler).** Lands the full Timer surface
+  replacing types.rs's R380 placeholder unit struct. New
+  handlers/notifications/timer.rs module ports the upstream
+  Cardano.Tracer.Handlers.Notifications.Timer surface:
+  - Timer struct holding Arc<Mutex<PeriodInSec>> call_period +
+    Arc<Mutex<bool>> is_running + Option<Arc<JoinHandle<()>>>
+    (None for placeholders). 5 inherent methods mirror upstream's
+    5-record fields:
+    - is_alive() (threadAlive), kill() (threadKill),
+      set_call_period(P) async (setCallPeriod), start_timer() /
+      stop_timer() async (startTimer / stopTimer).
+    - Plus call_period() / is_running() readers for tests.
+  - 5 constructors:
+    - Timer::new (full mkTimer with on_failure_message callback)
+    - Timer::new_stderr (mkTimerStderr — stderr-logging variant)
+    - Timer::new_die_on_failure (mkTimerDieOnFailure)
+    - Timer::new_stderr_die_on_failure (mkTimerStderrDieOnFailure)
+    - Timer::placeholder (no-op no-task variant for EventsQueues
+      default).
+  - CHECK_PERIOD_SECS const = 1 mirroring upstream's
+    `checkPeriod = 1` granularity.
+  - Spawn-loop semantics: every CHECK_PERIOD_SECS seconds, check
+    is_running flag → if false skip, else accumulate elapsed_time
+    (kept in closure-local Mutex, not on struct, since lifetime is
+    bounded by task) → when elapsed >= period, run action via
+    tokio::task::spawn_blocking + std::panic::catch_unwind, reset
+    elapsed on success, fire on_failure_message + optional break
+    on panic.
+  Carve-outs documented:
+  - Trace IO TracerTrace replaced with Box<dyn Fn(&str) + Send +
+    Sync> failure-message callback (Yggdrasil-side tracer-trace
+    surface not yet ported).
+  - killThread =<< myThreadId (upstream's die-on-failure pattern
+    that kills the calling thread) replaced with abort-only-the-
+    timer-loop semantics. Operationally safer in a multi-tenant
+    tokio runtime — the periodic action stops running but the
+    surrounding tracer process keeps going.
+  - Control.Exception.try → std::panic::catch_unwind.
+  Updates types.rs Timer to be a `pub use super::timer::Timer`
+  re-export. Downstream test sites in check.rs / utils.rs / types.rs
+  swap from `Timer` unit struct construction to `Timer::placeholder()`.
+  Tests: cardano-tracer 121 → 132 (+11: CHECK_PERIOD_SECS canonical
+  1; placeholder default not-alive; default constructs to
+  placeholder; placeholder methods are safe no-ops; new timer
+  invokes action after period elapses [4-second wait]; stop_timer
+  pauses invocations [3-second test, counter stays 0]; start_timer
+  resumes invocations [initial-stopped + 2-second wait + start +
+  3-second wait]; set_call_period updates in flight;
+  is_running flag round-trips; kill aborts task with eventual
+  is_alive=false [50ms-poll loop, 20-iter ceiling]; die_on_failure
+  aborts loop after action panics [counter exactly 1, failure
+  callback received the panic message]). Workspace: 5,525 →
+  5,536. Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R386 → R387.
 - **R385 — cardano-tracer: Notifications/Utils.hs port (bounded
   subset).** Lands the bounded subset of upstream's notification-engine
   utility helpers — the two functions whose dependencies are already

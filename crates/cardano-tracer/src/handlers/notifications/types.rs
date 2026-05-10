@@ -206,15 +206,7 @@ impl EventGroup {
 /// in the module docstring.
 pub type EventsQueue = mpsc::UnboundedReceiver<Event>;
 
-/// Placeholder for the notification timer struct. The full Timer
-/// surface (forkIO + killThread closures) lands in a future round
-/// when `Notifications/Timer.hs` (112 lines) is ported.
-///
-/// Until then this is a unit-shaped struct so downstream sites can
-/// thread `Timer` through the type system without a concrete
-/// implementation.
-#[derive(Clone, Debug, Default)]
-pub struct Timer;
+pub use super::timer::Timer;
 
 /// Map of [`EventGroup`] → ([`EventsQueue`], [`Timer`]) shared across
 /// the notification engine. Mirror of upstream
@@ -385,7 +377,7 @@ mod tests {
     async fn events_queues_can_register_a_group() {
         let queues = new_events_queues();
         let (_tx, rx) = mpsc::unbounded_channel::<Event>();
-        let timer = Timer;
+        let timer = Timer::placeholder();
         {
             let mut guard = queues.write().await;
             guard.insert(EventGroup::EventErrors, (rx, timer));
