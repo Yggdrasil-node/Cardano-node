@@ -274,6 +274,31 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R377 — closure-status doc refresh covering R369–R376.** Updates
+  the [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md) banner +
+  current-implementation-status preamble to reflect the deeper-layer
+  sub-arc shipped since the R368 banner. Banner now reads
+  "**376+ parity rounds completed**" (was "367+") with workspace-test
+  count refreshed from 5,358 → 5,443 (+85 across 8 rounds: +10 R369 +
+  4 R370 + 16 R371 + 13 R372 + 9 R373 + 10 R374 + 7 R375 + 17 R376).
+  Strict-mirror audit table held stable at 257 (a) + 215 (c) = 472
+  graded files (R369–R376 leaves are docstring-graded inline at the
+  strict-mirror gate; no audit-table regeneration required).
+  Per-round summary inline: R369 dmq-node Configuration.hs::readConfigurationFile
+  port; R370 kes-agent-control optFromEnv env-var derivation; R371
+  cardano-tracer runtime-state types (NodeId/NodeName/ProtocolsBrake/
+  ConnectedNodes/ConnectedNodesNames/Registry/HandleRegistry); R372
+  db-analyser CSV writers; R373 db-analyser HasAnalysis trait surface;
+  R374 db-analyser BenchmarkLedgerOps SlotDataPoint record; R375
+  db-analyser BenchmarkLedgerOps Metadata record; R376 db-analyser
+  BenchmarkLedgerOps FileWriting dispatch — closes the
+  BenchmarkLedgerOps leaf trio. Refreshed sister-tool partial-status
+  inventory: 4 typed-parser-wired tools have deeper-layer extensions
+  in flight (dmq-node, kes-agent-control, cardano-tracer, db-analyser);
+  3 are typed-parser-wired without deeper extensions yet
+  (snapshot-converter, db-synthesizer, cardano-testnet). No code
+  changes; doc-only round mirroring the cadence of R346/R352/R357/
+  R360/R368 closure refreshes.
 - **R376 — db-analyser: BenchmarkLedgerOps file writers (port of
   FileWriting.hs).** Closes the BenchmarkLedgerOps leaf trio
   (SlotDataPoint + Metadata + FileWriting). New
