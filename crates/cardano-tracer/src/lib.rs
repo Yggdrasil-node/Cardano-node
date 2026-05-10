@@ -31,6 +31,7 @@ use std::process::ExitCode;
 pub mod configuration;
 pub mod environment;
 pub mod handlers;
+pub mod logging;
 pub mod meta_trace;
 pub mod parser;
 pub mod severity;

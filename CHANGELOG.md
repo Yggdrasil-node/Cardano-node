@@ -274,6 +274,56 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R399 — cardano-tracer: TraceObject 6-field inline port (D3 from
+  R398 plan; unblocks Logs/{File, TraceObjects} + acceptors).**
+  Lands the canonical TraceObject record replacing R382's unit-
+  struct placeholder. New logging.rs module synthesizes the
+  `Cardano.Logging.TraceObject` shape (the upstream `trace-dispatcher`
+  package is NOT vendored at .reference-haskell-cardano-node/; the
+  field set was recovered from upstream's exhaustive field-accesses
+  in `Logs/Journal/Systemd.hs::mkJournalFields` +
+  `Logs/File.hs::traceTextForHuman/traceTextForMachine`):
+  - 6 fields: to_human (Option<String>), to_machine (String),
+    to_severity (SeverityS reused from R380), to_namespace
+    (Vec<String> hierarchical path), to_thread_id (String —
+    `tokio::task::id()`-formatted at use site), to_timestamp_ms
+    (i64 Unix-epoch ms matching crate::time::get_time_ms convention).
+  - new(...) all-explicit constructor for production sites.
+  - render_for_human() — Option<&str> with fallback to to_machine
+    (mirror of upstream's `fromMaybe toMachine toHuman`).
+  - render_for_machine() — always returns to_machine.
+  - namespace_dotted() — joins the namespace path with `.`
+    separator (e.g. "BlockFetch.Server.Acquired") for the
+    journal/systemd-journal `namespace` field.
+  - Default impl returns an all-zeros / empty-strings placeholder
+    suitable for tests + synthesis sites.
+  Migration: existing unit-struct placeholder at
+  handlers/logs/journal/no_systemd.rs:45 replaced with
+  `pub use crate::logging::TraceObject` re-export. Existing call
+  sites updated:
+  - environment.rs::tests::no_op_reforward_does_not_panic_on_non_empty_input
+    swapped from `&[TraceObject, TraceObject]` to
+    `&[TraceObject::default(), TraceObject::default()]`.
+  - handlers/logs/journal/no_systemd.rs::tests swapped similarly.
+  Carve-outs documented:
+  - LogFormatting typeclass methods (forHuman/forMachine) live on
+    the *source* type per upstream; Yggdrasil-side equivalents are
+    local to each emit site.
+  - Data.Time.UTCTime nanosecond precision dropped to milliseconds
+    (matches the rest of the cardano-tracer crate's wall-clock
+    convention; sub-millisecond precision unused operationally).
+  Tests: cardano-tracer 272 → 282 (+10: new builds with all fields;
+  default uses Debug severity + empty strings + 0 timestamp;
+  render_for_human uses to_human when present; falls back to
+  to_machine when to_human is None; render_for_machine always
+  returns to_machine; namespace_dotted joins with periods + handles
+  empty namespace + handles single element; equality across clones;
+  inequality when severity differs). Workspace: 5,676 → 5,686.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R399 → R400. Per the R398 audit, this unblocks
+  R400 (Logs/File.hs writeTraceObjectsToFile) + R401 (Logs/TraceObjects.hs
+  traceObjectsHandler) + R411+ trace-forwarder mini-protocol
+  acceptors.
 - **R398 — cardano-tracer: dependency audit + TracerEnv decision
   (R398-R410 sub-arc prep).** Documentation-only round preparing
   the next 12 rounds of cardano-tracer subsystem build-out. Three

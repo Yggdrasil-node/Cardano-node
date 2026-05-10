@@ -307,7 +307,7 @@ mod tests {
     #[test]
     fn no_op_reforward_does_not_panic_on_non_empty_input() {
         let cb = no_op_reforward();
-        cb(&[TraceObject, TraceObject]);
+        cb(&[TraceObject::default(), TraceObject::default()]);
     }
 
     #[test]

@@ -23,26 +23,22 @@
 //!
 //! Carve-outs (NOT ported, by design):
 //!
-//! - **`Cardano.Logging.TraceObject`**: not yet ported (see
-//!   [`super::super::super::notifications::types`]'s carve-out
-//!   docstring). Until the upstream `trace-dispatcher` package is
-//!   vendored, the trace-object payload is opaque to this sink —
-//!   the function takes a generic placeholder so callers compile
-//!   cleanly.
+//! - **`Cardano.Logging.TraceObject`**: now upgraded to a real
+//!   6-field record at [`crate::logging::TraceObject`] (R399 inline
+//!   port). This file re-exports that canonical type via
+//!   `pub use` so callers that imported it from the original
+//!   `journal::no_systemd` location keep working — the underlying
+//!   shape is no longer a unit struct.
 
 use crate::configuration::LogFormat;
 use crate::types::NodeName;
 
-/// Trace-object placeholder until the upstream `Cardano.Logging.TraceObject`
-/// type is vendored + ported. Documented here rather than in
-/// `crate::types` so the file-mirror tracks upstream `Logs/Journal/NoSystemd.hs`
-/// 1:1.
-///
-/// The full upstream type carries `(toHuman, toMachine, toSeverity,
-/// toNamespace, toThreadId, toTimestamp)` per the field accesses in
-/// `Logs/Journal/Systemd.hs::mkJournalFields`.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
-pub struct TraceObject;
+/// Re-export of the canonical [`crate::logging::TraceObject`]
+/// 6-field record. Originally lived here as a unit-struct
+/// placeholder (R382-R398); upgraded to the real shape at R399 per
+/// the audit logged in `docs/operational-runs/2026-05-10-round-398-dep-audit-tracerenv-decision.md`
+/// (D3 inline port).
+pub use crate::logging::TraceObject;
 
 /// Write a list of trace objects to the systemd journal. Mirror of
 /// upstream `writeTraceObjectsToJournal`. On Yggdrasil this is
@@ -79,7 +75,11 @@ mod tests {
 
     #[test]
     fn write_trace_objects_to_journal_handles_non_empty_object_list() {
-        let objects = vec![TraceObject, TraceObject, TraceObject];
+        let objects = vec![
+            TraceObject::default(),
+            TraceObject::default(),
+            TraceObject::default(),
+        ];
         let result = write_trace_objects_to_journal(
             LogFormat::ForMachine,
             &"test-node".to_string(),
@@ -90,7 +90,6 @@ mod tests {
 
     #[test]
     fn trace_object_default_constructs() {
-        let _: TraceObject = TraceObject;
-        let _ = TraceObject;
+        let _: TraceObject = TraceObject::default();
     }
 }
