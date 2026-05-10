@@ -274,6 +274,64 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R376 — db-analyser: BenchmarkLedgerOps file writers (port of
+  FileWriting.hs).** Closes the BenchmarkLedgerOps leaf trio
+  (SlotDataPoint + Metadata + FileWriting). New
+  analysis/benchmark_ledger_ops/file_writing.rs module ports the
+  upstream Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting
+  surface that ties together the BenchmarkLedgerOps row data,
+  preamble, and csv.rs writers:
+  - OutputFormat enum (Csv | Json) with Csv as Default, mirroring
+    upstream `data OutputFormat = CSV | JSON`.
+  - csv_separator() returning Separator::tab() — module constant
+    mirror of upstream `csvSeparator :: TextBuilder; csvSeparator = "\t"`.
+  - get_output_format(Option<&Path>, &mut W) — test-friendly variant
+    with stderr-sink injection so the dispatch logic is unit-testable
+    without spawning a process. Path-extension dispatch: `csv` →
+    Csv, `json` → Json, anything else → Csv with a stderr warning
+    matching upstream's exact text "Unsupported extension '.X'.
+    Defaulting to CSV.".
+  - get_output_format_io(Option<&Path>) — IO-driven counterpart that
+    writes the warning to std::io::stderr() (matching upstream's
+    `IO.hPutStr IO.stderr ...` byte-for-byte).
+  - write_header(&mut W, OutputFormat) — Csv emits 15-column header
+    via the same builder list as the data rows; Json no-op (matches
+    upstream's `writeHeader _ JSON = pure ()`).
+  - write_data_point(&mut W, OutputFormat, &SlotDataPoint) — Csv
+    emits 14 fixed columns + variable trailing era-specific stats
+    columns (the BlockStats list is intercalated with tabs and
+    expanded inline, matching upstream's `Builder.intercalate
+    csvSeparator . unBlockStats` semantics); Json emits compact JSON
+    via serde_json::to_writer with no trailing newline (matches
+    upstream's `BSL.hPut h (Aeson.encode x)`).
+  - write_metadata(&mut W, OutputFormat, LedgerApplicationMode) —
+    Csv no-op; Json emits Metadata::collect()'s output via
+    serde_json::to_writer.
+  - data_point_csv_builder() returning Vec<DataPointCsvBuilder>
+    where `DataPointCsvBuilder = (&'static str, fn(&SlotDataPoint) ->
+    String)`. Type alias keeps the function signature within
+    workspace clippy::type_complexity bounds. The 15-element list
+    preserves upstream's exact column order so any tooling grading
+    BenchmarkLedgerOps output by column position continues to work.
+  Carve-outs documented:
+  - Data.ByteString.Lazy.hPut + Aeson.encode → serde_json::to_writer
+    (byte-identical for compact JSON output).
+  - System.FilePath.Posix.takeExtension (which returns ".csv" with
+    leading dot) → Path::extension() (which strips the dot). The
+    warning message re-adds the dot prefix for byte-equivalent
+    stderr output.
+  Tests: db-analyser 89 → 106 (+17: OutputFormat default + csv_separator
+  + 5 get_output_format dispatch variants [None, .csv, .json,
+  unsupported with warning, no extension with warning] + write_header
+  CSV/JSON [2 tests] + write_data_point CSV/JSON [2 tests] +
+  empty-block-stats edge case + write_metadata CSV/JSON [2 tests] +
+  data_point_csv_builder column-name order + per-column rendering +
+  round-trip header+data sequencing). Workspace: 5,426 → 5,443.
+  Parity-matrix entry sister-tool.db-analyser advanced:
+  next_milestone R376 → R377. The BenchmarkLedgerOps leaf trio is
+  now structurally complete (SlotDataPoint + Metadata + FileWriting);
+  the remaining db-analyser work shifts to per-era HasAnalysis
+  instances + Analysis.hs dispatch + Run.hs supervisor.
 - **R375 — db-analyser: BenchmarkLedgerOps Metadata record (port of
   Metadata.hs).** Lands the run-environment metadata record
   accompanying the BenchmarkLedgerOps JSON output. New

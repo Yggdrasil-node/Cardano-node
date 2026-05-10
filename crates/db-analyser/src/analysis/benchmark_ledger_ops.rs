@@ -19,7 +19,8 @@
 //! |-----------------------------------------------------------|--------------------------|
 //! | `Analysis/BenchmarkLedgerOps/SlotDataPoint.hs`            | `slot_data_point.rs`     |
 //! | `Analysis/BenchmarkLedgerOps/Metadata.hs`                 | `metadata.rs`            |
-//! | `Analysis/BenchmarkLedgerOps/FileWriting.hs`              | `file_writing.rs` (pending) |
+//! | `Analysis/BenchmarkLedgerOps/FileWriting.hs`              | `file_writing.rs`        |
 
+pub mod file_writing;
 pub mod metadata;
 pub mod slot_data_point;
