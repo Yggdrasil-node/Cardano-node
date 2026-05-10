@@ -41,21 +41,40 @@ pub struct StakeCredentialState {
     /// Used to compute the correct refund on unregistration, since the
     /// protocol parameter `keyDeposit` may have changed since registration.
     pub(super) deposit: u64,
+    /// On-chain location (slot, tx_index, cert_index) of the registration
+    /// certificate that created this credential entry. Used to resolve
+    /// `Address::Pointer` UTxOs in `compute_stake_snapshot()`, matching
+    /// upstream `resolveShelleyInstantStake` / `addShelleyInstantStake`
+    /// in `Cardano.Ledger.Shelley.State.Stake`.
+    /// `None` for credentials loaded from pre-pointer-tracking checkpoints or
+    /// registered through genesis/simulation paths.
+    pub(super) registration_ptr: Option<(u64, u64, u64)>,
 }
 
 impl CborEncode for StakeCredentialState {
     fn encode_cbor(&self, enc: &mut Encoder) {
-        enc.array(3);
-        encode_optional_pool_key_hash(self.delegated_pool, enc);
-        encode_optional_drep(self.delegated_drep.as_ref(), enc);
-        enc.unsigned(self.deposit);
+        if let Some((slot, tx_idx, cert_idx)) = self.registration_ptr {
+            enc.array(4);
+            encode_optional_pool_key_hash(self.delegated_pool, enc);
+            encode_optional_drep(self.delegated_drep.as_ref(), enc);
+            enc.unsigned(self.deposit);
+            enc.array(3);
+            enc.unsigned(slot);
+            enc.unsigned(tx_idx);
+            enc.unsigned(cert_idx);
+        } else {
+            enc.array(3);
+            encode_optional_pool_key_hash(self.delegated_pool, enc);
+            encode_optional_drep(self.delegated_drep.as_ref(), enc);
+            enc.unsigned(self.deposit);
+        }
     }
 }
 
 impl CborDecode for StakeCredentialState {
     fn decode_cbor(dec: &mut Decoder<'_>) -> Result<Self, LedgerError> {
         let len = dec.array()?;
-        if len != 2 && len != 3 {
+        if len != 2 && len != 3 && len != 4 {
             return Err(LedgerError::CborInvalidLength {
                 expected: 3,
                 actual: len as usize,
@@ -65,11 +84,27 @@ impl CborDecode for StakeCredentialState {
         let delegated_pool = decode_optional_pool_key_hash(dec)?;
         let delegated_drep = decode_optional_drep(dec)?;
         let deposit = if len >= 3 { dec.unsigned()? } else { 0 };
+        let registration_ptr = if len >= 4 {
+            let ptr_len = dec.array()?;
+            if ptr_len != 3 {
+                return Err(LedgerError::CborInvalidLength {
+                    expected: 3,
+                    actual: ptr_len as usize,
+                });
+            }
+            let slot = dec.unsigned()?;
+            let tx_idx = dec.unsigned()?;
+            let cert_idx = dec.unsigned()?;
+            Some((slot, tx_idx, cert_idx))
+        } else {
+            None
+        };
 
         Ok(Self {
             delegated_pool,
             delegated_drep,
             deposit,
+            registration_ptr,
         })
     }
 }
@@ -81,6 +116,7 @@ impl StakeCredentialState {
             delegated_pool,
             delegated_drep,
             deposit: 0,
+            registration_ptr: None,
         }
     }
 
@@ -94,12 +130,21 @@ impl StakeCredentialState {
             delegated_pool,
             delegated_drep,
             deposit,
+            registration_ptr: None,
         }
     }
 
     /// Returns the deposit paid at registration time (upstream `rdDeposit`).
     pub fn deposit(&self) -> u64 {
         self.deposit
+    }
+
+    /// Returns the registration cert location `(slot, tx_index, cert_index)` for
+    /// pointer-address resolution. `None` when the credential was registered via
+    /// a code path that predates ptr-tracking (genesis, simulation, or legacy
+    /// checkpoints).
+    pub fn registration_ptr(&self) -> Option<(u64, u64, u64)> {
+        self.registration_ptr
     }
 
     /// Returns the delegated pool, if any.
@@ -226,6 +271,37 @@ impl StakeCredentials {
         self.entries.insert(
             credential,
             StakeCredentialState::new_with_deposit(None, None, deposit),
+        );
+        true
+    }
+
+    /// Registers a stake credential with no delegation target, the given deposit, and
+    /// the on-chain registration cert location `(slot, tx_index, cert_index)`.
+    ///
+    /// The `ptr` is used later by `compute_stake_snapshot()` to resolve
+    /// `Address::Pointer` UTxOs whose pointer equals this cert location —
+    /// matching upstream `addShelleyInstantStake` / `resolveShelleyInstantStake`
+    /// in `Cardano.Ledger.Shelley.State.Stake`.
+    ///
+    /// Returns `true` when the credential was freshly registered.
+    /// Returns `false` (already registered) **without** overwriting.
+    pub fn register_with_ptr(
+        &mut self,
+        credential: StakeCredential,
+        deposit: u64,
+        ptr: Option<(u64, u64, u64)>,
+    ) -> bool {
+        if self.entries.contains_key(&credential) {
+            return false;
+        }
+        self.entries.insert(
+            credential,
+            StakeCredentialState {
+                delegated_pool: None,
+                delegated_drep: None,
+                deposit,
+                registration_ptr: ptr,
+            },
         );
         true
     }

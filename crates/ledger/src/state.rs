@@ -1867,6 +1867,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
+                    0, // tx_index: submitted tx; ptr tracking follows block application
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
@@ -2030,6 +2031,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
+                    0, // tx_index: submitted tx; ptr tracking follows block application
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
@@ -2195,6 +2197,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
+                    0, // tx_index: submitted tx; ptr tracking follows block application
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, false).as_ref(),
                 )?;
@@ -2552,6 +2555,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
+                    0, // tx_index: submitted tx; ptr tracking follows block application
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, true).as_ref(),
                 )?;
@@ -2953,6 +2957,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
+                    0, // tx_index: submitted tx; ptr tracking follows block application
                     self.stability_window,
                     self.mir_validation_context(current_slot.0, true).as_ref(),
                 )?;
@@ -3564,6 +3569,7 @@ impl LedgerState {
                     tx.body.certificates.as_deref(),
                     tx.body.withdrawals.as_ref(),
                     current_slot.0,
+                    0, // tx_index: submitted tx; ptr tracking follows block application
                     self.stability_window,
                     None, // Conway: MIR certs rejected as UnsupportedCertificate
                 )?;
@@ -5059,7 +5065,8 @@ fn apply_certificates_and_withdrawals(
         ctx,
         certificates,
         withdrawals,
-        0,
+        0, // current_slot: simulation context, no block slot
+        0, // tx_index: simulation context, ptr tracking not needed
         None,
         None,
     )
@@ -5080,6 +5087,7 @@ fn apply_certificates_and_withdrawals_with_future(
     certificates: Option<&[DCert]>,
     withdrawals: Option<&BTreeMap<RewardAccount, u64>>,
     current_slot: u64,
+    tx_index: u64,
     stability_window: Option<u64>,
     mir_ctx: Option<&MirValidationContext<'_>>,
 ) -> Result<CertBalanceAdjustment, LedgerError> {
@@ -5152,7 +5160,7 @@ fn apply_certificates_and_withdrawals_with_future(
     let mut total_deposits: u64 = 0;
     let mut total_refunds: u64 = 0;
     if let Some(certs) = certificates {
-        for cert in certs {
+        for (cert_index, cert) in certs.iter().enumerate() {
             // -- Era-gate: Conway-only certs (CDDL tags 7–18) must be
             // rejected in Shelley–Babbage, and Shelley-only certs (tags 5–6:
             // GenesisDelegation, MoveInstantaneousReward) must be rejected
@@ -5189,7 +5197,12 @@ fn apply_certificates_and_withdrawals_with_future(
             }
             match cert {
                 DCert::AccountRegistration(credential) => {
-                    register_stake_credential(stake_credentials, *credential, key_deposit)?;
+                    register_stake_credential(
+                        stake_credentials,
+                        *credential,
+                        key_deposit,
+                        Some((current_slot, tx_index, cert_index as u64)),
+                    )?;
                     register_reward_account_for_credential(
                         reward_accounts,
                         *credential,
@@ -5224,7 +5237,12 @@ fn apply_certificates_and_withdrawals_with_future(
                         return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
                     }
                     if !stake_credentials.is_registered(credential) {
-                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_stake_credential(
+                            stake_credentials,
+                            *credential,
+                            *deposit,
+                            Some((current_slot, tx_index, cert_index as u64)),
+                        )?;
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,
@@ -5319,7 +5337,12 @@ fn apply_certificates_and_withdrawals_with_future(
                         return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
                     }
                     if !stake_credentials.is_registered(credential) {
-                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_stake_credential(
+                            stake_credentials,
+                            *credential,
+                            *deposit,
+                            Some((current_slot, tx_index, cert_index as u64)),
+                        )?;
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,
@@ -5385,7 +5408,12 @@ fn apply_certificates_and_withdrawals_with_future(
                         return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
                     }
                     if !stake_credentials.is_registered(credential) {
-                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_stake_credential(
+                            stake_credentials,
+                            *credential,
+                            *deposit,
+                            Some((current_slot, tx_index, cert_index as u64)),
+                        )?;
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,
@@ -5429,7 +5457,12 @@ fn apply_certificates_and_withdrawals_with_future(
                         return Err(LedgerError::StakeCredentialAlreadyRegistered(*credential));
                     }
                     if !stake_credentials.is_registered(credential) {
-                        register_stake_credential(stake_credentials, *credential, *deposit)?;
+                        register_stake_credential(
+                            stake_credentials,
+                            *credential,
+                            *deposit,
+                            Some((current_slot, tx_index, cert_index as u64)),
+                        )?;
                         register_reward_account_for_credential(
                             reward_accounts,
                             *credential,
@@ -5820,8 +5853,9 @@ fn register_stake_credential(
     stake_credentials: &mut StakeCredentials,
     credential: StakeCredential,
     deposit: u64,
+    ptr: Option<(u64, u64, u64)>,
 ) -> Result<(), LedgerError> {
-    if !stake_credentials.register_with_deposit(credential, deposit) {
+    if !stake_credentials.register_with_ptr(credential, deposit, ptr) {
         return Err(LedgerError::StakeCredentialAlreadyRegistered(credential));
     }
 

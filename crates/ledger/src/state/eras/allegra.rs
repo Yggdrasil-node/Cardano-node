@@ -76,7 +76,9 @@ impl LedgerState {
         let cert_ctx = self.certificate_validation_context();
         // Pre-compute genesis delegate key hash set for MIR quorum validation.
         let gen_delg_set = crate::witnesses::gen_delg_hash_set(&self.gen_delegs);
-        for (tx_id, tx_size, body, witness_bytes, aux_data) in &decoded {
+        for (tx_index, (tx_id, tx_size, body, witness_bytes, aux_data)) in
+            decoded.iter().enumerate()
+        {
             validate_auxiliary_data(
                 body.auxiliary_data_hash.as_ref(),
                 aux_data.as_deref(),
@@ -184,6 +186,7 @@ impl LedgerState {
                 body.certificates.as_deref(),
                 body.withdrawals.as_ref(),
                 slot,
+                tx_index as u64,
                 self.stability_window,
                 self.mir_validation_context(slot, false).as_ref(),
             )?;

@@ -514,9 +514,13 @@ impl CborDecode for StakeSnapshots {
 /// Computes a fresh `StakeSnapshot` from the current UTxO set, registered
 /// stake credentials, reward account balances, and pool registry.
 ///
-/// This walks the UTxO set once, extracting the staking credential from
-/// each output address (base addresses only — enterprise, pointer, Byron,
-/// and reward addresses do not contribute to the UTxO-based stake).
+/// Walks the UTxO set once, extracting the staking credential from
+/// each output address.  Base addresses contribute their staking credential
+/// directly.  Pointer addresses are resolved via the `registration_ptr`
+/// field stored on each `StakeCredentialState`, matching upstream
+/// `addShelleyInstantStake` in
+/// `Cardano.Ledger.Shelley.State.Stake` which handles both
+/// `StakeRefBase` and `StakeRefPtr` UTxOs.
 /// Reward account balances are then added on top.
 ///
 /// Reference: SNAP rule — `stakeDistr` in the formal specification.
@@ -530,15 +534,36 @@ pub fn compute_stake_snapshot(
     let mut delegations = Delegations::new();
     let mut pool_params_map: BTreeMap<PoolKeyHash, PoolParams> = BTreeMap::new();
 
-    // 1. Walk the UTxO to accumulate per-credential stake. Only base addresses
-    //    contribute — enterprise, pointer, Byron, and reward addresses do not
-    //    feed `stakeDistr` per the formal SNAP rule.
+    // Build a reverse map from registration ptr → stake credential so that
+    // pointer-address UTxOs can be resolved in O(log n) per lookup.
+    // Upstream `resolveShelleyInstantStake` does the same look-up from the
+    // `ptrsMap` field of the unified map (`dsUnified`).
+    // Only credentials that are delegated to a pool matter for stake
+    // distribution, but we include all registered credentials here so the
+    // pointer lookup is complete (delegations filter at step 3 anyway).
+    let ptr_to_cred: BTreeMap<(u64, u64, u64), StakeCredential> = stake_creds
+        .iter()
+        .filter_map(|(cred, state)| state.registration_ptr().map(|ptr| (ptr, *cred)))
+        .collect();
+
+    // 1. Walk the UTxO to accumulate per-credential stake.
+    //    Base addresses contribute via their embedded staking credential.
+    //    Pointer addresses are resolved to credentials via the registration
+    //    cert location stored in `StakeCredentialState::registration_ptr`.
+    //    Enterprise, Byron, and reward addresses do not feed `stakeDistr`.
     for (_txin, txout) in utxo.iter() {
         let addr_bytes = txout.address();
-        if let Some(Address::Base(base)) = Address::from_bytes(addr_bytes) {
-            if stake_creds.is_registered(&base.staking) {
+        match Address::from_bytes(addr_bytes) {
+            Some(Address::Base(base)) if stake_creds.is_registered(&base.staking) => {
                 stake.add(base.staking, txout.coin());
             }
+            Some(Address::Pointer(ptr_addr)) => {
+                let key = (ptr_addr.slot, ptr_addr.tx_index, ptr_addr.cert_index);
+                if let Some(&cred) = ptr_to_cred.get(&key) {
+                    stake.add(cred, txout.coin());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -999,5 +1024,145 @@ mod tests {
         augment_pool_dist_with_proposal_deposits(&mut dist, &stake_creds, &proposal_deposits);
         // No pool delegation → pool dist unchanged
         assert_eq!(dist.total_active_stake(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Pointer-address UTxO stake contribution (regression for preview epoch 12
+    // reward shortfall: credential 67ecde65… registered at slot 725220 with
+    // ptr (725220, 0, 0) had 7,971 ADA in pointer-address UTxOs that were
+    // missing from stake snapshots before this fix).
+    //
+    // Reference: upstream `addShelleyInstantStake` /
+    // `resolveShelleyInstantStake` in
+    // `Cardano.Ledger.Shelley.State.Stake` — handles both `StakeRefBase`
+    // and `StakeRefPtr` UTxOs when building the instant stake map.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pointer_address_utxo_contributes_to_stake_snapshot() {
+        use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut};
+        use crate::state::StakeCredentials;
+        use crate::types::{Address, BaseAddress, PointerAddress};
+        use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
+
+        let cred = test_cred(0xAB);
+        let pool = test_pool(0x01);
+        let ptr = (725_220_u64, 0_u64, 0_u64); // (slot, tx_index, cert_index)
+
+        // Register the credential with its on-chain registration ptr.
+        let mut stake_creds = StakeCredentials::new();
+        stake_creds.register_with_ptr(cred, 2_000_000, Some(ptr));
+        stake_creds
+            .get_mut(&cred)
+            .unwrap()
+            .set_delegated_pool(Some(pool));
+
+        // Pool state with one pool.
+        let mut pool_state = crate::state::PoolState::new();
+        pool_state.register_with_deposit(test_pool_params(0x01), 500_000_000);
+
+        // Build a UTxO with:
+        //   - one base-address output for the same credential  (5_000_000)
+        //   - one pointer-address output resolving to the credential (7_971_410_639)
+        let base_addr = Address::Base(BaseAddress {
+            network: 0,
+            payment: cred,
+            staking: cred,
+        });
+        let ptr_addr = Address::Pointer(PointerAddress {
+            network: 0,
+            payment: cred,
+            slot: ptr.0,
+            tx_index: ptr.1,
+            cert_index: ptr.2,
+        });
+
+        let make_txin = |b: u8| ShelleyTxIn {
+            transaction_id: [b; 32],
+            index: 0,
+        };
+        let mut utxo = MultiEraUtxo::new();
+        utxo.insert(
+            make_txin(1),
+            MultiEraTxOut::Shelley(ShelleyTxOut {
+                address: base_addr.to_bytes(),
+                amount: 5_000_000,
+            }),
+        );
+        utxo.insert(
+            make_txin(2),
+            MultiEraTxOut::Shelley(ShelleyTxOut {
+                address: ptr_addr.to_bytes(),
+                amount: 7_971_410_639,
+            }),
+        );
+
+        let reward_accounts = crate::state::RewardAccounts::new();
+        let snapshot = compute_stake_snapshot(&utxo, &stake_creds, &reward_accounts, &pool_state);
+
+        // Both base and pointer contributions must appear.
+        let expected = 5_000_000 + 7_971_410_639;
+        assert_eq!(
+            snapshot.stake.get(&cred),
+            expected,
+            "pointer-address UTxO must be included in stake snapshot"
+        );
+
+        // Sanity: pool stake distribution includes the full amount.
+        let dist = snapshot.pool_stake_distribution();
+        assert_eq!(dist.pool_stake(&pool), expected);
+        assert_eq!(dist.total_active_stake(), expected);
+    }
+
+    #[test]
+    fn pointer_address_unregistered_ptr_is_skipped() {
+        use crate::eras::shelley::{ShelleyTxIn, ShelleyTxOut};
+        use crate::state::StakeCredentials;
+        use crate::types::{Address, PointerAddress};
+        use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
+
+        let cred = test_cred(0xCD);
+        let pool = test_pool(0x02);
+
+        // Register the credential WITHOUT a registration ptr (e.g. legacy path).
+        let mut stake_creds = StakeCredentials::new();
+        stake_creds.register_with_deposit(cred, 2_000_000);
+        stake_creds
+            .get_mut(&cred)
+            .unwrap()
+            .set_delegated_pool(Some(pool));
+
+        let mut pool_state = crate::state::PoolState::new();
+        pool_state.register_with_deposit(test_pool_params(0x02), 500_000_000);
+
+        // A pointer-address output pointing to (1, 0, 0) — no matching registered ptr.
+        let dangling_ptr = Address::Pointer(PointerAddress {
+            network: 0,
+            payment: cred,
+            slot: 1,
+            tx_index: 0,
+            cert_index: 0,
+        });
+        let mut utxo = MultiEraUtxo::new();
+        utxo.insert(
+            ShelleyTxIn {
+                transaction_id: [0xEE; 32],
+                index: 0,
+            },
+            MultiEraTxOut::Shelley(ShelleyTxOut {
+                address: dangling_ptr.to_bytes(),
+                amount: 1_000_000,
+            }),
+        );
+
+        let reward_accounts = crate::state::RewardAccounts::new();
+        let snapshot = compute_stake_snapshot(&utxo, &stake_creds, &reward_accounts, &pool_state);
+
+        // No base address → no contribution at all (ptr not resolvable).
+        assert_eq!(
+            snapshot.stake.get(&cred),
+            0,
+            "dangling pointer-address must not contribute to stake snapshot"
+        );
     }
 }
