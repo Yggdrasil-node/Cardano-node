@@ -274,6 +274,44 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R413 — cardano-tracer: MetricsStore::render_prometheus + wire
+  into prometheus.rs handle_per_node (closes ExpositionStatus
+  carve-out from R408).** Phase 1 round 3 of R411-R430 arc. Three
+  primary deliverables:
+  - **MetricsStore::render_prometheus(no_suffix, &[(name, help)])**:
+    emits Prometheus text exposition (3-line block per metric:
+    `# HELP <name> <text>` (when help slice has entry) +
+    `# TYPE <name> <kind>` + `<name> <value>`). Mirror of upstream
+    `Cardano.Logging.Prometheus.Exposition.renderExpositionFromSampleWith`.
+    Uses `MetricValue::prometheus_kind()` + `prometheus_value()`
+    helpers from R411.
+  - **strip_prom_suffix + sanitize_prom_metric_name helpers**:
+    private helpers handling `metricsNoSuffix` flag (strips `_int`
+    / `_real` suffix) + sanitizing forbidden characters
+    (notably `.`) per Prometheus identifier rules
+    `[a-zA-Z_:][a-zA-Z0-9_:]*`.
+  - **prometheus.rs::handle_per_node wired through**: AppState
+    gains `accepted_metrics: AcceptedMetrics` + `metrics_help:
+    Vec<(String, String)>` fields. Per-node route now resolves
+    slug → NodeName via R407's compute_routes, then
+    NodeName → NodeId via the connected_nodes_names snapshot, then
+    looks up the per-node MetricsStore and renders. Run-prometheus-server
+    signature gains the two new args.
+  - **ExpositionStatus** struct upgraded from a deferral descriptor
+    to a closure marker: `status: "closed at R413"`.
+  Tests: cardano-tracer 362 → 373 (+11: render_prometheus emits
+  3-line block per metric + emits HELP when help slice supplies
+  text + strips _int suffix when no_suffix=true + sanitizes dotted
+  synthetic timestamp + empty store returns empty string;
+  strip_prom_suffix drops _int/_real + passes through unsuffixed;
+  sanitize_prom_metric_name replaces dots with underscores +
+  preserves alphanumeric_underscore + replaces leading digit with
+  underscore; ExpositionStatus describes closure;
+  run_prometheus_server binds with new args). Workspace:
+  5,766 → 5,777. Parity-matrix entry sister-tool.cardano-tracer
+  advanced: next_milestone R413 → R414. Per the R411 plan, R414
+  lands MetricsStore::render_ekg_html + monitoring.rs handle_per_node
+  wiring (closes per-node EKG monitoring carve-out).
 - **R412 — cardano-tracer: MetricsStore::insert_resp + MetricsLocalStore
   delta tracking (Phase 1 round 2 of R411-R430 arc).** Lands the
   Response::ResponseMetrics ingestion path that

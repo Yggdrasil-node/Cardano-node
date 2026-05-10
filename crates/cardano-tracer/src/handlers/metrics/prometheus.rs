@@ -92,6 +92,15 @@ struct AppState {
     prometheus_labels: BTreeMap<String, String>,
     /// Operator-configured `metricsNoSuffix` flag (default false).
     metrics_no_suffix: bool,
+    /// Per-node metrics-store registry — wired in at R413 to
+    /// replace the R411 placeholder lookup. Each connected node has
+    /// a [`crate::metrics_store::MetricsStore`] keyed by its
+    /// [`crate::types::NodeId`]; the per-node route renders a real
+    /// Prometheus exposition from the corresponding store.
+    accepted_metrics: crate::metrics_store::AcceptedMetrics,
+    /// Operator-supplied per-metric HELP text (`te_metrics_help` from
+    /// upstream). Empty until R415's `loadMetricsHelp` lands.
+    metrics_help: Vec<(String, String)>,
 }
 
 /// Run the Prometheus exporter HTTP server. Mirror of upstream
@@ -110,6 +119,8 @@ pub async fn run_prometheus_server(
     endpoint: Endpoint,
     prometheus_labels: BTreeMap<String, String>,
     metrics_no_suffix: bool,
+    accepted_metrics: crate::metrics_store::AcceptedMetrics,
+    metrics_help: Vec<(String, String)>,
 ) -> std::io::Result<tokio::task::JoinHandle<()>> {
     // Stagger to avoid concurrent listening-banner collisions.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -119,6 +130,8 @@ pub async fn run_prometheus_server(
         endpoint: endpoint.clone(),
         prometheus_labels,
         metrics_no_suffix,
+        accepted_metrics,
+        metrics_help,
     };
 
     let app = Router::new()
@@ -174,32 +187,38 @@ async fn handle_targets(State(state): State<AppState>) -> Response {
 
 async fn handle_per_node(State(state): State<AppState>, Path(slug): Path<String>) -> Response {
     use super::utils::compute_routes;
-    use crate::environment::AcceptedMetrics;
+    use crate::environment::AcceptedMetrics as AcceptedMetricsPlaceholder;
 
-    let dict = compute_routes(&state.connected_nodes_names, &AcceptedMetrics).await;
+    let dict = compute_routes(&state.connected_nodes_names, &AcceptedMetricsPlaceholder).await;
     let matched = dict.get_route_dictionary.iter().find(|(s, _)| s == &slug);
-    if matched.is_none() {
+    let Some((_slug, node_name)) = matched else {
         return (
             [(CONTENT_TYPE, CONTENT_HDR_OPEN_METRICS.1)],
             "# node not found\n".to_string(),
         )
             .into_response();
-    }
-    // Per-node OpenMetrics exposition body is deferred — return a
-    // placeholder that mirrors upstream's exposition shape but
-    // notes the deferral.
-    let suffix_note = if state.metrics_no_suffix {
-        "# metricsNoSuffix=true\n"
-    } else {
-        "# metricsNoSuffix=false\n"
     };
-    let body = format!(
-        "# Yggdrasil cardano-tracer per-node exposition\n\
-         # Node slug: {slug}\n\
-         {suffix_note}\
-         # NOTE: per-node metrics surface pending — see\n\
-         # crate::handlers::metrics::prometheus::exposition_status()\n",
-    );
+    // Resolve slug → NodeId via the connected_nodes_names snapshot,
+    // then look up the per-node store. R413 swaps the placeholder
+    // body for a real exposition rendered from the store.
+    let node_pairs = state.connected_nodes_names.snapshot();
+    let node_id = node_pairs
+        .iter()
+        .find_map(|(id, name)| (name == node_name).then_some(id.clone()));
+    let body = match node_id {
+        Some(id) => {
+            let stores = state.accepted_metrics.read().await;
+            match stores.get(&id) {
+                Some(store) => {
+                    store
+                        .render_prometheus(state.metrics_no_suffix, &state.metrics_help)
+                        .await
+                }
+                None => format!("# no metrics ingested yet for node {node_name}\n"),
+            }
+        }
+        None => format!("# could not resolve NodeId for slug {slug}\n"),
+    };
     ([(CONTENT_TYPE, CONTENT_HDR_OPEN_METRICS.1)], body).into_response()
 }
 
@@ -214,24 +233,24 @@ fn wants_json(headers: &HeaderMap) -> bool {
         .unwrap_or(false)
 }
 
-/// Status descriptor for the deferred per-node exposition rendering.
+/// Status descriptor for the previously-deferred per-node exposition
+/// rendering. Closed at R413 with R411-R413's MetricsStore +
+/// render_prometheus surface.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ExpositionStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary of the closure status.
     pub status: &'static str,
-    /// Reason — references the missing surface.
-    pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
-    pub deferred_round: &'static str,
+    /// Round at which the per-node exposition rendering landed.
+    pub closed_at_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for the per-node exposition
-/// rendering.
+/// Get the closure-status descriptor for the per-node exposition
+/// rendering. R413 closes the carve-out: the per-node route now
+/// renders via [`crate::metrics_store::MetricsStore::render_prometheus`].
 pub fn exposition_status() -> ExpositionStatus {
     ExpositionStatus {
-        status: "deferred",
-        depends_on: "EKG-equivalent metrics surface (Cardano.Tracer.Types.AcceptedMetrics + Cardano.Logging.Prometheus.Exposition.renderExpositionFromSampleWith) — both unported pending the trace-dispatcher / EKG vendor work",
-        deferred_round: "R411+",
+        status: "closed at R413",
+        closed_at_round: "R413",
     }
 }
 
@@ -312,11 +331,10 @@ mod tests {
     }
 
     #[test]
-    fn exposition_status_describes_deferral() {
+    fn exposition_status_describes_closure() {
         let s = exposition_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("EKG"));
-        assert_eq!(s.deferred_round, "R411+");
+        assert_eq!(s.status, "closed at R413");
+        assert_eq!(s.closed_at_round, "R413");
     }
 
     #[test]
@@ -328,6 +346,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_prometheus_server_binds_and_serves_root() {
+        use crate::metrics_store::new_accepted_metrics;
+
         let names = ConnectedNodesNames::new();
         names.insert(crate::types::NodeId::new("n1"), "alpha-pool".to_string());
         let endpoint = Endpoint {
@@ -335,12 +355,18 @@ mod tests {
             port: 0,
             force_ssl: None,
         };
+        let accepted = new_accepted_metrics();
         // Bind to ephemeral port; we just verify the server starts
-        // without panicking (don't assert the bind succeeds since
-        // port 0 means OS-assigned; we'd need an alternate accessor
-        // to read it back).
-        let result = run_prometheus_server(names, endpoint, BTreeMap::new(), false).await;
-        // Binding to port 0 should succeed.
+        // without panicking.
+        let result = run_prometheus_server(
+            names,
+            endpoint,
+            BTreeMap::new(),
+            false,
+            accepted,
+            Vec::new(),
+        )
+        .await;
         assert!(result.is_ok(), "server should bind: {:?}", result.err());
         if let Ok(handle) = result {
             handle.abort();

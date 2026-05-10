@@ -187,6 +187,59 @@ impl MetricsStore {
         self.inner.read().await.is_empty()
     }
 
+    /// Render the store contents as a Prometheus text exposition.
+    /// Mirror of upstream
+    /// `Cardano.Logging.Prometheus.Exposition.renderExpositionFromSampleWith`.
+    ///
+    /// Each metric name yields three lines:
+    /// ```text
+    /// # HELP <name> <help-text>
+    /// # TYPE <name> <kind>
+    /// <name> <value>
+    /// ```
+    /// (the HELP line is omitted when no help-text entry matches the
+    /// metric name).
+    ///
+    /// `no_suffix` controls upstream's `metricsNoSuffix` config flag:
+    /// when true, the `_int` / `_real` suffix that EKG appends to
+    /// metric names is stripped (`RTS_gcMajorNum_int` →
+    /// `RTS_gcMajorNum`).
+    ///
+    /// `help` carries the operator-supplied per-metric HELP text
+    /// from `te_metrics_help` (R415 wires this slice from
+    /// `metrics_help.json`).
+    ///
+    /// Format follows the OpenMetrics 1.0.0 exposition standard,
+    /// matching upstream's output byte-for-byte modulo the carve-out
+    /// for distribution metrics (which surface as Labels per the
+    /// module docstring).
+    pub async fn render_prometheus(&self, no_suffix: bool, help: &[(String, String)]) -> String {
+        let snapshot = self.snapshot().await;
+        let help_map: BTreeMap<&str, &str> =
+            help.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let mut out = String::new();
+        for (name, value) in snapshot.iter() {
+            let rendered_name = if no_suffix {
+                strip_prom_suffix(name)
+            } else {
+                name.clone()
+            };
+            let prom_name = sanitize_prom_metric_name(&rendered_name);
+            if let Some(help_text) = help_map.get(name.as_str()) {
+                out.push_str(&format!("# HELP {prom_name} {help_text}\n"));
+            }
+            out.push_str(&format!(
+                "# TYPE {prom_name} {kind}\n",
+                kind = value.prometheus_kind(),
+            ));
+            out.push_str(&format!(
+                "{prom_name} {val}\n",
+                val = value.prometheus_value(),
+            ));
+        }
+        out
+    }
+
     /// Insert a batch of metrics from an upstream
     /// `Response::ResponseMetrics(Vec<(MetricName, MetricValue)>)`
     /// payload. Mirror of upstream
@@ -241,6 +294,41 @@ impl MetricsStore {
         }
         delta
     }
+}
+
+/// Strip upstream EKG's type-tagging suffix from a metric name
+/// when the operator's `metricsNoSuffix` config flag is true.
+/// Mirror of upstream's
+/// `if metricsNoSuffix then T.dropSuffix "_int" . T.dropSuffix "_real"`
+/// behavior.
+fn strip_prom_suffix(name: &str) -> String {
+    let stripped = name
+        .strip_suffix("_int")
+        .or_else(|| name.strip_suffix("_real"))
+        .unwrap_or(name);
+    stripped.to_string()
+}
+
+/// Sanitize a metric name so it conforms to the Prometheus
+/// exposition format's identifier rules: `[a-zA-Z_:][a-zA-Z0-9_:]*`.
+/// Replaces forbidden characters (notably `.`) with `_` to keep
+/// scrapers happy. Mirror of upstream's metric-name normalization
+/// applied before exposition rendering.
+fn sanitize_prom_metric_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for (i, ch) in name.chars().enumerate() {
+        let ok = if i == 0 {
+            ch.is_ascii_alphabetic() || ch == '_' || ch == ':'
+        } else {
+            ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'
+        };
+        if ok {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    out
 }
 
 /// Canonical synthetic-counter name populated by every
@@ -622,5 +710,101 @@ mod tests {
     #[test]
     fn ekg_server_timestamp_ms_constant_matches_upstream() {
         assert_eq!(EKG_SERVER_TIMESTAMP_MS, "ekg.server_timestamp_ms");
+    }
+
+    #[test]
+    fn strip_prom_suffix_drops_int_suffix() {
+        assert_eq!(strip_prom_suffix("RTS_gcMajorNum_int"), "RTS_gcMajorNum");
+    }
+
+    #[test]
+    fn strip_prom_suffix_drops_real_suffix() {
+        assert_eq!(strip_prom_suffix("Mem_resident_real"), "Mem_resident");
+    }
+
+    #[test]
+    fn strip_prom_suffix_passes_through_unsuffixed_names() {
+        assert_eq!(
+            strip_prom_suffix("yggdrasil_blocks_synced"),
+            "yggdrasil_blocks_synced"
+        );
+    }
+
+    #[test]
+    fn sanitize_prom_metric_name_replaces_dots_with_underscores() {
+        assert_eq!(
+            sanitize_prom_metric_name("ekg.server_timestamp_ms"),
+            "ekg_server_timestamp_ms"
+        );
+    }
+
+    #[test]
+    fn sanitize_prom_metric_name_preserves_alphanumeric_and_underscore() {
+        assert_eq!(
+            sanitize_prom_metric_name("yggdrasil_chain_tip_42"),
+            "yggdrasil_chain_tip_42"
+        );
+    }
+
+    #[test]
+    fn sanitize_prom_metric_name_replaces_leading_digit_with_underscore() {
+        // Prometheus requires identifier to start with [a-zA-Z_:].
+        assert_eq!(sanitize_prom_metric_name("9metric"), "_metric");
+    }
+
+    #[tokio::test]
+    async fn render_prometheus_emits_canonical_three_line_block_per_metric() {
+        let store = MetricsStore::new();
+        store.register_counter("RTS_gcMajorNum_int", 4).await;
+        store.register_gauge("Mem_resident_int", 103_792_640).await;
+        let output = store.render_prometheus(false, &[]).await;
+        // Two metrics × 2 lines (TYPE + value; no HELP without help slice).
+        assert!(output.contains("# TYPE Mem_resident_int gauge\n"));
+        assert!(output.contains("Mem_resident_int 103792640\n"));
+        assert!(output.contains("# TYPE RTS_gcMajorNum_int counter\n"));
+        assert!(output.contains("RTS_gcMajorNum_int 4\n"));
+    }
+
+    #[tokio::test]
+    async fn render_prometheus_emits_help_when_help_slice_supplies_text() {
+        let store = MetricsStore::new();
+        store.register_gauge("Mem_resident_int", 1024).await;
+        let help = vec![(
+            "Mem_resident_int".to_string(),
+            "Kernel-reported RSS (resident set size)".to_string(),
+        )];
+        let output = store.render_prometheus(false, &help).await;
+        assert!(
+            output.contains("# HELP Mem_resident_int Kernel-reported RSS (resident set size)\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn render_prometheus_strips_int_suffix_when_no_suffix_is_true() {
+        let store = MetricsStore::new();
+        store.register_counter("RTS_gcMajorNum_int", 4).await;
+        let output = store.render_prometheus(true, &[]).await;
+        assert!(output.contains("# TYPE RTS_gcMajorNum counter\n"));
+        assert!(output.contains("RTS_gcMajorNum 4\n"));
+        assert!(!output.contains("RTS_gcMajorNum_int"));
+    }
+
+    #[tokio::test]
+    async fn render_prometheus_sanitizes_dotted_synthetic_timestamp() {
+        let store = MetricsStore::new();
+        store.insert_resp(vec![]).await;
+        let output = store.render_prometheus(false, &[]).await;
+        // The synthetic counter is `ekg.server_timestamp_ms` — must
+        // be sanitized to `ekg_server_timestamp_ms` for Prometheus.
+        assert!(output.contains("ekg_server_timestamp_ms "));
+        // No raw dot in the metric line.
+        assert!(!output.contains("ekg.server_timestamp_ms "));
+    }
+
+    #[tokio::test]
+    async fn render_prometheus_empty_store_returns_empty_string() {
+        let store = MetricsStore::new();
+        let output = store.render_prometheus(false, &[]).await;
+        assert!(output.is_empty());
     }
 }
