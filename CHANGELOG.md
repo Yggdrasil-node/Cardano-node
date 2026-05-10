@@ -274,6 +274,52 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R382 — cardano-tracer: Logs/Journal pair port (CPP-dispatcher +
+  no_systemd no-op).** Lands the journal log-sink surface as a
+  bounded pair: handlers/logs.rs (parent-shell synthesis), the
+  CPP-style dispatcher, and the no-op no-systemd impl. New files:
+  - handlers/logs.rs — parent shell with `**Strict mirror:** none.`
+    synthesis declaration + layout map; pub mod journal exported.
+  - handlers/logs/journal.rs — direct port of upstream's
+    CPP-conditional `module Impl` re-export; Yggdrasil always
+    selects the NoSystemd path per the workspace policy banning
+    systemd-specific dependencies (no-FFI policy). pub use
+    no_systemd::write_trace_objects_to_journal preserves upstream's
+    flat call surface so callers see the same API regardless of the
+    underlying impl.
+  - handlers/logs/journal/no_systemd.rs — direct port of upstream's
+    `writeTraceObjectsToJournal :: LogFormat -> NodeName ->
+    [TraceObject] -> IO ()`; Rust signature is
+    `write_trace_objects_to_journal(LogFormat, &NodeName, &[TraceObject])
+    -> std::io::Result<()>` returning Ok(()) unconditionally
+    (matches upstream's `pure ()` semantics).
+  - TraceObject placeholder unit struct documented as a deferred
+    port (full upstream type carries toHuman/toMachine/toSeverity/
+    toNamespace/toThreadId/toTimestamp per the field accesses in
+    Logs/Journal/Systemd.hs::mkJournalFields).
+  Carve-outs documented:
+  - Logs/Journal/Systemd.hs upstream impl carved out — uses the
+    libsystemd-journal Haskell binding which itself wraps the C
+    libsystemd-journal library. Yggdrasil's no-FFI policy forbids
+    that path. Operators wanting journald output can run the tracer
+    behind systemd's `StandardOutput=journal` redirect.
+  - Cardano.Logging.TraceObject deferred (synthesis placeholder
+    used; full port lands when trace-dispatcher is vendored).
+  Includes a `.gitignore` fix anchoring the `logs/` runtime-output
+  ignore-rule to repo root (`/logs/`) plus explicit
+  `**/run/logs/` + `**/*-runtime-logs/` patterns. Without the
+  anchor, the rule was swallowing the new source-tree
+  `crates/cardano-tracer/src/handlers/logs/` directory — same drift
+  class as R310/R311 (over-broad gitignore patterns hiding production
+  source files). The strict-mirror gate (R311 index-vs-tree drift
+  check) caught this in this same round; it warned that two new
+  files existed locally but weren't tracked, the .gitignore was
+  patched, and the gate cleared.
+  Tests: cardano-tracer 81 → 85 (+4: write_trace_objects_to_journal
+  no-op-returning-Ok with ForMachine format + ForHuman format +
+  non-empty trace-object list + TraceObject default construction).
+  Workspace: 5,485 → 5,489. Parity-matrix entry sister-tool.cardano-
+  tracer advanced: next_milestone R382 → R383.
 - **R381 — cardano-tracer: Notifications/Check.hs port (severity
   dispatcher).** Lands the per-event-group severity dispatcher that
   routes incoming trace events to the correct event-group queue. New

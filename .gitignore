@@ -82,7 +82,11 @@ yggdrasil-db-*.tar.gz
 
 # Local logs
 *.log
-logs/
+# Anchored to repo root so it doesn't swallow source dirs like
+# `crates/cardano-tracer/src/handlers/logs/` (R382).
+/logs/
+**/run/logs/
+**/*-runtime-logs/
 # Forensic captures referenced by tests (include_str! in plutus_eval/tests.rs)
 # must be committed even though they end in .log. Pinned via explicit
 # exception so the *.log rule above stays the safe default for everyone else.
