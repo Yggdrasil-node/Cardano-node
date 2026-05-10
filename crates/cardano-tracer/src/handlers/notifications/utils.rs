@@ -1,16 +1,15 @@
 //! Notification-engine utility helpers — queue lookup + event push
-//! + queue flush.
+//! + queue flush + per-group timer control.
 //!
 //! ## Naming parity
 //!
 //! **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Handlers/Notifications/Utils.hs.
 //!
-//! Direct port of upstream's bounded utility helpers
-//! (`addNewEvent` + `getNewEvents`) plus stub-and-defer markers for
-//! the timer-bound entries (`initEventsQueues`,
-//! `updateNotificationsEvents`, `updateNotificationsPeriods`,
-//! `changeTimerState`) that need [`super::types::Timer`]'s full
-//! implementation before they can ship.
+//! Direct port of upstream's utility helpers. R385 shipped the
+//! bounded subset (`addNewEvent`, `getNewEvents`); R387 re-enables
+//! the timer-bound entries (`updateNotificationsEvents`,
+//! `updateNotificationsPeriods`, `changeTimerState`) now that
+//! [`super::timer::Timer`] is fully implemented (R386).
 //!
 //! Mapping summary:
 //!
@@ -18,17 +17,14 @@
 //! |--------------------------------------------------------------|----------------------------------------|
 //! | `addNewEvent :: EventsQueues -> EventGroup -> Event -> IO ()` | [`add_new_event`]                      |
 //! | `getNewEvents :: EventsQueues -> EventGroup -> IO [Event]`   | [`get_new_events`]                     |
+//! | `updateNotificationsEvents :: EventsQueues -> EventGroup -> Bool -> IO ()` | [`update_notifications_events`] |
+//! | `updateNotificationsPeriods :: EventsQueues -> EventGroup -> PeriodInSec -> IO ()` | [`update_notifications_periods`] |
+//! | `changeTimerState :: (Timer -> IO ()) -> EventsQueues -> EventGroup -> IO ()` | [`change_timer_state`]   |
 //! | `initEventsQueues :: ... -> IO EventsQueues`                 | (deferred — see [`init_events_queues_status`]) |
-//! | `updateNotificationsEvents :: EventsQueues -> EventGroup -> Bool -> IO ()` | (deferred) |
-//! | `updateNotificationsPeriods :: EventsQueues -> EventGroup -> PeriodInSec -> IO ()` | (deferred) |
-//! | `changeTimerState :: (Timer -> IO ()) -> EventsQueues -> EventGroup -> IO ()` | (deferred) |
 //!
 //! Carve-outs (NOT ported, by design):
 //!
-//! - **`initEventsQueues`**: depends on the full
-//!   [`super::types::Timer`] surface (forkIO + killThread closures + setCallPeriod) which lands in a future round per the parity-matrix `remaining_work` list. Stub status documented in [`init_events_queues_status`].
-//! - **`updateNotificationsEvents` / `updateNotificationsPeriods` /
-//!   `changeTimerState`**: same Timer dependency.
+//! - **`initEventsQueues`**: still deferred — depends on Notifications/Send.hs (`makeAndSendNotification`) + DataPointRequestors + tracer-trace channel. Status documented in [`init_events_queues_status`]; downstream callers can reference it programmatically.
 //! - **`Cardano.Tracer.MetaTrace.TracerTrace`**: upstream's
 //!   `initEventsQueues` writes trace events to a `Trace IO
 //!   TracerTrace` channel during initialization. Yggdrasil-side
@@ -45,7 +41,7 @@
 //!   and observe `try_send` Err(Full) here.
 
 use super::check::EventsSenders;
-use super::types::{Event, EventGroup, EventsQueues};
+use super::types::{Event, EventGroup, EventsQueues, PeriodInSec, Timer};
 
 /// Push a new event to the per-group queue. Mirror of upstream
 /// `addNewEvent eventsQueues eventGroup event`.
@@ -86,6 +82,71 @@ pub async fn get_new_events(queues: &EventsQueues, event_group: EventGroup) -> V
         events.push(event);
     }
     events
+}
+
+/// Apply a per-Timer transform to the timer registered under a
+/// given [`EventGroup`] in the [`EventsQueues`] map. Mirror of
+/// upstream
+/// `changeTimerState :: (Timer -> IO ()) -> EventsQueues -> EventGroup -> IO ()`.
+///
+/// The closure runs while holding the read-lock on
+/// [`EventsQueues`]; it does **not** mutate the map. Upstream's
+/// `Timer`-side mutation (start/stop/set_period) operates on
+/// internal `Mutex`-shared state that the timer's spawn-loop reads
+/// — see [`super::timer::Timer`].
+///
+/// Returns `true` if the timer was found and the closure ran;
+/// `false` if no timer is registered for `event_group`.
+pub async fn change_timer_state<F>(
+    queues: &EventsQueues,
+    event_group: EventGroup,
+    setter: F,
+) -> bool
+where
+    F: AsyncFn(&Timer),
+{
+    let guard = queues.read().await;
+    let Some((_rx, timer)) = guard.get(&event_group) else {
+        return false;
+    };
+    setter(timer).await;
+    true
+}
+
+/// Toggle a per-event-group timer on/off. Mirror of upstream
+/// `updateNotificationsEvents queues group True = changeTimerState
+/// startTimer queues group; updateNotificationsEvents queues group
+/// False = changeTimerState stopTimer queues group`.
+pub async fn update_notifications_events(
+    queues: &EventsQueues,
+    event_group: EventGroup,
+    enabled: bool,
+) -> bool {
+    if enabled {
+        change_timer_state(queues, event_group, async |timer| {
+            timer.start_timer().await;
+        })
+        .await
+    } else {
+        change_timer_state(queues, event_group, async |timer| {
+            timer.stop_timer().await;
+        })
+        .await
+    }
+}
+
+/// Update the period of a per-event-group timer. Mirror of upstream
+/// `updateNotificationsPeriods queues group period =
+/// changeTimerState (\`setCallPeriod\` period) queues group`.
+pub async fn update_notifications_periods(
+    queues: &EventsQueues,
+    event_group: EventGroup,
+    period: PeriodInSec,
+) -> bool {
+    change_timer_state(queues, event_group, async |timer| {
+        timer.set_call_period(period).await;
+    })
+    .await
 }
 
 /// Status struct describing why [`init_events_queues`]-equivalent
@@ -248,5 +309,102 @@ mod tests {
         assert_eq!(s.status, "deferred");
         assert!(s.depends_on.contains("Timer"));
         assert_eq!(s.deferred_round, "R385+");
+    }
+
+    #[tokio::test]
+    async fn change_timer_state_returns_false_for_unregistered_group() {
+        let queues = new_events_queues();
+        let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let invoked_for_closure = std::sync::Arc::clone(&invoked);
+        let result = change_timer_state(&queues, EventGroup::EventErrors, async move |_t| {
+            invoked_for_closure.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+        .await;
+        assert!(!result);
+        assert!(!invoked.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn change_timer_state_runs_closure_for_registered_group() {
+        let queues = new_events_queues();
+        let (_, rx) = mpsc::unbounded_channel::<Event>();
+        queues
+            .write()
+            .await
+            .insert(EventGroup::EventWarnings, (rx, Timer::placeholder()));
+
+        let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let invoked_for_closure = std::sync::Arc::clone(&invoked);
+        let result = change_timer_state(&queues, EventGroup::EventWarnings, async move |_t| {
+            invoked_for_closure.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+        .await;
+        assert!(result);
+        assert!(invoked.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn update_notifications_events_starts_and_stops_timer() {
+        let queues = new_events_queues();
+        let timer = Timer::new(
+            |_msg: &str| {},
+            false,
+            || {},
+            false, // initially stopped
+            10,
+        );
+        let (_, rx) = mpsc::unbounded_channel::<Event>();
+        queues
+            .write()
+            .await
+            .insert(EventGroup::EventErrors, (rx, timer.clone()));
+
+        // Initially the timer is not running.
+        assert!(!timer.is_running().await);
+
+        // Enable.
+        let enabled = update_notifications_events(&queues, EventGroup::EventErrors, true).await;
+        assert!(enabled);
+        assert!(timer.is_running().await);
+
+        // Disable.
+        let disabled = update_notifications_events(&queues, EventGroup::EventErrors, false).await;
+        assert!(disabled);
+        assert!(!timer.is_running().await);
+
+        timer.kill();
+    }
+
+    #[tokio::test]
+    async fn update_notifications_events_returns_false_for_unregistered_group() {
+        let queues = new_events_queues();
+        let result = update_notifications_events(&queues, EventGroup::EventAlerts, true).await;
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn update_notifications_periods_swaps_call_period_in_flight() {
+        let queues = new_events_queues();
+        let timer = Timer::new(|_msg: &str| {}, false, || {}, false, 10);
+        let (_, rx) = mpsc::unbounded_channel::<Event>();
+        queues
+            .write()
+            .await
+            .insert(EventGroup::EventCriticals, (rx, timer.clone()));
+
+        assert_eq!(timer.call_period().await, 10);
+
+        let updated = update_notifications_periods(&queues, EventGroup::EventCriticals, 60).await;
+        assert!(updated);
+        assert_eq!(timer.call_period().await, 60);
+
+        timer.kill();
+    }
+
+    #[tokio::test]
+    async fn update_notifications_periods_returns_false_for_unregistered_group() {
+        let queues = new_events_queues();
+        let result = update_notifications_periods(&queues, EventGroup::EventEmergencies, 30).await;
+        assert!(!result);
     }
 }

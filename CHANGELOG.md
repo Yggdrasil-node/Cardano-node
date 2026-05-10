@@ -274,6 +274,38 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R387 — cardano-tracer: re-enable Notifications/Utils.hs
+  timer-bound helpers (now unblocked by R386).** Lands the three
+  Utils.hs helpers that R385 had stub-and-deferred pending the full
+  Timer surface. Functions added to handlers/notifications/utils.rs:
+  - change_timer_state<F: AsyncFn(&Timer)>(&EventsQueues,
+    EventGroup, setter) async → bool — applies a per-Timer transform
+    to the timer registered under a group (read-lock; closure runs
+    while holding it). Returns true if the timer was found,
+    false otherwise. Mirror of upstream
+    `changeTimerState :: (Timer -> IO ()) -> EventsQueues ->
+    EventGroup -> IO ()`.
+  - update_notifications_events(&EventsQueues, EventGroup, bool)
+    async → bool — dispatches to start_timer / stop_timer based
+    on the bool. Mirror of upstream's two-arm pattern-match.
+  - update_notifications_periods(&EventsQueues, EventGroup,
+    PeriodInSec) async → bool — calls set_call_period on the
+    matching timer. Mirror of upstream
+    `\`setCallPeriod\` period`-style invocation.
+  Module docstring updated to remove the deferred-status entries
+  for these three helpers; only initEventsQueues remains deferred
+  (gated on Send.hs + DataPointRequestors + tracer-trace channel
+  ports — see init_events_queues_status).
+  Tests: cardano-tracer 132 → 138 (+6: change_timer_state returns
+  false for unregistered group + runs closure for registered
+  group; update_notifications_events starts and stops a registered
+  Timer [verifies is_running before/after]; update_notifications_events
+  returns false for unregistered group; update_notifications_periods
+  swaps call_period in flight [verified via timer.call_period()
+  reader]; update_notifications_periods returns false for
+  unregistered group). Workspace: 5,536 → 5,542. Parity-matrix
+  entry sister-tool.cardano-tracer advanced: next_milestone R387 →
+  R388.
 - **R386 — cardano-tracer: Notifications/Timer.hs port (full
   periodic-action scheduler).** Lands the full Timer surface
   replacing types.rs's R380 placeholder unit struct. New
