@@ -218,14 +218,19 @@ where
         let conn_handler = Arc::clone(&lo_handler);
 
         tokio::spawn(async move {
-            // Per-connection mux: trace-objects sub-protocol only
-            // for now (EKG + DataPoint are deferred carve-outs).
+            // Per-connection mux: handshake (R435) + trace-objects
+            // sub-protocols. EKG + DataPoint sub-protocols are
+            // deferred carve-outs.
             let (mut handles, _mux) = start_unix(
                 stream,
                 MiniProtocolDir::Responder,
-                &[TRACE_OBJECTS_NUM],
+                &[MiniProtocolNum::HANDSHAKE, TRACE_OBJECTS_NUM],
                 1, /* buffer hint */
             );
+            let handshake_handle = match handles.remove(&MiniProtocolNum::HANDSHAKE) {
+                Some(h) => h,
+                None => return,
+            };
             let trace_handle = match handles.remove(&TRACE_OBJECTS_NUM) {
                 Some(h) => h,
                 None => {
@@ -238,6 +243,29 @@ where
                     return;
                 }
             };
+
+            // R436: gate the trace-objects acceptor on a successful
+            // handshake. The responder receives ProposeVersions,
+            // selects a compatible (version, magic) pair, and
+            // sends AcceptVersion. On no-overlap or magic-mismatch
+            // the responder sends Refuse and we drop the connection.
+            let local_versions = [
+                yggdrasil_network::protocols::ForwardingVersion::V1,
+                yggdrasil_network::protocols::ForwardingVersion::V2,
+            ];
+            let handshake_outcome =
+                yggdrasil_network::trace_object_forward_handshake_driver::run_handshake_responder(
+                    handshake_handle,
+                    &local_versions,
+                    conn_state.network_magic,
+                )
+                .await;
+            if handshake_outcome.is_err() {
+                // Handshake refused / errored — close the connection.
+                // No registration cleanup needed since we haven't
+                // touched connected_nodes yet.
+                return;
+            }
 
             // Resolve a NodeId from the stream's connection identity.
             // R424 doesn't have access to a peer-address string from

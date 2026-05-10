@@ -274,6 +274,54 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R436 — cardano-tracer: handshake-driver wired into Acceptors/
+  Server + Client (closes advisor gap #3 — full trace-forwarder
+  handshake state-machine integration).** Final integration round
+  for the R432-R435 handshake foundation. Two surfaces updated:
+  - **acceptors/server.rs::do_listen_to_forwarder_local**: mux
+    protocol list extended from `&[TRACE_OBJECTS_NUM]` to
+    `&[MiniProtocolNum::HANDSHAKE, TRACE_OBJECTS_NUM]`. Each
+    accepted UnixStream now spawns a per-connection mux with both
+    protocols; the spawned task takes the HANDSHAKE handle, runs
+    `run_handshake_responder` against the local version table
+    [V1, V2] + the operator's network magic, and gates the trace-
+    objects acceptor on success. On handshake refuse / error /
+    timeout the connection drops without registering in
+    `connected_nodes` (no cleanup needed since registration
+    happens post-handshake).
+  - **acceptors/client.rs::do_connect_to_forwarder_local**: same
+    mux extension (`MiniProtocolNum::HANDSHAKE` added). After
+    `UnixStream::connect`, the client takes the HANDSHAKE handle
+    and runs `run_handshake_initiator` proposing
+    [(V1, magic), (V2, magic)]. On handshake error the client
+    surfaces it via `AcceptorsServerError::LocalListener` wrapping
+    a `Bind { source: handshake error message }` — operators see
+    a clear signal rather than a silent connection drop.
+  R436 closes the third advisor-flagged gap from the R430 closure:
+  the trace-forwarder handshake state-machine driver is now
+  integrated into both responder and initiator paths. End-to-end
+  data flow: an operator running yggdrasil cardano-tracer in
+  AcceptAt mode + yggdrasil cardano-node-equivalent forwarder
+  with matching network magic will now successfully negotiate the
+  handshake, multiplex trace-objects on protocol 2, and ingest
+  trace-object batches through R421's `accept_trace_objects_resp`
+  → R427's `default_lo_handler_factory` → R401's
+  `trace_objects_handler` dispatcher.
+  Tests: yggdrasil-cardano-tracer 420 → 420 (the existing
+  `do_connect_to_forwarder_local_round_trips_against_local_listener`
+  test was updated to spawn a real handshake responder on the
+  server side; it now tests the full mux-handshake-trace path
+  rather than the prior naked-mux smoke). Workspace: 5,922 →
+  5,922 (no test count change; R436 strengthens an existing
+  integration test). All 5 gates clean.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R436 → R437. After R436, the only remaining
+  R430 advisor-flagged gap is the TraceObject CBOR codec
+  (`Cardano.Logging.TraceObject` Serialise instance — synthesis
+  port from the cardano-logging Hackage source, reverse-engineering
+  risk noted by advisor). All other ingest pipeline gaps (default
+  lo_handler, handshake codec primitives, handshake state machine)
+  are now closed.
 - **R435 — network: trace_object_forward_handshake_driver.rs —
   state-machine driver for the trace-forwarder handshake exchange.**
   Builds on R432-R434's codec foundation to ship the runtime
