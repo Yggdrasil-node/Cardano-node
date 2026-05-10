@@ -18,9 +18,10 @@
 //! |----------------------------------------------------|--------------------------|
 //! | `Metrics/Utils.hs`                                 | `utils.rs`               |
 //! | `Metrics/Servers.hs`                               | `servers.rs` (pending)   |
-//! | `Metrics/Monitoring.hs`                            | `monitoring.rs` (pending)|
+//! | `Metrics/Monitoring.hs`                            | `monitoring.rs`          |
 //! | `Metrics/TimeseriesServer.hs`                      | `timeseries_server.rs` (pending) |
 //! | `Metrics/Prometheus.hs`                            | `prometheus.rs`          |
 
+pub mod monitoring;
 pub mod prometheus;
 pub mod utils;

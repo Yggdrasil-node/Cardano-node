@@ -274,6 +274,49 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R410 — cardano-tracer: Metrics/Monitoring.hs port (EKG-style
+  monitoring HTTP server).** Lands the EKG-style monitoring server
+  using R408's axum 0.8 stack + R407's compute_routes + R406's
+  render_html / render_json, mirroring the same pattern as R409's
+  Prometheus port. New `handlers/metrics/monitoring.rs` module
+  ports the upstream Cardano.Tracer.Handlers.Metrics.Monitoring
+  surface:
+  - run_monitoring_server(ConnectedNodesNames, Endpoint) async →
+    std::io::Result<JoinHandle<()>>. Mirror of upstream's
+    runMonitoringServer signature; takes the slice of state per
+    R398 plan option (b) rather than full TracerEnv.
+  - 200ms `tokio::time::sleep` stagger before listener bind
+    (mirrors upstream's `sleep 0.2` — 0.1s offset from R409
+    Prometheus's 0.1s to prevent listening-banner collisions on
+    stdout).
+  - Two routes attached to an axum::Router:
+    - `GET /` — content-negotiated index (HTML or JSON based on
+      `Accept` header). Uses R406's render_html / render_json.
+    - `GET /{slug}` — per-node EKG monitoring page (HTML
+      placeholder pending the EKG-equivalent metrics surface).
+  - wants_json(&HeaderMap) helper for content negotiation
+    (duplicated from R409's prometheus.rs since each server
+    handles its own content negotiation independently per upstream's
+    per-server design).
+  Carve-outs documented:
+  - System.Metrics.Store EKG store deferred — same blocker as
+    R409 Prometheus's per-node exposition.
+  - TLS termination via tlsCertificate.epForceSSL deferred —
+    references R409's tls_termination_status carve-out.
+  Tests: cardano-tracer 333 → 336 (+3: wants_json content-negotiation
+  for application/json + text/html; run_monitoring_server binds
+  on ephemeral port without panicking). Workspace: 5,737 → 5,740.
+  Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R410 → R411.
+
+  R398 plan completion status: R398 (planning) + R399-R402 (Logs
+  pipeline) + R403-R405 (Notifications pipeline closure) + R406-R407
+  (HTML + compute_routes) + R408-R410 (HTTP server stack +
+  Prometheus + Monitoring) all shipped. Remaining R398-arc items:
+  TimeseriesServer.hs port + Servers.hs orchestration (R411+); full
+  TLS termination + EKG-equivalent metrics surface (R412+ tightening
+  rounds gated on follow-up workspace-dep approvals or hand-rolled
+  alternatives).
 - **R409 — cardano-tracer: Metrics/Prometheus.hs port (HTTP server
   with content negotiation + per-node routes).** Lands the
   Prometheus exporter HTTP server using R408's axum 0.8 stack +
