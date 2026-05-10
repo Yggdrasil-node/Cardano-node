@@ -2157,6 +2157,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
+ "yggdrasil-ledger",
+ "yggdrasil-network",
 ]
 
 [[package]]

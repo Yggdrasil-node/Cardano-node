@@ -35,3 +35,5 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }
+yggdrasil-ledger = { workspace = true }
+yggdrasil-network = { workspace = true }

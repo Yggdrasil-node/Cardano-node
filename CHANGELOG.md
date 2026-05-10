@@ -274,6 +274,92 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R424 — cardano-tracer: acceptors/server.rs port of
+  Cardano.Tracer.Acceptors.Server.hs (Phase 2 round 9 of R411-R430
+  arc).** Strict-mirror port of `runAcceptorsServer` — the trace-
+  forwarder responder-mode entry point. Wires R421's
+  `accept_trace_objects_resp` + R423's `prepare_metrics_stores`
+  / `remove_disconnected_node` into a top-level mux dispatcher
+  that accepts inbound forwarder connections over a Unix pipe and
+  spawns per-connection trace-object acceptors. New file:
+  `crates/cardano-tracer/src/acceptors/server.rs`.
+  Public API:
+  - **run_acceptors_server(state, how_to_connect, tf_config,
+    lo_handler) → Result&lt;(), AcceptorsServerError&gt;**: top-level
+    entry. Mirror of upstream's `runAcceptorsServer`. Dispatches
+    on `HowToConnect`: LocalPipe → `do_listen_to_forwarder_local`;
+    RemoteSocket → returns deferral error (TCP path requires the
+    trace-forwarder handshake codec port — R425+).
+  - **do_listen_to_forwarder_local(state, socket_path, tf_config,
+    lo_handler) → Result&lt;(), AcceptorsServerError&gt;**: Unix-pipe
+    accept loop. Mirror of upstream's `doListenToForwarderLocal`.
+    Binds R416's LocalPeerListener at `socket_path`, races accept
+    against the global brake from `tf_config.should_we_stop`,
+    spawns per-connection mux + trace-objects acceptor for each
+    accepted UnixStream. The error finalizer (mirror of upstream's
+    `errorHandler connId = deregisterNodeId + removeDisconnectedNode +
+    notifyAboutNodeDisconnected`) is inlined as a closure that
+    invokes R423's `remove_disconnected_node`.
+  - **AcceptorsServerState**: 4-field state slice
+    (connected_nodes, connected_nodes_names, accepted_metrics,
+    network_magic). Per the R398 plan's TracerEnv option (b)
+    decision, takes the slice of state directly rather than
+    coupling to the full `TracerEnv` record.
+  - **AcceptorsServerError**: 3-variant error enum
+    (LocalListener, Mux, MissingProtocolHandle).
+  - **TRACE_OBJECTS_NUM = 2 / EKG_NUM = 1 / DATA_POINTS_NUM = 3**:
+    pub consts locking down the upstream sub-protocol number
+    assignment — exposed even for the deferred sub-protocols so
+    the canonical number-space is in place when their ports land.
+  - **do_listen_to_forwarder_socket_status() /
+    run_ekg_acceptor_status() /
+    run_data_points_acceptor_status()**: programmatic carve-out
+    descriptors.
+  Carve-outs documented in module docstring:
+  - **EKG sub-protocol responder (`runEKGAcceptor` /
+    `acceptMetricsResp`)**: `ekg-forward` Hackage package not
+    vendored. Per advisor guidance, EKG ReqResp is a synthesis
+    carve-out — wire format would need to be reverse-engineered.
+    Operationally cardano-tracer can run without EKG ingest (the
+    per-node Prometheus/EKG endpoints from R408-R414 read from
+    MetricsStore which can be fed manually).
+  - **DataPoint sub-protocol responder (`runDataPointsAcceptor` /
+    `acceptDataPointsResp`)**: vendored at
+    `.reference-haskell-cardano-node/trace-forward/src/Trace/Forward/Run/DataPoint/Acceptor.hs`,
+    port deferred to R425+.
+  - **`Net.RemoteSocket host port` TCP path**: requires the trace-
+    forwarder handshake codec port (R425+). LocalPipe covers the
+    operationally-canonical SPO setup.
+  - **Trace-forwarder handshake codec**: deferred to R425+. The
+    LocalPipe path uses upstream's `Handshake.noTimeLimitsHandshake`
+    which collapses to no-op for the same-host trust boundary.
+    Yggdrasil's R424 port skips handshake; downstream fully-
+    conformant integration with a running cardano-node forwarder
+    will require the handshake port.
+  - **`OuroborosApplication` + `MiniProtocol` records**: collapse
+    into `mux::start_unix(stream, role, &amp;[MiniProtocolNum],
+    buffer_size)` direct dispatch. The `miniProtocolStart =
+    Mux.StartEagerly` and `maximumIngressQueue = maxBound` hints
+    fold into Yggdrasil's `ProtocolConfig::default_for` defaults.
+  - **TraceObject CBOR codec**: stub decoder returns empty list
+    until the trace-dispatcher upstream package is ported (the
+    full `Cardano.Logging.TraceObject` Serialise instance lives
+    in upstream's `cardano-logging` package).
+  Updates `crates/cardano-tracer/src/acceptors.rs` with `pub mod
+  server`. Updates `crates/cardano-tracer/Cargo.toml` with
+  `yggdrasil-ledger` + `yggdrasil-network` workspace dependencies.
+  Tests: yggdrasil-cardano-tracer 394 → 400 (+6: protocol numbers
+  match upstream wire assignment 1/2/3; do_listen_to_forwarder_socket_status
+  describes deferral; run_ekg_acceptor_status describes carve-out;
+  run_data_points_acceptor_status points to vendor path;
+  decode_trace_objects stub returns empty list; run_acceptors_server
+  remote-socket-path returns deferral error). Workspace: 5,861 →
+  5,867. Parity-matrix entry sister-tool.cardano-tracer advanced:
+  next_milestone R424 → R425. Per the R411 plan, R425 ports
+  `Cardano.Tracer.Acceptors.Client` (the cardano-node-side
+  initiator-mode client which mirrors the responder-mode wiring),
+  followed by `Cardano.Tracer.Acceptors.Run` (the supervisor that
+  handles reconnect logic), completing Phase 2 of the arc.
 - **R423 — cardano-tracer: acceptors/utils.rs port of
   Cardano.Tracer.Acceptors.Utils.hs (Phase 2 round 8 of R411-R430
   arc).** Strict-mirror port of the connecting tissue between
