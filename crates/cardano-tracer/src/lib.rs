@@ -8,26 +8,30 @@
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
 //!
-//! Layout mapping (R379 ships time.rs; later rounds populate the rest):
+//! Layout mapping (R380 ships severity.rs + handlers/notifications/types.rs; later rounds populate the rest):
 //!
-//! | Upstream `.hs`                                       | Yggdrasil `.rs`              |
-//! |------------------------------------------------------|------------------------------|
-//! | `Cardano/Tracer/Configuration.hs`                    | `configuration.rs`           |
-//! | `Cardano/Tracer/Types.hs`                            | `types.rs`                   |
-//! | `Cardano/Tracer/Time.hs`                             | `time.rs`                    |
-//! | `Cardano/Tracer/CLI.hs`                              | `cli.rs` (pending)           |
-//! | `Cardano/Tracer/Run.hs`                              | `run.rs` (pending)           |
-//! | `Cardano/Tracer/Acceptors/*`                         | `acceptors/*.rs` (pending)   |
-//! | `Cardano/Tracer/Handlers/Logs/*`                     | `handlers/logs/*.rs` (pending)|
-//! | `Cardano/Tracer/Handlers/RTView/*`                   | **CARVE-OUT** (synthesis)    |
-//! | `Cardano/Tracer/Handlers/Notifications/*`            | `handlers/notifications/*.rs` (pending) |
-//! | `Cardano/Tracer/Handlers/Metrics/*`                  | `handlers/metrics/*.rs` (pending) |
+//! | Upstream `.hs`                                       | Yggdrasil `.rs`                          |
+//! |------------------------------------------------------|------------------------------------------|
+//! | `Cardano/Tracer/Configuration.hs`                    | `configuration.rs`                       |
+//! | `Cardano/Tracer/Types.hs`                            | `types.rs`                               |
+//! | `Cardano/Tracer/Time.hs`                             | `time.rs`                                |
+//! | `Cardano.Logging.SeverityS` (synthesis)              | `severity.rs`                            |
+//! | `Cardano/Tracer/CLI.hs`                              | `cli.rs` (pending)                       |
+//! | `Cardano/Tracer/Run.hs`                              | `run.rs` (pending)                       |
+//! | `Cardano/Tracer/Acceptors/*`                         | `acceptors/*.rs` (pending)               |
+//! | `Cardano/Tracer/Handlers/Logs/*`                     | `handlers/logs/*.rs` (pending)           |
+//! | `Cardano/Tracer/Handlers/RTView/*`                   | **CARVE-OUT** (synthesis)                |
+//! | `Cardano/Tracer/Handlers/Notifications/Types.hs`     | `handlers/notifications/types.rs`        |
+//! | `Cardano/Tracer/Handlers/Notifications/{Check,Send,Email,Settings,Timer,Utils}.hs` | `handlers/notifications/*.rs` (pending) |
+//! | `Cardano/Tracer/Handlers/Metrics/*`                  | `handlers/metrics/*.rs` (pending)        |
 
 use std::io::Write;
 use std::process::ExitCode;
 
 pub mod configuration;
+pub mod handlers;
 pub mod parser;
+pub mod severity;
 pub mod time;
 pub mod types;
 

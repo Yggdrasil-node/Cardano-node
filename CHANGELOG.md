@@ -274,6 +274,77 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R380 — cardano-tracer: SeverityS synthesis + Notifications/Types.hs
+  port.** Lands the trace-event severity ladder + notification-engine
+  data-record surface. New severity.rs synthesizes the
+  Cardano.Logging.SeverityS enum (the upstream `trace-dispatcher`
+  package is not vendored at .reference-haskell-cardano-node/, so this
+  is a carved-out synthesis with the variant set recovered from
+  upstream's exhaustive pattern matches in
+  Journal/Systemd.hs::mkPriority and Notifications/Check.hs):
+  - SeverityS enum (8 variants: Debug, Info, Notice, Warning, Error,
+    Critical, Alert, Emergency) deriving Serialize+Deserialize +
+    Default=Debug. JSON serialization emits each variant's name
+    verbatim (matching upstream's Aeson deriving).
+  - syslog_code() inherent method returning the RFC 5424 §6.2.1
+    numeric severity (Emergency=0, Debug=7).
+  - is_notification_worthy() inherent method returning true for
+    Warning-and-above (matches Check.hs::checkCommonErrors which
+    only adds events for Warning/Error/Critical/Alert/Emergency).
+  - Derived Ord follows declaration order (Debug → Emergency, the
+    inverse of syslog_code).
+  Adds parent-shell modules handlers.rs (mirroring the upstream
+  `Cardano.Tracer.Handlers.*` namespace) and
+  handlers/notifications.rs (mirroring the upstream
+  `Cardano.Tracer.Handlers.Notifications.*` namespace), both with
+  `**Strict mirror:** none.` synthesis declarations explaining the
+  parent-shell role (no upstream aggregate `Handlers.hs` /
+  `Notifications.hs` exists).
+  Adds handlers/notifications/types.rs as a 1:1 port of upstream
+  Notifications/Types.hs:
+  - EmailSSL enum (TLS | STARTTLS | NoSSL, NoSSL default).
+  - EmailSettings (8-field SMTP envelope record with upstream JSON
+    keys: esSMTPHost / esSMTPPort / esUsername / esPassword / esSSL /
+    esEmailFrom / esEmailTo / esSubject).
+  - EventsSettings (6-field per-event-group enable+period record:
+    evsWarnings / evsErrors / evsCriticals / evsAlerts /
+    evsEmergencies / evsNodeDisconnected, each (bool, PeriodInSec)).
+  - Event (4-field record: node_id + time_ms + severity + message)
+    with constructor.
+  - EventGroup enum (6 variants: EventWarnings / EventErrors /
+    EventCriticals / EventAlerts / EventEmergencies /
+    EventNodeDisconnected) with from_severity(SeverityS) →
+    Option<Self> dispatcher returning None for Debug/Info/Notice.
+  - EventsQueue type alias (tokio::sync::mpsc::UnboundedReceiver<Event>).
+  - Timer placeholder unit struct (full port deferred until
+    R382+ when Timer.hs is ported).
+  - EventsQueues type alias
+    (Arc<RwLock<BTreeMap<EventGroup, (EventsQueue, Timer)>>>).
+  - new_events_queues() helper.
+  - PeriodInSec u32 type alias (promoted to types.rs from upstream
+    Timer.hs).
+  Carve-outs documented:
+  - Cardano.Logging.SeverityS unported package (severity.rs is the
+    synthesis stand-in).
+  - Control.Concurrent.STM.TBQueue → tokio::sync::mpsc::UnboundedReceiver.
+  - Control.Concurrent.STM.TVar → Arc<RwLock<...>> (same pattern as
+    R371 ConnectedNodes).
+  - Notifications/Timer.hs full port (112 lines wrapping
+    forkIO/killThread/IORef) deferred to a later round; until then
+    Timer is a placeholder unit struct.
+  Adds tokio workspace dependency to cardano-tracer Cargo.toml.
+  Tests: cardano-tracer 56 → 75 (+19: 6 severity tests [default
+  Debug, syslog_code RFC 5424, ord declaration-order, is_notification
+  _worthy worthy/not-worthy, JSON variant-name + round-trip] + 13
+  notification types tests [EmailSSL default + JSON variant-name,
+  EmailSettings round-trip + upstream-key fidelity, EventsSettings
+  default zeros + upstream-keys, Event constructor, EventGroup
+  from_severity for 5 worthy + 3 unworthy + ord declaration-order,
+  new_events_queues empty + register-a-group async-tested with
+  tokio::test]). Workspace: 5,460 → 5,479. Parity-matrix entry
+  sister-tool.cardano-tracer advanced: next_milestone R380 → R381.
+  Unblocks Notifications/Check.hs port for R381 (advisor-recommended
+  stub-and-build pattern).
 - **R379 — cardano-tracer: Time.hs port (EKG epoch-millis helper).**
   Lands the small wall-clock helper used by the cardano-tracer EKG
   metric backend. New time.rs module ports the upstream

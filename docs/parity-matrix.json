@@ -546,7 +546,7 @@
       "area": "sister-tools",
       "feature": "Standalone trace-forwarder + log + metrics aggregator \u2014 pure-Rust port mirroring upstream cardano-tracer/src/Cardano/Tracer/*.hs.",
       "status": "partial",
-      "next_milestone": "R380",
+      "next_milestone": "R381",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-tracer/",
@@ -556,7 +556,7 @@
       "rust_surface": [
         {
           "path": "crates/cardano-tracer/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R358 typed-config surface (full Configuration.hs port) + R366 typed-parser sweep + R371 runtime-state types + R379 Time helper. Acceptors/Handlers/CLI/Run land in subsequent rounds; RTView UI carve-out per the plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R358 typed-config surface (full Configuration.hs port) + R366 typed-parser sweep + R371 runtime-state types + R379 Time helper + R380 SeverityS synthesis + Notifications/Types port. Acceptors/Handlers/CLI/Run + per-Notification-leaf land in subsequent rounds; RTView UI carve-out per the plan."
         }
       ],
       "implemented_evidence": [
@@ -565,16 +565,19 @@
         "R358 typed-config surface: configuration.rs ports the full upstream Configuration.hs surface \u2014 TracerConfig (17-field record with serde renames matching upstream's hand-written FromJSON field names networkMagic/loRequestNum/ekgRequestFreq/hasEKG/hasPrometheus/hasRTView/hasTimeseries/tlsCertificate/hasForwarding/etc.); HowToConnect (LocalPipe FilePath | RemoteSocket host port) untagged sum mirroring Cardano.Logging.Types.HowToConnect; Endpoint with optional force_ssl; Certificate (cert/key/optional chain); RotationParams (4-field, with defaults matching upstream's hand-written FromJSON: frequency_secs=60, max_age_minutes=24*60); LogMode (FileMode | JournalMode); LogFormat (ForHuman | ForMachine); LoggingParams (root + mode + format); Network (AcceptAt | ConnectTo) untagged sum; Verbosity (Minimum | ErrorsOnly | Maximum); FileOrMap (File path | inline BTreeMap); HasForwarding triple; TraceOptionForwarder JsonValue placeholder. well_formed validator mirroring upstream's wellFormed (catMaybes-then-intercalate ', ' problem-list shape): checks AcceptAt-not-empty + ConnectTo-not-all-empty + logRoot-non-empty-when-FileMode + duplicate-port-detection + non-empty hosts on hasEKG/hasPrometheus/hasRTView. parse_tracer_config_json runs serde_json + nubLogging dedup + well_formed validation. 21 cardano-tracer tests at R358 (was 8 at R335 + 13 configuration unit tests).",
         "R366 typed-parser wiring: parser.rs typed dispatcher chained through lib.rs run_main \u2192 run with help/version/error short-circuits.",
         "R371 runtime-state types: types.rs ports NodeId / NodeName / ProtocolsBrake (Arc<RwLock<bool>>) / ConnectedNodes (Arc<RwLock<HashSet>>) / ConnectedNodesNames (bidirectional HashMap pair replacing upstream Bimap) / Registry<K,V> (Arc<Mutex<HashMap>>) / HandleRegistry \u2014 full Cardano.Tracer.Types runtime-state surface.",
-        "R379 Time.hs port: time.rs ports the EKG-frontend wall-clock helper get_time_ms() returning Unix epoch milliseconds as i64 (matches upstream's `getTimeMs :: IO Int64; getTimeMs = (round . (* 1000)) `fmap` getPOSIXTime`). 4 unit tests covering positive-integer past 1999-12-31 + sandwich-within-2-seconds-of-system-now + monotonic-within-short-window + i64-return-type assertion."
+        "R379 Time.hs port: time.rs ports the EKG-frontend wall-clock helper get_time_ms() returning Unix epoch milliseconds as i64 (matches upstream's `getTimeMs :: IO Int64; getTimeMs = (round . (* 1000)) `fmap` getPOSIXTime`). 4 unit tests covering positive-integer past 1999-12-31 + sandwich-within-2-seconds-of-system-now + monotonic-within-short-window + i64-return-type assertion.",
+        "R380 SeverityS synthesis + Notifications/Types.hs port: severity.rs synthesizes the Cardano.Logging.SeverityS enum (8-variant syslog ladder Debug\u2192Emergency) with syslog_code() / is_notification_worthy() helpers (Cardano.Logging package not vendored \u2014 synthesis carve-out documented). handlers.rs + handlers/notifications.rs parent-shell modules added. handlers/notifications/types.rs ports the upstream Notifications/Types.hs surface \u2014 EmailSSL (TLS|STARTTLS|NoSSL with NoSSL default), EmailSettings (8-field SMTP envelope record with esSMTPHost/esSMTPPort/esUsername/esPassword/esSSL/esEmailFrom/esEmailTo/esSubject upstream JSON keys), EventsSettings (6-field per-group enable+period record with evsWarnings/evsErrors/evsCriticals/evsAlerts/evsEmergencies/evsNodeDisconnected upstream keys), Event (4-field record: node_id+time_ms+severity+message), EventGroup (6-variant enum with from_severity dispatcher returning None for Debug/Info/Notice), EventsQueue (alias around tokio::sync::mpsc::UnboundedReceiver<Event>), Timer (placeholder unit struct \u2014 full Timer port deferred), EventsQueues (alias around Arc<RwLock<BTreeMap<EventGroup, (EventsQueue, Timer)>>>), new_events_queues() constructor, PeriodInSec (u32 alias). Carve-outs: Cardano.Logging.SeverityS unported package; STM TBQueue\u2192tokio mpsc::UnboundedReceiver; STM TVar\u2192Arc<RwLock>; full Timer.hs port deferred (placeholder). 19 R380 unit tests: 6 severity (default, syslog_code, ord, is_notification_worthy worthy/not-worthy, JSON serialization variant-name + round-trip) + 13 notification types (EmailSSL default + JSON variant-name encoding, EmailSettings round-trip + upstream-key fidelity, EventsSettings default zeros + upstream-keys, Event constructor round-trip, EventGroup::from_severity for 5 worthy + 3 unworthy severities, EventGroup ord, new_events_queues empty + register-a-group async-tested with tokio::test). Adds tokio workspace dependency to cardano-tracer Cargo.toml."
       ],
       "remaining_work": [
-        "R380+ CLI.hs port: clap-based parser refinements (--config + --statedir + --remap-prometheus + --network + --tunables + --version) and inner CLI types if any beyond what R366 already wired.",
-        "R381+ Acceptors/{Run,Server,Client,Utils}.hs: trace-forwarder mini-protocol acceptor (via crates/network).",
-        "R382+ Handlers/Logs/{File,Rotator,Journal,Utils,TraceObjects}: log writers + rotation.",
-        "R383+ Handlers/Metrics/{Prometheus,Monitoring,TimeseriesServer,Utils}: metrics endpoints (axum or raw-tokio HTTP).",
-        "R384+ Handlers/Notifications/{Send,Email,Settings,Timer,Check}: SMTP-based alerting.",
-        "R385+ Run.hs supervisor + main wiring.",
-        "R386+ RTView UI \u2014 CARVE-OUT per the plan (no clean Rust idiomatic equivalent for ThreePenny GUI; synthesis docstring at the carve-out file).",
+        "R381+ Notifications/Check.hs port: checkCommonErrors per-event-group dispatch (now unblocked by R380 SeverityS + Event + EventGroup + EventsQueues). Roughly 27 lines.",
+        "R382+ Notifications/Timer.hs port: Timer struct with thread_alive / thread_kill / set_call_period closures (replacing upstream's forkIO/killThread/IORef pattern with tokio::task::JoinHandle + AbortHandle + tokio::sync::watch). Roughly 112 lines.",
+        "R383+ Notifications/{Settings,Send,Email,Utils}.hs ports.",
+        "R384+ CLI.hs refinements beyond R366.",
+        "R385+ Acceptors/{Run,Server,Client,Utils}.hs: trace-forwarder mini-protocol acceptor (via crates/network).",
+        "R386+ Handlers/Logs/{File,Rotator,Journal,Utils,TraceObjects}: log writers + rotation.",
+        "R387+ Handlers/Metrics/{Prometheus,Monitoring,TimeseriesServer,Utils}: metrics endpoints (axum or raw-tokio HTTP).",
+        "R388+ Run.hs supervisor + main wiring.",
+        "R389+ RTView UI \u2014 CARVE-OUT per the plan (no clean Rust idiomatic equivalent for ThreePenny GUI; synthesis docstring at the carve-out file).",
         "Integration: live-rehearsal vs upstream cardano-tracer + closeout."
       ],
       "acceptance": [
