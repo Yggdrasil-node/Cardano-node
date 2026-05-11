@@ -894,4 +894,205 @@ mod tests {
             );
         }
     }
+
+    // ── per-era dispatch coverage: Babbage / Conway (R478) ─────────────
+
+    fn mk_babbage_body_cbor() -> Vec<u8> {
+        use yggdrasil_ledger::CborEncode;
+        use yggdrasil_ledger::{BabbageTxBody, BabbageTxOut, ShelleyTxIn, Value};
+        let body = BabbageTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xDD; 32],
+                index: 0,
+            }],
+            outputs: vec![
+                BabbageTxOut {
+                    address: vec![0x61; 29],
+                    amount: Value::Coin(1_000_000),
+                    datum_option: None,
+                    script_ref: None,
+                },
+                BabbageTxOut {
+                    address: vec![0x62; 29],
+                    amount: Value::Coin(2_000_000),
+                    datum_option: None,
+                    script_ref: None,
+                },
+            ],
+            fee: 1_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+        };
+        body.to_cbor_bytes()
+    }
+
+    fn mk_conway_body_cbor() -> Vec<u8> {
+        use yggdrasil_ledger::CborEncode;
+        use yggdrasil_ledger::{BabbageTxOut, ConwayTxBody, ShelleyTxIn, Value};
+        let body = ConwayTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xEE; 32],
+                index: 0,
+            }],
+            outputs: vec![
+                BabbageTxOut {
+                    address: vec![0x61; 29],
+                    amount: Value::Coin(3_000_000),
+                    datum_option: None,
+                    script_ref: None,
+                },
+                BabbageTxOut {
+                    address: vec![0x62; 29],
+                    amount: Value::Coin(5_000_000),
+                    datum_option: None,
+                    script_ref: None,
+                },
+                BabbageTxOut {
+                    address: vec![0x63; 29],
+                    amount: Value::Coin(7_000_000),
+                    datum_option: None,
+                    script_ref: None,
+                },
+                BabbageTxOut {
+                    address: vec![0x64; 29],
+                    amount: Value::Coin(11_000_000),
+                    datum_option: None,
+                    script_ref: None,
+                },
+            ],
+            fee: 2_000,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+            voting_procedures: None,
+            proposal_procedures: None,
+            current_treasury_value: None,
+            treasury_donation: None,
+        };
+        body.to_cbor_bytes()
+    }
+
+    #[test]
+    fn block_count_tx_outputs_babbage_dispatch() {
+        let body = mk_babbage_body_cbor();
+        let blk = Block {
+            era: Era::Babbage,
+            header: mk_block_header(500, 0),
+            transactions: vec![mk_empty_tx_with_body(body)],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // Single Babbage tx with 2 outputs.
+        assert_eq!(blk.count_tx_outputs(), 2);
+    }
+
+    #[test]
+    fn block_count_tx_outputs_babbage_multi_tx() {
+        let body = mk_babbage_body_cbor();
+        let blk = Block {
+            era: Era::Babbage,
+            header: mk_block_header(501, 0),
+            transactions: vec![
+                mk_empty_tx_with_body(body.clone()),
+                mk_empty_tx_with_body(body),
+            ],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // 2 txs × 2 outputs = 4.
+        assert_eq!(blk.count_tx_outputs(), 4);
+    }
+
+    #[test]
+    fn block_count_tx_outputs_conway_dispatch() {
+        let body = mk_conway_body_cbor();
+        let blk = Block {
+            era: Era::Conway,
+            header: mk_block_header(600, 0),
+            transactions: vec![mk_empty_tx_with_body(body)],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // Single Conway tx with 4 outputs.
+        assert_eq!(blk.count_tx_outputs(), 4);
+    }
+
+    #[test]
+    fn block_count_tx_outputs_conway_multi_tx() {
+        let body = mk_conway_body_cbor();
+        let blk = Block {
+            era: Era::Conway,
+            header: mk_block_header(601, 0),
+            transactions: vec![
+                mk_empty_tx_with_body(body.clone()),
+                mk_empty_tx_with_body(body.clone()),
+                mk_empty_tx_with_body(body),
+            ],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // 3 txs × 4 outputs = 12.
+        assert_eq!(blk.count_tx_outputs(), 12);
+    }
+
+    #[test]
+    fn block_stats_renders_babbage_and_conway() {
+        for (era, name) in [(Era::Babbage, "Babbage"), (Era::Conway, "Conway")] {
+            let blk = Block {
+                era,
+                header: mk_block_header(1, 1),
+                transactions: vec![],
+                raw_cbor: None,
+                header_cbor_size: None,
+            };
+            let stats = blk.block_stats();
+            assert!(
+                stats[2].contains(name),
+                "era={era:?} expected 'era={name}' got {:?}",
+                stats[2]
+            );
+        }
+    }
+
+    #[test]
+    fn block_application_metrics_renders_babbage_and_conway() {
+        let metrics = <Block as HasAnalysis>::block_application_metrics();
+        for (era, name) in [(Era::Babbage, "Babbage"), (Era::Conway, "Conway")] {
+            let blk = Block {
+                era,
+                header: mk_block_header(1000, 100),
+                transactions: vec![mk_empty_tx_with_body(vec![]), mk_empty_tx_with_body(vec![])],
+                raw_cbor: None,
+                header_cbor_size: None,
+            };
+            let with_state =
+                WithLedgerState::new(blk, CardanoLedgerStateValues, CardanoLedgerStateValues);
+            assert_eq!((metrics[0].1)(&with_state).unwrap(), "1000");
+            assert_eq!((metrics[1].1)(&with_state).unwrap(), "100");
+            assert_eq!((metrics[2].1)(&with_state).unwrap(), name);
+            assert_eq!((metrics[3].1)(&with_state).unwrap(), "2");
+        }
+    }
 }

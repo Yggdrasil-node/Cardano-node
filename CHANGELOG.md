@@ -351,6 +351,15 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R478 — Babbage / Conway HasAnalysis dispatch coverage.** Fourth
+  slice of the R475-R481 arc. Completes the 7-era dispatch
+  coverage matrix by adding Babbage (BabbageTxBody construction
+  with multi-output / multi-tx scenarios) and Conway (real
+  ConwayTxBody construction with 4 outputs, multi-tx accumulation,
+  era-stats rendering, CSV-column rendering). 6 new tests.
+  Workspace tests: 6,125 → 6,131. All 5 verification gates clean.
+  See `docs/operational-runs/2026-05-11-round-478-hasanalysis-
+  babbage-conway-coverage.md`.
 - **R477 — Allegra / Mary / Alonzo HasAnalysis dispatch coverage.**
   Third slice of the R475-R481 arc. Strengthens the test surface
   for R476's `HasAnalysis for Block` impl with concrete dispatch
