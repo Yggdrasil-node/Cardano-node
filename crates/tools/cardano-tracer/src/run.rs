@@ -155,6 +155,9 @@ pub async fn run_cardano_tracer_default(params: TracerParams) -> Result<(), RunC
     // source of truth for open log handles.
     let handle_registry = crate::types::HandleRegistry::new();
     let current_log_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    // R470: the per-connection DataPointRequestors registry shared
+    // across the supervisor + per-connection acceptor spawn body.
+    let data_point_requestors = crate::types::DataPointRequestors::new();
     // Build the runtime state slice ahead of the supervisor so the
     // default handler can capture connected_nodes_names by clone.
     let state = AcceptorsServerState {
@@ -162,6 +165,7 @@ pub async fn run_cardano_tracer_default(params: TracerParams) -> Result<(), RunC
         connected_nodes_names: ConnectedNodesNames::new(),
         accepted_metrics: new_accepted_metrics(),
         handle_registry: handle_registry.clone(),
+        data_point_requestors: data_point_requestors.clone(),
         network_magic: config.network_magic,
     };
     let lo_handler = Arc::new(default_lo_handler_factory_with_registry(
@@ -298,6 +302,7 @@ where
         connected_nodes_names: ConnectedNodesNames::new(),
         accepted_metrics: new_accepted_metrics(),
         handle_registry: crate::types::HandleRegistry::new(),
+        data_point_requestors: crate::types::DataPointRequestors::new(),
         network_magic: config.network_magic,
     };
     // Delegate to the state-aware variant with no shared registry
@@ -605,6 +610,7 @@ mod tests {
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: new_accepted_metrics(),
             handle_registry: crate::types::HandleRegistry::new(),
+            data_point_requestors: crate::types::DataPointRequestors::new(),
             network_magic: 764824073,
         }
     }

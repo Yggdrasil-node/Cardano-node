@@ -150,6 +150,14 @@ pub struct AcceptorsServerState {
     /// descriptors via Arc-drop) rather than leaking until the
     /// next reconnect.
     pub handle_registry: crate::types::HandleRegistry,
+    /// Per-connection registry of `DataPointRequestor` handles,
+    /// keyed by `NodeId`. R470: populated by the per-connection
+    /// acceptor spawn body after handshake completes; removed by
+    /// the per-connection teardown alongside the HandleRegistry
+    /// entries. External callers (e.g. `ask_node_name`) look up
+    /// the requestor by NodeId to query `NodeInfo` data-points
+    /// from the connected forwarder.
+    pub data_point_requestors: crate::types::DataPointRequestors,
     /// Network magic for the trace-forwarder handshake (deferred —
     /// see module docs).
     pub network_magic: u32,
@@ -325,11 +333,12 @@ where
                     // per-(node, LoggingParams) HandleRegistry
                     // entries for this disconnecting forwarder are
                     // dropped, closing the underlying FDs.
-                    crate::acceptors::utils::remove_disconnected_node_with_registry(
+                    crate::acceptors::utils::remove_disconnected_node_full(
                         &s.connected_nodes,
                         &s.connected_nodes_names,
                         &s.accepted_metrics,
                         &s.handle_registry,
+                        &s.data_point_requestors,
                         &token,
                     )
                     .await;
@@ -338,9 +347,10 @@ where
 
             // Wire the trace-objects sub-protocol handler.
             let node_id = crate::utils::conn_id_to_node_id(&conn_token);
+            let node_id_for_lo = node_id.clone();
             let handler = Arc::clone(&conn_handler);
             let lo_handler_wrapper = move |payloads: Vec<TraceObject>| {
-                handler(node_id.clone(), payloads);
+                handler(node_id_for_lo.clone(), payloads);
             };
 
             // Build a DataPoint acceptor configuration whose brake
@@ -351,12 +361,17 @@ where
                 acceptor_tracer: conn_config.acceptor_tracer.clone(),
                 should_we_stop: conn_config.should_we_stop.clone(),
             };
-            // Mint a fresh requestor for this connection. Future
-            // rounds will plumb a clone into the external
-            // node-info query router; for now the requestor is
-            // owned solely by the acceptor loop (it idles after the
-            // initial empty round-trip and trips MsgDone on brake).
+            // Mint a fresh requestor for this connection + register
+            // it in the supervisor-shared DataPointRequestors
+            // registry under this connection's NodeId. External
+            // callers (e.g. ask_node_name in run.rs) look up the
+            // requestor by NodeId to ask for NodeInfo data-points.
+            // The teardown hook (remove_disconnected_node_with_registry)
+            // drops the registration on disconnect.
             let dp_requestor = crate::acceptors::utils::prepare_data_point_requestor();
+            conn_state
+                .data_point_requestors
+                .insert(node_id.clone(), dp_requestor.clone());
             let dp_on_error =
                 move |_e: &yggdrasil_network::data_point_acceptor::DataPointAcceptorError| {
                     // R458: DataPoint error finalizer is currently a
@@ -387,11 +402,12 @@ where
             // Final cleanup on graceful shutdown.
             let _ = trace_result;
             let _ = dp_result;
-            crate::acceptors::utils::remove_disconnected_node_with_registry(
+            crate::acceptors::utils::remove_disconnected_node_full(
                 &conn_state.connected_nodes,
                 &conn_state.connected_nodes_names,
                 &conn_state.accepted_metrics,
                 &conn_state.handle_registry,
+                &conn_state.data_point_requestors,
                 &conn_token,
             )
             .await;
@@ -605,6 +621,7 @@ mod tests {
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: crate::metrics_store::new_accepted_metrics(),
             handle_registry: crate::types::HandleRegistry::new(),
+            data_point_requestors: crate::types::DataPointRequestors::new(),
             network_magic: 764824073,
         };
         let config = AcceptorConfiguration::new(NumberOfTraceObjects(10));
@@ -667,6 +684,7 @@ mod tests {
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: crate::metrics_store::new_accepted_metrics(),
             handle_registry: crate::types::HandleRegistry::new(),
+            data_point_requestors: crate::types::DataPointRequestors::new(),
             network_magic: 764824073,
         };
         let config = AcceptorConfiguration::new(NumberOfTraceObjects(3));

@@ -176,6 +176,33 @@ pub async fn remove_disconnected_node_with_registry(
     }
 }
 
+/// R470 follow-on to [`remove_disconnected_node_with_registry`]:
+/// also removes the per-connection `DataPointRequestor` from the
+/// supervisor-shared `DataPointRequestors` registry. Used by the
+/// Acceptors per-connection teardown so a disconnecting forwarder
+/// frees its requestor + handle entries together.
+pub async fn remove_disconnected_node_full(
+    connected_nodes: &ConnectedNodes,
+    connected_nodes_names: &ConnectedNodesNames,
+    accepted_metrics: &AcceptedMetrics,
+    handle_registry: &crate::types::HandleRegistry,
+    data_point_requestors: &crate::types::DataPointRequestors,
+    remote_address: &str,
+) {
+    let node_id = conn_id_to_node_id(remote_address);
+    remove_disconnected_node_with_registry(
+        connected_nodes,
+        connected_nodes_names,
+        accepted_metrics,
+        handle_registry,
+        remote_address,
+    )
+    .await;
+    // Drop the requestor entry. Arc-drop closes the underlying
+    // tokio::sync::Notify channels.
+    data_point_requestors.remove(&node_id);
+}
+
 /// Insert a `Response::ResponseMetrics` batch from the EKG sub-
 /// protocol into the per-node metrics store. Mirror of upstream's
 /// `store tracerEnv (NodeId nodeId) (ekgStore, localStore) resp@(ResponseMetrics ms)`.
@@ -451,6 +478,63 @@ mod tests {
         )
         .await;
         assert_eq!(handle_registry.len(), 0);
+    }
+
+    // ----- R470 remove_disconnected_node_full tests ---------------------
+
+    #[tokio::test]
+    async fn remove_disconnected_node_full_clears_data_point_requestor() {
+        use crate::types::{DataPointRequestors, HandleRegistry};
+
+        let connected = ConnectedNodes::new();
+        let names = ConnectedNodesNames::new();
+        let accepted = new_accepted_metrics();
+        let handle_registry = HandleRegistry::new();
+        let data_point_requestors = DataPointRequestors::new();
+
+        // Register state for a node + a data-point requestor.
+        let _ = prepare_metrics_stores(&connected, &accepted, "node-dp").await;
+        let node_id = conn_id_to_node_id("node-dp");
+        names.insert(node_id.clone(), "dp-pool".to_string());
+        let requestor = yggdrasil_network::protocols::DataPointRequestor::new();
+        data_point_requestors.insert(node_id.clone(), requestor);
+        assert_eq!(data_point_requestors.len(), 1);
+
+        remove_disconnected_node_full(
+            &connected,
+            &names,
+            &accepted,
+            &handle_registry,
+            &data_point_requestors,
+            "node-dp",
+        )
+        .await;
+
+        // All connection state cleared, including the requestor.
+        assert_eq!(connected.snapshot().len(), 0);
+        assert_eq!(names.snapshot().len(), 0);
+        assert_eq!(data_point_requestors.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn remove_disconnected_node_full_is_idempotent_for_unregistered_node() {
+        // Calling _full on a node that was never registered should
+        // be a no-op (doesn't panic, doesn't error).
+        let connected = ConnectedNodes::new();
+        let names = ConnectedNodesNames::new();
+        let accepted = new_accepted_metrics();
+        let handle_registry = crate::types::HandleRegistry::new();
+        let data_point_requestors = crate::types::DataPointRequestors::new();
+        remove_disconnected_node_full(
+            &connected,
+            &names,
+            &accepted,
+            &handle_registry,
+            &data_point_requestors,
+            "ghost-node",
+        )
+        .await;
+        // No assertion needed — the test passes if it doesn't panic.
     }
 
     #[tokio::test]

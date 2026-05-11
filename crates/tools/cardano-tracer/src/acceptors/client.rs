@@ -212,11 +212,12 @@ where
             // R465: registry-aware variant drops per-node
             // HandleRegistry entries alongside the existing
             // ConnectedNodes / metrics teardown.
-            crate::acceptors::utils::remove_disconnected_node_with_registry(
+            crate::acceptors::utils::remove_disconnected_node_full(
                 &s.connected_nodes,
                 &s.connected_nodes_names,
                 &s.accepted_metrics,
                 &s.handle_registry,
+                &s.data_point_requestors,
                 &token,
             )
             .await;
@@ -224,9 +225,10 @@ where
     };
 
     let node_id = crate::utils::conn_id_to_node_id(&conn_token);
+    let node_id_for_lo = node_id.clone();
     let handler = Arc::clone(&lo_handler);
     let lo_handler_wrapper = move |payloads: Vec<TraceObject>| {
-        handler(node_id.clone(), payloads);
+        handler(node_id_for_lo.clone(), payloads);
     };
 
     // Build a DataPoint acceptor configuration whose brake flag is
@@ -237,6 +239,10 @@ where
         should_we_stop: tf_config.should_we_stop.clone(),
     };
     let dp_requestor = crate::acceptors::utils::prepare_data_point_requestor();
+    // R470: register in the supervisor-shared registry.
+    state
+        .data_point_requestors
+        .insert(node_id.clone(), dp_requestor.clone());
     let dp_on_error = move |_e: &yggdrasil_network::data_point_acceptor::DataPointAcceptorError| {
         // R458: same no-op rationale as server.rs — the
         // trace-objects on_error already runs the
@@ -258,11 +264,12 @@ where
     );
 
     // Final cleanup on graceful shutdown.
-    crate::acceptors::utils::remove_disconnected_node_with_registry(
+    crate::acceptors::utils::remove_disconnected_node_full(
         &state.connected_nodes,
         &state.connected_nodes_names,
         &state.accepted_metrics,
         &state.handle_registry,
+        &state.data_point_requestors,
         &conn_token,
     )
     .await;
@@ -354,6 +361,7 @@ mod tests {
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: crate::metrics_store::new_accepted_metrics(),
             handle_registry: crate::types::HandleRegistry::new(),
+            data_point_requestors: crate::types::DataPointRequestors::new(),
             network_magic: 764824073,
         }
     }

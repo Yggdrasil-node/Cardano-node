@@ -351,6 +351,32 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R470 — cardano-tracer DataPointRequestors plumbing into
+  Acceptors spawn body.** Closes the R469 inert-plumbing gap that
+  the advisor flagged: R469 shipped `ask_node_name` + the
+  `DataPointRequestors` registry, but the per-connection spawn
+  body never registered any requestor — so `ask_node_name` would
+  always return the NodeId-fallback in production. Mirror of
+  R465's HandleRegistry plumbing pattern.
+  - `AcceptorsServerState` gains
+    `data_point_requestors: DataPointRequestors` field.
+  - `acceptors/server.rs` + `acceptors/client.rs` per-connection
+    spawn bodies register the freshly-minted requestor under the
+    conn_token's NodeId immediately after handshake (before
+    spawning the data-points acceptor).
+  - `acceptors/utils.rs` adds
+    `remove_disconnected_node_full(...)` — wraps
+    `remove_disconnected_node_with_registry` + drops the
+    requestor entry. Both server.rs and client.rs teardown paths
+    switched from the registry-aware variant to the _full
+    variant.
+  - `run_cardano_tracer_default` constructs `DataPointRequestors::
+    new()` once + threads it through state.
+  - 2 new tests in acceptors/utils.rs:
+    `remove_disconnected_node_full_clears_data_point_requestor`,
+    `remove_disconnected_node_full_is_idempotent_for_unregistered_node`.
+  Workspace tests: 6,061 → 6,063 (+2). All 5 verification gates
+  clean.
 - **R469 — cardano-tracer DataPointRequestors registry + askNodeName
   closure.** Closes the `ask_node_name_status` descriptor that had
   been mis-classified as "deferred — depends on DataPointRequestor"
