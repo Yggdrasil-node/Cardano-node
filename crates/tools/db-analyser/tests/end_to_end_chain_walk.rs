@@ -362,6 +362,132 @@ fn end_to_end_repro_mempool_and_forge_via_file_immutable() {
     }
 }
 
+// ── R501: Limit::Limit(n) truncation coverage ───────────────────────
+
+fn mk_config_with_limit(
+    db_dir: std::path::PathBuf,
+    analysis: AnalysisName,
+    limit: Limit,
+) -> DBAnalyserConfig {
+    DBAnalyserConfig {
+        db_dir,
+        verbose: false,
+        select_db: SelectDB::SelectImmutableDB(WithOrigin::Origin),
+        validation: Some(ValidateBlocks::ValidateAllBlocks),
+        analysis,
+        conf_limit: limit,
+        ldb_backend: LedgerDBBackend::V2InMem,
+    }
+}
+
+#[test]
+fn end_to_end_count_blocks_respects_limit_truncation() {
+    // R479 apply_limit truncates `bounded = blocks.take(limit)`
+    // when Limit::Limit(n) is set. R501: assert the truncation
+    // flows through the full FileImmutable production call path.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    // Populate 5 blocks.
+    for (byte, slot, block_no) in [
+        (0xA0u8, 10, 1),
+        (0xA1, 20, 2),
+        (0xA2, 30, 3),
+        (0xA3, 40, 4),
+        (0xA4, 50, 5),
+    ] {
+        store
+            .append_block(synthetic_block(byte, slot, block_no as u64))
+            .unwrap();
+    }
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.suffix_after(&Point::Origin).unwrap();
+    // Limit::Limit(2) → only the first 2 blocks counted.
+    let config = mk_config_with_limit(
+        dir.path().to_path_buf(),
+        AnalysisName::CountBlocks,
+        Limit::Limit(2),
+    );
+    let outcome = run_analysis(&config, blocks).unwrap();
+
+    match outcome {
+        AnalysisOutcome::CountBlocks { total, first, last } => {
+            assert_eq!(total, 2, "Limit::Limit(2) must truncate to 2 blocks");
+            // First and last must reflect the first 2 stored blocks
+            // in chain order.
+            assert_eq!(first, Some((SlotNo(10), BlockNo(1))));
+            assert_eq!(last, Some((SlotNo(20), BlockNo(2))));
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_show_slot_block_no_respects_limit_truncation() {
+    // R501: ShowSlotBlockNo also respects the truncation.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    for (byte, slot, block_no) in [(0xA0u8, 10, 1), (0xA1, 20, 2), (0xA2, 30, 3)] {
+        store
+            .append_block(synthetic_block(byte, slot, block_no as u64))
+            .unwrap();
+    }
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.suffix_after(&Point::Origin).unwrap();
+    let config = mk_config_with_limit(
+        dir.path().to_path_buf(),
+        AnalysisName::ShowSlotBlockNo,
+        Limit::Limit(1),
+    );
+    let outcome = run_analysis(&config, blocks).unwrap();
+
+    match outcome {
+        AnalysisOutcome::ShowSlotBlockNo { lines } => {
+            assert_eq!(lines.len(), 1, "Limit::Limit(1) → exactly 1 row");
+            assert_eq!(lines[0].0, SlotNo(10));
+            assert_eq!(lines[0].1, BlockNo(1));
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_limit_unlimited_is_equivalent_to_no_truncation() {
+    // R501 invariant: Limit::Unlimited and Limit::Limit(N) where
+    // N >= chain.len() must yield identical outcomes.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    for (byte, slot, block_no) in [(0xA0u8, 10, 1), (0xA1, 20, 2)] {
+        store
+            .append_block(synthetic_block(byte, slot, block_no as u64))
+            .unwrap();
+    }
+    drop(store);
+
+    let store_a = FileImmutable::open(dir.path()).unwrap();
+    let blocks_a = store_a.suffix_after(&Point::Origin).unwrap();
+    let config_unlim = mk_config_with_limit(
+        dir.path().to_path_buf(),
+        AnalysisName::CountBlocks,
+        Limit::Unlimited,
+    );
+    let outcome_unlim = run_analysis(&config_unlim, blocks_a).unwrap();
+
+    let store_b = FileImmutable::open(dir.path()).unwrap();
+    let blocks_b = store_b.suffix_after(&Point::Origin).unwrap();
+    let config_overrun = mk_config_with_limit(
+        dir.path().to_path_buf(),
+        AnalysisName::CountBlocks,
+        Limit::Limit(100),
+    );
+    let outcome_overrun = run_analysis(&config_overrun, blocks_b).unwrap();
+
+    assert_eq!(outcome_unlim, outcome_overrun);
+}
+
 #[test]
 fn end_to_end_get_block_application_metrics_via_file_immutable() {
     // R490: GetBlockApplicationMetrics invokes R476 column

@@ -351,6 +351,19 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R501 — `Limit::Limit(n)` truncation integration coverage.**
+  Tests-only round. R479's `apply_limit` helper is exercised by
+  the unit test `run_analysis_respects_conf_limit` (Vec<Block>
+  input) but all 11 integration tests at
+  `crates/tools/db-analyser/tests/end_to_end_chain_walk.rs` use
+  `Limit::Unlimited`. R501 adds 3 integration tests exercising
+  the truncation path end-to-end via FileImmutable: 5-block
+  chain + `Limit::Limit(2)` → 2 blocks counted; 3-block chain +
+  `Limit::Limit(1)` → 1 row; equivalence invariant for
+  `Limit::Unlimited` vs `Limit::Limit(N >= chain.len())`. A new
+  `mk_config_with_limit` helper parametrizes the limit field
+  (was hard-coded to `Limit::Unlimited`). Workspace tests:
+  6,229 → 6,232. All 5 gates clean.
 - **R500 — End-to-end integration tests for R488-R493 ledger-
   state-dependent handlers.** Tests-only round. R481 shipped 4
   integration tests at
