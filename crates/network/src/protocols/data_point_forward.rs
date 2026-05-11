@@ -295,6 +295,256 @@ impl DataPointForwardState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// CBOR wire codec
+// ---------------------------------------------------------------------------
+//
+// **Strict mirror:** trace-forward/src/Trace/Forward/Protocol/DataPoint/Codec.hs.
+//
+// Wire format mirrors upstream's `codecDataPointForward`:
+//
+// | Wire tag | Wire shape                                | Message              |
+// |----------|-------------------------------------------|----------------------|
+// |    1     | `[1, [name, ...]]`                        | MsgDataPointsRequest |
+// |    2     | `[2]`                                     | MsgDone              |
+// |    3     | `[3, [(name, maybe-bytes), ...]]`         | MsgDataPointsReply   |
+//
+// Per-name encoding (mirror of cborg `Serialise Text` instance): CBOR
+// major type 3 (text string), UTF-8.
+//
+// Per-value encoding (mirror of cborg `Serialise (Maybe LBS.ByteString)`
+// instance):
+// - `Nothing` → `array(0)` (`0x80`)
+// - `Just bytes` → `[1-array, bytes]` (`0x81 <bytes>`)
+//
+// Per-`(name, maybe-bytes)` pair: `[2-array, text, maybe-bytes]`.
+//
+// List encoding: upstream's call site at
+// `Trace.Forward.Run.DataPoint.Acceptor.hs:55` uses `CBOR.encode` /
+// `CBOR.decode` (Serialise list instance), which emits indefinite-
+// length lists for non-empty input and definite-length for empty.
+// Yggdrasil's encoder emits *definite-length* arrays on the wire (one
+// encoding for all cases) — matching the existing
+// [`super::trace_object_forward`] R418 codec precedent. The decoder
+// accepts both definite- AND indefinite-length list encodings so
+// messages from upstream cardano-node forwarders deserialize
+// correctly. This is documented as a wire-canonicalization carve-out
+// in [crates/network/src/protocols/trace_object_forward.rs] (R418)
+// and reused here.
+//
+// Carve-outs (NOT ported, by design):
+//
+// - **`MonadST` constraint + `MonadST m` bound**: upstream threads
+//   the `m` monad through `Codec` for ST-state-thread parametricity.
+//   Yggdrasil's [`yggdrasil_ledger::cbor::Encoder`] / `Decoder` pair
+//   is concrete (no monad transformer), matching the existing
+//   pattern in [`super::keep_alive`] and other Yggdrasil mini-
+//   protocol codecs.
+// - **`SomeMessage st` existential**: upstream's `decode` returns a
+//   `SomeMessage st` because the result type is dependent on the
+//   state token. Yggdrasil returns [`DataPointForwardMessage`]
+//   directly + relies on [`DataPointForwardState::transition`] for
+//   state-validation — matching the precedent in `keep_alive::from_cbor`.
+// - **`encodeRequest`/`decodeRequest`/`encodeReplyList`/`decodeReplyList`
+//   closure parameters**: upstream's `codecDataPointForward` takes
+//   four closures because the typed-protocol codec is generic and
+//   the call site (`Run/DataPoint/Acceptor.hs:55`) always passes
+//   the same Serialise-instance pair. Yggdrasil inlines the
+//   monomorphic encoders + decoders since `DataPointName` /
+//   `DataPointValue` / `DataPointValues` are concrete, eliminating
+//   the boilerplate. This is a Rust-side simplification with no
+//   wire-format consequence — bytes match the upstream pair.
+
+use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+
+/// Encode a list of `DataPointName` to CBOR. Mirror of upstream's
+/// `encodeRequest` closure passed at the
+/// `Trace.Forward.Run.DataPoint.Acceptor` call site (which uses
+/// `CBOR.encode :: [Text] -> Encoding`).
+fn encode_request_names(enc: &mut Encoder, names: &[DataPointName]) {
+    enc.array(names.len() as u64);
+    for name in names {
+        enc.text(name.as_str());
+    }
+}
+
+/// Decode a list of `DataPointName` from CBOR. Accepts both
+/// definite- and indefinite-length encodings (the latter is what
+/// upstream cborg-Serialise actually emits for non-empty lists).
+fn decode_request_names(dec: &mut Decoder<'_>) -> Result<Vec<DataPointName>, LedgerError> {
+    let maybe_len = dec.array_begin()?;
+    match maybe_len {
+        Some(len) => {
+            let mut out = Vec::with_capacity(len as usize);
+            for _ in 0..len {
+                out.push(DataPointName::new(dec.text()?));
+            }
+            Ok(out)
+        }
+        None => {
+            let mut out = Vec::new();
+            while !dec.is_break() {
+                out.push(DataPointName::new(dec.text()?));
+            }
+            dec.consume_break()?;
+            Ok(out)
+        }
+    }
+}
+
+/// Encode a `Maybe DataPointValue` to CBOR. Mirror of the cborg
+/// `Serialise (Maybe a)` instance:
+/// `Nothing → encodeListLen 0`,
+/// `Just v  → encodeListLen 1 <> encode v`.
+fn encode_maybe_value(enc: &mut Encoder, maybe: &Option<DataPointValue>) {
+    match maybe {
+        None => {
+            enc.array(0);
+        }
+        Some(v) => {
+            enc.array(1).bytes(v.as_slice());
+        }
+    }
+}
+
+/// Decode a `Maybe DataPointValue` from CBOR. Accepts the cborg
+/// canonical `[0-array]` / `[1-array, bytes]` shape; rejects any
+/// other array length.
+fn decode_maybe_value(dec: &mut Decoder<'_>) -> Result<Option<DataPointValue>, LedgerError> {
+    let len = dec.array()?;
+    match len {
+        0 => Ok(None),
+        1 => {
+            let bytes = dec.bytes()?.to_vec();
+            Ok(Some(DataPointValue::new(bytes)))
+        }
+        n => Err(LedgerError::CborDecodeError(format!(
+            "codecDataPointForward: Maybe DataPointValue: unexpected array len {n}, \
+             expected 0 (Nothing) or 1 (Just)"
+        ))),
+    }
+}
+
+/// Encode a `(name, maybe-bytes)` reply-list entry: `[2-array, text, maybe-bytes]`.
+fn encode_reply_entry(enc: &mut Encoder, entry: &(DataPointName, Option<DataPointValue>)) {
+    enc.array(2).text(entry.0.as_str());
+    encode_maybe_value(enc, &entry.1);
+}
+
+/// Decode a `(name, maybe-bytes)` reply-list entry.
+fn decode_reply_entry(
+    dec: &mut Decoder<'_>,
+) -> Result<(DataPointName, Option<DataPointValue>), LedgerError> {
+    let len = dec.array()?;
+    if len != 2 {
+        return Err(LedgerError::CborDecodeError(format!(
+            "codecDataPointForward: reply entry: expected 2-array (name, maybe-bytes), \
+             got {len}-array"
+        )));
+    }
+    let name = DataPointName::new(dec.text()?);
+    let value = decode_maybe_value(dec)?;
+    Ok((name, value))
+}
+
+/// Encode a `DataPointValues` reply list. Mirror of upstream's
+/// `encodeReplyList` closure (which uses
+/// `CBOR.encode :: [(Text, Maybe LBS.ByteString)] -> Encoding`).
+fn encode_reply_list(enc: &mut Encoder, values: &DataPointValues) {
+    enc.array(values.len() as u64);
+    for entry in values {
+        encode_reply_entry(enc, entry);
+    }
+}
+
+/// Decode a `DataPointValues` reply list. Accepts both definite-
+/// and indefinite-length encodings.
+fn decode_reply_list(dec: &mut Decoder<'_>) -> Result<DataPointValues, LedgerError> {
+    let maybe_len = dec.array_begin()?;
+    match maybe_len {
+        Some(len) => {
+            let mut out = Vec::with_capacity(len as usize);
+            for _ in 0..len {
+                out.push(decode_reply_entry(dec)?);
+            }
+            Ok(out)
+        }
+        None => {
+            let mut out = Vec::new();
+            while !dec.is_break() {
+                out.push(decode_reply_entry(dec)?);
+            }
+            dec.consume_break()?;
+            Ok(out)
+        }
+    }
+}
+
+impl DataPointForwardMessage {
+    /// Encode this message to CBOR bytes.
+    pub fn to_cbor(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        match self {
+            Self::MsgDataPointsRequest(names) => {
+                enc.array(2).unsigned(1);
+                encode_request_names(&mut enc, names);
+            }
+            Self::MsgDone => {
+                enc.array(1).unsigned(2);
+            }
+            Self::MsgDataPointsReply(values) => {
+                enc.array(2).unsigned(3);
+                encode_reply_list(&mut enc, values);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes given the current protocol
+    /// state. The `state` parameter is required because the wire
+    /// format does not embed state information — upstream's typed-
+    /// protocol codec passes a `SingDataPointForward st` token at
+    /// the same point.
+    pub fn from_cbor_in_state(
+        state: DataPointForwardState,
+        data: &[u8],
+    ) -> Result<Self, LedgerError> {
+        let mut dec = Decoder::new(data);
+        let len = dec.array()?;
+        let key = dec.unsigned()?;
+        let msg = match (key, len, state) {
+            // (1, 2, StIdle): MsgDataPointsRequest
+            (1, 2, DataPointForwardState::StIdle) => {
+                let names = decode_request_names(&mut dec)?;
+                Self::MsgDataPointsRequest(names)
+            }
+            // (2, 1, StIdle): MsgDone
+            (2, 1, DataPointForwardState::StIdle) => Self::MsgDone,
+            // (3, 2, StBusy): MsgDataPointsReply
+            (3, 2, DataPointForwardState::StBusy) => {
+                let values = decode_reply_list(&mut dec)?;
+                Self::MsgDataPointsReply(values)
+            }
+            // Any other (key, len, state) is illegal. Upstream's
+            // StDone branch hits `notActiveState`; we surface that
+            // as a CBOR-level invariant failure so the caller's
+            // protocol driver doesn't silently accept a post-terminal
+            // message.
+            _ => {
+                return Err(LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: key as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(LedgerError::CborTrailingBytes(dec.remaining()));
+        }
+        Ok(msg)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +750,243 @@ mod tests {
             .transition(&DataPointForwardMessage::MsgDone)
             .expect("idle→done");
         assert_eq!(s3, DataPointForwardState::StDone);
+    }
+
+    // ----- Codec round-trip tests ------------------------------------------
+
+    #[test]
+    fn codec_request_round_trip() {
+        let msg = DataPointForwardMessage::MsgDataPointsRequest(vec![
+            DataPointName::new("node-info"),
+            DataPointName::new("tip"),
+        ]);
+        let bytes = msg.to_cbor();
+        let decoded =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StIdle, &bytes)
+                .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_request_empty_round_trip() {
+        let msg = DataPointForwardMessage::MsgDataPointsRequest(vec![]);
+        let bytes = msg.to_cbor();
+        let decoded =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StIdle, &bytes)
+                .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_done_round_trip() {
+        let msg = DataPointForwardMessage::MsgDone;
+        let bytes = msg.to_cbor();
+        let decoded =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StIdle, &bytes)
+                .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_reply_round_trip_mixed_known_unknown() {
+        let msg = DataPointForwardMessage::MsgDataPointsReply(vec![
+            (
+                "node-info".into(),
+                Some(DataPointValue::new(b"{\"version\":\"11.0.1\"}".to_vec())),
+            ),
+            ("unknown".into(), None),
+            ("tip".into(), Some(DataPointValue::new(vec![]))),
+        ]);
+        let bytes = msg.to_cbor();
+        let decoded =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StBusy, &bytes)
+                .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_reply_empty_round_trip() {
+        let msg = DataPointForwardMessage::MsgDataPointsReply(vec![]);
+        let bytes = msg.to_cbor();
+        let decoded =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StBusy, &bytes)
+                .expect("decode");
+        assert_eq!(decoded, msg);
+    }
+
+    #[test]
+    fn codec_request_in_busy_state_rejected() {
+        // The wire bytes for a valid MsgDataPointsRequest, but
+        // attempting to decode in StBusy state (which only accepts
+        // MsgDataPointsReply) — must error.
+        let req = DataPointForwardMessage::MsgDataPointsRequest(vec!["a".into()]);
+        let bytes = req.to_cbor();
+        let result =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StBusy, &bytes);
+        assert!(
+            matches!(result, Err(LedgerError::CborTypeMismatch { .. })),
+            "expected CborTypeMismatch in StBusy, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn codec_reply_in_idle_state_rejected() {
+        let rep = DataPointForwardMessage::MsgDataPointsReply(vec![("a".into(), None)]);
+        let bytes = rep.to_cbor();
+        let result =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StIdle, &bytes);
+        assert!(
+            matches!(result, Err(LedgerError::CborTypeMismatch { .. })),
+            "expected CborTypeMismatch in StIdle, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn codec_decode_in_done_state_always_errors() {
+        let done = DataPointForwardMessage::MsgDone;
+        let bytes = done.to_cbor();
+        let result =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StDone, &bytes);
+        assert!(
+            matches!(result, Err(LedgerError::CborTypeMismatch { .. })),
+            "expected CborTypeMismatch in StDone, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn codec_request_wire_format_is_byte_stable() {
+        // Lock down the wire format for MsgDataPointsRequest(["a"]):
+        //   [1, ["a"]] in definite-length CBOR is:
+        //     0x82  array(2)
+        //     0x01  unsigned 1 (key)
+        //     0x81  array(1)
+        //     0x61  text(1)
+        //     0x61  'a'
+        let msg = DataPointForwardMessage::MsgDataPointsRequest(vec!["a".into()]);
+        let bytes = msg.to_cbor();
+        assert_eq!(bytes, vec![0x82, 0x01, 0x81, 0x61, 0x61]);
+    }
+
+    #[test]
+    fn codec_done_wire_format_is_byte_stable() {
+        // [2] → 0x81 array(1), 0x02 unsigned 2.
+        let msg = DataPointForwardMessage::MsgDone;
+        let bytes = msg.to_cbor();
+        assert_eq!(bytes, vec![0x81, 0x02]);
+    }
+
+    #[test]
+    fn codec_reply_wire_format_is_byte_stable() {
+        // Lock down the wire format for MsgDataPointsReply([("a", Just [0xAA])]):
+        //   [3, [["a", [0xAA]]]] in definite-length CBOR is:
+        //     0x82  array(2)
+        //     0x03  unsigned 3 (key)
+        //     0x81  array(1)        — reply list (1 entry)
+        //     0x82  array(2)        — (name, maybe) pair
+        //     0x61  text(1)
+        //     0x61  'a'
+        //     0x81  array(1)        — Just
+        //     0x41  bytes(1)
+        //     0xAA
+        let msg = DataPointForwardMessage::MsgDataPointsReply(vec![(
+            "a".into(),
+            Some(DataPointValue::new(vec![0xAA])),
+        )]);
+        let bytes = msg.to_cbor();
+        assert_eq!(
+            bytes,
+            vec![0x82, 0x03, 0x81, 0x82, 0x61, 0x61, 0x81, 0x41, 0xAA]
+        );
+    }
+
+    #[test]
+    fn codec_reply_nothing_wire_format_is_byte_stable() {
+        // MsgDataPointsReply([("x", Nothing)]):
+        //   0x82  array(2)
+        //   0x03  unsigned 3
+        //   0x81  array(1)        — reply list
+        //   0x82  array(2)        — pair
+        //   0x61  text(1)
+        //   0x78  'x'
+        //   0x80  array(0)        — Nothing
+        let msg = DataPointForwardMessage::MsgDataPointsReply(vec![("x".into(), None)]);
+        let bytes = msg.to_cbor();
+        assert_eq!(bytes, vec![0x82, 0x03, 0x81, 0x82, 0x61, 0x78, 0x80]);
+    }
+
+    #[test]
+    fn codec_decoder_accepts_indefinite_request_list() {
+        // Manually build a request with an indefinite-length name list
+        // (what upstream cborg-Serialise actually emits for non-empty
+        // [Text]). The decoder must accept it.
+        //   [1, names]
+        //   0x82 array(2)
+        //   0x01 key
+        //   0x9F indef array
+        //     0x61 'a'  (text "a")
+        //     0x61 'b'  (text "b")
+        //   0xFF break
+        let bytes = vec![0x82, 0x01, 0x9F, 0x61, 0x61, 0x61, 0x62, 0xFF];
+        let decoded =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StIdle, &bytes)
+                .expect("decode");
+        assert_eq!(
+            decoded,
+            DataPointForwardMessage::MsgDataPointsRequest(vec!["a".into(), "b".into()])
+        );
+    }
+
+    #[test]
+    fn codec_decoder_accepts_indefinite_reply_list() {
+        // [3, indef [["a", [0xAA]], ["b", []]]]
+        //   0x82 array(2)
+        //   0x03 key
+        //   0x9F indef array
+        //     0x82 array(2)
+        //     0x61 'a'
+        //     0x81 0x41 0xAA   — Just [0xAA]
+        //     0x82 array(2)
+        //     0x61 'b'
+        //     0x80              — Nothing
+        //   0xFF break
+        let bytes = vec![
+            0x82, 0x03, 0x9F, 0x82, 0x61, 0x61, 0x81, 0x41, 0xAA, 0x82, 0x61, 0x62, 0x80, 0xFF,
+        ];
+        let decoded =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StBusy, &bytes)
+                .expect("decode");
+        assert_eq!(
+            decoded,
+            DataPointForwardMessage::MsgDataPointsReply(vec![
+                ("a".into(), Some(DataPointValue::new(vec![0xAA]))),
+                ("b".into(), None),
+            ])
+        );
+    }
+
+    #[test]
+    fn codec_reply_maybe_with_invalid_len_rejected() {
+        // Construct a reply with a malformed Maybe — array-len 2 is
+        // illegal (only 0 = Nothing or 1 = Just are valid).
+        //   0x82 array(2)
+        //   0x03 key (reply)
+        //   0x81 array(1)         — reply list
+        //   0x82 array(2)         — pair
+        //   0x61 'a'
+        //   0x82                  — Maybe with invalid len 2
+        //   0x40                    bytes(0)
+        //   0x40                    bytes(0)
+        let bytes = vec![0x82, 0x03, 0x81, 0x82, 0x61, 0x61, 0x82, 0x40, 0x40];
+        let result =
+            DataPointForwardMessage::from_cbor_in_state(DataPointForwardState::StBusy, &bytes);
+        match result {
+            Err(LedgerError::CborDecodeError(s)) => {
+                assert!(
+                    s.contains("Maybe DataPointValue: unexpected array len 2"),
+                    "unexpected error message: {s}"
+                );
+            }
+            other => panic!("expected CborDecodeError, got {other:?}"),
+        }
     }
 }
