@@ -274,6 +274,31 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R449 — post-R447 living-doc path cleanup (CLAUDE.md +
+  DEPENDENCIES.md).** Updates the two non-historical documentation
+  surfaces that still referenced pre-R447 `crates/<tool>/` paths:
+  - **CLAUDE.md**: AGENTS.md index table row for cardano-cli
+    rewrites `crates/cardano-cli/AGENTS.md` →
+    `crates/tools/cardano-cli/AGENTS.md` + appends "(R447:
+    relocated under `crates/tools/`)" annotation.
+  - **docs/DEPENDENCIES.md**: 2 forward-looking references updated
+    — the `bech32` workspace-dep justification's "Foundation for
+    `crates/bech32/`" reference (now `crates/tools/bech32/`) and
+    the deferred-tracing-appender pointer to
+    `crates/cardano-tracer/src/handlers/logs/rotator.rs` (now
+    under `crates/tools/cardano-tracer/`).
+  Historical docs (PARITY_SUMMARY.md, PARITY_PROOF.md,
+  UPSTREAM_PARITY.md, top-level AGENTS.md's session-closure
+  narratives, dated `docs/operational-runs/*` files) intentionally
+  preserve their pre-R447 path references per CLAUDE.md's
+  historical-evidence rule ("Treat dated files under
+  `docs/operational-runs/` as historical evidence...rather than
+  rewriting old run records").
+  CI workflow audit (`.github/workflows/{ci, pages, release,
+  upstream-cardano-node-tests}.yml`): zero stale crate-path
+  references — CI uses cargo-target-name dispatch, not path-based.
+  Workspace test count unchanged at 5,962. All 5 verification
+  gates clean + parity-matrix gate clean.
 - **R448 — sister-tools AGENTS.md refresh sweep (post-R447
   documentation cleanup; closes the loop on R439-R445 + R446).**
   Refreshes 7 sister-tool AGENTS.md files (snapshot-converter,

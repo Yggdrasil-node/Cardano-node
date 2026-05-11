@@ -71,7 +71,7 @@ Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept cu
 | [crates/consensus/src/mempool/AGENTS.md](crates/consensus/src/mempool/AGENTS.md) | Fee-ordered mempool, TTL, eviction, TxSubmission accounting |
 | [crates/network/AGENTS.md](crates/network/AGENTS.md) | Mux, mini-protocols, governor, peer registry, diffusion types |
 | [crates/plutus/AGENTS.md](crates/plutus/AGENTS.md) | CEK machine, builtins, cost model |
-| [crates/cardano-cli/AGENTS.md](crates/cardano-cli/AGENTS.md) | Pure-Rust port of `cardano-cli` (R289+, ~237 files mirroring 180 upstream `.hs`); Phase F bootstrap state + R298+ migration roadmap |
+| [crates/tools/cardano-cli/AGENTS.md](crates/tools/cardano-cli/AGENTS.md) | Pure-Rust port of `cardano-cli` (R289+, ~237 files mirroring 180 upstream `.hs`); Phase F bootstrap state + R298+ migration roadmap (R447: relocated under `crates/tools/`) |
 | [node/AGENTS.md](node/AGENTS.md) | Runtime orchestration boundary rules |
 | [node/src/AGENTS.md](node/src/AGENTS.md) | CLI, config, sync, server, block production |
 | [node/configuration/AGENTS.md](node/configuration/AGENTS.md) | Vendored mainnet/preprod/preview operator configs |
