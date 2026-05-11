@@ -351,6 +351,30 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R500 — End-to-end integration tests for R488-R493 ledger-
+  state-dependent handlers.** Tests-only round. R481 shipped 4
+  integration tests at
+  `crates/tools/db-analyser/tests/end_to_end_chain_walk.rs`
+  covering block-iteration-only handlers; R488-R493 shipped 5
+  ledger-state-dependent handlers via the
+  `LedgerState::apply_block` seam but had only in-memory unit
+  tests. R500 adds 5 end-to-end FileImmutable integration tests
+  — one per shipped ledger-state-dependent handler
+  (`TraceLedgerProcessing`, `BenchmarkLedgerOps`,
+  `StoreLedgerStateAt`, `ReproMempoolAndForge`,
+  `GetBlockApplicationMetrics`). Each exercises the full
+  production call path: FileImmutable open → suffix_after →
+  run_analysis dispatch → outcome assertion. Byron-era blocks
+  used throughout for clean apply-loop semantics (matches the
+  R488 forensic semantic). Catches gap-classes the unit tests
+  miss: CBOR round-trip preserving Block fields the handler
+  reads + FileImmutable reopen seeing the same blocks +
+  chain-order preservation. Workspace tests: 6,224 → 6,229
+  (+5). All 5 gates clean. See `docs/operational-runs/2026-05-
+  12-round-500-end-to-end-integration-tests-ledger-state-
+  handlers.md`. **R475-R500 sequence: 30 commits, +145 tests
+  across 26 rounds. db-analyser surface fully shipped with
+  comprehensive test coverage.**
 - **R499 — parity-matrix refresh for db-analyser (R497) +
   cardano-tracer (R474).** Documentation-only round. Updates two
   `parity-matrix.json` entries to reflect shipped post-R481/post-

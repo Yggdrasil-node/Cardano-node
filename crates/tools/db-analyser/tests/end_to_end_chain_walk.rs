@@ -184,3 +184,224 @@ fn end_to_end_lib_run_propagates_check_no_thunks_carve_out() {
         "expected permanent-carve-out mention in error msg, got: {msg}"
     );
 }
+
+// ── R500: end-to-end integration tests for ledger-state-dependent
+//        handlers (R488-R493) via FileImmutable ───────────────────────────
+
+#[test]
+fn end_to_end_trace_ledger_processing_via_file_immutable() {
+    // R488 + R496: TraceLedgerProcessing applies blocks via
+    // LedgerState::apply_block, captures per-block Ok/Err
+    // outcomes + emit_traces strings. R500: assert the
+    // end-to-end FileImmutable path exercises both.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    let mut byron_blk = synthetic_block(0xB0, 10, 1);
+    byron_blk.era = Era::Byron;
+    store.append_block(byron_blk).unwrap();
+    let mut byron_blk_2 = synthetic_block(0xB1, 20, 2);
+    byron_blk_2.era = Era::Byron;
+    store.append_block(byron_blk_2).unwrap();
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.suffix_after(&Point::Origin).unwrap();
+    let config = mk_config(
+        dir.path().to_path_buf(),
+        AnalysisName::TraceLedgerProcessing,
+    );
+    let outcome = run_analysis(&config, blocks).unwrap();
+
+    match outcome {
+        AnalysisOutcome::TraceLedgerProcessing {
+            traces,
+            emit_traces,
+            applied_ok,
+            applied_err,
+        } => {
+            assert_eq!(traces.len(), 2, "2 blocks → 2 trace entries");
+            assert_eq!(emit_traces.len(), 2, "emit_traces parallel to traces");
+            // Byron blocks should apply cleanly against empty
+            // LedgerState (no UTxO lookups).
+            assert_eq!(applied_ok, 2);
+            assert_eq!(applied_err, 0);
+            // Each block's emit_traces must include the 5 canonical
+            // R496 strings.
+            for per_block in &emit_traces {
+                assert!(per_block.iter().any(|s| s == "event=block_apply"));
+                assert!(per_block.iter().any(|s| s.starts_with("era=Byron")));
+            }
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_benchmark_ledger_ops_via_file_immutable() {
+    // R489: BenchmarkLedgerOps captures per-block Instant timing
+    // + SlotDataPoint records. R500: end-to-end FileImmutable
+    // → run dispatch.
+    use yggdrasil_db_analyser::types::LedgerApplicationMode;
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    for (byte, slot, block_no) in [(0xB0u8, 10u64, 1u64), (0xB1, 20, 2), (0xB2, 30, 3)] {
+        let mut blk = synthetic_block(byte, slot, block_no);
+        blk.era = Era::Byron;
+        store.append_block(blk).unwrap();
+    }
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.suffix_after(&Point::Origin).unwrap();
+    let config = mk_config(
+        dir.path().to_path_buf(),
+        AnalysisName::BenchmarkLedgerOps(None, LedgerApplicationMode::LedgerReapply),
+    );
+    let outcome = run_analysis(&config, blocks).unwrap();
+
+    match outcome {
+        AnalysisOutcome::BenchmarkLedgerOps {
+            slot_data_points,
+            applied_ok,
+            applied_err,
+        } => {
+            assert_eq!(slot_data_points.len(), 3);
+            assert_eq!(applied_ok + applied_err, 3);
+            // R489 invariant: total_time mirrors mut_block_apply
+            // (no separate phase decomposition).
+            for dp in &slot_data_points {
+                assert_eq!(dp.total_time, dp.mut_block_apply);
+            }
+            // Slot gaps from synthetic chain (10, 20, 30).
+            assert_eq!(slot_data_points[0].slot_gap, 0); // first
+            assert_eq!(slot_data_points[1].slot_gap, 10);
+            assert_eq!(slot_data_points[2].slot_gap, 10);
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_store_ledger_state_at_via_file_immutable() {
+    // R491: StoreLedgerStateAt captures LedgerStateCheckpoint
+    // CBOR snapshot at target slot. R500: end-to-end
+    // FileImmutable → run dispatch.
+    use yggdrasil_db_analyser::types::LedgerApplicationMode;
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    for (byte, slot, block_no) in [(0xB0u8, 10u64, 1u64), (0xB1, 20, 2), (0xB2, 30, 3)] {
+        let mut blk = synthetic_block(byte, slot, block_no);
+        blk.era = Era::Byron;
+        store.append_block(blk).unwrap();
+    }
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.suffix_after(&Point::Origin).unwrap();
+    // Target slot 20 → snapshot at block 2.
+    let config = mk_config(
+        dir.path().to_path_buf(),
+        AnalysisName::StoreLedgerStateAt(SlotNo(20), LedgerApplicationMode::LedgerReapply),
+    );
+    let outcome = run_analysis(&config, blocks).unwrap();
+
+    match outcome {
+        AnalysisOutcome::StoreLedgerStateAt {
+            target_slot,
+            reached_slot,
+            snapshot_bytes,
+            applied_ok,
+            applied_err,
+        } => {
+            assert_eq!(target_slot, SlotNo(20));
+            assert_eq!(reached_slot, Some(SlotNo(20)));
+            assert!(!snapshot_bytes.is_empty(), "snapshot CBOR must be encoded");
+            // All 3 blocks applied for honest counters.
+            assert_eq!(applied_ok + applied_err, 3);
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_repro_mempool_and_forge_via_file_immutable() {
+    // R493 + R494 + R495 + R497: ReproMempoolAndForge insert +
+    // pop_best with real inputs/fee/ttl/raw_tx fidelity.
+    // R500: end-to-end FileImmutable → run dispatch.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    let mut blk = synthetic_block(0xB0, 10, 1);
+    blk.era = Era::Byron;
+    store.append_block(blk).unwrap();
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.suffix_after(&Point::Origin).unwrap();
+    let config = mk_config(
+        dir.path().to_path_buf(),
+        AnalysisName::ReproMempoolAndForge(1),
+    );
+    let outcome = run_analysis(&config, blocks).unwrap();
+
+    match outcome {
+        AnalysisOutcome::ReproMempoolAndForge {
+            per_block_stats,
+            applied_ok,
+            applied_err,
+        } => {
+            assert_eq!(per_block_stats.len(), 1);
+            // Empty transactions → zero inserts/forges.
+            let (_, _, inserts, forges, _, _) = per_block_stats[0];
+            assert_eq!(inserts, 0);
+            assert_eq!(forges, 0);
+            // Byron block applies cleanly.
+            assert_eq!(applied_ok, 1);
+            assert_eq!(applied_err, 0);
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_get_block_application_metrics_via_file_immutable() {
+    // R490: GetBlockApplicationMetrics invokes R476 column
+    // closures every-N-blocks. R500: end-to-end FileImmutable
+    // → run dispatch with every_n_blocks=1 → row per block.
+    use yggdrasil_db_analyser::types::NumberOfBlocks;
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    for (byte, slot, block_no) in [(0xB0u8, 10u64, 1u64), (0xB1, 20, 2)] {
+        let mut blk = synthetic_block(byte, slot, block_no);
+        blk.era = Era::Byron;
+        store.append_block(blk).unwrap();
+    }
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.suffix_after(&Point::Origin).unwrap();
+    let config = mk_config(
+        dir.path().to_path_buf(),
+        AnalysisName::GetBlockApplicationMetrics(NumberOfBlocks(1), None),
+    );
+    let outcome = run_analysis(&config, blocks).unwrap();
+
+    match outcome {
+        AnalysisOutcome::GetBlockApplicationMetrics {
+            rows,
+            every_n_blocks,
+            applied_ok,
+            applied_err,
+        } => {
+            assert_eq!(every_n_blocks, 1);
+            assert_eq!(rows.len(), 2, "every_n_blocks=1 → row per block");
+            // Each row has 4 R476 columns: slot, block_no, era, tx_count.
+            assert_eq!(rows[0].len(), 4);
+            assert!(rows[0].iter().any(|(k, _)| k == "slot"));
+            assert!(rows[0].iter().any(|(k, _)| k == "block_no"));
+            assert!(rows[0].iter().any(|(k, _)| k == "era"));
+            assert!(rows[0].iter().any(|(k, _)| k == "tx_count"));
+            assert_eq!(applied_ok + applied_err, 2);
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
