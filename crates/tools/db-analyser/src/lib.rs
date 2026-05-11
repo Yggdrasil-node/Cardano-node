@@ -172,6 +172,23 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
         AnalysisOutcome::OnlyValidation { blocks_processed } => {
             writeln!(out, "only_validation blocks_processed={blocks_processed}")?;
         }
+        AnalysisOutcome::BenchmarkLedgerOps {
+            slot_data_points,
+            applied_ok,
+            applied_err,
+        } => {
+            for dp in slot_data_points {
+                writeln!(
+                    out,
+                    "slot={} slot_gap={} total_time_ns={} block_size={}",
+                    dp.slot.0, dp.slot_gap, dp.total_time, dp.block_byte_size
+                )?;
+            }
+            writeln!(
+                out,
+                "benchmark_ledger_ops applied_ok={applied_ok} applied_err={applied_err}"
+            )?;
+        }
         AnalysisOutcome::TraceLedgerProcessing {
             traces,
             applied_ok,

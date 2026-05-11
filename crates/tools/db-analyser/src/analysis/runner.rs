@@ -142,6 +142,35 @@ pub enum AnalysisOutcome {
         /// Number of blocks whose apply call returned an error.
         applied_err: i64,
     },
+    /// `BenchmarkLedgerOps` result (R489) — per-block
+    /// [`crate::analysis::benchmark_ledger_ops::slot_data_point::SlotDataPoint`]
+    /// records produced by walking the chain with
+    /// `LedgerState::apply_block` timing instrumentation.
+    ///
+    /// **Portable-subset filling:** the upstream SlotDataPoint has
+    /// 15 fields; Yggdrasil populates the 6 portable ones (`slot`,
+    /// `slot_gap`, `total_time`, `mut_block_apply`,
+    /// `block_byte_size`, `block_stats`) and zero-fills the
+    /// GHC-specific timing breakdown (`mut_`, `gc`, `maj_gc_count`,
+    /// `min_gc_count`, `allocated_bytes`, `mut_forecast`,
+    /// `mut_header_tick`, `mut_header_apply`, `mut_block_tick`).
+    /// Rust has no direct analogs for GHC's per-allocation /
+    /// per-GC-cycle counters.
+    ///
+    /// `total_time` and `mut_block_apply` are wall-clock
+    /// nanoseconds measured via `std::time::Instant`. Apply
+    /// failures do not abort the run (forensic semantics — the
+    /// failed apply's timing is still captured).
+    BenchmarkLedgerOps {
+        /// Per-block timing records in chain order.
+        slot_data_points:
+            Vec<crate::analysis::benchmark_ledger_ops::slot_data_point::SlotDataPoint>,
+        /// Number of blocks that applied successfully.
+        applied_ok: i64,
+        /// Number of blocks whose apply call returned an error
+        /// (timing still captured for these blocks).
+        applied_err: i64,
+    },
 }
 
 /// Errors from the analysis dispatch core.
@@ -153,14 +182,15 @@ pub enum AnalysisError {
     /// `LedgerState (CardanoBlock c) ValuesMK` through the per-block
     /// step.
     ///
-    /// 4 of the 13 upstream analyses route to this variant after
-    /// R485 (CheckNoThunksEvery → NotApplicableToRust) and R488
-    /// (TraceLedgerProcessing → shipped via apply-loop hookup):
-    /// `StoreLedgerStateAt`, `BenchmarkLedgerOps`,
+    /// 3 of the 13 upstream analyses route to this variant after
+    /// R485 (CheckNoThunksEvery → NotApplicableToRust), R488
+    /// (TraceLedgerProcessing → shipped) and R489
+    /// (BenchmarkLedgerOps → shipped): `StoreLedgerStateAt`,
     /// `ReproMempoolAndForge`, `GetBlockApplicationMetrics`. The
     /// remaining 7 are block-iteration-only and ship handlers in
-    /// the R475-R481 arc; `TraceLedgerProcessing` is the 8th
-    /// shipped handler (R488) via the LedgerState apply-loop seam.
+    /// the R475-R481 arc; `TraceLedgerProcessing` ships via R488
+    /// and `BenchmarkLedgerOps` ships via R489 (both through the
+    /// `LedgerState::apply_block` seam).
     #[error(
         "yggdrasil-db-analyser: analysis '{analysis_name}' requires a ledger-state apply-loop \
          which is not yet shipped (R475-R481 lands block-iteration-only analyses; the apply-loop \
@@ -239,11 +269,7 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
             reason: "NoThunks-style ledger-state inspection walks GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks to inspect.".to_string(),
         }),
         AnalysisName::TraceLedgerProcessing => Ok(analysis_trace_ledger_processing(&bounded)),
-        AnalysisName::BenchmarkLedgerOps(_, _) => {
-            Err(AnalysisError::RequiresLedgerStateApplyLoop {
-                analysis_name: "BenchmarkLedgerOps".to_string(),
-            })
-        }
+        AnalysisName::BenchmarkLedgerOps(_, _) => Ok(analysis_benchmark_ledger_ops(&bounded)),
         AnalysisName::ReproMempoolAndForge(_) => Err(AnalysisError::RequiresLedgerStateApplyLoop {
             analysis_name: "ReproMempoolAndForge".to_string(),
         }),
@@ -433,6 +459,81 @@ pub fn analysis_trace_ledger_processing(blocks: &[Block]) -> AnalysisOutcome {
     }
     AnalysisOutcome::TraceLedgerProcessing {
         traces,
+        applied_ok,
+        applied_err,
+    }
+}
+
+/// `BenchmarkLedgerOps` handler (R489) — walks blocks via
+/// [`yggdrasil_ledger::LedgerState::apply_block`] with
+/// `std::time::Instant`-based timing instrumentation, producing
+/// one [`SlotDataPoint`] per block.
+///
+/// **Portable-subset filling:** Yggdrasil fills the 6 fields with
+/// real values (`slot`, `slot_gap`, `total_time`,
+/// `mut_block_apply`, `block_byte_size`, `block_stats`); the
+/// 9 GHC-specific fields (allocations, GC counters, per-phase
+/// header/tick breakdown) are zero. Rust has no direct analogs;
+/// honest zeros are more useful than synthesized values.
+///
+/// **`total_time` and `mut_block_apply`** are wall-clock nanoseconds
+/// measured around the `apply_block` call. They're equal in
+/// Yggdrasil because we don't have a separate forecast/tick/header-
+/// apply/block-tick/block-apply phase decomposition.
+///
+/// **`block_stats`** comes from the R476
+/// `Block::block_stats()` impl (`slot=N block_no=M era=E
+/// tx_count=K`).
+///
+/// **Forensic semantics:** apply failures don't abort the run; the
+/// failed apply's timing is still captured. Apply Ok/Err counters
+/// are returned alongside the per-block records.
+///
+/// Mirror of upstream `Analysis.hs::benchmarkLedgerOps`. R374-R376
+/// already shipped the `SlotDataPoint`, `Metadata`, and `FileWriting`
+/// leaf records; R489 wires them through this handler.
+pub fn analysis_benchmark_ledger_ops(blocks: &[Block]) -> AnalysisOutcome {
+    use crate::analysis::benchmark_ledger_ops::slot_data_point::{BlockStats, SlotDataPoint};
+    use std::time::Instant;
+
+    let initial_era = blocks
+        .first()
+        .map(|b| b.era)
+        .unwrap_or(yggdrasil_ledger::Era::Byron);
+    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut slot_data_points = Vec::with_capacity(blocks.len());
+    let mut applied_ok: i64 = 0;
+    let mut applied_err: i64 = 0;
+    let mut prev_slot: Option<u64> = None;
+
+    for blk in blocks {
+        let start = Instant::now();
+        let outcome = state.apply_block(blk);
+        let elapsed = start.elapsed();
+        match outcome {
+            Ok(()) => applied_ok += 1,
+            Err(_) => applied_err += 1,
+        }
+        let slot_gap = prev_slot
+            .map(|p| blk.header.slot_no.0.saturating_sub(p))
+            .unwrap_or(0);
+        prev_slot = Some(blk.header.slot_no.0);
+
+        let total_time_ns = elapsed.as_nanos().min(i64::MAX as u128) as i64;
+        let block_byte_size = blk.raw_cbor.as_ref().map(|b| b.len()).unwrap_or(0) as u32;
+        let block_stats = BlockStats::from_strings(HasAnalysis::block_stats(blk));
+
+        let mut dp = SlotDataPoint::empty(blk.header.slot_no);
+        dp.slot_gap = slot_gap;
+        dp.total_time = total_time_ns;
+        dp.mut_block_apply = total_time_ns;
+        dp.block_byte_size = block_byte_size;
+        dp.block_stats = block_stats;
+        slot_data_points.push(dp);
+    }
+
+    AnalysisOutcome::BenchmarkLedgerOps {
+        slot_data_points,
         applied_ok,
         applied_err,
     }
@@ -946,17 +1047,80 @@ mod tests {
     }
 
     #[test]
-    fn run_analysis_benchmark_ledger_ops_returns_requires_apply_loop() {
+    fn run_analysis_benchmark_ledger_ops_returns_outcome() {
+        // R489: BenchmarkLedgerOps now ships via the apply-loop
+        // seam (was RequiresLedgerStateApplyLoop pre-R489).
         let config = mk_config(
             AnalysisName::BenchmarkLedgerOps(None, LedgerApplicationMode::LedgerReapply),
             Limit::Unlimited,
         );
-        let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
-        match err {
-            AnalysisError::RequiresLedgerStateApplyLoop { analysis_name } => {
-                assert_eq!(analysis_name, "BenchmarkLedgerOps");
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        assert!(matches!(
+            outcome,
+            AnalysisOutcome::BenchmarkLedgerOps { .. }
+        ));
+    }
+
+    #[test]
+    fn analysis_benchmark_ledger_ops_empty_chain() {
+        let outcome = analysis_benchmark_ledger_ops(&[]);
+        match outcome {
+            AnalysisOutcome::BenchmarkLedgerOps {
+                slot_data_points,
+                applied_ok,
+                applied_err,
+            } => {
+                assert!(slot_data_points.is_empty());
+                assert_eq!(applied_ok, 0);
+                assert_eq!(applied_err, 0);
             }
-            _ => panic!("wrong error variant: {err:?}"),
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_benchmark_ledger_ops_records_per_block_timing() {
+        let mut byron = mk_block(10, 100, None);
+        byron.era = yggdrasil_ledger::Era::Byron;
+        let outcome = analysis_benchmark_ledger_ops(&[byron]);
+        match outcome {
+            AnalysisOutcome::BenchmarkLedgerOps {
+                slot_data_points,
+                applied_ok,
+                applied_err,
+            } => {
+                assert_eq!(slot_data_points.len(), 1);
+                let dp = &slot_data_points[0];
+                assert_eq!(dp.slot, SlotNo(10));
+                assert_eq!(dp.slot_gap, 0); // First block — gap = 0.
+                assert!(dp.total_time >= 0); // wall-clock ns
+                // mut_block_apply mirrors total_time in our impl.
+                assert_eq!(dp.total_time, dp.mut_block_apply);
+                // applied_ok + applied_err == slot_data_points.len()
+                assert_eq!(applied_ok + applied_err, 1);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_benchmark_ledger_ops_emits_slot_gap_between_blocks() {
+        let mut a = mk_block(10, 100, None);
+        a.era = yggdrasil_ledger::Era::Byron;
+        let mut b = mk_block(25, 101, None);
+        b.era = yggdrasil_ledger::Era::Byron;
+        let mut c = mk_block(40, 102, None);
+        c.era = yggdrasil_ledger::Era::Byron;
+        let outcome = analysis_benchmark_ledger_ops(&[a, b, c]);
+        match outcome {
+            AnalysisOutcome::BenchmarkLedgerOps {
+                slot_data_points, ..
+            } => {
+                assert_eq!(slot_data_points[0].slot_gap, 0); // first
+                assert_eq!(slot_data_points[1].slot_gap, 15); // 25-10
+                assert_eq!(slot_data_points[2].slot_gap, 15); // 40-25
+            }
+            _ => panic!("wrong outcome variant"),
         }
     }
 

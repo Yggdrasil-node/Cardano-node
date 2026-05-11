@@ -159,23 +159,23 @@ fn end_to_end_lib_run_renders_to_stdout() {
 
 #[test]
 fn end_to_end_lib_run_propagates_ledger_state_deferral() {
-    // R488 shipped TraceLedgerProcessing via the LedgerState
-    // apply-loop seam; the test now uses BenchmarkLedgerOps,
+    // R488 shipped TraceLedgerProcessing and R489 shipped
+    // BenchmarkLedgerOps; the test now uses ReproMempoolAndForge
     // which still routes through `RequiresLedgerStateApplyLoop`
-    // pending a future arc.
-    use yggdrasil_db_analyser::types::LedgerApplicationMode;
+    // (needs mempool+forge integration which is its own future
+    // arc).
     let dir = TempDir::new().unwrap();
     let store = FileImmutable::open(dir.path()).unwrap();
     drop(store);
 
     let config = mk_config(
         dir.path().to_path_buf(),
-        AnalysisName::BenchmarkLedgerOps(None, LedgerApplicationMode::LedgerReapply),
+        AnalysisName::ReproMempoolAndForge(50),
     );
     let err = yggdrasil_db_analyser::run(&config).unwrap_err();
     let msg = format!("{err}");
     assert!(
-        msg.contains("BenchmarkLedgerOps"),
+        msg.contains("ReproMempoolAndForge"),
         "expected analysis name in error msg, got: {msg}"
     );
     assert!(

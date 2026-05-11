@@ -351,6 +351,33 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R489 — `BenchmarkLedgerOps` handler with apply-timing
+  instrumentation.** Ships the 2nd of the 5 ledger-state-
+  dependent analyses (after R485 carved out CheckNoThunksEvery
+  and R488 shipped TraceLedgerProcessing). Wires
+  `std::time::Instant::now()` measurement around
+  `LedgerState::apply_block` in a new
+  `analysis_benchmark_ledger_ops` handler; produces per-block
+  `SlotDataPoint` (R374 record) populated with the 6 portable
+  fields (slot, slot_gap, total_time, mut_block_apply,
+  block_byte_size, block_stats). The 9 GHC-specific timing
+  fields (allocated_bytes, GC counters, per-phase tick/apply
+  breakdown) stay zero-filled — Rust has no direct analogs.
+  New `AnalysisOutcome::BenchmarkLedgerOps { slot_data_points,
+  applied_ok, applied_err }` variant.
+  `applied_ok + applied_err == slot_data_points.len()`
+  invariant. Forensic semantics inherited from R488: apply
+  failures don't abort the run; their timing is still captured.
+  **Dispatch coverage matrix now: 9/13 shipped + 1/13 permanent
+  carve-out = 10/13 final verdicts.** Updates
+  `status::analysis_dispatch_status` (`9-of-13-shipped`;
+  `deferred_round` `R488 → R489`); refreshes AGENTS.md. Switches
+  the R481 integration test
+  `end_to_end_lib_run_propagates_ledger_state_deferral` from
+  BenchmarkLedgerOps (now shipped) to ReproMempoolAndForge.
+  4 new tests. Workspace tests: 6,185 → 6,188. All 5 gates
+  clean. See `docs/operational-runs/2026-05-11-round-489-
+  benchmark-ledger-ops-handler.md`.
 - **R488 — `TraceLedgerProcessing` handler via
   `LedgerState::apply_block`.** Ships the first of the 5
   remaining ledger-state-dependent analyses (after R485's
