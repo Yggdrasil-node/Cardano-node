@@ -6,6 +6,9 @@ mod chain_sync;
 /// (sister to TraceObjectForward — carries node-info data-points
 /// over the same trace-forwarder mux).
 mod data_point_forward;
+/// DataPointForward mini-protocol configuration types
+/// (Acceptor / Forwarder side configuration records).
+mod data_point_forward_configuration;
 /// `ForwardSink` — bounded queue + overflow callback used by the
 /// trace-forwarder forwarder side.
 mod forward_sink;
@@ -45,6 +48,9 @@ pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError}
 pub use data_point_forward::{
     Agency as DataPointForwardAgency, DataPointForwardMessage, DataPointForwardState,
     DataPointForwardTransitionError, DataPointName, DataPointValue, DataPointValues,
+};
+pub use data_point_forward_configuration::{
+    DataPointAcceptorConfiguration, DataPointForwarderConfiguration,
 };
 pub use forward_sink::{ForwardSink, ForwardSinkOverflowCallback};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
