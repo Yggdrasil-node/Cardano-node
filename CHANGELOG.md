@@ -351,6 +351,44 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R473 — DataPoint forwarder-side R471-R473 arc closeout.**
+  Completes the trace-forward DataPoint sub-protocol port —
+  R452-R459 shipped the acceptor side (cardano-tracer); R471-R473
+  shipped the forwarder side (cardano-node analog). The
+  trace-forward 2-sided port is now structurally complete in
+  `crates/network/`.
+
+  Per-round:
+  - **R471** — `crates/network/src/data_point_forwarder.rs` ports
+    `Trace.Forward.Protocol.DataPoint.Forwarder.hs` (50 upstream
+    lines). `DataPointForwarder` driver with
+    `wait_for_request()` returning
+    `DataPointForwarderEvent::{Request(names), Done}` +
+    `send_reply(values)`. Mirror of R454's acceptor pattern,
+    inverted control. 6 tokio-mux tests.
+  - **R472** — `crates/network/src/protocols/data_point_forward_utils.rs`
+    extended with forwarder-side `DataPointStore`
+    (Arc<RwLock<HashMap<DataPointName, DataPointValue>>>),
+    `init_data_point_store`, `write_to_store`, `read_from_store`
+    helpers. Mirror of upstream `Trace.Forward.Utils.DataPoint.hs`
+    forwarder subset. 7 tests covering empty store, insert,
+    overwrite, known/unknown lookups, request-order
+    preservation, clone-shared state.
+  - **R473** — `crates/network/src/data_point_run_forwarder.rs`
+    ports `Trace.Forward.Run.DataPoint.Forwarder.hs` (46 upstream
+    lines). `forward_data_points_{init,resp}` mux-level entries
+    pairing the R471 driver with the R472 DataPointStore +
+    `run_forwarder_loop` (request → look up → reply → loop until
+    MsgDone). 4 tokio-mux tests + `docs/operational-runs/2026-05-
+    11-round-473-data-point-forwarder-arc-closure.md` capturing
+    the arc summary.
+
+  Workspace tests: 6,063 → 6,080 (+17 across 3 rounds). All 5
+  verification gates clean. Note: the forwarder side ships as a
+  callable library API but is not yet wired into a node-binary
+  trace-source (Yggdrasil's `node/` crate doesn't currently
+  generate trace objects to forward — when it does, callers will
+  hold a DataPointStore + spawn `forward_data_points_resp`).
 - **R470 — cardano-tracer DataPointRequestors plumbing into
   Acceptors spawn body.** Closes the R469 inert-plumbing gap that
   the advisor flagged: R469 shipped `ask_node_name` + the

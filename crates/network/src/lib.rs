@@ -35,6 +35,10 @@ pub mod data_point_forwarder;
 /// (cardano-tracer's `acceptDataPoints{Init,Resp}` analog — sister
 /// to the TraceObjectForward run-acceptor).
 pub mod data_point_run_acceptor;
+/// DataPointForward mini-protocol forwarder-side runtime aggregator
+/// (cardano-node's `forwardDataPoints{Init,Resp}` analog — pairs
+/// the R471 forwarder driver with the R472 DataPointStore).
+pub mod data_point_run_forwarder;
 /// Handshake negotiation types and state machine.
 pub mod handshake;
 /// KeepAlive client driver — typed, state-machine-correct protocol loop.
@@ -173,6 +177,9 @@ pub use data_point_forwarder::{
 pub use data_point_run_acceptor::{
     AcceptDataPointsError, SHUTDOWN_TIMEOUT as DATA_POINTS_SHUTDOWN_TIMEOUT,
     accept_data_points_init, accept_data_points_resp,
+};
+pub use data_point_run_forwarder::{
+    ForwardDataPointsError, forward_data_points_init, forward_data_points_resp,
 };
 pub use ledger_peers_provider::{
     ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, LedgerPeerProvider,
