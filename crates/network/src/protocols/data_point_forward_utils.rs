@@ -8,11 +8,9 @@
 //!
 //! Filename flattens the upstream directory; carries
 //! `DataPointRequestor`, `init_data_point_requestor`, and
-//! `ask_for_data_points` mirrors. The forwarder-side (`DataPoint`,
-//! `DataPointStore`, `init_data_point_store`, `read_from_store`,
-//! `write_to_store`) lives outside this round's scope — those run on
-//! the cardano-node side and need the unported
-//! `Trace.Forward.Protocol.DataPoint.Forwarder` driver.
+//! `ask_for_data_points` mirrors (acceptor-side helpers, R456),
+//! plus R472's forwarder-side `DataPointStore`,
+//! `init_data_point_store`, `write_to_store`, and `read_from_store`.
 //!
 //! Mapping summary:
 //!
@@ -54,7 +52,7 @@ use std::time::Duration;
 
 use tokio::sync::{Mutex, Notify};
 
-use super::{DataPointName, DataPointValues};
+use super::{DataPointName, DataPointValue, DataPointValues};
 
 /// Timeout for [`DataPointRequestor::ask_for_data_points`] when no
 /// reply arrives. Mirror of upstream's `tenSeconds = 10 * 1000000 :: Int`
@@ -268,6 +266,91 @@ impl DataPointRequestor {
 /// ported verbatim.
 pub fn init_data_point_requestor() -> DataPointRequestor {
     DataPointRequestor::new()
+}
+
+// ---------------------------------------------------------------------------
+// R472 forwarder-side DataPointStore + readFromStore
+// ---------------------------------------------------------------------------
+
+/// Forwarder-side data-point store. Maps each data-point name to
+/// its currently-published value (opaque JSON bytes).
+///
+/// Mirror of upstream's
+/// `type DataPointStore = TVar (Map DataPointName DataPoint)`
+/// (where `DataPoint = forall a. ToJSON a => DataPoint a`).
+/// Yggdrasil's port stores the already-JSON-encoded bytes directly,
+/// since the upstream `DataPoint a` existential is operationally
+/// always `encode . unDataPoint` at lookup time — caching the
+/// pre-encoded bytes is functionally equivalent.
+///
+/// Clones share the same underlying state (Arc-based) so multiple
+/// producer tasks can call [`write_to_store`] concurrently.
+#[derive(Clone, Debug, Default)]
+pub struct DataPointStore {
+    inner: Arc<tokio::sync::RwLock<std::collections::HashMap<DataPointName, DataPointValue>>>,
+}
+
+impl DataPointStore {
+    /// Construct an empty store. Mirror of upstream's
+    /// `initDataPointStore :: IO DataPointStore`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Snapshot the current bindings as a `Vec<(name, value)>`. Used
+    /// by tests + introspection. Order is unspecified (HashMap
+    /// iteration).
+    pub async fn snapshot(&self) -> Vec<(DataPointName, DataPointValue)> {
+        self.inner
+            .read()
+            .await
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+}
+
+/// Construct an empty `DataPointStore`. Free-function alias
+/// mirroring upstream's `initDataPointStore :: IO DataPointStore`.
+pub fn init_data_point_store() -> DataPointStore {
+    DataPointStore::new()
+}
+
+/// Publish a data-point value to the store. Mirror of upstream's
+/// implied write-side use of `modifyTVar' dpStore (Map.insert
+/// name value)` — upstream doesn't ship a named `writeToStore`
+/// function because the producer side directly manipulates the
+/// `TVar`. Yggdrasil packages it as a helper so producer call
+/// sites can stay aligned with the upstream surface.
+pub async fn write_to_store(store: &DataPointStore, name: DataPointName, value: DataPointValue) {
+    store.inner.write().await.insert(name, value);
+}
+
+/// Look up the requested data-point names in the store + return the
+/// per-name `(name, Option<value>)` pairs. `None` indicates the
+/// store does not know the name (mirror of upstream's
+/// `Map.lookup name store`).
+///
+/// Used by the forwarder driver as the request handler — when
+/// `wait_for_request` returns `Request(names)`, the forwarder calls
+/// `read_from_store(store, &names)` to compute the reply payload
+/// for `send_reply`.
+///
+/// Mirror of upstream's
+/// `readFromStore dpStore = DataPointForwarder
+///    { recvMsgDataPointsRequest = \names -> do
+///        store <- readTVarIO dpStore
+///        return $ map (lookupDataPoint store) names
+///    , recvMsgDone = return () }`
+/// — but inverted to be a direct-call helper rather than a record
+/// of callbacks (Yggdrasil's `DataPointForwarder` driver pattern
+/// from R471 calls this directly when handling a `Request` event).
+pub async fn read_from_store(store: &DataPointStore, names: &[DataPointName]) -> DataPointValues {
+    let guard = store.inner.read().await;
+    names
+        .iter()
+        .map(|name| (name.clone(), guard.get(name).cloned()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -582,5 +665,129 @@ mod tests {
         assert_eq!(reply.len(), 1);
         // Verify the third clone sees the cleared flag too.
         assert!(!req_third.debug_ask_flag().await);
+    }
+
+    // ----- R472 DataPointStore + read_from_store tests --------------------
+
+    #[tokio::test]
+    async fn data_point_store_starts_empty() {
+        let store = init_data_point_store();
+        assert!(store.snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_to_store_inserts_value() {
+        let store = init_data_point_store();
+        write_to_store(
+            &store,
+            DataPointName::new("node-info"),
+            DataPointValue::new(b"{\"version\":\"11.0.1\"}".to_vec()),
+        )
+        .await;
+        let snap = store.snapshot().await;
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].0, DataPointName::new("node-info"));
+        assert_eq!(snap[0].1.as_slice(), b"{\"version\":\"11.0.1\"}");
+    }
+
+    #[tokio::test]
+    async fn write_to_store_overwrites_existing_value() {
+        let store = init_data_point_store();
+        write_to_store(
+            &store,
+            DataPointName::new("tip"),
+            DataPointValue::new(b"v1".to_vec()),
+        )
+        .await;
+        write_to_store(
+            &store,
+            DataPointName::new("tip"),
+            DataPointValue::new(b"v2".to_vec()),
+        )
+        .await;
+        let snap = store.snapshot().await;
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].1.as_slice(), b"v2");
+    }
+
+    #[tokio::test]
+    async fn read_from_store_returns_none_for_unknown_names() {
+        let store = init_data_point_store();
+        let names = vec![
+            DataPointName::new("unknown-1"),
+            DataPointName::new("unknown-2"),
+        ];
+        let values = read_from_store(&store, &names).await;
+        assert_eq!(values.len(), 2);
+        assert!(values.iter().all(|(_, v)| v.is_none()));
+    }
+
+    #[tokio::test]
+    async fn read_from_store_returns_known_values() {
+        let store = init_data_point_store();
+        write_to_store(
+            &store,
+            DataPointName::new("node-info"),
+            DataPointValue::new(b"NI".to_vec()),
+        )
+        .await;
+        write_to_store(
+            &store,
+            DataPointName::new("tip"),
+            DataPointValue::new(b"T".to_vec()),
+        )
+        .await;
+        let names = vec![DataPointName::new("node-info"), DataPointName::new("tip")];
+        let values = read_from_store(&store, &names).await;
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0].0, DataPointName::new("node-info"));
+        assert_eq!(values[0].1.as_ref().expect("Just").as_slice(), b"NI");
+        assert_eq!(values[1].0, DataPointName::new("tip"));
+        assert_eq!(values[1].1.as_ref().expect("Just").as_slice(), b"T");
+    }
+
+    #[tokio::test]
+    async fn read_from_store_mixed_known_unknown_preserves_order() {
+        let store = init_data_point_store();
+        write_to_store(
+            &store,
+            DataPointName::new("a"),
+            DataPointValue::new(b"AAA".to_vec()),
+        )
+        .await;
+        write_to_store(
+            &store,
+            DataPointName::new("c"),
+            DataPointValue::new(b"CCC".to_vec()),
+        )
+        .await;
+        // Request order: a (known), b (unknown), c (known).
+        let names = vec![
+            DataPointName::new("a"),
+            DataPointName::new("b"),
+            DataPointName::new("c"),
+        ];
+        let values = read_from_store(&store, &names).await;
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0].0, DataPointName::new("a"));
+        assert!(values[0].1.is_some());
+        assert_eq!(values[1].0, DataPointName::new("b"));
+        assert!(values[1].1.is_none());
+        assert_eq!(values[2].0, DataPointName::new("c"));
+        assert!(values[2].1.is_some());
+    }
+
+    #[tokio::test]
+    async fn data_point_store_clone_shares_state() {
+        let store_a = init_data_point_store();
+        let store_b = store_a.clone();
+        write_to_store(
+            &store_a,
+            DataPointName::new("k"),
+            DataPointValue::new(b"V".to_vec()),
+        )
+        .await;
+        let snap_b = store_b.snapshot().await;
+        assert_eq!(snap_b.len(), 1, "clone observes write via shared Arc");
     }
 }

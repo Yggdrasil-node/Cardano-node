@@ -57,7 +57,8 @@ pub use data_point_forward_configuration::{
     DataPointAcceptorConfiguration, DataPointForwarderConfiguration,
 };
 pub use data_point_forward_utils::{
-    ASK_FOR_DATA_POINTS_TIMEOUT, DataPointRequestor, init_data_point_requestor,
+    ASK_FOR_DATA_POINTS_TIMEOUT, DataPointRequestor, DataPointStore, init_data_point_requestor,
+    init_data_point_store, read_from_store, write_to_store,
 };
 pub use forward_sink::{ForwardSink, ForwardSinkOverflowCallback};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
