@@ -274,6 +274,83 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R452-R459 — cardano-tracer DataPoint sub-protocol port arc
+  (8 rounds).** Ports the full upstream trace-forward DataPoint
+  sub-protocol from
+  `.reference-haskell-cardano-node/trace-forward/src/Trace/Forward/`
+  into `yggdrasil_network` and integrates it into cardano-tracer's
+  per-connection Acceptors mux. Closes R423
+  `prepare_data_point_requestor_status` + R424
+  `run_data_points_acceptor_status` deferred-status descriptors.
+  - **R452 — Type port.** `crates/network/src/protocols/data_point_forward.rs`
+    ports `Trace.Forward.Protocol.DataPoint.Type.hs` —
+    `DataPointName`/`DataPointValue`/`DataPointValues` newtypes,
+    3-variant `DataPointForwardState` state machine, `Agency` enum,
+    3-variant `DataPointForwardMessage`, transition validator
+    (+16 tests).
+  - **R453 — Codec port.** (Same file) ports
+    `Trace.Forward.Protocol.DataPoint.Codec.hs` — wire tags
+    1=Request, 2=Done, 3=Reply; `Maybe`-encoding mirrors cborg's
+    canonical shape (`Nothing → array(0)`, `Just v → [1, bytes(v)]`);
+    decoder accepts both definite- and indefinite-length list
+    encodings (+15 tests including wire-byte-stable lock-down).
+  - **R454 — Protocol-Acceptor driver.**
+    `crates/network/src/data_point_acceptor.rs` ports
+    `Trace.Forward.Protocol.DataPoint.Acceptor.hs` — collapses
+    upstream's continuation-passing `DataPointAcceptor m a` ADT
+    into async-method calls (`request(names)`, `done()`) on a
+    state-machine-correct driver struct (+6 tokio-mux tests).
+  - **R455 — Acceptor configuration.**
+    `crates/network/src/protocols/data_point_forward_configuration.rs`
+    ports `Trace.Forward.Configuration.DataPoint.hs` —
+    `DataPointAcceptorConfiguration`
+    (acceptor_tracer + should_we_stop fields; no
+    what_to_request) + `DataPointForwarderConfiguration`
+    (single-field newtype). Reuses R420's `TraceForwardTracer`
+    alias (+7 tests).
+  - **R456 — DataPointRequestor STM coordination primitive.**
+    `crates/network/src/protocols/data_point_forward_utils.rs`
+    ports `Trace.Forward.Utils.DataPoint.hs` (acceptor-side
+    subset). Collapses upstream's TVar/TMVar STM record into a
+    `tokio::sync::Mutex<RequestorState>` + two `Notify` channels.
+    Public API: `new`, `ask_for_data_points(names) ->
+    DataPointValues` (with 10s timeout mirroring upstream's
+    `tenSeconds` constant), `wait_for_ask`, `put_reply` (+12
+    tests).
+  - **R457 — Run/Acceptor aggregator.**
+    `crates/network/src/data_point_run_acceptor.rs` ports
+    `Trace.Forward.Run.DataPoint.Acceptor.hs` — exposes
+    `accept_data_points_init` / `accept_data_points_resp`
+    entry points; internal `run_until_stopped` loop races
+    wait-for-ask against a 50ms brake poll for robust
+    brake-driven shutdown (synthesis improvement over
+    upstream); `SHUTDOWN_TIMEOUT = 15_000ms` matches R421
+    (+5 tokio-mux tests).
+  - **R458 — cardano-tracer Acceptors integration.** Per-
+    connection mux in `crates/tools/cardano-tracer/src/
+    acceptors/{server, client}.rs` extends from `[HANDSHAKE,
+    TRACE_OBJECTS]` to `[HANDSHAKE, TRACE_OBJECTS,
+    DATA_POINTS]`; the per-connection acceptor task runs
+    `accept_trace_objects_*` + `accept_data_points_*`
+    concurrently via `tokio::join!`. Both sub-protocols share
+    the connection-level brake flag. `acceptors/utils.rs`
+    ships `prepare_data_point_requestor()` (the real
+    `prepareDataPointRequestor` mirror). Closes R423 + R424
+    deferred status descriptors.
+  - **R459 — Arc closeout (this entry).** Updates
+    `crates/tools/cardano-tracer/AGENTS.md` Current-Functional-
+    Surface to mark DataPoint sub-protocol shipped;
+    `docs/parity-matrix.json::sister-tool.cardano-tracer`
+    implemented_evidence + remaining_work refreshed; adds
+    `docs/operational-runs/2026-05-11-round-459-data-point-arc-
+    closure.md`. Workspace tests: 5,962 → 6,024 (+62 across 8
+    rounds). All 5 verification gates clean. 24/24
+    cardano-tracer acceptors tests pass at HEAD. Carve-outs
+    surviving R459: DataPoint forwarder side (cardano-node side,
+    not blocking cardano-tracer), EKG ReqResp sub-protocol
+    (Hackage-source synthesis), TraceObject CBOR upstream-byte-
+    equivalence (cardano-logging Hackage source), RemoteSocket
+    TCP path.
 - **R451 — workspace Cargo.toml comment cleanup (final post-R447
   trailing references).** Updates 2 trailing references in
   `Cargo.toml`'s `[workspace.dependencies]` section that still

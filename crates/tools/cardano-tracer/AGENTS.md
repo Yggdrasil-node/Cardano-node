@@ -1,15 +1,19 @@
 # Guidance for the pure-Rust port of upstream `cardano-tracer`.
 
-**Status:** `partial` (post-R411-R430 arc — trace-forwarder
-TraceObject sub-protocol fully wired through Type → Codec →
-Acceptor → Run + Configuration + Utils + ForwardSink + Acceptors/{Server, Client, Utils, Run} + supervisor).
-The R430 closure marks the structural completion of the
+**Status:** `partial` (post-R411-R459 arc — trace-forwarder
+TraceObject + DataPoint sub-protocols both fully wired through
+Type → Codec → Acceptor → Run + Configuration + Utils +
+ForwardSink + Acceptors/{Server, Client, Utils, Run} + supervisor).
+The R430 closure marked the structural completion of the
 trace-forwarder pipe + per-node Prometheus / EKG-equivalent
-endpoints. Remaining gaps are documented carve-outs (EKG
-ReqResp sub-protocol, DataPoint sub-protocol, RTView web UI,
-trace-forwarder handshake codec, TraceObject CBOR codec, TLS
-termination integration) — each surfaced via a `*_status()`
-helper for programmatic introspection. Scope band: **LARGE**.
+endpoints. The R452-R459 arc closed the DataPoint sub-protocol
+deferral; the per-connection mux now multiplexes HANDSHAKE +
+TRACE_OBJECTS + DATA_POINTS. Remaining gaps are documented
+carve-outs (EKG ReqResp sub-protocol, RTView web UI,
+trace-forwarder handshake-over-socket codec, TraceObject CBOR
+codec, TLS termination integration) — each surfaced via a
+`*_status()` helper for programmatic introspection. Scope band:
+**LARGE**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -28,7 +32,7 @@ Vendored at: `.reference-haskell-cardano-node/cardano-tracer/` (93 `.hs` files).
 
 Standalone trace-forwarder + log + metrics aggregator. Phase A.5 mini-arc R360-R385 (26 rounds, LARGE). RTView web UI carve-out approved (no Rust analog for ThreePenny GUI). R367 adds tracing-appender for log rotation; R371 adds axum for Prometheus metrics endpoint.
 
-## Current functional surface (post-R430)
+## Current functional surface (post-R459)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test
   pinned in `tests/cli_help_golden.rs`).
@@ -38,16 +42,28 @@ Standalone trace-forwarder + log + metrics aggregator. Phase A.5 mini-arc R360-R
   multi-thread tokio runtime (R427).
 - ✅ Trace-forwarder TraceObject sub-protocol acceptor + initiator
   drivers (R417-R421) over Unix-pipe transport (R416).
+- ✅ **Trace-forwarder DataPoint sub-protocol** acceptor + initiator
+  drivers (R452-R457): Type + Codec + Acceptor + Configuration +
+  Utils + Run + DataPointRequestor STM coordination primitive.
 - ✅ Acceptors quartet: `Server`, `Client`, `Utils`, `Run` — full
-  per-connection lifecycle (R423-R426).
+  per-connection lifecycle (R423-R426). R458 extended the
+  per-connection mux to multiplex HANDSHAKE + TRACE_OBJECTS +
+  DATA_POINTS concurrently via `tokio::join!`; both sub-protocols
+  share the connection-level brake flag.
+- ✅ `acceptors::utils::prepare_data_point_requestor` (R458) ships
+  the real per-connection `DataPointRequestor` factory.
 - ✅ Per-node `MetricsStore` registry + Prometheus + EKG-equivalent
   HTML endpoints (R411-R414).
 - ✅ `metrics_help.json` parser (R415).
 - ❌ EKG ReqResp sub-protocol — synthesis carve-out (`ekg-forward`
   Hackage package not vendored). See
   `acceptors::server::run_ekg_acceptor_status`.
-- ❌ DataPoint sub-protocol — vendored, port deferred to a follow-on
-  arc. See `acceptors::server::run_data_points_acceptor_status`.
+- ❌ DataPoint sub-protocol **forwarder side** — only the acceptor
+  side ships in R452-R458. The forwarder side (which runs in
+  cardano-node, not cardano-tracer) is vendored at
+  `.reference-haskell-cardano-node/trace-forward/src/Trace/Forward/Run/DataPoint/Forwarder.hs`
+  and remains pending — not blocking cardano-tracer's
+  operational role as the acceptor.
 - ❌ Trace-forwarder handshake codec — defers RemoteSocket TCP path.
   See `acceptors::server::do_listen_to_forwarder_socket_status`.
 - ❌ TraceObject CBOR codec — depends on `trace-dispatcher`
@@ -109,11 +125,16 @@ Per the R326-R459 plan + R411-R430 arc:
   Phase 2 (R416-R426): trace-forwarder mini-arc + Acceptors leaves;
   Phase 3 (R427-R428): supervisor entry + closure documentation;
   Phase 4 (R429-R430): TLS integration plan + parity-matrix promotion.
-- 🟡 Follow-on arcs (post-R430): EKG ReqResp sub-protocol synthesis,
-  DataPoint sub-protocol port, trace-forwarder handshake codec,
-  TraceObject CBOR codec, Logs Rotator full impl, axum-server TLS
-  bind integration. Each follow-on advances a `*_status()`-tracked
-  carve-out.
+- ✅ R452-R459 arc — DataPoint sub-protocol port: Type + Codec
+  (R452-R453), Acceptor driver (R454), Configuration (R455),
+  Utils + DataPointRequestor (R456), Run/Acceptor aggregator
+  (R457), Acceptors-server.rs + client.rs integration (R458),
+  closeout (R459). Closes R423 + R424 deferrals.
+- 🟡 Follow-on arcs: EKG ReqResp sub-protocol synthesis,
+  trace-forwarder handshake-over-socket codec, TraceObject CBOR
+  codec, DataPoint forwarder side, Logs Rotator full impl, axum-
+  server TLS bind integration. Each follow-on advances a
+  `*_status()`-tracked carve-out.
 
 ## Comparison-with-upstream procedure
 
