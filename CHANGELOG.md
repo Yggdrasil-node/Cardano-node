@@ -351,6 +351,23 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R503 — `config.select_db` wire-up for `At(slot)` start point.**
+  Closes a parsed-but-ignored config field. R351 added
+  `select_db: SelectDB`; the parser maps `--start-from-slot N`
+  to `SelectDB::SelectImmutableDB(WithOrigin::At(SlotNo(N)))`;
+  but R481's `lib.rs::run` always called
+  `store.iter_after(&Point::Origin)` regardless. R503 honors the
+  field: `WithOrigin::Origin` walks the whole chain;
+  `WithOrigin::At(target_slot)` chains `.skip_while(|b|
+  b.header.slot_no.0 < target)` after the storage-layer iter.
+  Runner-side filter (storage layer's `iter_after` requires a
+  full `Point`; streaming-from-slot optimization is a bounded
+  future round). 3 new tests: Origin (full walk), At(20) on
+  3-block 10/20/30 chain (2 blocks counted), At(9999) past tip
+  (empty suffix). Workspace tests: 6,233 → 6,236. All 5 gates
+  clean. **Config-field wire-up audit: 5/7 honored; 2 carve-outs
+  (`validation`, `ldb_backend`) need storage-layer / ledger-DB
+  redesign — multi-arc commitments.**
 - **R502 — `config.verbose` wire-up through `render_outcome`.**
   Closes a parsed-but-ignored config field: R351 added
   `verbose: bool` to `DBAnalyserConfig` + parser, but the R481

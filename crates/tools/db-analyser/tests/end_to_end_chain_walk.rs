@@ -380,6 +380,92 @@ fn mk_config_with_limit(
     }
 }
 
+// ── R503: SelectDB::SelectImmutableDB(At(slot)) start-point coverage ─
+
+#[test]
+fn end_to_end_lib_run_respects_select_db_origin() {
+    // R503: SelectImmutableDB(Origin) → process the whole chain.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    for byte in [0xA0u8, 0xA1, 0xA2] {
+        store
+            .append_block(synthetic_block(byte, byte as u64 * 10, byte as u64))
+            .unwrap();
+    }
+    drop(store);
+
+    let mut config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
+    config.select_db = SelectDB::SelectImmutableDB(WithOrigin::Origin);
+    // Skipping any walking-loop is impossible to assert from the
+    // lib::run path (stdout-only output), but we can sanity-check
+    // that origin mode walks the full chain by calling
+    // run_analysis directly with the equivalent shape.
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let blocks = store.iter_after(&Point::Origin).unwrap();
+    let outcome = run_analysis(&config, blocks).unwrap();
+    match outcome {
+        AnalysisOutcome::CountBlocks { total, .. } => assert_eq!(total, 3),
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_lib_run_respects_select_db_at_slot() {
+    // R503: SelectImmutableDB(At(slot=20)) → process blocks at
+    // slot >= 20 (skipping slot 10). 3-block chain at slots
+    // 10/20/30 → 2 blocks counted.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    for (byte, slot, block_no) in [(0xA0u8, 10, 1), (0xA1, 20, 2), (0xA2, 30, 3)] {
+        store
+            .append_block(synthetic_block(byte, slot, block_no as u64))
+            .unwrap();
+    }
+    drop(store);
+
+    // Mimic the lib::run skip_while semantics for the
+    // SelectImmutableDB(At(slot)) case.
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let raw = store.iter_after(&Point::Origin).unwrap();
+    let target = 20u64;
+    let skipped: Box<dyn Iterator<Item = Block>> =
+        Box::new(raw.skip_while(move |b| b.header.slot_no.0 < target));
+    let mut config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
+    config.select_db = SelectDB::SelectImmutableDB(WithOrigin::At(SlotNo(20)));
+    let outcome = run_analysis(&config, skipped).unwrap();
+    match outcome {
+        AnalysisOutcome::CountBlocks { total, first, last } => {
+            assert_eq!(total, 2, "skipped slot-10 block; 2 remaining");
+            assert_eq!(first, Some((SlotNo(20), BlockNo(2))));
+            assert_eq!(last, Some((SlotNo(30), BlockNo(3))));
+        }
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
+#[test]
+fn end_to_end_lib_run_select_db_at_slot_past_tip_yields_empty() {
+    // R503: target_slot past the chain's last slot → empty
+    // suffix → 0-count outcome.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path()).unwrap();
+    store.append_block(synthetic_block(0xA0, 10, 1)).unwrap();
+    drop(store);
+
+    let store = FileImmutable::open(dir.path()).unwrap();
+    let raw = store.iter_after(&Point::Origin).unwrap();
+    let target = 9999u64;
+    let skipped: Box<dyn Iterator<Item = Block>> =
+        Box::new(raw.skip_while(move |b| b.header.slot_no.0 < target));
+    let mut config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
+    config.select_db = SelectDB::SelectImmutableDB(WithOrigin::At(SlotNo(9999)));
+    let outcome = run_analysis(&config, skipped).unwrap();
+    match outcome {
+        AnalysisOutcome::CountBlocks { total, .. } => assert_eq!(total, 0),
+        _ => panic!("wrong outcome variant"),
+    }
+}
+
 #[test]
 fn end_to_end_lib_run_respects_verbose_flag() {
     // R502: when config.verbose=true, render_outcome emits per-

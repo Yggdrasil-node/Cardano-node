@@ -86,9 +86,24 @@ pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
     use yggdrasil_storage::{FileImmutable, ImmutableStore};
 
     let store = FileImmutable::open(&config.db_dir).map_err(RunError::Storage)?;
-    let blocks = store
+    let raw_iter = store
         .iter_after(&Point::Origin)
         .map_err(RunError::Storage)?;
+    // R503: honor config.select_db. `SelectImmutableDB(Origin)`
+    // walks from origin (default); `SelectImmutableDB(At(slot))`
+    // skips blocks until reaching `slot` and processes from there.
+    // The skip is purely a runner-side filter since the storage
+    // layer doesn't accept slot-only starting points; future
+    // optimization can plumb the slot through to FileImmutable
+    // for streaming-from-slot but the current chain sizes don't
+    // need it.
+    let blocks: Box<dyn Iterator<Item = yggdrasil_ledger::Block>> = match config.select_db {
+        types::SelectDB::SelectImmutableDB(types::WithOrigin::Origin) => raw_iter,
+        types::SelectDB::SelectImmutableDB(types::WithOrigin::At(target_slot)) => {
+            let target = target_slot.0;
+            Box::new(raw_iter.skip_while(move |b| b.header.slot_no.0 < target))
+        }
+    };
     let outcome = analysis::runner::run_analysis(config, blocks).map_err(RunError::Analysis)?;
     render_outcome(&outcome, config.verbose)?;
     Ok(())
