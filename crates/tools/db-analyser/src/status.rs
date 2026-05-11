@@ -28,13 +28,25 @@ pub struct AnalysisDispatchStatus {
     pub upstream_reference: &'static str,
 }
 
-/// Get the deferral-status descriptor for the upstream
-/// per-era HasAnalysis surface + 13-variant Analysis.hs dispatch.
+/// Get the dispatch-status descriptor for the upstream per-era
+/// HasAnalysis surface + 13-variant Analysis.hs dispatch.
+///
+/// R481 closes the R475-R481 arc: 7 of 13 block-iteration-only
+/// analyses ship (`ShowSlotBlockNo`, `CountBlocks`,
+/// `CountTxOutputs`, `ShowBlockHeaderSize`, `ShowBlockTxsSize`,
+/// `ShowEBBs`, `OnlyValidation`). The remaining 6
+/// (`StoreLedgerStateAt`, `CheckNoThunksEvery`,
+/// `TraceLedgerProcessing`, `BenchmarkLedgerOps`,
+/// `ReproMempoolAndForge`, `GetBlockApplicationMetrics`) require
+/// a ledger-state apply-loop and return a structured
+/// `RequiresLedgerStateApplyLoop` error from
+/// `crate::analysis::runner::run_analysis` pending a future
+/// implementation arc.
 pub fn analysis_dispatch_status() -> AnalysisDispatchStatus {
     AnalysisDispatchStatus {
-        status: "deferred",
-        depends_on: "yggdrasil's per-era ImmutableStore block-iteration surface (Block/{Byron, Shelley, Cardano} traits + the 13-variant Analysis name dispatch) — the analysis logic is large (1057 upstream lines) and depends on era-specific block deserialization which spans crates/ledger/src/eras/*. Tracked under Phase B.2 (R391-R400) per the playful-tickling-plum.md plan.",
-        deferred_round: "R365+",
+        status: "block-only-shipped",
+        depends_on: "yggdrasil's ledger-state apply-loop. The R475-R481 arc shipped 7/13 block-iteration-only analyses through the analysis::runner dispatch core; the remaining 6 (StoreLedgerStateAt, CheckNoThunksEvery, TraceLedgerProcessing, BenchmarkLedgerOps, ReproMempoolAndForge, GetBlockApplicationMetrics) require threading a LedgerState (CardanoBlock c) ValuesMK through the per-block step, which depends on a future ledger-state apply-loop arc.",
+        deferred_round: "R481",
         upstream_reference: ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/{HasAnalysis, Analysis, Run, Block/Byron, Block/Shelley, Block/Cardano}.hs",
     }
 }
@@ -44,11 +56,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn analysis_dispatch_status_describes_deferral() {
+    fn analysis_dispatch_status_describes_arc_outcome() {
         let s = analysis_dispatch_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("ImmutableStore"));
-        assert!(s.depends_on.contains("Phase B.2"));
+        assert_eq!(s.status, "block-only-shipped");
+        assert_eq!(s.deferred_round, "R481");
+        assert!(s.depends_on.contains("ledger-state apply-loop"));
+        assert!(s.depends_on.contains("R475-R481"));
         assert!(s.upstream_reference.contains("HasAnalysis"));
         assert!(s.upstream_reference.contains("Analysis"));
     }

@@ -351,6 +351,36 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R481 — db-analyser HasAnalysis R475-R481 arc closeout.**
+  Final slice. Wires `lib.rs::run` end-to-end:
+  `FileImmutable::open(&config.db_dir)` →
+  `ImmutableStore::suffix_after(&Point::Origin)` →
+  `analysis::runner::run_analysis(config, blocks)` →
+  `render_outcome` to stdout in upstream-compatible shape.
+  Replaces the `AnalysisDispatchDeferred` stub `RunError` with
+  proper `RunError::Storage(StorageError)` /
+  `RunError::Analysis(AnalysisError)` variants. Adds the
+  `yggdrasil-storage` workspace dependency and `tempfile`
+  dev-dependency. New
+  `crates/tools/db-analyser/tests/end_to_end_chain_walk.rs`
+  integration test suite (6 tests) exercises the production
+  call path with a temp `FileImmutable` ChainDB —
+  `count_blocks`, `show_slot_block_no`, `only_validation`,
+  empty-chain, full `lib.rs::run` stdout, and ledger-state-
+  deferral error-propagation. Closes the
+  `status::analysis_dispatch_status` descriptor from
+  `deferred` (R365+) to `block-only-shipped` (R481).
+  Updates `docs/parity-matrix.json::sister-tool.db-analyser`
+  with the full R475-R481 implementation evidence bullet +
+  refreshed `remaining_work` (ledger-state apply-loop arc +
+  streaming iterator + byte-equivalent stdout soak).
+  `scripts/check-parity-matrix.py` extends `ALLOWED_MILESTONES`
+  to cover R480-R499 (`_arc_range(480, 499)`).
+  **Arc total: +83 tests across 7 rounds; workspace tests 6,084
+  → 6,166.** All 5 verification gates clean. See
+  `docs/operational-runs/2026-05-11-round-481-db-analyser-
+  hasanalysis-arc-closure.md` for the full arc summary +
+  end-to-end call graph + carve-out inventory.
 - **R480 — remaining block-only handlers + simplified
   `AnalysisError`.** Sixth slice of the R475-R481 arc. Ships
   bodies for the 3 placeholder `BlockOnlyHandlerPendingR480` arms

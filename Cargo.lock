@@ -2391,8 +2391,10 @@ dependencies = [
  "eyre",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "yggdrasil-ledger",
+ "yggdrasil-storage",
 ]
 
 [[package]]

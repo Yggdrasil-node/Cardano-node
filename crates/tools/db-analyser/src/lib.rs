@@ -68,42 +68,125 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// R365 lands argv → [`types::DBAnalyserConfig`] dispatch. The actual
-/// per-era HasAnalysis surface + Analysis.hs dispatch (1057 upstream
-/// lines covering 13 analysis-name variants) + CSV writers + Run.hs
-/// supervisor land in subsequent rounds per the per-tool roadmap.
+/// R481 closes the R475-R481 arc: opens the operator-supplied
+/// ChainDB via [`yggdrasil_storage::FileImmutable::open`], walks
+/// the immutable chain via [`yggdrasil_storage::ImmutableStore::suffix_after`],
+/// and dispatches through [`analysis::runner::run_analysis`].
+///
+/// Of the 13 upstream `AnalysisName` variants, 7 are
+/// block-iteration-only and ship in this arc (`ShowSlotBlockNo`,
+/// `CountBlocks`, `CountTxOutputs`, `ShowBlockHeaderSize`,
+/// `ShowBlockTxsSize`, `ShowEBBs`, `OnlyValidation`); the
+/// remaining 6 require a ledger-state apply-loop and return a
+/// structured `RequiresLedgerStateApplyLoop` error pending a
+/// future arc. See [`status::analysis_dispatch_status`] for the
+/// full inventory.
 pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
-    Err(RunError::AnalysisDispatchDeferred {
-        db: config.db_dir.display().to_string(),
-        analysis: format!("{:?}", config.analysis),
-        backend: format!("{:?}", config.ldb_backend),
-        limit: format!("{:?}", config.conf_limit),
+    use yggdrasil_ledger::Point;
+    use yggdrasil_storage::{FileImmutable, ImmutableStore};
+
+    let store = FileImmutable::open(&config.db_dir).map_err(RunError::Storage)?;
+    let blocks = store
+        .suffix_after(&Point::Origin)
+        .map_err(RunError::Storage)?;
+    let outcome = analysis::runner::run_analysis(config, blocks).map_err(RunError::Analysis)?;
+    render_outcome(&outcome)?;
+    Ok(())
+}
+
+/// Render an [`analysis::runner::AnalysisOutcome`] to stdout in a
+/// shape compatible with upstream's per-analysis emission. Each
+/// variant prints one line per data point; the cumulative-result
+/// variants (`CountBlocks`, `CountTxOutputs`,
+/// `ShowBlockHeaderSize`) append a trailing summary line.
+fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<()> {
+    use analysis::runner::AnalysisOutcome;
+    let mut out = std::io::stdout().lock();
+    match outcome {
+        AnalysisOutcome::ShowSlotBlockNo { lines } => {
+            for (slot, block_no, hash) in lines {
+                writeln!(
+                    out,
+                    "slot={} block_no={} hash={}",
+                    slot.0,
+                    block_no.0,
+                    hex_render(&hash.0)
+                )?;
+            }
+        }
+        AnalysisOutcome::CountBlocks { total, first, last } => {
+            for (label, position) in [("first", first), ("last", last)] {
+                if let Some((slot, block_no)) = position {
+                    writeln!(out, "{label}: slot={} block_no={}", slot.0, block_no.0)?;
+                }
+            }
+            writeln!(out, "total_blocks={total}")?;
+        }
+        AnalysisOutcome::CountTxOutputs { total, per_block } => {
+            for (slot, n) in per_block {
+                writeln!(out, "slot={} tx_outputs={}", slot.0, n)?;
+            }
+            writeln!(out, "total_tx_outputs={total}")?;
+        }
+        AnalysisOutcome::ShowBlockHeaderSize {
+            max_size,
+            per_block,
+        } => {
+            for (slot, size) in per_block {
+                writeln!(out, "slot={} header_size={}", slot.0, size)?;
+            }
+            writeln!(out, "max_header_size={max_size}")?;
+        }
+        AnalysisOutcome::ShowBlockTxsSize { per_block } => {
+            for (slot, tx_count, total_bytes) in per_block {
+                writeln!(
+                    out,
+                    "slot={} tx_count={} total_bytes={}",
+                    slot.0, tx_count, total_bytes
+                )?;
+            }
+        }
+        AnalysisOutcome::ShowEBBs { ebbs } => {
+            for (slot, hash, prev_hash) in ebbs {
+                let prev = match prev_hash {
+                    Some(p) => hex_render(&p.0),
+                    None => "<origin>".to_string(),
+                };
+                writeln!(
+                    out,
+                    "ebb slot={} hash={} prev={}",
+                    slot.0,
+                    hex_render(&hash.0),
+                    prev
+                )?;
+            }
+        }
+        AnalysisOutcome::OnlyValidation { blocks_processed } => {
+            writeln!(out, "only_validation blocks_processed={blocks_processed}")?;
+        }
     }
-    .into())
+    Ok(())
+}
+
+fn hex_render(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    out
 }
 
 /// Errors from the db-analyser `run` entry point.
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
-    /// Per-era HasAnalysis + Analysis.hs dispatch is deferred.
-    /// Mirror of upstream `Cardano.Tools.DBAnalyser.{HasAnalysis,
-    /// Analysis, Run}` — gated on yggdrasil's per-era
-    /// ImmutableStore block-iteration surface (Phase B.2 per the
-    /// playful-tickling-plum.md plan).
-    #[error(
-        "yggdrasil-db-analyser: per-era HasAnalysis + Analysis.hs dispatch deferred \
-         (see crates/db-analyser/src/status.rs::analysis_dispatch_status for the full \
-         deferral rationale). Resolved CLI: db={db}, analysis={analysis}, backend={backend}, \
-         limit={limit}."
-    )]
-    AnalysisDispatchDeferred {
-        /// Path to the ChainDB the operator supplied.
-        db: String,
-        /// Analysis-name rendering.
-        analysis: String,
-        /// Ledger-DB backend rendering.
-        backend: String,
-        /// Conf-limit rendering.
-        limit: String,
-    },
+    /// I/O error opening or reading the operator-supplied ChainDB.
+    #[error("yggdrasil-db-analyser: storage error: {0}")]
+    Storage(#[from] yggdrasil_storage::StorageError),
+    /// Per-era HasAnalysis + Analysis.hs dispatch error. Returns
+    /// either a [`analysis::runner::AnalysisError::RequiresLedgerStateApplyLoop`]
+    /// when one of the 6 ledger-state-dependent analyses is
+    /// requested (pending a future arc).
+    #[error("yggdrasil-db-analyser: analysis error: {0}")]
+    Analysis(#[from] analysis::runner::AnalysisError),
 }
