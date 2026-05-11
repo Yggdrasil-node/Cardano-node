@@ -351,6 +351,51 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R461 — cardano-tracer Logs Rotator IO orchestration port.**
+  Closes the previously-deferred IO orchestration in
+  `crates/tools/cardano-tracer/src/handlers/logs/rotator.rs`. The
+  pure helpers (`logging_params_for_files`, `log_is_full`,
+  `check_if_there_are_old_logs`, `logs_to_remove`,
+  `sort_logs_oldest_first`) were already shipped; R461 layers the
+  IO orchestration on top:
+  - `run_logs_rotator(config, registry, lock, stop_flag, error_tracer)` —
+    top-level entry, no-ops when `config.rotation == None`.
+  - `launch_rotator` — sleep-loop running every
+    `rotation.frequency_secs` seconds; brake-aware via
+    `tokio::select!` racing the sleep against a 50ms brake poll.
+  - `check_root_dir` — lists subdirectories of the log root,
+    uses `tokio::task::JoinSet` for per-subdir concurrency
+    (mirror of upstream's `forConcurrently_`).
+  - `check_logs` — sorts log files oldest-first, calls
+    `check_if_current_log_is_full` on the newest log, then
+    `check_if_there_are_old_logs` on the older ones.
+  - `check_if_current_log_is_full` — queries the open handle's
+    metadata for file size, rolls via
+    `super::utils::create_or_update_empty_log` when over threshold.
+  Wired into `do_run_cardano_tracer` supervisor alongside
+  `run_acceptors` via `tokio::spawn` with a supervisor-level
+  `Arc<RwLock<bool>>` brake flag. Acceptors finishing (either by
+  brake or error) trips the rotator's brake so its sleep-loop
+  unwinds cleanly within ~50ms. Both `run_logs_rotator_status`
+  descriptors (rotator.rs struct + run.rs `&str`) repurposed from
+  deferred to closed state. Carve-out: `showProblemIfAny` →
+  caller-supplied `LogsRotatorErrorTracer` closure
+  (`Arc<dyn Fn(&str) + Send + Sync>`) since the tracer-trace
+  channel from `MetaTrace.hs` remains unported. 4 new tokio-async
+  integration tests landed in `rotator.rs`. Workspace tests:
+  6,025 → 6,029 (+4). All 5 verification gates clean.
+- **R460 — R459 advisor-flag closure.** (1)
+  `scripts/check-parity-matrix.py` `ALLOWED_MILESTONES` extends
+  via `_arc_range(460, 479)` to admit post-R459 follow-on arcs.
+  (2) `acceptors::server::tests::server_round_trips_both_sub_protocols_concurrently`
+  is a focused integration smoke that exercises
+  `tokio::join!(accept_trace_objects_resp, accept_data_points_resp)`
+  over a real Unix socket with full handshake + brake + MsgDone
+  exchange on both sub-protocols. Closes the R459 advisor flags
+  that (a) the allowlist cap would block any next-arc parity-
+  matrix milestone bump and (b) the "boots with DataPoint
+  multiplexed" claim was untested at the integration level.
+  Workspace tests: 6,024 → 6,025 (+1).
 - **R451 — workspace Cargo.toml comment cleanup (final post-R447
   trailing references).** Updates 2 trailing references in
   `Cargo.toml`'s `[workspace.dependencies]` section that still

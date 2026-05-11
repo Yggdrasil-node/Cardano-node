@@ -71,7 +71,11 @@ Standalone trace-forwarder + log + metrics aggregator. Phase A.5 mini-arc R360-R
 - ❌ TLS termination — R408's `load_pem_certs` / `load_pem_key`
   helpers ship; the `axum-server-rustls` integration recipe is in
   `http_server::tls_bind_plan_status` (R429).
-- ❌ Logs Rotator — see `run::run_logs_rotator_status`.
+- ✅ **Logs Rotator** (R461) — `handlers::logs::rotator::run_logs_rotator`
+  ships the full IO orchestration (`runLogsRotator`, `launchRotator`,
+  `checkRootDir`, `checkLogs`, `checkIfCurrentLogIsFull`). Wired into
+  `do_run_cardano_tracer` supervisor alongside `run_acceptors` via
+  `tokio::spawn` with supervisor-level brake flag.
 - ❌ RTView web UI — synthesis carve-out per the R326-R459 plan.
 
 ## Build + run

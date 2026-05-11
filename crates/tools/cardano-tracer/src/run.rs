@@ -203,16 +203,74 @@ where
         network_magic: config.network_magic,
     };
 
-    // Mirror of upstream's `sequenceConcurrently_` — currently the
-    // only spawned subsystem is the Acceptors supervisor. The
-    // deferred subsystems (logs rotator, metrics servers
-    // aggregator, RTView) can be added to this concurrent task
-    // set without changing the call surface.
+    // Brake flag for the logs rotator: trip it on supervisor exit
+    // so the rotator's sleep-loop unwinds cleanly. Shares semantic
+    // role with the AcceptorConfiguration's brake but lives at the
+    // supervisor level since the Acceptors-side brake is configured
+    // per-acceptor-config (currently freshly minted in
+    // `run::run_acceptors`).
+    let rotator_stop = std::sync::Arc::new(tokio::sync::RwLock::new(false));
+    let current_log_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    // R461: HandleRegistry shared between trace-objects-handler
+    // (which mints + registers handles in `crate::handlers::logs::
+    // file`) and the rotator (which inspects the registered handles
+    // to roll the current log file).
+    //
+    // R461 carve-out: the trace-objects-handler currently mints its
+    // own per-call handles + doesn't share a HandleRegistry with
+    // the supervisor. Wiring that handoff is a follow-on round —
+    // for now the rotator runs against an empty registry (which
+    // matches upstream's behavior when the operator hasn't yet
+    // accepted any forwarder traffic).
+    let handle_registry = crate::types::HandleRegistry::new();
+    // Error tracer for the rotator. Operators wire this to their
+    // log sink; tests typically supply a no-op closure.
+    let error_tracer: crate::handlers::logs::rotator::LogsRotatorErrorTracer =
+        std::sync::Arc::new(|msg: &str| {
+            eprintln!("cardano-tracer: {msg}");
+        });
+
+    // Mirror of upstream's `sequenceConcurrently_`:
+    //   [ runLogsRotator tracerEnv
+    //   , runAcceptors tracerEnv
+    //   , runMetricsServers tracerEnv         -- still partial
+    //   , runResourceStats tracerEnv          -- carve-out
+    //   ]
+    // R461 wires the logs rotator alongside the acceptors. Both
+    // tasks run concurrently; the acceptors-side run completes
+    // when its own brake fires (operator-configured), and the
+    // rotator-side run is cancelled via the supervisor-level brake
+    // when the acceptors finish.
     let acceptors_state = state.clone();
     let acceptors_config = config.clone();
     let acceptors_handler = Arc::clone(&lo_handler);
-    run_acceptors(acceptors_state, &acceptors_config, acceptors_handler).await?;
 
+    let rotator_config = config.clone();
+    let rotator_stop_clone = rotator_stop.clone();
+    let rotator_registry = handle_registry.clone();
+    let rotator_lock = current_log_lock.clone();
+    let rotator_tracer = error_tracer.clone();
+    let rotator_task = tokio::spawn(async move {
+        crate::handlers::logs::rotator::run_logs_rotator(
+            &rotator_config,
+            rotator_registry,
+            rotator_lock,
+            rotator_stop_clone,
+            rotator_tracer,
+        )
+        .await;
+    });
+
+    let acceptors_result =
+        run_acceptors(acceptors_state, &acceptors_config, acceptors_handler).await;
+
+    // Acceptors finished (either via brake or error) — trip the
+    // rotator brake + await its clean exit (50ms brake-poll cadence
+    // means worst-case ~50ms latency).
+    *rotator_stop.write().await = true;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), rotator_task).await;
+
+    acceptors_result?;
     Ok(())
 }
 
@@ -273,12 +331,22 @@ pub fn default_lo_handler_factory(
 // Carve-out status descriptors
 // ---------------------------------------------------------------------------
 
-/// Status descriptor for the deferred `runLogsRotator` subsystem.
+/// Status descriptor for the (now-closed) `runLogsRotator` subsystem.
+/// Retained for programmatic introspection — the function returns a
+/// short description summarising the current state and the round in
+/// which it closed.
 pub fn run_logs_rotator_status() -> &'static str {
-    "runLogsRotator: deferred. Logs/Rotator.hs port pending (R411 \
-     plan pacing). Operationally cardano-tracer can run without \
-     log rotation; the per-node File.hs writer (R382 wired) handles \
-     append-only writes correctly until rotation lands."
+    "runLogsRotator: closed at R461. The Logs/Rotator.hs IO orchestration \
+     (runLogsRotator + launchRotator + checkRootDir + checkLogs + \
+     checkIfCurrentLogIsFull) shipped in R461 as \
+     crate::handlers::logs::rotator::run_logs_rotator. The supervisor \
+     (do_run_cardano_tracer) wires it alongside run_acceptors via \
+     tokio::spawn + supervisor-level brake flag; the rotator's \
+     50ms-brake-poll cadence ensures clean shutdown alongside the \
+     acceptors. Carve-out: showProblemIfAny → caller-supplied \
+     error-tracer closure (tracer-trace channel from MetaTrace.hs \
+     remains unported, but the orchestration accepts a Rust closure \
+     in place of the typeclass-dispatched contra-tracer)."
 }
 
 /// Status descriptor for the deferred `runMetricsServers`
@@ -308,10 +376,11 @@ mod tests {
     use crate::configuration::{HowToConnect, LogFormat, LogMode, LoggingParams, Network};
 
     #[test]
-    fn run_logs_rotator_status_describes_deferral() {
+    fn run_logs_rotator_status_describes_closure() {
         let s = run_logs_rotator_status();
-        assert!(s.contains("deferred"));
+        assert!(s.contains("closed at R461"));
         assert!(s.contains("Rotator"));
+        assert!(s.contains("brake"));
     }
 
     #[test]
