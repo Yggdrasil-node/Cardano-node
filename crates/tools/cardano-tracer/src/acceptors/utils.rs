@@ -15,7 +15,7 @@
 //!
 //! | Upstream                                                                           | Yggdrasil                              |
 //! |------------------------------------------------------------------------------------|----------------------------------------|
-//! | `prepareDataPointRequestor :: TracerEnv -> ConnectionId addr -> IO DataPointRequestor` | (deferred — see [`prepare_data_point_requestor_status`]) |
+//! | `prepareDataPointRequestor :: TracerEnv -> ConnectionId addr -> IO DataPointRequestor` | [`prepare_data_point_requestor`] (R458; closed at R458 — see [`prepare_data_point_requestor_status`]) |
 //! | `prepareMetricsStores :: TracerEnv -> ConnectionId addr -> IO (EKG.Store, TVar MetricsLocalStore)` | [`prepare_metrics_stores`] |
 //! | `addConnectedNode :: ConnectedNodes -> ConnectionId addr -> IO ()`                 | [`add_connected_node`]                 |
 //! | `removeDisconnectedNode :: TracerEnv -> ConnectionId addr -> IO ()`                | [`remove_disconnected_node`]           |
@@ -24,11 +24,13 @@
 //!
 //! Carve-outs (NOT ported, by design):
 //!
-//! - **`prepareDataPointRequestor`**: depends on
-//!   `Trace.Forward.Utils.DataPoint.initDataPointRequestor` from
-//!   the trace-forward DataPoint sub-protocol (port deferred to
-//!   R425+ per the R411 plan). Status surfaced via
-//!   [`prepare_data_point_requestor_status`].
+//! - **`prepareDataPointRequestor`** (R458 closure): now ships
+//!   as [`prepare_data_point_requestor`] returning a real
+//!   `yggdrasil_network::protocols::DataPointRequestor` thanks to
+//!   the R452-R457 DataPoint sub-protocol port. The R423-era
+//!   deferred-status descriptor at
+//!   [`prepare_data_point_requestor_status`] is retained for
+//!   programmatic introspection but now describes the closed state.
 //! - **`notifyAboutNodeDisconnected`** (RTView-conditional): the
 //!   RTView web UI is a synthesis carve-out per the R411 plan
 //!   (no Rust analog for ThreePenny GUI). The non-RTView upstream
@@ -44,6 +46,8 @@
 //!   they need directly (e.g. `&ConnectedNodes` rather than
 //!   `&TracerEnv`). This keeps the call sites flexible during
 //!   the partial port window.
+
+use yggdrasil_network::protocols::DataPointRequestor;
 
 use crate::metrics_store::{
     AcceptedMetrics, MetricsLocalStore, MetricsStore, get_or_insert_store, remove_store,
@@ -156,17 +160,38 @@ pub async fn store(
 // Status descriptors (carve-out exposition)
 // ---------------------------------------------------------------------------
 
-/// Status descriptor for the deferred
-/// `prepareDataPointRequestor` upstream surface. Surfaces the
-/// dependency on the trace-forward DataPoint sub-protocol port
-/// (R425+ pending).
+/// Construct a fresh [`DataPointRequestor`] for a newly-accepted
+/// connection. Mirror of upstream's
+/// `prepareDataPointRequestor :: TracerEnv -> ConnectionId addr ->
+/// IO DataPointRequestor` (which collapses to
+/// `initDataPointRequestor` in upstream — there's no per-connection
+/// caching of the requestor in upstream code, and `TracerEnv`
+/// doesn't carry a registry of them).
+///
+/// Closes the R423 `prepare_data_point_requestor_status` deferral.
+/// The per-connection acceptor task in `server.rs::do_listen_to_
+/// forwarder_local` uses this to mint a requestor handed to
+/// `accept_data_points_resp`; the requestor's clones are wired into
+/// the external query-router context that translates incoming
+/// node-info RPCs into data-point asks.
+pub fn prepare_data_point_requestor() -> DataPointRequestor {
+    DataPointRequestor::new()
+}
+
+/// Status descriptor for the (now-closed)
+/// `prepareDataPointRequestor` upstream surface. Retained for
+/// programmatic introspection by status tooling — the function
+/// returns a short description summarising the current state and
+/// the round in which it closed.
 pub fn prepare_data_point_requestor_status() -> &'static str {
-    "prepareDataPointRequestor: deferred pending the trace-forward \
-     DataPoint sub-protocol port (Trace.Forward.Run.DataPoint.Acceptor + \
-     Trace.Forward.Utils.DataPoint.initDataPointRequestor — vendored at \
-     .reference-haskell-cardano-node/trace-forward/src/Trace/Forward/Run/\
-     DataPoint/Acceptor.hs). Tracked in the R411-R430 arc plan as a \
-     post-R422 follow-up."
+    "prepareDataPointRequestor: closed at R458. The trace-forward \
+     DataPoint sub-protocol port (R452-R457) shipped DataPointRequestor \
+     in yggdrasil_network::protocols::DataPointRequestor; the \
+     prepare_data_point_requestor function above wraps \
+     DataPointRequestor::new for upstream-naming parity with \
+     `prepareDataPointRequestor` :: TracerEnv -> ConnectionId addr -> \
+     IO DataPointRequestor (which in upstream code is equivalent to \
+     initDataPointRequestor)."
 }
 
 /// Status descriptor for the RTView-conditional
@@ -280,11 +305,19 @@ mod tests {
     }
 
     #[test]
-    fn prepare_data_point_requestor_status_describes_deferral() {
+    fn prepare_data_point_requestor_status_describes_closure() {
         let s = prepare_data_point_requestor_status();
-        assert!(s.contains("deferred"));
+        assert!(s.contains("closed at R458"));
         assert!(s.contains("DataPoint"));
-        assert!(s.contains("R411-R430"));
+        assert!(s.contains("R452-R457"));
+    }
+
+    #[tokio::test]
+    async fn prepare_data_point_requestor_returns_fresh_requestor() {
+        let req = prepare_data_point_requestor();
+        // Fresh requestor: ask flag unset, names empty.
+        assert!(!req.debug_ask_flag().await);
+        assert!(req.debug_names().await.is_empty());
     }
 
     #[test]

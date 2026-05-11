@@ -9,12 +9,12 @@
 //! **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Acceptors/Server.hs.
 //!
 //! Direct port of upstream's `runAcceptorsServer` + supporting
-//! helpers, scoped to the trace-objects sub-protocol path. EKG and
-//! DataPoint sub-protocols are deferred carve-outs (see module
-//! docs); the LocalPipe path lands now (Yggdrasil's
+//! helpers. Trace-objects + DataPoint sub-protocols are both wired
+//! (R424 + R458); EKG sub-protocol remains a deferred carve-out
+//! (Hackage-source synthesis). The LocalPipe path uses Yggdrasil's
 //! `crates/network/src/local_listener.rs::LocalPeerListener`
-//! provides the listener primitive); the RemoteSocket TCP path
-//! defers pending the trace-forwarder handshake codec port (R425+).
+//! primitive; the RemoteSocket TCP path defers pending the
+//! trace-forwarder handshake-over-socket codec port.
 //!
 //! Mapping summary:
 //!
@@ -26,7 +26,7 @@
 //! | `appResponder protocolsWithNums :: OuroborosApplication ...`                | (collapsed — Yggdrasil's mux dispatches by `MiniProtocolNum` directly via `start_unix`) |
 //! | `runEKGAcceptor :: TracerEnv -> EKGF.AcceptorConfiguration -> errorHandler -> ...` | (deferred — see [`run_ekg_acceptor_status`]) |
 //! | `runTraceObjectsAcceptor :: TracerEnv -> TracerEnvRTView -> TF.AcceptorConfiguration TraceObject -> errorHandler -> ...` | [`run_trace_objects_acceptor`] |
-//! | `runDataPointsAcceptor :: TracerEnv -> DPF.AcceptorConfiguration -> errorHandler -> ...` | (deferred — see [`run_data_points_acceptor_status`]) |
+//! | `runDataPointsAcceptor :: TracerEnv -> DPF.AcceptorConfiguration -> errorHandler -> ...` | (R458 — wired via [`yggdrasil_network::data_point_run_acceptor::accept_data_points_resp`]; status descriptor at [`run_data_points_acceptor_status`]) |
 //! | `errorHandler :: ConnectionId addr -> IO ()`                                | (inlined — see [`run_acceptors_server`]'s spawn body) |
 //!
 //! Carve-outs (NOT ported, by design):
@@ -43,10 +43,14 @@
 //!   from R408-R414 read from MetricsStore which can also be fed
 //!   manually for testing).
 //! - **DataPoint sub-protocol responder (`runDataPointsAcceptor` /
-//!   `acceptDataPointsResp`)**: vendored at
-//!   `.reference-haskell-cardano-node/trace-forward/src/Trace/Forward/Run/DataPoint/Acceptor.hs`,
-//!   port deferred to R425+ (one of the remaining sub-protocols
-//!   in the R411 plan's "trace-forward 4 sub-protocols" budget).
+//!   `acceptDataPointsResp`)** (R458 closure): now wired via
+//!   [`yggdrasil_network::data_point_run_acceptor::accept_data_points_resp`].
+//!   The R452-R457 arc ported the trace-forward DataPoint
+//!   Type/Codec/Acceptor/Configuration/Utils/Run files;
+//!   R458 wired the per-connection mux to include
+//!   [`DATA_POINTS_NUM`] alongside [`TRACE_OBJECTS_NUM`] and runs
+//!   both sub-protocol drivers concurrently via `tokio::join!`.
+//!   Both sub-protocols share the connection-level brake flag.
 //! - **`Net.RemoteSocket host port` TCP path**: requires the trace-
 //!   forwarder handshake codec port (R425+). The LocalPipe path
 //!   covers the operationally-canonical SPO setup (cardano-tracer
@@ -70,9 +74,10 @@ use std::sync::Arc;
 
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::Decoder;
+use yggdrasil_network::data_point_run_acceptor::accept_data_points_resp;
 use yggdrasil_network::local_listener::{LocalPeerListener, LocalPeerListenerError};
 use yggdrasil_network::mux::{MiniProtocolDir, MiniProtocolNum, ProtocolHandle, start_unix};
-use yggdrasil_network::protocols::AcceptorConfiguration;
+use yggdrasil_network::protocols::{AcceptorConfiguration, DataPointAcceptorConfiguration};
 use yggdrasil_network::trace_object_acceptor::TraceObjectAcceptorError;
 use yggdrasil_network::trace_object_run_acceptor::{
     AcceptTraceObjectsError, accept_trace_objects_resp,
@@ -95,11 +100,11 @@ pub const TRACE_OBJECTS_NUM: MiniProtocolNum = MiniProtocolNum(2);
 /// when the EKG port lands.
 pub const EKG_NUM: MiniProtocolNum = MiniProtocolNum(1);
 
-/// Sub-protocol number reserved for the DataPoint sub-protocol in
-/// the upstream wire format (number 3). Currently unused since the
-/// DataPoint port is deferred; the constant exists so
-/// `mux::start_unix` can be wired with the canonical number-space
-/// when the DataPoint port lands.
+/// Sub-protocol number for the DataPoint sub-protocol within the
+/// trace-forwarder mux pipe. Mirrors the upstream
+/// `Cardano.Tracer.Acceptors.Server` per-protocol number 3.
+/// R458 closed the previously-deferred port — the per-connection
+/// mux now multiplexes HANDSHAKE + TRACE_OBJECTS + DATA_POINTS.
 pub const DATA_POINTS_NUM: MiniProtocolNum = MiniProtocolNum(3);
 
 // ---------------------------------------------------------------------------
@@ -218,13 +223,17 @@ where
         let conn_handler = Arc::clone(&lo_handler);
 
         tokio::spawn(async move {
-            // Per-connection mux: handshake (R435) + trace-objects
-            // sub-protocols. EKG + DataPoint sub-protocols are
-            // deferred carve-outs.
+            // Per-connection mux: handshake (R435) + trace-objects +
+            // data-points (R458) sub-protocols. EKG sub-protocol is
+            // still a deferred carve-out (Hackage-source synthesis).
             let (mut handles, _mux) = start_unix(
                 stream,
                 MiniProtocolDir::Responder,
-                &[MiniProtocolNum::HANDSHAKE, TRACE_OBJECTS_NUM],
+                &[
+                    MiniProtocolNum::HANDSHAKE,
+                    TRACE_OBJECTS_NUM,
+                    DATA_POINTS_NUM,
+                ],
                 1, /* buffer hint */
             );
             let handshake_handle = match handles.remove(&MiniProtocolNum::HANDSHAKE) {
@@ -236,10 +245,15 @@ where
                 None => {
                     // Mux setup didn't return a handle for the
                     // trace-objects protocol — log + drop the
-                    // connection. The error_handler equivalent
-                    // collapses to no-op since we never registered
-                    // the connection in connected_nodes (no NodeId
-                    // resolution happened pre-handshake).
+                    // connection.
+                    return;
+                }
+            };
+            let data_points_handle = match handles.remove(&DATA_POINTS_NUM) {
+                Some(h) => h,
+                None => {
+                    // Mux setup didn't return a handle for the
+                    // data-points protocol — log + drop.
                     return;
                 }
             };
@@ -317,12 +331,50 @@ where
                 handler(node_id.clone(), payloads);
             };
 
-            let result: Result<(), AcceptTraceObjectsError> =
-                run_trace_objects_acceptor(conn_config, trace_handle, lo_handler_wrapper, on_error)
-                    .await;
+            // Build a DataPoint acceptor configuration whose brake
+            // flag is shared with the trace-objects brake (so a
+            // single connection-level brake trip stops both
+            // sub-protocols cleanly).
+            let dp_config = DataPointAcceptorConfiguration {
+                acceptor_tracer: conn_config.acceptor_tracer.clone(),
+                should_we_stop: conn_config.should_we_stop.clone(),
+            };
+            // Mint a fresh requestor for this connection. Future
+            // rounds will plumb a clone into the external
+            // node-info query router; for now the requestor is
+            // owned solely by the acceptor loop (it idles after the
+            // initial empty round-trip and trips MsgDone on brake).
+            let dp_requestor = crate::acceptors::utils::prepare_data_point_requestor();
+            let dp_on_error =
+                move |_e: &yggdrasil_network::data_point_acceptor::DataPointAcceptorError| {
+                    // R458: DataPoint error finalizer is currently a
+                    // no-op — the trace-objects on_error already
+                    // performs the per-connection cleanup (deregister
+                    // NodeId, drop metrics store) atomically. Both
+                    // sub-protocols share the same brake; a transport
+                    // error on one trips the other within ~50ms.
+                };
+
+            // Run trace-objects + data-points concurrently.
+            // tokio::join! awaits both; either an error or a clean
+            // shutdown on either side returns its result here, and
+            // the connection-level cleanup runs after both have
+            // wound down. Per upstream's Network.Mux semantics, the
+            // two sub-protocols share the mux's egress buffer but
+            // are otherwise independent.
+            let (trace_result, dp_result) = tokio::join!(
+                run_trace_objects_acceptor(conn_config, trace_handle, lo_handler_wrapper, on_error),
+                accept_data_points_resp(
+                    dp_config,
+                    data_points_handle,
+                    move || dp_requestor,
+                    dp_on_error,
+                )
+            );
 
             // Final cleanup on graceful shutdown.
-            let _ = result;
+            let _ = trace_result;
+            let _ = dp_result;
             crate::acceptors::utils::remove_disconnected_node(
                 &conn_state.connected_nodes,
                 &conn_state.connected_nodes_names,
@@ -466,14 +518,21 @@ pub fn run_ekg_acceptor_status() -> &'static str {
      synthesis port)."
 }
 
-/// Status descriptor for the deferred DataPoint sub-protocol
+/// Status descriptor for the (now-closed) DataPoint sub-protocol
 /// responder (`runDataPointsAcceptor` / `acceptDataPointsResp`).
+/// Retained for programmatic introspection — the function returns
+/// a short description summarising the current state and the round
+/// in which it closed.
 pub fn run_data_points_acceptor_status() -> &'static str {
-    "runDataPointsAcceptor / acceptDataPointsResp: deferred to \
-     R425+. The trace-forward DataPoint sub-protocol is vendored at \
-     .reference-haskell-cardano-node/trace-forward/src/Trace/Forward/Run/\
-     DataPoint/Acceptor.hs but not yet ported. The trace-objects \
-     sub-protocol is fully wired and exercises the end-to-end pipe."
+    "runDataPointsAcceptor / acceptDataPointsResp: closed at R458. \
+     The trace-forward DataPoint sub-protocol shipped in R452-R457 \
+     (Type + Codec + Acceptor driver + Configuration + Utils + \
+     Run-aggregator). R458 wired DATA_POINTS_NUM=MiniProtocolNum(3) \
+     into the per-connection mux protocol list, and the per-connection \
+     acceptor spawn body now runs accept_trace_objects_resp + \
+     accept_data_points_resp concurrently via tokio::join!. The two \
+     sub-protocols share the connection-level brake flag so a single \
+     stop trip terminates both cleanly."
 }
 
 #[cfg(test)]
@@ -507,11 +566,12 @@ mod tests {
     }
 
     #[test]
-    fn run_data_points_acceptor_status_points_to_vendor_path() {
+    fn run_data_points_acceptor_status_describes_closure() {
         let s = run_data_points_acceptor_status();
-        assert!(s.contains("vendored"));
+        assert!(s.contains("closed at R458"));
         assert!(s.contains("DataPoint"));
-        assert!(s.contains("R425"));
+        assert!(s.contains("R452-R457"));
+        assert!(s.contains("DATA_POINTS_NUM"));
     }
 
     #[test]

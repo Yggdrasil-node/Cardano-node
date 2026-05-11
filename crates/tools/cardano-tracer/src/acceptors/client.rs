@@ -16,12 +16,12 @@
 //! **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Acceptors/Client.hs.
 //!
 //! Direct port of upstream's `runAcceptorsClient` + supporting
-//! helpers, scoped to the trace-objects sub-protocol path. EKG +
-//! DataPoint sub-protocols are deferred carve-outs (see
-//! [`super::server`] module docs); the LocalPipe path lands now
-//! using `tokio::net::UnixStream::connect`; the RemoteSocket TCP
-//! path defers pending the trace-forwarder handshake codec port
-//! (R426+).
+//! helpers. Trace-objects + DataPoint sub-protocols are both wired
+//! (R425 + R458); EKG sub-protocol remains a deferred carve-out
+//! (Hackage-source synthesis, see [`super::server`] module docs).
+//! The LocalPipe path uses `tokio::net::UnixStream::connect`; the
+//! RemoteSocket TCP path defers pending the trace-forwarder
+//! handshake-over-socket codec port.
 //!
 //! Mapping summary:
 //!
@@ -33,7 +33,7 @@
 //! | `appInitiator protocolsWithNums :: OuroborosApplication ...`                | (collapsed — Yggdrasil's mux dispatches by `MiniProtocolNum` directly via `start_unix`) |
 //! | `runEKGAcceptorInit :: TracerEnv -> EKGF.AcceptorConfiguration -> errorHandler -> ...` | (deferred — see [`super::server::run_ekg_acceptor_status`]) |
 //! | `runTraceObjectsAcceptorInit :: TracerEnv -> TracerEnvRTView -> TF.AcceptorConfiguration TraceObject -> errorHandler -> ...` | [`run_trace_objects_acceptor_init`] |
-//! | `runDataPointsAcceptorInit :: TracerEnv -> DPF.AcceptorConfiguration -> errorHandler -> ...` | (deferred — see [`super::server::run_data_points_acceptor_status`]) |
+//! | `runDataPointsAcceptorInit :: TracerEnv -> DPF.AcceptorConfiguration -> errorHandler -> ...` | (R458 — wired via [`yggdrasil_network::data_point_run_acceptor::accept_data_points_init`]; status descriptor at [`super::server::run_data_points_acceptor_status`]) |
 //!
 //! Carve-outs (NOT ported, by design):
 //!
@@ -50,14 +50,17 @@ use std::sync::Arc;
 
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::Decoder;
+use yggdrasil_network::data_point_run_acceptor::accept_data_points_init;
 use yggdrasil_network::mux::{MiniProtocolDir, MiniProtocolNum, ProtocolHandle, start_unix};
-use yggdrasil_network::protocols::AcceptorConfiguration;
+use yggdrasil_network::protocols::{AcceptorConfiguration, DataPointAcceptorConfiguration};
 use yggdrasil_network::trace_object_acceptor::TraceObjectAcceptorError;
 use yggdrasil_network::trace_object_run_acceptor::{
     AcceptTraceObjectsError, accept_trace_objects_init,
 };
 
-use super::server::{AcceptorsServerError, AcceptorsServerState, TRACE_OBJECTS_NUM};
+use super::server::{
+    AcceptorsServerError, AcceptorsServerState, DATA_POINTS_NUM, TRACE_OBJECTS_NUM,
+};
 use crate::configuration::HowToConnect;
 use crate::logging::TraceObject;
 
@@ -128,7 +131,11 @@ where
     let (mut handles, _mux) = start_unix(
         stream,
         MiniProtocolDir::Initiator,
-        &[MiniProtocolNum::HANDSHAKE, TRACE_OBJECTS_NUM],
+        &[
+            MiniProtocolNum::HANDSHAKE,
+            TRACE_OBJECTS_NUM,
+            DATA_POINTS_NUM,
+        ],
         1, /* buffer hint */
     );
     let handshake_handle = handles.remove(&MiniProtocolNum::HANDSHAKE).ok_or(
@@ -140,6 +147,9 @@ where
             .ok_or(AcceptorsServerError::MissingProtocolHandle(
                 TRACE_OBJECTS_NUM,
             ))?;
+    let data_points_handle = handles
+        .remove(&DATA_POINTS_NUM)
+        .ok_or(AcceptorsServerError::MissingProtocolHandle(DATA_POINTS_NUM))?;
 
     // R436: run the trace-forwarder handshake initiator before
     // proceeding to the trace-objects acceptor. Propose V1 + V2
@@ -215,9 +225,33 @@ where
         handler(node_id.clone(), payloads);
     };
 
-    let _result: Result<(), AcceptTraceObjectsError> =
-        run_trace_objects_acceptor_init(tf_config, trace_handle, lo_handler_wrapper, on_error)
-            .await;
+    // Build a DataPoint acceptor configuration whose brake flag is
+    // shared with the trace-objects brake (mirror of the server.rs
+    // pattern — both sub-protocols stop together on a single trip).
+    let dp_config = DataPointAcceptorConfiguration {
+        acceptor_tracer: tf_config.acceptor_tracer.clone(),
+        should_we_stop: tf_config.should_we_stop.clone(),
+    };
+    let dp_requestor = crate::acceptors::utils::prepare_data_point_requestor();
+    let dp_on_error = move |_e: &yggdrasil_network::data_point_acceptor::DataPointAcceptorError| {
+        // R458: same no-op rationale as server.rs — the
+        // trace-objects on_error already runs the
+        // per-connection cleanup; the shared brake terminates
+        // both protocols within ~50ms of a transport error.
+    };
+
+    // Run trace-objects + data-points concurrently. tokio::join!
+    // awaits both; the connection-level cleanup runs after both
+    // have wound down.
+    let (_trace_result, _dp_result) = tokio::join!(
+        run_trace_objects_acceptor_init(tf_config, trace_handle, lo_handler_wrapper, on_error,),
+        accept_data_points_init(
+            dp_config,
+            data_points_handle,
+            move || dp_requestor,
+            dp_on_error,
+        )
+    );
 
     // Final cleanup on graceful shutdown.
     crate::acceptors::utils::remove_disconnected_node(
@@ -370,14 +404,24 @@ mod tests {
         let listener = LocalPeerListener::bind(&socket_path).await.expect("bind");
         let server_task = tokio::spawn(async move {
             let stream = listener.accept_unix().await.expect("accept");
+            // R458: the per-connection mux now multiplexes
+            // HANDSHAKE + TRACE_OBJECTS_NUM + DATA_POINTS_NUM; the
+            // responder side of the test must mirror that protocol
+            // list so handshake completes against a client running
+            // the post-R458 wire shape.
             let (mut handles, _mux) = start_unix(
                 stream,
                 MiniProtocolDir::Responder,
-                &[MiniProtocolNum::HANDSHAKE, super::TRACE_OBJECTS_NUM],
+                &[
+                    MiniProtocolNum::HANDSHAKE,
+                    super::TRACE_OBJECTS_NUM,
+                    super::DATA_POINTS_NUM,
+                ],
                 1,
             );
             let handshake_handle = handles.remove(&MiniProtocolNum::HANDSHAKE).expect("hs");
             let _trace_handle = handles.remove(&super::TRACE_OBJECTS_NUM).expect("trace");
+            let _data_points_handle = handles.remove(&super::DATA_POINTS_NUM).expect("dp");
             // Run the responder using the same magic the client
             // will propose.
             let _outcome = run_handshake_responder(
@@ -389,7 +433,7 @@ mod tests {
                 764824073,
             )
             .await;
-            // Hold the trace handle open briefly so the client
+            // Hold the protocol handles open briefly so the client
             // sees the connection as established.
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         });
