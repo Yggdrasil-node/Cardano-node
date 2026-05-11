@@ -94,7 +94,8 @@ pub use trace_object_forward_handshake::{
     TraceForwardHandshakeMessage, TraceForwardRefuseReason, simple_singleton_versions,
 };
 pub use trace_object_forward_utils::{
-    get_trace_objects_from_reply, init_forward_sink, read_from_sink_status, write_to_sink_status,
+    get_trace_objects_from_reply, init_forward_sink, read_from_sink_non_blocking,
+    read_from_sink_status, write_to_sink, write_to_sink_status,
 };
 pub use trace_object_forward_version::{
     AcceptForwardingVersionData, ForwardingVersion, ForwardingVersionData,

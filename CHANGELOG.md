@@ -351,6 +351,34 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R467 — network: trace-forwarder `write_to_sink` +
+  `read_from_sink_non_blocking` closure.** Closes
+  `write_to_sink_status` (fully) + `read_from_sink_status`
+  (non-blocking variant) in
+  `crates/network/src/protocols/trace_object_forward_utils.rs`.
+  Ports upstream `Trace.Forward.Utils.TraceObject.writeToSink` +
+  `readFromSinkSTM TokNonBlocking` as pure helpers operating on
+  the existing R422 `ForwardSink`:
+  - `write_to_sink(sink, capacity, item) -> usize` — push with
+    bounded-queue semantics: if `queue.len() >= capacity`, drain
+    everything via `overflow_callback` then push the new item.
+    Returns the count of flushed items (0 if no overflow).
+    Mirror of upstream's `isFullTBQueue` → `flushTBQueue` →
+    `writeTBQueue` pattern collapsed into a single mutex
+    critical section.
+  - `read_from_sink_non_blocking(sink, n) -> Vec<TraceObj>` —
+    drain up to `n` items from the front (no block if empty).
+    Mirror of `readFromSinkSTM queue TokNonBlocking n`.
+  Both status descriptors repurposed from deferred to closed.
+  The blocking variant of `readFromSink` (needing
+  `tokio::sync::Notify` wake-on-write + a `TraceObjectForwarder`
+  driver) remains deferred — operationally cardano-node forwarders
+  use the non-blocking variant in a poll loop, which is fully
+  supported. 6 new tests covering: below-capacity push without
+  flush, at-capacity push triggers overflow, drain-up-to-n,
+  drain-with-n-exceeds-queue, drain-empty, full round-trip.
+  Workspace tests: 6,045 → 6,051 (+6). All 5 verification gates
+  clean.
 - **R466 — cardano-tracer `before_program_stops` +
   `sequence_concurrently_` closure.** Closes two remaining
   closable cardano-tracer status descriptors that didn't need
