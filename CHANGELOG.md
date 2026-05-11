@@ -274,6 +274,23 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R451 — workspace Cargo.toml comment cleanup (final post-R447
+  trailing references).** Updates 2 trailing references in
+  `Cargo.toml`'s `[workspace.dependencies]` section that still
+  pointed at the pre-R447 `crates/bech32/` path:
+  - `bech32 = "0.11"` justification comment: "Foundation for
+    `crates/bech32/`" → "Foundation for `crates/tools/bech32/`"
+    + "R447 relocated under `crates/tools/`" annotation.
+  - `bs58 = "0.5"` justification comment: "Used by `crates/bech32/`"
+    → "Used by `crates/tools/bech32/` (R447 relocated)".
+  Post-R451 comprehensive audit (grep across `*.rs` / `*.toml` /
+  `*.yml` / `*.yaml` / `*.sh` / `*.py` excluding `target/`):
+  zero remaining stale `crates/<tool>/` references in production
+  code, workspace config, CI workflows, scripts. The post-R447
+  cleanup is now genuinely complete — every non-historical
+  cross-reference has been retargeted to `crates/tools/<tool>/`.
+  Workspace test count unchanged at 5,962. All 5 verification
+  gates clean + parity-matrix gate clean.
 - **R450 — node-crate doc-comment path cleanup (post-R447
   trailing references).** Updates 4 production rustdoc comments
   in the `node/` crate that still pointed at pre-R447
