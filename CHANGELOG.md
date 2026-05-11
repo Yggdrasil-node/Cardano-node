@@ -351,6 +351,14 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R483 — AGENTS.md refresh for db-analyser + storage post-R475-R482.**
+  Documentation-only round. Refreshes
+  `crates/tools/db-analyser/AGENTS.md` to reflect the R475-R482
+  shipped surface (replaces stale R442 deferral language with a
+  7/13 dispatch-coverage matrix + R475-R482 round roadmap +
+  surviving carve-out inventory). Refreshes
+  `crates/storage/AGENTS.md` with the R482 `iter_after` bullet.
+  No source code or tests touched.
 - **R482 — `ImmutableStore::iter_after` streaming iterator.**
   Single-round bounded follow-on to the R475-R481 arc closeout.
   Adds `fn iter_after<'a>(&'a self, point: &Point) ->

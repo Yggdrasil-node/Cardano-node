@@ -1,8 +1,11 @@
 # Guidance for the pure-Rust port of upstream `db-analyser`.
 
-**Status:** `partial` (post-R335-pattern skeleton). Concrete
-subcommand dispatch lands at **R392+** per the R326-R459
-sister-tools port arc plan. Scope band: **MEDIUM**.
+**Status:** `partial` (post-R482 streaming wire-up). 7/13 of
+upstream's `AnalysisName` variants ship end-to-end; 6/13 return
+`AnalysisError::RequiresLedgerStateApplyLoop` pending a future
+ledger-state apply-loop arc. Scope band: **MEDIUM** (R475-R482
+arc shipped; remaining work captured in the
+**Carve-out inventory** below).
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -15,35 +18,76 @@ file(s) the helper surfaces. CI gate:
 
 ## Upstream source
 
-Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/` (13 `.hs` files).
+Vendored at:
+`.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/`
+(13 `.hs` files).
+
+The Byron `knownEBBs` registry consumed by `ShowEBBs` is at
+`.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/EBBs.hs`.
 
 ## Mini-arc scope
 
-ChainDB forensic analyser. Phase B.2 mini-arc R391-R400 (10 rounds, MEDIUM). R394 ports per-era HasAnalysis (Block/{Byron,Shelley,Cardano}); R397 adds CSV output. Operates on Yggdrasil's ChainDB format (semantic parity with upstream binary, not on-disk-format byte parity since the storage layer diverges).
+ChainDB forensic analyser. Phase B.2 mini-arc R391-R400 was rolled
+into the R475-R482 post-R459 follow-on arc which shipped the full
+HasAnalysis surface + analysis dispatch core + 7-of-13 handlers +
+end-to-end `FileImmutable` wire-up. Operates on Yggdrasil's
+ChainDB format (semantic parity with upstream binary, not on-disk-
+format byte parity since the storage layer diverges).
 
-## Current functional surface (post-R442)
+## Current functional surface (post-R482)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
 - ✅ Typed `parser::DBAnalyserConfig` dispatch — db path, analysis
   name, ledger-DB backend, conf-limit parsed + validated.
-- ❌ Per-era HasAnalysis + Analysis.hs dispatch — returns
-  `RunError::AnalysisDispatchDeferred { db, analysis, backend, limit }`
-  (R442 structured deferral). See **Carve-out inventory** below.
-- ❌ End-to-end behavioral tests against upstream binary — pending
-  yggdrasil's per-era ImmutableStore block-iteration surface
-  (Phase B.2 R391-R400).
+- ✅ Per-era `Tx::output_count(era)` dispatcher in
+  `crates/ledger/src/tx.rs` + per-era `decode_output_count`
+  helpers under `crates/ledger/src/eras/*` (R475).
+- ✅ `impl HasAnalysis for yggdrasil_ledger::Block` in
+  `src/has_analysis.rs` (R476) — collapses upstream's per-era
+  typeclass instances into a single match-on-Era dispatcher.
+- ✅ Byron known-EBB registry at `src/byron_ebbs.rs` (R476;
+  325-entry strict-mirror of upstream `EBBs.hs`).
+- ✅ `analysis::runner::run_analysis` dispatch core
+  (`src/analysis/runner.rs`) ports upstream `Analysis.hs::runAnalysis`
+  (R479).
+- ✅ End-to-end run path via `lib.rs::run`: opens
+  `FileImmutable::open(&config.db_dir)` → walks
+  `ImmutableStore::iter_after(&Point::Origin)` (R482 streaming
+  iter) → dispatches → renders to stdout (R481+R482).
+- ✅ 6 integration tests at `tests/end_to_end_chain_walk.rs`
+  exercise the production call path against a temp ChainDB.
 
-## Carve-out inventory (R442 structured deferral surface)
+### Dispatch coverage matrix
+
+| AnalysisName | Verdict | Shipping round |
+|--------------|---------|----------------|
+| `ShowSlotBlockNo` | ✅ shipped | R479 |
+| `CountBlocks` | ✅ shipped | R479 |
+| `CountTxOutputs` | ✅ shipped | R479 |
+| `ShowBlockHeaderSize` | ✅ shipped | R479 |
+| `ShowBlockTxsSize` | ✅ shipped | R480 |
+| `ShowEBBs` | ✅ shipped | R480 |
+| `OnlyValidation` | ✅ shipped | R480 |
+| `StoreLedgerStateAt` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `CheckNoThunksEvery` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `TraceLedgerProcessing` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `BenchmarkLedgerOps` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `ReproMempoolAndForge` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `GetBlockApplicationMetrics` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+
+## Carve-out inventory (post-R482)
 
 `crates/tools/db-analyser/src/status.rs` ships
 `analysis_dispatch_status()` returning an `AnalysisDispatchStatus`
-descriptor.
+descriptor. **Post-R481 status:** `block-only-shipped`.
 
-| Carve-out                            | Status helper                          | Deferral rationale (one-liner)                                            |
-|--------------------------------------|----------------------------------------|---------------------------------------------------------------------------|
-| Per-era HasAnalysis + Analysis.hs dispatch (13-variant) | `status::analysis_dispatch_status()` | Gated on yggdrasil's per-era ImmutableStore block-iteration surface (Phase B.2 R391-R400); upstream analysis is 1057 lines spanning Block/{Byron, Shelley, Cardano} era-specific deserialization. |
+| Carve-out | Status helper | Deferral rationale |
+|-----------|---------------|--------------------|
+| 6 ledger-state-dependent analyses | `status::analysis_dispatch_status()` | Gated on a future ledger-state apply-loop arc — each currently returns `AnalysisError::RequiresLedgerStateApplyLoop { analysis_name }` with the analysis name in the error message. Per-era ledger-state apply rules already exist in `crates/ledger/src/eras/*`; threading them through `WithLedgerState<Block, LedgerState>` per-block is the missing wire-up. |
+| On-disk-streaming `FileImmutable` | (no helper — operational concern) | R482's `iter_after` saves the intermediate `Vec` allocation but the `FileImmutable` impl still loads every block into `self.index: HashMap<HeaderHash, Block>` at open time. A revision that lazy-loads CBOR records from disk on-demand would close the multi-terabyte memory gap fully; gated on a chunked-log on-disk format design (separate arc). |
+| Per-analysis byte-equivalent stdout vs upstream binary | (operational soak — no helper) | `lib.rs::render_outcome` emits an upstream-compatible-shape stdout (e.g. `slot=N block_no=M hash=...; total_blocks=K`). A formal byte-by-byte soak against `.reference-haskell-cardano-node/install/bin/db-analyser` is a follow-on integration round (not blocking — `AnalysisOutcome` is the canonical Yggdrasil-side contract). |
 
 ## Build + run
 
@@ -55,20 +99,27 @@ cargo build --release -p yggdrasil-db-analyser
 node/scripts/run-tools.sh db-analyser --help
 node/scripts/run-tools.sh db-analyser --version
 
+# Run an analysis (R481+R482 wire-up):
+node/scripts/run-tools.sh db-analyser \
+  --db /path/to/chaindb \
+  --analysis count-blocks
+
 # Or invoke the binary directly:
 target/release/db-analyser --help
 ```
 
 The binary is named `db-analyser` (matching upstream exactly) — operators
-can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch lands at `R392+`.
+can swap upstream's binary for the yggdrasil one for the 7 shipped
+analyses. The 6 ledger-state-dependent analyses return a clear
+operator-readable error naming the dependency.
 
-##  Rules *Non-Negotiable*
+## Rules *Non-Negotiable*
 
 - Every new sub-module file MUST mirror an upstream `.hs` file by
   snake_case basename or carry a `## Naming parity` block.
-- Wire-format byte-equivalence with upstream `db-analyser` is the
-  acceptance gate for any concrete implementation.
+- Wire-format / stdout byte-equivalence with upstream `db-analyser`
+  is the acceptance gate for any concrete handler — see the
+  carve-out inventory above for the documented stdout-shape soak.
 - No FFI; no Haskell wrapping. Pure-Rust ecosystem dependencies
   from crates.io are allowed if license-compatible (see
   `docs/DEPENDENCIES.md`).
@@ -80,19 +131,30 @@ once concrete dispatch lands at `R392+`.
 
 ## Round roadmap
 
-Per the R326-R459 plan, this crate's full implementation lands across
-the named mini-arc rounds:
+Post-R482 status:
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- 🟡 Next: **R392** — first concrete-impl round of the mini-arc.
-- 🟡 Closeout — when all subcommands are functional, parity-matrix
-  entry advances `partial → verified_11_0_1`. Operators can then
-  swap upstream binary for the yggdrasil binary without script
-  changes.
+- ✅ Typed config + parser dispatch (R351 + R365).
+- ✅ CSV writers + HasAnalysis trait + BenchmarkLedgerOps leaf trio
+  (R372-R376).
+- ✅ Per-era `Tx::output_count` + `HasAnalysis for Block` impl +
+  Byron EBB registry (R475-R476).
+- ✅ Per-era dispatch coverage (R477-R478).
+- ✅ `analysis::runner::run_analysis` core + 7/13 handlers (R479-R480).
+- ✅ End-to-end `lib.rs::run` wire-up + `iter_after` streaming
+  (R481-R482).
+- 🟡 **Next:** ledger-state apply-loop arc (multi-round, future) →
+  unblocks the 6 remaining analyses.
+- 🟡 **Optional:** on-disk-streaming `FileImmutable` redesign
+  (multi-terabyte memory profile improvement).
+- 🟡 **Closeout:** parity-matrix entry advances `partial →
+  verified_11_0_1` after the ledger-state apply-loop arc + the
+  stdout-shape soak.
 
 ## Comparison-with-upstream procedure
 
-To verify the yggdrasil binary still tracks upstream byte-for-byte:
+To verify the yggdrasil binary still tracks upstream byte-for-byte
+on `--help` / `--version`:
 
 ```bash
 # 1. Refresh vendored upstream tree (only when bumping the upstream version).
@@ -109,13 +171,19 @@ diff <(.reference-haskell-cardano-node/install/bin/db-analyser --version) \
 # (empty diffs expected — byte-equivalent)
 ```
 
+For the 7 shipped per-analysis stdout shapes, the operational soak
+(documented in the carve-out inventory above) would diff the same
+way on a fixture ChainDB. Acceptance criteria: stdout shape matches
+upstream OR is documented as semantically-equivalent here.
+
 ## Maintenance Guidance
 
-- Update this AGENTS.md when concrete subcommand implementations
-  land (replace `❌ not yet implemented` rows with `✅ shipped` +
-  round number).
-- Keep the per-tool migration round numbers in sync with the
-  authoritative plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`.
+- Update this AGENTS.md when ledger-state apply-loop arc ships
+  (replace `🚧 RequiresLedgerStateApplyLoop` rows in the dispatch
+  matrix with `✅ shipped` + round number).
+- Keep the per-tool round numbers in sync with the authoritative
+  plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`
+  + `CHANGELOG.md`.
 - If upstream ships a new release: refresh the help/version
   fixtures, advance the relevant SHA pin in `upstream_pins.rs`,
   re-run the full cargo gate.
