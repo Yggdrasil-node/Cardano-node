@@ -351,6 +351,22 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R502 — `config.verbose` wire-up through `render_outcome`.**
+  Closes a parsed-but-ignored config field: R351 added
+  `verbose: bool` to `DBAnalyserConfig` + parser, but the R481
+  `render_outcome` had no `verbose` parameter and always emitted
+  full per-block output. R502 wires it through: `lib.rs::run`
+  now calls `render_outcome(&outcome, config.verbose)`. The 9
+  per-block-emitting outcome variants suppress per-block rows
+  when `verbose=false`, emitting only the aggregate/summary
+  line. The 3 aggregate-only variants (`ShowEBBs`,
+  `OnlyValidation`, `StoreLedgerStateAt`) emit unconditionally
+  — no separable per-block half. For `ShowSlotBlockNo` /
+  `ShowBlockTxsSize` (no aggregate by default), non-verbose
+  emits a `<analysis_name> rows=N` synthetic summary. Matches
+  upstream's `--verbose` semantics (controls stdout volume).
+  1 new test: `end_to_end_lib_run_respects_verbose_flag`.
+  Workspace tests: 6,232 → 6,233. All 5 gates clean.
 - **R501 — `Limit::Limit(n)` truncation integration coverage.**
   Tests-only round. R479's `apply_limit` helper is exercised by
   the unit test `run_analysis_respects_conf_limit` (Vec<Block>

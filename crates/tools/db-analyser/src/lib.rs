@@ -90,45 +90,63 @@ pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
         .iter_after(&Point::Origin)
         .map_err(RunError::Storage)?;
     let outcome = analysis::runner::run_analysis(config, blocks).map_err(RunError::Analysis)?;
-    render_outcome(&outcome)?;
+    render_outcome(&outcome, config.verbose)?;
     Ok(())
 }
 
 /// Render an [`analysis::runner::AnalysisOutcome`] to stdout in a
-/// shape compatible with upstream's per-analysis emission. Each
-/// variant prints one line per data point; the cumulative-result
-/// variants (`CountBlocks`, `CountTxOutputs`,
-/// `ShowBlockHeaderSize`) append a trailing summary line.
-fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<()> {
+/// shape compatible with upstream's per-analysis emission.
+///
+/// **R502 verbose mode:** when `verbose=true` (the default;
+/// matches upstream's `--verbose` flag semantic), every per-block
+/// row is emitted. When `verbose=false`, per-block rows are
+/// suppressed and only the aggregate / summary line is emitted —
+/// matches upstream's quiet mode for batch / scripted operator
+/// workflows that only need totals.
+///
+/// Aggregate-only variants (`ShowEBBs`, `OnlyValidation`, etc.)
+/// emit their full content regardless of verbose — they don't
+/// have separable per-block + summary halves.
+fn render_outcome(outcome: &analysis::runner::AnalysisOutcome, verbose: bool) -> eyre::Result<()> {
     use analysis::runner::AnalysisOutcome;
     let mut out = std::io::stdout().lock();
     match outcome {
         AnalysisOutcome::ShowSlotBlockNo { lines } => {
-            for (slot, block_no, hash) in lines {
-                writeln!(
-                    out,
-                    "slot={} block_no={} hash={}",
-                    slot.0,
-                    block_no.0,
-                    hex_render(&hash.0)
-                )?;
+            // ShowSlotBlockNo has no aggregate line; non-verbose
+            // emits a single count summary.
+            if verbose {
+                for (slot, block_no, hash) in lines {
+                    writeln!(
+                        out,
+                        "slot={} block_no={} hash={}",
+                        slot.0,
+                        block_no.0,
+                        hex_render(&hash.0)
+                    )?;
+                }
+            } else {
+                writeln!(out, "show_slot_block_no rows={}", lines.len())?;
             }
         }
         AnalysisOutcome::CountBlocks { total, first, last } => {
-            for (label, position) in [("first", first), ("last", last)] {
-                if let Some((slot, block_no)) = position {
-                    writeln!(out, "{label}: slot={} block_no={}", slot.0, block_no.0)?;
+            if verbose {
+                for (label, position) in [("first", first), ("last", last)] {
+                    if let Some((slot, block_no)) = position {
+                        writeln!(out, "{label}: slot={} block_no={}", slot.0, block_no.0)?;
+                    }
                 }
             }
             writeln!(out, "total_blocks={total}")?;
         }
         AnalysisOutcome::CountTxOutputs { total, per_block } => {
-            for (slot, block_no, cumulative, count) in per_block {
-                writeln!(
-                    out,
-                    "slot={} block_no={} cumulative_tx_outputs={} tx_outputs={}",
-                    slot.0, block_no.0, cumulative, count
-                )?;
+            if verbose {
+                for (slot, block_no, cumulative, count) in per_block {
+                    writeln!(
+                        out,
+                        "slot={} block_no={} cumulative_tx_outputs={} tx_outputs={}",
+                        slot.0, block_no.0, cumulative, count
+                    )?;
+                }
             }
             writeln!(out, "total_tx_outputs={total}")?;
         }
@@ -136,22 +154,28 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
             max_size,
             per_block,
         } => {
-            for (slot, block_no, header_size, block_size) in per_block {
-                writeln!(
-                    out,
-                    "slot={} block_no={} header_size={} block_size={}",
-                    slot.0, block_no.0, header_size, block_size
-                )?;
+            if verbose {
+                for (slot, block_no, header_size, block_size) in per_block {
+                    writeln!(
+                        out,
+                        "slot={} block_no={} header_size={} block_size={}",
+                        slot.0, block_no.0, header_size, block_size
+                    )?;
+                }
             }
             writeln!(out, "max_header_size={max_size}")?;
         }
         AnalysisOutcome::ShowBlockTxsSize { per_block } => {
-            for (slot, tx_count, total_bytes) in per_block {
-                writeln!(
-                    out,
-                    "slot={} tx_count={} total_bytes={}",
-                    slot.0, tx_count, total_bytes
-                )?;
+            if verbose {
+                for (slot, tx_count, total_bytes) in per_block {
+                    writeln!(
+                        out,
+                        "slot={} tx_count={} total_bytes={}",
+                        slot.0, tx_count, total_bytes
+                    )?;
+                }
+            } else {
+                writeln!(out, "show_block_txs_size rows={}", per_block.len())?;
             }
         }
         AnalysisOutcome::ShowEBBs { ebbs } => {
@@ -177,13 +201,16 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
             applied_ok,
             applied_err,
         } => {
-            for (slot, block_no, insert_count, forge_count, insert_ns, forge_ns) in per_block_stats
-            {
-                writeln!(
-                    out,
-                    "slot={} block_no={} mempool_inserts={} forge_pops={} insert_ns={} forge_ns={}",
-                    slot.0, block_no.0, insert_count, forge_count, insert_ns, forge_ns
-                )?;
+            if verbose {
+                for (slot, block_no, insert_count, forge_count, insert_ns, forge_ns) in
+                    per_block_stats
+                {
+                    writeln!(
+                        out,
+                        "slot={} block_no={} mempool_inserts={} forge_pops={} insert_ns={} forge_ns={}",
+                        slot.0, block_no.0, insert_count, forge_count, insert_ns, forge_ns
+                    )?;
+                }
             }
             writeln!(
                 out,
@@ -218,16 +245,18 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
             applied_ok,
             applied_err,
         } => {
-            for row in rows {
-                let mut first = true;
-                for (name, value) in row {
-                    if !first {
-                        write!(out, " ")?;
+            if verbose {
+                for row in rows {
+                    let mut first = true;
+                    for (name, value) in row {
+                        if !first {
+                            write!(out, " ")?;
+                        }
+                        write!(out, "{name}={value}")?;
+                        first = false;
                     }
-                    write!(out, "{name}={value}")?;
-                    first = false;
+                    writeln!(out)?;
                 }
-                writeln!(out)?;
             }
             writeln!(
                 out,
@@ -239,12 +268,14 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
             applied_ok,
             applied_err,
         } => {
-            for dp in slot_data_points {
-                writeln!(
-                    out,
-                    "slot={} slot_gap={} total_time_ns={} block_size={}",
-                    dp.slot.0, dp.slot_gap, dp.total_time, dp.block_byte_size
-                )?;
+            if verbose {
+                for dp in slot_data_points {
+                    writeln!(
+                        out,
+                        "slot={} slot_gap={} total_time_ns={} block_size={}",
+                        dp.slot.0, dp.slot_gap, dp.total_time, dp.block_byte_size
+                    )?;
+                }
             }
             writeln!(
                 out,
@@ -257,18 +288,22 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
             applied_ok,
             applied_err,
         } => {
-            for (i, (slot, block_no, result)) in traces.iter().enumerate() {
-                match result {
-                    Ok(()) => writeln!(out, "slot={} block_no={} apply=ok", slot.0, block_no.0)?,
-                    Err(reason) => writeln!(
-                        out,
-                        "slot={} block_no={} apply=err reason={}",
-                        slot.0, block_no.0, reason
-                    )?,
-                };
-                if let Some(per_block_traces) = emit_traces.get(i) {
-                    for trace in per_block_traces {
-                        writeln!(out, "  trace: {trace}")?;
+            if verbose {
+                for (i, (slot, block_no, result)) in traces.iter().enumerate() {
+                    match result {
+                        Ok(()) => {
+                            writeln!(out, "slot={} block_no={} apply=ok", slot.0, block_no.0)?
+                        }
+                        Err(reason) => writeln!(
+                            out,
+                            "slot={} block_no={} apply=err reason={}",
+                            slot.0, block_no.0, reason
+                        )?,
+                    };
+                    if let Some(per_block_traces) = emit_traces.get(i) {
+                        for trace in per_block_traces {
+                            writeln!(out, "  trace: {trace}")?;
+                        }
                     }
                 }
             }
