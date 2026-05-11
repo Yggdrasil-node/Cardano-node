@@ -736,4 +736,162 @@ mod tests {
         assert_eq!((metrics[2].1)(&with_state).unwrap(), "Babbage");
         assert_eq!((metrics[3].1)(&with_state).unwrap(), "1");
     }
+
+    // ── per-era dispatch coverage: Allegra / Mary / Alonzo (R477) ──────
+
+    fn mk_alonzo_body_cbor() -> Vec<u8> {
+        use yggdrasil_ledger::CborEncode;
+        use yggdrasil_ledger::{AlonzoTxBody, AlonzoTxOut, ShelleyTxIn, Value};
+        let body = AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xBB; 32],
+                index: 0,
+            }],
+            outputs: vec![
+                AlonzoTxOut {
+                    address: vec![0x61; 29],
+                    amount: Value::Coin(5_000_000),
+                    datum_hash: None,
+                },
+                AlonzoTxOut {
+                    address: vec![0x62; 29],
+                    amount: Value::Coin(7_500_000),
+                    datum_hash: Some([0xCC; 32]),
+                },
+                AlonzoTxOut {
+                    address: vec![0x63; 29],
+                    amount: Value::Coin(10_000_000),
+                    datum_hash: None,
+                },
+            ],
+            fee: 1_000,
+            ttl: Some(100),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        };
+        body.to_cbor_bytes()
+    }
+
+    #[test]
+    fn block_count_tx_outputs_allegra_dispatch() {
+        // Allegra reuses ShelleyTxBody — same wire format. The
+        // R475 dispatcher maps Allegra → ShelleyTxBody decoder.
+        let body = mk_shelley_body_cbor();
+        let blk = Block {
+            era: Era::Allegra,
+            header: mk_block_header(208, 0),
+            transactions: vec![
+                mk_empty_tx_with_body(body.clone()),
+                mk_empty_tx_with_body(body),
+            ],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // Two transactions × two outputs each = 4.
+        assert_eq!(blk.count_tx_outputs(), 4);
+    }
+
+    #[test]
+    fn block_count_tx_outputs_mary_dispatch() {
+        // Mary reuses ShelleyTxBody at the wire-format level (Value
+        // changes are encoded inside TxOut but tx-output counting
+        // walks the outer array shape, which is unchanged).
+        let body = mk_shelley_body_cbor();
+        let blk = Block {
+            era: Era::Mary,
+            header: mk_block_header(300, 0),
+            transactions: vec![mk_empty_tx_with_body(body)],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        assert_eq!(blk.count_tx_outputs(), 2);
+    }
+
+    #[test]
+    fn block_count_tx_outputs_alonzo_dispatch() {
+        let body = mk_alonzo_body_cbor();
+        let blk = Block {
+            era: Era::Alonzo,
+            header: mk_block_header(400, 0),
+            transactions: vec![mk_empty_tx_with_body(body)],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // Single Alonzo tx with 3 outputs.
+        assert_eq!(blk.count_tx_outputs(), 3);
+    }
+
+    #[test]
+    fn block_count_tx_outputs_alonzo_multi_tx() {
+        let body = mk_alonzo_body_cbor();
+        let blk = Block {
+            era: Era::Alonzo,
+            header: mk_block_header(401, 0),
+            transactions: vec![
+                mk_empty_tx_with_body(body.clone()),
+                mk_empty_tx_with_body(body.clone()),
+                mk_empty_tx_with_body(body),
+            ],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // 3 txs × 3 outputs = 9.
+        assert_eq!(blk.count_tx_outputs(), 9);
+    }
+
+    #[test]
+    fn block_count_tx_outputs_alonzo_decoder_accepts_shelley_body() {
+        // Alonzo's TxBody wire format is a superset of Shelley's
+        // (same map keys 0..6, plus optional Alonzo-only keys
+        // 7..15). When the era is Alonzo but the body is shaped
+        // like a Shelley body (no Alonzo-extension fields set),
+        // the Alonzo decoder accepts it and the output count is
+        // the Shelley body's output count.
+        //
+        // This is a *property* of the wire format, not a chain-
+        // validity claim — real Alonzo blocks always carry full
+        // Alonzo bodies; this test documents the dispatcher's
+        // backward-compat-by-decoder-design behavior.
+        let shelley_body = mk_shelley_body_cbor();
+        let blk = Block {
+            era: Era::Alonzo,
+            header: mk_block_header(402, 0),
+            transactions: vec![mk_empty_tx_with_body(shelley_body)],
+            raw_cbor: None,
+            header_cbor_size: None,
+        };
+        // Shelley body has 2 outputs; Alonzo decoder reads them.
+        assert_eq!(blk.count_tx_outputs(), 2);
+    }
+
+    #[test]
+    fn block_stats_renders_each_era() {
+        for (era, name) in [
+            (Era::Allegra, "Allegra"),
+            (Era::Mary, "Mary"),
+            (Era::Alonzo, "Alonzo"),
+        ] {
+            let blk = Block {
+                era,
+                header: mk_block_header(1, 1),
+                transactions: vec![],
+                raw_cbor: None,
+                header_cbor_size: None,
+            };
+            let stats = blk.block_stats();
+            assert!(
+                stats[2].contains(name),
+                "era={era:?} expected 'era={name}' got {:?}",
+                stats[2]
+            );
+        }
+    }
 }

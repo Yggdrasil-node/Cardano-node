@@ -351,6 +351,25 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R477 — Allegra / Mary / Alonzo HasAnalysis dispatch coverage.**
+  Third slice of the R475-R481 arc. Strengthens the test surface
+  for R476's `HasAnalysis for Block` impl with concrete dispatch
+  tests covering Allegra (ShelleyTxBody-shaped, multi-tx), Mary
+  (ShelleyTxBody-shaped, multi-output), and Alonzo (real
+  AlonzoTxBody with 3 outputs incl. datum-hash + multi-tx
+  accumulation). Adds the
+  `block_count_tx_outputs_alonzo_decoder_accepts_shelley_body`
+  test documenting an empirical property: Alonzo's TxBody decoder
+  accepts a Shelley-shaped body because Alonzo's wire format
+  (CBOR map keys 0..6 from Shelley + optional 7..15 for Alonzo-
+  only fields) is a Shelley superset. Not a chain-validity claim
+  — real Alonzo blocks always carry full Alonzo bodies — but
+  documents the decoder's superset tolerance for future readers.
+  Plus a per-era `block_stats` rendering test iterating
+  Allegra/Mary/Alonzo. 6 new tests. Workspace tests: 6,119 →
+  6,125. All 5 verification gates clean. See
+  `docs/operational-runs/2026-05-11-round-477-hasanalysis-
+  dispatch-coverage.md`.
 - **R476 — `HasAnalysis for yggdrasil_ledger::Block` impl + Byron EBB
   registry.** Second slice of the R475-R481 arc. Ports the upstream
   `Ouroboros.Consensus.Byron.EBBs::knownEBBs` constant (325 entries:
