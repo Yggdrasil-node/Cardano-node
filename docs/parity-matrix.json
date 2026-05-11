@@ -546,7 +546,7 @@
       "area": "sister-tools",
       "feature": "Standalone trace-forwarder + log + metrics aggregator \u2014 pure-Rust port mirroring upstream cardano-tracer/src/Cardano/Tracer/*.hs.",
       "status": "partial",
-      "next_milestone": "R470",
+      "next_milestone": "R474",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-tracer/",
@@ -556,7 +556,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/cardano-tracer/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R358 typed-config + R366 typed-parser + R371 runtime-state types + R379 Time + R380 SeverityS + Notifications/Types + R381 Notifications/Check + R382 Logs/Journal + R383 Handlers/System + R384 Notifications/Settings + R385+R387 Notifications/Utils + R386 Notifications/Timer + R388 Notifications/Email + R389 Notifications/Send + R390 Logs/Utils + R391 Metrics/Utils + R393 Environment.hs (TracerEnv 14-field record). Notifications subsystem structurally complete; Acceptors/CLI/Run + Metrics servers + log-rotation IO unblocked by R393's TracerEnv; RTView UI carve-out per the plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R358 typed-config + R366 typed-parser + R371 runtime-state types + R379 Time + R380 SeverityS + Notifications/Types + R381 Notifications/Check + R382 Logs/Journal + R383 Handlers/System + R384 Notifications/Settings + R385+R387 Notifications/Utils + R386 Notifications/Timer + R388 Notifications/Email + R389 Notifications/Send + R390 Logs/Utils + R391 Metrics/Utils + R393 Environment.hs (TracerEnv 14-field record) + R411-R430 arc (EKG MetricsStore, trace-forwarder mini-arc, Acceptors leaves, supervisor entry, TLS plan, parity-matrix promotion) + R452-R459 DataPoint sub-protocol acceptor side (Type + Codec + Acceptor + Configuration + Utils + Run + DataPointRequestor STM + per-connection mux integration) + R460-R474 follow-on arc: per-connection mux integration smoke (R460), Logs Rotator IO orchestration (R461-R463), runMetricsServers aggregator (R464), per-connection HandleRegistry deregister hook (R465), supervisor shutdown + write_to_sink + read_from_sink_non_blocking (R466-R467), TLS termination via axum-server-rustls (R468), DataPointRequestors registry plumbing into Acceptors spawn body (R469-R470), DataPoint sub-protocol forwarder side (R471-R473: Protocol/Forwarder + Run/Forwarder + DataPointStore in crates/network), end-to-end DataPoint acceptor+forwarder integration smoke (R474). Operational binary ships full supervisor + trace-forwarder pipe + per-node Prometheus / EKG endpoints + TLS termination. Surviving carve-outs: EKG ReqResp sub-protocol synthesis (Hackage source not vendored), trace-forwarder handshake-over-socket codec (RemoteSocket TCP path), TraceObject CBOR upstream-byte-equivalence (cardano-logging Hackage source not vendored), RTView web UI (permanent \u2014 no Rust analog for ThreePenny GUI)."
         }
       ],
       "implemented_evidence": [
@@ -656,7 +656,7 @@
       "area": "sister-tools",
       "feature": "ChainDB forensic analyser \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBAnalyser.* + app/db-analyser.hs.",
       "status": "partial",
-      "next_milestone": "R491",
+      "next_milestone": "R497",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/",
@@ -666,7 +666,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/db-analyser/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R351 typed config + R372 CSV writers + R373 HasAnalysis trait surface + R374 SlotDataPoint record + R375 Metadata record + R376 FileWriting OutputFormat dispatch + R475-R491 dispatch + handler arc. **Dispatch coverage matrix: 11/13 analyses shipped + 1/13 permanent carve-out (CheckNoThunksEvery \u2014 Haskell-only laziness/thunks) = 12/13 final verdicts.** Only ReproMempoolAndForge remains deferred (needs multi-round mempool+forge integration). R475-R481 shipped the dispatch core + 7 block-iteration-only handlers + FileImmutable end-to-end wire-up; R482 added ImmutableStore::iter_after streaming iterator; R485 carved out CheckNoThunksEvery; R486 enriched per-block event shapes to match upstream; R488 shipped TraceLedgerProcessing via LedgerState::apply_block seam; R489 shipped BenchmarkLedgerOps via Instant timing + SlotDataPoint records; R490 shipped GetBlockApplicationMetrics via R476 column closures + every-N-blocks sampling; R491 shipped StoreLedgerStateAt via the existing R269 LedgerStateCheckpoint CBOR codec."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R351 typed config + R372 CSV writers + R373 HasAnalysis trait surface + R374 SlotDataPoint record + R375 Metadata record + R376 FileWriting OutputFormat dispatch + R475-R497 dispatch + handler + forensic-fidelity arc. **Dispatch coverage matrix: 12/13 analyses shipped + 1/13 permanent carve-out (CheckNoThunksEvery \u2014 Haskell-only laziness/thunks) = 13/13 final verdicts. Zero RequiresLedgerStateApplyLoop deferrals.** R475-R481 shipped the dispatch core + 7 block-iteration-only handlers + FileImmutable end-to-end wire-up; R482 added ImmutableStore::iter_after streaming iterator; R485 carved out CheckNoThunksEvery; R486 enriched per-block event shapes to match upstream; R488 shipped TraceLedgerProcessing via LedgerState::apply_block seam; R489 shipped BenchmarkLedgerOps via Instant timing + SlotDataPoint records; R490 shipped GetBlockApplicationMetrics via R476 column closures + every-N-blocks sampling; R491 shipped StoreLedgerStateAt via the existing R269 LedgerStateCheckpoint CBOR codec; R493 shipped ReproMempoolAndForge via the yggdrasil_consensus::Mempool seam (insert + pop_best round-trip timing). R494-R497 closed the MempoolEntry forensic-fidelity gap (R494: real inputs via Tx::decode_inputs; R495: real fee + ttl via Tx::decode_fee/Tx::decode_ttl; R496: Block::emit_traces real body + TraceLedgerProcessing trace-event wiring; R497: Tx::to_raw_tx_bytes for real wire-form CBOR). **MempoolEntry forensic-fidelity matrix: 8/8 real fields.**"
         }
       ],
       "implemented_evidence": [

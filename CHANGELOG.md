@@ -351,6 +351,21 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R499 — parity-matrix refresh for db-analyser (R497) +
+  cardano-tracer (R474).** Documentation-only round. Updates two
+  `parity-matrix.json` entries to reflect shipped post-R481/post-
+  R459 state:
+  - **db-analyser**: `next_milestone` `R491` → `R497`;
+    `rust_surface[0].role` expanded with R493 ReproMempoolAndForge
+    via yggdrasil_consensus::Mempool seam (closes 13/13 dispatch)
+    + R494-R497 forensic-fidelity sequence (closes 8/8
+    MempoolEntry field fidelity).
+  - **cardano-tracer**: `next_milestone` `R470` → `R474`;
+    `rust_surface[0].role` expanded with R411-R430 arc closure +
+    R452-R459 DataPoint acceptor side + R460-R474 follow-on
+    (TLS, Logs Rotator, runMetricsServers, HandleRegistry hooks,
+    DataPoint forwarder side, end-to-end integration smoke).
+  No source code touched. All gates clean.
 - **R498 — cardano-submit-api AGENTS.md + parity-matrix refresh
   post-R344.** Documentation-only round. Survey of
   `crates/tools/cardano-submit-api/src/` showed the R344 Metrics.hs
