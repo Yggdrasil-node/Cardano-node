@@ -43,11 +43,13 @@
 //! - **`#if RTVIEW saveTraceObjects` arm**: the entire RTView UI
 //!   carve-out per the workspace plan; never ported.
 
+use std::sync::Arc;
+
 use crate::configuration::{LogMode, LoggingParams};
 use crate::logging::TraceObject;
-use crate::types::NodeName;
+use crate::types::{HandleRegistry, NodeName};
 
-use super::file::prepare_lines;
+use super::file::{prepare_lines, write_trace_objects_to_file};
 use super::journal::write_trace_objects_to_journal;
 
 /// Outcome of dispatching one batch of trace objects to a single
@@ -66,12 +68,36 @@ pub enum DispatchOutcome {
         /// Number of trace objects routed.
         count: usize,
     },
-    /// Routed to the file sink. The line-encoded bytes are computed
-    /// (via [`super::file::prepare_lines`]) but the actual write
-    /// operation is **pending R402** — the file orchestration
-    /// depends on `createOrUpdateEmptyLog` which is itself blocked
-    /// on the modifyRegistry_ port. Sites should track this as a
-    /// pending IO commitment.
+    /// Routed to the file sink — bytes successfully appended.
+    /// R462 closure of the previously-deferred file-write IO
+    /// orchestration. The handle was either looked up from the
+    /// shared [`HandleRegistry`] or freshly minted via
+    /// [`super::utils::create_or_update_empty_log`] (and registered)
+    /// before the append.
+    FileWritten {
+        /// The logging-params slice that matched.
+        params: LoggingParams,
+        /// Number of trace objects routed.
+        count: usize,
+        /// Number of bytes appended to the file (including the
+        /// leading newline). Matches the return value of
+        /// [`super::file::write_trace_objects_to_file`].
+        written_bytes: usize,
+    },
+    /// Routed to the file sink, but the file-write failed. The
+    /// caller should log + carry on (matching upstream's
+    /// `showProblemIfAny` swallow-and-continue semantics).
+    FileError {
+        /// The logging-params slice that matched.
+        params: LoggingParams,
+        /// Human-readable error.
+        message: String,
+    },
+    /// Routed to the file sink using the pure line-encoder only —
+    /// no registry was supplied, so the IO orchestration was
+    /// skipped. Used by the registry-less
+    /// [`trace_objects_handler`] entry-point for backward
+    /// compatibility with existing call sites.
     FilePending {
         /// The logging-params slice that matched.
         params: LoggingParams,
@@ -96,6 +122,14 @@ pub enum DispatchOutcome {
 /// Returns one [`DispatchOutcome`] per LoggingParams entry, in
 /// upstream's iteration order. Empty trace-object input returns a
 /// single [`DispatchOutcome::Skipped`].
+///
+/// **Registry-less variant**: this entry point does not have access
+/// to the supervisor's [`HandleRegistry`] and so cannot actually
+/// write file-mode entries to disk — it produces
+/// [`DispatchOutcome::FilePending`] outcomes for them. Production
+/// call sites should use
+/// [`trace_objects_handler_with_registry`] (R462 closure), which
+/// writes + registers handles.
 pub async fn trace_objects_handler(
     node_name: &NodeName,
     logging_params: &[LoggingParams],
@@ -119,8 +153,9 @@ pub async fn trace_objects_handler(
                 });
             }
             LogMode::FileMode => {
-                // R400 wired the line-encoder; the actual write
-                // path defers to R402.
+                // Registry-less: produce the line-encoded bytes for
+                // sites that just want the byte-count without doing
+                // the actual write.
                 let prepared = prepare_lines(params.format, trace_objects);
                 outcomes.push(DispatchOutcome::FilePending {
                     params: params.clone(),
@@ -133,23 +168,104 @@ pub async fn trace_objects_handler(
     outcomes
 }
 
-/// Status descriptor for the deferred `deregisterNodeId` entry.
+/// Production trace-objects dispatcher: routes incoming objects to
+/// the appropriate per-LoggingParams sink, **writing file-mode
+/// entries to disk** by looking up (or minting) handles in the
+/// supervisor's shared [`HandleRegistry`]. Mirror of upstream
+/// `traceObjectsHandler` with the full IO orchestration wired.
+///
+/// R462 closure: the previously-deferred file-write path now ships.
+/// The supervisor's [`HandleRegistry`] is the source of truth for
+/// open log file descriptors — the rotator (R461) inspects the
+/// same registry to roll over full / aged-out files.
+///
+/// Returns one [`DispatchOutcome`] per LoggingParams entry, in
+/// upstream's iteration order. File-mode writes return
+/// [`DispatchOutcome::FileWritten`] on success or
+/// [`DispatchOutcome::FileError`] on a transport failure
+/// (matching upstream's `showProblemIfAny` swallow-and-continue).
+pub async fn trace_objects_handler_with_registry(
+    node_name: &NodeName,
+    logging_params: &[LoggingParams],
+    trace_objects: &[TraceObject],
+    registry: &HandleRegistry,
+    current_log_lock: &Arc<tokio::sync::Mutex<()>>,
+) -> Vec<DispatchOutcome> {
+    if trace_objects.is_empty() {
+        return vec![DispatchOutcome::Skipped];
+    }
+    let mut outcomes = Vec::with_capacity(logging_params.len());
+    for params in logging_params {
+        match params.mode {
+            LogMode::JournalMode => {
+                let _ = write_trace_objects_to_journal(params.format, node_name, trace_objects);
+                outcomes.push(DispatchOutcome::Journal {
+                    params: params.clone(),
+                    count: trace_objects.len(),
+                });
+            }
+            LogMode::FileMode => {
+                match write_trace_objects_to_file(
+                    registry,
+                    params,
+                    node_name,
+                    current_log_lock,
+                    trace_objects,
+                )
+                .await
+                {
+                    Ok(written_bytes) => {
+                        outcomes.push(DispatchOutcome::FileWritten {
+                            params: params.clone(),
+                            count: trace_objects.len(),
+                            written_bytes,
+                        });
+                    }
+                    Err(e) => {
+                        outcomes.push(DispatchOutcome::FileError {
+                            params: params.clone(),
+                            message: e.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    outcomes
+}
+
+/// Status descriptor for `deregisterNodeId`.
+///
+/// R462 partially closed this: registry-stored handles now exist
+/// (so the `Registry::remove` + Arc-drop semantics give equivalent
+/// close-on-drop behavior). The remaining gap is the per-connection
+/// deregistration hook invoked when the trace-forwarder closes —
+/// currently the Acceptors `on_error` finalizer only removes the
+/// NodeId from `ConnectedNodes`; it doesn't remove the
+/// per-LoggingParams HandleRegistry entries. Wiring that hook into
+/// the Acceptors teardown path is a follow-on round.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct DeregisterNodeIdStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary.
     pub status: &'static str,
-    /// Reason — references the missing upstream port.
+    /// Reason — describes the remaining gap.
     pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
+    /// Round-number marker.
     pub deferred_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for `deregisterNodeId`.
+/// Get the status descriptor for `deregisterNodeId`. The registry-
+/// stored handles now exist (R462 closure); the per-connection
+/// deregistration hook into the Acceptors teardown path remains
+/// pending — operationally cardano-tracer leaks one HandleRegistry
+/// entry per disconnected forwarder, which the rotator then keeps
+/// scanning. Bounded leakage (one entry per node per LoggingParams);
+/// not a correctness gap.
 pub fn deregister_node_id_status() -> DeregisterNodeIdStatus {
     DeregisterNodeIdStatus {
-        status: "deferred",
-        depends_on: "Cardano.Tracer.Utils.modifyRegistry_ + System.IO.hClose semantics on registry-stored handles (placeholder at R371); resolves alongside R402's createOrUpdateEmptyLog",
-        deferred_round: "R402",
+        status: "partial — registry-side closed at R462",
+        depends_on: "Acceptors per-connection teardown does not yet invoke registry.remove on the HandleRegistry. Wiring this hook is a follow-on round — operationally cardano-tracer leaks one HandleRegistry entry per disconnected forwarder, bounded by the operator's connected-node count.",
+        deferred_round: "(partial)",
     }
 }
 
@@ -308,15 +424,149 @@ mod tests {
     }
 
     #[test]
-    fn deregister_node_id_status_describes_deferral() {
+    fn deregister_node_id_status_describes_partial_closure() {
         let s = deregister_node_id_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("modifyRegistry_"));
-        assert_eq!(s.deferred_round, "R402");
+        assert!(s.status.contains("partial"));
+        assert!(s.status.contains("R462"));
+        assert!(s.depends_on.contains("Acceptors per-connection teardown"));
+        assert_eq!(s.deferred_round, "(partial)");
     }
 
     #[test]
     fn dispatch_outcome_skipped_equals_skipped() {
         assert_eq!(DispatchOutcome::Skipped, DispatchOutcome::Skipped);
+    }
+
+    // ----- Registry-aware dispatcher tests (R462) -------------------------
+
+    #[tokio::test]
+    async fn handler_with_registry_writes_file_mode_to_disk() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry = HandleRegistry::new();
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        let params = lp(
+            LogMode::FileMode,
+            LogFormat::ForMachine,
+            dir.path().to_str().expect("path"),
+        );
+        let event = sample_event();
+        let outcomes = trace_objects_handler_with_registry(
+            &"node-rt".to_string(),
+            std::slice::from_ref(&params),
+            std::slice::from_ref(&event),
+            &registry,
+            &lock,
+        )
+        .await;
+        assert_eq!(outcomes.len(), 1);
+        let written_bytes = match &outcomes[0] {
+            DispatchOutcome::FileWritten {
+                written_bytes,
+                count,
+                ..
+            } => {
+                assert_eq!(*count, 1);
+                *written_bytes
+            }
+            other => panic!("expected FileWritten, got {other:?}"),
+        };
+        // Registry now has one entry for (node-rt, params).
+        assert_eq!(registry.len(), 1);
+        // The minted log file exists on disk.
+        let node_dir = dir.path().join("node-rt");
+        let mut entries = tokio::fs::read_dir(&node_dir).await.expect("read_dir");
+        let mut found_log = false;
+        while let Some(e) = entries.next_entry().await.expect("next_entry") {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with("node-") && name.ends_with(".json") && !name.contains(".sym") {
+                found_log = true;
+                let metadata = e.metadata().await.expect("metadata");
+                assert_eq!(metadata.len(), written_bytes as u64);
+            }
+        }
+        assert!(found_log, "expected a node-*.json log to exist");
+    }
+
+    #[tokio::test]
+    async fn handler_with_registry_appends_on_second_call() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry = HandleRegistry::new();
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        let params = lp(
+            LogMode::FileMode,
+            LogFormat::ForMachine,
+            dir.path().to_str().expect("path"),
+        );
+        let event = sample_event();
+        // First batch: mints the handle + writes 1 line.
+        let outcomes1 = trace_objects_handler_with_registry(
+            &"node-rt2".to_string(),
+            std::slice::from_ref(&params),
+            std::slice::from_ref(&event),
+            &registry,
+            &lock,
+        )
+        .await;
+        let first_bytes = match outcomes1[0] {
+            DispatchOutcome::FileWritten { written_bytes, .. } => written_bytes,
+            _ => panic!("expected FileWritten"),
+        };
+        // Second batch: reuses the handle + writes 2 more lines.
+        let outcomes2 = trace_objects_handler_with_registry(
+            &"node-rt2".to_string(),
+            std::slice::from_ref(&params),
+            &[sample_event(), sample_event()],
+            &registry,
+            &lock,
+        )
+        .await;
+        let second_bytes = match outcomes2[0] {
+            DispatchOutcome::FileWritten {
+                written_bytes,
+                count,
+                ..
+            } => {
+                assert_eq!(count, 2);
+                written_bytes
+            }
+            _ => panic!("expected FileWritten"),
+        };
+        // Registry still has exactly 1 entry (handle was reused).
+        assert_eq!(registry.len(), 1);
+        // The file's total size is first + second (handle appended,
+        // didn't truncate).
+        let node_dir = dir.path().join("node-rt2");
+        let mut entries = tokio::fs::read_dir(&node_dir).await.expect("read_dir");
+        while let Some(e) = entries.next_entry().await.expect("next_entry") {
+            if e.file_name().to_string_lossy().starts_with("node-")
+                && e.file_name().to_string_lossy().ends_with(".json")
+            {
+                let metadata = e.metadata().await.expect("metadata");
+                assert_eq!(metadata.len() as usize, first_bytes + second_bytes);
+                return;
+            }
+        }
+        panic!("expected node-*.json log");
+    }
+
+    #[tokio::test]
+    async fn handler_with_registry_journal_outcome_unchanged() {
+        let registry = HandleRegistry::new();
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        let outcomes = trace_objects_handler_with_registry(
+            &"node-rt3".to_string(),
+            &[lp(LogMode::JournalMode, LogFormat::ForMachine, "/tmp")],
+            &[sample_event()],
+            &registry,
+            &lock,
+        )
+        .await;
+        match &outcomes[0] {
+            DispatchOutcome::Journal { count, .. } => assert_eq!(*count, 1),
+            other => panic!("expected Journal, got {other:?}"),
+        }
+        // No registry entry for journal mode (only file mode writes
+        // register handles).
+        assert!(registry.is_empty());
     }
 }

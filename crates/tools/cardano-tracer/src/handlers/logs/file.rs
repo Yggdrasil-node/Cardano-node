@@ -79,25 +79,116 @@ pub fn prepare_lines(format: LogFormat, trace_objects: &[TraceObject]) -> Vec<u8
     out.into_bytes()
 }
 
-/// Status descriptor for the deferred `writeTraceObjectsToFile`
-/// orchestration entry-point.
+/// Status descriptor for the (now-closed) `writeTraceObjectsToFile`
+/// orchestration entry-point. Retained for programmatic
+/// introspection — the function returns a struct summarising the
+/// closed state.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct WriteTraceObjectsToFileStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary.
     pub status: &'static str,
-    /// Reason — references the missing dependency.
+    /// Reason — references the round in which the orchestration shipped.
     pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
+    /// Round-number marker.
     pub deferred_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for `writeTraceObjectsToFile`.
+/// Get the status descriptor for `writeTraceObjectsToFile`. R462
+/// closed the previously-deferred IO orchestration; the function
+/// now ships as [`write_trace_objects_to_file`].
 pub fn write_trace_objects_to_file_status() -> WriteTraceObjectsToFileStatus {
     WriteTraceObjectsToFileStatus {
-        status: "deferred",
-        depends_on: "super::utils::log_rotation_status carve-out (createOrUpdateEmptyLog) — itself blocked on Cardano.Tracer.Utils.modifyRegistry_; resolves at R402",
-        deferred_round: "R402",
+        status: "closed at R462",
+        depends_on: "super::utils::create_or_update_empty_log shipped at R390; HandleRegistry handoff between trace_objects_handler and the supervisor's rotator-shared registry shipped at R462",
+        deferred_round: "(closed)",
     }
+}
+
+// ---------------------------------------------------------------------------
+// IO orchestration — R462 closure of writeTraceObjectsToFile
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc;
+
+use crate::configuration::LoggingParams;
+use crate::types::{HandleRegistry, HandleRegistryKey, NodeName};
+
+/// Append the prepared lines for `trace_objects` to the per-node
+/// log file managed by the rotator. Mirror of upstream
+/// `writeTraceObjectsToFile` (cardano-tracer/.../Logs/File.hs).
+///
+/// The lookup-or-mint flow:
+/// 1. Compute `key = (node_name, logging_params)`.
+/// 2. Read the registry. If a handle is registered, append + flush.
+/// 3. If no handle is registered, mint one via
+///    [`super::utils::create_or_update_empty_log`] (which creates
+///    the subdirectory, opens the file, registers the handle, and
+///    swaps the convenience symlink), then append + flush.
+///
+/// The `current_log_lock` is held internally by
+/// `create_or_update_empty_log` when minting; the write itself
+/// acquires the per-handle mutex inside the SharedLogFile.
+///
+/// Returns the number of bytes appended (0 if `trace_objects` is
+/// empty — mirrors upstream's `unless (null itemsToWrite) do ...`
+/// short-circuit).
+pub async fn write_trace_objects_to_file(
+    registry: &HandleRegistry,
+    logging_params: &LoggingParams,
+    node_name: &NodeName,
+    current_log_lock: &Arc<tokio::sync::Mutex<()>>,
+    trace_objects: &[TraceObject],
+) -> Result<usize, super::utils::LogRotationError> {
+    let prepared = prepare_lines(logging_params.format, trace_objects);
+    if prepared.is_empty() {
+        return Ok(0);
+    }
+    let key: HandleRegistryKey = (node_name.clone(), logging_params.clone());
+
+    // Look up an existing handle, or mint one.
+    let handle = match registry.get(&key) {
+        Some((shared, _path)) => shared,
+        None => {
+            // Mint a fresh handle. Subdir: log_root/node_name/.
+            // Use the configured root directly (no canonicalize) so
+            // we don't fail on first-write into a directory that
+            // doesn't exist yet; create_dir_all handles missing
+            // intermediate components.
+            let sub_dir = logging_params.root.join(node_name);
+            tokio::fs::create_dir_all(&sub_dir)
+                .await
+                .map_err(super::utils::LogRotationError::Io)?;
+            let now_ms = crate::time::get_time_ms();
+            super::utils::create_or_update_empty_log(
+                current_log_lock,
+                &key,
+                registry,
+                &sub_dir,
+                now_ms,
+            )
+            .await?;
+            // Re-read the registry to get the freshly-inserted handle.
+            registry.get(&key).map(|(s, _p)| s).ok_or_else(|| {
+                super::utils::LogRotationError::Io(std::io::Error::other(
+                    "write_trace_objects_to_file: registry insert by \
+                         create_or_update_empty_log was silently lost",
+                ))
+            })?
+        }
+    };
+
+    // Append + flush. The write is inside the SharedLogFile's own
+    // mutex to serialize concurrent writes from other dispatcher
+    // calls.
+    use tokio::io::AsyncWriteExt;
+    let mut file = handle.lock().await;
+    file.write_all(&prepared)
+        .await
+        .map_err(super::utils::LogRotationError::Io)?;
+    file.flush()
+        .await
+        .map_err(super::utils::LogRotationError::Io)?;
+    Ok(prepared.len())
 }
 
 #[cfg(test)]
@@ -234,10 +325,55 @@ mod tests {
     }
 
     #[test]
-    fn write_trace_objects_to_file_status_describes_deferral() {
+    fn write_trace_objects_to_file_status_describes_closure() {
         let s = write_trace_objects_to_file_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("createOrUpdateEmptyLog"));
-        assert_eq!(s.deferred_round, "R402");
+        assert_eq!(s.status, "closed at R462");
+        assert!(s.depends_on.contains("create_or_update_empty_log"));
+        assert_eq!(s.deferred_round, "(closed)");
+    }
+
+    // ----- write_trace_objects_to_file IO orchestration tests (R462) -----
+
+    #[tokio::test]
+    async fn write_to_file_short_circuits_on_empty_input() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry = crate::types::HandleRegistry::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let params = LoggingParams {
+            root: dir.path().to_path_buf(),
+            mode: crate::configuration::LogMode::FileMode,
+            format: LogFormat::ForMachine,
+        };
+        let written =
+            write_trace_objects_to_file(&registry, &params, &"node-empty".to_string(), &lock, &[])
+                .await
+                .expect("write empty");
+        assert_eq!(written, 0);
+        // Registry remains empty — no handle minted for an empty batch.
+        assert!(registry.is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_to_file_mints_handle_on_first_call() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let registry = crate::types::HandleRegistry::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let params = LoggingParams {
+            root: dir.path().to_path_buf(),
+            mode: crate::configuration::LogMode::FileMode,
+            format: LogFormat::ForMachine,
+        };
+        let event = sample_with_human();
+        let written = write_trace_objects_to_file(
+            &registry,
+            &params,
+            &"node-mint".to_string(),
+            &lock,
+            std::slice::from_ref(&event),
+        )
+        .await
+        .expect("write mints");
+        assert!(written > 0);
+        assert_eq!(registry.len(), 1);
     }
 }

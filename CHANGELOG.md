@@ -351,6 +351,46 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R462 — cardano-tracer trace-objects file-write IO orchestration
+  + HandleRegistry handoff.** Closes R461's advisor flag that the
+  rotator was operationally inert: `trace_objects_handler` produced
+  `FilePending` outcomes that never wrote to disk + never registered
+  handles in the supervisor's `HandleRegistry`. R462:
+  - Ports upstream `writeTraceObjectsToFile` to
+    `crates/tools/cardano-tracer/src/handlers/logs/file.rs::write_trace_objects_to_file`.
+    Looks up an existing handle in the shared registry; if absent,
+    mints one via `super::utils::create_or_update_empty_log` (which
+    creates the subdirectory, opens the file, registers the handle,
+    and swaps the convenience symlink). Appends the prepared bytes
+    and flushes.
+  - Adds `trace_objects_handler_with_registry` to
+    `handlers/logs/trace_objects.rs` — the registry-aware variant
+    of the dispatcher. Existing `trace_objects_handler` stays for
+    backward compatibility with registry-less call sites (returns
+    `FilePending`). New variants of `DispatchOutcome`:
+    `FileWritten { written_bytes }` for successful writes,
+    `FileError { message }` for transport failures.
+  - Adds `default_lo_handler_factory_with_registry` to `run.rs` —
+    captures the supervisor's shared `(HandleRegistry,
+    current_log_lock)` pair so each invocation of the lo_handler
+    routes through `trace_objects_handler_with_registry`.
+  - Refactors `do_run_cardano_tracer_with_state` to accept an
+    optional shared `(HandleRegistry, current_log_lock)` pair and
+    spawn the rotator (R461 logic moved here). `do_run_cardano_tracer`
+    delegates to it with `None`. `run_cardano_tracer_default`
+    constructs the shared registry/lock first, threads them
+    through both the factory and the supervisor — so the rotator
+    sees the real open handles written to by the lo_handler under
+    load.
+  - Closes `write_trace_objects_to_file_status` (R402-era deferral
+    descriptor). Partial closure on `deregister_node_id_status` —
+    registry-stored handles now exist for `Registry::remove` +
+    Arc-drop semantics, but the per-connection deregistration hook
+    into Acceptors teardown is a follow-on round (bounded leakage,
+    not a correctness gap).
+  Workspace tests: 6,029 → 6,034 (+5: 2 new file-write tests, 3
+  new registry-aware handler tests, 1 existing status-descriptor
+  test now asserts closed state). All 5 verification gates clean.
 - **R461 — cardano-tracer Logs Rotator IO orchestration port.**
   Closes the previously-deferred IO orchestration in
   `crates/tools/cardano-tracer/src/handlers/logs/rotator.rs`. The
