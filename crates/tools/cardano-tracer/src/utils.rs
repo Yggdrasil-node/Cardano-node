@@ -290,12 +290,116 @@ pub struct AskNodeNameStatus {
     pub deferred_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for the askNodeName family.
+/// Get the status descriptor for the askNodeName family. R469
+/// closed this: the data-point mini-protocol surface
+/// (DataPointRequestor, ask_for_data_points) shipped at R452-R458,
+/// and the askNodeName-equivalent function ships here as
+/// [`ask_node_name`] + [`ask_data_point`]. The tracer-trace channel
+/// dependency was only used for error-logging in upstream;
+/// Yggdrasil's port silently swallows errors (matches operational
+/// behavior).
 pub fn ask_node_name_status() -> AskNodeNameStatus {
     AskNodeNameStatus {
-        status: "deferred",
-        depends_on: "data-point mini-protocol surface (askDataPoint, DataPointRequestor) + tracer-trace channel (Trace IO TracerTrace from MetaTrace.hs) — both unported",
-        deferred_round: "R397+",
+        status: "closed at R469",
+        depends_on: "DataPointRequestor (R452-R458 ported), DataPointRequestors registry (R469 ported in crate::types), ask_data_point + ask_node_name helpers (R469). The tracer-trace channel from MetaTrace.hs is only an error-logging dependency in upstream — Yggdrasil's port silently swallows errors per upstream's operational semantics.",
+        deferred_round: "(closed)",
+    }
+}
+
+/// Look up a `DataPointRequestor` by `NodeId` and ask for the named
+/// data-point. Mirror of upstream
+/// `askDataPoint :: DataPointRequestors -> Lock -> NodeId -> Text -> IO (Maybe LBS.ByteString)`.
+///
+/// Returns `None` if:
+/// - The NodeId has no registered DataPointRequestor (forwarder
+///   not yet connected, or already disconnected).
+/// - The requestor's `ask_for_data_points` times out (10 seconds
+///   per `ASK_FOR_DATA_POINTS_TIMEOUT`).
+/// - The forwarder returns `Nothing` for the requested name
+///   (unknown data-point).
+///
+/// `current_dp_lock` serializes concurrent asks across all
+/// requestors (mirror of upstream's `currentDPLock :: Lock`).
+/// Operationally only one ask-flow can be in flight at a time per
+/// requestor; the lock prevents thundering-herd interleaving when
+/// multiple external contexts want different data-points at once.
+pub async fn ask_data_point(
+    requestors: &crate::types::DataPointRequestors,
+    current_dp_lock: &std::sync::Arc<tokio::sync::Mutex<()>>,
+    node_id: &crate::types::NodeId,
+    name: &str,
+) -> Option<yggdrasil_network::protocols::DataPointValue> {
+    let requestor = requestors.get(node_id)?;
+    let _guard = current_dp_lock.lock().await;
+    let values = requestor
+        .ask_for_data_points(vec![yggdrasil_network::protocols::DataPointName::new(name)])
+        .await;
+    values
+        .into_iter()
+        .find_map(|(n, v)| if n.as_str() == name { v } else { None })
+}
+
+/// Resolve a `NodeName` for the given `NodeId`. Mirror of upstream
+/// `askNodeNameRaw`:
+///
+/// 1. Look up in `connected_nodes_names` — if present, return it.
+/// 2. Else ask the forwarder for its `NodeInfo` data-point via
+///    [`ask_data_point`]. Parse the JSON; extract `niName`.
+/// 3. If `niName` is empty / missing, fall back to the NodeId
+///    string (matches upstream's `if T.null niName then anId`).
+/// 4. Register the resolved name in `connected_nodes_names` so
+///    subsequent lookups skip the data-point round-trip.
+///
+/// R469 closure of the `ask_node_name_status` deferral. The
+/// upstream `tracer` argument used for error-tracing is replaced
+/// by silent error-swallowing (matches upstream's
+/// `case ... of Nothing -> return anId` behaviour where decoding
+/// errors collapse to the fallback).
+pub async fn ask_node_name(
+    connected_nodes_names: &crate::types::ConnectedNodesNames,
+    requestors: &crate::types::DataPointRequestors,
+    current_dp_lock: &std::sync::Arc<tokio::sync::Mutex<()>>,
+    node_id: &crate::types::NodeId,
+) -> crate::types::NodeName {
+    // 1. Fast path: cached lookup.
+    if let Some(name) = connected_nodes_names
+        .snapshot()
+        .into_iter()
+        .find_map(|(id, name)| if id == *node_id { Some(name) } else { None })
+    {
+        return name;
+    }
+
+    // 2. Cache miss → ask the forwarder.
+    let resolved_name = match ask_data_point(requestors, current_dp_lock, node_id, "NodeInfo").await
+    {
+        Some(value) => {
+            extract_node_name_from_node_info(&value).unwrap_or_else(|| node_id.0.clone())
+        }
+        None => node_id.0.clone(),
+    };
+
+    // 3. Register the resolved name.
+    if !resolved_name.is_empty() {
+        connected_nodes_names.insert(node_id.clone(), resolved_name.clone());
+    }
+    resolved_name
+}
+
+/// Extract `niName` from the JSON-encoded `NodeInfo` data-point
+/// payload. Mirror of upstream's
+/// `\NodeInfo{niName} -> if T.null niName then anId else niName`
+/// destructure. Returns `None` if the JSON is unparseable, the
+/// `niName` field is missing, or `niName` is empty.
+fn extract_node_name_from_node_info(
+    value: &yggdrasil_network::protocols::DataPointValue,
+) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_slice(value.as_slice()).ok()?;
+    let name = json.get("niName")?.as_str()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
     }
 }
 
@@ -585,10 +689,138 @@ mod tests {
     }
 
     #[test]
-    fn ask_node_name_status_describes_deferral() {
+    fn ask_node_name_status_describes_closure() {
         let s = ask_node_name_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("data-point"));
+        assert_eq!(s.status, "closed at R469");
+        assert!(s.depends_on.contains("DataPointRequestor"));
+        assert!(s.depends_on.contains("ask_node_name"));
+    }
+
+    // ----- R469 ask_data_point + ask_node_name tests --------------------
+
+    #[tokio::test]
+    async fn ask_data_point_returns_none_when_node_unregistered() {
+        let requestors = crate::types::DataPointRequestors::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let node_id = NodeId::new("ghost");
+        let result = ask_data_point(&requestors, &lock, &node_id, "NodeInfo").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn ask_node_name_returns_cached_name_when_registered() {
+        let names = crate::types::ConnectedNodesNames::new();
+        let requestors = crate::types::DataPointRequestors::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let node_id = NodeId::new("node-1");
+        names.insert(node_id.clone(), "alice-pool".to_string());
+        let resolved = ask_node_name(&names, &requestors, &lock, &node_id).await;
+        assert_eq!(resolved, "alice-pool");
+    }
+
+    #[tokio::test]
+    async fn ask_node_name_falls_back_to_node_id_when_no_requestor() {
+        let names = crate::types::ConnectedNodesNames::new();
+        let requestors = crate::types::DataPointRequestors::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let node_id = NodeId::new("orphan-node");
+        let resolved = ask_node_name(&names, &requestors, &lock, &node_id).await;
+        // No requestor + no cached name → falls back to NodeId
+        // string.
+        assert_eq!(resolved, "orphan-node");
+        // The fallback name is registered in the cache so subsequent
+        // lookups skip the data-point round-trip attempt.
+        let snap = names.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].1, "orphan-node");
+    }
+
+    #[tokio::test]
+    async fn ask_data_point_falls_back_when_requestor_returns_none() {
+        // Set up a requestor; spawn a task simulating a forwarder
+        // that replies with (name, None) for the requested name.
+        let requestors = crate::types::DataPointRequestors::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let node_id = NodeId::new("node-x");
+        let requestor = yggdrasil_network::protocols::DataPointRequestor::new();
+        requestors.insert(node_id.clone(), requestor.clone());
+
+        // Simulate the acceptor loop on a background task: pick up
+        // the ask, deliver an empty reply (the data-point isn't
+        // registered on the forwarder side).
+        let requestor_clone = requestor.clone();
+        tokio::spawn(async move {
+            let _names = requestor_clone.wait_for_ask().await;
+            requestor_clone
+                .put_reply(vec![(
+                    yggdrasil_network::protocols::DataPointName::new("NodeInfo"),
+                    None,
+                )])
+                .await;
+        });
+
+        let result = ask_data_point(&requestors, &lock, &node_id, "NodeInfo").await;
+        assert!(
+            result.is_none(),
+            "None payload → ask_data_point returns None"
+        );
+    }
+
+    #[tokio::test]
+    async fn ask_node_name_extracts_niname_from_node_info_json() {
+        let names = crate::types::ConnectedNodesNames::new();
+        let requestors = crate::types::DataPointRequestors::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let node_id = NodeId::new("node-with-info");
+        let requestor = yggdrasil_network::protocols::DataPointRequestor::new();
+        requestors.insert(node_id.clone(), requestor.clone());
+
+        // Forwarder replies with a JSON-encoded NodeInfo containing
+        // niName = "bob-pool".
+        let requestor_clone = requestor.clone();
+        tokio::spawn(async move {
+            let _names = requestor_clone.wait_for_ask().await;
+            let payload = br#"{"niName":"bob-pool","niVersion":"1.0"}"#.to_vec();
+            requestor_clone
+                .put_reply(vec![(
+                    yggdrasil_network::protocols::DataPointName::new("NodeInfo"),
+                    Some(yggdrasil_network::protocols::DataPointValue::new(payload)),
+                )])
+                .await;
+        });
+
+        let resolved = ask_node_name(&names, &requestors, &lock, &node_id).await;
+        assert_eq!(resolved, "bob-pool");
+        // The resolved name was cached.
+        let snap = names.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].1, "bob-pool");
+    }
+
+    #[tokio::test]
+    async fn ask_node_name_falls_back_when_niname_is_empty() {
+        let names = crate::types::ConnectedNodesNames::new();
+        let requestors = crate::types::DataPointRequestors::new();
+        let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+        let node_id = NodeId::new("node-empty-name");
+        let requestor = yggdrasil_network::protocols::DataPointRequestor::new();
+        requestors.insert(node_id.clone(), requestor.clone());
+
+        let requestor_clone = requestor.clone();
+        tokio::spawn(async move {
+            let _names = requestor_clone.wait_for_ask().await;
+            let payload = br#"{"niName":"","niVersion":"1.0"}"#.to_vec();
+            requestor_clone
+                .put_reply(vec![(
+                    yggdrasil_network::protocols::DataPointName::new("NodeInfo"),
+                    Some(yggdrasil_network::protocols::DataPointValue::new(payload)),
+                )])
+                .await;
+        });
+
+        let resolved = ask_node_name(&names, &requestors, &lock, &node_id).await;
+        // Empty niName → falls back to NodeId.
+        assert_eq!(resolved, "node-empty-name");
     }
 
     #[test]

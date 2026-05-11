@@ -351,6 +351,34 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R469 — cardano-tracer DataPointRequestors registry + askNodeName
+  closure.** Closes the `ask_node_name_status` descriptor that had
+  been mis-classified as "deferred — depends on DataPointRequestor"
+  ever since R452-R458 actually shipped the DataPointRequestor.
+  - `crates/tools/cardano-tracer/src/types.rs` adds
+    `pub type DataPointRequestors = Registry<NodeId,
+    DataPointRequestor>` — the cardano-tracer-scoped registry of
+    per-connection data-point requestors keyed by NodeId.
+  - `crates/tools/cardano-tracer/src/utils.rs` adds:
+    - `ask_data_point(requestors, lock, node_id, name) ->
+      Option<DataPointValue>` — looks up the requestor for
+      `node_id`, locks `current_dp_lock`, asks for `name`, returns
+      the value (or `None` on unknown name / timeout / no
+      requestor registered).
+    - `ask_node_name(connected_nodes_names, requestors, lock,
+      node_id) -> NodeName` — mirror of upstream
+      `askNodeNameRaw`. Fast-path cache hit; else ask the
+      forwarder for `NodeInfo` data-point, parse JSON, extract
+      `niName`; falls back to NodeId string if missing/empty;
+      registers the resolved name for subsequent lookups.
+    - `extract_node_name_from_node_info` — private helper for
+      parsing the `niName` field from the JSON-encoded NodeInfo
+      payload.
+  6 new tests covering: empty-registry returns None; cached name
+  short-circuit; fallback to NodeId when no requestor;
+  None-payload from forwarder; real JSON extraction (niName
+  populated); empty niName fallback to NodeId. Workspace tests:
+  6,055 → 6,061 (+6). All 5 verification gates clean.
 - **R468 — cardano-tracer TLS termination via axum-server-rustls.**
   Closes 3 deferred status descriptors:
   `tls_bind_plan_status` + `force_ssl_unsupported_status` (in

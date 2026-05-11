@@ -319,6 +319,18 @@ pub type SharedLogFile = Arc<tokio::sync::Mutex<tokio::fs::File>>;
 /// together require a real handle here.
 pub type HandleRegistry = Registry<HandleRegistryKey, (SharedLogFile, std::path::PathBuf)>;
 
+/// Per-connection registry of `DataPointRequestor` handles, keyed
+/// by `NodeId`. Mirror of upstream
+/// `type DataPointRequestors = TVar (Map NodeId DataPointRequestor)`.
+///
+/// R469: populated by the per-connection acceptor spawn body after
+/// handshake completes; removed by the per-connection teardown.
+/// External callers (e.g. `ask_data_point` /
+/// `ask_node_name`) look up the requestor by NodeId and call
+/// `requestor.ask_for_data_points(names)` to query a connected
+/// node's `NodeInfo` (or any other registered data-point).
+pub type DataPointRequestors = Registry<NodeId, yggdrasil_network::protocols::DataPointRequestor>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
