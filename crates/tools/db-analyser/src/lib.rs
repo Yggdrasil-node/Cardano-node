@@ -123,8 +123,12 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
             writeln!(out, "total_blocks={total}")?;
         }
         AnalysisOutcome::CountTxOutputs { total, per_block } => {
-            for (slot, n) in per_block {
-                writeln!(out, "slot={} tx_outputs={}", slot.0, n)?;
+            for (slot, block_no, cumulative, count) in per_block {
+                writeln!(
+                    out,
+                    "slot={} block_no={} cumulative_tx_outputs={} tx_outputs={}",
+                    slot.0, block_no.0, cumulative, count
+                )?;
             }
             writeln!(out, "total_tx_outputs={total}")?;
         }
@@ -132,8 +136,12 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
             max_size,
             per_block,
         } => {
-            for (slot, size) in per_block {
-                writeln!(out, "slot={} header_size={}", slot.0, size)?;
+            for (slot, block_no, header_size, block_size) in per_block {
+                writeln!(
+                    out,
+                    "slot={} block_no={} header_size={} block_size={}",
+                    slot.0, block_no.0, header_size, block_size
+                )?;
             }
             writeln!(out, "max_header_size={max_size}")?;
         }

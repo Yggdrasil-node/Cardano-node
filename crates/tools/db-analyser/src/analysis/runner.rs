@@ -59,22 +59,32 @@ pub enum AnalysisOutcome {
         last: Option<(SlotNo, BlockNo)>,
     },
     /// `CountTxOutputs` result — cumulative output count + per-block
-    /// `(slot, output_count)` tuples.
+    /// `(slot, block_no, cumulative, count)` tuples matching upstream's
+    /// `CountTxOutputsEvent(blockNo, slot, cumulative, count)` shape
+    /// (R486 byte-equivalence enrichment).
     CountTxOutputs {
         /// Cumulative tx-output count across the chain.
         total: i64,
-        /// Per-block `(slot, output_count)` tuples in chain order.
-        per_block: Vec<(SlotNo, i64)>,
+        /// Per-block `(slot, block_no, cumulative, count)` tuples in
+        /// chain order. The `cumulative` field is the running total
+        /// *after* applying this block; the `count` field is the
+        /// per-block contribution.
+        per_block: Vec<(SlotNo, BlockNo, i64, i64)>,
     },
     /// `ShowBlockHeaderSize` result — max observed header size + per-
-    /// block `(slot, header_size_bytes)` tuples.
+    /// block `(slot, block_no, header_size, block_size)` tuples
+    /// matching upstream's `HeaderSizeEvent(blockNo, slot, headerSize,
+    /// blockSize)` shape (R486 byte-equivalence enrichment).
     ShowBlockHeaderSize {
         /// Maximum header size in bytes observed across the chain.
         /// Width is `u32` for headroom; upstream uses `Word16` which
         /// will narrow at render time.
         max_size: u32,
-        /// Per-block `(slot, header_size_bytes)` tuples.
-        per_block: Vec<(SlotNo, u32)>,
+        /// Per-block `(slot, block_no, header_size, block_size)`
+        /// tuples. `block_size` comes from `Block::raw_cbor.len()`
+        /// when present, else 0 (matches upstream's `GetBlockSize`
+        /// behavior on programmatically-constructed blocks).
+        per_block: Vec<(SlotNo, BlockNo, u32, u32)>,
     },
     /// `ShowBlockTxsSize` result — per-block `(slot, tx_count,
     /// total_tx_size_bytes)` tuples.
@@ -246,9 +256,10 @@ pub fn analysis_count_blocks(blocks: &[Block]) -> AnalysisOutcome {
 }
 
 /// `CountTxOutputs` handler — cumulative output count + per-block
-/// `(slot, output_count)` tuples.
+/// `(slot, block_no, cumulative, count)` tuples matching upstream's
+/// `CountTxOutputsEvent(blockNo, slot, cumulative, count)` shape.
 ///
-/// Mirror of upstream `Analysis.hs` `countTxOutputs` pass which
+/// Mirror of upstream `Analysis.hs::countTxOutputs` pass which
 /// reduces over `HasAnalysis::countTxOutputs`.
 pub fn analysis_count_tx_outputs(blocks: &[Block]) -> AnalysisOutcome {
     let mut total: i64 = 0;
@@ -256,29 +267,39 @@ pub fn analysis_count_tx_outputs(blocks: &[Block]) -> AnalysisOutcome {
     for blk in blocks {
         let n = blk.count_tx_outputs();
         total = total.saturating_add(n);
-        per_block.push((blk.header.slot_no, n));
+        per_block.push((blk.header.slot_no, blk.header.block_no, total, n));
     }
     AnalysisOutcome::CountTxOutputs { total, per_block }
 }
 
 /// `ShowBlockHeaderSize` handler — max observed header size + per-
-/// block `(slot, header_size_bytes)` tuples.
+/// block `(slot, block_no, header_size, block_size)` tuples matching
+/// upstream's `HeaderSizeEvent(blockNo, slot, headerSize, blockSize)`
+/// shape.
 ///
-/// Block header sizes come from `Block::header_cbor_size`, which is
-/// `Some(usize)` when the block was decoded from on-the-wire CBOR.
-/// For programmatically constructed blocks (none in production
-/// chain-walks), the size is zero.
+/// Header sizes come from `Block::header_cbor_size` (`Some(usize)`
+/// when the block was decoded from on-the-wire CBOR). Block sizes
+/// come from `Block::raw_cbor.as_ref().map(|b| b.len())` — also
+/// `Some(_)` when the block carries its original wire bytes.
+/// Programmatically constructed blocks (without raw_cbor / header
+/// size populated) emit 0.
 ///
-/// Mirror of upstream `Analysis.hs` `showBlockHeaderSize` pass.
+/// Mirror of upstream `Analysis.hs::showHeaderSize` pass.
 pub fn analysis_show_block_header_size(blocks: &[Block]) -> AnalysisOutcome {
     let mut max_size: u32 = 0;
     let mut per_block = Vec::with_capacity(blocks.len());
     for blk in blocks {
-        let size = blk.header_cbor_size.unwrap_or(0) as u32;
-        if size > max_size {
-            max_size = size;
+        let header_size = blk.header_cbor_size.unwrap_or(0) as u32;
+        let block_size = blk.raw_cbor.as_ref().map(|b| b.len()).unwrap_or(0) as u32;
+        if header_size > max_size {
+            max_size = header_size;
         }
-        per_block.push((blk.header.slot_no, size));
+        per_block.push((
+            blk.header.slot_no,
+            blk.header.block_no,
+            header_size,
+            block_size,
+        ));
     }
     AnalysisOutcome::ShowBlockHeaderSize {
         max_size,
@@ -471,8 +492,9 @@ mod tests {
             AnalysisOutcome::CountTxOutputs { total, per_block } => {
                 assert_eq!(total, 0);
                 assert_eq!(per_block.len(), 2);
-                assert_eq!(per_block[0], (SlotNo(0), 0));
-                assert_eq!(per_block[1], (SlotNo(20), 0));
+                // (slot, block_no, cumulative, count)
+                assert_eq!(per_block[0], (SlotNo(0), BlockNo(0), 0, 0));
+                assert_eq!(per_block[1], (SlotNo(20), BlockNo(1), 0, 0));
             }
             _ => panic!("wrong outcome variant"),
         }
@@ -508,9 +530,11 @@ mod tests {
             } => {
                 assert_eq!(max_size, 250);
                 assert_eq!(per_block.len(), 3);
-                assert_eq!(per_block[0], (SlotNo(0), 100));
-                assert_eq!(per_block[1], (SlotNo(20), 250));
-                assert_eq!(per_block[2], (SlotNo(40), 180));
+                // (slot, block_no, header_size, block_size).
+                // No raw_cbor populated → block_size = 0.
+                assert_eq!(per_block[0], (SlotNo(0), BlockNo(0), 100, 0));
+                assert_eq!(per_block[1], (SlotNo(20), BlockNo(1), 250, 0));
+                assert_eq!(per_block[2], (SlotNo(40), BlockNo(2), 180, 0));
             }
             _ => panic!("wrong outcome variant"),
         }
@@ -525,7 +549,75 @@ mod tests {
                 per_block,
             } => {
                 assert_eq!(max_size, 0);
-                assert_eq!(per_block, vec![(SlotNo(0), 0)]);
+                // (slot, block_no, header_size, block_size) all zero.
+                assert_eq!(per_block, vec![(SlotNo(0), BlockNo(0), 0u32, 0u32)]);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    // ── R486 per-block event-shape enrichment ──────────────────────────
+
+    #[test]
+    fn analysis_count_tx_outputs_emits_block_no_and_cumulative() {
+        // R486: each per-block row carries (slot, block_no, cumulative,
+        // count). Empty transaction lists give 0 contributions; the
+        // cumulative still increments through the chain (here: 0).
+        let outcome = analysis_count_tx_outputs(&[
+            mk_block(10, 100, None),
+            mk_block(20, 101, None),
+            mk_block(30, 102, None),
+        ]);
+        match outcome {
+            AnalysisOutcome::CountTxOutputs { total, per_block } => {
+                assert_eq!(total, 0);
+                assert_eq!(per_block.len(), 3);
+                assert_eq!(per_block[0], (SlotNo(10), BlockNo(100), 0, 0));
+                assert_eq!(per_block[1], (SlotNo(20), BlockNo(101), 0, 0));
+                assert_eq!(per_block[2], (SlotNo(30), BlockNo(102), 0, 0));
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_show_block_header_size_emits_block_no() {
+        // R486: each per-block row carries (slot, block_no,
+        // header_size, block_size).
+        let outcome = analysis_show_block_header_size(&[
+            mk_block(10, 42, Some(120)),
+            mk_block(20, 43, Some(80)),
+        ]);
+        match outcome {
+            AnalysisOutcome::ShowBlockHeaderSize {
+                max_size,
+                per_block,
+            } => {
+                assert_eq!(max_size, 120);
+                // No raw_cbor populated → block_size = 0.
+                assert_eq!(per_block[0], (SlotNo(10), BlockNo(42), 120, 0));
+                assert_eq!(per_block[1], (SlotNo(20), BlockNo(43), 80, 0));
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_show_block_header_size_emits_block_size_from_raw_cbor() {
+        // R486: when raw_cbor is populated, block_size reflects its
+        // length. mk_block hard-codes raw_cbor: None; build a block
+        // with raw_cbor here to exercise the populated path.
+        use std::sync::Arc;
+        let mut blk = mk_block(50, 200, Some(64));
+        blk.raw_cbor = Some(Arc::from(vec![0u8; 1024].into_boxed_slice()));
+        let outcome = analysis_show_block_header_size(&[blk]);
+        match outcome {
+            AnalysisOutcome::ShowBlockHeaderSize {
+                max_size,
+                per_block,
+            } => {
+                assert_eq!(max_size, 64);
+                assert_eq!(per_block, vec![(SlotNo(50), BlockNo(200), 64u32, 1024u32)]);
             }
             _ => panic!("wrong outcome variant"),
         }

@@ -351,6 +351,24 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R486 — per-block event-shape enrichment for CountTxOutputs +
+  ShowBlockHeaderSize.** Aligns two shipped handlers' per-block
+  output tuples with upstream `Analysis.hs` event shapes.
+  `AnalysisOutcome::CountTxOutputs.per_block` shifts from
+  `(slot, count)` to `(slot, block_no, cumulative, count)` —
+  matches upstream `CountTxOutputsEvent`.
+  `AnalysisOutcome::ShowBlockHeaderSize.per_block` shifts from
+  `(slot, header_size)` to `(slot, block_no, header_size,
+  block_size)` — matches upstream `HeaderSizeEvent`.
+  `block_size` derived from `Block::raw_cbor.as_ref().map(|b|
+  b.len())` (the wire bytes when present, else 0 for
+  programmatically-constructed blocks). `lib.rs::render_outcome`
+  emits the additional fields in per-row stdout output. Aggregate
+  fields (`total`, `max_size`) unchanged. 3 new tests + 3
+  existing tests refactored to the new shape. Workspace tests:
+  6,178 → 6,181. All 5 gates clean. See
+  `docs/operational-runs/2026-05-11-round-486-per-block-event-
+  shape-enrichment.md`.
 - **R485 — `CheckNoThunksEvery` permanent carve-out (Rust has no
   thunks).** Reclassifies the `CheckNoThunksEvery` dispatch arm
   from "deferred pending future ledger-state apply-loop arc" to
