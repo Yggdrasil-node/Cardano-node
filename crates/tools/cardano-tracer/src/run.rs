@@ -474,6 +474,7 @@ pub async fn run_metrics_servers(
     let prometheus_labels = config.prometheus_labels.clone().unwrap_or_default();
     let metrics_no_suffix = config.metrics_no_suffix.unwrap_or(false);
 
+    let tls_certificate = config.tls_certificate.as_ref();
     let prometheus_handle = match config.has_prometheus.clone() {
         Some(endpoint) => Some(
             crate::handlers::metrics::prometheus::run_prometheus_server(
@@ -483,6 +484,7 @@ pub async fn run_metrics_servers(
                 metrics_no_suffix,
                 state.accepted_metrics.clone(),
                 metrics_help,
+                tls_certificate,
             )
             .await
             .map_err(RunCardanoTracerError::MetricsServer)?,
@@ -495,6 +497,7 @@ pub async fn run_metrics_servers(
                 state.connected_nodes_names.clone(),
                 endpoint,
                 state.accepted_metrics.clone(),
+                tls_certificate,
             )
             .await
             .map_err(RunCardanoTracerError::MetricsServer)?,

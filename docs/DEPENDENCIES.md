@@ -119,6 +119,34 @@ sets.
   maud audit fails at R406: hand-rolled inline renderer kept as
   a documented carve-out option.
 
+## Sister-tools port arc — R468 audit (cardano-tracer TLS)
+
+Two new dependencies approved at R468 to close the long-deferred
+`tls_bind_plan_status` + `tls_termination_status` descriptors in
+`crates/tools/cardano-tracer/src/handlers/`.
+
+- **`axum-server` 0.7 (LANDED at R468)**: TLS-terminated HTTP server
+  for cardano-tracer Prometheus + Monitoring endpoints when the
+  operator config has `force_ssl: true`. Final pin:
+  `default-features = false, features = ["tls-rustls"]`. Pulls
+  rustls + tokio-rustls + rustls-pki-types + rustls-webpki. Audited
+  against `deny.toml:90` no-openssl ban via `cargo tree -p
+  yggdrasil-cardano-tracer`: no `openssl`, `openssl-sys`,
+  `native-tls`. License: MIT/Apache-2.0 (dual-licensed). Pure Rust
+  transitive tree.
+
+- **`rustls` 0.23 (LANDED at R468)**: required directly so
+  `cardano-tracer`'s `serve_router_with_tls` can call
+  `rustls::crypto::ring::default_provider().install_default()`
+  (rustls 0.23 requires the application to explicitly choose a
+  crypto provider before `ServerConfig::builder` runs). Final pin:
+  `default-features = false, features = ["ring", "std", "tls12"]`.
+  Picked `ring` over `aws-lc-rs` because the latter pulls
+  `aws-lc-sys` C bindings (against Yggdrasil's no-FFI policy
+  spirit). `ring` is license-clarified in `deny.toml` (MIT AND ISC
+  AND OpenSSL). Pure Rust transitive tree (uses assembly internally
+  for crypto primitives, no external C libraries linked).
+
 ## Review Required
 - Any new cryptography crate.
 - Any dependency that enables native code, assembly, or bundled C libraries.

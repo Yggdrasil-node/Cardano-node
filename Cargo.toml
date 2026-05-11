@@ -122,6 +122,20 @@ maud = "0.27"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 rustls-pemfile = "2"
+# R468 audit: TLS-terminated HTTP server for cardano-tracer Prometheus/
+# Monitoring endpoints when operator config has `force_ssl: true`.
+# Pinned `default-features = false, features = ["tls-rustls"]` to use
+# tokio-rustls (no native-tls); same audit posture as `lettre`
+# (R403). MIT/Apache-2.0 dual-licensed; pure Rust transitive deps.
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls"] }
+# R468 audit: rustls 0.23 requires the application to install a
+# CryptoProvider explicitly before ServerConfig::builder. Yggdrasil
+# picks `ring` (license-clarified in deny.toml — MIT AND ISC AND
+# OpenSSL) over `aws-lc-rs` (which pulls `aws-lc-sys` C bindings,
+# against Yggdrasil's no-FFI policy spirit). Pulled directly here
+# so cardano-tracer's `serve_router_with_tls` can call
+# `rustls::crypto::ring::default_provider().install_default()`.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # R330 — pure-Rust BIP-0173 / Bech32m encoding from rust-bitcoin/rust-bech32.
 # MIT-licensed, zero transitive deps. Foundation for `crates/tools/bech32/`
 # (R331-R334 file-mirror skeleton + functional implementation; R447

@@ -351,6 +351,53 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R468 — cardano-tracer TLS termination via axum-server-rustls.**
+  Closes 3 deferred status descriptors:
+  `tls_bind_plan_status` + `force_ssl_unsupported_status` (in
+  `handlers/http_server.rs`) and `tls_termination_status` (in
+  `handlers/metrics/prometheus.rs`). Operators with valid PEM
+  materials now get real TLS termination on the Prometheus +
+  Monitoring HTTP endpoints when `Endpoint::force_ssl == Some(true)`.
+
+  Dep audit:
+  - `axum-server` 0.7 added to workspace with
+    `default-features = false, features = ["tls-rustls"]`.
+    `cargo tree -p yggdrasil-cardano-tracer` confirms no
+    `openssl`/`openssl-sys`/`native-tls` (per `deny.toml:90`).
+    MIT/Apache-2.0; pure Rust.
+  - `rustls` 0.23 added to workspace with
+    `default-features = false, features = ["ring", "std", "tls12"]`.
+    Required directly so `serve_router_with_tls` can call
+    `rustls::crypto::ring::default_provider().install_default()`
+    (rustls 0.23 mandates an explicit crypto provider). Picked
+    `ring` over `aws-lc-rs` because the latter pulls
+    `aws-lc-sys` C bindings (against Yggdrasil's no-FFI spirit).
+    `ring` is license-clarified in `deny.toml` (MIT AND ISC AND
+    OpenSSL).
+  - `docs/DEPENDENCIES.md` updated with R468 audit section.
+
+  Implementation:
+  - `handlers/http_server.rs::serve_router_with_tls(addr, router,
+    cert_path, key_path, chain_path)` — installs the `ring`
+    CryptoProvider (idempotent), loads cert + optional chain (PEMs
+    concatenated to a tempfile when chain is supplied since
+    axum-server's `RustlsConfig::from_pem_file` takes one PEM),
+    binds via `axum_server::bind_rustls`. New
+    `TlsBindError { Cert, Chain, Rustls }` enum.
+  - `handlers/metrics/prometheus.rs::run_prometheus_server` +
+    `handlers/metrics/monitoring.rs::run_monitoring_server` gain
+    a `tls_certificate: Option<&Certificate>` parameter and route
+    via `serve_router_with_tls` when `endpoint.force_ssl ==
+    Some(true)` and `tls_certificate.is_some()`. Falls back to
+    plain TCP otherwise (matches operator expectation when
+    force_ssl is unset).
+  - `run.rs::run_metrics_servers` (R464) threads
+    `config.tls_certificate.as_ref()` through to both servers.
+
+  4 new tests covering: missing cert file, invalid PEM materials,
+  missing chain file, TlsBindError variant Display distinctness.
+  Workspace tests: 6,051 → 6,055 (+4). All 5 verification gates
+  clean.
 - **R467 — network: trace-forwarder `write_to_sink` +
   `read_from_sink_non_blocking` closure.** Closes
   `write_to_sink_status` (fully) + `read_from_sink_status`

@@ -76,6 +76,7 @@ pub async fn run_monitoring_server(
     connected_nodes_names: ConnectedNodesNames,
     endpoint: Endpoint,
     accepted_metrics: crate::metrics_store::AcceptedMetrics,
+    tls_certificate: Option<&crate::configuration::Certificate>,
 ) -> std::io::Result<tokio::task::JoinHandle<()>> {
     // Stagger to avoid concurrent listening-banner collisions
     // (R409 Prometheus uses 0.1; R410 Monitoring uses 0.2 to keep
@@ -98,7 +99,26 @@ pub async fn run_monitoring_server(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
         })?;
 
-    super::super::http_server::serve_router(bind_addr, app).await
+    if matches!(endpoint.force_ssl, Some(true))
+        && let Some(cert) = tls_certificate
+    {
+        let chain: Option<&std::path::Path> = cert
+            .chain
+            .as_ref()
+            .and_then(|v| v.first())
+            .map(|p| p.as_path());
+        super::super::http_server::serve_router_with_tls(
+            bind_addr,
+            app,
+            &cert.file,
+            &cert.key_file,
+            chain,
+        )
+        .await
+        .map_err(|e| std::io::Error::other(format!("TLS bind: {e}")))
+    } else {
+        super::super::http_server::serve_router(bind_addr, app).await
+    }
 }
 
 async fn handle_root(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -203,7 +223,7 @@ mod tests {
             force_ssl: None,
         };
         let accepted = new_accepted_metrics();
-        let result = run_monitoring_server(names, endpoint, accepted).await;
+        let result = run_monitoring_server(names, endpoint, accepted, None).await;
         assert!(result.is_ok(), "server should bind: {:?}", result.err());
         if let Ok(handle) = result {
             handle.abort();

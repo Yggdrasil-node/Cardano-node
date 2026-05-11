@@ -121,6 +121,7 @@ pub async fn run_prometheus_server(
     metrics_no_suffix: bool,
     accepted_metrics: crate::metrics_store::AcceptedMetrics,
     metrics_help: Vec<(String, String)>,
+    tls_certificate: Option<&crate::configuration::Certificate>,
 ) -> std::io::Result<tokio::task::JoinHandle<()>> {
     // Stagger to avoid concurrent listening-banner collisions.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -146,7 +147,28 @@ pub async fn run_prometheus_server(
             std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
         })?;
 
-    super::super::http_server::serve_router(bind_addr, app).await
+    // R468: route via serve_router_with_tls when force_ssl is set
+    // + a Certificate is supplied; else plain TCP.
+    if matches!(endpoint.force_ssl, Some(true))
+        && let Some(cert) = tls_certificate
+    {
+        let chain: Option<&std::path::Path> = cert
+            .chain
+            .as_ref()
+            .and_then(|v| v.first())
+            .map(|p| p.as_path());
+        super::super::http_server::serve_router_with_tls(
+            bind_addr,
+            app,
+            &cert.file,
+            &cert.key_file,
+            chain,
+        )
+        .await
+        .map_err(|e| std::io::Error::other(format!("TLS bind: {e}")))
+    } else {
+        super::super::http_server::serve_router(bind_addr, app).await
+    }
 }
 
 async fn handle_root(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -265,15 +287,16 @@ pub struct TlsTerminationStatus {
     pub deferred_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for the TLS termination
-/// wiring. R429 tightens the integration recipe — see
-/// [`crate::handlers::http_server::tls_bind_plan_status`] for the
-/// authoritative deferral plan + integration recipe.
+/// Get the closure-status descriptor for the TLS termination wiring.
+/// R468 closed this: `run_prometheus_server` + `run_monitoring_server`
+/// now route through `crate::handlers::http_server::serve_router_with_tls`
+/// when `endpoint.force_ssl == Some(true)` and the operator's
+/// `TracerConfig::tls_certificate` is set.
 pub fn tls_termination_status() -> TlsTerminationStatus {
     TlsTerminationStatus {
-        status: "deferred — R429 documents the integration recipe",
-        depends_on: "axum-server-rustls (or hyper-rustls direct) integration with R408's load_pem_certs / load_pem_key. R429 documents the integration recipe in http_server::tls_bind_plan_status; see also docs/DEPENDENCIES.md for the audit checklist when adding axum-server.",
-        deferred_round: "R429+",
+        status: "closed at R468",
+        depends_on: "serve_router_with_tls in handlers/http_server.rs binds axum router via axum-server's tls-rustls feature using R408's load_pem_certs / load_pem_key + R468's rustls::crypto::ring CryptoProvider install. The metrics-server entry points (run_prometheus_server + run_monitoring_server) take an optional `&Certificate` and route via TLS when endpoint.force_ssl is Some(true).",
+        deferred_round: "(closed)",
     }
 }
 
@@ -340,13 +363,12 @@ mod tests {
     }
 
     #[test]
-    fn tls_termination_status_describes_deferral() {
+    fn tls_termination_status_describes_closure() {
         let s = tls_termination_status();
-        // R429 tightened the status descriptor — check substring
-        // rather than exact match so future round refinements
-        // don't churn the test.
-        assert!(s.status.contains("deferred"));
+        assert_eq!(s.status, "closed at R468");
+        assert!(s.depends_on.contains("serve_router_with_tls"));
         assert!(s.depends_on.contains("rustls"));
+        assert_eq!(s.deferred_round, "(closed)");
     }
 
     #[tokio::test]
@@ -370,6 +392,7 @@ mod tests {
             false,
             accepted,
             Vec::new(),
+            None,
         )
         .await;
         assert!(result.is_ok(), "server should bind: {:?}", result.err());
