@@ -27,6 +27,10 @@ pub mod connection;
 /// (cardano-tracer side of the data-point sub-protocol — sister to
 /// the TraceObjectForward acceptor).
 pub mod data_point_acceptor;
+/// DataPointForward mini-protocol forwarder driver
+/// (cardano-node side — replies to acceptor requests with
+/// `(name, maybe-bytes)` pairs from a per-node DataPointStore).
+pub mod data_point_forwarder;
 /// DataPointForward mini-protocol acceptor runtime aggregator
 /// (cardano-tracer's `acceptDataPoints{Init,Resp}` analog — sister
 /// to the TraceObjectForward run-acceptor).
@@ -163,6 +167,9 @@ pub use mux::{
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use data_point_acceptor::{DataPointAcceptor, DataPointAcceptorError};
+pub use data_point_forwarder::{
+    DataPointForwarder, DataPointForwarderError, DataPointForwarderEvent,
+};
 pub use data_point_run_acceptor::{
     AcceptDataPointsError, SHUTDOWN_TIMEOUT as DATA_POINTS_SHUTDOWN_TIMEOUT,
     accept_data_points_init, accept_data_points_resp,
