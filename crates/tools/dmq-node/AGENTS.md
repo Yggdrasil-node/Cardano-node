@@ -21,17 +21,32 @@ Vendored at: `.reference-haskell-cardano-node/deps/dmq-node/` (51 `.hs` files).
 
 Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase D.1 mini-arc R450-R459 (10 rounds, MEDIUM). R453-R454 port the DMQ wire protocol + mempool queue logic; R455 reuses the local-socket pattern from `crates/network/src/local_state_query_server.rs`; R456 reuses `crates/network` mux for the cardano-node connection.
 
-## Current functional surface (R335-pattern skeleton)
+## Current functional surface (post-R444)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Arg passthrough captured into `parser::Args.passthrough` for
-  later-round typed dispatch.
-- ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. Lands at `R451+`.
+- ✅ Typed `parser::Args` + `configuration::Configuration` dispatch —
+  host/port/local-socket/config-file/topology-file/cardano-socket/
+  network-magic parsed + validated + merged with config-file
+  contents (R369 layered).
+- ❌ Diffusion / NodeKernel / PeerSelection wiring — returns
+  `RunError::DiffusionWiringDeferred { host, local_socket,
+  config_file, topology_file, cardano_socket, cardano_magic,
+  dmq_magic }` (R444 structured deferral). See **Carve-out
+  inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  concrete dispatch.
+  the dmq-node mini-arc (R450-R459).
+
+## Carve-out inventory (R444 structured deferral surface)
+
+`crates/tools/dmq-node/src/status.rs` ships
+`diffusion_wiring_status()` returning a `DiffusionWiringStatus`
+descriptor.
+
+| Carve-out                            | Status helper                          | Deferral rationale (one-liner)                                            |
+|--------------------------------------|----------------------------------------|---------------------------------------------------------------------------|
+| Diffusion / NodeKernel / PeerSelection wiring | `status::diffusion_wiring_status()` | Gated on dmq-node mini-arc (R450-R459 — Tier 4 sister project). Leverages `crates/network/`'s existing surfaces (shipped) but needs the dmq-specific wire protocol + local-socket server. |
 
 ## Build + run
 

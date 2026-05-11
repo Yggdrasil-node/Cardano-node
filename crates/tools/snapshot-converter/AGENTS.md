@@ -21,17 +21,43 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Ledger snapshot format converter (mem ↔ lmdb ↔ lsm). Phase B.3 mini-arc R401-R407 (7 rounds, MEDIUM). Single dense file (~245 lines); R405 covers all 9 (3×3) input/output combinations with golden tests.
 
-## Current functional surface (R335-pattern skeleton)
+## Current functional surface (post-R446)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Arg passthrough captured into `parser::Args.passthrough` for
-  later-round typed dispatch.
-- ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. Lands at `R402+`.
+- ✅ Typed `parser::Config` dispatch — Daemon / Oneshot modes parsed
+  + validated.
+- ✅ R446 `LedgerSnapshotVersion` scaffolding in
+  `crates/storage/src/ledger_db.rs` — version-tag newtype + `MAGIC`
+  + `V1` / `LATEST` constants + `detect_version()` helper +
+  `LedgerStore::latest_snapshot_version()` trait method. Gates the
+  future V1↔V2 migration body.
+- ❌ Concrete conversion dispatch — returns
+  `RunError::ConvertSnapshotDeferred { mode }` (R439 structured
+  deferral; the prior raw `eyre!` stub was replaced at R439). See
+  the **Carve-out inventory** section below for the deferral
+  rationale.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  concrete dispatch.
+  the V2 snapshot format being defined (R446 gates this).
+
+## Carve-out inventory (R439 / R446 structured deferral surface)
+
+The deferred surfaces are surfaced programmatically via
+`crates/tools/snapshot-converter/src/status.rs`. Callers can
+match on `RunError` variants for programmatic dispatch + grep
+`fn .*_status()` across the workspace to enumerate deferrals.
+
+| Carve-out                            | Status helper                                    | Deferral rationale (one-liner)                                            |
+|--------------------------------------|--------------------------------------------------|---------------------------------------------------------------------------|
+| mem↔lsm `convertSnapshot` logic      | `status::convert_snapshot_status()`              | Gated on yggdrasil-format LedgerStore reader/writer (R446 scaffolds the version-tag scheme; V1↔V2 migration body lands when format evolves). |
+| filesystem-watcher daemon            | `status::daemon_watcher_status()`                | Depends on `convert_snapshot` logic itself; Yggdrasil uses the `notify` crate when ready. |
+
+Honest re-scoping vs upstream: the upstream 3×3
+`mem↔lmdb↔lsm` matrix collapses for Yggdrasil (single backend);
+real scope is format-version migration over time. See
+[R446 operational-runs doc](../../../docs/operational-runs/2026-05-11-round-446-snapshot-converter-format-design.md)
+for the design rationale.
 
 ## Build + run
 

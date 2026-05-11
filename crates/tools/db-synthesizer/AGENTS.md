@@ -21,17 +21,28 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `node/src/block_producer.rs` Forging logic.
 
-## Current functional surface (R335-pattern skeleton)
+## Current functional surface (post-R441)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Arg passthrough captured into `parser::Args.passthrough` for
-  later-round typed dispatch.
-- ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. Lands at `R409+`.
+- ✅ Typed `parser::Args` dispatch — forge-limit (slot/block/epoch) +
+  open-mode (create/create-force/append) parsed + validated.
+- ❌ Forge loop — returns `RunError::ForgeLoopDeferred { config,
+  chain_db, limit, mode }` (R441 structured deferral). See **Carve-out
+  inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  concrete dispatch.
+  Phase C authorization checkpoint (cardano-cli MVS in the parallel
+  C-arc must complete first).
+
+## Carve-out inventory (R441 structured deferral surface)
+
+`crates/tools/db-synthesizer/src/status.rs` ships
+`forge_loop_status()` returning a `ForgeLoopStatus` descriptor.
+
+| Carve-out                            | Status helper                       | Deferral rationale (one-liner)                                            |
+|--------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
+| Forge loop + Run.hs supervisor       | `status::forge_loop_status()`       | Gated on Phase C authorization checkpoint (cardano-cli MVS C-arc); once unlocked, leverages `node/src/block_producer.rs` for actual block-construction logic. |
 
 ## Build + run
 

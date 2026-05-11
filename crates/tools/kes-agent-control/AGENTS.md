@@ -21,17 +21,30 @@ Vendored at: `.reference-haskell-cardano-node/deps/kes-agent/kes-agent/` (0 `.hs
 
 Companion CLI for kes-agent. Phase A.4 mini-arc R355-R359 (5 rounds, SMALL). R357 implements gen-staged-key, install-key, export-staged-vkey subcommands; R358 round-trip test against R344-R354 yggdrasil-kes-agent + upstream.
 
-## Current functional surface (R335-pattern skeleton)
+## Current functional surface (post-R440)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Arg passthrough captured into `parser::Args.passthrough` for
-  later-round typed dispatch.
-- ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. Lands at `R356+`.
+- ✅ Typed `parser::ProgramOptions` dispatch — 6 subcommands recognized
+  + env-var-derived defaults merged (R362+R370 pipeline).
+- ❌ Concrete ControlClient socket I/O — returns
+  `RunError::SubcommandSocketIoDeferred { subcommand: status::Subcommand }`
+  (R440 structured deferral). See **Carve-out inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  concrete dispatch.
+  the kes-agent server mini-arc (R344-R354).
+
+## Carve-out inventory (R440 structured deferral surface)
+
+`crates/tools/kes-agent-control/src/status.rs` ships a typed
+`Subcommand` enum (6 verbs: `gen-staged-key`, `export-staged-vkey`,
+`drop-staged-key`, `install-key`, `drop-key`, `info`) +
+`control_client_status()` helper. Callers can match on the
+`Subcommand` for programmatic dispatch.
+
+| Carve-out                            | Status helper                       | Deferral rationale (one-liner)                                            |
+|--------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
+| ControlClient socket I/O             | `status::control_client_status()`   | Gated on kes-agent server mini-arc (R344-R354 — highest-stakes parity: socket protocol must be byte-equivalent or live SPO setups break). KES key lifecycle in `crates/crypto/src/kes/` is already shipped; only the server-side socket protocol is missing. |
 
 ## Build + run
 

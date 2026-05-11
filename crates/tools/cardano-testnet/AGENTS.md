@@ -21,17 +21,29 @@ Vendored at: `.reference-haskell-cardano-node/cardano-testnet/` (82 `.hs` files)
 
 Local multi-node testnet harness. Phase C.2 mini-arc R416-R433 (18 rounds, LARGE). Hedgehog Process/Property carve-out approved at plan time — Rust uses tokio::process + proptest instead. R424 drives CLI-MVS from the parallel C-arc cardano-cli completion. Hard-gated on CLI-MVS (keys/tx/query/genesis/governance) being verified in C-arc.
 
-## Current functional surface (R335-pattern skeleton)
+## Current functional surface (post-R445)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Arg passthrough captured into `parser::Args.passthrough` for
-  later-round typed dispatch.
-- ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. Lands at `R417+`.
+- ✅ Typed `parser::Command` dispatch — 3 subcommands recognized
+  (`cardano`, `create-env`, `version`).
+- ❌ Per-subcommand era-aware dispatch — returns
+  `RunError::SubcommandEraDispatchDeferred { subcommand: status::Subcommand }`
+  (R445 structured deferral). See **Carve-out inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  concrete dispatch.
+  the cardano-testnet mini-arc (R416-R433) + yggdrasil-ledger era
+  surface being exposed at crate boundaries.
+
+## Carve-out inventory (R445 structured deferral surface)
+
+`crates/tools/cardano-testnet/src/status.rs` ships a typed
+`Subcommand` enum (3 verbs: `cardano`, `create-env`, `version`) +
+`era_dispatch_status()` helper.
+
+| Carve-out                            | Status helper                       | Deferral rationale (one-liner)                                            |
+|--------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
+| Per-subcommand era-aware dispatch    | `status::era_dispatch_status()`     | Gated on cardano-testnet mini-arc (R416-R433 — LARGE; 32 upstream `.hs` files; Hedgehog Process/Property modules approved as Rust-idiomatic carve-out using `tokio::process` + `proptest`) AND on yggdrasil-ledger's era surface being exposed at crate boundaries. |
 
 ## Build + run
 

@@ -21,17 +21,29 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 ChainDB forensic analyser. Phase B.2 mini-arc R391-R400 (10 rounds, MEDIUM). R394 ports per-era HasAnalysis (Block/{Byron,Shelley,Cardano}); R397 adds CSV output. Operates on Yggdrasil's ChainDB format (semantic parity with upstream binary, not on-disk-format byte parity since the storage layer diverges).
 
-## Current functional surface (R335-pattern skeleton)
+## Current functional surface (post-R442)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Arg passthrough captured into `parser::Args.passthrough` for
-  later-round typed dispatch.
-- ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. Lands at `R392+`.
+- ✅ Typed `parser::DBAnalyserConfig` dispatch — db path, analysis
+  name, ledger-DB backend, conf-limit parsed + validated.
+- ❌ Per-era HasAnalysis + Analysis.hs dispatch — returns
+  `RunError::AnalysisDispatchDeferred { db, analysis, backend, limit }`
+  (R442 structured deferral). See **Carve-out inventory** below.
 - ❌ End-to-end behavioral tests against upstream binary — pending
-  concrete dispatch.
+  yggdrasil's per-era ImmutableStore block-iteration surface
+  (Phase B.2 R391-R400).
+
+## Carve-out inventory (R442 structured deferral surface)
+
+`crates/tools/db-analyser/src/status.rs` ships
+`analysis_dispatch_status()` returning an `AnalysisDispatchStatus`
+descriptor.
+
+| Carve-out                            | Status helper                          | Deferral rationale (one-liner)                                            |
+|--------------------------------------|----------------------------------------|---------------------------------------------------------------------------|
+| Per-era HasAnalysis + Analysis.hs dispatch (13-variant) | `status::analysis_dispatch_status()` | Gated on yggdrasil's per-era ImmutableStore block-iteration surface (Phase B.2 R391-R400); upstream analysis is 1057 lines spanning Block/{Byron, Shelley, Cardano} era-specific deserialization. |
 
 ## Build + run
 

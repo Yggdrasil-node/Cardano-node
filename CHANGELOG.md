@@ -274,6 +274,35 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R448 — sister-tools AGENTS.md refresh sweep (post-R447
+  documentation cleanup; closes the loop on R439-R445 + R446).**
+  Refreshes 7 sister-tool AGENTS.md files (snapshot-converter,
+  kes-agent-control, db-synthesizer, db-analyser, kes-agent,
+  dmq-node, cardano-testnet) to reflect the structured deferral
+  surfaces shipped at R439-R445 + (for snapshot-converter)
+  R446's `LedgerSnapshotVersion` scaffolding.
+  Each AGENTS.md update is identical in shape:
+  - **"Current functional surface"** section refreshed: the
+    previously-bullet about "returns 'not yet implemented' sentinel"
+    is replaced with a bullet referencing the typed `RunError`
+    variant (e.g. `RunError::ConvertSnapshotDeferred`,
+    `RunError::SubcommandSocketIoDeferred`, `RunError::ForgeLoopDeferred`,
+    etc.) + a forward pointer to the new "Carve-out inventory"
+    section.
+  - **New "Carve-out inventory" section** lists each `*_status()`
+    helper in a table (status helper name + one-line deferral
+    rationale + dependency pointer). Mirrors the cardano-tracer
+    R424-R429 pattern.
+  - Where applicable: typed `Subcommand` enum cli verbs documented
+    inline (kes-agent-control's 6 verbs; cardano-testnet's 3 verbs).
+  Functional impact: zero. Workspace test count unchanged at 5,962.
+  All 5 verification gates clean.
+  R448 completes the R439-R446 documentation loop — every operator-
+  facing deferred surface in the sister-tools workspace is now
+  cross-referenced from its tool's AGENTS.md to the corresponding
+  `status::*` helper. Operators / future contributors can grep
+  `fn .*_status()` workspace-wide + cross-link to the AGENTS.md
+  "Carve-out inventory" tables for the deferral context.
 - **R447 — workspace: sister-tools relocated under `crates/tools/`
   (organizational restructure; zero functional change).** Operator-
   requested cleanup that groups the 13 sister tools (bech32,
