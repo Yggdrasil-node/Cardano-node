@@ -1287,6 +1287,21 @@ impl ConwayTxBody {
         let parsed = Self::decode_cbor(&mut dec)?;
         Ok(parsed.inputs)
     }
+
+    /// Decode the fee from a Conway tx body. R495.
+    pub fn decode_fee(body: &[u8]) -> Result<u64, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let parsed = Self::decode_cbor(&mut dec)?;
+        Ok(parsed.fee)
+    }
+
+    /// Decode the TTL slot from a Conway tx body. R495.
+    /// Optional in CDDL (same as Alonzo/Babbage).
+    pub fn decode_ttl(body: &[u8]) -> Result<Option<u64>, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let parsed = Self::decode_cbor(&mut dec)?;
+        Ok(parsed.ttl)
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -351,6 +351,27 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R495 — `Tx::decode_fee` + `Tx::decode_ttl` forensic-fidelity
+  bump.** Continues R494's per-era decoder pattern: ships
+  `TxBody::decode_fee` and `TxBody::decode_ttl` helpers across
+  `crates/ledger/src/eras/{shelley,alonzo,babbage,conway}.rs` +
+  `Tx::decode_fee(era)`/`Tx::decode_ttl(era)` dispatchers in
+  `crates/ledger/src/tx.rs`. Byron carve-outs: `decode_fee(Byron)`
+  returns 0 (fee computed from input/output diff, not stored);
+  `decode_ttl(Byron)` returns `u64::MAX` (no TTL concept).
+  Alonzo+ optional-ttl: per-era helper returns `Option<u64>`;
+  `Tx::decode_ttl` collapses to `u64` via `.unwrap_or(u64::MAX)`.
+  Updates `analysis_repro_mempool_and_forge` (R493) to populate
+  `MempoolEntry::fee` and `MempoolEntry::ttl` via the new
+  dispatchers — operator gets real fee-priority forge ordering
+  + real TTL eviction. **Forensic-fidelity matrix: 7/8
+  `MempoolEntry` fields now real (was 5/8 at R494, 4/8 at R493).
+  Only `raw_tx` remains a placeholder** — bounded follow-on
+  needing a `Tx::to_raw_tx_bytes` helper for the 3-or-4-element
+  wire-form CBOR array. 9 new tests (8 ledger dispatch + 1
+  runner fee-priority round-trip). Workspace tests: 6,207 → 6,216.
+  All 5 gates clean. See `docs/operational-runs/2026-05-11-
+  round-495-decode-fee-and-ttl-forensic-fidelity.md`.
 - **R494 — `Tx::decode_inputs` + R493 forensic-fidelity bump.**
   Ships per-era `TxBody::decode_inputs(&[u8]) -> Result<Vec<ShelleyTxIn>,
   LedgerError>` helpers under `crates/ledger/src/eras/{shelley,

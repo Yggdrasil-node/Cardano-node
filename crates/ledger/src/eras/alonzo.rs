@@ -554,6 +554,25 @@ impl AlonzoTxBody {
         let parsed = Self::decode_cbor(&mut dec)?;
         Ok(parsed.inputs)
     }
+
+    /// Decode the fee from an Alonzo tx body. R495.
+    pub fn decode_fee(body: &[u8]) -> Result<u64, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let parsed = Self::decode_cbor(&mut dec)?;
+        Ok(parsed.fee)
+    }
+
+    /// Decode the TTL slot from an Alonzo tx body. R495.
+    ///
+    /// Alonzo's `ttl` is optional (CDDL key 3, optional). Returns
+    /// `None` when the body omits ttl (Alonzo introduces
+    /// ValidityIntervalStart for the lower bound; some txs only
+    /// set the lower bound).
+    pub fn decode_ttl(body: &[u8]) -> Result<Option<u64>, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let parsed = Self::decode_cbor(&mut dec)?;
+        Ok(parsed.ttl)
+    }
 }
 
 // ---------------------------------------------------------------------------

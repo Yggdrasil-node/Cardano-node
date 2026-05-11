@@ -415,6 +415,30 @@ impl ShelleyTxBody {
         let parsed = Self::decode_cbor(&mut dec)?;
         Ok(parsed.inputs)
     }
+
+    /// Decode the fee from a Shelley/Allegra/Mary tx body.
+    ///
+    /// Used by db-analyser's `ReproMempoolAndForge` analysis (R495)
+    /// to populate `MempoolEntry::fee` with the real fee for fee-
+    /// priority ordering in the mempool's `BTreeMap<(fee, tx_id),
+    /// ...>` index.
+    pub fn decode_fee(body: &[u8]) -> Result<u64, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let parsed = Self::decode_cbor(&mut dec)?;
+        Ok(parsed.fee)
+    }
+
+    /// Decode the TTL slot from a Shelley/Allegra/Mary tx body.
+    ///
+    /// Used by db-analyser's `ReproMempoolAndForge` analysis (R495)
+    /// to populate `MempoolEntry::ttl`. Shelley/Allegra/Mary have
+    /// a required `ttl: u64` field; the returned value is the raw
+    /// CDDL key-3 integer.
+    pub fn decode_ttl(body: &[u8]) -> Result<u64, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let parsed = Self::decode_cbor(&mut dec)?;
+        Ok(parsed.ttl)
+    }
 }
 
 // ---------------------------------------------------------------------------

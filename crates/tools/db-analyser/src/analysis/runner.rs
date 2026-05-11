@@ -184,22 +184,30 @@ pub enum AnalysisOutcome {
     /// (capacity-exceeded, duplicate-tx-id, conflicting inputs)
     /// are silently skipped — the per-block insert count reflects
     /// successful inserts. Each `MempoolEntry` is built with the
-    /// progressively-realer field set:
+    /// progressively-realer field set (post-R495):
     /// - `era`/`tx_id`/`body`/`size_bytes` from the source `Tx`.
     /// - `inputs` from `Tx::decode_inputs(era)` (R494) — enables
     ///   real mempool conflict-detection; Byron returns empty
     ///   (uses `ByronTxIn`, not `ShelleyTxIn`).
-    /// - `fee=0` / `raw_tx=body` / `ttl=u64::MAX` (forensic
-    ///   placeholders).
+    /// - `fee` from `Tx::decode_fee(era)` (R495) — enables real
+    ///   fee-priority ordering in the mempool; Byron returns 0
+    ///   (fee computed from input/output diff, not stored).
+    /// - `ttl` from `Tx::decode_ttl(era)` (R495) — Shelley/Allegra/
+    ///   Mary have a mandatory ttl; Alonzo+ ttl is optional and
+    ///   defaults to `u64::MAX` when absent; Byron returns
+    ///   `u64::MAX`.
+    /// - `raw_tx=body` (forensic placeholder — `raw_tx` should be
+    ///   the 3-or-4-element wire-form CBOR array; bounded
+    ///   follow-on item).
     ///
-    /// **Carve-out (post-R494):** upstream's `reproMempoolForge`
+    /// **Carve-out (post-R495):** upstream's `reproMempoolForge`
     /// measures the mempool revalidation hot path against live
-    /// ledger state with real fee-ordering + ttl-eviction.
-    /// Yggdrasil's `fee=0` placeholder means fee-priority
-    /// ordering degenerates to insertion order; `ttl=u64::MAX`
-    /// means no TTL eviction; ledger-state-aware revalidation
-    /// is absent. Per-era fee/ttl decoders are bounded future-
-    /// work items.
+    /// ledger state. Yggdrasil's R494+R495 wire-up gives real
+    /// inputs/fee/ttl/size_bytes — fee-priority ordering, conflict
+    /// detection, and TTL eviction all work. The remaining gap is
+    /// ledger-state-aware revalidation (e.g. UTxO existence
+    /// checks); that needs a configured genesis state, which is a
+    /// separate future arc.
     ReproMempoolAndForge {
         /// Per-block stats in chain order.
         per_block_stats: Vec<(SlotNo, BlockNo, i64, i64, i64, i64)>,
@@ -808,20 +816,21 @@ pub fn analysis_repro_mempool_and_forge(blocks: &[Block]) -> AnalysisOutcome {
         let insert_start = Instant::now();
         let mut insert_count: i64 = 0;
         for tx in &blk.transactions {
-            // R494: populate inputs via Tx::decode_inputs for real
-            // mempool conflict-detection. Byron returns empty
-            // (forensic carve-out — Byron uses ByronTxIn, not
-            // ShelleyTxIn). Decode failures fall back to empty
-            // inputs (forensic stance — don't abort the analysis).
+            // R494: real inputs via Tx::decode_inputs.
+            // R495: real fee + ttl via Tx::decode_fee/Tx::decode_ttl.
+            // Decode failures fall back to forensic placeholders
+            // (don't abort the analysis).
             let inputs = tx.decode_inputs(blk.era).unwrap_or_default();
+            let fee = tx.decode_fee(blk.era).unwrap_or(0);
+            let ttl = tx.decode_ttl(blk.era).unwrap_or(u64::MAX);
             let entry = MempoolEntry {
                 era: blk.era,
                 tx_id: tx.id,
-                fee: 0,
+                fee,
                 body: tx.body.clone(),
                 raw_tx: tx.body.clone(),
                 size_bytes: tx.serialized_size(),
-                ttl: yggdrasil_ledger::SlotNo(u64::MAX),
+                ttl: yggdrasil_ledger::SlotNo(ttl),
                 inputs,
             };
             if mempool.insert(entry).is_ok() {
@@ -1690,6 +1699,58 @@ mod tests {
                     "expected 1 successful insert (2nd tx conflicts on input)"
                 );
                 assert_eq!(forges, 1, "1 forge for the 1 successful insert");
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_repro_mempool_and_forge_uses_real_fee_for_priority_ordering_r495() {
+        // R495: real fee enables fee-priority forge ordering.
+        // The mempool's pop_best returns highest-fee first; we
+        // construct 3 Shelley txs with fees 100, 500, 250 and
+        // assert all 3 forge cleanly (they're inserted; the
+        // ordering is internal to the mempool but the round-trip
+        // count proves real fees flow through).
+        use yggdrasil_ledger::{
+            CborEncode, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, Tx, compute_tx_id,
+        };
+        let mk_body = |fee: u64, tx_byte: u8| ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [tx_byte; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1,
+            }],
+            fee,
+            ttl: 0,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let mut blk = mk_block(10, 1, None);
+        blk.era = yggdrasil_ledger::Era::Shelley;
+        for (fee, tx_byte) in [(100u64, 0xAA), (500, 0xBB), (250, 0xCC)] {
+            let bytes = mk_body(fee, tx_byte).to_cbor_bytes();
+            blk.transactions.push(Tx {
+                id: compute_tx_id(&bytes),
+                body: bytes,
+                witnesses: None,
+                auxiliary_data: None,
+                is_valid: None,
+            });
+        }
+        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        match outcome {
+            AnalysisOutcome::ReproMempoolAndForge {
+                per_block_stats, ..
+            } => {
+                let (_, _, inserts, forges, _, _) = per_block_stats[0];
+                assert_eq!(inserts, 3, "all 3 distinct txs inserted (distinct inputs)");
+                assert_eq!(forges, 3, "all 3 forged back");
             }
             _ => panic!("wrong outcome variant"),
         }

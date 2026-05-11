@@ -159,6 +159,58 @@ impl Tx {
             Era::Conway => crate::eras::conway::ConwayTxBody::decode_inputs(&self.body),
         }
     }
+
+    /// Decode the fee field from this transaction's body, dispatching
+    /// on the supplied [`Era`].
+    ///
+    /// Used by db-analyser's `ReproMempoolAndForge` analysis (R495)
+    /// to populate `MempoolEntry::fee` with the real fee for fee-
+    /// priority ordering.
+    ///
+    /// **Byron carve-out:** Byron's fee is *computed* from the
+    /// input/output diff (not stored as a tx-body field). Returns
+    /// `Ok(0)` for Byron.
+    pub fn decode_fee(&self, era: Era) -> Result<u64, LedgerError> {
+        if self.body.is_empty() {
+            return Ok(0);
+        }
+        match era {
+            Era::Byron => Ok(0),
+            Era::Shelley | Era::Allegra | Era::Mary => {
+                crate::eras::shelley::ShelleyTxBody::decode_fee(&self.body)
+            }
+            Era::Alonzo => crate::eras::alonzo::AlonzoTxBody::decode_fee(&self.body),
+            Era::Babbage => crate::eras::babbage::BabbageTxBody::decode_fee(&self.body),
+            Era::Conway => crate::eras::conway::ConwayTxBody::decode_fee(&self.body),
+        }
+    }
+
+    /// Decode the TTL slot from this transaction's body, dispatching
+    /// on the supplied [`Era`].
+    ///
+    /// Used by db-analyser's `ReproMempoolAndForge` analysis (R495)
+    /// to populate `MempoolEntry::ttl`.
+    ///
+    /// Shelley/Allegra/Mary require ttl (CDDL key 3, mandatory).
+    /// Alonzo+ ttl is optional — when absent, returns `u64::MAX`
+    /// (no expiry). Byron has no ttl concept — returns `u64::MAX`.
+    pub fn decode_ttl(&self, era: Era) -> Result<u64, LedgerError> {
+        if self.body.is_empty() {
+            return Ok(u64::MAX);
+        }
+        match era {
+            Era::Byron => Ok(u64::MAX),
+            Era::Shelley | Era::Allegra | Era::Mary => {
+                crate::eras::shelley::ShelleyTxBody::decode_ttl(&self.body)
+            }
+            Era::Alonzo => crate::eras::alonzo::AlonzoTxBody::decode_ttl(&self.body)
+                .map(|opt| opt.unwrap_or(u64::MAX)),
+            Era::Babbage => crate::eras::babbage::BabbageTxBody::decode_ttl(&self.body)
+                .map(|opt| opt.unwrap_or(u64::MAX)),
+            Era::Conway => crate::eras::conway::ConwayTxBody::decode_ttl(&self.body)
+                .map(|opt| opt.unwrap_or(u64::MAX)),
+        }
+    }
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:
@@ -1462,5 +1514,149 @@ mod tests {
         // Other eras propagate the decoder error.
         assert!(tx.decode_inputs(Era::Shelley).is_err());
         assert!(tx.decode_inputs(Era::Conway).is_err());
+    }
+
+    // ── Tx::decode_fee + Tx::decode_ttl per-era dispatch (R495) ────────
+
+    #[test]
+    fn decode_fee_empty_body_returns_zero() {
+        let tx = mk_tx(vec![]);
+        assert_eq!(tx.decode_fee(Era::Shelley).unwrap(), 0);
+        assert_eq!(tx.decode_fee(Era::Byron).unwrap(), 0);
+        assert_eq!(tx.decode_fee(Era::Conway).unwrap(), 0);
+    }
+
+    #[test]
+    fn decode_fee_byron_carve_out_returns_zero() {
+        let tx = mk_tx(vec![0xFF, 0xFF, 0xFF]); // garbage
+        assert_eq!(tx.decode_fee(Era::Byron).unwrap(), 0);
+    }
+
+    #[test]
+    fn decode_fee_shelley_family_dispatch() {
+        use crate::eras::{ShelleyTxIn, ShelleyTxOut};
+        let body = ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xAA; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1,
+            }],
+            fee: 250_000,
+            ttl: 1000,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        assert_eq!(tx.decode_fee(Era::Shelley).unwrap(), 250_000);
+        assert_eq!(tx.decode_fee(Era::Allegra).unwrap(), 250_000);
+        assert_eq!(tx.decode_fee(Era::Mary).unwrap(), 250_000);
+    }
+
+    #[test]
+    fn decode_ttl_empty_body_returns_max() {
+        let tx = mk_tx(vec![]);
+        assert_eq!(tx.decode_ttl(Era::Shelley).unwrap(), u64::MAX);
+        assert_eq!(tx.decode_ttl(Era::Byron).unwrap(), u64::MAX);
+        assert_eq!(tx.decode_ttl(Era::Conway).unwrap(), u64::MAX);
+    }
+
+    #[test]
+    fn decode_ttl_byron_carve_out_returns_max() {
+        let tx = mk_tx(vec![0xFF, 0xFF, 0xFF]); // garbage
+        assert_eq!(tx.decode_ttl(Era::Byron).unwrap(), u64::MAX);
+    }
+
+    #[test]
+    fn decode_ttl_shelley_family_dispatch() {
+        use crate::eras::{ShelleyTxIn, ShelleyTxOut};
+        let body = ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xAA; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1,
+            }],
+            fee: 1,
+            ttl: 12345,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        assert_eq!(tx.decode_ttl(Era::Shelley).unwrap(), 12345);
+        assert_eq!(tx.decode_ttl(Era::Allegra).unwrap(), 12345);
+        assert_eq!(tx.decode_ttl(Era::Mary).unwrap(), 12345);
+    }
+
+    #[test]
+    fn decode_ttl_alonzo_optional_absent_returns_max() {
+        // Alonzo's ttl is optional; absent → u64::MAX.
+        use crate::eras::Value;
+        use crate::eras::{AlonzoTxBody, AlonzoTxOut, ShelleyTxIn};
+        let body = AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xBB; 32],
+                index: 0,
+            }],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 29],
+                amount: Value::Coin(1),
+                datum_hash: None,
+            }],
+            fee: 100,
+            ttl: None, // optional, absent
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        assert_eq!(tx.decode_ttl(Era::Alonzo).unwrap(), u64::MAX);
+        assert_eq!(tx.decode_fee(Era::Alonzo).unwrap(), 100);
+    }
+
+    #[test]
+    fn decode_ttl_alonzo_optional_present_returns_value() {
+        use crate::eras::Value;
+        use crate::eras::{AlonzoTxBody, AlonzoTxOut, ShelleyTxIn};
+        let body = AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0xBB; 32],
+                index: 0,
+            }],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 29],
+                amount: Value::Coin(1),
+                datum_hash: None,
+            }],
+            fee: 100,
+            ttl: Some(7777),
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        assert_eq!(tx.decode_ttl(Era::Alonzo).unwrap(), 7777);
     }
 }
