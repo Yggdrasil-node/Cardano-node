@@ -351,6 +351,22 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R498 — cardano-submit-api AGENTS.md + parity-matrix refresh
+  post-R344.** Documentation-only round. Survey of
+  `crates/tools/cardano-submit-api/src/` showed the R344 Metrics.hs
+  Prometheus surface is fully shipped (282-line `metrics.rs` with
+  13 tests; `web.rs::run_tx_submit_server_from_params` spawns
+  `register_metrics_server` + wraps tracer via
+  `make_metrics_aware_tracer`). AGENTS.md hadn't been refreshed
+  since R343: Status field updated `(post-R343 functional binary;
+  metrics + integration soak + closeout remain)` → `(post-R344
+  functional binary with metrics; integration soak + closeout
+  remain — operator-time gates)`; mini-arc table R344 row
+  `next` → `done`; 2 ❌ rows for `/metrics` endpoint +
+  port-occupied retry flipped to ✅. Parity-matrix `next_milestone`
+  `R354` → `R346` (drops stale typed-parser-sweep round; advances
+  to the actual remaining closeout round). No source code
+  touched. All gates clean.
 - **R497 — `Tx::to_raw_tx_bytes` — last forensic-fidelity gap
   closes. 8/8 MempoolEntry fields real.** New
   `Tx::to_raw_tx_bytes(&self) -> Vec<u8>` constructs the wire-

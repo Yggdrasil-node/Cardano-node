@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `cardano-submit-api`.
 
-**Status:** `partial` (post-R343 functional binary; metrics + integration soak + closeout remain). Scope band: **MEDIUM**.
+**Status:** `partial` (post-R344 functional binary with metrics; integration soak + closeout remain — operator-time gates). Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -25,9 +25,9 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 | R341  | Trace surface complete: TraceSubmitApi::for_machine / as_metrics / namespace_for; Namespace enum with segments / severity / metrics_doc; ALL_NAMESPACES const; MetricUpdate enum; Severity enum | done   |
 | R342  | Web server: HttpRequest/HttpResponse + parse_request + run_settings (raw tokio TCP); web.rs supervisor scaffolding with placeholder 503 | done   |
 | R343  | LocalTxSubmission wiring: async Handler refactor; submit_via_ntc opens ntc_connect per request, drives LocalTxSubmissionClient::submit, maps outcomes to TxCmdError; lib.rs::run() spins tokio runtime + serves the listener | done   |
-| R344  | Metrics.hs Prometheus surface: port-occupied retry (try ports startingPort..startingPort+1000); /metrics endpoint; tx_submit / tx_submit_fail counters incremented from tx_submit_post outcomes | next   |
-| R345  | Integration soak: drop-in replacement vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api; diff response wire output for matching tx-submission requests | scheduled |
-| R346  | Closeout: parity-matrix promotion `partial → verified_11_0_1`; AGENTS.md operational guide finalized; CHANGELOG closeout entry | scheduled |
+| R344  | Metrics.hs Prometheus surface: `metrics.rs` ships `MetricsRegistry` (lock-free `AtomicU64` `tx_submit` + `tx_submit_fail` counters with `register_metrics_server` doing port-occupied retry up to `MAX_PORT_OFFSET=1000` adjacent ports), `web.rs::run_tx_submit_server_from_params` spawns `register_metrics_server` on `params.metrics_port` + wraps the operator tracer via `make_metrics_aware_tracer` so `TraceSubmitApi::ApplicationTxSubmitPostResult` events increment counters. 13 metrics tests pin the path. | done |
+| R345  | Integration soak: drop-in replacement vs upstream binary at .reference-haskell-cardano-node/install/bin/cardano-submit-api; diff response wire output for matching tx-submission requests | scheduled (operator-time) |
+| R346  | Closeout: parity-matrix promotion `partial → verified_11_0_1`; AGENTS.md operational guide finalized; CHANGELOG closeout entry | scheduled (gated on R345) |
 
 ## Current functional surface (post-R343)
 
@@ -50,8 +50,12 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 - ✅ Off-path requests → 404; non-POST on `/api/submit/tx` → 405.
 - ✅ Request size cap 32 KiB (`MAX_REQUEST_BYTES`); chunked
   transfer-encoding rejected with 400; oversized bodies → 413.
-- ❌ `/metrics` Prometheus endpoint — lands at R344.
-- ❌ Port-occupied retry — lands at R344.
+- ✅ `/metrics` Prometheus endpoint (R344) — `register_metrics_server`
+  binds the configured `--metrics-port`, serves `text/plain; charset=utf-8`
+  exposition format with `tx_submit` + `tx_submit_fail` counters.
+- ✅ Port-occupied retry (R344) — tries `starting_port..starting_port+1000`;
+  on exhaustion traces `TraceSubmitApi::MetricsServerPortNotBound`
+  and returns cleanly (mirrors upstream's "disable endpoint" semantic).
 - ❌ TxId in 202 success body — deferred (depends on multi-era CBOR
   decode; tracked in parity-matrix `remaining_work`).
 - ❌ End-to-end soak vs upstream binary — lands at R345.

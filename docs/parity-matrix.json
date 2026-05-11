@@ -427,7 +427,7 @@
       "area": "sister-tools",
       "feature": "HTTP API for transaction submission \u2014 pure-Rust port mirroring upstream cardano-submit-api/src/Cardano/TxSubmit/*.hs.",
       "status": "partial",
-      "next_milestone": "R354",
+      "next_milestone": "R346",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/cardano-submit-api/",
@@ -437,7 +437,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/cardano-submit-api/",
-          "role": "Yggdrasil pure-Rust port \u2014 R327 skeleton; concrete implementation lands across the A.2 sub-arc per the R326\u2013R459 sister-tools port plan."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R339-R343 functional binary (types, util, tracing, cli/types+parsers, rest/types+parsers, web.rs raw-tokio HTTP server, NtC LocalTxSubmission wiring) + R344 Metrics.hs Prometheus surface (MetricsRegistry with AtomicU64 tx_submit/tx_submit_fail counters, register_metrics_server with port-occupied retry up to 1000 adjacent ports, /metrics endpoint, make_metrics_aware_tracer wrapping the operator tracer). Remaining: R345 operator-time integration soak vs upstream binary + R346 closeout (parity-matrix promotion to verified_11_0_1)."
         }
       ],
       "implemented_evidence": [
