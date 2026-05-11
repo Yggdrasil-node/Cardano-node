@@ -23,6 +23,10 @@ pub type BlockFetchInstrumentation =
 pub mod chainsync_client;
 /// Connection manager types and state machine.
 pub mod connection;
+/// DataPointForward mini-protocol acceptor driver
+/// (cardano-tracer side of the data-point sub-protocol — sister to
+/// the TraceObjectForward acceptor).
+pub mod data_point_acceptor;
 /// Handshake negotiation types and state machine.
 pub mod handshake;
 /// KeepAlive client driver — typed, state-machine-correct protocol loop.
@@ -154,6 +158,7 @@ pub use mux::{
 };
 
 // -- Peer re-exports ----------------------------------------------------------
+pub use data_point_acceptor::{DataPointAcceptor, DataPointAcceptorError};
 pub use ledger_peers_provider::{
     ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, LedgerPeerProvider,
     LedgerPeerProviderError, LedgerPeerProviderKind, LedgerPeerProviderRefresh,
