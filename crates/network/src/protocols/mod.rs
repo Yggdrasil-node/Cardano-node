@@ -2,6 +2,10 @@
 mod block_fetch;
 /// ChainSync protocol state machine and messages.
 mod chain_sync;
+/// DataPointForward mini-protocol state machine and messages
+/// (sister to TraceObjectForward — carries node-info data-points
+/// over the same trace-forwarder mux).
+mod data_point_forward;
 /// `ForwardSink` — bounded queue + overflow callback used by the
 /// trace-forwarder forwarder side.
 mod forward_sink;
@@ -38,6 +42,10 @@ mod tx_submission;
 
 pub use block_fetch::{BlockFetchMessage, BlockFetchState, BlockFetchTransitionError, ChainRange};
 pub use chain_sync::{ChainSyncMessage, ChainSyncState, ChainSyncTransitionError};
+pub use data_point_forward::{
+    Agency as DataPointForwardAgency, DataPointForwardMessage, DataPointForwardState,
+    DataPointForwardTransitionError, DataPointName, DataPointValue, DataPointValues,
+};
 pub use forward_sink::{ForwardSink, ForwardSinkOverflowCallback};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
 pub use local_state_query::{
