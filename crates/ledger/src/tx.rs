@@ -124,6 +124,41 @@ impl Tx {
             Era::Conway => crate::eras::conway::ConwayTxBody::decode_output_count(&self.body),
         }
     }
+
+    /// Decode the input list from this transaction's body, dispatching
+    /// on the supplied [`Era`] to the era-specific decoder.
+    ///
+    /// Used by db-analyser's `ReproMempoolAndForge` analysis (R494) to
+    /// populate `MempoolEntry::inputs` with real conflict-detection
+    /// data rather than a forensic placeholder.
+    ///
+    /// **Byron carve-out:** Byron txs use `ByronTxIn` which is a
+    /// distinct type from `ShelleyTxIn` (different field set + ID
+    /// shape). Byron returns `Ok(Vec::new())` — Byron-era inputs
+    /// don't participate in Shelley-family mempool conflict
+    /// detection, which is the only operational use of this
+    /// dispatcher.
+    ///
+    /// Returns `Ok(Vec::new())` for an empty body. Returns
+    /// `Err(LedgerError::CborDecodeError)` if the body bytes don't
+    /// match the era's expected CBOR shape.
+    pub fn decode_inputs(&self, era: Era) -> Result<Vec<crate::eras::ShelleyTxIn>, LedgerError> {
+        if self.body.is_empty() {
+            return Ok(Vec::new());
+        }
+        match era {
+            // Byron uses ByronTxIn (distinct from ShelleyTxIn) — forensic
+            // carve-out: return empty (Byron txs don't participate in
+            // the Shelley-family mempool used by R493 ReproMempoolAndForge).
+            Era::Byron => Ok(Vec::new()),
+            Era::Shelley | Era::Allegra | Era::Mary => {
+                crate::eras::shelley::ShelleyTxBody::decode_inputs(&self.body)
+            }
+            Era::Alonzo => crate::eras::alonzo::AlonzoTxBody::decode_inputs(&self.body),
+            Era::Babbage => crate::eras::babbage::BabbageTxBody::decode_inputs(&self.body),
+            Era::Conway => crate::eras::conway::ConwayTxBody::decode_inputs(&self.body),
+        }
+    }
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:
@@ -1314,5 +1349,118 @@ mod tests {
         let tx = mk_tx(vec![0xFF, 0x00, 0x01]);
         assert!(tx.output_count(Era::Shelley).is_err());
         assert!(tx.output_count(Era::Conway).is_err());
+    }
+
+    // ── Tx::decode_inputs per-era dispatch (R494) ──────────────────────
+
+    #[test]
+    fn decode_inputs_empty_body_returns_empty_vec() {
+        let tx = mk_tx(vec![]);
+        assert!(tx.decode_inputs(Era::Shelley).unwrap().is_empty());
+        assert!(tx.decode_inputs(Era::Byron).unwrap().is_empty());
+        assert!(tx.decode_inputs(Era::Conway).unwrap().is_empty());
+    }
+
+    #[test]
+    fn decode_inputs_byron_carve_out_returns_empty() {
+        // Byron uses ByronTxIn (distinct from ShelleyTxIn). Dispatcher
+        // returns empty Vec for Byron regardless of body content
+        // (forensic carve-out — Byron doesn't participate in
+        // Shelley-family mempool conflict detection).
+        let tx = mk_tx(vec![0xFF, 0xFF, 0xFF]); // garbage
+        let result = tx.decode_inputs(Era::Byron);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn decode_inputs_shelley_family_dispatch() {
+        use crate::eras::{ShelleyTxIn, ShelleyTxOut};
+        let body = ShelleyTxBody {
+            inputs: vec![
+                ShelleyTxIn {
+                    transaction_id: [0xAA; 32],
+                    index: 0,
+                },
+                ShelleyTxIn {
+                    transaction_id: [0xBB; 32],
+                    index: 5,
+                },
+            ],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1,
+            }],
+            fee: 1,
+            ttl: 0,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        // Shelley, Allegra, Mary all route through ShelleyTxBody's decoder.
+        for era in [Era::Shelley, Era::Allegra, Era::Mary] {
+            let inputs = tx.decode_inputs(era).unwrap();
+            assert_eq!(inputs.len(), 2);
+            assert_eq!(inputs[0].transaction_id, [0xAA; 32]);
+            assert_eq!(inputs[0].index, 0);
+            assert_eq!(inputs[1].transaction_id, [0xBB; 32]);
+            assert_eq!(inputs[1].index, 5);
+        }
+    }
+
+    #[test]
+    fn decode_inputs_alonzo_dispatch() {
+        use crate::eras::Value;
+        use crate::eras::{AlonzoTxBody, AlonzoTxOut, ShelleyTxIn};
+        let body = AlonzoTxBody {
+            inputs: vec![
+                ShelleyTxIn {
+                    transaction_id: [0xCC; 32],
+                    index: 1,
+                },
+                ShelleyTxIn {
+                    transaction_id: [0xDD; 32],
+                    index: 2,
+                },
+                ShelleyTxIn {
+                    transaction_id: [0xEE; 32],
+                    index: 3,
+                },
+            ],
+            outputs: vec![AlonzoTxOut {
+                address: vec![0x61; 29],
+                amount: Value::Coin(1),
+                datum_hash: None,
+            }],
+            fee: 1,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        let inputs = tx.decode_inputs(Era::Alonzo).unwrap();
+        assert_eq!(inputs.len(), 3);
+        assert_eq!(inputs[1].transaction_id, [0xDD; 32]);
+        assert_eq!(inputs[2].index, 3);
+    }
+
+    #[test]
+    fn decode_inputs_dispatch_propagates_decode_error() {
+        let tx = mk_tx(vec![0xFF, 0x00, 0x01]);
+        // Byron silently returns empty (forensic carve-out).
+        assert!(tx.decode_inputs(Era::Byron).unwrap().is_empty());
+        // Other eras propagate the decoder error.
+        assert!(tx.decode_inputs(Era::Shelley).is_err());
+        assert!(tx.decode_inputs(Era::Conway).is_err());
     }
 }

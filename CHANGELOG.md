@@ -351,6 +351,25 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R494 — `Tx::decode_inputs` + R493 forensic-fidelity bump.**
+  Ships per-era `TxBody::decode_inputs(&[u8]) -> Result<Vec<ShelleyTxIn>,
+  LedgerError>` helpers under `crates/ledger/src/eras/{shelley,
+  alonzo,babbage,conway}.rs` + `Tx::decode_inputs(&self, era: Era)`
+  dispatcher in `crates/ledger/src/tx.rs`. Mirrors R475's
+  `decode_output_count` pattern. Byron returns empty
+  (forensic carve-out — Byron uses `ByronTxIn`, not
+  `ShelleyTxIn`). Updates `analysis_repro_mempool_and_forge`
+  (R493) to populate `MempoolEntry::inputs` via the new
+  dispatcher — operator gets real mempool conflict-detection
+  rather than the R493 empty placeholder.
+  Forensic-fidelity matrix: 5/8 `MempoolEntry` fields now real
+  (was 4/8 at R493). Bounded follow-ons: `fee` + `ttl` + `raw_tx`
+  per-era decoders. 6 new tests including a planted conflicting-
+  inputs test that constructs 2 Shelley txs sharing an input and
+  confirms the mempool rejects the second (1 insert, not 2).
+  Workspace tests: 6,201 → 6,207. All 5 gates clean. See
+  `docs/operational-runs/2026-05-11-round-494-decode-inputs-
+  forensic-fidelity.md`.
 - **R493 — `ReproMempoolAndForge` handler via yggdrasil-consensus
   Mempool. Closes 13/13 dispatch coverage.** Ships the last
   remaining ledger-state-dependent analysis. Adds

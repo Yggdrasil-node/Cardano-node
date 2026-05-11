@@ -181,22 +181,25 @@ pub enum AnalysisOutcome {
     /// **Forensic semantics:** the mempool starts empty per block
     /// (matches upstream's "reproduce mempool-and-forge cycle"
     /// rather than carrying state across blocks). Insert failures
-    /// (capacity-exceeded, duplicate-tx-id) are silently skipped
-    /// — the per-block insert count reflects successful inserts.
-    /// Each `MempoolEntry` is built with the simplified field set:
-    /// `era`/`tx_id`/`body`/`size_bytes` from the source `Tx`,
-    /// `fee=0`/`raw_tx=body`/`ttl=u64::MAX`/`inputs=Vec::new()`
-    /// (no conflict detection — operator forensic stance).
+    /// (capacity-exceeded, duplicate-tx-id, conflicting inputs)
+    /// are silently skipped — the per-block insert count reflects
+    /// successful inserts. Each `MempoolEntry` is built with the
+    /// progressively-realer field set:
+    /// - `era`/`tx_id`/`body`/`size_bytes` from the source `Tx`.
+    /// - `inputs` from `Tx::decode_inputs(era)` (R494) — enables
+    ///   real mempool conflict-detection; Byron returns empty
+    ///   (uses `ByronTxIn`, not `ShelleyTxIn`).
+    /// - `fee=0` / `raw_tx=body` / `ttl=u64::MAX` (forensic
+    ///   placeholders).
     ///
-    /// **Carve-out (R493):** upstream's `reproMempoolForge`
+    /// **Carve-out (post-R494):** upstream's `reproMempoolForge`
     /// measures the mempool revalidation hot path against live
-    /// ledger state with real fee-ordering + ttl. Yggdrasil's
-    /// simplified `MempoolEntry` construction means fee-ordering
-    /// degenerates to insertion order and there's no real ledger-
-    /// state-aware revalidation. The dispatch shape is wired and
-    /// times the mempool insert + pop hot path; richer fidelity
-    /// (decode fees from tx body, derive ttl, derive inputs)
-    /// awaits a future arc.
+    /// ledger state with real fee-ordering + ttl-eviction.
+    /// Yggdrasil's `fee=0` placeholder means fee-priority
+    /// ordering degenerates to insertion order; `ttl=u64::MAX`
+    /// means no TTL eviction; ledger-state-aware revalidation
+    /// is absent. Per-era fee/ttl decoders are bounded future-
+    /// work items.
     ReproMempoolAndForge {
         /// Per-block stats in chain order.
         per_block_stats: Vec<(SlotNo, BlockNo, i64, i64, i64, i64)>,
@@ -805,6 +808,12 @@ pub fn analysis_repro_mempool_and_forge(blocks: &[Block]) -> AnalysisOutcome {
         let insert_start = Instant::now();
         let mut insert_count: i64 = 0;
         for tx in &blk.transactions {
+            // R494: populate inputs via Tx::decode_inputs for real
+            // mempool conflict-detection. Byron returns empty
+            // (forensic carve-out — Byron uses ByronTxIn, not
+            // ShelleyTxIn). Decode failures fall back to empty
+            // inputs (forensic stance — don't abort the analysis).
+            let inputs = tx.decode_inputs(blk.era).unwrap_or_default();
             let entry = MempoolEntry {
                 era: blk.era,
                 tx_id: tx.id,
@@ -813,7 +822,7 @@ pub fn analysis_repro_mempool_and_forge(blocks: &[Block]) -> AnalysisOutcome {
                 raw_tx: tx.body.clone(),
                 size_bytes: tx.serialized_size(),
                 ttl: yggdrasil_ledger::SlotNo(u64::MAX),
-                inputs: Vec::new(),
+                inputs,
             };
             if mempool.insert(entry).is_ok() {
                 insert_count += 1;
@@ -1615,6 +1624,72 @@ mod tests {
             } => {
                 let (_, _, inserts, _, _, _) = per_block_stats[0];
                 assert_eq!(inserts, 1, "duplicate tx_id second insert is skipped");
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_repro_mempool_and_forge_rejects_conflicting_inputs_r494() {
+        // R494: real input decoding enables mempool conflict
+        // detection. Construct 2 Shelley txs sharing an input
+        // (TxId,index)=(0xAA..,0); the mempool's
+        // remove_conflicting_inputs logic rejects the second.
+        use yggdrasil_ledger::{
+            CborEncode, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, Tx, compute_tx_id,
+        };
+        let shared_in = ShelleyTxIn {
+            transaction_id: [0xAA; 32],
+            index: 0,
+        };
+        let body_a = ShelleyTxBody {
+            inputs: vec![shared_in],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1,
+            }],
+            fee: 1,
+            ttl: 0,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let mut body_b = body_a.clone();
+        // Make body_b distinct from body_a (different fee → different tx_id)
+        // but with the same input.
+        body_b.fee = 2;
+        let bytes_a = body_a.to_cbor_bytes();
+        let bytes_b = body_b.to_cbor_bytes();
+        let mut blk = mk_block(10, 1, None);
+        blk.era = yggdrasil_ledger::Era::Shelley;
+        blk.transactions.push(Tx {
+            id: compute_tx_id(&bytes_a),
+            body: bytes_a,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        });
+        blk.transactions.push(Tx {
+            id: compute_tx_id(&bytes_b),
+            body: bytes_b,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        });
+        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        match outcome {
+            AnalysisOutcome::ReproMempoolAndForge {
+                per_block_stats, ..
+            } => {
+                let (_, _, inserts, forges, _, _) = per_block_stats[0];
+                // First tx inserts; second tx is rejected as a
+                // conflicting-input duplicate.
+                assert_eq!(
+                    inserts, 1,
+                    "expected 1 successful insert (2nd tx conflicts on input)"
+                );
+                assert_eq!(forges, 1, "1 forge for the 1 successful insert");
             }
             _ => panic!("wrong outcome variant"),
         }

@@ -849,6 +849,17 @@ impl BabbageTxBody {
         let body = Self::decode_cbor(&mut dec)?;
         Ok(body.outputs.len())
     }
+
+    /// Decode the input list from a Babbage tx body.
+    ///
+    /// Used by db-analyser's `ReproMempoolAndForge` analysis (R494) to
+    /// populate `MempoolEntry::inputs` with real conflict-detection
+    /// data.
+    pub fn decode_inputs(body: &[u8]) -> Result<Vec<crate::eras::ShelleyTxIn>, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let parsed = Self::decode_cbor(&mut dec)?;
+        Ok(parsed.inputs)
+    }
 }
 
 // ---------------------------------------------------------------------------
