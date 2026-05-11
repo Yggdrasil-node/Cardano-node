@@ -27,6 +27,10 @@ pub mod connection;
 /// (cardano-tracer side of the data-point sub-protocol — sister to
 /// the TraceObjectForward acceptor).
 pub mod data_point_acceptor;
+/// DataPointForward mini-protocol acceptor runtime aggregator
+/// (cardano-tracer's `acceptDataPoints{Init,Resp}` analog — sister
+/// to the TraceObjectForward run-acceptor).
+pub mod data_point_run_acceptor;
 /// Handshake negotiation types and state machine.
 pub mod handshake;
 /// KeepAlive client driver — typed, state-machine-correct protocol loop.
@@ -159,6 +163,10 @@ pub use mux::{
 
 // -- Peer re-exports ----------------------------------------------------------
 pub use data_point_acceptor::{DataPointAcceptor, DataPointAcceptorError};
+pub use data_point_run_acceptor::{
+    AcceptDataPointsError, SHUTDOWN_TIMEOUT as DATA_POINTS_SHUTDOWN_TIMEOUT,
+    accept_data_points_init, accept_data_points_resp,
+};
 pub use ledger_peers_provider::{
     ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, LedgerPeerProvider,
     LedgerPeerProviderError, LedgerPeerProviderKind, LedgerPeerProviderRefresh,
