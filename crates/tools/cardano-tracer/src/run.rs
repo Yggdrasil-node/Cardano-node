@@ -22,7 +22,7 @@
 //! | `doRunCardanoTracer config rtViewStateDir tr brake dpRequestors :: IO ()` | [`do_run_cardano_tracer`] |
 //! | `loadMetricsHelp` (Run.hs:181-191)                | [`crate::utils::load_metrics_help`] (R415 done) |
 //! | `runLogsRotator tracerEnv`                        | (deferred — see [`run_logs_rotator_status`]) |
-//! | `runMetricsServers tracerEnv`                     | (uses R408-R414's per-server entries; full Servers.hs aggregator deferred — see [`run_metrics_servers_status`]) |
+//! | `runMetricsServers tracerEnv`                     | [`run_metrics_servers`] (R464) — conditional spawn of Prometheus + Monitoring via tokio::spawn |
 //! | `runAcceptors tracerEnv tracerEnvRTView`          | [`crate::acceptors::run::run_acceptors`] (R426 done) |
 //! | `runRTView tracerEnv tracerEnvRTView`             | (RTView carve-out — see plan)          |
 //! | `beforeProgramStops { ... }`                      | (deferred — see [`crate::utils::before_program_stops_status`]) |
@@ -102,6 +102,11 @@ pub enum RunCardanoTracerError {
     /// Acceptors supervisor returned an unrecoverable error.
     #[error("acceptors supervisor: {0}")]
     Acceptors(#[from] AcceptorsSupervisorError),
+
+    /// Metrics-servers aggregator failed to bind one of its
+    /// listeners (Prometheus or Monitoring). R464 closure.
+    #[error("metrics server bind: {0}")]
+    MetricsServer(std::io::Error),
 }
 
 // ---------------------------------------------------------------------------
@@ -233,16 +238,29 @@ where
         .await;
     });
 
+    // R464: spawn the metrics-servers aggregator alongside the
+    // acceptors + rotator. The aggregator conditionally spawns
+    // Prometheus / Monitoring servers per the operator's config
+    // fields (has_prometheus / has_ekg). Shares the rotator's
+    // brake flag so all subsystems shut down cohesively.
+    let metrics_config = config.clone();
+    let metrics_state = state.clone();
+    let metrics_stop = rotator_stop.clone();
+    let metrics_task = tokio::spawn(async move {
+        let _ = run_metrics_servers(&metrics_config, &metrics_state, metrics_stop).await;
+    });
+
     let acceptors_state = state.clone();
     let acceptors_config = config.clone();
     let acceptors_handler = Arc::clone(&lo_handler);
     let acceptors_result =
         run_acceptors(acceptors_state, &acceptors_config, acceptors_handler).await;
 
-    // Acceptors finished — trip the rotator brake + await its
-    // clean exit.
+    // Acceptors finished — trip the rotator brake + await rotator
+    // + metrics-servers clean exit.
     *rotator_stop.write().await = true;
     let _ = tokio::time::timeout(std::time::Duration::from_secs(2), rotator_task).await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), metrics_task).await;
 
     acceptors_result?;
     Ok(())
@@ -400,16 +418,102 @@ pub fn run_logs_rotator_status() -> &'static str {
      in place of the typeclass-dispatched contra-tracer)."
 }
 
-/// Status descriptor for the deferred `runMetricsServers`
-/// aggregator. The per-server entries (run_prometheus_server,
-/// run_monitoring_server) are wired at R408-R414; only the
-/// aggregator that spawns them concurrently is pending.
+/// Status descriptor for the (now-closed) `runMetricsServers`
+/// aggregator. Retained for programmatic introspection — the
+/// per-server entries (`run_prometheus_server`,
+/// `run_monitoring_server`) shipped at R408-R414; R464 wired the
+/// aggregator at [`run_metrics_servers`] which conditionally spawns
+/// each per the operator's `has_prometheus` / `has_ekg` config
+/// fields.
 pub fn run_metrics_servers_status() -> &'static str {
-    "runMetricsServers: per-server entries are wired at R408 \
-     (Prometheus) + R410 (Monitoring) + R411-R414 (MetricsStore \
-     wiring). The Servers.hs aggregator that spawns them \
-     concurrently is the only piece pending; the Yggdrasil callers \
-     can spawn them directly via tokio::join! / JoinSet for now."
+    "runMetricsServers: closed at R464. Aggregator function \
+     run_metrics_servers spawns run_prometheus_server (when \
+     config.has_prometheus is Some) + run_monitoring_server (when \
+     config.has_ekg is Some) concurrently via tokio::join!. Mirror \
+     of upstream's `runMetricsServers tracerEnv = sequenceConcurrently_ \
+     [whenJust hasEKG $ runMonitoringServer tracerEnv, whenJust \
+     hasPrometheus $ runPrometheusServer tracerEnv]` pattern. \
+     Wired into do_run_cardano_tracer_with_state alongside the \
+     acceptors + rotator."
+}
+
+/// Run the metrics-servers aggregator: spawn the Prometheus +
+/// Monitoring (EKG-equivalent) servers concurrently when the
+/// operator has configured them. Mirror of upstream
+/// `runMetricsServers tracerEnv`.
+///
+/// Each server is conditional on its config field:
+/// - `config.has_prometheus = Some(Endpoint)` → spawns
+///   [`crate::handlers::metrics::prometheus::run_prometheus_server`].
+/// - `config.has_ekg = Some(Endpoint)` → spawns
+///   [`crate::handlers::metrics::monitoring::run_monitoring_server`].
+///
+/// Both servers run until the `stop_flag` brake is engaged. Returns
+/// `Ok(())` cleanly when the brake fires; transport failures (e.g.
+/// the port is already in use) bubble up as
+/// [`RunCardanoTracerError::MetricsServer`].
+///
+/// R464 closure of the previously-deferred Servers.hs aggregator.
+pub async fn run_metrics_servers(
+    config: &TracerConfig,
+    state: &AcceptorsServerState,
+    stop_flag: std::sync::Arc<tokio::sync::RwLock<bool>>,
+) -> Result<(), RunCardanoTracerError> {
+    let metrics_help = crate::utils::load_metrics_help(config.metrics_help.as_ref());
+    let prometheus_labels = config.prometheus_labels.clone().unwrap_or_default();
+    let metrics_no_suffix = config.metrics_no_suffix.unwrap_or(false);
+
+    let prometheus_handle = match config.has_prometheus.clone() {
+        Some(endpoint) => Some(
+            crate::handlers::metrics::prometheus::run_prometheus_server(
+                state.connected_nodes_names.clone(),
+                endpoint,
+                prometheus_labels,
+                metrics_no_suffix,
+                state.accepted_metrics.clone(),
+                metrics_help,
+            )
+            .await
+            .map_err(RunCardanoTracerError::MetricsServer)?,
+        ),
+        None => None,
+    };
+    let monitoring_handle = match config.has_ekg.clone() {
+        Some(endpoint) => Some(
+            crate::handlers::metrics::monitoring::run_monitoring_server(
+                state.connected_nodes_names.clone(),
+                endpoint,
+                state.accepted_metrics.clone(),
+            )
+            .await
+            .map_err(RunCardanoTracerError::MetricsServer)?,
+        ),
+        None => None,
+    };
+
+    // Run until the brake fires. Each server task is internal to
+    // its run_*_server function (already returned a JoinHandle);
+    // we just await the brake here, then abort the handles so
+    // the bound listeners release their ports.
+    wait_for_stop(&stop_flag).await;
+    if let Some(h) = prometheus_handle {
+        h.abort();
+    }
+    if let Some(h) = monitoring_handle {
+        h.abort();
+    }
+    Ok(())
+}
+
+/// Polls the brake flag every 50ms until it becomes `true`. Mirror
+/// of R421's `wait_for_stop` precedent.
+async fn wait_for_stop(stop_flag: &std::sync::Arc<tokio::sync::RwLock<bool>>) {
+    loop {
+        if *stop_flag.read().await {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 /// Status descriptor for the deferred resource-stats loop.
@@ -435,8 +539,9 @@ mod tests {
     }
 
     #[test]
-    fn run_metrics_servers_status_describes_partial_wiring() {
+    fn run_metrics_servers_status_describes_closure() {
         let s = run_metrics_servers_status();
+        assert!(s.contains("closed at R464"));
         assert!(s.contains("Prometheus"));
         assert!(s.contains("Monitoring"));
     }
@@ -446,6 +551,142 @@ mod tests {
         let s = run_resource_stats_status();
         assert!(s.contains("deferred"));
         assert!(s.contains("Cardano.Logging.Resources"));
+    }
+
+    // ----- R464 run_metrics_servers integration tests --------------------
+
+    fn config_with_metrics(
+        has_prometheus: Option<crate::configuration::Endpoint>,
+        has_ekg: Option<crate::configuration::Endpoint>,
+    ) -> TracerConfig {
+        TracerConfig {
+            network_magic: 764824073,
+            network: Network::ConnectTo { connect_to: vec![] },
+            logging: vec![LoggingParams {
+                root: std::path::PathBuf::from("."),
+                mode: LogMode::FileMode,
+                format: LogFormat::ForHuman,
+            }],
+            rotation: None,
+            verbosity: None,
+            has_ekg,
+            has_prometheus,
+            has_rtview: None,
+            has_timeseries: None,
+            tls_certificate: None,
+            has_forwarding: None,
+            ekg_request_freq: None,
+            ekg_request_full: None,
+            metrics_help: None,
+            log_objects_request_num: Some(50),
+            metrics_no_suffix: None,
+            prometheus_labels: None,
+            resource_freq: None,
+        }
+    }
+
+    fn empty_state() -> AcceptorsServerState {
+        AcceptorsServerState {
+            connected_nodes: ConnectedNodes::new(),
+            connected_nodes_names: ConnectedNodesNames::new(),
+            accepted_metrics: new_accepted_metrics(),
+            network_magic: 764824073,
+        }
+    }
+
+    #[tokio::test]
+    async fn run_metrics_servers_no_op_when_both_endpoints_none() {
+        // When neither has_prometheus nor has_ekg is set, the
+        // aggregator runs the brake-poll loop with no spawned
+        // servers. Brake-trip exits cleanly within ~50ms.
+        let config = config_with_metrics(None, None);
+        let state = empty_state();
+        let stop = std::sync::Arc::new(tokio::sync::RwLock::new(false));
+        let stop_clone = stop.clone();
+        let task =
+            tokio::spawn(async move { run_metrics_servers(&config, &state, stop_clone).await });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        *stop.write().await = true;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("run_metrics_servers did not exit")
+            .expect("run_metrics_servers panicked");
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn run_metrics_servers_spawns_prometheus_only() {
+        // Bind to an ephemeral port (0) so the kernel picks one
+        // that's free. has_ekg is None so only Prometheus spawns.
+        let endpoint = crate::configuration::Endpoint {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            force_ssl: None,
+        };
+        let config = config_with_metrics(Some(endpoint), None);
+        let state = empty_state();
+        let stop = std::sync::Arc::new(tokio::sync::RwLock::new(false));
+        let stop_clone = stop.clone();
+        let task =
+            tokio::spawn(async move { run_metrics_servers(&config, &state, stop_clone).await });
+        // Give the server time to bind + the 100ms initial stagger.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        *stop.write().await = true;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("did not exit")
+            .expect("panicked");
+        assert!(result.is_ok(), "expected clean exit, got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn run_metrics_servers_spawns_monitoring_only() {
+        let endpoint = crate::configuration::Endpoint {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            force_ssl: None,
+        };
+        let config = config_with_metrics(None, Some(endpoint));
+        let state = empty_state();
+        let stop = std::sync::Arc::new(tokio::sync::RwLock::new(false));
+        let stop_clone = stop.clone();
+        let task =
+            tokio::spawn(async move { run_metrics_servers(&config, &state, stop_clone).await });
+        // Monitoring has a 200ms initial stagger.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        *stop.write().await = true;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("did not exit")
+            .expect("panicked");
+        assert!(result.is_ok(), "expected clean exit, got {result:?}");
+    }
+
+    #[tokio::test]
+    async fn run_metrics_servers_spawns_both_concurrently() {
+        let prom_endpoint = crate::configuration::Endpoint {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            force_ssl: None,
+        };
+        let mon_endpoint = crate::configuration::Endpoint {
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            force_ssl: None,
+        };
+        let config = config_with_metrics(Some(prom_endpoint), Some(mon_endpoint));
+        let state = empty_state();
+        let stop = std::sync::Arc::new(tokio::sync::RwLock::new(false));
+        let stop_clone = stop.clone();
+        let task =
+            tokio::spawn(async move { run_metrics_servers(&config, &state, stop_clone).await });
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        *stop.write().await = true;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+            .await
+            .expect("did not exit")
+            .expect("panicked");
+        assert!(result.is_ok(), "expected clean exit, got {result:?}");
     }
 
     #[tokio::test]

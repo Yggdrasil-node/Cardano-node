@@ -351,6 +351,35 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R464 — cardano-tracer `runMetricsServers` aggregator wiring.**
+  Closes the R408-R414-era partial-wiring status descriptor in
+  `run.rs::run_metrics_servers_status`. Adds
+  `run_metrics_servers(config, state, stop_flag)` — the
+  `Servers.hs`-equivalent aggregator that conditionally spawns:
+  - `run_prometheus_server` when `config.has_prometheus.is_some()`
+    (Prometheus endpoint + labels + metrics_help + no_suffix
+    threaded through).
+  - `run_monitoring_server` when `config.has_ekg.is_some()`
+    (EKG-equivalent HTML/JSON endpoint).
+  Each server is started via the existing R408 / R410 entry
+  points; the aggregator awaits the supervisor-level brake then
+  aborts the spawned `JoinHandle`s so the bound ports are
+  released. Mirror of upstream `runMetricsServers tracerEnv =
+  sequenceConcurrently_ [whenJust hasEKG $ ..., whenJust
+  hasPrometheus $ ...]`.
+
+  Wired into `do_run_cardano_tracer_with_state` alongside the
+  acceptors + rotator — shares the same `rotator_stop` brake
+  flag so all three subsystems shut down cohesively on supervisor
+  exit. Adds `RunCardanoTracerError::MetricsServer` variant for
+  bind failures.
+
+  4 new tokio-async integration tests: both endpoints None
+  (no-op), Prometheus only, Monitoring only, both concurrent.
+  Each binds to a kernel-allocated ephemeral port (`port: 0`)
+  + verifies clean brake-driven shutdown within 2 seconds.
+  Workspace tests: 6,035 → 6,039 (+4). All 5 verification gates
+  clean.
 - **R463 — cardano-tracer Logs Rotator + file-write soak test.**
   Validates the R461 + R462 system under realistic concurrent
   load. Adds
