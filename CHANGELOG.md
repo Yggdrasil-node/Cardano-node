@@ -351,6 +351,26 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R479 — `analysis::runner` dispatch core + 4 shipped handlers.**
+  Fifth slice of the R475-R481 arc. Wires upstream
+  `Cardano.Tools.DBAnalyser.Analysis::runAnalysis` (1057-line
+  dispatch) into `crates/tools/db-analyser/src/analysis/runner.rs`.
+  Ships `AnalysisOutcome` (4-variant structured result enum),
+  `AnalysisError` (`RequiresLedgerStateApplyLoop` +
+  `BlockOnlyHandlerPendingR480`), `apply_limit` (private), and
+  `run_analysis(config, blocks) -> Result<AnalysisOutcome,
+  AnalysisError>`. Dispatches on the 13 `AnalysisName` variants:
+  4 shipped (`ShowSlotBlockNo`, `CountBlocks`, `CountTxOutputs`,
+  `ShowBlockHeaderSize`); 3 return `BlockOnlyHandlerPendingR480`
+  (handler bodies land at R480 — runner is wired end-to-end now);
+  6 return `RequiresLedgerStateApplyLoop` with the analysis name
+  in the error message. The runner takes any
+  `IntoIterator<Item = Block>` rather than a storage handle so
+  it's testable in isolation without pulling `yggdrasil-storage`
+  into the dep graph at R479 (storage wire-up lands at R481).
+  21 new tests. Workspace tests: 6,131 → 6,152. All 5 verification
+  gates clean. See `docs/operational-runs/2026-05-11-round-479-
+  analysis-runner-core.md`.
 - **R478 — Babbage / Conway HasAnalysis dispatch coverage.** Fourth
   slice of the R475-R481 arc. Completes the 7-era dispatch
   coverage matrix by adding Babbage (BabbageTxBody construction
