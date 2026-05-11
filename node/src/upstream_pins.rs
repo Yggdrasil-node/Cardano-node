@@ -218,8 +218,8 @@ pub const UPSTREAM_CARDANO_NODE_COMMIT: &str = "97036a66bcf8c89f687ae57a048eecc0
 /// `.reference-haskell-cardano-node/deps/bech32/`. Provides the
 /// canonical Haskell implementation of BIP-0173 Bech32 / Bech32m
 /// encoding used by Cardano addresses (`addr_test1…`, `stake1…`,
-/// etc.). Yggdrasil's pure-Rust port lands at `crates/bech32/`
-/// across R331–R334 (Phase A.1 of the sister-tools port arc).
+/// etc.). Yggdrasil's pure-Rust port lands at `crates/tools/bech32/`
+/// (R447 relocated) across R331–R334 (Phase A.1 of the sister-tools port arc).
 ///
 /// Reference: <https://github.com/IntersectMBO/bech32/tree/master/>
 pub const UPSTREAM_BECH32_COMMIT: &str = "4624d3a84606615c1ca1410d6dd3fd9213211215";
@@ -229,8 +229,8 @@ pub const UPSTREAM_BECH32_COMMIT: &str = "4624d3a84606615c1ca1410d6dd3fd92132112
 /// the legacy `input-output-hk` GitHub org, NOT `IntersectMBO`).
 /// Provides the KES key custody + period-rotation agent used by
 /// stake pool operators in production. Yggdrasil's pure-Rust port
-/// lands at `crates/kes-agent/` (the daemon, R344–R354) and
-/// `crates/kes-agent-control/` (the companion CLI, R355–R359),
+/// lands at `crates/tools/kes-agent/` (the daemon, R344–R354) and
+/// `crates/tools/kes-agent-control/` (the companion CLI, R355–R359) — R447 relocated,
 /// both Phase A.3/A.4 of the sister-tools port arc.
 ///
 /// Reference: <https://github.com/input-output-hk/kes-agent/tree/master/>
@@ -240,7 +240,7 @@ pub const UPSTREAM_KES_AGENT_COMMIT: &str = "6d54ac2ee325aadeeb3659cfefcd58035f6
 /// `.reference-haskell-cardano-node/deps/dmq-node/`. Provides the
 /// DMQ (Delegated Mempool Queue) diffusion-layer node used as a
 /// sidecar for Mithril certificates. Yggdrasil's pure-Rust port
-/// lands at `crates/dmq-node/` across R450–R459 (Phase D of the
+/// lands at `crates/tools/dmq-node/` (R447 relocated) across R450–R459 (Phase D of the
 /// sister-tools port arc — Tier 4 sister project).
 ///
 /// Reference: <https://github.com/IntersectMBO/dmq-node/tree/main/>

@@ -274,6 +274,21 @@ basename-heuristic reliance.
   but the primary runtime denotation logic each file carries IS a
   1:1 mirror of its upstream `.hs`. The `(partial)` qualifier was
   obscuring this.
+- **R450 — node-crate doc-comment path cleanup (post-R447
+  trailing references).** Updates 4 production rustdoc comments
+  in the `node/` crate that still pointed at pre-R447
+  `crates/<tool>/` paths:
+  - `node/src/commands/cardano_cli.rs` (Strict-mirror docstring
+    citing `crates/cardano-cli/`)
+  - `node/src/upstream_pins.rs` — 3 sister-tool upstream-pin
+    descriptions (`crates/bech32/`, `crates/kes-agent/` +
+    `crates/kes-agent-control/`, `crates/dmq-node/`)
+  Each rewrite preserves the round-band annotation context
+  (R331-R334 / R344-R354 / R355-R359 / R450-R459) and appends a
+  "R447 relocated" note for searchability.
+  Workspace test count unchanged at 5,962. All 5 verification
+  gates clean.
+  Post-R450 audit: `grep -rE 'crates/(bech32|cardano-cli|cardano-submit-api|...etc.)/' node/ crates/AGENTS.md crates/*/AGENTS.md scripts/AGENTS.md docs/AGENTS.md docs/ARCHITECTURE.md specs/AGENTS.md` returns zero hits — all production code + living docs reference the post-R447 `crates/tools/<tool>/` layout. Historical operational-runs docs intentionally preserved per CLAUDE.md's historical-evidence rule.
 - **R449 — post-R447 living-doc path cleanup (CLAUDE.md +
   DEPENDENCIES.md).** Updates the two non-historical documentation
   surfaces that still referenced pre-R447 `crates/<tool>/` paths:
