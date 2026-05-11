@@ -260,13 +260,36 @@ impl HasAnalysis for yggdrasil_ledger::Block {
 
     /// Trace markers emitted during ledger-state apply.
     ///
-    /// **Carve-out (R476):** returns an empty vector. Producing
-    /// meaningful traces requires the ledger-state apply-loop arc
-    /// which has not yet shipped. See
-    /// [`crate::status::analysis_dispatch_status`] for the full
-    /// inventory of analyses gated on the apply-loop.
-    fn emit_traces(_with_state: &WithLedgerState<Self, Self::LedgerStateValues>) -> Vec<String> {
-        Vec::new()
+    /// **R496 expansion:** R476 shipped an empty placeholder; R496
+    /// emits block-iteration-derivable per-block trace strings —
+    /// era, slot, block_no, tx_count, EBB marker when applicable,
+    /// and the previous-hash relation. Each string is a stable
+    /// `key=value` pair so downstream tooling can grep / parse.
+    /// Ledger-state-derived traces (stake delta, reward delta,
+    /// epoch-boundary processing) still require a configured
+    /// genesis state — those land in a follow-on arc.
+    fn emit_traces(with_state: &WithLedgerState<Self, Self::LedgerStateValues>) -> Vec<String> {
+        let blk = &with_state.blk;
+        let mut traces = vec![
+            format!("event=block_apply"),
+            format!("slot={}", blk.header.slot_no.0),
+            format!("block_no={}", blk.header.block_no.0),
+            format!("era={:?}", blk.era),
+            format!("tx_count={}", blk.transactions.len()),
+        ];
+        // EBB marker — Byron-era blocks whose hash matches a known
+        // EBB entry; useful for ShowEBBs cross-reference at apply
+        // time.
+        let registry = crate::byron_ebbs::known_ebbs();
+        if registry.contains_key(&blk.header.hash) {
+            traces.push("ebb=true".to_string());
+        }
+        // Origin-successor marker — first block of the chain has
+        // prev_hash = all-zeros sentinel.
+        if blk.header.prev_hash.0 == [0u8; 32] {
+            traces.push("prev=<origin>".to_string());
+        }
+        traces
     }
 
     /// Per-block stats for the `BenchmarkLedgerOps` analysis.
@@ -681,19 +704,26 @@ mod tests {
     }
 
     #[test]
-    fn block_emit_traces_returns_empty_pending_ledger_state_arc() {
-        // R476 carve-out: emit_traces requires the ledger-state
-        // apply-loop arc; for now returns empty.
+    fn block_emit_traces_returns_block_iteration_traces_r496() {
+        // R496: emit_traces now emits block-iteration-derived
+        // strings (event/slot/block_no/era/tx_count + optional
+        // origin / ebb markers). Was empty at R476.
         let blk = Block {
             era: Era::Shelley,
-            header: mk_block_header(0, 0),
+            header: mk_block_header(123, 456),
             transactions: vec![],
             raw_cbor: None,
             header_cbor_size: None,
         };
         let with_state =
             WithLedgerState::new(blk, CardanoLedgerStateValues, CardanoLedgerStateValues);
-        assert!(Block::emit_traces(&with_state).is_empty());
+        let traces = Block::emit_traces(&with_state);
+        assert!(!traces.is_empty(), "emit_traces should emit ≥1 string");
+        assert!(traces.iter().any(|s| s == "event=block_apply"));
+        assert!(traces.iter().any(|s| s == "slot=123"));
+        assert!(traces.iter().any(|s| s == "block_no=456"));
+        assert!(traces.iter().any(|s| s == "era=Shelley"));
+        assert!(traces.iter().any(|s| s == "tx_count=0"));
     }
 
     #[test]

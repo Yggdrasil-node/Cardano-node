@@ -116,27 +116,35 @@ pub enum AnalysisOutcome {
         /// Number of blocks the validating chain walk processed.
         blocks_processed: i64,
     },
-    /// `TraceLedgerProcessing` result (R488) — per-block ledger-apply
-    /// outcome trace. Each tuple is `(slot, block_no, outcome)` where
-    /// `outcome` is either `Ok(())` (block applied successfully) or
-    /// `Err(reason_string)` (apply failed; the reason is the
+    /// `TraceLedgerProcessing` result (R488 + R496) — per-block
+    /// ledger-apply outcome trace + emitted trace events.
+    ///
+    /// `traces`: each tuple is `(slot, block_no, outcome)` where
+    /// `outcome` is either `Ok(())` (block applied successfully)
+    /// or `Err(reason_string)` (apply failed; the reason is the
     /// [`yggdrasil_ledger::LedgerError`] rendered via `Display`).
     ///
-    /// **Carve-out (R488):** upstream's `traceLedgerProcessing`
-    /// calls `emit_traces` per block which returns ledger-state-
-    /// derived trace strings (epoch boundary, stake delta, etc.).
-    /// Yggdrasil's emit_traces currently returns an empty Vec
-    /// (R476 placeholder); without a configured genesis state the
-    /// `LedgerState::apply_block` path will fail at the first real
-    /// chain transaction. R488 ships the dispatch shape — the
-    /// per-block outcome line is operationally useful for forensic
-    /// audits and proves the apply-loop is reachable from
-    /// db-analyser. Closing the trace-content gap is a follow-on
-    /// once the genesis-bootstrap CLI flags ship.
+    /// `emit_traces` (R496): per-block parallel vec of the
+    /// strings returned by `HasAnalysis::emit_traces` (block-
+    /// iteration-derivable trace events — era, slot, block_no,
+    /// tx_count, EBB marker, etc.). Indexed by the same i-th
+    /// block as `traces`.
+    ///
+    /// **Carve-out (R496):** R488 documented an empty
+    /// `Block::emit_traces` (R476 placeholder); R496 ships a
+    /// block-iteration-derived body (era / slot / block_no /
+    /// tx_count / EBB marker / origin-successor marker). Ledger-
+    /// state-derived traces (epoch boundary, stake delta, era
+    /// transition) still need a configured genesis state — that
+    /// lands in a follow-on arc.
     TraceLedgerProcessing {
         /// Per-block `(slot, block_no, outcome)` tuples in chain
         /// order. `outcome` is `Ok(())` or `Err(reason)`.
         traces: Vec<(SlotNo, BlockNo, Result<(), String>)>,
+        /// R496: per-block emit_traces output, parallel to
+        /// `traces`. `emit_traces[i]` is `HasAnalysis::emit_traces`
+        /// applied to the i-th block.
+        emit_traces: Vec<Vec<String>>,
         /// Number of blocks that applied successfully.
         applied_ok: i64,
         /// Number of blocks whose apply call returned an error.
@@ -532,12 +540,15 @@ pub fn analysis_only_validation(blocks: &[Block]) -> AnalysisOutcome {
 /// the captured Ok/Err outcome is the Yggdrasil-side analog of the
 /// trace events.
 pub fn analysis_trace_ledger_processing(blocks: &[Block]) -> AnalysisOutcome {
+    use crate::has_analysis::{CardanoLedgerStateValues, WithLedgerState};
+
     let initial_era = blocks
         .first()
         .map(|b| b.era)
         .unwrap_or(yggdrasil_ledger::Era::Byron);
     let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
     let mut traces = Vec::with_capacity(blocks.len());
+    let mut emit_traces = Vec::with_capacity(blocks.len());
     let mut applied_ok: i64 = 0;
     let mut applied_err: i64 = 0;
     for blk in blocks {
@@ -552,9 +563,20 @@ pub fn analysis_trace_ledger_processing(blocks: &[Block]) -> AnalysisOutcome {
             }
         };
         traces.push((blk.header.slot_no, blk.header.block_no, outcome));
+        // R496: invoke emit_traces via WithLedgerState wrapper.
+        // CardanoLedgerStateValues is a placeholder (R476); the
+        // emit_traces body uses only block-iteration-derivable
+        // fields, so the placeholder state is sufficient.
+        let with_state = WithLedgerState::new(
+            blk.clone(),
+            CardanoLedgerStateValues,
+            CardanoLedgerStateValues,
+        );
+        emit_traces.push(<Block as HasAnalysis>::emit_traces(&with_state));
     }
     AnalysisOutcome::TraceLedgerProcessing {
         traces,
+        emit_traces,
         applied_ok,
         applied_err,
     }
@@ -1229,9 +1251,11 @@ mod tests {
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing {
                 traces,
+                emit_traces,
                 applied_ok,
                 applied_err,
             } => {
+                let _ = &emit_traces;
                 assert!(traces.is_empty());
                 assert_eq!(applied_ok, 0);
                 assert_eq!(applied_err, 0);
@@ -1251,6 +1275,7 @@ mod tests {
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing {
                 traces,
+                emit_traces: _,
                 applied_ok,
                 applied_err: _,
             } => {
@@ -1272,9 +1297,11 @@ mod tests {
         match outcome {
             AnalysisOutcome::TraceLedgerProcessing {
                 traces,
+                emit_traces,
                 applied_ok,
                 applied_err,
             } => {
+                let _ = &emit_traces;
                 assert_eq!(traces.len(), 3);
                 assert_eq!(traces[0].0, SlotNo(10));
                 assert_eq!(traces[0].1, BlockNo(100));
@@ -1298,6 +1325,84 @@ mod tests {
             outcome,
             AnalysisOutcome::TraceLedgerProcessing { .. }
         ));
+    }
+
+    #[test]
+    fn analysis_trace_ledger_processing_emits_per_block_trace_strings_r496() {
+        // R496: emit_traces field is parallel to traces; each entry
+        // is the HasAnalysis::emit_traces output for the i-th block.
+        // Block-iteration-derived content: event/slot/block_no/era/
+        // tx_count + EBB marker + origin marker.
+        let outcome =
+            analysis_trace_ledger_processing(&[mk_block(10, 100, None), mk_block(20, 101, None)]);
+        match outcome {
+            AnalysisOutcome::TraceLedgerProcessing {
+                traces,
+                emit_traces,
+                ..
+            } => {
+                assert_eq!(traces.len(), 2);
+                assert_eq!(emit_traces.len(), 2);
+                // Each per-block trace vec must include the canonical
+                // 5 key=value strings (event/slot/block_no/era/tx_count).
+                for (i, per_block) in emit_traces.iter().enumerate() {
+                    assert!(per_block.iter().any(|s| s == "event=block_apply"));
+                    assert!(per_block.iter().any(|s| s.starts_with("slot=")));
+                    assert!(per_block.iter().any(|s| s.starts_with("block_no=")));
+                    assert!(per_block.iter().any(|s| s.starts_with("era=")));
+                    assert!(per_block.iter().any(|s| s.starts_with("tx_count=")));
+                    // Block i=0 has slot=10, block_no=100; i=1 has slot=20,
+                    // block_no=101.
+                    let expected_slot = if i == 0 { "slot=10" } else { "slot=20" };
+                    assert!(
+                        per_block.iter().any(|s| s == expected_slot),
+                        "block i={i} missing expected {expected_slot}: {per_block:?}"
+                    );
+                }
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_trace_ledger_processing_emits_origin_marker_for_genesis_successor() {
+        // R496: blocks with prev_hash = all-zeros (origin marker)
+        // get a "prev=<origin>" trace.
+        let blk = mk_block(0, 0, None);
+        // mk_block sets prev_hash: HeaderHash([0x00; 32]) — origin.
+        let outcome = analysis_trace_ledger_processing(&[blk]);
+        match outcome {
+            AnalysisOutcome::TraceLedgerProcessing { emit_traces, .. } => {
+                assert!(
+                    emit_traces[0].iter().any(|s| s == "prev=<origin>"),
+                    "expected prev=<origin> trace, got {:?}",
+                    emit_traces[0]
+                );
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_trace_ledger_processing_emits_ebb_marker_for_known_byron_ebb() {
+        // R496: blocks whose header_hash matches a known Byron EBB
+        // get an "ebb=true" trace.
+        let mut blk = mk_block(0, 0, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        blk.header.hash = HeaderHash(crate::byron_ebbs::parse_hex32(
+            "89d9b5a5b8ddc8d7e5a6795e9774d97faf1efea59b2caf7eaf9f8c5b32059df4",
+        ));
+        let outcome = analysis_trace_ledger_processing(&[blk]);
+        match outcome {
+            AnalysisOutcome::TraceLedgerProcessing { emit_traces, .. } => {
+                assert!(
+                    emit_traces[0].iter().any(|s| s == "ebb=true"),
+                    "expected ebb=true trace, got {:?}",
+                    emit_traces[0]
+                );
+            }
+            _ => panic!("wrong outcome variant"),
+        }
     }
 
     // ── Dispatch core ──────────────────────────────────────────────────

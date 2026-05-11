@@ -351,6 +351,25 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R496 — `Block::emit_traces` body + `TraceLedgerProcessing`
+  trace-event wiring.** Closes R488's documented trace-content
+  gap. Replaces R476's empty `emit_traces` placeholder with a
+  block-iteration-derived body: per block emits 5 baseline
+  `key=value` strings (`event=block_apply`, `slot=N`,
+  `block_no=M`, `era=E`, `tx_count=K`) + optional `ebb=true`
+  (when header hash is in the R476 byron_ebbs registry) +
+  optional `prev=<origin>` (when prev_hash is all-zeros).
+  Extends `AnalysisOutcome::TraceLedgerProcessing` with a new
+  `emit_traces: Vec<Vec<String>>` field parallel to `traces`.
+  Runner invokes `Block::emit_traces` per block via a
+  `WithLedgerState::new(blk.clone(), CardanoLedgerStateValues,
+  CardanoLedgerStateValues)` wrapper. Stdout renderer indents
+  `  trace: <key=value>` per emitted string under the per-block
+  apply-outcome line. 4 new tests (+1 reshaped from R476's
+  `_returns_empty_pending_ledger_state_arc`). Existing R488
+  destructure-tests updated to mention the new field. Workspace
+  tests: 6,216 → 6,219. All 5 gates clean. See
+  `docs/operational-runs/2026-05-11-round-496-emit-traces-body.md`.
 - **R495 — `Tx::decode_fee` + `Tx::decode_ttl` forensic-fidelity
   bump.** Continues R494's per-era decoder pattern: ships
   `TxBody::decode_fee` and `TxBody::decode_ttl` helpers across

@@ -253,10 +253,11 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
         }
         AnalysisOutcome::TraceLedgerProcessing {
             traces,
+            emit_traces,
             applied_ok,
             applied_err,
         } => {
-            for (slot, block_no, result) in traces {
+            for (i, (slot, block_no, result)) in traces.iter().enumerate() {
                 match result {
                     Ok(()) => writeln!(out, "slot={} block_no={} apply=ok", slot.0, block_no.0)?,
                     Err(reason) => writeln!(
@@ -265,6 +266,11 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
                         slot.0, block_no.0, reason
                     )?,
                 };
+                if let Some(per_block_traces) = emit_traces.get(i) {
+                    for trace in per_block_traces {
+                        writeln!(out, "  trace: {trace}")?;
+                    }
+                }
             }
             writeln!(
                 out,
