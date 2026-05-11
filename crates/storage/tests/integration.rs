@@ -110,6 +110,74 @@ fn immutable_rejects_duplicate() {
         .expect_err("duplicate hash should be rejected");
 }
 
+#[test]
+fn in_memory_iter_after_streams_full_chain_from_origin() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x10, 10)).unwrap();
+    store.append_block(test_block(0x11, 20)).unwrap();
+    store.append_block(test_block(0x12, 30)).unwrap();
+    let blocks: Vec<_> = store.iter_after(&Point::Origin).unwrap().collect();
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(blocks[0].header.hash, HeaderHash([0x10; 32]));
+    assert_eq!(blocks[2].header.slot_no, SlotNo(30));
+}
+
+#[test]
+fn in_memory_iter_after_skips_to_point() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x10, 10)).unwrap();
+    store.append_block(test_block(0x11, 20)).unwrap();
+    store.append_block(test_block(0x12, 30)).unwrap();
+    let blocks: Vec<_> = store
+        .iter_after(&Point::BlockPoint(SlotNo(10), HeaderHash([0x10; 32])))
+        .unwrap()
+        .collect();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].header.slot_no, SlotNo(20));
+    assert_eq!(blocks[1].header.slot_no, SlotNo(30));
+}
+
+#[test]
+fn in_memory_iter_after_empty_when_past_tip() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x10, 10)).unwrap();
+    let blocks: Vec<_> = store
+        .iter_after(&Point::BlockPoint(SlotNo(99), HeaderHash([0xAA; 32])))
+        .unwrap()
+        .collect();
+    assert!(blocks.is_empty());
+}
+
+#[test]
+fn in_memory_iter_after_rejects_unknown_inside_range() {
+    let mut store = InMemoryImmutable::default();
+    store.append_block(test_block(0x10, 10)).unwrap();
+    store.append_block(test_block(0x12, 30)).unwrap();
+    // Slot 20 is between the two stored slots but no block has that hash.
+    let result = store.iter_after(&Point::BlockPoint(SlotNo(20), HeaderHash([0x99; 32])));
+    assert!(result.is_err());
+}
+
+#[test]
+fn in_memory_iter_after_empty_store_yields_empty() {
+    let store = InMemoryImmutable::default();
+    let blocks: Vec<_> = store.iter_after(&Point::Origin).unwrap().collect();
+    assert!(blocks.is_empty());
+}
+
+#[test]
+fn in_memory_iter_and_suffix_yield_same_sequence() {
+    let mut store = InMemoryImmutable::default();
+    for byte in [0x01u8, 0x02, 0x03, 0x04, 0x05] {
+        store
+            .append_block(test_block(byte, byte as u64 * 10))
+            .unwrap();
+    }
+    let from_iter: Vec<_> = store.iter_after(&Point::Origin).unwrap().collect();
+    let from_suffix = store.suffix_after(&Point::Origin).unwrap();
+    assert_eq!(from_iter, from_suffix);
+}
+
 // ---------------------------------------------------------------------------
 // Volatile store
 // ---------------------------------------------------------------------------
@@ -361,6 +429,64 @@ fn file_immutable_suffix_after_returns_expected_range() {
     assert_eq!(suffix.len(), 2);
     assert_eq!(suffix[0].header.slot_no, SlotNo(20));
     assert_eq!(suffix[1].header.slot_no, SlotNo(30));
+}
+
+#[test]
+fn file_immutable_iter_after_streams_chain() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let mut store = FileImmutable::open(dir.path().join("imm")).expect("open");
+    for (byte, slot) in [(0x01u8, 10u64), (0x02, 20), (0x03, 30), (0x04, 40)] {
+        store.append_block(test_block(byte, slot)).unwrap();
+    }
+    let blocks: Vec<_> = store.iter_after(&Point::Origin).unwrap().collect();
+    assert_eq!(blocks.len(), 4);
+    assert_eq!(blocks[0].header.slot_no, SlotNo(10));
+    assert_eq!(blocks[3].header.slot_no, SlotNo(40));
+}
+
+#[test]
+fn file_immutable_iter_after_skips_to_point() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let mut store = FileImmutable::open(dir.path().join("imm")).expect("open");
+    store.append_block(test_block(0x01, 10)).unwrap();
+    store.append_block(test_block(0x02, 20)).unwrap();
+    store.append_block(test_block(0x03, 30)).unwrap();
+    let blocks: Vec<_> = store
+        .iter_after(&Point::BlockPoint(SlotNo(20), HeaderHash([0x02; 32])))
+        .unwrap()
+        .collect();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].header.slot_no, SlotNo(30));
+}
+
+#[test]
+fn file_immutable_iter_after_persists_across_reopen() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let path = dir.path().join("imm");
+    {
+        let mut store = FileImmutable::open(&path).unwrap();
+        store.append_block(test_block(0xA0, 100)).unwrap();
+        store.append_block(test_block(0xA1, 200)).unwrap();
+    }
+    let store = FileImmutable::open(&path).unwrap();
+    let blocks: Vec<_> = store.iter_after(&Point::Origin).unwrap().collect();
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].header.slot_no, SlotNo(100));
+    assert_eq!(blocks[1].header.slot_no, SlotNo(200));
+}
+
+#[test]
+fn file_immutable_iter_and_suffix_yield_same_sequence() {
+    let dir = tempfile::tempdir().expect("tmp dir");
+    let mut store = FileImmutable::open(dir.path().join("imm")).expect("open");
+    for byte in [0x10u8, 0x11, 0x12, 0x13, 0x14] {
+        store
+            .append_block(test_block(byte, byte as u64 * 10))
+            .unwrap();
+    }
+    let from_iter: Vec<_> = store.iter_after(&Point::Origin).unwrap().collect();
+    let from_suffix = store.suffix_after(&Point::Origin).unwrap();
+    assert_eq!(from_iter, from_suffix);
 }
 
 #[test]

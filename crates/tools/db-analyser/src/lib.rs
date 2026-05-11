@@ -87,7 +87,7 @@ pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
 
     let store = FileImmutable::open(&config.db_dir).map_err(RunError::Storage)?;
     let blocks = store
-        .suffix_after(&Point::Origin)
+        .iter_after(&Point::Origin)
         .map_err(RunError::Storage)?;
     let outcome = analysis::runner::run_analysis(config, blocks).map_err(RunError::Analysis)?;
     render_outcome(&outcome)?;

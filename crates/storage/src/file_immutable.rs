@@ -247,6 +247,43 @@ impl FileImmutable {
     fn legacy_json_block_path(&self, hash: &HeaderHash) -> PathBuf {
         self.data_dir.join(format!("{}.json", hex_encode(&hash.0)))
     }
+
+    /// Resolve the `point` argument of [`ImmutableStore::suffix_after`] /
+    /// [`ImmutableStore::iter_after`] into the index in `self.chain`
+    /// of the first block to yield (`chain[start..]` is the suffix).
+    ///
+    /// Returns `chain.len()` when the chain is fully consumed (empty
+    /// suffix), `0` when the chain should be yielded in full, or an
+    /// error when the point falls within the covered range but does
+    /// not correspond to a known block (`PointNotFound`). Mirrors
+    /// `InMemoryImmutable::resolve_suffix_start` byte-for-byte at the
+    /// trait-contract level.
+    fn resolve_suffix_start(&self, point: &Point) -> Result<usize, StorageError> {
+        match point {
+            Point::Origin => Ok(0),
+            Point::BlockPoint(slot, hash) => {
+                if self.chain.is_empty() {
+                    return Ok(0);
+                }
+                let first_slot = self.index[&self.chain[0]].header.slot_no;
+                if *slot < first_slot {
+                    return Ok(0);
+                }
+                if let Some(pos) = self
+                    .chain
+                    .iter()
+                    .position(|block_hash| *block_hash == *hash)
+                {
+                    return Ok(pos + 1);
+                }
+                let last_slot = self.index[&self.chain[self.chain.len() - 1]].header.slot_no;
+                if *slot > last_slot {
+                    return Ok(self.chain.len());
+                }
+                Err(StorageError::PointNotFound)
+            }
+        }
+    }
 }
 
 impl ImmutableStore for FileImmutable {
@@ -283,45 +320,23 @@ impl ImmutableStore for FileImmutable {
     }
 
     fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError> {
-        match point {
-            Point::Origin => Ok(self
-                .chain
+        let start = self.resolve_suffix_start(point)?;
+        Ok(self.chain[start..]
+            .iter()
+            .filter_map(|hash| self.index.get(hash).cloned())
+            .collect())
+    }
+
+    fn iter_after<'a>(
+        &'a self,
+        point: &Point,
+    ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, StorageError> {
+        let start = self.resolve_suffix_start(point)?;
+        Ok(Box::new(
+            self.chain[start..]
                 .iter()
-                .filter_map(|hash| self.index.get(hash).cloned())
-                .collect()),
-            Point::BlockPoint(slot, hash) => {
-                if self.chain.is_empty() {
-                    return Ok(Vec::new());
-                }
-
-                let first_slot = self.index[&self.chain[0]].header.slot_no;
-                if *slot < first_slot {
-                    return Ok(self
-                        .chain
-                        .iter()
-                        .filter_map(|block_hash| self.index.get(block_hash).cloned())
-                        .collect());
-                }
-
-                if let Some(pos) = self
-                    .chain
-                    .iter()
-                    .position(|block_hash| *block_hash == *hash)
-                {
-                    return Ok(self.chain[pos + 1..]
-                        .iter()
-                        .filter_map(|block_hash| self.index.get(block_hash).cloned())
-                        .collect());
-                }
-
-                let last_slot = self.index[&self.chain[self.chain.len() - 1]].header.slot_no;
-                if *slot > last_slot {
-                    return Ok(Vec::new());
-                }
-
-                Err(StorageError::PointNotFound)
-            }
-        }
+                .filter_map(move |hash| self.index.get(hash).cloned()),
+        ))
     }
 
     fn len(&self) -> usize {

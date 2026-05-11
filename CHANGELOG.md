@@ -351,6 +351,31 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R482 — `ImmutableStore::iter_after` streaming iterator.**
+  Single-round bounded follow-on to the R475-R481 arc closeout.
+  Adds `fn iter_after<'a>(&'a self, point: &Point) ->
+  Result<Box<dyn Iterator<Item = Block> + 'a>, StorageError>` to
+  the `ImmutableStore` trait. Default impl delegates to
+  `suffix_after().into_iter()`; `InMemoryImmutable` and
+  `FileImmutable` override with lazy-yield via
+  `chain[start..].iter().cloned()` (no intermediate `Vec`).
+  Refactor: extract `resolve_suffix_start(&self, point) ->
+  Result<usize, StorageError>` private helper on both
+  implementations — `suffix_after` and `iter_after` now share
+  the same 3-case point-resolution logic and are guaranteed to
+  yield byte-identical sequences (verified by per-backend
+  `*_iter_and_suffix_yield_same_sequence` tests).
+  `crates/tools/db-analyser/src/lib.rs::run` now calls
+  `iter_after` rather than `suffix_after` — the runner consumes
+  blocks lazily for multi-terabyte forensic chains. 10 new
+  tests (5 `InMemoryImmutable` + 4 `FileImmutable` + 1 cross-
+  backend equivalence). Workspace tests: 6,166 → 6,176. All 5
+  verification gates clean. Carve-outs: on-disk-streaming
+  `FileImmutable` revision (currently loads full chain into
+  `HashMap<HeaderHash, Block>` at open time) and per-item
+  error-bearing iterator deferred — separate arcs. See
+  `docs/operational-runs/2026-05-11-round-482-immutable-store-
+  iter-after.md`.
 - **R481 — db-analyser HasAnalysis R475-R481 arc closeout.**
   Final slice. Wires `lib.rs::run` end-to-end:
   `FileImmutable::open(&config.db_dir)` →

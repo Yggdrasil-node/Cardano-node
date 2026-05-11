@@ -55,6 +55,35 @@ pub trait ImmutableStore {
     /// but does not correspond to a known immutable block.
     fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError>;
 
+    /// Streaming counterpart to [`Self::suffix_after`] — returns an
+    /// iterator that yields cloned [`Block`] values one at a time
+    /// rather than materializing the full chain in a `Vec<Block>`.
+    ///
+    /// The default implementation calls [`Self::suffix_after`] and
+    /// returns the resulting `Vec`'s `into_iter()`, so existing
+    /// callers see the same per-block sequence + same error semantics
+    /// for point-not-found. Storage backends with internal layouts
+    /// that can yield blocks lazily (e.g. a future on-disk
+    /// `FileImmutable` revision that streams CBOR records from
+    /// chunked log files) should override this method to avoid the
+    /// intermediate `Vec`.
+    ///
+    /// Used by `db-analyser`'s `analysis::runner::run_analysis` to
+    /// process multi-terabyte forensic chains without materializing
+    /// the full chain in memory.
+    ///
+    /// Reference: Upstream `Ouroboros.Consensus.Storage.ImmutableDB`
+    /// exposes a streaming-iterator API
+    /// (`Ouroboros.Consensus.Storage.ImmutableDB.API.Iterator`); the
+    /// Rust port matches the lazy-yield contract.
+    fn iter_after<'a>(
+        &'a self,
+        point: &Point,
+    ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, StorageError> {
+        let blocks = self.suffix_after(point)?;
+        Ok(Box::new(blocks.into_iter()))
+    }
+
     /// Returns the number of stored blocks.
     fn len(&self) -> usize;
 
@@ -107,6 +136,41 @@ pub struct InMemoryImmutable {
     blocks: Vec<Block>,
 }
 
+impl InMemoryImmutable {
+    /// Resolve the `point` argument of [`ImmutableStore::suffix_after`] /
+    /// [`ImmutableStore::iter_after`] into the index of the first block
+    /// to yield (`blocks[start..]` is the suffix).
+    ///
+    /// Returns `blocks.len()` when the chain is fully consumed (suffix
+    /// is empty), `0` when the chain should be yielded in full, or an
+    /// error when the point falls within the covered range but does
+    /// not correspond to a known block (`PointNotFound`).
+    fn resolve_suffix_start(&self, point: &Point) -> Result<usize, StorageError> {
+        match point {
+            Point::Origin => Ok(0),
+            Point::BlockPoint(slot, hash) => {
+                if self.blocks.is_empty() {
+                    return Ok(0);
+                }
+                if *slot < self.blocks[0].header.slot_no {
+                    return Ok(0);
+                }
+                if let Some(pos) = self
+                    .blocks
+                    .iter()
+                    .position(|block| block.header.hash == *hash)
+                {
+                    return Ok(pos + 1);
+                }
+                if *slot > self.blocks[self.blocks.len() - 1].header.slot_no {
+                    return Ok(self.blocks.len());
+                }
+                Err(StorageError::PointNotFound)
+            }
+        }
+    }
+}
+
 impl ImmutableStore for InMemoryImmutable {
     fn append_block(&mut self, block: Block) -> Result<(), StorageError> {
         if self
@@ -135,32 +199,16 @@ impl ImmutableStore for InMemoryImmutable {
     }
 
     fn suffix_after(&self, point: &Point) -> Result<Vec<Block>, StorageError> {
-        match point {
-            Point::Origin => Ok(self.blocks.clone()),
-            Point::BlockPoint(slot, hash) => {
-                if self.blocks.is_empty() {
-                    return Ok(Vec::new());
-                }
+        let start = self.resolve_suffix_start(point)?;
+        Ok(self.blocks[start..].to_vec())
+    }
 
-                if *slot < self.blocks[0].header.slot_no {
-                    return Ok(self.blocks.clone());
-                }
-
-                if let Some(pos) = self
-                    .blocks
-                    .iter()
-                    .position(|block| block.header.hash == *hash)
-                {
-                    return Ok(self.blocks[pos + 1..].to_vec());
-                }
-
-                if *slot > self.blocks[self.blocks.len() - 1].header.slot_no {
-                    return Ok(Vec::new());
-                }
-
-                Err(StorageError::PointNotFound)
-            }
-        }
+    fn iter_after<'a>(
+        &'a self,
+        point: &Point,
+    ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, StorageError> {
+        let start = self.resolve_suffix_start(point)?;
+        Ok(Box::new(self.blocks[start..].iter().cloned()))
     }
 
     fn len(&self) -> usize {
