@@ -71,7 +71,7 @@ format byte parity since the storage layer diverges).
 | `ShowEBBs` | ✅ shipped | R480 |
 | `OnlyValidation` | ✅ shipped | R480 |
 | `StoreLedgerStateAt` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
-| `CheckNoThunksEvery` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `CheckNoThunksEvery` | ⛔ `NotApplicableToRust` | R485 (permanent carve-out) |
 | `TraceLedgerProcessing` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
 | `BenchmarkLedgerOps` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
 | `ReproMempoolAndForge` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
@@ -85,7 +85,8 @@ descriptor. **Post-R481 status:** `block-only-shipped`.
 
 | Carve-out | Status helper | Deferral rationale |
 |-----------|---------------|--------------------|
-| 6 ledger-state-dependent analyses | `status::analysis_dispatch_status()` | Gated on a future ledger-state apply-loop arc — each currently returns `AnalysisError::RequiresLedgerStateApplyLoop { analysis_name }` with the analysis name in the error message. Per-era ledger-state apply rules already exist in `crates/ledger/src/eras/*`; threading them through `WithLedgerState<Block, LedgerState>` per-block is the missing wire-up. |
+| 5 ledger-state-dependent analyses | `status::analysis_dispatch_status()` | Gated on a future ledger-state apply-loop arc — each currently returns `AnalysisError::RequiresLedgerStateApplyLoop { analysis_name }` with the analysis name in the error message. Per-era ledger-state apply rules already exist in `crates/ledger/src/eras/*`; threading them through `WithLedgerState<Block, LedgerState>` per-block is the missing wire-up. |
+| `CheckNoThunksEvery` (permanent) | `status::analysis_dispatch_status()` (R485) | Fundamentally not portable to Rust. Upstream `checkNoThunks` uses `NoThunks.unsafeNoThunks` to walk GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks. Returns `AnalysisError::NotApplicableToRust` with the explanation in the error message. |
 | On-disk-streaming `FileImmutable` | (no helper — operational concern) | R482's `iter_after` saves the intermediate `Vec` allocation but the `FileImmutable` impl still loads every block into `self.index: HashMap<HeaderHash, Block>` at open time. A revision that lazy-loads CBOR records from disk on-demand would close the multi-terabyte memory gap fully; gated on a chunked-log on-disk format design (separate arc). |
 | Per-analysis byte-equivalent stdout vs upstream binary | (operational soak — no helper) | `lib.rs::render_outcome` emits an upstream-compatible-shape stdout (e.g. `slot=N block_no=M hash=...; total_blocks=K`). A formal byte-by-byte soak against `.reference-haskell-cardano-node/install/bin/db-analyser` is a follow-on integration round (not blocking — `AnalysisOutcome` is the canonical Yggdrasil-side contract). |
 

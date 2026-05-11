@@ -117,8 +117,8 @@ pub enum AnalysisError {
     /// `LedgerState (CardanoBlock c) ValuesMK` through the per-block
     /// step.
     ///
-    /// 6 of the 13 upstream analyses route to this variant:
-    /// `StoreLedgerStateAt`, `CheckNoThunksEvery`,
+    /// 5 of the 13 upstream analyses route to this variant (after
+    /// R485 carved out `CheckNoThunksEvery`): `StoreLedgerStateAt`,
     /// `TraceLedgerProcessing`, `BenchmarkLedgerOps`,
     /// `ReproMempoolAndForge`, `GetBlockApplicationMetrics`. The
     /// remaining 7 are block-iteration-only and ship handlers in
@@ -131,6 +131,28 @@ pub enum AnalysisError {
     RequiresLedgerStateApplyLoop {
         /// Name of the analysis that hit the deferral (e.g. `"BenchmarkLedgerOps"`).
         analysis_name: String,
+    },
+    /// The selected analysis is fundamentally not portable to Rust.
+    /// Mirror of upstream's `CheckNoThunksEvery` arm which inspects
+    /// the ledger state's GHC heap representation for unevaluated
+    /// thunks — a Haskell-only laziness concept that has no Rust
+    /// analog (Rust is eagerly evaluated; the language has no
+    /// runtime thunks to inspect).
+    ///
+    /// Mirror upstream `Cardano.Tools.DBAnalyser.Analysis.checkNoThunks`
+    /// uses `NoThunks.unsafeNoThunks` which walks GHC's lazy heap;
+    /// this is impossible to port to Rust without a Haskell runtime.
+    /// R485 documents this as a permanent carve-out.
+    #[error(
+        "yggdrasil-db-analyser: analysis '{analysis_name}' is fundamentally not portable to Rust \
+         (laziness/thunks are a Haskell-specific GHC concept; Rust is eagerly evaluated). \
+         This is a permanent carve-out — see status::analysis_dispatch_status."
+    )]
+    NotApplicableToRust {
+        /// Name of the analysis (e.g. `"CheckNoThunksEvery"`).
+        analysis_name: String,
+        /// Human-readable explanation of why this analysis isn't portable.
+        reason: String,
     },
 }
 
@@ -174,8 +196,9 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
                 analysis_name: "StoreLedgerStateAt".to_string(),
             })
         }
-        AnalysisName::CheckNoThunksEvery(_) => Err(AnalysisError::RequiresLedgerStateApplyLoop {
+        AnalysisName::CheckNoThunksEvery(_) => Err(AnalysisError::NotApplicableToRust {
             analysis_name: "CheckNoThunksEvery".to_string(),
+            reason: "NoThunks-style ledger-state inspection walks GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks to inspect.".to_string(),
         }),
         AnalysisName::TraceLedgerProcessing => Err(AnalysisError::RequiresLedgerStateApplyLoop {
             analysis_name: "TraceLedgerProcessing".to_string(),
@@ -678,8 +701,12 @@ mod tests {
             Limit::Unlimited,
         );
         let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
-        let AnalysisError::RequiresLedgerStateApplyLoop { analysis_name } = err;
-        assert_eq!(analysis_name, "BenchmarkLedgerOps");
+        match err {
+            AnalysisError::RequiresLedgerStateApplyLoop { analysis_name } => {
+                assert_eq!(analysis_name, "BenchmarkLedgerOps");
+            }
+            _ => panic!("wrong error variant: {err:?}"),
+        }
     }
 
     #[test]
@@ -703,6 +730,40 @@ mod tests {
             err,
             AnalysisError::RequiresLedgerStateApplyLoop { .. }
         ));
+    }
+
+    #[test]
+    fn run_analysis_check_no_thunks_returns_not_applicable_to_rust() {
+        // R485: CheckNoThunksEvery is fundamentally a Haskell-only
+        // analysis (inspects GHC lazy heap thunks). Permanent
+        // carve-out → NotApplicableToRust variant.
+        let config = mk_config(AnalysisName::CheckNoThunksEvery(100), Limit::Unlimited);
+        let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
+        match err {
+            AnalysisError::NotApplicableToRust {
+                analysis_name,
+                reason,
+            } => {
+                assert_eq!(analysis_name, "CheckNoThunksEvery");
+                assert!(
+                    reason.contains("thunks") || reason.contains("lazy"),
+                    "reason must mention thunks/laziness: {reason}"
+                );
+            }
+            _ => panic!("wrong error variant: {err:?}"),
+        }
+    }
+
+    #[test]
+    fn analysis_error_not_applicable_to_rust_renders_helpful_message() {
+        let err = AnalysisError::NotApplicableToRust {
+            analysis_name: "CheckNoThunksEvery".to_string(),
+            reason: "Rust is eagerly evaluated".to_string(),
+        };
+        let msg = format!("{err}");
+        assert!(msg.contains("CheckNoThunksEvery"));
+        assert!(msg.contains("not portable to Rust"));
+        assert!(msg.contains("permanent carve-out"));
     }
 
     #[test]

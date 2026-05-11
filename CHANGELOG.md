@@ -351,6 +351,23 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R485 — `CheckNoThunksEvery` permanent carve-out (Rust has no
+  thunks).** Reclassifies the `CheckNoThunksEvery` dispatch arm
+  from "deferred pending future ledger-state apply-loop arc" to
+  "fundamentally not portable to Rust". Upstream
+  `checkNoThunks`/`unsafeNoThunks` walks GHC's lazy heap for
+  unevaluated thunks — a Haskell-only laziness concept with no
+  Rust analog (Rust is eagerly evaluated). New
+  `AnalysisError::NotApplicableToRust { analysis_name, reason }`
+  variant carries the explanation through to operator output.
+  Updates `status::analysis_dispatch_status` (`deferred_round`
+  advances `R481 → R485`); AGENTS.md dispatch-coverage matrix row
+  changes from `🚧 RequiresLedgerStateApplyLoop` to
+  `⛔ NotApplicableToRust (R485 permanent)`. **Dispatch coverage
+  matrix now: 7/13 shipped + 1/13 permanent carve-out = 8/13 final
+  verdicts.** Workspace tests: 6,176 → 6,178 (+2). All 5 gates
+  clean. See `docs/operational-runs/2026-05-11-round-485-
+  checknothunks-permanent-carve-out.md`.
 - **R484 — db-truncater AGENTS.md + parity-matrix refresh post-R349.**
   Documentation-only round. Refreshes
   `crates/tools/db-truncater/AGENTS.md` to reflect the
