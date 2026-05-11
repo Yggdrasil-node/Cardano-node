@@ -99,7 +99,7 @@ pub struct WriteTraceObjectsToFileStatus {
 pub fn write_trace_objects_to_file_status() -> WriteTraceObjectsToFileStatus {
     WriteTraceObjectsToFileStatus {
         status: "closed at R462",
-        depends_on: "super::utils::create_or_update_empty_log shipped at R390; HandleRegistry handoff between trace_objects_handler and the supervisor's rotator-shared registry shipped at R462",
+        depends_on: "super::utils::create_or_update_empty_log shipped at R402; HandleRegistry handoff between trace_objects_handler and the supervisor's rotator-shared registry shipped at R462",
         deferred_round: "(closed)",
     }
 }

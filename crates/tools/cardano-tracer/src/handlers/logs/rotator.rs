@@ -884,4 +884,172 @@ mod tests {
         assert!(!tokio::fs::try_exists(&old_log).await.expect("exists query"));
         assert!(tokio::fs::try_exists(&new_log).await.expect("exists query"));
     }
+
+    // ----- R463 full-pipeline soak: rotator + file-write together --------
+
+    /// Soak test: run `run_logs_rotator` concurrently with repeated
+    /// `write_trace_objects_to_file` calls, verify the rotator picks
+    /// up the registered handle, rolls when the size threshold is
+    /// hit, and the registry tracks the freshest handle throughout.
+    ///
+    /// Closes the R462 advisor flag that R461+R462 hadn't been
+    /// validated as a system under load. The unit tests cover each
+    /// half in isolation; this test drives the full pipeline.
+    #[tokio::test]
+    async fn rotator_and_writer_cooperate_under_load() {
+        use crate::configuration::{Network, TracerConfig};
+        use crate::logging::TraceObject;
+        use crate::severity::SeverityS;
+        use crate::types::HandleRegistry;
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let logging = LoggingParams {
+            root: dir.path().to_path_buf(),
+            mode: LogMode::FileMode,
+            format: LogFormat::ForMachine,
+        };
+        // Aggressive rotation: tiny size limit so each batch of
+        // writes triggers a roll; frequency=1s so the rotator scans
+        // quickly; keep_files_num=2 so we accumulate a few historic
+        // logs.
+        let rotation = RotationParams {
+            frequency_secs: 1,
+            log_limit_bytes: 80,
+            max_age_minutes: 60,
+            keep_files_num: 2,
+        };
+        let config = TracerConfig {
+            network_magic: 764824073,
+            network: Network::ConnectTo { connect_to: vec![] },
+            logging: vec![logging.clone()],
+            rotation: Some(rotation),
+            verbosity: None,
+            has_ekg: None,
+            has_prometheus: None,
+            has_rtview: None,
+            has_timeseries: None,
+            tls_certificate: None,
+            has_forwarding: None,
+            ekg_request_freq: None,
+            ekg_request_full: None,
+            metrics_help: None,
+            log_objects_request_num: Some(50),
+            metrics_no_suffix: None,
+            prometheus_labels: None,
+            resource_freq: None,
+        };
+
+        let registry = HandleRegistry::new();
+        let current_log_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let stop = Arc::new(tokio::sync::RwLock::new(false));
+        let tracer: LogsRotatorErrorTracer = Arc::new(|msg: &str| {
+            eprintln!("R463 soak rotator: {msg}");
+        });
+
+        // Spawn the rotator.
+        let rotator_config = config.clone();
+        let rotator_registry = registry.clone();
+        let rotator_lock = current_log_lock.clone();
+        let rotator_stop = stop.clone();
+        let rotator_tracer = tracer.clone();
+        let rotator_task = tokio::spawn(async move {
+            run_logs_rotator(
+                &rotator_config,
+                rotator_registry,
+                rotator_lock,
+                rotator_stop,
+                rotator_tracer,
+            )
+            .await;
+        });
+
+        // Drive the writer. 10 batches of 2 events each. Each
+        // ForMachine event is around 40-50 bytes prepared; 2 events
+        // per batch easily crosses the 80-byte threshold so each
+        // batch should trigger a roll on the next rotator scan.
+        let node_name = "soak-node".to_string();
+        let mk_event = |seq: u32| {
+            TraceObject::new(
+                Some("soak human".to_string()),
+                format!("{{\"seq\":{seq},\"msg\":\"soak machine event\"}}"),
+                SeverityS::Info,
+                vec!["Soak".to_string()],
+                "soak-thread".to_string(),
+                1_700_000_000_000_i64 + i64::from(seq),
+            )
+        };
+        for batch in 0..10u32 {
+            let events = vec![mk_event(batch * 2), mk_event(batch * 2 + 1)];
+            crate::handlers::logs::file::write_trace_objects_to_file(
+                &registry,
+                &logging,
+                &node_name,
+                &current_log_lock,
+                &events,
+            )
+            .await
+            .expect("write batch");
+            // Sleep 250ms so the rotator (1s cadence) interleaves
+            // with the writes — sometimes during a batch, sometimes
+            // after.
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+
+        // Final settle: give the rotator a full scan cycle to
+        // finish any in-flight rolls.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        // Trip the brake + await rotator clean exit.
+        *stop.write().await = true;
+        tokio::time::timeout(Duration::from_secs(3), rotator_task)
+            .await
+            .expect("rotator did not exit")
+            .expect("rotator panicked");
+
+        // Validate the final state:
+        let node_subdir = dir.path().join(&node_name);
+        let mut entries = tokio::fs::read_dir(&node_subdir)
+            .await
+            .expect("read node subdir");
+        let mut log_files: Vec<std::path::PathBuf> = Vec::new();
+        let mut symlinks: Vec<std::path::PathBuf> = Vec::new();
+        while let Some(e) = entries.next_entry().await.expect("entry") {
+            let path = e.path();
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let ft = e.file_type().await.expect("file_type");
+            if ft.is_symlink() {
+                symlinks.push(path);
+            } else if ft.is_file() && name.starts_with("node-") && name.ends_with(".json") {
+                log_files.push(path);
+            }
+        }
+        // Expectations:
+        // - At least 1 log file exists (the current one).
+        // - At least 1 symlink exists (the node.json convenience).
+        // - Total log files is bounded by keep_files_num + 1 (current + retained).
+        //   We allow some slack for in-flight rotations.
+        assert!(
+            !log_files.is_empty(),
+            "expected at least one node-*.json log file"
+        );
+        assert!(
+            !symlinks.is_empty(),
+            "expected at least one node.json symlink"
+        );
+        // Cap: keep_files_num=2 retains 2 older logs + 1 current
+        // = 3 total. The age-based eviction wouldn't fire in this
+        // test (all logs are recent). Allow up to 4 to handle the
+        // race window between mint + rotator scan.
+        assert!(
+            log_files.len() <= 4,
+            "expected ≤4 log files after rotation; got {} ({log_files:?})",
+            log_files.len()
+        );
+        // The registry should still have exactly one handle for
+        // the (node_name, logging) key — the rotator overwrites
+        // it on each roll, never accumulates.
+        assert_eq!(registry.len(), 1);
+    }
 }

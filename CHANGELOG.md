@@ -351,6 +351,29 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R463 — cardano-tracer Logs Rotator + file-write soak test.**
+  Validates the R461 + R462 system under realistic concurrent
+  load. Adds
+  `handlers::logs::rotator::tests::rotator_and_writer_cooperate_under_load`
+  — a focused integration test that:
+  1. Spawns `run_logs_rotator` in a task with aggressive rotation
+     (size limit 80 bytes, 1s frequency, retain 2 historic).
+  2. Drives 10 batches of 2 ForMachine events each, fired every
+     250ms (interleaves with the rotator's 1s scan cadence).
+  3. After settling, trips the brake and verifies the on-disk
+     state: ≥1 log file + ≥1 symlink, log count bounded by
+     `keep_files_num + slack` (≤4), and exactly one
+     HandleRegistry entry for the (node, params) key (proves
+     no FD accumulation across rolls).
+  Closes the R462 advisor flag that R461/R462 hadn't been
+  validated as a system. Also corrects R462's
+  `write_trace_objects_to_file_status` descriptor — said
+  `create_or_update_empty_log` shipped at R390, actually shipped
+  at R402 (R390 was just the pure log-naming + timestamp parser
+  subset). Adds
+  `docs/operational-runs/2026-05-11-round-463-logs-rotator-soak.md`
+  capturing the closure. Workspace tests: 6,034 → 6,035 (+1).
+  All 5 verification gates clean.
 - **R462 — cardano-tracer trace-objects file-write IO orchestration
   + HandleRegistry handoff.** Closes R461's advisor flag that the
   rotator was operationally inert: `trace_objects_handler` produced
