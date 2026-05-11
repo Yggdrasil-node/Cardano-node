@@ -76,6 +76,36 @@ pub enum AnalysisOutcome {
         /// Per-block `(slot, header_size_bytes)` tuples.
         per_block: Vec<(SlotNo, u32)>,
     },
+    /// `ShowBlockTxsSize` result — per-block `(slot, tx_count,
+    /// total_tx_size_bytes)` tuples.
+    ShowBlockTxsSize {
+        /// Per-block `(slot, tx_count, total_tx_size_bytes)` tuples
+        /// in chain order.
+        per_block: Vec<(SlotNo, i64, u64)>,
+    },
+    /// `ShowEBBs` result — Byron-era epoch-boundary blocks
+    /// encountered along the chain. Each tuple is
+    /// `(slot, header_hash, prev_hash_from_registry)`. The prev-hash
+    /// comes from the Byron known-EBB registry (matches what
+    /// upstream emits — registry stays authoritative).
+    ShowEBBs {
+        /// EBB hits in chain order.
+        ebbs: Vec<(SlotNo, HeaderHash, Option<HeaderHash>)>,
+    },
+    /// `OnlyValidation` result — no per-block output, just the count
+    /// of blocks the chain walk processed.
+    ///
+    /// Upstream's `OnlyValidation` emits nothing on stdout; it
+    /// completes successfully when the chain walk validates. The
+    /// Yggdrasil port emits the block count so callers / tests can
+    /// observe that the walk traversed the expected number of
+    /// blocks (the actual validation is performed by
+    /// `ImmutableStore::suffix_after` at R481 wire-up time, which
+    /// rejects malformed chain data with a different error path).
+    OnlyValidation {
+        /// Number of blocks the validating chain walk processed.
+        blocks_processed: i64,
+    },
 }
 
 /// Errors from the analysis dispatch core.
@@ -86,6 +116,13 @@ pub enum AnalysisError {
     /// upstream `Analysis.hs` pattern where these analyses thread
     /// `LedgerState (CardanoBlock c) ValuesMK` through the per-block
     /// step.
+    ///
+    /// 6 of the 13 upstream analyses route to this variant:
+    /// `StoreLedgerStateAt`, `CheckNoThunksEvery`,
+    /// `TraceLedgerProcessing`, `BenchmarkLedgerOps`,
+    /// `ReproMempoolAndForge`, `GetBlockApplicationMetrics`. The
+    /// remaining 7 are block-iteration-only and ship handlers in
+    /// the R475-R481 arc.
     #[error(
         "yggdrasil-db-analyser: analysis '{analysis_name}' requires a ledger-state apply-loop \
          which is not yet shipped (R475-R481 lands block-iteration-only analyses; the apply-loop \
@@ -93,20 +130,6 @@ pub enum AnalysisError {
     )]
     RequiresLedgerStateApplyLoop {
         /// Name of the analysis that hit the deferral (e.g. `"BenchmarkLedgerOps"`).
-        analysis_name: String,
-    },
-    /// The selected analysis is documented as a block-iteration-only
-    /// analysis but has not yet shipped its handler in the R475-R481
-    /// arc. Used for the three handlers that R480 ships
-    /// (`ShowBlockTxsSize`, `ShowEBBs`, `OnlyValidation`) — R479
-    /// returns this variant for them so the runner is wired
-    /// end-to-end at R479 even before R480 lands the bodies.
-    #[error(
-        "yggdrasil-db-analyser: analysis '{analysis_name}' is block-iteration-only but its \
-         handler is not yet shipped (lands at R480 per the R475-R481 arc plan)."
-    )]
-    BlockOnlyHandlerPendingR480 {
-        /// Name of the analysis whose handler is pending.
         analysis_name: String,
     },
 }
@@ -141,15 +164,9 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
         AnalysisName::CountBlocks => Ok(analysis_count_blocks(&bounded)),
         AnalysisName::CountTxOutputs => Ok(analysis_count_tx_outputs(&bounded)),
         AnalysisName::ShowBlockHeaderSize => Ok(analysis_show_block_header_size(&bounded)),
-        AnalysisName::ShowBlockTxsSize => Err(AnalysisError::BlockOnlyHandlerPendingR480 {
-            analysis_name: "ShowBlockTxsSize".to_string(),
-        }),
-        AnalysisName::ShowEBBs => Err(AnalysisError::BlockOnlyHandlerPendingR480 {
-            analysis_name: "ShowEBBs".to_string(),
-        }),
-        AnalysisName::OnlyValidation => Err(AnalysisError::BlockOnlyHandlerPendingR480 {
-            analysis_name: "OnlyValidation".to_string(),
-        }),
+        AnalysisName::ShowBlockTxsSize => Ok(analysis_show_block_txs_size(&bounded)),
+        AnalysisName::ShowEBBs => Ok(analysis_show_ebbs(&bounded)),
+        AnalysisName::OnlyValidation => Ok(analysis_only_validation(&bounded)),
         // Ledger-state-dependent analyses — return structured error
         // pending the ledger-state apply-loop arc.
         AnalysisName::StoreLedgerStateAt(_, _) => {
@@ -243,6 +260,57 @@ pub fn analysis_show_block_header_size(blocks: &[Block]) -> AnalysisOutcome {
     AnalysisOutcome::ShowBlockHeaderSize {
         max_size,
         per_block,
+    }
+}
+
+/// `ShowBlockTxsSize` handler — per-block `(slot, tx_count,
+/// total_tx_size_bytes)` tuples. Mirror of upstream `Analysis.hs`
+/// `showBlockTxsSize` pass which reduces over
+/// `HasAnalysis::blockTxSizes`.
+pub fn analysis_show_block_txs_size(blocks: &[Block]) -> AnalysisOutcome {
+    let per_block = blocks
+        .iter()
+        .map(|blk| {
+            let sizes = blk.block_tx_sizes();
+            let total: u64 = sizes.iter().sum();
+            (blk.header.slot_no, sizes.len() as i64, total)
+        })
+        .collect();
+    AnalysisOutcome::ShowBlockTxsSize { per_block }
+}
+
+/// `ShowEBBs` handler — Byron-era epoch-boundary-block markers
+/// encountered along the chain. Walks each block, checks whether
+/// its header-hash is in the Byron known-EBB registry, and emits a
+/// `(slot, header_hash, prev_hash_from_registry)` tuple for hits.
+///
+/// Mirror of upstream `Analysis.hs` `showEBBs` pass which consumes
+/// `HasAnalysis::knownEBBs`.
+pub fn analysis_show_ebbs(blocks: &[Block]) -> AnalysisOutcome {
+    let registry = <Block as HasAnalysis>::known_ebbs();
+    let ebbs = blocks
+        .iter()
+        .filter_map(|blk| {
+            registry
+                .get(&blk.header.hash)
+                .map(|prev| (blk.header.slot_no, blk.header.hash, *prev))
+        })
+        .collect();
+    AnalysisOutcome::ShowEBBs { ebbs }
+}
+
+/// `OnlyValidation` handler — completes successfully when the chain
+/// walk succeeds; returns the block count for observation. Upstream's
+/// `OnlyValidation` emits no output on stdout but the actual
+/// validation work happens in `ImmutableStore::suffix_after` at
+/// R481 wire-up time. This handler is therefore a sentinel: if it
+/// runs, the chain walk reached this dispatch point.
+///
+/// Mirror of upstream `Analysis.hs` `OnlyValidation` arm
+/// (`onlyValidation` returns `Nothing`).
+pub fn analysis_only_validation(blocks: &[Block]) -> AnalysisOutcome {
+    AnalysisOutcome::OnlyValidation {
+        blocks_processed: blocks.len() as i64,
     }
 }
 
@@ -440,6 +508,98 @@ mod tests {
         }
     }
 
+    // ── R480 handlers ──────────────────────────────────────────────────
+
+    #[test]
+    fn analysis_show_block_txs_size_empty_chain() {
+        let outcome = analysis_show_block_txs_size(&[]);
+        match outcome {
+            AnalysisOutcome::ShowBlockTxsSize { per_block } => assert!(per_block.is_empty()),
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_show_block_txs_size_empty_blocks_yields_zero_sizes() {
+        let outcome = analysis_show_block_txs_size(&[mk_block(0, 0, None)]);
+        match outcome {
+            AnalysisOutcome::ShowBlockTxsSize { per_block } => {
+                assert_eq!(per_block.len(), 1);
+                assert_eq!(per_block[0], (SlotNo(0), 0, 0));
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_show_ebbs_empty_chain() {
+        let outcome = analysis_show_ebbs(&[]);
+        match outcome {
+            AnalysisOutcome::ShowEBBs { ebbs } => assert!(ebbs.is_empty()),
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_show_ebbs_no_match_emits_empty() {
+        // Synthetic block hashes don't match real Byron EBBs.
+        let outcome = analysis_show_ebbs(&[mk_block(0, 0, None), mk_block(20, 1, None)]);
+        match outcome {
+            AnalysisOutcome::ShowEBBs { ebbs } => assert!(ebbs.is_empty()),
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_show_ebbs_matches_byron_genesis_successor() {
+        // Plant a block whose header_hash is the first Mainnet
+        // Byron EBB → the analysis must report it.
+        let genesis_succ_hash = HeaderHash(crate::byron_ebbs::parse_hex32(
+            "89d9b5a5b8ddc8d7e5a6795e9774d97faf1efea59b2caf7eaf9f8c5b32059df4",
+        ));
+        let mut blk = mk_block(0, 0, None);
+        blk.era = Era::Byron;
+        blk.header.hash = genesis_succ_hash;
+        let outcome = analysis_show_ebbs(&[blk]);
+        match outcome {
+            AnalysisOutcome::ShowEBBs { ebbs } => {
+                assert_eq!(ebbs.len(), 1);
+                assert_eq!(ebbs[0].0, SlotNo(0));
+                assert_eq!(ebbs[0].1, genesis_succ_hash);
+                // The genesis successor has no previous hash (the
+                // first Mainnet entry in EBBs.hs is `(h "...", Nothing)`).
+                assert_eq!(ebbs[0].2, None);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_only_validation_empty_chain() {
+        let outcome = analysis_only_validation(&[]);
+        match outcome {
+            AnalysisOutcome::OnlyValidation { blocks_processed } => {
+                assert_eq!(blocks_processed, 0);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_only_validation_counts_blocks() {
+        let outcome = analysis_only_validation(&[
+            mk_block(0, 0, None),
+            mk_block(20, 1, None),
+            mk_block(40, 2, None),
+        ]);
+        match outcome {
+            AnalysisOutcome::OnlyValidation { blocks_processed } => {
+                assert_eq!(blocks_processed, 3);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
     // ── Dispatch core ──────────────────────────────────────────────────
 
     #[test]
@@ -485,25 +645,30 @@ mod tests {
     }
 
     #[test]
-    fn run_analysis_show_block_txs_size_returns_pending_r480() {
+    fn run_analysis_dispatches_show_block_txs_size() {
         let config = mk_config(AnalysisName::ShowBlockTxsSize, Limit::Unlimited);
-        let err = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap_err();
-        match err {
-            AnalysisError::BlockOnlyHandlerPendingR480 { analysis_name } => {
-                assert_eq!(analysis_name, "ShowBlockTxsSize");
-            }
-            _ => panic!("wrong error variant"),
-        }
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        assert!(matches!(outcome, AnalysisOutcome::ShowBlockTxsSize { .. }));
     }
 
     #[test]
-    fn run_analysis_show_ebbs_returns_pending_r480() {
+    fn run_analysis_dispatches_show_ebbs() {
         let config = mk_config(AnalysisName::ShowEBBs, Limit::Unlimited);
-        let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
-        assert!(matches!(
-            err,
-            AnalysisError::BlockOnlyHandlerPendingR480 { .. }
-        ));
+        let outcome = run_analysis(&config, Vec::<Block>::new()).unwrap();
+        assert!(matches!(outcome, AnalysisOutcome::ShowEBBs { .. }));
+    }
+
+    #[test]
+    fn run_analysis_dispatches_only_validation() {
+        let config = mk_config(AnalysisName::OnlyValidation, Limit::Unlimited);
+        let outcome =
+            run_analysis(&config, vec![mk_block(0, 0, None), mk_block(20, 1, None)]).unwrap();
+        match outcome {
+            AnalysisOutcome::OnlyValidation { blocks_processed } => {
+                assert_eq!(blocks_processed, 2);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
     }
 
     #[test]
@@ -513,12 +678,8 @@ mod tests {
             Limit::Unlimited,
         );
         let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
-        match err {
-            AnalysisError::RequiresLedgerStateApplyLoop { analysis_name } => {
-                assert_eq!(analysis_name, "BenchmarkLedgerOps");
-            }
-            _ => panic!("wrong error variant"),
-        }
+        let AnalysisError::RequiresLedgerStateApplyLoop { analysis_name } = err;
+        assert_eq!(analysis_name, "BenchmarkLedgerOps");
     }
 
     #[test]

@@ -351,6 +351,24 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R480 — remaining block-only handlers + simplified
+  `AnalysisError`.** Sixth slice of the R475-R481 arc. Ships
+  bodies for the 3 placeholder `BlockOnlyHandlerPendingR480` arms
+  from R479: `analysis_show_block_txs_size` (per-block (slot,
+  tx_count, total_tx_size_bytes)), `analysis_show_ebbs` (Byron
+  EBB markers — walks blocks, looks up `header.hash` in the R476
+  byron_ebbs registry, emits hits with their registry prev-hash),
+  `analysis_only_validation` (counts blocks processed; the
+  validation work itself is performed by the storage layer at
+  R481 wire-up time). Adds 3 new `AnalysisOutcome` variants;
+  removes the `BlockOnlyHandlerPendingR480` error variant
+  (all 7 block-only handlers now ship). 8 new tests including a
+  planted-EBB lookup against the real Mainnet genesis-successor
+  EBB hash. **Dispatch coverage matrix now: 7/13 shipped, 6/13
+  return `RequiresLedgerStateApplyLoop` pending a future arc.**
+  Workspace tests: 6,152 → 6,160. All 5 verification gates clean.
+  See `docs/operational-runs/2026-05-11-round-480-remaining-
+  block-only-handlers.md`.
 - **R479 — `analysis::runner` dispatch core + 4 shipped handlers.**
   Fifth slice of the R475-R481 arc. Wires upstream
   `Cardano.Tools.DBAnalyser.Analysis::runAnalysis` (1057-line
