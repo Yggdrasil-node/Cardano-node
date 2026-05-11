@@ -351,6 +351,28 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R476 — `HasAnalysis for yggdrasil_ledger::Block` impl + Byron EBB
+  registry.** Second slice of the R475-R481 arc. Ports the upstream
+  `Ouroboros.Consensus.Byron.EBBs::knownEBBs` constant (325 entries:
+  176 mainnet + 119 staging + 30 testnet) to a new
+  `crates/tools/db-analyser/src/byron_ebbs.rs` file with inline
+  hex-decoder + `LazyLock<HashMap<HeaderHash, Option<HeaderHash>>>`
+  registry — strict mirror of upstream `EBBs.hs`. Then implements
+  `HasAnalysis for yggdrasil_ledger::Block` in `has_analysis.rs`,
+  collapsing upstream's three per-era typeclass instances
+  (`Block/{Byron,Shelley,Cardano}.hs`) into a single impl that
+  dispatches through `Block::era` (Yggdrasil's unified Block struct
+  replaces the per-era newtype hierarchy). Block-iteration-only
+  methods (`count_tx_outputs`, `block_tx_sizes`, `known_ebbs`,
+  `block_stats`, `block_application_metrics` columns) are real;
+  ledger-state-dependent methods (`emit_traces` + extended
+  block_stats / metrics columns) return empty pending the future
+  ledger-state apply-loop arc. New `pub struct
+  CardanoLedgerStateValues` placeholder for the
+  `LedgerStateValues` associated-type slot. 14 new tests (5 EBB
+  registry + 9 Block-impl). Workspace tests: 6,105 → 6,119. All 5
+  verification gates clean. See `docs/operational-runs/2026-05-11-
+  round-476-hasanalysis-block-impl.md`.
 - **R475 — per-era TxBody output-count helpers.** First slice of the
   R475-R481 `db-analyser HasAnalysis` arc. Ships per-era
   `TxBody::decode_output_count(&[u8]) -> Result<usize, LedgerError>`

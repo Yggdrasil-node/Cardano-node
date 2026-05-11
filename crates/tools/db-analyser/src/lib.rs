@@ -27,6 +27,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod analysis;
+pub mod byron_ebbs;
 pub mod csv;
 pub mod has_analysis;
 pub mod parser;
