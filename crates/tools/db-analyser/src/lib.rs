@@ -172,6 +172,28 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
         AnalysisOutcome::OnlyValidation { blocks_processed } => {
             writeln!(out, "only_validation blocks_processed={blocks_processed}")?;
         }
+        AnalysisOutcome::StoreLedgerStateAt {
+            target_slot,
+            reached_slot,
+            snapshot_bytes,
+            applied_ok,
+            applied_err,
+        } => match reached_slot {
+            Some(reached) => writeln!(
+                out,
+                "store_ledger_state_at target_slot={} reached_slot={} snapshot_bytes={} applied_ok={} applied_err={}",
+                target_slot.0,
+                reached.0,
+                snapshot_bytes.len(),
+                applied_ok,
+                applied_err
+            )?,
+            None => writeln!(
+                out,
+                "store_ledger_state_at target_slot={} reached_slot=<not_reached> snapshot_bytes=0 applied_ok={} applied_err={}",
+                target_slot.0, applied_ok, applied_err
+            )?,
+        },
         AnalysisOutcome::GetBlockApplicationMetrics {
             rows,
             every_n_blocks,

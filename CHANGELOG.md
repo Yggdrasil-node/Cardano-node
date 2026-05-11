@@ -351,6 +351,26 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R491 — `StoreLedgerStateAt` handler via existing
+  `LedgerStateCheckpoint` CBOR codec.** Ships the 4th of the 5
+  ledger-state-dependent analyses by reusing the R269-shipped
+  `LedgerStateCheckpoint` `CborEncode`/`CborDecode` impls at
+  `crates/ledger/src/state/checkpoint.rs`. New
+  `analysis_store_ledger_state_at` handler walks blocks via
+  `LedgerState::apply_block`, captures
+  `state.checkpoint().to_cbor_bytes()` at the first block whose
+  `slot_no >= target_slot`, returns the encoded snapshot. **No
+  new codec work** — R491 ships exclusively as a handler + dispatch
+  wire-up. New `AnalysisOutcome::StoreLedgerStateAt { target_slot,
+  reached_slot, snapshot_bytes, applied_ok, applied_err }`
+  variant. A test confirms the captured `snapshot_bytes` decode
+  back via `LedgerStateCheckpoint::from_cbor_bytes` — round-trip
+  via the existing codec works. **Dispatch coverage matrix now:
+  11/13 shipped + 1/13 permanent carve-out = 12/13 final
+  verdicts.** Only 1/13 still deferred (`ReproMempoolAndForge`
+  needs mempool+forge integration). 5 new tests. Workspace tests:
+  6,191 → 6,196. All 5 gates clean. See `docs/operational-runs/
+  2026-05-11-round-491-store-ledger-state-at-handler.md`.
 - **R490 — `GetBlockApplicationMetrics` handler via R476 column
   closures.** Ships the 3rd of the 5 ledger-state-dependent
   analyses (after R485 permanent + R488/R489 shipped). Leverages

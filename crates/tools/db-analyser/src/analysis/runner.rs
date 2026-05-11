@@ -168,6 +168,33 @@ pub enum AnalysisOutcome {
         /// Number of blocks whose apply call returned an error.
         applied_err: i64,
     },
+    /// `StoreLedgerStateAt` result (R491) — captures the
+    /// [`yggdrasil_ledger::LedgerStateCheckpoint`] CBOR snapshot
+    /// when the chain walk reaches the target slot.
+    ///
+    /// `snapshot_bytes` is the CBOR-encoded checkpoint
+    /// (`LedgerStateCheckpoint::to_cbor_bytes()`); a downstream
+    /// caller can write it to disk or decode back via
+    /// `LedgerStateCheckpoint::from_cbor_bytes`. `reached_slot`
+    /// is the actual slot at which the snapshot was captured —
+    /// `None` if the walk completed without reaching
+    /// `target_slot` (chain too short).
+    StoreLedgerStateAt {
+        /// Operator-supplied target slot.
+        target_slot: SlotNo,
+        /// Slot at which the snapshot was captured (`None` if the
+        /// chain walk ended before reaching `target_slot`).
+        reached_slot: Option<SlotNo>,
+        /// CBOR-encoded `LedgerStateCheckpoint` snapshot. Empty
+        /// when `reached_slot` is `None`.
+        snapshot_bytes: Vec<u8>,
+        /// Number of blocks that applied successfully during the
+        /// walk to reach the target slot.
+        applied_ok: i64,
+        /// Number of blocks whose apply call returned an error
+        /// during the walk (still counted; doesn't abort).
+        applied_err: i64,
+    },
     /// `BenchmarkLedgerOps` result (R489) — per-block
     /// [`crate::analysis::benchmark_ledger_ops::slot_data_point::SlotDataPoint`]
     /// records produced by walking the chain with
@@ -208,16 +235,15 @@ pub enum AnalysisError {
     /// `LedgerState (CardanoBlock c) ValuesMK` through the per-block
     /// step.
     ///
-    /// 2 of the 13 upstream analyses route to this variant after
+    /// 1 of the 13 upstream analyses routes to this variant after
     /// R485 (CheckNoThunksEvery → NotApplicableToRust), R488
     /// (TraceLedgerProcessing → shipped), R489 (BenchmarkLedgerOps
-    /// → shipped) and R490 (GetBlockApplicationMetrics → shipped):
-    /// `StoreLedgerStateAt`, `ReproMempoolAndForge`. The remaining
-    /// 7 are block-iteration-only and ship handlers in the
-    /// R475-R481 arc. `TraceLedgerProcessing` ships via R488,
-    /// `BenchmarkLedgerOps` ships via R489, and
-    /// `GetBlockApplicationMetrics` ships via R490 (all three
-    /// through the `LedgerState::apply_block` seam).
+    /// → shipped), R490 (GetBlockApplicationMetrics → shipped),
+    /// and R491 (StoreLedgerStateAt → shipped via the existing
+    /// LedgerStateCheckpoint CBOR codec): only
+    /// `ReproMempoolAndForge` remains pending. The remaining 7
+    /// are block-iteration-only and ship handlers in the R475-R481
+    /// arc.
     #[error(
         "yggdrasil-db-analyser: analysis '{analysis_name}' requires a ledger-state apply-loop \
          which is not yet shipped (R475-R481 lands block-iteration-only analyses; the apply-loop \
@@ -286,10 +312,8 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
         AnalysisName::OnlyValidation => Ok(analysis_only_validation(&bounded)),
         // Ledger-state-dependent analyses — return structured error
         // pending the ledger-state apply-loop arc.
-        AnalysisName::StoreLedgerStateAt(_, _) => {
-            Err(AnalysisError::RequiresLedgerStateApplyLoop {
-                analysis_name: "StoreLedgerStateAt".to_string(),
-            })
+        AnalysisName::StoreLedgerStateAt(target_slot, _mode) => {
+            Ok(analysis_store_ledger_state_at(&bounded, *target_slot))
         }
         AnalysisName::CheckNoThunksEvery(_) => Err(AnalysisError::NotApplicableToRust {
             analysis_name: "CheckNoThunksEvery".to_string(),
@@ -559,6 +583,68 @@ pub fn analysis_benchmark_ledger_ops(blocks: &[Block]) -> AnalysisOutcome {
 
     AnalysisOutcome::BenchmarkLedgerOps {
         slot_data_points,
+        applied_ok,
+        applied_err,
+    }
+}
+
+/// `StoreLedgerStateAt` handler (R491) — walks blocks via
+/// [`yggdrasil_ledger::LedgerState::apply_block`] until reaching
+/// `target_slot`, captures a
+/// [`yggdrasil_ledger::LedgerStateCheckpoint`] CBOR snapshot at
+/// that point, and returns the encoded bytes.
+///
+/// The chain walk stops at the first block whose
+/// `header.slot_no >= target_slot`. If the walk completes without
+/// reaching the target, `reached_slot` is `None` and
+/// `snapshot_bytes` is empty.
+///
+/// **Reuses the existing R269-shipped codec:**
+/// `LedgerStateCheckpoint` already has `CborEncode`/`CborDecode`
+/// impls in `crates/ledger/src/state/checkpoint.rs`. R491 does
+/// not add new codec work — it only wires the existing snapshot
+/// codec through the analysis runner.
+///
+/// **Forensic semantics:** apply failures don't abort the walk;
+/// the snapshot is taken at whatever state the chain walk
+/// reached when the target slot was hit.
+///
+/// Mirror of upstream `Analysis.hs::storeLedgerStateAt`.
+pub fn analysis_store_ledger_state_at(
+    blocks: &[Block],
+    target_slot: yggdrasil_ledger::SlotNo,
+) -> AnalysisOutcome {
+    use yggdrasil_ledger::CborEncode;
+
+    let initial_era = blocks
+        .first()
+        .map(|b| b.era)
+        .unwrap_or(yggdrasil_ledger::Era::Byron);
+    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut applied_ok: i64 = 0;
+    let mut applied_err: i64 = 0;
+    let mut reached_slot: Option<SlotNo> = None;
+    let mut snapshot_bytes: Vec<u8> = Vec::new();
+
+    for blk in blocks {
+        match state.apply_block(blk) {
+            Ok(()) => applied_ok += 1,
+            Err(_) => applied_err += 1,
+        }
+        if blk.header.slot_no.0 >= target_slot.0 && reached_slot.is_none() {
+            let checkpoint = state.checkpoint();
+            snapshot_bytes = checkpoint.to_cbor_bytes();
+            reached_slot = Some(blk.header.slot_no);
+            // Continue applying remaining blocks for an honest
+            // applied_ok/applied_err total; the snapshot is
+            // taken at first-reach.
+        }
+    }
+
+    AnalysisOutcome::StoreLedgerStateAt {
+        target_slot,
+        reached_slot,
+        snapshot_bytes,
         applied_ok,
         applied_err,
     }
@@ -1280,6 +1366,107 @@ mod tests {
             }
             _ => panic!("wrong outcome variant"),
         }
+    }
+
+    // ── R491 StoreLedgerStateAt handler ────────────────────────────────
+
+    #[test]
+    fn analysis_store_ledger_state_at_empty_chain_returns_none() {
+        let outcome = analysis_store_ledger_state_at(&[], SlotNo(100));
+        match outcome {
+            AnalysisOutcome::StoreLedgerStateAt {
+                target_slot,
+                reached_slot,
+                snapshot_bytes,
+                applied_ok,
+                applied_err,
+            } => {
+                assert_eq!(target_slot, SlotNo(100));
+                assert!(reached_slot.is_none());
+                assert!(snapshot_bytes.is_empty());
+                assert_eq!(applied_ok, 0);
+                assert_eq!(applied_err, 0);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_store_ledger_state_at_target_too_high_returns_none() {
+        let mut blk = mk_block(10, 0, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        let outcome = analysis_store_ledger_state_at(&[blk], SlotNo(9999));
+        match outcome {
+            AnalysisOutcome::StoreLedgerStateAt {
+                reached_slot,
+                snapshot_bytes,
+                ..
+            } => {
+                assert!(reached_slot.is_none());
+                assert!(snapshot_bytes.is_empty());
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_store_ledger_state_at_captures_snapshot_at_target() {
+        let mut a = mk_block(10, 0, None);
+        a.era = yggdrasil_ledger::Era::Byron;
+        let mut b = mk_block(20, 1, None);
+        b.era = yggdrasil_ledger::Era::Byron;
+        let mut c = mk_block(30, 2, None);
+        c.era = yggdrasil_ledger::Era::Byron;
+        // target_slot=20 — should snapshot at block b.
+        let outcome = analysis_store_ledger_state_at(&[a, b, c], SlotNo(20));
+        match outcome {
+            AnalysisOutcome::StoreLedgerStateAt {
+                target_slot,
+                reached_slot,
+                snapshot_bytes,
+                applied_ok,
+                applied_err,
+            } => {
+                assert_eq!(target_slot, SlotNo(20));
+                assert_eq!(reached_slot, Some(SlotNo(20)));
+                assert!(!snapshot_bytes.is_empty(), "snapshot must be encoded");
+                // All 3 blocks applied (apply doesn't stop at target).
+                assert_eq!(applied_ok + applied_err, 3);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_store_ledger_state_at_snapshot_round_trips_via_checkpoint_codec() {
+        use yggdrasil_ledger::{CborDecode, LedgerStateCheckpoint};
+        let mut blk = mk_block(0, 0, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        let outcome = analysis_store_ledger_state_at(&[blk], SlotNo(0));
+        match outcome {
+            AnalysisOutcome::StoreLedgerStateAt { snapshot_bytes, .. } => {
+                // Confirm the bytes decode back via the existing
+                // LedgerStateCheckpoint codec.
+                let decoded = LedgerStateCheckpoint::from_cbor_bytes(&snapshot_bytes);
+                assert!(decoded.is_ok(), "round-trip decode failed: {decoded:?}");
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn run_analysis_dispatches_store_ledger_state_at() {
+        let config = mk_config(
+            AnalysisName::StoreLedgerStateAt(SlotNo(0), LedgerApplicationMode::LedgerReapply),
+            Limit::Unlimited,
+        );
+        let mut blk = mk_block(0, 0, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        let outcome = run_analysis(&config, vec![blk]).unwrap();
+        assert!(matches!(
+            outcome,
+            AnalysisOutcome::StoreLedgerStateAt { .. }
+        ));
     }
 
     #[test]
