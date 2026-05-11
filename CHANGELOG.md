@@ -351,6 +351,25 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R497 — `Tx::to_raw_tx_bytes` — last forensic-fidelity gap
+  closes. 8/8 MempoolEntry fields real.** New
+  `Tx::to_raw_tx_bytes(&self) -> Vec<u8>` constructs the wire-
+  form CBOR: pre-Alonzo emits 3-element `[body, witnesses_or_null,
+  aux_data_or_null]`; Alonzo+ emits 4-element `[body, witnesses_
+  or_null, is_valid_bool, aux_data_or_null]`. Updates R493's
+  `analysis_repro_mempool_and_forge` to populate
+  `MempoolEntry::raw_tx` via the new helper (was `tx.body.clone()`
+  placeholder). **Forensic-fidelity matrix complete: 8/8 fields
+  real** (was 7/8 at R495+R496). 5 new tests including byte-exact
+  assertions on the CBOR output shape for pre-Alonzo + Alonzo+
+  (both `is_valid=true` and `is_valid=false`) + a
+  `to_raw_tx_bytes_matches_serialized_size_length` invariant
+  test pinning the pre-Alonzo `serialized_size()` ↔
+  `to_raw_tx_bytes().len()` equality. Workspace tests: 6,219 →
+  6,224. All 5 gates clean. See `docs/operational-runs/2026-05-11-
+  round-497-to-raw-tx-bytes-fidelity.md`. **R475-R497 sequence:
+  27 commits, +140 tests across 23 rounds, db-analyser fully
+  shipped at high forensic fidelity.**
 - **R496 — `Block::emit_traces` body + `TraceLedgerProcessing`
   trace-event wiring.** Closes R488's documented trace-content
   gap. Replaces R476's empty `emit_traces` placeholder with a

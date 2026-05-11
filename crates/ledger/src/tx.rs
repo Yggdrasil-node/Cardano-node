@@ -211,6 +211,54 @@ impl Tx {
                 .map(|opt| opt.unwrap_or(u64::MAX)),
         }
     }
+
+    /// Construct the wire-form CBOR bytes for relay-protocol /
+    /// mempool storage.
+    ///
+    /// Pre-Alonzo (`is_valid: None`): 3-element array
+    /// `[body, witnesses_or_null, aux_data_or_null]`.
+    ///
+    /// Alonzo+ (`is_valid: Some`): 4-element array
+    /// `[body, witnesses_or_null, is_valid_bool, aux_data_or_null]`.
+    ///
+    /// `null` is CBOR primitive `0xf6` (1 byte). The element-count
+    /// in the header is in the inlined 0..=23 range so the array
+    /// header is 1 byte.
+    ///
+    /// Used by db-analyser's `ReproMempoolAndForge` analysis (R497)
+    /// to populate `MempoolEntry::raw_tx` with the real wire-form
+    /// bytes rather than the R493 forensic placeholder (`raw_tx =
+    /// body`).
+    pub fn to_raw_tx_bytes(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        let element_count: u64 = if self.is_valid.is_some() { 4 } else { 3 };
+        enc.array(element_count);
+        // Element 0: body (already CBOR-encoded).
+        enc.raw(&self.body);
+        // Element 1: witnesses (CBOR-encoded) or null.
+        match &self.witnesses {
+            Some(w) => {
+                enc.raw(w);
+            }
+            None => {
+                enc.null();
+            }
+        }
+        // Element 2 (Alonzo+ only): is_valid bool.
+        if let Some(v) = self.is_valid {
+            enc.bool(v);
+        }
+        // Element 3 (or 2 for pre-Alonzo): aux_data or null.
+        match &self.auxiliary_data {
+            Some(a) => {
+                enc.raw(a);
+            }
+            None => {
+                enc.null();
+            }
+        }
+        enc.into_bytes()
+    }
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:
@@ -1627,6 +1675,83 @@ mod tests {
         let tx = mk_tx(body.to_cbor_bytes());
         assert_eq!(tx.decode_ttl(Era::Alonzo).unwrap(), u64::MAX);
         assert_eq!(tx.decode_fee(Era::Alonzo).unwrap(), 100);
+    }
+
+    // ── Tx::to_raw_tx_bytes (R497) ─────────────────────────────────────
+
+    #[test]
+    fn to_raw_tx_bytes_pre_alonzo_3_element_with_witnesses_and_aux() {
+        let tx = Tx {
+            id: compute_tx_id(b"body"),
+            body: vec![0x80, 0x01, 0x02], // 3-byte CBOR fragment
+            witnesses: Some(vec![0xA0]),  // 1-byte CBOR fragment
+            auxiliary_data: Some(vec![0x83]),
+            is_valid: None, // pre-Alonzo → 3-element array
+        };
+        let raw = tx.to_raw_tx_bytes();
+        // [array(3)=0x83, body=0x80 0x01 0x02, witnesses=0xA0, aux_data=0x83]
+        assert_eq!(raw, vec![0x83, 0x80, 0x01, 0x02, 0xA0, 0x83]);
+    }
+
+    #[test]
+    fn to_raw_tx_bytes_pre_alonzo_3_element_null_witnesses() {
+        let tx = Tx {
+            id: compute_tx_id(b"body"),
+            body: vec![0x80],
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        };
+        let raw = tx.to_raw_tx_bytes();
+        // [array(3)=0x83, body=0x80, null=0xF6, null=0xF6]
+        assert_eq!(raw, vec![0x83, 0x80, 0xF6, 0xF6]);
+    }
+
+    #[test]
+    fn to_raw_tx_bytes_alonzo_plus_4_element_with_is_valid_true() {
+        let tx = Tx {
+            id: compute_tx_id(b"body"),
+            body: vec![0x80],
+            witnesses: Some(vec![0xA0]),
+            auxiliary_data: None,
+            is_valid: Some(true),
+        };
+        let raw = tx.to_raw_tx_bytes();
+        // [array(4)=0x84, body=0x80, witnesses=0xA0, is_valid=true=0xF5, aux=null=0xF6]
+        assert_eq!(raw, vec![0x84, 0x80, 0xA0, 0xF5, 0xF6]);
+    }
+
+    #[test]
+    fn to_raw_tx_bytes_alonzo_plus_4_element_with_is_valid_false() {
+        let tx = Tx {
+            id: compute_tx_id(b"body"),
+            body: vec![0x80],
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: Some(false),
+        };
+        let raw = tx.to_raw_tx_bytes();
+        // [array(4)=0x84, body=0x80, witnesses=null=0xF6, is_valid=false=0xF4, aux=null=0xF6]
+        assert_eq!(raw, vec![0x84, 0x80, 0xF6, 0xF4, 0xF6]);
+    }
+
+    #[test]
+    fn to_raw_tx_bytes_matches_serialized_size_length() {
+        // The size returned by Tx::serialized_size() must equal the
+        // byte length of to_raw_tx_bytes() output (modulo Alonzo+
+        // which has an extra is_valid byte not counted in
+        // serialized_size — matches upstream's
+        // toCBORForSizeComputation that excludes is_valid).
+        let pre_alonzo = Tx {
+            id: compute_tx_id(b"body"),
+            body: vec![0x80, 0x01, 0x02],
+            witnesses: Some(vec![0xA0]),
+            auxiliary_data: Some(vec![0x83]),
+            is_valid: None,
+        };
+        let raw = pre_alonzo.to_raw_tx_bytes();
+        // Pre-Alonzo: serialized_size == to_raw_tx_bytes length.
+        assert_eq!(raw.len(), pre_alonzo.serialized_size());
     }
 
     #[test]

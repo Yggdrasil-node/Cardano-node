@@ -186,36 +186,32 @@ pub enum AnalysisOutcome {
     /// `(slot, block_no, mempool_insert_count, forge_pop_count,
     ///  mempool_insert_ns, forge_pop_ns)`.
     ///
-    /// **Forensic semantics:** the mempool starts empty per block
-    /// (matches upstream's "reproduce mempool-and-forge cycle"
-    /// rather than carrying state across blocks). Insert failures
-    /// (capacity-exceeded, duplicate-tx-id, conflicting inputs)
-    /// are silently skipped — the per-block insert count reflects
-    /// successful inserts. Each `MempoolEntry` is built with the
-    /// progressively-realer field set (post-R495):
+    /// **Forensic semantics (post-R497):** the mempool starts
+    /// empty per block (matches upstream's "reproduce mempool-and-
+    /// forge cycle" rather than carrying state across blocks).
+    /// Insert failures (capacity-exceeded, duplicate-tx-id,
+    /// conflicting inputs) are silently skipped — the per-block
+    /// insert count reflects successful inserts. Each
+    /// `MempoolEntry` is built with the **full 8/8 real-field
+    /// set**:
     /// - `era`/`tx_id`/`body`/`size_bytes` from the source `Tx`.
     /// - `inputs` from `Tx::decode_inputs(era)` (R494) — enables
-    ///   real mempool conflict-detection; Byron returns empty
-    ///   (uses `ByronTxIn`, not `ShelleyTxIn`).
+    ///   real mempool conflict-detection; Byron returns empty.
     /// - `fee` from `Tx::decode_fee(era)` (R495) — enables real
-    ///   fee-priority ordering in the mempool; Byron returns 0
-    ///   (fee computed from input/output diff, not stored).
-    /// - `ttl` from `Tx::decode_ttl(era)` (R495) — Shelley/Allegra/
-    ///   Mary have a mandatory ttl; Alonzo+ ttl is optional and
-    ///   defaults to `u64::MAX` when absent; Byron returns
+    ///   fee-priority ordering; Byron returns 0.
+    /// - `ttl` from `Tx::decode_ttl(era)` (R495); Byron returns
     ///   `u64::MAX`.
-    /// - `raw_tx=body` (forensic placeholder — `raw_tx` should be
-    ///   the 3-or-4-element wire-form CBOR array; bounded
-    ///   follow-on item).
+    /// - `raw_tx` from `Tx::to_raw_tx_bytes()` (R497) — real wire-
+    ///   form CBOR (3-or-4-element array depending on `is_valid`).
     ///
-    /// **Carve-out (post-R495):** upstream's `reproMempoolForge`
+    /// **Carve-out (post-R497):** upstream's `reproMempoolForge`
     /// measures the mempool revalidation hot path against live
-    /// ledger state. Yggdrasil's R494+R495 wire-up gives real
-    /// inputs/fee/ttl/size_bytes — fee-priority ordering, conflict
-    /// detection, and TTL eviction all work. The remaining gap is
-    /// ledger-state-aware revalidation (e.g. UTxO existence
-    /// checks); that needs a configured genesis state, which is a
-    /// separate future arc.
+    /// ledger state. Yggdrasil's R494-R497 wire-up gives 8/8 real
+    /// `MempoolEntry` fields — fee-priority ordering, conflict
+    /// detection, TTL eviction, and wire-form-CBOR relay payloads
+    /// all work. The remaining gap is ledger-state-aware
+    /// revalidation (UTxO existence checks); that needs a
+    /// configured genesis state, which is a separate future arc.
     ReproMempoolAndForge {
         /// Per-block stats in chain order.
         per_block_stats: Vec<(SlotNo, BlockNo, i64, i64, i64, i64)>,
@@ -845,12 +841,15 @@ pub fn analysis_repro_mempool_and_forge(blocks: &[Block]) -> AnalysisOutcome {
             let inputs = tx.decode_inputs(blk.era).unwrap_or_default();
             let fee = tx.decode_fee(blk.era).unwrap_or(0);
             let ttl = tx.decode_ttl(blk.era).unwrap_or(u64::MAX);
+            // R497: real wire-form CBOR via Tx::to_raw_tx_bytes
+            // (3-or-4-element array depending on is_valid).
+            let raw_tx = tx.to_raw_tx_bytes();
             let entry = MempoolEntry {
                 era: blk.era,
                 tx_id: tx.id,
                 fee,
                 body: tx.body.clone(),
-                raw_tx: tx.body.clone(),
+                raw_tx,
                 size_bytes: tx.serialized_size(),
                 ttl: yggdrasil_ledger::SlotNo(ttl),
                 inputs,
