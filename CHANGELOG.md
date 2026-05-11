@@ -351,6 +351,16 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R492 — `docs/parity-matrix.json::sister-tool.db-analyser`
+  refresh post-R491.** Documentation-only round. Updates
+  `next_milestone` `R481 → R491`; expands `rust_surface[0].role`
+  to summarize the 12/13 final verdicts (11 shipped + 1
+  permanent carve-out); adds an R482-R491 implementation-evidence
+  bullet enumerating each delivered round; trims `remaining_work`
+  from 4 multi-issue items to 4 single-issue items
+  (`ReproMempoolAndForge` handler, `TraceLedgerProcessing`
+  trace-content fidelity, stdout byte-equivalence soak,
+  closeout). No source code touched. All gates clean.
 - **R491 — `StoreLedgerStateAt` handler via existing
   `LedgerStateCheckpoint` CBOR codec.** Ships the 4th of the 5
   ledger-state-dependent analyses by reusing the R269-shipped
