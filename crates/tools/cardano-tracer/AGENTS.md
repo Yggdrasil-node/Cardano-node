@@ -1,17 +1,23 @@
 # Guidance for the pure-Rust port of upstream `cardano-tracer`.
 
-**Status:** `partial` (post-R411-R459 arc — trace-forwarder
+**Status:** `partial` (post-R474 closeout — trace-forwarder
 TraceObject + DataPoint sub-protocols both fully wired through
 Type → Codec → Acceptor → Run + Configuration + Utils +
 ForwardSink + Acceptors/{Server, Client, Utils, Run} + supervisor).
 The R430 closure marked the structural completion of the
 trace-forwarder pipe + per-node Prometheus / EKG-equivalent
-endpoints. The R452-R459 arc closed the DataPoint sub-protocol
-deferral; the per-connection mux now multiplexes HANDSHAKE +
-TRACE_OBJECTS + DATA_POINTS. Remaining gaps are documented
-carve-outs (EKG ReqResp sub-protocol, RTView web UI,
-trace-forwarder handshake-over-socket codec, TraceObject CBOR
-codec, TLS termination integration) — each surfaced via a
+endpoints. The R452-R459 arc closed the DataPoint **acceptor**
+sub-protocol; the R471-R473 arc closed the DataPoint
+**forwarder** sub-protocol (R474 added the end-to-end integration
+smoke). The R460-R470 follow-on arcs closed the per-connection
+mux integration (R460), Logs Rotator IO orchestration (R461-R463),
+runMetricsServers aggregator (R464), per-connection HandleRegistry
+hooks (R465), supervisor shutdown helpers (R466-R467), TLS
+termination via axum-server-rustls (R468), and the cardano-tracer-
+side `DataPointRequestor` registry plumbing (R469-R470). Remaining
+gaps are documented carve-outs (EKG ReqResp sub-protocol, RTView
+web UI, trace-forwarder handshake-over-socket codec, TraceObject
+CBOR upstream-byte-equivalence) — each surfaced via a
 `*_status()` helper for programmatic introspection. Scope band:
 **LARGE**.
 
@@ -32,7 +38,7 @@ Vendored at: `.reference-haskell-cardano-node/cardano-tracer/` (93 `.hs` files).
 
 Standalone trace-forwarder + log + metrics aggregator. Phase A.5 mini-arc R360-R385 (26 rounds, LARGE). RTView web UI carve-out approved (no Rust analog for ThreePenny GUI). R367 adds tracing-appender for log rotation; R371 adds axum for Prometheus metrics endpoint.
 
-## Current functional surface (post-R459)
+## Current functional surface (post-R474)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test
   pinned in `tests/cli_help_golden.rs`).
@@ -58,25 +64,41 @@ Standalone trace-forwarder + log + metrics aggregator. Phase A.5 mini-arc R360-R
 - ❌ EKG ReqResp sub-protocol — synthesis carve-out (`ekg-forward`
   Hackage package not vendored). See
   `acceptors::server::run_ekg_acceptor_status`.
-- ❌ DataPoint sub-protocol **forwarder side** — only the acceptor
-  side ships in R452-R458. The forwarder side (which runs in
-  cardano-node, not cardano-tracer) is vendored at
-  `.reference-haskell-cardano-node/trace-forward/src/Trace/Forward/Run/DataPoint/Forwarder.hs`
-  and remains pending — not blocking cardano-tracer's
-  operational role as the acceptor.
-- ❌ Trace-forwarder handshake codec — defers RemoteSocket TCP path.
+- ✅ **DataPoint sub-protocol forwarder side** (R471-R473) —
+  `crates/network/src/{data_point_forwarder,data_point_run_forwarder}.rs`
+  ships the cardano-node-analog forwarder driver + DataPointStore +
+  `forward_data_points_{init,resp}` mux entries. The trace-forward
+  2-sided port is structurally complete at the protocol level.
+- ❌ Trace-forwarder handshake-over-socket codec — defers
+  RemoteSocket TCP path (operator uses Unix-pipe transport).
   See `acceptors::server::do_listen_to_forwarder_socket_status`.
-- ❌ TraceObject CBOR codec — depends on `trace-dispatcher`
-  upstream port. R424's stub decoder returns empty list.
-- ❌ TLS termination — R408's `load_pem_certs` / `load_pem_key`
-  helpers ship; the `axum-server-rustls` integration recipe is in
-  `http_server::tls_bind_plan_status` (R429).
-- ✅ **Logs Rotator** (R461) — `handlers::logs::rotator::run_logs_rotator`
-  ships the full IO orchestration (`runLogsRotator`, `launchRotator`,
-  `checkRootDir`, `checkLogs`, `checkIfCurrentLogIsFull`). Wired into
-  `do_run_cardano_tracer` supervisor alongside `run_acceptors` via
-  `tokio::spawn` with supervisor-level brake flag.
-- ❌ RTView web UI — synthesis carve-out per the R326-R459 plan.
+- ❌ TraceObject CBOR upstream-byte-equivalence — current codec
+  is a 6-field array synthesis (`crates/tools/cardano-tracer/src/logging.rs`
+  R437 carve-out); upstream's `Cardano.Logging.TraceObject` Serialise
+  instance lives in the cardano-logging Hackage package which is
+  not vendored locally. Operationally: yggdrasil ↔ yggdrasil
+  round-trips work; yggdrasil ↔ upstream-cardano-node interop
+  would need the upstream Serialise port.
+- ✅ **TLS termination** (R468) — `http_server::serve_router_with_tls`
+  ships axum-server-rustls integration with R408's
+  `load_pem_certs` / `load_pem_key` helpers, defaulting to the
+  ring CryptoProvider. Carve-out documented at
+  `http_server::tls_bind_plan_status` (R429) closed.
+- ✅ **Logs Rotator** (R461-R463) —
+  `handlers::logs::rotator::run_logs_rotator` ships the full IO
+  orchestration (`runLogsRotator`, `launchRotator`, `checkRootDir`,
+  `checkLogs`, `checkIfCurrentLogIsFull`) + file-write soak (R463).
+  Wired into `do_run_cardano_tracer` supervisor alongside
+  `run_acceptors` via `tokio::spawn` with supervisor-level brake
+  flag.
+- ✅ **runMetricsServers** (R464) — Prometheus + Monitoring HTTP
+  endpoint aggregator wired into the supervisor.
+- ✅ **per-connection HandleRegistry** (R465) — deregister hook
+  fires on connection close.
+- ✅ **DataPointRequestors registry plumbing** (R469-R470) —
+  `askNodeName` helper + Acceptors-side spawn-body plumbing.
+- ❌ RTView web UI — permanent synthesis carve-out (no Rust
+  analog for upstream's ThreePenny GUI / Haskell-specific FRP).
 
 ## Build + run
 
@@ -94,7 +116,13 @@ target/release/cardano-tracer --help
 
 The binary is named `cardano-tracer` (matching upstream exactly) — operators
 can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch lands at `R361+`.
+now that the R411-R474 arc closure shipped the supervisor +
+trace-forwarder pipe + per-node Prometheus / EKG endpoints + TLS
+termination. The TraceObject CBOR upstream-byte-equivalence
+caveat: yggdrasil ↔ yggdrasil interop works; yggdrasil ↔
+upstream-cardano-node interop would need the upstream
+`Cardano.Logging.TraceObject` Serialise instance ported (the
+cardano-logging Hackage package is not vendored locally).
 
 ##  Rules *Non-Negotiable*
 
@@ -129,16 +157,33 @@ Per the R326-R459 plan + R411-R430 arc:
   Phase 2 (R416-R426): trace-forwarder mini-arc + Acceptors leaves;
   Phase 3 (R427-R428): supervisor entry + closure documentation;
   Phase 4 (R429-R430): TLS integration plan + parity-matrix promotion.
-- ✅ R452-R459 arc — DataPoint sub-protocol port: Type + Codec
-  (R452-R453), Acceptor driver (R454), Configuration (R455),
+- ✅ R452-R459 arc — DataPoint sub-protocol acceptor side: Type +
+  Codec (R452-R453), Acceptor driver (R454), Configuration (R455),
   Utils + DataPointRequestor (R456), Run/Acceptor aggregator
   (R457), Acceptors-server.rs + client.rs integration (R458),
   closeout (R459). Closes R423 + R424 deferrals.
-- 🟡 Follow-on arcs: EKG ReqResp sub-protocol synthesis,
-  trace-forwarder handshake-over-socket codec, TraceObject CBOR
-  codec, DataPoint forwarder side, Logs Rotator full impl, axum-
-  server TLS bind integration. Each follow-on advances a
-  `*_status()`-tracked carve-out.
+- ✅ R460-R474 follow-on arc — DataPoint sub-protocol forwarder
+  side (R471-R473) + closing R459's advisor flags: per-connection
+  mux integration smoke (R460), Logs Rotator IO orchestration
+  (R461-R463), runMetricsServers aggregator (R464), per-connection
+  HandleRegistry deregister hook (R465), supervisor shutdown
+  helpers + write_to_sink + read_from_sink_non_blocking
+  (R466-R467), TLS termination via axum-server-rustls (R468),
+  DataPointRequestors registry plumbing into Acceptors spawn body
+  (R469-R470), end-to-end DataPoint acceptor+forwarder
+  integration test (R474).
+- 🟡 Surviving follow-ons (each tracked via a `*_status()`
+  helper):
+  - EKG ReqResp sub-protocol — synthesis carve-out
+    (`ekg-forward` Hackage package not vendored).
+  - Trace-forwarder handshake-over-socket codec — RemoteSocket
+    TCP path (operator uses Unix-pipe transport in production).
+  - TraceObject CBOR upstream-byte-equivalence — current codec
+    is a 6-field array synthesis. Upstream's
+    `Cardano.Logging.TraceObject` Serialise instance lives in
+    the cardano-logging Hackage package not vendored locally.
+  - RTView web UI — permanent synthesis carve-out (no Rust
+    analog for upstream's ThreePenny GUI / Haskell-specific FRP).
 
 ## Comparison-with-upstream procedure
 

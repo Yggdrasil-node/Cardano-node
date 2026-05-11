@@ -351,6 +351,19 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R487 — cardano-tracer AGENTS.md refresh post-R474.**
+  Documentation-only round. Refreshes
+  `crates/tools/cardano-tracer/AGENTS.md` to reflect the
+  R460-R474 follow-on arc closure: Status field
+  `post-R411-R459 arc` → `post-R474 closeout`; surface matrix
+  flipped to ✅ for DataPoint forwarder side (R471-R473), TLS
+  termination (R468), Logs Rotator (R461-R463), runMetricsServers
+  (R464), per-connection HandleRegistry hook (R465),
+  DataPointRequestors registry plumbing (R469-R470); preserves
+  EKG ReqResp / RemoteSocket / TraceObject CBOR upstream-byte-
+  equivalence / RTView web UI carve-outs. Round roadmap gains an
+  R460-R474 follow-on arc bullet. No source code touched. All
+  gates clean.
 - **R486 — per-block event-shape enrichment for CountTxOutputs +
   ShowBlockHeaderSize.** Aligns two shipped handlers' per-block
   output tuples with upstream `Analysis.hs` event shapes.
