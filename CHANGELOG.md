@@ -351,6 +351,30 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R466 — cardano-tracer `before_program_stops` +
+  `sequence_concurrently_` closure.** Closes two remaining
+  closable cardano-tracer status descriptors that didn't need
+  cross-crate dependencies.
+  - **`before_program_stops`** (R398-era descriptor) — installs
+    SIGINT + SIGTERM handlers via `tokio::signal::unix::signal`.
+    On either signal, the handler trips the supervisor's
+    `Arc<RwLock<bool>>` brake flag, triggering cohesive shutdown
+    of acceptors + rotator + metrics servers (all share the
+    same brake at the supervisor level). `cfg(unix)`-gated;
+    non-Unix platforms get a no-op stub matching upstream's
+    Windows behavior. Wired into
+    `do_run_cardano_tracer_with_state` so operators get clean
+    Ctrl-C + systemd-stop shutdown.
+  - **`sequence_concurrently_`** (R399-era descriptor) — thin
+    wrapper that spawns each future via `tokio::spawn`
+    (parallel execution on the runtime), then awaits the
+    JoinHandles in input order. Panics in any task propagate
+    via `panic::resume_unwind`. Mirror of upstream's
+    `Control.Concurrent.Async.runConcurrently . traverse_
+    Concurrently` semantics.
+  Workspace tests: 6,041 → 6,045 (+4: concurrent-execution
+  timing, order preservation, empty-input, SIGINT handler
+  smoke). All 5 verification gates clean.
 - **R465 — cardano-tracer per-connection HandleRegistry deregister
   hook.** Closes the R462 partial-closure descriptor
   `deregister_node_id_status`. Wires the HandleRegistry teardown

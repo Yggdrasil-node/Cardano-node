@@ -252,6 +252,14 @@ where
         let _ = run_metrics_servers(&metrics_config, &metrics_state, metrics_stop).await;
     });
 
+    // R466: install SIGINT/SIGTERM handlers that trip the brake on
+    // signal receipt. Operators get clean shutdown via Ctrl-C +
+    // systemd-stop without needing to send a separate brake signal.
+    // The signal task shares the same supervisor-level brake as
+    // the rotator + metrics servers.
+    let signal_brake = rotator_stop.clone();
+    let _signal_task = crate::utils::before_program_stops(signal_brake);
+
     let acceptors_state = state.clone();
     let acceptors_config = config.clone();
     let acceptors_handler = Arc::clone(&lo_handler);

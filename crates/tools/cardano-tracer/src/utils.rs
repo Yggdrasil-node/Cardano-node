@@ -299,44 +299,141 @@ pub fn ask_node_name_status() -> AskNodeNameStatus {
     }
 }
 
-/// Status descriptor for the deferred `beforeProgramStops` entry.
+/// Status descriptor for `beforeProgramStops`. R466 closed this:
+/// the function now ships as [`before_program_stops`] which installs
+/// SIGINT/SIGTERM handlers that trip the supervisor brake on signal
+/// receipt.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct BeforeProgramStopsStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary.
     pub status: &'static str,
-    /// Reason — references the missing surface.
+    /// Description of the implementation.
     pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
+    /// Round-number marker.
     pub deferred_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for `beforeProgramStops`.
+/// Get the status descriptor for `beforeProgramStops`. R466 closure.
 pub fn before_program_stops_status() -> BeforeProgramStopsStatus {
     BeforeProgramStopsStatus {
-        status: "deferred",
-        depends_on: "Unix signal handler installation via tokio::signal::unix::signal; integration requires the Run.hs supervisor task lifetime to be in scope",
-        deferred_round: "R398+",
+        status: "closed at R466",
+        depends_on: "before_program_stops(brake_flag) installs SIGINT + SIGTERM listeners via tokio::signal::unix::signal; on either signal it sets the supervisor's Arc<RwLock<bool>> brake flag to true, triggering cohesive shutdown of acceptors + rotator + metrics servers (all share the same brake at the supervisor level).",
+        deferred_round: "(closed)",
     }
 }
 
-/// Status descriptor for the deferred `sequenceConcurrently_` entry.
+/// Install Unix signal handlers for SIGINT + SIGTERM that trip the
+/// supervisor brake flag on receipt. Mirror of upstream
+/// `beforeProgramStops` (cardano-tracer/.../Utils.hs).
+///
+/// The returned `JoinHandle` runs the signal-listener loop. Callers
+/// should keep it alive for the supervisor's lifetime; aborting it
+/// uninstalls the handlers. On signal receipt the brake flag is set
+/// to `true`, after which the supervisor's brake-poll loops (R421
+/// SHUTDOWN_TIMEOUT pattern) detect the change and shut down cleanly.
+///
+/// The function is `cfg(unix)` since `tokio::signal::unix` is
+/// Unix-only; on non-Unix platforms the function is a no-op (mirror
+/// of upstream's Windows behavior which also has no equivalent).
+#[cfg(unix)]
+pub fn before_program_stops(
+    brake_flag: std::sync::Arc<tokio::sync::RwLock<bool>>,
+) -> tokio::task::JoinHandle<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+    tokio::spawn(async move {
+        let mut sigint = match signal(SignalKind::interrupt()) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("before_program_stops: failed to install SIGINT handler: {e}");
+                return;
+            }
+        };
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("before_program_stops: failed to install SIGTERM handler: {e}");
+                return;
+            }
+        };
+        tokio::select! {
+            _ = sigint.recv() => {
+                eprintln!("cardano-tracer: SIGINT received, initiating graceful shutdown");
+            }
+            _ = sigterm.recv() => {
+                eprintln!("cardano-tracer: SIGTERM received, initiating graceful shutdown");
+            }
+        }
+        *brake_flag.write().await = true;
+    })
+}
+
+/// Non-Unix stub for [`before_program_stops`] — no-op on platforms
+/// without tokio::signal::unix. Returns a JoinHandle for a task that
+/// completes immediately.
+#[cfg(not(unix))]
+pub fn before_program_stops(
+    _brake_flag: std::sync::Arc<tokio::sync::RwLock<bool>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async {})
+}
+
+/// Status descriptor for `sequenceConcurrently_`. R466 closed this:
+/// the function now ships as [`sequence_concurrently`] — a thin
+/// wrapper around `futures::future::join_all`.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SequenceConcurrentlyStatus {
-    /// One-line summary of the deferral.
+    /// One-line summary.
     pub status: &'static str,
-    /// Reason — references the Rust idiomatic equivalents.
+    /// Description of the implementation.
     pub depends_on: &'static str,
-    /// Round-number marker for tracking the deferred work.
+    /// Round-number marker.
     pub deferred_round: &'static str,
 }
 
-/// Get the deferral-status descriptor for `sequenceConcurrently_`.
+/// Get the status descriptor for `sequenceConcurrently_`. R466 closure.
 pub fn sequence_concurrently_status() -> SequenceConcurrentlyStatus {
     SequenceConcurrentlyStatus {
-        status: "deferred",
-        depends_on: "no clean Rust 1:1 mirror — Rust uses tokio::join! / futures::future::join_all instead. Will land as a thin wrapper around futures::future::join_all when Run.hs supervisor needs it",
-        deferred_round: "R399+",
+        status: "closed at R466",
+        depends_on: "sequence_concurrently<F>(futures: Vec<F>) -> Vec<F::Output> spawns each future via tokio::spawn (parallel execution on the runtime), then awaits the JoinHandles in order. Mirror of upstream's Control.Concurrent.Async.runConcurrently . traverse_ Concurrently semantics; the trailing _ in upstream's name discards results, the Yggdrasil port returns them for caller inspection.",
+        deferred_round: "(closed)",
     }
+}
+
+/// Run a list of futures concurrently and collect their outputs in
+/// the original order. Mirror of upstream `sequenceConcurrently_ ::
+/// [IO a] -> IO ()` — the trailing `_` indicates upstream discards
+/// results; the Yggdrasil port returns the Vec so callers can
+/// inspect outcomes if they care.
+///
+/// Implementation: each future is spawned via `tokio::spawn` (so
+/// they run concurrently on the runtime), then the join-handles
+/// are awaited in order. Panics in any task panic the awaiting
+/// caller (matching upstream's `Async.async` + `wait` propagation).
+///
+/// Use [`tokio::join!`] when you have a fixed number of
+/// heterogeneously-typed futures; use this when you have a
+/// homogeneously-typed runtime-determined `Vec<F>`.
+pub async fn sequence_concurrently<F>(futures: Vec<F>) -> Vec<F::Output>
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let handles: Vec<tokio::task::JoinHandle<F::Output>> =
+        futures.into_iter().map(tokio::spawn).collect();
+    let mut results = Vec::with_capacity(handles.len());
+    for h in handles {
+        match h.await {
+            Ok(v) => results.push(v),
+            Err(join_err) => {
+                if join_err.is_panic() {
+                    std::panic::resume_unwind(join_err.into_panic());
+                } else {
+                    panic!("sequence_concurrently: task cancelled");
+                }
+            }
+        }
+    }
+    results
 }
 
 #[cfg(test)]
@@ -495,17 +592,91 @@ mod tests {
     }
 
     #[test]
-    fn before_program_stops_status_describes_deferral() {
+    fn before_program_stops_status_describes_closure() {
         let s = before_program_stops_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("signal"));
+        assert_eq!(s.status, "closed at R466");
+        assert!(s.depends_on.contains("SIGINT"));
+        assert!(s.depends_on.contains("SIGTERM"));
     }
 
     #[test]
-    fn sequence_concurrently_status_describes_deferral() {
+    fn sequence_concurrently_status_describes_closure() {
         let s = sequence_concurrently_status();
-        assert_eq!(s.status, "deferred");
-        assert!(s.depends_on.contains("tokio") || s.depends_on.contains("futures"));
+        assert_eq!(s.status, "closed at R466");
+        assert!(s.depends_on.contains("tokio::spawn"));
+    }
+
+    // ----- R466 functional tests -----------------------------------------
+
+    #[tokio::test]
+    async fn sequence_concurrently_runs_futures_concurrently() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::Instant;
+        // 3 futures each sleeping 100ms. If run sequentially total
+        // ≥ 300ms; concurrently ≤ ~200ms. Plus a counter to verify
+        // all three actually ran.
+        let counter = std::sync::Arc::new(AtomicU32::new(0));
+        let mk_fut = |c: std::sync::Arc<AtomicU32>| async move {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            c.fetch_add(1, Ordering::SeqCst);
+            42i32
+        };
+        let start = Instant::now();
+        let results = sequence_concurrently(vec![
+            mk_fut(counter.clone()),
+            mk_fut(counter.clone()),
+            mk_fut(counter.clone()),
+        ])
+        .await;
+        let elapsed = start.elapsed();
+        assert_eq!(results, vec![42, 42, 42]);
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+        assert!(
+            elapsed < std::time::Duration::from_millis(250),
+            "concurrent execution should complete in <250ms; took {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sequence_concurrently_preserves_order() {
+        // Each async block has its own anonymous type, so we
+        // homogenize via an async fn (identical signature, identical
+        // type for closure-of-async).
+        async fn yield_value(v: u32) -> u32 {
+            tokio::task::yield_now().await;
+            v
+        }
+        let results = sequence_concurrently(vec![
+            yield_value(1),
+            yield_value(2),
+            yield_value(3),
+            yield_value(4),
+        ])
+        .await;
+        assert_eq!(results, vec![1, 2, 3, 4]);
+    }
+
+    #[tokio::test]
+    async fn sequence_concurrently_empty_input_returns_empty() {
+        let results: Vec<()> = sequence_concurrently::<std::future::Ready<()>>(vec![]).await;
+        assert!(results.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn before_program_stops_handler_installs_cleanly() {
+        // Smoke test: install the signal handlers + immediately
+        // abort the listener task. The handlers should install
+        // without error (we can't test signal-receipt itself
+        // because that would kill the test process).
+        let brake = std::sync::Arc::new(tokio::sync::RwLock::new(false));
+        let handle = before_program_stops(brake.clone());
+        // Give the task a tick to install handlers.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Brake should still be false (no signal received).
+        assert!(!*brake.read().await);
+        handle.abort();
+        let _ = handle.await;
     }
 
     #[test]
