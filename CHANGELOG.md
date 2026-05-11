@@ -351,6 +351,16 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R484 — db-truncater AGENTS.md + parity-matrix refresh post-R349.**
+  Documentation-only round. Refreshes
+  `crates/tools/db-truncater/AGENTS.md` to reflect the
+  R347-R349 shipped surface (storage extension + typed config +
+  `Run.hs` equivalent — full procedure parity at the operator
+  level). Status field: `partial (post-R335-pattern skeleton)`
+  → `partial (functionally complete; awaiting operator soak
+  gate for verified_11_0_1 promotion)`. Updates the
+  `parity-matrix.json::sister-tool.db-truncater.rust_surface[0].role`
+  description to match. No source code touched.
 - **R483 — AGENTS.md refresh for db-analyser + storage post-R475-R482.**
   Documentation-only round. Refreshes
   `crates/tools/db-analyser/AGENTS.md` to reflect the R475-R482

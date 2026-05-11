@@ -630,7 +630,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/db-truncater/",
-          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R348 typed config surface. Run.hs equivalent (R349) pending."
+          "role": "Yggdrasil pure-Rust port \u2014 R335 skeleton + R347 storage extension (ImmutableStore::trim_after_slot) + R348 typed config surface + R349 Run.hs equivalent (open-ChainDB + dispatch + report). Functionally complete; awaiting operator-side comparison soak vs upstream binary for verified_11_0_1 promotion."
         }
       ],
       "implemented_evidence": [
