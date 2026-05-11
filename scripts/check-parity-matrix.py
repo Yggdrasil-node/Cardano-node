@@ -82,6 +82,13 @@ ALLOWED_MILESTONES |= _arc_range(408, 415)  # Phase C.1 — db-synthesizer.
 ALLOWED_MILESTONES |= _arc_range(416, 433)  # Phase C.2 — cardano-testnet.
 ALLOWED_MILESTONES |= _arc_range(434, 449)  # Phase C.3 — tx-generator.
 ALLOWED_MILESTONES |= _arc_range(450, 459)  # Phase D.1 — dmq-node.
+# Post-R459 follow-on arcs (cardano-tracer DataPoint sub-protocol port
+# R452-R459 already used R452-R459; this bucket leaves room for the
+# next ~20 rounds of carve-out-closing follow-ons: cardano-tracer EKG
+# ReqResp synthesis, DataPoint forwarder side, Logs Rotator, axum-
+# server-rustls TLS integration, etc.). Extend further when this
+# bucket fills.
+ALLOWED_MILESTONES |= _arc_range(460, 479)  # Phase D.2 — post-R459 follow-on arcs.
 
 
 def fail(message: str) -> None:

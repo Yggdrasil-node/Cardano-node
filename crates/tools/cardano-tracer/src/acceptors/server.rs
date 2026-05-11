@@ -626,4 +626,194 @@ mod tests {
         )
         .await
     }
+
+    /// R460 integration smoke: brings up `do_listen_to_forwarder_local`
+    /// against a real Unix socket, dials it as a forwarder, completes
+    /// the trace-forwarder handshake, and verifies both sub-protocols
+    /// (trace-objects + data-points) coexist on the per-connection mux
+    /// — i.e. the `tokio::join!` in the spawn body actually runs both
+    /// drivers concurrently.
+    ///
+    /// Closes the R459 advisor flag that the "boots with DataPoint
+    /// multiplexed" claim was untested at the integration level.
+    #[tokio::test]
+    async fn server_round_trips_both_sub_protocols_concurrently() {
+        use yggdrasil_network::mux::MessageChannel;
+        use yggdrasil_network::protocols::{
+            DataPointForwardMessage, DataPointForwardState, DataPointName, DataPointValue,
+            TraceObjectForwardMessage, TraceObjectForwardState,
+        };
+        use yggdrasil_network::trace_object_forward_handshake_driver::run_handshake_initiator;
+
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let socket_path = dir.path().join("r460-rt.sock");
+
+        let state = AcceptorsServerState {
+            connected_nodes: ConnectedNodes::new(),
+            connected_nodes_names: ConnectedNodesNames::new(),
+            accepted_metrics: crate::metrics_store::new_accepted_metrics(),
+            network_magic: 764824073,
+        };
+        let config = AcceptorConfiguration::new(NumberOfTraceObjects(3));
+        let stop_flag_clone = config.should_we_stop.clone();
+        let handler: Arc<dyn Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync> =
+            Arc::new(|_id, _payloads| {});
+
+        // Start cardano-tracer responder server (acceptor side).
+        let socket_clone = socket_path.clone();
+        let config_clone = config.clone();
+        let server_task = tokio::spawn(async move {
+            do_listen_to_forwarder_local(
+                state,
+                socket_clone,
+                config_clone,
+                Arc::new(move |id, payloads| handler(id, payloads)),
+            )
+            .await
+        });
+
+        // Give server time to bind.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Forwarder side (cardano-node analog): connect + run handshake
+        // initiator + drive both sub-protocols.
+        let stream = tokio::net::UnixStream::connect(&socket_path)
+            .await
+            .expect("forwarder connect");
+        let (mut handles, _mux) = start_unix(
+            stream,
+            MiniProtocolDir::Initiator,
+            &[
+                MiniProtocolNum::HANDSHAKE,
+                TRACE_OBJECTS_NUM,
+                DATA_POINTS_NUM,
+            ],
+            1,
+        );
+        let handshake_handle = handles.remove(&MiniProtocolNum::HANDSHAKE).expect("hs");
+        let trace_handle = handles.remove(&TRACE_OBJECTS_NUM).expect("trace");
+        let dp_handle = handles.remove(&DATA_POINTS_NUM).expect("dp");
+
+        let proposals = vec![(
+            yggdrasil_network::protocols::ForwardingVersion::V1,
+            yggdrasil_network::protocols::ForwardingVersionData {
+                network_magic: 764824073,
+            },
+        )];
+        run_handshake_initiator(handshake_handle, proposals)
+            .await
+            .expect("handshake initiator");
+
+        // Spawn TraceObjects forwarder side: receives requests + sends
+        // empty replies until MsgDone arrives.
+        let mut trace_channel = MessageChannel::new(trace_handle);
+        let trace_forwarder = tokio::spawn(async move {
+            let mut round_count = 0u32;
+            loop {
+                let raw = match trace_channel.recv().await {
+                    Some(r) => r,
+                    None => return round_count,
+                };
+                let req = TraceObjectForwardMessage::<TraceObject>::from_cbor_in_state(
+                    TraceObjectForwardState::StIdle,
+                    &raw,
+                    |_dec: &mut Decoder<'_>| Ok(Vec::<TraceObject>::new()),
+                )
+                .expect("decode trace request");
+                match req {
+                    TraceObjectForwardMessage::MsgTraceObjectsRequest { .. } => {
+                        round_count += 1;
+                        let reply: TraceObjectForwardMessage<TraceObject> =
+                            TraceObjectForwardMessage::MsgTraceObjectsReply {
+                                reply:
+                                    yggdrasil_network::protocols::BlockingReplyList::non_blocking(
+                                        vec![],
+                                    ),
+                            };
+                        trace_channel
+                            .send(reply.to_cbor(|enc, _: &[TraceObject]| {
+                                enc.array(0);
+                            }))
+                            .await
+                            .expect("trace forwarder send");
+                    }
+                    TraceObjectForwardMessage::MsgDone => return round_count,
+                    other => panic!("trace forwarder: unexpected {other:?}"),
+                }
+            }
+        });
+
+        // Spawn DataPoints forwarder side: receives requests + sends
+        // canned replies until MsgDone.
+        let mut dp_channel = MessageChannel::new(dp_handle);
+        let dp_forwarder = tokio::spawn(async move {
+            let mut round_count = 0u32;
+            loop {
+                let raw = match dp_channel.recv().await {
+                    Some(r) => r,
+                    None => return round_count,
+                };
+                let req = DataPointForwardMessage::from_cbor_in_state(
+                    DataPointForwardState::StIdle,
+                    &raw,
+                )
+                .expect("decode dp request");
+                match req {
+                    DataPointForwardMessage::MsgDataPointsRequest(names) => {
+                        round_count += 1;
+                        // Echo back each requested name with a canned
+                        // value. If names is empty (initial round-trip),
+                        // reply with empty values.
+                        let values: yggdrasil_network::protocols::DataPointValues = names
+                            .into_iter()
+                            .map(|n: DataPointName| {
+                                let v = format!("value-for-{}", n.as_str()).into_bytes();
+                                (n, Some(DataPointValue::new(v)))
+                            })
+                            .collect();
+                        let reply = DataPointForwardMessage::MsgDataPointsReply(values);
+                        dp_channel.send(reply.to_cbor()).await.expect("dp send");
+                    }
+                    DataPointForwardMessage::MsgDone => return round_count,
+                    other => panic!("dp forwarder: unexpected {other:?}"),
+                }
+            }
+        });
+
+        // Allow both initial empty round-trips to complete.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // Trip the brake — both sub-protocols' loops will detect it
+        // within ~50ms and send MsgDone.
+        *stop_flag_clone.write().await = true;
+
+        // Wait for both forwarder tasks to receive MsgDone and exit.
+        let trace_rounds = tokio::time::timeout(std::time::Duration::from_secs(5), trace_forwarder)
+            .await
+            .expect("trace forwarder timed out")
+            .expect("trace forwarder panicked");
+        let dp_rounds = tokio::time::timeout(std::time::Duration::from_secs(5), dp_forwarder)
+            .await
+            .expect("dp forwarder timed out")
+            .expect("dp forwarder panicked");
+
+        // Both forwarders should have processed at least the initial
+        // request before MsgDone. The DataPoint side always sends an
+        // initial empty MsgDataPointsRequest([]); the TraceObjects
+        // side issues batch requests on its `what_to_request` cadence.
+        assert!(
+            trace_rounds >= 1,
+            "trace forwarder should have served at least one request (got {trace_rounds})"
+        );
+        assert!(
+            dp_rounds >= 1,
+            "dp forwarder should have served at least the initial empty request (got {dp_rounds})"
+        );
+
+        // Server task is in an infinite accept-loop; it'll exit when
+        // the brake-poll inside `wait_for_global_stop` next ticks
+        // (50ms cadence). Abort it to free the test.
+        server_task.abort();
+        let _ = server_task.await;
+    }
 }
