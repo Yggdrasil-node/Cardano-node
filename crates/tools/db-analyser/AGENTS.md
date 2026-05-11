@@ -1,11 +1,14 @@
 # Guidance for the pure-Rust port of upstream `db-analyser`.
 
-**Status:** `partial` (post-R482 streaming wire-up). 7/13 of
-upstream's `AnalysisName` variants ship end-to-end; 6/13 return
+**Status:** `partial` (post-R491 dispatch-coverage closure).
+**11/13** of upstream's `AnalysisName` variants ship end-to-end;
+**1/13** permanent carve-out (`CheckNoThunksEvery` — Rust has no
+GHC-side laziness/thunks); **1/13** remaining
+(`ReproMempoolAndForge`) returns
 `AnalysisError::RequiresLedgerStateApplyLoop` pending a future
-ledger-state apply-loop arc. Scope band: **MEDIUM** (R475-R482
-arc shipped; remaining work captured in the
-**Carve-out inventory** below).
+mempool+forge integration arc. **12/13 final verdicts.** Scope
+band: **MEDIUM** (R475-R491 arc + follow-ons shipped; remaining
+work captured in the **Carve-out inventory** below).
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -28,13 +31,16 @@ The Byron `knownEBBs` registry consumed by `ShowEBBs` is at
 ## Mini-arc scope
 
 ChainDB forensic analyser. Phase B.2 mini-arc R391-R400 was rolled
-into the R475-R482 post-R459 follow-on arc which shipped the full
-HasAnalysis surface + analysis dispatch core + 7-of-13 handlers +
-end-to-end `FileImmutable` wire-up. Operates on Yggdrasil's
-ChainDB format (semantic parity with upstream binary, not on-disk-
-format byte parity since the storage layer diverges).
+into the R475-R491 post-R459 follow-on arc which shipped the full
+HasAnalysis surface + analysis dispatch core + 11-of-13 handlers
+(R479-R480: 7 block-iteration-only; R488-R491: 4 via
+LedgerState::apply_block seam) + 1 permanent carve-out
+(CheckNoThunksEvery, R485) + end-to-end `FileImmutable` wire-up.
+Operates on Yggdrasil's ChainDB format (semantic parity with
+upstream binary, not on-disk-format byte parity since the storage
+layer diverges).
 
-## Current functional surface (post-R482)
+## Current functional surface (post-R491)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -77,7 +83,7 @@ format byte parity since the storage layer diverges).
 | `ReproMempoolAndForge` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
 | `GetBlockApplicationMetrics` | ✅ shipped (R476 column closures + every-N sampling) | R490 |
 
-## Carve-out inventory (post-R482)
+## Carve-out inventory (post-R491)
 
 `crates/tools/db-analyser/src/status.rs` ships
 `analysis_dispatch_status()` returning an `AnalysisDispatchStatus`
