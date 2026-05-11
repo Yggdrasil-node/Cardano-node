@@ -142,6 +142,32 @@ pub enum AnalysisOutcome {
         /// Number of blocks whose apply call returned an error.
         applied_err: i64,
     },
+    /// `GetBlockApplicationMetrics` result (R490) — per-block CSV-
+    /// row entries produced by invoking the R476
+    /// `Block::block_application_metrics()` column closures every
+    /// `every_n_blocks` blocks.
+    ///
+    /// Each `row` is `Vec<(column_name, column_value)>` matching the
+    /// 4-column shape from `HasAnalysis::block_application_metrics`
+    /// (slot, block_no, era, tx_count). The `every_n_blocks` field
+    /// records the sampling cadence (1 = every block, 1000 = every
+    /// thousandth block — matches upstream's `NumberOfBlocks`).
+    ///
+    /// **R490 carve-out:** all 4 R476 columns are block-derived (no
+    /// ledger state read). The `LedgerState` is still applied per
+    /// block via `LedgerState::apply_block` to stay symmetric with
+    /// R488/R489's apply-loop semantics; richer ledger-state-delta
+    /// columns (utxo deltas, fee totals, etc.) await a future arc.
+    GetBlockApplicationMetrics {
+        /// Column rows in chain order (only every-Nth block).
+        rows: Vec<Vec<(String, String)>>,
+        /// Sampling cadence supplied by the operator.
+        every_n_blocks: u64,
+        /// Number of blocks that applied successfully during the walk.
+        applied_ok: i64,
+        /// Number of blocks whose apply call returned an error.
+        applied_err: i64,
+    },
     /// `BenchmarkLedgerOps` result (R489) — per-block
     /// [`crate::analysis::benchmark_ledger_ops::slot_data_point::SlotDataPoint`]
     /// records produced by walking the chain with
@@ -182,15 +208,16 @@ pub enum AnalysisError {
     /// `LedgerState (CardanoBlock c) ValuesMK` through the per-block
     /// step.
     ///
-    /// 3 of the 13 upstream analyses route to this variant after
+    /// 2 of the 13 upstream analyses route to this variant after
     /// R485 (CheckNoThunksEvery → NotApplicableToRust), R488
-    /// (TraceLedgerProcessing → shipped) and R489
-    /// (BenchmarkLedgerOps → shipped): `StoreLedgerStateAt`,
-    /// `ReproMempoolAndForge`, `GetBlockApplicationMetrics`. The
-    /// remaining 7 are block-iteration-only and ship handlers in
-    /// the R475-R481 arc; `TraceLedgerProcessing` ships via R488
-    /// and `BenchmarkLedgerOps` ships via R489 (both through the
-    /// `LedgerState::apply_block` seam).
+    /// (TraceLedgerProcessing → shipped), R489 (BenchmarkLedgerOps
+    /// → shipped) and R490 (GetBlockApplicationMetrics → shipped):
+    /// `StoreLedgerStateAt`, `ReproMempoolAndForge`. The remaining
+    /// 7 are block-iteration-only and ship handlers in the
+    /// R475-R481 arc. `TraceLedgerProcessing` ships via R488,
+    /// `BenchmarkLedgerOps` ships via R489, and
+    /// `GetBlockApplicationMetrics` ships via R490 (all three
+    /// through the `LedgerState::apply_block` seam).
     #[error(
         "yggdrasil-db-analyser: analysis '{analysis_name}' requires a ledger-state apply-loop \
          which is not yet shipped (R475-R481 lands block-iteration-only analyses; the apply-loop \
@@ -273,11 +300,9 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
         AnalysisName::ReproMempoolAndForge(_) => Err(AnalysisError::RequiresLedgerStateApplyLoop {
             analysis_name: "ReproMempoolAndForge".to_string(),
         }),
-        AnalysisName::GetBlockApplicationMetrics(_, _) => {
-            Err(AnalysisError::RequiresLedgerStateApplyLoop {
-                analysis_name: "GetBlockApplicationMetrics".to_string(),
-            })
-        }
+        AnalysisName::GetBlockApplicationMetrics(every_n, _path) => Ok(
+            analysis_get_block_application_metrics(&bounded, every_n.0.max(1)),
+        ),
     }
 }
 
@@ -534,6 +559,73 @@ pub fn analysis_benchmark_ledger_ops(blocks: &[Block]) -> AnalysisOutcome {
 
     AnalysisOutcome::BenchmarkLedgerOps {
         slot_data_points,
+        applied_ok,
+        applied_err,
+    }
+}
+
+/// `GetBlockApplicationMetrics` handler (R490) — walks blocks via
+/// [`yggdrasil_ledger::LedgerState::apply_block`], invoking the
+/// R476 `Block::block_application_metrics()` column closures every
+/// `every_n_blocks` blocks. `every_n_blocks=1` emits a row for
+/// every block; `every_n_blocks=1000` emits every thousandth
+/// block (matches upstream's `NumberOfBlocks` cadence parameter).
+///
+/// The R476 columns are all block-derived (`slot`, `block_no`,
+/// `era`, `tx_count`) — no `state_before` / `state_after` reads.
+/// The handler still applies blocks through the ledger-state for
+/// symmetry with R488/R489 (and so the apply-loop seam is
+/// exercised); richer ledger-state-delta columns (utxo deltas,
+/// fee totals, etc.) await a future arc that ships them through
+/// `HasAnalysis::block_application_metrics` directly.
+///
+/// Forensic semantics inherited from R488/R489: apply failures do
+/// not abort the run; per-block sampling continues. Closure
+/// failures (i.e. `Box<dyn Fn ... -> Result<_, std::io::Error>>`
+/// returning `Err`) cause the row to be skipped with the metric's
+/// error in the trace; `applied_err` is incremented only for
+/// `LedgerState::apply_block` failures (not closure failures).
+///
+/// Mirror of upstream `Analysis.hs::getBlockApplicationMetrics`.
+pub fn analysis_get_block_application_metrics(
+    blocks: &[Block],
+    every_n_blocks: u64,
+) -> AnalysisOutcome {
+    use crate::has_analysis::{CardanoLedgerStateValues, WithLedgerState};
+
+    let initial_era = blocks
+        .first()
+        .map(|b| b.era)
+        .unwrap_or(yggdrasil_ledger::Era::Byron);
+    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let metrics = <Block as HasAnalysis>::block_application_metrics();
+    let mut rows: Vec<Vec<(String, String)>> = Vec::new();
+    let mut applied_ok: i64 = 0;
+    let mut applied_err: i64 = 0;
+    for (idx, blk) in blocks.iter().enumerate() {
+        match state.apply_block(blk) {
+            Ok(()) => applied_ok += 1,
+            Err(_) => applied_err += 1,
+        }
+        if !(idx as u64).is_multiple_of(every_n_blocks) {
+            continue;
+        }
+        let with_state = WithLedgerState::new(
+            blk.clone(),
+            CardanoLedgerStateValues,
+            CardanoLedgerStateValues,
+        );
+        let mut row: Vec<(String, String)> = Vec::with_capacity(metrics.len());
+        for (name, closure) in &metrics {
+            if let Ok(value) = closure(&with_state) {
+                row.push(((*name).to_string(), value));
+            }
+        }
+        rows.push(row);
+    }
+    AnalysisOutcome::GetBlockApplicationMetrics {
+        rows,
+        every_n_blocks,
         applied_ok,
         applied_err,
     }
@@ -1135,16 +1227,82 @@ mod tests {
     }
 
     #[test]
-    fn run_analysis_get_block_application_metrics_returns_requires_apply_loop() {
+    fn run_analysis_get_block_application_metrics_returns_outcome() {
+        // R490: GetBlockApplicationMetrics now ships (was
+        // RequiresLedgerStateApplyLoop pre-R490).
         let config = mk_config(
-            AnalysisName::GetBlockApplicationMetrics(NumberOfBlocks(1000), None),
+            AnalysisName::GetBlockApplicationMetrics(NumberOfBlocks(1), None),
             Limit::Unlimited,
         );
-        let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
         assert!(matches!(
-            err,
-            AnalysisError::RequiresLedgerStateApplyLoop { .. }
+            outcome,
+            AnalysisOutcome::GetBlockApplicationMetrics { .. }
         ));
+    }
+
+    #[test]
+    fn analysis_get_block_application_metrics_empty_chain() {
+        let outcome = analysis_get_block_application_metrics(&[], 1);
+        match outcome {
+            AnalysisOutcome::GetBlockApplicationMetrics {
+                rows,
+                every_n_blocks,
+                applied_ok,
+                applied_err,
+            } => {
+                assert!(rows.is_empty());
+                assert_eq!(every_n_blocks, 1);
+                assert_eq!(applied_ok, 0);
+                assert_eq!(applied_err, 0);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_get_block_application_metrics_every_block() {
+        // every_n_blocks=1 → row per block. R476 columns are
+        // slot/block_no/era/tx_count.
+        let mut a = mk_block(10, 1, None);
+        a.era = yggdrasil_ledger::Era::Byron;
+        let mut b = mk_block(20, 2, None);
+        b.era = yggdrasil_ledger::Era::Byron;
+        let outcome = analysis_get_block_application_metrics(&[a, b], 1);
+        match outcome {
+            AnalysisOutcome::GetBlockApplicationMetrics { rows, .. } => {
+                assert_eq!(rows.len(), 2);
+                // Each row has 4 columns: slot, block_no, era, tx_count.
+                assert_eq!(rows[0].len(), 4);
+                assert_eq!(rows[0][0], ("slot".to_string(), "10".to_string()));
+                assert_eq!(rows[0][1], ("block_no".to_string(), "1".to_string()));
+                assert_eq!(rows[1][0], ("slot".to_string(), "20".to_string()));
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_get_block_application_metrics_samples_every_n() {
+        // every_n_blocks=3 → only rows for blocks at index 0, 3, 6 …
+        let mut blks = Vec::new();
+        for i in 0..10u64 {
+            let mut b = mk_block(i * 10, i, None);
+            b.era = yggdrasil_ledger::Era::Byron;
+            blks.push(b);
+        }
+        let outcome = analysis_get_block_application_metrics(&blks, 3);
+        match outcome {
+            AnalysisOutcome::GetBlockApplicationMetrics { rows, .. } => {
+                // Indices 0, 3, 6, 9 → 4 rows.
+                assert_eq!(rows.len(), 4);
+                assert_eq!(rows[0][0].1, "0"); // slot=0 (block 0)
+                assert_eq!(rows[1][0].1, "30"); // slot=30 (block 3)
+                assert_eq!(rows[2][0].1, "60"); // slot=60 (block 6)
+                assert_eq!(rows[3][0].1, "90"); // slot=90 (block 9)
+            }
+            _ => panic!("wrong outcome variant"),
+        }
     }
 
     #[test]

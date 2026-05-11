@@ -75,7 +75,7 @@ format byte parity since the storage layer diverges).
 | `TraceLedgerProcessing` | ✅ shipped (forensic Ok/Err trace) | R488 |
 | `BenchmarkLedgerOps` | ✅ shipped (Instant timing into SlotDataPoint) | R489 |
 | `ReproMempoolAndForge` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
-| `GetBlockApplicationMetrics` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `GetBlockApplicationMetrics` | ✅ shipped (R476 column closures + every-N sampling) | R490 |
 
 ## Carve-out inventory (post-R482)
 
@@ -85,7 +85,7 @@ descriptor. **Post-R481 status:** `block-only-shipped`.
 
 | Carve-out | Status helper | Deferral rationale |
 |-----------|---------------|--------------------|
-| 3 ledger-state-dependent analyses | `status::analysis_dispatch_status()` | Gated on follow-on arcs — each currently returns `AnalysisError::RequiresLedgerStateApplyLoop { analysis_name }` with the analysis name in the error message. `StoreLedgerStateAt` needs a LedgerState snapshot codec; `ReproMempoolAndForge` needs a mempool+forge integration; `GetBlockApplicationMetrics` needs a richer ledger-state-delta `block_application_metrics` body. |
+| 2 ledger-state-dependent analyses | `status::analysis_dispatch_status()` | Gated on follow-on arcs — each currently returns `AnalysisError::RequiresLedgerStateApplyLoop { analysis_name }` with the analysis name in the error message. `StoreLedgerStateAt` needs a LedgerState snapshot codec; `ReproMempoolAndForge` needs a mempool+forge integration. |
 | `CheckNoThunksEvery` (permanent) | `status::analysis_dispatch_status()` (R485) | Fundamentally not portable to Rust. Upstream `checkNoThunks` uses `NoThunks.unsafeNoThunks` to walk GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks. Returns `AnalysisError::NotApplicableToRust` with the explanation in the error message. |
 | `TraceLedgerProcessing` trace content | `analysis::runner::analysis_trace_ledger_processing` (R488) | Yggdrasil's R488 handler captures per-block apply Ok/Err outcomes. Upstream's `traceLedgerProcessing` calls `emit_traces` per block, which returns ledger-state-derived traces (epoch boundary, stake delta, etc.). Yggdrasil's `Block::emit_traces` returns empty (R476 placeholder); closing this trace-content gap needs genesis-bootstrap CLI flags + a richer `emit_traces` body — separate future arc. |
 | On-disk-streaming `FileImmutable` | (no helper — operational concern) | R482's `iter_after` saves the intermediate `Vec` allocation but the `FileImmutable` impl still loads every block into `self.index: HashMap<HeaderHash, Block>` at open time. A revision that lazy-loads CBOR records from disk on-demand would close the multi-terabyte memory gap fully; gated on a chunked-log on-disk format design (separate arc). |

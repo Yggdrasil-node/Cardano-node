@@ -351,6 +351,30 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R490 — `GetBlockApplicationMetrics` handler via R476 column
+  closures.** Ships the 3rd of the 5 ledger-state-dependent
+  analyses (after R485 permanent + R488/R489 shipped). Leverages
+  the R476 `Block::block_application_metrics()` impl which
+  returns 4 column closures (slot/block_no/era/tx_count) — all
+  block-derived, no ledger-state read required. Handler walks
+  blocks via `LedgerState::apply_block` for apply-loop symmetry,
+  then invokes each closure via a `WithLedgerState{blk,
+  state_before:CardanoLedgerStateValues, state_after:..}` per
+  every-N-th block (`NumberOfBlocks` cadence parameter). New
+  `AnalysisOutcome::GetBlockApplicationMetrics { rows,
+  every_n_blocks, applied_ok, applied_err }` variant.
+  `rows: Vec<Vec<(String, String)>>` carries per-block
+  `(column_name, column_value)` tuples. Stdout renders as
+  `slot=N block_no=M era=E tx_count=K` per row. Clippy fix:
+  `% != 0` → `!.is_multiple_of()` for the sampling test.
+  **Dispatch coverage matrix now: 10/13 shipped + 1/13 permanent
+  carve-out = 11/13 final verdicts.** Only 2/13 still deferred
+  (`StoreLedgerStateAt` needs snapshot codec, `ReproMempoolAndForge`
+  needs mempool+forge integration — both multi-round
+  commitments). 3 new tests + 1 existing test reshaped. Workspace
+  tests: 6,188 → 6,191. All 5 gates clean. See
+  `docs/operational-runs/2026-05-11-round-490-get-block-
+  application-metrics-handler.md`.
 - **R489 — `BenchmarkLedgerOps` handler with apply-timing
   instrumentation.** Ships the 2nd of the 5 ledger-state-
   dependent analyses (after R485 carved out CheckNoThunksEvery

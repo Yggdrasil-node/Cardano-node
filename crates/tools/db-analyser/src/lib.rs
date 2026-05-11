@@ -172,6 +172,28 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
         AnalysisOutcome::OnlyValidation { blocks_processed } => {
             writeln!(out, "only_validation blocks_processed={blocks_processed}")?;
         }
+        AnalysisOutcome::GetBlockApplicationMetrics {
+            rows,
+            every_n_blocks,
+            applied_ok,
+            applied_err,
+        } => {
+            for row in rows {
+                let mut first = true;
+                for (name, value) in row {
+                    if !first {
+                        write!(out, " ")?;
+                    }
+                    write!(out, "{name}={value}")?;
+                    first = false;
+                }
+                writeln!(out)?;
+            }
+            writeln!(
+                out,
+                "get_block_application_metrics every_n_blocks={every_n_blocks} applied_ok={applied_ok} applied_err={applied_err}"
+            )?;
+        }
         AnalysisOutcome::BenchmarkLedgerOps {
             slot_data_points,
             applied_ok,
