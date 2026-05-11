@@ -9,6 +9,10 @@ mod data_point_forward;
 /// DataPointForward mini-protocol configuration types
 /// (Acceptor / Forwarder side configuration records).
 mod data_point_forward_configuration;
+/// DataPointForward mini-protocol utilities — `DataPointRequestor`
+/// shared-state primitive that external context uses to coordinate
+/// with the acceptor loop.
+mod data_point_forward_utils;
 /// `ForwardSink` — bounded queue + overflow callback used by the
 /// trace-forwarder forwarder side.
 mod forward_sink;
@@ -51,6 +55,9 @@ pub use data_point_forward::{
 };
 pub use data_point_forward_configuration::{
     DataPointAcceptorConfiguration, DataPointForwarderConfiguration,
+};
+pub use data_point_forward_utils::{
+    ASK_FOR_DATA_POINTS_TIMEOUT, DataPointRequestor, init_data_point_requestor,
 };
 pub use forward_sink::{ForwardSink, ForwardSinkOverflowCallback};
 pub use keep_alive::{KeepAliveMessage, KeepAliveState, KeepAliveTransitionError};
