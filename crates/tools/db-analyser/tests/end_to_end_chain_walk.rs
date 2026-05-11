@@ -159,18 +159,23 @@ fn end_to_end_lib_run_renders_to_stdout() {
 
 #[test]
 fn end_to_end_lib_run_propagates_ledger_state_deferral() {
+    // R488 shipped TraceLedgerProcessing via the LedgerState
+    // apply-loop seam; the test now uses BenchmarkLedgerOps,
+    // which still routes through `RequiresLedgerStateApplyLoop`
+    // pending a future arc.
+    use yggdrasil_db_analyser::types::LedgerApplicationMode;
     let dir = TempDir::new().unwrap();
     let store = FileImmutable::open(dir.path()).unwrap();
     drop(store);
 
     let config = mk_config(
         dir.path().to_path_buf(),
-        AnalysisName::TraceLedgerProcessing,
+        AnalysisName::BenchmarkLedgerOps(None, LedgerApplicationMode::LedgerReapply),
     );
     let err = yggdrasil_db_analyser::run(&config).unwrap_err();
     let msg = format!("{err}");
     assert!(
-        msg.contains("TraceLedgerProcessing"),
+        msg.contains("BenchmarkLedgerOps"),
         "expected analysis name in error msg, got: {msg}"
     );
     assert!(

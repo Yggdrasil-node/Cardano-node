@@ -172,6 +172,26 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
         AnalysisOutcome::OnlyValidation { blocks_processed } => {
             writeln!(out, "only_validation blocks_processed={blocks_processed}")?;
         }
+        AnalysisOutcome::TraceLedgerProcessing {
+            traces,
+            applied_ok,
+            applied_err,
+        } => {
+            for (slot, block_no, result) in traces {
+                match result {
+                    Ok(()) => writeln!(out, "slot={} block_no={} apply=ok", slot.0, block_no.0)?,
+                    Err(reason) => writeln!(
+                        out,
+                        "slot={} block_no={} apply=err reason={}",
+                        slot.0, block_no.0, reason
+                    )?,
+                };
+            }
+            writeln!(
+                out,
+                "trace_ledger_processing applied_ok={applied_ok} applied_err={applied_err}"
+            )?;
+        }
     }
     Ok(())
 }

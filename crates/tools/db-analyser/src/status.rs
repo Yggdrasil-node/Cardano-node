@@ -41,18 +41,29 @@ pub struct AnalysisDispatchStatus {
 /// now returns `AnalysisError::NotApplicableToRust` rather than
 /// the ledger-state apply-loop deferral.
 ///
-/// The remaining 5 (`StoreLedgerStateAt`, `TraceLedgerProcessing`,
-/// `BenchmarkLedgerOps`, `ReproMempoolAndForge`,
-/// `GetBlockApplicationMetrics`) require a ledger-state
-/// apply-loop and return a structured
-/// `RequiresLedgerStateApplyLoop` error from
-/// `crate::analysis::runner::run_analysis` pending a future
+/// R488 ships `TraceLedgerProcessing` via the
+/// `yggdrasil_ledger::LedgerState::apply_block` seam — per-block
+/// apply Ok/Err outcomes are captured into
+/// `AnalysisOutcome::TraceLedgerProcessing` (forensic semantics:
+/// apply failures don't abort the run; they're observable rows in
+/// the per-block trace).
+///
+/// The remaining 4 (`StoreLedgerStateAt`, `BenchmarkLedgerOps`,
+/// `ReproMempoolAndForge`, `GetBlockApplicationMetrics`) require
+/// either:
+/// - genesis-bootstrap configuration to produce upstream-equivalent
+///   trace content (`StoreLedgerStateAt`, `BenchmarkLedgerOps`,
+///   `GetBlockApplicationMetrics`); OR
+/// - a mempool+forge integration (`ReproMempoolAndForge`).
+///
+/// They return a structured `RequiresLedgerStateApplyLoop` error
+/// from `crate::analysis::runner::run_analysis` pending a future
 /// implementation arc.
 pub fn analysis_dispatch_status() -> AnalysisDispatchStatus {
     AnalysisDispatchStatus {
-        status: "block-only-shipped",
-        depends_on: "yggdrasil's ledger-state apply-loop. The R475-R481 arc shipped 7/13 block-iteration-only analyses through the analysis::runner dispatch core; R485 carved out CheckNoThunksEvery as a permanent NotApplicableToRust (Haskell laziness/thunks have no Rust analog); the remaining 5 (StoreLedgerStateAt, TraceLedgerProcessing, BenchmarkLedgerOps, ReproMempoolAndForge, GetBlockApplicationMetrics) require threading a LedgerState (CardanoBlock c) ValuesMK through the per-block step, which depends on a future ledger-state apply-loop arc.",
-        deferred_round: "R485",
+        status: "8-of-13-shipped",
+        depends_on: "yggdrasil's ledger-state apply-loop bootstrap. The R475-R481 arc shipped 7/13 block-iteration-only analyses through the analysis::runner dispatch core; R485 carved out CheckNoThunksEvery as a permanent NotApplicableToRust (Haskell laziness/thunks have no Rust analog); R488 shipped TraceLedgerProcessing via the LedgerState::apply_block seam (forensic per-block apply Ok/Err trace). The remaining 4 (StoreLedgerStateAt, BenchmarkLedgerOps, ReproMempoolAndForge, GetBlockApplicationMetrics) need either genesis-bootstrap CLI flags + protocol-params hydration, or a mempool+forge integration (ReproMempoolAndForge).",
+        deferred_round: "R488",
         upstream_reference: ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/{HasAnalysis, Analysis, Run, Block/Byron, Block/Shelley, Block/Cardano}.hs",
     }
 }
@@ -64,12 +75,13 @@ mod tests {
     #[test]
     fn analysis_dispatch_status_describes_arc_outcome() {
         let s = analysis_dispatch_status();
-        assert_eq!(s.status, "block-only-shipped");
-        assert_eq!(s.deferred_round, "R485");
-        assert!(s.depends_on.contains("ledger-state apply-loop"));
+        assert_eq!(s.status, "8-of-13-shipped");
+        assert_eq!(s.deferred_round, "R488");
         assert!(s.depends_on.contains("R475-R481"));
         assert!(s.depends_on.contains("CheckNoThunksEvery"));
         assert!(s.depends_on.contains("NotApplicableToRust"));
+        assert!(s.depends_on.contains("TraceLedgerProcessing"));
+        assert!(s.depends_on.contains("LedgerState::apply_block"));
         assert!(s.upstream_reference.contains("HasAnalysis"));
         assert!(s.upstream_reference.contains("Analysis"));
     }

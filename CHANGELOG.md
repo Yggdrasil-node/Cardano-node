@@ -351,6 +351,33 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R488 — `TraceLedgerProcessing` handler via
+  `LedgerState::apply_block`.** Ships the first of the 5
+  remaining ledger-state-dependent analyses (after R485's
+  permanent carve-out of `CheckNoThunksEvery`). Wires
+  `yggdrasil_ledger::LedgerState::apply_block` into the runner:
+  bootstraps `LedgerState::new(initial_era)` from the first
+  block's era; iterates blocks; captures per-block `Result<(),
+  LedgerError>` as a string; apply failures don't abort the run.
+  New `AnalysisOutcome::TraceLedgerProcessing { traces,
+  applied_ok, applied_err }` variant. **Forensic semantics
+  (Yggdrasil-side, not upstream byte-equivalent):** R488 surfaces
+  the apply Ok/Err outcome per block as the trace; upstream's
+  `traceLedgerProcessing` emits ledger-state-derived strings
+  (epoch boundary, stake delta) which require genesis-bootstrap
+  + `Block::emit_traces` expansion — gap documented as a
+  follow-on. **Dispatch coverage matrix now: 8/13 shipped + 1/13
+  permanent carve-out = 9/13 final verdicts.** Updates
+  `status::analysis_dispatch_status` (`status` field
+  `block-only-shipped` → `8-of-13-shipped`; `deferred_round`
+  `R485 → R488`); refreshes AGENTS.md dispatch matrix +
+  carve-out inventory. Switches the R481 integration test
+  `end_to_end_lib_run_propagates_ledger_state_deferral` from
+  `TraceLedgerProcessing` (now shipped) to `BenchmarkLedgerOps`
+  (still deferred). 4 new tests + 1 existing test fixed.
+  Workspace tests: 6,181 → 6,185. All 5 gates clean. See
+  `docs/operational-runs/2026-05-11-round-488-trace-ledger-
+  processing-handler.md`.
 - **R487 — cardano-tracer AGENTS.md refresh post-R474.**
   Documentation-only round. Refreshes
   `crates/tools/cardano-tracer/AGENTS.md` to reflect the

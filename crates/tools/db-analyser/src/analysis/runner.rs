@@ -116,6 +116,32 @@ pub enum AnalysisOutcome {
         /// Number of blocks the validating chain walk processed.
         blocks_processed: i64,
     },
+    /// `TraceLedgerProcessing` result (R488) — per-block ledger-apply
+    /// outcome trace. Each tuple is `(slot, block_no, outcome)` where
+    /// `outcome` is either `Ok(())` (block applied successfully) or
+    /// `Err(reason_string)` (apply failed; the reason is the
+    /// [`yggdrasil_ledger::LedgerError`] rendered via `Display`).
+    ///
+    /// **Carve-out (R488):** upstream's `traceLedgerProcessing`
+    /// calls `emit_traces` per block which returns ledger-state-
+    /// derived trace strings (epoch boundary, stake delta, etc.).
+    /// Yggdrasil's emit_traces currently returns an empty Vec
+    /// (R476 placeholder); without a configured genesis state the
+    /// `LedgerState::apply_block` path will fail at the first real
+    /// chain transaction. R488 ships the dispatch shape — the
+    /// per-block outcome line is operationally useful for forensic
+    /// audits and proves the apply-loop is reachable from
+    /// db-analyser. Closing the trace-content gap is a follow-on
+    /// once the genesis-bootstrap CLI flags ship.
+    TraceLedgerProcessing {
+        /// Per-block `(slot, block_no, outcome)` tuples in chain
+        /// order. `outcome` is `Ok(())` or `Err(reason)`.
+        traces: Vec<(SlotNo, BlockNo, Result<(), String>)>,
+        /// Number of blocks that applied successfully.
+        applied_ok: i64,
+        /// Number of blocks whose apply call returned an error.
+        applied_err: i64,
+    },
 }
 
 /// Errors from the analysis dispatch core.
@@ -127,12 +153,14 @@ pub enum AnalysisError {
     /// `LedgerState (CardanoBlock c) ValuesMK` through the per-block
     /// step.
     ///
-    /// 5 of the 13 upstream analyses route to this variant (after
-    /// R485 carved out `CheckNoThunksEvery`): `StoreLedgerStateAt`,
-    /// `TraceLedgerProcessing`, `BenchmarkLedgerOps`,
+    /// 4 of the 13 upstream analyses route to this variant after
+    /// R485 (CheckNoThunksEvery → NotApplicableToRust) and R488
+    /// (TraceLedgerProcessing → shipped via apply-loop hookup):
+    /// `StoreLedgerStateAt`, `BenchmarkLedgerOps`,
     /// `ReproMempoolAndForge`, `GetBlockApplicationMetrics`. The
     /// remaining 7 are block-iteration-only and ship handlers in
-    /// the R475-R481 arc.
+    /// the R475-R481 arc; `TraceLedgerProcessing` is the 8th
+    /// shipped handler (R488) via the LedgerState apply-loop seam.
     #[error(
         "yggdrasil-db-analyser: analysis '{analysis_name}' requires a ledger-state apply-loop \
          which is not yet shipped (R475-R481 lands block-iteration-only analyses; the apply-loop \
@@ -210,9 +238,7 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
             analysis_name: "CheckNoThunksEvery".to_string(),
             reason: "NoThunks-style ledger-state inspection walks GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks to inspect.".to_string(),
         }),
-        AnalysisName::TraceLedgerProcessing => Err(AnalysisError::RequiresLedgerStateApplyLoop {
-            analysis_name: "TraceLedgerProcessing".to_string(),
-        }),
+        AnalysisName::TraceLedgerProcessing => Ok(analysis_trace_ledger_processing(&bounded)),
         AnalysisName::BenchmarkLedgerOps(_, _) => {
             Err(AnalysisError::RequiresLedgerStateApplyLoop {
                 analysis_name: "BenchmarkLedgerOps".to_string(),
@@ -355,6 +381,60 @@ pub fn analysis_show_ebbs(blocks: &[Block]) -> AnalysisOutcome {
 pub fn analysis_only_validation(blocks: &[Block]) -> AnalysisOutcome {
     AnalysisOutcome::OnlyValidation {
         blocks_processed: blocks.len() as i64,
+    }
+}
+
+/// `TraceLedgerProcessing` handler (R488) — walks blocks via
+/// [`yggdrasil_ledger::LedgerState::apply_block`], capturing the
+/// per-block Ok/Err outcome.
+///
+/// **Forensic semantics:** the handler bootstraps a fresh
+/// `LedgerState::new(initial_era)` (where `initial_era` is the
+/// first block's era, defaulting to Byron for empty inputs). It
+/// applies each block in turn; an apply error does *not* abort the
+/// run — instead it's captured in the per-block trace and the walk
+/// continues with the unchanged state. This matches the forensic-
+/// tool stance: surface every block's outcome rather than stopping
+/// at the first ledger-rule violation.
+///
+/// **Carve-out (R488):** without a configured genesis state, real
+/// Cardano mainnet blocks will mostly fail at apply time (UTxO not
+/// found, protocol params absent, etc.). The dispatch shape is
+/// wired and the per-block outcome line is operationally useful;
+/// closing the trace-content gap requires genesis-bootstrap CLI
+/// flags + protocol-params hydration which lands in a future arc.
+///
+/// Mirror of upstream `Analysis.hs::traceLedgerProcessing` —
+/// applies blocks and calls `emit_traces` per block. Yggdrasil's
+/// `Block::emit_traces` currently returns empty (R476 placeholder);
+/// the captured Ok/Err outcome is the Yggdrasil-side analog of the
+/// trace events.
+pub fn analysis_trace_ledger_processing(blocks: &[Block]) -> AnalysisOutcome {
+    let initial_era = blocks
+        .first()
+        .map(|b| b.era)
+        .unwrap_or(yggdrasil_ledger::Era::Byron);
+    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut traces = Vec::with_capacity(blocks.len());
+    let mut applied_ok: i64 = 0;
+    let mut applied_err: i64 = 0;
+    for blk in blocks {
+        let outcome = match state.apply_block(blk) {
+            Ok(()) => {
+                applied_ok += 1;
+                Ok(())
+            }
+            Err(e) => {
+                applied_err += 1;
+                Err(format!("{e}"))
+            }
+        };
+        traces.push((blk.header.slot_no, blk.header.block_no, outcome));
+    }
+    AnalysisOutcome::TraceLedgerProcessing {
+        traces,
+        applied_ok,
+        applied_err,
     }
 }
 
@@ -713,6 +793,85 @@ mod tests {
             }
             _ => panic!("wrong outcome variant"),
         }
+    }
+
+    // ── R488 TraceLedgerProcessing handler ─────────────────────────────
+
+    #[test]
+    fn analysis_trace_ledger_processing_empty_chain() {
+        let outcome = analysis_trace_ledger_processing(&[]);
+        match outcome {
+            AnalysisOutcome::TraceLedgerProcessing {
+                traces,
+                applied_ok,
+                applied_err,
+            } => {
+                assert!(traces.is_empty());
+                assert_eq!(applied_ok, 0);
+                assert_eq!(applied_err, 0);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_trace_ledger_processing_byron_block_empty_state_succeeds() {
+        // A Byron block with no transactions against an empty
+        // Byron-era LedgerState should apply cleanly (no UTxO
+        // lookups required).
+        let mut blk = mk_block(0, 0, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        let outcome = analysis_trace_ledger_processing(&[blk]);
+        match outcome {
+            AnalysisOutcome::TraceLedgerProcessing {
+                traces,
+                applied_ok,
+                applied_err: _,
+            } => {
+                assert_eq!(traces.len(), 1);
+                assert_eq!(applied_ok, 1);
+                assert!(traces[0].2.is_ok(), "expected Ok, got {:?}", traces[0].2);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_trace_ledger_processing_per_block_trace_shape() {
+        let outcome = analysis_trace_ledger_processing(&[
+            mk_block(10, 100, None),
+            mk_block(20, 101, None),
+            mk_block(30, 102, None),
+        ]);
+        match outcome {
+            AnalysisOutcome::TraceLedgerProcessing {
+                traces,
+                applied_ok,
+                applied_err,
+            } => {
+                assert_eq!(traces.len(), 3);
+                assert_eq!(traces[0].0, SlotNo(10));
+                assert_eq!(traces[0].1, BlockNo(100));
+                assert_eq!(traces[2].0, SlotNo(30));
+                // applied_ok + applied_err should equal trace count.
+                assert_eq!(
+                    applied_ok + applied_err,
+                    traces.len() as i64,
+                    "applied_ok + applied_err must equal trace count"
+                );
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn run_analysis_dispatches_trace_ledger_processing() {
+        let config = mk_config(AnalysisName::TraceLedgerProcessing, Limit::Unlimited);
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        assert!(matches!(
+            outcome,
+            AnalysisOutcome::TraceLedgerProcessing { .. }
+        ));
     }
 
     // ── Dispatch core ──────────────────────────────────────────────────
