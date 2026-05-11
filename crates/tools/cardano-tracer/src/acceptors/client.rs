@@ -209,10 +209,14 @@ where
         let s = cleanup_state.clone();
         let token = cleanup_token.clone();
         tokio::spawn(async move {
-            crate::acceptors::utils::remove_disconnected_node(
+            // R465: registry-aware variant drops per-node
+            // HandleRegistry entries alongside the existing
+            // ConnectedNodes / metrics teardown.
+            crate::acceptors::utils::remove_disconnected_node_with_registry(
                 &s.connected_nodes,
                 &s.connected_nodes_names,
                 &s.accepted_metrics,
+                &s.handle_registry,
                 &token,
             )
             .await;
@@ -254,10 +258,11 @@ where
     );
 
     // Final cleanup on graceful shutdown.
-    crate::acceptors::utils::remove_disconnected_node(
+    crate::acceptors::utils::remove_disconnected_node_with_registry(
         &state.connected_nodes,
         &state.connected_nodes_names,
         &state.accepted_metrics,
+        &state.handle_registry,
         &conn_token,
     )
     .await;
@@ -348,6 +353,7 @@ mod tests {
             connected_nodes: ConnectedNodes::new(),
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: crate::metrics_store::new_accepted_metrics(),
+            handle_registry: crate::types::HandleRegistry::new(),
             network_magic: 764824073,
         }
     }

@@ -310,6 +310,7 @@ mod tests {
             connected_nodes: ConnectedNodes::new(),
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: crate::metrics_store::new_accepted_metrics(),
+            handle_registry: crate::types::HandleRegistry::new(),
             network_magic: 764824073,
         }
     }

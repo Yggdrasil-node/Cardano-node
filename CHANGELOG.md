@@ -351,6 +351,35 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R465 — cardano-tracer per-connection HandleRegistry deregister
+  hook.** Closes the R462 partial-closure descriptor
+  `deregister_node_id_status`. Wires the HandleRegistry teardown
+  into the Acceptors per-connection finalizer so disconnecting
+  forwarders' open log file handles are dropped (FDs closed via
+  Arc-drop) rather than leaking until the next reconnect.
+  - `AcceptorsServerState` gains a `handle_registry:
+    HandleRegistry` field plumbing the supervisor's shared
+    registry through the per-connection spawn body.
+  - `crates/tools/cardano-tracer/src/acceptors/utils.rs` adds
+    `remove_disconnected_node_with_registry` which resolves
+    `node_name` from `connected_nodes_names` (falling back to
+    `NodeId::as_str()`), then scans the registry for keys with
+    matching `node_name.0` and removes them. SharedLogFile Arc
+    drop closes the underlying FDs.
+  - Both `acceptors/server.rs` (responder) and
+    `acceptors/client.rs` (initiator) updated to use the
+    registry-aware variant in both the `on_error` finalizer
+    and the post-protocol cleanup paths.
+  - `run.rs::run_cardano_tracer_default` constructs the
+    registry before `AcceptorsServerState` so the same handle
+    is shared across the lo_handler factory, the rotator, and
+    the per-connection teardown hook.
+  Mirror of upstream `deregisterNodeId tracerEnv nodeId`
+  (cardano-tracer/.../Handlers/Logs/TraceObjects.hs). 2 new
+  integration tests: clears 2-LoggingParams alice + leaves
+  unrelated bob untouched; node_id fallback when no friendly
+  name registered. Workspace tests: 6,039 → 6,041 (+2). All 5
+  verification gates clean.
 - **R464 — cardano-tracer `runMetricsServers` aggregator wiring.**
   Closes the R408-R414-era partial-wiring status descriptor in
   `run.rs::run_metrics_servers_status`. Adds

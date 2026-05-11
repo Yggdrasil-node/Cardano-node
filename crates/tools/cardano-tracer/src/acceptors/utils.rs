@@ -127,6 +127,55 @@ pub async fn remove_disconnected_node(
     // deferred — the field is the R371 unit-struct placeholder).
 }
 
+/// Extended teardown that also removes any open log-file handles
+/// registered for this node from the supervisor-shared
+/// [`crate::types::HandleRegistry`]. R465 closure of the
+/// `deregister_node_id` partial-closure descriptor.
+///
+/// The handle's underlying file descriptor is closed when the
+/// `Arc<Mutex<File>>` reference count drops to zero — which happens
+/// here when the `(SharedLogFile, PathBuf)` tuple returned by
+/// `Registry::remove` is dropped.
+///
+/// The scan is by `node_name` only (matching any `LoggingParams`
+/// the forwarder might have registered handles under). The
+/// resolved node_name comes from the connected_nodes_names map
+/// — if the forwarder never registered a name, the function falls
+/// back to the NodeId string representation, matching upstream's
+/// `askNodeName` fallback behavior.
+pub async fn remove_disconnected_node_with_registry(
+    connected_nodes: &ConnectedNodes,
+    connected_nodes_names: &ConnectedNodesNames,
+    accepted_metrics: &AcceptedMetrics,
+    handle_registry: &crate::types::HandleRegistry,
+    remote_address: &str,
+) {
+    let node_id = conn_id_to_node_id(remote_address);
+
+    // Resolve the node_name *before* clearing the names map so we
+    // know which HandleRegistry keys to scan for.
+    let node_name = connected_nodes_names
+        .snapshot()
+        .into_iter()
+        .find_map(|(id, name)| if id == node_id { Some(name) } else { None })
+        .unwrap_or_else(|| node_id.as_str().to_string());
+
+    connected_nodes.remove(&node_id);
+    connected_nodes_names.remove_id(&node_id);
+    let _ = remove_store(accepted_metrics, &node_id).await;
+
+    // Scan the HandleRegistry for entries keyed on this node_name.
+    // Each (node_name, LoggingParams) entry's removal drops the
+    // SharedLogFile Arc (closing the underlying FD if this was the
+    // last reference) + drops the PathBuf.
+    let snapshot = handle_registry.snapshot();
+    for (key, _value) in snapshot {
+        if key.0 == node_name {
+            handle_registry.remove(&key);
+        }
+    }
+}
+
 /// Insert a `Response::ResponseMetrics` batch from the EKG sub-
 /// protocol into the per-node metrics store. Mirror of upstream's
 /// `store tracerEnv (NodeId nodeId) (ekgStore, localStore) resp@(ResponseMetrics ms)`.
@@ -283,6 +332,125 @@ mod tests {
         let accepted = new_accepted_metrics();
         // No setup — just remove. Should not panic.
         remove_disconnected_node(&connected, &names, &accepted, "ghost").await;
+    }
+
+    // ----- R465 registry-aware teardown tests ------------------------------
+
+    #[tokio::test]
+    async fn remove_disconnected_node_with_registry_clears_handle_entries() {
+        use crate::configuration::{LogFormat, LogMode, LoggingParams};
+        use crate::types::HandleRegistry;
+        use std::sync::Arc;
+
+        let connected = ConnectedNodes::new();
+        let names = ConnectedNodesNames::new();
+        let accepted = new_accepted_metrics();
+        let handle_registry = HandleRegistry::new();
+
+        // Set up state for two nodes; register a handle for each.
+        let _ = prepare_metrics_stores(&connected, &accepted, "node-a").await;
+        let _ = prepare_metrics_stores(&connected, &accepted, "node-b").await;
+        let node_a_id = conn_id_to_node_id("node-a");
+        let node_b_id = conn_id_to_node_id("node-b");
+        names.insert(node_a_id.clone(), "alice".to_string());
+        names.insert(node_b_id.clone(), "bob".to_string());
+
+        // Mock handle registry entries: alice has 2 LoggingParams,
+        // bob has 1.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let mk_handle = |path: std::path::PathBuf| -> crate::types::SharedLogFile {
+            let file = std::fs::File::create(&path).expect("create");
+            Arc::new(tokio::sync::Mutex::new(tokio::fs::File::from_std(file)))
+        };
+        let alice_params_1 = LoggingParams {
+            root: tmp.path().to_path_buf(),
+            mode: LogMode::FileMode,
+            format: LogFormat::ForMachine,
+        };
+        let alice_params_2 = LoggingParams {
+            root: tmp.path().to_path_buf(),
+            mode: LogMode::FileMode,
+            format: LogFormat::ForHuman,
+        };
+        let bob_params = alice_params_1.clone();
+        let alice_log_1 = tmp.path().join("alice-1.log");
+        let alice_log_2 = tmp.path().join("alice-2.log");
+        let bob_log = tmp.path().join("bob.log");
+        handle_registry.insert(
+            ("alice".to_string(), alice_params_1),
+            (mk_handle(alice_log_1.clone()), alice_log_1),
+        );
+        handle_registry.insert(
+            ("alice".to_string(), alice_params_2),
+            (mk_handle(alice_log_2.clone()), alice_log_2),
+        );
+        handle_registry.insert(
+            ("bob".to_string(), bob_params),
+            (mk_handle(bob_log.clone()), bob_log),
+        );
+        assert_eq!(handle_registry.len(), 3);
+
+        // Disconnect node-a: should remove both alice's
+        // HandleRegistry entries, leaving only bob's.
+        remove_disconnected_node_with_registry(
+            &connected,
+            &names,
+            &accepted,
+            &handle_registry,
+            "node-a",
+        )
+        .await;
+
+        assert_eq!(handle_registry.len(), 1, "only bob's handle remains");
+        // bob still in names
+        let names_snap = names.snapshot();
+        assert_eq!(names_snap.len(), 1);
+        assert_eq!(names_snap[0].1, "bob");
+    }
+
+    #[tokio::test]
+    async fn remove_disconnected_node_with_registry_falls_back_to_node_id() {
+        use crate::types::HandleRegistry;
+        // If the node never registered a friendly name, the helper
+        // falls back to the NodeId string. Verify the registry is
+        // scanned against that fallback.
+        let connected = ConnectedNodes::new();
+        let names = ConnectedNodesNames::new();
+        let accepted = new_accepted_metrics();
+        let handle_registry = HandleRegistry::new();
+
+        // node-c is connected but never registered a name.
+        let _ = prepare_metrics_stores(&connected, &accepted, "node-c").await;
+        // The NodeId resolution removes the "pipe-" prefix per
+        // upstream's conn_id_to_node_id semantics; in this test
+        // there's no pipe-prefix so the NodeId equals "node-c".
+        let node_id = conn_id_to_node_id("node-c");
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let log_path = tmp.path().join("c.log");
+        let file = std::fs::File::create(&log_path).expect("create");
+        let handle: crate::types::SharedLogFile =
+            std::sync::Arc::new(tokio::sync::Mutex::new(tokio::fs::File::from_std(file)));
+        let key = (
+            node_id.as_str().to_string(),
+            crate::configuration::LoggingParams {
+                root: tmp.path().to_path_buf(),
+                mode: crate::configuration::LogMode::FileMode,
+                format: crate::configuration::LogFormat::ForMachine,
+            },
+        );
+        handle_registry.insert(key, (handle, log_path));
+        assert_eq!(handle_registry.len(), 1);
+
+        remove_disconnected_node_with_registry(
+            &connected,
+            &names,
+            &accepted,
+            &handle_registry,
+            "node-c",
+        )
+        .await;
+        assert_eq!(handle_registry.len(), 0);
     }
 
     #[tokio::test]

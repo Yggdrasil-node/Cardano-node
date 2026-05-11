@@ -148,20 +148,22 @@ pub async fn run_cardano_tracer_default(params: TracerParams) -> Result<(), RunC
         .map_err(RunCardanoTracerError::ReadConfig)?;
     let config = parse_tracer_config_json(&raw).map_err(RunCardanoTracerError::ParseConfig)?;
 
+    // R462: build the shared HandleRegistry + current_log_lock first
+    // so the lo_handler (which writes file-mode entries), the
+    // rotator (which inspects the same registry for rotation), AND
+    // the per-connection teardown hook (R465) all share a single
+    // source of truth for open log handles.
+    let handle_registry = crate::types::HandleRegistry::new();
+    let current_log_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
     // Build the runtime state slice ahead of the supervisor so the
     // default handler can capture connected_nodes_names by clone.
     let state = AcceptorsServerState {
         connected_nodes: ConnectedNodes::new(),
         connected_nodes_names: ConnectedNodesNames::new(),
         accepted_metrics: new_accepted_metrics(),
+        handle_registry: handle_registry.clone(),
         network_magic: config.network_magic,
     };
-    // R462: build the shared HandleRegistry + current_log_lock here
-    // so the lo_handler (which writes file-mode entries) and the
-    // rotator (which inspects the same registry for rotation) share
-    // a single source of truth for open log handles.
-    let handle_registry = crate::types::HandleRegistry::new();
-    let current_log_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
     let lo_handler = Arc::new(default_lo_handler_factory_with_registry(
         &config,
         state.connected_nodes_names.clone(),
@@ -287,6 +289,7 @@ where
         connected_nodes: ConnectedNodes::new(),
         connected_nodes_names: ConnectedNodesNames::new(),
         accepted_metrics: new_accepted_metrics(),
+        handle_registry: crate::types::HandleRegistry::new(),
         network_magic: config.network_magic,
     };
     // Delegate to the state-aware variant with no shared registry
@@ -590,6 +593,7 @@ mod tests {
             connected_nodes: ConnectedNodes::new(),
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: new_accepted_metrics(),
+            handle_registry: crate::types::HandleRegistry::new(),
             network_magic: 764824073,
         }
     }

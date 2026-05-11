@@ -236,36 +236,33 @@ pub async fn trace_objects_handler_with_registry(
 
 /// Status descriptor for `deregisterNodeId`.
 ///
-/// R462 partially closed this: registry-stored handles now exist
-/// (so the `Registry::remove` + Arc-drop semantics give equivalent
-/// close-on-drop behavior). The remaining gap is the per-connection
-/// deregistration hook invoked when the trace-forwarder closes —
-/// currently the Acceptors `on_error` finalizer only removes the
-/// NodeId from `ConnectedNodes`; it doesn't remove the
-/// per-LoggingParams HandleRegistry entries. Wiring that hook into
-/// the Acceptors teardown path is a follow-on round.
+/// R465 closure: the per-connection HandleRegistry teardown hook
+/// is now wired into the Acceptors `remove_disconnected_node_with_registry`
+/// finalizer. On forwarder disconnect (graceful MsgDone or
+/// transport error), the supervisor's shared HandleRegistry is
+/// scanned for any (node_name, LoggingParams) keys matching the
+/// disconnecting forwarder, and the entries are removed —
+/// dropping the SharedLogFile Arcs which closes the underlying
+/// file descriptors. No more leaked entries between disconnect +
+/// reconnect.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct DeregisterNodeIdStatus {
     /// One-line summary.
     pub status: &'static str,
-    /// Reason — describes the remaining gap.
+    /// Reason — describes the closed state.
     pub depends_on: &'static str,
     /// Round-number marker.
     pub deferred_round: &'static str,
 }
 
-/// Get the status descriptor for `deregisterNodeId`. The registry-
-/// stored handles now exist (R462 closure); the per-connection
-/// deregistration hook into the Acceptors teardown path remains
-/// pending — operationally cardano-tracer leaks one HandleRegistry
-/// entry per disconnected forwarder, which the rotator then keeps
-/// scanning. Bounded leakage (one entry per node per LoggingParams);
-/// not a correctness gap.
+/// Get the status descriptor for `deregisterNodeId`. R465 closed
+/// the per-connection HandleRegistry teardown hook; the function
+/// now ships via `acceptors::utils::remove_disconnected_node_with_registry`.
 pub fn deregister_node_id_status() -> DeregisterNodeIdStatus {
     DeregisterNodeIdStatus {
-        status: "partial — registry-side closed at R462",
-        depends_on: "Acceptors per-connection teardown does not yet invoke registry.remove on the HandleRegistry. Wiring this hook is a follow-on round — operationally cardano-tracer leaks one HandleRegistry entry per disconnected forwarder, bounded by the operator's connected-node count.",
-        deferred_round: "(partial)",
+        status: "closed at R465",
+        depends_on: "acceptors::utils::remove_disconnected_node_with_registry scans the supervisor-shared HandleRegistry for matching (node_name, LoggingParams) keys and removes them on disconnect. AcceptorsServerState gained a handle_registry field plumbing the registry through the per-connection spawn body. SharedLogFile Arcs drop on Registry::remove which closes the underlying FDs.",
+        deferred_round: "(closed)",
     }
 }
 
@@ -424,12 +421,14 @@ mod tests {
     }
 
     #[test]
-    fn deregister_node_id_status_describes_partial_closure() {
+    fn deregister_node_id_status_describes_closure() {
         let s = deregister_node_id_status();
-        assert!(s.status.contains("partial"));
-        assert!(s.status.contains("R462"));
-        assert!(s.depends_on.contains("Acceptors per-connection teardown"));
-        assert_eq!(s.deferred_round, "(partial)");
+        assert_eq!(s.status, "closed at R465");
+        assert!(
+            s.depends_on
+                .contains("remove_disconnected_node_with_registry")
+        );
+        assert_eq!(s.deferred_round, "(closed)");
     }
 
     #[test]

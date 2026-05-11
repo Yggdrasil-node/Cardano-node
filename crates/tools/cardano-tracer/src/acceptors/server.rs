@@ -143,6 +143,13 @@ pub struct AcceptorsServerState {
     pub connected_nodes_names: ConnectedNodesNames,
     /// Per-node MetricsStore registry.
     pub accepted_metrics: AcceptedMetrics,
+    /// Per-(node_name, LoggingParams) registry of open log file
+    /// handles. R465: plumbed into the per-connection
+    /// `remove_disconnected_node` finalizer so disconnecting
+    /// forwarders' handle entries get dropped (closing their file
+    /// descriptors via Arc-drop) rather than leaking until the
+    /// next reconnect.
+    pub handle_registry: crate::types::HandleRegistry,
     /// Network magic for the trace-forwarder handshake (deferred —
     /// see module docs).
     pub network_magic: u32,
@@ -314,10 +321,15 @@ where
                 let s = cleanup_state.clone();
                 let token = cleanup_token.clone();
                 tokio::spawn(async move {
-                    crate::acceptors::utils::remove_disconnected_node(
+                    // R465: use the registry-aware variant so the
+                    // per-(node, LoggingParams) HandleRegistry
+                    // entries for this disconnecting forwarder are
+                    // dropped, closing the underlying FDs.
+                    crate::acceptors::utils::remove_disconnected_node_with_registry(
                         &s.connected_nodes,
                         &s.connected_nodes_names,
                         &s.accepted_metrics,
+                        &s.handle_registry,
                         &token,
                     )
                     .await;
@@ -375,10 +387,11 @@ where
             // Final cleanup on graceful shutdown.
             let _ = trace_result;
             let _ = dp_result;
-            crate::acceptors::utils::remove_disconnected_node(
+            crate::acceptors::utils::remove_disconnected_node_with_registry(
                 &conn_state.connected_nodes,
                 &conn_state.connected_nodes_names,
                 &conn_state.accepted_metrics,
+                &conn_state.handle_registry,
                 &conn_token,
             )
             .await;
@@ -591,6 +604,7 @@ mod tests {
             connected_nodes: ConnectedNodes::new(),
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: crate::metrics_store::new_accepted_metrics(),
+            handle_registry: crate::types::HandleRegistry::new(),
             network_magic: 764824073,
         };
         let config = AcceptorConfiguration::new(NumberOfTraceObjects(10));
@@ -652,6 +666,7 @@ mod tests {
             connected_nodes: ConnectedNodes::new(),
             connected_nodes_names: ConnectedNodesNames::new(),
             accepted_metrics: crate::metrics_store::new_accepted_metrics(),
+            handle_registry: crate::types::HandleRegistry::new(),
             network_magic: 764824073,
         };
         let config = AcceptorConfiguration::new(NumberOfTraceObjects(3));
