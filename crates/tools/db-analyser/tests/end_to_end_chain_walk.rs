@@ -158,28 +158,29 @@ fn end_to_end_lib_run_renders_to_stdout() {
 }
 
 #[test]
-fn end_to_end_lib_run_propagates_ledger_state_deferral() {
-    // R488 shipped TraceLedgerProcessing and R489 shipped
-    // BenchmarkLedgerOps; the test now uses ReproMempoolAndForge
-    // which still routes through `RequiresLedgerStateApplyLoop`
-    // (needs mempool+forge integration which is its own future
-    // arc).
+fn end_to_end_lib_run_propagates_check_no_thunks_carve_out() {
+    // R485 carved out CheckNoThunksEvery as fundamentally not
+    // portable to Rust (NotApplicableToRust, not the
+    // ledger-state apply-loop deferral). After R493 closed
+    // ReproMempoolAndForge, this is the only remaining analysis
+    // that returns an error — and it's a permanent carve-out,
+    // not a deferral.
     let dir = TempDir::new().unwrap();
     let store = FileImmutable::open(dir.path()).unwrap();
     drop(store);
 
     let config = mk_config(
         dir.path().to_path_buf(),
-        AnalysisName::ReproMempoolAndForge(50),
+        AnalysisName::CheckNoThunksEvery(50),
     );
     let err = yggdrasil_db_analyser::run(&config).unwrap_err();
     let msg = format!("{err}");
     assert!(
-        msg.contains("ReproMempoolAndForge"),
+        msg.contains("CheckNoThunksEvery"),
         "expected analysis name in error msg, got: {msg}"
     );
     assert!(
-        msg.contains("ledger-state apply-loop"),
-        "expected deferral mention in error msg, got: {msg}"
+        msg.contains("not portable to Rust"),
+        "expected permanent-carve-out mention in error msg, got: {msg}"
     );
 }

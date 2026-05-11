@@ -1,14 +1,13 @@
 # Guidance for the pure-Rust port of upstream `db-analyser`.
 
-**Status:** `partial` (post-R491 dispatch-coverage closure).
-**11/13** of upstream's `AnalysisName` variants ship end-to-end;
-**1/13** permanent carve-out (`CheckNoThunksEvery` — Rust has no
-GHC-side laziness/thunks); **1/13** remaining
-(`ReproMempoolAndForge`) returns
-`AnalysisError::RequiresLedgerStateApplyLoop` pending a future
-mempool+forge integration arc. **12/13 final verdicts.** Scope
-band: **MEDIUM** (R475-R491 arc + follow-ons shipped; remaining
-work captured in the **Carve-out inventory** below).
+**Status:** `partial` (post-R493 dispatch-coverage matrix
+complete). **12/13** of upstream's `AnalysisName` variants ship
+end-to-end; **1/13** permanent carve-out (`CheckNoThunksEvery`
+— Rust has no GHC-side laziness/thunks). **13/13 final
+verdicts** — zero remaining `RequiresLedgerStateApplyLoop`
+deferrals. Scope band: **MEDIUM** (R475-R493 arc + follow-ons
+shipped; remaining work is forensic-fidelity hardening, not
+dispatch-coverage gaps).
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -80,7 +79,7 @@ layer diverges).
 | `CheckNoThunksEvery` | ⛔ `NotApplicableToRust` | R485 (permanent carve-out) |
 | `TraceLedgerProcessing` | ✅ shipped (forensic Ok/Err trace) | R488 |
 | `BenchmarkLedgerOps` | ✅ shipped (Instant timing into SlotDataPoint) | R489 |
-| `ReproMempoolAndForge` | 🚧 `RequiresLedgerStateApplyLoop` | (future arc) |
+| `ReproMempoolAndForge` | ✅ shipped (yggdrasil-consensus Mempool insert + pop_best timing) | R493 |
 | `GetBlockApplicationMetrics` | ✅ shipped (R476 column closures + every-N sampling) | R490 |
 
 ## Carve-out inventory (post-R491)
@@ -91,7 +90,8 @@ descriptor. **Post-R481 status:** `block-only-shipped`.
 
 | Carve-out | Status helper | Deferral rationale |
 |-----------|---------------|--------------------|
-| 1 ledger-state-dependent analysis | `status::analysis_dispatch_status()` | Gated on a future arc — `ReproMempoolAndForge` returns `AnalysisError::RequiresLedgerStateApplyLoop { analysis_name }` pending a mempool+forge integration (multi-round). |
+| 0 ledger-state-dependent analyses (post-R493) | n/a | Dispatch matrix fully covered. After R493, no `AnalysisName` returns `RequiresLedgerStateApplyLoop`. The only remaining error variant operators can hit is `NotApplicableToRust` for `CheckNoThunksEvery` (R485 permanent carve-out). |
+| Forensic-fidelity hardening (post-R493) | n/a | R488 `TraceLedgerProcessing` emits Ok/Err per block but `Block::emit_traces` is the R476 placeholder. R493 `ReproMempoolAndForge` uses a simplified `MempoolEntry` (fee=0, ttl=u64::MAX, empty inputs) — no fee-decoding, ttl-derivation, conflict-detection, or revalidation-against-ledger-state. Closing these gaps needs richer per-era helpers + genesis-bootstrap CLI flags. Not blocking the dispatch matrix. |
 | `CheckNoThunksEvery` (permanent) | `status::analysis_dispatch_status()` (R485) | Fundamentally not portable to Rust. Upstream `checkNoThunks` uses `NoThunks.unsafeNoThunks` to walk GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks. Returns `AnalysisError::NotApplicableToRust` with the explanation in the error message. |
 | `TraceLedgerProcessing` trace content | `analysis::runner::analysis_trace_ledger_processing` (R488) | Yggdrasil's R488 handler captures per-block apply Ok/Err outcomes. Upstream's `traceLedgerProcessing` calls `emit_traces` per block, which returns ledger-state-derived traces (epoch boundary, stake delta, etc.). Yggdrasil's `Block::emit_traces` returns empty (R476 placeholder); closing this trace-content gap needs genesis-bootstrap CLI flags + a richer `emit_traces` body — separate future arc. |
 | On-disk-streaming `FileImmutable` | (no helper — operational concern) | R482's `iter_after` saves the intermediate `Vec` allocation but the `FileImmutable` impl still loads every block into `self.index: HashMap<HeaderHash, Block>` at open time. A revision that lazy-loads CBOR records from disk on-demand would close the multi-terabyte memory gap fully; gated on a chunked-log on-disk format design (separate arc). |

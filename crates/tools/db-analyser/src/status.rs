@@ -67,16 +67,23 @@ pub struct AnalysisDispatchStatus {
 /// `state.checkpoint().to_cbor_bytes()`, returns the encoded
 /// snapshot. No new codec work needed.
 ///
-/// The remaining 1 (`ReproMempoolAndForge`) needs a mempool +
-/// forge integration. It returns a structured
-/// `RequiresLedgerStateApplyLoop` error from
-/// `crate::analysis::runner::run_analysis` pending that future
-/// implementation arc.
+/// R493 ships `ReproMempoolAndForge` via the
+/// `yggdrasil_consensus::Mempool` seam — for each block,
+/// inserts the block's transactions into a fresh 1 MiB Mempool
+/// then drains via `pop_best()`. Times each phase. Forensic
+/// semantics: simplified `MempoolEntry` (fee=0, ttl=u64::MAX,
+/// empty inputs) — operator stance, not upstream-byte-equivalent
+/// of revalidation-against-ledger-state.
+///
+/// **Dispatch matrix fully covered:** 12/13 shipped + 1/13
+/// permanent carve-out (CheckNoThunksEvery → NotApplicableToRust)
+/// = 13/13 final verdicts. Zero remaining
+/// `RequiresLedgerStateApplyLoop` deferrals.
 pub fn analysis_dispatch_status() -> AnalysisDispatchStatus {
     AnalysisDispatchStatus {
-        status: "11-of-13-shipped",
-        depends_on: "yggdrasil's mempool+forge integration. The R475-R481 arc shipped 7/13 block-iteration-only analyses through the analysis::runner dispatch core; R485 carved out CheckNoThunksEvery as a permanent NotApplicableToRust (Haskell laziness/thunks have no Rust analog); R488 shipped TraceLedgerProcessing via the LedgerState::apply_block seam (forensic per-block apply Ok/Err trace); R489 shipped BenchmarkLedgerOps via the same seam plus std::time::Instant timing instrumentation (per-block SlotDataPoint records); R490 shipped GetBlockApplicationMetrics via the same seam invoking the R476 block_application_metrics() column closures with every-N-blocks sampling; R491 shipped StoreLedgerStateAt via the existing R269 LedgerStateCheckpoint CBOR codec. Only ReproMempoolAndForge remains — needs a mempool+forge integration (multi-round commitment).",
-        deferred_round: "R491",
+        status: "13-of-13-final-verdicts",
+        depends_on: "nothing — the dispatch matrix is fully covered after R493. The R475-R481 arc shipped 7/13 block-iteration-only analyses through the analysis::runner dispatch core; R485 carved out CheckNoThunksEvery as a permanent NotApplicableToRust (Haskell laziness/thunks have no Rust analog); R488 shipped TraceLedgerProcessing via the LedgerState::apply_block seam (forensic per-block apply Ok/Err trace); R489 shipped BenchmarkLedgerOps via the same seam plus std::time::Instant timing instrumentation (per-block SlotDataPoint records); R490 shipped GetBlockApplicationMetrics via the same seam invoking the R476 block_application_metrics() column closures with every-N-blocks sampling; R491 shipped StoreLedgerStateAt via the existing R269 LedgerStateCheckpoint CBOR codec; R493 shipped ReproMempoolAndForge via the yggdrasil_consensus::Mempool seam (insert + pop_best round-trip timing). All 12 reachable analyses ship; CheckNoThunksEvery is permanently NotApplicableToRust. Remaining work is forensic-fidelity hardening (trace-content body, fee-decoding in MempoolEntry, ledger-state-aware revalidation, stdout byte-equivalence soak) — none of which block the dispatch matrix.",
+        deferred_round: "R493",
         upstream_reference: ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBAnalyser/{HasAnalysis, Analysis, Run, Block/Byron, Block/Shelley, Block/Cardano}.hs",
     }
 }
@@ -88,13 +95,13 @@ mod tests {
     #[test]
     fn analysis_dispatch_status_describes_arc_outcome() {
         let s = analysis_dispatch_status();
-        assert_eq!(s.status, "11-of-13-shipped");
-        assert_eq!(s.deferred_round, "R491");
-        assert!(s.depends_on.contains("mempool+forge"));
+        assert_eq!(s.status, "13-of-13-final-verdicts");
+        assert_eq!(s.deferred_round, "R493");
+        assert!(s.depends_on.contains("dispatch matrix is fully covered"));
         assert!(s.depends_on.contains("CheckNoThunksEvery"));
         assert!(s.depends_on.contains("NotApplicableToRust"));
-        assert!(s.depends_on.contains("StoreLedgerStateAt"));
-        assert!(s.depends_on.contains("LedgerStateCheckpoint"));
+        assert!(s.depends_on.contains("ReproMempoolAndForge"));
+        assert!(s.depends_on.contains("Mempool"));
         assert!(s.depends_on.contains("LedgerState::apply_block"));
         assert!(s.upstream_reference.contains("HasAnalysis"));
         assert!(s.upstream_reference.contains("Analysis"));

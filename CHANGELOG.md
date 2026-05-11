@@ -351,6 +351,37 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R493 — `ReproMempoolAndForge` handler via yggdrasil-consensus
+  Mempool. Closes 13/13 dispatch coverage.** Ships the last
+  remaining ledger-state-dependent analysis. Adds
+  `yggdrasil-consensus = { path = "../../consensus" }` to
+  `crates/tools/db-analyser/Cargo.toml`. New
+  `analysis_repro_mempool_and_forge` handler walks blocks via
+  `LedgerState::apply_block`, then for each block: instantiates
+  a fresh `Mempool::with_capacity(1024 * 1024)`, inserts each
+  tx as a simplified `MempoolEntry` (real era/tx_id/body/
+  size_bytes; fee=0/raw_tx=body/ttl=u64::MAX/inputs=Vec::new() —
+  forensic stance), drains via `pop_best()` until empty. Times
+  each phase with `std::time::Instant`. New
+  `AnalysisOutcome::ReproMempoolAndForge { per_block_stats,
+  applied_ok, applied_err }` variant. **Dispatch coverage matrix
+  now: 12/13 shipped + 1/13 permanent carve-out = 13/13 final
+  verdicts. Zero remaining `RequiresLedgerStateApplyLoop`
+  deferrals.** Documented forensic-fidelity carve-outs (fee=0
+  degenerates fee-priority to FIFO; ttl=u64::MAX means no
+  expiry; empty inputs means no conflict detection) — bounded
+  follow-on items, not dispatch gaps. Updates
+  `status::analysis_dispatch_status` (`status` field
+  `11-of-13-shipped` → `13-of-13-final-verdicts`;
+  `deferred_round` `R491 → R493`). 6 new tests + 2 existing
+  tests reshaped (one integration test switched from
+  ReproMempoolAndForge to CheckNoThunksEvery as the only
+  post-R493 error path; one lib test replaced with a
+  dispatch-matrix-coverage assertion pinning the 13/13 state).
+  Workspace tests: 6,196 → 6,201. All 5 gates clean. See
+  `docs/operational-runs/2026-05-11-round-493-repro-mempool-and-
+  forge-handler.md`. **R475-R493 sequence: 23 commits, +117
+  tests, db-analyser dispatch matrix complete.**
 - **R492 — `docs/parity-matrix.json::sister-tool.db-analyser`
   refresh post-R491.** Documentation-only round. Updates
   `next_milestone` `R481 → R491`; expands `rust_surface[0].role`

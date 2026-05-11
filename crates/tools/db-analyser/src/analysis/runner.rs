@@ -168,6 +168,44 @@ pub enum AnalysisOutcome {
         /// Number of blocks whose apply call returned an error.
         applied_err: i64,
     },
+    /// `ReproMempoolAndForge` result (R493) — for each block,
+    /// inserts the block's transactions into a
+    /// [`yggdrasil_consensus::Mempool`] then "forges" by
+    /// repeatedly calling `pop_best()` until the mempool is
+    /// drained. Times each phase.
+    ///
+    /// Per-block stat shape:
+    /// `(slot, block_no, mempool_insert_count, forge_pop_count,
+    ///  mempool_insert_ns, forge_pop_ns)`.
+    ///
+    /// **Forensic semantics:** the mempool starts empty per block
+    /// (matches upstream's "reproduce mempool-and-forge cycle"
+    /// rather than carrying state across blocks). Insert failures
+    /// (capacity-exceeded, duplicate-tx-id) are silently skipped
+    /// — the per-block insert count reflects successful inserts.
+    /// Each `MempoolEntry` is built with the simplified field set:
+    /// `era`/`tx_id`/`body`/`size_bytes` from the source `Tx`,
+    /// `fee=0`/`raw_tx=body`/`ttl=u64::MAX`/`inputs=Vec::new()`
+    /// (no conflict detection — operator forensic stance).
+    ///
+    /// **Carve-out (R493):** upstream's `reproMempoolForge`
+    /// measures the mempool revalidation hot path against live
+    /// ledger state with real fee-ordering + ttl. Yggdrasil's
+    /// simplified `MempoolEntry` construction means fee-ordering
+    /// degenerates to insertion order and there's no real ledger-
+    /// state-aware revalidation. The dispatch shape is wired and
+    /// times the mempool insert + pop hot path; richer fidelity
+    /// (decode fees from tx body, derive ttl, derive inputs)
+    /// awaits a future arc.
+    ReproMempoolAndForge {
+        /// Per-block stats in chain order.
+        per_block_stats: Vec<(SlotNo, BlockNo, i64, i64, i64, i64)>,
+        /// Number of blocks that applied successfully during the
+        /// walk (LedgerState::apply_block Ok).
+        applied_ok: i64,
+        /// Number of blocks whose apply call returned an error.
+        applied_err: i64,
+    },
     /// `StoreLedgerStateAt` result (R491) — captures the
     /// [`yggdrasil_ledger::LedgerStateCheckpoint`] CBOR snapshot
     /// when the chain walk reaches the target slot.
@@ -235,15 +273,13 @@ pub enum AnalysisError {
     /// `LedgerState (CardanoBlock c) ValuesMK` through the per-block
     /// step.
     ///
-    /// 1 of the 13 upstream analyses routes to this variant after
-    /// R485 (CheckNoThunksEvery → NotApplicableToRust), R488
-    /// (TraceLedgerProcessing → shipped), R489 (BenchmarkLedgerOps
-    /// → shipped), R490 (GetBlockApplicationMetrics → shipped),
-    /// and R491 (StoreLedgerStateAt → shipped via the existing
-    /// LedgerStateCheckpoint CBOR codec): only
-    /// `ReproMempoolAndForge` remains pending. The remaining 7
-    /// are block-iteration-only and ship handlers in the R475-R481
-    /// arc.
+    /// 0 of the 13 upstream analyses route to this variant after
+    /// R493 (ReproMempoolAndForge → shipped via the
+    /// yggdrasil-consensus Mempool seam). The dispatch matrix is
+    /// fully covered: 12/13 shipped + 1/13 permanent carve-out
+    /// (CheckNoThunksEvery → NotApplicableToRust at R485) =
+    /// 13/13 final verdicts. This variant is retained for
+    /// future analyses that may surface a comparable deferral.
     #[error(
         "yggdrasil-db-analyser: analysis '{analysis_name}' requires a ledger-state apply-loop \
          which is not yet shipped (R475-R481 lands block-iteration-only analyses; the apply-loop \
@@ -321,9 +357,9 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
         }),
         AnalysisName::TraceLedgerProcessing => Ok(analysis_trace_ledger_processing(&bounded)),
         AnalysisName::BenchmarkLedgerOps(_, _) => Ok(analysis_benchmark_ledger_ops(&bounded)),
-        AnalysisName::ReproMempoolAndForge(_) => Err(AnalysisError::RequiresLedgerStateApplyLoop {
-            analysis_name: "ReproMempoolAndForge".to_string(),
-        }),
+        AnalysisName::ReproMempoolAndForge(_n) => {
+            Ok(analysis_repro_mempool_and_forge(&bounded))
+        }
         AnalysisName::GetBlockApplicationMetrics(every_n, _path) => Ok(
             analysis_get_block_application_metrics(&bounded, every_n.0.max(1)),
         ),
@@ -712,6 +748,99 @@ pub fn analysis_get_block_application_metrics(
     AnalysisOutcome::GetBlockApplicationMetrics {
         rows,
         every_n_blocks,
+        applied_ok,
+        applied_err,
+    }
+}
+
+/// `ReproMempoolAndForge` handler (R493) — for each block,
+/// applies via [`yggdrasil_ledger::LedgerState::apply_block`],
+/// then inserts the block's transactions into a fresh
+/// [`yggdrasil_consensus::Mempool`] (capacity = 1 MiB matching
+/// upstream's `MempoolCapacityBytesOverride 1024*1024`), then
+/// drains via `pop_best()`. Times each phase with
+/// `std::time::Instant`.
+///
+/// **Forensic semantics:**
+/// - Mempool starts empty per block (upstream's reproduce-cycle
+///   semantics).
+/// - `MempoolEntry` is built with simplified fields: real
+///   `era` + `tx_id` + `body` + `size_bytes` from the source
+///   `Tx`; `fee=0` / `raw_tx=body` / `ttl=u64::MAX` /
+///   `inputs=Vec::new()` (no fee-decoding, no real ttl, no
+///   conflict-detection — operator forensic stance).
+/// - Insert failures (capacity-exceeded, duplicate-tx-id) are
+///   silently skipped; the per-block insert count reflects
+///   successful inserts only.
+///
+/// Mirror of upstream `Analysis.hs::reproMempoolForge`. R493
+/// ships the dispatch shape; richer fidelity (decode fees,
+/// derive ttl, derive inputs for conflict detection,
+/// ledger-state-aware revalidation) awaits a future arc.
+pub fn analysis_repro_mempool_and_forge(blocks: &[Block]) -> AnalysisOutcome {
+    use std::time::Instant;
+    use yggdrasil_consensus::mempool::{Mempool, MempoolEntry};
+
+    const MEMPOOL_CAPACITY_BYTES: usize = 1024 * 1024;
+
+    let initial_era = blocks
+        .first()
+        .map(|b| b.era)
+        .unwrap_or(yggdrasil_ledger::Era::Byron);
+    let mut state = yggdrasil_ledger::LedgerState::new(initial_era);
+    let mut per_block_stats = Vec::with_capacity(blocks.len());
+    let mut applied_ok: i64 = 0;
+    let mut applied_err: i64 = 0;
+
+    for blk in blocks {
+        match state.apply_block(blk) {
+            Ok(()) => applied_ok += 1,
+            Err(_) => applied_err += 1,
+        }
+
+        // Fresh mempool per block (upstream's reproduce-cycle).
+        let mut mempool = Mempool::with_capacity(MEMPOOL_CAPACITY_BYTES);
+
+        // Phase 1: insert each tx into the mempool, timed.
+        let insert_start = Instant::now();
+        let mut insert_count: i64 = 0;
+        for tx in &blk.transactions {
+            let entry = MempoolEntry {
+                era: blk.era,
+                tx_id: tx.id,
+                fee: 0,
+                body: tx.body.clone(),
+                raw_tx: tx.body.clone(),
+                size_bytes: tx.serialized_size(),
+                ttl: yggdrasil_ledger::SlotNo(u64::MAX),
+                inputs: Vec::new(),
+            };
+            if mempool.insert(entry).is_ok() {
+                insert_count += 1;
+            }
+        }
+        let insert_ns = insert_start.elapsed().as_nanos().min(i64::MAX as u128) as i64;
+
+        // Phase 2: forge — drain the mempool via pop_best, timed.
+        let forge_start = Instant::now();
+        let mut forge_count: i64 = 0;
+        while mempool.pop_best().is_some() {
+            forge_count += 1;
+        }
+        let forge_ns = forge_start.elapsed().as_nanos().min(i64::MAX as u128) as i64;
+
+        per_block_stats.push((
+            blk.header.slot_no,
+            blk.header.block_no,
+            insert_count,
+            forge_count,
+            insert_ns,
+            forge_ns,
+        ));
+    }
+
+    AnalysisOutcome::ReproMempoolAndForge {
+        per_block_stats,
         applied_ok,
         applied_err,
     }
@@ -1303,13 +1432,37 @@ mod tests {
     }
 
     #[test]
-    fn run_analysis_repro_mempool_returns_requires_apply_loop() {
-        let config = mk_config(AnalysisName::ReproMempoolAndForge(50), Limit::Unlimited);
+    fn run_analysis_dispatch_matrix_no_longer_returns_apply_loop_errors() {
+        // After R493: no AnalysisName routes to
+        // RequiresLedgerStateApplyLoop. The only error variant
+        // operators can hit is NotApplicableToRust for
+        // CheckNoThunksEvery (R485 permanent carve-out). This
+        // test pins the 13/13 dispatch coverage.
+        for analysis in [
+            AnalysisName::ShowSlotBlockNo,
+            AnalysisName::CountTxOutputs,
+            AnalysisName::ShowBlockHeaderSize,
+            AnalysisName::ShowBlockTxsSize,
+            AnalysisName::ShowEBBs,
+            AnalysisName::OnlyValidation,
+            AnalysisName::CountBlocks,
+            AnalysisName::TraceLedgerProcessing,
+            AnalysisName::ReproMempoolAndForge(50),
+            AnalysisName::StoreLedgerStateAt(SlotNo(0), LedgerApplicationMode::LedgerReapply),
+            AnalysisName::BenchmarkLedgerOps(None, LedgerApplicationMode::LedgerReapply),
+            AnalysisName::GetBlockApplicationMetrics(NumberOfBlocks(1), None),
+        ] {
+            let config = mk_config(analysis.clone(), Limit::Unlimited);
+            let result = run_analysis(&config, Vec::<Block>::new());
+            assert!(
+                result.is_ok(),
+                "analysis {analysis:?} should now ship, got {result:?}"
+            );
+        }
+        // CheckNoThunksEvery is the only permanent carve-out.
+        let config = mk_config(AnalysisName::CheckNoThunksEvery(100), Limit::Unlimited);
         let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
-        assert!(matches!(
-            err,
-            AnalysisError::RequiresLedgerStateApplyLoop { .. }
-        ));
+        assert!(matches!(err, AnalysisError::NotApplicableToRust { .. }));
     }
 
     #[test]
@@ -1366,6 +1519,115 @@ mod tests {
             }
             _ => panic!("wrong outcome variant"),
         }
+    }
+
+    // ── R493 ReproMempoolAndForge handler ──────────────────────────────
+
+    #[test]
+    fn analysis_repro_mempool_and_forge_empty_chain() {
+        let outcome = analysis_repro_mempool_and_forge(&[]);
+        match outcome {
+            AnalysisOutcome::ReproMempoolAndForge {
+                per_block_stats,
+                applied_ok,
+                applied_err,
+            } => {
+                assert!(per_block_stats.is_empty());
+                assert_eq!(applied_ok, 0);
+                assert_eq!(applied_err, 0);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_repro_mempool_and_forge_block_with_no_txs_yields_zero_counts() {
+        let mut blk = mk_block(10, 1, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        // mk_block sets transactions: vec![] — confirm.
+        assert!(blk.transactions.is_empty());
+        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        match outcome {
+            AnalysisOutcome::ReproMempoolAndForge {
+                per_block_stats, ..
+            } => {
+                assert_eq!(per_block_stats.len(), 1);
+                let (slot, block_no, inserts, forges, _ins_ns, _fge_ns) = per_block_stats[0];
+                assert_eq!(slot, SlotNo(10));
+                assert_eq!(block_no, BlockNo(1));
+                assert_eq!(inserts, 0);
+                assert_eq!(forges, 0);
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_repro_mempool_and_forge_with_synthetic_txs_round_trips() {
+        use yggdrasil_ledger::{Tx, compute_tx_id};
+        let mut blk = mk_block(10, 1, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        // Add 3 transactions with distinct bodies (so distinct tx_ids).
+        for i in 0u8..3 {
+            let body = vec![0x80, 0x10 + i]; // CBOR empty-array + sentinel
+            blk.transactions.push(Tx {
+                id: compute_tx_id(&body),
+                body,
+                witnesses: None,
+                auxiliary_data: None,
+                is_valid: None,
+            });
+        }
+        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        match outcome {
+            AnalysisOutcome::ReproMempoolAndForge {
+                per_block_stats, ..
+            } => {
+                let (_, _, inserts, forges, _, _) = per_block_stats[0];
+                assert_eq!(inserts, 3, "all 3 synthetic txs inserted");
+                assert_eq!(forges, 3, "all 3 forged back");
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn analysis_repro_mempool_and_forge_skips_duplicate_tx_ids() {
+        use yggdrasil_ledger::{Tx, compute_tx_id};
+        let mut blk = mk_block(10, 1, None);
+        blk.era = yggdrasil_ledger::Era::Byron;
+        // Two transactions with the same body → same tx_id →
+        // second insert should fail and be silently skipped.
+        let body = vec![0x80];
+        for _ in 0..2 {
+            blk.transactions.push(Tx {
+                id: compute_tx_id(&body),
+                body: body.clone(),
+                witnesses: None,
+                auxiliary_data: None,
+                is_valid: None,
+            });
+        }
+        let outcome = analysis_repro_mempool_and_forge(&[blk]);
+        match outcome {
+            AnalysisOutcome::ReproMempoolAndForge {
+                per_block_stats, ..
+            } => {
+                let (_, _, inserts, _, _, _) = per_block_stats[0];
+                assert_eq!(inserts, 1, "duplicate tx_id second insert is skipped");
+            }
+            _ => panic!("wrong outcome variant"),
+        }
+    }
+
+    #[test]
+    fn run_analysis_dispatches_repro_mempool_and_forge() {
+        let config = mk_config(AnalysisName::ReproMempoolAndForge(50), Limit::Unlimited);
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        assert!(matches!(
+            outcome,
+            AnalysisOutcome::ReproMempoolAndForge { .. }
+        ));
     }
 
     // ── R491 StoreLedgerStateAt handler ────────────────────────────────

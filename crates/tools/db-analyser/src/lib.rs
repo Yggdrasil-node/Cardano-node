@@ -172,6 +172,24 @@ fn render_outcome(outcome: &analysis::runner::AnalysisOutcome) -> eyre::Result<(
         AnalysisOutcome::OnlyValidation { blocks_processed } => {
             writeln!(out, "only_validation blocks_processed={blocks_processed}")?;
         }
+        AnalysisOutcome::ReproMempoolAndForge {
+            per_block_stats,
+            applied_ok,
+            applied_err,
+        } => {
+            for (slot, block_no, insert_count, forge_count, insert_ns, forge_ns) in per_block_stats
+            {
+                writeln!(
+                    out,
+                    "slot={} block_no={} mempool_inserts={} forge_pops={} insert_ns={} forge_ns={}",
+                    slot.0, block_no.0, insert_count, forge_count, insert_ns, forge_ns
+                )?;
+            }
+            writeln!(
+                out,
+                "repro_mempool_and_forge applied_ok={applied_ok} applied_err={applied_err}"
+            )?;
+        }
         AnalysisOutcome::StoreLedgerStateAt {
             target_slot,
             reached_slot,

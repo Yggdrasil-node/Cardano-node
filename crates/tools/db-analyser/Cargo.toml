@@ -29,6 +29,7 @@ eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+yggdrasil-consensus = { path = "../../consensus" }
 yggdrasil-ledger = { path = "../../ledger" }
 yggdrasil-storage = { path = "../../storage" }
 
