@@ -351,6 +351,28 @@ basename-heuristic reliance.
     (Hackage-source synthesis), TraceObject CBOR upstream-byte-
     equivalence (cardano-logging Hackage source), RemoteSocket
     TCP path.
+- **R475 — per-era TxBody output-count helpers.** First slice of the
+  R475-R481 `db-analyser HasAnalysis` arc. Ships per-era
+  `TxBody::decode_output_count(&[u8]) -> Result<usize, LedgerError>`
+  helpers in `crates/ledger/src/eras/{byron,shelley,alonzo,babbage,
+  conway}.rs`, plus a `Tx::output_count(&self, era: Era)` dispatcher
+  in `crates/ledger/src/tx.rs:113`. Empty-body input returns `Ok(0)`
+  (matching upstream's `countTxOutputs (Block [])` short-circuit);
+  malformed bodies propagate `LedgerError::CborDecodeError` rather
+  than panicking. Shelley/Allegra/Mary all route through
+  `ShelleyTxBody::decode_output_count` (they share the wire format).
+  Mirror of upstream's per-era `Cardano.Tools.DBAnalyser.HasAnalysis.
+  {Byron,Shelley,Allegra,Mary,Alonzo,Babbage,Conway}::countTxOutputs`
+  typeclass-instance surface; Yggdrasil collapses the seven instances
+  into one match-on-era dispatcher because `Block` is a unified
+  struct rather than seven era-specific newtypes. 16 new tests
+  (5 dispatcher + 4 Byron + 3 each Shelley/Alonzo/Babbage/Conway).
+  Workspace tests: 6,084 → 6,105. All 5 verification gates clean.
+  See `docs/operational-runs/2026-05-11-round-475-tx-output-count-
+  helpers.md`. Sets up R476-R481 (HasAnalysis trait impl,
+  analysis-runner dispatch core, 7-of-13 block-only analyses
+  shipped, 6 ledger-state-dependent analyses returning structured
+  `RequiresLedgerStateApplyLoop` errors pending a future arc).
 - **R473 — DataPoint forwarder-side R471-R473 arc closeout.**
   Completes the trace-forward DataPoint sub-protocol port —
   R452-R459 shipped the acceptor side (cardano-tracer); R471-R473

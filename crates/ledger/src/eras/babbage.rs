@@ -835,6 +835,22 @@ impl CborDecode for BabbageTxBody {
     }
 }
 
+impl BabbageTxBody {
+    /// Decode just enough of a Babbage tx body to return the output count.
+    ///
+    /// Wrapper around the full `CborDecode` path; db-analyser's
+    /// `CountTxOutputs` analysis (R475-R481 arc) calls this through
+    /// the `Tx::output_count` per-era dispatch in `crates/ledger/src/tx.rs`.
+    ///
+    /// Mirror of upstream `Cardano.Tools.DBAnalyser.HasAnalysis.Babbage`
+    /// `countTxOutputs` per-era instance.
+    pub fn decode_output_count(body: &[u8]) -> Result<usize, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let body = Self::decode_cbor(&mut dec)?;
+        Ok(body.outputs.len())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Block envelope
 // ---------------------------------------------------------------------------
@@ -1244,5 +1260,29 @@ mod tests {
             vec![0, 1],
             "DatumOption tag set must be exactly 0..=1"
         );
+    }
+
+    // ── decode_output_count (R475) ─────────────────────────────────────
+
+    #[test]
+    fn decode_output_count_single_output() {
+        let body = mk_babbage_body();
+        assert_eq!(body.outputs.len(), 1);
+        let bytes = body.to_cbor_bytes();
+        assert_eq!(BabbageTxBody::decode_output_count(&bytes).unwrap(), 1);
+    }
+
+    #[test]
+    fn decode_output_count_multiple_outputs() {
+        let mut body = mk_babbage_body();
+        body.outputs.push(mk_babbage_txout());
+        let bytes = body.to_cbor_bytes();
+        assert_eq!(BabbageTxBody::decode_output_count(&bytes).unwrap(), 2);
+    }
+
+    #[test]
+    fn decode_output_count_rejects_malformed_body() {
+        let garbage = [0xFF, 0x00, 0x01];
+        assert!(BabbageTxBody::decode_output_count(&garbage).is_err());
     }
 }

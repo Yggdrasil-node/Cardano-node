@@ -389,6 +389,23 @@ impl CborDecode for ShelleyTxBody {
     }
 }
 
+impl ShelleyTxBody {
+    /// Decode just enough of a Shelley/Allegra/Mary tx body to return the
+    /// output count.
+    ///
+    /// Wrapper around the full `CborDecode` path; db-analyser's
+    /// `CountTxOutputs` analysis (R475-R481 arc) calls this through
+    /// the `Tx::output_count` per-era dispatch in `crates/ledger/src/tx.rs`.
+    ///
+    /// Mirror of upstream `Cardano.Tools.DBAnalyser.HasAnalysis.Shelley`
+    /// `countTxOutputs` per-era instance.
+    pub fn decode_output_count(body: &[u8]) -> Result<usize, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let body = Self::decode_cbor(&mut dec)?;
+        Ok(body.outputs.len())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VKey witness
 // ---------------------------------------------------------------------------
@@ -2270,5 +2287,36 @@ mod tests {
         };
         let decoded = ShelleyUpdate::from_cbor_bytes(&update.to_cbor_bytes()).unwrap();
         assert_eq!(decoded, update);
+    }
+
+    // ── decode_output_count (R475) ─────────────────────────────────────
+
+    #[test]
+    fn decode_output_count_single_output() {
+        let body = mk_shelley_body();
+        assert_eq!(body.outputs.len(), 1);
+        let bytes = body.to_cbor_bytes();
+        assert_eq!(ShelleyTxBody::decode_output_count(&bytes).unwrap(), 1);
+    }
+
+    #[test]
+    fn decode_output_count_multiple_outputs() {
+        let mut body = mk_shelley_body();
+        body.outputs.push(ShelleyTxOut {
+            address: vec![0x62; 29],
+            amount: 3_000_000,
+        });
+        body.outputs.push(ShelleyTxOut {
+            address: vec![0x63; 29],
+            amount: 4_000_000,
+        });
+        let bytes = body.to_cbor_bytes();
+        assert_eq!(ShelleyTxBody::decode_output_count(&bytes).unwrap(), 3);
+    }
+
+    #[test]
+    fn decode_output_count_rejects_malformed_body() {
+        let garbage = [0xFF, 0x00, 0x01];
+        assert!(ShelleyTxBody::decode_output_count(&garbage).is_err());
     }
 }

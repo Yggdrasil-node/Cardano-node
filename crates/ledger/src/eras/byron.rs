@@ -256,6 +256,20 @@ impl ByronTx {
     pub fn tx_id(&self) -> [u8; 32] {
         yggdrasil_crypto::hash_bytes_256(&self.to_cbor_bytes()).0
     }
+
+    /// Decode just enough of a Byron tx body to return the output count.
+    ///
+    /// Wrapper around the full `CborDecode` path; db-analyser's
+    /// `CountTxOutputs` analysis (R475-R481 arc) calls this through
+    /// the `Tx::output_count` per-era dispatch in `crates/ledger/src/tx.rs`.
+    ///
+    /// Mirror of upstream `Cardano.Tools.DBAnalyser.HasAnalysis.Byron`
+    /// `countTxOutputs` per-era instance.
+    pub fn decode_output_count(body: &[u8]) -> Result<usize, LedgerError> {
+        let mut dec = Decoder::new(body);
+        let tx = Self::decode_cbor(&mut dec)?;
+        Ok(tx.outputs.len())
+    }
 }
 
 /// A Byron-era transaction witness (signature).
@@ -1129,5 +1143,72 @@ mod tests {
             raw_header: vec![0x01],
         };
         assert_eq!(blk.header_hash().0.len(), 32);
+    }
+
+    // ── decode_output_count (R475) ─────────────────────────────────────
+
+    #[test]
+    fn decode_output_count_zero_outputs() {
+        let tx = ByronTx {
+            inputs: vec![ByronTxIn {
+                txid: [0xCC; 32],
+                index: 0,
+            }],
+            outputs: vec![],
+            attributes: mk_attrs(),
+        };
+        let bytes = tx.to_cbor_bytes();
+        assert_eq!(ByronTx::decode_output_count(&bytes).unwrap(), 0);
+    }
+
+    #[test]
+    fn decode_output_count_single_output() {
+        let tx = ByronTx {
+            inputs: vec![ByronTxIn {
+                txid: [0xDD; 32],
+                index: 0,
+            }],
+            outputs: vec![ByronTxOut {
+                address: mk_addr(),
+                amount: 1_000_000,
+            }],
+            attributes: mk_attrs(),
+        };
+        let bytes = tx.to_cbor_bytes();
+        assert_eq!(ByronTx::decode_output_count(&bytes).unwrap(), 1);
+    }
+
+    #[test]
+    fn decode_output_count_multiple_outputs() {
+        let tx = ByronTx {
+            inputs: vec![ByronTxIn {
+                txid: [0xEE; 32],
+                index: 0,
+            }],
+            outputs: vec![
+                ByronTxOut {
+                    address: mk_addr(),
+                    amount: 100,
+                },
+                ByronTxOut {
+                    address: mk_addr(),
+                    amount: 200,
+                },
+                ByronTxOut {
+                    address: mk_addr(),
+                    amount: 300,
+                },
+            ],
+            attributes: mk_attrs(),
+        };
+        let bytes = tx.to_cbor_bytes();
+        assert_eq!(ByronTx::decode_output_count(&bytes).unwrap(), 3);
+    }
+
+    #[test]
+    fn decode_output_count_rejects_malformed_body() {
+        // Not a valid Byron tx CBOR — must error, not panic.
+        let garbage = [0xFF, 0x00, 0x01];
+        assert!(ByronTx::decode_output_count(&garbage).is_err());
     }
 }

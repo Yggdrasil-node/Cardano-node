@@ -98,6 +98,32 @@ impl Tx {
         let aux_data_size = self.auxiliary_data.as_ref().map_or(1, |a| a.len()); // null = 1 byte
         header_size + body_size + witness_size + aux_data_size
     }
+
+    /// Count the number of transaction outputs in this transaction's
+    /// body, dispatching on the supplied [`Era`] to the era-specific
+    /// `TxBody` decoder. Used by db-analyser's `CountTxOutputs`
+    /// analysis (R475-R481 arc).
+    ///
+    /// Returns `Ok(0)` for an empty body. Returns
+    /// `Err(LedgerError::CborDecodeError)` if the body bytes don't
+    /// match the era's expected CBOR shape.
+    ///
+    /// Mirror of upstream `Cardano.Tools.DBAnalyser.HasAnalysis::
+    /// countTxOutputs` per-era dispatch.
+    pub fn output_count(&self, era: Era) -> Result<usize, LedgerError> {
+        if self.body.is_empty() {
+            return Ok(0);
+        }
+        match era {
+            Era::Byron => crate::eras::byron::ByronTx::decode_output_count(&self.body),
+            Era::Shelley | Era::Allegra | Era::Mary => {
+                crate::eras::shelley::ShelleyTxBody::decode_output_count(&self.body)
+            }
+            Era::Alonzo => crate::eras::alonzo::AlonzoTxBody::decode_output_count(&self.body),
+            Era::Babbage => crate::eras::babbage::BabbageTxBody::decode_output_count(&self.body),
+            Era::Conway => crate::eras::conway::ConwayTxBody::decode_output_count(&self.body),
+        }
+    }
 }
 
 /// A submitted transaction using the 3-element Shelley-family wire shape:
@@ -1168,5 +1194,125 @@ mod tests {
         let result = decode_optional_raw_cbor(&mut dec).unwrap();
         assert!(result.is_some());
         assert_eq!(result.unwrap(), bytes);
+    }
+
+    // ── output_count per-era dispatch (R475) ────────────────────────────
+
+    fn mk_tx(body: Vec<u8>) -> Tx {
+        Tx {
+            id: compute_tx_id(&body),
+            body,
+            witnesses: None,
+            auxiliary_data: None,
+            is_valid: None,
+        }
+    }
+
+    #[test]
+    fn output_count_empty_body_returns_zero() {
+        let tx = mk_tx(vec![]);
+        assert_eq!(tx.output_count(Era::Shelley).unwrap(), 0);
+        assert_eq!(tx.output_count(Era::Byron).unwrap(), 0);
+        assert_eq!(tx.output_count(Era::Conway).unwrap(), 0);
+    }
+
+    #[test]
+    fn output_count_byron_dispatch() {
+        use crate::eras::{ByronTx, ByronTxIn, ByronTxOut};
+        let mut enc = crate::cbor::Encoder::new();
+        enc.map(0);
+        let attrs = enc.into_bytes();
+        let byron_tx = ByronTx {
+            inputs: vec![ByronTxIn {
+                txid: [0x11; 32],
+                index: 0,
+            }],
+            outputs: vec![
+                ByronTxOut {
+                    address: vec![0x82, 0x80, 0xA0],
+                    amount: 100,
+                },
+                ByronTxOut {
+                    address: vec![0x82, 0x80, 0xA0],
+                    amount: 200,
+                },
+            ],
+            attributes: attrs,
+        };
+        let tx = mk_tx(byron_tx.to_cbor_bytes());
+        assert_eq!(tx.output_count(Era::Byron).unwrap(), 2);
+    }
+
+    #[test]
+    fn output_count_shelley_family_dispatch() {
+        use crate::eras::{ShelleyTxIn, ShelleyTxOut};
+        let body = ShelleyTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x22; 32],
+                index: 0,
+            }],
+            outputs: vec![ShelleyTxOut {
+                address: vec![0x61; 29],
+                amount: 1_000,
+            }],
+            fee: 1,
+            ttl: 0,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        // Shelley, Allegra, and Mary all route to ShelleyTxBody's decoder.
+        assert_eq!(tx.output_count(Era::Shelley).unwrap(), 1);
+        assert_eq!(tx.output_count(Era::Allegra).unwrap(), 1);
+        assert_eq!(tx.output_count(Era::Mary).unwrap(), 1);
+    }
+
+    #[test]
+    fn output_count_alonzo_dispatch() {
+        use crate::eras::Value;
+        use crate::eras::{AlonzoTxBody, AlonzoTxOut, ShelleyTxIn};
+        let body = AlonzoTxBody {
+            inputs: vec![ShelleyTxIn {
+                transaction_id: [0x33; 32],
+                index: 0,
+            }],
+            outputs: vec![
+                AlonzoTxOut {
+                    address: vec![0x61; 29],
+                    amount: Value::Coin(5_000),
+                    datum_hash: None,
+                },
+                AlonzoTxOut {
+                    address: vec![0x61; 29],
+                    amount: Value::Coin(7_000),
+                    datum_hash: None,
+                },
+            ],
+            fee: 1,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            update: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+        };
+        let tx = mk_tx(body.to_cbor_bytes());
+        assert_eq!(tx.output_count(Era::Alonzo).unwrap(), 2);
+    }
+
+    #[test]
+    fn output_count_dispatch_propagates_decode_error() {
+        // Garbage body bytes must propagate the decoder error rather
+        // than panicking or silently returning zero.
+        let tx = mk_tx(vec![0xFF, 0x00, 0x01]);
+        assert!(tx.output_count(Era::Shelley).is_err());
+        assert!(tx.output_count(Era::Conway).is_err());
     }
 }
