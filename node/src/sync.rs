@@ -67,8 +67,14 @@ pub use yggdrasil_storage::LedgerRecoveryOutcome;
 const DIJKSTRA_MAJOR_PROTOCOL_VERSION: u64 = 12;
 
 mod error;
+mod shelley_decoders;
 
 pub use error::SyncError;
+use shelley_decoders::compute_tx_id;
+pub use shelley_decoders::{
+    decode_point, decode_shelley_blocks, decode_shelley_header, shelley_block_to_block,
+    shelley_block_to_block_with_spans,
+};
 
 /// Result of a single sync step.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -165,121 +171,6 @@ pub struct TypedSyncProgress {
     pub fetched_blocks: usize,
     /// Number of rollback steps observed.
     pub rollback_count: usize,
-}
-
-/// Compute a `TxId` as the Blake2b-256 hash of the CBOR-encoded transaction
-/// body, matching the upstream Cardano transaction identifier.
-///
-/// Reference: `Cardano.Ledger.TxIn` — `TxId`.
-fn compute_tx_id(body: &[u8]) -> TxId {
-    TxId(hash_bytes_256(body).0)
-}
-
-/// Convert a typed Shelley block into the generic ledger `Block` wrapper used
-/// by storage traits.
-///
-/// `raw_block_bytes` is the original on-wire CBOR encoding of the block
-/// (as received from BlockFetch).  Each transaction's `body` and
-/// `witnesses` slots are populated with the **exact on-wire byte spans**
-/// extracted from this buffer rather than re-serialised from the typed
-/// `ShelleyTxBody` / `ShelleyWitnessSet` values.  Re-serialisation is
-/// byte-canonical CBOR but does not always agree byte-for-byte with the
-/// block author's original encoding (set vs array, definite vs
-/// indefinite length, integer-width canonicalisation), and the linear
-/// fee formula `min_fee = a · txSize + b` is sensitive to that
-/// difference.
-///
-/// Reference: `Cardano.Ledger.Shelley.Tx.minfee`,
-/// `Cardano.Ledger.Core.txIdTxBody`.
-pub fn shelley_block_to_block(block: &ShelleyBlock, raw_block_bytes: &[u8]) -> Block {
-    let spans = yggdrasil_ledger::extract_block_tx_byte_spans(raw_block_bytes).unwrap_or_default();
-    apply_raw_header_hash_override(
-        shelley_block_to_block_with_spans(block, &spans),
-        raw_block_bytes,
-    )
-}
-
-/// Variant of [`shelley_block_to_block`] that consumes pre-extracted
-/// `BlockTxRawSpans` instead of re-walking the block CBOR.
-///
-/// Use this on the sync hot path when spans are already cached on the
-/// `MultiEraSyncStep::RollForward.block_spans` field — saves one CBOR
-/// walk per block.
-pub fn shelley_block_to_block_with_spans(
-    block: &ShelleyBlock,
-    spans: &yggdrasil_ledger::BlockTxRawSpans,
-) -> Block {
-    let body = &block.header.body;
-    let hash = block.header_hash();
-    let prev_hash = HeaderHash(body.prev_hash.unwrap_or([0u8; 32]));
-
-    let transactions: Vec<Tx> = block
-        .transaction_bodies
-        .iter()
-        .enumerate()
-        .zip(
-            block
-                .transaction_witness_sets
-                .iter()
-                .map(Some)
-                .chain(std::iter::repeat(None)),
-        )
-        .map(|((idx, tx_body), ws)| {
-            // Prefer the on-wire byte span; fall back to a typed
-            // re-encoding only if span extraction failed (test paths).
-            let raw_body = spans
-                .bodies
-                .get(idx)
-                .cloned()
-                .unwrap_or_else(|| tx_body.to_cbor_bytes());
-            let raw_witnesses = spans
-                .witness_sets
-                .get(idx)
-                .cloned()
-                .or_else(|| ws.map(|w| w.to_cbor_bytes()));
-            Tx {
-                id: compute_tx_id(&raw_body),
-                body: raw_body,
-                witnesses: raw_witnesses,
-                auxiliary_data: block.transaction_metadata_set.get(&(idx as u64)).cloned(),
-                is_valid: None,
-            }
-        })
-        .collect();
-
-    Block {
-        era: Era::Shelley,
-        header: BlockHeader {
-            hash,
-            prev_hash,
-            slot_no: SlotNo(body.slot),
-            block_no: BlockNo(body.block_number),
-            issuer_vkey: body.issuer_vkey,
-            protocol_version: Some(body.protocol_version),
-        },
-        transactions,
-        raw_cbor: None,
-        header_cbor_size: Some(block.header.to_cbor_bytes().len()),
-    }
-}
-
-/// Decode a list of raw BlockFetch payloads into Shelley blocks.
-pub fn decode_shelley_blocks(raw_blocks: &[Vec<u8>]) -> Result<Vec<ShelleyBlock>, SyncError> {
-    raw_blocks
-        .iter()
-        .map(|raw| ShelleyBlock::from_cbor_bytes(raw))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(SyncError::LedgerDecode)
-}
-
-/// Decode a raw ChainSync header payload into a typed Shelley header.
-pub fn decode_shelley_header(raw_header: &[u8]) -> Result<ShelleyHeader, SyncError> {
-    ShelleyHeader::from_cbor_bytes(raw_header).map_err(SyncError::LedgerDecode)
-}
-
-/// Decode a raw ChainSync point/tip payload into a typed ledger `Point`.
-pub fn decode_point(raw_point: &[u8]) -> Result<Point, SyncError> {
-    Point::from_cbor_bytes(raw_point).map_err(SyncError::LedgerDecode)
 }
 
 fn map_blockfetch_error(err: BlockFetchClientError) -> SyncError {
@@ -3867,7 +3758,7 @@ fn drop_raw_range_lower_boundary(raw_blocks: &mut Vec<Vec<u8>>, lower: Point) {
     }
 }
 
-fn apply_raw_header_hash_override(mut block: Block, raw_block_bytes: &[u8]) -> Block {
+pub(super) fn apply_raw_header_hash_override(mut block: Block, raw_block_bytes: &[u8]) -> Block {
     if block.era != Era::Byron
         && let Some((hash, header_len)) = raw_shelley_family_header_hash_from_block(raw_block_bytes)
     {
