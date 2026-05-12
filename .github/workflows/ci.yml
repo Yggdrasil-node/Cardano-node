@@ -51,6 +51,14 @@ jobs:
       - name: Strict-mirror drift-guard
         run: python3 scripts/check-strict-mirror.py --fail-on-violation
 
+      # Fetch upstream Haskell source trees only (no 870 MB install
+      # tarball). Required by the parity-matrix validator below, which
+      # asserts every `haskell_reference[*].path` exists on disk under
+      # `.reference-haskell-cardano-node/deps/`. The full install tree
+      # is local-only (see check-reference-artifacts.py).
+      - name: Fetch upstream Haskell reference sources
+        run: bash scripts/setup-reference.sh --sources-only
+
       # Parity-matrix path/schema validator.
       # Walks docs/parity-matrix.json and asserts every entry's
       # `haskell_reference[*].path` and `rust_surface[*].path` exists
