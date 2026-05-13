@@ -18,10 +18,26 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REF_DIR="$ROOT_DIR/.reference-haskell-cardano-node"
 CARDANO_NODE_REMOTE="https://github.com/IntersectMBO/cardano-node.git"
 
-if [[ "${1:-}" == "--force" ]]; then
-    echo "removing existing $REF_DIR"
-    rm -rf "$REF_DIR"
-fi
+SOURCES_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --force)
+            echo "removing existing $REF_DIR"
+            rm -rf "$REF_DIR"
+            ;;
+        --sources-only)
+            # Skip the ~870 MB compiled install tarball; only materialise the
+            # upstream source trees needed by parity-flow CI gates
+            # (check-parity-matrix.py, check-strict-mirror.py). Used in
+            # .github/workflows/ci.yml.
+            SOURCES_ONLY=1
+            ;;
+        *)
+            echo "usage: $0 [--force] [--sources-only]" >&2
+            exit 2
+            ;;
+    esac
+done
 
 mkdir -p "$REF_DIR"
 cd "$REF_DIR"
@@ -69,6 +85,12 @@ for entry in \
     fi
 done
 cd ..
+
+if [[ "$SOURCES_ONLY" -eq 1 ]]; then
+    echo
+    echo "=== reference sources fetched ($VERSION); --sources-only skipped install tarball ==="
+    exit 0
+fi
 
 echo "==> downloading cardano-node $VERSION release tarball"
 mkdir -p install
