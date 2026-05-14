@@ -172,29 +172,189 @@ pub(crate) fn run_cardano_cli_command(
         CardanoCliCommand::AddressKeyGen {
             verification_key_file,
             signing_key_file,
+        } => generate_keypair_to_envelopes(
+            &verification_key_file,
+            &signing_key_file,
+            KeyKind::Payment,
+        ),
+        CardanoCliCommand::StakeAddressKeyGen {
+            verification_key_file,
+            signing_key_file,
+        } => generate_keypair_to_envelopes(
+            &verification_key_file,
+            &signing_key_file,
+            KeyKind::Stake,
+        ),
+        CardanoCliCommand::AddressBuild {
+            payment_verification_key_file,
+            stake_verification_key_file,
+            mainnet,
+            testnet_magic,
+            out_file,
         } => {
-            let seed = read_os_entropy_32_bytes()?;
-            let sk = yggdrasil_crypto::SigningKey::from_bytes(seed);
-            let vk = sk
-                .verification_key()
-                .map_err(|e| eyre::eyre!("failed to derive VK from generated SK: {e}"))?;
-            write_text_envelope(
-                &signing_key_file,
-                "PaymentSigningKeyShelley_ed25519",
-                "Payment Signing Key",
-                &sk.to_bytes(),
-                /* private = */ true,
-            )?;
-            write_text_envelope(
-                &verification_key_file,
-                "PaymentVerificationKeyShelley_ed25519",
-                "Payment Verification Key",
-                &vk.to_bytes(),
-                /* private = */ false,
-            )?;
+            // Network selection: --mainnet OR --testnet-magic, default to
+            // testnet when neither is given (matches upstream's "must
+            // specify one" stance but with a safer default for
+            // mistype-ridden operator paste flows).
+            let network_id: u8 = if mainnet {
+                1
+            } else if testnet_magic.is_some() {
+                0
+            } else {
+                eyre::bail!(
+                    "address-build requires either --mainnet or --testnet-magic"
+                );
+            };
+
+            // Read and hash the payment verification key.
+            let pay_env = std::fs::read(&payment_verification_key_file).map_err(|e| {
+                eyre::eyre!(
+                    "failed to read --payment-verification-key-file {}: {e}",
+                    payment_verification_key_file.display()
+                )
+            })?;
+            let pay_vk = read_verification_key_text_envelope(&pay_env)?;
+            let pay_hash = yggdrasil_crypto::hash_bytes_224(&pay_vk).0;
+
+            // Optionally read and hash the stake verification key.
+            let stake_hash: Option<[u8; 28]> = match stake_verification_key_file {
+                Some(p) => {
+                    let env = std::fs::read(&p).map_err(|e| {
+                        eyre::eyre!(
+                            "failed to read --stake-verification-key-file {}: {e}",
+                            p.display()
+                        )
+                    })?;
+                    let vk = read_verification_key_text_envelope(&env)?;
+                    Some(yggdrasil_crypto::hash_bytes_224(&vk).0)
+                }
+                None => None,
+            };
+
+            let bech32_addr = build_shelley_address_bech32(network_id, &pay_hash, stake_hash.as_ref())?;
+            match out_file {
+                Some(path) => std::fs::write(&path, format!("{bech32_addr}\n")).map_err(|e| {
+                    eyre::eyre!("failed to write --out-file {}: {e}", path.display())
+                })?,
+                None => println!("{bech32_addr}"),
+            };
             Ok(())
         }
     }
+}
+
+/// Construct a Shelley address byte sequence and Bech32-encode it.
+///
+/// Two cases per
+/// `Cardano.Ledger.Shelley.API.Wallet.computeShelleyAddress`:
+///
+/// - Enterprise (`stake_hash == None`): header `0b0110_<netid>`
+///   (type 6 = key-payment, enterprise) + 28-byte payment hash =
+///   29 raw bytes.
+/// - Base (`stake_hash == Some(h)`): header `0b0000_<netid>`
+///   (type 0 = key-payment, key-stake) + 28-byte payment hash +
+///   28-byte stake hash = 57 raw bytes.
+///
+/// `network_id` is 1 for mainnet, 0 for any testnet. The Bech32
+/// HRP is `addr` (mainnet) or `addr_test` (testnet) per
+/// `Cardano.Ledger.Address.serialiseAddrBech32`.
+pub(crate) fn build_shelley_address_bech32(
+    network_id: u8,
+    payment_hash: &[u8; 28],
+    stake_hash: Option<&[u8; 28]>,
+) -> Result<String> {
+    if network_id > 0x0F {
+        eyre::bail!(
+            "network_id {network_id} must fit in 4 bits (0..=15); got {network_id}"
+        );
+    }
+    let header = match stake_hash {
+        // Base address (type 0); upper nibble 0x0 + network id in low nibble.
+        Some(_) => network_id,
+        // Enterprise address (type 6); upper nibble 0x6 + network id.
+        None => 0x60 | network_id,
+    };
+    let mut addr_bytes: Vec<u8> = Vec::with_capacity(57);
+    addr_bytes.push(header);
+    addr_bytes.extend_from_slice(payment_hash);
+    if let Some(sh) = stake_hash {
+        addr_bytes.extend_from_slice(sh);
+    }
+
+    let hrp_str = if network_id == 1 { "addr" } else { "addr_test" };
+    let hrp = bech32::Hrp::parse(hrp_str)
+        .map_err(|e| eyre::eyre!("bech32 HRP parse failed for {hrp_str:?}: {e}"))?;
+    bech32::encode::<bech32::Bech32>(hrp, &addr_bytes)
+        .map_err(|e| eyre::eyre!("bech32 encode failed: {e}"))
+}
+
+/// Kind of key being generated/loaded — selects the TextEnvelope
+/// `type` + `description` fields. The on-wire bytes are identical
+/// for both kinds (32-byte Ed25519 SK / VK); only the metadata
+/// changes so upstream `cardano-cli` can tell payment from stake at
+/// file-load time.
+#[derive(Clone, Copy)]
+pub(crate) enum KeyKind {
+    Payment,
+    Stake,
+}
+
+impl KeyKind {
+    fn signing_envelope_type(self) -> &'static str {
+        match self {
+            KeyKind::Payment => "PaymentSigningKeyShelley_ed25519",
+            KeyKind::Stake => "StakeSigningKeyShelley_ed25519",
+        }
+    }
+    fn signing_description(self) -> &'static str {
+        match self {
+            KeyKind::Payment => "Payment Signing Key",
+            KeyKind::Stake => "Stake Signing Key",
+        }
+    }
+    fn verification_envelope_type(self) -> &'static str {
+        match self {
+            KeyKind::Payment => "PaymentVerificationKeyShelley_ed25519",
+            KeyKind::Stake => "StakeVerificationKeyShelley_ed25519",
+        }
+    }
+    fn verification_description(self) -> &'static str {
+        match self {
+            KeyKind::Payment => "Payment Verification Key",
+            KeyKind::Stake => "Stake Verification Key",
+        }
+    }
+}
+
+/// Shared keypair generator used by `address-key-gen` and
+/// `stake-address-key-gen`. Reads 32 bytes of OS entropy, derives
+/// the VK, and writes both TextEnvelope files with the metadata
+/// for `kind`.
+fn generate_keypair_to_envelopes(
+    verification_key_file: &std::path::Path,
+    signing_key_file: &std::path::Path,
+    kind: KeyKind,
+) -> Result<()> {
+    let seed = read_os_entropy_32_bytes()?;
+    let sk = yggdrasil_crypto::SigningKey::from_bytes(seed);
+    let vk = sk
+        .verification_key()
+        .map_err(|e| eyre::eyre!("failed to derive VK from generated SK: {e}"))?;
+    write_text_envelope(
+        signing_key_file,
+        kind.signing_envelope_type(),
+        kind.signing_description(),
+        &sk.to_bytes(),
+        /* private = */ true,
+    )?;
+    write_text_envelope(
+        verification_key_file,
+        kind.verification_envelope_type(),
+        kind.verification_description(),
+        &vk.to_bytes(),
+        /* private = */ false,
+    )?;
+    Ok(())
 }
 
 /// Read 32 cryptographically-secure random bytes from the OS.

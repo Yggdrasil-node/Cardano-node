@@ -2650,6 +2650,138 @@ fn read_verification_key_text_envelope_rejects_wrong_prefix() {
 }
 
 #[test]
+fn cardano_cli_stake_address_key_gen_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "stake-address-key-gen",
+        "--verification-key-file",
+        "/tmp/stake.vkey",
+        "--signing-key-file",
+        "/tmp/stake.skey",
+    ])
+    .expect("stake-address-key-gen must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::StakeAddressKeyGen { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_address_build_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "address-build",
+        "--payment-verification-key-file",
+        "/tmp/payment.vkey",
+        "--mainnet",
+    ])
+    .expect("address-build with --mainnet must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::AddressBuild { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_address_build_rejects_both_network_flags() {
+    use clap::Parser;
+    use super::Cli;
+
+    let result = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "address-build",
+        "--payment-verification-key-file",
+        "/tmp/payment.vkey",
+        "--mainnet",
+        "--testnet-magic",
+        "1",
+    ]);
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("clap must reject --mainnet AND --testnet-magic together"),
+    };
+    assert!(
+        err.to_string().contains("cannot be used with")
+            || err.to_string().contains("conflicts"),
+        "clap conflict-error must reference the conflict; got {err}"
+    );
+}
+
+/// Pin Shelley address bytes against a known input: a payment hash
+/// of 0x11 × 28 yields a specific 29-byte enterprise address on
+/// mainnet that Bech32-encodes to a deterministic `addr1…` string.
+/// Cross-checked: decoding the result back through `bech32::decode`
+/// must yield the same 29-byte sequence we constructed.
+#[test]
+fn build_shelley_enterprise_address_round_trips() {
+    use super::commands::cardano_cli::build_shelley_address_bech32;
+
+    let pay_hash = [0x11_u8; 28];
+    let mainnet_addr = build_shelley_address_bech32(1, &pay_hash, None).expect("build mainnet");
+    assert!(
+        mainnet_addr.starts_with("addr1"),
+        "mainnet enterprise address must start with addr1; got {mainnet_addr}"
+    );
+
+    // Round-trip via the bech32 crate: decode and confirm we get
+    // back the 29-byte sequence `[0x61, 0x11×28]` (enterprise type
+    // 6 on mainnet).
+    let (_hrp, decoded) = bech32::decode(&mainnet_addr).expect("decode bech32");
+    let mut expected = vec![0x61_u8];
+    expected.extend_from_slice(&pay_hash);
+    assert_eq!(
+        decoded, expected,
+        "round-tripped address bytes drift; expected {:?}, got {:?}",
+        hex::encode(&expected),
+        hex::encode(&decoded),
+    );
+
+    // Testnet path: header byte changes (0x60 instead of 0x61), HRP
+    // becomes addr_test.
+    let testnet_addr = build_shelley_address_bech32(0, &pay_hash, None).expect("build testnet");
+    assert!(
+        testnet_addr.starts_with("addr_test1"),
+        "testnet enterprise address must start with addr_test1; got {testnet_addr}"
+    );
+    let (_hrp, decoded) = bech32::decode(&testnet_addr).expect("decode bech32");
+    assert_eq!(decoded[0], 0x60, "testnet enterprise header must be 0x60");
+}
+
+/// Pin the base address byte shape — header 0x00 (mainnet, type 0)
+/// followed by 28-byte payment hash + 28-byte stake hash.
+#[test]
+fn build_shelley_base_address_byte_shape() {
+    use super::commands::cardano_cli::build_shelley_address_bech32;
+
+    let pay_hash = [0x22_u8; 28];
+    let stake_hash = [0x33_u8; 28];
+    let addr = build_shelley_address_bech32(1, &pay_hash, Some(&stake_hash)).expect("build");
+    let (_hrp, decoded) = bech32::decode(&addr).expect("decode");
+    assert_eq!(decoded.len(), 57, "base address must be 57 bytes");
+    // Header 0b0000_0001 = 0x01 (type 0, mainnet).
+    assert_eq!(decoded[0], 0x01, "base address header must be 0x01 on mainnet");
+    assert_eq!(&decoded[1..29], &pay_hash, "payment hash slot");
+    assert_eq!(&decoded[29..57], &stake_hash, "stake hash slot");
+}
+
+#[test]
 fn cardano_cli_address_key_gen_parses() {
     use clap::Parser;
     use super::cli::{CardanoCliCommand, Command};

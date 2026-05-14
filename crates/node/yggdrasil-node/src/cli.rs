@@ -397,8 +397,8 @@ pub(crate) enum CardanoCliCommand {
     ///   `--signing-key-file SK_FILE`      type = `PaymentSigningKeyShelley_ed25519`
     ///   `--verification-key-file VK_FILE` type = `PaymentVerificationKeyShelley_ed25519`
     ///
-    /// Both files use `0o600` permissions on Unix so the new signing
-    /// key isn't world-readable.
+    /// The signing-key file is written with `0o600` permissions on
+    /// Unix so the new signing key isn't world-readable.
     AddressKeyGen {
         /// Path to write the verification (public) key TextEnvelope.
         #[arg(long)]
@@ -406,5 +406,59 @@ pub(crate) enum CardanoCliCommand {
         /// Path to write the signing (private) key TextEnvelope.
         #[arg(long)]
         signing_key_file: PathBuf,
+    },
+    /// Generate a fresh Ed25519 stake keypair (delegation /
+    /// reward-account credential). Identical entropy + wire shape
+    /// as `address-key-gen`; only the TextEnvelope `type` field
+    /// differs (`StakeSigningKey…` / `StakeVerificationKey…`).
+    ///
+    /// Mirrors upstream `cardano-cli stake-address key-gen
+    /// --verification-key-file VK --signing-key-file SK`.
+    StakeAddressKeyGen {
+        /// Path to write the stake verification key TextEnvelope.
+        #[arg(long)]
+        verification_key_file: PathBuf,
+        /// Path to write the stake signing key TextEnvelope.
+        #[arg(long)]
+        signing_key_file: PathBuf,
+    },
+    /// Build a Shelley payment address as a Bech32 string. Reads a
+    /// payment verification key TextEnvelope file, optionally
+    /// combines with a stake verification key to produce a "base"
+    /// address. Mirrors upstream `cardano-cli address build`.
+    ///
+    /// Output forms: enterprise (payment-only) produces 29 raw bytes
+    /// → `addr1...` (mainnet, HRP `addr`) or `addr_test1...` (any
+    /// non-mainnet network); base (payment + stake) produces 57 raw
+    /// bytes → same HRP set. Network selection: pass either
+    /// `--mainnet` (network ID 1 + HRP `addr`) or `--testnet-magic
+    /// N` (network ID 0 + HRP `addr_test`). The magic itself is
+    /// informational; addresses don't carry the magic on-chain,
+    /// only the 1-bit network ID.
+    AddressBuild {
+        /// Path to the payment verification key TextEnvelope.
+        #[arg(long)]
+        payment_verification_key_file: PathBuf,
+        /// Optional stake verification key TextEnvelope. When
+        /// present the output is a Shelley base address (type 0,
+        /// key+key); otherwise it's an enterprise address (type 6,
+        /// payment-key only).
+        #[arg(long)]
+        stake_verification_key_file: Option<PathBuf>,
+        /// Use the mainnet network ID (1) and the `addr` HRP.
+        /// Mutually exclusive with `--testnet-magic`.
+        #[arg(long, conflicts_with = "testnet_magic")]
+        mainnet: bool,
+        /// Use the testnet network ID (0) and the `addr_test` HRP.
+        /// Accepts any magic value (preprod 1, preview 2, custom
+        /// magics, …); the magic itself is informational because
+        /// Shelley addresses don't carry the network magic on-chain.
+        /// Mutually exclusive with `--mainnet`.
+        #[arg(long, conflicts_with = "mainnet")]
+        testnet_magic: Option<u32>,
+        /// Optional output file. When omitted the Bech32 address is
+        /// printed to stdout (no trailing newline beyond `println!`).
+        #[arg(long)]
+        out_file: Option<PathBuf>,
     },
 }
