@@ -62,6 +62,43 @@ jobs:
           restore-keys: |
             cargo-${{ matrix.target }}-
 
+      # Wave 7 PR 20 — reproducible-build environment.
+      #
+      # The release build SHOULD produce a byte-identical archive on
+      # any runner given the same tag. Three sources of non-determinism
+      # need pinning before that holds:
+      #
+      #   1. Embedded timestamps (rustc / cargo emit them by default).
+      #      Pin via SOURCE_DATE_EPOCH set from the tag's commit time.
+      #   2. Build-tree paths (rustc embeds them in debug + panic info).
+      #      Pin via --remap-path-prefix mapping the runner cwd + the
+      #      cargo registry dir to fixed virtual roots.
+      #   3. The ELF build-id (linker emits a random one). Pin via
+      #      -Clink-arg=-Wl,--build-id=none.
+      #
+      # repro-check.yml (this PR) re-builds each tag on a different
+      # runner and diffs the archive byte-for-byte.
+      - name: Configure reproducible-build env
+        id: repro
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            [ -z "$tag" ] && tag="HEAD"
+          fi
+          # Use the tag's commit time (UTC seconds since epoch) so the
+          # value is deterministic per tag, regardless of runner clock.
+          source_date_epoch="$(git log -1 --format=%ct "$tag")"
+          {
+            echo "SOURCE_DATE_EPOCH=$source_date_epoch"
+            # Map runtime paths to stable virtual roots so debug-info
+            # doesn't capture runner-specific paths. /yggdrasil-src and
+            # /yggdrasil-cargo are arbitrary but stable.
+            echo "CARGO_BUILD_RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}=/yggdrasil-src --remap-path-prefix=${HOME}/.cargo=/yggdrasil-cargo -Clink-arg=-Wl,--build-id=none"
+          } >> "$GITHUB_ENV"
+          echo "[repro] SOURCE_DATE_EPOCH=$source_date_epoch (tag $tag)"
+
       # Wave 7 PR 19: cargo-auditable embeds the dependency manifest
       # into the shipped binary so operators can run
       # `cargo audit bin yggdrasil-node` after a future RUSTSEC advisory
@@ -130,7 +167,14 @@ jobs:
           # operators get the dep manifest in-tree.
           cp "${{ steps.sbom.outputs.sbom_src }}" "$dir/yggdrasil-node-sbom.cdx.json"
 
-          tar -czf "${dir}.tar.gz" "$dir"
+          # Wave 7 PR 20: deterministic tar — strip mtime + ownership
+          # variation so two runners building the same tag produce the
+          # same archive bytes. SOURCE_DATE_EPOCH was set in the
+          # `Configure reproducible-build env` step.
+          tar --sort=name \
+              --owner=0 --group=0 --numeric-owner \
+              --mtime="@${SOURCE_DATE_EPOCH}" \
+              -czf "${dir}.tar.gz" "$dir"
           sha256sum "${dir}.tar.gz" > "${dir}.tar.gz.sha256"
           # Wave 7 PR 19: also emit the SBOM as a separate signed
           # artifact for operators that prefer to verify it independently.

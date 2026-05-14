@@ -1,0 +1,272 @@
+name: Reproducible-build check
+
+# Wave 7 PR 20 — verify the published release archives are byte-identical
+# when rebuilt from source on a different runner.
+#
+# The release.yml workflow pins SOURCE_DATE_EPOCH, --remap-path-prefix,
+# --build-id=none, and uses deterministic tar so each tag's archive
+# should be reproducible. This workflow re-runs the build for a tag on
+# a fresh runner and diffs the output against the published archive's
+# SHA-256.
+#
+# Triggers:
+#   - On tag push: runs automatically after release.yml publishes.
+#     Tracked-issue on byte-diff; the release itself is not retracted.
+#   - workflow_dispatch: re-verify any historical tag on demand.
+#   - schedule (weekly): re-verify the latest published tag.
+#
+# Output: a `reproducibility-report.txt` artifact (per matrix target)
+# with the SHA-256 of the locally-rebuilt archive next to the SHA-256
+# from SHA256SUMS.txt. On mismatch, opens a single
+# `[repro-drift]` tracking issue.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to re-verify (e.g. v0.2.0). Defaults to the latest published tag."
+        required: false
+        default: ""
+  schedule:
+    # 02:00 UTC Tuesday. After the Monday supply-chain audit window;
+    # avoids running the same long build twice on consecutive days.
+    - cron: '0 2 * * 2'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  rebuild:
+    name: Rebuild ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Use a different OS image / version than release.yml uses
+          # so the diff catches runner-image-induced drift. release.yml
+          # pins `ubuntu-latest` for x86_64 and `ubuntu-24.04-arm` for
+          # aarch64; this workflow pins explicit older images.
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            archive_suffix: linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            archive_suffix: linux-aarch64
+    steps:
+      - name: Resolve target tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="$REF_NAME"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            # schedule + workflow_dispatch without input: pick the
+            # latest published release.
+            tag="$(gh release view --repo "$REPO" --json tagName --jq .tagName)"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "[tag] verifying $tag"
+
+      - name: Checkout source at tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Install Rust (pinned via rust-toolchain.toml)
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - name: Install cargo-auditable + cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-auditable,cargo-cyclonedx
+
+      - name: Configure reproducible-build env
+        run: |
+          set -euo pipefail
+          source_date_epoch="$(git log -1 --format=%ct "${{ steps.tag.outputs.tag }}")"
+          {
+            echo "SOURCE_DATE_EPOCH=$source_date_epoch"
+            echo "CARGO_BUILD_RUSTFLAGS=--remap-path-prefix=${GITHUB_WORKSPACE}=/yggdrasil-src --remap-path-prefix=${HOME}/.cargo=/yggdrasil-cargo -Clink-arg=-Wl,--build-id=none"
+          } >> "$GITHUB_ENV"
+
+      - name: Rebuild binary
+        run: cargo auditable build --release --bin yggdrasil-node --target ${{ matrix.target }}
+
+      - name: Strip binary
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq binutils-aarch64-linux-gnu
+            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/yggdrasil-node
+          else
+            strip target/${{ matrix.target }}/release/yggdrasil-node
+          fi
+
+      - name: Re-generate SBOM
+        id: sbom
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format json --target-only --target ${{ matrix.target }}
+          sbom_src="crates/node/yggdrasil-node/yggdrasil-node.cdx.json"
+          if [ ! -f "$sbom_src" ]; then
+            sbom_src="$(find . -name 'yggdrasil-node*.cdx.json' -not -path './target/*' | head -1)"
+          fi
+          echo "sbom_src=$sbom_src" >> "$GITHUB_OUTPUT"
+
+      - name: Stage local archive (deterministic tar)
+        id: stage
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tag.outputs.tag }}"
+          dir="yggdrasil-node-${tag}-${{ matrix.archive_suffix }}"
+          mkdir -p "$dir"
+          cp target/${{ matrix.target }}/release/yggdrasil-node "$dir/"
+          cp README.md LICENSE* "$dir/" 2>/dev/null || true
+          cp -r crates/node/yggdrasil-node/configuration "$dir/configuration"
+          cp -r crates/node/yggdrasil-node/scripts "$dir/scripts"
+          cp "${{ steps.sbom.outputs.sbom_src }}" "$dir/yggdrasil-node-sbom.cdx.json"
+          tar --sort=name \
+              --owner=0 --group=0 --numeric-owner \
+              --mtime="@${SOURCE_DATE_EPOCH}" \
+              -czf "${dir}.tar.gz" "$dir"
+          local_sha="$(sha256sum "${dir}.tar.gz" | awk '{print $1}')"
+          echo "archive=${dir}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "local_sha=$local_sha" >> "$GITHUB_OUTPUT"
+          echo "[local] SHA-256: $local_sha"
+
+      - name: Download published archive's checksum
+        id: published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tag.outputs.tag }}"
+          archive="${{ steps.stage.outputs.archive }}"
+          # Pull the per-archive .sha256 from the published release.
+          # If the release hasn't published yet (e.g. push-triggered
+          # repro-check racing release.yml), the step short-circuits
+          # to a soft pass — the next scheduled run will reconcile.
+          if ! gh release download "$tag" --repo "$REPO" \
+                 --pattern "${archive}.sha256" --dir published 2>release-download.err; then
+            echo "[published] release artifacts not available yet (release.yml may still be running)"
+            cat release-download.err
+            echo "published_sha=PENDING" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          published_sha="$(awk '{print $1}' < "published/${archive}.sha256")"
+          echo "published_sha=$published_sha" >> "$GITHUB_OUTPUT"
+          echo "[published] SHA-256: $published_sha"
+
+      - name: Compare local vs published
+        id: compare
+        env:
+          LOCAL: ${{ steps.stage.outputs.local_sha }}
+          PUBLISHED: ${{ steps.published.outputs.published_sha }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          TARGET: ${{ matrix.archive_suffix }}
+        run: |
+          set -euo pipefail
+          {
+            echo "tag: $TAG"
+            echo "target: $TARGET"
+            echo "published_sha: $PUBLISHED"
+            echo "local_sha:     $LOCAL"
+          } > reproducibility-report.txt
+          if [ "$PUBLISHED" = "PENDING" ]; then
+            echo "verdict: pending (release artifacts not yet available)" >> reproducibility-report.txt
+            echo "drift=pending" >> "$GITHUB_OUTPUT"
+          elif [ "$PUBLISHED" = "$LOCAL" ]; then
+            echo "verdict: REPRODUCIBLE (byte-identical)" >> reproducibility-report.txt
+            echo "drift=none" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict: DRIFT" >> reproducibility-report.txt
+            echo "drift=changed" >> "$GITHUB_OUTPUT"
+          fi
+          cat reproducibility-report.txt
+
+      - name: Upload reproducibility report
+        uses: actions/upload-artifact@v4
+        with:
+          name: reproducibility-${{ matrix.archive_suffix }}-${{ steps.tag.outputs.tag }}
+          path: |
+            reproducibility-report.txt
+            ${{ steps.stage.outputs.archive }}
+          retention-days: 90
+
+      - name: Open tracking issue on drift
+        if: steps.compare.outputs.drift == 'changed'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          TARGET: ${{ matrix.archive_suffix }}
+          LOCAL: ${{ steps.stage.outputs.local_sha }}
+          PUBLISHED: ${{ steps.published.outputs.published_sha }}
+        run: |
+          set -euo pipefail
+          title="[repro-drift] $TAG / $TARGET — rebuilt archive differs from published"
+          body_file="$(mktemp)"
+          cat >"$body_file" <<MARKDOWN
+          ## Reproducible-build drift detected
+
+          - **Tag**: \`$TAG\`
+          - **Target**: \`$TARGET\`
+          - **Published SHA-256**: \`$PUBLISHED\`
+          - **Rebuilt SHA-256**:  \`$LOCAL\`
+          - **Detector**: \`.github/workflows/repro-check.yml\`
+
+          A fresh runner re-built the same source tree at the same tag and
+          produced a different archive. This usually means one of:
+
+          1. A non-deterministic input slipped past the
+             SOURCE_DATE_EPOCH + remap-path-prefix + build-id=none gate
+             (e.g. a build-script writes hostname / build-host into the binary).
+          2. Cargo / rustc itself shipped a non-deterministic emission change
+             between the publish-time toolchain and the rebuild toolchain.
+             (\`rust-toolchain.toml\` is pinned at 1.95.0; check whether the
+             runner image has a different patch-level installed.)
+          3. The published archive is not from this source tree (which would
+             also fail the cosign attestation gate from Wave 7 PR 19).
+
+          ### Diagnostics
+
+          - Re-run \`.github/workflows/repro-check.yml\` on \`workflow_dispatch\`
+            with the same tag; persistent drift confirms (1).
+          - \`gh attestation verify <archive> --repo $REPO\`; failure confirms (3).
+          - Diff the two binaries with \`diffoscope\` to localise the
+            non-deterministic byte range.
+          MARKDOWN
+
+          existing="$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --search "\"[repro-drift] $TAG\" in:title" \
+            --json number \
+            --jq '.[0].number // empty')"
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --repo "$REPO" --body-file "$body_file"
+            echo "[drift] updated issue #$existing"
+          else
+            gh issue create --repo "$REPO" \
+              --title "$title" \
+              --label "release,repro-drift,security" \
+              --body-file "$body_file"
+            echo "[drift] opened new tracking issue"
+          fi
