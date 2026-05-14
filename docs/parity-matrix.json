@@ -365,11 +365,11 @@
       ],
       "rust_surface": [
         {
-          "path": "node/src/runtime.rs",
+          "path": "crates/node/yggdrasil-node/src/runtime.rs",
           "role": "140-line orchestration shell with 18 sub-module declarations + ChainTipNotify type alias + tests."
         },
         {
-          "path": "node/src/runtime",
+          "path": "crates/node/yggdrasil-node/src/runtime",
           "role": "18 per-domain sub-modules covering governor, block-producer, peer management, cm-actions, forge, sync-session, reconnecting, mempool helpers, etc."
         }
       ],

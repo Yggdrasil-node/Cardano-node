@@ -21,8 +21,10 @@ scripts/
 
 ### `check-strict-mirror.py` (R275 warn-only → R288 fail-build, R311 drift-aware)
 
-Walks every production `.rs` under `crates/<crate>/src/` + `node/src/`
-(excluding `**/tests/**` + `target/`) and verifies each file either:
+Walks every production `.rs` under `crates/<crate>/src/` (including
+the `crates/node/yggdrasil-node/src/` binary-crate tree after Wave 4
+PR 6 relocation), excluding `**/tests/**` + `target/`, and verifies
+each file either:
 
 1. Mirrors a single canonical upstream `.hs` file by snake_case
    basename (with directory-prefix fallback for sibling collisions), OR
@@ -73,7 +75,7 @@ release tags) or a Rust file was renamed without updating the matrix.
 
 Cross-checks the `cardano-base` SHA pin matrix:
 
-- `node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT` (Rust constant).
+- `crates/node/yggdrasil-node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT` (Rust constant).
 - `specs/upstream-test-vectors/cardano-base/<SHA>/` (vendored corpus directory).
 - `docs/SPECS.md` (provenance prose).
 - `docs/UPSTREAM_PARITY.md` (pin matrix table).
@@ -178,8 +180,8 @@ which filename is "in scope".
 - Document a new validator in CLAUDE.md's Commands section + the
   enclosing crate AGENTS.md if its scope is crate-local.
 - The `scripts/` tree is small by design — resist adding shell helpers
-  that belong in `node/scripts/` (operator-side) or
-  `.claude/scripts/` (Claude Code session-side).
+  that belong in `crates/node/yggdrasil-node/scripts/` (operator-side)
+  or `.claude/scripts/` (Claude Code session-side).
 
 ## Official Upstream References
 
@@ -187,4 +189,4 @@ which filename is "in scope".
   `.reference-haskell-cardano-node/`
 - Policy tag source-of-truth: [`docs/parity-matrix.json`](../docs/parity-matrix.json) (`reference.tag`)
 - Strict-mirror allowlist source-of-truth: [`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv)
-- Fixture-manifest pin source-of-truth: [`node/src/upstream_pins.rs`](../node/src/upstream_pins.rs) (`UPSTREAM_CARDANO_BASE_COMMIT`)
+- Fixture-manifest pin source-of-truth: [`crates/node/yggdrasil-node/src/upstream_pins.rs`](../crates/node/yggdrasil-node/src/upstream_pins.rs) (`UPSTREAM_CARDANO_BASE_COMMIT`)

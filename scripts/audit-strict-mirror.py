@@ -49,7 +49,6 @@ OUT_PATH = ROOT / "docs" / "strict-mirror-audit.tsv"
 
 RUST_ROOTS = [
     ROOT / "crates",
-    ROOT / "node" / "src",
 ]
 
 def pascal_to_snake_variants(basename: str) -> list[str]:
@@ -214,7 +213,7 @@ CRATE_AFFINITY: list[tuple[str, list[str]]] = [
     ("crates/storage/src/", ["/ouroboros-consensus/.../Storage/", "/ouroboros-consensus/"]),
     ("crates/plutus/src/", ["/plutus/"]),
     ("crates/crypto/src/", ["/cardano-base/cardano-crypto", "/cardano-base/"]),
-    ("node/src/", ["/cardano-node/", "/cardano-tracer/"]),
+    ("crates/node/yggdrasil-node/src/", ["/cardano-node/", "/cardano-tracer/"]),
 ]
 
 

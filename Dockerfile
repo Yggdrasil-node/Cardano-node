@@ -64,11 +64,11 @@ RUN apt-get update -qq && \
 
 # Copy the binary and the vendored network presets.
 COPY --from=builder /src/target/release/yggdrasil-node /usr/local/bin/yggdrasil-node
-COPY --from=builder /src/node/configuration /usr/share/yggdrasil/configuration
+COPY --from=builder /src/crates/node/yggdrasil-node/configuration /usr/share/yggdrasil/configuration
 
 # Operator scripts — useful for one-shot ops via `docker exec`.
-COPY --from=builder /src/node/scripts/check_upstream_drift.sh /usr/local/bin/yggdrasil-check-upstream-drift
-COPY --from=builder /src/node/scripts/restart_resilience.sh    /usr/local/bin/yggdrasil-restart-resilience
+COPY --from=builder /src/crates/node/yggdrasil-node/scripts/check_upstream_drift.sh /usr/local/bin/yggdrasil-check-upstream-drift
+COPY --from=builder /src/crates/node/yggdrasil-node/scripts/restart_resilience.sh    /usr/local/bin/yggdrasil-restart-resilience
 RUN chmod +x /usr/local/bin/yggdrasil-*
 
 USER yggdrasil

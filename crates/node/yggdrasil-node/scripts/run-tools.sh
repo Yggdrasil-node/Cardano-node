@@ -37,7 +37,7 @@ set -euo pipefail
 
 # Canonical tool list — must match `Cargo.toml` `[workspace.members]`
 # entries under `crates/<tool>/` AND the per-tool `[[bin]] name = "<tool>"`
-# declarations. Keep in lockstep with `node/src/upstream_pins.rs`
+# declarations. Keep in lockstep with `crates/node/yggdrasil-node/src/upstream_pins.rs`
 # `UPSTREAM_PINS` for the sister-tool subset (entries 7-9 today).
 TOOLS=(
     bech32

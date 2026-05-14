@@ -18,10 +18,16 @@ set -euo pipefail
 #   0  drift report produced successfully (drift may exist; see output)
 #   1  --fail-on-drift was set AND at least one repo drifted
 #   2  could not fetch live HEAD for one or more repos
-#   3  could not parse pinned SHAs from node/src/upstream_pins.rs
+#   3  could not parse pinned SHAs from crates/node/yggdrasil-node/src/upstream_pins.rs
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PINS_FILE="$ROOT_DIR/node/src/upstream_pins.rs"
+# Wave 4 PR 6: paths now resolve relative to the script's own location
+# (the script lives inside the yggdrasil-node crate). WORKSPACE_ROOT walks
+# up to the repo root for consumers that need it; sibling files (src/,
+# configuration/) are reached via $(dirname ...)/../ to avoid hardcoding
+# the workspace layout.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+PINS_FILE="$SCRIPT_DIR/../src/upstream_pins.rs"
 
 JSON_ONLY=0
 FAIL_ON_DRIFT=0
@@ -178,7 +184,7 @@ else
   echo "[summary] drifted=$drifted_count unreachable=$unreachable_count total=$total_count"
   echo ""
   echo "Drift is informational. To advance a pin: edit"
-  echo "node/src/upstream_pins.rs, run the audit cadence against the new"
+  echo "crates/node/yggdrasil-node/src/upstream_pins.rs, run the audit cadence against the new"
   echo "SHA, and update docs/UPSTREAM_PARITY.md with the rationale."
 fi
 

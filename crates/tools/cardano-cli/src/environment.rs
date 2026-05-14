@@ -64,7 +64,7 @@ pub fn resolve_socket_path(override_path: Option<PathBuf>) -> Option<PathBuf> {
 /// `"preprod"`, `"preview"`); `upstream_config_root` is the operator-
 /// supplied override (typically `--upstream-config-root /tmp/cardano-tooling/share`).
 /// When the override is absent we fall back to `/tmp/cardano-tooling/share`,
-/// then to the vendored `node/configuration/<network_dir>` directory so
+/// then to the vendored `crates/node/yggdrasil-node/configuration/<network_dir>` directory so
 /// the subcommand still works without an upstream install.
 ///
 /// Migrated from `node/src/commands/cardano_cli.rs` in R297. Takes
@@ -77,7 +77,7 @@ pub fn resolve_upstream_reference_paths(
     let mut root =
         upstream_config_root.unwrap_or_else(|| PathBuf::from("/tmp/cardano-tooling/share"));
     if !root.join(network_dir).is_dir() {
-        root = PathBuf::from("node/configuration");
+        root = PathBuf::from("crates/node/yggdrasil-node/configuration");
     }
 
     let config_path = root.join(network_dir).join("config.json");

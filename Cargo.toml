@@ -26,8 +26,12 @@ members = [
 
     # ──────────────────────────────────────────────────────────────────
     # Main node binary — orchestration layer wrapping the core crates.
+    # Path layout after Wave 4 PR 6: re-homed under `crates/node/` so
+    # Wave 5 sub-crate extractions (`crates/node/{config,genesis,sync,
+    # mempool,...}/`) sit as siblings to the binary crate. The crate
+    # name `yggdrasil-node` and the shipped binary name are unchanged.
     # ──────────────────────────────────────────────────────────────────
-    "node",
+    "crates/node/yggdrasil-node",
 
     # ──────────────────────────────────────────────────────────────────
     # Sister tools — operator binaries / SPO tooling, organized under

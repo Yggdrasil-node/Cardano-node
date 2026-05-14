@@ -296,7 +296,7 @@ run_tip_compare() {
     YGG_SOCK="$SOCKET_PATH" \
     HASKELL_SOCK="$HASKELL_SOCK" \
     NETWORK_MAGIC="$NETWORK_MAGIC" \
-    "$ROOT_DIR/node/scripts/compare_tip_to_haskell.sh" >"$logfile" 2>&1
+    "$(dirname "${BASH_SOURCE[0]}")/compare_tip_to_haskell.sh" >"$logfile" 2>&1
 }
 
 echo "[info] parallel_blockfetch_soak: NETWORK=$NETWORK magic=$NETWORK_MAGIC knob=$MAX_CONCURRENT_BLOCK_FETCH_PEERS expected_workers=$EXPECT_WORKERS"

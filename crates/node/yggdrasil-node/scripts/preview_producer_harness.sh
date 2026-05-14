@@ -10,8 +10,11 @@ set -euo pipefail
 # before that the producer runtime can start, validate credentials, sync, and
 # run the forge loop, but it will not be elected.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PREVIEW_REF_DIR="$ROOT_DIR/node/configuration/preview"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Wave 4 PR 6: configuration/ is now a sibling of scripts/ inside the
+# crates/node/yggdrasil-node/ binary crate; reach it script-locally.
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+PREVIEW_REF_DIR="$SCRIPT_DIR/../configuration/preview"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/tmp/preview-producer}"
 KEY_DIR="$OUT_DIR/keys"
 CONFIG_DIR="$OUT_DIR/config"

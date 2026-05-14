@@ -33,7 +33,8 @@ use yggdrasil_plutus::CostModel;
 /// quiet on the table-driven assertion loop below.
 type StepCostEntry = (&'static str, fn(&CostModel) -> (i64, i64));
 
-const PREVIEW_ALONZO_GENESIS: &str = "../../node/configuration/preview/alonzo-genesis.json";
+const PREVIEW_ALONZO_GENESIS: &str =
+    "../node/yggdrasil-node/configuration/preview/alonzo-genesis.json";
 
 fn manifest_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

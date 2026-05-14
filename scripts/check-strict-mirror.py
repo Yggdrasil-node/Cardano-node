@@ -71,7 +71,7 @@ def get_tracked_rust_files() -> set[str] | None:
     """
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--", "crates/*.rs", "node/*.rs"],
+            ["git", "ls-files", "--", "crates/*.rs"],
             cwd=str(ROOT),
             capture_output=True,
             text=True,
