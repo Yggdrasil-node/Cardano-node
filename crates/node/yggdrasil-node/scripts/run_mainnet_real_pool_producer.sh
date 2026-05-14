@@ -16,7 +16,7 @@ set -euo pipefail
 #   - RELAY_ONLY=1 short-circuits the credential requirement and runs the
 #     node in sync-only mode (recommended first step before producer mode).
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 LOG_DIR="${LOG_DIR:-/tmp/ygg-real-mainnet}"
 DB_DIR="${DB_DIR:-/tmp/ygg-real-mainnet-db}"
 RUN_SECONDS="${RUN_SECONDS:-600}"

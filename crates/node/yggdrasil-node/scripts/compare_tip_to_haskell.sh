@@ -22,7 +22,7 @@ set -euo pipefail
 #   2  one or both nodes unreachable / unparseable
 #   3  bad invocation (missing required env / tools)
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 YGG_BIN="${YGG_BIN:-$ROOT_DIR/target/debug/yggdrasil-node}"
 CARDANO_CLI="${CARDANO_CLI:-cardano-cli}"
 YGG_SOCK="${YGG_SOCK:-}"

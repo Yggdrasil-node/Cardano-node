@@ -4,7 +4,7 @@ set -euo pipefail
 # Run yggdrasil-node as a preprod block producer using real pool credentials
 # and validate key startup/forging-loop signals from logs.
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 LOG_DIR="${LOG_DIR:-/tmp/ygg-real-preprod}"
 DB_DIR="${DB_DIR:-/tmp/ygg-real-preprod-db}"
 RUN_SECONDS="${RUN_SECONDS:-45}"

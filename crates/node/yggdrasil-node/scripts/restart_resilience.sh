@@ -22,7 +22,7 @@ set -euo pipefail
 #   1  non-monotonic regression detected (forensic logs preserved)
 #   2  yggdrasil-node failed to start or recover within deadline
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 YGG_BIN="${YGG_BIN:-$ROOT_DIR/target/debug/yggdrasil-node}"
 NETWORK="${NETWORK:-preprod}"
 CYCLES="${CYCLES:-12}"

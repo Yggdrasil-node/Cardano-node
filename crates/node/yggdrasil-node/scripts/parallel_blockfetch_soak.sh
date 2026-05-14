@@ -19,7 +19,7 @@ set -euo pipefail
 #   1  parity or liveness assertion failed
 #   2  node startup, metrics, or invocation failure
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
 if [[ -z "${YGG_BIN:-}" ]]; then
   if [[ -x "$ROOT_DIR/target/release/yggdrasil-node" ]]; then
