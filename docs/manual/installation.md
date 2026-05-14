@@ -37,6 +37,38 @@ $ source "$HOME/.cargo/env"
 
 `rustup` will read `rust-toolchain.toml` automatically when you build the workspace and download the pinned compiler if missing. You do not need to run `rustup install` manually.
 
+### Make `cargo` available in non-interactive shells
+
+The rustup installer adds `$HOME/.cargo/bin` to your interactive
+shell's `PATH` via `~/.bashrc` / `~/.zshrc`. Non-interactive shells
+(CI runners on WSL, editor terminals, scripted Bash subprocesses,
+agent harnesses) typically don't source those files, so `cargo`
+won't be found.
+
+Two robust fixes:
+
+1. **Symlink the rustup binaries into `~/.local/bin/`** (which is on
+   every shell's `PATH` by default on Debian/Ubuntu):
+
+   ```bash
+   $ mkdir -p ~/.local/bin
+   $ for bin in cargo rustc rustup rustdoc rustfmt clippy-driver \
+                cargo-clippy cargo-fmt cargo-nextest cargo-deny just; do
+       ln -sf "$HOME/.cargo/bin/$bin" "$HOME/.local/bin/$bin"
+     done
+   ```
+
+2. **Or install Rust system-wide** via your distribution's packaging
+   (`apt-get install rustc cargo` on Debian/Ubuntu). The pinned
+   `1.95.0` toolchain still gets downloaded by `rustup`-via-`rustc`
+   when you build, but the dispatch binaries are in `/usr/bin`.
+
+The devcontainer (`.devcontainer/devcontainer.json`) uses the
+`ghcr.io/devcontainers/features/rust:1` feature which handles this
+automatically — system-wide install with cargo on PATH for every
+shell mode. The two fixes above only apply when running on a local
+host (WSL, bare-metal Linux).
+
 Verify:
 
 ```bash
