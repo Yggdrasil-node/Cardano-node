@@ -332,4 +332,39 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Submit a previously-built transaction to the local node via
+    /// `LocalTxSubmission`. The tx body is supplied either as a path
+    /// to a CBOR file (`--tx-file`) or as a hex-encoded string
+    /// (`--tx-hex`), matching upstream `cardano-cli transaction
+    /// submit` ergonomics. Mutually exclusive.
+    TransactionSubmit {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Path to a file containing the CBOR-encoded transaction.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR transaction bytes (with or without `0x`
+        /// prefix; surrounding whitespace tolerated for terminal-
+        /// paste ergonomics).
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+    },
+    /// Compute the transaction id (Blake2b-256 of the CBOR-encoded
+    /// TxBody) of a transaction. Reads the same `--tx-file` /
+    /// `--tx-hex` shape as `transaction-submit`. Offline operation;
+    /// no socket needed.
+    TransactionTxid {
+        /// Path to a file containing the CBOR-encoded transaction.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR transaction bytes (with or without `0x`
+        /// prefix; surrounding whitespace tolerated for terminal-
+        /// paste ergonomics).
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+    },
 }

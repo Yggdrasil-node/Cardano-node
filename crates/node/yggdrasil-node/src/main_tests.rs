@@ -2425,3 +2425,150 @@ fn cardano_cli_query_stake_distribution_parses() {
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
+
+#[test]
+fn cardano_cli_transaction_submit_with_tx_hex_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "transaction-submit",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--tx-hex",
+        "0xdeadbeef",
+    ])
+    .expect("transaction-submit with --tx-hex must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::TransactionSubmit {
+                tx_file, tx_hex, ..
+            } => {
+                assert!(tx_file.is_none(), "tx_file must be None when --tx-hex given");
+                assert_eq!(tx_hex.as_deref(), Some("0xdeadbeef"));
+            }
+            _ => panic!("expected TransactionSubmit variant"),
+        },
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_transaction_submit_with_tx_file_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "transaction-submit",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--tx-file",
+        "/tmp/tx.cbor",
+    ])
+    .expect("transaction-submit with --tx-file must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::TransactionSubmit {
+                tx_file, tx_hex, ..
+            } => {
+                assert!(tx_hex.is_none(), "tx_hex must be None when --tx-file given");
+                assert!(tx_file.is_some(), "tx_file must be Some");
+            }
+            _ => panic!("expected TransactionSubmit variant"),
+        },
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_transaction_submit_rejects_both_flags() {
+    use clap::Parser;
+    use super::Cli;
+
+    let result = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "transaction-submit",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--tx-hex",
+        "0xdeadbeef",
+        "--tx-file",
+        "/tmp/tx.cbor",
+    ]);
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("clap must reject --tx-hex AND --tx-file together"),
+    };
+    assert!(
+        err.to_string().contains("cannot be used with")
+            || err.to_string().contains("conflicts"),
+        "clap conflict-error must reference the conflict; got {err}"
+    );
+}
+
+#[test]
+fn cardano_cli_transaction_txid_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "transaction-txid",
+        "--tx-hex",
+        "0xdeadbeef",
+    ])
+    .expect("transaction-txid must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::TransactionTxid { tx_file, tx_hex } => {
+                assert!(tx_file.is_none());
+                assert_eq!(tx_hex.as_deref(), Some("0xdeadbeef"));
+            }
+            _ => panic!("expected TransactionTxid variant"),
+        },
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+/// Compute-txid pin: hand-crafted CBOR-encoded "tx" whose first
+/// element is a known body. `compute_txid_from_tx_cbor` must return
+/// `Blake2b-256(body_bytes)`, byte-equivalent to upstream
+/// `cardano-cli transaction txid` output.
+#[test]
+fn cardano_cli_transaction_txid_matches_blake2b_256_of_body() {
+    use super::commands::cardano_cli::compute_txid_from_tx_cbor;
+    use yggdrasil_crypto::hash_bytes_256;
+
+    // Body: CBOR-encoded `[1, 2, 3]` = three-element array of small uints.
+    //   array-len-3 = 0x83
+    //   uint(1)     = 0x01
+    //   uint(2)     = 0x02
+    //   uint(3)     = 0x03
+    let body = [0x83_u8, 0x01, 0x02, 0x03];
+    let expected_txid = hash_bytes_256(&body).0;
+
+    // Wrap the body in a 2-element CBOR array: outer = [body, 0x01].
+    //   array-len-2 = 0x82
+    //   <body 4 bytes>
+    //   uint(1)     = 0x01
+    let mut tx = vec![0x82_u8];
+    tx.extend_from_slice(&body);
+    tx.push(0x01);
+
+    let actual = compute_txid_from_tx_cbor(&tx).expect("compute txid");
+    assert_eq!(
+        actual, expected_txid,
+        "transaction-txid must equal Blake2b-256(TxBody); got {:?}, expected {:?}",
+        hex::encode(actual),
+        hex::encode(expected_txid),
+    );
+}

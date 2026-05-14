@@ -136,6 +136,102 @@ pub(crate) fn run_cardano_cli_command(
             network_magic.unwrap_or(reference_network_magic),
             crate::commands::query::QueryCommand::StakeDistribution,
         ),
+        CardanoCliCommand::TransactionSubmit {
+            socket_path: _socket_path,
+            network_magic,
+            tx_file,
+            tx_hex,
+        } => {
+            let _magic = network_magic.unwrap_or(reference_network_magic);
+            let tx_bytes = read_tx_input(tx_file, tx_hex, "transaction-submit")?;
+            run_submit_via_binary_runtime(_socket_path, _magic, tx_bytes)
+        }
+        CardanoCliCommand::TransactionTxid { tx_file, tx_hex } => {
+            let tx_bytes = read_tx_input(tx_file, tx_hex, "transaction-txid")?;
+            let txid = compute_txid_from_tx_cbor(&tx_bytes)?;
+            // Print as 64-char lowercase hex without any prefix —
+            // upstream `cardano-cli transaction txid` output shape.
+            println!("{}", hex::encode(txid));
+            Ok(())
+        }
+    }
+}
+
+/// Shared `--tx-file` / `--tx-hex` flag resolver. Both arms route
+/// through here so the conflict-already-rejected-by-clap +
+/// missing-flag error message stays uniform across the `transaction-*`
+/// subcommand family.
+fn read_tx_input(
+    tx_file: Option<PathBuf>,
+    tx_hex: Option<String>,
+    subcommand: &str,
+) -> Result<Vec<u8>> {
+    match (tx_file, tx_hex) {
+        (Some(path), None) => std::fs::read(&path)
+            .map_err(|e| eyre::eyre!("failed to read --tx-file {}: {e}", path.display())),
+        (None, Some(hex_str)) => crate::commands::submit_tx::decode_tx_hex_arg(&hex_str),
+        (None, None) => {
+            eyre::bail!("{subcommand} requires either --tx-file or --tx-hex")
+        }
+        (Some(_), Some(_)) => unreachable!(
+            "clap's conflicts_with prevents both flags being set"
+        ),
+    }
+}
+
+/// Compute the transaction id from a complete tx CBOR encoding.
+///
+/// All Cardano eras encode a transaction as a CBOR array whose first
+/// element is the transaction body (`TxBody`). The transaction id is
+/// `Blake2b-256(<bytes-of-TxBody-CBOR>)` per
+/// `Cardano.Ledger.Core.txIdTxBody`. Reuses the existing
+/// `yggdrasil_ledger::tx::compute_tx_id` helper.
+///
+/// Works for every era from Shelley through Conway — Shelley/Allegra/
+/// Mary use a 3-element array, Alonzo/Babbage/Conway a 4-element
+/// array, but in both cases the first element is the body, and
+/// `Decoder::raw_value()` reads it as opaque bytes without needing to
+/// know the surrounding shape.
+pub(crate) fn compute_txid_from_tx_cbor(tx_bytes: &[u8]) -> Result<[u8; 32]> {
+    use yggdrasil_ledger::cbor::Decoder;
+    use yggdrasil_ledger::compute_tx_id;
+
+    let mut dec = Decoder::new(tx_bytes);
+    let _array_len = dec
+        .array()
+        .map_err(|e| eyre::eyre!("transaction CBOR does not start with an array: {e}"))?;
+    let body_bytes = dec
+        .raw_value()
+        .map_err(|e| eyre::eyre!("failed to extract TxBody bytes: {e}"))?;
+    Ok(compute_tx_id(body_bytes).0)
+}
+
+/// Shared dispatch helper for the `cardano-cli transaction submit`
+/// path — builds the binary's tokio runtime and drives
+/// `commands::submit_tx::run_submit_tx`.
+fn run_submit_via_binary_runtime(
+    socket_path: PathBuf,
+    network_magic: u32,
+    tx_bytes: Vec<u8>,
+) -> Result<()> {
+    let _socket_path = socket_path;
+    let _magic = network_magic;
+    let _tx_bytes = tx_bytes;
+    #[cfg(unix)]
+    {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(crate::commands::submit_tx::run_submit_tx(
+            _socket_path,
+            _magic,
+            _tx_bytes,
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        eyre::bail!(
+            "cardano-cli transaction-submit requires a Unix domain socket; \
+             not supported on this platform"
+        )
     }
 }
 
