@@ -67,7 +67,12 @@ What's still missing:
 - The Mux state-machine driver (ingress queue, egress queue,
   per-mini-protocol scheduler, handshake driver, bearer-task
   lifecycle).
-- An `AF_UNIX SOCK_STREAM` bearer adapter.
+- ~~An `AF_UNIX SOCK_STREAM` bearer adapter.~~ **Landed in commit
+  `ee7d496`** — `crates/node/tracer/src/trace_forwarder/bearer.rs`
+  ships `Bearer<S>` generic over any `tokio::io::AsyncRead +
+  AsyncWrite + Unpin + Send` transport, with `read_sdu` /
+  `write_sdu` + 4 round-trip tests pinned against
+  `tokio::io::DuplexStream` in-memory pipes.
 - The cardano-tracer-specific Handshake mini-protocol negotiator
   (mini-protocol num 0).
 - A `Layer<S>` adapter for `tracing-subscriber` that walks every
