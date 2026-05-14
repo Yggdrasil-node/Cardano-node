@@ -87,6 +87,54 @@ remaining commands and a separate binary is justified.
   `environment::run_show_upstream_config` migrated from
   `node/src/commands/cardano_cli.rs`. Wire output byte-identical.
 
+### Phase F operator surface (2026-05 — landed in the binary)
+
+While THIS crate (the library `yggdrasil-cardano-cli`) is still
+in its R289 placeholder state for most subcommand families, the
+binary crate (`yggdrasil-node`) ships a `cardano-cli` subcommand
+group with 15 operator-essential commands that route through
+`crates/node/yggdrasil-node/src/commands/cardano_cli.rs` into
+the existing node helpers (`commands/query.rs`,
+`commands/submit_tx.rs`, `yggdrasil_crypto`,
+`yggdrasil_ledger::compute_tx_id`, the `bech32` workspace crate,
+and `/dev/urandom`). The split is intentional: the binary
+surface is "operator-ready"; the library surface stays
+placeholder-stage and waits for the C-arc migration.
+
+Operator surface mapped to upstream `cardano-cli`:
+
+| `yggdrasil-node cardano-cli ...`     | `cardano-cli ...`                      |
+| ------------------------------------ | -------------------------------------- |
+| `version`                            | `version`                              |
+| `show-upstream-config`               | n/a (Yggdrasil helper)                 |
+| `query-tip`                          | `query tip`                            |
+| `query-utxo --address` / `--tx-in`   | `query utxo --address` / `--tx-in`     |
+| `query-protocol-parameters`          | `query protocol-parameters`            |
+| `query-stake-pools`                  | `query stake-pools`                    |
+| `query-stake-distribution`           | `query stake-distribution`             |
+| `transaction-submit`                 | `transaction submit`                   |
+| `transaction-txid`                   | `transaction txid`                     |
+| `transaction-sign` (single-signer)   | `transaction sign` (subset)            |
+| `address-key-gen`                    | `address key-gen`                      |
+| `address-key-hash`                   | `address key-hash`                     |
+| `address-build`                      | `address build`                        |
+| `stake-address-key-gen`              | `stake-address key-gen`                |
+| `stake-address-build`                | `stake-address build`                  |
+
+Not yet wired (each gated on a substantive new primitive — full
+tx construction with input selection + fees, new LSQ queries
+with Rust-side response decoders, per-era certificate encoders,
+era-history Interpreter CBOR decoder): `query leadership-schedule`,
+`query stake-snapshot`, `query slot-number`, `transaction build`,
+`transaction build-raw`, `transaction view`,
+`stake-pool registration-certificate`.
+
+The C-arc migration plan (below) is the path that lifts these
+binary-side handlers into THIS library crate so a standalone
+`cargo install --path crates/tools/cardano-cli` produces a
+parity-compatible `cardano-cli` binary independent of the node
+runtime.
+
 ## Migration roadmap (R298+ deferred)
 
 Concrete subcommand implementations port from upstream over multi-
