@@ -56,7 +56,8 @@ use std::sync::Mutex;
 
 use yggdrasil_ledger::cbor::Encoder;
 
-// Wave 6 PR 17 Phase 2.B — Layer 2 and Layer 3 codecs.
+// Wave 6 PR 17 Phase 2.B — Layer 2 and Layer 3 codecs + bearer.
+pub mod bearer;
 pub mod mini_protocol;
 pub mod mux;
 
