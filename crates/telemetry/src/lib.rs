@@ -22,6 +22,8 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
 pub mod haskell_json;
+#[cfg(feature = "otlp")]
+pub mod otlp;
 
 /// Supported log output formats.
 ///
@@ -58,17 +60,26 @@ impl LogFormat {
 
 /// Configuration passed by binary main entry-points to
 /// `init_subscriber`. Wave 6 PR 14 populates the `init_subscriber`
-/// function; for now this struct only carries the configured values
-/// from CLI parsing through to where they will eventually be wired.
+/// function; Wave 6 PR 17 Phase 2.A wires `otlp_endpoint` through
+/// to the actual exporter (`otlp` feature, off by default).
 #[derive(Clone, Debug, Default)]
 pub struct TracingConfig {
     /// Output format. Defaults to `HaskellJson`.
     pub format: LogFormat,
     /// Optional OTLP collector endpoint (e.g. `http://otel-collector:4317`).
+    /// Honored only when the crate is compiled with `--features otlp`;
+    /// non-OTLP builds leave the value in place and silently skip the
+    /// exporter so a binary built without the feature still accepts
+    /// the CLI flag without erroring.
     pub otlp_endpoint: Option<String>,
     /// Optional `cardano-tracer` Unix socket. When set, an additional
     /// tracer-forwarder layer is installed alongside the local logger.
     pub tracer_socket: Option<std::path::PathBuf>,
+    /// OTel `service.name` attribute attached to every exported span.
+    /// Defaults to `"yggdrasil-node"`; sister tools override per-binary
+    /// (`cardano-submit-api`, `cardano-tracer`, …) so a shared OTel
+    /// backend can multiplex multiple Yggdrasil binaries cleanly.
+    pub service_name: Option<String>,
 }
 
 // Wave 6 PR 14: expose the `tracing` re-export so callers can write
@@ -134,6 +145,34 @@ mod tests {
         assert_eq!(c.format, LogFormat::HaskellJson);
         assert!(c.otlp_endpoint.is_none());
         assert!(c.tracer_socket.is_none());
+        assert!(c.service_name.is_none());
+    }
+
+    /// Pin the `otlp` feature gate: when ON, the `otlp` module is
+    /// reachable and `OtlpInitError` is a public type that callers
+    /// can pattern-match. When OFF, the entire module is absent and
+    /// none of the OpenTelemetry transitive deps are pulled in.
+    #[cfg(feature = "otlp")]
+    #[test]
+    fn otlp_module_reachable_when_feature_on() {
+        // The function exists and returns a Result. We don't drive
+        // it end-to-end here because building the OTLP gRPC exporter
+        // needs a Tokio context and would attempt a DNS resolve on
+        // the host portion of the endpoint.
+        let _: fn(&str, &str) -> Result<_, otlp::OtlpInitError> = otlp::build_tracer;
+    }
+
+    /// Pin the public-API shape of `TracingConfig::service_name` —
+    /// it MUST be optional and string-shaped so `service.name` is
+    /// configurable at the binary boundary without further breaking
+    /// changes (per the docs/COMPATIBILITY.md Tier-1 contract).
+    #[test]
+    fn tracing_config_service_name_is_optional_string() {
+        let c = TracingConfig {
+            service_name: Some("yggdrasil-test".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(c.service_name.as_deref(), Some("yggdrasil-test"));
     }
 
     #[test]
@@ -188,30 +227,73 @@ pub fn init_subscriber(config: &TracingConfig) -> Result<(), InitSubscriberError
         .or_else(|| std::env::var("RUST_LOG").ok().map(EnvFilter::new))
         .unwrap_or_else(|| EnvFilter::new("info"));
 
+    // Wave 6 PR 17 Phase 2.A — when the operator supplies an OTLP
+    // endpoint, `--log-format=otel`, AND the binary was built with
+    // `--features otlp`, attach the OTLP forwarder layer alongside
+    // the Haskell-JSON formatter. Out of the otlp-feature path the
+    // endpoint is recorded but no exporter is constructed (the
+    // binary still accepts the CLI flag, but no events leave the
+    // process — flag is doc'd as a no-op in non-otlp builds).
     let registry = tracing_subscriber::registry().with(env_filter);
 
     let result = match config.format {
-        LogFormat::HaskellJson | LogFormat::Otel => {
+        LogFormat::HaskellJson => {
             // Wave 6 PR 15 — Haskell-Katip-shaped JSON.
             // Field set: {at, ns, data, sev, thread, host, app}.
             // SPOs migrating from upstream cardano-node 11.0.1 keep
             // their Promtail / fluentd configs unchanged. See
             // `haskell_json::HaskellJsonFormat` for the schema.
-            //
-            // `Otel` reuses the same formatter pending Wave 6 PR 17;
-            // the OTLP exporter layer that actually distinguishes
-            // OTLP from Haskell-JSON lands once
-            // `tracing-opentelemetry` is added to the workspace.
+            // Never forwards to OTLP even if the endpoint is set —
+            // the format selector is the operator's explicit choice
+            // between "local Promtail/fluentd schema" and "OTLP+local".
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .event_format(haskell_json::HaskellJsonFormat::new());
+            registry.with(fmt_layer).try_init()
+        }
+        LogFormat::Otel => {
+            // Same local formatter as HaskellJson, plus the OTLP
+            // exporter when feature-on AND endpoint configured.
+            let fmt_layer = tracing_subscriber::fmt::layer()
+                .event_format(haskell_json::HaskellJsonFormat::new());
+            #[cfg(feature = "otlp")]
+            {
+                let service_name = config
+                    .service_name
+                    .as_deref()
+                    .unwrap_or("yggdrasil-node");
+                if let Some(endpoint) = &config.otlp_endpoint {
+                    match otlp::build_tracer(endpoint, service_name) {
+                        Ok(tracer) => {
+                            let otlp_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+                            registry.with(fmt_layer).with(otlp_layer).try_init()
+                        }
+                        Err(err) => {
+                            // Don't fail-stop on a transient collector
+                            // outage; emit a single warning and continue
+                            // with the local formatter only.
+                            eprintln!(
+                                "yggdrasil-telemetry: OTLP layer disabled — {err}"
+                            );
+                            registry.with(fmt_layer).try_init()
+                        }
+                    }
+                } else {
+                    registry.with(fmt_layer).try_init()
+                }
+            }
+            #[cfg(not(feature = "otlp"))]
+            {
+                registry.with(fmt_layer).try_init()
+            }
+        }
+        LogFormat::Pretty => {
+            // `Pretty` is dev-only; never forwards to OTLP even if
+            // the endpoint is configured. Operators wanting OTLP
+            // must pick `--log-format=otel`.
             registry
-                .with(
-                    tracing_subscriber::fmt::layer()
-                        .event_format(haskell_json::HaskellJsonFormat::new()),
-                )
+                .with(tracing_subscriber::fmt::layer().compact())
                 .try_init()
         }
-        LogFormat::Pretty => registry
-            .with(tracing_subscriber::fmt::layer().compact())
-            .try_init(),
     };
 
     result.map_err(|_| InitSubscriberError::AlreadyInstalled)

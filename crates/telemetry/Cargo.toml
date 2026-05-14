@@ -8,15 +8,33 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Wave 6 PR 14: tracing facade + subscriber landed. OpenTelemetry
-# OTLP forwarding stays deferred to a follow-on PR — adding
-# tracing-opentelemetry + opentelemetry_sdk + opentelemetry-otlp
-# brings async-runtime + protobuf deps that don't pay off until the
-# cardano-tracer Mux 2/3 protocol lands; today's `init_subscriber`
-# just installs the local Haskell-JSON + EnvFilter layers.
+# Wave 6 PR 14: tracing facade + subscriber.
+# Wave 6 PR 17 Phase 2.A: OTLP forwarder layer for the
+# `LogFormat::Otel` + `TracingConfig::otlp_endpoint` operator surface.
+# OpenTelemetry deps are pulled in only via the `otlp` feature so
+# binaries / sister tools that never want OTLP can compile the
+# yggdrasil-telemetry crate without async-runtime + protobuf
+# transitive deps.
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+# Required only when the `otlp` feature is on: the OTLP gRPC
+# exporter spawns its own background batch-export task using
+# whichever tokio runtime is in scope. Made optional so non-Tokio
+# binaries don't accidentally drag in tokio.
+tokio = { workspace = true, optional = true }
+
+[features]
+default = []
+# Compiles the OTLP exporter layer into `init_subscriber`. When OFF
+# (default), `LogFormat::Otel` and `TracingConfig::otlp_endpoint`
+# silently fall back to the Haskell-JSON formatter — the binary
+# still runs, but no trace events leave the process via OTLP.
+otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-opentelemetry", "dep:tokio"]
 
 [lints]
 workspace = true

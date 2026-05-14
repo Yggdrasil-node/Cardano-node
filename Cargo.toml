@@ -189,6 +189,18 @@ bs58 = "0.5"
 # unchanged (no proc-macro or async-runtime additions).
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter", "json", "registry", "smallvec", "tracing-log"] }
+# Wave 6 PR 17 (Phase 2.A) — OTLP forwarder layer for the
+# `--log-format=otel` / `--otlp-endpoint=...` operator surface. The
+# OpenTelemetry crates are explicitly NOT pulled into default
+# tracing-subscriber init paths; only `yggdrasil-telemetry` opts in
+# and only the OTLP code path constructs them. `grpc-tonic` is the
+# wire protocol; `rt-tokio` lets the exporter span its own tokio
+# runtime when invoked from a Tokio context. `reqwest-client` is
+# avoided since the workspace already uses tonic for its gRPC needs.
+opentelemetry = { version = "0.26", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.26", default-features = false, features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.26", default-features = false, features = ["trace", "grpc-tonic", "tls", "tls-roots"] }
+tracing-opentelemetry = { version = "0.27", default-features = false, features = ["tracing-log"] }
 # Wave 6 PR 16 — Prometheus metrics façade. `metrics` is a small
 # facade crate (zero-cost when no recorder is installed);
 # `metrics-exporter-prometheus` provides the HTTP scrape endpoint.
