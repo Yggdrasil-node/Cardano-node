@@ -1,0 +1,145 @@
+name: Parity drift
+
+# Wave 10 PR 30 — daily upstream-release drift detector.
+#
+# Polls the IntersectMBO/cardano-node "latest release" tag and compares
+# it against the policy tag pinned in `docs/parity-matrix.json::reference.tag`
+# (currently `11.0.1`, kept in lockstep with the `REFERENCE_TAG` constant
+# at `scripts/check-parity-matrix.py:33`). On drift, opens or updates a
+# single `[parity-drift]` tracking issue with the new tag's release notes.
+#
+# Never fails CI — this is *informational* signal so the parity-matrix
+# bump cadence (see `docs/UPSTREAM_PARITY.md` and the
+# `intersectmbo_version_policy.md` agent-memory entry) gets a low-noise
+# heads-up. The actual bump remains a focused human-reviewed PR.
+
+on:
+  schedule:
+    # 04:00 UTC daily. Off-cycle from the main CI burst so the GH API
+    # token bucket is fresh.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Read pinned policy tag
+        id: pin
+        run: |
+          set -euo pipefail
+          pinned_tag="$(jq -r '.reference.tag' docs/parity-matrix.json)"
+          if [[ -z "$pinned_tag" || "$pinned_tag" == "null" ]]; then
+            echo "::error::failed to read .reference.tag from docs/parity-matrix.json"
+            exit 1
+          fi
+          echo "pinned_tag=$pinned_tag" >> "$GITHUB_OUTPUT"
+          echo "[pin] policy tag: $pinned_tag"
+
+      - name: Fetch upstream latest-release tag
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          latest_json="$(gh api repos/IntersectMBO/cardano-node/releases/latest)"
+          latest_tag="$(echo "$latest_json" | jq -r '.tag_name')"
+          latest_url="$(echo "$latest_json" | jq -r '.html_url')"
+          latest_body="$(echo "$latest_json" | jq -r '.body' | head -c 4000)"
+
+          # Strip a leading `v` to match the bare-semver convention
+          # used in docs/parity-matrix.json (`11.0.1`, not `v11.0.1`).
+          latest_tag_bare="${latest_tag#v}"
+
+          echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
+          echo "latest_tag_bare=$latest_tag_bare" >> "$GITHUB_OUTPUT"
+          echo "latest_url=$latest_url" >> "$GITHUB_OUTPUT"
+          {
+            echo 'latest_body<<EOF'
+            echo "$latest_body"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+          echo "[upstream] latest: $latest_tag ($latest_url)"
+
+      - name: Compare + open/update tracking issue on drift
+        if: steps.pin.outputs.pinned_tag != steps.upstream.outputs.latest_tag_bare
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PINNED: ${{ steps.pin.outputs.pinned_tag }}
+          LATEST: ${{ steps.upstream.outputs.latest_tag }}
+          URL: ${{ steps.upstream.outputs.latest_url }}
+          BODY: ${{ steps.upstream.outputs.latest_body }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title_prefix="[parity-drift]"
+          title="${title_prefix} Upstream ${LATEST} available (pinned ${PINNED})"
+
+          # Build the issue body via a HEREDOC to preserve markdown.
+          body_file="$(mktemp)"
+          cat >"$body_file" <<MARKDOWN
+          ## Upstream release drift detected
+
+          - **Pinned policy tag** (\`docs/parity-matrix.json::reference.tag\`): \`${PINNED}\`
+          - **Latest upstream tag**: [\`${LATEST}\`](${URL})
+          - **Detector**: \`.github/workflows/parity-drift.yml\` (daily 04:00 UTC)
+
+          ### Bump checklist (see \`docs/UPSTREAM_PARITY.md\`)
+
+          1. Update \`docs/parity-matrix.json::reference.tag\` and \`scripts/check-parity-matrix.py:33\` (\`REFERENCE_TAG\`).
+          2. Update \`scripts/setup-reference.sh\` \`CARDANO_NODE_VERSION\` constant.
+          3. Re-fetch the reference tree: \`bash scripts/setup-reference.sh --force\`.
+          4. Run \`python3 scripts/check-parity-matrix.py\`; fix every now-missing \`haskell_reference[*].path\` (upstream may have moved files).
+          5. Re-validate \`docs/UPSTREAM_PARITY.md\` and prose mentions across \`AGENTS.md\` + \`CLAUDE.md\`.
+          6. Open a focused PR with the parity bump alone; do not bundle with other changes.
+
+          ### Upstream release notes (truncated to 4000 chars)
+
+          ${BODY}
+          MARKDOWN
+
+          # Find existing open issue by title-prefix; update its body if
+          # found, otherwise open a new one. Only the latest single
+          # tracking issue stays open — close any older drift issues
+          # that no longer match the latest tag.
+          existing_number=""
+          existing_numbers="$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --search "${title_prefix} in:title" \
+            --json number,title \
+            --jq '.[] | "\(.number)\t\(.title)"')"
+
+          while IFS=$'\t' read -r num current_title; do
+            [[ -z "$num" ]] && continue
+            if [[ "$current_title" == "$title" ]]; then
+              existing_number="$num"
+            else
+              gh issue close "$num" --repo "$REPO" \
+                --comment "Closed by parity-drift workflow: superseded by ${title}."
+            fi
+          done <<<"$existing_numbers"
+
+          if [[ -n "$existing_number" ]]; then
+            gh issue edit "$existing_number" --repo "$REPO" --body-file "$body_file"
+            echo "[drift] updated issue #$existing_number"
+          else
+            gh issue create --repo "$REPO" \
+              --title "$title" \
+              --label "parity,drift,upstream" \
+              --body-file "$body_file"
+            echo "[drift] opened new tracking issue"
+          fi
+
+      - name: No drift — report and exit cleanly
+        if: steps.pin.outputs.pinned_tag == steps.upstream.outputs.latest_tag_bare
+        run: |
+          echo "[ok] policy tag ${{ steps.pin.outputs.pinned_tag }} matches upstream latest ${{ steps.upstream.outputs.latest_tag }}"

@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Yggdrasil-node/Cardano-node/blob/main/docs/parity-matrix.schema.json",
+  "title": "Yggdrasil parity-matrix.json",
+  "description": "Schema for docs/parity-matrix.json — the source-of-truth inventory of every Yggdrasil parity claim against IntersectMBO/cardano-node. Validated in CI (.github/workflows/ci.yml) on every push/PR. Adding a new entry MUST keep this file passing.",
+  "type": "object",
+  "required": ["schema_version", "reviewed_at_utc", "reference", "status_legend", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "description": "Bump when the JSON shape of parity-matrix.json changes (not when entries change). Workspace metadata at Cargo.toml::workspace.metadata.parity.schema-version pins the expected value.",
+      "type": "integer",
+      "const": 1
+    },
+    "reviewed_at_utc": {
+      "description": "ISO-8601 UTC timestamp of the last whole-file review. Should bump every time a parity-bump round closes.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "reference": {
+      "type": "object",
+      "required": ["repo", "tag", "local_root", "verified_by"],
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "type": "string",
+          "const": "IntersectMBO/cardano-node",
+          "description": "Upstream repo coordinate. Pinned by deliberate scope: this matrix tracks one upstream repo."
+        },
+        "tag": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "description": "Bare semver policy tag (e.g. '11.0.1'). Drift is detected by .github/workflows/parity-drift.yml and tracked via the [parity-drift] issue label."
+        },
+        "local_root": {
+          "type": "string",
+          "const": ".reference-haskell-cardano-node"
+        },
+        "verified_by": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Shell command lines that operators run to verify the local reference tree matches the policy tag."
+        },
+        "note": {
+          "type": "string"
+        }
+      }
+    },
+    "status_legend": {
+      "type": "object",
+      "required": [
+        "verified_11_0_1",
+        "implemented_needs_11_0_1_evidence",
+        "partial",
+        "absent"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "verified_11_0_1": { "type": "string" },
+        "implemented_needs_11_0_1_evidence": { "type": "string" },
+        "partial": { "type": "string" },
+        "absent": { "type": "string" }
+      },
+      "description": "Status enum docstrings. Keys must match the ALLOWED_STATUS set in scripts/check-parity-matrix.py."
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/Entry" }
+    }
+  },
+  "$defs": {
+    "Entry": {
+      "type": "object",
+      "required": [
+        "id",
+        "area",
+        "feature",
+        "status",
+        "haskell_reference",
+        "rust_surface"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]*\\.[a-z0-9.-]+$",
+          "description": "Dotted-namespace identifier (e.g. 'consensus.praos.leader-check')."
+        },
+        "area": {
+          "type": "string",
+          "enum": [
+            "node",
+            "network",
+            "consensus",
+            "storage",
+            "ledger",
+            "plutus",
+            "crypto",
+            "runtime",
+            "cli",
+            "tracer",
+            "submit-api",
+            "kes-agent",
+            "db-tooling",
+            "testing",
+            "infra"
+          ]
+        },
+        "feature": {
+          "type": "string",
+          "minLength": 4,
+          "description": "Free-text one-line description of the parity surface."
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "verified_11_0_1",
+            "implemented_needs_11_0_1_evidence",
+            "partial",
+            "absent"
+          ]
+        },
+        "next_milestone": {
+          "type": "string",
+          "pattern": "^(R[0-9]{1,4}[a-z]?|TBD|none)$",
+          "description": "R-arc round identifier for the next concrete advance (R267, R501a, ...) or TBD / none."
+        },
+        "haskell_reference": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PathRoleEntry" },
+          "minItems": 1
+        },
+        "rust_surface": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/PathRoleEntry" },
+          "minItems": 1
+        },
+        "implemented_evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "remaining_work": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "acceptance": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "PathRoleEntry": {
+      "type": "object",
+      "required": ["path", "role"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 4,
+          "description": "Filesystem path relative to repo root. For haskell_reference, MUST start with '.reference-haskell-cardano-node/'; for rust_surface, MUST start with 'crates/'. scripts/check-parity-matrix.py asserts each path exists at validation time."
+        },
+        "role": {
+          "type": "string",
+          "minLength": 4
+        }
+      }
+    }
+  }
+}
