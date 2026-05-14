@@ -36,6 +36,49 @@
 //! backends (`Stdout HumanFormatColoured`, `Stdout HumanFormat`,
 //! `StdoutMachine`) are unaffected.
 //!
+//! # Wiring the full Mux Layer 2/3 forwarder (Wave 6 PR 17 Phase 2.B)
+//!
+//! Codecs + bearer + dispatchers for Layers 1/2/3 are now landed; the
+//! pipeline composes through a single shared [`mux_connection::MuxConnection`]
+//! in ~10 binary-setup lines:
+//!
+//! ```ignore
+//! use std::collections::BTreeMap;
+//! use std::sync::Arc;
+//! use tokio::net::UnixStream;
+//! use tokio::sync::mpsc;
+//! use tracing_subscriber::prelude::*;
+//!
+//! let socket = UnixStream::connect("/run/cardano-tracer.sock").await?;
+//! let bearer = bearer::Bearer::new(socket);
+//! let mux = Arc::new(mux_connection::MuxConnection::new(bearer));
+//!
+//! // 1. Run handshake initiator side (mini-protocol num 0).
+//! let mut versions = BTreeMap::new();
+//! versions.insert(1u32, encode_network_magic(764_824_073));
+//! let _agreed = mux.run_initiator_handshake(versions).await?;
+//!
+//! // 2. Spawn the read-task so subsequent inbound SDUs dispatch.
+//! let _read_task = mux.spawn_read_task();
+//!
+//! // 3. Wire the tracing-subscriber Layer that builds TraceObjects.
+//! let (tx, rx) = mpsc::unbounded_channel();
+//! let layer = layer::TraceForwardingLayer::new(tx, "yggdrasil-node-01".into());
+//! tracing_subscriber::registry().with(layer).init();
+//!
+//! // 4. Spawn the forwarding task that drains the channel into SDUs.
+//! tokio::spawn(forwarding_task::run_via_mux(
+//!     rx,
+//!     Arc::clone(&mux),
+//!     forwarding_task::ForwardingTaskConfig::default(),
+//! ));
+//! ```
+//!
+//! The remaining piece for full Network.Mux parity (per-mini-protocol
+//! limits, scheduler fairness, bearer-task supervision, live binary-
+//! against-binary conformance soak) is the single open item in
+//! `docs/TECH-DEBT.md`'s "cardano-tracer Mux Layer 2/3" entry.
+//!
 //! Reference: `cardano-node:trace-dispatcher`, the `trace-forward`
 //! Hackage package, and `Codec.Serialise` / `Codec.CBOR.Encoding` for
 //! the application-layer codec primitives.
