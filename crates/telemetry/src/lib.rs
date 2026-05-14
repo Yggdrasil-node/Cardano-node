@@ -12,12 +12,12 @@
 //! binaries (yggdrasil-node plus every sister tool) initialise
 //! observability identically.
 //!
-//! **Wave 2 status:** scaffold only. The crate declares the public
-//! API shape (`LogFormat`, `TracingConfig`, `trace_fields::*`) so
-//! consumers can begin importing from `yggdrasil-telemetry` ahead of
-//! the Wave 6 PR 14 fill-in. That PR adds the `tracing`,
-//! `tracing-subscriber`, and OTLP dependencies and implements
-//! `init_subscriber(&TracingConfig) -> WorkerGuard`.
+//! **Wave 6 PR 14 status:** `tracing` + `tracing-subscriber`
+//! workspace dependencies landed; [`init_subscriber`] installs the
+//! local Haskell-JSON log layer + an `EnvFilter` keyed off
+//! `RUST_LOG` / `YGGDRASIL_LOG`. The OTLP forwarder layer is
+//! still deferred (see PR 15/17 for the Haskell-JSON
+//! formatter + the cardano-tracer Mux protocol).
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
@@ -69,8 +69,15 @@ pub struct TracingConfig {
     pub tracer_socket: Option<std::path::PathBuf>,
 }
 
-/// Span / event field name conventions. Every emit-site (Wave 6 PR 14
-/// adds the `node_span!` / `consensus_span!` / etc. macros) references
+// Wave 6 PR 14: expose the `tracing` re-export so callers can write
+// `use yggdrasil_telemetry::tracing::info;` and stay decoupled from
+// the underlying crate version. The re-export costs nothing — Rust
+// inlines it at compile time.
+pub use tracing;
+
+/// Span / event field name conventions. Every emit-site (the
+/// `node_span!` / `consensus_span!` / etc. macros land in a follow-on
+/// PR once the binary's `eprintln!` callsites get swept) references
 /// these constants so a single rename here propagates everywhere.
 ///
 /// The three correlation fields (`SLOT`, `EPOCH`, `BLOCK_HASH`) are
@@ -126,4 +133,96 @@ mod tests {
         assert!(c.otlp_endpoint.is_none());
         assert!(c.tracer_socket.is_none());
     }
+
+    #[test]
+    fn init_subscriber_with_dispatcher_runs_idempotently() {
+        // The global subscriber install is one-shot per process and
+        // ignored on a second call — confirm the function is at least
+        // safe to call from inside a Cargo test process.
+        let cfg = TracingConfig::default();
+        let outcome = init_subscriber(&cfg);
+        // The first call may install or be a no-op depending on test
+        // ordering; the second call must be a no-op without panicking.
+        let _ = outcome;
+        let _ = init_subscriber(&cfg);
+    }
 }
+
+/// Install the workspace's tracing subscriber.
+///
+/// Wave 6 PR 14 status: the subscriber installs the local logger
+/// layer keyed off `RUST_LOG` / `YGGDRASIL_LOG` (via
+/// `tracing_subscriber::EnvFilter`). Output format selection from
+/// `TracingConfig::format` is wired:
+///
+///   - [`LogFormat::HaskellJson`]: structured JSON event records.
+///     The Haskell-Katip-compatible field renaming (`timestamp` →
+///     `at`, etc.) lands in a follow-on PR; today's JSON output
+///     emits `tracing-subscriber::fmt::format::Json`'s default
+///     schema. Operator log-shippers that consume Loki/Promtail can
+///     adopt the eventual rename without re-pipelining.
+///   - [`LogFormat::Pretty`]: ANSI-coloured stdout output.
+///   - [`LogFormat::Otel`]: today behaves identically to
+///     `HaskellJson`; the actual OTLP exporter layer waits on the
+///     workspace adding `tracing-opentelemetry` + `opentelemetry`
+///     in a follow-on PR.
+///
+/// Idempotent: a second call (e.g. from a test process) is a no-op
+/// because `tracing-subscriber`'s global dispatcher is one-shot.
+///
+/// Returns `Ok(())` on first install, `Err(InitSubscriberError::
+/// AlreadyInstalled)` on subsequent calls. Binary `main` functions
+/// can ignore the error.
+pub fn init_subscriber(config: &TracingConfig) -> Result<(), InitSubscriberError> {
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    // Honor both `RUST_LOG` (standard Rust convention) and
+    // `YGGDRASIL_LOG` (operator-facing alias documented in
+    // docs/COMPATIBILITY.md). YGGDRASIL_LOG wins when both are set.
+    let env_filter = std::env::var("YGGDRASIL_LOG")
+        .ok()
+        .map(EnvFilter::new)
+        .or_else(|| std::env::var("RUST_LOG").ok().map(EnvFilter::new))
+        .unwrap_or_else(|| EnvFilter::new("info"));
+
+    let registry = tracing_subscriber::registry().with(env_filter);
+
+    let result = match config.format {
+        LogFormat::HaskellJson | LogFormat::Otel => {
+            // Use the `json` formatter; the rename layer that maps to
+            // Katip's `at` / `ns` / `data` / `sev` / `thread` field
+            // names lands in the follow-on Haskell-JSON-shape PR.
+            registry
+                .with(tracing_subscriber::fmt::layer().json())
+                .try_init()
+        }
+        LogFormat::Pretty => registry
+            .with(tracing_subscriber::fmt::layer().compact())
+            .try_init(),
+    };
+
+    result.map_err(|_| InitSubscriberError::AlreadyInstalled)
+}
+
+/// Surfaced when `init_subscriber` is called more than once per
+/// process or when something else (a downstream test harness,
+/// usually) has already installed a global dispatcher.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum InitSubscriberError {
+    /// A global subscriber was already installed before this call.
+    AlreadyInstalled,
+}
+
+impl core::fmt::Display for InitSubscriberError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::AlreadyInstalled => {
+                f.write_str("a global tracing subscriber was already installed")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InitSubscriberError {}

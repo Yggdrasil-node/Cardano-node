@@ -8,10 +8,14 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Intentionally minimal in Wave 2. Wave 6 PR 14 adds `tracing`,
-# `tracing-subscriber`, `tracing-opentelemetry`, `opentelemetry`,
-# `opentelemetry_sdk`, `opentelemetry-otlp` as workspace deps and
-# wires the subscriber init function below.
+# Wave 6 PR 14: tracing facade + subscriber landed. OpenTelemetry
+# OTLP forwarding stays deferred to a follow-on PR — adding
+# tracing-opentelemetry + opentelemetry_sdk + opentelemetry-otlp
+# brings async-runtime + protobuf deps that don't pay off until the
+# cardano-tracer Mux 2/3 protocol lands; today's `init_subscriber`
+# just installs the local Haskell-JSON + EnvFilter layers.
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

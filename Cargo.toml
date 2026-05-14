@@ -180,6 +180,14 @@ bech32 = "0.11"
 # (R447 relocated) to mirror upstream's Base58 input-encoding detection
 # (Cardano legacy Byron address parsing path).
 bs58 = "0.5"
+# Wave 6 PR 14: tracing facade + subscriber. `tracing` itself is a
+# small no-deps crate; `tracing-subscriber` pulls in `sharded-slab`
+# `thread_local` `tracing-core` `tracing-log` and the JSON formatter
+# dependencies. `default-features = false` + an explicit feature list
+# keeps the build narrow and the `cargo deny check` audit posture
+# unchanged (no proc-macro or async-runtime additions).
+tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter", "json", "registry", "smallvec", "tracing-log"] }
 
 yggdrasil-cardano-cli = { path = "crates/tools/cardano-cli" }
 yggdrasil-consensus = { path = "crates/consensus" }
