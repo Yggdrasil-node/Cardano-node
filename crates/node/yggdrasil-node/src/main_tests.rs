@@ -2649,6 +2649,115 @@ fn read_verification_key_text_envelope_rejects_wrong_prefix() {
     );
 }
 
+#[test]
+fn cardano_cli_address_key_gen_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "address-key-gen",
+        "--verification-key-file",
+        "/tmp/payment.vkey",
+        "--signing-key-file",
+        "/tmp/payment.skey",
+    ])
+    .expect("address-key-gen must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::AddressKeyGen { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+/// `write_text_envelope` produces a JSON document whose `cborHex`
+/// field, when parsed back with `read_verification_key_text_envelope`,
+/// yields the original 32-byte payload. Round-trip pin so a future
+/// refactor breaking either side surfaces here, not at operator
+/// key-file load time.
+#[test]
+fn cardano_cli_text_envelope_round_trip() {
+    use super::commands::cardano_cli::{
+        read_verification_key_text_envelope, write_text_envelope,
+    };
+
+    let dir = std::env::temp_dir().join(format!(
+        "yggdrasil-cardano-cli-key-gen-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir tmp");
+    let path = dir.join("payment.vkey");
+
+    let payload = [0x5A_u8; 32];
+    write_text_envelope(
+        &path,
+        "PaymentVerificationKeyShelley_ed25519",
+        "Payment Verification Key",
+        &payload,
+        /* private = */ false,
+    )
+    .expect("write envelope");
+
+    let bytes = std::fs::read(&path).expect("read back");
+    let parsed = read_verification_key_text_envelope(&bytes).expect("parse round-trip");
+    assert_eq!(parsed, payload, "round-trip drift through envelope reader/writer");
+
+    // Confirm the JSON has the right shape (type + description fields
+    // are surfaced for upstream-compat) without parsing the whole file
+    // again.
+    let json: serde_json::Value = serde_json::from_slice(&bytes).expect("re-parse JSON");
+    assert_eq!(
+        json.get("type").and_then(serde_json::Value::as_str),
+        Some("PaymentVerificationKeyShelley_ed25519")
+    );
+    assert_eq!(
+        json.get("description").and_then(serde_json::Value::as_str),
+        Some("Payment Verification Key")
+    );
+    // Cleanup.
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Signing-key envelopes on Unix MUST be 0o600 so the file isn't
+/// world-readable. Pin so a future refactor that drops the
+/// `OpenOptionsExt::mode` call surfaces here, not as a CVE.
+#[cfg(unix)]
+#[test]
+fn cardano_cli_text_envelope_signing_key_mode_is_0o600() {
+    use std::os::unix::fs::PermissionsExt;
+    use super::commands::cardano_cli::write_text_envelope;
+
+    let dir = std::env::temp_dir().join(format!(
+        "yggdrasil-cardano-cli-key-gen-perm-test-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("mkdir tmp");
+    let path = dir.join("payment.skey");
+
+    write_text_envelope(
+        &path,
+        "PaymentSigningKeyShelley_ed25519",
+        "Payment Signing Key",
+        &[0u8; 32],
+        /* private = */ true,
+    )
+    .expect("write signing-key envelope");
+
+    let meta = std::fs::metadata(&path).expect("stat skey");
+    let mode = meta.permissions().mode() & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "signing-key file must be 0o600; got 0o{:o}",
+        mode
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// End-to-end: a known VK → known Blake2b-224 hash. The hash is the
 /// 28-byte address-credential used for the Shelley payment address;
 /// pin it so a regression in the hash function surfaces here.

@@ -169,7 +169,113 @@ pub(crate) fn run_cardano_cli_command(
             println!("{}", hex::encode(hash.0));
             Ok(())
         }
+        CardanoCliCommand::AddressKeyGen {
+            verification_key_file,
+            signing_key_file,
+        } => {
+            let seed = read_os_entropy_32_bytes()?;
+            let sk = yggdrasil_crypto::SigningKey::from_bytes(seed);
+            let vk = sk
+                .verification_key()
+                .map_err(|e| eyre::eyre!("failed to derive VK from generated SK: {e}"))?;
+            write_text_envelope(
+                &signing_key_file,
+                "PaymentSigningKeyShelley_ed25519",
+                "Payment Signing Key",
+                &sk.to_bytes(),
+                /* private = */ true,
+            )?;
+            write_text_envelope(
+                &verification_key_file,
+                "PaymentVerificationKeyShelley_ed25519",
+                "Payment Verification Key",
+                &vk.to_bytes(),
+                /* private = */ false,
+            )?;
+            Ok(())
+        }
     }
+}
+
+/// Read 32 cryptographically-secure random bytes from the OS.
+///
+/// Yggdrasil's `cardano-cli address key-gen` parity surface uses
+/// `/dev/urandom` directly rather than pulling in a new workspace
+/// dep on `getrandom` / `rand` — every supported Yggdrasil platform
+/// (Linux, macOS, …) provides the kernel-backed entropy device.
+/// On non-Unix this errors out cleanly rather than silently downgrading.
+fn read_os_entropy_32_bytes() -> Result<[u8; 32]> {
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        let mut buf = [0_u8; 32];
+        std::fs::File::open("/dev/urandom")
+            .map_err(|e| eyre::eyre!("open /dev/urandom failed: {e}"))?
+            .read_exact(&mut buf)
+            .map_err(|e| eyre::eyre!("read 32 bytes from /dev/urandom failed: {e}"))?;
+        Ok(buf)
+    }
+    #[cfg(not(unix))]
+    {
+        eyre::bail!(
+            "address-key-gen needs /dev/urandom for entropy; not supported on this platform"
+        )
+    }
+}
+
+/// Write a TextEnvelope JSON file (`{type, description, cborHex}`)
+/// matching upstream `cardano-cli`'s output shape for a 32-byte key.
+///
+/// `cbor_hex` is constructed from the 32-byte payload as `5820 ||
+/// payload` (CBOR major-2 bytes-string of length 32). When
+/// `private = true` on Unix, the file is created with `0o600`
+/// permissions so the signing key isn't world-readable.
+pub(crate) fn write_text_envelope(
+    path: &std::path::Path,
+    envelope_type: &str,
+    description: &str,
+    payload: &[u8; 32],
+    private: bool,
+) -> Result<()> {
+    let mut cbor = Vec::with_capacity(34);
+    cbor.push(0x58);
+    cbor.push(0x20);
+    cbor.extend_from_slice(payload);
+    let envelope = serde_json::json!({
+        "type": envelope_type,
+        "description": description,
+        "cborHex": hex::encode(&cbor),
+    });
+    let json = serde_json::to_string_pretty(&envelope).map_err(|e| {
+        eyre::eyre!("failed to serialise TextEnvelope: {e}")
+    })?;
+
+    // Restrictive mode for signing-key files on Unix; default mode for
+    // verification-key files so they can be checked in / shared freely.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mode = if private { 0o600 } else { 0o644 };
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(mode)
+            .open(path)
+            .map_err(|e| eyre::eyre!("open {} failed: {e}", path.display()))?;
+        use std::io::Write;
+        f.write_all(json.as_bytes())
+            .map_err(|e| eyre::eyre!("write {} failed: {e}", path.display()))?;
+        f.write_all(b"\n")
+            .map_err(|e| eyre::eyre!("write {} trailing newline failed: {e}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = private;
+        std::fs::write(path, json + "\n")
+            .map_err(|e| eyre::eyre!("write {} failed: {e}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// Shared `--tx-file` / `--tx-hex` flag resolver. Both arms route

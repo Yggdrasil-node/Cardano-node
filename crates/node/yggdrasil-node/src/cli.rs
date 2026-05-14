@@ -387,4 +387,24 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long)]
         payment_verification_key_file: PathBuf,
     },
+    /// Generate a fresh Ed25519 payment keypair, writing two
+    /// TextEnvelope JSON files (the upstream `cardano-cli address
+    /// key-gen` output shape). Reads 32 bytes of OS entropy from
+    /// `/dev/urandom` to seed the signing key.
+    ///
+    /// Files written:
+    ///
+    ///   `--signing-key-file SK_FILE`      type = `PaymentSigningKeyShelley_ed25519`
+    ///   `--verification-key-file VK_FILE` type = `PaymentVerificationKeyShelley_ed25519`
+    ///
+    /// Both files use `0o600` permissions on Unix so the new signing
+    /// key isn't world-readable.
+    AddressKeyGen {
+        /// Path to write the verification (public) key TextEnvelope.
+        #[arg(long)]
+        verification_key_file: PathBuf,
+        /// Path to write the signing (private) key TextEnvelope.
+        #[arg(long)]
+        signing_key_file: PathBuf,
+    },
 }
