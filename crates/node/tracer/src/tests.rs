@@ -3,7 +3,7 @@
 // `use super::*;` still gives full access to the parent's items.
 
 use super::*;
-use crate::config::{NodeConfigFile, TraceNamespaceConfig, default_config};
+use yggdrasil_node_config::{NodeConfigFile, TraceNamespaceConfig, default_config};
 
 #[test]
 fn machine_trace_line_is_json() {

@@ -2511,6 +2511,7 @@ dependencies = [
  "yggdrasil-network",
  "yggdrasil-node-config",
  "yggdrasil-node-genesis",
+ "yggdrasil-node-tracer",
  "yggdrasil-plutus",
  "yggdrasil-storage",
 ]
@@ -2544,6 +2545,19 @@ dependencies = [
  "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-plutus",
+]
+
+[[package]]
+name = "yggdrasil-node-tracer"
+version = "0.2.0"
+dependencies = [
+ "ciborium",
+ "hex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "yggdrasil-ledger",
+ "yggdrasil-node-config",
 ]
 
 [[package]]

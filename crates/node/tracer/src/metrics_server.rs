@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use yggdrasil_node::tracer::NodeMetrics;
+use crate::NodeMetrics;
 
 /// Serve a tiny HTTP endpoint exposing node metrics + health on the
 /// loopback interface. Routes:
@@ -59,7 +59,7 @@ pub async fn serve_metrics(port: u16, metrics: Arc<NodeMetrics>) -> std::io::Res
     }
 }
 
-pub(crate) fn metrics_http_response(
+pub fn metrics_http_response(
     request: &str,
     metrics: &NodeMetrics,
 ) -> (&'static str, &'static str, String) {

@@ -1,3 +1,23 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+//! yggdrasil-node-tracer — node tracer + metrics + cardano-tracer forwarder.
+//!
+//! Wave 5 PR 7 extracted this crate from the monolithic
+//! `yggdrasil-node` binary. Wave 6 PR 14-17 (R502) refactors the
+//! `metrics_server` + `trace_forwarder` surfaces to use
+//! `metrics-exporter-prometheus` and finish the cardano-tracer Mux
+//! Layer 2/3 protocol.
+//!
+//! The crate ships `NodeTracer`, `NodeMetrics`, `MetricsSnapshot`,
+//! `trace_fields` (the operator-stable field-name constants), the
+//! raw-TCP `metrics_server` on the configurable `--metrics-port`,
+//! and the Layer-1 `TraceObject` CBOR codec used by the cardano-
+//! tracer Unix-socket forwarder.
+//!
+//! Sister tools depend on `yggdrasil-node-tracer` for `trace_fields`
+//! + `NodeMetrics` without linking the runtime.
+//!
+//! ## Original file docstring
+//!
 //! Thin node-side tracing helpers aligned with the Cardano trace dispatcher
 //! vocabulary.
 //!
@@ -22,6 +42,9 @@
 //! uses a contravariant-tracer type-class hierarchy; Yggdrasil
 //! uses Rust closures + structured-fields BTreeMaps.
 
+pub mod metrics_server;
+pub mod trace_forwarder;
+
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -30,7 +53,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::config::{NodeConfigFile, TraceNamespaceConfig};
+use yggdrasil_node_config::{NodeConfigFile, TraceNamespaceConfig};
 use crate::trace_forwarder::TraceForwarder;
 
 /// Trace output backend corresponding to upstream scribe/backend strings.

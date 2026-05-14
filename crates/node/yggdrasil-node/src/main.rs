@@ -157,7 +157,9 @@ use handlers::shutdown::wait_for_shutdown_signal;
 
 // Prometheus metrics HTTP server (loopback-only). Mirrors upstream
 // `Cardano.Node.Tracing.Tracers.Startup` Prometheus endpoint.
-mod metrics_server;
+// Wave 5 PR 7: metrics_server moved to the yggdrasil-node-tracer crate;
+// reach it through the `tracer::metrics_server` re-export.
+use yggdrasil_node::tracer::metrics_server;
 use metrics_server::serve_metrics;
 
 // Genesis-aware startup helpers. Mirrors upstream

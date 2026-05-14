@@ -4,27 +4,24 @@
 pub mod block_producer;
 pub mod blockfetch_worker;
 pub mod chainsync_worker;
-pub mod trace_forwarder;
 
-// Wave 5 PR 7+8: the `config`, `path_resolve`, `upstream_pins`, and
-// `genesis` modules were extracted into standalone sibling crates
-// `yggdrasil-node-config` and `yggdrasil-node-genesis`. Re-export
-// under the historical paths so every existing
-// `yggdrasil_node::{config,path_resolve,upstream_pins,genesis}::*`
-// call site keeps working without edits. Wave 5 PR 13 drops these
-// shims once direct imports land. Layering enforced by Cargo:
-// yggdrasil-node-genesis < yggdrasil-node-config < yggdrasil-node binary.
+// Wave 5 PR 7+8: extracted sub-crates re-exported under their
+// historical paths so existing `yggdrasil_node::*::*` call sites
+// keep working without edits. Wave 5 PR 13 drops these shims once
+// direct imports land. Layering: yggdrasil-node-config <
+// yggdrasil-node-genesis, yggdrasil-node-tracer < yggdrasil-node binary.
 pub use yggdrasil_node_config as config;
 pub use yggdrasil_node_config::path_resolve;
 pub use yggdrasil_node_config::upstream_pins;
 pub use yggdrasil_node_genesis as genesis;
+pub use yggdrasil_node_tracer as tracer;
+pub use yggdrasil_node_tracer::trace_forwarder;
 
 pub mod local_server;
 pub mod plutus_eval;
 pub mod runtime;
 pub mod server;
 pub mod sync;
-pub mod tracer;
 
 pub use blockfetch_worker::{
     DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
