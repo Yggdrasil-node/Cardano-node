@@ -42,6 +42,10 @@ pub mod types;
 /// 3. [`types::CommonOptions::defaults`] (lowest priority — fills
 ///    in any field still unset).
 pub fn run_main() -> ExitCode {
+    // Wave 8 PR 23: initialise the workspace tracing subscriber so
+    // this binary emits Haskell-Katip JSON logs identical to
+    // yggdrasil-node. Idempotent: a second call is a no-op.
+    let _ = yggdrasil_telemetry::init_subscriber(&yggdrasil_telemetry::TracingConfig::default());
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let cli_options = match parser::parse_args(&argv) {
         Ok(opts) => opts,

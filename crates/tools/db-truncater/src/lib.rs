@@ -26,6 +26,10 @@ pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {
+    // Wave 8 PR 23: initialise the workspace tracing subscriber so
+    // this binary emits Haskell-Katip JSON logs identical to
+    // yggdrasil-node. Idempotent: a second call is a no-op.
+    let _ = yggdrasil_telemetry::init_subscriber(&yggdrasil_telemetry::TracingConfig::default());
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match parser::parse_args(&argv) {
         Ok(args) => match parser::into_config(&args) {

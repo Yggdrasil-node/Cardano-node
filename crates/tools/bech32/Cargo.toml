@@ -41,4 +41,5 @@ bs58 = { workspace = true }
 clap = { workspace = true }
 eyre = { workspace = true }
 hex = { workspace = true }
+yggdrasil-telemetry.workspace = true
 thiserror = { workspace = true }

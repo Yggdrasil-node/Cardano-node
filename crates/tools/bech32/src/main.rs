@@ -18,6 +18,10 @@ use std::process::ExitCode;
 use yggdrasil_bech32::parser::{HELP_TEXT, ParseError, VERSION_TEXT, parse_args};
 
 fn main() -> ExitCode {
+    // Wave 8 PR 23: initialise the workspace tracing subscriber so
+    // this binary emits Haskell-Katip JSON logs identical to
+    // yggdrasil-node. Idempotent: a second call is a no-op.
+    let _ = yggdrasil_telemetry::init_subscriber(&yggdrasil_telemetry::TracingConfig::default());
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match parse_args(&argv) {
         Ok(args) => match yggdrasil_bech32::run_with(args) {

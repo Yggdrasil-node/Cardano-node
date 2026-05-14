@@ -30,4 +30,5 @@ path = "src/main.rs"
 [dependencies]
 clap = { workspace = true }
 eyre = { workspace = true }
+yggdrasil-telemetry.workspace = true
 thiserror = { workspace = true }

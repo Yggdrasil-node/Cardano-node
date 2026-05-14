@@ -30,5 +30,6 @@ thiserror = { workspace = true }
 yggdrasil-ledger = { path = "../../ledger" }
 yggdrasil-storage = { path = "../../storage" }
 
+yggdrasil-telemetry.workspace = true
 [dev-dependencies]
 tempfile = "3"

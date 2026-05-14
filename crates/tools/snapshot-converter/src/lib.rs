@@ -31,6 +31,10 @@ pub mod types;
 /// parse the resolved [`types::Config`] is handed to [`run`]; `--help`
 /// and `--version` short-circuit with byte-equivalent upstream output.
 pub fn run_main() -> ExitCode {
+    // Wave 8 PR 23: initialise the workspace tracing subscriber so
+    // this binary emits Haskell-Katip JSON logs identical to
+    // yggdrasil-node. Idempotent: a second call is a no-op.
+    let _ = yggdrasil_telemetry::init_subscriber(&yggdrasil_telemetry::TracingConfig::default());
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let config = match parser::parse_args(&argv) {
         Ok(config) => config,
