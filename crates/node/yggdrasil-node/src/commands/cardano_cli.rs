@@ -154,6 +154,21 @@ pub(crate) fn run_cardano_cli_command(
             println!("{}", hex::encode(txid));
             Ok(())
         }
+        CardanoCliCommand::AddressKeyHash {
+            payment_verification_key_file,
+        } => {
+            let envelope_bytes = std::fs::read(&payment_verification_key_file).map_err(|e| {
+                eyre::eyre!(
+                    "failed to read --payment-verification-key-file {}: {e}",
+                    payment_verification_key_file.display()
+                )
+            })?;
+            let key_bytes = read_verification_key_text_envelope(&envelope_bytes)?;
+            let hash = yggdrasil_crypto::hash_bytes_224(&key_bytes);
+            // Upstream prints lowercase hex without prefix (56 chars).
+            println!("{}", hex::encode(hash.0));
+            Ok(())
+        }
     }
 }
 
@@ -192,6 +207,56 @@ fn read_tx_input(
 /// array, but in both cases the first element is the body, and
 /// `Decoder::raw_value()` reads it as opaque bytes without needing to
 /// know the surrounding shape.
+/// Parse an upstream-shaped TextEnvelope JSON document and extract the
+/// 32-byte Ed25519 verification key bytes from its `cborHex` field.
+///
+/// The TextEnvelope format (per upstream
+/// `Cardano.Api.SerialiseTextEnvelope`) is the JSON object
+///
+/// ```text
+/// { "type":        "PaymentVerificationKeyShelley_ed25519",
+///   "description": "Payment Verification Key",
+///   "cborHex":     "5820<64 hex chars of 32-byte VK>" }
+/// ```
+///
+/// `cborHex` is a CBOR bytes-string envelope (`0x58 0x20 = bytes,
+/// length 32`) wrapping the raw 32-byte VK. This helper strips the
+/// 2-byte CBOR prefix and returns the inner 32 bytes.
+///
+/// The same envelope shape is used for `StakeVerificationKeyShelley_ed25519`
+/// (the wire bytes are identical; only the `type` field differs), so
+/// this helper is reused by `address key-hash` AND `stake-address
+/// key-hash` (the latter lands in a follow-on slice).
+pub(crate) fn read_verification_key_text_envelope(envelope_bytes: &[u8]) -> Result<[u8; 32]> {
+    let envelope: serde_json::Value = serde_json::from_slice(envelope_bytes)
+        .map_err(|e| eyre::eyre!("TextEnvelope is not valid JSON: {e}"))?;
+    let cbor_hex = envelope
+        .get("cborHex")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            eyre::eyre!("TextEnvelope is missing the required `cborHex` string field")
+        })?;
+    let cbor_bytes = hex::decode(cbor_hex.trim())
+        .map_err(|e| eyre::eyre!("TextEnvelope cborHex is not valid hex: {e}"))?;
+    if cbor_bytes.len() != 34 {
+        eyre::bail!(
+            "expected 34 bytes of cborHex (2-byte CBOR prefix + 32-byte key), got {}",
+            cbor_bytes.len()
+        );
+    }
+    // CBOR bytes-string of length 32 = major-type-2 (0x40) | length-32 (0x20) = 0x58 0x20.
+    if cbor_bytes[0] != 0x58 || cbor_bytes[1] != 0x20 {
+        eyre::bail!(
+            "expected CBOR prefix 0x5820 (bytes-string of length 32), got 0x{:02x}{:02x}",
+            cbor_bytes[0],
+            cbor_bytes[1]
+        );
+    }
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(&cbor_bytes[2..]);
+    Ok(out)
+}
+
 pub(crate) fn compute_txid_from_tx_cbor(tx_bytes: &[u8]) -> Result<[u8; 32]> {
     use yggdrasil_ledger::cbor::Decoder;
     use yggdrasil_ledger::compute_tx_id;

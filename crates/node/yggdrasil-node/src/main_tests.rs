@@ -2572,3 +2572,109 @@ fn cardano_cli_transaction_txid_matches_blake2b_256_of_body() {
         hex::encode(expected_txid),
     );
 }
+
+#[test]
+fn cardano_cli_address_key_hash_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "address-key-hash",
+        "--payment-verification-key-file",
+        "/tmp/payment.vkey",
+    ])
+    .expect("address-key-hash must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::AddressKeyHash { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+/// Pin the TextEnvelope reader against the upstream-shaped JSON
+/// `{type, description, cborHex}` envelope. The cborHex strips the
+/// 2-byte CBOR prefix (`0x58 0x20`) and returns the 32 raw VK bytes.
+#[test]
+fn read_verification_key_text_envelope_round_trips() {
+    use super::commands::cardano_cli::read_verification_key_text_envelope;
+
+    // 32-byte fake VK = 0xAA repeated.
+    let vk = [0xAA_u8; 32];
+    // CBOR prefix + key = 34 bytes.
+    let mut cbor = vec![0x58, 0x20];
+    cbor.extend_from_slice(&vk);
+    let cbor_hex = hex::encode(&cbor);
+
+    let envelope = serde_json::json!({
+        "type": "PaymentVerificationKeyShelley_ed25519",
+        "description": "Payment Verification Key",
+        "cborHex": cbor_hex,
+    });
+    let envelope_bytes = serde_json::to_vec(&envelope).expect("serialize envelope");
+
+    let parsed = read_verification_key_text_envelope(&envelope_bytes).expect("parse envelope");
+    assert_eq!(parsed, vk);
+}
+
+#[test]
+fn read_verification_key_text_envelope_rejects_wrong_prefix() {
+    use super::commands::cardano_cli::read_verification_key_text_envelope;
+
+    // Use 0x4020 (text-string instead of bytes-string) — same length,
+    // wrong major type. The CBOR prefix check must reject it.
+    let mut cbor = vec![0x40, 0x20];
+    cbor.extend_from_slice(&[0xBB_u8; 32]);
+    let cbor_hex = hex::encode(&cbor);
+
+    let envelope = serde_json::json!({
+        "type": "PaymentVerificationKeyShelley_ed25519",
+        "description": "Payment Verification Key",
+        "cborHex": cbor_hex,
+    });
+    let envelope_bytes = serde_json::to_vec(&envelope).expect("serialize envelope");
+
+    let result = read_verification_key_text_envelope(&envelope_bytes);
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("must reject wrong CBOR prefix"),
+    };
+    assert!(
+        err.to_string().contains("expected CBOR prefix"),
+        "error must reference the prefix expectation; got {err}"
+    );
+}
+
+/// End-to-end: a known VK → known Blake2b-224 hash. The hash is the
+/// 28-byte address-credential used for the Shelley payment address;
+/// pin it so a regression in the hash function surfaces here.
+#[test]
+fn address_key_hash_matches_blake2b_224() {
+    use super::commands::cardano_cli::read_verification_key_text_envelope;
+    use yggdrasil_crypto::hash_bytes_224;
+
+    let vk = [0x42_u8; 32];
+    let expected = hash_bytes_224(&vk).0;
+
+    let mut cbor = vec![0x58, 0x20];
+    cbor.extend_from_slice(&vk);
+    let envelope = serde_json::json!({
+        "type": "PaymentVerificationKeyShelley_ed25519",
+        "description": "Payment Verification Key",
+        "cborHex": hex::encode(&cbor),
+    });
+    let envelope_bytes = serde_json::to_vec(&envelope).expect("serialize");
+    let parsed = read_verification_key_text_envelope(&envelope_bytes).expect("parse");
+
+    let actual = hash_bytes_224(&parsed).0;
+    assert_eq!(
+        actual, expected,
+        "address-key-hash must equal Blake2b-224(VK); got {:?}, expected {:?}",
+        hex::encode(actual),
+        hex::encode(expected),
+    );
+}

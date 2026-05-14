@@ -367,4 +367,24 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
+    /// Hash a payment / stake verification key. Reads the upstream
+    /// TextEnvelope JSON shape (`type`, `description`, `cborHex`),
+    /// CBOR-decodes the inner 32-byte key payload, and prints the
+    /// 28-byte Blake2b-224 hash as 56 lowercase hex characters.
+    /// Offline operation; no socket needed.
+    ///
+    /// Mirrors upstream `cardano-cli address key-hash --payment-
+    /// verification-key-file FILE`. The same Blake2b-224 hash is
+    /// the address-hash for Shelley payment / stake credentials,
+    /// so this is the building block for `address build` / `stake-
+    /// address build` (forthcoming).
+    AddressKeyHash {
+        /// Path to a TextEnvelope JSON file containing the
+        /// verification key. Both `PaymentVerificationKeyShelley_ed25519`
+        /// and `StakeVerificationKeyShelley_ed25519` envelopes are
+        /// accepted — the wire shape is identical (32-byte VK
+        /// inside a CBOR bytes envelope).
+        #[arg(long)]
+        payment_verification_key_file: PathBuf,
+    },
 }
