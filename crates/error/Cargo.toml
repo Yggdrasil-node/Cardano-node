@@ -1,0 +1,19 @@
+[package]
+name = "yggdrasil-error"
+description = "Workspace-wide error envelope unifying per-crate domain errors at the binary boundary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+yggdrasil-consensus.workspace = true
+yggdrasil-crypto.workspace = true
+yggdrasil-ledger.workspace = true
+yggdrasil-plutus.workspace = true
+yggdrasil-storage.workspace = true
+
+[lints]
+workspace = true

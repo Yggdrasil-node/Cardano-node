@@ -1,0 +1,17 @@
+[package]
+name = "yggdrasil-telemetry"
+description = "Workspace-wide observability scaffolding (log format, span field names, tracing-subscriber wiring). Wave 2 scaffold; Wave 6 fills in the tracing/metrics dependencies."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Intentionally minimal in Wave 2. Wave 6 PR 14 adds `tracing`,
+# `tracing-subscriber`, `tracing-opentelemetry`, `opentelemetry`,
+# `opentelemetry_sdk`, `opentelemetry-otlp` as workspace deps and
+# wires the subscriber init function below.
+
+[lints]
+workspace = true
