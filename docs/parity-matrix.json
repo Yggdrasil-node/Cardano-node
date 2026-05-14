@@ -365,12 +365,12 @@
       ],
       "rust_surface": [
         {
-          "path": "crates/node/yggdrasil-node/src/runtime.rs",
-          "role": "140-line orchestration shell with 18 sub-module declarations + ChainTipNotify type alias + tests."
+          "path": "crates/node/runtime/src/lib.rs",
+          "role": "Thin orchestration shell that re-exports the per-domain sub-modules and exposes the verified-sync service entry points the CLI consumes. Wave 5 PR 13 lifted the runtime out of the binary crate into its own yggdrasil-node-runtime crate; this file is the equivalent of the former 140-line shell."
         },
         {
-          "path": "crates/node/yggdrasil-node/src/runtime",
-          "role": "18 per-domain sub-modules covering governor, block-producer, peer management, cm-actions, forge, sync-session, reconnecting, mempool helpers, etc."
+          "path": "crates/node/runtime/src/",
+          "role": "Per-domain sub-modules covering governor, block-producer, peer management, cm-actions, forge, sync-session, reconnecting, mempool helpers, etc. Each *.rs file maps to a specific upstream Haskell concept."
         }
       ],
       "implemented_evidence": [
