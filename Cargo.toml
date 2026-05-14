@@ -181,6 +181,7 @@ yggdrasil-crypto = { path = "crates/crypto" }
 yggdrasil-error = { path = "crates/error" }
 yggdrasil-ledger = { path = "crates/ledger" }
 yggdrasil-network = { path = "crates/network" }
+yggdrasil-node-block-producer = { path = "crates/node/block-producer" }
 yggdrasil-node-config = { path = "crates/node/config" }
 yggdrasil-node-genesis = { path = "crates/node/genesis" }
 yggdrasil-node-plutus-eval = { path = "crates/node/plutus-eval" }

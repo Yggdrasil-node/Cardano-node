@@ -1,0 +1,32 @@
+[package]
+name = "yggdrasil-node-block-producer"
+description = "Block-producer credentials + forge primitives + ForgedBlock types — extracted from the yggdrasil-node binary in Wave 5 PR 10 so the `default = [\"forge\"]` feature flag toggle can build a relay-only variant that compiles out the block-producer surface entirely."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+yggdrasil-consensus.workspace = true
+yggdrasil-crypto.workspace = true
+yggdrasil-ledger.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["forge"]
+# When the `forge` feature is off the block-producer crate compiles to
+# essentially nothing; the binary's relay-only variant gets a
+# fully-dead-stripped build path. Today the flag is decorative (no
+# `#[cfg(feature = "forge")]` gates inside the crate yet); Wave 5 PR 13
+# wires the gates after sister-tool import migration.
+forge = []
+
+[lints]
+workspace = true

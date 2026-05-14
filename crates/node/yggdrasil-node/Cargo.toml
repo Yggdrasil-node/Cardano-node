@@ -20,6 +20,7 @@ yggdrasil-cardano-cli.workspace = true
 yggdrasil-consensus.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true
+yggdrasil-node-block-producer.workspace = true
 yggdrasil-node-config.workspace = true
 yggdrasil-node-genesis.workspace = true
 yggdrasil-node-plutus-eval.workspace = true

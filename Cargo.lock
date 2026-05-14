@@ -2509,12 +2509,27 @@ dependencies = [
  "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-network",
+ "yggdrasil-node-block-producer",
  "yggdrasil-node-config",
  "yggdrasil-node-genesis",
  "yggdrasil-node-plutus-eval",
  "yggdrasil-node-tracer",
  "yggdrasil-plutus",
  "yggdrasil-storage",
+]
+
+[[package]]
+name = "yggdrasil-node-block-producer"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "yggdrasil-consensus",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
 ]
 
 [[package]]

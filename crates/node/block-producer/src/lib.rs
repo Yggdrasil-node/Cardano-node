@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Block producer credentials, text-envelope parsing, and leader check.
 //!
 //! This module implements the block-production side of the Praos protocol:
