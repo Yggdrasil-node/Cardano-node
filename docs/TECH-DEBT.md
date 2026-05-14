@@ -75,9 +75,16 @@ What's still missing:
   `tokio::io::DuplexStream` in-memory pipes.
 - The cardano-tracer-specific Handshake mini-protocol negotiator
   (mini-protocol num 0).
-- A `Layer<S>` adapter for `tracing-subscriber` that walks every
+- ~~A `Layer<S>` adapter for `tracing-subscriber` that walks every
   `tracing::Event` into a `TraceObject` and emits it through the
-  Mux stack to a configurable Unix socket.
+  Mux stack to a configurable Unix socket.~~ **Landed in commit
+  `92fc2df`** — `crates/node/tracer/src/trace_forwarder/layer.rs`
+  ships `TraceForwardingLayer` (a `tracing_subscriber::Layer<S>`)
+  + `event_builder::build_trace_object_from_event` (data transform)
+  + `forwarding_task::run` (write-only batched bearer drain).
+  Full pipeline `tracing::Event` → `TraceObject` →
+  `MsgTraceObjectsReply` SDU → bearer is wireable with ~10 lines
+  of binary setup.
 - ~~TraceObject Layer 1 **decoder** (today only the encoder ships;
   `mini_protocol.rs` errors on a non-empty inbound `Reply` until
   the decoder lands).~~ **Landed in commit `f0bc5a9`** —
