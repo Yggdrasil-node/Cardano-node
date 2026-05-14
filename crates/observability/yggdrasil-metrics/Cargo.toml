@@ -1,0 +1,16 @@
+[package]
+name = "yggdrasil-metrics"
+description = "Prometheus metrics registry with EKG-parity names mirroring upstream cardano-node 11.0.1. Wave 6 PR 16."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

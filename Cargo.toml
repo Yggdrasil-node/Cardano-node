@@ -20,9 +20,10 @@ members = [
     # `docs/strict-mirror-audit.tsv` allowlist carries the
     # `(c) NO_MIRROR_NEEDS_DOCSTRING` verdicts.
     # ──────────────────────────────────────────────────────────────────
-    "crates/error",          # cross-crate YggdrasilError envelope
-    "crates/telemetry",      # observability scaffold; Wave 6 fill-in
-    "crates/test-fixtures",  # dev-deps-only shared scaffolding
+    "crates/error",                            # cross-crate YggdrasilError envelope
+    "crates/telemetry",                        # tracing + Haskell-JSON formatter
+    "crates/test-fixtures",                    # dev-deps-only shared scaffolding
+    "crates/observability/yggdrasil-metrics",  # Wave 6 PR 16 EKG-parity Prometheus registry
 
     # ──────────────────────────────────────────────────────────────────
     # Main node binary — orchestration layer wrapping the core crates.
@@ -188,6 +189,13 @@ bs58 = "0.5"
 # unchanged (no proc-macro or async-runtime additions).
 tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["std", "fmt", "env-filter", "json", "registry", "smallvec", "tracing-log"] }
+# Wave 6 PR 16 — Prometheus metrics façade. `metrics` is a small
+# facade crate (zero-cost when no recorder is installed);
+# `metrics-exporter-prometheus` provides the HTTP scrape endpoint.
+# Pinned `default-features = false` to keep the audit-time
+# transitive footprint narrow.
+metrics = { version = "0.24", default-features = false }
+metrics-exporter-prometheus = { version = "0.17", default-features = false, features = ["http-listener"] }
 
 yggdrasil-cardano-cli = { path = "crates/tools/cardano-cli" }
 yggdrasil-consensus = { path = "crates/consensus" }
@@ -198,6 +206,7 @@ yggdrasil-network = { path = "crates/network" }
 yggdrasil-node-block-producer = { path = "crates/node/block-producer" }
 yggdrasil-node-config = { path = "crates/node/config" }
 yggdrasil-node-genesis = { path = "crates/node/genesis" }
+yggdrasil-metrics = { path = "crates/observability/yggdrasil-metrics" }
 yggdrasil-node-ntc-server = { path = "crates/node/ntc-server" }
 yggdrasil-node-ntn-server = { path = "crates/node/ntn-server" }
 yggdrasil-node-plutus-eval = { path = "crates/node/plutus-eval" }
