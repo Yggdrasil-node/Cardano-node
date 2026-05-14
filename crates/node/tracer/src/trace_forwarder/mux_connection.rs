@@ -132,6 +132,32 @@ where
         rx
     }
 
+    /// Run the initiator side of the Handshake mini-protocol
+    /// (mini-protocol num 0) over this Mux connection.
+    ///
+    /// Equivalent to
+    /// [`super::handshake_driver::run_initiator_handshake`] but
+    /// composes cleanly with the per-mini-protocol channel-based
+    /// subscription instead of taking a raw `&mut Bearer<S>` —
+    /// useful when other mini-protocols share the same bearer
+    /// (cardano-tracer use case: handshake → TraceObject forwarding,
+    /// both on the same Unix socket).
+    ///
+    /// MUST be called BEFORE [`Self::spawn_read_task`] starts the
+    /// read-loop — this function performs its own blocking
+    /// `bearer.read_sdu()` to consume the responder's Accept /
+    /// Refuse reply. After it returns, spawn the read-task to
+    /// dispatch subsequent SDUs.
+    pub async fn run_initiator_handshake(
+        &self,
+        versions: std::collections::BTreeMap<u32, Vec<u8>>,
+    ) -> Result<super::handshake_driver::AgreedVersion, super::handshake_driver::HandshakeDriverError>
+    {
+        // Take the bearer mutex for the full handshake duration.
+        let mut bearer = self.bearer.lock().await;
+        super::handshake_driver::run_initiator_handshake(&mut bearer, versions).await
+    }
+
     /// Spawn the read-task that dispatches inbound SDUs to
     /// subscribers. Returns the `JoinHandle` so the caller can
     /// await it on shutdown.
@@ -246,6 +272,70 @@ mod mux_connection_tests {
             .expect("subscriber channel produced an SDU");
         assert_eq!(received.header, outbound_header);
         assert_eq!(received.payload, b"hello");
+    }
+
+    /// Compose handshake_driver with MuxConnection: invoke the
+    /// handshake via `run_initiator_handshake` (taking the bearer
+    /// mutex internally), then spawn the read-task afterwards so
+    /// subsequent mini-protocol SDUs dispatch normally.
+    #[tokio::test]
+    async fn mux_connection_run_initiator_handshake_round_trip() {
+        use crate::trace_forwarder::handshake::{HandshakeMessage, decode_message, encode_message};
+        use std::collections::BTreeMap;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (client, mut server) = tokio::io::duplex(4096);
+        let conn = MuxConnection::new(Bearer::new(client));
+
+        // Fake responder: read Propose, reply Accept on version 2.
+        let server_task = tokio::spawn(async move {
+            let mut hdr = [0u8; 8];
+            server.read_exact(&mut hdr).await.expect("read hdr");
+            let hdr_decoded =
+                crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode");
+            let mut payload = vec![0u8; hdr_decoded.length as usize];
+            server.read_exact(&mut payload).await.expect("read payload");
+            // Sanity: it was a ProposeVersions in Idle state.
+            let _ = decode_message(&payload, true).expect("decode propose");
+
+            // Reply with AcceptVersion(2, <data>).
+            let reply = HandshakeMessage::AcceptVersion {
+                version: 2,
+                data_cbor: {
+                    use yggdrasil_ledger::cbor::Encoder;
+                    let mut enc = Encoder::new();
+                    enc.unsigned(764_824_073u64);
+                    enc.into_bytes()
+                },
+            };
+            let reply_payload = encode_message(&reply);
+            let reply_hdr = SduHeader {
+                timestamp: 0,
+                mini_protocol_num: HANDSHAKE_MINI_PROTOCOL_NUM,
+                direction: MiniProtocolDir::Responder,
+                length: reply_payload.len() as u16,
+            };
+            let reply_hdr_bytes =
+                crate::trace_forwarder::mux::encode_sdu_header(&reply_hdr).expect("encode");
+            server.write_all(&reply_hdr_bytes).await.expect("write hdr");
+            server.write_all(&reply_payload).await.expect("write payload");
+        });
+
+        let mut versions = BTreeMap::new();
+        let v_data = {
+            use yggdrasil_ledger::cbor::Encoder;
+            let mut enc = Encoder::new();
+            enc.unsigned(1u64);
+            enc.into_bytes()
+        };
+        versions.insert(1u32, v_data.clone());
+        versions.insert(2u32, v_data);
+        let agreed = conn
+            .run_initiator_handshake(versions)
+            .await
+            .expect("handshake accept");
+        assert_eq!(agreed.version, 2);
+        let _ = server_task.await;
     }
 
     /// SDUs arriving on a mini-protocol that has no subscriber are
