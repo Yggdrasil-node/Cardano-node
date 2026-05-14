@@ -19,6 +19,10 @@ on:
 
 permissions:
   contents: write
+  # Wave 7 PR 19: required for keyless cosign signing via OIDC + SLSA
+  # build-provenance attestation via actions/attest-build-provenance.
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -58,8 +62,17 @@ jobs:
           restore-keys: |
             cargo-${{ matrix.target }}-
 
-      - name: Build release binary
-        run: cargo build --release --bin yggdrasil-node --target ${{ matrix.target }}
+      # Wave 7 PR 19: cargo-auditable embeds the dependency manifest
+      # into the shipped binary so operators can run
+      # `cargo audit bin yggdrasil-node` after a future RUSTSEC advisory
+      # without rebuilding the whole tree.
+      - name: Install cargo-auditable + cargo-cyclonedx
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-auditable,cargo-cyclonedx
+
+      - name: Build release binary (cargo-auditable)
+        run: cargo auditable build --release --bin yggdrasil-node --target ${{ matrix.target }}
 
       - name: Strip binary
         run: |
@@ -69,6 +82,30 @@ jobs:
           else
             strip target/${{ matrix.target }}/release/yggdrasil-node
           fi
+
+      # Wave 7 PR 19: CycloneDX-JSON SBOM per arch. The shipped tarball
+      # bundles its own SBOM so operators can run dependency-CVE scans
+      # against the exact artifacts they downloaded without trusting
+      # the cargo-auditable manifest alone.
+      - name: Generate CycloneDX SBOM
+        id: sbom
+        run: |
+          set -euo pipefail
+          cargo cyclonedx --format json --target-only --target ${{ matrix.target }}
+          # cargo-cyclonedx emits to per-crate paths. Aggregate the
+          # binary crate's SBOM into a single top-level artifact
+          # named for the release archive.
+          sbom_src="crates/node/yggdrasil-node/yggdrasil-node.cdx.json"
+          if [ ! -f "$sbom_src" ]; then
+            # Fallback for older cargo-cyclonedx layout.
+            sbom_src="$(find . -name 'yggdrasil-node*.cdx.json' -not -path './target/*' | head -1)"
+          fi
+          if [ -z "$sbom_src" ] || [ ! -f "$sbom_src" ]; then
+            echo "::error::cargo-cyclonedx did not produce a yggdrasil-node SBOM"
+            exit 1
+          fi
+          echo "sbom_src=$sbom_src" >> "$GITHUB_OUTPUT"
+          echo "[sbom] $sbom_src ($(wc -c < "$sbom_src") bytes)"
 
       - name: Stage release artifacts
         id: stage
@@ -86,14 +123,51 @@ jobs:
 
           cp target/${{ matrix.target }}/release/yggdrasil-node "$dir/"
           cp README.md LICENSE* "$dir/" 2>/dev/null || true
-          cp -r node/configuration "$dir/configuration"
-          cp -r node/scripts "$dir/scripts"
+          # Wave 4 PR 6 follow-up: post-move paths.
+          cp -r crates/node/yggdrasil-node/configuration "$dir/configuration"
+          cp -r crates/node/yggdrasil-node/scripts "$dir/scripts"
+          # Wave 7 PR 19: bundle the SBOM alongside the binary so
+          # operators get the dep manifest in-tree.
+          cp "${{ steps.sbom.outputs.sbom_src }}" "$dir/yggdrasil-node-sbom.cdx.json"
 
           tar -czf "${dir}.tar.gz" "$dir"
           sha256sum "${dir}.tar.gz" > "${dir}.tar.gz.sha256"
+          # Wave 7 PR 19: also emit the SBOM as a separate signed
+          # artifact for operators that prefer to verify it independently.
+          cp "${{ steps.sbom.outputs.sbom_src }}" "${dir}-sbom.cdx.json"
 
           echo "archive=${dir}.tar.gz" >> "$GITHUB_OUTPUT"
           echo "checksum=${dir}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          echo "sbom=${dir}-sbom.cdx.json" >> "$GITHUB_OUTPUT"
+          echo "dir=${dir}" >> "$GITHUB_OUTPUT"
+
+      # Wave 7 PR 19: SLSA L3 build-provenance attestation. The
+      # `predicate_type` is `https://slsa.dev/provenance/v1`; operators
+      # verify via `gh attestation verify <archive> --repo <repo>` or
+      # `slsa-verifier`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ${{ steps.stage.outputs.archive }}
+            ${{ steps.stage.outputs.sbom }}
+
+      # Wave 7 PR 19: cosign keyless signing via the workflow's OIDC
+      # token. Each archive + SBOM gets a `.sig` + `.crt` pair.
+      # Verification recipe: see docs/manual/release-verification.md.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign archive + SBOM (cosign keyless)
+        run: |
+          set -euo pipefail
+          for path in "${{ steps.stage.outputs.archive }}" "${{ steps.stage.outputs.sbom }}"; do
+            cosign sign-blob --yes \
+              --output-signature "${path}.sig" \
+              --output-certificate "${path}.crt" \
+              "$path"
+            echo "[cosign] signed $path"
+          done
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
@@ -101,7 +175,12 @@ jobs:
           name: yggdrasil-node-${{ matrix.archive_suffix }}
           path: |
             ${{ steps.stage.outputs.archive }}
+            ${{ steps.stage.outputs.archive }}.sig
+            ${{ steps.stage.outputs.archive }}.crt
             ${{ steps.stage.outputs.checksum }}
+            ${{ steps.stage.outputs.sbom }}
+            ${{ steps.stage.outputs.sbom }}.sig
+            ${{ steps.stage.outputs.sbom }}.crt
           if-no-files-found: error
           retention-days: 7
 
@@ -125,15 +204,33 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.sha256" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \
+            \( -name "*.tar.gz" -o -name "*.sha256" \
+               -o -name "*.sig" -o -name "*.crt" \
+               -o -name "*.cdx.json" \) \
+            -exec cp {} release-assets/ \;
           ls -la release-assets/
 
-      - name: Aggregate SHA256 checksums
+      - name: Aggregate SHA256 checksums + sign aggregate
         run: |
+          set -euo pipefail
           cd release-assets
           cat *.sha256 > SHA256SUMS.txt
           echo "Aggregated checksums:"
           cat SHA256SUMS.txt
+
+      - name: Install cosign (aggregate signing)
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign SHA256SUMS.txt (cosign keyless)
+        run: |
+          set -euo pipefail
+          cd release-assets
+          cosign sign-blob --yes \
+            --output-signature SHA256SUMS.txt.sig \
+            --output-certificate SHA256SUMS.txt.crt \
+            SHA256SUMS.txt
+          echo "[cosign] signed SHA256SUMS.txt"
 
       - name: Compute previous tag
         id: prev_tag
@@ -172,11 +269,38 @@ jobs:
               echo "| ${base#yggdrasil-node-${tag}-} | \`${base}\` |"
             done
             echo ""
-            echo "Verify integrity:"
+            echo "Verify integrity (checksums):"
             echo ""
             echo '```'
             echo "sha256sum -c SHA256SUMS.txt"
             echo '```'
+            echo ""
+            echo "Verify signature (cosign keyless via Sigstore):"
+            echo ""
+            echo '```'
+            echo "cosign verify-blob \\"
+            echo "  --certificate <archive>.tar.gz.crt \\"
+            echo "  --signature <archive>.tar.gz.sig \\"
+            echo "  --certificate-identity-regexp '^https://github\\.com/${{ github.repository }}/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\"
+            echo "  <archive>.tar.gz"
+            echo '```'
+            echo ""
+            echo "Verify build provenance (SLSA L3 attestation):"
+            echo ""
+            echo '```'
+            echo "gh attestation verify <archive>.tar.gz --repo ${{ github.repository }}"
+            echo '```'
+            echo ""
+            echo "Verify embedded dependency manifest (cargo-auditable):"
+            echo ""
+            echo '```'
+            echo "cargo install cargo-audit"
+            echo "tar -xzf <archive>.tar.gz"
+            echo "cargo audit bin yggdrasil-node-*/yggdrasil-node"
+            echo '```'
+            echo ""
+            echo "Full verification recipe: [docs/manual/release-verification.md](https://github.com/${{ github.repository }}/blob/${tag}/docs/manual/release-verification.md)"
             echo ""
             echo "## Documentation"
             echo ""
@@ -191,10 +315,22 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
+          # Wave 7 PR 19: the release surface now includes per-archive
+          # cosign signature + certificate, the CycloneDX SBOM (and its
+          # own signature/cert), and the signed aggregate checksum file.
+          # SLSA build-provenance attestations are stored separately via
+          # GitHub's attestation API (verify with `gh attestation verify`).
           files: |
             release-assets/*.tar.gz
+            release-assets/*.tar.gz.sig
+            release-assets/*.tar.gz.crt
             release-assets/*.sha256
+            release-assets/*.cdx.json
+            release-assets/*.cdx.json.sig
+            release-assets/*.cdx.json.crt
             release-assets/SHA256SUMS.txt
+            release-assets/SHA256SUMS.txt.sig
+            release-assets/SHA256SUMS.txt.crt
           body_path: release-notes.md
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
