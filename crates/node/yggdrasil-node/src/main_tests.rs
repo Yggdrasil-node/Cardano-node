@@ -2765,6 +2765,101 @@ fn build_shelley_enterprise_address_round_trips() {
 }
 
 #[test]
+fn cardano_cli_transaction_sign_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "transaction-sign",
+        "--tx-hex",
+        "0x836162",
+        "--signing-key-file",
+        "/tmp/payment.skey",
+        "--out-file",
+        "/tmp/signed.cbor",
+    ])
+    .expect("transaction-sign must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::TransactionSign { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+/// End-to-end signing pin: build a 3-element fake tx
+/// `[<body>, <empty wits>, true]`, sign with a known SK from a fixed
+/// 32-byte seed, then assert:
+///
+///   - The outer array stays 3-elements.
+///   - The TxBody is preserved verbatim.
+///   - The fresh witness set is `{0: [[vk_bytes, sig_bytes]]}`.
+///   - The signature verifies against txid = Blake2b-256(body).
+#[test]
+fn sign_tx_replaces_witness_set_and_signature_verifies() {
+    use super::commands::cardano_cli::sign_tx_with_fresh_witness_set;
+    use yggdrasil_crypto::{SigningKey, hash_bytes_256};
+    use yggdrasil_ledger::cbor::Decoder;
+
+    // Body: CBOR `[1, 2, 3]` = 4 bytes (0x83 0x01 0x02 0x03).
+    let body = [0x83_u8, 0x01, 0x02, 0x03];
+    // Empty witness set: CBOR map of length 0 = 0xA0.
+    // IsValid: CBOR true = 0xF5.
+    // Outer 3-element array prefix = 0x83.
+    let mut tx = vec![0x83_u8];
+    tx.extend_from_slice(&body);
+    tx.push(0xA0); // empty wits map
+    tx.push(0xF5); // is_valid = true
+
+    let seed = [0x77_u8; 32];
+    let signed = sign_tx_with_fresh_witness_set(&tx, &seed).expect("sign");
+
+    let mut dec = Decoder::new(&signed);
+    // Outer array len = 3.
+    assert_eq!(dec.array().expect("outer array"), 3);
+    // Element 0: body — must equal the original 4 body bytes.
+    let body_out = dec.raw_value().expect("body").to_vec();
+    assert_eq!(body_out, body, "body bytes must be preserved verbatim");
+    // Element 1: fresh witness set = {0: [[vk, sig]]}.
+    let map_len = dec.map().expect("witness set map");
+    assert_eq!(map_len, 1, "witness set should have 1 entry");
+    let key = dec.unsigned().expect("witness map key");
+    assert_eq!(key, 0, "first map key must be 0 (vkey witnesses)");
+    let outer_len = dec.array().expect("vkey witness array");
+    assert_eq!(outer_len, 1, "expected one vkey witness");
+    let inner_len = dec.array().expect("vkey witness pair");
+    assert_eq!(inner_len, 2, "vkey witness must be [vk, sig]");
+    let vk_bytes = dec.bytes().expect("vk").to_vec();
+    let sig_bytes = dec.bytes().expect("sig").to_vec();
+    assert_eq!(vk_bytes.len(), 32, "vk is 32 bytes");
+    assert_eq!(sig_bytes.len(), 64, "ed25519 sig is 64 bytes");
+    // Element 2: IsValid = true.
+    let is_valid = dec.bool().expect("is_valid");
+    assert!(is_valid);
+
+    // Verify the witness signature: VK ∋ Verify(sig, Blake2b-256(body), VK).
+    use yggdrasil_crypto::{Signature, VerificationKey};
+    let expected_txid = hash_bytes_256(&body).0;
+    let vk_arr: [u8; 32] = vk_bytes.try_into().expect("vk size");
+    let sig_arr: [u8; 64] = sig_bytes.try_into().expect("sig size");
+    let vk_obj = VerificationKey::from_bytes(vk_arr);
+    let sig_obj = Signature::from_bytes(sig_arr);
+    vk_obj
+        .verify(&expected_txid, &sig_obj)
+        .expect("signature must verify against the txid");
+
+    // Sanity: re-deriving the VK from the seed must equal the
+    // witness's VK bytes — pins that we signed with the right SK.
+    let sk = SigningKey::from_bytes(seed);
+    let derived_vk = sk.verification_key().expect("derive vk");
+    assert_eq!(derived_vk.to_bytes(), vk_arr);
+}
+
+#[test]
 fn cardano_cli_stake_address_build_parses() {
     use clap::Parser;
     use super::cli::{CardanoCliCommand, Command};

@@ -422,6 +422,37 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long)]
         signing_key_file: PathBuf,
     },
+    /// Sign a transaction with a single payment / stake signing key,
+    /// replacing the existing witness set with a fresh one containing
+    /// just the produced VKeyWitness. Operator-essential single-
+    /// signer slice; multi-signer / additive-witness flows land in a
+    /// future round.
+    ///
+    /// Inputs:
+    ///
+    ///   - `--tx-file FILE` or `--tx-hex HEX`: the unsigned tx CBOR
+    ///     (typically produced by `transaction-build-raw` upstream).
+    ///   - `--signing-key-file SK`: TextEnvelope payment/stake SK file.
+    ///   - `--out-file FILE`: where to write the signed tx CBOR.
+    ///
+    /// Output: CBOR bytes (raw, not hex). For hex output, pipe through
+    /// `xxd -p` or use `od -An -tx1`.
+    TransactionSign {
+        /// Path to a file containing the CBOR-encoded unsigned tx.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR unsigned tx bytes.
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+        /// Path to a TextEnvelope JSON file containing the Ed25519
+        /// signing key. Both `Payment…` and `Stake…` envelope types
+        /// are accepted — the on-wire SK bytes are identical.
+        #[arg(long)]
+        signing_key_file: PathBuf,
+        /// Path to write the signed tx CBOR.
+        #[arg(long)]
+        out_file: PathBuf,
+    },
     /// Build a Shelley reward (stake) address as a Bech32 string.
     /// Reads a stake verification key TextEnvelope file, hashes it,
     /// wraps with the reward-address header byte, and Bech32-

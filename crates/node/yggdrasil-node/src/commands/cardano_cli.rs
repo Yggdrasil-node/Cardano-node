@@ -185,6 +185,26 @@ pub(crate) fn run_cardano_cli_command(
             &signing_key_file,
             KeyKind::Stake,
         ),
+        CardanoCliCommand::TransactionSign {
+            tx_file,
+            tx_hex,
+            signing_key_file,
+            out_file,
+        } => {
+            let tx_bytes = read_tx_input(tx_file, tx_hex, "transaction-sign")?;
+            let sk_envelope = std::fs::read(&signing_key_file).map_err(|e| {
+                eyre::eyre!(
+                    "failed to read --signing-key-file {}: {e}",
+                    signing_key_file.display()
+                )
+            })?;
+            let sk_bytes = read_verification_key_text_envelope(&sk_envelope)?;
+            let signed_tx = sign_tx_with_fresh_witness_set(&tx_bytes, &sk_bytes)?;
+            std::fs::write(&out_file, &signed_tx).map_err(|e| {
+                eyre::eyre!("failed to write --out-file {}: {e}", out_file.display())
+            })?;
+            Ok(())
+        }
         CardanoCliCommand::StakeAddressBuild {
             stake_verification_key_file,
             mainnet,
@@ -584,6 +604,84 @@ pub(crate) fn read_verification_key_text_envelope(envelope_bytes: &[u8]) -> Resu
     }
     let mut out = [0_u8; 32];
     out.copy_from_slice(&cbor_bytes[2..]);
+    Ok(out)
+}
+
+/// Sign a transaction with a single Ed25519 signing key, replacing
+/// the existing witness set with a fresh one carrying just the
+/// produced VKeyWitness.
+///
+/// Wire surgery:
+///
+/// - Read the outer CBOR array length L from `tx_bytes`.
+/// - Slice out the TxBody bytes (element 0) via `Decoder::raw_value`.
+/// - Skip the original witness set (element 1) and remember the
+///   tail-bytes range — element 2 onward (IsValid + optional
+///   AuxData) gets preserved verbatim.
+/// - Construct a fresh witness-set CBOR map `{0: [[vk, sig]]}` —
+///   upstream `Cardano.Ledger.Shelley.TxWits` encoding for vkey
+///   witnesses with the `0` map key.
+/// - Re-emit the tx as `array(L) || TxBody || NewWitnessSet || tail`.
+///
+/// This is the single-signer flow; additive-witness flows (preserve
+/// existing entries 0..=k of the witness set and append a new
+/// VKeyWitness) require a full witness-set decoder + re-encoder
+/// that doesn't exist yet — gated on a future round when multi-
+/// signer is needed.
+pub(crate) fn sign_tx_with_fresh_witness_set(
+    tx_bytes: &[u8],
+    sk_bytes: &[u8; 32],
+) -> Result<Vec<u8>> {
+    use yggdrasil_crypto::SigningKey;
+    use yggdrasil_ledger::cbor::{Decoder, Encoder};
+
+    // Step 1: parse the outer array prefix + identify TxBody bytes +
+    // identify the tail (everything after the original witness set).
+    let mut dec = Decoder::new(tx_bytes);
+    let array_len = dec
+        .array()
+        .map_err(|e| eyre::eyre!("tx CBOR does not start with an array: {e}"))?;
+    if array_len < 2 {
+        eyre::bail!(
+            "tx CBOR outer array must have ≥2 elements (body + witness set); got {array_len}"
+        );
+    }
+    let body_bytes = dec
+        .raw_value()
+        .map_err(|e| eyre::eyre!("failed to extract TxBody bytes: {e}"))?
+        .to_vec();
+    dec.skip()
+        .map_err(|e| eyre::eyre!("failed to skip original witness set: {e}"))?;
+    let tail_start = dec.position();
+    let tail = &tx_bytes[tail_start..];
+
+    // Step 2: compute txid and Ed25519-sign with the supplied SK.
+    let sk = SigningKey::from_bytes(*sk_bytes);
+    let vk = sk
+        .verification_key()
+        .map_err(|e| eyre::eyre!("derive VK from SK failed: {e}"))?;
+    let txid = yggdrasil_ledger::compute_tx_id(&body_bytes);
+    let sig = sk
+        .sign(&txid.0)
+        .map_err(|e| eyre::eyre!("sign txid failed: {e}"))?;
+
+    // Step 3: construct fresh witness set = {0: [[vk_bytes, sig_bytes]]}.
+    let mut wits = Encoder::new();
+    wits.map(1);
+    wits.unsigned(0);
+    wits.array(1);
+    wits.array(2);
+    wits.bytes(&vk.to_bytes());
+    wits.bytes(&sig.to_bytes());
+    let wits_bytes = wits.into_bytes();
+
+    // Step 4: assemble the signed tx: outer array(L) || body || wits || tail.
+    let mut header = Encoder::new();
+    header.array(array_len);
+    let mut out = header.into_bytes();
+    out.extend_from_slice(&body_bytes);
+    out.extend_from_slice(&wits_bytes);
+    out.extend_from_slice(tail);
     Ok(out)
 }
 
