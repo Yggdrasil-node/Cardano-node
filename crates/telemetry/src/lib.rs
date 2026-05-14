@@ -5,11 +5,12 @@
 //! **Strict mirror:** none. Yggdrasil-side synthesis crate that
 //! centralises observability primitives (log format selector, span
 //! field-name registry, tracing-subscriber init builder). Upstream
-//! `cardano-node` configures `iohk-monitoring-framework` (`contra-tracer`
-//! + EKG metrics + Katip JSON logs) inside `Cardano.Node.Tracing`;
-//! Yggdrasil collapses the corresponding Rust-side conventions into
-//! one place so all binaries (yggdrasil-node + every sister tool)
-//! initialise observability identically.
+//! `cardano-node` configures `iohk-monitoring-framework` (the
+//! `contra-tracer` stack with EKG metrics and Katip JSON logs)
+//! inside `Cardano.Node.Tracing`; Yggdrasil collapses the
+//! corresponding Rust-side conventions into one place so all
+//! binaries (yggdrasil-node plus every sister tool) initialise
+//! observability identically.
 //!
 //! **Wave 2 status:** scaffold only. The crate declares the public
 //! API shape (`LogFormat`, `TracingConfig`, `trace_fields::*`) so

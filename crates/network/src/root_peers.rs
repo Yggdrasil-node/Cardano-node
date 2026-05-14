@@ -644,9 +644,13 @@ mod tests {
     #[test]
     fn topology_config_parses_each_shipped_network_preset() {
         for net in ["mainnet", "preprod", "preview"] {
+            // Wave 4 PR 6: node/ moved to crates/node/yggdrasil-node/;
+            // remap the manifest dir accordingly so this test still
+            // reads the shipped topology fixtures.
             let path = format!(
                 "{}/configuration/{}/topology.json",
-                env!("CARGO_MANIFEST_DIR").replace("crates/network", "node"),
+                env!("CARGO_MANIFEST_DIR")
+                    .replace("crates/network", "crates/node/yggdrasil-node"),
                 net
             );
             let bytes =

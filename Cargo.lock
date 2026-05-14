@@ -2434,6 +2434,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-error"
+version = "0.2.0"
+dependencies = [
+ "thiserror",
+ "yggdrasil-consensus",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
+ "yggdrasil-plutus",
+ "yggdrasil-storage",
+]
+
+[[package]]
 name = "yggdrasil-kes-agent"
 version = "0.2.0"
 dependencies = [
@@ -2537,6 +2549,14 @@ dependencies = [
  "thiserror",
  "yggdrasil-ledger",
 ]
+
+[[package]]
+name = "yggdrasil-telemetry"
+version = "0.2.0"
+
+[[package]]
+name = "yggdrasil-test-fixtures"
+version = "0.2.0"
 
 [[package]]
 name = "yggdrasil-tx-generator"
