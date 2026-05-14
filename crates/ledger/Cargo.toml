@@ -16,6 +16,9 @@ yggdrasil-crypto.workspace = true
 [dev-dependencies]
 hex.workspace = true
 serde_json.workspace = true
+# Wave 9 PR 28 follow-on: property-based CBOR roundtrip tests
+# covering the workspace's foundational newtype + enum encoders.
+proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 # ──────────────────────────────────────────────────────────────────────
 # Wave 3 PR 5 — feature-flag declarations.

@@ -3040,6 +3040,7 @@ dependencies = [
  "hex",
  "num-bigint",
  "num-traits",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
