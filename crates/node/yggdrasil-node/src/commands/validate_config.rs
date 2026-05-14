@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use eyre::{Result, WrapErr, bail};
 use serde::Serialize;
 
-use yggdrasil_node::config::NetworkPreset;
+use yggdrasil_node_config::NetworkPreset;
 
 use crate::commands::configuration::{
     apply_block_producer_credential_overrides, apply_inbound_listen_overrides,
@@ -39,10 +39,10 @@ use crate::commands::configuration::{
 
 use yggdrasil_ledger::Point;
 use yggdrasil_network::{GovernorTargets, LedgerPeerSnapshot, LedgerStateJudgement};
-use yggdrasil_node::config::{NodeConfigFile, load_peer_snapshot_file};
-use yggdrasil_node::genesis;
+use yggdrasil_node_config::{NodeConfigFile, load_peer_snapshot_file};
+use yggdrasil_node_genesis as genesis;
 use yggdrasil_node::recover_ledger_state_chaindb_epoch_boundary;
-use yggdrasil_node::tracer::NodeTracer;
+use yggdrasil_node_tracer::NodeTracer;
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
 
 #[derive(Debug, Serialize)]
@@ -195,13 +195,13 @@ pub fn load_configured_block_producer_credentials(
     file_cfg: &NodeConfigFile,
     config_base_dir: Option<&std::path::Path>,
     non_producing_node: bool,
-) -> Result<Option<yggdrasil_node::block_producer::BlockProducerCredentials>> {
+) -> Result<Option<yggdrasil_node_block_producer::BlockProducerCredentials>> {
     let status = ensure_block_producer_credential_policy(file_cfg, non_producing_node)?;
     if non_producing_node || status == BlockProducerCredentialStatus::Absent {
         return Ok(None);
     }
 
-    let creds = yggdrasil_node::block_producer::load_block_producer_credentials(
+    let creds = yggdrasil_node_block_producer::load_block_producer_credentials(
         &crate::resolve_config_path(
             std::path::Path::new(
                 file_cfg
@@ -480,7 +480,7 @@ pub fn validate_config_report_with_role(
              and later blocks will be rejected as unsupported. \
              Recommended: {} (Conway-era default)",
             file_cfg.max_major_protocol_version,
-            yggdrasil_node::config::CONWAY_MAJOR_PROTOCOL_VERSION,
+            yggdrasil_node_config::CONWAY_MAJOR_PROTOCOL_VERSION,
         ));
     }
 
@@ -586,7 +586,7 @@ pub fn validate_config_report_with_role(
 
     if let Some(explicit) = file_cfg.requires_network_magic {
         let expected =
-            yggdrasil_node::config::RequiresNetworkMagic::default_for_magic(file_cfg.network_magic);
+            yggdrasil_node_config::RequiresNetworkMagic::default_for_magic(file_cfg.network_magic);
         if explicit != expected {
             warnings.push(format!(
                 "RequiresNetworkMagic = {:?} is inconsistent with network_magic = {}; \

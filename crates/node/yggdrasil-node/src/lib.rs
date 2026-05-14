@@ -1,37 +1,22 @@
 #![cfg_attr(test, allow(clippy::unwrap_used))]
-/// Yggdrasil node — integration layer wiring consensus, ledger, network,
-/// storage, and mempool crates into a running Cardano node.
-pub use yggdrasil_node_block_producer as block_producer;
-pub use yggdrasil_node_sync as sync;
-pub use yggdrasil_node_sync::blockfetch_worker;
-pub use yggdrasil_node_sync::chainsync_worker;
+//! Yggdrasil node — integration layer wiring consensus, ledger, network,
+//! storage, and mempool crates into a running Cardano node.
+//!
+//! Wave 5 PR 13: module-level shims dropped. The remaining symbol-
+//! level re-exports below preserve the binary's library-side public
+//! API surface (e.g. `yggdrasil_node::SyncError`) for callers that
+//! already pin them. New consumers should depend on the leaf crates
+//! directly (`yggdrasil_node_sync::SyncError`).
 
-// Wave 5 PR 7+8: extracted sub-crates re-exported under their
-// historical paths so existing `yggdrasil_node::*::*` call sites
-// keep working without edits. Wave 5 PR 13 drops these shims once
-// direct imports land. Layering: yggdrasil-node-config <
-// yggdrasil-node-genesis, yggdrasil-node-tracer < yggdrasil-node binary.
-pub use yggdrasil_node_config as config;
-pub use yggdrasil_node_config::path_resolve;
-pub use yggdrasil_node_config::upstream_pins;
-pub use yggdrasil_node_genesis as genesis;
-pub use yggdrasil_node_plutus_eval as plutus_eval;
-pub use yggdrasil_node_tracer as tracer;
-pub use yggdrasil_node_tracer::trace_forwarder;
-
-pub use yggdrasil_node_ntc_server as local_server;
-pub use yggdrasil_node_ntn_server as server;
-pub use yggdrasil_node_runtime as runtime;
-
-pub use blockfetch_worker::{
+pub use yggdrasil_node_sync::blockfetch_worker::{
     DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
 };
-pub use chainsync_worker::{
+pub use yggdrasil_node_sync::chainsync_worker::{
     CandidateFragment, ChainSyncEvent, ChainSyncRequest, ChainSyncWorkerHandle,
     ChainSyncWorkerPool, DEFAULT_CANDIDATE_FRAGMENT_CAPACITY, SharedChainSyncWorkerPool,
     new_shared_chainsync_worker_pool, publish_announced_header, publish_rollback,
 };
-pub use runtime::{
+pub use yggdrasil_node_runtime::{
     ChainTipNotify, LedgerJudgementSettings, MempoolAddTxError, MempoolAddTxOutcome,
     MempoolAddTxResult, NodeConfig, PeerSession, ReconnectingSyncServiceOutcome,
     ReconnectingVerifiedSyncRequest, ResumeReconnectingVerifiedSyncRequest,
@@ -52,7 +37,7 @@ pub use runtime::{
     run_txsubmission_service_shared, seed_peer_registry, serve_txsubmission_request_from_mempool,
     serve_txsubmission_request_from_reader,
 };
-pub use sync::{
+pub use yggdrasil_node_sync::{
     BlockFetchAssignment, DecodedSyncStep, DensityRegistry, FutureBlockCheckConfig,
     LedgerCheckpointPolicy, LedgerRecoveryOutcome, MultiEraBlock, MultiEraSyncProgress,
     MultiEraSyncStep, MultiPeerDispatchContext, SHELLEY_KES_DEPTH, SyncError, SyncProgress,
@@ -78,20 +63,20 @@ pub use sync::{
     verify_block_body_hash, verify_block_vrf, verify_block_vrf_with_stake, verify_multi_era_block,
     verify_praos_header, verify_shelley_header,
 };
-pub use tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};
+pub use yggdrasil_node_tracer::{MetricsSnapshot, NodeMetrics, NodeTracer, trace_fields};
 
-pub use server::{
+pub use yggdrasil_node_ntn_server::{
     BlockProvider, ChainProvider, InboundPeerSession, InboundServiceError, PeerSharingProvider,
     SharedChainDb, SharedPeerSharingProvider, SharedTxSubmissionConsumer, TxSubmissionConsumer,
     run_blockfetch_server, run_chainsync_server, run_inbound_accept_loop, run_keepalive_server,
     run_peersharing_server, run_txsubmission_server,
 };
 
-pub use local_server::{
+pub use yggdrasil_node_ntc_server::{
     BasicLocalQueryDispatcher, LocalQueryDispatcher, LocalServerError, LocalStateQuerySessionError,
     LocalTxMonitorSessionError, LocalTxSubmissionSessionError, NetworkPreset,
     encode_shelley_genesis_for_lsq, run_local_state_query_session, run_local_tx_monitor_session,
     run_local_tx_submission_session,
 };
 #[cfg(unix)]
-pub use local_server::{run_local_accept_loop, run_local_client_session};
+pub use yggdrasil_node_ntc_server::{run_local_accept_loop, run_local_client_session};

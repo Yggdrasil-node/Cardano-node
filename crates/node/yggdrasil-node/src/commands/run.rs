@@ -31,8 +31,8 @@ use yggdrasil_network::{
     BlockFetchInstrumentation, GovernorTargets, HandshakeVersion, LedgerStateJudgement,
     NodePeerSharing, blockfetch_pool::BlockFetchPool, blockfetch_pool::FetchMode,
 };
-use yggdrasil_node::genesis;
-use yggdrasil_node::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_genesis as genesis;
+use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 use yggdrasil_node::{
     FutureBlockCheckConfig, LedgerCheckpointPolicy, NodeConfig, RuntimeGovernorConfig,
     VerificationConfig, VerifiedSyncServiceConfig, recover_ledger_state_chaindb_epoch_boundary,
@@ -52,7 +52,7 @@ use crate::{
     resolve_config_path, resolve_storage_dir, strict_base_ledger_state,
     trace_genesis_hashes_verified,
 };
-use yggdrasil_node::config::NetworkPreset;
+use yggdrasil_node_config::NetworkPreset;
 
 /// Operator-supplied arguments for the `run` subcommand.  Matches the
 /// `Command::Run` clap variant 1:1 by field name.
@@ -282,7 +282,7 @@ pub(crate) fn run_subcommand(args: RunCmdArgs) -> Result<()> {
     // the governor loop (reader: density-aware hot-demotion
     // scoring). Cloning the Arc keeps both ends pointing at the
     // same `BTreeMap<SocketAddr, DensityWindow>`.
-    let density_registry = yggdrasil_node::sync::new_density_registry();
+    let density_registry = yggdrasil_node_sync::new_density_registry();
 
     // Phase 6 — shared FetchWorkerPool for upstream-faithful
     // multi-peer BlockFetch dispatch.  Cloned into both the
@@ -290,7 +290,7 @@ pub(crate) fn run_subcommand(args: RunCmdArgs) -> Result<()> {
     // governor-side wiring (writer path).  Default knob = 1
     // keeps the pool empty and the legacy single-peer path
     // active; opting into knob > 1 activates registration.
-    let shared_fetch_worker_pool = yggdrasil_node::runtime::new_shared_fetch_worker_pool();
+    let shared_fetch_worker_pool = yggdrasil_node_runtime::new_shared_fetch_worker_pool();
     let shared_chainsync_worker_pool = yggdrasil_node::new_shared_chainsync_worker_pool();
 
     let sync_config = if let Some(verification) = verification {
@@ -452,7 +452,7 @@ pub(crate) fn run_subcommand(args: RunCmdArgs) -> Result<()> {
     // upstream `mkLedgerStateJudgement` from
     // `Cardano.Node.Diffusion.Configuration` whose threshold is
     // `stabilityWindow * slotLength` ≈ `3 * k / f * slotLength`.
-    .with_ledger_judgement_settings(yggdrasil_node::runtime::LedgerJudgementSettings {
+    .with_ledger_judgement_settings(yggdrasil_node_runtime::LedgerJudgementSettings {
         system_start_unix_secs: genesis_system_start_unix_secs,
         slot_length_secs: genesis_slot_length,
         max_ledger_state_age_secs: (3.0 * file_cfg.security_param_k as f64

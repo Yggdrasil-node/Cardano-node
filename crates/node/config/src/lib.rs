@@ -19,7 +19,7 @@
 //!
 //! The `yggdrasil-node` binary re-exports this crate via
 //! `pub use yggdrasil_node_config as config;` so the public surface
-//! `yggdrasil_node::config::NetworkPreset` stays stable for every
+//! `yggdrasil_node_config::NetworkPreset` stays stable for every
 //! external consumer (sister tools, downstream embedders, the
 //! `cardano-cli` subcommand registered at `crates/tools/cardano-cli/`).
 //!

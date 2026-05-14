@@ -28,8 +28,8 @@ use yggdrasil_network::{
     LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement, PeerAccessPoint,
     merge_ledger_peer_snapshots, resolve_peer_access_points,
 };
-use yggdrasil_node::config::{NodeConfigFile, load_peer_snapshot_file};
-use yggdrasil_node::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_config::{NodeConfigFile, load_peer_snapshot_file};
+use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 /// Project the slot number of an `Ouroboros.Network.Block.Point`,
 /// returning `None` for `Origin` (mirrors upstream `pointSlot`).

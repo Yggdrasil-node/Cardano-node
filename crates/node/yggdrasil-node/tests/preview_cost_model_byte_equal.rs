@@ -23,7 +23,7 @@
 use std::collections::BTreeMap;
 
 use yggdrasil_ledger::plutus_validation::PlutusVersion;
-use yggdrasil_node::genesis::build_plutus_cost_model_from_protocol_values_for_protocol;
+use yggdrasil_node_genesis::build_plutus_cost_model_from_protocol_values_for_protocol;
 use yggdrasil_plutus::{BuiltinSemanticsVariant, CostModel};
 
 /// Selector entry: a step-cost prefix and a function reading `(cpu, mem)`

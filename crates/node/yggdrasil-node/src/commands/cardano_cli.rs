@@ -17,13 +17,13 @@ use std::path::PathBuf;
 use eyre::Result;
 
 use yggdrasil_cardano_cli::environment;
-use yggdrasil_node::config::NetworkPreset;
+use yggdrasil_node_config::NetworkPreset;
 
 use crate::cli::CardanoCliCommand;
 
 /// Map a `NetworkPreset` enum to its on-disk sub-directory name. The
 /// `yggdrasil-cardano-cli` crate accepts the directory name as a `&str`
-/// to avoid importing `yggdrasil_node::config::NetworkPreset` (which
+/// to avoid importing `yggdrasil_node_config::NetworkPreset` (which
 /// would invert the dependency direction).
 fn network_dir(network: NetworkPreset) -> &'static str {
     match network {

@@ -3,7 +3,7 @@
 use clap::Parser;
 use eyre::{Result, WrapErr, bail};
 
-use yggdrasil_node::config::default_config;
+use yggdrasil_node_config::default_config;
 
 // `clap` subcommand definitions for the binary surface. Mirrors
 // upstream `Cardano.Node.Parsers`.
@@ -159,7 +159,7 @@ use handlers::shutdown::wait_for_shutdown_signal;
 // `Cardano.Node.Tracing.Tracers.Startup` Prometheus endpoint.
 // Wave 5 PR 7: metrics_server moved to the yggdrasil-node-tracer crate;
 // reach it through the `tracer::metrics_server` re-export.
-use yggdrasil_node::tracer::metrics_server;
+use yggdrasil_node_tracer::metrics_server;
 use metrics_server::serve_metrics;
 
 // Genesis-aware startup helpers. Mirrors upstream
@@ -175,10 +175,10 @@ use startup::{
 // into the standalone `yggdrasil-node-config` crate. The binary
 // imports the helpers directly from the new crate — the lib.rs
 // `pub use yggdrasil_node_config::path_resolve;` re-export covers
-// `yggdrasil_node::path_resolve::*` for downstream users, but the
+// `yggdrasil_node_config::path_resolve::*` for downstream users, but the
 // binary itself is a separate crate root and reaches the helpers
 // through the public crate path.
-pub(crate) use yggdrasil_node::path_resolve::{resolve_config_path, resolve_storage_dir};
+pub(crate) use yggdrasil_node_config::path_resolve::{resolve_config_path, resolve_storage_dir};
 
 // Ledger-derived fallback peer assembly. Mirrors upstream
 // `Ouroboros.Network.PeerSelection.LedgerPeers`.

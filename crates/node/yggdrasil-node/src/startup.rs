@@ -25,8 +25,8 @@ use eyre::{Result, WrapErr};
 use serde_json::json;
 
 use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, StakeCredential};
-use yggdrasil_node::config::NodeConfigFile;
-use yggdrasil_node::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_config::NodeConfigFile;
+use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 /// Emit a positive-path `Node.GenesisHash.Verified` trace event after
 /// [`strict_base_ledger_state`] has completed genesis-hash verification.

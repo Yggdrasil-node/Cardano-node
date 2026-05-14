@@ -7,7 +7,7 @@
 //! `db-analyser`, `db-synthesizer`, `cardano-testnet`) consume
 //! this crate directly; the binary re-exports via
 //! `pub use yggdrasil_node_genesis as genesis;` so the public
-//! surface `yggdrasil_node::genesis::*` stays stable.
+//! surface `yggdrasil_node_genesis::*` stays stable.
 //!
 //! ## Original file docstring follows
 //!

@@ -19,7 +19,7 @@ use std::path::PathBuf;
 
 use eyre::{Result, WrapErr};
 
-use yggdrasil_node::config::{
+use yggdrasil_node_config::{
     NetworkPreset, NodeConfigFile, TraceNamespaceConfig, apply_topology_to_config, default_config,
     load_topology_file,
 };

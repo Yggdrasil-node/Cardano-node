@@ -32,7 +32,7 @@ use yggdrasil_ledger::{LedgerState, Nonce};
 use yggdrasil_network::{
     ConnectionManagerState, GovernorState, InboundGovernorState, NodePeerSharing, PeerListener,
 };
-use yggdrasil_node::tracer::{NodeMetrics, NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
     BlockProvider, ChainProvider, NodeConfig, ResumeReconnectingVerifiedSyncRequest,
     ResumedSyncServiceOutcome, RuntimeGovernorConfig, SharedChainDb, SharedPeerSharingProvider,
@@ -64,7 +64,7 @@ pub(crate) struct RunNodeRequest {
     /// Block producer credentials (VRF key, KES key, operational certificate).
     /// When present the node operates in block-producing mode.
     pub(crate) block_producer_credentials:
-        Option<yggdrasil_node::block_producer::BlockProducerCredentials>,
+        Option<yggdrasil_node_block_producer::BlockProducerCredentials>,
     /// Maximum protocol-version major this node supports for forged headers.
     pub(crate) max_major_protocol_version: u64,
     /// R214 — pre-encoded `ShelleyGenesis` CBOR bytes for the

@@ -10,7 +10,7 @@
 //! into this module. Both helpers were authored in the node binary
 //! before the new crate landed; the migration keeps cross-crate
 //! decoupling clean by taking `network_dir: &str` and `fallback_magic:
-//! u32` as parameters instead of importing `yggdrasil_node::config::
+//! u32` as parameters instead of importing `yggdrasil_node_config::
 //! NetworkPreset` (which would invert the dependency direction).
 //!
 //! ## Naming parity
@@ -68,7 +68,7 @@ pub fn resolve_socket_path(override_path: Option<PathBuf>) -> Option<PathBuf> {
 /// the subcommand still works without an upstream install.
 ///
 /// Migrated from `node/src/commands/cardano_cli.rs` in R297. Takes
-/// `network_dir: &str` rather than `yggdrasil_node::config::NetworkPreset`
+/// `network_dir: &str` rather than `yggdrasil_node_config::NetworkPreset`
 /// to keep the new crate independent of the node binary's config types.
 pub fn resolve_upstream_reference_paths(
     network_dir: &str,

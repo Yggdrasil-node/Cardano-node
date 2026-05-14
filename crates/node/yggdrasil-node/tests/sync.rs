@@ -3577,7 +3577,7 @@ fn recover_ledger_state_chaindb_bootstraps_initial_funds_on_first_shelley_block(
     let mut chain_db = ChainDb::new(immutable, volatile, ledger);
 
     let address = test_shelley_initial_funds_address(0x44);
-    let txin = yggdrasil_node::genesis::initial_funds_pseudo_txin(&address);
+    let txin = yggdrasil_node_genesis::initial_funds_pseudo_txin(&address);
     let txout = yggdrasil_ledger::ShelleyTxOut {
         address: address.clone(),
         amount: 1_000,
@@ -3628,7 +3628,7 @@ fn recover_ledger_state_chaindb_keeps_initial_funds_hidden_before_shelley() {
     let mut chain_db = ChainDb::new(immutable, volatile, ledger);
 
     let address = test_shelley_initial_funds_address(0x55);
-    let txin = yggdrasil_node::genesis::initial_funds_pseudo_txin(&address);
+    let txin = yggdrasil_node_genesis::initial_funds_pseudo_txin(&address);
 
     let mut base_state = LedgerState::new(Era::Byron);
     base_state.configure_pending_shelley_genesis_utxo(vec![(

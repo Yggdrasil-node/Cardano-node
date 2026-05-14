@@ -25,7 +25,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use yggdrasil_node::config::NetworkPreset;
+use yggdrasil_node_config::NetworkPreset;
 
 #[cfg(unix)]
 use crate::commands::query::QueryCommand;

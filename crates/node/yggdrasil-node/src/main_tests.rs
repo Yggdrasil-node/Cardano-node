@@ -20,8 +20,8 @@ use yggdrasil_ledger::{
     Era, LedgerState, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
 };
 use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
-use yggdrasil_node::config::default_config;
-use yggdrasil_node::tracer::{NodeMetrics, NodeTracer};
+use yggdrasil_node_config::default_config;
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer};
 
 // ── decode_tx_hex_arg tests ───────────────────────────────────────
 //
@@ -876,7 +876,7 @@ fn metrics_http_response_routes_json_before_prometheus() {
     // Regression for the `starts_with("GET /metrics")` routing bug:
     // `GET /metrics/json` must reach the JSON arm, not match the
     // shorter `/metrics` prefix first.
-    let metrics = yggdrasil_node::tracer::NodeMetrics::default();
+    let metrics = yggdrasil_node_tracer::NodeMetrics::default();
 
     let (status, ctype, body) =
         super::metrics_server::metrics_http_response("GET /metrics/json HTTP/1.1\r\n", &metrics);
@@ -1012,7 +1012,7 @@ fn validate_config_report_warns_on_mainnet_requires_magic_override() {
     let mut cfg = default_config();
     cfg.storage_dir = PathBuf::from("data");
     cfg.peer_snapshot_file = None;
-    cfg.requires_network_magic = Some(yggdrasil_node::config::RequiresNetworkMagic::RequiresMagic);
+    cfg.requires_network_magic = Some(yggdrasil_node_config::RequiresNetworkMagic::RequiresMagic);
 
     let report = validate_config_report(&cfg, Some(&dir)).expect("report");
     assert!(
@@ -1044,7 +1044,7 @@ fn validate_config_report_warns_on_testnet_requires_no_magic_override() {
     // Not the mainnet magic.
     cfg.network_magic = 2;
     cfg.requires_network_magic =
-        Some(yggdrasil_node::config::RequiresNetworkMagic::RequiresNoMagic);
+        Some(yggdrasil_node_config::RequiresNetworkMagic::RequiresNoMagic);
 
     let report = validate_config_report(&cfg, Some(&dir)).expect("report");
     assert!(
@@ -1073,7 +1073,7 @@ fn validate_config_report_accepts_canonical_requires_network_magic() {
     cfg.storage_dir = PathBuf::from("data");
     cfg.peer_snapshot_file = None;
     cfg.requires_network_magic =
-        Some(yggdrasil_node::config::RequiresNetworkMagic::RequiresNoMagic);
+        Some(yggdrasil_node_config::RequiresNetworkMagic::RequiresNoMagic);
     let report = validate_config_report(&cfg, Some(&dir)).expect("report");
     assert!(
         !report
@@ -1864,7 +1864,7 @@ fn validate_config_report_warns_on_genesis_hash_mismatch() {
 /// cannot resolve without a real node run.
 #[test]
 fn vendored_network_presets_produce_only_environmental_warnings() {
-    use yggdrasil_node::config::NetworkPreset;
+    use yggdrasil_node_config::NetworkPreset;
 
     const ENVIRONMENTAL_SUBSTRINGS: &[&str] = &[
         // No peer-snapshot.json is vendored with the repo — this is a
@@ -1901,14 +1901,14 @@ fn vendored_network_presets_produce_only_environmental_warnings() {
 #[test]
 fn load_effective_config_uses_network_preset_when_file_is_absent() {
     let (cfg, config_base_dir) =
-        load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
+        load_effective_config(None, Some(yggdrasil_node_config::NetworkPreset::Preview))
             .expect("preset config");
 
     assert_eq!(cfg.network_magic, 2);
     assert_eq!(
         config_base_dir,
         Some(preset_config_base_dir(
-            yggdrasil_node::config::NetworkPreset::Preview
+            yggdrasil_node_config::NetworkPreset::Preview
         ))
     );
 }
@@ -1916,7 +1916,7 @@ fn load_effective_config_uses_network_preset_when_file_is_absent() {
 #[test]
 fn strict_base_ledger_state_seeds_preview_reserves_from_genesis_supply() {
     let (cfg, config_base_dir) =
-        load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
+        load_effective_config(None, Some(yggdrasil_node_config::NetworkPreset::Preview))
             .expect("preset config");
 
     let ledger =
@@ -1981,7 +1981,7 @@ fn validate_config_report_warns_when_peer_snapshot_file_is_missing() {
     // file so the "configured peer snapshot file could not be loaded"
     // warning path is still exercised.
     let (mut cfg, config_base_dir) =
-        load_effective_config(None, Some(yggdrasil_node::config::NetworkPreset::Preview))
+        load_effective_config(None, Some(yggdrasil_node_config::NetworkPreset::Preview))
             .expect("preset config");
     cfg.peer_snapshot_file = Some("does-not-exist-peer-snapshot.json".to_owned());
 
