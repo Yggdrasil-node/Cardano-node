@@ -73,9 +73,13 @@ What's still missing:
 - A `Layer<S>` adapter for `tracing-subscriber` that walks every
   `tracing::Event` into a `TraceObject` and emits it through the
   Mux stack to a configurable Unix socket.
-- TraceObject Layer 1 **decoder** (today only the encoder ships;
+- ~~TraceObject Layer 1 **decoder** (today only the encoder ships;
   `mini_protocol.rs` errors on a non-empty inbound `Reply` until
-  the decoder lands).
+  the decoder lands).~~ **Landed in commit `f0bc5a9`** —
+  `TraceObject::from_cbor_bytes` is now the inverse of `to_cbor`;
+  `mini_protocol::decode_message` walks non-empty replies via
+  `Decoder::raw_value()` + the Layer-1 decoder; full round-trip
+  test pinned in `mini_protocol_tests::nonempty_reply_round_trip`.
 - Conformance test against the vendored
   `.reference-haskell-cardano-node/install/bin/cardano-tracer`
   binary — needs `scripts/setup-reference.sh` without
