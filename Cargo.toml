@@ -63,12 +63,24 @@ edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.95"
 version = "0.2.0"
+repository = "https://github.com/Yggdrasil-node/Cardano-node"
+homepage = "https://yggdrasil-node.github.io/Cardano-node/"
+authors = ["Yggdrasil contributors"]
 # Workspace crates are not published to crates.io. The release artefact
 # is the `yggdrasil-node` binary tarball published from .github/workflows/release.yml.
 # Marking every crate `publish = false` lets `cargo deny`'s
 # `allow-wildcard-paths = true` apply (crates.io rejects path-only deps
 # in published crates, so the gate only ever exempts private crates).
 publish = false
+
+# Workspace-level parity metadata. Consumed by `xtask` (Wave 9 PR 27)
+# and by tooling that needs to locate the parity surfaces without
+# hardcoding paths. Schema version is bumped when the JSON shape of
+# `docs/parity-matrix.json` changes.
+[workspace.metadata.parity]
+matrix = "docs/parity-matrix.json"
+strict-mirror-audit = "docs/strict-mirror-audit.tsv"
+schema-version = 1
 
 [workspace.dependencies]
 blake2 = "0.10.6"
@@ -177,8 +189,66 @@ collapsible_if = "allow"
 result_large_err = "allow"
 large_enum_variant = "allow"
 
+# ──────────────────────────────────────────────────────────────────────
+# Build profiles.
+#
+# `release` is the default-shipped profile. `release-debug` keeps full
+# debuginfo for stack-walk forensics during operator soak runs without
+# losing the optimised codegen. `dist` is the profile used by
+# .github/workflows/release.yml for shipped tarballs — codegen-units=1
+# + fat LTO trade extra build time for smaller / faster binaries.
+# `bench` mirrors release while keeping line-tables-only debuginfo so
+# perf samples resolve to function names.
+# ──────────────────────────────────────────────────────────────────────
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+panic = "abort"
+strip = "debuginfo"
+debug = "line-tables-only"
+incremental = false
+
+[profile.release-debug]
+inherits = "release"
+debug = "full"
+strip = "none"
+split-debuginfo = "packed"
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+[profile.bench]
+inherits = "release"
+debug = "line-tables-only"
+lto = "thin"
+
+# ──────────────────────────────────────────────────────────────────────
+# Crypto opt-level overrides — keep test/dev cycles fast by compiling
+# the inner-loop crypto crates at -O3 even under `dev`/`test`. The
+# yggdrasil-crypto override was the original; the additional package
+# overrides cut down KES/VRF/BLS-heavy test runtimes.
+# ──────────────────────────────────────────────────────────────────────
 [profile.dev.package.yggdrasil-crypto]
 opt-level = 3
 
 [profile.test.package.yggdrasil-crypto]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
+
+[profile.dev.package.bls12_381]
+opt-level = 3
+
+[profile.dev.package.ed25519-dalek]
+opt-level = 3
+
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+
+[profile.dev.package.sha2]
 opt-level = 3

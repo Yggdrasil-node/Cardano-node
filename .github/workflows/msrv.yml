@@ -1,0 +1,33 @@
+name: MSRV
+
+# Asserts the workspace still builds at the MSRV declared in
+# `rust-toolchain.toml` / `[workspace.package].rust-version`.  Without
+# this gate, `cargo check` in CI silently passes against an
+# unconstrained `@stable` toolchain — a new compiler feature can leak
+# into production code and break operator builds pinned to 1.95.0.
+#
+# Counterpart to the strict-mirror, parity-matrix, and fixture-manifest
+# gates: cheap, focused, fails on the *one* thing it tracks.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  msrv-check:
+    name: cargo check @1.95.0
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust 1.95.0 (workspace MSRV)
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo check --workspace --all-targets --locked
+        run: cargo check --workspace --all-targets --locked

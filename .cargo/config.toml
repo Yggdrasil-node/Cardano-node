@@ -1,7 +1,38 @@
 [alias]
 check-all = "check --workspace --all-targets"
 lint = "clippy --workspace --all-targets --all-features -- -D warnings"
+# Counterpart to `lint`: validates that code under `#[cfg(feature =
+# "...")]` still compiles when every default feature is turned off.
+# Without this, a relay-only / slim build first surfaces breakage at
+# release time.  CI runs both `lint` and `lint-no-default`.
+lint-no-default = "clippy --workspace --all-targets --no-default-features -- -D warnings"
 test-all = "test --workspace --all-features"
+# Convenience entry-point for the `xtask/` dev-subcommand crate
+# (added in a later round — `xtask` is excluded from
+# `default-members` so `cargo check-all` stays fast).  Using
+# `--release` keeps repeated `cargo xtask` invocations snappy
+# because we don't rebuild xtask itself on each call.
+xtask = "run -p xtask --release --"
 
 [build]
 target-dir = "target"
+
+# ──────────────────────────────────────────────────────────────────────
+# Optional fast-link override for Linux.
+#
+# Operators with `mold` + `clang` installed can opt in to a faster link
+# step by exporting `YGG_FAST_LINK=1` and sourcing the snippet below
+# (or by copying it into their `~/.cargo/config.toml`).  We do NOT
+# enable it by default here because:
+#   - CI images don't ship `mold`/`clang`;
+#   - rustup-installed dev boxes don't ship `mold` either;
+#   - silently switching the linker can shadow real link errors on
+#     boxes that "almost" have mold installed.
+# Activation snippet:
+#
+#   [target.x86_64-unknown-linux-gnu]
+#   linker = "clang"
+#   rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+#
+# Document in README under "fast development links".
+# ──────────────────────────────────────────────────────────────────────
