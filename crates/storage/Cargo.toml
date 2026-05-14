@@ -16,5 +16,26 @@ yggdrasil-ledger.workspace = true
 [dev-dependencies]
 tempfile = "3"
 
+# ──────────────────────────────────────────────────────────────────────
+# Wave 3 PR 5 — feature-flag declarations.
+#
+# Reserved hooks for fuzz / property-test builds and for any
+# embedded / WASM target that can't access disk-backed storage:
+#   * `lmdb`     — file-backed immutable / volatile / ledger DBs
+#                  (default). Required by every operator deployment.
+#   * `mem-only` — in-memory-only storage stack. Enables `cargo fuzz`
+#                  targets and the Wave 9 PR 28 `mux_sdu_frame` /
+#                  `mempool_admission` fuzz harnesses to run without
+#                  filesystem touchpoints.
+#
+# Both default-on today (mem-only is additive, not exclusive); the
+# default build is byte-identical. Wave 5+ adds the actual `#[cfg]`
+# gates around the file-backed code paths.
+# ──────────────────────────────────────────────────────────────────────
+[features]
+default = ["lmdb"]
+lmdb = []
+mem-only = []
+
 [lints]
 workspace = true

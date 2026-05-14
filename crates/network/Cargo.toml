@@ -18,5 +18,33 @@ yggdrasil-ledger.workspace = true
 hex.workspace = true
 tempfile = "3"
 
+# ──────────────────────────────────────────────────────────────────────
+# Wave 3 PR 5 — feature-flag declarations.
+#
+# Reserved hooks for Wave 5 PR 11 and Wave 8 PR 22:
+#   * `ntn`           — Node-to-Node mini-protocols (default).
+#                       Sister tools that only need the local socket
+#                       surface (cardano-submit-api, kes-agent-control)
+#                       opt out by depending on this crate with
+#                       `default-features = false, features = ["ntc"]`.
+#   * `ntc`           — Node-to-Client mini-protocols (default).
+#                       Required by every sister tool that talks to
+#                       a running yggdrasil-node.
+#   * `serde-traces`  — Derive `serde::Serialize` on trace event types
+#                       so the cardano-tracer forwarder layer (Wave 6
+#                       PR 17) can emit them over the Unix socket.
+#                       Default-on because trace forwarding is the
+#                       standard operator config.
+#
+# All three are default-on today, so the default build is byte-identical;
+# no `#[cfg(feature = "...")]` gates exist yet. Wave 5/6/8 adds the
+# actual conditional compilation.
+# ──────────────────────────────────────────────────────────────────────
+[features]
+default = ["ntn", "ntc", "serde-traces"]
+ntn = []
+ntc = []
+serde-traces = []
+
 [lints]
 workspace = true

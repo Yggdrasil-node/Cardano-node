@@ -23,5 +23,22 @@ yggdrasil-ledger.workspace = true
 # stack just to load `costModels.PlutusV1` for an end-to-end assertion).
 serde_json.workspace = true
 
+# ──────────────────────────────────────────────────────────────────────
+# Wave 3 PR 5 — feature-flag declarations.
+#
+# Splitting `secp256k1` and `bls12-381` lets the Wave 9 PR 28
+# cost-model fuzz harness compile out the BLS path (which dominates
+# build time and is irrelevant to integer/bytestring builtin fuzzing)
+# without touching the rest of the CEK machine.
+#
+# Both default-on today; the default build is byte-identical. Wave 5+
+# adds `#[cfg(feature = "...")]` gates around the corresponding
+# builtin dispatch arms in `src/builtins/`.
+# ──────────────────────────────────────────────────────────────────────
+[features]
+default = ["secp256k1", "bls12-381"]
+secp256k1 = []
+bls12-381 = []
+
 [lints]
 workspace = true

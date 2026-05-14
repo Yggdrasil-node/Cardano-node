@@ -17,5 +17,23 @@ yggdrasil-crypto.workspace = true
 hex.workspace = true
 serde_json.workspace = true
 
+# ──────────────────────────────────────────────────────────────────────
+# Wave 3 PR 5 — feature-flag declarations.
+#
+# `plutus` (default) reserves a hook for Wave 5 PR 10 sub-crate
+# extraction. Disabling it (built by sister tools that only walk
+# block headers, e.g. db-truncater) will eventually drop the
+# Alonzo+ phase-2 witness-resolution path. Today the flag is
+# decorative: no `#[cfg(feature = "plutus")]` gates exist yet, so
+# the default build is byte-identical, and the `lint-no-default`
+# CI job (cargo lint-no-default) builds the same surface.
+#
+# Wave 5+ wires the actual gates around the script-context
+# encode/decode and the Alonzo+ tx-witness paths.
+# ──────────────────────────────────────────────────────────────────────
+[features]
+default = ["plutus"]
+plutus = []
+
 [lints]
 workspace = true

@@ -19,5 +19,21 @@ yggdrasil-ledger.workspace = true
 tempfile = "3"
 yggdrasil-storage = { path = "../storage" }
 
+# ──────────────────────────────────────────────────────────────────────
+# Wave 3 PR 5 — feature-flag declarations.
+#
+# `experimental-genesis` (off-by-default) walls off in-progress
+# Ouroboros Genesis (density-based chain selection) so it can land
+# incrementally without affecting the verified Praos path. Today
+# the flag is decorative: no `#[cfg(feature = "experimental-genesis")]`
+# gates exist yet, so the default build is byte-identical with or
+# without the flag enabled.
+#
+# Wave 5+ adds the actual gates around the density-rule code paths.
+# ──────────────────────────────────────────────────────────────────────
+[features]
+default = []
+experimental-genesis = []
+
 [lints]
 workspace = true
