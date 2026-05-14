@@ -2,9 +2,9 @@
 /// Yggdrasil node — integration layer wiring consensus, ledger, network,
 /// storage, and mempool crates into a running Cardano node.
 pub use yggdrasil_node_block_producer as block_producer;
-
-pub mod blockfetch_worker;
-pub mod chainsync_worker;
+pub use yggdrasil_node_sync as sync;
+pub use yggdrasil_node_sync::blockfetch_worker;
+pub use yggdrasil_node_sync::chainsync_worker;
 
 // Wave 5 PR 7+8: extracted sub-crates re-exported under their
 // historical paths so existing `yggdrasil_node::*::*` call sites
@@ -22,7 +22,6 @@ pub use yggdrasil_node_tracer::trace_forwarder;
 pub mod local_server;
 pub mod runtime;
 pub mod server;
-pub mod sync;
 
 pub use blockfetch_worker::{
     DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,

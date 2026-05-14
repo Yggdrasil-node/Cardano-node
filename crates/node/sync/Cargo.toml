@@ -1,5 +1,6 @@
 [package]
-name = "yggdrasil-node"
+name = "yggdrasil-node-sync"
+description = "Chain-sync + block-fetch driver (Praos / TPraos / Genesis), the node's largest sub-crate (8,615 LoC for the core algorithm + 1,600 for the worker pool + ChainSync/BlockFetch slabs). Extracted from yggdrasil-node in Wave 5 PR 9 — the highest-risk extraction of the wave."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,31 +8,22 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-ciborium.workspace = true
-clap.workspace = true
-eyre.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_norway.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-yggdrasil-cardano-cli.workspace = true
 yggdrasil-consensus.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true
-yggdrasil-node-block-producer.workspace = true
-yggdrasil-node-config.workspace = true
-yggdrasil-node-genesis.workspace = true
-yggdrasil-node-plutus-eval.workspace = true
-yggdrasil-node-sync.workspace = true
-yggdrasil-node-tracer.workspace = true
-yggdrasil-plutus.workspace = true
 yggdrasil-network.workspace = true
+yggdrasil-node-config.workspace = true
+yggdrasil-node-plutus-eval.workspace = true
+yggdrasil-plutus.workspace = true
 yggdrasil-storage.workspace = true
-
-[lints]
-workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+
+[lints]
+workspace = true

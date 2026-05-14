@@ -78,7 +78,7 @@ pub(super) async fn fetch_range_blocks_typed(
         .map_err(map_blockfetch_error)
 }
 
-pub(crate) async fn fetch_range_blocks_multi_era_raw_decoded(
+pub async fn fetch_range_blocks_multi_era_raw_decoded(
     block_fetch: &mut BlockFetchClient,
     lower: Point,
     upper: Point,

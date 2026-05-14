@@ -185,6 +185,7 @@ yggdrasil-node-block-producer = { path = "crates/node/block-producer" }
 yggdrasil-node-config = { path = "crates/node/config" }
 yggdrasil-node-genesis = { path = "crates/node/genesis" }
 yggdrasil-node-plutus-eval = { path = "crates/node/plutus-eval" }
+yggdrasil-node-sync = { path = "crates/node/sync" }
 yggdrasil-node-tracer = { path = "crates/node/tracer" }
 yggdrasil-plutus = { path = "crates/plutus" }
 yggdrasil-storage = { path = "crates/storage" }

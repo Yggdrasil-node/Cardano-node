@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Sync orchestration helpers for node-to-node ChainSync + BlockFetch.
 //!
 //! This module provides a thin runtime coordination layer between the
@@ -18,6 +19,9 @@
 //! service into one large module that R271-arc rounds split
 //! incrementally into `runtime/*.rs` sub-files.
 
+pub mod blockfetch_worker;
+pub mod chainsync_worker;
+
 use std::time::Duration;
 
 use std::collections::BTreeMap;
@@ -27,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use crate::config::MAINNET_NETWORK_MAGIC;
+use yggdrasil_node_config::MAINNET_NETWORK_MAGIC;
 #[cfg(test)]
 use yggdrasil_consensus::EpochSize;
 use yggdrasil_consensus::mempool::Mempool;
@@ -70,7 +74,7 @@ mod chain_sync;
 mod error;
 mod shelley_decoders;
 
-pub(crate) use block_fetch::fetch_range_blocks_multi_era_raw_decoded;
+pub use block_fetch::fetch_range_blocks_multi_era_raw_decoded;
 use block_fetch::{
     fetch_range_blocks_multi_era_raw_decoded_excluding_lower, normalize_blockfetch_range_points,
     point_from_raw_header,
@@ -328,7 +332,7 @@ impl Default for LedgerCheckpointPolicy {
 }
 
 impl LedgerCheckpointPolicy {
-    pub(crate) fn should_persist(
+    pub fn should_persist(
         &self,
         previous_point: &Point,
         current_point: &Point,
@@ -453,12 +457,12 @@ pub struct VerifiedSyncServiceConfig {
     /// `Ouroboros.Network.BlockFetch.ClientRegistry` semantics.
     ///
     /// Cloned at runtime startup from
-    /// [`crate::runtime::new_shared_fetch_worker_pool`] and threaded
+    /// [`crate::blockfetch_worker::new_shared_fetch_worker_pool`] and threaded
     /// into both [`crate::runtime::RuntimeGovernorConfig`] (governor
     /// side) and this config (sync side) so register/unregister
     /// from the governor task is visible to the sync task on the
     /// next read.
-    pub shared_fetch_worker_pool: Option<crate::runtime::SharedFetchWorkerPool>,
+    pub shared_fetch_worker_pool: Option<crate::blockfetch_worker::SharedFetchWorkerPool>,
     /// Round 151 — shared candidate-fragment registry that the
     /// verified-sync loop populates on each `MsgRollForward` and
     /// the BlockFetch dispatcher reads to resolve `split_range`'s
@@ -484,22 +488,22 @@ impl VerifiedSyncServiceConfig {
 
     /// Build a `CekPlutusEvaluator` from this config's cost model and
     /// time-conversion parameters.
-    pub(crate) fn build_plutus_evaluator(&self) -> crate::plutus_eval::CekPlutusEvaluator {
+    pub fn build_plutus_evaluator(&self) -> yggdrasil_node_plutus_eval::CekPlutusEvaluator {
         match (&self.plutus_cost_model, self.system_start_unix_secs) {
             (Some(cm), Some(start)) => {
-                crate::plutus_eval::CekPlutusEvaluator::with_time_conversion(
+                yggdrasil_node_plutus_eval::CekPlutusEvaluator::with_time_conversion(
                     cm.clone(),
                     start,
                     self.slot_length_secs.unwrap_or(1.0),
                 )
             }
-            (Some(cm), None) => crate::plutus_eval::CekPlutusEvaluator::with_cost_model(cm.clone()),
-            (None, Some(start)) => crate::plutus_eval::CekPlutusEvaluator {
+            (Some(cm), None) => yggdrasil_node_plutus_eval::CekPlutusEvaluator::with_cost_model(cm.clone()),
+            (None, Some(start)) => yggdrasil_node_plutus_eval::CekPlutusEvaluator {
                 system_start_unix_secs: Some(start),
                 slot_length_secs: self.slot_length_secs.unwrap_or(1.0),
                 ..Default::default()
             },
-            (None, None) => crate::plutus_eval::CekPlutusEvaluator::default(),
+            (None, None) => yggdrasil_node_plutus_eval::CekPlutusEvaluator::default(),
         }
     }
 }
@@ -521,8 +525,8 @@ impl VerifiedSyncServiceConfig {
 /// `validatePhase2` is a consensus rule every fully-validating node runs;
 /// this helper is the documented escape hatch for sync-only catch-up
 /// while a CEK parity gap is being investigated (e.g. R249 Gap BP).
-pub(crate) fn phase2_evaluator_or_trust_block(
-    eval: &crate::plutus_eval::CekPlutusEvaluator,
+pub fn phase2_evaluator_or_trust_block(
+    eval: &yggdrasil_node_plutus_eval::CekPlutusEvaluator,
 ) -> Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator> {
     if std::env::var_os("YGG_SKIP_PHASE2").is_some() {
         warn_phase2_skip_once();
@@ -577,35 +581,35 @@ pub struct VerifiedSyncServiceOutcome {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct LedgerCheckpointTracking {
-    pub(crate) base_ledger_state: LedgerState,
-    pub(crate) ledger_state: LedgerState,
-    pub(crate) last_persisted_point: Point,
-    pub(crate) plutus_evaluator: crate::plutus_eval::CekPlutusEvaluator,
+pub struct LedgerCheckpointTracking {
+    pub base_ledger_state: LedgerState,
+    pub ledger_state: LedgerState,
+    pub last_persisted_point: Point,
+    pub plutus_evaluator: yggdrasil_node_plutus_eval::CekPlutusEvaluator,
     /// Stake snapshots for epoch boundary processing.  When present,
     /// block application detects epoch transitions and applies the
     /// NEWEPOCH / SNAP / RUPD sequence before the first block of each
     /// new epoch.
-    pub(crate) stake_snapshots: Option<StakeSnapshots>,
+    pub stake_snapshots: Option<StakeSnapshots>,
     /// Epoch schedule (era-aware slots per epoch) for epoch boundary
     /// detection.  Required when `stake_snapshots` is `Some`.
-    pub(crate) epoch_size: Option<EpochSchedule>,
+    pub epoch_size: Option<EpochSchedule>,
     /// Diagnostic mirror of per-pool block production counts for the
     /// current epoch.
     ///
     /// The ledger state's `blocks_made` / `blocks_made_prev` fields are
     /// authoritative for reward timing. This mirror is retained for runtime
     /// recovery evidence and tests, then reset at the same epoch boundary.
-    pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
+    pub pool_block_counts: BTreeMap<PoolKeyHash, u64>,
     /// Storage directory under which slot-indexed ChainDepState sidecars are
     /// persisted whenever a ledger checkpoint is written. When `None`, no
     /// durable nonce/OpCert ChainDepState history exists and rollback can only
     /// reset to the non-persistent baseline.
-    pub(crate) chain_dep_persist_dir: Option<PathBuf>,
+    pub chain_dep_persist_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum LedgerCheckpointUpdateOutcome {
+pub enum LedgerCheckpointUpdateOutcome {
     ClearedDisabled,
     ClearedOrigin,
     Persisted {
@@ -626,7 +630,7 @@ const CHAIN_DEP_SIDECAR_VERSION: u64 = 1;
 /// Node-owned CBOR payload stored in the storage crate's opaque
 /// `chain_dep_state/<slot>.cbor` files.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ChainDepSidecarSnapshot {
+pub struct ChainDepSidecarSnapshot {
     pub point: Point,
     pub nonce_state: Option<NonceEvolutionState>,
     pub ocert_counters: Option<OcertCounters>,
@@ -656,7 +660,7 @@ fn encode_chain_dep_sidecar_snapshot(
     enc.into_bytes()
 }
 
-pub(crate) fn decode_chain_dep_sidecar_snapshot(
+pub fn decode_chain_dep_sidecar_snapshot(
     bytes: &[u8],
 ) -> Result<ChainDepSidecarSnapshot, SyncError> {
     let mut dec = Decoder::new(bytes);
@@ -694,7 +698,7 @@ pub(crate) fn decode_chain_dep_sidecar_snapshot(
     })
 }
 
-pub(crate) fn chain_dep_context_from_sidecar(
+pub fn chain_dep_context_from_sidecar(
     sidecar: &ChainDepSidecarSnapshot,
 ) -> ChainDepStateContext {
     let mut ctx = ChainDepStateContext::default();
@@ -713,7 +717,7 @@ pub(crate) fn chain_dep_context_from_sidecar(
     ctx
 }
 
-pub(crate) fn load_exact_chain_dep_sidecar_snapshot(
+pub fn load_exact_chain_dep_sidecar_snapshot(
     storage_dir: Option<&Path>,
     point: &Point,
 ) -> Result<Option<ChainDepSidecarSnapshot>, SyncError> {
@@ -736,7 +740,7 @@ pub(crate) fn load_exact_chain_dep_sidecar_snapshot(
     }
 }
 
-pub(crate) fn load_stake_snapshots_sidecar(
+pub fn load_stake_snapshots_sidecar(
     storage_dir: Option<&Path>,
 ) -> Result<Option<StakeSnapshots>, SyncError> {
     let Some(dir) = storage_dir else {
@@ -752,7 +756,7 @@ pub(crate) fn load_stake_snapshots_sidecar(
         .map_err(SyncError::LedgerDecode)
 }
 
-pub(crate) fn for_each_roll_forward_block<E, F>(
+pub fn for_each_roll_forward_block<E, F>(
     progress: &MultiEraSyncProgress,
     mut f: F,
 ) -> Result<(), E>
@@ -783,7 +787,7 @@ where
     Ok(())
 }
 
-pub(crate) fn advance_ledger_state_with_progress(
+pub fn advance_ledger_state_with_progress(
     ledger_state: &mut LedgerState,
     progress: &MultiEraSyncProgress,
     evaluator: Option<&dyn yggdrasil_ledger::plutus_validation::PlutusEvaluator>,
@@ -895,7 +899,7 @@ fn apparent_performance_ratio(
 /// `startStep`; `Cardano.Ledger.Shelley.Rewards` —
 /// `mkApparentPerformance`.
 #[cfg(test)]
-pub(crate) fn compute_pool_performance(
+pub fn compute_pool_performance(
     pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
     reward_snapshot: &yggdrasil_ledger::StakeSnapshot,
     _epoch_size: EpochSize,
@@ -928,7 +932,7 @@ pub(crate) fn compute_pool_performance(
 }
 
 #[cfg(test)]
-pub(crate) fn compute_epoch_boundary_pool_performance(
+pub fn compute_epoch_boundary_pool_performance(
     pool_block_counts: &BTreeMap<PoolKeyHash, u64>,
     snapshots: &StakeSnapshots,
     epoch_size: EpochSize,
@@ -940,7 +944,7 @@ pub(crate) fn compute_epoch_boundary_pool_performance(
 ///
 /// When provided, each block's VRF leader eligibility proof is checked
 /// against the pool's relative stake using the `set` snapshot.
-pub(crate) struct VrfVerificationContext<'a> {
+pub struct VrfVerificationContext<'a> {
     /// Current epoch nonce from nonce evolution tracking.
     pub nonce_state: &'a NonceEvolutionState,
     /// Network nonce-evolution parameters used to tick the verification
@@ -1022,14 +1026,14 @@ fn lookup_tpraos_overlay_schedule<'a>(
         .or(Some(TpraosOverlaySlot::NonActive))
 }
 
-pub(crate) struct ChainDepStateTracking<'a> {
+pub struct ChainDepStateTracking<'a> {
     pub nonce_state: &'a mut Option<NonceEvolutionState>,
     pub origin_nonce_state: Option<&'a NonceEvolutionState>,
     pub nonce_cfg: Option<&'a NonceEvolutionConfig>,
     pub ocert_counters: &'a mut Option<OcertCounters>,
 }
 
-pub(crate) fn advance_ledger_with_epoch_boundary(
+pub fn advance_ledger_with_epoch_boundary(
     ledger_state: &mut LedgerState,
     snapshots: &mut StakeSnapshots,
     epoch_schedule: EpochSchedule,
@@ -1185,7 +1189,7 @@ pub(crate) fn advance_ledger_with_epoch_boundary(
     Ok(events)
 }
 
-pub(crate) fn apply_nonce_evolution_to_progress(
+pub fn apply_nonce_evolution_to_progress(
     nonce_state: &mut NonceEvolutionState,
     progress: &MultiEraSyncProgress,
     nonce_cfg: &NonceEvolutionConfig,
@@ -1196,7 +1200,7 @@ pub(crate) fn apply_nonce_evolution_to_progress(
     });
 }
 
-pub(crate) fn update_ledger_checkpoint_after_progress<I, V, L>(
+pub fn update_ledger_checkpoint_after_progress<I, V, L>(
     chain_db: &mut ChainDb<I, V, L>,
     tracking: &mut LedgerCheckpointTracking,
     progress: &MultiEraSyncProgress,
@@ -1461,7 +1465,7 @@ where
     }
 }
 
-pub(crate) fn default_checkpoint_tracking<I, V, L>(
+pub fn default_checkpoint_tracking<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
     base_ledger_state: LedgerState,
     config: &VerifiedSyncServiceConfig,
@@ -1720,13 +1724,13 @@ fn replay_storage_block_with_epoch_boundary(
     }
 }
 
-pub(crate) struct BoundaryAwareRecovery {
-    pub(crate) ledger_state: LedgerState,
-    pub(crate) checkpoint_slot: Option<SlotNo>,
-    pub(crate) replayed_volatile_blocks: usize,
-    pub(crate) stake_snapshots: StakeSnapshots,
-    pub(crate) pool_block_counts: BTreeMap<PoolKeyHash, u64>,
-    pub(crate) epoch_events: Vec<EpochBoundaryEvent>,
+pub struct BoundaryAwareRecovery {
+    pub ledger_state: LedgerState,
+    pub checkpoint_slot: Option<SlotNo>,
+    pub replayed_volatile_blocks: usize,
+    pub stake_snapshots: StakeSnapshots,
+    pub pool_block_counts: BTreeMap<PoolKeyHash, u64>,
+    pub epoch_events: Vec<EpochBoundaryEvent>,
 }
 
 pub fn recover_ledger_state_chaindb_epoch_boundary<I, V, L>(
@@ -1756,7 +1760,7 @@ where
     })
 }
 
-pub(crate) fn recover_ledger_state_chaindb_with_epoch_boundary<I, V, L>(
+pub fn recover_ledger_state_chaindb_with_epoch_boundary<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
     base_state: LedgerState,
     epoch_schedule: EpochSchedule,
@@ -2023,7 +2027,7 @@ where
     }
 }
 
-pub(crate) fn restore_chain_dep_sidecar_state_to_point<I, V, L>(
+pub fn restore_chain_dep_sidecar_state_to_point<I, V, L>(
     chain_db: &ChainDb<I, V, L>,
     target_point: &Point,
     storage_dir: Option<&Path>,
@@ -2299,7 +2303,7 @@ where
 /// This helper writes the rollback-addressable history that lets rollback
 /// recovery, restart recovery, and LSQ attachment restore `PraosState`-owned
 /// nonces and OpCert counters to an exact point before replaying forward.
-pub(crate) fn persist_chain_dep_state_sidecar(
+pub fn persist_chain_dep_state_sidecar(
     checkpoint_outcome: &Option<LedgerCheckpointUpdateOutcome>,
     storage_dir: Option<&Path>,
     point: Point,
@@ -2763,7 +2767,7 @@ fn shelley_family_header_body_len(block_body: &[u8]) -> Option<u64> {
 /// 4-element Shelley block codec. Alonzo (tag 5) uses the 5-element Alonzo
 /// block codec. Babbage (tag 6) and Conway (tag 7) use their own 5-element
 /// block codecs with era-appropriate transaction body types.
-pub(super) fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
+pub fn decode_multi_era_block_ledger(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
     fn decode_impl(raw: &[u8]) -> Result<MultiEraBlock, LedgerError> {
         // Peek at the structure: expect a 2-element array [tag, body].
         use yggdrasil_ledger::cbor::Decoder;
@@ -3053,7 +3057,7 @@ fn raw_shelley_family_point_from_block(raw_block_bytes: &[u8]) -> Option<Point> 
     point_from_raw_header(raw_shelley_family_header_from_block(raw_block_bytes)?)
 }
 
-pub(super) fn drop_raw_range_lower_boundary(raw_blocks: &mut Vec<Vec<u8>>, lower: Point) {
+pub fn drop_raw_range_lower_boundary(raw_blocks: &mut Vec<Vec<u8>>, lower: Point) {
     if !matches!(lower, Point::BlockPoint(_, _)) {
         return;
     }
@@ -3067,7 +3071,7 @@ pub(super) fn drop_raw_range_lower_boundary(raw_blocks: &mut Vec<Vec<u8>>, lower
     }
 }
 
-pub(super) fn apply_raw_header_hash_override(mut block: Block, raw_block_bytes: &[u8]) -> Block {
+pub fn apply_raw_header_hash_override(mut block: Block, raw_block_bytes: &[u8]) -> Block {
     if block.era != Era::Byron
         && let Some((hash, header_len)) = raw_shelley_family_header_hash_from_block(raw_block_bytes)
     {
@@ -4473,7 +4477,7 @@ pub fn apply_multi_era_step_to_volatile<S: VolatileStore>(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct AppliedVerifiedProgress {
+pub struct AppliedVerifiedProgress {
     pub stable_block_count: usize,
     pub checkpoint_outcome: Option<LedgerCheckpointUpdateOutcome>,
     /// Transaction ids collected from blocks discarded during rollback steps.
@@ -4482,7 +4486,7 @@ pub(crate) struct AppliedVerifiedProgress {
     pub epoch_boundary_events: Vec<EpochBoundaryEvent>,
 }
 
-pub(crate) fn apply_verified_progress_to_chaindb<I, V, L>(
+pub fn apply_verified_progress_to_chaindb<I, V, L>(
     chain_db: &mut ChainDb<I, V, L>,
     progress: &MultiEraSyncProgress,
     chain_state: Option<&mut ChainState>,
@@ -4637,7 +4641,7 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
         })
 }
 
-pub(crate) async fn sync_batch_verified(
+pub async fn sync_batch_verified(
     chain_sync: &mut ChainSyncClient,
     block_fetch: &mut BlockFetchClient,
     from_point: Point,
@@ -4662,7 +4666,7 @@ pub(crate) async fn sync_batch_verified(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn sync_batch_verified_with_tentative(
+pub async fn sync_batch_verified_with_tentative(
     chain_sync: &mut ChainSyncClient,
     block_fetch: Option<&mut BlockFetchClient>,
     mut from_point: Point,
@@ -5980,7 +5984,7 @@ where
 /// Runtime-side dispatch context for the multi-peer BlockFetch path.
 ///
 /// When passed to `sync_batch_verified_with_tentative` as
-/// `Some(...)`, AND the underlying [`crate::runtime::SharedFetchWorkerPool`]
+/// `Some(...)`, AND the underlying [`crate::blockfetch_worker::SharedFetchWorkerPool`]
 /// has at least two registered workers, AND
 /// `effective_block_fetch_concurrency(workers, max_knob) > 1`, the
 /// per-RollForward fetch dispatches through the pool's `dispatch_plan`
@@ -5995,7 +5999,7 @@ pub struct MultiPeerDispatchContext<'a> {
     /// Shared per-peer worker pool.  Cloned `Arc` from runtime
     /// startup; both the governor (writer) and this context (reader)
     /// hold their own clones.
-    pub pool: &'a crate::runtime::SharedFetchWorkerPool,
+    pub pool: &'a crate::blockfetch_worker::SharedFetchWorkerPool,
     /// Operator-configured upper bound on concurrent BlockFetch
     /// peers (`max_concurrent_block_fetch_peers` from
     /// `NodeConfigFile`).  When `<= 1`, the multi-peer branch is
@@ -7392,7 +7396,7 @@ mod tests {
     /// the rollback.
     #[test]
     fn rollback_without_sidecar_resets_ocert_counters_and_nonce_state() {
-        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_consensus::OcertCounters;
         use yggdrasil_ledger::Era;
         use yggdrasil_storage::{
@@ -7477,7 +7481,7 @@ mod tests {
 
     #[test]
     fn initial_sync_rollback_to_origin_resets_nonce_to_origin_without_sidecar() {
-        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_consensus::OcertCounters;
         use yggdrasil_ledger::Era;
         use yggdrasil_storage::{
@@ -7537,7 +7541,7 @@ mod tests {
 
     #[test]
     fn persistent_rollback_without_chain_dep_sidecar_errors() {
-        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_consensus::OcertCounters;
         use yggdrasil_ledger::Era;
         use yggdrasil_storage::{
@@ -7723,7 +7727,7 @@ mod tests {
 
     #[test]
     fn rollback_restores_exact_chain_dep_sidecar_snapshot() {
-        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_storage::{
             ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         };
@@ -7800,7 +7804,7 @@ mod tests {
 
     #[test]
     fn rollback_replays_chain_dep_state_from_sidecar_to_target() {
-        use crate::plutus_eval::CekPlutusEvaluator;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_storage::{
             ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         };
@@ -7936,7 +7940,7 @@ mod tests {
             }),
             ocert_counters: None,
             pp_major_protocol_version: Some(10),
-            network_magic: Some(crate::config::PREVIEW_NETWORK_MAGIC),
+            network_magic: Some(yggdrasil_node_config::PREVIEW_NETWORK_MAGIC),
         }
     }
 
@@ -8453,7 +8457,7 @@ mod tests {
     #[test]
     fn header_protocol_version_window_enforced_on_mainnet_before_dijkstra() {
         let config =
-            verification_config_for_header_window(10, Some(crate::config::MAINNET_NETWORK_MAGIC));
+            verification_config_for_header_window(10, Some(yggdrasil_node_config::MAINNET_NETWORK_MAGIC));
         assert!(
             config.enforce_header_protocol_version_window(10),
             "mainnet keeps Conway BBODY HeaderProtVerTooHigh active before Dijkstra",
@@ -8463,7 +8467,7 @@ mod tests {
     #[test]
     fn header_protocol_version_window_skipped_on_testnet_before_dijkstra() {
         let config =
-            verification_config_for_header_window(10, Some(crate::config::PREVIEW_NETWORK_MAGIC));
+            verification_config_for_header_window(10, Some(yggdrasil_node_config::PREVIEW_NETWORK_MAGIC));
         assert!(
             !config.enforce_header_protocol_version_window(10),
             "testnets suppress HeaderProtVerTooHigh until protocol major 12",
@@ -8474,7 +8478,7 @@ mod tests {
     fn header_protocol_version_window_enforced_on_testnet_at_dijkstra() {
         let config = verification_config_for_header_window(
             DIJKSTRA_MAJOR_PROTOCOL_VERSION,
-            Some(crate::config::PREPROD_NETWORK_MAGIC),
+            Some(yggdrasil_node_config::PREPROD_NETWORK_MAGIC),
         );
         assert!(
             config.enforce_header_protocol_version_window(DIJKSTRA_MAJOR_PROTOCOL_VERSION),

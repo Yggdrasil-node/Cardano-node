@@ -182,24 +182,13 @@ impl ManagedWarmPeer {
 /// demote) and the sync-loop task (reader: dispatch fetch plans).
 ///
 /// Wraps a [`crate::blockfetch_worker::FetchWorkerPool`] in
-/// `Arc<tokio::sync::RwLock<>>` so multiple readers can dispatch
-/// concurrently while writes (register / unregister) take a brief
-/// exclusive lock.  Mirrors upstream
-/// `Ouroboros.Network.BlockFetch.ClientRegistry` shared across the
-/// fetch-decision policy thread and the per-peer fetch threads via
-/// STM.
-pub type SharedFetchWorkerPool = std::sync::Arc<
-    tokio::sync::RwLock<crate::blockfetch_worker::FetchWorkerPool<crate::sync::MultiEraBlock>>,
->;
-
-/// Construct a fresh shared fetch-worker pool.  Cloning the returned
-/// `Arc` is cheap; both governor and sync-loop configs hold their
-/// own clones.
-pub fn new_shared_fetch_worker_pool() -> SharedFetchWorkerPool {
-    std::sync::Arc::new(tokio::sync::RwLock::new(
-        crate::blockfetch_worker::FetchWorkerPool::new(),
-    ))
-}
+// Wave 5 PR 9: SharedFetchWorkerPool + new_shared_fetch_worker_pool
+// were moved into yggdrasil-node-sync::blockfetch_worker so the sync
+// crate doesn't need to reach back into the binary's runtime module.
+// Binary callers continue to use the crate:: re-export path.
+pub use yggdrasil_node_sync::blockfetch_worker::{
+    SharedFetchWorkerPool, new_shared_fetch_worker_pool,
+};
 
 pub(super) struct OutboundPeerManager {
     pub(super) warm_peers: BTreeMap<SocketAddr, ManagedWarmPeer>,

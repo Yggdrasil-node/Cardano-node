@@ -71,7 +71,7 @@ use yggdrasil_network::{
     BlockFetchClient, BlockFetchInstrumentation, blockfetch_pool::ReorderBuffer,
 };
 
-use crate::sync::{BlockFetchAssignment, MultiEraBlock, SyncError};
+use crate::{BlockFetchAssignment, MultiEraBlock, SyncError};
 
 /// Result type for a fetched range — vector of `(raw_bytes, decoded_block)`
 /// tuples in chain order.  Aliased to keep generic signatures readable.
@@ -238,7 +238,7 @@ impl<B: Send + 'static> FetchWorkerHandle<B> {
 impl FetchWorkerHandle<MultiEraBlock> {
     /// Spawn a per-peer fetch worker that owns a real
     /// [`BlockFetchClient`] and dispatches requests via the
-    /// `crate::sync::fetch_range_blocks_multi_era_raw_decoded` helper.
+    /// `crate::fetch_range_blocks_multi_era_raw_decoded` helper.
     ///
     /// This is the production wire: the runtime calls this when
     /// promoting a peer to warm so the per-peer fetch task takes
@@ -282,7 +282,7 @@ impl FetchWorkerHandle<MultiEraBlock> {
             // borrow crosses iterations, so the outer `'static`
             // bound on the spawned task is satisfied.
             while let Some(req) = receiver.recv().await {
-                let result = crate::sync::fetch_range_blocks_multi_era_raw_decoded(
+                let result = crate::fetch_range_blocks_multi_era_raw_decoded(
                     &mut block_fetch,
                     req.lower,
                     req.upper,
@@ -585,6 +585,23 @@ fn head_seed_for_buffer(from_point: Point) -> Point {
             }
         }
     }
+}
+
+// Wave 5 PR 9: SharedFetchWorkerPool + new_shared_fetch_worker_pool
+// moved here from runtime/peer_management.rs so the sync crate
+// doesn't need to depend on the binary's runtime module.
+/// Shared fetch-worker pool, wrapped in `Arc<tokio::sync::RwLock<>>`
+/// so multiple readers can dispatch concurrently while writes
+/// (register / unregister) take a brief exclusive lock. Mirrors
+/// upstream `Ouroboros.Network.BlockFetch.ClientRegistry`.
+pub type SharedFetchWorkerPool =
+    std::sync::Arc<tokio::sync::RwLock<FetchWorkerPool<crate::MultiEraBlock>>>;
+
+/// Construct a fresh shared fetch-worker pool. Cloning the returned
+/// `Arc` is cheap; both governor and sync-loop configs hold their
+/// own clones.
+pub fn new_shared_fetch_worker_pool() -> SharedFetchWorkerPool {
+    std::sync::Arc::new(tokio::sync::RwLock::new(FetchWorkerPool::new()))
 }
 
 #[cfg(test)]

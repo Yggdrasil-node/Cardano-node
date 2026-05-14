@@ -2513,6 +2513,7 @@ dependencies = [
  "yggdrasil-node-config",
  "yggdrasil-node-genesis",
  "yggdrasil-node-plutus-eval",
+ "yggdrasil-node-sync",
  "yggdrasil-node-tracer",
  "yggdrasil-plutus",
  "yggdrasil-storage",
@@ -2571,6 +2572,26 @@ dependencies = [
  "yggdrasil-ledger",
  "yggdrasil-node-genesis",
  "yggdrasil-plutus",
+]
+
+[[package]]
+name = "yggdrasil-node-sync"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "yggdrasil-consensus",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
+ "yggdrasil-network",
+ "yggdrasil-node-config",
+ "yggdrasil-node-plutus-eval",
+ "yggdrasil-plutus",
+ "yggdrasil-storage",
 ]
 
 [[package]]
