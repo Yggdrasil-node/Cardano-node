@@ -35,13 +35,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Wave 7 PR 18 — musl targets land alongside gnu (additive),
+        # not replacing them. Operators choose: gnu for the dynamic-libc
+        # baseline (smaller binary; depends on the host's glibc), musl
+        # for a fully-static binary (drop-in for any Linux distro,
+        # including Alpine; required by IntersectMBO's cardano-node-tests
+        # static-bin validation in upstream-cardano-node-tests.yml).
+        #
+        # Native runners are used throughout (no cargo-zigbuild yet);
+        # the cross-compile via zigbuild swap is queued for a follow-on
+        # PR once local cargo verification is available.
         include:
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
             archive_suffix: linux-x86_64
+            libc: gnu
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
             archive_suffix: linux-aarch64
+            libc: gnu
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            archive_suffix: linux-x86_64-musl
+            libc: musl
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            archive_suffix: linux-aarch64-musl
+            libc: musl
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -50,6 +70,15 @@ jobs:
         run: |
           rustup show
           rustup target add ${{ matrix.target }}
+
+      # Wave 7 PR 18: musl builds need musl-tools (musl-gcc + linker)
+      # on Ubuntu. On the native-arm runner the package name is the same.
+      - name: Install musl static-link tools
+        if: matrix.libc == 'musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools file
+          sudo rm -rf /var/lib/apt/lists/*
 
       - name: Cache cargo registry + target
         uses: actions/cache@v5
@@ -113,12 +142,14 @@ jobs:
 
       - name: Strip binary
         run: |
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            sudo apt-get update -qq && sudo apt-get install -y -qq binutils-aarch64-linux-gnu
-            aarch64-linux-gnu-strip target/${{ matrix.target }}/release/yggdrasil-node
-          else
-            strip target/${{ matrix.target }}/release/yggdrasil-node
-          fi
+          # Wave 7 PR 18: every matrix entry uses a native-arch runner
+          # (no cross-compile yet), so vanilla `strip` works for all
+          # four targets. The legacy cross-strip arm of this script
+          # (binutils-aarch64-linux-gnu) was needed when the aarch64
+          # build ran on an x86_64 runner; today both gnu+musl aarch64
+          # use ubuntu-24.04-arm.
+          strip target/${{ matrix.target }}/release/yggdrasil-node
+          file target/${{ matrix.target }}/release/yggdrasil-node
 
       # Wave 7 PR 19: CycloneDX-JSON SBOM per arch. The shipped tarball
       # bundles its own SBOM so operators can run dependency-CVE scans
