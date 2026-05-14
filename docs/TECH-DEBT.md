@@ -66,7 +66,17 @@ What's still missing:
 
 - The Mux state-machine driver (ingress queue, egress queue,
   per-mini-protocol scheduler, handshake driver, bearer-task
-  lifecycle).
+  lifecycle). **Minimal dispatcher landed in commit `30111c5`** —
+  `crates/node/tracer/src/trace_forwarder/mux_connection.rs::MuxConnection`
+  ships bidirectional SDU read/write with per-mini-protocol
+  channel-based subscription and a bearer-mutex-serialised write
+  side. Subset of upstream's full Network.Mux: no per-mini-protocol
+  limits, no scheduler fairness, no bearer-task supervision —
+  sufficient for the cardano-tracer use case (Handshake first,
+  then TraceObject forwarding until shutdown), but the full
+  bidirectional driver with concurrent activity / backpressure /
+  cancel semantics is still pending for parity with upstream's
+  `Network.Mux` semantics.
 - ~~An `AF_UNIX SOCK_STREAM` bearer adapter.~~ **Landed in commit
   `ee7d496`** — `crates/node/tracer/src/trace_forwarder/bearer.rs`
   ships `Bearer<S>` generic over any `tokio::io::AsyncRead +
