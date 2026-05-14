@@ -167,11 +167,13 @@ impl std::error::Error for EnvSocketError {}
 /// default), producing `{"tag":"<Constructor>","contents":<payload>}`.
 /// `#[serde(tag = "tag", content = "contents")]` matches it.
 ///
-/// **R340+ TODO:** `TxCmdTxSubmitValidationError` currently carries a
-/// rendered string; replace with a structured `ApplyError` mapping once
-/// the web round wires through `yggdrasil-ledger`'s validation surface.
-/// Tracked in `docs/parity-matrix.json` under the cardano-submit-api
-/// entry's `next_milestone` field.
+/// Note: `TxCmdTxSubmitValidationError` currently carries a rendered
+/// string; the structured `ApplyError` mapping is tracked as a
+/// follow-on in `docs/TECH-DEBT.md` under "cardano-submit-api
+/// validation error: structured mapping" (cohered with the Phase 4.A
+/// sister-tool web-protocol completion so the wire-protocol change
+/// lands in one cohesive PR) and in `docs/parity-matrix.json` under
+/// the cardano-submit-api entry's `next_milestone` field.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "tag", content = "contents")]
 pub enum TxCmdError {

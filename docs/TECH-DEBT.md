@@ -102,6 +102,33 @@ just the CLI without the runtime binary.
 **Scope.** Gated on C-arc Phase F + R298+ migration roadmap;
 not actionable as a standalone PR until the C-arc lands.
 
+## cardano-submit-api validation error: structured mapping
+
+**Owner:** sister-tools (Wave 6 PR 18 / cardano-submit-api web round, Phase 4.A)
+
+**State today.** `TxCmdError::TxCmdTxSubmitValidationError` in
+`crates/tools/cardano-submit-api/src/types.rs` carries a rendered
+`String` for the local-tx-submission rejection payload. Upstream's
+Haskell shape is a structured `ApplyTxError` sum with per-era
+variants; the JSON wire shape matches when serialized via the same
+`#[serde(tag = "tag", content = "contents")]` shape, but the
+information content is currently lossy on the Rust side (no per-rule
+variant tags survive the rendering step).
+
+**Desired end state.** A `TxSubmitValidationError` enum that mirrors
+upstream's `ApplyTxError` variants 1:1, with the per-era rule names
+preserved through serialization. The renderer becomes a `Display`
+impl on top of the structured form.
+
+**Scope.** ~80 lines of new enum + ~20 callsite updates in
+`yggdrasil-ledger` validation surface to surface the structured
+form. Best landed alongside the Phase 4.A web-protocol completion
+so the wire-format change is one cohesive PR rather than two.
+
+**Tracking.** Also referenced from `docs/parity-matrix.json` under
+the cardano-submit-api entry's `next_milestone` field; the doc-
+comment in `types.rs` points here.
+
 ## Tracking conventions
 
 - New tech-debt entries follow this header structure: **Owner**,
