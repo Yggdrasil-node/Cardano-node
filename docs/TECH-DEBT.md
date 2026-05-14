@@ -74,7 +74,14 @@ What's still missing:
   `write_sdu` + 4 round-trip tests pinned against
   `tokio::io::DuplexStream` in-memory pipes.
 - The cardano-tracer-specific Handshake mini-protocol negotiator
-  (mini-protocol num 0).
+  (mini-protocol num 0). **Codec landed in commit `fe9c520`** —
+  `crates/node/tracer/src/trace_forwarder/handshake.rs` ships
+  encode/decode for `MsgProposeVersions` / `MsgReplyVersions` /
+  `MsgAcceptVersion` / `MsgRefuse` with all three RefuseReason
+  variants (VersionMismatch, HandshakeDecodeError, Refused).
+  Remaining sub-item: the typed-protocol state-machine driver
+  that consumes the codec (Idle → Confirm → Done sequencing,
+  bearer write-then-read pacing).
 - ~~A `Layer<S>` adapter for `tracing-subscriber` that walks every
   `tracing::Event` into a `TraceObject` and emits it through the
   Mux stack to a configurable Unix socket.~~ **Landed in commit
