@@ -11,17 +11,18 @@
 //!    against pinned upstream-shape wire bytes.
 //! 2. **Mini-protocol layer** — `Trace.Forward.Protocol.TraceObject`
 //!    runs as a typed `MsgRequest n` / `MsgReply [TraceObject]` /
-//!    `MsgDone` state machine over a multiplexed bearer.  *Not yet
-//!    implemented in Yggdrasil.*
+//!    `MsgDone` state machine over a multiplexed bearer. The CBOR
+//!    codec for the three message types lives in [`mini_protocol`]
+//!    (Wave 6 PR 17 Phase 2.B). The driving state-machine + reply-
+//!    list streaming (TraceObject decoder + non-empty-blocking
+//!    enforcement on live traces) lands when the transport is wired.
 //! 3. **Transport** — `AF_UNIX SOCK_STREAM` with `Network.Mux` SDU
 //!    framing, plus a `cardano-tracer`-specific handshake mini-protocol.
-//!    *Not yet implemented in Yggdrasil.*
-//!
-//! Layer 1 is fully implemented and tested.  Layers 2/3 require
-//! conformance verification against a live `cardano-tracer` binary; the
-//! wire shape is documented in
-//! `cardano-node:trace-dispatcher/src/Cardano/Logging/Forwarding.hs`
-//! and the `trace-forward` package on Hackage.
+//!    The SDU codec lives in [`mux`] (Wave 6 PR 17 Phase 2.B). The
+//!    full Mux state-machine (ingress / egress / scheduler /
+//!    handshake-driver / per-bearer task lifecycle) is a follow-on
+//!    once a binary opens an actual `AF_UNIX SOCK_STREAM` against a
+//!    live cardano-tracer.
 //!
 //! # Current runtime behaviour
 //!
@@ -54,6 +55,10 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use yggdrasil_ledger::cbor::Encoder;
+
+// Wave 6 PR 17 Phase 2.B — Layer 2 and Layer 3 codecs.
+pub mod mini_protocol;
+pub mod mux;
 
 // ---------------------------------------------------------------------------
 // TraceObject — application-layer codec

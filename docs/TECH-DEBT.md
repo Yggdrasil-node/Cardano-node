@@ -44,24 +44,51 @@ surface so the integration has a real driver.
 
 **Owner:** observability (Wave 6 PR 17)
 
-**State today.** Layer 1 (the `TraceObject` CBOR codec at
-`crates/node/tracer/src/trace_forwarder.rs`) is fully implemented
-and unit-tested against pinned upstream-shape wire bytes. Layers
-2/3 — the `Trace.Forward.Protocol.TraceObject` mini-protocol
-state machine and the `Network.Mux` SDU framing + handshake — are
-documented but unimplemented; the `## Layered design` block in
-`trace_forwarder.rs` explains the gap.
+**State today.** Layer 1 (`TraceObject` CBOR codec) is fully
+implemented and unit-tested against pinned upstream-shape wire
+bytes. Phase 2.B of Wave 6 PR 17 added the codec halves of
+Layers 2 and 3:
+
+- `crates/node/tracer/src/trace_forwarder/mux.rs` — `Network.Mux`
+  SDU header codec (encode + decode of the 8-byte big-endian
+  timestamp + dir-and-protonum + length header). Mini-protocol
+  number constants for Handshake (0), EKG (1), TraceObject (2),
+  DataPoint (3) per upstream `Cardano.Tracer.Acceptors.*`.
+- `crates/node/tracer/src/trace_forwarder/mini_protocol.rs` —
+  `Trace.Forward.Protocol.TraceObject` CBOR codec for
+  `MsgTraceObjectsRequest` / `MsgDone` / `MsgTraceObjectsReply`.
+  Round-trip pinned against the upstream wire shape; `Request`
+  and `Done` are byte-exact, `Reply` encodes the prefix
+  byte-exactly and concatenates each `TraceObject`'s Layer 1
+  CBOR.
+
+What's still missing:
+
+- The Mux state-machine driver (ingress queue, egress queue,
+  per-mini-protocol scheduler, handshake driver, bearer-task
+  lifecycle).
+- An `AF_UNIX SOCK_STREAM` bearer adapter.
+- The cardano-tracer-specific Handshake mini-protocol negotiator
+  (mini-protocol num 0).
+- A `Layer<S>` adapter for `tracing-subscriber` that walks every
+  `tracing::Event` into a `TraceObject` and emits it through the
+  Mux stack to a configurable Unix socket.
+- TraceObject Layer 1 **decoder** (today only the encoder ships;
+  `mini_protocol.rs` errors on a non-empty inbound `Reply` until
+  the decoder lands).
+- Conformance test against the vendored
+  `.reference-haskell-cardano-node/install/bin/cardano-tracer`
+  binary — needs `scripts/setup-reference.sh` without
+  `--sources-only` so the install tarball materialises.
 
 **Desired end state.** A `Layer<S>` for `tracing-subscriber` that
 forwards every `tracing::Event` over the cardano-tracer Unix
-socket. Wave 6 PR 17 adds the `tracing-opentelemetry` workspace
-dep plus the Mux 2/3 protocol implementation. SPOs who run a
-sibling `cardano-tracer` process get drop-in trace forwarding.
+socket. SPOs who run a sibling `cardano-tracer` process get
+drop-in trace forwarding.
 
-**Scope.** Multi-day. Conformance verification against a live
-`cardano-tracer` binary, Mux SDU framing, handshake protocol
-state machine, integration test against the vendored upstream
-binary.
+**Scope.** Multi-day. Bearer adapter, state-machine driver,
+Handshake negotiator, decoder side of TraceObject, conformance
+verification against a live `cardano-tracer` binary.
 
 ## Wave 3 / Wave 5 feature flags: declared but not gating
 
