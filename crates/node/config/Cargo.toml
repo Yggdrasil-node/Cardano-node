@@ -1,0 +1,26 @@
+[package]
+name = "yggdrasil-node-config"
+description = "Node configuration types, path resolution helpers, and upstream-pin constants — extracted from the yggdrasil-node binary in Wave 5 PR 7 so sister tools and downstream consumers can depend on the configuration surface without linking the whole runtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+yggdrasil-consensus.workspace = true
+yggdrasil-ledger.workspace = true
+yggdrasil-network.workspace = true
+yggdrasil-node-genesis.workspace = true
+yggdrasil-plutus.workspace = true
+
+[dev-dependencies]
+hex.workspace = true
+tempfile = "3"
+yggdrasil-crypto.workspace = true
+
+[lints]
+workspace = true

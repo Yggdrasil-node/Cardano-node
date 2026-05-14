@@ -1,3 +1,16 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+//! yggdrasil-node-genesis — genesis loading + protocol-parameter derivation.
+//!
+//! Wave 5 PR 7+8 split this crate out of the monolithic
+//! `yggdrasil-node` binary alongside `yggdrasil-node-config`.
+//! Sister tools that need genesis-side helpers (`cardano-cli`,
+//! `db-analyser`, `db-synthesizer`, `cardano-testnet`) consume
+//! this crate directly; the binary re-exports via
+//! `pub use yggdrasil_node_genesis as genesis;` so the public
+//! surface `yggdrasil_node::genesis::*` stays stable.
+//!
+//! ## Original file docstring follows
+//!
 //! Genesis configuration file loading and protocol-parameter derivation.
 //!
 //! The official Cardano node reads separate genesis files per era at startup:

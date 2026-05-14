@@ -1,0 +1,23 @@
+[package]
+name = "yggdrasil-node-genesis"
+description = "Per-era genesis file loaders (Byron / Shelley / Alonzo / Conway) and protocol-parameter derivation — extracted from the yggdrasil-node binary in Wave 5 PR 7+8 so sister tools that need genesis-side helpers (cardano-cli, db-analyser, db-synthesizer, cardano-testnet) don't have to link the runtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+yggdrasil-crypto.workspace = true
+yggdrasil-ledger.workspace = true
+yggdrasil-plutus.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

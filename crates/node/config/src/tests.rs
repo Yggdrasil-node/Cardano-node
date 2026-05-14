@@ -509,11 +509,19 @@ fn vendored_preset_hashes_match_vendored_genesis_files_end_to_end() {
     // Exercises the full path that runs on every `--network <preset>`
     // startup: each preset's preset constructor declares the
     // canonical *GenesisHash values, and `verify_known_genesis_hashes`
-    // reads the vendored genesis files from `node/configuration/<network>/`
-    // and compares Blake2b-256 of the file bytes. If a vendored file
-    // is updated without bumping the in-code hash (or vice versa),
-    // this test fails immediately so the drift is caught at CI time.
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // reads the vendored genesis files from
+    // `crates/node/yggdrasil-node/configuration/<network>/` and
+    // compares Blake2b-256 of the file bytes. If a vendored file is
+    // updated without bumping the in-code hash (or vice versa), this
+    // test fails immediately so the drift is caught at CI time.
+    //
+    // Wave 5 PR 7+8: the `configuration/` tree stayed with the binary
+    // crate; remap CARGO_MANIFEST_DIR (which is `crates/node/config/`
+    // now) up one level and into `yggdrasil-node/`.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("config crate manifest dir has a parent")
+        .join("yggdrasil-node");
     for &preset in NetworkPreset::all() {
         let cfg = preset.to_config();
         let base = manifest_dir.join("configuration").join(preset.to_string());
@@ -554,7 +562,7 @@ fn verify_known_genesis_hashes_short_circuits_on_first_mismatch() {
         .verify_known_genesis_hashes(Some(dir.path()))
         .expect_err("Shelley mismatch must surface");
     assert!(
-        matches!(err, crate::genesis::GenesisLoadError::HashMismatch { .. }),
+        matches!(err, yggdrasil_node_genesis::GenesisLoadError::HashMismatch { .. }),
         "expected HashMismatch first, got {err:?}",
     );
 }
@@ -816,7 +824,12 @@ fn mainnet_preset_matches_genesis() {
 #[test]
 fn mainnet_preset_loads_plutus_cost_model() {
     let cfg = NetworkPreset::Mainnet.to_config();
-    let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("configuration/mainnet");
+    // Wave 5 PR 7+8: the `configuration/` tree lives with the binary
+    // crate; reach it relative to this crate's manifest dir.
+    let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("config crate manifest dir has a parent")
+        .join("yggdrasil-node/configuration/mainnet");
     let model = cfg
         .load_plutus_cost_model(Some(base_dir.as_path()))
         .expect("load plutus cost model")
@@ -886,7 +899,7 @@ fn explicit_bootstrap_peers_parse_from_json() {
 #[test]
 fn topology_parser_reads_bootstrap_peers() {
     let peers =
-        parse_topology_bootstrap_peers(include_str!("../../configuration/mainnet/topology.json"));
+        parse_topology_bootstrap_peers(include_str!("../../yggdrasil-node/configuration/mainnet/topology.json"));
     assert_eq!(peers.len(), 3);
     assert_eq!(peers[0].0, "backbone.cardano.iog.io");
     assert_eq!(peers[0].1, 3001);

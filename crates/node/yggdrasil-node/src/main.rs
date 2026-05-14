@@ -169,10 +169,14 @@ use startup::{
     forged_header_protocol_version, strict_base_ledger_state, trace_genesis_hashes_verified,
 };
 
-// Config-relative path resolution. Mirrors upstream
-// `Cardano.Node.Configuration.NodeAddress`.
-mod path_resolve;
-pub(crate) use path_resolve::{resolve_config_path, resolve_storage_dir};
+// Config-relative path resolution. Wave 5 PR 7+8 moved this module
+// into the standalone `yggdrasil-node-config` crate. The binary
+// imports the helpers directly from the new crate — the lib.rs
+// `pub use yggdrasil_node_config::path_resolve;` re-export covers
+// `yggdrasil_node::path_resolve::*` for downstream users, but the
+// binary itself is a separate crate root and reaches the helpers
+// through the public crate path.
+pub(crate) use yggdrasil_node::path_resolve::{resolve_config_path, resolve_storage_dir};
 
 // Ledger-derived fallback peer assembly. Mirrors upstream
 // `Ouroboros.Network.PeerSelection.LedgerPeers`.

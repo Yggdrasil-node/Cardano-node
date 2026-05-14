@@ -2509,8 +2509,41 @@ dependencies = [
  "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-network",
+ "yggdrasil-node-config",
+ "yggdrasil-node-genesis",
  "yggdrasil-plutus",
  "yggdrasil-storage",
+]
+
+[[package]]
+name = "yggdrasil-node-config"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "yggdrasil-consensus",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
+ "yggdrasil-network",
+ "yggdrasil-node-genesis",
+ "yggdrasil-plutus",
+]
+
+[[package]]
+name = "yggdrasil-node-genesis"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
+ "yggdrasil-plutus",
 ]
 
 [[package]]

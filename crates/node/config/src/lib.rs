@@ -1,15 +1,34 @@
-//! Node configuration file types.
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+//! yggdrasil-node-config — node configuration file types + path resolution + upstream pin metadata.
 //!
-//! The configuration format follows the same JSON convention used by the
-//! official Cardano node runtime. A config file is a JSON object with
-//! a primary peer address, optional ordered bootstrap relays, network magic,
-//! protocol versions, and consensus parameters.
+//! Wave 5 PR 7 split this crate out of the monolithic `yggdrasil-node`
+//! binary. Three logical surfaces now live here as a single leaf-of-
+//! the-build-graph crate:
 //!
-//! Reference: `cardano-node/configuration/` in the IntersectMBO repository.
+//!  * Configuration parsing: `NodeConfigFile`, `NetworkPreset`,
+//!    `TraceNamespaceConfig`, and the JSON-first deserializer with
+//!    PascalCase upstream key aliases (this file). Source-of-truth
+//!    for the operator-stable Tier-1 config surface declared in
+//!    `docs/COMPATIBILITY.md`.
+//!  * [`path_resolve`]: `$XDG_CONFIG_HOME` / per-network preset path
+//!    resolution helpers (pure `std::path`, no I/O).
+//!  * [`upstream_pins`]: cardano-base / ouroboros-consensus / etc.
+//!    git SHA constants pinned at the policy tag from
+//!    `docs/parity-matrix.json::reference.tag` (currently 11.0.1).
+//!    Cross-checked by `scripts/check-fixture-manifest.py`.
+//!
+//! The `yggdrasil-node` binary re-exports this crate via
+//! `pub use yggdrasil_node_config as config;` so the public surface
+//! `yggdrasil_node::config::NetworkPreset` stays stable for every
+//! external consumer (sister tools, downstream embedders, the
+//! `cardano-cli` subcommand registered at `crates/tools/cardano-cli/`).
 //!
 //! ## Naming parity
 //!
 //! **Strict mirror:** none. Yggdrasil-side binary `NodeConfigFile` struct + JSON-first deserializer (with YAML fallback) + PascalCase upstream key aliases (`TargetNumberOfKnownPeers`, `MaxKnownMajorProtocolVersion`, `ShelleyGenesisHash`, etc.). Upstream's equivalent is split across `Cardano.Node.Configuration.POM` + `Cardano.Tracing.Config` + per-subsystem configs; Yggdrasil unifies into a single struct that the binary's CLI override layer applies on top of.
+
+pub mod path_resolve;
+pub mod upstream_pins;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -343,7 +362,7 @@ pub struct NodeConfigFile {
     /// `CheckpointsFileHash` in the official Cardano node configuration.
     /// Verified at `validate-config` time against the raw-bytes digest of
     /// `checkpoints_file` via
-    /// [`crate::genesis::verify_genesis_file_hash`]. Enforcement at the
+    /// [`yggdrasil_node_genesis::verify_genesis_file_hash`]. Enforcement at the
     /// loader level will land alongside the checkpoint-pinning feature.
     #[serde(
         rename = "CheckpointsFileHash",
@@ -553,7 +572,7 @@ pub struct NodeConfigFile {
     /// Expected Blake2b-256 hash (lowercase hex) of the Shelley genesis
     /// file referenced by [`Self::shelley_genesis_file`]. Matches
     /// `ShelleyGenesisHash` in the official Cardano node configuration.
-    /// When set, [`crate::genesis::verify_genesis_file_hash`] is invoked
+    /// When set, [`yggdrasil_node_genesis::verify_genesis_file_hash`] is invoked
     /// at startup to verify the file matches; mismatches abort startup
     /// rather than silently using a wrong genesis.
     #[serde(
@@ -575,7 +594,7 @@ pub struct NodeConfigFile {
     /// Unlike Shelley-family genesis hashes, upstream Byron hashes are
     /// computed over `Text.JSON.Canonical.renderCanonicalJSON` of the parsed
     /// JSON value. Startup verifies this with
-    /// [`crate::genesis::verify_byron_genesis_file_hash`].
+    /// [`yggdrasil_node_genesis::verify_byron_genesis_file_hash`].
     #[serde(
         rename = "ByronGenesisHash",
         default,
@@ -800,8 +819,8 @@ impl NodeConfigFile {
     pub fn load_genesis_protocol_params(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Option<ProtocolParameters>, crate::genesis::GenesisLoadError> {
-        use crate::genesis::{
+    ) -> Result<Option<ProtocolParameters>, yggdrasil_node_genesis::GenesisLoadError> {
+        use yggdrasil_node_genesis::{
             build_protocol_parameters, load_alonzo_genesis, load_conway_genesis,
             load_shelley_genesis,
         };
@@ -855,9 +874,9 @@ impl NodeConfigFile {
     pub fn load_shelley_genesis_bootstrap(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Option<crate::genesis::ShelleyGenesisBootstrap>, crate::genesis::GenesisLoadError>
+    ) -> Result<Option<yggdrasil_node_genesis::ShelleyGenesisBootstrap>, yggdrasil_node_genesis::GenesisLoadError>
     {
-        use crate::genesis::load_shelley_genesis_bootstrap;
+        use yggdrasil_node_genesis::load_shelley_genesis_bootstrap;
 
         let Some(path) = self.shelley_genesis_file.as_deref() else {
             return Ok(None);
@@ -877,8 +896,8 @@ impl NodeConfigFile {
     pub fn load_byron_genesis_utxo(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Vec<crate::genesis::ByronGenesisUtxoEntry>, crate::genesis::GenesisLoadError> {
-        use crate::genesis::load_byron_genesis_utxo;
+    ) -> Result<Vec<yggdrasil_node_genesis::ByronGenesisUtxoEntry>, yggdrasil_node_genesis::GenesisLoadError> {
+        use yggdrasil_node_genesis::load_byron_genesis_utxo;
 
         let Some(path) = self.byron_genesis_file.as_deref() else {
             return Ok(Vec::new());
@@ -903,8 +922,8 @@ impl NodeConfigFile {
     /// Shelley / Alonzo / Conway use raw file bytes.
     ///
     /// Returns `Ok(())` when every checked file matches, or
-    /// [`crate::genesis::GenesisLoadError::HashMismatch`] /
-    /// [`crate::genesis::GenesisLoadError::InvalidHashHex`] on the first
+    /// [`yggdrasil_node_genesis::GenesisLoadError::HashMismatch`] /
+    /// [`yggdrasil_node_genesis::GenesisLoadError::InvalidHashHex`] on the first
     /// failure.
     ///
     /// Reference: `cardano-node` `Cardano.Node.Configuration.POM` —
@@ -912,8 +931,8 @@ impl NodeConfigFile {
     pub fn verify_known_genesis_hashes(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<(), crate::genesis::GenesisLoadError> {
-        use crate::genesis::{verify_byron_genesis_file_hash, verify_genesis_file_hash};
+    ) -> Result<(), yggdrasil_node_genesis::GenesisLoadError> {
+        use yggdrasil_node_genesis::{verify_byron_genesis_file_hash, verify_genesis_file_hash};
 
         let resolve = |relative: &str| -> std::path::PathBuf {
             let p = Path::new(relative);
@@ -967,10 +986,10 @@ impl NodeConfigFile {
                     }
                 }
                 (Some(_), None) => {
-                    return Err(crate::genesis::GenesisLoadError::MissingHash { field });
+                    return Err(yggdrasil_node_genesis::GenesisLoadError::MissingHash { field });
                 }
                 (None, Some(_)) => {
-                    return Err(crate::genesis::GenesisLoadError::MissingFile { field });
+                    return Err(yggdrasil_node_genesis::GenesisLoadError::MissingFile { field });
                 }
                 (None, None) => {} // optional era genesis (e.g. Conway pre-Conway)
             }
@@ -983,8 +1002,8 @@ impl NodeConfigFile {
     pub fn load_genesis_enact_state(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Option<yggdrasil_ledger::EnactState>, crate::genesis::GenesisLoadError> {
-        use crate::genesis::{build_genesis_enact_state, load_conway_genesis};
+    ) -> Result<Option<yggdrasil_ledger::EnactState>, yggdrasil_node_genesis::GenesisLoadError> {
+        use yggdrasil_node_genesis::{build_genesis_enact_state, load_conway_genesis};
 
         let Some(path) = self.conway_genesis_file.as_deref() else {
             return Ok(None);
@@ -1005,8 +1024,8 @@ impl NodeConfigFile {
     pub fn load_plutus_cost_model(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Option<CostModel>, crate::genesis::GenesisCostModelError> {
-        use crate::genesis::{build_plutus_cost_model, load_alonzo_genesis, load_conway_genesis};
+    ) -> Result<Option<CostModel>, yggdrasil_node_genesis::GenesisCostModelError> {
+        use yggdrasil_node_genesis::{build_plutus_cost_model, load_alonzo_genesis, load_conway_genesis};
 
         let Some(path) = self.alonzo_genesis_file.as_deref() else {
             return Ok(None);
@@ -1531,7 +1550,7 @@ pub fn default_config() -> NodeConfigFile {
 pub fn mainnet_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("valid default addr");
     let topology = resolve_topology_peers(
-        include_str!("../configuration/mainnet/topology.json"),
+        include_str!("../../yggdrasil-node/configuration/mainnet/topology.json"),
         fallback_primary,
     );
 
@@ -1616,7 +1635,7 @@ pub fn mainnet_config() -> NodeConfigFile {
 pub fn preprod_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("fallback addr");
     let topology = resolve_topology_peers(
-        include_str!("../configuration/preprod/topology.json"),
+        include_str!("../../yggdrasil-node/configuration/preprod/topology.json"),
         fallback_primary,
     );
 
@@ -1701,7 +1720,7 @@ pub fn preprod_config() -> NodeConfigFile {
 pub fn preview_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("fallback addr");
     let topology = resolve_topology_peers(
-        include_str!("../configuration/preview/topology.json"),
+        include_str!("../../yggdrasil-node/configuration/preview/topology.json"),
         fallback_primary,
     );
 

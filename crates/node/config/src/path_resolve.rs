@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 /// Resolve a `storage_dir` config field. Identical semantics to
 /// [`resolve_config_path`] but kept as a separate name so call-site
 /// intent (`storage_dir` vs. arbitrary `*File` fields) is obvious.
-pub(crate) fn resolve_storage_dir(storage_dir: &Path, config_base_dir: Option<&Path>) -> PathBuf {
+pub fn resolve_storage_dir(storage_dir: &Path, config_base_dir: Option<&Path>) -> PathBuf {
     if storage_dir.is_absolute() {
         storage_dir.to_path_buf()
     } else if let Some(base_dir) = config_base_dir {
@@ -42,7 +42,7 @@ pub(crate) fn resolve_storage_dir(storage_dir: &Path, config_base_dir: Option<&P
 /// holding the config file. Used for `ShelleyGenesisFile`,
 /// `AlonzoGenesisFile`, `TopologyFilePath`, KES key paths, peer
 /// snapshot paths, the checkpoints file, etc.
-pub(crate) fn resolve_config_path(path: &Path, config_base_dir: Option<&Path>) -> PathBuf {
+pub fn resolve_config_path(path: &Path, config_base_dir: Option<&Path>) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else if let Some(base_dir) = config_base_dir {

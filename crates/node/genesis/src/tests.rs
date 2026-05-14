@@ -1240,7 +1240,14 @@ fn compute_byron_genesis_file_hash_rejects_raw_control_byte_in_string() {
 
 #[test]
 fn compute_byron_genesis_file_hash_matches_vendored_preset_hashes() {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // Wave 5 PR 7+8: the vendored `configuration/` tree stayed with
+    // the `yggdrasil-node` binary crate when this module was
+    // extracted. Hop one level up from this crate's manifest
+    // (`crates/node/genesis/`) and into the sibling binary's tree.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("genesis crate manifest dir has a parent")
+        .join("yggdrasil-node");
     let cases = [
         (
             "mainnet",
