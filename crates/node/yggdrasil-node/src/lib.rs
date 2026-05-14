@@ -14,11 +14,11 @@ pub use yggdrasil_node_config as config;
 pub use yggdrasil_node_config::path_resolve;
 pub use yggdrasil_node_config::upstream_pins;
 pub use yggdrasil_node_genesis as genesis;
+pub use yggdrasil_node_plutus_eval as plutus_eval;
 pub use yggdrasil_node_tracer as tracer;
 pub use yggdrasil_node_tracer::trace_forwarder;
 
 pub mod local_server;
-pub mod plutus_eval;
 pub mod runtime;
 pub mod server;
 pub mod sync;

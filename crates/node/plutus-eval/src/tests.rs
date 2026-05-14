@@ -43,11 +43,12 @@ fn gap_bp_v2_script_context_structural_shape() {
     // diffs; this test deliberately works on the live-built ScriptContext
     // for the captured tx, not the hex, so the shape stays in sync with
     // any future ScriptContext refactor.
-    // Wave 4 PR 6: the tree moved from node/src/ to
-    // crates/node/yggdrasil-node/src/, so the include_str! path now
-    // walks five `..` to reach the workspace root (was three).
+    // Wave 5 PR 10: plutus-eval is now its own crate, so the
+    // relative include_str! walks 4 `..` (src/ → plutus-eval/ →
+    // node/ → crates/ → workspace root). Was 5 when the file lived
+    // in crates/node/yggdrasil-node/src/plutus_eval/tests.rs.
     let captured_hex = include_str!(
-        "../../../../../docs/operational-runs/2026-05-06-round-266c-gap-bp-script-context.log"
+        "../../../../docs/operational-runs/2026-05-06-round-266c-gap-bp-script-context.log"
     );
     let cbor_hex = captured_hex
         .lines()

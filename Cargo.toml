@@ -183,6 +183,7 @@ yggdrasil-ledger = { path = "crates/ledger" }
 yggdrasil-network = { path = "crates/network" }
 yggdrasil-node-config = { path = "crates/node/config" }
 yggdrasil-node-genesis = { path = "crates/node/genesis" }
+yggdrasil-node-plutus-eval = { path = "crates/node/plutus-eval" }
 yggdrasil-node-tracer = { path = "crates/node/tracer" }
 yggdrasil-plutus = { path = "crates/plutus" }
 yggdrasil-storage = { path = "crates/storage" }

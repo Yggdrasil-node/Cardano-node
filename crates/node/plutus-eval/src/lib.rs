@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! CEK-machine `PlutusEvaluator` implementation for the node.
 //!
 //! Bridges [`yggdrasil_ledger::plutus_validation::PlutusEvaluator`] to the
@@ -107,7 +108,7 @@ impl CekPlutusEvaluator {
     /// genesis parameters, or return the raw slot if unavailable.
     fn slot_to_posix_ms(&self, slot: u64) -> u64 {
         match self.system_start_unix_secs {
-            Some(start) => crate::genesis::slot_to_posix_ms(slot, start, self.slot_length_secs),
+            Some(start) => yggdrasil_node_genesis::slot_to_posix_ms(slot, start, self.slot_length_secs),
             None => slot,
         }
     }
@@ -172,7 +173,7 @@ impl PlutusEvaluator for CekPlutusEvaluator {
         let budget = ExBudget::new(eval.ex_units.steps as i64, eval.ex_units.mem as i64);
         let cost_model = match eval.cost_model.as_deref() {
             Some(values) => {
-                crate::genesis::build_plutus_cost_model_from_protocol_values_for_protocol(
+                yggdrasil_node_genesis::build_plutus_cost_model_from_protocol_values_for_protocol(
                     eval.version,
                     tx_ctx.protocol_version,
                     values,
