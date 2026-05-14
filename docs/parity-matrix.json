@@ -619,7 +619,7 @@
       "id": "sister-tool.db-truncater",
       "area": "sister-tools",
       "feature": "ChainDB rollback utility \u2014 pure-Rust port mirroring upstream Cardano.Tools.DBTruncater.* + app/db-truncater.hs.",
-      "status": "partial",
+      "status": "implemented_needs_11_0_1_evidence",
       "next_milestone": "R351",
       "haskell_reference": [
         {
