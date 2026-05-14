@@ -84,8 +84,57 @@ install_static_link_tools() {
 }
 
 install_haskell_cardano_node() {
-  if ! "$REPO_ROOT/node/scripts/install_haskell_cardano_node.sh"; then
+  # Wave 4 PR 6: the operator script tree moved to
+  # crates/node/yggdrasil-node/scripts/ alongside the binary crate.
+  if ! "$REPO_ROOT/crates/node/yggdrasil-node/scripts/install_haskell_cardano_node.sh"; then
     echo "[devcontainer] install_haskell_cardano_node failed; re-run manually when network access is available" >&2
+  fi
+}
+
+install_dev_tools() {
+  # Wave 9 PR 26: dev-loop ergonomics tooling.
+  # Each installer is idempotent; subsequent rebuilds skip already-matching tools.
+  echo "[devcontainer] installing dev-loop tools (nextest, llvm-cov, fuzz, just, bacon, lefthook)"
+
+  rustup component add llvm-tools-preview
+
+  cargo install --locked cargo-nextest cargo-llvm-cov cargo-criterion \
+                          cargo-deny cargo-fuzz just bacon
+
+  # lefthook ships as a native Go binary; install directly rather than
+  # through cargo (faster + smaller).
+  if ! command -v lefthook >/dev/null 2>&1; then
+    case "$(uname -m)" in
+      x86_64) lefthook_arch="x86_64" ;;
+      aarch64|arm64) lefthook_arch="arm64" ;;
+      *)
+        echo "[devcontainer] unsupported lefthook architecture: $(uname -m)" >&2
+        return
+        ;;
+    esac
+
+    tmpdir="$(mktemp -d -t lefthook-install-XXXXXX)"
+    (
+      trap 'rm -rf "$tmpdir"' EXIT
+      asset="lefthook_${lefthook_arch}.tar.gz"
+      url="https://github.com/evilmartians/lefthook/releases/latest/download/${asset}"
+      echo "[devcontainer] installing lefthook"
+      curl -fsSL "$url" -o "$tmpdir/$asset"
+      tar -xzf "$tmpdir/$asset" -C "$tmpdir"
+      "${SUDO[@]}" install -m 0755 "$tmpdir/lefthook" /usr/local/bin/lefthook
+    )
+  fi
+
+  # Native fast-link toolchain for `YGG_FAST_LINK=1` opt-in
+  # (`.cargo/config.toml`-documented; not enabled by default).
+  "${SUDO[@]}" apt-get update
+  "${SUDO[@]}" env DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends mold clang
+  "${SUDO[@]}" rm -rf /var/lib/apt/lists/*
+
+  # Wire lefthook into the repo's git hooks. Idempotent.
+  if [[ -d "$REPO_ROOT/.git" ]]; then
+    (cd "$REPO_ROOT" && lefthook install)
   fi
 }
 
@@ -105,5 +154,6 @@ prepare_yggdrasil_runtime_dirs() {
 install_shellcheck
 install_actionlint
 install_static_link_tools
+install_dev_tools
 install_haskell_cardano_node
 prepare_yggdrasil_runtime_dirs

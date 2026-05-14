@@ -1,0 +1,68 @@
+# Wave 9 PR 26 — bacon (background cargo runner) configuration.
+#
+# Bacon watches the workspace for file changes and reruns the
+# configured job. Typical loop: editor saves a file in
+# `crates/<crate>/src/`, bacon re-runs `check` in <2s, then operator
+# presses `t` to switch to `test-fast`, `l` for clippy, `p` for the
+# parity-matrix validator.
+#
+# Install via `cargo install --locked bacon`. The devcontainer
+# `post-create.sh` adds it automatically.
+
+default_job = "check"
+
+# Restrict the watcher to the directories that hold production /
+# test sources. `target/`, `.reference-haskell-cardano-node/`, `tmp/`,
+# and `docs/operational-runs/` are excluded so the watcher doesn't
+# rebuild on every cargo touch or vendored-tree update.
+watch = [
+    "crates",
+    "fuzz",
+    "xtask",
+    "benches",
+]
+
+[jobs.check]
+command = ["cargo", "check-all"]
+need_stdout = false
+
+[jobs.clippy]
+command = ["cargo", "lint"]
+need_stdout = false
+
+[jobs.lint-no-default]
+command = ["cargo", "lint-no-default"]
+need_stdout = false
+
+[jobs.test-fast]
+command = [
+    "cargo", "nextest", "run",
+    "--profile", "default",
+    "--workspace",
+    "--no-fail-fast",
+]
+need_stdout = true
+
+[jobs.parity]
+command = ["python3", "scripts/check-parity-matrix.py"]
+need_stdout = true
+
+[jobs.parity-mirror]
+command = ["python3", "scripts/check-strict-mirror.py", "--fail-on-violation"]
+need_stdout = true
+
+# `bacon test-crate <name>` re-runs nextest scoped to a single crate.
+# Saves rebuilding the world when iterating on a single sub-crate's
+# tests. Invoke as `bacon test-crate -- yggdrasil-consensus`.
+[jobs.test-crate]
+command = ["cargo", "nextest", "run", "-p"]
+need_stdout = true
+on_change_strategy = "wait_then_restart"
+
+[keybindings]
+c = "job:check"
+l = "job:clippy"
+n = "job:lint-no-default"
+t = "job:test-fast"
+p = "job:parity"
+m = "job:parity-mirror"

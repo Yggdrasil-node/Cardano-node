@@ -1,0 +1,54 @@
+# Wave 9 PR 26 — lefthook git hooks configuration.
+#
+# `lefthook` (https://github.com/evilmartians/lefthook) over `pre-commit`:
+# single Go binary, no Python virtualenv, ~5x faster on a workspace
+# this size. Aligned with Yggdrasil's pure-Rust (no FFI / no openssl)
+# stance — keeps the dev-loop dep surface lean.
+#
+# Install:
+#   curl -fsSL https://github.com/evilmartians/lefthook/releases/latest/download/lefthook_linux_x86_64.tar.gz \
+#     | sudo tar -xz -C /usr/local/bin lefthook
+#   lefthook install
+# Bypass per-invocation:
+#   LEFTHOOK=0 git push   # emergency, do not abuse
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt -- --check {staged_files}
+      stage_fixed: true
+    clippy-changed:
+      glob: "*.rs"
+      run: |
+        # Restrict clippy to the crates whose files changed. Full
+        # `cargo lint` runs at pre-push; pre-commit stays sub-2s by
+        # scoping to changed crates only.
+        crates=$(git diff --cached --name-only --diff-filter=ACM \
+                 | awk -F/ '
+                   /^crates\/node\/yggdrasil-node\// { print "yggdrasil-node"; next }
+                   /^crates\/node\// { print "yggdrasil-node-" $3; next }
+                   /^crates\/tools\// { print "yggdrasil-" $3; next }
+                   /^crates\// { print "yggdrasil-" $2 }
+                 ' \
+                 | sort -u)
+        for c in $crates; do
+          [ -n "$c" ] && cargo clippy -p "$c" --all-targets -- -D warnings || exit 1
+        done
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: actionlint {staged_files}
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+
+pre-push:
+  parallel: false
+  commands:
+    test-fast:
+      run: cargo nextest run --profile default --workspace
+    parity-mirror:
+      run: python3 scripts/check-strict-mirror.py --fail-on-violation
+    parity-fixtures:
+      run: python3 scripts/check-fixture-manifest.py
