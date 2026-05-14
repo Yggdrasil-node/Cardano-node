@@ -167,13 +167,13 @@ impl std::error::Error for EnvSocketError {}
 /// default), producing `{"tag":"<Constructor>","contents":<payload>}`.
 /// `#[serde(tag = "tag", content = "contents")]` matches it.
 ///
-/// Note: `TxCmdTxSubmitValidationError` currently carries a rendered
-/// string; the structured `ApplyError` mapping is tracked as a
-/// follow-on in `docs/TECH-DEBT.md` under "cardano-submit-api
-/// validation error: structured mapping" (cohered with the Phase 4.A
-/// sister-tool web-protocol completion so the wire-protocol change
-/// lands in one cohesive PR) and in `docs/parity-matrix.json` under
-/// the cardano-submit-api entry's `next_milestone` field.
+/// `TxCmdTxSubmitValidationError` now carries a [`TxSubmitValidationError`]
+/// which preserves both the raw CBOR-encoded era-specific `ApplyTxError`
+/// payload AND a human-readable rendering. The inner type's custom
+/// `Serialize` keeps the upstream JSON wire shape (`{"contents":"<rendered>"}`)
+/// byte-equivalent — only the rendered string surfaces in the JSON
+/// envelope. Operators that want the structured payload reach for
+/// `TxSubmitValidationError::raw_cbor()`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "tag", content = "contents")]
 pub enum TxCmdError {
@@ -182,11 +182,93 @@ pub enum TxCmdError {
     TxCmdSocketEnvError(EnvSocketError),
     /// Raw CBOR decoder failure(s) when parsing transaction bytes.
     TxCmdTxReadError(RawCborDecodeError),
-    /// Tx-validation rejection from the local cardano-node. Currently
-    /// rendered as a string; structured form lands at R340+.
-    TxCmdTxSubmitValidationError(String),
+    /// Tx-validation rejection from the local cardano-node. Carries the
+    /// raw CBOR-encoded era-specific reject payload + a string
+    /// rendering; JSON serialisation emits only the rendering to keep
+    /// upstream-byte-equivalence.
+    TxCmdTxSubmitValidationError(TxSubmitValidationError),
     /// Connection to the local cardano-node socket failed.
     TxCmdTxSubmitConnectionError(String),
+}
+
+/// Structured transaction-validation rejection from the local node.
+///
+/// Carries both the raw CBOR-encoded era-specific `ApplyTxError`
+/// payload (so future structured-decoder work can pattern-match on
+/// individual variants like `FeeTooSmall` / `ValueNotConservedUTxO`
+/// without re-fetching the rejection) AND a string rendering used
+/// today's operator-facing output.
+///
+/// The custom `Serialize` impl emits only the rendered string so the
+/// upstream JSON wire shape stays byte-equivalent:
+/// `{"tag":"TxCmdTxSubmitValidationError","contents":"<rendered>"}`.
+///
+/// Upstream parallel: `Cardano.TxSubmit.Types.TxValidationErrorInCardanoMode`.
+/// Yggdrasil's variant is era-opaque at the Rust-type level pending
+/// the multi-era `ApplyTxError` decoder; see
+/// `docs/TECH-DEBT.md` "cardano-submit-api validation error" for the
+/// per-era structured-decoder roadmap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TxSubmitValidationError {
+    /// Raw CBOR-encoded era-specific `ApplyTxError` payload as
+    /// received from the local-tx-submission server.
+    raw_cbor: Vec<u8>,
+    /// Human-readable rendering — used by `Display` impls and JSON
+    /// `contents` field.
+    rendered: String,
+}
+
+impl TxSubmitValidationError {
+    /// Construct from raw CBOR + a pre-rendered string. The renderer is
+    /// typically the same one used by upstream's
+    /// `renderTxValidationErrorInCardanoMode`; today the Rust side
+    /// passes through whatever string the LSQ surface produced.
+    pub fn new(raw_cbor: Vec<u8>, rendered: impl Into<String>) -> Self {
+        Self {
+            raw_cbor,
+            rendered: rendered.into(),
+        }
+    }
+
+    /// Construct from a string only — the raw CBOR slot is left empty.
+    /// Used by call sites that built the error from a string before
+    /// the raw bytes were threaded through; eligible for follow-on
+    /// replacement once the LocalTxSubmission client exposes the raw
+    /// reject payload alongside the rendered form.
+    pub fn from_rendered(rendered: impl Into<String>) -> Self {
+        Self {
+            raw_cbor: Vec::new(),
+            rendered: rendered.into(),
+        }
+    }
+
+    /// Raw CBOR-encoded `ApplyTxError` bytes. Empty when the value was
+    /// constructed via [`Self::from_rendered`].
+    pub fn raw_cbor(&self) -> &[u8] {
+        &self.raw_cbor
+    }
+
+    /// Human-readable rendering, suitable for stderr / JSON output.
+    pub fn rendered(&self) -> &str {
+        &self.rendered
+    }
+}
+
+impl fmt::Display for TxSubmitValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.rendered)
+    }
+}
+
+/// Custom `Serialize` that emits ONLY the rendered string so the
+/// upstream JSON `{"contents":"<rendered>"}` wire shape stays
+/// byte-equivalent. The raw CBOR bytes are deliberately not
+/// surfaced through JSON — operators that need them reach through
+/// the Rust API.
+impl Serialize for TxSubmitValidationError {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.rendered)
+    }
 }
 
 impl fmt::Display for TxCmdError {
@@ -248,8 +330,8 @@ pub fn render_tx_cmd_error(err: &TxCmdError) -> String {
         TxCmdError::TxCmdTxReadError(envelope_error) => {
             format!("transaction read error \"{envelope_error}\"")
         }
-        TxCmdError::TxCmdTxSubmitValidationError(rendered) => {
-            format!("transaction submit error {rendered}")
+        TxCmdError::TxCmdTxSubmitValidationError(validation_error) => {
+            format!("transaction submit error {}", validation_error.rendered())
         }
         TxCmdError::TxCmdTxSubmitConnectionError(msg) => {
             format!("transaction submit connection error: {msg}")
@@ -344,11 +426,50 @@ mod tests {
 
     #[test]
     fn tx_cmd_validation_error_json_shape() {
-        let err = TxCmdError::TxCmdTxSubmitValidationError("FeeTooSmall".to_string());
+        let err = TxCmdError::TxCmdTxSubmitValidationError(
+            TxSubmitValidationError::from_rendered("FeeTooSmall"),
+        );
+        // Wire shape stays byte-equivalent to upstream's
+        // `{"tag":"...","contents":"<rendered>"}`; the raw_cbor field
+        // is hidden by the custom Serialize impl on
+        // TxSubmitValidationError.
         assert_eq!(
             json(&err),
             r#"{"tag":"TxCmdTxSubmitValidationError","contents":"FeeTooSmall"}"#
         );
+    }
+
+    /// Same JSON shape when the value carries non-empty raw_cbor —
+    /// the bytes must not leak into the JSON envelope.
+    #[test]
+    fn tx_cmd_validation_error_json_shape_hides_raw_cbor() {
+        let err = TxCmdError::TxCmdTxSubmitValidationError(TxSubmitValidationError::new(
+            vec![0xDE, 0xAD, 0xBE, 0xEF],
+            "FeeTooSmall",
+        ));
+        assert_eq!(
+            json(&err),
+            r#"{"tag":"TxCmdTxSubmitValidationError","contents":"FeeTooSmall"}"#
+        );
+    }
+
+    /// Raw bytes survive through the Rust API even though they don't
+    /// surface in JSON — operators that want the structured form can
+    /// recover them.
+    #[test]
+    fn tx_submit_validation_error_preserves_raw_cbor() {
+        let bytes = vec![0x82, 0x01, 0x82, 0x05, 0x82, 0xFE, 0xFD];
+        let err = TxSubmitValidationError::new(bytes.clone(), "ValueNotConservedUTxO");
+        assert_eq!(err.raw_cbor(), bytes.as_slice());
+        assert_eq!(err.rendered(), "ValueNotConservedUTxO");
+    }
+
+    /// `from_rendered` leaves raw_cbor empty.
+    #[test]
+    fn tx_submit_validation_error_from_rendered_has_empty_raw_cbor() {
+        let err = TxSubmitValidationError::from_rendered("OutsideValidityIntervalUTxO");
+        assert!(err.raw_cbor().is_empty());
+        assert_eq!(err.rendered(), "OutsideValidityIntervalUTxO");
     }
 
     #[test]
@@ -418,7 +539,9 @@ mod tests {
 
     #[test]
     fn render_tx_cmd_error_validation() {
-        let err = TxCmdError::TxCmdTxSubmitValidationError("FeeTooSmall".to_string());
+        let err = TxCmdError::TxCmdTxSubmitValidationError(
+            TxSubmitValidationError::from_rendered("FeeTooSmall"),
+        );
         assert_eq!(
             render_tx_cmd_error(&err),
             "transaction submit error FeeTooSmall"

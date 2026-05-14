@@ -129,28 +129,37 @@ just the CLI without the runtime binary.
 **Scope.** Gated on C-arc Phase F + R298+ migration roadmap;
 not actionable as a standalone PR until the C-arc lands.
 
-## cardano-submit-api validation error: structured mapping
+## cardano-submit-api validation error: structured mapping (Phase 1 — raw-bytes carrier landed)
 
 **Owner:** sister-tools (Wave 6 PR 18 / cardano-submit-api web round, Phase 4.A)
 
-**State today.** `TxCmdError::TxCmdTxSubmitValidationError` in
-`crates/tools/cardano-submit-api/src/types.rs` carries a rendered
-`String` for the local-tx-submission rejection payload. Upstream's
-Haskell shape is a structured `ApplyTxError` sum with per-era
-variants; the JSON wire shape matches when serialized via the same
-`#[serde(tag = "tag", content = "contents")]` shape, but the
-information content is currently lossy on the Rust side (no per-rule
-variant tags survive the rendering step).
+**State today.** `TxCmdError::TxCmdTxSubmitValidationError` now carries
+a `TxSubmitValidationError` struct (in
+`crates/tools/cardano-submit-api/src/types.rs`) holding BOTH the raw
+CBOR-encoded era-specific `ApplyTxError` payload AND a string
+rendering. The custom `Serialize` impl on `TxSubmitValidationError`
+emits only the rendered string so the upstream JSON wire shape
+(`{"tag":"...","contents":"<rendered>"}`) stays byte-equivalent.
+The `LocalTxSubmissionClientError::TransactionRejected(reason)` path
+in `web.rs` now plumbs the raw reject bytes through.
 
-**Desired end state.** A `TxSubmitValidationError` enum that mirrors
-upstream's `ApplyTxError` variants 1:1, with the per-era rule names
-preserved through serialization. The renderer becomes a `Display`
-impl on top of the structured form.
+**Remaining work** (Phase 2 — structured-enum decoder, deferred):
+the rendered string is still a hex-dump of the reject bytes; the
+structured `ApplyTxError` enum mirroring upstream's per-era variant
+sum (`FeeTooSmall`, `ValueNotConservedUTxO`, `OutsideValidityInterval`,
+`BadInputsUTxO`, `OutputTooSmall`, `WrongNetwork`, …; multiplied by
+6 eras Shelley→Conway) is not yet built. Once it lands, the
+renderer becomes a `Display` impl on the structured form and
+operators can pattern-match on individual rejection variants
+without a CBOR re-walk.
 
-**Scope.** ~80 lines of new enum + ~20 callsite updates in
-`yggdrasil-ledger` validation surface to surface the structured
-form. Best landed alongside the Phase 4.A web-protocol completion
-so the wire-format change is one cohesive PR rather than two.
+**Scope of Phase 2.** ~400 lines of new enum (per-era ApplyTxError
+sum + UtxoErr/UtxowErr/DelegsErr sub-sums + Conway governance
+errors), the per-era CBOR decoders that map the wire shape to
+the typed enum, and the `Display` impl that re-renders. Best
+landed when a sister tool actually needs to pattern-match (e.g.,
+tx-generator surfacing typed rejection reasons in its 1-hour TPS
+soak summary).
 
 **Tracking.** Also referenced from `docs/parity-matrix.json` under
 the cardano-submit-api entry's `next_milestone` field; the doc-

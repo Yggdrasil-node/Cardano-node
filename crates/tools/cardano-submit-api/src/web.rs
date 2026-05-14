@@ -256,10 +256,14 @@ async fn submit_via_ntc(
     let result = match client.submit(tx_bytes).await {
         Ok(()) => Ok(()),
         Err(LocalTxSubmissionClientError::TransactionRejected(reason)) => {
-            Err(TxCmdError::TxCmdTxSubmitValidationError(format!(
-                "rejected: 0x{}",
-                hex::encode(reason)
-            )))
+            // Preserve the raw CBOR reject bytes alongside the
+            // human-readable rendering so a future structured-
+            // ApplyTxError decoder can pattern-match on the inner
+            // payload without re-fetching it.
+            let rendered = format!("rejected: 0x{}", hex::encode(&reason));
+            Err(TxCmdError::TxCmdTxSubmitValidationError(
+                crate::types::TxSubmitValidationError::new(reason, rendered),
+            ))
         }
         Err(LocalTxSubmissionClientError::ConnectionClosed) => Err(
             TxCmdError::TxCmdTxSubmitConnectionError("NtC connection closed by remote".to_string()),
