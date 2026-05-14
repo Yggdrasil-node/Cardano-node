@@ -1,0 +1,154 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Yggdrasil Cardano node overview — slot/block tip, era, density, mempool, peers. Wave 10 PR 29 scaffold. SPOs migrating from upstream cardano-node 11.0.1 import this against the existing Prometheus scrape target on port 12798; the queries reference EKG-parity metric names declared at crates/observability/yggdrasil-metrics/src/lib.rs (Wave 6 PR 16).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Current Slot",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "cardano_node_metrics_slotNum_int", "refId": "A", "legendFormat": "slot" }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "unit": "none", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Current Block",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "cardano_node_metrics_blockNum_int", "refId": "A", "legendFormat": "block" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Current Era",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "cardano_node_metrics_currentEra_int", "refId": "A", "legendFormat": "era" }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name",
+        "colorMode": "value"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "Byron" }, "1": { "text": "Shelley" }, "2": { "text": "Allegra" }, "3": { "text": "Mary" }, "4": { "text": "Alonzo" }, "5": { "text": "Babbage" }, "6": { "text": "Conway" } } }
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Chain Density",
+      "type": "gauge",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "cardano_node_metrics_density_real", "refId": "A", "legendFormat": "density" }
+      ],
+      "fieldConfig": {
+        "defaults": { "min": 0, "max": 1, "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 0.03 }, { "color": "green", "value": 0.05 }] } }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Connected Peers",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "cardano_node_metrics_connectedPeers_int", "refId": "A", "legendFormat": "connected" },
+        { "expr": "cardano_node_metrics_peersFromNodeKernel_int", "refId": "B", "legendFormat": "known" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Mempool",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "cardano_node_metrics_txsInMempool_int", "refId": "A", "legendFormat": "tx count" },
+        { "expr": "cardano_node_metrics_mempoolBytes_int / 1024", "refId": "B", "legendFormat": "size (KiB)" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Forge",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 10, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(cardano_node_metrics_nodeIsLeader_int[5m]) * 60", "refId": "A", "legendFormat": "leader slots/min" },
+        { "expr": "rate(cardano_node_metrics_blocksForgedNum_int[5m]) * 60", "refId": "B", "legendFormat": "blocks forged/min" },
+        { "expr": "rate(cardano_node_metrics_nodeCannotForge_int[5m]) * 60", "refId": "C", "legendFormat": "cannot-forge/min" },
+        { "expr": "rate(cardano_node_metrics_slotsMissedNum_int[5m]) * 60", "refId": "D", "legendFormat": "slots-missed/min" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Forks / Rollbacks",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 10, "w": 12, "h": 6 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        { "expr": "rate(cardano_node_metrics_forks_int[1h])", "refId": "A", "legendFormat": "forks/hr" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["yggdrasil", "cardano", "spo"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "Prometheus", "value": "prometheus" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Datasource",
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Yggdrasil — Node Overview",
+  "uid": "yggdrasil-node-overview",
+  "version": 1,
+  "weekStart": ""
+}

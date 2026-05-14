@@ -1,0 +1,92 @@
+# Wave 10 PR 29 — Promtail scrape config for Yggdrasil node JSON logs.
+#
+# Tail every Yggdrasil binary's journald output and ship to Loki,
+# preserving the Haskell-Katip JSON shape (`at`, `ns`, `sev`,
+# `thread`, `host`, `app`) as Loki labels for fast filtering. The
+# JSON schema is enforced by `crates/telemetry/src/haskell_json.rs`
+# (Wave 6 PR 15); operators migrating from upstream `cardano-node`
+# 11.0.1 reuse their existing dashboards / log queries.
+#
+# Install:
+#   1. `cp docs/observability/loki/promtail.example.yml /etc/promtail/config.yml`
+#   2. Edit `clients[].url` to point at your Loki instance.
+#   3. Edit `host`/`spo_name` labels under `external_labels`.
+#   4. `systemctl restart promtail`.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/promtail-positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    external_labels:
+      # Operator-supplied labels — fill in before deploy.
+      host: ${HOSTNAME}
+      spo_name: yggdrasil-default
+
+scrape_configs:
+  # ─── yggdrasil-node systemd journal ──────────────────────────────
+  - job_name: yggdrasil-node-journal
+    journal:
+      max_age: 12h
+      labels:
+        job: yggdrasil-node
+      matches: _SYSTEMD_UNIT=yggdrasil-node.service
+    pipeline_stages:
+      # The Haskell-Katip JSON shape lives on each journal line.
+      - json:
+          expressions:
+            at: at
+            ns: ns
+            sev: sev
+            thread: thread
+            host: host
+            app: app
+            data: data
+      - timestamp:
+          source: at
+          format: RFC3339Nano
+      # Promote the high-cardinality-OK fields to labels so Grafana
+      # range-query selectors stay cheap.
+      - labels:
+          sev:
+          app:
+      # Drop unparseable lines rather than spamming Loki with raw
+      # bytes when something prints non-JSON (rare, but defensive).
+      - drop:
+          source: at
+          expression: '^$'
+          drop_counter_reason: missing_at_field
+
+  # ─── Sister-tool journals (every Yggdrasil binary emits the same
+  # Haskell-Katip JSON shape per Wave 8 PR 23) ──────────────────────
+  - job_name: yggdrasil-sister-tools
+    journal:
+      max_age: 12h
+      labels:
+        job: yggdrasil-sister-tool
+      matches: |
+        _SYSTEMD_UNIT=cardano-cli.service
+        _SYSTEMD_UNIT=cardano-submit-api.service
+        _SYSTEMD_UNIT=cardano-tracer.service
+        _SYSTEMD_UNIT=kes-agent.service
+        _SYSTEMD_UNIT=db-truncater.service
+        _SYSTEMD_UNIT=db-analyser.service
+    pipeline_stages:
+      - json:
+          expressions:
+            at: at
+            ns: ns
+            sev: sev
+            thread: thread
+            host: host
+            app: app
+      - timestamp:
+          source: at
+          format: RFC3339Nano
+      - labels:
+          sev:
+          app:

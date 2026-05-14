@@ -1,0 +1,125 @@
+# Wave 10 PR 29 — Prometheus alerting rules for Yggdrasil SPO deployments.
+#
+# Every alert references an EKG-parity metric name from
+# `crates/observability/yggdrasil-metrics/src/lib.rs::names` so SPOs
+# migrating from upstream `cardano-node` 11.0.1 reuse their existing
+# Alertmanager routing tree unchanged. Severity tags map to standard
+# Yggdrasil tiers (`critical` = pages oncall, `warning` = ticket).
+
+groups:
+  - name: yggdrasil-node
+    interval: 30s
+    rules:
+
+      # ─── Chain tip / sync health ─────────────────────────────────
+
+      - alert: YggdrasilBehindTip
+        expr: |
+          (time() - cardano_node_metrics_slotNum_int_last_observed) > 90
+        for: 5m
+        labels:
+          severity: critical
+          subsystem: chain-sync
+        annotations:
+          summary: "Yggdrasil node is more than 90 seconds behind the chain tip on {{ $labels.instance }}."
+          description: >
+            `cardano_node_metrics_slotNum_int` has not advanced for more than
+            90 seconds. The most common causes are upstream peer disconnect,
+            chain-sync stall, or block-fetch worker exhaustion. Investigate
+            with `journalctl -u yggdrasil-node -o json --since '5 minutes ago'`
+            and check `cardano_node_metrics_connectedPeers_int`.
+
+      - alert: YggdrasilNoConnectedPeers
+        expr: cardano_node_metrics_connectedPeers_int < 1
+        for: 2m
+        labels:
+          severity: critical
+          subsystem: network
+        annotations:
+          summary: "Yggdrasil node has zero connected peers on {{ $labels.instance }}."
+          description: >
+            The peer-governor reports no active inbound or outbound NtN
+            connections. Sync cannot make progress without peers.
+
+      - alert: YggdrasilLowPeerCount
+        expr: cardano_node_metrics_connectedPeers_int < 3
+        for: 10m
+        labels:
+          severity: warning
+          subsystem: network
+        annotations:
+          summary: "Yggdrasil node has fewer than 3 connected peers on {{ $labels.instance }}."
+
+      # ─── Block-producer alerts (only fire for forge-mode nodes) ──
+
+      - alert: YggdrasilMissedSlot
+        expr: increase(cardano_node_metrics_slotsMissedNum_int[5m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          subsystem: forge
+        annotations:
+          summary: "Yggdrasil block-producer missed a slot leadership on {{ $labels.instance }}."
+          description: >
+            `cardano_node_metrics_slotsMissedNum_int` increased over the
+            last 5 minutes — a slot for which this node had VRF leadership
+            did NOT produce a block. Common causes: KES secret expired,
+            forge loop blocked, ledger judgement out of date.
+
+      - alert: YggdrasilCannotForge
+        expr: increase(cardano_node_metrics_nodeCannotForge_int[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+          subsystem: forge
+        annotations:
+          summary: "Yggdrasil block-producer is unable to forge on {{ $labels.instance }}."
+          description: >
+            `cardano_node_metrics_nodeCannotForge_int` increased in the
+            last 15 minutes. Likely missing or expired KES key, wrong
+            era, or ledger judgement not advancing. Check
+            `journalctl -u yggdrasil-node -o json -p err` for the
+            specific cause.
+
+      # ─── Chain dynamics ──────────────────────────────────────────
+
+      - alert: YggdrasilHighRollbackRate
+        expr: rate(cardano_node_metrics_forks_int[10m]) > (1 / 600)
+        for: 30m
+        labels:
+          severity: warning
+          subsystem: consensus
+        annotations:
+          summary: "Yggdrasil node observing > 1 rollback per 10 minutes on {{ $labels.instance }}."
+          description: >
+            Sustained rollback rate. Common causes: upstream peer churn,
+            network split / partition, or a divergent honest fork.
+
+      - alert: YggdrasilMempoolBacklog
+        expr: cardano_node_metrics_txsInMempool_int > 5000
+        for: 15m
+        labels:
+          severity: warning
+          subsystem: mempool
+        annotations:
+          summary: "Yggdrasil mempool has > 5000 pending transactions on {{ $labels.instance }}."
+          description: >
+            Mempool admission outpacing inclusion. Likely a network-wide
+            congestion event or local block-fetch stall preventing
+            mempool eviction.
+
+      # ─── Process health ──────────────────────────────────────────
+
+      - alert: YggdrasilDensityLow
+        expr: cardano_node_metrics_density_real < 0.04
+        for: 30m
+        labels:
+          severity: warning
+          subsystem: consensus
+        annotations:
+          summary: "Yggdrasil chain density below 0.04 (4%) on {{ $labels.instance }}."
+          description: >
+            Active-slot coefficient should yield ~0.05 density at steady
+            state. Sustained density below 0.04 suggests a local sync
+            issue (the global density gauge is fine — this is the local
+            blocks/uptime ratio).
