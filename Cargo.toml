@@ -70,6 +70,12 @@ members = [
     # Tier 4 sister project — Delegated Mempool Queue
     # (R450-R459 arc).
     "crates/tools/dmq-node",              # partial — R444 structured deferral surface
+
+    # ──────────────────────────────────────────────────────────────────
+    # Developer subcommands (Wave 9 PR 27). Invoked via the
+    # `.cargo/config.toml` alias `cargo xtask = "run -p xtask --release --"`.
+    # ──────────────────────────────────────────────────────────────────
+    "xtask",
 ]
 resolver = "2"
 

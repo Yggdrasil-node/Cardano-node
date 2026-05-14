@@ -2283,6 +2283,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "xtask"
+version = "0.2.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "yggdrasil-bech32"
 version = "0.2.0"
 dependencies = [
