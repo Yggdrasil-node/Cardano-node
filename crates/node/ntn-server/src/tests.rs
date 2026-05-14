@@ -7,8 +7,8 @@ use super::{
     PeerSharingProvider, SharedChainDb, SharedPeerSharingProvider, TxSubmissionConsumer,
     process_connection_manager_timeouts, run_inbound_accept_loop,
 };
-use crate::NodeConfig;
-use crate::runtime::bootstrap;
+use yggdrasil_node_runtime::NodeConfig;
+use yggdrasil_node_runtime::bootstrap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
@@ -509,7 +509,7 @@ async fn inbound_accept_loop_records_responder_egress_metrics() {
         .expect("bind listener");
     let listen_addr = listener.local_addr().expect("listen addr");
     let consumer = Arc::new(RecordingTxSubmissionConsumer::default());
-    let metrics = Arc::new(crate::tracer::NodeMetrics::new());
+    let metrics = Arc::new(yggdrasil_node_tracer::NodeMetrics::new());
     let shared_peer = SocketAddr::from(([10, 0, 0, 1], 3001));
     let peer_sharing_provider = Arc::new(StaticPeerSharingProvider {
         peers: vec![SharedPeerAddress { addr: shared_peer }],

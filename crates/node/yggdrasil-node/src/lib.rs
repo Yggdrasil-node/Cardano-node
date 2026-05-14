@@ -19,9 +19,9 @@ pub use yggdrasil_node_plutus_eval as plutus_eval;
 pub use yggdrasil_node_tracer as tracer;
 pub use yggdrasil_node_tracer::trace_forwarder;
 
-pub mod local_server;
+pub use yggdrasil_node_ntc_server as local_server;
+pub use yggdrasil_node_ntn_server as server;
 pub use yggdrasil_node_runtime as runtime;
-pub mod server;
 
 pub use blockfetch_worker::{
     DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,

@@ -29,7 +29,7 @@ fn test_encode_rejection_reason_is_non_empty() {
 
 #[test]
 fn protocol_state_uses_exact_chain_dep_sidecar_and_ignores_latest_mirrors() {
-    use crate::sync::{LedgerCheckpointUpdateOutcome, persist_chain_dep_state_sidecar};
+    use yggdrasil_node_sync::{LedgerCheckpointUpdateOutcome, persist_chain_dep_state_sidecar};
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborEncode, Decoder, HeaderHash, Nonce, Point, SlotNo,
     };
@@ -118,7 +118,7 @@ fn protocol_state_uses_exact_chain_dep_sidecar_and_ignores_latest_mirrors() {
 /// shape that field 12 reuses.
 #[test]
 fn shelley_genesis_encoder_emits_15_element_list() {
-    use crate::genesis::{
+    use yggdrasil_node_genesis::{
         GenesisProtocolVersion, GenesisRational, ShelleyGenesis, ShelleyGenesisDelegation,
         ShelleyGenesisProtocolParams,
     };

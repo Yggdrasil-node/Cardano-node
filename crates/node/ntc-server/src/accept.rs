@@ -26,11 +26,11 @@ use yggdrasil_consensus::mempool::SharedMempool;
 use yggdrasil_network::{LocalStateQueryServer, LocalTxMonitorServer, LocalTxSubmissionServer};
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
-use crate::local_server::{
+use crate::{
     LocalQueryDispatcher, LocalServerError, run_local_state_query_session,
     run_local_tx_monitor_session, run_local_tx_submission_session,
 };
-use crate::tracer::NodeMetrics;
+use yggdrasil_node_tracer::NodeMetrics;
 
 // ---------------------------------------------------------------------------
 // run_local_client_session — wire both protocols for one accepted connection

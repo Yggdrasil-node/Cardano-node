@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Node-to-Client (NtC) local socket server.
 //!
 //! Accepts connections on a Unix-domain socket and services the NtC
@@ -2357,7 +2358,7 @@ fn encode_committee_members_state_for_lsq(snapshot: &LedgerStateSnapshot) -> Vec
 /// `staking` is a 2-element `[pools_map, stake_map]` record.  Empty
 /// maps are valid for testnets without static genesis staking.
 pub fn encode_shelley_genesis_for_lsq(
-    genesis: &crate::genesis::ShelleyGenesis,
+    genesis: &yggdrasil_node_genesis::ShelleyGenesis,
     full_protocol_params: &yggdrasil_ledger::ProtocolParameters,
     chain_start_unix_secs: f64,
 ) -> Vec<u8> {

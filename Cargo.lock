@@ -2512,6 +2512,8 @@ dependencies = [
  "yggdrasil-node-block-producer",
  "yggdrasil-node-config",
  "yggdrasil-node-genesis",
+ "yggdrasil-node-ntc-server",
+ "yggdrasil-node-ntn-server",
  "yggdrasil-node-plutus-eval",
  "yggdrasil-node-runtime",
  "yggdrasil-node-sync",
@@ -2563,6 +2565,47 @@ dependencies = [
  "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-plutus",
+]
+
+[[package]]
+name = "yggdrasil-node-ntc-server"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "yggdrasil-consensus",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
+ "yggdrasil-network",
+ "yggdrasil-node-config",
+ "yggdrasil-node-genesis",
+ "yggdrasil-node-runtime",
+ "yggdrasil-node-sync",
+ "yggdrasil-node-tracer",
+ "yggdrasil-storage",
+]
+
+[[package]]
+name = "yggdrasil-node-ntn-server"
+version = "0.2.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "yggdrasil-consensus",
+ "yggdrasil-crypto",
+ "yggdrasil-ledger",
+ "yggdrasil-network",
+ "yggdrasil-node-runtime",
+ "yggdrasil-node-sync",
+ "yggdrasil-node-tracer",
+ "yggdrasil-storage",
 ]
 
 [[package]]

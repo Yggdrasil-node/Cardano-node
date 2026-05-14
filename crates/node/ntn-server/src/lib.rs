@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Inbound peer session handling — server-side protocol orchestration.
 //!
 //! When the node accepts an inbound connection via [`PeerListener`], the
@@ -21,8 +22,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use crate::runtime::{MempoolAddTxResult, add_txs_to_shared_mempool_with_eviction};
-use crate::sync::recover_ledger_state_chaindb;
+use yggdrasil_node_runtime::{MempoolAddTxResult, add_txs_to_shared_mempool_with_eviction};
+use yggdrasil_node_sync::recover_ledger_state_chaindb;
 use yggdrasil_consensus::TentativeState;
 use yggdrasil_consensus::mempool::{SharedMempool, SharedTxState};
 use yggdrasil_ledger::{
@@ -96,7 +97,7 @@ pub struct SharedTxSubmissionConsumer<I, V, L> {
     /// increments `mempool_tx_added` and every rejection increments
     /// `mempool_tx_rejected`, backing the Prometheus exports of the same
     /// names.
-    metrics: Option<Arc<crate::tracer::NodeMetrics>>,
+    metrics: Option<Arc<yggdrasil_node_tracer::NodeMetrics>>,
 }
 
 impl<I: std::fmt::Debug, V: std::fmt::Debug, L: std::fmt::Debug> std::fmt::Debug
@@ -142,11 +143,11 @@ impl<I, V, L> SharedTxSubmissionConsumer<I, V, L> {
         }
     }
 
-    /// Attach a [`crate::tracer::NodeMetrics`] handle so per-tx admission
+    /// Attach a [`yggdrasil_node_tracer::NodeMetrics`] handle so per-tx admission
     /// outcomes are mirrored into the `mempool_tx_added` /
     /// `mempool_tx_rejected` Prometheus counters.
     #[must_use]
-    pub fn with_metrics(mut self, metrics: Arc<crate::tracer::NodeMetrics>) -> Self {
+    pub fn with_metrics(mut self, metrics: Arc<yggdrasil_node_tracer::NodeMetrics>) -> Self {
         self.metrics = Some(metrics);
         self
     }
@@ -560,7 +561,7 @@ impl InboundPeerSession {
 /// (upstream `SingServer → Just 60`) per receive.
 pub async fn run_keepalive_server(
     mut server: KeepAliveServer,
-    metrics: Option<&crate::tracer::NodeMetrics>,
+    metrics: Option<&yggdrasil_node_tracer::NodeMetrics>,
     peer: Option<SocketAddr>,
 ) -> Result<(), KeepAliveServerError> {
     loop {
@@ -608,7 +609,7 @@ pub trait BlockProvider: Send + Sync {
 pub async fn run_blockfetch_server(
     mut server: BlockFetchServer,
     provider: &dyn BlockProvider,
-    metrics: Option<&crate::tracer::NodeMetrics>,
+    metrics: Option<&yggdrasil_node_tracer::NodeMetrics>,
     peer: Option<SocketAddr>,
 ) -> Result<(), BlockFetchServerError> {
     loop {
@@ -698,8 +699,8 @@ pub trait ChainProvider: Send + Sync {
 pub async fn run_chainsync_server(
     mut server: ChainSyncServer,
     provider: &dyn ChainProvider,
-    tip_notify: Option<crate::runtime::ChainTipNotify>,
-    metrics: Option<&crate::tracer::NodeMetrics>,
+    tip_notify: Option<yggdrasil_node_runtime::ChainTipNotify>,
+    metrics: Option<&yggdrasil_node_tracer::NodeMetrics>,
     peer: Option<SocketAddr>,
 ) -> Result<(), ChainSyncServerError> {
     let mut cursor: Option<Vec<u8>> = None;
@@ -716,7 +717,7 @@ pub async fn run_chainsync_server(
     // for Byron, ~150 bytes for Shelley) but fire on every
     // RollForward so the cumulative volume is comparable to
     // BlockFetch over a full sync.
-    let record_emit = |header: &[u8], tip: &[u8], m: Option<&crate::tracer::NodeMetrics>| {
+    let record_emit = |header: &[u8], tip: &[u8], m: Option<&yggdrasil_node_tracer::NodeMetrics>| {
         if let Some(metrics) = m {
             let bytes_out = (header.len() as u64).saturating_add(tip.len() as u64);
             metrics.add_chainsync_server_bytes_served_for_peer(peer, bytes_out);
@@ -918,7 +919,7 @@ pub async fn run_txsubmission_server(
     mut server: TxSubmissionServer,
     consumer: &dyn TxSubmissionConsumer,
     dedup: Option<(&SharedTxState, SocketAddr)>,
-    metrics: Option<&crate::tracer::NodeMetrics>,
+    metrics: Option<&yggdrasil_node_tracer::NodeMetrics>,
     peer: Option<SocketAddr>,
 ) -> Result<(), TxSubmissionServerError> {
     const TXSUBMISSION_BATCH_SIZE: u16 = 16;
@@ -1206,7 +1207,7 @@ pub async fn run_txsubmission_server(
 pub async fn run_peersharing_server(
     mut server: PeerSharingServer,
     provider: &dyn PeerSharingProvider,
-    metrics: Option<&crate::tracer::NodeMetrics>,
+    metrics: Option<&yggdrasil_node_tracer::NodeMetrics>,
     peer: Option<SocketAddr>,
 ) -> Result<(), PeerSharingServerError> {
     loop {
@@ -1645,9 +1646,9 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
     inbound_governor: Option<Arc<RwLock<InboundGovernorState>>>,
     accepted_connections_limit: Option<AcceptedConnectionsLimit>,
     shared_tx_state: Option<SharedTxState>,
-    tip_notify: Option<crate::runtime::ChainTipNotify>,
-    tracer: Option<&crate::tracer::NodeTracer>,
-    metrics: Option<&Arc<crate::tracer::NodeMetrics>>,
+    tip_notify: Option<yggdrasil_node_runtime::ChainTipNotify>,
+    tracer: Option<&yggdrasil_node_tracer::NodeTracer>,
+    metrics: Option<&Arc<yggdrasil_node_tracer::NodeMetrics>>,
     shutdown: F,
 ) -> Result<(), InboundServiceError> {
     let listener_local_addr = listener
@@ -1709,7 +1710,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                     "Net.Inbound",
                                     "Debug",
                                     "soft delay before accepting inbound connection",
-                                    crate::tracer::trace_fields([
+                                    yggdrasil_node_tracer::trace_fields([
                                         ("peer", serde_json::json!(addr.to_string())),
                                         ("delayMs", serde_json::json!(d.as_millis())),
                                         ("inboundCount", serde_json::json!(inbound_count)),
@@ -1724,7 +1725,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                     "Net.Inbound",
                                     "Warning",
                                     "inbound connection rejected at hard limit",
-                                    crate::tracer::trace_fields([
+                                    yggdrasil_node_tracer::trace_fields([
                                         ("peer", serde_json::json!(addr.to_string())),
                                         ("inboundCount", serde_json::json!(inbound_count)),
                                     ]),
@@ -1753,7 +1754,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                                 "Net.Inbound",
                                 "Warning",
                                 "inbound handshake failed",
-                                crate::tracer::trace_fields([
+                                yggdrasil_node_tracer::trace_fields([
                                     ("peer", serde_json::json!(addr.to_string())),
                                     ("error", serde_json::json!(e.to_string())),
                                 ]),
@@ -1845,7 +1846,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                         "Net.Inbound",
                         "Info",
                         "inbound peer session started",
-                        crate::tracer::trace_fields([
+                        yggdrasil_node_tracer::trace_fields([
                             ("peer", serde_json::json!(addr.to_string())),
                             ("dataFlow", serde_json::json!(format!("{:?}", data_flow))),
                             ("peerSharing", serde_json::json!(session.peer_sharing.is_some())),
@@ -1880,7 +1881,7 @@ pub async fn run_inbound_accept_loop<F: std::future::Future<Output = ()>>(
                 // R234 — Phase D.2 bytes-out: clone the metrics
                 // handle for the BlockFetch responder spawn so it
                 // can record server-side bytes-served.
-                let bf_metrics: Option<Arc<crate::tracer::NodeMetrics>> =
+                let bf_metrics: Option<Arc<yggdrasil_node_tracer::NodeMetrics>> =
                     metrics.cloned();
                 let remote_addr = session.remote_addr;
                 let connection_id = conn_id;
