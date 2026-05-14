@@ -248,6 +248,26 @@ pub(crate) enum Command {
 }
 
 /// cardano-cli actions exposed through the pure Rust command implementation.
+///
+/// The variants below mirror upstream `cardano-cli` subcommand shapes
+/// closely enough that operator muscle-memory ports cleanly:
+///
+/// | Yggdrasil                                          | upstream `cardano-cli`            |
+/// | -------------------------------------------------- | --------------------------------- |
+/// | `yggdrasil-node cardano-cli version`               | `cardano-cli version`             |
+/// | `yggdrasil-node cardano-cli show-upstream-config`  | n/a (Yggdrasil-specific helper)   |
+/// | `yggdrasil-node cardano-cli query-tip`             | `cardano-cli query tip`           |
+/// | `yggdrasil-node cardano-cli query-utxo`            | `cardano-cli query utxo`          |
+/// | `yggdrasil-node cardano-cli query-protocol-parameters` | `cardano-cli query protocol-parameters` |
+/// | `yggdrasil-node cardano-cli query-stake-pools`     | `cardano-cli query stake-pools`   |
+/// | `yggdrasil-node cardano-cli query-stake-distribution` | `cardano-cli query stake-distribution` |
+///
+/// The hyphenated single-token form (`query-tip` rather than
+/// `query tip`) lets clap nest these under `cardano-cli` without an
+/// additional sub-subcommand layer. A future Phase 3 round migrates
+/// the surface to the upstream-shaped two-token form once the
+/// in-crate `yggdrasil-cardano-cli` runtime can host the parser
+/// independently.
 #[derive(Subcommand)]
 pub(crate) enum CardanoCliCommand {
     /// Print pure-Rust cardano-cli compatibility version info.
@@ -256,6 +276,55 @@ pub(crate) enum CardanoCliCommand {
     ShowUpstreamConfig,
     /// Query tip against a running node socket.
     QueryTip {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query UTxO entries. Either `--address` (hex-encoded address
+    /// bytes; the upstream `cardano-cli` `--address` Bech32 form is
+    /// not yet accepted — supply hex) or `--tx-in` (32-byte hex
+    /// transaction id; pin a specific UTxO).
+    QueryUtxo {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Filter UTxO set by address (hex-encoded). Mutually
+        /// exclusive with `--tx-in`.
+        #[arg(long, conflicts_with = "tx_in")]
+        address: Option<String>,
+        /// Filter UTxO set by transaction input in upstream
+        /// `TX_HASH#INDEX` form (e.g. `--tx-in
+        /// 0123abcd…#0`). Mutually exclusive with `--address`.
+        #[arg(long, conflicts_with = "address")]
+        tx_in: Option<String>,
+    },
+    /// Query current protocol parameters as JSON.
+    QueryProtocolParameters {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the set of registered stake pools.
+    QueryStakePools {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the stake distribution (pool-id → fraction of total
+    /// stake delegated).
+    QueryStakeDistribution {
         /// Path to node socket.
         #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
         socket_path: PathBuf,

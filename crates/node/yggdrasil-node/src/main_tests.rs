@@ -2257,3 +2257,171 @@ fn apply_topology_override_noop_when_neither_cli_nor_config() {
 
     assert_eq!(cfg.use_ledger_after_slot, original_ledger_slot);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 (cardano-cli C-arc Phase F) — CardanoCliCommand parser pins.
+//
+// These tests assert that the clap-derived `CardanoCliCommand` variants
+// added for the operator-essential query family (utxo / protocol-
+// parameters / stake-pools / stake-distribution) parse correctly from
+// the upstream `cardano-cli`-shaped flag set. They don't drive the
+// commands end-to-end — that needs a live socket — but they do pin the
+// CLI surface so a flag rename / removal surfaces as a failing test
+// rather than silently breaking an operator's invocation script.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cardano_cli_query_utxo_with_address_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-utxo",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--address",
+        "0123abcdef",
+    ])
+    .expect("cardano-cli query-utxo with --address must parse");
+
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::QueryUtxo { address, tx_in, .. } => {
+                assert_eq!(address.as_deref(), Some("0123abcdef"));
+                assert!(tx_in.is_none(), "tx_in must be None when --address is given");
+            }
+            _ => panic!("expected QueryUtxo variant"),
+        },
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_utxo_with_tx_in_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-utxo",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--tx-in",
+        "deadbeef#7",
+    ])
+    .expect("cardano-cli query-utxo with --tx-in must parse");
+
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::QueryUtxo { address, tx_in, .. } => {
+                assert!(address.is_none(), "address must be None when --tx-in is given");
+                assert_eq!(tx_in.as_deref(), Some("deadbeef#7"));
+            }
+            _ => panic!("expected QueryUtxo variant"),
+        },
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_utxo_rejects_both_address_and_tx_in() {
+    use clap::Parser;
+    use super::Cli;
+
+    let result = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-utxo",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--address",
+        "0123",
+        "--tx-in",
+        "deadbeef#0",
+    ]);
+    // `Cli` doesn't derive Debug, so `.expect_err` won't compile.
+    // Pull out the error via a match instead.
+    let err = match result {
+        Err(e) => e,
+        Ok(_) => panic!("clap must reject --address AND --tx-in together"),
+    };
+    assert!(
+        err.to_string().contains("cannot be used with")
+            || err.to_string().contains("conflicts"),
+        "clap conflict-error must reference the conflict; got {err}"
+    );
+}
+
+#[test]
+fn cardano_cli_query_protocol_parameters_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-protocol-parameters",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-protocol-parameters must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QueryProtocolParameters { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_stake_pools_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-stake-pools",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-stake-pools must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QueryStakePools { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_stake_distribution_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-stake-distribution",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-stake-distribution must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QueryStakeDistribution { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}

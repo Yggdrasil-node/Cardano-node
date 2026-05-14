@@ -68,27 +68,108 @@ pub(crate) fn run_cardano_cli_command(
         CardanoCliCommand::QueryTip {
             socket_path: _socket_path,
             network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::Tip,
+        ),
+        CardanoCliCommand::QueryUtxo {
+            socket_path: _socket_path,
+            network_magic,
+            address,
+            tx_in,
         } => {
-            // QueryTip remains in the node binary because it depends on
-            // the binary's tokio runtime + `commands::query::run_query`
-            // helper. R298+ will migrate it once the trait-based
-            // abstraction for the LSQ socket client lands.
             let _magic = network_magic.unwrap_or(reference_network_magic);
-            #[cfg(unix)]
-            {
-                let rt = tokio::runtime::Runtime::new()?;
-                rt.block_on(crate::commands::query::run_query(
-                    _socket_path,
-                    _magic,
-                    crate::commands::query::QueryCommand::Tip,
-                ))
-            }
-            #[cfg(not(unix))]
-            {
-                eyre::bail!(
-                    "query-tip requires a Unix domain socket; not supported on this platform"
-                )
-            }
+            let query = match (address, tx_in) {
+                (Some(addr), None) => {
+                    crate::commands::query::QueryCommand::UtxoByAddress { address: addr }
+                }
+                (None, Some(tx)) => {
+                    // Upstream `cardano-cli` accepts `--tx-in TX#INDEX`
+                    // as a single token. Split here so the downstream
+                    // `UtxoByTxIn` query gets the structured pair.
+                    let (tx_id, index_str) = tx.split_once('#').ok_or_else(|| {
+                        eyre::eyre!(
+                            "--tx-in expects TX_HASH#INDEX (e.g. 0123ab…#0); got {tx:?}"
+                        )
+                    })?;
+                    let index: u16 = index_str.parse().map_err(|e| {
+                        eyre::eyre!(
+                            "--tx-in index {index_str:?} is not a valid u16: {e}"
+                        )
+                    })?;
+                    crate::commands::query::QueryCommand::UtxoByTxIn {
+                        tx_id: tx_id.to_string(),
+                        index,
+                    }
+                }
+                (None, None) => eyre::bail!(
+                    "query-utxo requires either --address or --tx-in; pass one of them"
+                ),
+                (Some(_), Some(_)) => unreachable!(
+                    "clap's conflicts_with = ... pair prevents both flags being set"
+                ),
+            };
+            run_query_via_binary_runtime(_socket_path, _magic, query)
         }
+        CardanoCliCommand::QueryProtocolParameters {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::ProtocolParams,
+        ),
+        CardanoCliCommand::QueryStakePools {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::StakePools,
+        ),
+        CardanoCliCommand::QueryStakeDistribution {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::StakeDistribution,
+        ),
+    }
+}
+
+/// Shared dispatch helper: build the binary's `tokio::runtime::Runtime`
+/// and drive `crate::commands::query::run_query` to completion.
+///
+/// Used by every `cardano-cli query-*` variant. Centralised here so
+/// the Unix-only `cfg` gate + runtime construction logic lives in one
+/// place instead of being duplicated across every match arm. The
+/// `_socket_path` underscored prefix is preserved from the upstream
+/// expansion of the QueryTip arm to keep the non-Unix `cfg` branch
+/// non-warning.
+fn run_query_via_binary_runtime(
+    socket_path: PathBuf,
+    network_magic: u32,
+    query: crate::commands::query::QueryCommand,
+) -> Result<()> {
+    let _socket_path = socket_path;
+    let _magic = network_magic;
+    let _query = query;
+    #[cfg(unix)]
+    {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(crate::commands::query::run_query(
+            _socket_path,
+            _magic,
+            _query,
+        ))
+    }
+    #[cfg(not(unix))]
+    {
+        eyre::bail!(
+            "cardano-cli query subcommands require a Unix domain socket; \
+             not supported on this platform"
+        )
     }
 }
