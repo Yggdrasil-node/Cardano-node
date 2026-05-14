@@ -606,7 +606,7 @@ conditions.
 **Graduated at R258 (2026-05-06).** `max_concurrent_block_fetch_peers`
 now defaults to `2`, matching upstream
 `Ouroboros.Network.BlockFetch.Decision::bfcMaxConcurrencyBulkSync = 2`.
-R218 (`docs/operational-runs/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`)
+R218 (`docs/operational-runs/archive/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`)
 measured the multi-peer path on mainnet at knob=4: 67% throughput
 delta, 2 active workers (saturating the BulkSync cap). R258
 graduates this empirical evidence into the shipped default while

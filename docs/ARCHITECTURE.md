@@ -59,7 +59,7 @@ The 2026-Q2 audit ([`docs/AUDIT_VERIFICATION_2026Q2.md`](archive/AUDIT_VERIFICAT
 
 Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas.
 
-The remaining production-readiness gate is operator-side: the mainnet sync endurance run (`docs/MANUAL_TEST_RUNBOOK.md` §2–9) and ongoing operational hardening; the parallel-fetch rehearsal (§6.5) was completed at R218 (`docs/operational-runs/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`), measured a 67% throughput delta, and graduated the default `max_concurrent_block_fetch_peers` from `1` to `2` at R258 (`docs/operational-runs/2026-05-06-round-258-multipeer-default-graduation.md`).
+The remaining production-readiness gate is operator-side: the mainnet sync endurance run (`docs/MANUAL_TEST_RUNBOOK.md` §2–9) and ongoing operational hardening; the parallel-fetch rehearsal (§6.5) was completed at R218 (`docs/operational-runs/archive/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`), measured a 67% throughput delta, and graduated the default `max_concurrent_block_fetch_peers` from `1` to `2` at R258 (`docs/operational-runs/archive/2026-05-06-round-258-multipeer-default-graduation.md`).
 
 Topology parsing and preset-specific config resolution currently stay in `node` because they are operational concerns tied to the node binary's config format. Once peer selection grows into ledger peers, peer sharing, or long-lived governor policy, that logic should move behind a network-crate boundary rather than continuing to grow in `node`.
 
