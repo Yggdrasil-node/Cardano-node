@@ -31,6 +31,10 @@ workspace = true
 # a regression-checking surface.
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+# Wave 9 PR 28 follow-on: proptest property-based tests covering the
+# Sum-KES sign/verify roundtrip across all evolution levels. Pinned at
+# 1.x (default-features stay enabled so the test reporter works).
+proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 [[bench]]
 name = "blake2b_hash"
