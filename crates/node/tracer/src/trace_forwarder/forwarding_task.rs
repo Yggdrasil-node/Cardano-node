@@ -181,6 +181,21 @@ async fn flush<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
+    let (header, payload) = build_reply_sdu(buffer)?;
+    bearer
+        .write_sdu(&header, &payload)
+        .await
+        .map_err(ForwardingTaskError::Bearer)?;
+    buffer.clear();
+    Ok(())
+}
+
+/// Build the (header, payload) pair for a flush. Shared between
+/// `run` (raw Bearer) and `run_via_mux` (Bearer behind a
+/// MuxConnection mutex).
+fn build_reply_sdu(
+    buffer: &[TraceObject],
+) -> Result<(SduHeader, Vec<u8>), ForwardingTaskError> {
     let payload = encode_reply(buffer);
     if payload.len() > u16::MAX as usize {
         return Err(ForwardingTaskError::PayloadTooLarge(payload.len()));
@@ -194,10 +209,85 @@ where
         direction: MiniProtocolDir::Initiator,
         length: payload.len() as u16,
     };
-    bearer
-        .write_sdu(&header, &payload)
-        .await
-        .map_err(ForwardingTaskError::Bearer)?;
+    Ok((header, payload))
+}
+
+/// Same as [`run`] but writes through a [`super::mux_connection::MuxConnection`]
+/// instead of holding the bearer directly. Use this variant when
+/// other mini-protocols share the same bearer (cardano-tracer use
+/// case: forwarding_task runs concurrently with the read-task
+/// dispatched by `MuxConnection::spawn_read_task`).
+///
+/// The MuxConnection's internal bearer-mutex serializes the
+/// forwarding writes against any concurrent `send_sdu` callers,
+/// so SDUs hit the wire atomically.
+pub async fn run_via_mux<S>(
+    mut rx: UnboundedReceiver<TraceObject>,
+    mux: std::sync::Arc<super::mux_connection::MuxConnection<S>>,
+    config: ForwardingTaskConfig,
+) -> Result<(), ForwardingTaskError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let mut buffer: Vec<TraceObject> = Vec::with_capacity(config.batch_size);
+
+    loop {
+        let recv_outcome = if buffer.is_empty() {
+            match rx.recv().await {
+                Some(to) => Some(to),
+                None => break,
+            }
+        } else {
+            tokio::select! {
+                maybe = rx.recv() => maybe,
+                _ = tokio::time::sleep(config.flush_interval) => None,
+            }
+        };
+
+        match recv_outcome {
+            Some(trace_object) => {
+                buffer.push(trace_object);
+                if buffer.len() >= config.batch_size {
+                    flush_via_mux(&mut buffer, &mux).await?;
+                }
+            }
+            None => {
+                if !buffer.is_empty() {
+                    flush_via_mux(&mut buffer, &mux).await?;
+                }
+                if rx.is_closed() && rx.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+
+    while let Ok(to) = rx.try_recv() {
+        buffer.push(to);
+        if buffer.len() >= config.batch_size {
+            flush_via_mux(&mut buffer, &mux).await?;
+        }
+    }
+    if !buffer.is_empty() {
+        flush_via_mux(&mut buffer, &mux).await?;
+    }
+    Ok(())
+}
+
+/// Mux-flavoured flush helper. Mirrors `flush` but routes the
+/// outbound SDU through `MuxConnection::send_sdu` instead of the
+/// raw bearer.
+async fn flush_via_mux<S>(
+    buffer: &mut Vec<TraceObject>,
+    mux: &super::mux_connection::MuxConnection<S>,
+) -> Result<(), ForwardingTaskError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (header, payload) = build_reply_sdu(buffer)?;
+    mux.send_sdu(&header, &payload).await.map_err(|e| match e {
+        super::mux_connection::MuxConnectionError::Bearer(b) => ForwardingTaskError::Bearer(b),
+    })?;
     buffer.clear();
     Ok(())
 }
@@ -308,6 +398,53 @@ mod forwarding_task_tests {
         }
         drop(tx);
         let _ = join.await;
+    }
+
+    /// Mux-flavoured variant: route the forwarding writes through
+    /// a `MuxConnection`. Composes correctly with the
+    /// bearer-mutex; SDUs hit the wire identical to the
+    /// non-mux `run` path.
+    #[tokio::test]
+    async fn forwarding_task_via_mux_round_trips() {
+        use crate::trace_forwarder::mux_connection::MuxConnection;
+        use std::sync::Arc;
+
+        let (client, server) = tokio::io::duplex(8192);
+        let client_bearer = Bearer::new(client);
+        let mut server_bearer = Bearer::new(server);
+        let mux = Arc::new(MuxConnection::new(client_bearer));
+        let (tx, rx) = mpsc::unbounded_channel::<TraceObject>();
+
+        let join = tokio::spawn(run_via_mux(
+            rx,
+            Arc::clone(&mux),
+            ForwardingTaskConfig {
+                batch_size: 4,
+                flush_interval: Duration::from_millis(50),
+            },
+        ));
+
+        tx.send(sample_trace_object("via-mux-1")).expect("send 1");
+        tx.send(sample_trace_object("via-mux-2")).expect("send 2");
+        drop(tx);
+
+        // Read what reached the server side.
+        let (header, payload) = server_bearer.read_sdu().await.expect("read sdu");
+        assert_eq!(
+            header.mini_protocol_num,
+            TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM
+        );
+        let msg = decode_message(&payload).expect("decode");
+        match msg {
+            TraceForwardMessage::Reply(traces) => {
+                assert_eq!(traces.len(), 2);
+                assert_eq!(traces[0].to_machine, r#"{"msg":"via-mux-1"}"#);
+                assert_eq!(traces[1].to_machine, r#"{"msg":"via-mux-2"}"#);
+            }
+            _ => panic!("expected Reply"),
+        }
+        let outcome = join.await.expect("join");
+        assert!(outcome.is_ok(), "task returned {outcome:?}");
     }
 
     /// Flush-interval trigger: one event sits in the buffer; after
