@@ -60,9 +60,11 @@ use cm_actions::{
     suppress_outbound_promotions_while_bootstrap_pending, update_registry_status_from_cm,
 };
 
+#[cfg(feature = "forge")]
 pub mod forge;
-#[cfg(test)]
+#[cfg(all(feature = "forge", test))]
 use forge::kes_expiry_warning_from_periods;
+#[cfg(feature = "forge")]
 use forge::{
     kes_expiry_warning, mempool_entries_for_forging, self_validate_forged_block,
     tip_context_from_chain_db,
@@ -72,13 +74,15 @@ pub mod ledger_judgement;
 pub use ledger_judgement::LedgerJudgementSettings;
 
 pub mod ledger_peer_source;
-use ledger_peer_source::{
-    block_producer_ledger_state_judgement, refresh_ledger_peer_sources_from_chain_db,
-};
+use ledger_peer_source::refresh_ledger_peer_sources_from_chain_db;
+#[cfg(feature = "forge")]
+use ledger_peer_source::block_producer_ledger_state_judgement;
 #[cfg(test)]
 use ledger_peer_source::{derive_judgement_at, wall_clock_unix_secs};
 
+#[cfg(feature = "forge")]
 pub mod block_producer_loop;
+#[cfg(feature = "forge")]
 pub use block_producer_loop::run_block_producer_loop;
 
 pub mod governor_loop;
@@ -148,5 +152,11 @@ use tracing::session_established_trace_fields;
 use tracing::{sync_error_trace_fields, verified_sync_batch_trace_fields};
 mod keep_alive;
 
-#[cfg(test)]
+// Tests gated behind `forge` because the bulk of them (sample
+// forged block, KES window, body-hash self-validation, block-
+// producer ledger judgement) need the `yggdrasil-node-block-producer`
+// crate that the `forge` feature gates. Relay-only `--no-default-
+// features` builds skip the test target entirely; the default
+// build runs all tests as before.
+#[cfg(all(test, feature = "forge"))]
 mod tests;

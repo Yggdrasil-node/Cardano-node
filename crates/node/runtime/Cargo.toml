@@ -17,7 +17,12 @@ yggdrasil-consensus.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true
 yggdrasil-network.workspace = true
-yggdrasil-node-block-producer.workspace = true
+# Wave 5 PR 5+ feature flag: `forge` gates the block-producer
+# orchestration (forge.rs + block_producer_loop.rs). A relay-only
+# build (`--no-default-features` on the binary) drops this dep
+# entirely so SPOs running pure relays don't carry the unused KES
+# / OpCert / body-assembly code in their binary.
+yggdrasil-node-block-producer = { workspace = true, optional = true }
 yggdrasil-node-config.workspace = true
 yggdrasil-node-genesis.workspace = true
 yggdrasil-node-plutus-eval.workspace = true
@@ -25,6 +30,15 @@ yggdrasil-node-sync.workspace = true
 yggdrasil-node-tracer.workspace = true
 yggdrasil-plutus.workspace = true
 yggdrasil-storage.workspace = true
+
+[features]
+default = ["forge"]
+# Compiles the slot-driven block-producer dispatch (forge.rs +
+# block_producer_loop.rs). When OFF the modules are absent and the
+# block-producer crate is excluded from the dependency graph; the
+# runtime then ships only the sync / governor / peer-management
+# orchestration that every node (relay or producer) needs.
+forge = ["dep:yggdrasil-node-block-producer"]
 
 [dev-dependencies]
 tempfile = "3"

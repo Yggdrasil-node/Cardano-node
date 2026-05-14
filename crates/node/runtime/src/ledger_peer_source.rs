@@ -181,6 +181,7 @@ pub(super) fn wall_clock_unix_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
+#[cfg(feature = "forge")]
 pub(super) fn block_producer_ledger_state_judgement(
     tip_slot: Option<SlotNo>,
     config: &RuntimeBlockProducerConfig,

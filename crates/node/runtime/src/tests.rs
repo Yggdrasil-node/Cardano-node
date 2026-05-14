@@ -6,18 +6,25 @@ use super::{
     BatchErrorDisposition, BatchTraceExtras, CheckpointPersistenceOutcome, LedgerJudgementSettings,
     NodeConfig, ReconnectingRunState, ReconnectingVerifiedSyncRequest,
     ResumeReconnectingVerifiedSyncRequest, RuntimeBlockProducerConfig, VerifiedSyncServiceConfig,
-    block_producer_ledger_state_judgement, checkpoint_trace_fields, derive_judgement_at,
-    direct_sync_bootstrap_pending, handle_reconnect_batch_error, kes_expiry_warning_from_periods,
-    local_root_targets_from_config, mempool_entries_for_forging, ordered_reconnect_fallback_peers,
-    peer_share_request_amount, preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
+    checkpoint_trace_fields, derive_judgement_at, direct_sync_bootstrap_pending,
+    handle_reconnect_batch_error, local_root_targets_from_config,
+    ordered_reconnect_fallback_peers, peer_share_request_amount,
+    preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
     prepare_reconnect_attempt_state, reconnect_preferred_peer,
     reconnect_preferred_peer_with_source, reconnect_storage_tip, record_verified_batch_progress,
     recover_ledger_state_for_runtime, refresh_ledger_peer_sources_from_chain_db,
     reserve_bootstrap_sync_peers, retire_failed_outbound_peer, seed_peer_registry,
-    self_validate_forged_block, session_established_trace_fields,
-    stake_snapshots_for_recovered_point, suppress_outbound_promotions_while_bootstrap_pending,
-    sync_error_trace_fields, tip_context_from_chain_db, verified_sync_batch_trace_fields,
-    wall_clock_unix_secs,
+    session_established_trace_fields, stake_snapshots_for_recovered_point,
+    suppress_outbound_promotions_while_bootstrap_pending, sync_error_trace_fields,
+    verified_sync_batch_trace_fields, wall_clock_unix_secs,
+};
+// Forge-only test helpers — feature-gated so a `--no-default-features`
+// build (no block-producer crate) drops them with the rest of the
+// forge surface.
+#[cfg(feature = "forge")]
+use super::{
+    block_producer_ledger_state_judgement, kes_expiry_warning_from_periods,
+    mempool_entries_for_forging, self_validate_forged_block, tip_context_from_chain_db,
 };
 use yggdrasil_node_sync::LedgerCheckpointPolicy;
 use yggdrasil_node_sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
@@ -221,6 +228,7 @@ fn sample_pool_params(relay: Relay, operator: u8) -> PoolParams {
     }
 }
 
+#[cfg(feature = "forge")]
 fn sample_forged_block_for_self_validation() -> yggdrasil_node_block_producer::ForgedBlock {
     let mut body_enc = Encoder::new();
     body_enc.array(0);
@@ -306,6 +314,7 @@ fn sample_forged_block_for_self_validation() -> yggdrasil_node_block_producer::F
     }
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn mempool_entries_for_forging_is_fee_ordered() {
     let mempool = SharedMempool::with_capacity(1024);
@@ -324,6 +333,7 @@ fn mempool_entries_for_forging_is_fee_ordered() {
     assert_eq!(fees, vec![100, 50, 10]);
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn self_validate_forged_block_accepts_structurally_valid_block() {
     let forged = sample_forged_block_for_self_validation();
@@ -331,6 +341,7 @@ fn self_validate_forged_block_accepts_structurally_valid_block() {
         .expect("structurally valid forged block should self-validate");
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn self_validate_forged_block_rejects_body_hash_mismatch() {
     let mut forged = sample_forged_block_for_self_validation();
@@ -345,6 +356,7 @@ fn self_validate_forged_block_rejects_body_hash_mismatch() {
     );
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn self_validate_forged_block_rejects_header_hash_mismatch() {
     let mut forged = sample_forged_block_for_self_validation();
@@ -359,6 +371,7 @@ fn self_validate_forged_block_rejects_header_hash_mismatch() {
     );
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn kes_expiry_warning_triggers_near_window_end() {
     // cert validity window: [100, 162)
@@ -372,6 +385,7 @@ fn kes_expiry_warning_triggers_near_window_end() {
     assert_eq!(warning.remaining_slots, 4 * 129_600);
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn kes_expiry_warning_suppressed_when_far_from_expiry() {
     // cert validity window: [10, 72), current=40 => remaining=32 (> threshold)
@@ -379,6 +393,7 @@ fn kes_expiry_warning_suppressed_when_far_from_expiry() {
     assert!(warning.is_none());
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn tip_context_from_chain_db_reads_tip_block_number() {
     let mut chain_db = ChainDb::new(
@@ -1096,6 +1111,7 @@ fn derive_judgement_at_returns_young_enough_when_genesis_present_and_tip_fresh()
     );
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn block_producer_ledger_judgement_blocks_stale_tips() {
     let now = wall_clock_unix_secs();
