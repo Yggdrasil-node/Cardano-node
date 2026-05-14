@@ -889,6 +889,84 @@
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-dmq-node --test integration` green."
       ]
+    },
+    {
+      "id": "node.tracer.cardano-tracer-forwarder",
+      "area": "observability",
+      "feature": "Node-side trace-forwarder: the cardano-tracer Mux Layer 1/2/3 codecs + bearer + handshake + dispatchers that lift any `tracing::Event` into a TraceObject and forward it over an AF_UNIX SOCK_STREAM bearer to a cardano-tracer acceptor. Distinct from `sister-tool.cardano-tracer` which tracks the daemon (acceptor) side.",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R503",
+      "haskell_reference": [
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-network/network-mux/src/Network/Mux/",
+          "role": "Upstream Network.Mux source — SDU codec, bearer, state-machine driver. Yggdrasil ports the codec halves verbatim (`mux.rs`) + a minimal dispatcher (`mux_connection.rs`); per-mini-protocol limits / scheduler fairness / bearer-task supervision remain pending."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/trace-forward/src/Trace/Forward/Protocol/TraceObject/",
+          "role": "Upstream TraceForward mini-protocol — Type / Codec / Forwarder / Acceptor. Yggdrasil ports the wire codec (`mini_protocol.rs`) + the write-only forwarder driver (`forwarding_task.rs`)."
+        },
+        {
+          "path": ".reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/Protocol/Handshake/",
+          "role": "Upstream Network.Mux Handshake mini-protocol — Type / Codec / Client / Server. Yggdrasil ports the wire codec (`handshake.rs`) + the initiator-side state-machine driver (`handshake_driver.rs`)."
+        }
+      ],
+      "rust_surface": [
+        {
+          "path": "crates/node/tracer/src/trace_forwarder.rs",
+          "role": "Module shell with the original Layer 1 `TraceObject` codec (encoder + decoder) + the operator-wiring example in the module docstring. Re-exports the 10 sub-modules below."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/mini_protocol.rs",
+          "role": "Layer 2: `TraceObject` mini-protocol CBOR codec — `MsgTraceObjectsRequest` / `MsgTraceObjectsReply` / `MsgDone` per upstream `Trace.Forward.Protocol.TraceObject.{Type,Codec}.hs`."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/mux.rs",
+          "role": "Layer 3: SDU codec for the 8-byte big-endian Network.Mux header (timestamp + dir-and-protonum + length) + mini-protocol number constants (Handshake=0, EKG=1, TraceObject=2, DataPoint=3) per `Network.Mux.Codec.hs` + `Cardano.Tracer.Acceptors.{Server,Client}.hs`."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/bearer.rs",
+          "role": "AF_UNIX SOCK_STREAM bearer: generic `Bearer<S>` over any `tokio::io::AsyncRead + AsyncWrite + Unpin + Send`. Provides `read_sdu` / `write_sdu`."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/handshake.rs",
+          "role": "Network.Mux Handshake mini-protocol CBOR codec — `MsgProposeVersions` / `MsgReplyVersions` / `MsgAcceptVersion` / `MsgRefuse` + all three RefuseReason variants. Mirrors `Ouroboros.Network.Protocol.Handshake.Codec.hs`."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/handshake_driver.rs",
+          "role": "Handshake initiator state-machine driver. `run_initiator_handshake(&mut bearer, versions)` performs the one-shot Idle→Confirm→Done flow."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/event_builder.rs",
+          "role": "`tracing::Event` → `TraceObject` translator. Computes (year, dayOfYear, picosecondsOfDay) from `SystemTime::now()` via Howard Hinnant civil-date arithmetic; maps `Level` → `SeverityS`; serialises event fields to JSON."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/forwarding_task.rs",
+          "role": "Write-only forwarding loop. `run` / `run_via_mux` drain a `tokio::sync::mpsc::UnboundedReceiver<TraceObject>` and batch-emit one `MsgTraceObjectsReply` SDU per `batch_size` items or `flush_interval` elapsed."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/layer.rs",
+          "role": "`tracing_subscriber::Layer<S>` adapter. `TraceForwardingLayer::new(tx, hostname)` plus the `on_event` callback that builds a `TraceObject` and pushes through the channel."
+        },
+        {
+          "path": "crates/node/tracer/src/trace_forwarder/mux_connection.rs",
+          "role": "Minimal bidirectional Mux dispatcher. `MuxConnection<S>` wraps `Bearer<S>` with per-mini-protocol channel-based subscriptions and a serialised write side. Composes with `handshake_driver::run_initiator_handshake` via `MuxConnection::run_initiator_handshake` and with `forwarding_task::run_via_mux`."
+        }
+      ],
+      "implemented_evidence": [
+        "Phase 2.B follow-on (May 2026 session, 12 commits): `3d78362` Layer 2/3 codecs; `01cdc53` SDU direction-bit fix; `f0bc5a9` TraceObject Layer-1 decoder + non-empty reply round-trip; `ee7d496` AF_UNIX bearer; `5464f8a` event_builder; `02f7ce0` forwarding_task (write-only); `92fc2df` TraceForwardingLayer (tracing-subscriber::Layer<S>); `fe9c520` Handshake codec; `c868f73` Handshake initiator state-machine driver; `30111c5` minimal bidirectional MuxConnection dispatcher; `5a8b662` MuxConnection::run_initiator_handshake composition glue; `0d40fb6` forwarding_task::run_via_mux composition glue.",
+        "Test coverage: 19 unit tests across the 10 sub-modules covering byte-shape pins for SDU header (Initiator + Responder), round-trips for Layer 1/2/3 codecs, bearer round-trips via tokio::io::duplex, handshake propose/accept/refuse, event_builder timestamp arithmetic (leap years, picoseconds-of-day), forwarding_task batch-size + flush-interval + channel-close + via-mux variants, TraceForwardingLayer end-to-end through the tracing subscriber, MuxConnection send + subscribe + dispatch + drop-unsubscribed.",
+        "End-to-end composition: operator wires the full pipeline in ~10 binary-setup lines per the example block in `crates/node/tracer/src/trace_forwarder.rs` module docstring."
+      ],
+      "remaining_work": [
+        "Full Network.Mux semantics: per-mini-protocol ingress/egress queue limits, scheduler fairness (round-robin among ready writers, weighted-priority for hot protocols), and bearer-task supervision (cohesive shutdown when any sub-task fails). Today's MuxConnection serialises through a single bearer mutex; that's sufficient for cardano-tracer's two-sub-protocol use case but doesn't match upstream Network.Mux semantics under contention.",
+        "Live conformance test against the upstream `cardano-tracer` binary at `.reference-haskell-cardano-node/install/bin/cardano-tracer` (requires `scripts/setup-reference.sh` without `--sources-only` to materialize the install tarball; today only the source tree is vendored).",
+        "Closeout: parity-matrix promotion to `verified_11_0_1` (gated on the conformance test + an operator-driven 24h soak forwarding live mainnet/preprod traces to a real cardano-tracer endpoint without protocol errors)."
+      ],
+      "acceptance": [
+        "`cargo test -p yggdrasil-node-tracer --lib trace_forwarder` green — all 19 unit tests round-trip the codec stack via tokio::io::duplex pipes.",
+        "Operator wires the pipeline per the example in the `trace_forwarder.rs` module docstring; events emitted via `tracing::info!` / `warn!` / `error!` reach the upstream cardano-tracer daemon's output log byte-identically to events the upstream cardano-node would produce.",
+        "Strict-mirror gate green for all 10 sub-module files (each carries its `## Naming parity` stanza)."
+      ]
     }
   ]
 }

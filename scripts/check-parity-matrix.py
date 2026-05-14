@@ -90,6 +90,7 @@ ALLOWED_MILESTONES |= _arc_range(450, 459)  # Phase D.1 — dmq-node.
 # bucket fills.
 ALLOWED_MILESTONES |= _arc_range(460, 479)  # Phase D.2 — post-R459 follow-on arcs.
 ALLOWED_MILESTONES |= _arc_range(480, 499)  # Phase D.3 — db-analyser HasAnalysis arc closeout + room for the next 18 follow-ons.
+ALLOWED_MILESTONES |= _arc_range(500, 519)  # Phase 2.B follow-on — cardano-tracer Mux Layer 2/3 forwarder stack (R502 + R503 conformance + buffer).
 
 
 def fail(message: str) -> None:
