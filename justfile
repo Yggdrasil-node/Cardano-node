@@ -82,5 +82,137 @@ preview-producer:
 mainnet-relay-rehearsal:
     bash crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh
 
+# ─── Sister-tool recipes (Wave 8 PR 24) ───────────────────────────────
+#
+# Each sister tool gets a `<tool>-build`, `<tool>-test`,
+# `<tool>-help`, and (where a comparison harness exists) `<tool>-parity`
+# recipe. The recipes call `cargo` / `bash` against fully-qualified
+# crate names so they remain stable even after Wave 5 sub-crate
+# reorganization. Comparison harnesses migrated from
+# `node/scripts/compare_*_to_upstream.sh` to
+# `crates/node/yggdrasil-node/scripts/` during Wave 4 PR 6.
+
+# cardano-cli — the Yggdrasil-side cardano-cli port
+cardano-cli-build:
+    cargo build --release -p yggdrasil-cardano-cli
+
+cardano-cli-test:
+    cargo nextest run --profile default -p yggdrasil-cardano-cli
+
+cardano-cli-help:
+    cargo run --release -p yggdrasil-cardano-cli -- --help
+
+# bech32 — BIP-0173 encoder + CLI mirror
+bech32-build:
+    cargo build --release -p yggdrasil-bech32
+
+bech32-test:
+    cargo nextest run --profile default -p yggdrasil-bech32
+
+bech32-help:
+    cargo run --release -p yggdrasil-bech32 -- --help
+
+# cardano-submit-api — HTTP tx-submission server
+cardano-submit-api-build:
+    cargo build --release -p yggdrasil-cardano-submit-api
+
+cardano-submit-api-test:
+    cargo nextest run --profile default -p yggdrasil-cardano-submit-api
+
+cardano-submit-api-parity:
+    bash crates/node/yggdrasil-node/scripts/compare_submit_api_to_upstream.sh
+
+# cardano-tracer — trace-forwarder aggregator
+cardano-tracer-build:
+    cargo build --release -p yggdrasil-cardano-tracer
+
+cardano-tracer-test:
+    cargo nextest run --profile default -p yggdrasil-cardano-tracer
+
+cardano-tracer-help:
+    cargo run --release -p yggdrasil-cardano-tracer -- --help
+
+# kes-agent / kes-agent-control — KES secret custody
+kes-agent-build:
+    cargo build --release -p yggdrasil-kes-agent -p yggdrasil-kes-agent-control
+
+kes-agent-test:
+    cargo nextest run --profile default -p yggdrasil-kes-agent -p yggdrasil-kes-agent-control
+
+# db-truncater — ChainDB rollback tool
+db-truncater-build:
+    cargo build --release -p yggdrasil-db-truncater
+
+db-truncater-test:
+    cargo nextest run --profile default -p yggdrasil-db-truncater
+
+db-truncater-parity:
+    bash crates/node/yggdrasil-node/scripts/compare_db_truncater_to_upstream.sh
+
+# db-analyser — ChainDB forensic analyser
+db-analyser-build:
+    cargo build --release -p yggdrasil-db-analyser
+
+db-analyser-test:
+    cargo nextest run --profile default -p yggdrasil-db-analyser
+
+# db-synthesizer — synthetic chain generator
+db-synthesizer-build:
+    cargo build --release -p yggdrasil-db-synthesizer
+
+db-synthesizer-test:
+    cargo nextest run --profile default -p yggdrasil-db-synthesizer
+
+# snapshot-converter — ledger snapshot format converter
+snapshot-converter-build:
+    cargo build --release -p yggdrasil-snapshot-converter
+
+snapshot-converter-test:
+    cargo nextest run --profile default -p yggdrasil-snapshot-converter
+
+# cardano-testnet — multi-node testnet harness
+cardano-testnet-build:
+    cargo build --release -p yggdrasil-cardano-testnet
+
+cardano-testnet-test:
+    cargo nextest run --profile default -p yggdrasil-cardano-testnet
+
+# tx-generator — transaction-stream load generator
+tx-generator-build:
+    cargo build --release -p yggdrasil-tx-generator
+
+tx-generator-test:
+    cargo nextest run --profile default -p yggdrasil-tx-generator
+
+# dmq-node — Mithril-related Delegated Mempool Queue node
+dmq-node-build:
+    cargo build --release -p yggdrasil-dmq-node
+
+dmq-node-test:
+    cargo nextest run --profile default -p yggdrasil-dmq-node
+
+# Tip-compare against a running upstream cardano-node — runs from the
+# yggdrasil-node binary against the operator-configured Unix socket.
+tip-compare:
+    bash crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh
+
+# Build every sister tool in one shot. Useful for verifying the
+# `crates/tools/` tree hasn't drifted out of sync with the workspace.
+tools-build-all:
+    cargo build --release \
+      -p yggdrasil-cardano-cli \
+      -p yggdrasil-bech32 \
+      -p yggdrasil-cardano-submit-api \
+      -p yggdrasil-cardano-tracer \
+      -p yggdrasil-kes-agent \
+      -p yggdrasil-kes-agent-control \
+      -p yggdrasil-db-truncater \
+      -p yggdrasil-db-analyser \
+      -p yggdrasil-db-synthesizer \
+      -p yggdrasil-snapshot-converter \
+      -p yggdrasil-cardano-testnet \
+      -p yggdrasil-tx-generator \
+      -p yggdrasil-dmq-node
+
 # ─── Pre-push convenience: locally equivalent to ci.yml ───────────────
 ci-local: fmt-check check lint test-fast parity-all audit
