@@ -31,6 +31,154 @@
 
 pub use metrics;
 
+/// Read-side trait implemented by `MetricsSnapshot`-shaped types
+/// (today: `yggdrasil_node_tracer::MetricsSnapshot`) so the EKG-
+/// parity Prometheus-text rendering can live in this crate without
+/// depending on `yggdrasil-node-tracer` (which would invert the
+/// layering — tracer crate owns the snapshot type, this crate owns
+/// the metric-name registry; the trait is the bridge).
+///
+/// All return types are `u64` so the trait stays object-safe and
+/// the implementation is decoupled from any specific atomic-counter
+/// type. Counter values that are not tracked by a particular
+/// implementation MUST return `0`; the rendering logic relies on
+/// that to keep the scrape surface stable from process startup.
+pub trait EkgParitySource {
+    /// `cardano.node.metrics.slotNum.int` — current slot at chain tip.
+    fn current_slot(&self) -> u64;
+    /// `cardano.node.metrics.blockNum.int` — current block number at chain tip.
+    fn current_block_number(&self) -> u64;
+    /// `cardano.node.metrics.currentEra.int` — era ordinal (0=Byron…6=Conway).
+    fn current_era(&self) -> u64;
+    /// Mempool transaction count → `cardano.node.metrics.txsInMempool.int`.
+    fn mempool_tx_count(&self) -> u64;
+    /// Mempool size in bytes → `cardano.node.metrics.mempoolBytes.int`.
+    fn mempool_bytes(&self) -> u64;
+    /// Connected peer count → `cardano.node.metrics.connectedPeers.int`.
+    fn active_peers(&self) -> u64;
+    /// Known peer count → `cardano.node.metrics.peersFromNodeKernel.int`.
+    fn known_peers(&self) -> u64;
+    /// Rollback / fork count → `cardano.node.metrics.forks.int`.
+    fn rollbacks(&self) -> u64;
+    /// Blocks fetched + applied since process start (used to derive `density`).
+    fn blocks_synced(&self) -> u64;
+    /// Process uptime in milliseconds (used to derive `density`).
+    fn uptime_ms(&self) -> u64;
+
+    // --- Forge-side counters (return 0 when not tracked) --------------
+
+    /// Slots in which the local node was elected leader.
+    fn node_is_leader(&self) -> u64 {
+        0
+    }
+    /// Forge attempts aborted because the node did not satisfy preconditions.
+    fn node_cannot_forge(&self) -> u64 {
+        0
+    }
+    /// Blocks the local node successfully forged.
+    fn blocks_forged_num(&self) -> u64 {
+        0
+    }
+    /// Slot number the local node was last about to lead.
+    fn about_to_lead_slot_last(&self) -> u64 {
+        0
+    }
+    /// Slots in which the local node had block-producer credentials but
+    /// did not produce a block.
+    fn slots_missed_num(&self) -> u64 {
+        0
+    }
+}
+
+/// Render the EKG-parity metric block in Prometheus text format.
+///
+/// Single-source-of-truth implementation owned by this crate. Wave 6
+/// PR 16 follow-on consolidation: previously this logic was
+/// duplicated on `MetricsSnapshot::to_ekg_parity_prometheus_text` in
+/// `yggdrasil-node-tracer` (~110 lines of field-mapping). That impl
+/// is now a thin wrapper around this function so any future name /
+/// HELP-string / TYPE drift happens in one place.
+///
+/// The 15 emitted metric names exactly match
+/// `ALL_NAMES` (with the canonical `cardano.node.metrics.<symbol>.<type>`
+/// dots Prometheus-escaped to underscores per scrape convention).
+pub fn render_ekg_parity_prometheus_text(src: &impl EkgParitySource) -> String {
+    let density = if src.uptime_ms() > 0 {
+        ((src.blocks_synced() as f64) / (src.uptime_ms() as f64 / 1000.0)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    // blockProcessingTime exposes a single gauge for now — the
+    // histogram version replaces this once the metrics-exporter-
+    // prometheus integration lands (queued in docs/TECH-DEBT.md).
+    let block_processing_time = 0.0_f64;
+
+    format!(
+        "\
+# HELP cardano_node_metrics_slotNum_int Current slot at the chain tip (EKG parity).\n\
+# TYPE cardano_node_metrics_slotNum_int gauge\n\
+cardano_node_metrics_slotNum_int {slot}\n\
+# HELP cardano_node_metrics_blockNum_int Current block number at the chain tip (EKG parity).\n\
+# TYPE cardano_node_metrics_blockNum_int gauge\n\
+cardano_node_metrics_blockNum_int {block}\n\
+# HELP cardano_node_metrics_density_real Chain density (blocks per second) over uptime (EKG parity).\n\
+# TYPE cardano_node_metrics_density_real gauge\n\
+cardano_node_metrics_density_real {density}\n\
+# HELP cardano_node_metrics_slotsMissedNum_int Slots in which the local node had block-producer credentials but did not produce a block.\n\
+# TYPE cardano_node_metrics_slotsMissedNum_int counter\n\
+cardano_node_metrics_slotsMissedNum_int {slots_missed}\n\
+# HELP cardano_node_metrics_txsInMempool_int Transaction count currently held by the mempool (EKG parity).\n\
+# TYPE cardano_node_metrics_txsInMempool_int gauge\n\
+cardano_node_metrics_txsInMempool_int {mempool_tx}\n\
+# HELP cardano_node_metrics_mempoolBytes_int Mempool size in bytes (sum of held tx CBOR sizes) (EKG parity).\n\
+# TYPE cardano_node_metrics_mempoolBytes_int gauge\n\
+cardano_node_metrics_mempoolBytes_int {mempool_bytes}\n\
+# HELP cardano_node_metrics_connectedPeers_int Currently-connected peer count (EKG parity).\n\
+# TYPE cardano_node_metrics_connectedPeers_int gauge\n\
+cardano_node_metrics_connectedPeers_int {connected}\n\
+# HELP cardano_node_metrics_peersFromNodeKernel_int Peer-snapshot size known to the node kernel (EKG parity).\n\
+# TYPE cardano_node_metrics_peersFromNodeKernel_int gauge\n\
+cardano_node_metrics_peersFromNodeKernel_int {known}\n\
+# HELP cardano_node_metrics_currentEra_int Era ordinal at the chain tip: 0=Byron,1=Shelley,2=Allegra,3=Mary,4=Alonzo,5=Babbage,6=Conway (EKG parity).\n\
+# TYPE cardano_node_metrics_currentEra_int gauge\n\
+cardano_node_metrics_currentEra_int {era}\n\
+# HELP cardano_node_metrics_blockProcessingTime_real Block-processing duration in seconds (EKG parity; histogram-shaped output lands with the metrics-exporter-prometheus follow-on).\n\
+# TYPE cardano_node_metrics_blockProcessingTime_real gauge\n\
+cardano_node_metrics_blockProcessingTime_real {bpt}\n\
+# HELP cardano_node_metrics_forks_int Rollback / fork events observed since process start (EKG parity).\n\
+# TYPE cardano_node_metrics_forks_int counter\n\
+cardano_node_metrics_forks_int {forks}\n\
+# HELP cardano_node_metrics_nodeIsLeader_int Slots in which the local node was elected leader.\n\
+# TYPE cardano_node_metrics_nodeIsLeader_int counter\n\
+cardano_node_metrics_nodeIsLeader_int {is_leader}\n\
+# HELP cardano_node_metrics_nodeCannotForge_int Forge attempts aborted because the node did not satisfy preconditions.\n\
+# TYPE cardano_node_metrics_nodeCannotForge_int counter\n\
+cardano_node_metrics_nodeCannotForge_int {cannot}\n\
+# HELP cardano_node_metrics_blocksForgedNum_int Blocks the local node successfully forged.\n\
+# TYPE cardano_node_metrics_blocksForgedNum_int counter\n\
+cardano_node_metrics_blocksForgedNum_int {forged}\n\
+# HELP cardano_node_metrics_aboutToLeadSlotLast_int Slot number the local node was last about to lead.\n\
+# TYPE cardano_node_metrics_aboutToLeadSlotLast_int gauge\n\
+cardano_node_metrics_aboutToLeadSlotLast_int {last_lead}\n\
+",
+        slot = src.current_slot(),
+        block = src.current_block_number(),
+        density = density,
+        slots_missed = src.slots_missed_num(),
+        mempool_tx = src.mempool_tx_count(),
+        mempool_bytes = src.mempool_bytes(),
+        connected = src.active_peers(),
+        known = src.known_peers(),
+        era = src.current_era(),
+        bpt = block_processing_time,
+        forks = src.rollbacks(),
+        is_leader = src.node_is_leader(),
+        cannot = src.node_cannot_forge(),
+        forged = src.blocks_forged_num(),
+        last_lead = src.about_to_lead_slot_last(),
+    )
+}
+
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
 /// Tier-1 stable EKG-parity metric names. The naming scheme is

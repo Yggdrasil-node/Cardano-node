@@ -4,42 +4,41 @@ Operator-visible items that work today but want consolidation. Each
 entry names the owning subsystem, the current state, the desired
 end state, and the rough scope of the consolidation PR.
 
-## EKG-parity metrics: two emission paths
+## EKG-parity metrics: field-mapping consolidated (formerly dual paths)
 
-**Owner:** observability (Wave 6 PR 16 + follow-on)
+**Owner:** observability (Wave 6 PR 16 follow-on consolidation)
 
-**State today.** Two code paths emit the 15 EKG-parity metric names
-declared at `crates/observability/yggdrasil-metrics/src/lib.rs`:
+**State today.** The 110-line field-mapping table now lives in ONE
+place — `yggdrasil_metrics::render_ekg_parity_prometheus_text` —
+via the `yggdrasil_metrics::EkgParitySource` trait. The binary's
+`MetricsSnapshot::to_ekg_parity_prometheus_text` is a one-line
+delegation to that function plus an `impl EkgParitySource for
+MetricsSnapshot` block (ten 1:1 field accessors). The
+`/metrics` route's concatenation behaviour is unchanged from the
+operator perspective; only the rendering ownership moved.
 
-1. **`yggdrasil_metrics::install_prometheus_exporter`** —
-   `PrometheusBuilder::new().with_http_listener` plus
-   `metrics::gauge!`/`counter!`/`histogram!` pre-registrations against
-   each canonical name. Standalone HTTP listener on the configured
-   port (default 12798). **No live consumer in the binary today.**
-2. **`MetricsSnapshot::to_ekg_parity_prometheus_text`** — appended to
-   the legacy `yggdrasil_*` Prometheus text inside the binary's
-   `metrics_server.rs` route handler. **This is the path operators
-   actually see at `GET /metrics`.**
+**Remaining secondary debt.** `yggdrasil_metrics::install_prometheus_exporter`
+still spawns its own HTTP listener (originally meant as a parallel
+Prometheus scrape endpoint). It currently has NO live consumer in
+the binary — `serve_metrics` owns the port. Sister tools (cardano-
+tracer, future cardano-submit-api) that want their own scrape
+endpoint can call `install_prometheus_exporter`; the binary
+continues to use the `render_ekg_parity_prometheus_text` path so
+both legacy `yggdrasil_*` and EKG names appear on the same port.
 
-Both paths render the same 15 names from the same `MetricsSnapshot`
-values today; drift risk is in the field-mapping table, not the
-underlying counters.
+**Desired end state for the secondary item.** The binary's
+`NodeMetrics` update sites call `metrics::*` macros so values flow
+through the global `metrics` facade. `install_prometheus_exporter`
+no longer binds its own port (operator chooses the port via
+`--metrics-port`). `to_ekg_parity_prometheus_text` becomes a thin
+adapter over `handle.render()`. Histogram-shaped metrics
+(`blockProcessingTime`) become real Prometheus histograms.
 
-**Desired end state.** A single owner — `yggdrasil_metrics` — drives
-the registry. The binary's `serve_metrics` calls into
-`yggdrasil_metrics::handle.render()` for the EKG-parity block and
-concatenates with the legacy `yggdrasil_*` text. `to_ekg_parity_prometheus_text`
-gets retired. `NodeMetrics` update sites optionally call `metrics::*`
-gauges so the values are emitted *through* the facade rather than
-mirrored on every scrape.
-
-**Scope.** ~30 NodeMetrics update sites in `yggdrasil_node_tracer`
-either bridged via a tick-loop (cheaper) or rewritten as direct
-`metrics::*` calls (cleaner). The HTTP listener in
-`install_prometheus_exporter` either gets disabled (binary owns the
-port) or moved to a sibling port `12799` (operators scrape both).
-Removing `to_ekg_parity_prometheus_text` removes ~110 lines of
-field-mapping logic.
+**Scope of the remaining item.** ~30 `NodeMetrics` update sites in
+`yggdrasil_node_tracer` either bridged via a tick-loop (cheaper)
+or rewritten as direct `metrics::*` calls (cleaner). Best done
+once a sister tool actually consumes the `install_prometheus_exporter`
+surface so the integration has a real driver.
 
 ## cardano-tracer Mux Layer 2/3 (R502)
 

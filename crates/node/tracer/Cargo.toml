@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 yggdrasil-ledger.workspace = true
+yggdrasil-metrics.workspace = true
 yggdrasil-node-config.workspace = true
 
 [lints]
