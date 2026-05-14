@@ -191,6 +191,7 @@ pub fn node_role_report(
     })
 }
 
+#[cfg(feature = "forge")]
 pub fn load_configured_block_producer_credentials(
     file_cfg: &NodeConfigFile,
     config_base_dir: Option<&std::path::Path>,
@@ -365,8 +366,17 @@ pub fn validate_config_report_with_role(
                 .to_owned(),
         );
     }
+    #[cfg(feature = "forge")]
     if node_role.block_producer_credentials == "complete" {
         load_configured_block_producer_credentials(file_cfg, config_base_dir, non_producing_node)?;
+    }
+    #[cfg(not(feature = "forge"))]
+    if node_role.block_producer_credentials == "complete" {
+        warnings.push(
+            "block producer credential paths are configured but this binary was built without \
+             the `forge` feature; credentials will be ignored and the forge loop is unavailable"
+                .to_owned(),
+        );
     }
 
     // Surface genesis-hash mismatches in the preflight report (without

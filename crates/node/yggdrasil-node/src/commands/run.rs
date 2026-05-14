@@ -43,9 +43,9 @@ use crate::commands::configuration::{
     apply_block_producer_credential_overrides, apply_inbound_listen_overrides,
     apply_topology_override, checkpoint_trace_config_mut, load_effective_config,
 };
-use crate::commands::validate_config::{
-    load_configured_block_producer_credentials, node_role_report,
-};
+use crate::commands::validate_config::node_role_report;
+#[cfg(feature = "forge")]
+use crate::commands::validate_config::load_configured_block_producer_credentials;
 use crate::run_node::{RunNodeRequest, run_node};
 use crate::{
     configured_fallback_peers, ledger_peer_snapshot_from_ledger_state, point_slot,
@@ -484,11 +484,17 @@ pub(crate) fn run_subcommand(args: RunCmdArgs) -> Result<()> {
         ]),
     );
 
+    #[cfg(feature = "forge")]
     let block_producer_credentials = load_configured_block_producer_credentials(
         &file_cfg,
         config_base_dir.as_deref(),
         non_producing_node,
     )?;
+    // Relay-only build: no producer credentials to load. Silence the
+    // would-be-unused `non_producing_node` binding by binding the result
+    // to an underscore-prefixed local so the variable still has a use.
+    #[cfg(not(feature = "forge"))]
+    let _no_forge_non_producing_node = non_producing_node;
 
     // R214 — pre-encode `ShelleyGenesis` once at startup so
     // the `GetGenesisConfig` (era-specific tag 11) LSQ
@@ -568,7 +574,9 @@ pub(crate) fn run_subcommand(args: RunCmdArgs) -> Result<()> {
         metrics_port,
         base_ledger_state,
         socket_path: file_cfg.socket_path.map(PathBuf::from),
+        #[cfg(feature = "forge")]
         block_producer_credentials,
+        #[cfg(feature = "forge")]
         max_major_protocol_version: file_cfg.max_major_protocol_version,
         genesis_config_cbor,
         initial_praos_nonce,

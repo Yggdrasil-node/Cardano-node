@@ -19,6 +19,11 @@ yggdrasil-ledger.workspace = true
 yggdrasil-network.workspace = true
 yggdrasil-node-config.workspace = true
 yggdrasil-node-genesis.workspace = true
+# ntc-server pulls only non-forge runtime helpers (`mempool_helpers`,
+# `ChainTipNotify`, `NodeConfig`); workspace-default of runtime is
+# `forge` OFF, so ntc-server doesn't pull the block-producer crate
+# in transitively. The binary opts INTO forge separately via its
+# own `forge` feature when built with default features.
 yggdrasil-node-runtime.workspace = true
 yggdrasil-node-sync.workspace = true
 yggdrasil-node-tracer.workspace = true

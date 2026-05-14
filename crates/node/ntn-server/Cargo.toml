@@ -17,6 +17,9 @@ yggdrasil-consensus.workspace = true
 yggdrasil-crypto.workspace = true
 yggdrasil-ledger.workspace = true
 yggdrasil-network.workspace = true
+# ntn-server pulls only non-forge runtime helpers; workspace-default
+# of runtime is `forge` OFF, so ntn-server doesn't pull the block-
+# producer crate in transitively.
 yggdrasil-node-runtime.workspace = true
 yggdrasil-node-sync.workspace = true
 yggdrasil-node-tracer.workspace = true

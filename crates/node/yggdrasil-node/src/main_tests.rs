@@ -11,14 +11,18 @@ use super::commands::status::status_report;
 use super::commands::submit_tx::decode_tx_hex_arg;
 use super::commands::validate_config::{node_role_report, validate_config_report};
 use super::{
-    configured_fallback_peers, forged_header_protocol_version,
-    ledger_peer_snapshot_from_ledger_state, strict_base_ledger_state,
+    configured_fallback_peers, ledger_peer_snapshot_from_ledger_state, strict_base_ledger_state,
 };
+#[cfg(feature = "forge")]
+use super::forged_header_protocol_version;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use yggdrasil_ledger::{
-    Era, LedgerState, PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval,
-};
+use yggdrasil_ledger::{PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval};
+// Era + LedgerState are only used by the forge-feature tests; gate
+// the import so a relay-only build doesn't emit the unused-import
+// warning that the -D warnings policy would escalate to an error.
+#[cfg(feature = "forge")]
+use yggdrasil_ledger::{Era, LedgerState};
 use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
 use yggdrasil_node_config::default_config;
 use yggdrasil_node_tracer::{NodeMetrics, NodeTracer};
@@ -1954,6 +1958,7 @@ fn load_effective_config_parses_yaml_file() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn forged_header_protocol_version_uses_ledger_protocol_when_present() {
     let mut state = LedgerState::new(Era::Byron);
@@ -1966,6 +1971,7 @@ fn forged_header_protocol_version_uses_ledger_protocol_when_present() {
     assert_eq!(forged_header_protocol_version(&state, 10), (9, 1));
 }
 
+#[cfg(feature = "forge")]
 #[test]
 fn forged_header_protocol_version_falls_back_to_max_major_protocol_version() {
     let state = LedgerState::new(Era::Byron);

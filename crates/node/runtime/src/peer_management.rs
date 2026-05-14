@@ -45,7 +45,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use yggdrasil_ledger::{LedgerState, Point, PoolRelayAccessPoint};
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use yggdrasil_network::BlockFetchClient;
 use yggdrasil_network::{
     ControlMessage, DnsRefreshPolicy, DnsRootPeerProvider, GovernorState, GovernorTargets,
@@ -296,7 +296,7 @@ impl OutboundPeerManager {
     /// so the getter is not needed on the production code path.
     /// Tests use it to inspect the manager-side pool without
     /// reaching into private fields.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "forge"))]
     pub(super) fn shared_fetch_worker_pool(&self) -> SharedFetchWorkerPool {
         self.fetch_worker_pool.clone()
     }
@@ -411,7 +411,7 @@ impl OutboundPeerManager {
     /// `block_fetch` field (single-peer mode). This accessor exists for
     /// runtime-tests that exercise the borrow-checked closure pattern
     /// without spinning up a full sync session.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "forge"))]
     pub(super) fn with_hot_block_fetch_clients<R>(
         &mut self,
         f: impl FnOnce(&mut [(SocketAddr, &mut BlockFetchClient)]) -> R,
@@ -447,7 +447,7 @@ impl OutboundPeerManager {
     /// counts registered workers in the pool) rather than via the
     /// manager-side warm-peer iteration. This accessor exists for
     /// runtime-tests that exercise the manager-side hot-peer view.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "forge"))]
     pub(super) fn hot_peer_addrs(&self) -> Vec<SocketAddr> {
         self.warm_peers
             .iter()
@@ -897,7 +897,7 @@ pub(super) fn prepare_reconnect_attempt_state(
     (attempt_state, reconnect_preference)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 pub(super) fn reconnect_preferred_peer(
     peer_registry: Option<&Arc<RwLock<PeerRegistry>>>,
     previous_preferred_peer: Option<SocketAddr>,

@@ -201,6 +201,7 @@ pub fn best_effort_base_ledger_state(
 /// forged block header. Falls back to `(max_major_protocol_version, 0)`
 /// when the recovered ledger state has no `protocol_version` (e.g.
 /// before the Shelley hard-fork has applied).
+#[cfg(feature = "forge")]
 pub fn forged_header_protocol_version(
     base_ledger_state: &LedgerState,
     max_major_protocol_version: u64,

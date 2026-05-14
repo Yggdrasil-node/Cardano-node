@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use yggdrasil_node_sync::LedgerCheckpointTracking;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use yggdrasil_node_sync::VerifiedSyncServiceConfig;
 
 /// Notification used to wake ChainSync servers when the chain tip advances.
@@ -36,7 +36,7 @@ pub mod governor_config;
 pub use governor_config::RuntimeGovernorConfig;
 
 pub mod peer_management;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use peer_management::{
     ManagedWarmPeer, ordered_reconnect_fallback_peers, preferred_hot_peer_from_registry,
     reconnect_preferred_peer, reconnect_preferred_peer_with_source,
@@ -52,7 +52,7 @@ pub use peer_management::{
 };
 
 pub mod cm_actions;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use cm_actions::direct_sync_bootstrap_pending;
 use cm_actions::{
     apply_cm_actions, governor_action_name, governor_action_peer, outbound_cm_local_addr,
@@ -77,7 +77,7 @@ pub mod ledger_peer_source;
 use ledger_peer_source::refresh_ledger_peer_sources_from_chain_db;
 #[cfg(feature = "forge")]
 use ledger_peer_source::block_producer_ledger_state_judgement;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use ledger_peer_source::{derive_judgement_at, wall_clock_unix_secs};
 
 #[cfg(feature = "forge")]
@@ -111,7 +111,7 @@ pub mod bootstrap;
 pub use bootstrap::{bootstrap, bootstrap_with_attempt_state, bootstrap_with_fallbacks};
 
 pub mod reconnecting_sync;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 pub(crate) use reconnecting_sync::{
     recover_ledger_state_for_runtime, stake_snapshots_for_recovered_point,
 };
@@ -128,7 +128,7 @@ pub use reconnecting_sync::{
 type CheckpointTracking = LedgerCheckpointTracking;
 
 pub mod sync_session;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use sync_session::{CheckpointPersistenceOutcome, checkpoint_trace_fields};
 use sync_session::{
     handle_reconnect_batch_error, refresh_chain_db_reconnect_fallback_peers,
@@ -138,16 +138,16 @@ use sync_session::{
 };
 
 mod reconnecting;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use reconnecting::cache_confirmed_entries;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use reconnecting::{
     BatchErrorDisposition, re_admit_rolled_back_tx_ids, record_verified_batch_progress,
 };
 use reconnecting::{BatchTraceExtras, ReconnectingRunState};
 
 mod tracing;
-#[cfg(test)]
+#[cfg(all(test, feature = "forge"))]
 use tracing::session_established_trace_fields;
 use tracing::{sync_error_trace_fields, verified_sync_batch_trace_fields};
 mod keep_alive;

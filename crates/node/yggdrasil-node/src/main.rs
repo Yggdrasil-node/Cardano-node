@@ -167,9 +167,9 @@ use metrics_server::serve_metrics;
 // `Ouroboros.Consensus.Node.Genesis`.
 mod startup;
 pub(crate) use startup::best_effort_base_ledger_state;
-use startup::{
-    forged_header_protocol_version, strict_base_ledger_state, trace_genesis_hashes_verified,
-};
+use startup::{strict_base_ledger_state, trace_genesis_hashes_verified};
+#[cfg(feature = "forge")]
+use startup::forged_header_protocol_version;
 
 // Config-relative path resolution. Wave 5 PR 7+8 moved this module
 // into the standalone `yggdrasil-node-config` crate. The binary

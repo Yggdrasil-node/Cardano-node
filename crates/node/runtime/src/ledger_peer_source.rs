@@ -41,7 +41,12 @@ use std::sync::{Arc, RwLock};
 use serde_json::json;
 
 use yggdrasil_consensus::EpochSchedule;
-use yggdrasil_ledger::{LedgerState, SlotNo};
+use yggdrasil_ledger::LedgerState;
+// SlotNo is only used by the forge-only `block_producer_ledger_state_judgement`
+// helper below; gate the import so a relay-only build doesn't emit
+// an unused-import warning.
+#[cfg(feature = "forge")]
+use yggdrasil_ledger::SlotNo;
 use yggdrasil_network::{
     ConsensusLedgerPeerInputs, ConsensusLedgerPeerSource, LedgerPeerSnapshot, LedgerStateJudgement,
     PeerSnapshotFileObservation, PeerSnapshotFileSource,
@@ -52,6 +57,9 @@ use yggdrasil_node_config::load_peer_snapshot_file;
 use yggdrasil_node_sync::{recover_ledger_state_chaindb, recover_ledger_state_chaindb_epoch_boundary};
 use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
+// `RuntimeBlockProducerConfig` is only used by the forge-only judgement
+// helper below; gate the import to avoid a relay-only unused warning.
+#[cfg(feature = "forge")]
 use super::block_producer_config::RuntimeBlockProducerConfig;
 use super::peer_management::{ledger_peer_snapshot_from_ledger_state, point_slot};
 

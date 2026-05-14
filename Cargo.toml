@@ -222,7 +222,13 @@ yggdrasil-metrics = { path = "crates/observability/yggdrasil-metrics" }
 yggdrasil-node-ntc-server = { path = "crates/node/ntc-server" }
 yggdrasil-node-ntn-server = { path = "crates/node/ntn-server" }
 yggdrasil-node-plutus-eval = { path = "crates/node/plutus-eval" }
-yggdrasil-node-runtime = { path = "crates/node/runtime" }
+# Phase 5.1 forge feature flag: the workspace dep entry sets
+# default-features = false so consumers (ntc-server, ntn-server)
+# can opt in/out of the runtime's `forge` feature independently.
+# The binary opts INTO forge via its own `forge` feature
+# (`yggdrasil-node-runtime/forge`); ntc-server / ntn-server leave it
+# off because they only consume non-forge runtime surface.
+yggdrasil-node-runtime = { path = "crates/node/runtime", default-features = false }
 yggdrasil-node-sync = { path = "crates/node/sync" }
 yggdrasil-node-tracer = { path = "crates/node/tracer" }
 yggdrasil-plutus = { path = "crates/plutus" }

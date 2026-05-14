@@ -37,12 +37,16 @@ use yggdrasil_node::{
     BlockProvider, ChainProvider, NodeConfig, ResumeReconnectingVerifiedSyncRequest,
     ResumedSyncServiceOutcome, RuntimeGovernorConfig, SharedChainDb, SharedPeerSharingProvider,
     SharedTxSubmissionConsumer, VerifiedSyncServiceConfig,
-    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer, run_block_producer_loop,
+    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer,
     run_governor_loop, run_inbound_accept_loop, seed_peer_registry,
 };
+#[cfg(feature = "forge")]
+use yggdrasil_node_runtime::run_block_producer_loop;
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
 
-use crate::{forged_header_protocol_version, serve_metrics, wait_for_shutdown_signal};
+use crate::{serve_metrics, wait_for_shutdown_signal};
+#[cfg(feature = "forge")]
+use crate::forged_header_protocol_version;
 
 pub(crate) struct RunNodeRequest {
     pub(crate) node_config: NodeConfig,
@@ -62,10 +66,16 @@ pub(crate) struct RunNodeRequest {
     /// NtC Unix domain socket path for local client queries.
     pub(crate) socket_path: Option<PathBuf>,
     /// Block producer credentials (VRF key, KES key, operational certificate).
-    /// When present the node operates in block-producing mode.
+    /// When present the node operates in block-producing mode. Only present
+    /// when the binary is built with the `forge` feature; relay-only builds
+    /// drop the field along with the rest of the producer dispatch.
+    #[cfg(feature = "forge")]
     pub(crate) block_producer_credentials:
         Option<yggdrasil_node_block_producer::BlockProducerCredentials>,
     /// Maximum protocol-version major this node supports for forged headers.
+    /// Only consulted by the forge dispatch — gated alongside `block_producer_
+    /// credentials` so a relay-only build doesn't carry the unused parameter.
+    #[cfg(feature = "forge")]
     pub(crate) max_major_protocol_version: u64,
     /// R214 — pre-encoded `ShelleyGenesis` CBOR bytes for the
     /// `GetGenesisConfig` (era-specific tag 11) LSQ response.  See
@@ -92,13 +102,16 @@ pub(crate) async fn run_node(request: RunNodeRequest) -> Result<()> {
         metrics_port,
         base_ledger_state,
         socket_path,
+        #[cfg(feature = "forge")]
         block_producer_credentials,
+        #[cfg(feature = "forge")]
         max_major_protocol_version,
         genesis_config_cbor,
         initial_praos_nonce,
     } = request;
 
-    // Log block producer mode availability.
+    // Log block producer mode availability (forge-only).
+    #[cfg(feature = "forge")]
     if let Some(ref bp) = block_producer_credentials {
         tracer.trace_runtime(
             "Startup.BlockProducer",
@@ -122,6 +135,7 @@ pub(crate) async fn run_node(request: RunNodeRequest) -> Result<()> {
         );
     }
 
+    #[cfg(feature = "forge")]
     let block_producer_runtime_config = if block_producer_credentials.is_some() {
         let active_slot_coeff = sync_config
             .active_slot_coeff
@@ -339,6 +353,9 @@ pub(crate) async fn run_node(request: RunNodeRequest) -> Result<()> {
 
     // Shared block-producer state updated by the sync pipeline so the
     // producer loop reads live epoch nonce and stake sigma values.
+    // Forge-only — relay builds drop the state along with the producer
+    // task that would consume it.
+    #[cfg(feature = "forge")]
     let shared_bp_state = std::sync::Arc::new(std::sync::RwLock::new(
         yggdrasil_node::SharedBlockProducerState::default(),
     ));
@@ -346,11 +363,15 @@ pub(crate) async fn run_node(request: RunNodeRequest) -> Result<()> {
     // Compute issuer pool-key-hash (Blake2b-224) before credentials are
     // consumed by the block-producer task.  Used by the sync pipeline to
     // push stake sigma updates to the shared producer state.
+    #[cfg(feature = "forge")]
     let bp_pool_key_hash: Option<[u8; 28]> = block_producer_credentials
         .as_ref()
         .map(|bp| yggdrasil_crypto::blake2b::hash_bytes_224(&bp.issuer_vkey.0).0);
+    #[cfg(not(feature = "forge"))]
+    let bp_pool_key_hash: Option<[u8; 28]> = None;
 
-    let block_producer_task =
+    #[cfg(feature = "forge")]
+    let block_producer_task: Option<tokio::task::JoinHandle<()>> =
         if let (Some(block_producer_credentials), Some(block_producer_config)) =
             (block_producer_credentials, block_producer_runtime_config)
         {
@@ -389,6 +410,9 @@ pub(crate) async fn run_node(request: RunNodeRequest) -> Result<()> {
         } else {
             None
         };
+    // Relay-only build: no producer task; the JoinHandle slot is permanently None.
+    #[cfg(not(feature = "forge"))]
+    let block_producer_task: Option<tokio::task::JoinHandle<()>> = None;
 
     // Shared TxSubmission inbound dedup state; threaded into both the inbound
     // accept loop (populated when peers advertise TxIds) and the reconnecting
@@ -579,7 +603,18 @@ pub(crate) async fn run_node(request: RunNodeRequest) -> Result<()> {
     .with_tentative_state(shared_tentative_state.clone())
     .with_tip_notify(Some(chain_tip_notify.clone()))
     .with_bp_state(
-        bp_pool_key_hash.map(|_| std::sync::Arc::clone(&shared_bp_state)),
+        {
+            #[cfg(feature = "forge")]
+            {
+                bp_pool_key_hash.map(|_| std::sync::Arc::clone(&shared_bp_state))
+            }
+            #[cfg(not(feature = "forge"))]
+            {
+                // Relay-only build has no producer task to push state
+                // updates to; sync drops sigma/nonce updates on the floor.
+                None
+            }
+        },
         bp_pool_key_hash,
     )
     .with_inbound_tx_state(Some(inbound_tx_state))
