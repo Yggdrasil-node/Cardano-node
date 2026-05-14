@@ -48,13 +48,16 @@
 //!   is implicit and explicit per the upstream `RemoteClockModel`.
 //! - **bytes 4–5**: a 16-bit big-endian word with the direction bit
 //!   in the high bit and the mini-protocol number in the low 15 bits.
-//!   Direction `1` = Initiator (high bit set), `0` = Responder
-//!   (high bit clear).
-//!     - In the Haskell source, `InitiatorDir` is encoded as `n` and
-//!       `ResponderDir` as `n | 0x8000`. The natural reading of the
-//!       diagram is the opposite ("d = 1 → initiator"); the
-//!       implementation is the source of truth. The Rust codec
-//!       follows the Haskell implementation.
+//!   Per the **implementation** in `Network.Mux.Codec`:
+//!   `InitiatorDir` is encoded as `n` (high bit **clear**) and
+//!   `ResponderDir` as `n | 0x8000` (high bit **set**).
+//!     - The block-comment diagram in `Codec.hs` reads the bit
+//!       in the opposite direction (it labels `d = 1` as
+//!       "initiator direction"). The Haskell implementation is the
+//!       source of truth — the diagram is a documentation
+//!       artifact. The Rust codec follows the implementation, so
+//!       a real `cardano-tracer` decoder will accept Yggdrasil-
+//!       emitted SDUs.
 //! - **bytes 6–7**: payload length in bytes (`Word16`). A `0` here
 //!   signals a malformed SDU per `decodeSDU` (`"short SDU"`).
 //!
@@ -76,10 +79,10 @@
 ///
 /// - `Initiator` is the application that opened the bearer (typically
 ///   the node sending traces to the cardano-tracer collector). Its
-///   high bit is **set** on the wire (i.e. `n | 0x8000`).
+///   high bit is **clear** on the wire (i.e. `n & 0x7fff`).
 /// - `Responder` is the application that accepted the bearer (the
-///   collector receiving traces). Its high bit is **clear** on the
-///   wire (i.e. `n & 0x7fff`).
+///   collector receiving traces). Its high bit is **set** on the
+///   wire (i.e. `n | 0x8000`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MiniProtocolDir {
     /// The peer that opened the bearer. High direction bit ON.
@@ -149,8 +152,8 @@ pub fn encode_sdu_header(header: &SduHeader) -> Result<[u8; 8], MuxError> {
         });
     }
     let dir_bit = match header.direction {
-        MiniProtocolDir::Initiator => 0x8000_u16,
-        MiniProtocolDir::Responder => 0x0000_u16,
+        MiniProtocolDir::Initiator => 0x0000_u16,
+        MiniProtocolDir::Responder => 0x8000_u16,
     };
     let num_and_dir = (header.mini_protocol_num & 0x7fff) | dir_bit;
     let mut out = [0_u8; 8];
@@ -173,13 +176,15 @@ pub fn decode_sdu_header(buf: &[u8]) -> Result<SduHeader, MuxError> {
     let num_and_dir = u16::from_be_bytes([buf[4], buf[5]]);
     let length = u16::from_be_bytes([buf[6], buf[7]]);
     // Per `Network.Mux.Codec.decodeSDU`:
-    //   getDir mid = if mid .&. 0x8000 == 0 then ResponderDir else InitiatorDir
-    // Note this is the OPPOSITE of the diagram-level reading of the
-    // 'd' bit: in the Haskell wire format, `d = 1` means **initiator**.
+    //   getDir mid = if mid .&. 0x8000 == 0 then InitiatorDir else ResponderDir
+    // The implementation is authoritative here — the diagram block-
+    // comment at the top of `Codec.hs` labels `d = 1` as initiator
+    // but the function above labels it as responder; interop with a
+    // real cardano-tracer follows the function.
     let direction = if num_and_dir & 0x8000 == 0 {
-        MiniProtocolDir::Responder
-    } else {
         MiniProtocolDir::Initiator
+    } else {
+        MiniProtocolDir::Responder
     };
     let mini_protocol_num = num_and_dir & 0x7fff;
     Ok(SduHeader {
@@ -225,6 +230,10 @@ mod mux_tests {
     fn encode_initiator_trace_object_sdu_header_byte_shape() {
         // Timestamp = 0x_DEAD_BEEF, num = 2 (TraceObject), Initiator
         // direction, payload length = 0x_0042 (66 bytes).
+        //
+        // Initiator → high bit CLEAR per the Haskell implementation
+        // (`putNumAndMode (MiniProtocolNum n) InitiatorDir = n`),
+        // so bytes 4–5 are `0x00 0x02`, not `0x80 0x02`.
         let h = SduHeader {
             timestamp: 0xDEAD_BEEF,
             mini_protocol_num: TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM,
@@ -233,16 +242,16 @@ mod mux_tests {
         };
         let bytes = encode_sdu_header(&h).expect("encode");
         // Expected: 0xDE 0xAD 0xBE 0xEF  (timestamp BE)
-        //           0x80 0x02            (direction=initiator high bit, num=2)
+        //           0x00 0x02            (direction=initiator high bit OFF, num=2)
         //           0x00 0x42            (length=66 BE)
         assert_eq!(
             bytes,
-            [0xDE, 0xAD, 0xBE, 0xEF, 0x80, 0x02, 0x00, 0x42],
+            [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x02, 0x00, 0x42],
             "Initiator/TraceObject/len=66 SDU header byte shape drifted"
         );
     }
 
-    /// Responder direction: high bit clears. Pin the byte shape so a
+    /// Responder direction: high bit sets. Pin the byte shape so a
     /// regression in the bit mask shows here.
     #[test]
     fn encode_responder_sdu_header_byte_shape() {
@@ -253,9 +262,10 @@ mod mux_tests {
             length: 0x_0010,
         };
         let bytes = encode_sdu_header(&h).expect("encode");
+        // Responder → high bit SET, so bytes 4–5 = 0x80 0x01.
         assert_eq!(
             bytes,
-            [0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10],
+            [0x00, 0x00, 0x00, 0x01, 0x80, 0x01, 0x00, 0x10],
             "Responder/EKG/len=16 SDU header byte shape drifted"
         );
     }
