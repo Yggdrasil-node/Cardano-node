@@ -157,8 +157,7 @@ pub struct TraceObject {
 impl TraceObject {
     /// Produce the canonical CBOR wire representation that
     /// `cardano-tracer`'s `TraceForward` codec expects.  Round-trip
-    /// safe with `from_cbor_bytes` (added once we wire the consumer
-    /// side; `cardano-tracer`'s decoder is the canonical reference).
+    /// safe with [`Self::from_cbor_bytes`].
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut enc = Encoder::new();
         enc.array(8);
@@ -195,7 +194,172 @@ impl TraceObject {
         enc.text(&self.to_thread_id);
         enc.into_bytes()
     }
+
+    /// Decode a CBOR-encoded `TraceObject` per the upstream wire
+    /// shape produced by `to_cbor`. Inverse of the encoder.
+    ///
+    /// Errors out on:
+    ///   - outer array length ≠ 8,
+    ///   - `to_severity` / `to_details` strings that don't match a
+    ///     known upstream variant,
+    ///   - inner timestamp array length ≠ 3,
+    ///   - any underlying CBOR decode failure.
+    pub fn from_cbor_bytes(bytes: &[u8]) -> Result<Self, TraceObjectDecodeError> {
+        use yggdrasil_ledger::cbor::Decoder;
+
+        let mut dec = Decoder::new(bytes);
+        let outer_len = dec
+            .array()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("outer array: {e}")))?;
+        if outer_len != 8 {
+            return Err(TraceObjectDecodeError::WrongOuterArity(outer_len));
+        }
+
+        // Field 0: to_human :: Maybe Text. Peek at the next CBOR byte
+        // to decide whether to read null or text — the existing
+        // Decoder doesn't expose a peek API, so try `null()` first
+        // by inspecting the remaining input.
+        let to_human = if dec.peek_is_null() {
+            dec.null()
+                .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_human null: {e}")))?;
+            None
+        } else {
+            let s = dec
+                .text()
+                .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_human text: {e}")))?;
+            Some(s.to_owned())
+        };
+
+        // Field 1: to_machine :: Text.
+        let to_machine = dec
+            .text()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_machine: {e}")))?
+            .to_owned();
+
+        // Field 2: to_namespace :: [Text].
+        let ns_len = dec
+            .array()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_namespace array: {e}")))?;
+        let mut to_namespace = Vec::with_capacity(ns_len as usize);
+        for _ in 0..ns_len {
+            let s = dec.text().map_err(|e| {
+                TraceObjectDecodeError::Cbor(format!("to_namespace element: {e}"))
+            })?;
+            to_namespace.push(s.to_owned());
+        }
+
+        // Field 3: to_severity :: Text → TraceSeverity.
+        let sev_str = dec
+            .text()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_severity text: {e}")))?;
+        let to_severity = match sev_str {
+            "Debug" => TraceSeverity::Debug,
+            "Info" => TraceSeverity::Info,
+            "Notice" => TraceSeverity::Notice,
+            "Warning" => TraceSeverity::Warning,
+            "Error" => TraceSeverity::Error,
+            "Critical" => TraceSeverity::Critical,
+            "Alert" => TraceSeverity::Alert,
+            "Emergency" => TraceSeverity::Emergency,
+            other => {
+                return Err(TraceObjectDecodeError::UnknownSeverity(other.to_owned()));
+            }
+        };
+
+        // Field 4: to_details :: Text → TraceDetail.
+        let det_str = dec
+            .text()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_details text: {e}")))?;
+        let to_details = match det_str {
+            "DMinimal" => TraceDetail::DMinimal,
+            "DNormal" => TraceDetail::DNormal,
+            "DDetailed" => TraceDetail::DDetailed,
+            "DMaximum" => TraceDetail::DMaximum,
+            other => {
+                return Err(TraceObjectDecodeError::UnknownDetail(other.to_owned()));
+            }
+        };
+
+        // Field 5: to_timestamp :: [year, dayOfYear, picosecondsOfDay].
+        let ts_len = dec
+            .array()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp array: {e}")))?;
+        if ts_len != 3 {
+            return Err(TraceObjectDecodeError::WrongTimestampArity(ts_len));
+        }
+        let year = dec
+            .unsigned()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("year: {e}")))?;
+        let doy = dec
+            .unsigned()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("dayOfYear: {e}")))?;
+        let picos = dec
+            .unsigned()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("picosecondsOfDay: {e}")))?;
+
+        // Field 6: to_hostname :: Text.
+        let to_hostname = dec
+            .text()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_hostname: {e}")))?
+            .to_owned();
+
+        // Field 7: to_thread_id :: Text.
+        let to_thread_id = dec
+            .text()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_thread_id: {e}")))?
+            .to_owned();
+
+        Ok(TraceObject {
+            to_human,
+            to_machine,
+            to_namespace,
+            to_severity,
+            to_details,
+            to_timestamp: (year, doy, picos),
+            to_hostname,
+            to_thread_id,
+        })
+    }
 }
+
+/// Errors surfaced from [`TraceObject::from_cbor_bytes`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TraceObjectDecodeError {
+    /// Underlying CBOR decode failure with the field name + reason.
+    Cbor(String),
+    /// Outer array length wasn't 8.
+    WrongOuterArity(u64),
+    /// Inner timestamp array length wasn't 3.
+    WrongTimestampArity(u64),
+    /// `to_severity` text wasn't a recognised `SeverityS` variant.
+    UnknownSeverity(String),
+    /// `to_details` text wasn't a recognised `DetailLevel` variant.
+    UnknownDetail(String),
+}
+
+impl core::fmt::Display for TraceObjectDecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cbor(msg) => write!(f, "CBOR decode error: {msg}"),
+            Self::WrongOuterArity(n) => write!(
+                f,
+                "TraceObject outer array length must be 8 per upstream wire format; got {n}"
+            ),
+            Self::WrongTimestampArity(n) => write!(
+                f,
+                "timestamp array length must be 3 (year, dayOfYear, picosecondsOfDay); got {n}"
+            ),
+            Self::UnknownSeverity(s) => {
+                write!(f, "unknown SeverityS variant: {s:?}")
+            }
+            Self::UnknownDetail(s) => {
+                write!(f, "unknown DetailLevel variant: {s:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TraceObjectDecodeError {}
 
 // ---------------------------------------------------------------------------
 // Existing best-effort UnixDatagram egress (preserved while layers 2/3 land)
@@ -327,6 +491,94 @@ mod tests {
         // Peek at the next byte: must be CBOR `null` (`0xf6`).
         // We use `null()` (returns `()` for null) to verify the type.
         dec.null().expect("toHuman None must encode as CBOR null");
+    }
+
+    /// Encode → decode round-trip: every shape that the encoder
+    /// produces must decode back to the same TraceObject.
+    #[test]
+    fn trace_object_cbor_round_trip() {
+        let originals = vec![
+            // All fields populated.
+            TraceObject {
+                to_human: Some("hello world".into()),
+                to_machine: "{\"k\":\"v\"}".into(),
+                to_namespace: vec!["Net".into(), "Governor".into()],
+                to_severity: TraceSeverity::Info,
+                to_details: TraceDetail::DNormal,
+                to_timestamp: (2026, 122, 0),
+                to_hostname: "yggdrasil".into(),
+                to_thread_id: "t1".into(),
+            },
+            // to_human None; empty strings; empty namespace.
+            TraceObject {
+                to_human: None,
+                to_machine: String::new(),
+                to_namespace: Vec::new(),
+                to_severity: TraceSeverity::Debug,
+                to_details: TraceDetail::DMinimal,
+                to_timestamp: (0, 0, 0),
+                to_hostname: String::new(),
+                to_thread_id: String::new(),
+            },
+            // All severities + details exercised.
+            TraceObject {
+                to_human: Some("emergency".into()),
+                to_machine: "msg".into(),
+                to_namespace: vec!["A".into(), "B".into(), "C".into()],
+                to_severity: TraceSeverity::Emergency,
+                to_details: TraceDetail::DMaximum,
+                to_timestamp: (2099, 365, 86_400_000_000_000_000),
+                to_hostname: "h".into(),
+                to_thread_id: "t".into(),
+            },
+        ];
+
+        for original in originals {
+            let bytes = original.to_cbor();
+            let decoded = TraceObject::from_cbor_bytes(&bytes).expect("round-trip decode");
+            assert_eq!(decoded, original, "round-trip drift on {original:?}");
+        }
+    }
+
+    /// Decoder rejects an outer array of length ≠ 8.
+    #[test]
+    fn trace_object_decoder_rejects_wrong_outer_arity() {
+        // Build a fake CBOR with a 7-element outer array.
+        let mut enc = yggdrasil_ledger::cbor::Encoder::new();
+        enc.array(7);
+        for _ in 0..7 {
+            enc.null();
+        }
+        let bytes = enc.into_bytes();
+        let err = TraceObject::from_cbor_bytes(&bytes).expect_err("wrong arity must fail");
+        assert!(
+            matches!(err, TraceObjectDecodeError::WrongOuterArity(7)),
+            "expected WrongOuterArity(7); got {err:?}"
+        );
+    }
+
+    /// Decoder rejects an unknown `SeverityS` text variant.
+    #[test]
+    fn trace_object_decoder_rejects_unknown_severity() {
+        let mut enc = yggdrasil_ledger::cbor::Encoder::new();
+        enc.array(8);
+        enc.null(); // to_human
+        enc.text(""); // to_machine
+        enc.array(0); // to_namespace
+        enc.text("Bogus"); // to_severity — invalid
+        enc.text("DMinimal"); // to_details
+        enc.array(3);
+        enc.unsigned(0);
+        enc.unsigned(0);
+        enc.unsigned(0);
+        enc.text(""); // to_hostname
+        enc.text(""); // to_thread_id
+        let bytes = enc.into_bytes();
+        let err = TraceObject::from_cbor_bytes(&bytes).expect_err("unknown severity must fail");
+        assert!(
+            matches!(err, TraceObjectDecodeError::UnknownSeverity(ref s) if s == "Bogus"),
+            "expected UnknownSeverity(\"Bogus\"); got {err:?}"
+        );
     }
 
     /// All severities have stable upstream-spelled wire labels.

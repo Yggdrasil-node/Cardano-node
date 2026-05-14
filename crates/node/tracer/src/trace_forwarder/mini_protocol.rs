@@ -180,12 +180,10 @@ pub fn encode_reply(traces: &[TraceObject]) -> Vec<u8> {
 /// the decoded variant unconditionally — the caller (state-machine
 /// driver) enforces transition validity.
 ///
-/// The TraceObject reply decoder is **not** wired here yet — the Layer 1
-/// `TraceObject` decoder is forthcoming (see crate top-of-module
-/// docs: "`from_cbor_bytes` … added once we wire the consumer side").
-/// `decode_message` errors out on a `Reply` whose inner list has any
-/// items; an empty-list `NonBlockingReply` decodes cleanly to
-/// `TraceForwardMessage::Reply(vec![])`.
+/// `MsgTraceObjectsReply` decodes the inner array by walking each
+/// element through [`super::TraceObject::from_cbor_bytes`]; the
+/// `Decoder::raw_value()` helper slices each TraceObject's bytes
+/// so the per-element decoder operates on a fresh sub-slice.
 pub fn decode_message(buf: &[u8]) -> Result<TraceForwardMessage, ProtocolError> {
     let mut dec = Decoder::new(buf);
     let len = dec
@@ -237,19 +235,19 @@ pub fn decode_message(buf: &[u8]) -> Result<TraceForwardMessage, ProtocolError> 
             let inner_len = dec
                 .array()
                 .map_err(|e| ProtocolError::Cbor(format!("reply array: {e}")))?;
-            // TraceObject decoder is forthcoming (see top-of-module
-            // doc on `from_cbor_bytes`). For now an empty-list reply
-            // (the only one possible without that decoder) decodes
-            // cleanly; non-empty reply decoding will land alongside
-            // the TraceObject CBOR decoder.
-            if inner_len == 0 {
-                Ok(TraceForwardMessage::Reply(Vec::new()))
-            } else {
-                Err(ProtocolError::Cbor(format!(
-                    "decode_message: non-empty reply ({inner_len} TraceObjects) \
-                     requires TraceObject::from_cbor_bytes (forthcoming)"
-                )))
+            let mut traces = Vec::with_capacity(inner_len as usize);
+            for _ in 0..inner_len {
+                // Slice out the next TraceObject's bytes via raw_value()
+                // then hand the slice to the Layer-1 decoder.
+                let to_bytes = dec
+                    .raw_value()
+                    .map_err(|e| ProtocolError::Cbor(format!("reply TraceObject: {e}")))?;
+                let to = TraceObject::from_cbor_bytes(to_bytes).map_err(|e| {
+                    ProtocolError::Cbor(format!("TraceObject decode: {e}"))
+                })?;
+                traces.push(to);
             }
+            Ok(TraceForwardMessage::Reply(traces))
         }
         _ => Err(ProtocolError::UnknownTag { tag, len }),
     }
@@ -351,6 +349,40 @@ mod mini_protocol_tests {
         let bytes = encode_reply(&[]);
         let msg = decode_message(&bytes).expect("decode");
         assert_eq!(msg, TraceForwardMessage::Reply(Vec::new()));
+    }
+
+    /// Round-trip a non-empty reply with two TraceObjects. The
+    /// outer reply decoder now slices each TraceObject via
+    /// `Decoder::raw_value()` and runs them through
+    /// `TraceObject::from_cbor_bytes` — both elements come back
+    /// byte-identical.
+    #[test]
+    fn nonempty_reply_round_trip() {
+        let traces = vec![
+            TraceObject {
+                to_human: Some("first".into()),
+                to_machine: "{\"k\":1}".into(),
+                to_namespace: vec!["Net".into(), "ChainSync".into()],
+                to_severity: TraceSeverity::Info,
+                to_details: TraceDetail::DNormal,
+                to_timestamp: (2026, 130, 0),
+                to_hostname: "h1".into(),
+                to_thread_id: "t1".into(),
+            },
+            TraceObject {
+                to_human: None,
+                to_machine: "{}".into(),
+                to_namespace: vec!["Consensus".into()],
+                to_severity: TraceSeverity::Warning,
+                to_details: TraceDetail::DDetailed,
+                to_timestamp: (2026, 130, 1_000_000_000_000),
+                to_hostname: "h2".into(),
+                to_thread_id: "t2".into(),
+            },
+        ];
+        let bytes = encode_reply(&traces);
+        let msg = decode_message(&bytes).expect("decode reply");
+        assert_eq!(msg, TraceForwardMessage::Reply(traces));
     }
 
     /// Unknown tag rejected.
