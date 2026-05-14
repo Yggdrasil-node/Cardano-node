@@ -98,7 +98,14 @@ pub fn metrics_http_response(
         || request.starts_with("GET /debug/metrics")
         || request.starts_with("GET /metrics")
     {
-        let body = metrics.snapshot().to_prometheus_text();
+        // Wave 6 PR 16 follow-on: emit BOTH the legacy `yggdrasil_*`
+        // metrics and the EKG-parity `cardano_node_metrics_*` names
+        // so SPOs migrating from upstream cardano-node 11.0.1 keep
+        // their Grafana dashboards / Alertmanager rules unchanged.
+        // The legacy block retires at v1.0 per docs/COMPATIBILITY.md.
+        let snap = metrics.snapshot();
+        let mut body = snap.to_prometheus_text();
+        body.push_str(&snap.to_ekg_parity_prometheus_text());
         ("200 OK", "text/plain; version=0.0.4; charset=utf-8", body)
     } else {
         ("404 Not Found", "text/plain", "not found\n".to_owned())
