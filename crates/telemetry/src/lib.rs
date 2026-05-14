@@ -21,6 +21,8 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+pub mod haskell_json;
+
 /// Supported log output formats.
 ///
 /// `HaskellJson` is the default so an operator migrating from
@@ -155,12 +157,11 @@ mod tests {
 /// `tracing_subscriber::EnvFilter`). Output format selection from
 /// `TracingConfig::format` is wired:
 ///
-///   - [`LogFormat::HaskellJson`]: structured JSON event records.
-///     The Haskell-Katip-compatible field renaming (`timestamp` →
-///     `at`, etc.) lands in a follow-on PR; today's JSON output
-///     emits `tracing-subscriber::fmt::format::Json`'s default
-///     schema. Operator log-shippers that consume Loki/Promtail can
-///     adopt the eventual rename without re-pipelining.
+///   - [`LogFormat::HaskellJson`]: Wave 6 PR 15 ships
+///     [`haskell_json::HaskellJsonFormat`] — emits the upstream
+///     Katip schema `{at, ns, data, sev, thread, host, app}` so
+///     SPO log-shippers (Promtail, fluentd, vector) consume it
+///     without re-pipelining.
 ///   - [`LogFormat::Pretty`]: ANSI-coloured stdout output.
 ///   - [`LogFormat::Otel`]: today behaves identically to
 ///     `HaskellJson`; the actual OTLP exporter layer waits on the
@@ -191,11 +192,21 @@ pub fn init_subscriber(config: &TracingConfig) -> Result<(), InitSubscriberError
 
     let result = match config.format {
         LogFormat::HaskellJson | LogFormat::Otel => {
-            // Use the `json` formatter; the rename layer that maps to
-            // Katip's `at` / `ns` / `data` / `sev` / `thread` field
-            // names lands in the follow-on Haskell-JSON-shape PR.
+            // Wave 6 PR 15 — Haskell-Katip-shaped JSON.
+            // Field set: {at, ns, data, sev, thread, host, app}.
+            // SPOs migrating from upstream cardano-node 11.0.1 keep
+            // their Promtail / fluentd configs unchanged. See
+            // `haskell_json::HaskellJsonFormat` for the schema.
+            //
+            // `Otel` reuses the same formatter pending Wave 6 PR 17;
+            // the OTLP exporter layer that actually distinguishes
+            // OTLP from Haskell-JSON lands once
+            // `tracing-opentelemetry` is added to the workspace.
             registry
-                .with(tracing_subscriber::fmt::layer().json())
+                .with(
+                    tracing_subscriber::fmt::layer()
+                        .event_format(haskell_json::HaskellJsonFormat::new()),
+                )
                 .try_init()
         }
         LogFormat::Pretty => registry
