@@ -58,10 +58,11 @@ use yggdrasil_ledger::cbor::Encoder;
 
 // Wave 6 PR 17 Phase 2.B — Layer 2 + Layer 3 codecs + bearer +
 // tracing::Event→TraceObject builder + write-only forwarding task
-// + tracing-subscriber Layer<S> adapter.
+// + tracing-subscriber Layer<S> adapter + Handshake codec.
 pub mod bearer;
 pub mod event_builder;
 pub mod forwarding_task;
+pub mod handshake;
 pub mod layer;
 pub mod mini_protocol;
 pub mod mux;
