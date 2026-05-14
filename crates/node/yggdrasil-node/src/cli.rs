@@ -422,6 +422,34 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long)]
         signing_key_file: PathBuf,
     },
+    /// Build a Shelley reward (stake) address as a Bech32 string.
+    /// Reads a stake verification key TextEnvelope file, hashes it,
+    /// wraps with the reward-address header byte, and Bech32-
+    /// encodes. Mirrors upstream `cardano-cli stake-address build`.
+    ///
+    /// Output: 29 raw bytes (header + 28-byte stake-key hash) →
+    /// `stake1...` (mainnet, HRP `stake`) or `stake_test1...`
+    /// (any non-mainnet network, HRP `stake_test`). Header byte is
+    /// `0xE0 | network_id` for the standard key-based reward
+    /// address (upstream type 14). Yggdrasil today does not
+    /// support the script-based variant (type 15).
+    StakeAddressBuild {
+        /// Path to the stake verification key TextEnvelope.
+        #[arg(long)]
+        stake_verification_key_file: PathBuf,
+        /// Use the mainnet network ID (1) and the `stake` HRP.
+        /// Mutually exclusive with `--testnet-magic`.
+        #[arg(long, conflicts_with = "testnet_magic")]
+        mainnet: bool,
+        /// Use the testnet network ID (0) and the `stake_test` HRP.
+        /// Mutually exclusive with `--mainnet`.
+        #[arg(long, conflicts_with = "mainnet")]
+        testnet_magic: Option<u32>,
+        /// Optional output file. When omitted the Bech32 address is
+        /// printed to stdout.
+        #[arg(long)]
+        out_file: Option<PathBuf>,
+    },
     /// Build a Shelley payment address as a Bech32 string. Reads a
     /// payment verification key TextEnvelope file, optionally
     /// combines with a stake verification key to produce a "base"

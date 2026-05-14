@@ -2764,6 +2764,64 @@ fn build_shelley_enterprise_address_round_trips() {
     assert_eq!(decoded[0], 0x60, "testnet enterprise header must be 0x60");
 }
 
+#[test]
+fn cardano_cli_stake_address_build_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "stake-address-build",
+        "--stake-verification-key-file",
+        "/tmp/stake.vkey",
+        "--mainnet",
+    ])
+    .expect("stake-address-build with --mainnet must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::StakeAddressBuild { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+/// Pin the reward-address byte shape — header `0xE0 | network_id`
+/// followed by 28-byte stake-key hash. Mainnet uses HRP `stake`
+/// (so the output starts with `stake1`), testnet uses `stake_test`.
+#[test]
+fn build_shelley_reward_address_round_trips() {
+    use super::commands::cardano_cli::build_shelley_reward_address_bech32;
+
+    let stake_hash = [0x44_u8; 28];
+
+    let mainnet = build_shelley_reward_address_bech32(1, &stake_hash).expect("build mainnet");
+    assert!(
+        mainnet.starts_with("stake1"),
+        "mainnet reward address must start with stake1; got {mainnet}"
+    );
+    let (_hrp, decoded) = bech32::decode(&mainnet).expect("decode mainnet");
+    let mut expected = vec![0xE1_u8];
+    expected.extend_from_slice(&stake_hash);
+    assert_eq!(
+        decoded, expected,
+        "mainnet reward address byte shape drifted; expected {:?}, got {:?}",
+        hex::encode(&expected),
+        hex::encode(&decoded),
+    );
+
+    let testnet = build_shelley_reward_address_bech32(0, &stake_hash).expect("build testnet");
+    assert!(
+        testnet.starts_with("stake_test1"),
+        "testnet reward address must start with stake_test1; got {testnet}"
+    );
+    let (_hrp, decoded) = bech32::decode(&testnet).expect("decode testnet");
+    assert_eq!(decoded[0], 0xE0, "testnet reward header must be 0xE0");
+    assert_eq!(&decoded[1..29], &stake_hash);
+}
+
 /// Pin the base address byte shape — header 0x00 (mainnet, type 0)
 /// followed by 28-byte payment hash + 28-byte stake hash.
 #[test]

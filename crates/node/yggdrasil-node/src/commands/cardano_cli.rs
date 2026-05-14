@@ -185,6 +185,38 @@ pub(crate) fn run_cardano_cli_command(
             &signing_key_file,
             KeyKind::Stake,
         ),
+        CardanoCliCommand::StakeAddressBuild {
+            stake_verification_key_file,
+            mainnet,
+            testnet_magic,
+            out_file,
+        } => {
+            let network_id: u8 = if mainnet {
+                1
+            } else if testnet_magic.is_some() {
+                0
+            } else {
+                eyre::bail!(
+                    "stake-address-build requires either --mainnet or --testnet-magic"
+                );
+            };
+            let env_bytes = std::fs::read(&stake_verification_key_file).map_err(|e| {
+                eyre::eyre!(
+                    "failed to read --stake-verification-key-file {}: {e}",
+                    stake_verification_key_file.display()
+                )
+            })?;
+            let stake_vk = read_verification_key_text_envelope(&env_bytes)?;
+            let stake_hash = yggdrasil_crypto::hash_bytes_224(&stake_vk).0;
+            let bech32_addr = build_shelley_reward_address_bech32(network_id, &stake_hash)?;
+            match out_file {
+                Some(path) => std::fs::write(&path, format!("{bech32_addr}\n")).map_err(|e| {
+                    eyre::eyre!("failed to write --out-file {}: {e}", path.display())
+                })?,
+                None => println!("{bech32_addr}"),
+            };
+            Ok(())
+        }
         CardanoCliCommand::AddressBuild {
             payment_verification_key_file,
             stake_verification_key_file,
@@ -282,6 +314,38 @@ pub(crate) fn build_shelley_address_bech32(
     }
 
     let hrp_str = if network_id == 1 { "addr" } else { "addr_test" };
+    let hrp = bech32::Hrp::parse(hrp_str)
+        .map_err(|e| eyre::eyre!("bech32 HRP parse failed for {hrp_str:?}: {e}"))?;
+    bech32::encode::<bech32::Bech32>(hrp, &addr_bytes)
+        .map_err(|e| eyre::eyre!("bech32 encode failed: {e}"))
+}
+
+/// Construct a Shelley reward (stake) address byte sequence and
+/// Bech32-encode it.
+///
+/// Per `Cardano.Ledger.Address.RewardAccount`:
+///
+/// - Header byte: `0b1110_<netid>` for the standard key-based
+///   reward address (upstream address type 14). Script-based reward
+///   addresses (type 15) are not yet supported.
+/// - Payload: 28-byte stake-key hash (Blake2b-224 of the stake VK).
+///
+/// Bech32 HRP: `stake` (mainnet, `network_id == 1`) or `stake_test`
+/// (any non-mainnet `network_id`).
+pub(crate) fn build_shelley_reward_address_bech32(
+    network_id: u8,
+    stake_hash: &[u8; 28],
+) -> Result<String> {
+    if network_id > 0x0F {
+        eyre::bail!(
+            "network_id {network_id} must fit in 4 bits (0..=15); got {network_id}"
+        );
+    }
+    let mut addr_bytes: Vec<u8> = Vec::with_capacity(29);
+    addr_bytes.push(0xE0 | network_id);
+    addr_bytes.extend_from_slice(stake_hash);
+
+    let hrp_str = if network_id == 1 { "stake" } else { "stake_test" };
     let hrp = bech32::Hrp::parse(hrp_str)
         .map_err(|e| eyre::eyre!("bech32 HRP parse failed for {hrp_str:?}: {e}"))?;
     bech32::encode::<bech32::Bech32>(hrp, &addr_bytes)
