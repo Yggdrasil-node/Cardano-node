@@ -1,0 +1,190 @@
+name: Supply-chain audit
+
+# Wave 7 PR 21 — weekly cargo-vet + cargo-supply-chain audit.
+#
+# Two gates layered on top of the existing weekly cargo-deny in
+# `.github/workflows/ci.yml`:
+#
+#   1. `cargo vet check`             — confirms every dep meets the
+#                                       per-crate criteria policy
+#                                       declared in `supply-chain/config.toml`.
+#   2. `cargo supply-chain publishers --diffable` — surfaces every
+#                                       crates.io publisher in the
+#                                       transitive graph; on drift
+#                                       from the committed
+#                                       `supply-chain/publishers.snapshot.txt`,
+#                                       opens or updates a tracking
+#                                       issue.
+#
+# Both are informational on schedule (continue-on-error: true) — the
+# weekly cadence is the SLA. Manual `workflow_dispatch` runs are
+# blocking for the operator who triggered them.
+
+on:
+  schedule:
+    # 06:00 UTC Monday. After parity-drift (04:00) so any release-tag
+    # bump issue gets opened first.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  cargo-vet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: ${{ github.event_name == 'schedule' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-vet
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet
+
+      - name: cargo vet
+        run: cargo vet
+
+  publisher-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: ${{ github.event_name == 'schedule' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-supply-chain
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-supply-chain
+
+      - name: Snapshot current publishers
+        id: publishers
+        run: |
+          set -euo pipefail
+          cargo supply-chain publishers --diffable > publishers.now.txt
+          # Sort for stability — cargo-supply-chain output is mostly
+          # but not perfectly deterministic across cargo versions.
+          sort -o publishers.now.txt publishers.now.txt
+          echo "[snapshot] $(wc -l < publishers.now.txt) publishers"
+
+      - name: Compare to committed baseline
+        id: diff
+        run: |
+          set -euo pipefail
+          baseline="supply-chain/publishers.snapshot.txt"
+          if [[ ! -f "$baseline" ]]; then
+            echo "[baseline] no committed baseline yet; uploading first snapshot as artifact"
+            echo "drift=first-run" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if diff -u "$baseline" publishers.now.txt > publishers.diff.txt; then
+            echo "[ok] publishers unchanged ($(wc -l < "$baseline") entries)"
+            echo "drift=none" >> "$GITHUB_OUTPUT"
+          else
+            echo "[drift] publisher set changed"
+            cat publishers.diff.txt
+            echo "drift=changed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload publisher snapshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: publishers-snapshot
+          path: |
+            publishers.now.txt
+            publishers.diff.txt
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Open or update tracking issue on drift
+        if: steps.diff.outputs.drift == 'changed'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title_prefix="[supply-chain-drift]"
+          title="${title_prefix} New crates.io publishers in transitive dep tree"
+          body_file="$(mktemp)"
+          cat >"$body_file" <<MARKDOWN
+          ## crates.io publisher drift
+
+          \`cargo supply-chain publishers --diffable\` produced a different
+          publisher set than the committed baseline at
+          \`supply-chain/publishers.snapshot.txt\`.
+
+          New / removed publishers usually mean:
+
+          - A transitive dep added a new top-level dep.
+          - An existing crate transferred ownership (catches event-stream-style takeovers).
+          - A vendored / forked crate now publishes under a new identity.
+
+          ### Diff
+
+          \`\`\`diff
+          $(cat publishers.diff.txt | head -c 4000)
+          \`\`\`
+
+          ### How to resolve
+
+          1. Inspect the artifact \`publishers-snapshot\` from this workflow run.
+          2. Audit the new publisher(s) in the \`cargo vet\` queue if any
+             of their crates fall under \`crypto-reviewed\` or
+             \`observability-reviewed\` (see \`supply-chain/config.toml\`).
+          3. Once accepted, refresh the baseline:
+             \`\`\`bash
+             cargo supply-chain publishers --diffable | sort > supply-chain/publishers.snapshot.txt
+             git add supply-chain/publishers.snapshot.txt
+             git commit -m "supply-chain: refresh publishers snapshot"
+             \`\`\`
+          MARKDOWN
+
+          existing_number=""
+          existing_numbers="$(gh issue list \
+            --repo "$REPO" \
+            --state open \
+            --search "${title_prefix} in:title" \
+            --json number,title \
+            --jq '.[] | "\(.number)\t\(.title)"')"
+
+          while IFS=$'\t' read -r num current_title; do
+            [[ -z "$num" ]] && continue
+            if [[ "$current_title" == "$title" ]]; then
+              existing_number="$num"
+              break
+            fi
+          done <<<"$existing_numbers"
+
+          if [[ -n "$existing_number" ]]; then
+            gh issue edit "$existing_number" --repo "$REPO" --body-file "$body_file"
+            echo "[drift] updated issue #$existing_number"
+          else
+            gh issue create --repo "$REPO" \
+              --title "$title" \
+              --label "supply-chain,drift,security" \
+              --body-file "$body_file"
+            echo "[drift] opened new tracking issue"
+          fi
+
+      - name: First-run notice
+        if: steps.diff.outputs.drift == 'first-run'
+        run: |
+          echo "::notice::No publishers.snapshot.txt committed yet. After reviewing the artifact, commit it with:"
+          echo "::notice::  cargo supply-chain publishers --diffable | sort > supply-chain/publishers.snapshot.txt"
+          echo "::notice::  git add supply-chain/publishers.snapshot.txt && git commit"

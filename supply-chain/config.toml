@@ -1,0 +1,139 @@
+# Wave 7 PR 21 — cargo-vet workspace policy.
+#
+# `[imports]` pulls trusted audit chains from Mozilla and Google so
+# Yggdrasil's audit burden is bounded to the cryptography-heavy
+# subset where the broader Rust ecosystem hasn't already certified
+# the dep. `cargo vet update` refreshes the cached imports.
+#
+# `[policy.<crate>]` requires specific audit criteria for each
+# crate that hits the cryptographic / observability hot path.
+# All other third-party crates fall back to `safe-to-deploy`
+# (cargo-vet's default).
+#
+# Reference: https://mozilla.github.io/cargo-vet/configuring.html
+
+[cargo-vet]
+version = "0.10"
+
+# Pre-existing audit chains. `cargo vet check` will pull these via
+# the cached `imports.lock` (next to this file). A `cargo vet trust`
+# step in `.github/workflows/supply-chain-audit.yml` keeps the cache
+# current.
+[imports.mozilla]
+url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
+
+[imports.google]
+url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
+
+[imports.bytecode-alliance]
+url = "https://raw.githubusercontent.com/bytecodealliance/wasmtime/main/supply-chain/audits.toml"
+
+# Cryptography crates — require crypto-reviewed (stronger than
+# safe-to-deploy). The criteria is defined in audits.toml.
+[policy.ed25519-dalek]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.bls12_381]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.k256]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.curve25519-dalek]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.curve25519-elligator2]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.rustls]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.ring]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.blake2]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.sha2]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.sha3]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+[policy.ripemd]
+audit-as-crates-io = true
+criteria = "crypto-reviewed"
+
+# Observability-bound crates — require observability-reviewed when
+# they land via Wave 6 PR 14 / PR 16 workspace dep additions.
+# The criteria is defined in audits.toml. Leaving the policy in
+# place ahead of time so the gate is honoured the day the deps
+# appear in Cargo.lock.
+[policy.tracing]
+audit-as-crates-io = true
+criteria = "observability-reviewed"
+
+[policy.tracing-subscriber]
+audit-as-crates-io = true
+criteria = "observability-reviewed"
+
+[policy.tracing-opentelemetry]
+audit-as-crates-io = true
+criteria = "observability-reviewed"
+
+[policy.opentelemetry]
+audit-as-crates-io = true
+criteria = "observability-reviewed"
+
+[policy.opentelemetry-otlp]
+audit-as-crates-io = true
+criteria = "observability-reviewed"
+
+[policy.metrics]
+audit-as-crates-io = true
+criteria = "observability-reviewed"
+
+[policy.metrics-exporter-prometheus]
+audit-as-crates-io = true
+criteria = "observability-reviewed"
+
+# Workspace crates — exempt from third-party audit (we own them).
+[policy.yggdrasil-consensus]
+criteria = []
+
+[policy.yggdrasil-crypto]
+criteria = []
+
+[policy.yggdrasil-error]
+criteria = []
+
+[policy.yggdrasil-ledger]
+criteria = []
+
+[policy.yggdrasil-network]
+criteria = []
+
+[policy.yggdrasil-node]
+criteria = []
+
+[policy.yggdrasil-plutus]
+criteria = []
+
+[policy.yggdrasil-storage]
+criteria = []
+
+[policy.yggdrasil-telemetry]
+criteria = []
+
+[policy.yggdrasil-test-fixtures]
+criteria = []

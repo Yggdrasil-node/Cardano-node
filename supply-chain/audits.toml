@@ -1,0 +1,63 @@
+# Wave 7 PR 21 — cargo-vet audit trail.
+#
+# Run locally:
+#   cargo install --locked cargo-vet
+#   cargo vet
+# Run in CI:
+#   .github/workflows/supply-chain-audit.yml (weekly cron + manual).
+#
+# Reference: https://mozilla.github.io/cargo-vet/
+#
+# This file is the source-of-truth for what humans have manually
+# reviewed about each third-party crate. Empty `[audits]` at seed
+# time; operators add entries via `cargo vet certify` as audits
+# complete. Trust chains (`[trusted]`) and imported audit caches
+# (`imports.lock`) live alongside `config.toml`.
+
+[criteria.crypto-reviewed]
+description = """
+A human cryptographer (or auditor with equivalent training) has \
+reviewed the crate's source code, focused on:
+  - constant-time arithmetic where the crate claims it;
+  - zeroization of secrets (typed via `zeroize::Zeroizing`);
+  - absence of `unsafe` blocks in security-critical paths,
+    or — when `unsafe` is present — a written invariant statement;
+  - no panicking paths reachable from public APIs given
+    well-formed input (DoS-hardness);
+  - no FFI calls (Yggdrasil's `deny.toml` already bans openssl /
+    native-tls — this criteria reinforces the policy from the
+    cargo-vet side).
+
+Stronger than `safe-to-deploy`: implies safe-to-deploy AND the
+crypto-specific properties above. Applies to ed25519-dalek,
+bls12_381, k256, curve25519-dalek, curve25519-elligator2, rustls,
+ring, blake2, sha2, sha3, ripemd."""
+
+implies = "safe-to-deploy"
+
+[criteria.observability-reviewed]
+description = """
+A human has reviewed the crate's source for:
+  - no PII / credential leakage in default trace / log output;
+  - no remote attestation / phone-home behaviour;
+  - bounded memory on unbounded-stream inputs (no `Vec` growth
+    without a configurable cap).
+Stronger than `safe-to-deploy`. Applies to tracing,
+tracing-subscriber, tracing-opentelemetry, opentelemetry,
+opentelemetry-otlp, metrics, metrics-exporter-prometheus."""
+
+implies = "safe-to-deploy"
+
+# Audit records — empty seed. Populate via `cargo vet certify` as
+# audits land. Each entry includes the auditor's GitHub handle, the
+# audited version, the criteria granted, and (optionally) the
+# diff range when delta-auditing.
+#
+# Example shape (commented out):
+# [[audits.ed25519-dalek]]
+# who = "FractionEstate <FractionEstate@users.noreply.github.com>"
+# criteria = "crypto-reviewed"
+# version = "2.1.1"
+# notes = "Verified constant-time scalar ops; Zeroize on SigningKey; no unsafe in API surface."
+
+[audits]
