@@ -45,8 +45,8 @@ use yggdrasil_network::{
 };
 use yggdrasil_storage::LedgerRecoveryOutcome;
 
-use crate::sync::VerifiedSyncServiceConfig;
-use crate::tracer::NodeMetrics;
+use yggdrasil_node_sync::VerifiedSyncServiceConfig;
+use yggdrasil_node_tracer::NodeMetrics;
 
 use super::ChainTipNotify;
 use super::block_producer_config::SharedBlockProducerState;
@@ -85,11 +85,11 @@ pub struct PeerSession {
     /// BlockFetch wire handle (legacy single-peer path).  Becomes
     /// `None` after [`PeerSession::take_block_fetch`] migrates the
     /// handle into a per-peer
-    /// [`crate::blockfetch_worker::FetchWorkerHandle`] for the
+    /// [`yggdrasil_node_sync::blockfetch_worker::FetchWorkerHandle`] for the
     /// multi-peer dispatch path.  Once migrated, the worker owns
     /// the handle until disconnect; the sync loop reaches the
     /// peer through the
-    /// [`crate::blockfetch_worker::FetchWorkerPool`] instead of
+    /// [`yggdrasil_node_sync::blockfetch_worker::FetchWorkerPool`] instead of
     /// touching this field.
     pub block_fetch: Option<BlockFetchClient>,
     /// KeepAlive client driver.
@@ -112,7 +112,7 @@ pub struct PeerSession {
 impl PeerSession {
     /// Returns a mutable reference to the BlockFetch client, panicking
     /// with a descriptive message if the handle has already been
-    /// migrated into a [`crate::blockfetch_worker::FetchWorkerHandle`].
+    /// migrated into a [`yggdrasil_node_sync::blockfetch_worker::FetchWorkerHandle`].
     /// Callers operating on the legacy single-peer path use this
     /// helper rather than `block_fetch.as_mut().unwrap()` so the
     /// failure message points at the design contract instead of an
@@ -136,9 +136,9 @@ impl PeerSession {
     ///
     /// The caller is expected to spawn a per-peer worker around the
     /// returned handle via
-    /// [`crate::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client`]
+    /// [`yggdrasil_node_sync::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client`]
     /// and register the worker in a
-    /// [`crate::blockfetch_worker::FetchWorkerPool`].  Subsequent
+    /// [`yggdrasil_node_sync::blockfetch_worker::FetchWorkerPool`].  Subsequent
     /// fetches for this peer must go through the pool — the
     /// `block_fetch` field is left as `None` and any direct
     /// access via `block_fetch_mut` panics with a descriptive

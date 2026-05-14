@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 use yggdrasil_ledger::Point;
 use yggdrasil_network::{KeepAliveClient, KeepAliveClientError};
 
-use crate::sync::{MultiEraSyncProgress, SyncError};
-use crate::tracer::NodeTracer;
+use yggdrasil_node_sync::{MultiEraSyncProgress, SyncError};
+use yggdrasil_node_tracer::NodeTracer;
 
 use super::{
     BatchTraceExtras, ReconnectingRunState, sync_error_trace_fields,

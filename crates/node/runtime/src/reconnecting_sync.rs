@@ -43,7 +43,7 @@ use yggdrasil_ledger::{LedgerState, Point, SlotNo, StakeSnapshots, TxId};
 use yggdrasil_network::{PeerStatus, peer_attempt_state};
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
-use crate::sync::{
+use yggdrasil_node_sync::{
     ChainDepStateTracking, LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome,
     LedgerRecoveryOutcome, MultiEraSyncStep, SyncError, VerifiedSyncServiceConfig,
     VrfVerificationContext, apply_verified_progress_to_chaindb, load_stake_snapshots_sidecar,
@@ -51,7 +51,7 @@ use crate::sync::{
     restore_chain_dep_sidecar_state_to_point, sync_batch_apply_verified,
     sync_batch_verified_with_tentative, track_chain_state,
 };
-use crate::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 type CheckpointPersistenceOutcome = LedgerCheckpointUpdateOutcome;
 
@@ -363,7 +363,7 @@ where
                     .as_ref()
                     .map(|r| (r, session.connected_peer_addr)),
                 config.shared_fetch_worker_pool.as_ref().map(|pool| {
-                    crate::sync::MultiPeerDispatchContext {
+                    yggdrasil_node_sync::MultiPeerDispatchContext {
                         pool,
                         max_concurrent_knob: config.max_concurrent_block_fetch_peers,
                         chainsync_pool: config.shared_chainsync_worker_pool.as_ref(),
@@ -1028,7 +1028,7 @@ where
                     .as_ref()
                     .map(|r| (r, session.connected_peer_addr)),
                 config.shared_fetch_worker_pool.as_ref().map(|pool| {
-                    crate::sync::MultiPeerDispatchContext {
+                    yggdrasil_node_sync::MultiPeerDispatchContext {
                         pool,
                         max_concurrent_knob: config.max_concurrent_block_fetch_peers,
                         chainsync_pool: config.shared_chainsync_worker_pool.as_ref(),
@@ -1501,7 +1501,7 @@ where
     let mut run_state = ReconnectingRunState::new();
     let mut chain_state = config
         .security_param
-        .map(|k| crate::sync::seed_chain_state_from_volatile(store, k));
+        .map(|k| yggdrasil_node_sync::seed_chain_state_from_volatile(store, k));
     let mut ocert_counters = config.verification.ocert_counters.clone();
     let mut had_session = false;
     let mut attempt_state = peer_attempt_state(node_config.peer_addr, fallback_peer_addrs);
@@ -1741,7 +1741,7 @@ where
             let recovered_point = chain_db.tip();
             let restored_stake_snapshots =
                 stake_snapshots_for_recovered_point(config, storage_dir, &recovered_point)?;
-            let recovery = crate::sync::recover_ledger_state_chaindb_with_epoch_boundary(
+            let recovery = yggdrasil_node_sync::recover_ledger_state_chaindb_with_epoch_boundary(
                 chain_db,
                 base_ledger_state,
                 epoch_schedule,
@@ -2037,7 +2037,7 @@ where
         tentative_state,
     } = request;
     let checkpoint_tracking = {
-        let mut ct = crate::sync::default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
+        let mut ct = yggdrasil_node_sync::default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
         if let Some(ref nonce_cfg) = config.nonce_config {
             ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
             ct.epoch_size = Some(config.epoch_schedule.unwrap_or_else(|| {
@@ -2087,7 +2087,7 @@ pub(super) fn seed_chain_state_via_chain_db<S: ChainDbVolatileAccess>(
     security_param: Option<yggdrasil_consensus::SecurityParam>,
 ) -> Option<yggdrasil_consensus::ChainState> {
     security_param
-        .map(|k| chain_db.with_volatile(|v| crate::sync::seed_chain_state_from_volatile(v, k)))
+        .map(|k| chain_db.with_volatile(|v| yggdrasil_node_sync::seed_chain_state_from_volatile(v, k)))
 }
 
 /// Trait abstracting "give me a borrow of the volatile store" across the

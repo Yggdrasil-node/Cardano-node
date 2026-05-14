@@ -33,8 +33,8 @@ use yggdrasil_consensus::mempool::{MEMPOOL_ZERO_IDX, MempoolEntry, SharedMempool
 use yggdrasil_ledger::{BlockNo, Decoder, HeaderHash, Point, SlotNo};
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
-use crate::block_producer::{BlockProducerCredentials, ForgedBlock, serialize_forged_block_cbor};
-use crate::sync::{
+use yggdrasil_node_block_producer::{BlockProducerCredentials, ForgedBlock, serialize_forged_block_cbor};
+use yggdrasil_node_sync::{
     SyncError, decode_multi_era_block, multi_era_block_to_block, validate_block_body_size,
     validate_block_protocol_version, verify_block_body_hash,
 };

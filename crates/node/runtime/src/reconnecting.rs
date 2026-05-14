@@ -50,11 +50,11 @@ use yggdrasil_consensus::{ChainState, NonceEvolutionConfig, NonceEvolutionState,
 use yggdrasil_ledger::{Point, ShelleyTxIn, SlotNo, TxId};
 use yggdrasil_network::{PeerRegistry, PeerSource, PeerStatus, UseLedgerPeers};
 
-use crate::sync::{
+use yggdrasil_node_sync::{
     LedgerCheckpointTracking, MultiEraSyncProgress, MultiEraSyncStep, VerifiedSyncServiceConfig,
     apply_nonce_evolution_to_progress, extract_consumed_inputs, extract_tx_ids,
 };
-use crate::tracer::{NodeMetrics, NodeTracer};
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer};
 
 use super::peer_session::{NodeConfig, ReconnectingSyncServiceOutcome};
 use super::{ChainTipNotify, CheckpointTracking, SharedBlockProducerState};
@@ -187,7 +187,7 @@ pub(super) fn re_admit_rolled_back_tx_ids(
 /// Returns a tuple of `(cached, confirmed, conflicting, expired, revalidated)`.
 pub(super) fn evict_mempool_after_roll_forward(
     mempool: &SharedMempool,
-    blocks: &[crate::sync::MultiEraBlock],
+    blocks: &[yggdrasil_node_sync::MultiEraBlock],
     block_spans: &[yggdrasil_ledger::BlockTxRawSpans],
     tip: &Point,
     recently_confirmed: &mut BTreeMap<TxId, MempoolEntry>,

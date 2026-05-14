@@ -42,7 +42,7 @@ use yggdrasil_network::{
 };
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
-use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer, trace_fields};
 
 use super::governor_config::RuntimeGovernorConfig;
 use super::peer_session::NodeConfig;
@@ -419,7 +419,7 @@ pub async fn run_governor_loop<I, V, L, F>(
                     // bonus on this tick.  No-op when no registry is wired.
                     if let Some(density_registry) = config.density_registry.as_ref() {
                         for (addr, _) in registry.iter() {
-                            let d = crate::sync::read_peer_density(*addr, density_registry);
+                            let d = yggdrasil_node_sync::read_peer_density(*addr, density_registry);
                             governor_state.metrics.set_density(*addr, d);
                         }
                     }

@@ -39,11 +39,11 @@ use yggdrasil_ledger::{Point, SlotNo};
 use yggdrasil_network::LedgerStateJudgement;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
-use crate::block_producer::{
+use yggdrasil_node_block_producer::{
     BlockProducerCredentials, ShouldForge, SlotClock, assemble_block_body, check_should_forge,
     forge_block, forged_block_to_storage_block, make_block_context,
 };
-use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer, trace_fields};
 
 use super::block_producer_config::{RuntimeBlockProducerConfig, SharedBlockProducerState};
 use super::{

@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::unwrap_used))]
 //! Node runtime — wires networking, storage, and protocol client drivers
 //! into a cohesive sync lifecycle.
 //!
@@ -16,9 +17,9 @@
 
 use std::sync::Arc;
 
-use crate::sync::LedgerCheckpointTracking;
+use yggdrasil_node_sync::LedgerCheckpointTracking;
 #[cfg(test)]
-use crate::sync::VerifiedSyncServiceConfig;
+use yggdrasil_node_sync::VerifiedSyncServiceConfig;
 
 /// Notification used to wake ChainSync servers when the chain tip advances.
 /// This is the Rust equivalent of the upstream ChainDB follower notification

@@ -54,12 +54,12 @@ use yggdrasil_network::{
     resolve_peer_access_points,
 };
 
-use crate::config::load_peer_snapshot_file;
-use crate::sync::{
+use yggdrasil_node_config::load_peer_snapshot_file;
+use yggdrasil_node_sync::{
     LedgerCheckpointTracking, LedgerCheckpointUpdateOutcome, SyncError, TypedIntersectResult,
     typed_find_intersect,
 };
-use crate::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 use super::keep_alive::trace_sync_failure;
 use super::reconnecting::BatchErrorDisposition;
@@ -396,7 +396,7 @@ pub(super) type CheckpointPersistenceOutcome = LedgerCheckpointUpdateOutcome;
 
 pub(super) fn checkpoint_trace_fields(
     outcome: &CheckpointPersistenceOutcome,
-    policy: &crate::sync::LedgerCheckpointPolicy,
+    policy: &yggdrasil_node_sync::LedgerCheckpointPolicy,
 ) -> BTreeMap<String, Value> {
     match outcome {
         CheckpointPersistenceOutcome::ClearedDisabled => trace_fields([
@@ -441,7 +441,7 @@ pub(super) fn checkpoint_trace_fields(
 pub(super) fn trace_checkpoint_outcome(
     tracer: &NodeTracer,
     outcome: &CheckpointPersistenceOutcome,
-    policy: &crate::sync::LedgerCheckpointPolicy,
+    policy: &yggdrasil_node_sync::LedgerCheckpointPolicy,
 ) {
     let (severity, message) = match outcome {
         CheckpointPersistenceOutcome::Persisted { .. } => ("Info", "ledger checkpoint persisted"),

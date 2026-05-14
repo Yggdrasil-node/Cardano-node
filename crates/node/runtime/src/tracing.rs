@@ -40,8 +40,8 @@ use std::net::SocketAddr;
 use serde_json::{Value, json};
 use yggdrasil_ledger::Point;
 
-use crate::sync::MultiEraSyncProgress;
-use crate::tracer::trace_fields;
+use yggdrasil_node_sync::MultiEraSyncProgress;
+use yggdrasil_node_tracer::trace_fields;
 
 use super::{BatchTraceExtras, ReconnectingRunState};
 

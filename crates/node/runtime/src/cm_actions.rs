@@ -44,7 +44,7 @@ use yggdrasil_network::{
     NodeToNodeVersionData, PeerRegistry, PeerSource, PeerStatus,
 };
 
-use crate::tracer::{NodeMetrics, NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer, trace_fields};
 
 use super::peer_management::OutboundPeerManager;
 use super::peer_session::NodeConfig;

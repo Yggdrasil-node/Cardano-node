@@ -72,11 +72,11 @@ pub struct RuntimeGovernorConfig {
     /// instance the sync service uses
     /// (`VerifiedSyncServiceConfig::density_registry`) so writes from
     /// the sync hook land where the governor reads.
-    pub density_registry: Option<crate::sync::DensityRegistry>,
+    pub density_registry: Option<yggdrasil_node_sync::DensityRegistry>,
     /// Operator-configured upper bound on concurrent BlockFetch
     /// peers.  When `> 1`, the governor migrates each warm peer's
     /// `BlockFetchClient` into a per-peer
-    /// [`crate::blockfetch_worker::FetchWorkerHandle`] at promote
+    /// [`yggdrasil_node_sync::blockfetch_worker::FetchWorkerHandle`] at promote
     /// time, populating the shared
     /// [`SharedFetchWorkerPool`] held by `OutboundPeerManager`.
     /// The sync loop's multi-peer dispatch branch then activates.
@@ -96,11 +96,11 @@ pub struct RuntimeGovernorConfig {
     pub shared_fetch_worker_pool: Option<SharedFetchWorkerPool>,
     /// Optional shared `ChainSyncWorkerPool` cloned from runtime
     /// startup (see
-    /// [`crate::chainsync_worker::new_shared_chainsync_worker_pool`]).
+    /// [`yggdrasil_node_sync::chainsync_worker::new_shared_chainsync_worker_pool`]).
     /// When `Some`, the governor exports the live registered-worker
     /// count to `/metrics` each tick.  When `None`, the
     /// `chainsync_workers_registered` gauge stays at 0.
-    pub shared_chainsync_worker_pool: Option<crate::chainsync_worker::SharedChainSyncWorkerPool>,
+    pub shared_chainsync_worker_pool: Option<yggdrasil_node_sync::chainsync_worker::SharedChainSyncWorkerPool>,
 }
 
 impl RuntimeGovernorConfig {
@@ -134,7 +134,7 @@ impl RuntimeGovernorConfig {
     /// `VerifiedSyncServiceConfig::shared_chainsync_worker_pool`.
     pub fn with_shared_chainsync_worker_pool(
         mut self,
-        pool: Option<crate::chainsync_worker::SharedChainSyncWorkerPool>,
+        pool: Option<yggdrasil_node_sync::chainsync_worker::SharedChainSyncWorkerPool>,
     ) -> Self {
         self.shared_chainsync_worker_pool = pool;
         self
@@ -163,7 +163,7 @@ impl RuntimeGovernorConfig {
     /// signal.  Pass the same `DensityRegistry` instance as the sync
     /// service is using (`VerifiedSyncServiceConfig::density_registry`)
     /// so writes from the sync hook land where the governor reads.
-    pub fn with_density_registry(mut self, registry: Option<crate::sync::DensityRegistry>) -> Self {
+    pub fn with_density_registry(mut self, registry: Option<yggdrasil_node_sync::DensityRegistry>) -> Self {
         self.density_registry = registry;
         self
     }

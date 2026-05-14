@@ -20,7 +20,7 @@ pub use yggdrasil_node_tracer as tracer;
 pub use yggdrasil_node_tracer::trace_forwarder;
 
 pub mod local_server;
-pub mod runtime;
+pub use yggdrasil_node_runtime as runtime;
 pub mod server;
 
 pub use blockfetch_worker::{

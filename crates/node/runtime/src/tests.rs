@@ -19,9 +19,9 @@ use super::{
     sync_error_trace_fields, tip_context_from_chain_db, verified_sync_batch_trace_fields,
     wall_clock_unix_secs,
 };
-use crate::sync::LedgerCheckpointPolicy;
-use crate::sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
-use crate::tracer::NodeTracer;
+use yggdrasil_node_sync::LedgerCheckpointPolicy;
+use yggdrasil_node_sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
+use yggdrasil_node_tracer::NodeTracer;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -221,7 +221,7 @@ fn sample_pool_params(relay: Relay, operator: u8) -> PoolParams {
     }
 }
 
-fn sample_forged_block_for_self_validation() -> crate::block_producer::ForgedBlock {
+fn sample_forged_block_for_self_validation() -> yggdrasil_node_block_producer::ForgedBlock {
     let mut body_enc = Encoder::new();
     body_enc.array(0);
     body_enc.array(0);
@@ -292,8 +292,8 @@ fn sample_forged_block_for_self_validation() -> crate::block_producer::ForgedBlo
     };
     let header_hash = praos_header.header_hash();
 
-    crate::block_producer::ForgedBlock {
-        header: crate::block_producer::ForgedBlockHeader {
+    yggdrasil_node_block_producer::ForgedBlock {
+        header: yggdrasil_node_block_producer::ForgedBlockHeader {
             header_body,
             kes_signature,
         },
@@ -508,7 +508,7 @@ fn resume_request_builder_sets_optional_fields() {
     let node = sample_node_config();
     let cfg = sample_sync_config();
     let path = std::path::PathBuf::from("snapshot.json");
-    let metrics = crate::tracer::NodeMetrics::new();
+    let metrics = yggdrasil_node_tracer::NodeMetrics::new();
 
     let req =
         ResumeReconnectingVerifiedSyncRequest::new(&node, &[], LedgerState::new(Era::Byron), &cfg)

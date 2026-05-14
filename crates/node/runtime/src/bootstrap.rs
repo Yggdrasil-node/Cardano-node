@@ -41,7 +41,7 @@ use yggdrasil_network::{
     TxSubmissionClient, peer_attempt_state,
 };
 
-use crate::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 use super::peer_session::{NodeConfig, PeerSession};
 

@@ -55,8 +55,8 @@ use yggdrasil_network::{
     resolve_peer_access_points,
 };
 
-use crate::sync::SyncError;
-use crate::tracer::{NodeTracer, trace_fields};
+use yggdrasil_node_sync::SyncError;
+use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 use super::bootstrap::bootstrap;
 use super::peer_session::{NodeConfig, PeerSession};
@@ -181,7 +181,7 @@ impl ManagedWarmPeer {
 /// governor task (writer: register on promote, unregister on
 /// demote) and the sync-loop task (reader: dispatch fetch plans).
 ///
-/// Wraps a [`crate::blockfetch_worker::FetchWorkerPool`] in
+/// Wraps a [`yggdrasil_node_sync::blockfetch_worker::FetchWorkerPool`] in
 // Wave 5 PR 9: SharedFetchWorkerPool + new_shared_fetch_worker_pool
 // were moved into yggdrasil-node-sync::blockfetch_worker so the sync
 // crate doesn't need to reach back into the binary's runtime module.
@@ -205,7 +205,7 @@ pub(super) struct OutboundPeerManager {
     /// at runtime startup via
     /// [`new_shared_fetch_worker_pool`] and cloned into both the
     /// governor's [`OutboundPeerManager`] and the sync service's
-    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`].
+    /// [`yggdrasil_node_sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`].
     ///
     /// Populated by [`OutboundPeerManager::migrate_session_to_worker`]
     /// at promote time; entries are removed by
@@ -261,7 +261,7 @@ impl OutboundPeerManager {
         let Some(block_fetch) = managed.session.take_block_fetch() else {
             return false;
         };
-        let handle = crate::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client(
+        let handle = yggdrasil_node_sync::blockfetch_worker::FetchWorkerHandle::spawn_with_block_fetch_client(
             peer,
             block_fetch,
         );
@@ -292,7 +292,7 @@ impl OutboundPeerManager {
     /// [`new_shared_fetch_worker_pool`] and threads the same `Arc`
     /// directly into both the manager (via
     /// [`Self::with_fetch_worker_pool`]) and the sync config (via
-    /// [`crate::sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`]),
+    /// [`yggdrasil_node_sync::VerifiedSyncServiceConfig::shared_fetch_worker_pool`]),
     /// so the getter is not needed on the production code path.
     /// Tests use it to inspect the manager-side pool without
     /// reaching into private fields.
@@ -389,7 +389,7 @@ impl OutboundPeerManager {
     ///
     /// This is the runtime seam (Phase 6 of `docs/ARCHITECTURE.md`)
     /// that exposes hot peers' BlockFetch handles to the sync loop's
-    /// multi-peer dispatcher (`crate::sync::dispatch_range_with_tentative`).
+    /// multi-peer dispatcher (`yggdrasil_node_sync::dispatch_range_with_tentative`).
     /// The closure-style API keeps borrow checking in the manager —
     /// no `Arc<Mutex<BlockFetchClient>>` wrapper is required because
     /// the closure runs synchronously while the mutable borrow is
