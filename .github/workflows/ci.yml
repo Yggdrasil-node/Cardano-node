@@ -13,10 +13,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # Pin to the same toolchain that rust-toolchain.toml declares
+      # (1.95.0). Using `@stable` here would silently drift CI ahead of
+      # the workspace MSRV declared in [workspace.package].rust-version
+      # and miss MSRV regressions.
+      - name: Install Rust toolchain (pinned to rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy,rustfmt
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -27,11 +34,22 @@ jobs:
       - name: Check workspace
         run: cargo check-all
 
+      # cargo-nextest is the test runner. The `ci` profile is defined
+      # in `.config/nextest.toml` (Wave 9 PR 25) and falls back to
+      # the default profile until that lands; the per-target JUnit
+      # output enables future flaky-test surfacing.
       - name: Test workspace
-        run: cargo test-all
+        run: cargo nextest run --workspace --all-features --no-fail-fast
 
       - name: Lint workspace
         run: cargo lint
+
+      # Catch feature-gated breakage early — code under
+      # `#[cfg(feature = "...")]` that doesn't compile with default
+      # features off would otherwise only surface when an operator
+      # builds a relay-only / slim variant.
+      - name: Lint workspace (no default features)
+        run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
       # Strict-mirror drift-guard (fifth verification gate).
       # Counterpart to .claude/skills/round-extraction/SKILL.md (the
