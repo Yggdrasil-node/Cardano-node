@@ -23,3 +23,16 @@ zeroize.workspace = true
 
 [lints]
 workspace = true
+
+# Wave 9 PR 28: criterion benchmarks for the hashing hot path. Run via
+# `cargo bench -p yggdrasil-crypto --bench blake2b_hash`. The bench
+# scaffold is intentionally small (one bench file, three sizes) — the
+# goal is to establish the infrastructure so future hot-path work has
+# a regression-checking surface.
+[dev-dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "blake2b_hash"
+harness = false
+
