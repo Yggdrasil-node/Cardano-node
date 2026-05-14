@@ -1,0 +1,209 @@
+name: Parity snapshot
+
+# Wave 10 PR 31 — side-by-side tip comparison against upstream cardano-node.
+#
+# Triggered manually via `workflow_dispatch`. The job spawns a fresh
+# yggdrasil-node and a vendored upstream Haskell `cardano-node`, lets
+# both sync for the requested duration, then samples the chain tip
+# from each on the configured interval and runs the existing
+# `crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh`
+# parity script. Any tip divergence in slot or hash fails the
+# workflow.
+#
+# The harness scripts already handle the comparison logic; this
+# workflow is the CI wiring around them. Vendored upstream binary is
+# at `.reference-haskell-cardano-node/install/bin/cardano-node` per
+# `scripts/setup-reference.sh --force` (fetched here on first run).
+#
+# Why workflow_dispatch only (no scheduled cron):
+#   - Each run takes 30+ minutes of wallclock (sync + comparison
+#     loop) plus 1.3 GB of vendored Haskell-tree caching.
+#   - The comparison is operator-conducted: the operator picks the
+#     network (preview / preprod / mainnet), the slot budget, and
+#     the sample interval based on what they're investigating.
+#   - Scheduling this on every push would be expensive and noisy
+#     for low-marginal-value (the strict-mirror gate already
+#     catches structural drift; parity-snapshot catches runtime
+#     drift, which is rare).
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Network to sync against (preview / preprod / mainnet)"
+        required: true
+        type: choice
+        options:
+          - preview
+          - preprod
+          - mainnet
+        default: preview
+      run_seconds:
+        description: "Total wallclock seconds to run the comparison loop"
+        required: true
+        default: "1800"
+      sample_interval_seconds:
+        description: "Seconds between tip-comparison samples"
+        required: true
+        default: "60"
+      fail_on_first_divergence:
+        description: "Fail the workflow on the first tip divergence (otherwise the run records every divergence and fails at the end)"
+        required: true
+        type: choice
+        options:
+          - "true"
+          - "false"
+        default: "true"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: parity-snapshot-${{ github.ref }}-${{ inputs.network }}
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    name: Tip snapshot vs upstream — ${{ inputs.network }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain (pinned)
+        uses: dtolnay/rust-toolchain@1.95.0
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build yggdrasil-node (release)
+        run: cargo build --release --bin yggdrasil-node
+
+      - name: Fetch upstream cardano-node reference tree
+        # Pulls the vendored Haskell binary + source trees into
+        # .reference-haskell-cardano-node/ at the policy-tag SHA
+        # declared in docs/parity-matrix.json::reference.tag.
+        run: bash scripts/setup-reference.sh --force
+
+      - name: Verify reference artifacts present
+        run: |
+          set -euo pipefail
+          binary=.reference-haskell-cardano-node/install/bin/cardano-node
+          cli=.reference-haskell-cardano-node/install/bin/cardano-cli
+          for bin in "$binary" "$cli"; do
+            if [[ ! -x "$bin" ]]; then
+              echo "::error::missing upstream binary: $bin"
+              exit 1
+            fi
+          done
+          "$binary" --version
+
+      - name: Pre-stage networking + socket dirs
+        run: |
+          mkdir -p tmp/parity-snapshot/{ygg,haskell}
+          chmod 0755 tmp/parity-snapshot tmp/parity-snapshot/ygg tmp/parity-snapshot/haskell
+
+      - name: Run side-by-side sync + tip comparison
+        env:
+          NETWORK: ${{ inputs.network }}
+          RUN_SECONDS: ${{ inputs.run_seconds }}
+          SAMPLE_INTERVAL_S: ${{ inputs.sample_interval_seconds }}
+          FAIL_FAST: ${{ inputs.fail_on_first_divergence }}
+        run: |
+          set -euo pipefail
+
+          # Hand-pick network-magic per the operator-configurable input.
+          case "$NETWORK" in
+            preview)  NETWORK_MAGIC=2 ;;
+            preprod)  NETWORK_MAGIC=1 ;;
+            mainnet)  NETWORK_MAGIC=764824073 ;;
+            *) echo "::error::unsupported NETWORK: $NETWORK"; exit 1 ;;
+          esac
+          echo "[parity-snapshot] $NETWORK (magic=$NETWORK_MAGIC) for $RUN_SECONDS s, sampling every $SAMPLE_INTERVAL_S s"
+
+          # Launch yggdrasil-node in producer-disabled mode.
+          ygg_log="tmp/parity-snapshot/ygg/yggdrasil-node.log"
+          target/release/yggdrasil-node run \
+            --config "crates/node/yggdrasil-node/configuration/$NETWORK/config.json" \
+            --topology "crates/node/yggdrasil-node/configuration/$NETWORK/topology.json" \
+            --database-path tmp/parity-snapshot/ygg/db \
+            --socket-path tmp/parity-snapshot/ygg/node.sock \
+            --port 3001 \
+            --non-producing-node \
+            >"$ygg_log" 2>&1 &
+          ygg_pid=$!
+          echo "[ygg] launched (pid=$ygg_pid)"
+
+          # Launch upstream cardano-node (path layout follows the
+          # vendored tree from scripts/setup-reference.sh).
+          haskell_log="tmp/parity-snapshot/haskell/cardano-node.log"
+          .reference-haskell-cardano-node/install/bin/cardano-node run \
+            --config ".reference-haskell-cardano-node/install/share/$NETWORK/config.json" \
+            --topology ".reference-haskell-cardano-node/install/share/$NETWORK/topology.json" \
+            --database-path tmp/parity-snapshot/haskell/db \
+            --socket-path tmp/parity-snapshot/haskell/node.sock \
+            --port 3002 \
+            >"$haskell_log" 2>&1 &
+          haskell_pid=$!
+          echo "[haskell] launched (pid=$haskell_pid)"
+
+          trap 'echo "[cleanup] stopping nodes"; kill -INT $ygg_pid $haskell_pid 2>/dev/null || true; sleep 5; kill -KILL $ygg_pid $haskell_pid 2>/dev/null || true' EXIT
+
+          # Wait for both sockets to appear.
+          deadline=$(( $(date +%s) + 120 ))
+          while [[ ! -S tmp/parity-snapshot/ygg/node.sock || ! -S tmp/parity-snapshot/haskell/node.sock ]]; do
+            if [[ $(date +%s) -gt $deadline ]]; then
+              echo "::error::nodes did not open NtC sockets within 120s; check logs"
+              tail -50 "$ygg_log" || true
+              tail -50 "$haskell_log" || true
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "[parity-snapshot] both nodes are up; comparison loop starts"
+
+          # Comparison loop.
+          start_ts=$(date +%s)
+          end_ts=$(( start_ts + RUN_SECONDS ))
+          divergence_count=0
+          sample_count=0
+          while [[ $(date +%s) -lt $end_ts ]]; do
+            sample_count=$(( sample_count + 1 ))
+            if YGG_BIN=target/release/yggdrasil-node \
+               CARDANO_CLI=.reference-haskell-cardano-node/install/bin/cardano-cli \
+               YGG_SOCK=tmp/parity-snapshot/ygg/node.sock \
+               HASKELL_SOCK=tmp/parity-snapshot/haskell/node.sock \
+               NETWORK_MAGIC=$NETWORK_MAGIC \
+               SNAPSHOT_DIR=tmp/parity-snapshot/snapshots \
+               bash crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh; then
+              echo "[sample $sample_count] tips match"
+            else
+              rc=$?
+              divergence_count=$(( divergence_count + 1 ))
+              echo "::warning::tip divergence at sample $sample_count (compare_tip_to_haskell.sh exited $rc)"
+              if [[ "$FAIL_FAST" = "true" ]]; then
+                echo "::error::FAIL_FAST set; aborting"
+                exit 1
+              fi
+            fi
+            sleep "$SAMPLE_INTERVAL_S"
+          done
+
+          echo "[parity-snapshot] complete: $sample_count samples, $divergence_count divergent"
+          if (( divergence_count > 0 )); then
+            echo "::error::$divergence_count of $sample_count samples diverged"
+            exit 1
+          fi
+
+      - name: Upload tip snapshots on divergence
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tip-snapshots-${{ inputs.network }}
+          path: |
+            tmp/parity-snapshot/snapshots
+            tmp/parity-snapshot/ygg/yggdrasil-node.log
+            tmp/parity-snapshot/haskell/cardano-node.log
+          retention-days: 30
+          if-no-files-found: ignore
