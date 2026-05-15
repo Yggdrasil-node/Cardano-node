@@ -97,10 +97,29 @@ remaining commands and a separate binary is justified.
   (`run::tests`) cover all three arms — pinning that the
   Version path actually emits the banner and that the
   deferral messages stay stable. Library `run_command` is
-  now operational for the simplest of the three commands;
-  ShowUpstreamConfig + QueryTip remain blocked on Command-
-  variant + deps work tracked in their respective error
-  messages.
+  now operational for the simplest of the three commands.
+- **R504 (Phase 5 follow-on, 2026-05) — `ShowUpstreamConfig`
+  arm wired.** `Command::ShowUpstreamConfig` grew a
+  `network: String` field (clap `--network`) and the run-
+  dispatcher arm now does real path resolution via
+  `environment::{resolve_upstream_reference_paths,
+  extract_reference_network_magic, run_show_upstream_config}`
+  — the same helpers the node binary's wrapper uses. Fallback
+  network magics hardcoded (mainnet=764_824_073 / preprod=1 /
+  preview=2); unknown presets surface a structured `"expected
+  one of mainnet / preprod / preview"` error rather than a
+  deferral string. Standalone
+  `yggdrasil-cardano-cli show-upstream-config --network mainnet`
+  now emits the same operator JSON the node binary already did.
+  Two new tests in `run::tests`
+  (`show_upstream_config_rejects_unknown_network_preset`,
+  `show_upstream_config_resolves_or_errors_with_real_network`)
+  replace the prior `show_upstream_config_currently_bails_with_deferral_message`
+  pin; parser tests in `parser::tests` updated to pass
+  `--network <preset>`. Only `Command::QueryTip` now stays in
+  deferral — wiring blocked on the LSQ-client trait abstraction
+  needed so the library can carry a tokio-free signature without
+  pulling tokio + yggdrasil-network direct deps in.
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -191,13 +210,14 @@ week follow-up rounds. Each port requires:
    the byte-equivalence verification status against the upstream
    binary at `.reference-haskell-cardano-node/install/bin/cardano-cli`.
 
-The pending migrations as of R297 closure:
+The pending migrations as of R504 closure (run-dispatcher operational
+for 2 of 3 surface commands; only `QueryTip` deferred):
 
 | Subcommand | Status | Migration shape |
 |---|---|---|
-| `Version` | ✅ migrated (R296) | direct `helper::version_info()` call |
-| `ShowUpstreamConfig` | ✅ migrated (R297) | `environment::run_show_upstream_config` (path resolution + JSON) |
-| `QueryTip` | future R298+ | needs `trait LsqClient` abstraction in this crate; node binary supplies the impl with its tokio + Unix-socket connector |
+| `Version` | ✅ migrated (R296 helpers, R503 dispatcher) | library-side `run::run_command` dispatches to `helper::version_info()` |
+| `ShowUpstreamConfig` | ✅ migrated (R297 helpers, R504 dispatcher) | library-side `run::run_command` dispatches to `environment::resolve_upstream_reference_paths` → `extract_reference_network_magic` → `run_show_upstream_config` |
+| `QueryTip` | future round | needs `trait LsqClient` abstraction in this crate; node binary supplies the impl with its tokio + Unix-socket connector |
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
@@ -228,9 +248,13 @@ this crate.
 - `command.rs` — top-level dispatch enum (3 variants today; grows
   per R298+ migration).
 - `run.rs` — top-level dispatcher (forwards to per-cluster runners).
-- `parser.rs` — clap-based parser shell (currently `NotYetMigrated`
-  stub; node binary uses its own parser at `node/src/cli.rs`
-  pending the full per-cluster sub-parser tree).
+- `parser.rs` — clap-based parser shell. Operational since R503:
+  `Args { command: Command }` wraps the `Command` `Subcommand` derive
+  and `parse_command` invokes `Args::try_parse_from`. The node binary
+  still uses its own parser at `node/src/cli.rs` for the wider
+  cardano-cli surface; the library parser covers the standalone
+  binary's 3-subcommand surface (`version`, `show-upstream-config`,
+  `query-tip`).
 - `render.rs` — output formatting (`render_json`, `render_text`).
 - `option.rs` — shared option parsers (`parse_socket_path`,
   `parse_network_magic`).
