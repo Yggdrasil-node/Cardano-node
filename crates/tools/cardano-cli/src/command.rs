@@ -15,6 +15,8 @@
 
 use std::path::PathBuf;
 
+use clap::Subcommand;
+
 /// Top-level dispatch enum for `yggdrasil-cardano-cli`.
 ///
 /// Mirrors the entry-point shape of upstream `ClientCommand` from
@@ -22,7 +24,12 @@ use std::path::PathBuf;
 /// binary's `cardano-cli` subcommand already implements; per-cluster
 /// rounds R290–R295 expand the variant set to mirror upstream's full
 /// surface (Byron / Compatible / Shelley / Alonzo / Babbage / Conway).
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// `clap::Subcommand` derive (R503): wires the enum into the library's
+/// `parser::parse_command` so a standalone `yggdrasil-cardano-cli`
+/// binary (when its `[[bin]]` target lands) can dispatch directly
+/// without going through the node binary's wrapper.
+#[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 pub enum Command {
     /// Print pure-Rust cardano-cli compatibility version info.
     /// Mirrors upstream `DisplayVersion` arm.
@@ -34,15 +41,18 @@ pub enum Command {
         /// Override path for the upstream Haskell-share root
         /// (typically `/tmp/cardano-tooling/share`); falls back to
         /// the vendored `node/configuration/<network>/` directory.
+        #[arg(long)]
         upstream_config_root: Option<PathBuf>,
     },
     /// Query the running node for tip / chain-point / block-no.
     /// Mirrors upstream `QueryTip` from `Cardano.CLI.Compatible.Run`.
     QueryTip {
         /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
         socket_path: PathBuf,
         /// Override network magic instead of using the upstream
         /// reference config.
+        #[arg(long)]
         network_magic: Option<u32>,
     },
 }
