@@ -44,84 +44,85 @@ surface so the integration has a real driver.
 
 **Owner:** observability (Wave 6 PR 17)
 
-**State today.** Layer 1 (`TraceObject` CBOR codec) is fully
-implemented and unit-tested against pinned upstream-shape wire
-bytes. Phase 2.B of Wave 6 PR 17 added the codec halves of
-Layers 2 and 3:
+**State today.** **11 of 12 sub-items landed across Phase 2.B
+(May 2026 session, 12+ commits).** The forwarder-side
+pipeline is fully wireable in ~10 binary-setup lines (see the
+example block at the top of
+`crates/node/tracer/src/trace_forwarder.rs`).
 
-- `crates/node/tracer/src/trace_forwarder/mux.rs` — `Network.Mux`
-  SDU header codec (encode + decode of the 8-byte big-endian
-  timestamp + dir-and-protonum + length header). Mini-protocol
-  number constants for Handshake (0), EKG (1), TraceObject (2),
-  DataPoint (3) per upstream `Cardano.Tracer.Acceptors.*`.
-- `crates/node/tracer/src/trace_forwarder/mini_protocol.rs` —
-  `Trace.Forward.Protocol.TraceObject` CBOR codec for
-  `MsgTraceObjectsRequest` / `MsgDone` / `MsgTraceObjectsReply`.
-  Round-trip pinned against the upstream wire shape; `Request`
-  and `Done` are byte-exact, `Reply` encodes the prefix
-  byte-exactly and concatenates each `TraceObject`'s Layer 1
-  CBOR.
+Shipped components:
 
-What's still missing:
+- **Layer 1** (TraceObject CBOR codec): encoder
+  (`trace_forwarder.rs::TraceObject::to_cbor`) + decoder
+  (`trace_forwarder.rs::TraceObject::from_cbor_bytes` —
+  commit `f0bc5a9`).
+- **Layer 2** (TraceForward mini-protocol CBOR codec):
+  `mini_protocol.rs` — `MsgTraceObjectsRequest` /
+  `MsgTraceObjectsReply` / `MsgDone` + full round-trip pinned
+  in `nonempty_reply_round_trip`.
+- **Layer 3** (Network.Mux SDU codec): `mux.rs` — 8-byte
+  big-endian header (timestamp + dir-and-protonum + length) +
+  mini-protocol number constants (Handshake=0, EKG=1,
+  TraceObject=2, DataPoint=3).
+- **AF_UNIX SOCK_STREAM bearer** (`bearer.rs`, commit
+  `ee7d496`): `Bearer<S>` generic over any
+  `tokio::io::AsyncRead + AsyncWrite + Unpin + Send`
+  transport, with `read_sdu` / `write_sdu` + 4 round-trip
+  tests pinned against `tokio::io::DuplexStream`.
+- **Handshake mini-protocol codec** (`handshake.rs`, commit
+  `fe9c520`): `MsgProposeVersions` / `MsgReplyVersions` /
+  `MsgAcceptVersion` / `MsgRefuse` + all three RefuseReason
+  variants.
+- **Handshake initiator state-machine driver**
+  (`handshake_driver.rs`, commit `c868f73`):
+  `run_initiator_handshake(&mut bearer, versions)` performs
+  the Idle→Confirm→Done flow with structured error variants.
+- **`tracing::Event` → `TraceObject` builder**
+  (`event_builder.rs`, commit `5464f8a`): pure-Rust
+  civil-date arithmetic, Level→SeverityS mapping, field-set
+  JSON serialisation.
+- **Write-only forwarding task** (`forwarding_task.rs`,
+  commit `02f7ce0`): `run` / `run_via_mux` drain a tokio
+  mpsc::UnboundedReceiver<TraceObject> and batch-emit
+  `MsgTraceObjectsReply` SDUs.
+- **`tracing_subscriber::Layer<S>` adapter** (`layer.rs`,
+  commit `92fc2df`): `TraceForwardingLayer::new(tx, hostname)`
+  bridges sync `on_event` callbacks to the async forwarding
+  pipeline.
+- **Minimal bidirectional Mux dispatcher**
+  (`mux_connection.rs`, commit `30111c5`):
+  `MuxConnection<S>` wraps `Bearer<S>` with per-mini-protocol
+  `mpsc` subscription channels + a serialised write side.
+- **Composition glue** (`MuxConnection::run_initiator_handshake`,
+  commit `5a8b662`; `forwarding_task::run_via_mux`, commit
+  `0d40fb6`): handshake_driver and forwarding_task can both
+  ride on a shared `Arc<MuxConnection<S>>` without exclusivity.
 
-- The Mux state-machine driver (ingress queue, egress queue,
-  per-mini-protocol scheduler, handshake driver, bearer-task
-  lifecycle). **Minimal dispatcher landed in commit `30111c5`** —
-  `crates/node/tracer/src/trace_forwarder/mux_connection.rs::MuxConnection`
-  ships bidirectional SDU read/write with per-mini-protocol
-  channel-based subscription and a bearer-mutex-serialised write
-  side. Subset of upstream's full Network.Mux: no per-mini-protocol
-  limits, no scheduler fairness, no bearer-task supervision —
-  sufficient for the cardano-tracer use case (Handshake first,
-  then TraceObject forwarding until shutdown), but the full
-  bidirectional driver with concurrent activity / backpressure /
-  cancel semantics is still pending for parity with upstream's
-  `Network.Mux` semantics.
-- ~~An `AF_UNIX SOCK_STREAM` bearer adapter.~~ **Landed in commit
-  `ee7d496`** — `crates/node/tracer/src/trace_forwarder/bearer.rs`
-  ships `Bearer<S>` generic over any `tokio::io::AsyncRead +
-  AsyncWrite + Unpin + Send` transport, with `read_sdu` /
-  `write_sdu` + 4 round-trip tests pinned against
-  `tokio::io::DuplexStream` in-memory pipes.
-- ~~The cardano-tracer-specific Handshake mini-protocol negotiator
-  (mini-protocol num 0).~~ **Initiator side fully landed**: codec
-  in commit `fe9c520`
-  (`crates/node/tracer/src/trace_forwarder/handshake.rs`) +
-  state-machine driver in `c868f73`
-  (`crates/node/tracer/src/trace_forwarder/handshake_driver.rs::run_initiator_handshake`)
-  with 4 round-trip + error-path tests against `tokio::io::duplex`
-  in-memory pipes. Responder-side driver (Yggdrasil-side acceptor)
-  remains deferred; today's cardano-tracer use case is initiator-only.
-- ~~A `Layer<S>` adapter for `tracing-subscriber` that walks every
-  `tracing::Event` into a `TraceObject` and emits it through the
-  Mux stack to a configurable Unix socket.~~ **Landed in commit
-  `92fc2df`** — `crates/node/tracer/src/trace_forwarder/layer.rs`
-  ships `TraceForwardingLayer` (a `tracing_subscriber::Layer<S>`)
-  + `event_builder::build_trace_object_from_event` (data transform)
-  + `forwarding_task::run` (write-only batched bearer drain).
-  Full pipeline `tracing::Event` → `TraceObject` →
-  `MsgTraceObjectsReply` SDU → bearer is wireable with ~10 lines
-  of binary setup.
-- ~~TraceObject Layer 1 **decoder** (today only the encoder ships;
-  `mini_protocol.rs` errors on a non-empty inbound `Reply` until
-  the decoder lands).~~ **Landed in commit `f0bc5a9`** —
-  `TraceObject::from_cbor_bytes` is now the inverse of `to_cbor`;
-  `mini_protocol::decode_message` walks non-empty replies via
-  `Decoder::raw_value()` + the Layer-1 decoder; full round-trip
-  test pinned in `mini_protocol_tests::nonempty_reply_round_trip`.
+**Only remaining sub-item:**
+
+- Full Network.Mux semantics: per-mini-protocol ingress/egress
+  queue limits, scheduler fairness (round-robin among ready
+  writers, weighted-priority for hot protocols), and
+  bearer-task supervision (cohesive shutdown when any
+  sub-task fails). Today's `MuxConnection` serialises through
+  a single bearer mutex; sufficient for the cardano-tracer
+  use case (Handshake first, then TraceObject forwarding
+  until shutdown), but doesn't match upstream Network.Mux
+  semantics under concurrent activity.
 - Conformance test against the vendored
   `.reference-haskell-cardano-node/install/bin/cardano-tracer`
   binary — needs `scripts/setup-reference.sh` without
   `--sources-only` so the install tarball materialises.
 
-**Desired end state.** A `Layer<S>` for `tracing-subscriber` that
-forwards every `tracing::Event` over the cardano-tracer Unix
-socket. SPOs who run a sibling `cardano-tracer` process get
-drop-in trace forwarding.
+**Desired end state.** Verified_11_0_1 promotion of the new
+`node.tracer.cardano-tracer-forwarder` parity-matrix entry
+(`docs/parity-matrix.json`, added in commit `8e79bc7`). Gated
+on the full-Mux work + a 24h operator soak forwarding live
+mainnet/preprod traces to a real cardano-tracer endpoint
+without protocol errors.
 
-**Scope.** Multi-day. Bearer adapter, state-machine driver,
-Handshake negotiator, decoder side of TraceObject, conformance
-verification against a live `cardano-tracer` binary.
+**Scope.** Multi-day for full Mux semantics; the conformance
+soak is operator-driven work.
 
 ## Wave 3 / Wave 5 feature flags: declared but not gating
 
