@@ -124,25 +124,51 @@ without protocol errors.
 **Scope.** Multi-day for full Mux semantics; the conformance
 soak is operator-driven work.
 
-## Wave 3 / Wave 5 feature flags: declared but not gating
+## Wave 3 / Wave 5 feature flags: per-flag gating progress
 
-**Owner:** packaging (Wave 3 PR 5, Wave 5 PR 7+)
+**Owner:** packaging (Wave 3 PR 5, Wave 5 PR 7+, Phase 5)
 
-**State today.** Feature flags are declared on every workspace
-crate (`yggdrasil-ledger/plutus`, `yggdrasil-consensus/experimental-genesis`,
-`yggdrasil-network/{ntn, ntc, serde-traces}`, `yggdrasil-storage/{lmdb, mem-only}`,
-`yggdrasil-plutus/{secp256k1, bls12-381}`, `yggdrasil-node-block-producer/forge`,
-binary's `yggdrasil-node/{forge, plutus, ntc-socket, tracer-forwarder}`)
-but no Rust code uses `#[cfg(feature = "...")]` to gate anything yet.
-The flags are documentation in Cargo.toml form.
+**State today.**
 
-**Desired end state.** Each flag actually conditionally compiles the
-code paths it names. Relay-only builds (`forge` off) compile out
-the block-producer crate entirely. Slim builds (`plutus` off)
-compile out the Plutus evaluator. WASM-stub builds become buildable.
+- ✅ **`forge`** (the canonical first target): fully gated as of
+  Phase 5.1 (commits `d526613` runtime side + `ba7119d` binary
+  side, May 2026). `cargo build --no-default-features
+  --features=relay-only` produces a smaller binary that excludes
+  the `yggdrasil-node-block-producer` crate from the dep graph
+  entirely. The runtime's `forge` feature gates `forge.rs` +
+  `block_producer_loop.rs` + the `block_producer_ledger_state_judgement`
+  helper; the binary's `forge` feature pulls in the runtime's
+  `forge` plus the block-producer crate as a direct optional
+  dep; `ntc-server` / `ntn-server` consume runtime with the
+  workspace-default `forge` OFF so they don't pull the
+  block-producer crate transitively.
 
-**Scope.** Per-flag PRs. `forge` is the cleanest first target since
-the block-producer crate is already its own crate boundary.
+- ⏳ Other declared-but-not-gating flags: `yggdrasil-ledger/plutus`,
+  `yggdrasil-consensus/experimental-genesis`,
+  `yggdrasil-network/{ntn, ntc, serde-traces}`,
+  `yggdrasil-storage/{lmdb, mem-only}`,
+  `yggdrasil-plutus/{secp256k1, bls12-381}`,
+  binary's `yggdrasil-node/{plutus, ntc-socket, tracer-forwarder}`.
+  Each is a separate per-flag PR. `plutus` is the next-biggest
+  individual scope (gating the Alonzo+ phase-2 witness paths in
+  per-era ledger apply rules); `ntn` / `ntc` gate full mini-
+  protocol module trees in `yggdrasil-network`; `secp256k1` /
+  `bls12-381` gate per-builtin dispatch arms in
+  `yggdrasil-plutus::builtins`. `serde-traces` is decorative
+  today (no trace-type serde derives currently in the network
+  crate); a follow-on round will surface derives on the trace
+  types newly added under `crates/network/src/protocols/`.
+
+**Desired end state.** Each flag actually conditionally compiles
+the code paths it names. Per-flag follow-on PRs land
+incrementally as operator demand surfaces (e.g., a sister tool
+that needs `--no-default-features --features=slim` to drop
+Plutus would drive the `plutus` flag work).
+
+**Scope.** Per-flag PRs. `forge` is closed; per remaining flag:
+~1-3 days each depending on the cross-crate coupling. `plutus`
+is multi-day because Plutus types are referenced from ~8 ledger
+files including era-specific apply rules.
 
 ## yggdrasil-cardano-cli library-only crate has no `[[bin]]`
 
