@@ -50,18 +50,18 @@ where
 /// Parse error returned by [`parse_command`].
 ///
 /// Mirrors upstream `ClientCommandErrors` from `Cardano.CLI.Run`.
+/// R503 retired the prior `NotYetMigrated` variant after `parse_command`
+/// became operational via `Args::try_parse_from`; today the only
+/// failure mode is the clap parser itself (which also raises
+/// `--help` / `--version` short-circuit "errors" with
+/// `kind() == DisplayHelp / DisplayVersion`).
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
-    /// The full optparse-applicative parser has not yet been ported
-    /// into this crate; callers should use `node/src/cli.rs` for now.
-    #[error(
-        "yggdrasil-cardano-cli parser is the R289 skeleton; use the \
-         node binary's `cardano-cli` subcommand for now (migration \
-         scheduled for R290+)"
-    )]
-    NotYetMigrated,
-    /// A clap parser failure surfaced through.
-    #[error("clap parser error: {0}")]
+    /// A clap parser failure surfaced through. Also wraps clap's
+    /// `--help` / `--version` short-circuit "errors" — the binary
+    /// `main` discriminates via `err.kind()` and prints those on
+    /// stdout (exit 0) vs other variants on stderr (exit 2).
+    #[error("{0}")]
     Clap(#[from] clap::Error),
 }
 
