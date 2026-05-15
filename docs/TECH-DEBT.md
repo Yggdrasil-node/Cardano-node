@@ -170,24 +170,47 @@ Plutus would drive the `plutus` flag work).
 is multi-day because Plutus types are referenced from ~8 ledger
 files including era-specific apply rules.
 
-## yggdrasil-cardano-cli library-only crate has no `[[bin]]`
+## yggdrasil-cardano-cli library-only crate has no `[[bin]]` — binary half closed
 
 **Owner:** packaging (sister-tools layout)
 
-**State today.** Every other sister tool under `crates/tools/`
-ships a `[[bin]] name = "<upstream-name>"` so `cargo install
---path crates/tools/<tool>` produces an operator-named binary.
-`crates/tools/cardano-cli/` is library-only — the binary surface
-is hosted by `yggdrasil-node`'s `cardano-cli` subcommand
-(C-arc partial port).
+**State today.** The binary-shape half **landed in commit `54d4038`**
+(May 2026). `crates/tools/cardano-cli/Cargo.toml` now declares
+`[[bin]] name = "yggdrasil-cardano-cli" path = "src/main.rs"`;
+operators can `cargo install --path crates/tools/cardano-cli` and
+get a standalone `yggdrasil-cardano-cli` binary on PATH. The
+binary parses argv via the in-crate `parser::parse_command`
+(commit `cfc3fc6`) and dispatches via `run::run_command` (commit
+`c9d896d`), with clap-conventional exit codes (0 on success /
+help / version, 1 on runtime error, 2 on parser error).
 
-**Desired end state.** Once the C-arc port reaches `CLI-MVS`
-verified parity, a standalone `[[bin]] name = "cardano-cli"`
-ships from `crates/tools/cardano-cli/` so operators can install
-just the CLI without the runtime binary.
+Operator-visible coverage today:
 
-**Scope.** Gated on C-arc Phase F + R298+ migration roadmap;
-not actionable as a standalone PR until the C-arc lands.
+- ✅ `yggdrasil-cardano-cli version` — emits the canonical
+  `helper::version_info()` banner.
+- ✅ `yggdrasil-cardano-cli --version` / `--help` — clap-standard
+  output to stdout, exit 0.
+- ⏳ `yggdrasil-cardano-cli show-upstream-config` — bails with a
+  structured deferral message pointing at the node binary's
+  `yggdrasil-node cardano-cli show-upstream-config` wrapper.
+  Library-side wiring needs the `Command::ShowUpstreamConfig`
+  variant extended with a network-preset selector.
+- ⏳ `yggdrasil-cardano-cli query-tip` — same deferral pattern;
+  library-side wiring needs an LSQ-client trait abstraction
+  so the library can plug in a tokio-backed impl without
+  taking the full tokio + yggdrasil-network dep tree.
+
+**Desired end state.** Full per-subcommand surface migrated into
+the library so `yggdrasil-cardano-cli <any_subcommand>` works
+standalone (no need for the node binary's wrapper). This is the
+C-arc migration tracked in
+`crates/tools/cardano-cli/AGENTS.md`'s "Migration roadmap
+(R298+ deferred)" section.
+
+**Scope.** Per-subcommand follow-on rounds, each ~1-3 days
+depending on what auxiliary deps the subcommand brings (tokio
+for socket-touching commands, bech32 for address commands,
+etc).
 
 ## cardano-submit-api validation error: structured mapping (Phase 1 — raw-bytes carrier landed)
 
