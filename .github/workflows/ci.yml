@@ -35,11 +35,16 @@ jobs:
         run: cargo check-all
 
       # cargo-nextest is the test runner. The `ci` profile is defined
-      # in `.config/nextest.toml` (Wave 9 PR 25) and falls back to
-      # the default profile until that lands; the per-target JUnit
-      # output enables future flaky-test surfacing.
+      # in `.config/nextest.toml` (Wave 9 PR 25) and tunes the slow-
+      # timeout for CI hardware (120s × terminate-after 3 = 360s
+      # ceiling, vs the local default's 60s × 2 = 120s) so heavy
+      # config-validation tests like
+      # `vendored_network_presets_produce_only_environmental_warnings`
+      # (which loads + validates all three genesis bundles, taking
+      # ~30s locally / ~120s+ on CI runners) don't trip the local-
+      # tuned timeout when the workflow runs them.
       - name: Test workspace
-        run: cargo nextest run --workspace --all-features --no-fail-fast
+        run: cargo nextest run --workspace --all-features --no-fail-fast --profile ci
 
       - name: Lint workspace
         run: cargo lint
