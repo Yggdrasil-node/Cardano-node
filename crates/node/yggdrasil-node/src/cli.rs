@@ -332,6 +332,53 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Query the current era of the ledger tip.
+    QueryCurrentEra {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the chain block-number (height) at the current tip.
+    QueryChainBlockNo {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the network's system-start timestamp.
+    QuerySystemStart {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the current epoch number.
+    QueryCurrentEpoch {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the network ID the node is configured for. Useful as a
+    /// preflight check that `--mainnet` / `--testnet-magic` matches
+    /// the node's actual network.
+    QueryExpectedNetworkId {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
     /// Submit a previously-built transaction to the local node via
     /// `LocalTxSubmission`. The tx body is supplied either as a path
     /// to a CBOR file (`--tx-file`) or as a hex-encoded string

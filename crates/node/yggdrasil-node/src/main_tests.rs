@@ -2433,6 +2433,121 @@ fn cardano_cli_query_stake_distribution_parses() {
 }
 
 #[test]
+fn cardano_cli_query_current_era_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-current-era",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-current-era must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QueryCurrentEra { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_chain_block_no_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-chain-block-no",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-chain-block-no must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QueryChainBlockNo { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_system_start_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-system-start",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-system-start must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QuerySystemStart { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_current_epoch_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-current-epoch",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-current-epoch must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QueryCurrentEpoch { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_expected_network_id_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-expected-network-id",
+        "--socket-path",
+        "/tmp/node.socket",
+    ])
+    .expect("query-expected-network-id must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => assert!(matches!(
+            action,
+            CardanoCliCommand::QueryExpectedNetworkId { .. }
+        )),
+        _ => panic!("expected Command::CardanoCli variant"),
+    }
+}
+
+#[test]
 fn cardano_cli_transaction_submit_with_tx_hex_parses() {
     use clap::Parser;
     use super::cli::{CardanoCliCommand, Command};

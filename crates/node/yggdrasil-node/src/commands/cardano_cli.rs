@@ -136,6 +136,46 @@ pub(crate) fn run_cardano_cli_command(
             network_magic.unwrap_or(reference_network_magic),
             crate::commands::query::QueryCommand::StakeDistribution,
         ),
+        CardanoCliCommand::QueryCurrentEra {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::CurrentEra,
+        ),
+        CardanoCliCommand::QueryChainBlockNo {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::ChainBlockNo,
+        ),
+        CardanoCliCommand::QuerySystemStart {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::SystemStart,
+        ),
+        CardanoCliCommand::QueryCurrentEpoch {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::CurrentEpoch,
+        ),
+        CardanoCliCommand::QueryExpectedNetworkId {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::ExpectedNetworkId,
+        ),
         CardanoCliCommand::TransactionSubmit {
             socket_path: _socket_path,
             network_magic,
