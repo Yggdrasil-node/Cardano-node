@@ -16,17 +16,48 @@ pub mod mnemonic;
 use eyre::Result;
 
 use crate::command::Command;
+use crate::lsq::{DeferralLsqClient, LsqClient};
 
 /// Run a parsed `Command` against the local environment.
 ///
-/// Mirrors upstream `runClientCommand` from `Cardano.CLI.Run`.
+/// Mirrors upstream `runClientCommand` from `Cardano.CLI.Run`. The
+/// no-client overload bails on `Command::QueryTip` with a deferral
+/// pointer at [`run_command_with`] (the LSQ-capable variant);
+/// the simpler shape stays in place for `Version` /
+/// `ShowUpstreamConfig`, both of which need no LSQ wiring.
 ///
-/// # R289 bootstrap state
-///
-/// Implementation forwards to `node/src/commands/cardano_cli.rs` for
-/// now. The forwarding layer migrates into this crate as Phase F
-/// rounds populate the per-cluster runners.
+/// Callers that want to dispatch `QueryTip` should use
+/// [`run_command_with`] with a concrete [`LsqClient`] impl. The
+/// in-crate [`DeferralLsqClient`] stays the default for
+/// [`run_command`] so the public surface remains a simple
+/// `fn(Command) -> Result<()>`.
 pub fn run_command(command: Command) -> Result<()> {
+    run_command_with(command, &DeferralLsqClient)
+}
+
+/// Run a parsed `Command` with a caller-supplied [`LsqClient`].
+///
+/// Mirrors upstream `runClientCommand` from `Cardano.CLI.Run` — the
+/// upstream call-graph passes `LocalNodeConnectInfo` inline; here
+/// the equivalent is the `&dyn LsqClient` parameter.
+///
+/// The library's standalone binary `main.rs` calls this with either
+/// [`DeferralLsqClient`] (the in-crate sentinel — `query-tip` bails
+/// pointing operators at the node binary's wrapper) or a future
+/// concrete impl supplied by the binary crate (tokio + yggdrasil-
+/// network backed). The node binary's existing
+/// `node/src/commands/cardano_cli.rs` doesn't go through this
+/// crate's `Command` enum and stays unaffected.
+///
+/// # Per-arm dispatch
+///
+/// - `Command::Version` — prints `helper::version_info()`. No LSQ.
+/// - `Command::ShowUpstreamConfig { network, upstream_config_root }`
+///   — resolves paths + magic, emits the operator JSON. No LSQ.
+/// - `Command::QueryTip { socket_path, network_magic }` —
+///   dispatches to `client.query_tip(...)`. The client owns the
+///   socket connection + presentation.
+pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> {
     match command {
         Command::Version => {
             // Wired in R503 (Phase 5 follow-on): the version banner
@@ -62,10 +93,8 @@ pub fn run_command(command: Command) -> Result<()> {
                     &network,
                     upstream_config_root,
                 )?;
-            let reference_network_magic = crate::environment::extract_reference_network_magic(
-                &config_path,
-                fallback_magic,
-            );
+            let reference_network_magic =
+                crate::environment::extract_reference_network_magic(&config_path, fallback_magic);
             crate::environment::run_show_upstream_config(
                 &network,
                 &config_path,
@@ -73,22 +102,17 @@ pub fn run_command(command: Command) -> Result<()> {
                 reference_network_magic,
             )
         }
-        Command::QueryTip { .. } => {
-            // QueryTip needs a tokio runtime + the NtC client; the
-            // library crate doesn't currently depend on
-            // yggdrasil-network or tokio. Wiring this from the
-            // library requires either (a) tokio + yggdrasil-network
-            // direct deps (substantial transitive footprint) or
-            // (b) a trait-based abstraction for the LSQ client so
-            // the library can plug in a tokio-backed impl at
-            // runtime. (b) is the cleaner path — tracked for a
-            // future round.
-            eyre::bail!(
-                "QueryTip: today's library crate doesn't carry the tokio + yggdrasil-network \
-                 deps needed to open a NtC socket; use the node binary's \
-                 `yggdrasil-node cardano-cli query-tip --socket-path=…` subcommand for now. \
-                 Library-side wiring lands once the LSQ-client trait abstraction is in place."
-            );
+        Command::QueryTip {
+            socket_path,
+            network_magic,
+        } => {
+            // R505: dispatch through the LSQ-client trait. The
+            // library carries the dispatch logic + variant decode;
+            // the client owns the wire-protocol drive + stdout
+            // rendering. Network-magic fallback mirrors upstream's
+            // mainnet default when the operator omits it.
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.query_tip(&socket_path, magic)
         }
     }
 }
@@ -105,7 +129,10 @@ mod tests {
     #[test]
     fn version_returns_ok_and_helper_banner_is_nonempty() {
         let banner = crate::helper::version_info();
-        assert!(!banner.is_empty(), "version_info() must produce a non-empty banner");
+        assert!(
+            !banner.is_empty(),
+            "version_info() must produce a non-empty banner"
+        );
         assert!(
             banner.contains("yggdrasil") || banner.contains("cardano-cli"),
             "version banner must identify the crate; got {banner:?}"
@@ -150,25 +177,100 @@ mod tests {
             // message — that would indicate the variant didn't carry
             // the network preset through.
             assert!(
-                !err.to_string().contains("Command variant doesn't carry the network preset"),
+                !err.to_string()
+                    .contains("Command variant doesn't carry the network preset"),
                 "must not be the old deferral message; got {err}"
             );
         }
     }
 
-    /// `Command::QueryTip` similarly bails with the documented
-    /// "needs tokio + yggdrasil-network deps" message.
+    /// `Command::QueryTip` dispatches through the supplied
+    /// [`LsqClient`] now. The default `run_command` plugs in
+    /// [`DeferralLsqClient`] which still bails — pin the deferral
+    /// message stays operator-readable.
     #[test]
-    fn query_tip_currently_bails_with_deferral_message() {
+    fn query_tip_with_deferral_client_bails_with_documented_message() {
         let result = run_command(Command::QueryTip {
             socket_path: std::path::PathBuf::from("/unused.socket"),
             network_magic: None,
         });
-        let err = result.expect_err("QueryTip must bail");
+        let err = result.expect_err("QueryTip must bail with the default deferral client");
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("query-tip")
-                || err.to_string().contains("LSQ-client trait abstraction"),
-            "error must explain the deferral; got {err}"
+            msg.contains("query-tip") && msg.contains("LsqClient"),
+            "error must point at LsqClient wiring; got {msg}"
+        );
+    }
+
+    /// `run_command_with` dispatches `QueryTip` through a custom
+    /// [`LsqClient`] impl. Pins the trait integration end-to-end —
+    /// the binary crate's eventual concrete impl will plug in here.
+    #[test]
+    fn query_tip_dispatches_through_custom_lsq_client() {
+        use std::cell::RefCell;
+        use std::path::{Path, PathBuf};
+
+        struct RecordingClient {
+            seen: RefCell<Option<(PathBuf, u32)>>,
+        }
+        impl crate::lsq::LsqClient for RecordingClient {
+            fn query_tip(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
+                *self.seen.borrow_mut() = Some((socket.to_path_buf(), magic));
+                Ok(())
+            }
+        }
+        let client = RecordingClient {
+            seen: RefCell::new(None),
+        };
+        run_command_with(
+            Command::QueryTip {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: Some(1),
+            },
+            &client,
+        )
+        .expect("run_command_with must succeed with a custom client");
+        let captured = client.seen.borrow().clone();
+        assert_eq!(
+            captured,
+            Some((PathBuf::from("/tmp/node.socket"), 1)),
+            "custom client must see the socket path + magic forwarded verbatim"
+        );
+    }
+
+    /// `run_command_with` falls back to mainnet magic when the
+    /// `network_magic` field is None. Pins the fallback behavior so
+    /// the operator doesn't have to pass `--network-magic` on
+    /// mainnet.
+    #[test]
+    fn query_tip_falls_back_to_mainnet_magic_when_unset() {
+        use std::cell::Cell;
+        use std::path::Path;
+
+        struct MagicCapture {
+            magic: Cell<u32>,
+        }
+        impl crate::lsq::LsqClient for MagicCapture {
+            fn query_tip(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
+                self.magic.set(magic);
+                Ok(())
+            }
+        }
+        let client = MagicCapture {
+            magic: Cell::new(0),
+        };
+        run_command_with(
+            Command::QueryTip {
+                socket_path: std::path::PathBuf::from("/unused.socket"),
+                network_magic: None,
+            },
+            &client,
+        )
+        .expect("run_command_with must succeed with None magic + fallback");
+        assert_eq!(
+            client.magic.get(),
+            764_824_073,
+            "None network_magic must fall back to the mainnet protocol-magic constant"
         );
     }
 }

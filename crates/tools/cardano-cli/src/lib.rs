@@ -41,6 +41,7 @@ pub mod helper;
 pub mod io;
 pub mod json;
 pub mod legacy;
+pub mod lsq;
 pub mod option;
 pub mod orphan;
 pub mod os;
