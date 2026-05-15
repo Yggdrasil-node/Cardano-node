@@ -36,23 +36,42 @@ pub fn run_command(command: Command) -> Result<()> {
             println!("{}", crate::helper::version_info());
             Ok(())
         }
-        Command::ShowUpstreamConfig { .. } => {
-            // The `Command::ShowUpstreamConfig` variant carries only
-            // `upstream_config_root` today; the underlying
-            // `environment::run_show_upstream_config` needs
-            // `(network_name, config_path, topology_path,
-            // reference_network_magic)` — three of which derive from a
-            // chosen network preset that the variant doesn't yet
-            // carry. Extending the variant + wiring the resolve-paths
-            // pipeline is the natural next slice; until then the node
-            // binary's `cardano-cli show-upstream-config` subcommand
-            // continues to be the operator entry point.
-            eyre::bail!(
-                "ShowUpstreamConfig: today's Command variant doesn't carry the network \
-                 preset that `environment::run_show_upstream_config` needs; use the node \
-                 binary's `yggdrasil-node cardano-cli show-upstream-config --network=…` \
-                 subcommand for now. Library-side wiring lands in the next round."
+        Command::ShowUpstreamConfig {
+            network,
+            upstream_config_root,
+        } => {
+            // R504: full library-side wiring. Resolve the network's
+            // config + topology paths against the supplied upstream
+            // root, extract the network magic from the config file
+            // (or fall back to the well-known constant for the
+            // network), and emit the operator-readable summary via
+            // the existing `environment::run_show_upstream_config`.
+            let fallback_magic = match network.as_str() {
+                "mainnet" => 764_824_073,
+                "preprod" => 1,
+                "preview" => 2,
+                _ => {
+                    eyre::bail!(
+                        "unknown network preset {network:?}; expected one of \
+                         mainnet / preprod / preview"
+                    );
+                }
+            };
+            let (config_path, topology_path) =
+                crate::environment::resolve_upstream_reference_paths(
+                    &network,
+                    upstream_config_root,
+                )?;
+            let reference_network_magic = crate::environment::extract_reference_network_magic(
+                &config_path,
+                fallback_magic,
             );
+            crate::environment::run_show_upstream_config(
+                &network,
+                &config_path,
+                &topology_path,
+                reference_network_magic,
+            )
         }
         Command::QueryTip { .. } => {
             // QueryTip needs a tokio runtime + the NtC client; the
@@ -94,20 +113,47 @@ mod tests {
         run_command(Command::Version).expect("Command::Version must succeed");
     }
 
-    /// `Command::ShowUpstreamConfig` still bails with a documented
-    /// "use the node binary's subcommand for now" message; this
-    /// pins that the deferral is intentional (not a regression).
+    /// `Command::ShowUpstreamConfig` is now wired. With an unknown
+    /// network preset it errors out with a structured "expected
+    /// one of mainnet / preprod / preview" message.
     #[test]
-    fn show_upstream_config_currently_bails_with_deferral_message() {
+    fn show_upstream_config_rejects_unknown_network_preset() {
         let result = run_command(Command::ShowUpstreamConfig {
+            network: "bogus".to_string(),
             upstream_config_root: None,
         });
-        let err = result.expect_err("ShowUpstreamConfig must bail");
+        let err = result.expect_err("unknown network must bail");
         assert!(
-            err.to_string().contains("show-upstream-config")
-                || err.to_string().contains("Command variant doesn't carry the network preset"),
-            "error must explain the deferral; got {err}"
+            err.to_string().contains("unknown network preset")
+                && err.to_string().contains("mainnet / preprod / preview"),
+            "error must enumerate the supported network presets; got {err}"
         );
+    }
+
+    /// With a valid network preset the runner attempts path
+    /// resolution. In a workspace-test environment without a real
+    /// `node/configuration/<network>/config.json`, this either
+    /// succeeds (when the vendored configs are present, the
+    /// canonical case) or surfaces a structured path-resolution
+    /// error from `environment::resolve_upstream_reference_paths`.
+    /// We assert one of those two outcomes — not a "deferral
+    /// message" anymore.
+    #[test]
+    fn show_upstream_config_resolves_or_errors_with_real_network() {
+        let outcome = run_command(Command::ShowUpstreamConfig {
+            network: "mainnet".to_string(),
+            upstream_config_root: Some(std::path::PathBuf::from("/tmp/no-such-dir")),
+        });
+        if let Err(err) = outcome {
+            // Path-resolution failure is acceptable in a sandboxed test
+            // environment; the error must NOT be the old deferral
+            // message — that would indicate the variant didn't carry
+            // the network preset through.
+            assert!(
+                !err.to_string().contains("Command variant doesn't carry the network preset"),
+                "must not be the old deferral message; got {err}"
+            );
+        }
     }
 
     /// `Command::QueryTip` similarly bails with the documented

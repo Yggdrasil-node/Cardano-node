@@ -82,27 +82,35 @@ mod tests {
         assert_eq!(cmd, Command::Version);
     }
 
-    /// `show-upstream-config` with no flags parses to the
-    /// `upstream_config_root: None` shape.
+    /// `show-upstream-config --network mainnet` parses to the
+    /// expected variant with `upstream_config_root: None`.
     #[test]
     fn parses_show_upstream_config_default() {
-        let cmd = parse_command(["yggdrasil-cardano-cli", "show-upstream-config"])
-            .expect("parse");
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "show-upstream-config",
+            "--network",
+            "mainnet",
+        ])
+        .expect("parse");
         assert_eq!(
             cmd,
             Command::ShowUpstreamConfig {
-                upstream_config_root: None
+                network: "mainnet".to_string(),
+                upstream_config_root: None,
             }
         );
     }
 
-    /// `show-upstream-config --upstream-config-root /opt/...` parses
-    /// the operator-supplied override.
+    /// `show-upstream-config --network preview --upstream-config-root /opt/...`
+    /// parses the operator-supplied override.
     #[test]
     fn parses_show_upstream_config_with_root() {
         let cmd = parse_command([
             "yggdrasil-cardano-cli",
             "show-upstream-config",
+            "--network",
+            "preview",
             "--upstream-config-root",
             "/opt/cardano",
         ])
@@ -110,7 +118,8 @@ mod tests {
         assert_eq!(
             cmd,
             Command::ShowUpstreamConfig {
-                upstream_config_root: Some(PathBuf::from("/opt/cardano"))
+                network: "preview".to_string(),
+                upstream_config_root: Some(PathBuf::from("/opt/cardano")),
             }
         );
     }

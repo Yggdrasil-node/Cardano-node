@@ -38,6 +38,13 @@ pub enum Command {
     /// Mirrors upstream's `Cardano.CLI.Helper`-style operator
     /// introspection helpers; Yggdrasil-specific utility.
     ShowUpstreamConfig {
+        /// Network preset name (`mainnet` / `preprod` / `preview`).
+        /// Selects the `node/configuration/<network>/` sub-tree to
+        /// resolve config + topology paths against, plus the
+        /// well-known network magic for the fallback if
+        /// `config.json` lacks one.
+        #[arg(long)]
+        network: String,
         /// Override path for the upstream Haskell-share root
         /// (typically `/tmp/cardano-tooling/share`); falls back to
         /// the vendored `node/configuration/<network>/` directory.
