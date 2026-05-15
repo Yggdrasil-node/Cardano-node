@@ -86,6 +86,21 @@ remaining commands and a separate binary is justified.
   `environment::extract_reference_network_magic`, and
   `environment::run_show_upstream_config` migrated from
   `node/src/commands/cardano_cli.rs`. Wire output byte-identical.
+- **R503 (Phase 5 follow-on, 2026-05) — `run::run_command`
+  Version arm wired.** `Command::Version` now prints
+  `helper::version_info()` (was R289-stub "skeleton…"
+  placeholder). `Command::ShowUpstreamConfig` and
+  `Command::QueryTip` arms updated with structured deferral
+  messages explaining WHY (variant needs extension; library
+  needs tokio+yggdrasil-network deps) rather than the prior
+  generic "R29x scheduled" comment. 3 unit tests
+  (`run::tests`) cover all three arms — pinning that the
+  Version path actually emits the banner and that the
+  deferral messages stay stable. Library `run_command` is
+  now operational for the simplest of the three commands;
+  ShowUpstreamConfig + QueryTip remain blocked on Command-
+  variant + deps work tracked in their respective error
+  messages.
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
