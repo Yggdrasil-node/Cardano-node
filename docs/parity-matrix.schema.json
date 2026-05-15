@@ -96,6 +96,7 @@
             "consensus",
             "storage",
             "ledger",
+            "mempool",
             "plutus",
             "crypto",
             "runtime",
@@ -105,7 +106,9 @@
             "kes-agent",
             "db-tooling",
             "testing",
-            "infra"
+            "infra",
+            "observability",
+            "sister-tools"
           ]
         },
         "feature": {
