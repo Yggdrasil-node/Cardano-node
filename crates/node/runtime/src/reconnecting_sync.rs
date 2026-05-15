@@ -2037,7 +2037,8 @@ where
         tentative_state,
     } = request;
     let checkpoint_tracking = {
-        let mut ct = yggdrasil_node_sync::default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
+        let mut ct =
+            yggdrasil_node_sync::default_checkpoint_tracking(chain_db, base_ledger_state, config)?;
         if let Some(ref nonce_cfg) = config.nonce_config {
             ct.stake_snapshots = Some(yggdrasil_ledger::StakeSnapshots::new());
             ct.epoch_size = Some(config.epoch_schedule.unwrap_or_else(|| {
@@ -2086,8 +2087,9 @@ pub(super) fn seed_chain_state_via_chain_db<S: ChainDbVolatileAccess>(
     chain_db: &S,
     security_param: Option<yggdrasil_consensus::SecurityParam>,
 ) -> Option<yggdrasil_consensus::ChainState> {
-    security_param
-        .map(|k| chain_db.with_volatile(|v| yggdrasil_node_sync::seed_chain_state_from_volatile(v, k)))
+    security_param.map(|k| {
+        chain_db.with_volatile(|v| yggdrasil_node_sync::seed_chain_state_from_volatile(v, k))
+    })
 }
 
 /// Trait abstracting "give me a borrow of the volatile store" across the

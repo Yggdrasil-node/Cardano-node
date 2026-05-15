@@ -257,10 +257,7 @@ pub fn init_subscriber(config: &TracingConfig) -> Result<(), InitSubscriberError
                 .event_format(haskell_json::HaskellJsonFormat::new());
             #[cfg(feature = "otlp")]
             {
-                let service_name = config
-                    .service_name
-                    .as_deref()
-                    .unwrap_or("yggdrasil-node");
+                let service_name = config.service_name.as_deref().unwrap_or("yggdrasil-node");
                 if let Some(endpoint) = &config.otlp_endpoint {
                     match otlp::build_tracer(endpoint, service_name) {
                         Ok(tracer) => {
@@ -271,9 +268,7 @@ pub fn init_subscriber(config: &TracingConfig) -> Result<(), InitSubscriberError
                             // Don't fail-stop on a transient collector
                             // outage; emit a single warning and continue
                             // with the local formatter only.
-                            eprintln!(
-                                "yggdrasil-telemetry: OTLP layer disabled — {err}"
-                            );
+                            eprintln!("yggdrasil-telemetry: OTLP layer disabled — {err}");
                             registry.with(fmt_layer).try_init()
                         }
                     }

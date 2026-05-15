@@ -295,9 +295,9 @@ impl TraceObject {
             .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_namespace array: {e}")))?;
         let mut to_namespace = Vec::with_capacity(ns_len as usize);
         for _ in 0..ns_len {
-            let s = dec.text().map_err(|e| {
-                TraceObjectDecodeError::Cbor(format!("to_namespace element: {e}"))
-            })?;
+            let s = dec
+                .text()
+                .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_namespace element: {e}")))?;
             to_namespace.push(s.to_owned());
         }
 

@@ -277,12 +277,7 @@ mod mux_tests {
         for (timestamp, num, dir, length) in [
             (0_u32, 0_u16, MiniProtocolDir::Initiator, 0_u16),
             (1, 1, MiniProtocolDir::Responder, 1),
-            (
-                u32::MAX,
-                0x7fff,
-                MiniProtocolDir::Initiator,
-                u16::MAX,
-            ),
+            (u32::MAX, 0x7fff, MiniProtocolDir::Initiator, u16::MAX),
             (
                 0x12_34_56_78,
                 TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM,

@@ -220,8 +220,7 @@ pub mod names {
     pub const CONNECTED_PEERS: &str = "cardano.node.metrics.connectedPeers.int";
     /// Peer-snapshot size known to the node kernel (the ledger-peer
     /// snapshot loaded at startup plus on-line refreshes).
-    pub const PEERS_FROM_NODE_KERNEL: &str =
-        "cardano.node.metrics.peersFromNodeKernel.int";
+    pub const PEERS_FROM_NODE_KERNEL: &str = "cardano.node.metrics.peersFromNodeKernel.int";
 
     // --- Era ----------------------------------------------------------
 
@@ -236,8 +235,7 @@ pub mod names {
     /// quantile bucketing defaults to the upstream-rounded
     /// {0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0}
     /// seconds at registration time.
-    pub const BLOCK_PROCESSING_TIME: &str =
-        "cardano.node.metrics.blockProcessingTime.real";
+    pub const BLOCK_PROCESSING_TIME: &str = "cardano.node.metrics.blockProcessingTime.real";
 
     // --- Chain dynamics ----------------------------------------------
 
@@ -254,8 +252,7 @@ pub mod names {
     /// Count of blocks the local node successfully forged.
     pub const BLOCKS_FORGED_NUM: &str = "cardano.node.metrics.blocksForgedNum.int";
     /// Slot number the local node was last about to lead.
-    pub const ABOUT_TO_LEAD_SLOT_LAST: &str =
-        "cardano.node.metrics.aboutToLeadSlotLast.int";
+    pub const ABOUT_TO_LEAD_SLOT_LAST: &str = "cardano.node.metrics.aboutToLeadSlotLast.int";
 }
 
 /// All canonical EKG-parity names in declaration order. Used by
@@ -303,7 +300,9 @@ impl Default for ExporterConfig {
 /// Idempotent: a second call returns the existing handle without
 /// rebinding the socket (the underlying recorder is one-shot per
 /// process per `metrics` crate convention).
-pub fn install_prometheus_exporter(config: &ExporterConfig) -> Result<PrometheusHandle, ExporterError> {
+pub fn install_prometheus_exporter(
+    config: &ExporterConfig,
+) -> Result<PrometheusHandle, ExporterError> {
     let builder = PrometheusBuilder::new().with_http_listener(config.bind);
 
     let handle = builder
@@ -378,7 +377,10 @@ mod tests {
     fn all_names_unique() {
         let mut seen = std::collections::HashSet::new();
         for name in ALL_NAMES {
-            assert!(seen.insert(*name), "duplicate metric name in ALL_NAMES: {name}");
+            assert!(
+                seen.insert(*name),
+                "duplicate metric name in ALL_NAMES: {name}"
+            );
         }
     }
 
@@ -401,7 +403,11 @@ mod tests {
         // covering slot/block/era, mempool, peers, forge, and block-
         // processing-time. Bumping this number requires updating
         // docs/COMPATIBILITY.md's Tier-1 stable surface.
-        assert_eq!(ALL_NAMES.len(), 15, "EKG-parity metric set has drifted; expected 15");
+        assert_eq!(
+            ALL_NAMES.len(),
+            15,
+            "EKG-parity metric set has drifted; expected 15"
+        );
     }
 
     #[test]

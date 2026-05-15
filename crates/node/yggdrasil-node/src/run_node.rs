@@ -32,21 +32,21 @@ use yggdrasil_ledger::{LedgerState, Nonce};
 use yggdrasil_network::{
     ConnectionManagerState, GovernorState, InboundGovernorState, NodePeerSharing, PeerListener,
 };
-use yggdrasil_node_tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_node::{
     BlockProvider, ChainProvider, NodeConfig, ResumeReconnectingVerifiedSyncRequest,
     ResumedSyncServiceOutcome, RuntimeGovernorConfig, SharedChainDb, SharedPeerSharingProvider,
     SharedTxSubmissionConsumer, VerifiedSyncServiceConfig,
-    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer,
-    run_governor_loop, run_inbound_accept_loop, seed_peer_registry,
+    resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer, run_governor_loop,
+    run_inbound_accept_loop, seed_peer_registry,
 };
 #[cfg(feature = "forge")]
 use yggdrasil_node_runtime::run_block_producer_loop;
+use yggdrasil_node_tracer::{NodeMetrics, NodeTracer, trace_fields};
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
 
-use crate::{serve_metrics, wait_for_shutdown_signal};
 #[cfg(feature = "forge")]
 use crate::forged_header_protocol_version;
+use crate::{serve_metrics, wait_for_shutdown_signal};
 
 pub(crate) struct RunNodeRequest {
     pub(crate) node_config: NodeConfig,

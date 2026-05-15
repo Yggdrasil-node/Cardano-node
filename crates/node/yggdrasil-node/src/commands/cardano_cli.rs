@@ -89,26 +89,22 @@ pub(crate) fn run_cardano_cli_command(
                     // as a single token. Split here so the downstream
                     // `UtxoByTxIn` query gets the structured pair.
                     let (tx_id, index_str) = tx.split_once('#').ok_or_else(|| {
-                        eyre::eyre!(
-                            "--tx-in expects TX_HASH#INDEX (e.g. 0123ab…#0); got {tx:?}"
-                        )
+                        eyre::eyre!("--tx-in expects TX_HASH#INDEX (e.g. 0123ab…#0); got {tx:?}")
                     })?;
                     let index: u16 = index_str.parse().map_err(|e| {
-                        eyre::eyre!(
-                            "--tx-in index {index_str:?} is not a valid u16: {e}"
-                        )
+                        eyre::eyre!("--tx-in index {index_str:?} is not a valid u16: {e}")
                     })?;
                     crate::commands::query::QueryCommand::UtxoByTxIn {
                         tx_id: tx_id.to_string(),
                         index,
                     }
                 }
-                (None, None) => eyre::bail!(
-                    "query-utxo requires either --address or --tx-in; pass one of them"
-                ),
-                (Some(_), Some(_)) => unreachable!(
-                    "clap's conflicts_with = ... pair prevents both flags being set"
-                ),
+                (None, None) => {
+                    eyre::bail!("query-utxo requires either --address or --tx-in; pass one of them")
+                }
+                (Some(_), Some(_)) => {
+                    unreachable!("clap's conflicts_with = ... pair prevents both flags being set")
+                }
             };
             run_query_via_binary_runtime(_socket_path, _magic, query)
         }
@@ -347,11 +343,9 @@ pub(crate) fn run_cardano_cli_command(
         CardanoCliCommand::StakeAddressKeyGen {
             verification_key_file,
             signing_key_file,
-        } => generate_keypair_to_envelopes(
-            &verification_key_file,
-            &signing_key_file,
-            KeyKind::Stake,
-        ),
+        } => {
+            generate_keypair_to_envelopes(&verification_key_file, &signing_key_file, KeyKind::Stake)
+        }
         CardanoCliCommand::TransactionSign {
             tx_file,
             tx_hex,
@@ -383,9 +377,7 @@ pub(crate) fn run_cardano_cli_command(
             } else if testnet_magic.is_some() {
                 0
             } else {
-                eyre::bail!(
-                    "stake-address-build requires either --mainnet or --testnet-magic"
-                );
+                eyre::bail!("stake-address-build requires either --mainnet or --testnet-magic");
             };
             let env_bytes = std::fs::read(&stake_verification_key_file).map_err(|e| {
                 eyre::eyre!(
@@ -420,9 +412,7 @@ pub(crate) fn run_cardano_cli_command(
             } else if testnet_magic.is_some() {
                 0
             } else {
-                eyre::bail!(
-                    "address-build requires either --mainnet or --testnet-magic"
-                );
+                eyre::bail!("address-build requires either --mainnet or --testnet-magic");
             };
 
             // Read and hash the payment verification key.
@@ -450,7 +440,8 @@ pub(crate) fn run_cardano_cli_command(
                 None => None,
             };
 
-            let bech32_addr = build_shelley_address_bech32(network_id, &pay_hash, stake_hash.as_ref())?;
+            let bech32_addr =
+                build_shelley_address_bech32(network_id, &pay_hash, stake_hash.as_ref())?;
             match out_file {
                 Some(path) => std::fs::write(&path, format!("{bech32_addr}\n")).map_err(|e| {
                     eyre::eyre!("failed to write --out-file {}: {e}", path.display())
@@ -483,9 +474,7 @@ pub(crate) fn build_shelley_address_bech32(
     stake_hash: Option<&[u8; 28]>,
 ) -> Result<String> {
     if network_id > 0x0F {
-        eyre::bail!(
-            "network_id {network_id} must fit in 4 bits (0..=15); got {network_id}"
-        );
+        eyre::bail!("network_id {network_id} must fit in 4 bits (0..=15); got {network_id}");
     }
     let header = match stake_hash {
         // Base address (type 0); upper nibble 0x0 + network id in low nibble.
@@ -524,15 +513,17 @@ pub(crate) fn build_shelley_reward_address_bech32(
     stake_hash: &[u8; 28],
 ) -> Result<String> {
     if network_id > 0x0F {
-        eyre::bail!(
-            "network_id {network_id} must fit in 4 bits (0..=15); got {network_id}"
-        );
+        eyre::bail!("network_id {network_id} must fit in 4 bits (0..=15); got {network_id}");
     }
     let mut addr_bytes: Vec<u8> = Vec::with_capacity(29);
     addr_bytes.push(0xE0 | network_id);
     addr_bytes.extend_from_slice(stake_hash);
 
-    let hrp_str = if network_id == 1 { "stake" } else { "stake_test" };
+    let hrp_str = if network_id == 1 {
+        "stake"
+    } else {
+        "stake_test"
+    };
     let hrp = bech32::Hrp::parse(hrp_str)
         .map_err(|e| eyre::eyre!("bech32 HRP parse failed for {hrp_str:?}: {e}"))?;
     bech32::encode::<bech32::Bech32>(hrp, &addr_bytes)
@@ -657,9 +648,8 @@ pub(crate) fn write_text_envelope(
         "description": description,
         "cborHex": hex::encode(&cbor),
     });
-    let json = serde_json::to_string_pretty(&envelope).map_err(|e| {
-        eyre::eyre!("failed to serialise TextEnvelope: {e}")
-    })?;
+    let json = serde_json::to_string_pretty(&envelope)
+        .map_err(|e| eyre::eyre!("failed to serialise TextEnvelope: {e}"))?;
 
     // Restrictive mode for signing-key files on Unix; default mode for
     // verification-key files so they can be checked in / shared freely.
@@ -705,9 +695,7 @@ fn read_tx_input(
         (None, None) => {
             eyre::bail!("{subcommand} requires either --tx-file or --tx-hex")
         }
-        (Some(_), Some(_)) => unreachable!(
-            "clap's conflicts_with prevents both flags being set"
-        ),
+        (Some(_), Some(_)) => unreachable!("clap's conflicts_with prevents both flags being set"),
     }
 }
 

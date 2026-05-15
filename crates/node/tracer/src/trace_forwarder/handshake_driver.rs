@@ -37,9 +37,7 @@ use super::bearer::{Bearer, BearerError};
 use super::handshake::{
     HandshakeDecodeError, HandshakeMessage, RefuseReason, decode_message, encode_message,
 };
-use super::mux::{
-    HANDSHAKE_MINI_PROTOCOL_NUM, MiniProtocolDir, SduHeader,
-};
+use super::mux::{HANDSHAKE_MINI_PROTOCOL_NUM, MiniProtocolDir, SduHeader};
 
 /// One agreed (version-number, version-data) pair returned by a
 /// successful handshake run.
@@ -203,12 +201,15 @@ mod handshake_driver_tests {
             // Read the initiator's SDU header + payload.
             let mut hdr = [0u8; 8];
             server.read_exact(&mut hdr).await.expect("server read hdr");
-            let hdr_decoded = crate::trace_forwarder::mux::decode_sdu_header(&hdr)
-                .expect("decode header");
+            let hdr_decoded =
+                crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode header");
             assert_eq!(hdr_decoded.mini_protocol_num, HANDSHAKE_MINI_PROTOCOL_NUM);
             assert_eq!(hdr_decoded.direction, MiniProtocolDir::Initiator);
             let mut payload = vec![0u8; hdr_decoded.length as usize];
-            server.read_exact(&mut payload).await.expect("server read payload");
+            server
+                .read_exact(&mut payload)
+                .await
+                .expect("server read payload");
             // Decode initiator's ProposeVersions (state_is_propose=true).
             let propose = decode_message(&payload, true).expect("decode propose");
             match propose {
@@ -232,7 +233,10 @@ mod handshake_driver_tests {
             };
             let reply_hdr_bytes = encode_sdu_header(&reply_hdr).expect("encode header");
             server.write_all(&reply_hdr_bytes).await.expect("write hdr");
-            server.write_all(&reply_payload).await.expect("write payload");
+            server
+                .write_all(&reply_payload)
+                .await
+                .expect("write payload");
         });
 
         let mut versions = BTreeMap::new();
@@ -257,15 +261,12 @@ mod handshake_driver_tests {
             // Read the initiator's SDU.
             let mut hdr = [0u8; 8];
             server.read_exact(&mut hdr).await.expect("server read hdr");
-            let hdr_decoded =
-                crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode");
+            let hdr_decoded = crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode");
             let mut payload = vec![0u8; hdr_decoded.length as usize];
             server.read_exact(&mut payload).await.expect("read payload");
 
             // Reply with MsgRefuse(VersionMismatch([5,6,7])).
-            let reply = HandshakeMessage::Refuse(RefuseReason::VersionMismatch(vec![
-                5, 6, 7,
-            ]));
+            let reply = HandshakeMessage::Refuse(RefuseReason::VersionMismatch(vec![5, 6, 7]));
             let reply_payload = encode_message(&reply);
             let reply_hdr = SduHeader {
                 timestamp: 0,
@@ -275,7 +276,10 @@ mod handshake_driver_tests {
             };
             let reply_hdr_bytes = encode_sdu_header(&reply_hdr).expect("encode");
             server.write_all(&reply_hdr_bytes).await.expect("write hdr");
-            server.write_all(&reply_payload).await.expect("write payload");
+            server
+                .write_all(&reply_payload)
+                .await
+                .expect("write payload");
         });
 
         let mut versions = BTreeMap::new();
@@ -311,8 +315,7 @@ mod handshake_driver_tests {
         let server_task = tokio::spawn(async move {
             let mut hdr = [0u8; 8];
             server.read_exact(&mut hdr).await.expect("read hdr");
-            let hdr_decoded =
-                crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode");
+            let hdr_decoded = crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode");
             let mut payload = vec![0u8; hdr_decoded.length as usize];
             server.read_exact(&mut payload).await.expect("read payload");
 
@@ -331,7 +334,10 @@ mod handshake_driver_tests {
             };
             let reply_hdr_bytes = encode_sdu_header(&reply_hdr).expect("encode");
             server.write_all(&reply_hdr_bytes).await.expect("write hdr");
-            server.write_all(&reply_payload).await.expect("write payload");
+            server
+                .write_all(&reply_payload)
+                .await
+                .expect("write payload");
         });
 
         let mut versions = BTreeMap::new();

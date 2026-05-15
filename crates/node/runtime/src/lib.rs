@@ -74,9 +74,9 @@ pub mod ledger_judgement;
 pub use ledger_judgement::LedgerJudgementSettings;
 
 pub mod ledger_peer_source;
-use ledger_peer_source::refresh_ledger_peer_sources_from_chain_db;
 #[cfg(feature = "forge")]
 use ledger_peer_source::block_producer_ledger_state_judgement;
+use ledger_peer_source::refresh_ledger_peer_sources_from_chain_db;
 #[cfg(all(test, feature = "forge"))]
 use ledger_peer_source::{derive_judgement_at, wall_clock_unix_secs};
 

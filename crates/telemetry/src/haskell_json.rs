@@ -193,10 +193,8 @@ impl tracing::field::Visit for JsonFieldVisitor<'_> {
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        self.0.insert(
-            field.name().to_string(),
-            serde_json::Value::Bool(value),
-        );
+        self.0
+            .insert(field.name().to_string(), serde_json::Value::Bool(value));
     }
 
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
@@ -276,7 +274,8 @@ impl tracing::field::Visit for SpanFieldVisitor<'_> {
 
     fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
         if let Some(n) = serde_json::Number::from_f64(value) {
-            self.0.push((field.name().to_string(), serde_json::Value::Number(n)));
+            self.0
+                .push((field.name().to_string(), serde_json::Value::Number(n)));
         } else {
             self.0.push((
                 field.name().to_string(),

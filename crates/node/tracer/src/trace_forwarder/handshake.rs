@@ -154,8 +154,7 @@ impl std::error::Error for HandshakeDecodeError {}
 /// Encode a `HandshakeMessage` to its CBOR wire form.
 pub fn encode_message(msg: &HandshakeMessage) -> Vec<u8> {
     match msg {
-        HandshakeMessage::ProposeVersions(versions)
-        | HandshakeMessage::ReplyVersions(versions) => {
+        HandshakeMessage::ProposeVersions(versions) | HandshakeMessage::ReplyVersions(versions) => {
             let mut prefix = Encoder::new();
             prefix.array(2);
             prefix.unsigned(0);
@@ -285,9 +284,7 @@ pub fn decode_message(
     }
 }
 
-fn decode_versions(
-    dec: &mut Decoder,
-) -> Result<BTreeMap<u32, Vec<u8>>, HandshakeDecodeError> {
+fn decode_versions(dec: &mut Decoder) -> Result<BTreeMap<u32, Vec<u8>>, HandshakeDecodeError> {
     let map_len = dec
         .map()
         .map_err(|e| HandshakeDecodeError::Cbor(format!("versions map: {e}")))?;
@@ -314,9 +311,7 @@ fn decode_versions(
     Ok(versions)
 }
 
-fn decode_refuse_reason(
-    dec: &mut Decoder,
-) -> Result<RefuseReason, HandshakeDecodeError> {
+fn decode_refuse_reason(dec: &mut Decoder) -> Result<RefuseReason, HandshakeDecodeError> {
     let inner_len = dec
         .array()
         .map_err(|e| HandshakeDecodeError::Cbor(format!("refuse outer array: {e}")))?;
@@ -337,9 +332,9 @@ fn decode_refuse_reason(
                 .map_err(|e| HandshakeDecodeError::Cbor(format!("refuse vmismatch list: {e}")))?;
             let mut versions = Vec::with_capacity(list_len as usize);
             for _ in 0..list_len {
-                let v_u64 = dec
-                    .unsigned()
-                    .map_err(|e| HandshakeDecodeError::Cbor(format!("refuse vmismatch element: {e}")))?;
+                let v_u64 = dec.unsigned().map_err(|e| {
+                    HandshakeDecodeError::Cbor(format!("refuse vmismatch element: {e}"))
+                })?;
                 let v = u32::try_from(v_u64)
                     .map_err(|_| HandshakeDecodeError::VersionOutOfRange(v_u64))?;
                 versions.push(v);
@@ -354,11 +349,11 @@ fn decode_refuse_reason(
                     expected_len: 3,
                 });
             }
-            let v_u64 = dec
-                .unsigned()
-                .map_err(|e| HandshakeDecodeError::Cbor(format!("refuse decode-err version: {e}")))?;
-            let version = u32::try_from(v_u64)
-                .map_err(|_| HandshakeDecodeError::VersionOutOfRange(v_u64))?;
+            let v_u64 = dec.unsigned().map_err(|e| {
+                HandshakeDecodeError::Cbor(format!("refuse decode-err version: {e}"))
+            })?;
+            let version =
+                u32::try_from(v_u64).map_err(|_| HandshakeDecodeError::VersionOutOfRange(v_u64))?;
             let message = dec
                 .text()
                 .map_err(|e| HandshakeDecodeError::Cbor(format!("refuse decode-err message: {e}")))?
@@ -376,8 +371,8 @@ fn decode_refuse_reason(
             let v_u64 = dec
                 .unsigned()
                 .map_err(|e| HandshakeDecodeError::Cbor(format!("refuse refused version: {e}")))?;
-            let version = u32::try_from(v_u64)
-                .map_err(|_| HandshakeDecodeError::VersionOutOfRange(v_u64))?;
+            let version =
+                u32::try_from(v_u64).map_err(|_| HandshakeDecodeError::VersionOutOfRange(v_u64))?;
             let reason = dec
                 .text()
                 .map_err(|e| HandshakeDecodeError::Cbor(format!("refuse refused reason: {e}")))?
@@ -406,8 +401,8 @@ mod handshake_tests {
     fn propose_versions_round_trip() {
         let mut versions = BTreeMap::new();
         versions.insert(1u32, cbor_uint_bytes(764_824_073)); // mainnet magic
-        versions.insert(2u32, cbor_uint_bytes(1));            // preprod
-        versions.insert(3u32, cbor_uint_bytes(2));            // preview
+        versions.insert(2u32, cbor_uint_bytes(1)); // preprod
+        versions.insert(3u32, cbor_uint_bytes(2)); // preview
         let msg = HandshakeMessage::ProposeVersions(versions);
         let bytes = encode_message(&msg);
         let decoded = decode_message(&bytes, true).expect("decode");

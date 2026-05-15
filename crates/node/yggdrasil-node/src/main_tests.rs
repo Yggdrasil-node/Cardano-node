@@ -10,11 +10,11 @@ use super::commands::query::{decode_optional_prefixed_hex, format_utc_time};
 use super::commands::status::status_report;
 use super::commands::submit_tx::decode_tx_hex_arg;
 use super::commands::validate_config::{node_role_report, validate_config_report};
+#[cfg(feature = "forge")]
+use super::forged_header_protocol_version;
 use super::{
     configured_fallback_peers, ledger_peer_snapshot_from_ledger_state, strict_base_ledger_state,
 };
-#[cfg(feature = "forge")]
-use super::forged_header_protocol_version;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use yggdrasil_ledger::{PoolParams, Relay, RewardAccount, StakeCredential, UnitInterval};
@@ -1047,8 +1047,7 @@ fn validate_config_report_warns_on_testnet_requires_no_magic_override() {
     cfg.peer_snapshot_file = None;
     // Not the mainnet magic.
     cfg.network_magic = 2;
-    cfg.requires_network_magic =
-        Some(yggdrasil_node_config::RequiresNetworkMagic::RequiresNoMagic);
+    cfg.requires_network_magic = Some(yggdrasil_node_config::RequiresNetworkMagic::RequiresNoMagic);
 
     let report = validate_config_report(&cfg, Some(&dir)).expect("report");
     assert!(
@@ -1076,8 +1075,7 @@ fn validate_config_report_accepts_canonical_requires_network_magic() {
     let mut cfg = default_config();
     cfg.storage_dir = PathBuf::from("data");
     cfg.peer_snapshot_file = None;
-    cfg.requires_network_magic =
-        Some(yggdrasil_node_config::RequiresNetworkMagic::RequiresNoMagic);
+    cfg.requires_network_magic = Some(yggdrasil_node_config::RequiresNetworkMagic::RequiresNoMagic);
     let report = validate_config_report(&cfg, Some(&dir)).expect("report");
     assert!(
         !report
@@ -2278,9 +2276,9 @@ fn apply_topology_override_noop_when_neither_cli_nor_config() {
 
 #[test]
 fn cardano_cli_query_utxo_with_address_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2297,7 +2295,10 @@ fn cardano_cli_query_utxo_with_address_parses() {
         Command::CardanoCli { action, .. } => match action {
             CardanoCliCommand::QueryUtxo { address, tx_in, .. } => {
                 assert_eq!(address.as_deref(), Some("0123abcdef"));
-                assert!(tx_in.is_none(), "tx_in must be None when --address is given");
+                assert!(
+                    tx_in.is_none(),
+                    "tx_in must be None when --address is given"
+                );
             }
             _ => panic!("expected QueryUtxo variant"),
         },
@@ -2307,9 +2308,9 @@ fn cardano_cli_query_utxo_with_address_parses() {
 
 #[test]
 fn cardano_cli_query_utxo_with_tx_in_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2325,7 +2326,10 @@ fn cardano_cli_query_utxo_with_tx_in_parses() {
     match cli.command {
         Command::CardanoCli { action, .. } => match action {
             CardanoCliCommand::QueryUtxo { address, tx_in, .. } => {
-                assert!(address.is_none(), "address must be None when --tx-in is given");
+                assert!(
+                    address.is_none(),
+                    "address must be None when --tx-in is given"
+                );
                 assert_eq!(tx_in.as_deref(), Some("deadbeef#7"));
             }
             _ => panic!("expected QueryUtxo variant"),
@@ -2336,8 +2340,8 @@ fn cardano_cli_query_utxo_with_tx_in_parses() {
 
 #[test]
 fn cardano_cli_query_utxo_rejects_both_address_and_tx_in() {
-    use clap::Parser;
     use super::Cli;
+    use clap::Parser;
 
     let result = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2357,17 +2361,16 @@ fn cardano_cli_query_utxo_rejects_both_address_and_tx_in() {
         Ok(_) => panic!("clap must reject --address AND --tx-in together"),
     };
     assert!(
-        err.to_string().contains("cannot be used with")
-            || err.to_string().contains("conflicts"),
+        err.to_string().contains("cannot be used with") || err.to_string().contains("conflicts"),
         "clap conflict-error must reference the conflict; got {err}"
     );
 }
 
 #[test]
 fn cardano_cli_query_protocol_parameters_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2388,9 +2391,9 @@ fn cardano_cli_query_protocol_parameters_parses() {
 
 #[test]
 fn cardano_cli_query_stake_pools_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2401,19 +2404,18 @@ fn cardano_cli_query_stake_pools_parses() {
     ])
     .expect("query-stake-pools must parse");
     match cli.command {
-        Command::CardanoCli { action, .. } => assert!(matches!(
-            action,
-            CardanoCliCommand::QueryStakePools { .. }
-        )),
+        Command::CardanoCli { action, .. } => {
+            assert!(matches!(action, CardanoCliCommand::QueryStakePools { .. }))
+        }
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
 
 #[test]
 fn cardano_cli_query_stake_distribution_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2434,9 +2436,9 @@ fn cardano_cli_query_stake_distribution_parses() {
 
 #[test]
 fn cardano_cli_query_current_era_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2447,19 +2449,18 @@ fn cardano_cli_query_current_era_parses() {
     ])
     .expect("query-current-era must parse");
     match cli.command {
-        Command::CardanoCli { action, .. } => assert!(matches!(
-            action,
-            CardanoCliCommand::QueryCurrentEra { .. }
-        )),
+        Command::CardanoCli { action, .. } => {
+            assert!(matches!(action, CardanoCliCommand::QueryCurrentEra { .. }))
+        }
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
 
 #[test]
 fn cardano_cli_query_chain_block_no_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2480,9 +2481,9 @@ fn cardano_cli_query_chain_block_no_parses() {
 
 #[test]
 fn cardano_cli_query_system_start_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2493,19 +2494,18 @@ fn cardano_cli_query_system_start_parses() {
     ])
     .expect("query-system-start must parse");
     match cli.command {
-        Command::CardanoCli { action, .. } => assert!(matches!(
-            action,
-            CardanoCliCommand::QuerySystemStart { .. }
-        )),
+        Command::CardanoCli { action, .. } => {
+            assert!(matches!(action, CardanoCliCommand::QuerySystemStart { .. }))
+        }
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
 
 #[test]
 fn cardano_cli_query_current_epoch_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2532,22 +2532,32 @@ fn cardano_cli_query_current_epoch_parses() {
 #[test]
 #[allow(clippy::type_complexity)]
 fn cardano_cli_zero_arg_query_subcommands_parse() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let subcommands_and_expected_variant: &[(&str, fn(&CardanoCliCommand) -> bool)] = &[
-        ("query-era-history", |a| matches!(a, CardanoCliCommand::QueryEraHistory { .. })),
+        ("query-era-history", |a| {
+            matches!(a, CardanoCliCommand::QueryEraHistory { .. })
+        }),
         ("query-treasury-and-reserves", |a| {
             matches!(a, CardanoCliCommand::QueryTreasuryAndReserves { .. })
         }),
         ("query-drep-stake-distr", |a| {
             matches!(a, CardanoCliCommand::QueryDrepStakeDistr { .. })
         }),
-        ("query-constitution", |a| matches!(a, CardanoCliCommand::QueryConstitution { .. })),
-        ("query-gov-state", |a| matches!(a, CardanoCliCommand::QueryGovState { .. })),
-        ("query-drep-state", |a| matches!(a, CardanoCliCommand::QueryDrepState { .. })),
-        ("query-account-state", |a| matches!(a, CardanoCliCommand::QueryAccountState { .. })),
+        ("query-constitution", |a| {
+            matches!(a, CardanoCliCommand::QueryConstitution { .. })
+        }),
+        ("query-gov-state", |a| {
+            matches!(a, CardanoCliCommand::QueryGovState { .. })
+        }),
+        ("query-drep-state", |a| {
+            matches!(a, CardanoCliCommand::QueryDrepState { .. })
+        }),
+        ("query-account-state", |a| {
+            matches!(a, CardanoCliCommand::QueryAccountState { .. })
+        }),
         ("query-genesis-delegations", |a| {
             matches!(a, CardanoCliCommand::QueryGenesisDelegations { .. })
         }),
@@ -2557,8 +2567,12 @@ fn cardano_cli_zero_arg_query_subcommands_parse() {
         ("query-num-dormant-epochs", |a| {
             matches!(a, CardanoCliCommand::QueryNumDormantEpochs { .. })
         }),
-        ("query-deposit-pot", |a| matches!(a, CardanoCliCommand::QueryDepositPot { .. })),
-        ("query-ledger-counts", |a| matches!(a, CardanoCliCommand::QueryLedgerCounts { .. })),
+        ("query-deposit-pot", |a| {
+            matches!(a, CardanoCliCommand::QueryDepositPot { .. })
+        }),
+        ("query-ledger-counts", |a| {
+            matches!(a, CardanoCliCommand::QueryLedgerCounts { .. })
+        }),
     ];
 
     for (subcommand, matcher) in subcommands_and_expected_variant {
@@ -2584,9 +2598,9 @@ fn cardano_cli_zero_arg_query_subcommands_parse() {
 
 #[test]
 fn cardano_cli_query_reward_balance_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2611,9 +2625,9 @@ fn cardano_cli_query_reward_balance_parses() {
 
 #[test]
 fn cardano_cli_query_delegations_and_rewards_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     // The `is_key_hash: bool` flag has `default_value = "true"` so
     // operators get the common-case key-credential behavior without
@@ -2650,9 +2664,9 @@ fn cardano_cli_query_delegations_and_rewards_parses() {
 
 #[test]
 fn cardano_cli_query_stake_pool_params_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2677,9 +2691,9 @@ fn cardano_cli_query_stake_pool_params_parses() {
 
 #[test]
 fn cardano_cli_query_expected_network_id_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2700,9 +2714,9 @@ fn cardano_cli_query_expected_network_id_parses() {
 
 #[test]
 fn cardano_cli_transaction_submit_with_tx_hex_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2719,7 +2733,10 @@ fn cardano_cli_transaction_submit_with_tx_hex_parses() {
             CardanoCliCommand::TransactionSubmit {
                 tx_file, tx_hex, ..
             } => {
-                assert!(tx_file.is_none(), "tx_file must be None when --tx-hex given");
+                assert!(
+                    tx_file.is_none(),
+                    "tx_file must be None when --tx-hex given"
+                );
                 assert_eq!(tx_hex.as_deref(), Some("0xdeadbeef"));
             }
             _ => panic!("expected TransactionSubmit variant"),
@@ -2730,9 +2747,9 @@ fn cardano_cli_transaction_submit_with_tx_hex_parses() {
 
 #[test]
 fn cardano_cli_transaction_submit_with_tx_file_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2760,8 +2777,8 @@ fn cardano_cli_transaction_submit_with_tx_file_parses() {
 
 #[test]
 fn cardano_cli_transaction_submit_rejects_both_flags() {
-    use clap::Parser;
     use super::Cli;
+    use clap::Parser;
 
     let result = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2779,17 +2796,16 @@ fn cardano_cli_transaction_submit_rejects_both_flags() {
         Ok(_) => panic!("clap must reject --tx-hex AND --tx-file together"),
     };
     assert!(
-        err.to_string().contains("cannot be used with")
-            || err.to_string().contains("conflicts"),
+        err.to_string().contains("cannot be used with") || err.to_string().contains("conflicts"),
         "clap conflict-error must reference the conflict; got {err}"
     );
 }
 
 #[test]
 fn cardano_cli_transaction_txid_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2838,7 +2854,8 @@ fn cardano_cli_transaction_txid_matches_blake2b_256_of_body() {
 
     let actual = compute_txid_from_tx_cbor(&tx).expect("compute txid");
     assert_eq!(
-        actual, expected_txid,
+        actual,
+        expected_txid,
         "transaction-txid must equal Blake2b-256(TxBody); got {:?}, expected {:?}",
         hex::encode(actual),
         hex::encode(expected_txid),
@@ -2847,9 +2864,9 @@ fn cardano_cli_transaction_txid_matches_blake2b_256_of_body() {
 
 #[test]
 fn cardano_cli_address_key_hash_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2860,10 +2877,9 @@ fn cardano_cli_address_key_hash_parses() {
     ])
     .expect("address-key-hash must parse");
     match cli.command {
-        Command::CardanoCli { action, .. } => assert!(matches!(
-            action,
-            CardanoCliCommand::AddressKeyHash { .. }
-        )),
+        Command::CardanoCli { action, .. } => {
+            assert!(matches!(action, CardanoCliCommand::AddressKeyHash { .. }))
+        }
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
@@ -2923,9 +2939,9 @@ fn read_verification_key_text_envelope_rejects_wrong_prefix() {
 
 #[test]
 fn cardano_cli_stake_address_key_gen_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2948,9 +2964,9 @@ fn cardano_cli_stake_address_key_gen_parses() {
 
 #[test]
 fn cardano_cli_address_build_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2962,18 +2978,17 @@ fn cardano_cli_address_build_parses() {
     ])
     .expect("address-build with --mainnet must parse");
     match cli.command {
-        Command::CardanoCli { action, .. } => assert!(matches!(
-            action,
-            CardanoCliCommand::AddressBuild { .. }
-        )),
+        Command::CardanoCli { action, .. } => {
+            assert!(matches!(action, CardanoCliCommand::AddressBuild { .. }))
+        }
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
 
 #[test]
 fn cardano_cli_address_build_rejects_both_network_flags() {
-    use clap::Parser;
     use super::Cli;
+    use clap::Parser;
 
     let result = Cli::try_parse_from([
         "yggdrasil-node",
@@ -2990,8 +3005,7 @@ fn cardano_cli_address_build_rejects_both_network_flags() {
         Ok(_) => panic!("clap must reject --mainnet AND --testnet-magic together"),
     };
     assert!(
-        err.to_string().contains("cannot be used with")
-            || err.to_string().contains("conflicts"),
+        err.to_string().contains("cannot be used with") || err.to_string().contains("conflicts"),
         "clap conflict-error must reference the conflict; got {err}"
     );
 }
@@ -3019,7 +3033,8 @@ fn build_shelley_enterprise_address_round_trips() {
     let mut expected = vec![0x61_u8];
     expected.extend_from_slice(&pay_hash);
     assert_eq!(
-        decoded, expected,
+        decoded,
+        expected,
         "round-tripped address bytes drift; expected {:?}, got {:?}",
         hex::encode(&expected),
         hex::encode(&decoded),
@@ -3038,9 +3053,9 @@ fn build_shelley_enterprise_address_round_trips() {
 
 #[test]
 fn cardano_cli_transaction_sign_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -3055,10 +3070,9 @@ fn cardano_cli_transaction_sign_parses() {
     ])
     .expect("transaction-sign must parse");
     match cli.command {
-        Command::CardanoCli { action, .. } => assert!(matches!(
-            action,
-            CardanoCliCommand::TransactionSign { .. }
-        )),
+        Command::CardanoCli { action, .. } => {
+            assert!(matches!(action, CardanoCliCommand::TransactionSign { .. }))
+        }
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
@@ -3133,9 +3147,9 @@ fn sign_tx_replaces_witness_set_and_signature_verifies() {
 
 #[test]
 fn cardano_cli_stake_address_build_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -3173,7 +3187,8 @@ fn build_shelley_reward_address_round_trips() {
     let mut expected = vec![0xE1_u8];
     expected.extend_from_slice(&stake_hash);
     assert_eq!(
-        decoded, expected,
+        decoded,
+        expected,
         "mainnet reward address byte shape drifted; expected {:?}, got {:?}",
         hex::encode(&expected),
         hex::encode(&decoded),
@@ -3201,16 +3216,19 @@ fn build_shelley_base_address_byte_shape() {
     let (_hrp, decoded) = bech32::decode(&addr).expect("decode");
     assert_eq!(decoded.len(), 57, "base address must be 57 bytes");
     // Header 0b0000_0001 = 0x01 (type 0, mainnet).
-    assert_eq!(decoded[0], 0x01, "base address header must be 0x01 on mainnet");
+    assert_eq!(
+        decoded[0], 0x01,
+        "base address header must be 0x01 on mainnet"
+    );
     assert_eq!(&decoded[1..29], &pay_hash, "payment hash slot");
     assert_eq!(&decoded[29..57], &stake_hash, "stake hash slot");
 }
 
 #[test]
 fn cardano_cli_address_key_gen_parses() {
-    use clap::Parser;
-    use super::cli::{CardanoCliCommand, Command};
     use super::Cli;
+    use super::cli::{CardanoCliCommand, Command};
+    use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "yggdrasil-node",
@@ -3223,10 +3241,9 @@ fn cardano_cli_address_key_gen_parses() {
     ])
     .expect("address-key-gen must parse");
     match cli.command {
-        Command::CardanoCli { action, .. } => assert!(matches!(
-            action,
-            CardanoCliCommand::AddressKeyGen { .. }
-        )),
+        Command::CardanoCli { action, .. } => {
+            assert!(matches!(action, CardanoCliCommand::AddressKeyGen { .. }))
+        }
         _ => panic!("expected Command::CardanoCli variant"),
     }
 }
@@ -3238,9 +3255,7 @@ fn cardano_cli_address_key_gen_parses() {
 /// key-file load time.
 #[test]
 fn cardano_cli_text_envelope_round_trip() {
-    use super::commands::cardano_cli::{
-        read_verification_key_text_envelope, write_text_envelope,
-    };
+    use super::commands::cardano_cli::{read_verification_key_text_envelope, write_text_envelope};
 
     let dir = std::env::temp_dir().join(format!(
         "yggdrasil-cardano-cli-key-gen-test-{}",
@@ -3261,7 +3276,10 @@ fn cardano_cli_text_envelope_round_trip() {
 
     let bytes = std::fs::read(&path).expect("read back");
     let parsed = read_verification_key_text_envelope(&bytes).expect("parse round-trip");
-    assert_eq!(parsed, payload, "round-trip drift through envelope reader/writer");
+    assert_eq!(
+        parsed, payload,
+        "round-trip drift through envelope reader/writer"
+    );
 
     // Confirm the JSON has the right shape (type + description fields
     // are surfaced for upstream-compat) without parsing the whole file
@@ -3285,8 +3303,8 @@ fn cardano_cli_text_envelope_round_trip() {
 #[cfg(unix)]
 #[test]
 fn cardano_cli_text_envelope_signing_key_mode_is_0o600() {
-    use std::os::unix::fs::PermissionsExt;
     use super::commands::cardano_cli::write_text_envelope;
+    use std::os::unix::fs::PermissionsExt;
 
     let dir = std::env::temp_dir().join(format!(
         "yggdrasil-cardano-cli-key-gen-perm-test-{}",
@@ -3338,7 +3356,8 @@ fn address_key_hash_matches_blake2b_224() {
 
     let actual = hash_bytes_224(&parsed).0;
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "address-key-hash must equal Blake2b-224(VK); got {:?}, expected {:?}",
         hex::encode(actual),
         hex::encode(expected),

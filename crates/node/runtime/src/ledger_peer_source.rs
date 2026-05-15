@@ -54,7 +54,9 @@ use yggdrasil_network::{
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
 use yggdrasil_node_config::load_peer_snapshot_file;
-use yggdrasil_node_sync::{recover_ledger_state_chaindb, recover_ledger_state_chaindb_epoch_boundary};
+use yggdrasil_node_sync::{
+    recover_ledger_state_chaindb, recover_ledger_state_chaindb_epoch_boundary,
+};
 use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 // `RuntimeBlockProducerConfig` is only used by the forge-only judgement

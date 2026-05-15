@@ -874,8 +874,10 @@ impl NodeConfigFile {
     pub fn load_shelley_genesis_bootstrap(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Option<yggdrasil_node_genesis::ShelleyGenesisBootstrap>, yggdrasil_node_genesis::GenesisLoadError>
-    {
+    ) -> Result<
+        Option<yggdrasil_node_genesis::ShelleyGenesisBootstrap>,
+        yggdrasil_node_genesis::GenesisLoadError,
+    > {
         use yggdrasil_node_genesis::load_shelley_genesis_bootstrap;
 
         let Some(path) = self.shelley_genesis_file.as_deref() else {
@@ -896,7 +898,10 @@ impl NodeConfigFile {
     pub fn load_byron_genesis_utxo(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Vec<yggdrasil_node_genesis::ByronGenesisUtxoEntry>, yggdrasil_node_genesis::GenesisLoadError> {
+    ) -> Result<
+        Vec<yggdrasil_node_genesis::ByronGenesisUtxoEntry>,
+        yggdrasil_node_genesis::GenesisLoadError,
+    > {
         use yggdrasil_node_genesis::load_byron_genesis_utxo;
 
         let Some(path) = self.byron_genesis_file.as_deref() else {
@@ -1002,7 +1007,8 @@ impl NodeConfigFile {
     pub fn load_genesis_enact_state(
         &self,
         config_base_dir: Option<&Path>,
-    ) -> Result<Option<yggdrasil_ledger::EnactState>, yggdrasil_node_genesis::GenesisLoadError> {
+    ) -> Result<Option<yggdrasil_ledger::EnactState>, yggdrasil_node_genesis::GenesisLoadError>
+    {
         use yggdrasil_node_genesis::{build_genesis_enact_state, load_conway_genesis};
 
         let Some(path) = self.conway_genesis_file.as_deref() else {
@@ -1025,7 +1031,9 @@ impl NodeConfigFile {
         &self,
         config_base_dir: Option<&Path>,
     ) -> Result<Option<CostModel>, yggdrasil_node_genesis::GenesisCostModelError> {
-        use yggdrasil_node_genesis::{build_plutus_cost_model, load_alonzo_genesis, load_conway_genesis};
+        use yggdrasil_node_genesis::{
+            build_plutus_cost_model, load_alonzo_genesis, load_conway_genesis,
+        };
 
         let Some(path) = self.alonzo_genesis_file.as_deref() else {
             return Ok(None);

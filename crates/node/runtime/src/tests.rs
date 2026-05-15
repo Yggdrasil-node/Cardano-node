@@ -7,9 +7,8 @@ use super::{
     NodeConfig, ReconnectingRunState, ReconnectingVerifiedSyncRequest,
     ResumeReconnectingVerifiedSyncRequest, RuntimeBlockProducerConfig, VerifiedSyncServiceConfig,
     checkpoint_trace_fields, derive_judgement_at, direct_sync_bootstrap_pending,
-    handle_reconnect_batch_error, local_root_targets_from_config,
-    ordered_reconnect_fallback_peers, peer_share_request_amount,
-    preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
+    handle_reconnect_batch_error, local_root_targets_from_config, ordered_reconnect_fallback_peers,
+    peer_share_request_amount, preferred_hot_peer_from_registry, preferred_hot_peer_handoff_target,
     prepare_reconnect_attempt_state, reconnect_preferred_peer,
     reconnect_preferred_peer_with_source, reconnect_storage_tip, record_verified_batch_progress,
     recover_ledger_state_for_runtime, refresh_ledger_peer_sources_from_chain_db,
@@ -26,9 +25,6 @@ use super::{
     block_producer_ledger_state_judgement, kes_expiry_warning_from_periods,
     mempool_entries_for_forging, self_validate_forged_block, tip_context_from_chain_db,
 };
-use yggdrasil_node_sync::LedgerCheckpointPolicy;
-use yggdrasil_node_sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
-use yggdrasil_node_tracer::NodeTracer;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -51,6 +47,9 @@ use yggdrasil_network::{
     LedgerStateJudgement, LocalRootConfig, PeerAccessPoint, PeerRegistry, PeerSource, PeerStatus,
     TimeoutExpired, TopologyConfig, UseBootstrapPeers, UseLedgerPeers,
 };
+use yggdrasil_node_sync::LedgerCheckpointPolicy;
+use yggdrasil_node_sync::{MultiEraSyncProgress, SyncError, VerificationConfig};
+use yggdrasil_node_tracer::NodeTracer;
 use yggdrasil_storage::{ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile};
 
 fn local_addr(port: u16) -> SocketAddr {

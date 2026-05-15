@@ -53,8 +53,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use serde_json::Value;
 
-use yggdrasil_node_config::{NodeConfigFile, TraceNamespaceConfig};
 use crate::trace_forwarder::TraceForwarder;
+use yggdrasil_node_config::{NodeConfigFile, TraceNamespaceConfig};
 
 /// Trace output backend corresponding to upstream scribe/backend strings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2043,7 +2043,6 @@ impl yggdrasil_metrics::EkgParitySource for MetricsSnapshot {
         u64::try_from(self.uptime_ms).unwrap_or(u64::MAX)
     }
 }
-
 
 #[cfg(test)]
 mod tests;

@@ -22,8 +22,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use yggdrasil_node_runtime::{MempoolAddTxResult, add_txs_to_shared_mempool_with_eviction};
-use yggdrasil_node_sync::recover_ledger_state_chaindb;
 use yggdrasil_consensus::TentativeState;
 use yggdrasil_consensus::mempool::{SharedMempool, SharedTxState};
 use yggdrasil_ledger::{
@@ -42,6 +40,8 @@ use yggdrasil_network::{
     TxIdsReply, TxSubmissionMessage, TxSubmissionServer, TxSubmissionServerError,
     rate_limit_decision,
 };
+use yggdrasil_node_runtime::{MempoolAddTxResult, add_txs_to_shared_mempool_with_eviction};
+use yggdrasil_node_sync::recover_ledger_state_chaindb;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, VolatileStore};
 
 // ---------------------------------------------------------------------------
@@ -717,12 +717,13 @@ pub async fn run_chainsync_server(
     // for Byron, ~150 bytes for Shelley) but fire on every
     // RollForward so the cumulative volume is comparable to
     // BlockFetch over a full sync.
-    let record_emit = |header: &[u8], tip: &[u8], m: Option<&yggdrasil_node_tracer::NodeMetrics>| {
-        if let Some(metrics) = m {
-            let bytes_out = (header.len() as u64).saturating_add(tip.len() as u64);
-            metrics.add_chainsync_server_bytes_served_for_peer(peer, bytes_out);
-        }
-    };
+    let record_emit =
+        |header: &[u8], tip: &[u8], m: Option<&yggdrasil_node_tracer::NodeMetrics>| {
+            if let Some(metrics) = m {
+                let bytes_out = (header.len() as u64).saturating_add(tip.len() as u64);
+                metrics.add_chainsync_server_bytes_served_for_peer(peer, bytes_out);
+            }
+        };
 
     loop {
         match server.recv_request().await? {

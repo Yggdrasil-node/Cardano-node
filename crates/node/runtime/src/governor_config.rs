@@ -100,7 +100,8 @@ pub struct RuntimeGovernorConfig {
     /// When `Some`, the governor exports the live registered-worker
     /// count to `/metrics` each tick.  When `None`, the
     /// `chainsync_workers_registered` gauge stays at 0.
-    pub shared_chainsync_worker_pool: Option<yggdrasil_node_sync::chainsync_worker::SharedChainSyncWorkerPool>,
+    pub shared_chainsync_worker_pool:
+        Option<yggdrasil_node_sync::chainsync_worker::SharedChainSyncWorkerPool>,
 }
 
 impl RuntimeGovernorConfig {
@@ -163,7 +164,10 @@ impl RuntimeGovernorConfig {
     /// signal.  Pass the same `DensityRegistry` instance as the sync
     /// service is using (`VerifiedSyncServiceConfig::density_registry`)
     /// so writes from the sync hook land where the governor reads.
-    pub fn with_density_registry(mut self, registry: Option<yggdrasil_node_sync::DensityRegistry>) -> Self {
+    pub fn with_density_registry(
+        mut self,
+        registry: Option<yggdrasil_node_sync::DensityRegistry>,
+    ) -> Self {
         self.density_registry = registry;
         self
     }

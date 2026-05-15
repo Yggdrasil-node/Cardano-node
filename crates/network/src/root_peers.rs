@@ -649,8 +649,7 @@ mod tests {
             // reads the shipped topology fixtures.
             let path = format!(
                 "{}/configuration/{}/topology.json",
-                env!("CARGO_MANIFEST_DIR")
-                    .replace("crates/network", "crates/node/yggdrasil-node"),
+                env!("CARGO_MANIFEST_DIR").replace("crates/network", "crates/node/yggdrasil-node"),
                 net
             );
             let bytes =

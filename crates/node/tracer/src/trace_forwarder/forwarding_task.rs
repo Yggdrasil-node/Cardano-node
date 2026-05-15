@@ -193,9 +193,7 @@ where
 /// Build the (header, payload) pair for a flush. Shared between
 /// `run` (raw Bearer) and `run_via_mux` (Bearer behind a
 /// MuxConnection mutex).
-fn build_reply_sdu(
-    buffer: &[TraceObject],
-) -> Result<(SduHeader, Vec<u8>), ForwardingTaskError> {
+fn build_reply_sdu(buffer: &[TraceObject]) -> Result<(SduHeader, Vec<u8>), ForwardingTaskError> {
     let payload = encode_reply(buffer);
     if payload.len() > u16::MAX as usize {
         return Err(ForwardingTaskError::PayloadTooLarge(payload.len()));
@@ -338,7 +336,10 @@ mod forwarding_task_tests {
 
         // Read what the bearer received.
         let (header, payload) = server_bearer.read_sdu().await.expect("read sdu");
-        assert_eq!(header.mini_protocol_num, TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM);
+        assert_eq!(
+            header.mini_protocol_num,
+            TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM
+        );
         assert_eq!(header.direction, MiniProtocolDir::Initiator);
         let msg = decode_message(&payload).expect("decode message");
         match msg {
@@ -382,13 +383,11 @@ mod forwarding_task_tests {
         // Race the SDU read against a 2-second timeout — if the
         // batch trigger doesn't fire we'd block on the 60-second
         // flush_interval.
-        let (_header, payload) = tokio::time::timeout(
-            Duration::from_secs(2),
-            server_bearer.read_sdu(),
-        )
-        .await
-        .expect("batch flush within 2s timeout")
-        .expect("read sdu");
+        let (_header, payload) =
+            tokio::time::timeout(Duration::from_secs(2), server_bearer.read_sdu())
+                .await
+                .expect("batch flush within 2s timeout")
+                .expect("read sdu");
 
         let msg = decode_message(&payload).expect("decode");
         if let TraceForwardMessage::Reply(traces) = msg {
@@ -470,17 +469,19 @@ mod forwarding_task_tests {
 
         // The task should write within the flush_interval window.
         // Give a generous 1-second timeout to absorb scheduler jitter.
-        let (_header, payload) = tokio::time::timeout(
-            Duration::from_secs(1),
-            server_bearer.read_sdu(),
-        )
-        .await
-        .expect("interval flush within 1s timeout")
-        .expect("read sdu");
+        let (_header, payload) =
+            tokio::time::timeout(Duration::from_secs(1), server_bearer.read_sdu())
+                .await
+                .expect("interval flush within 1s timeout")
+                .expect("read sdu");
 
         let msg = decode_message(&payload).expect("decode");
         if let TraceForwardMessage::Reply(traces) = msg {
-            assert_eq!(traces.len(), 1, "interval flush should emit just the buffered solo event");
+            assert_eq!(
+                traces.len(),
+                1,
+                "interval flush should emit just the buffered solo event"
+            );
             assert_eq!(traces[0].to_machine, r#"{"msg":"solo"}"#);
         } else {
             panic!("expected Reply");

@@ -108,7 +108,10 @@ impl core::fmt::Display for ProtocolError {
         match self {
             Self::Cbor(msg) => write!(f, "CBOR decode error: {msg}"),
             Self::UnknownTag { tag, len } => {
-                write!(f, "unknown TraceForward message tag {tag} (array length {len})")
+                write!(
+                    f,
+                    "unknown TraceForward message tag {tag} (array length {len})"
+                )
             }
             Self::ArityMismatch {
                 tag,
@@ -242,9 +245,8 @@ pub fn decode_message(buf: &[u8]) -> Result<TraceForwardMessage, ProtocolError> 
                 let to_bytes = dec
                     .raw_value()
                     .map_err(|e| ProtocolError::Cbor(format!("reply TraceObject: {e}")))?;
-                let to = TraceObject::from_cbor_bytes(to_bytes).map_err(|e| {
-                    ProtocolError::Cbor(format!("TraceObject decode: {e}"))
-                })?;
+                let to = TraceObject::from_cbor_bytes(to_bytes)
+                    .map_err(|e| ProtocolError::Cbor(format!("TraceObject decode: {e}")))?;
                 traces.push(to);
             }
             Ok(TraceForwardMessage::Reply(traces))

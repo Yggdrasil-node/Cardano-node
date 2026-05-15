@@ -258,10 +258,13 @@ mod mux_connection_tests {
             direction: MiniProtocolDir::Responder,
             length: 5,
         };
-        let outbound_bytes = super::super::mux::encode_sdu_header(&outbound_header)
-            .expect("encode header");
+        let outbound_bytes =
+            super::super::mux::encode_sdu_header(&outbound_header).expect("encode header");
         use tokio::io::AsyncWriteExt;
-        server.write_all(&outbound_bytes).await.expect("write header");
+        server
+            .write_all(&outbound_bytes)
+            .await
+            .expect("write header");
         server.write_all(b"hello").await.expect("write payload");
 
         // The subscriber should receive the SDU within a
@@ -291,8 +294,7 @@ mod mux_connection_tests {
         let server_task = tokio::spawn(async move {
             let mut hdr = [0u8; 8];
             server.read_exact(&mut hdr).await.expect("read hdr");
-            let hdr_decoded =
-                crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode");
+            let hdr_decoded = crate::trace_forwarder::mux::decode_sdu_header(&hdr).expect("decode");
             let mut payload = vec![0u8; hdr_decoded.length as usize];
             server.read_exact(&mut payload).await.expect("read payload");
             // Sanity: it was a ProposeVersions in Idle state.
@@ -318,7 +320,10 @@ mod mux_connection_tests {
             let reply_hdr_bytes =
                 crate::trace_forwarder::mux::encode_sdu_header(&reply_hdr).expect("encode");
             server.write_all(&reply_hdr_bytes).await.expect("write hdr");
-            server.write_all(&reply_payload).await.expect("write payload");
+            server
+                .write_all(&reply_payload)
+                .await
+                .expect("write payload");
         });
 
         let mut versions = BTreeMap::new();
@@ -356,8 +361,7 @@ mod mux_connection_tests {
             direction: MiniProtocolDir::Responder,
             length: 3,
         };
-        let trace_hdr_bytes = super::super::mux::encode_sdu_header(&trace_header)
-            .expect("encode");
+        let trace_hdr_bytes = super::super::mux::encode_sdu_header(&trace_header).expect("encode");
         use tokio::io::AsyncWriteExt;
         server.write_all(&trace_hdr_bytes).await.expect("write");
         server.write_all(b"xxx").await.expect("write payload");
@@ -379,7 +383,10 @@ mod mux_connection_tests {
             .await
             .expect("hs receive within 1s")
             .expect("subscriber channel produced an SDU");
-        assert_eq!(received.header.mini_protocol_num, HANDSHAKE_MINI_PROTOCOL_NUM);
+        assert_eq!(
+            received.header.mini_protocol_num,
+            HANDSHAKE_MINI_PROTOCOL_NUM
+        );
         assert_eq!(received.payload, b"y");
     }
 }

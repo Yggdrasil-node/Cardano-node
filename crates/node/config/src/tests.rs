@@ -562,7 +562,10 @@ fn verify_known_genesis_hashes_short_circuits_on_first_mismatch() {
         .verify_known_genesis_hashes(Some(dir.path()))
         .expect_err("Shelley mismatch must surface");
     assert!(
-        matches!(err, yggdrasil_node_genesis::GenesisLoadError::HashMismatch { .. }),
+        matches!(
+            err,
+            yggdrasil_node_genesis::GenesisLoadError::HashMismatch { .. }
+        ),
         "expected HashMismatch first, got {err:?}",
     );
 }
@@ -898,8 +901,9 @@ fn explicit_bootstrap_peers_parse_from_json() {
 
 #[test]
 fn topology_parser_reads_bootstrap_peers() {
-    let peers =
-        parse_topology_bootstrap_peers(include_str!("../../yggdrasil-node/configuration/mainnet/topology.json"));
+    let peers = parse_topology_bootstrap_peers(include_str!(
+        "../../yggdrasil-node/configuration/mainnet/topology.json"
+    ));
     assert_eq!(peers.len(), 3);
     assert_eq!(peers[0].0, "backbone.cardano.iog.io");
     assert_eq!(peers[0].1, 3001);

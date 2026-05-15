@@ -71,7 +71,15 @@ mod era_cases {
     use super::*;
 
     fn all_eras() -> [Era; 7] {
-        [Era::Byron, Era::Shelley, Era::Allegra, Era::Mary, Era::Alonzo, Era::Babbage, Era::Conway]
+        [
+            Era::Byron,
+            Era::Shelley,
+            Era::Allegra,
+            Era::Mary,
+            Era::Alonzo,
+            Era::Babbage,
+            Era::Conway,
+        ]
     }
 
     #[test]

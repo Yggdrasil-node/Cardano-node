@@ -21,7 +21,12 @@ use clap::{Parser, Subcommand};
 use eyre::{Context, Result, bail, ensure};
 
 #[derive(Parser)]
-#[command(name = "xtask", author, version, about = "Yggdrasil workspace developer subcommands.")]
+#[command(
+    name = "xtask",
+    author,
+    version,
+    about = "Yggdrasil workspace developer subcommands."
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -84,8 +89,8 @@ fn parity_add(file: &Path, note: &str) -> Result<()> {
     // synthesis docstring; xtask should not be used to silence the
     // gate on files that are missing the stanza.
     let abs = workspace_root.join(&file_rel);
-    let contents = std::fs::read_to_string(&abs)
-        .with_context(|| format!("reading {}", abs.display()))?;
+    let contents =
+        std::fs::read_to_string(&abs).with_context(|| format!("reading {}", abs.display()))?;
     ensure!(
         contents.contains("## Naming parity"),
         "{file_rel}: missing `## Naming parity` docstring stanza; \
@@ -157,10 +162,7 @@ fn parity_add(file: &Path, note: &str) -> Result<()> {
     // We deliberately append (rather than insert-in-sorted-order)
     // because the existing TSV is not strictly sorted and the
     // validator is order-insensitive.
-    std::fs::write(
-        &audit_path,
-        format!("{existing}{row}"),
-    )?;
+    std::fs::write(&audit_path, format!("{existing}{row}"))?;
     println!("[xtask parity-add] appended row for {file_rel}");
 
     validate_strict_mirror(&workspace_root)
@@ -169,9 +171,17 @@ fn parity_add(file: &Path, note: &str) -> Result<()> {
 fn parity_all() -> Result<()> {
     let workspace_root = workspace_root()?;
     let scripts = [
-        ("strict-mirror", "scripts/check-strict-mirror.py", &["--fail-on-violation"][..]),
+        (
+            "strict-mirror",
+            "scripts/check-strict-mirror.py",
+            &["--fail-on-violation"][..],
+        ),
         ("parity-matrix", "scripts/check-parity-matrix.py", &[][..]),
-        ("fixture-manifest", "scripts/check-fixture-manifest.py", &[][..]),
+        (
+            "fixture-manifest",
+            "scripts/check-fixture-manifest.py",
+            &[][..],
+        ),
     ];
     for (label, script, args) in scripts {
         let script_path = workspace_root.join(script);
@@ -218,9 +228,12 @@ fn workspace_root() -> Result<PathBuf> {
         if dir.join("Cargo.lock").is_file() {
             return Ok(dir.to_path_buf());
         }
-        dir = dir
-            .parent()
-            .ok_or_else(|| eyre::eyre!("could not locate workspace root (Cargo.lock) from {}", manifest_dir.display()))?;
+        dir = dir.parent().ok_or_else(|| {
+            eyre::eyre!(
+                "could not locate workspace root (Cargo.lock) from {}",
+                manifest_dir.display()
+            )
+        })?;
     }
 }
 

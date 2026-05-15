@@ -52,21 +52,14 @@ use super::{TraceDetail, TraceObject, TraceSeverity};
 ///   hostname doesn't get re-read on every event.
 /// - `to_thread_id` is the thread name (when set via
 ///   `thread::Builder::name`) or the `{:?}`-formatted std thread Id.
-pub fn build_trace_object_from_event<S>(
-    event: &Event<'_>,
-    hostname: &str,
-) -> TraceObject
+pub fn build_trace_object_from_event<S>(event: &Event<'_>, hostname: &str) -> TraceObject
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     let metadata = event.metadata();
 
     // to_namespace: target split on "::"
-    let to_namespace: Vec<String> = metadata
-        .target()
-        .split("::")
-        .map(str::to_string)
-        .collect();
+    let to_namespace: Vec<String> = metadata.target().split("::").map(str::to_string).collect();
 
     // to_severity: Level → SeverityS
     let to_severity = match *metadata.level() {
@@ -132,7 +125,11 @@ pub fn build_trace_timestamp(when: SystemTime) -> (u64, u64, u64) {
     let mp = (5 * doy_anchor_mar + 2) / 153;
     let d = doy_anchor_mar - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 { y_anchor_mar + 1 } else { y_anchor_mar };
+    let year = if m <= 2 {
+        y_anchor_mar + 1
+    } else {
+        y_anchor_mar
+    };
 
     // Day-of-year from (year, month, day):
     // cumulative days at start of each month in a non-leap year.
@@ -157,8 +154,10 @@ struct MachineJsonFieldVisitor<'a>(&'a mut serde_json::Map<String, serde_json::V
 
 impl tracing::field::Visit for MachineJsonFieldVisitor<'_> {
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.0
-            .insert(field.name().to_string(), serde_json::Value::String(value.to_string()));
+        self.0.insert(
+            field.name().to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
@@ -185,8 +184,10 @@ impl tracing::field::Visit for MachineJsonFieldVisitor<'_> {
             self.0
                 .insert(field.name().to_string(), serde_json::Value::Number(n));
         } else {
-            self.0
-                .insert(field.name().to_string(), serde_json::Value::String(value.to_string()));
+            self.0.insert(
+                field.name().to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
         }
     }
 
@@ -210,24 +211,21 @@ mod event_builder_tests {
     fn timestamp_year_doy_picos_known_dates() {
         // 2026-01-01T00:00:00Z → unix epoch + (56 years from 1970-01-01).
         // Compute via std::time arithmetic to avoid chrono dep.
-        let unix_2026_01_01 = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(1767225600); // 2026-01-01T00:00:00Z
+        let unix_2026_01_01 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1767225600); // 2026-01-01T00:00:00Z
         let (year, doy, picos) = build_trace_timestamp(unix_2026_01_01);
         assert_eq!(year, 2026);
         assert_eq!(doy, 1);
         assert_eq!(picos, 0);
 
         // 2024-12-31T00:00:00Z. Day-of-year 366 (leap).
-        let unix_2024_12_31 = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(1735603200);
+        let unix_2024_12_31 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1735603200);
         let (year, doy, picos) = build_trace_timestamp(unix_2024_12_31);
         assert_eq!(year, 2024);
         assert_eq!(doy, 366);
         assert_eq!(picos, 0);
 
         // 2025-12-31T00:00:00Z. Day-of-year 365 (non-leap).
-        let unix_2025_12_31 = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(1767139200);
+        let unix_2025_12_31 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1767139200);
         let (year, doy, _) = build_trace_timestamp(unix_2025_12_31);
         assert_eq!(year, 2025);
         assert_eq!(doy, 365);
@@ -238,15 +236,13 @@ mod event_builder_tests {
     fn timestamp_picos_of_day_at_midday() {
         // 2026-05-15T12:34:56.789Z = 2026-05-15T00:00:00Z + (12*3600
         // + 34*60 + 56) seconds + 789 millis.
-        let base = SystemTime::UNIX_EPOCH
-            + std::time::Duration::from_secs(1778803200); // 2026-05-15T00:00:00Z
+        let base = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1778803200); // 2026-05-15T00:00:00Z
         let when = base
             + std::time::Duration::from_secs(12 * 3600 + 34 * 60 + 56)
             + std::time::Duration::from_millis(789);
         let (_year, _doy, picos) = build_trace_timestamp(when);
         // (45296 secs) * 1e12 + 789_000_000 nanos * 1000.
-        let expected = (12_u64 * 3600 + 34 * 60 + 56) * 1_000_000_000_000
-            + 789_000_000 * 1_000;
+        let expected = (12_u64 * 3600 + 34 * 60 + 56) * 1_000_000_000_000 + 789_000_000 * 1_000;
         assert_eq!(picos, expected);
     }
 

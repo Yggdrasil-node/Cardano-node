@@ -108,7 +108,9 @@ impl CekPlutusEvaluator {
     /// genesis parameters, or return the raw slot if unavailable.
     fn slot_to_posix_ms(&self, slot: u64) -> u64 {
         match self.system_start_unix_secs {
-            Some(start) => yggdrasil_node_genesis::slot_to_posix_ms(slot, start, self.slot_length_secs),
+            Some(start) => {
+                yggdrasil_node_genesis::slot_to_posix_ms(slot, start, self.slot_length_secs)
+            }
             None => slot,
         }
     }

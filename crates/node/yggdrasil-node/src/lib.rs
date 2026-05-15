@@ -8,14 +8,6 @@
 //! already pin them. New consumers should depend on the leaf crates
 //! directly (`yggdrasil_node_sync::SyncError`).
 
-pub use yggdrasil_node_sync::blockfetch_worker::{
-    DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
-};
-pub use yggdrasil_node_sync::chainsync_worker::{
-    CandidateFragment, ChainSyncEvent, ChainSyncRequest, ChainSyncWorkerHandle,
-    ChainSyncWorkerPool, DEFAULT_CANDIDATE_FRAGMENT_CAPACITY, SharedChainSyncWorkerPool,
-    new_shared_chainsync_worker_pool, publish_announced_header, publish_rollback,
-};
 pub use yggdrasil_node_runtime::{
     ChainTipNotify, LedgerJudgementSettings, MempoolAddTxError, MempoolAddTxOutcome,
     MempoolAddTxResult, NodeConfig, PeerSession, ReconnectingSyncServiceOutcome,
@@ -30,12 +22,19 @@ pub use yggdrasil_node_runtime::{
     resume_reconnecting_verified_sync_service_chaindb_with_tracer,
     resume_reconnecting_verified_sync_service_shared_chaindb,
     resume_reconnecting_verified_sync_service_shared_chaindb_with_tracer, run_governor_loop,
-    run_reconnecting_verified_sync_service,
-    run_reconnecting_verified_sync_service_chaindb,
+    run_reconnecting_verified_sync_service, run_reconnecting_verified_sync_service_chaindb,
     run_reconnecting_verified_sync_service_chaindb_with_tracer,
     run_reconnecting_verified_sync_service_with_tracer, run_txsubmission_service,
     run_txsubmission_service_shared, seed_peer_registry, serve_txsubmission_request_from_mempool,
     serve_txsubmission_request_from_reader,
+};
+pub use yggdrasil_node_sync::blockfetch_worker::{
+    DEFAULT_WORKER_QUEUE_DEPTH, FetchRequest, FetchWorkerHandle, FetchWorkerPool,
+};
+pub use yggdrasil_node_sync::chainsync_worker::{
+    CandidateFragment, ChainSyncEvent, ChainSyncRequest, ChainSyncWorkerHandle,
+    ChainSyncWorkerPool, DEFAULT_CANDIDATE_FRAGMENT_CAPACITY, SharedChainSyncWorkerPool,
+    new_shared_chainsync_worker_pool, publish_announced_header, publish_rollback,
 };
 pub use yggdrasil_node_sync::{
     BlockFetchAssignment, DecodedSyncStep, DensityRegistry, FutureBlockCheckConfig,

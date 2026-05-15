@@ -29,10 +29,10 @@ fn test_encode_rejection_reason_is_non_empty() {
 
 #[test]
 fn protocol_state_uses_exact_chain_dep_sidecar_and_ignores_latest_mirrors() {
-    use yggdrasil_node_sync::{LedgerCheckpointUpdateOutcome, persist_chain_dep_state_sidecar};
     use yggdrasil_ledger::{
         Block, BlockHeader, BlockNo, CborEncode, Decoder, HeaderHash, Nonce, Point, SlotNo,
     };
+    use yggdrasil_node_sync::{LedgerCheckpointUpdateOutcome, persist_chain_dep_state_sidecar};
 
     let dir = tempfile::tempdir().expect("temp sidecar dir");
     let point = Point::BlockPoint(SlotNo(7), HeaderHash([7; 32]));
@@ -118,12 +118,12 @@ fn protocol_state_uses_exact_chain_dep_sidecar_and_ignores_latest_mirrors() {
 /// shape that field 12 reuses.
 #[test]
 fn shelley_genesis_encoder_emits_15_element_list() {
+    use std::collections::BTreeMap;
+    use yggdrasil_ledger::{Decoder, ProtocolParameters};
     use yggdrasil_node_genesis::{
         GenesisProtocolVersion, GenesisRational, ShelleyGenesis, ShelleyGenesisDelegation,
         ShelleyGenesisProtocolParams,
     };
-    use std::collections::BTreeMap;
-    use yggdrasil_ledger::{Decoder, ProtocolParameters};
 
     // Mainnet-like genesis (subset; any non-default value would do).
     let mut gen_delegs = BTreeMap::new();

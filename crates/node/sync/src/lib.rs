@@ -31,7 +31,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
-use yggdrasil_node_config::MAINNET_NETWORK_MAGIC;
 #[cfg(test)]
 use yggdrasil_consensus::EpochSize;
 use yggdrasil_consensus::mempool::Mempool;
@@ -58,6 +57,7 @@ use yggdrasil_network::{
     BlockFetchClient, BlockFetchClientError, BlockFetchInstrumentation, ChainSyncClient,
     KeepAliveClient, TypedNextResponse,
 };
+use yggdrasil_node_config::MAINNET_NETWORK_MAGIC;
 use yggdrasil_plutus::CostModel;
 use yggdrasil_storage::{ChainDb, ImmutableStore, LedgerStore, StorageError, VolatileStore};
 
@@ -497,7 +497,9 @@ impl VerifiedSyncServiceConfig {
                     self.slot_length_secs.unwrap_or(1.0),
                 )
             }
-            (Some(cm), None) => yggdrasil_node_plutus_eval::CekPlutusEvaluator::with_cost_model(cm.clone()),
+            (Some(cm), None) => {
+                yggdrasil_node_plutus_eval::CekPlutusEvaluator::with_cost_model(cm.clone())
+            }
             (None, Some(start)) => yggdrasil_node_plutus_eval::CekPlutusEvaluator {
                 system_start_unix_secs: Some(start),
                 slot_length_secs: self.slot_length_secs.unwrap_or(1.0),
@@ -698,9 +700,7 @@ pub fn decode_chain_dep_sidecar_snapshot(
     })
 }
 
-pub fn chain_dep_context_from_sidecar(
-    sidecar: &ChainDepSidecarSnapshot,
-) -> ChainDepStateContext {
+pub fn chain_dep_context_from_sidecar(sidecar: &ChainDepSidecarSnapshot) -> ChainDepStateContext {
     let mut ctx = ChainDepStateContext::default();
     if let Some(nonces) = sidecar.nonce_state.as_ref() {
         ctx.evolving_nonce = nonces.evolving_nonce;
@@ -756,10 +756,7 @@ pub fn load_stake_snapshots_sidecar(
         .map_err(SyncError::LedgerDecode)
 }
 
-pub fn for_each_roll_forward_block<E, F>(
-    progress: &MultiEraSyncProgress,
-    mut f: F,
-) -> Result<(), E>
+pub fn for_each_roll_forward_block<E, F>(progress: &MultiEraSyncProgress, mut f: F) -> Result<(), E>
 where
     F: FnMut(&MultiEraBlock, &[u8], &yggdrasil_ledger::BlockTxRawSpans) -> Result<(), E>,
 {
@@ -7396,9 +7393,9 @@ mod tests {
     /// the rollback.
     #[test]
     fn rollback_without_sidecar_resets_ocert_counters_and_nonce_state() {
-        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_consensus::OcertCounters;
         use yggdrasil_ledger::Era;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_storage::{
             ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         };
@@ -7481,9 +7478,9 @@ mod tests {
 
     #[test]
     fn initial_sync_rollback_to_origin_resets_nonce_to_origin_without_sidecar() {
-        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_consensus::OcertCounters;
         use yggdrasil_ledger::Era;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_storage::{
             ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         };
@@ -7541,9 +7538,9 @@ mod tests {
 
     #[test]
     fn persistent_rollback_without_chain_dep_sidecar_errors() {
-        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_consensus::OcertCounters;
         use yggdrasil_ledger::Era;
+        use yggdrasil_node_plutus_eval::CekPlutusEvaluator;
         use yggdrasil_storage::{
             ChainDb, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
         };
@@ -8456,8 +8453,10 @@ mod tests {
 
     #[test]
     fn header_protocol_version_window_enforced_on_mainnet_before_dijkstra() {
-        let config =
-            verification_config_for_header_window(10, Some(yggdrasil_node_config::MAINNET_NETWORK_MAGIC));
+        let config = verification_config_for_header_window(
+            10,
+            Some(yggdrasil_node_config::MAINNET_NETWORK_MAGIC),
+        );
         assert!(
             config.enforce_header_protocol_version_window(10),
             "mainnet keeps Conway BBODY HeaderProtVerTooHigh active before Dijkstra",
@@ -8466,8 +8465,10 @@ mod tests {
 
     #[test]
     fn header_protocol_version_window_skipped_on_testnet_before_dijkstra() {
-        let config =
-            verification_config_for_header_window(10, Some(yggdrasil_node_config::PREVIEW_NETWORK_MAGIC));
+        let config = verification_config_for_header_window(
+            10,
+            Some(yggdrasil_node_config::PREVIEW_NETWORK_MAGIC),
+        );
         assert!(
             !config.enforce_header_protocol_version_window(10),
             "testnets suppress HeaderProtVerTooHigh until protocol major 12",

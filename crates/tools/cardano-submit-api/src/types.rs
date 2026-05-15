@@ -426,9 +426,9 @@ mod tests {
 
     #[test]
     fn tx_cmd_validation_error_json_shape() {
-        let err = TxCmdError::TxCmdTxSubmitValidationError(
-            TxSubmitValidationError::from_rendered("FeeTooSmall"),
-        );
+        let err = TxCmdError::TxCmdTxSubmitValidationError(TxSubmitValidationError::from_rendered(
+            "FeeTooSmall",
+        ));
         // Wire shape stays byte-equivalent to upstream's
         // `{"tag":"...","contents":"<rendered>"}`; the raw_cbor field
         // is hidden by the custom Serialize impl on
@@ -539,9 +539,9 @@ mod tests {
 
     #[test]
     fn render_tx_cmd_error_validation() {
-        let err = TxCmdError::TxCmdTxSubmitValidationError(
-            TxSubmitValidationError::from_rendered("FeeTooSmall"),
-        );
+        let err = TxCmdError::TxCmdTxSubmitValidationError(TxSubmitValidationError::from_rendered(
+            "FeeTooSmall",
+        ));
         assert_eq!(
             render_tx_cmd_error(&err),
             "transaction submit error FeeTooSmall"

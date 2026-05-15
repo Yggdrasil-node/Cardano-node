@@ -7,8 +7,6 @@ use super::{
     PeerSharingProvider, SharedChainDb, SharedPeerSharingProvider, TxSubmissionConsumer,
     process_connection_manager_timeouts, run_inbound_accept_loop,
 };
-use yggdrasil_node_runtime::NodeConfig;
-use yggdrasil_node_runtime::bootstrap;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
@@ -24,6 +22,8 @@ use yggdrasil_network::{
     HandshakeVersion, KeepAliveMessage, MuxError, MuxHandle, NextResponse, PeerListener,
     PeerSharingMessage, SharedPeerAddress, TxIdAndSize, TxSubmissionMessage,
 };
+use yggdrasil_node_runtime::NodeConfig;
+use yggdrasil_node_runtime::bootstrap;
 use yggdrasil_storage::{
     ChainDb, ImmutableStore, InMemoryImmutable, InMemoryLedgerStore, InMemoryVolatile,
     VolatileStore,
