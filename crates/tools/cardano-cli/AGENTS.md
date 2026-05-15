@@ -101,25 +101,49 @@ and `/dev/urandom`). The split is intentional: the binary
 surface is "operator-ready"; the library surface stays
 placeholder-stage and waits for the C-arc migration.
 
-Operator surface mapped to upstream `cardano-cli`:
+Operator surface mapped to upstream `cardano-cli` (35 subcommands):
 
-| `yggdrasil-node cardano-cli ...`     | `cardano-cli ...`                      |
-| ------------------------------------ | -------------------------------------- |
-| `version`                            | `version`                              |
-| `show-upstream-config`               | n/a (Yggdrasil helper)                 |
-| `query-tip`                          | `query tip`                            |
-| `query-utxo --address` / `--tx-in`   | `query utxo --address` / `--tx-in`     |
-| `query-protocol-parameters`          | `query protocol-parameters`            |
-| `query-stake-pools`                  | `query stake-pools`                    |
-| `query-stake-distribution`           | `query stake-distribution`             |
-| `transaction-submit`                 | `transaction submit`                   |
-| `transaction-txid`                   | `transaction txid`                     |
-| `transaction-sign` (single-signer)   | `transaction sign` (subset)            |
-| `address-key-gen`                    | `address key-gen`                      |
-| `address-key-hash`                   | `address key-hash`                     |
-| `address-build`                      | `address build`                        |
-| `stake-address-key-gen`              | `stake-address key-gen`                |
-| `stake-address-build`                | `stake-address build`                  |
+| `yggdrasil-node cardano-cli ...`            | `cardano-cli ...`                          |
+| ------------------------------------------- | ------------------------------------------ |
+| **Introspection**                           |                                            |
+| `version`                                   | `version`                                  |
+| `show-upstream-config`                      | n/a (Yggdrasil helper)                     |
+| **Query (LocalStateQuery)**                 |                                            |
+| `query-tip`                                 | `query tip`                                |
+| `query-utxo --address` / `--tx-in`          | `query utxo --address` / `--tx-in`         |
+| `query-protocol-parameters`                 | `query protocol-parameters`                |
+| `query-stake-pools`                         | `query stake-pools`                        |
+| `query-stake-distribution`                  | `query stake-distribution`                 |
+| `query-current-era`                         | n/a (informational)                        |
+| `query-chain-block-no`                      | n/a (introspection)                        |
+| `query-system-start`                        | n/a (introspection)                        |
+| `query-current-epoch`                       | n/a (informational)                        |
+| `query-expected-network-id`                 | n/a (network-preflight check)              |
+| `query-era-history`                         | `query era-history` (opaque CBOR)          |
+| `query-treasury-and-reserves`               | n/a (Yggdrasil helper for pots)            |
+| `query-drep-stake-distr`                    | `query drep-stake-distribution`            |
+| `query-constitution`                        | `query constitution`                       |
+| `query-gov-state`                           | `query gov-state`                          |
+| `query-drep-state`                          | `query drep-state`                         |
+| `query-account-state`                       | n/a (Yggdrasil helper)                     |
+| `query-genesis-delegations`                 | n/a (Byron-only helper)                    |
+| `query-stability-window`                    | n/a (Yggdrasil helper)                     |
+| `query-num-dormant-epochs`                  | n/a (Conway dormancy helper)               |
+| `query-deposit-pot`                         | n/a (Yggdrasil helper)                     |
+| `query-ledger-counts`                       | n/a (Yggdrasil helper)                     |
+| `query-reward-balance --account`            | n/a (Yggdrasil helper)                     |
+| `query-delegations-and-rewards --credential`| n/a (Yggdrasil helper)                     |
+| `query-stake-pool-params --pool-hash`       | `query pool-params`                        |
+| **Transaction**                             |                                            |
+| `transaction-submit`                        | `transaction submit`                       |
+| `transaction-txid`                          | `transaction txid`                         |
+| `transaction-sign` (single-signer)          | `transaction sign` (subset)                |
+| **Keys + Addresses**                        |                                            |
+| `address-key-gen`                           | `address key-gen`                          |
+| `address-key-hash`                          | `address key-hash`                         |
+| `address-build`                             | `address build`                            |
+| `stake-address-key-gen`                     | `stake-address key-gen`                    |
+| `stake-address-build`                       | `stake-address build`                      |
 
 Not yet wired (each gated on a substantive new primitive — full
 tx construction with input selection + fees, new LSQ queries
