@@ -176,6 +176,102 @@ pub(crate) fn run_cardano_cli_command(
             network_magic.unwrap_or(reference_network_magic),
             crate::commands::query::QueryCommand::ExpectedNetworkId,
         ),
+        CardanoCliCommand::QueryEraHistory {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::EraHistory,
+        ),
+        CardanoCliCommand::QueryTreasuryAndReserves {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::TreasuryAndReserves,
+        ),
+        CardanoCliCommand::QueryDrepStakeDistr {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::DrepStakeDistr,
+        ),
+        CardanoCliCommand::QueryConstitution {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::Constitution,
+        ),
+        CardanoCliCommand::QueryGovState {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::GovState,
+        ),
+        CardanoCliCommand::QueryDrepState {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::DrepState,
+        ),
+        CardanoCliCommand::QueryAccountState {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::AccountState,
+        ),
+        CardanoCliCommand::QueryGenesisDelegations {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::GenesisDelegations,
+        ),
+        CardanoCliCommand::QueryStabilityWindow {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::StabilityWindow,
+        ),
+        CardanoCliCommand::QueryNumDormantEpochs {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::NumDormantEpochs,
+        ),
+        CardanoCliCommand::QueryDepositPot {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::DepositPot,
+        ),
+        CardanoCliCommand::QueryLedgerCounts {
+            socket_path: _socket_path,
+            network_magic,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::LedgerCounts,
+        ),
         CardanoCliCommand::TransactionSubmit {
             socket_path: _socket_path,
             network_magic,

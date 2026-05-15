@@ -379,6 +379,117 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Query the era-summary interpreter (slot↔time conversion
+    /// table). Output is opaque CBOR; pipe into ledger libraries
+    /// for slot-to-wall-clock arithmetic.
+    QueryEraHistory {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the treasury and reserves pots (lovelace held by each).
+    QueryTreasuryAndReserves {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the per-DRep stake distribution (Conway governance).
+    QueryDrepStakeDistr {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the constitution (Conway governance).
+    QueryConstitution {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the live governance state (Conway).
+    QueryGovState {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the per-DRep state map (Conway).
+    QueryDrepState {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the treasury account state.
+    QueryAccountState {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the Byron genesis-delegation map.
+    QueryGenesisDelegations {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the current chain-stability window (slots).
+    QueryStabilityWindow {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the number of dormant epochs (Conway governance).
+    QueryNumDormantEpochs {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the deposit pot (sum of stake-key + pool deposits).
+    QueryDepositPot {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query ledger-state-derived counts (number of pools, stake-
+    /// keys, etc).
+    QueryLedgerCounts {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
     /// Submit a previously-built transaction to the local node via
     /// `LocalTxSubmission`. The tx body is supplied either as a path
     /// to a CBOR file (`--tx-file`) or as a hex-encoded string

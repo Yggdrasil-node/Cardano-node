@@ -2524,6 +2524,64 @@ fn cardano_cli_query_current_epoch_parses() {
     }
 }
 
+/// Smoke-test that every new cardano-cli query subcommand parses
+/// cleanly via clap, with a fixed --socket-path. This is one big
+/// table-driven test instead of a separate `#[test]` per command
+/// since the shape is identical (socket_path + optional
+/// network_magic; no other arguments).
+#[test]
+#[allow(clippy::type_complexity)]
+fn cardano_cli_zero_arg_query_subcommands_parse() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let subcommands_and_expected_variant: &[(&str, fn(&CardanoCliCommand) -> bool)] = &[
+        ("query-era-history", |a| matches!(a, CardanoCliCommand::QueryEraHistory { .. })),
+        ("query-treasury-and-reserves", |a| {
+            matches!(a, CardanoCliCommand::QueryTreasuryAndReserves { .. })
+        }),
+        ("query-drep-stake-distr", |a| {
+            matches!(a, CardanoCliCommand::QueryDrepStakeDistr { .. })
+        }),
+        ("query-constitution", |a| matches!(a, CardanoCliCommand::QueryConstitution { .. })),
+        ("query-gov-state", |a| matches!(a, CardanoCliCommand::QueryGovState { .. })),
+        ("query-drep-state", |a| matches!(a, CardanoCliCommand::QueryDrepState { .. })),
+        ("query-account-state", |a| matches!(a, CardanoCliCommand::QueryAccountState { .. })),
+        ("query-genesis-delegations", |a| {
+            matches!(a, CardanoCliCommand::QueryGenesisDelegations { .. })
+        }),
+        ("query-stability-window", |a| {
+            matches!(a, CardanoCliCommand::QueryStabilityWindow { .. })
+        }),
+        ("query-num-dormant-epochs", |a| {
+            matches!(a, CardanoCliCommand::QueryNumDormantEpochs { .. })
+        }),
+        ("query-deposit-pot", |a| matches!(a, CardanoCliCommand::QueryDepositPot { .. })),
+        ("query-ledger-counts", |a| matches!(a, CardanoCliCommand::QueryLedgerCounts { .. })),
+    ];
+
+    for (subcommand, matcher) in subcommands_and_expected_variant {
+        let cli = Cli::try_parse_from([
+            "yggdrasil-node",
+            "cardano-cli",
+            subcommand,
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .unwrap_or_else(|e| panic!("`{subcommand}` must parse; got {e}"));
+        match cli.command {
+            Command::CardanoCli { action, .. } => {
+                assert!(
+                    matcher(&action),
+                    "`{subcommand}` did not produce the expected variant"
+                );
+            }
+            _ => panic!("`{subcommand}` did not produce Command::CardanoCli"),
+        }
+    }
+}
+
 #[test]
 fn cardano_cli_query_expected_network_id_parses() {
     use clap::Parser;
