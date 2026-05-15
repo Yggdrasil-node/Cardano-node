@@ -44,11 +44,64 @@ pre-commit:
       run: shellcheck {staged_files}
 
 pre-push:
+  # Mirror every CI gate that runs in `.github/workflows/ci.yml` so a
+  # successful `git push` implies (best-effort) green CI. May 2026
+  # follow-up: prior to this expansion, only 3 of CI's 9 gates ran
+  # at pre-push — multiple slices shipped with red CI (fmt drift,
+  # cargo-deny advisory + license, parity-matrix schema enum drift)
+  # before anyone noticed. The full mirror keeps that from recurring.
   parallel: false
   commands:
+    # Gate 1: workspace-wide rustfmt drift. The pre-commit `fmt`
+    # only checks staged files; a rebase that brings in someone
+    # else's drift can slip through pre-commit and only surface in
+    # CI. The pre-push check is workspace-wide.
+    fmt-check:
+      run: cargo fmt --all -- --check
+    # Gate 2: full nextest run with the `ci` profile so the
+    # slow-timeout matches what CI uses (the default profile's
+    # 60s × 2 = 120s ceiling trips the vendored-network-presets
+    # config-validation test on slow hardware). May 2026 fix.
     test-fast:
-      run: cargo nextest run --profile default --workspace
+      run: cargo nextest run --profile ci --workspace --all-features --no-fail-fast
+    # Gate 3: workspace clippy at full strictness (`-D warnings`).
+    # The pre-commit `clippy-changed` only lints crates touched by
+    # the diff; cross-crate breakage from a `pub` change can slip.
+    lint:
+      run: cargo lint
+    # Gate 4: feature-gated breakage canary. CI runs this with
+    # `--no-default-features`; pre-push mirrors that exactly.
+    lint-no-default:
+      run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+    # Gate 5: strict-mirror drift-guard. Walks production .rs files
+    # and verifies each has either an upstream .hs mirror or a
+    # `## Naming parity` stanza ending in `**Strict mirror:** none.`
     parity-mirror:
       run: python3 scripts/check-strict-mirror.py --fail-on-violation
+    # Gate 6: parity-matrix schema + on-disk-paths validator.
+    parity-matrix:
+      run: python3 scripts/check-parity-matrix.py
+    # Gate 7: JSON-schema validator for parity-matrix.json. The
+    # CI workflow installs check-jsonschema on the fly; we use a
+    # best-effort `python3 -m check_jsonschema` here so devs who
+    # haven't installed it locally get a clear skip message rather
+    # than a confusing failure.
+    parity-matrix-schema:
+      run: |
+        if python3 -c 'import check_jsonschema' 2>/dev/null; then
+          python3 -m check_jsonschema --schemafile docs/parity-matrix.schema.json docs/parity-matrix.json
+        else
+          echo "[pre-push] skip: check-jsonschema not installed; CI will catch this. (pip install check-jsonschema to enable.)"
+        fi
+    # Gate 8: cardano-base fixture-manifest pin validator.
     parity-fixtures:
       run: python3 scripts/check-fixture-manifest.py
+    # Gate 9: supply-chain (cargo-deny). Best-effort — skip with
+    # a warning when the binary isn't installed locally.
+    deny:
+      run: |
+        if command -v cargo-deny >/dev/null 2>&1; then
+          cargo deny check
+        else
+          echo "[pre-push] skip: cargo-deny not installed; CI will catch this. (cargo install --locked cargo-deny to enable.)"
+        fi
