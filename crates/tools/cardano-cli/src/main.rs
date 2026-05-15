@@ -47,7 +47,22 @@ fn main() -> ExitCode {
             }
         }
     };
-    match yggdrasil_cardano_cli::run::run_command(cmd) {
+    // R506: dispatch through `run_command_with` so the standalone
+    // binary can plug a concrete `LsqClient` impl in. With the
+    // `lsq-tokio` feature on (the default), the concrete
+    // `TokioLsqClient` opens a Unix-socket NtC connection and drives
+    // the LSQ mini-protocol for `query-tip`. With the feature off
+    // (slim build), `DeferralLsqClient` keeps the documented "use
+    // the node binary's wrapper" deferral message.
+    #[cfg(feature = "lsq-tokio")]
+    let result = yggdrasil_cardano_cli::run::run_command_with(
+        cmd,
+        &yggdrasil_cardano_cli::lsq_tokio::TokioLsqClient,
+    );
+    #[cfg(not(feature = "lsq-tokio"))]
+    let result = yggdrasil_cardano_cli::run::run_command(cmd);
+
+    match result {
         Ok(()) => ExitCode::from(0),
         Err(err) => {
             eprintln!("yggdrasil-cardano-cli: {err}");

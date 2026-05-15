@@ -15,6 +15,27 @@ description = "Pure-Rust port of the upstream cardano-cli operator-tooling surfa
 [lints]
 workspace = true
 
+# R506: `lsq-tokio` feature gates the concrete tokio +
+# yggdrasil-network LSQ-client impl that drives `query-tip` against
+# a running node's NtC socket. Default-on so `cargo install --path
+# crates/tools/cardano-cli` produces a feature-complete binary; the
+# library crate stays tokio-free regardless (the gated deps only
+# pull when the feature is on, and the library's `LsqClient` trait
+# is the indirection that keeps the surface clean).
+#
+# Operators wanting a smaller binary can build with
+# `--no-default-features`; `query-tip` then falls back to the
+# `DeferralLsqClient` (structured error pointing at the node
+# binary's wrapper).
+[features]
+default = ["lsq-tokio"]
+lsq-tokio = [
+    "dep:hex",
+    "dep:tokio",
+    "dep:yggdrasil-ledger",
+    "dep:yggdrasil-network",
+]
+
 [dependencies]
 clap = { workspace = true }
 eyre = { workspace = true }
@@ -22,13 +43,26 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
+# R506 lsq-tokio gated deps — only compiled when the feature is on.
+# Required so the binary's concrete `LsqClient` impl can build a
+# tokio runtime, open the Unix NtC socket via yggdrasil-network's
+# `ntc_connect`, drive the LSQ mini-protocol, and decode the CBOR
+# Tip result through yggdrasil-ledger's `Decoder`. Library callers
+# never see these deps unless they opt in.
+hex = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+yggdrasil-ledger = { workspace = true, optional = true }
+yggdrasil-network = { workspace = true, optional = true }
+
 # Standalone binary target. Operators install via:
-#   cargo install --path crates/tools/cardano-cli
-# This produces a `yggdrasil-cardano-cli` binary on `$PATH`.
-# Today's coverage is: `version` (fully wired), `show-upstream-
-# config` and `query-tip` (emit structured deferral messages —
-# use the node binary's wrapper for now). Full surface migration
-# tracked in docs/TECH-DEBT.md.
+#   cargo install --path crates/tools/cardano-cli                  # full
+#   cargo install --path crates/tools/cardano-cli --no-default-features  # slim
+#
+# Default build (lsq-tokio on): `version` / `show-upstream-config` /
+# `query-tip` all operational. Slim build (lsq-tokio off): same surface
+# but `query-tip` falls back to the documented deferral message.
+#
+# Full subcommand surface migration tracked in docs/TECH-DEBT.md.
 [[bin]]
 name = "yggdrasil-cardano-cli"
 path = "src/main.rs"

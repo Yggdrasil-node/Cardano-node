@@ -42,6 +42,8 @@ pub mod io;
 pub mod json;
 pub mod legacy;
 pub mod lsq;
+#[cfg(feature = "lsq-tokio")]
+pub mod lsq_tokio;
 pub mod option;
 pub mod orphan;
 pub mod os;
