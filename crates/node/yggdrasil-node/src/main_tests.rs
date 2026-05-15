@@ -2583,6 +2583,99 @@ fn cardano_cli_zero_arg_query_subcommands_parse() {
 }
 
 #[test]
+fn cardano_cli_query_reward_balance_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-reward-balance",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--account",
+        "0xdeadbeef",
+    ])
+    .expect("query-reward-balance must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::QueryRewardBalance { account, .. } => {
+                assert_eq!(account, "0xdeadbeef");
+            }
+            _ => panic!("expected QueryRewardBalance"),
+        },
+        _ => panic!("expected Command::CardanoCli"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_delegations_and_rewards_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    // The `is_key_hash: bool` flag has `default_value = "true"` so
+    // operators get the common-case key-credential behavior without
+    // an explicit flag. clap treats bare-bool fields as on/off
+    // switches; switching to script-hash via the negated form needs
+    // either a `num_args = 1`-shaped flag definition (a follow-on
+    // round) or `--no-is-key-hash` if we add that alias. For now the
+    // parser pins the default-on case.
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-delegations-and-rewards",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--credential",
+        "abcd1234",
+    ])
+    .expect("query-delegations-and-rewards must parse with default --is-key-hash=true");
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::QueryDelegationsAndRewards {
+                credential,
+                is_key_hash,
+                ..
+            } => {
+                assert_eq!(credential, "abcd1234");
+                assert!(is_key_hash, "default is_key_hash should be true");
+            }
+            _ => panic!("expected QueryDelegationsAndRewards"),
+        },
+        _ => panic!("expected Command::CardanoCli"),
+    }
+}
+
+#[test]
+fn cardano_cli_query_stake_pool_params_parses() {
+    use clap::Parser;
+    use super::cli::{CardanoCliCommand, Command};
+    use super::Cli;
+
+    let cli = Cli::try_parse_from([
+        "yggdrasil-node",
+        "cardano-cli",
+        "query-stake-pool-params",
+        "--socket-path",
+        "/tmp/node.socket",
+        "--pool-hash",
+        "0xfeedface",
+    ])
+    .expect("query-stake-pool-params must parse");
+    match cli.command {
+        Command::CardanoCli { action, .. } => match action {
+            CardanoCliCommand::QueryStakePoolParams { pool_hash, .. } => {
+                assert_eq!(pool_hash, "0xfeedface");
+            }
+            _ => panic!("expected QueryStakePoolParams"),
+        },
+        _ => panic!("expected Command::CardanoCli"),
+    }
+}
+
+#[test]
 fn cardano_cli_query_expected_network_id_parses() {
     use clap::Parser;
     use super::cli::{CardanoCliCommand, Command};

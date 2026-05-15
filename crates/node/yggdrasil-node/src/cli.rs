@@ -490,6 +490,52 @@ pub(crate) enum CardanoCliCommand {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Query the reward balance for a reward account.
+    QueryRewardBalance {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Hex-encoded reward account bytes (with or without `0x`
+        /// prefix). For a key-based stake credential the account
+        /// is the 28-byte key hash; for script-based it's the
+        /// 28-byte script hash. Use `stake-address-build` to
+        /// convert a Bech32 reward address into the hex form.
+        #[arg(long)]
+        account: String,
+    },
+    /// Query delegations and rewards for a stake credential.
+    QueryDelegationsAndRewards {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Hex-encoded 28-byte credential hash (with or without
+        /// `0x` prefix).
+        #[arg(long)]
+        credential: String,
+        /// True (default) for a key-hash credential; false for a
+        /// script-hash credential.
+        #[arg(long, default_value = "true")]
+        is_key_hash: bool,
+    },
+    /// Query the registered parameters of a specific stake pool.
+    QueryStakePoolParams {
+        /// Path to node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using upstream reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Hex-encoded 28-byte pool key hash (with or without `0x`
+        /// prefix).
+        #[arg(long)]
+        pool_hash: String,
+    },
     /// Submit a previously-built transaction to the local node via
     /// `LocalTxSubmission`. The tx body is supplied either as a path
     /// to a CBOR file (`--tx-file`) or as a hex-encoded string

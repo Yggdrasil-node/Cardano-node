@@ -272,6 +272,37 @@ pub(crate) fn run_cardano_cli_command(
             network_magic.unwrap_or(reference_network_magic),
             crate::commands::query::QueryCommand::LedgerCounts,
         ),
+        CardanoCliCommand::QueryRewardBalance {
+            socket_path: _socket_path,
+            network_magic,
+            account,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::RewardBalance { account },
+        ),
+        CardanoCliCommand::QueryDelegationsAndRewards {
+            socket_path: _socket_path,
+            network_magic,
+            credential,
+            is_key_hash,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::DelegationsAndRewards {
+                credential,
+                is_key_hash,
+            },
+        ),
+        CardanoCliCommand::QueryStakePoolParams {
+            socket_path: _socket_path,
+            network_magic,
+            pool_hash,
+        } => run_query_via_binary_runtime(
+            _socket_path,
+            network_magic.unwrap_or(reference_network_magic),
+            crate::commands::query::QueryCommand::StakePoolParams { pool_hash },
+        ),
         CardanoCliCommand::TransactionSubmit {
             socket_path: _socket_path,
             network_magic,
