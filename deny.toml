@@ -34,6 +34,16 @@ ignore = [
     # Migration plan: switch storage to in-house cbor.rs codec and
     # bump the on-disk format version; tracked separately.
     "RUSTSEC-2021-0127",
+    # rustls-pemfile 2.2.0 archived August 2025; the maintainers
+    # recommend migrating to `rustls-pki-types`'s PemObject trait.
+    # Yggdrasil pulls it in transitively via `axum-server` (used by
+    # cardano-tracer's HTTPS listener) and via `tonic` (used by
+    # opentelemetry-otlp). Both routes lack a one-step bump that
+    # drops rustls-pemfile — `tonic` 0.13+ migrates off it; we're
+    # blocked on opentelemetry-otlp's tonic bump. Documented in
+    # docs/TECH-DEBT.md; revisit when opentelemetry-otlp ships a
+    # tonic 0.13+ release.
+    "RUSTSEC-2025-0134",
 ]
 
 # -----------------------------------------------------------------------------
@@ -50,6 +60,13 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "CC0-1.0",
+    # Community Data License Agreement Permissive 2.0 — permissive,
+    # data-focused license. Surfaces transitively via webpki-roots
+    # (Mozilla CA root store snapshot) pulled in by `lettre` for the
+    # cardano-tracer SMTP notification handler. Compatible with
+    # Apache-2.0 distribution; the redistribution conditions are
+    # purely attribution-style (no copyleft scope).
+    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "MPL-2.0",
