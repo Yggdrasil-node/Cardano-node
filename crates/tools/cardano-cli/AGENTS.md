@@ -116,10 +116,45 @@ remaining commands and a separate binary is justified.
   `show_upstream_config_resolves_or_errors_with_real_network`)
   replace the prior `show_upstream_config_currently_bails_with_deferral_message`
   pin; parser tests in `parser::tests` updated to pass
-  `--network <preset>`. Only `Command::QueryTip` now stays in
-  deferral — wiring blocked on the LSQ-client trait abstraction
-  needed so the library can carry a tokio-free signature without
-  pulling tokio + yggdrasil-network direct deps in.
+  `--network <preset>`. Only `Command::QueryTip` then stayed in
+  deferral — wiring blocked on the LSQ-client trait abstraction.
+- **R505 (Phase 5 follow-on, 2026-05) — LSQ-client trait shipped.**
+  New `src/lsq.rs` module defines `trait LsqClient` with one method
+  `query_tip(socket_path, network_magic) -> Result<()>` plus the
+  in-crate `DeferralLsqClient` sentinel. Library's `run.rs` gains a
+  sibling `run_command_with(cmd, &dyn LsqClient)` that dispatches
+  `Command::QueryTip` through the trait; the existing
+  `run_command(cmd)` keeps its signature and internally delegates
+  to `run_command_with(cmd, &DeferralLsqClient)`. Strict mirror
+  declared "none" — Rust-side abstraction the upstream
+  monomorphic call-graph doesn't need. 4 new tests
+  (`lsq::tests::deferral_client_bails_with_structured_error`,
+  `custom_lsq_impl_can_be_plugged`,
+  `run::tests::query_tip_dispatches_through_custom_lsq_client`,
+  `query_tip_falls_back_to_mainnet_magic_when_unset`). 14 tests
+  total in the crate post-R505.
+- **R506 (Phase 5 follow-on, 2026-05) — concrete tokio LSQ impl
+  shipped.** New `src/lsq_tokio.rs` module + `lsq-tokio` Cargo
+  feature (default-on) lands the concrete `TokioLsqClient` that
+  opens a Unix-socket NtC connection via
+  `yggdrasil_network::ntc_connect`, drives the LocalStateQuery
+  mini-protocol to acquire VolatileTip + send the CBOR `[3]`
+  `GetChainPoint` query, decodes the upstream
+  `Ouroboros.Network.Block.encodePoint` reply (`[]` = origin /
+  `[slot, hash]` = block point), prints JSON byte-equivalent to
+  what the node binary's `cardano-cli query-tip` already prints.
+  `main.rs` plugs `TokioLsqClient` into `run_command_with` when
+  `lsq-tokio` is on, falls back to `DeferralLsqClient` when off
+  (slim build). The library crate stays tokio-free regardless —
+  optional deps gate the dependency footprint. **All 3 of 3
+  `Command` variants are now operationally wired in the standalone
+  binary**: closure of the R503-R506 arc.
+  5 new tests in `lsq_tokio::tests`
+  (`query_tip_against_missing_socket_returns_wrapped_error`,
+  `decode_origin_chain_point`, `decode_block_point_chain_point`,
+  `decode_unknown_shape_falls_back_to_raw_hex`,
+  `encode_get_chain_point_query_emits_canonical_cbor`). 19 tests
+  total in the crate post-R506.
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -210,14 +245,15 @@ week follow-up rounds. Each port requires:
    the byte-equivalence verification status against the upstream
    binary at `.reference-haskell-cardano-node/install/bin/cardano-cli`.
 
-The pending migrations as of R504 closure (run-dispatcher operational
-for 2 of 3 surface commands; only `QueryTip` deferred):
+The pending migrations as of R506 closure (run-dispatcher operational
+for all 3 of 3 surface commands; standalone binary is feature-complete
+for the current `Command` enum):
 
 | Subcommand | Status | Migration shape |
 |---|---|---|
 | `Version` | ✅ migrated (R296 helpers, R503 dispatcher) | library-side `run::run_command` dispatches to `helper::version_info()` |
 | `ShowUpstreamConfig` | ✅ migrated (R297 helpers, R504 dispatcher) | library-side `run::run_command` dispatches to `environment::resolve_upstream_reference_paths` → `extract_reference_network_magic` → `run_show_upstream_config` |
-| `QueryTip` | future round | needs `trait LsqClient` abstraction in this crate; node binary supplies the impl with its tokio + Unix-socket connector |
+| `QueryTip` | ✅ migrated (R505 trait, R506 concrete impl) | library defines `trait LsqClient`; binary's `main.rs` constructs `TokioLsqClient` (gated by `lsq-tokio` feature, default on) and passes it to `run_command_with`. Slim build (`--no-default-features`) falls back to `DeferralLsqClient`. |
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
