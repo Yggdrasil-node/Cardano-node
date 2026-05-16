@@ -412,6 +412,25 @@ mod tests {
         );
     }
 
+    /// `transaction-view --tx-hex …` parses to the expected variant.
+    #[test]
+    fn parses_transaction_view() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "transaction-view",
+            "--tx-hex",
+            "83a0a0f5",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::TransactionView {
+                tx_file: None,
+                tx_hex: Some("83a0a0f5".to_string()),
+            }
+        );
+    }
+
     /// `address-key-gen --verification-key-file … --signing-key-file …`
     /// parses to the expected variant.
     #[test]

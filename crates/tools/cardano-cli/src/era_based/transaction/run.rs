@@ -3,12 +3,12 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Transaction/Run.hs`.
-//! R292 landed the file as an API skeleton. R508–R509 (Phase 3.2)
-//! land `run_transaction_txid_cmd` + `run_transaction_sign_cmd`,
-//! mirroring upstream `runTransactionTxIdCmd` /
-//! `runTransactionSignCmd`. Remaining transaction subcommands
-//! (`transaction build`, `transaction build-raw`,
-//! `transaction view`, …) port over subsequent rounds.
+//! R292 landed the file as an API skeleton. R508–R513 (Phase 3.2/3.3)
+//! land `run_transaction_txid_cmd` / `run_transaction_sign_cmd` /
+//! `run_transaction_submit_cmd` / `run_transaction_view_cmd`,
+//! mirroring the corresponding upstream `runTransaction*Cmd`.
+//! `transaction build` / `build-raw` (full tx construction) port
+//! over subsequent rounds.
 
 use std::path::{Path, PathBuf};
 
@@ -147,6 +147,60 @@ pub fn run_transaction_submit_cmd(
 ) -> Result<()> {
     let tx_bytes = read_tx_input(tx_file, tx_hex)?;
     client.submit_tx(socket_path, network_magic, &tx_bytes)
+}
+
+/// Run `transaction view` — print the structural breakdown of a
+/// serialized transaction as JSON.
+///
+/// Mirrors upstream `runTransactionViewCmd` from
+/// `Cardano.CLI.EraBased.Transaction.Run`, but **shallow**: rather
+/// than a full era-aware decode of every tx-body field, it surfaces
+/// the txid plus each top-level CBOR array element (body / witness
+/// set / tail) as hex. A full typed pretty-printer is a follow-on —
+/// this gives operators the txid + structure without depending on a
+/// per-era tx-body decoder. The shallow shape is deliberate and
+/// documented in the output's `view` field.
+pub fn run_transaction_view_cmd(tx_file: Option<PathBuf>, tx_hex: Option<String>) -> Result<()> {
+    let tx_bytes = read_tx_input(tx_file, tx_hex)?;
+    let view = decode_tx_structure(&tx_bytes)?;
+    println!("{}", serde_json::to_string_pretty(&view)?);
+    Ok(())
+}
+
+/// Decode the *structure* of a CBOR transaction `[body, witness_set,
+/// …tail]` into a JSON object: the txid (Blake2b-256 of the body),
+/// the outer array length, and each element as hex.
+fn decode_tx_structure(tx_bytes: &[u8]) -> Result<serde_json::Value> {
+    use yggdrasil_ledger::cbor::Decoder;
+
+    let mut dec = Decoder::new(tx_bytes);
+    let array_len = dec
+        .array()
+        .map_err(|e| eyre::eyre!("transaction CBOR does not start with an array: {e}"))?;
+    if array_len < 2 {
+        eyre::bail!(
+            "tx CBOR outer array must have at least 2 elements (body + witness set); got {array_len}"
+        );
+    }
+    let body = dec
+        .raw_value()
+        .map_err(|e| eyre::eyre!("failed to extract the transaction body bytes: {e}"))?
+        .to_vec();
+    let witness_set = dec
+        .raw_value()
+        .map_err(|e| eyre::eyre!("failed to extract the witness-set bytes: {e}"))?
+        .to_vec();
+    let tail = &tx_bytes[dec.position()..];
+    let txid = yggdrasil_ledger::compute_tx_id(&body).0;
+
+    Ok(serde_json::json!({
+        "view": "shallow — txid + top-level CBOR structure; not a full per-era field decode",
+        "txid": hex::encode(txid),
+        "tx_array_len": array_len,
+        "body_cbor": hex::encode(&body),
+        "witness_set_cbor": hex::encode(&witness_set),
+        "tail_cbor": hex::encode(tail),
+    }))
 }
 
 /// Resolve the `--tx-file` / `--tx-hex` flag pair to raw transaction
@@ -308,6 +362,34 @@ mod tests {
         // `[ {} ]` = 0x81 0xA0 — a 1-element array.
         let err = sign_tx_with_fresh_witness_set(&[0x81, 0xA0], &[1_u8; 32])
             .expect_err("1-element tx array must bail");
+        assert!(
+            err.to_string().contains("at least 2 elements"),
+            "error must explain the ≥2-element requirement; got {err}"
+        );
+    }
+
+    /// `decode_tx_structure` breaks a CBOR tx into its txid + the
+    /// hex of each top-level element.
+    #[test]
+    fn tx_structure_splits_body_witnesses_tail() {
+        // `[ {}, {}, true ]` = 0x83 0xA0 0xA0 0xF5 — body, witness
+        // set, and a 1-byte tail (the `is_valid` flag).
+        let tx = vec![0x83, 0xA0, 0xA0, 0xF5];
+        let v = decode_tx_structure(&tx).expect("structure of a 3-element tx");
+        assert_eq!(v["tx_array_len"], 3);
+        assert_eq!(v["body_cbor"], "a0");
+        assert_eq!(v["witness_set_cbor"], "a0");
+        assert_eq!(v["tail_cbor"], "f5");
+        // The txid is Blake2b-256 of the body byte span (`0xa0`).
+        let expected = hex::encode(yggdrasil_ledger::compute_tx_id(&[0xA0]).0);
+        assert_eq!(v["txid"], expected);
+    }
+
+    /// `decode_tx_structure` rejects a tx whose outer array has
+    /// fewer than 2 elements.
+    #[test]
+    fn tx_structure_rejects_too_short_array() {
+        let err = decode_tx_structure(&[0x81, 0xA0]).expect_err("1-element array must bail");
         assert!(
             err.to_string().contains("at least 2 elements"),
             "error must explain the ≥2-element requirement; got {err}"

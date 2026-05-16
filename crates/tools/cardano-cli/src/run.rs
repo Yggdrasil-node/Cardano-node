@@ -297,6 +297,11 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 &out_file,
             )
         }
+        Command::TransactionView { tx_file, tx_hex } => {
+            // R513: offline subcommand — shallow structural view of
+            // a serialized tx (txid + top-level CBOR elements).
+            crate::era_based::transaction::run::run_transaction_view_cmd(tx_file, tx_hex)
+        }
         Command::TransactionSubmit {
             tx_file,
             tx_hex,

@@ -307,6 +307,17 @@ pub enum Command {
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
+    /// Print the structural breakdown (txid + top-level CBOR
+    /// elements) of a serialized transaction. Mirrors upstream
+    /// `transaction view` (`Cardano.CLI.EraBased.Transaction.Command`).
+    TransactionView {
+        /// Path to a file containing the CBOR-encoded transaction.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR transaction bytes.
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+    },
     /// Submit a serialized transaction to a running node over the
     /// NtC LocalTxSubmission mini-protocol. Mirrors upstream
     /// `transaction submit` (`Cardano.CLI.EraBased.Transaction.Command`).
