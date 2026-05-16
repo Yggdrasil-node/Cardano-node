@@ -297,6 +297,19 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 &out_file,
             )
         }
+        Command::TransactionBuildRaw {
+            tx_in,
+            tx_out,
+            fee,
+            out_file,
+        } => {
+            // R514: offline subcommand — assemble an unsigned Conway
+            // tx from explicit inputs/outputs/fee. The tx body is
+            // encoded by yggdrasil-ledger's parity-built encoder.
+            crate::era_based::transaction::run::run_transaction_build_raw_cmd(
+                &tx_in, &tx_out, fee, &out_file,
+            )
+        }
         Command::TransactionView { tx_file, tx_hex } => {
             // R513: offline subcommand — shallow structural view of
             // a serialized tx (txid + top-level CBOR elements).

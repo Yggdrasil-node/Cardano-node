@@ -412,6 +412,36 @@ mod tests {
         );
     }
 
+    /// `transaction-build-raw` parses repeatable `--tx-in` / `--tx-out`
+    /// plus `--fee` and `--out-file`.
+    #[test]
+    fn parses_transaction_build_raw() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "transaction-build-raw",
+            "--tx-in",
+            "aa#0",
+            "--tx-in",
+            "bb#1",
+            "--tx-out",
+            "addr_test1xyz+1000000",
+            "--fee",
+            "170000",
+            "--out-file",
+            "/tmp/tx.raw",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::TransactionBuildRaw {
+                tx_in: vec!["aa#0".to_string(), "bb#1".to_string()],
+                tx_out: vec!["addr_test1xyz+1000000".to_string()],
+                fee: 170_000,
+                out_file: PathBuf::from("/tmp/tx.raw"),
+            }
+        );
+    }
+
     /// `transaction-view --tx-hex …` parses to the expected variant.
     #[test]
     fn parses_transaction_view() {

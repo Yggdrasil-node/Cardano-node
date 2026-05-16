@@ -149,6 +149,138 @@ pub fn run_transaction_submit_cmd(
     client.submit_tx(socket_path, network_magic, &tx_bytes)
 }
 
+/// Run `transaction build-raw` — assemble an unsigned Conway
+/// transaction from explicit `--tx-in` / `--tx-out` / `--fee` and
+/// write the raw CBOR to `out_file`.
+///
+/// Mirrors upstream `runTransactionBuildRawCmd` from
+/// `Cardano.CLI.EraBased.Transaction.Run`. "Raw" = no coin selection
+/// and no fee balancing — the operator supplies every input, output,
+/// and the exact fee (`transaction build` adds those on top, a
+/// follow-on round).
+///
+/// Wire-format trust: the transaction *body* is encoded by
+/// `yggdrasil_ledger::ConwayTxBody`'s `CborEncode` impl — a
+/// parity-built per-era encoder, reused verbatim, not hand-rolled
+/// here. This runner only constructs the typed `ConwayTxBody` from
+/// the CLI args and wraps it in the canonical 4-element Conway tx
+/// array `[body, {}, true, null]` (empty witness set, `is_valid`
+/// true, no auxiliary data) — the same shape `transaction txid` /
+/// `sign` / `view` already decode. Output is the raw tx CBOR, so it
+/// composes directly with this crate's other `transaction *`
+/// subcommands.
+pub fn run_transaction_build_raw_cmd(
+    tx_ins: &[String],
+    tx_outs: &[String],
+    fee: u64,
+    out_file: &Path,
+) -> Result<()> {
+    use yggdrasil_ledger::cbor::{CborEncode, Encoder};
+    use yggdrasil_ledger::{BabbageTxOut, ConwayTxBody, ShelleyTxIn};
+
+    if tx_ins.is_empty() {
+        eyre::bail!("transaction build-raw requires at least one --tx-in");
+    }
+    if tx_outs.is_empty() {
+        eyre::bail!("transaction build-raw requires at least one --tx-out");
+    }
+
+    let inputs: Vec<ShelleyTxIn> = tx_ins
+        .iter()
+        .map(|s| parse_tx_in(s))
+        .collect::<Result<_>>()?;
+    let outputs: Vec<BabbageTxOut> = tx_outs
+        .iter()
+        .map(|s| parse_tx_out(s))
+        .collect::<Result<_>>()?;
+
+    // A `build-raw` body carries only inputs / outputs / fee; every
+    // optional field (certs, withdrawals, mint, governance, …) is
+    // absent. `transaction build` is the variant that would populate
+    // more.
+    let body = ConwayTxBody {
+        inputs,
+        outputs,
+        fee,
+        ttl: None,
+        certificates: None,
+        withdrawals: None,
+        auxiliary_data_hash: None,
+        validity_interval_start: None,
+        mint: None,
+        script_data_hash: None,
+        collateral: None,
+        required_signers: None,
+        network_id: None,
+        collateral_return: None,
+        total_collateral: None,
+        reference_inputs: None,
+        voting_procedures: None,
+        proposal_procedures: None,
+        current_treasury_value: None,
+        treasury_donation: None,
+    };
+
+    let mut enc = Encoder::new();
+    body.encode_cbor(&mut enc);
+    let body_cbor = enc.into_bytes();
+
+    // Canonical Conway tx: `[body, witness_set, is_valid, aux]`.
+    // Unsigned ⇒ empty witness map (0xa0), is_valid true (0xf5),
+    // no auxiliary data (0xf6).
+    let mut tx_cbor = Vec::with_capacity(body_cbor.len() + 4);
+    tx_cbor.push(0x84);
+    tx_cbor.extend_from_slice(&body_cbor);
+    tx_cbor.extend_from_slice(&[0xa0, 0xf5, 0xf6]);
+
+    std::fs::write(out_file, &tx_cbor)
+        .wrap_err_with(|| format!("failed to write --out-file {}", out_file.display()))?;
+    Ok(())
+}
+
+/// Parse a `--tx-in` argument `TXID#INDEX` into a [`ShelleyTxIn`].
+fn parse_tx_in(raw: &str) -> Result<yggdrasil_ledger::ShelleyTxIn> {
+    let (txid_hex, index_str) = raw
+        .trim()
+        .rsplit_once('#')
+        .ok_or_else(|| eyre::eyre!("--tx-in expects TXID#INDEX (e.g. 0123ab…#0); got {raw:?}"))?;
+    let txid_bytes = hex::decode(txid_hex.trim())
+        .map_err(|e| eyre::eyre!("--tx-in TXID {txid_hex:?} is not valid hex: {e}"))?;
+    let transaction_id: [u8; 32] = txid_bytes.as_slice().try_into().map_err(|_| {
+        eyre::eyre!("--tx-in TXID must be 32 bytes (64 hex chars); got {txid_hex:?}")
+    })?;
+    let index: u16 = index_str
+        .trim()
+        .parse()
+        .map_err(|e| eyre::eyre!("--tx-in INDEX {index_str:?} is not a valid u16: {e}"))?;
+    Ok(yggdrasil_ledger::ShelleyTxIn {
+        transaction_id,
+        index,
+    })
+}
+
+/// Parse a `--tx-out` argument `ADDRESS+LOVELACE` into a
+/// [`BabbageTxOut`]. `ADDRESS` is a Bech32 Shelley address (the
+/// form `address build` emits); `LOVELACE` is a plain integer.
+fn parse_tx_out(raw: &str) -> Result<yggdrasil_ledger::BabbageTxOut> {
+    let (addr, lovelace_str) = raw
+        .trim()
+        .rsplit_once('+')
+        .ok_or_else(|| eyre::eyre!("--tx-out expects ADDRESS+LOVELACE; got {raw:?}"))?;
+    let (_hrp, address) = bech32::decode(addr.trim())
+        .map_err(|e| eyre::eyre!("--tx-out ADDRESS {addr:?} is not valid Bech32: {e}"))?;
+    let lovelace: u64 = lovelace_str
+        .trim()
+        .parse()
+        .map_err(|e| eyre::eyre!("--tx-out LOVELACE {lovelace_str:?} is not a valid u64: {e}"))?;
+    Ok(yggdrasil_ledger::BabbageTxOut {
+        address,
+        amount: yggdrasil_ledger::Value::Coin(lovelace),
+        datum_option: None,
+        script_ref: None,
+    })
+}
+
 /// Run `transaction view` — print the structural breakdown of a
 /// serialized transaction as JSON.
 ///
@@ -394,5 +526,93 @@ mod tests {
             err.to_string().contains("at least 2 elements"),
             "error must explain the ≥2-element requirement; got {err}"
         );
+    }
+
+    /// `parse_tx_in` reads a `TXID#INDEX` pair; bad shapes bail.
+    #[test]
+    fn parse_tx_in_accepts_valid_and_rejects_bad() {
+        let txin = parse_tx_in(&format!("{}#7", "ab".repeat(32))).expect("valid tx-in");
+        assert_eq!(txin.transaction_id, [0xab_u8; 32]);
+        assert_eq!(txin.index, 7);
+        assert!(parse_tx_in("deadbeef").is_err(), "missing # must bail");
+        assert!(parse_tx_in("zz#0").is_err(), "non-hex TXID must bail");
+        assert!(
+            parse_tx_in(&format!("{}#0", "ab".repeat(16))).is_err(),
+            "a 16-byte TXID (not 32) must bail"
+        );
+    }
+
+    /// `parse_tx_out` reads an `ADDRESS+LOVELACE` pair, Bech32-decoding
+    /// the address; bad shapes bail.
+    #[test]
+    fn parse_tx_out_accepts_valid_and_rejects_bad() {
+        // A 29-byte enterprise-address payload, Bech32-encoded.
+        let addr = bech32::encode::<bech32::Bech32>(
+            bech32::Hrp::parse("addr_test").expect("hrp"),
+            &[0x60_u8; 29],
+        )
+        .expect("encode test address");
+        let txout = parse_tx_out(&format!("{addr}+1500000")).expect("valid tx-out");
+        assert_eq!(txout.address.len(), 29);
+        assert!(matches!(
+            txout.amount,
+            yggdrasil_ledger::Value::Coin(1_500_000)
+        ));
+        assert!(parse_tx_out("noplus").is_err(), "missing + must bail");
+        assert!(
+            parse_tx_out("not-bech32+1000000").is_err(),
+            "non-Bech32 address must bail"
+        );
+    }
+
+    /// `run_transaction_build_raw_cmd` writes a structurally-valid
+    /// unsigned Conway tx: a 4-element array `[body, {}, true, null]`
+    /// whose body round-trips through `decode_tx_structure`.
+    #[test]
+    fn build_raw_produces_a_decodable_unsigned_tx() {
+        let dir = std::env::temp_dir().join(format!(
+            "yggdrasil-cli-buildraw-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let addr = bech32::encode::<bech32::Bech32>(
+            bech32::Hrp::parse("addr_test").expect("hrp"),
+            &[0x60_u8; 29],
+        )
+        .expect("encode test address");
+        let out = dir.join("tx.raw");
+        run_transaction_build_raw_cmd(
+            &[format!("{}#0", "ab".repeat(32))],
+            &[format!("{addr}+1000000")],
+            170_000,
+            &out,
+        )
+        .expect("build-raw must succeed");
+
+        let bytes = std::fs::read(&out).expect("read built tx");
+        let v = decode_tx_structure(&bytes).expect("the built tx must decode");
+        assert_eq!(v["tx_array_len"], 4, "an unsigned tx is a 4-element array");
+        assert!(
+            !v["body_cbor"].as_str().expect("body hex").is_empty(),
+            "the body must carry the inputs/outputs/fee"
+        );
+        assert_eq!(v["witness_set_cbor"], "a0", "witness set is the empty map");
+        assert_eq!(v["tail_cbor"], "f5f6", "tail is is_valid(true) + aux(null)");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `build-raw` bails when no inputs or no outputs are supplied.
+    #[test]
+    fn build_raw_requires_inputs_and_outputs() {
+        let out = std::env::temp_dir().join("yggdrasil-cli-buildraw-unused.raw");
+        let err = run_transaction_build_raw_cmd(&[], &["x+1".to_string()], 0, &out)
+            .expect_err("no --tx-in must bail");
+        assert!(err.to_string().contains("at least one --tx-in"));
+        let err = run_transaction_build_raw_cmd(&[format!("{}#0", "ab".repeat(32))], &[], 0, &out)
+            .expect_err("no --tx-out must bail");
+        assert!(err.to_string().contains("at least one --tx-out"));
     }
 }

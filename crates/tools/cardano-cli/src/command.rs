@@ -307,6 +307,25 @@ pub enum Command {
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
+    /// Assemble an unsigned Conway transaction from explicit inputs,
+    /// outputs, and fee (no coin selection / fee balancing). Mirrors
+    /// upstream `transaction build-raw`
+    /// (`Cardano.CLI.EraBased.Transaction.Command`).
+    TransactionBuildRaw {
+        /// A transaction input, `TXID#INDEX`. Repeatable.
+        #[arg(long = "tx-in")]
+        tx_in: Vec<String>,
+        /// A transaction output, `ADDRESS+LOVELACE` (ADDRESS is a
+        /// Bech32 Shelley address). Repeatable.
+        #[arg(long = "tx-out")]
+        tx_out: Vec<String>,
+        /// The transaction fee in lovelace.
+        #[arg(long)]
+        fee: u64,
+        /// Path to write the unsigned transaction CBOR.
+        #[arg(long)]
+        out_file: PathBuf,
+    },
     /// Print the structural breakdown (txid + top-level CBOR
     /// elements) of a serialized transaction. Mirrors upstream
     /// `transaction view` (`Cardano.CLI.EraBased.Transaction.Command`).
