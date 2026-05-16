@@ -397,6 +397,19 @@ async fn trace_objects_delivered_to_upstream_cardano_tracer() {
     // the bearer instead of back-pressuring it.
     let _read_task = conn.spawn_read_task();
 
+    // Spawn the egress scheduler (`muxer`) — slice (b). Upstream
+    // `Network.Mux.hs` forks the `muxer`/`demuxer` job pair only
+    // AFTER the Handshake mini-protocol has completed; this mirrors
+    // that ordering exactly (handshake above → muxer here). Once the
+    // muxer is running, `run_via_mux`'s `send_sdu` calls `enqueue`
+    // onto the shared egress FIFO and the muxer drains it. The
+    // default `EgressConfig` uses a `u16::MAX` `sdu_size`, so a
+    // `MsgTraceObjectsReply` SDU is written un-segmented — one
+    // `send_sdu` → one SDU on the wire, byte-identical to the
+    // pre-scheduler direct write.
+    let _muxer_task = conn
+        .spawn_muxer_task(yggdrasil_node_tracer::trace_forwarder::egress::EgressConfig::default());
+
     // The known TraceObject stream. Each `to_machine` carries a
     // unique marker so the log-file assertion is unambiguous. The
     // process id keeps markers distinct across concurrent test runs.

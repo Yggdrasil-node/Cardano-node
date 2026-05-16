@@ -43,10 +43,16 @@ The crate ships:
   read-task byte-accounts every dispatched payload and an over-cap
   SDU returns `MuxConnectionError::IngressQueueOverRun` from the
   read-loop (mirrors upstream `Network.Mux.Ingress.demuxer`'s
-  `IngressQueueOverRun` throw + bearer tear-down). Remaining: the
-  egress scheduler (round (b)) and bearer-task supervision
-  (round (c)) — the current forwarding task is write-only and
-  works against a request-tolerant acceptor like cardano-tracer.
+  `IngressQueueOverRun` throw + bearer tear-down). The **egress
+  scheduler** has also landed (task #19, full Network.Mux arc,
+  slice (b)): `egress.rs` is a faithful port of `Network.Mux.Egress`
+  (`EgressQueue` / `TranslocationServiceRequest` / `Wanton` /
+  `muxer` / `processSingleWanton`); `MuxConnection::spawn_muxer_task`
+  forks the `muxer` after the handshake and `send_sdu` then enqueues
+  a demand instead of writing directly. Remaining: bearer-task
+  supervision (round (c)) — the current forwarding task is
+  write-only and works against a request-tolerant acceptor like
+  cardano-tracer.
 
 ## Rules — Non-Negotiable
 
@@ -121,13 +127,41 @@ prometheus` and finish the cardano-tracer Mux Layer 2/3 protocol.
   16 KiB-admitted, over-run tear-down, drain-frees-bytes,
   inclusive boundary). Egress queue (b) and bearer-task supervision
   (c) are follow-on rounds.
+- task #19 full-Network.Mux arc, slice (b) — the **egress
+  scheduler**. New `egress.rs` is a faithful port of upstream
+  `Network.Mux.Egress`: `EgressQueue` (a FIFO of
+  `TranslocationServiceRequest`/`TLSRDemand`), `Wanton` (the
+  per-demand payload-being-drained), the `muxer` task (`run_muxer`),
+  and `processSingleWanton` (`process_single_wanton`). A single
+  shared FIFO is drained by one `muxer` task: each iteration pops
+  one demand, slices ≤ `sdu_size` bytes off its `Wanton`, and
+  re-enqueues the demand at the BACK of the FIFO when bytes
+  remain — round-robin fairness emerges from that FIFO +
+  re-enqueue. `run_muxer` batches up to `MAX_SDUS_PER_BATCH = 100`
+  SDUs / `EgressConfig::batch_size` bytes per bearer write (the
+  Rust analogue of upstream `writeMany`).
+  `EgressConfig::CARDANO_TRACER_DEFAULT` pins
+  `sdu_size = batch_size = u16::MAX` so a real `MsgTraceObjectsReply`
+  SDU is never segmented — one `enqueue` → one SDU on the wire,
+  byte-identical to the pre-scheduler direct write.
+  `MuxConnection::spawn_muxer_task(EgressConfig)` forks the `muxer`
+  AFTER the handshake (mirroring upstream `Network.Mux.hs`, which
+  forks `muxer`/`demuxer` only after the Handshake mini-protocol
+  completes over a direct-write channel);
+  `MuxConnection::run_initiator_handshake` therefore still does a
+  direct bearer write/read and the handshake conformance test is
+  unaffected. After `spawn_muxer_task`, `MuxConnection::send_sdu`
+  enqueues a demand (returns once queued — the upstream
+  `muxChannel.send` semantic); before it, `send_sdu` falls back to
+  a direct `write_sdu`. 10 new unit tests (7 in `egress.rs`,
+  3 in `mux_connection.rs`) including a deterministic round-robin
+  fairness test (`A,B,A,B,A,B` interleaving). Bearer-task
+  supervision (c) is the remaining follow-on round.
 
-Remaining pre-`verified_11_0_1`: the egress scheduler (round (b):
-`Network.Mux.Egress` — `EgressQueue` / `TranslocationServiceRequest`
-/ `Wanton` / `muxer` round-robin) and bearer-task supervision
+Remaining pre-`verified_11_0_1`: bearer-task supervision
 (round (c): cohesive shutdown when any sub-task fails) — the bearer
-deadlock and the ingress queue limits are now done — plus an
-operator conformance soak against
+deadlock, the ingress queue limits, and the egress scheduler are
+now done — plus an operator conformance soak against
 `.reference-haskell-cardano-node/install/bin/cardano-tracer`
 (needs `setup-reference.sh` without `--sources-only`).
 

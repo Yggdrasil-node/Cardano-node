@@ -294,6 +294,17 @@ where
         super::mux_connection::MuxConnectionError::IngressQueueOverRun { .. } => {
             ForwardingTaskError::Bearer(BearerError::UnexpectedEof)
         }
+        // `Egress` surfaces when the egress muxer task has failed (a
+        // fatal bearer write) or already stopped — either way the
+        // forwarding write cannot proceed. Carry the underlying
+        // bearer error through when there is one; otherwise surface
+        // a generic transport failure.
+        super::mux_connection::MuxConnectionError::Egress(eg) => match eg {
+            super::egress::EgressError::Bearer(b) => ForwardingTaskError::Bearer(b),
+            super::egress::EgressError::MuxerStopped => {
+                ForwardingTaskError::Bearer(BearerError::UnexpectedEof)
+            }
+        },
     })?;
     buffer.clear();
     Ok(())

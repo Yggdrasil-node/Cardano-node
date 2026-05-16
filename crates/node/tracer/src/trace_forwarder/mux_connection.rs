@@ -77,16 +77,40 @@
 //! progress; Yggdrasil's smaller dispatcher has no queue until a
 //! subscriber exists — documented divergence).
 //!
-//! The egress side is **not** queue-limited in this slice:
-//! [`MuxConnection::send_sdu`] is a direct
-//! `writer.lock() + write_sdu` round-trip with no intervening queue.
-//! Introducing an egress queue requires the egress scheduler
-//! (upstream `Network.Mux.Egress`: `EgressQueue`,
-//! `TranslocationServiceRequest`, `Wanton`, the `muxer` task) — that
-//! is a follow-on round, tracked in `docs/TECH-DEBT.md`
-//! "cardano-tracer Mux Layer 2/3". Bearer-task supervision
-//! (cohesive shutdown when any sub-task fails) is a further
-//! follow-on round.
+//! ## Egress scheduler (slice b)
+//!
+//! The egress side is now routed through a port of upstream
+//! `Network.Mux.Egress` — see [`super::egress`]. The lifecycle is a
+//! faithful mirror of upstream `Network.Mux.hs`, where the
+//! `muxer`/`demuxer` job pair is forked **after** the Handshake
+//! mini-protocol has already completed over a plain direct-write
+//! `bearerAsChannel`:
+//!
+//! - [`MuxConnection::run_initiator_handshake`] still does its own
+//!   direct `writer.write_sdu` / `reader.read_sdu` exchange. No
+//!   scheduler is involved — exactly as upstream runs the handshake
+//!   before the muxer exists. The handshake conformance test is
+//!   therefore unaffected by this slice.
+//! - [`MuxConnection::spawn_muxer_task`] constructs the egress
+//!   channel ([`super::egress::egress_channel`]), stashes the
+//!   producer-side [`super::egress::EgressDemand`] handle, and spawns
+//!   the `muxer` task ([`super::egress::run_muxer`]) on the **writer**
+//!   half. It MUST be called after the handshake and before any
+//!   [`MuxConnection::send_sdu`].
+//! - After `spawn_muxer_task`, [`MuxConnection::send_sdu`] no longer
+//!   writes directly: it `enqueue`s a [`super::egress::Wanton`]-style
+//!   demand onto the shared FIFO and returns as soon as the demand is
+//!   queued. The muxer drains the FIFO, segments to `sdu_size`, and
+//!   batches up to `MAX_SDUS_PER_BATCH` SDUs per bearer write.
+//!   Round-robin fairness across mini-protocols emerges from the
+//!   FIFO + re-enqueue-on-remainder discipline.
+//! - Before `spawn_muxer_task` (i.e. during the handshake window),
+//!   `send_sdu` falls back to a direct `writer.lock() + write_sdu` so
+//!   the API stays usable for callers that never spawn a muxer (the
+//!   pre-existing `send_sdu` round-trip unit tests).
+//!
+//! Bearer-task supervision (cohesive shutdown when the muxer, the
+//! read-task, or the bearer fails) is the next follow-on round.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -97,6 +121,7 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
 use super::bearer::{Bearer, BearerError, BearerReader, BearerWriter};
+use super::egress::{EgressConfig, EgressDemand, EgressError, egress_channel, run_muxer};
 use super::mux::{MiniProtocolDir, SduHeader};
 
 /// One full received SDU exposed to per-mini-protocol consumers
@@ -130,6 +155,12 @@ pub enum MuxConnectionError {
         /// Direction of the offending SDU.
         direction: MiniProtocolDir,
     },
+    /// The egress scheduler reported a failure — either a fatal
+    /// bearer write inside the muxer or an `enqueue` after the muxer
+    /// task already exited. Surfaced from [`MuxConnection::send_sdu`]
+    /// once a muxer has been spawned. Mirrors upstream
+    /// `Network.Mux.hs`'s "muxer exception is always fatal".
+    Egress(EgressError),
 }
 
 impl core::fmt::Display for MuxConnectionError {
@@ -144,6 +175,7 @@ impl core::fmt::Display for MuxConnectionError {
                 "ingress queue over-run on mini-protocol {mini_protocol_num} \
                  ({direction:?}): SDU exceeds maximumIngressQueue"
             ),
+            Self::Egress(e) => write!(f, "mux connection egress error: {e}"),
         }
     }
 }
@@ -305,6 +337,13 @@ where
     /// [`MuxConnectionError::IngressQueueOverRun`] if the cap would
     /// be exceeded).
     subscribers: Arc<Mutex<SubscriberMap>>,
+    /// Producer-side handle for the egress scheduler — `Some` once
+    /// [`Self::spawn_muxer_task`] has been called, `None` before
+    /// that (the handshake window). When `Some`, [`Self::send_sdu`]
+    /// `enqueue`s onto the shared FIFO instead of writing directly.
+    /// Behind a tokio Mutex so `spawn_muxer_task` can install it and
+    /// `send_sdu` can read it without a data race.
+    egress: Arc<Mutex<Option<EgressDemand>>>,
 }
 
 impl<S> MuxConnection<S>
@@ -322,23 +361,106 @@ where
             writer: Arc::new(Mutex::new(writer)),
             reader: Arc::new(Mutex::new(reader)),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
+            egress: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Send one outbound SDU. Serializes against other `send_sdu`
-    /// callers through the **writer** mutex so SDUs hit the wire as
-    /// atomic units. Never contends with the read-task: the
-    /// read-loop locks the separate reader mutex.
+    /// Send one outbound SDU.
+    ///
+    /// **After [`Self::spawn_muxer_task`]** this `enqueue`s the
+    /// payload as a [`super::egress`] demand onto the shared egress
+    /// FIFO and returns as soon as the demand is queued — the bytes
+    /// are **not** yet on the wire when this returns. The muxer task
+    /// drains the FIFO, segments to `sdu_size`, batches, and writes.
+    /// Round-robin fairness across mini-protocols comes from the
+    /// FIFO + re-enqueue-on-remainder. This is the upstream
+    /// `muxChannel.send` semantic.
+    ///
+    /// **Before `spawn_muxer_task`** (the handshake window, or any
+    /// caller that never spawns a muxer) this falls back to a direct
+    /// `writer.lock() + write_sdu` round-trip, serialised against
+    /// other direct callers through the writer mutex. Never contends
+    /// with the read-task: the read-loop locks the separate reader
+    /// mutex.
+    ///
+    /// The `header.timestamp` is honoured only on the direct-write
+    /// path; on the scheduler path the muxer stamps its own header
+    /// (timestamp 0, mirroring upstream `processSingleWanton` which
+    /// sets `RemoteClockModel 0`) — the trace-forward protocol treats
+    /// the SDU timestamp as informational, so this is parity-correct.
     pub async fn send_sdu(
         &self,
         header: &SduHeader,
         payload: &[u8],
     ) -> Result<(), MuxConnectionError> {
+        // Fast-path: a muxer has been spawned — enqueue the demand.
+        {
+            let egress = self.egress.lock().await;
+            if let Some(demand) = egress.as_ref() {
+                return demand
+                    .enqueue(header.mini_protocol_num, header.direction, payload.to_vec())
+                    .await
+                    .map_err(MuxConnectionError::Egress);
+            }
+        }
+        // No muxer yet: direct write (handshake window / muxer-less
+        // callers).
         let mut writer = self.writer.lock().await;
         writer
             .write_sdu(header, payload)
             .await
             .map_err(MuxConnectionError::Bearer)
+    }
+
+    /// Spawn the egress scheduler (`muxer`) task and switch
+    /// [`Self::send_sdu`] over to the enqueue path.
+    ///
+    /// Faithful mirror of upstream `Network.Mux.hs`, which forks the
+    /// `muxer` job (`forkJob jobpool (muxerJob egressQueue)`) only
+    /// **after** the Handshake mini-protocol has finished over a
+    /// plain direct-write channel. Therefore this MUST be called
+    /// **after** [`Self::run_initiator_handshake`] and **before** the
+    /// first scheduler-routed [`Self::send_sdu`].
+    ///
+    /// Returns the muxer's `JoinHandle` so the caller can await it on
+    /// shutdown. The muxer runs until every [`super::egress::EgressDemand`]
+    /// is dropped (clean shutdown — it drains the FIFO first) or a
+    /// bearer write fails (fatal). The muxer locks only the **writer**
+    /// half, so it never contends with the read-task.
+    ///
+    /// `config` selects the segmentation `sdu_size` and the per-batch
+    /// byte budget; pass [`EgressConfig::default`] for the
+    /// trace-forwarder bearer (`u16::MAX` SDUs — no segmentation of a
+    /// real trace SDU).
+    ///
+    /// Calling this twice replaces the stashed [`super::egress::EgressDemand`]
+    /// with a fresh channel; the previous muxer's producer side is
+    /// dropped, so the previous muxer drains its FIFO and exits.
+    /// Callers should spawn the muxer exactly once per connection.
+    pub fn spawn_muxer_task(
+        &self,
+        config: EgressConfig,
+    ) -> tokio::task::JoinHandle<Result<(), EgressError>> {
+        let (demand, muxer) = egress_channel();
+        // Install the producer handle synchronously so a `send_sdu`
+        // immediately after this call already routes through the
+        // scheduler. The documented call contract is "after the
+        // handshake, before the first scheduler-routed send_sdu", so
+        // no other task holds the `egress` lock at this point — the
+        // `try_lock` always succeeds. The `else` arm is a
+        // defence-in-depth detached install (the muxer is already
+        // spawned below either way, so no demand is ever lost).
+        match self.egress.try_lock() {
+            Ok(mut slot) => *slot = Some(demand),
+            Err(_) => {
+                let egress = Arc::clone(&self.egress);
+                tokio::spawn(async move {
+                    *egress.lock().await = Some(demand);
+                });
+            }
+        }
+        let writer = Arc::clone(&self.writer);
+        tokio::spawn(run_muxer(muxer, writer, config))
     }
 
     /// Subscribe to inbound SDUs on the given mini-protocol number
@@ -1029,5 +1151,134 @@ mod mux_connection_tests {
             "one byte past the cap must over-run; got {outcome:?}"
         );
         drop(rx);
+    }
+
+    // ------------------------------------------------------------------
+    // Slice (b): egress scheduler.
+    // ------------------------------------------------------------------
+
+    /// After [`MuxConnection::spawn_muxer_task`], `send_sdu` routes
+    /// through the egress scheduler: the demand is enqueued, the
+    /// muxer drains it, and the SDU reaches the wire byte-identical
+    /// to a direct write.
+    #[tokio::test]
+    async fn send_sdu_via_muxer_reaches_the_wire() {
+        use crate::trace_forwarder::egress::EgressConfig;
+
+        let (client, server) = tokio::io::duplex(8192);
+        let conn = MuxConnection::new(Bearer::new(client));
+        let mut server_bearer = Bearer::new(server);
+
+        // Spawn the muxer — switches send_sdu to the enqueue path.
+        let _muxer = conn.spawn_muxer_task(EgressConfig::default());
+
+        let header = SduHeader {
+            timestamp: 0,
+            mini_protocol_num: TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM,
+            direction: MiniProtocolDir::Initiator,
+            length: 9,
+        };
+        conn.send_sdu(&header, b"scheduled")
+            .await
+            .expect("send_sdu via muxer");
+
+        let (got_header, got_payload) =
+            tokio::time::timeout(Duration::from_secs(2), server_bearer.read_sdu())
+                .await
+                .expect("read within 2s")
+                .expect("read sdu");
+        assert_eq!(
+            got_header.mini_protocol_num,
+            TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM
+        );
+        assert_eq!(got_header.direction, MiniProtocolDir::Initiator);
+        assert_eq!(got_payload, b"scheduled");
+    }
+
+    /// Before `spawn_muxer_task`, `send_sdu` still does a direct
+    /// write — the pre-scheduler behaviour the handshake window and
+    /// muxer-less callers depend on. This is the regression guard
+    /// for the handshake-conformance path: the handshake never
+    /// spawns a muxer, so its SDUs must keep flowing through the
+    /// direct-write fallback.
+    #[tokio::test]
+    async fn send_sdu_without_muxer_writes_directly() {
+        let (client, server) = tokio::io::duplex(8192);
+        let conn = MuxConnection::new(Bearer::new(client));
+        let mut server_bearer = Bearer::new(server);
+
+        // No spawn_muxer_task → direct-write fallback.
+        let header = SduHeader {
+            timestamp: 7,
+            mini_protocol_num: HANDSHAKE_MINI_PROTOCOL_NUM,
+            direction: MiniProtocolDir::Initiator,
+            length: 6,
+        };
+        conn.send_sdu(&header, b"direct")
+            .await
+            .expect("direct send_sdu");
+
+        let (got_header, got_payload) =
+            tokio::time::timeout(Duration::from_secs(2), server_bearer.read_sdu())
+                .await
+                .expect("read within 2s")
+                .expect("read sdu");
+        // Direct write honours the caller's timestamp.
+        assert_eq!(got_header, header);
+        assert_eq!(got_payload, b"direct");
+    }
+
+    /// Egress fairness through the `MuxConnection` API: with a forced
+    /// tiny `sdu_size`, two `send_sdu` calls on different
+    /// mini-protocols — issued back-to-back before the muxer has a
+    /// chance to drain — have their SDUs round-robin-interleaved on
+    /// the wire. This is the connection-level proof of the slice-(b)
+    /// fairness property (the unit-level proof lives in
+    /// `egress::egress_tests::muxer_round_robins_between_two_mini_protocols`).
+    #[tokio::test]
+    async fn send_sdu_via_muxer_round_robins_mini_protocols() {
+        use crate::trace_forwarder::egress::EgressConfig;
+
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let conn = MuxConnection::new(Bearer::new(client));
+        let mut server_bearer = Bearer::new(server);
+
+        // 2-byte SDUs so each 6-byte payload spans 3 SDUs.
+        let _muxer = conn.spawn_muxer_task(EgressConfig {
+            sdu_size: 2,
+            batch_size: u16::MAX as usize,
+        });
+
+        const PROTO_A: u16 = 2;
+        const PROTO_B: u16 = 3;
+        let header = |num: u16| SduHeader {
+            timestamp: 0,
+            mini_protocol_num: num,
+            direction: MiniProtocolDir::Initiator,
+            length: 6,
+        };
+        // Two enqueues back-to-back: FIFO order A then B is fixed.
+        conn.send_sdu(&header(PROTO_A), &[0xA1; 6])
+            .await
+            .expect("send A");
+        conn.send_sdu(&header(PROTO_B), &[0xB2; 6])
+            .await
+            .expect("send B");
+
+        // Wire order must interleave: A,B,A,B,A,B.
+        let expected = [PROTO_A, PROTO_B, PROTO_A, PROTO_B, PROTO_A, PROTO_B];
+        let mut observed: Vec<u16> = Vec::new();
+        for _ in 0..6 {
+            let (h, p) = tokio::time::timeout(Duration::from_secs(2), server_bearer.read_sdu())
+                .await
+                .expect("read SDU within 2s")
+                .expect("read sdu");
+            assert_eq!(p.len(), 2, "each SDU is one 2-byte fragment");
+            observed.push(h.mini_protocol_num);
+        }
+        assert_eq!(
+            observed, expected,
+            "send_sdu via the muxer must round-robin between mini-protocols"
+        );
     }
 }

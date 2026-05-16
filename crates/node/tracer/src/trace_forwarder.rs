@@ -105,6 +105,7 @@ use yggdrasil_ledger::cbor::Encoder;
 // + tracing-subscriber Layer<S> adapter + Handshake codec +
 // Handshake state-machine driver + minimal Mux dispatcher.
 pub mod bearer;
+pub mod egress;
 pub mod event_builder;
 pub mod forwarding_task;
 pub mod handshake;
