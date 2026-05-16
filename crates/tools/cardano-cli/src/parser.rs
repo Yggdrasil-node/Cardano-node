@@ -266,6 +266,49 @@ mod tests {
         );
     }
 
+    /// `address-build --payment-verification-key-file … --mainnet`
+    /// parses to the expected variant.
+    #[test]
+    fn parses_address_build_mainnet() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "address-build",
+            "--payment-verification-key-file",
+            "/tmp/p.vkey",
+            "--mainnet",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::AddressBuild {
+                payment_verification_key_file: PathBuf::from("/tmp/p.vkey"),
+                stake_verification_key_file: None,
+                mainnet: true,
+                testnet_magic: None,
+                out_file: None,
+            }
+        );
+    }
+
+    /// `address-build` rejects `--mainnet` + `--testnet-magic`
+    /// together (clap `conflicts_with`).
+    #[test]
+    fn address_build_rejects_both_network_flags() {
+        let result = parse_command([
+            "yggdrasil-cardano-cli",
+            "address-build",
+            "--payment-verification-key-file",
+            "/tmp/p.vkey",
+            "--mainnet",
+            "--testnet-magic",
+            "2",
+        ]);
+        assert!(
+            matches!(result, Err(ParseError::Clap(_))),
+            "conflicting --mainnet + --testnet-magic must be a clap error; got {result:?}"
+        );
+    }
+
     /// Unknown subcommand surfaces through `ParseError::Clap`.
     #[test]
     fn rejects_unknown_subcommand() {

@@ -3299,6 +3299,7 @@ dependencies = [
 name = "yggdrasil-cardano-cli"
 version = "0.2.0"
 dependencies = [
+ "bech32",
  "clap",
  "eyre",
  "hex",

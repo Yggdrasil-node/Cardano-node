@@ -3,11 +3,12 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Address/Run.hs`.
-//! R293 landed the file as an API skeleton. R507 (Phase 3.2) lands
-//! `run_address_key_gen_cmd` + `run_address_key_hash_cmd`, mirroring
-//! upstream `runAddressKeyGenCmd` / `runAddressKeyHashCmd`. Remaining
-//! EraIndependent address subcommands (`address build`,
-//! `address info`) port over subsequent rounds.
+//! R293 landed the file as an API skeleton. R507–R508 (Phase 3.2)
+//! land `run_address_key_gen_cmd` / `run_address_key_hash_cmd` /
+//! `run_address_build_cmd`, mirroring upstream `runAddressKeyGenCmd`
+//! / `runAddressKeyHashCmd` / `runAddressBuildCmd`. Remaining
+//! EraIndependent address subcommands (`address info`) port over
+//! subsequent rounds.
 
 use std::path::Path;
 
@@ -55,6 +56,102 @@ pub fn run_address_key_hash_cmd(payment_verification_key_file: &Path) -> Result<
     // Upstream prints lowercase hex, no `0x` prefix (28 bytes = 56 chars).
     println!("{}", hex::encode(hash.0));
     Ok(())
+}
+
+/// Run `address build` — construct a Shelley payment address and
+/// print (or write) its Bech32 encoding.
+///
+/// Mirrors upstream `runAddressBuildCmd` from
+/// `Cardano.CLI.EraIndependent.Address.Run`. Hashes the payment VK
+/// (and the optional stake VK) with Blake2b-224, assembles the
+/// Shelley address bytes, and Bech32-encodes them. Network selection
+/// is `--mainnet` (id 1) xor `--testnet-magic` (id 0); the node
+/// binary's `cardano-cli address-build` wrapper is the parity
+/// reference.
+pub fn run_address_build_cmd(
+    payment_verification_key_file: &Path,
+    stake_verification_key_file: Option<&Path>,
+    mainnet: bool,
+    testnet_magic: Option<u32>,
+    out_file: Option<&Path>,
+) -> Result<()> {
+    let network_id: u8 = if mainnet {
+        1
+    } else if testnet_magic.is_some() {
+        0
+    } else {
+        eyre::bail!("address build requires either --mainnet or --testnet-magic");
+    };
+
+    let pay_env = std::fs::read(payment_verification_key_file).wrap_err_with(|| {
+        format!(
+            "failed to read --payment-verification-key-file {}",
+            payment_verification_key_file.display()
+        )
+    })?;
+    let pay_vk = read_verification_key_text_envelope(&pay_env)?;
+    let pay_hash = yggdrasil_crypto::hash_bytes_224(&pay_vk).0;
+
+    let stake_hash: Option<[u8; 28]> = match stake_verification_key_file {
+        Some(p) => {
+            let env = std::fs::read(p).wrap_err_with(|| {
+                format!(
+                    "failed to read --stake-verification-key-file {}",
+                    p.display()
+                )
+            })?;
+            let vk = read_verification_key_text_envelope(&env)?;
+            Some(yggdrasil_crypto::hash_bytes_224(&vk).0)
+        }
+        None => None,
+    };
+
+    let bech32_addr = build_shelley_address_bech32(network_id, &pay_hash, stake_hash.as_ref())?;
+    match out_file {
+        Some(path) => std::fs::write(path, format!("{bech32_addr}\n"))
+            .wrap_err_with(|| format!("failed to write --out-file {}", path.display()))?,
+        None => println!("{bech32_addr}"),
+    }
+    Ok(())
+}
+
+/// Assemble a Shelley address byte sequence and Bech32-encode it.
+///
+/// Two cases, per `Cardano.Ledger.Address`:
+///
+/// - Enterprise (`stake_hash == None`): header `0b0110_<netid>`
+///   (address type 6 = key-payment, no stake) + 28-byte payment
+///   hash = 29 raw bytes.
+/// - Base (`stake_hash == Some(h)`): header `0b0000_<netid>`
+///   (type 0 = key-payment, key-stake) + 28-byte payment hash +
+///   28-byte stake hash = 57 raw bytes.
+///
+/// The Bech32 HRP is `addr` (mainnet, `network_id == 1`) or
+/// `addr_test` (any other network) per
+/// `Cardano.Ledger.Address.serialiseAddrBech32`.
+fn build_shelley_address_bech32(
+    network_id: u8,
+    payment_hash: &[u8; 28],
+    stake_hash: Option<&[u8; 28]>,
+) -> Result<String> {
+    if network_id > 0x0F {
+        eyre::bail!("network_id {network_id} must fit in 4 bits (0..=15)");
+    }
+    let header = match stake_hash {
+        Some(_) => network_id,     // base address (type 0)
+        None => 0x60 | network_id, // enterprise address (type 6)
+    };
+    let mut addr_bytes: Vec<u8> = Vec::with_capacity(57);
+    addr_bytes.push(header);
+    addr_bytes.extend_from_slice(payment_hash);
+    if let Some(sh) = stake_hash {
+        addr_bytes.extend_from_slice(sh);
+    }
+    let hrp_str = if network_id == 1 { "addr" } else { "addr_test" };
+    let hrp = bech32::Hrp::parse(hrp_str)
+        .map_err(|e| eyre::eyre!("bech32 HRP parse failed for {hrp_str:?}: {e}"))?;
+    bech32::encode::<bech32::Bech32>(hrp, &addr_bytes)
+        .map_err(|e| eyre::eyre!("bech32 encode failed: {e}"))
 }
 
 /// Decode a 32-byte verification key out of a TextEnvelope JSON
@@ -375,6 +472,90 @@ mod tests {
         let vk_path = dir.join("p.vkey");
         run_address_key_gen_cmd(&vk_path, &dir.join("p.skey")).expect("key-gen");
         run_address_key_hash_cmd(&vk_path).expect("key-hash must succeed on a valid vkey");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An enterprise address (no stake key) is 29 raw bytes — header
+    /// `0x60 | netid` + 28-byte payment hash — and Bech32-encodes
+    /// with the `addr` HRP on mainnet, `addr_test` on testnet.
+    #[test]
+    fn enterprise_address_header_and_hrp() {
+        let pay = [0x11_u8; 28];
+        let mainnet = build_shelley_address_bech32(1, &pay, None).expect("mainnet enterprise");
+        let testnet = build_shelley_address_bech32(0, &pay, None).expect("testnet enterprise");
+        assert!(
+            mainnet.starts_with("addr1"),
+            "mainnet enterprise address must use the `addr` HRP; got {mainnet}"
+        );
+        assert!(
+            testnet.starts_with("addr_test1"),
+            "testnet enterprise address must use the `addr_test` HRP; got {testnet}"
+        );
+        // Mainnet and testnet differ only in the header's low nibble,
+        // so the encodings must not collide.
+        assert_ne!(mainnet, testnet);
+    }
+
+    /// A base address (payment + stake) is 57 raw bytes — header
+    /// `0x00 | netid` + payment hash + stake hash — and is distinct
+    /// from the enterprise address built from the same payment key.
+    #[test]
+    fn base_address_differs_from_enterprise() {
+        let pay = [0x22_u8; 28];
+        let stake = [0x33_u8; 28];
+        let base = build_shelley_address_bech32(1, &pay, Some(&stake)).expect("base address");
+        let enterprise = build_shelley_address_bech32(1, &pay, None).expect("enterprise address");
+        assert!(base.starts_with("addr1"));
+        assert_ne!(
+            base, enterprise,
+            "a base address must differ from the enterprise address with the same payment key"
+        );
+    }
+
+    /// `run_address_build_cmd` with neither `--mainnet` nor
+    /// `--testnet-magic` bails with the documented message.
+    #[test]
+    fn address_build_requires_a_network_flag() {
+        let dir = std::env::temp_dir().join(format!(
+            "yggdrasil-cli-ab-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let vk = dir.join("p.vkey");
+        run_address_key_gen_cmd(&vk, &dir.join("p.skey")).expect("key-gen");
+        let err = run_address_build_cmd(&vk, None, false, None, None)
+            .expect_err("no network flag must bail");
+        assert!(
+            err.to_string().contains("--mainnet or --testnet-magic"),
+            "error must name both network flags; got {err}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `run_address_build_cmd` writes the Bech32 address to
+    /// `--out-file` when one is supplied.
+    #[test]
+    fn address_build_writes_out_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "yggdrasil-cli-abo-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let vk = dir.join("p.vkey");
+        run_address_key_gen_cmd(&vk, &dir.join("p.skey")).expect("key-gen");
+        let out = dir.join("addr.txt");
+        run_address_build_cmd(&vk, None, true, None, Some(&out)).expect("address build");
+        let written = std::fs::read_to_string(&out).expect("read out-file");
+        assert!(
+            written.trim_end().starts_with("addr1"),
+            "out-file must hold a mainnet `addr1…` address; got {written:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

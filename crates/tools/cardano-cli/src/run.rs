@@ -149,6 +149,22 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             // body. No LSQ client, no node socket.
             crate::era_based::transaction::run::run_transaction_txid_cmd(tx_file, tx_hex)
         }
+        Command::AddressBuild {
+            payment_verification_key_file,
+            stake_verification_key_file,
+            mainnet,
+            testnet_magic,
+            out_file,
+        } => {
+            // R508: offline subcommand — Bech32 Shelley address.
+            crate::era_independent::address::run::run_address_build_cmd(
+                &payment_verification_key_file,
+                stake_verification_key_file.as_deref(),
+                mainnet,
+                testnet_magic,
+                out_file.as_deref(),
+            )
+        }
     }
 }
 

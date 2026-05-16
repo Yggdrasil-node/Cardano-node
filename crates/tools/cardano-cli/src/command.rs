@@ -109,4 +109,30 @@ pub enum Command {
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
+    /// Build a Shelley payment address (Bech32) from a payment
+    /// verification key, optionally with a stake credential. Mirrors
+    /// upstream `address build`
+    /// (`Cardano.CLI.EraIndependent.Address.Command.AddressBuild`).
+    AddressBuild {
+        /// Path to the payment verification-key TextEnvelope.
+        #[arg(long)]
+        payment_verification_key_file: PathBuf,
+        /// Optional stake verification-key TextEnvelope. When present
+        /// the result is a base address (type 0); otherwise an
+        /// enterprise address (type 6).
+        #[arg(long)]
+        stake_verification_key_file: Option<PathBuf>,
+        /// Use the mainnet network ID (1) and the `addr` HRP.
+        #[arg(long, conflicts_with = "testnet_magic")]
+        mainnet: bool,
+        /// Use a testnet network ID (0) and the `addr_test` HRP. The
+        /// magic value itself is informational — Shelley addresses
+        /// do not carry it on-chain.
+        #[arg(long, conflicts_with = "mainnet")]
+        testnet_magic: Option<u32>,
+        /// Optional output file; when omitted the address prints to
+        /// stdout.
+        #[arg(long)]
+        out_file: Option<PathBuf>,
+    },
 }

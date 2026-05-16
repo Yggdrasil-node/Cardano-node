@@ -46,6 +46,7 @@ thiserror = { workspace = true }
 # the subcommands that need neither tokio nor a node socket. They
 # stay in the slim (`--no-default-features`) build because that
 # build's purpose is exactly the offline operator toolkit.
+#   * `bech32` — Bech32 address encoding for `address build`.
 #   * `hex` — TextEnvelope cborHex + txid hex encode/decode.
 #   * `yggdrasil-crypto` — layer-1, dependency-light, pure-Rust
 #     (no FFI): Ed25519 keypairs + Blake2b hashing.
@@ -53,6 +54,7 @@ thiserror = { workspace = true }
 #     `transaction txid` (R508: promoted from the lsq-tokio gate to
 #     unconditional; the LSQ client also uses its `Encoder`/`Decoder`
 #     but the txid path needs it without tokio).
+bech32 = { workspace = true }
 hex = { workspace = true }
 yggdrasil-crypto = { workspace = true }
 yggdrasil-ledger = { workspace = true }
