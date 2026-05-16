@@ -336,11 +336,13 @@ mod tests {
             false,
         )
         .expect("write envelope");
-        let decoded = read_verification_key_text_envelope(
-            &std::fs::read(&path).expect("read envelope"),
-        )
-        .expect("decode envelope");
-        assert_eq!(decoded, key, "32 key bytes must survive the envelope round-trip");
+        let decoded =
+            read_verification_key_text_envelope(&std::fs::read(&path).expect("read envelope"))
+                .expect("decode envelope");
+        assert_eq!(
+            decoded, key,
+            "32 key bytes must survive the envelope round-trip"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
