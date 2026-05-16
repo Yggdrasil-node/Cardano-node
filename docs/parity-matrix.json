@@ -984,7 +984,7 @@
         },
         {
           "path": "crates/node/tracer/src/trace_forwarder/bearer.rs",
-          "role": "AF_UNIX SOCK_STREAM bearer: generic `Bearer<S>` over any `tokio::io::AsyncRead + AsyncWrite + Unpin + Send`. Provides `read_sdu` / `write_sdu`."
+          "role": "AF_UNIX SOCK_STREAM bearer: generic `Bearer<S>` over any `tokio::io::AsyncRead + AsyncWrite + Unpin + Send`. Provides `read_sdu` / `write_sdu`, plus `Bearer::split` which divides the bearer into independent `BearerReader<S>` / `BearerWriter<S>` halves (via `tokio::io::split`) so reads and writes are concurrently lockable — the bearer-layer fix for the MuxConnection read/write deadlock (task #19)."
         },
         {
           "path": "crates/node/tracer/src/trace_forwarder/handshake.rs",
@@ -992,7 +992,7 @@
         },
         {
           "path": "crates/node/tracer/src/trace_forwarder/handshake_driver.rs",
-          "role": "Handshake initiator state-machine driver. `run_initiator_handshake(&mut bearer, versions)` performs the one-shot Idle→Confirm→Done flow."
+          "role": "Handshake initiator state-machine driver. `run_initiator_handshake(&mut bearer, versions)` performs the one-shot Idle→Confirm→Done flow over a raw `Bearer<S>`; `run_initiator_handshake_split(reader, writer, versions)` is the same flow over a `Bearer::split` reader/writer pair (used by `MuxConnection::run_initiator_handshake`)."
         },
         {
           "path": "crates/node/tracer/src/trace_forwarder/event_builder.rs",
@@ -1008,7 +1008,7 @@
         },
         {
           "path": "crates/node/tracer/src/trace_forwarder/mux_connection.rs",
-          "role": "Minimal bidirectional Mux dispatcher. `MuxConnection<S>` wraps `Bearer<S>` with per-mini-protocol channel-based subscriptions and a serialised write side. Composes with `handshake_driver::run_initiator_handshake` via `MuxConnection::run_initiator_handshake` and with `forwarding_task::run_via_mux`."
+          "role": "Minimal bidirectional Mux dispatcher. `MuxConnection<S>` `Bearer::split`s the bearer into `BearerReader`/`BearerWriter` halves, each behind its own tokio mutex, so the read-task and the SDU writer never contend on a single lock (read/write deadlock fix, task #19). Provides per-mini-protocol channel-based subscriptions. Composes with `handshake_driver::run_initiator_handshake_split` via `MuxConnection::run_initiator_handshake` and with `forwarding_task::run_via_mux`."
         }
       ],
       "implemented_evidence": [
@@ -1019,7 +1019,7 @@
         "TraceObject-delivery conformance — GREEN (May 2026, task #19 closeout, outcome a): `trace_objects_delivered_to_upstream_cardano_tracer` in `tests/cardano_tracer_conformance.rs` drives the TraceForward mini-protocol (num 2) end-to-end against the live upstream `cardano-tracer 11.0.1` binary — after the handshake it forwards a stream of marker-tagged `TraceObject`s via `forwarding_task::run_via_mux` and asserts every marker appears in cardano-tracer's `FileMode`/`ForMachine` log subtree. The test was un-`ignore`d once three trace-forward CBOR codecs were corrected to the upstream `Codec.Serialise` byte shapes (read from the now-vendored `trace-dispatcher` source at `deps/hermod-tracing/trace-dispatcher/src/Cardano/Logging/Types.hs` and the generic `Serialise` instances in `well-typed/cborg`'s `Codec/Serialise/Class.hs`): (1) `NumberOfTraceObjects` is the generic-newtype 2-element envelope `[0, word16]` (not a bare uint) — confirmed on-wire as `83 01 f5 82 00 18 64` = `[1, true, [0,100]]`; (2) `TraceObject` is a 9-element generic-product array `[0, ...8 fields...]` (constructor tag 0 then the fields; `Maybe a` -> `[]`/`[x]`, `[Text]` -> `array(0)` or indefinite list, `SeverityS`/`DetailLevel` -> nullary-sum `[idx]`, `UTCTime` -> extended-time `tag(1000) {1: secs, -12: psecs}`) — not the previous 8-element array; (3) the `MsgTraceObjectsReply` list is `Serialise [TraceObject]`, encoded as an indefinite-length list `0x9f..0xff` when non-empty. `trace-dispatcher` is vendored by extending `scripts/setup-reference.sh`'s deps loop with the standalone `IntersectMBO/hermod-tracing` repo (trace-dispatcher 2.12.x was extracted from `cardano-node` into that repo). The test self-skips when the binary is absent (verified: `YGGDRASIL_CARDANO_TRACER_BIN=/nonexistent` prints SKIP and returns); run normally it drives the full pipeline GREEN against the real Haskell binary."
       ],
       "remaining_work": [
-        "Full Network.Mux semantics: per-mini-protocol ingress/egress queue limits, scheduler fairness (round-robin among ready writers, weighted-priority for hot protocols), and bearer-task supervision (cohesive shutdown when any sub-task fails). Today's MuxConnection serialises through a single bearer mutex; that's sufficient for cardano-tracer's two-sub-protocol use case but doesn't match upstream Network.Mux semantics under contention.",
+        "Full Network.Mux semantics: the read/write bearer-layer deadlock is FIXED (task #19, May 2026) — `Bearer::split` divides the bearer into independent `BearerReader`/`BearerWriter` halves and `MuxConnection` holds each behind its own tokio mutex, so the read-task's pending `read_sdu` never starves a concurrent `send_sdu` (matches upstream Network.Mux, which drives ingress/egress on separate threads sharing one socket FD). Still pending: per-mini-protocol ingress/egress queue limits, scheduler fairness (round-robin among ready writers, weighted-priority for hot protocols), and bearer-task supervision (cohesive shutdown when any sub-task fails). Those sub-items are sufficient-by-omission for cardano-tracer's two-sub-protocol use case but don't yet match upstream Network.Mux semantics under heavy multi-protocol contention.",
         "Closeout: parity-matrix promotion to `verified_11_0_1` (gated on an operator-driven 24h soak forwarding live mainnet/preprod traces to a real cardano-tracer endpoint without protocol errors — both conformance tests in `tests/cardano_tracer_conformance.rs` are already GREEN against the vendored `cardano-tracer 11.0.1` binary)."
       ],
       "acceptance": [

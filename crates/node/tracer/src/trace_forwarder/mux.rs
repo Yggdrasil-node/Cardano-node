@@ -85,9 +85,11 @@
 ///   wire (i.e. `n | 0x8000`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MiniProtocolDir {
-    /// The peer that opened the bearer. High direction bit ON.
+    /// The peer that opened the bearer. High direction bit CLEAR
+    /// (`n & 0x7fff`) per `Network.Mux.Codec.encodeSDU`.
     Initiator,
-    /// The peer that accepted the bearer. High direction bit OFF.
+    /// The peer that accepted the bearer. High direction bit SET
+    /// (`n | 0x8000`) per `Network.Mux.Codec.encodeSDU`.
     Responder,
 }
 
@@ -119,6 +121,11 @@ pub enum MuxError {
     /// `SduHeader`; the decode path masks the high bit off
     /// unconditionally.
     ProtocolNumberOutOfRange { got: u16 },
+    /// The SDU header decoded cleanly but its `length` field is 0.
+    /// Upstream `Network.Mux.Codec.decodeSDU` rejects this as a
+    /// `"short SDU"` — a valid SDU always carries at least one
+    /// payload byte.
+    ShortSdu,
 }
 
 impl core::fmt::Display for MuxError {
@@ -133,6 +140,7 @@ impl core::fmt::Display for MuxError {
                     "mini-protocol number {got:#06x} is in the reserved 0x8000..=0xFFFF range"
                 )
             }
+            Self::ShortSdu => f.write_str("short SDU: header length field is 0"),
         }
     }
 }
@@ -168,6 +176,11 @@ pub fn encode_sdu_header(header: &SduHeader) -> Result<[u8; 8], MuxError> {
 /// Mirrors `Network.Mux.Codec.decodeSDU`. The decoder consumes only
 /// the first 8 bytes; callers slice off the payload separately
 /// based on `header.length`.
+///
+/// Rejects a header whose `length` field is 0 with
+/// [`MuxError::ShortSdu`] — upstream `decodeSDU` does the same
+/// (`if mhLength h > 0 then Right … else Left (SDUDecodeError
+/// "short SDU")`).
 pub fn decode_sdu_header(buf: &[u8]) -> Result<SduHeader, MuxError> {
     if buf.len() < 8 {
         return Err(MuxError::ShortHeader { got: buf.len() });
@@ -175,6 +188,11 @@ pub fn decode_sdu_header(buf: &[u8]) -> Result<SduHeader, MuxError> {
     let timestamp = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
     let num_and_dir = u16::from_be_bytes([buf[4], buf[5]]);
     let length = u16::from_be_bytes([buf[6], buf[7]]);
+    // Per `Network.Mux.Codec.decodeSDU`: a header with a zero
+    // `length` field is a malformed ("short") SDU.
+    if length == 0 {
+        return Err(MuxError::ShortSdu);
+    }
     // Per `Network.Mux.Codec.decodeSDU`:
     //   getDir mid = if mid .&. 0x8000 == 0 then InitiatorDir else ResponderDir
     // The implementation is authoritative here — the diagram block-
@@ -271,11 +289,13 @@ mod mux_tests {
     }
 
     /// Decode round-trip: every encodable header decodes back
-    /// identically.
+    /// identically. All lengths are non-zero — `decode_sdu_header`
+    /// rejects `length == 0` as a short SDU (see
+    /// `decode_zero_length_sdu_errors`).
     #[test]
     fn encode_decode_sdu_header_round_trip() {
         for (timestamp, num, dir, length) in [
-            (0_u32, 0_u16, MiniProtocolDir::Initiator, 0_u16),
+            (0_u32, 0_u16, MiniProtocolDir::Initiator, 1_u16),
             (1, 1, MiniProtocolDir::Responder, 1),
             (u32::MAX, 0x7fff, MiniProtocolDir::Initiator, u16::MAX),
             (
@@ -308,6 +328,30 @@ mod mux_tests {
                 "expected ShortHeader(got={n}); got {result:?}"
             );
         }
+    }
+
+    /// Decoder rejects a structurally-valid 8-byte header whose
+    /// `length` field is 0 — upstream `decodeSDU` returns
+    /// `SDUDecodeError "short SDU"` for exactly this case. A
+    /// zero-length SDU carries no payload, so it is never a valid
+    /// frame on the wire.
+    #[test]
+    fn decode_zero_length_sdu_errors() {
+        // A well-formed header (timestamp / dir / num all valid)
+        // except for the trailing two length bytes, which are 0.
+        let buf = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x02, 0x00, 0x00];
+        let result = decode_sdu_header(&buf);
+        assert!(
+            matches!(result, Err(MuxError::ShortSdu)),
+            "expected ShortSdu for a zero-length SDU header; got {result:?}"
+        );
+        // The same header with length = 1 decodes fine — proves the
+        // rejection keys on the length field, not anything else.
+        let ok = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x02, 0x00, 0x01];
+        assert!(
+            decode_sdu_header(&ok).is_ok(),
+            "length=1 header must still decode"
+        );
     }
 
     /// Encoder rejects a mini-protocol number with the high bit set

@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::bearer::{Bearer, BearerError};
+use super::bearer::{Bearer, BearerError, BearerReader, BearerWriter};
 use super::handshake::{
     HandshakeDecodeError, HandshakeMessage, RefuseReason, decode_message, encode_message,
 };
@@ -105,6 +105,61 @@ impl core::fmt::Display for HandshakeDriverError {
 
 impl std::error::Error for HandshakeDriverError {}
 
+/// Build the `(header, payload)` pair for the initiator's
+/// `MsgProposeVersions` SDU. Errors with `EmptyVersionMap` if the
+/// caller passed no versions (upstream requires at least one).
+///
+/// Shared by [`run_initiator_handshake`] (raw `&mut Bearer<S>`) and
+/// [`run_initiator_handshake_split`] (split read/write halves).
+fn build_propose_sdu(
+    versions: BTreeMap<u32, Vec<u8>>,
+) -> Result<(SduHeader, Vec<u8>), HandshakeDriverError> {
+    if versions.is_empty() {
+        return Err(HandshakeDriverError::EmptyVersionMap);
+    }
+    let propose = HandshakeMessage::ProposeVersions(versions);
+    let payload = encode_message(&propose);
+    let header = SduHeader {
+        timestamp: 0,
+        mini_protocol_num: HANDSHAKE_MINI_PROTOCOL_NUM,
+        direction: MiniProtocolDir::Initiator,
+        length: payload.len() as u16,
+    };
+    Ok((header, payload))
+}
+
+/// Parse the responder's reply SDU into an [`AgreedVersion`].
+/// Validates the SDU's mini-protocol number / direction, decodes
+/// the payload in Confirm state, and pattern-matches the three
+/// valid outcomes.
+///
+/// Shared by [`run_initiator_handshake`] and
+/// [`run_initiator_handshake_split`].
+fn parse_handshake_reply(
+    reply_header: &SduHeader,
+    reply_payload: &[u8],
+) -> Result<AgreedVersion, HandshakeDriverError> {
+    if reply_header.mini_protocol_num != HANDSHAKE_MINI_PROTOCOL_NUM
+        || reply_header.direction != MiniProtocolDir::Responder
+    {
+        return Err(HandshakeDriverError::UnexpectedSdu {
+            mini_protocol_num: reply_header.mini_protocol_num,
+            direction: reply_header.direction,
+        });
+    }
+    // state_is_propose = false (we're in Confirm state expecting
+    // Accept or Refuse).
+    let reply_message =
+        decode_message(reply_payload, false).map_err(HandshakeDriverError::Decode)?;
+    match reply_message {
+        HandshakeMessage::AcceptVersion { version, data_cbor } => {
+            Ok(AgreedVersion { version, data_cbor })
+        }
+        HandshakeMessage::Refuse(reason) => Err(HandshakeDriverError::Refused(reason)),
+        other => Err(HandshakeDriverError::UnexpectedMessage(other)),
+    }
+}
+
 /// Run the initiator side of the Handshake mini-protocol against
 /// the bearer.
 ///
@@ -124,52 +179,54 @@ pub async fn run_initiator_handshake<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    if versions.is_empty() {
-        return Err(HandshakeDriverError::EmptyVersionMap);
-    }
-
-    // Step 1+2: encode + send MsgProposeVersions.
-    let propose = HandshakeMessage::ProposeVersions(versions);
-    let payload = encode_message(&propose);
-    let sdu_header = SduHeader {
-        timestamp: 0,
-        mini_protocol_num: HANDSHAKE_MINI_PROTOCOL_NUM,
-        direction: MiniProtocolDir::Initiator,
-        length: payload.len() as u16,
-    };
+    // Step 1+2: build + send MsgProposeVersions.
+    let (sdu_header, payload) = build_propose_sdu(versions)?;
     bearer
         .write_sdu(&sdu_header, &payload)
         .await
         .map_err(HandshakeDriverError::Bearer)?;
 
-    // Step 3+4: read + decode responder's reply.
+    // Step 3+4+5: read the responder's reply and parse it.
     let (reply_header, reply_payload) = bearer
         .read_sdu()
         .await
         .map_err(HandshakeDriverError::Bearer)?;
+    parse_handshake_reply(&reply_header, &reply_payload)
+}
 
-    if reply_header.mini_protocol_num != HANDSHAKE_MINI_PROTOCOL_NUM
-        || reply_header.direction != MiniProtocolDir::Responder
-    {
-        return Err(HandshakeDriverError::UnexpectedSdu {
-            mini_protocol_num: reply_header.mini_protocol_num,
-            direction: reply_header.direction,
-        });
-    }
+/// Run the initiator side of the Handshake mini-protocol over a
+/// [`Bearer::split`]-ed reader/writer pair.
+///
+/// Behaviour is identical to [`run_initiator_handshake`] — the same
+/// strict write-then-read exchange, the same outcomes — but it
+/// operates on the independent read/write halves a
+/// [`super::mux_connection::MuxConnection`] holds, rather than a
+/// single `&mut Bearer<S>`. The handshake is the first thing on a
+/// fresh bearer, so taking both halves here cannot deadlock
+/// (nothing else holds either lock yet).
+///
+/// [`Bearer::split`]: super::bearer::Bearer::split
+pub async fn run_initiator_handshake_split<S>(
+    reader: &mut BearerReader<S>,
+    writer: &mut BearerWriter<S>,
+    versions: BTreeMap<u32, Vec<u8>>,
+) -> Result<AgreedVersion, HandshakeDriverError>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    // Step 1+2: build + send MsgProposeVersions on the write half.
+    let (sdu_header, payload) = build_propose_sdu(versions)?;
+    writer
+        .write_sdu(&sdu_header, &payload)
+        .await
+        .map_err(HandshakeDriverError::Bearer)?;
 
-    // state_is_propose = false (we're in Confirm state expecting
-    // Accept or Refuse).
-    let reply_message =
-        decode_message(&reply_payload, false).map_err(HandshakeDriverError::Decode)?;
-
-    // Step 5: pattern-match.
-    match reply_message {
-        HandshakeMessage::AcceptVersion { version, data_cbor } => {
-            Ok(AgreedVersion { version, data_cbor })
-        }
-        HandshakeMessage::Refuse(reason) => Err(HandshakeDriverError::Refused(reason)),
-        other => Err(HandshakeDriverError::UnexpectedMessage(other)),
-    }
+    // Step 3+4+5: read the responder's reply on the read half.
+    let (reply_header, reply_payload) = reader
+        .read_sdu()
+        .await
+        .map_err(HandshakeDriverError::Bearer)?;
+    parse_handshake_reply(&reply_header, &reply_payload)
 }
 
 #[cfg(test)]

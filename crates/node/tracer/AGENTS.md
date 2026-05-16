@@ -30,11 +30,16 @@ The crate ships:
   and `MuxConnection` (`mux_connection.rs`). Both live conformance
   tests against the upstream `cardano-tracer 11.0.1` binary are
   GREEN — the handshake and the full TraceObject-delivery pipeline
-  (see "Live conformance tests" below). Remaining: a fully
-  bidirectional Mux state-machine driver (ingress/egress scheduler
-  for per-mini-protocol Request/Reply pacing — the current
-  forwarding task is write-only and works against a request-
-  tolerant acceptor like cardano-tracer).
+  (see "Live conformance tests" below). The Mux bearer-layer
+  read/write deadlock is FIXED (task #19): `Bearer::split` divides
+  the bearer into independent `BearerReader`/`BearerWriter` halves
+  and `MuxConnection` holds each behind its own tokio mutex, so the
+  read-task's pending `read_sdu` never starves a concurrent
+  `send_sdu`. Remaining: a fully bidirectional Mux state-machine
+  driver (per-mini-protocol ingress/egress queue limits, scheduler
+  fairness, bearer-task supervision — the current forwarding task
+  is write-only and works against a request-tolerant acceptor like
+  cardano-tracer).
 
 ## Rules — Non-Negotiable
 
@@ -77,11 +82,23 @@ prometheus` and finish the cardano-tracer Mux Layer 2/3 protocol.
   Accept / Refuse + all three RefuseReason variants).
 - `c868f73` — Handshake initiator state-machine driver
   (`run_initiator_handshake`).
+- task #19 (May 2026) — Mux bearer-layer read/write deadlock fix:
+  `Bearer::split` (`bearer.rs`) returns independent
+  `BearerReader`/`BearerWriter` halves; `MuxConnection`
+  (`mux_connection.rs`) holds each behind its own mutex so
+  `spawn_read_task` and `send_sdu` never contend on one lock.
+  `handshake_driver.rs` gains `run_initiator_handshake_split` for
+  the split halves. Ride-alongs: `decode_sdu_header` (`mux.rs`)
+  now rejects a zero-`length` header (`MuxError::ShortSdu`, upstream
+  "short SDU"); inverted `MiniProtocolDir` variant doc-comments
+  corrected. Regression test
+  `mux_connection_send_sdu_not_blocked_by_pending_read` hangs on
+  the pre-fix single-mutex code, passes after the split.
 
-Remaining pre-`verified_11_0_1`: bidirectional Mux state-machine
-driver (multi-day; the ingress/egress scheduler that runs every
-mini-protocol concurrently on a shared bearer) and operator
-conformance soak against
+Remaining pre-`verified_11_0_1`: the rest of the bidirectional Mux
+state-machine driver (per-mini-protocol ingress/egress queue
+limits, scheduler fairness, bearer-task supervision — the bearer
+deadlock itself is now fixed) and operator conformance soak against
 `.reference-haskell-cardano-node/install/bin/cardano-tracer`
 (needs `setup-reference.sh` without `--sources-only`).
 

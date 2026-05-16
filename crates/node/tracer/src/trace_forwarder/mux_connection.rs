@@ -14,15 +14,32 @@
 //! read-task that reads SDUs and routes the payload to per-mini-
 //! protocol `mpsc::UnboundedSender` channels.
 //!
+//! ## Read/write are independently lockable
+//!
+//! The bearer is [`Bearer::split`]-ed into a [`BearerReader`] and a
+//! [`BearerWriter`], each behind its **own** tokio mutex.
+//! [`MuxConnection::spawn_read_task`] locks only the reader; a
+//! concurrent [`MuxConnection::send_sdu`] locks only the writer, so
+//! the two never contend on a single lock. Upstream `Network.Mux`
+//! likewise drives ingress and egress on separate threads sharing
+//! one socket FD. An earlier revision wrapped the whole bearer in
+//! one `Mutex`: the read-task held that lock for the full duration
+//! of a `read_sdu().await`, so while a read was pending (no inbound
+//! bytes) every `send_sdu` caller blocked forever — a deadlock,
+//! latent only because the cardano-tracer conversation is
+//! sequential. The split removes the shared lock.
+//!
 //! What this is good for: a one-mini-protocol-at-a-time conversation
 //! over the same bearer (cardano-tracer use case: the Handshake
 //! initiator finishes first, then the TraceObject forwarder runs
 //! until shutdown). What it isn't good for: concurrent
 //! mini-protocol activity with backpressure / fairness / cancel
 //! semantics. The bidirectional Mux state-machine driver that
-//! implements those properties is the one remaining sub-item in
-//! `docs/TECH-DEBT.md` "cardano-tracer Mux Layer 2/3"; this module
-//! is a subset that unblocks operator-side end-to-end soaks today.
+//! implements those properties (per-mini-protocol ingress/egress
+//! queue limits, scheduler fairness, bearer-task supervision) is
+//! the one remaining sub-item in `docs/TECH-DEBT.md` "cardano-tracer
+//! Mux Layer 2/3"; this module is a subset that unblocks
+//! operator-side end-to-end soaks today.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -31,7 +48,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 
-use super::bearer::{Bearer, BearerError};
+use super::bearer::{Bearer, BearerError, BearerReader, BearerWriter};
 use super::mux::SduHeader;
 
 /// One full received SDU exposed to per-mini-protocol consumers
@@ -70,18 +87,28 @@ type SubscriberMap = HashMap<u16, mpsc::UnboundedSender<InboundSdu>>;
 
 /// Multiplexer connection: wraps a [`Bearer<S>`] with a per-mini-
 /// protocol dispatch table.
+///
+/// The bearer is split into independent read/write halves
+/// ([`Bearer::split`]) so the read-task and the SDU writer hold
+/// **separate** mutexes and never deadlock against each other (see
+/// the module docs).
 pub struct MuxConnection<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    /// The bearer used for both outbound and inbound SDUs. Wrapped
-    /// in a tokio Mutex so concurrent `send_sdu` callers serialize
-    /// access — a single outbound SDU is never partially
-    /// interleaved with another.
-    bearer: Arc<Mutex<Bearer<S>>>,
+    /// Write half of the bearer. Wrapped in its own tokio Mutex so
+    /// concurrent `send_sdu` callers serialize against each other —
+    /// a single outbound SDU is never partially interleaved with
+    /// another — without ever blocking the read-task.
+    writer: Arc<Mutex<BearerWriter<S>>>,
+    /// Read half of the bearer. Wrapped in its own tokio Mutex,
+    /// locked only by [`Self::spawn_read_task`]'s read-loop and by
+    /// [`Self::run_initiator_handshake`]. Independent of `writer`,
+    /// so a pending `read_sdu` never starves an outbound write.
+    reader: Arc<Mutex<BearerReader<S>>>,
     /// Per-mini-protocol channel registry. `subscribe(num)`
     /// inserts a new entry; the read-task reads from
-    /// `bearer.read_sdu()` and forwards to the corresponding
+    /// `reader.read_sdu()` and forwards to the corresponding
     /// Sender (silently dropping the SDU if no subscriber is
     /// registered).
     subscribers: Arc<Mutex<SubscriberMap>>,
@@ -91,27 +118,31 @@ impl<S> MuxConnection<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    /// Construct a new MuxConnection from a Bearer. Call
+    /// Construct a new MuxConnection from a Bearer. The bearer is
+    /// immediately split into independent read/write halves. Call
     /// [`Self::spawn_read_task`] separately to start dispatching
     /// inbound SDUs to subscribers; until that's spawned, the
     /// bearer never reads.
     pub fn new(bearer: Bearer<S>) -> Self {
+        let (reader, writer) = bearer.split();
         Self {
-            bearer: Arc::new(Mutex::new(bearer)),
+            writer: Arc::new(Mutex::new(writer)),
+            reader: Arc::new(Mutex::new(reader)),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     /// Send one outbound SDU. Serializes against other `send_sdu`
-    /// callers through the bearer mutex so SDUs hit the wire as
-    /// atomic units.
+    /// callers through the **writer** mutex so SDUs hit the wire as
+    /// atomic units. Never contends with the read-task: the
+    /// read-loop locks the separate reader mutex.
     pub async fn send_sdu(
         &self,
         header: &SduHeader,
         payload: &[u8],
     ) -> Result<(), MuxConnectionError> {
-        let mut bearer = self.bearer.lock().await;
-        bearer
+        let mut writer = self.writer.lock().await;
+        writer
             .write_sdu(header, payload)
             .await
             .map_err(MuxConnectionError::Bearer)
@@ -153,9 +184,16 @@ where
         versions: std::collections::BTreeMap<u32, Vec<u8>>,
     ) -> Result<super::handshake_driver::AgreedVersion, super::handshake_driver::HandshakeDriverError>
     {
-        // Take the bearer mutex for the full handshake duration.
-        let mut bearer = self.bearer.lock().await;
-        super::handshake_driver::run_initiator_handshake(&mut bearer, versions).await
+        // Take BOTH half-mutexes for the full handshake duration:
+        // the handshake is a strict write-then-read exchange and
+        // must run before any other mini-protocol touches the
+        // bearer. The read-task is not yet spawned (the doc
+        // contract requires this call first), so there is no other
+        // lock holder to deadlock against.
+        let mut writer = self.writer.lock().await;
+        let mut reader = self.reader.lock().await;
+        super::handshake_driver::run_initiator_handshake_split(&mut reader, &mut writer, versions)
+            .await
     }
 
     /// Spawn the read-task that dispatches inbound SDUs to
@@ -166,19 +204,20 @@ where
     /// any other bearer error). On any subscriber that hasn't
     /// been registered, the inbound SDU is silently dropped.
     pub fn spawn_read_task(&self) -> tokio::task::JoinHandle<Result<(), MuxConnectionError>> {
-        let bearer = Arc::clone(&self.bearer);
+        let reader = Arc::clone(&self.reader);
         let subscribers = Arc::clone(&self.subscribers);
         tokio::spawn(async move {
             loop {
-                // Take the lock for the duration of one full SDU
-                // read (header + payload). Outbound writes can't
-                // progress while we're mid-read; that's the
-                // simple-dispatcher trade-off versus a real Mux
-                // that splits the bearer into independent
-                // read/write halves.
+                // Lock the READER half for the duration of one full
+                // SDU read (header + payload). This is a separate
+                // mutex from the writer half, so a `send_sdu`
+                // caller can write concurrently while this read is
+                // pending — no read/write deadlock. (An earlier
+                // revision shared one bearer mutex; see the module
+                // docs.)
                 let read_outcome = {
-                    let mut bearer_guard = bearer.lock().await;
-                    bearer_guard.read_sdu().await
+                    let mut reader_guard = reader.lock().await;
+                    reader_guard.read_sdu().await
                 };
                 match read_outcome {
                     Ok((header, payload)) => {
@@ -341,6 +380,78 @@ mod mux_connection_tests {
             .expect("handshake accept");
         assert_eq!(agreed.version, 2);
         let _ = server_task.await;
+    }
+
+    /// Regression test for the Mux bearer-layer read/write
+    /// deadlock (task #19, outcome d).
+    ///
+    /// Setup reproduces the exact deadlock geometry:
+    ///
+    /// 1. Spawn the read-task. Its read-loop calls `read_sdu()` and
+    ///    blocks — the peer (`server`) sends nothing, so the
+    ///    8-byte header read never completes.
+    /// 2. `yield_now()` so the read-task is *guaranteed* to have
+    ///    acquired its bearer lock and parked inside the pending
+    ///    `read_sdu` before we proceed. Without this yield,
+    ///    `send_sdu` could win the lock race on a single-threaded
+    ///    runtime and the test would falsely pass on the broken
+    ///    code.
+    /// 3. Call `send_sdu` concurrently, wrapped in a 2s timeout.
+    ///
+    /// On the **old** single-`Mutex<Bearer>` design the read-task
+    /// held the one bearer lock for the whole duration of the
+    /// pending read, so `send_sdu` could never acquire it →
+    /// `send_sdu` hangs and the timeout fires. After the
+    /// [`Bearer::split`] fix the read-task holds only the reader
+    /// mutex and `send_sdu` takes the independent writer mutex, so
+    /// the write completes well inside the timeout.
+    ///
+    /// `keep_alive` holds the server end open for the whole test:
+    /// dropping it would EOF the read and let the read-task release
+    /// its lock, masking the deadlock.
+    #[tokio::test]
+    async fn mux_connection_send_sdu_not_blocked_by_pending_read() {
+        let (client, keep_alive) = tokio::io::duplex(4096);
+        let conn = MuxConnection::new(Bearer::new(client));
+
+        // 1. Read-task: blocks inside `read_sdu` — no inbound bytes.
+        let _read_task = conn.spawn_read_task();
+
+        // 2. Let the read-task acquire its lock and park in the
+        //    pending read before we attempt the concurrent write.
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+
+        // 3. Concurrent `send_sdu` — must NOT be starved by the
+        //    pending read. On the pre-split code this hung forever.
+        let header = SduHeader {
+            timestamp: 0,
+            mini_protocol_num: TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM,
+            direction: MiniProtocolDir::Initiator,
+            length: 4,
+        };
+        let send_result =
+            tokio::time::timeout(Duration::from_secs(2), conn.send_sdu(&header, b"abcd")).await;
+        assert!(
+            send_result.is_ok(),
+            "send_sdu was starved by the read-task's pending read — \
+             the Mux bearer-layer deadlock has regressed"
+        );
+        send_result
+            .expect("send_sdu completed within the timeout")
+            .expect("send_sdu succeeded");
+
+        // The write reached the peer: read it back off the
+        // still-open server end to confirm it actually hit the wire
+        // (not just acquired a lock).
+        let mut server_bearer = Bearer::new(keep_alive);
+        let (got_header, got_payload) =
+            tokio::time::timeout(Duration::from_secs(2), server_bearer.read_sdu())
+                .await
+                .expect("server read of the concurrently-sent SDU did not time out")
+                .expect("server read the SDU");
+        assert_eq!(got_header, header);
+        assert_eq!(got_payload, b"abcd");
     }
 
     /// SDUs arriving on a mini-protocol that has no subscriber are
