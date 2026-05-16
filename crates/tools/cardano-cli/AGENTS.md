@@ -243,11 +243,19 @@ remaining commands and a separate binary is justified.
   the ledger parity surface rather than creating a new one (which
   is what sidesteps the wire-shape-pin hazard). `parse_tx_in` /
   `parse_tx_out` (Bech32 address decode) map the CLI args. 89 tests
-  total post-R514. **32 operational subcommands**. Only
-  `transaction build` remains — automatic coin selection + fee
-  minimization, which needs UTxO-value lookup + protocol-parameter
-  CBOR decoding + iterative fee convergence (a genuine algorithm,
-  not a mirror-the-pattern port).
+  total post-R514. **32 operational subcommands**.
+- **R515 (Phase 3.3, 2026-05) — `transaction build`. C-arc
+  complete.** The last subcommand: assembles an unsigned Conway tx
+  with the fee computed automatically and the remainder balanced
+  into a change output. Yggdrasil's **offline variant** — fee
+  coefficients (`--min-fee-a`/`-b`, mainnet-defaulted) and total
+  input lovelace are operator-supplied, not node-queried, so the
+  command is deterministic and fully verifiable without a socket.
+  The algorithm is `balance_conway_tx`, a pure fixpoint loop, with
+  the balance invariant `total_input == Σ outputs + fee + change`
+  verified end-to-end in tests by decoding the built tx with
+  `ConwayTxBody::decode_cbor`. 92 tests total post-R515.
+  **33 operational subcommands — the cardano-cli C-arc is complete.**
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -357,17 +365,21 @@ binary exposes 9 operational subcommands:
 | `TransactionView` | ✅ migrated (R513) | `era_based/transaction/run.rs::run_transaction_view_cmd` — shallow structural view (txid + top-level CBOR hex) |
 | `Query*` (20 LSQ subcommands) | ✅ migrated (R510–R512) | `lsq.rs` `NtcQuery` enum + `lsq_tokio.rs` `plan_for`: tip / chain-block-no / current-era / system-start / stake-distribution / stake-pools / protocol-parameters / drep-stake-distribution / constitution / gov-state / drep-state / committee-state / treasury-and-reserves / account-state / genesis-delegations / stability-window / num-dormant-epochs / expected-network-id / deposit-pot / ledger-counts |
 | `TransactionBuildRaw` | ✅ migrated (R514) | `era_based/transaction/run.rs::run_transaction_build_raw_cmd` — typed `ConwayTxBody` via the ledger's parity `CborEncode`, wrapped as `[body,{},true,null]` |
-| `TransactionBuild` | ⏳ deferred | automatic coin selection + fee minimization — needs UTxO-value lookup + protocol-parameter CBOR decode + iterative fee convergence |
+| `TransactionBuild` | ✅ migrated (R515) | `era_based/transaction/run.rs::run_transaction_build_cmd` + `balance_conway_tx` — offline auto fee + change balancing (operator-supplied fee coefficients) |
 
-The standalone binary now exposes **32 operational subcommands** —
-the offline operator toolkit (keys / addresses / txid / single-signer
-signing / shallow tx-view / `build-raw`), the complete 20-query
-LocalStateQuery surface, and `transaction submit`. The only
-subcommand still deferred is `transaction build`: automatic coin
-selection + fee minimization, which needs UTxO-value lookup +
-protocol-parameter CBOR decoding + iterative fee convergence — a
-genuine algorithm, a deliberate separate arc rather than a
-mirror-the-pattern port.
+The standalone binary now exposes **33 operational subcommands —
+the cardano-cli C-arc is complete**: the offline operator toolkit
+(keys / addresses / txid / single-signer signing / shallow tx-view /
+`build-raw` / `build`), the complete 20-query LocalStateQuery
+surface, and `transaction submit`.
+
+`transaction build`'s offline variant takes the fee coefficients +
+total input lovelace as explicit flags rather than node-querying
+them — a documented simplification that keeps the command
+deterministic and verifiable. A node-auto-query mode (live
+protocol-parameter + UTxO-value resolution) is a possible future
+enhancement, but not required for the operator workflows the
+standalone binary targets.
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
