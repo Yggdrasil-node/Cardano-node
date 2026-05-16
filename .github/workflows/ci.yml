@@ -56,6 +56,28 @@ jobs:
       - name: Lint workspace (no default features)
         run: cargo clippy --workspace --all-targets --no-default-features -- -D warnings
 
+      # Feature-combination matrix (Phase 5.4). The blanket
+      # `--no-default-features` check above turns *every* crate's
+      # flags off simultaneously — it never exercises an intermediate
+      # combination, so a regression that breaks the
+      # `secp256k1`-on / `bls12-381`-off build (or vice versa) would
+      # slip through. `yggdrasil-plutus` is the crate carrying
+      # genuinely-wired `#[cfg(feature)]` gates (Phase 5.4: secp256k1
+      # + bls12-381 dispatch-gating); this step pins every individual
+      # combination compiling + its tests passing. `--all-targets`
+      # so the gated unit tests are covered too.
+      - name: Verify yggdrasil-plutus feature combinations
+        run: |
+          set -euxo pipefail
+          # Neither crypto flag — both dispatch paths gated off.
+          cargo nextest run -p yggdrasil-plutus --no-default-features --profile ci
+          # secp256k1 only — bls12-381 dispatch gated off.
+          cargo nextest run -p yggdrasil-plutus --no-default-features \
+            --features secp256k1 --profile ci
+          # bls12-381 only — secp256k1 dispatch gated off.
+          cargo nextest run -p yggdrasil-plutus --no-default-features \
+            --features bls12-381 --profile ci
+
       # Strict-mirror drift-guard (fifth verification gate).
       # Counterpart to .claude/skills/round-extraction/SKILL.md (the
       # authoring-time guard). Walks production .rs files, looks each
