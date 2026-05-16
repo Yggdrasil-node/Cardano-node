@@ -156,6 +156,41 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             let magic = network_magic.unwrap_or(764_824_073);
             client.run_query(&socket_path, magic, NtcQuery::ProtocolParameters)
         }
+        Command::QueryDrepStakeDistribution {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::DrepStakeDistribution)
+        }
+        Command::QueryConstitution {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::Constitution)
+        }
+        Command::QueryGovState {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::GovState)
+        }
+        Command::QueryDrepState {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::DrepState)
+        }
+        Command::QueryCommitteeState {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::CommitteeState)
+        }
         Command::AddressKeyGen {
             verification_key_file,
             signing_key_file,
@@ -405,6 +440,46 @@ mod tests {
                 },
                 NtcQuery::ProtocolParameters,
                 7,
+            ),
+            (
+                Command::QueryDrepStakeDistribution {
+                    socket_path: socket.clone(),
+                    network_magic: Some(8),
+                },
+                NtcQuery::DrepStakeDistribution,
+                8,
+            ),
+            (
+                Command::QueryConstitution {
+                    socket_path: socket.clone(),
+                    network_magic: Some(9),
+                },
+                NtcQuery::Constitution,
+                9,
+            ),
+            (
+                Command::QueryGovState {
+                    socket_path: socket.clone(),
+                    network_magic: Some(10),
+                },
+                NtcQuery::GovState,
+                10,
+            ),
+            (
+                Command::QueryDrepState {
+                    socket_path: socket.clone(),
+                    network_magic: Some(11),
+                },
+                NtcQuery::DrepState,
+                11,
+            ),
+            (
+                Command::QueryCommitteeState {
+                    socket_path: socket.clone(),
+                    network_magic: Some(12),
+                },
+                NtcQuery::CommitteeState,
+                12,
             ),
         ];
         for (command, expected_query, expected_magic) in cases {

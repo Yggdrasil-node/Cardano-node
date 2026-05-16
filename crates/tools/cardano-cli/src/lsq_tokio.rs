@@ -96,7 +96,63 @@ fn plan_for(query: NtcQuery) -> QueryPlan {
             query_label: "GetProtocolParameters",
             decode: decode_protocol_parameters_result,
         },
+        NtcQuery::DrepStakeDistribution => QueryPlan {
+            query_bytes: encode_single_tag_query(17),
+            query_label: "GetDRepStakeDistribution",
+            decode: decode_drep_stake_distribution_result,
+        },
+        NtcQuery::Constitution => QueryPlan {
+            query_bytes: encode_single_tag_query(8),
+            query_label: "GetConstitution",
+            decode: decode_constitution_result,
+        },
+        NtcQuery::GovState => QueryPlan {
+            query_bytes: encode_single_tag_query(9),
+            query_label: "GetGovState",
+            decode: decode_gov_state_result,
+        },
+        NtcQuery::DrepState => QueryPlan {
+            query_bytes: encode_single_tag_query(10),
+            query_label: "GetDRepState",
+            decode: decode_drep_state_result,
+        },
+        NtcQuery::CommitteeState => QueryPlan {
+            query_bytes: encode_single_tag_query(11),
+            query_label: "GetCommitteeState",
+            decode: decode_committee_state_result,
+        },
     }
+}
+
+// The five Conway governance queries surface complex per-era ledger
+// structures (`Constitution`, `GovActionsState`, DRep maps, …) as
+// raw CBOR hex under a descriptive key — matching the node binary's
+// `decode_ntc_result` arms. Decoding them into typed JSON is a
+// follow-on; the hex passthrough lets clients decode them today.
+
+/// Decode the `GetDRepStakeDistribution` reply (raw CBOR hex).
+fn decode_drep_stake_distribution_result(result: &[u8]) -> serde_json::Value {
+    json!({ "drep_stake_distribution_cbor": hex::encode(result) })
+}
+
+/// Decode the `GetConstitution` reply (raw CBOR hex).
+fn decode_constitution_result(result: &[u8]) -> serde_json::Value {
+    json!({ "constitution_cbor": hex::encode(result) })
+}
+
+/// Decode the `GetGovState` reply (raw CBOR hex).
+fn decode_gov_state_result(result: &[u8]) -> serde_json::Value {
+    json!({ "governance_actions_cbor": hex::encode(result) })
+}
+
+/// Decode the `GetDRepState` reply (raw CBOR hex).
+fn decode_drep_state_result(result: &[u8]) -> serde_json::Value {
+    json!({ "drep_state_cbor": hex::encode(result) })
+}
+
+/// Decode the `GetCommitteeState` reply (raw CBOR hex).
+fn decode_committee_state_result(result: &[u8]) -> serde_json::Value {
+    json!({ "committee_state_cbor": hex::encode(result) })
 }
 
 /// CBOR-encode a single-element `[tag]` query envelope.
@@ -619,6 +675,32 @@ mod tests {
         assert_eq!(
             decode_protocol_parameters_result(&[0x01, 0x02]),
             json!({ "protocol_parameters": "0102" })
+        );
+    }
+
+    /// The 5 Conway governance decoders each surface the reply under
+    /// their descriptive raw-hex key.
+    #[test]
+    fn governance_decoders_surface_raw_hex() {
+        assert_eq!(
+            decode_drep_stake_distribution_result(&[0xde, 0xad]),
+            json!({ "drep_stake_distribution_cbor": "dead" })
+        );
+        assert_eq!(
+            decode_constitution_result(&[0xbe, 0xef]),
+            json!({ "constitution_cbor": "beef" })
+        );
+        assert_eq!(
+            decode_gov_state_result(&[0x01]),
+            json!({ "governance_actions_cbor": "01" })
+        );
+        assert_eq!(
+            decode_drep_state_result(&[0x02]),
+            json!({ "drep_state_cbor": "02" })
+        );
+        assert_eq!(
+            decode_committee_state_result(&[0x03]),
+            json!({ "committee_state_cbor": "03" })
         );
     }
 }

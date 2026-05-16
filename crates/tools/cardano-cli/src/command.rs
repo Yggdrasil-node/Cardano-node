@@ -130,6 +130,56 @@ pub enum Command {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Query the running node for the per-DRep stake distribution
+    /// (Conway governance). Targets a `yggdrasil-node` NtC socket.
+    QueryDrepStakeDistribution {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the current on-chain constitution
+    /// (Conway governance). Targets a `yggdrasil-node` NtC socket.
+    QueryConstitution {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the governance-action state
+    /// (Conway). Targets a `yggdrasil-node` NtC socket.
+    QueryGovState {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the registered-DRep state
+    /// (Conway). Targets a `yggdrasil-node` NtC socket.
+    QueryDrepState {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the constitutional-committee state
+    /// (Conway governance). Targets a `yggdrasil-node` NtC socket.
+    QueryCommitteeState {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
     /// Generate a fresh Ed25519 payment keypair, writing both keys
     /// as TextEnvelope JSON files. Mirrors upstream `address key-gen`
     /// (`Cardano.CLI.EraIndependent.Address.Command.AddressKeyGen`).

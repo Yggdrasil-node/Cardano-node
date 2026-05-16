@@ -274,6 +274,83 @@ mod tests {
         );
     }
 
+    /// The 5 Conway-governance `query-*` subcommands all parse to
+    /// their expected variant with just `--socket-path`.
+    #[test]
+    fn parses_governance_query_subcommands() {
+        let socket = "/tmp/node.socket";
+        let drep_distr = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-drep-stake-distribution",
+            "--socket-path",
+            socket,
+        ])
+        .expect("parse");
+        assert_eq!(
+            drep_distr,
+            Command::QueryDrepStakeDistribution {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+            }
+        );
+        let constitution = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-constitution",
+            "--socket-path",
+            socket,
+        ])
+        .expect("parse");
+        assert_eq!(
+            constitution,
+            Command::QueryConstitution {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+            }
+        );
+        let gov_state = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-gov-state",
+            "--socket-path",
+            socket,
+        ])
+        .expect("parse");
+        assert_eq!(
+            gov_state,
+            Command::QueryGovState {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+            }
+        );
+        let drep_state = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-drep-state",
+            "--socket-path",
+            socket,
+        ])
+        .expect("parse");
+        assert_eq!(
+            drep_state,
+            Command::QueryDrepState {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+            }
+        );
+        let committee = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-committee-state",
+            "--socket-path",
+            socket,
+        ])
+        .expect("parse");
+        assert_eq!(
+            committee,
+            Command::QueryCommitteeState {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+            }
+        );
+    }
+
     /// `address-key-gen --verification-key-file … --signing-key-file …`
     /// parses to the expected variant.
     #[test]

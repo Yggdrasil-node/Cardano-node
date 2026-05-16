@@ -69,6 +69,19 @@ pub enum NtcQuery {
     /// `query-protocol-parameters` — the current protocol
     /// parameters.
     ProtocolParameters,
+    /// `query-drep-stake-distribution` — per-DRep stake distribution
+    /// (Conway governance).
+    DrepStakeDistribution,
+    /// `query-constitution` — the current on-chain constitution
+    /// (Conway governance).
+    Constitution,
+    /// `query-gov-state` — the governance-action state (Conway).
+    GovState,
+    /// `query-drep-state` — the registered-DRep state (Conway).
+    DrepState,
+    /// `query-committee-state` — the constitutional-committee state
+    /// (Conway governance).
+    CommitteeState,
 }
 
 impl NtcQuery {
@@ -84,6 +97,11 @@ impl NtcQuery {
             NtcQuery::StakeDistribution => "query-stake-distribution",
             NtcQuery::StakePools => "query-stake-pools",
             NtcQuery::ProtocolParameters => "query-protocol-parameters",
+            NtcQuery::DrepStakeDistribution => "query-drep-stake-distribution",
+            NtcQuery::Constitution => "query-constitution",
+            NtcQuery::GovState => "query-gov-state",
+            NtcQuery::DrepState => "query-drep-state",
+            NtcQuery::CommitteeState => "query-committee-state",
         }
     }
 }
@@ -158,6 +176,11 @@ mod tests {
             NtcQuery::StakeDistribution,
             NtcQuery::StakePools,
             NtcQuery::ProtocolParameters,
+            NtcQuery::DrepStakeDistribution,
+            NtcQuery::Constitution,
+            NtcQuery::GovState,
+            NtcQuery::DrepState,
+            NtcQuery::CommitteeState,
         ] {
             let err = client
                 .run_query(&socket, 764_824_073, query)
