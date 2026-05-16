@@ -1,18 +1,19 @@
 //! Top-level cardano-tracer supervisor — `runCardanoTracer` analog.
 //! Reads the operator config, initializes the runtime state, and
-//! spawns the four core subsystems (Acceptors, Metrics servers,
-//! Logs rotator, RTView) concurrently.
+//! spawns the core subsystems (Acceptors, Metrics servers, Logs
+//! rotator) plus the SIGINT/SIGTERM handler concurrently; RTView is
+//! a permanent carve-out.
 //!
 //! ## Naming parity
 //!
 //! **Strict mirror:** cardano-tracer/src/Cardano/Tracer/Run.hs.
 //!
 //! Direct port of upstream's `runCardanoTracer` +
-//! `doRunCardanoTracer` entry points. R427 ships the operationally-
-//! viable subset (config load, Acceptors supervisor, Metrics
-//! servers); the deferred subsystems (Logs rotator, ReForwarder,
-//! resource stats loop, RTView) are documented carve-outs that
-//! can be wired in later rounds without breaking the call surface.
+//! `doRunCardanoTracer` entry points. The operationally-viable
+//! supervisor is fully wired — config load, Acceptors, Metrics
+//! servers, Logs rotator (R461), and the SIGINT/SIGTERM handler
+//! (R466); the remaining carve-outs (meta-trace channel,
+//! ReForwarder, resource-stats loop, RTView) are documented below.
 //!
 //! Mapping summary:
 //!
@@ -20,12 +21,12 @@
 //! |---------------------------------------------------|----------------------------------------|
 //! | `runCardanoTracer :: TracerParams -> IO ()`       | [`run_cardano_tracer`]                 |
 //! | `doRunCardanoTracer config rtViewStateDir tr brake dpRequestors :: IO ()` | [`do_run_cardano_tracer`] |
-//! | `loadMetricsHelp` (Run.hs:181-191)                | [`crate::utils::load_metrics_help`] (R415 done) |
-//! | `runLogsRotator tracerEnv`                        | (deferred — see [`run_logs_rotator_status`]) |
+//! | `loadMetricsHelp` (Run.hs:181-191)                | [`crate::utils::load_metrics_help`] (R415) |
+//! | `runLogsRotator tracerEnv`                        | [`crate::handlers::logs::rotator::run_logs_rotator`] (R461) — see [`run_logs_rotator_status`] |
 //! | `runMetricsServers tracerEnv`                     | [`run_metrics_servers`] (R464) — conditional spawn of Prometheus + Monitoring via tokio::spawn |
-//! | `runAcceptors tracerEnv tracerEnvRTView`          | [`crate::acceptors::run::run_acceptors`] (R426 done) |
+//! | `runAcceptors tracerEnv tracerEnvRTView`          | [`crate::acceptors::run::run_acceptors`] (R426) |
 //! | `runRTView tracerEnv tracerEnvRTView`             | (RTView carve-out — see plan)          |
-//! | `beforeProgramStops { ... }`                      | (deferred — see [`crate::utils::before_program_stops_status`]) |
+//! | `beforeProgramStops { ... }`                      | [`crate::utils::before_program_stops`] (R466) — SIGINT/SIGTERM trips the supervisor brake |
 //! | `mkTraceBundle` + `traceWith tr.assorted`         | (deferred — meta-trace channel not ported) |
 //! | `for_ (resourceFreq config) ...` resource stats loop | (deferred — see [`run_resource_stats_status`]) |
 //!
@@ -33,27 +34,21 @@
 //!
 //! - **TraceBundle / meta-trace channel** (`mkTraceBundle`,
 //!   `traceWith tr.assorted`): depends on the upstream
-//!   `Cardano.Logging` package + meta-trace channel ports. R427
-//!   collapses these to no-op log calls; the actual log traffic
-//!   goes through Yggdrasil's standard `eprintln!` / future
+//!   `Cardano.Logging` package + meta-trace channel ports. The
+//!   supervisor collapses these to no-op log calls; the actual log
+//!   traffic goes through Yggdrasil's standard `eprintln!` / future
 //!   structured-logger plumbing.
-//! - **`runLogsRotator`**: Logs/Rotator.hs port deferred per the
-//!   R411 plan's pacing.
 //! - **`runRTView`**: RTView web UI is a synthesis carve-out per
 //!   the original R326-R459 plan (no Rust analog for ThreePenny GUI).
 //! - **Resource stats loop** (`for_ (resourceFreq config) ...`):
 //!   periodic `readResourceStats`. Operationally a metrics-emission
 //!   convenience; deferred pending the Cardano.Logging.Resources
 //!   port.
-//! - **`beforeProgramStops` SIGINT/SIGTERM handler**: deferred per
-//!   `crate::utils::before_program_stops_status`. The supervisor
-//!   currently shuts down via the brake flag in the config.
-//! - **DataPointRequestors initialization**: deferred per the
-//!   DataPoint sub-protocol carve-out.
-//! - **CurrentLogLock / CurrentDPLock**: deferred — the lock-free
-//!   `Arc<RwLock<...>>` shape Yggdrasil uses for runtime state
-//!   doesn't need separate per-resource locks for the bounded
-//!   subset of operations R427 wires.
+//! - **`CurrentDPLock`**: not ported — the lock-free
+//!   `Arc<RwLock<...>>` runtime-state shape plus the R462
+//!   `current_log_lock` (`Arc<Mutex<()>>` guarding the active log
+//!   handle) cover the synchronization the supervisor needs; no
+//!   separate DataPoint lock is required.
 
 use std::sync::Arc;
 
