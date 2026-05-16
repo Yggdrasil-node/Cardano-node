@@ -73,4 +73,14 @@ pub enum Command {
         #[arg(long)]
         signing_key_file: PathBuf,
     },
+    /// Print the Blake2b-224 hash of a verification key. Mirrors
+    /// upstream `address key-hash`
+    /// (`Cardano.CLI.EraIndependent.Address.Command.AddressKeyHash`).
+    AddressKeyHash {
+        /// Path to a verification-key TextEnvelope. Both payment and
+        /// stake verification-key envelopes are accepted — the wire
+        /// shape is identical (32-byte VK in a CBOR bytes envelope).
+        #[arg(long)]
+        payment_verification_key_file: PathBuf,
+    },
 }

@@ -125,6 +125,14 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 &signing_key_file,
             )
         }
+        Command::AddressKeyHash {
+            payment_verification_key_file,
+        } => {
+            // R507: pure-crypto subcommand — Blake2b-224 of a VK.
+            crate::era_independent::address::run::run_address_key_hash_cmd(
+                &payment_verification_key_file,
+            )
+        }
     }
 }
 

@@ -4,10 +4,10 @@
 //!
 //! **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraIndependent/Address/Run.hs`.
 //! R293 landed the file as an API skeleton. R507 (Phase 3.2) lands
-//! the first concrete subcommand — `run_address_key_gen_cmd`,
-//! mirroring upstream `runAddressKeyGenCmd`. Remaining
+//! `run_address_key_gen_cmd` + `run_address_key_hash_cmd`, mirroring
+//! upstream `runAddressKeyGenCmd` / `runAddressKeyHashCmd`. Remaining
 //! EraIndependent address subcommands (`address build`,
-//! `address key-hash`, `address info`) port over subsequent rounds.
+//! `address info`) port over subsequent rounds.
 
 use std::path::Path;
 
@@ -31,6 +31,66 @@ pub fn run_address_key_gen_cmd(
     signing_key_file: &Path,
 ) -> Result<()> {
     generate_keypair_to_envelopes(verification_key_file, signing_key_file, KeyKind::Payment)
+}
+
+/// Run `address key-hash` — print the Blake2b-224 hash of a
+/// verification key as lowercase hex.
+///
+/// Mirrors upstream `runAddressKeyHashCmd` from
+/// `Cardano.CLI.EraIndependent.Address.Run`. Yggdrasil's surface
+/// (the node binary's `cardano-cli address-key-hash` wrapper is the
+/// parity reference) reads the VK from a TextEnvelope file and
+/// prints the 56-hex-char hash to stdout — no `--out-file` selector.
+/// Both `Payment…` and `Stake…` verification-key envelopes are
+/// accepted: the wire shape is identical (32-byte VK).
+pub fn run_address_key_hash_cmd(payment_verification_key_file: &Path) -> Result<()> {
+    let envelope_bytes = std::fs::read(payment_verification_key_file).wrap_err_with(|| {
+        format!(
+            "failed to read --payment-verification-key-file {}",
+            payment_verification_key_file.display()
+        )
+    })?;
+    let key_bytes = read_verification_key_text_envelope(&envelope_bytes)?;
+    let hash = yggdrasil_crypto::hash_bytes_224(&key_bytes);
+    // Upstream prints lowercase hex, no `0x` prefix (28 bytes = 56 chars).
+    println!("{}", hex::encode(hash.0));
+    Ok(())
+}
+
+/// Decode a 32-byte verification key out of a TextEnvelope JSON
+/// blob (`{type, description, cborHex}`).
+///
+/// The `cborHex` field must be exactly 34 bytes: the 2-byte CBOR
+/// bytes-string-of-length-32 prefix `0x5820` followed by the
+/// 32-byte key. Mirrors the inverse of [`write_text_envelope`].
+fn read_verification_key_text_envelope(envelope_bytes: &[u8]) -> Result<[u8; 32]> {
+    let envelope: serde_json::Value = serde_json::from_slice(envelope_bytes)
+        .map_err(|e| eyre::eyre!("TextEnvelope is not valid JSON: {e}"))?;
+    let cbor_hex = envelope
+        .get("cborHex")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            eyre::eyre!("TextEnvelope is missing the required `cborHex` string field")
+        })?;
+    let cbor_bytes = hex::decode(cbor_hex.trim())
+        .map_err(|e| eyre::eyre!("TextEnvelope cborHex is not valid hex: {e}"))?;
+    if cbor_bytes.len() != 34 {
+        eyre::bail!(
+            "expected 34 bytes of cborHex (2-byte CBOR prefix + 32-byte key), got {}",
+            cbor_bytes.len()
+        );
+    }
+    // CBOR bytes-string of length 32 = major-type-2 | length-32 = 0x58 0x20.
+    if cbor_bytes[0] != 0x58 || cbor_bytes[1] != 0x20 {
+        eyre::bail!(
+            "expected CBOR prefix 0x5820 (bytes-string of length 32), got 0x{:02x}{:02x}",
+            cbor_bytes[0],
+            cbor_bytes[1]
+        );
+    }
+    let mut out = [0_u8; 32];
+    out.copy_from_slice(&cbor_bytes[2..]);
+    Ok(out)
 }
 
 /// Kind of key being generated — selects the TextEnvelope `type` +
@@ -250,6 +310,69 @@ mod tests {
         let a = std::fs::read_to_string(dir.join("a.skey")).expect("read a");
         let b = std::fs::read_to_string(dir.join("b.skey")).expect("read b");
         assert_ne!(a, b, "two key-gen runs must produce different signing keys");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `read_verification_key_text_envelope` round-trips a key that
+    /// `write_text_envelope` produced — the 32 key bytes survive the
+    /// `5820`-prefixed CBOR envelope and back.
+    #[test]
+    fn verification_key_envelope_round_trips() {
+        let dir = std::env::temp_dir().join(format!(
+            "yggdrasil-cli-vk-rt-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let key = [0x42_u8; 32];
+        let path = dir.join("k.vkey");
+        write_text_envelope(
+            &path,
+            "PaymentVerificationKeyShelley_ed25519",
+            "Payment Verification Key",
+            &key,
+            false,
+        )
+        .expect("write envelope");
+        let decoded = read_verification_key_text_envelope(
+            &std::fs::read(&path).expect("read envelope"),
+        )
+        .expect("decode envelope");
+        assert_eq!(decoded, key, "32 key bytes must survive the envelope round-trip");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `read_verification_key_text_envelope` rejects a `cborHex`
+    /// whose decoded length is not the required 34 bytes.
+    #[test]
+    fn verification_key_envelope_rejects_wrong_length() {
+        // `cborHex` = "5820" + only 4 hex (2 bytes) of payload → 4 bytes total.
+        let bad = br#"{"type":"x","description":"y","cborHex":"5820abcd"}"#;
+        let err = read_verification_key_text_envelope(bad).expect_err("short cborHex must bail");
+        assert!(
+            err.to_string().contains("expected 34 bytes"),
+            "error must explain the length requirement; got {err}"
+        );
+    }
+
+    /// `run_address_key_hash_cmd` succeeds on a freshly-generated
+    /// verification key — confirms the key-gen → key-hash pipeline
+    /// composes end-to-end.
+    #[test]
+    fn key_hash_succeeds_on_generated_vkey() {
+        let dir = std::env::temp_dir().join(format!(
+            "yggdrasil-cli-kh-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let vk_path = dir.join("p.vkey");
+        run_address_key_gen_cmd(&vk_path, &dir.join("p.skey")).expect("key-gen");
+        run_address_key_hash_cmd(&vk_path).expect("key-hash must succeed on a valid vkey");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -188,6 +188,25 @@ mod tests {
         );
     }
 
+    /// `address-key-hash --payment-verification-key-file …` parses
+    /// to the expected variant.
+    #[test]
+    fn parses_address_key_hash() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "address-key-hash",
+            "--payment-verification-key-file",
+            "/tmp/p.vkey",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::AddressKeyHash {
+                payment_verification_key_file: PathBuf::from("/tmp/p.vkey"),
+            }
+        );
+    }
+
     /// Unknown subcommand surfaces through `ParseError::Clap`.
     #[test]
     fn rejects_unknown_subcommand() {
