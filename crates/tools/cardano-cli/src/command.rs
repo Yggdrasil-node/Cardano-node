@@ -109,6 +109,25 @@ pub enum Command {
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
+    /// Sign a transaction with a single Ed25519 signing key,
+    /// replacing the witness set with a fresh single-signer one.
+    /// Mirrors upstream `transaction sign`
+    /// (`Cardano.CLI.EraBased.Transaction.Command`).
+    TransactionSign {
+        /// Path to a file containing the CBOR-encoded unsigned tx.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR unsigned-tx bytes.
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+        /// Path to the Ed25519 signing-key TextEnvelope. Both payment
+        /// and stake signing-key envelopes are accepted.
+        #[arg(long)]
+        signing_key_file: PathBuf,
+        /// Path to write the signed transaction CBOR.
+        #[arg(long)]
+        out_file: PathBuf,
+    },
     /// Build a Shelley payment address (Bech32) from a payment
     /// verification key, optionally with a stake credential. Mirrors
     /// upstream `address build`

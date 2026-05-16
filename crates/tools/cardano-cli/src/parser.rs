@@ -333,6 +333,32 @@ mod tests {
         );
     }
 
+    /// `transaction-sign --tx-hex … --signing-key-file …
+    /// --out-file …` parses to the expected variant.
+    #[test]
+    fn parses_transaction_sign() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "transaction-sign",
+            "--tx-hex",
+            "82a0a0",
+            "--signing-key-file",
+            "/tmp/p.skey",
+            "--out-file",
+            "/tmp/signed.tx",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::TransactionSign {
+                tx_file: None,
+                tx_hex: Some("82a0a0".to_string()),
+                signing_key_file: PathBuf::from("/tmp/p.skey"),
+                out_file: PathBuf::from("/tmp/signed.tx"),
+            }
+        );
+    }
+
     /// Unknown subcommand surfaces through `ParseError::Clap`.
     #[test]
     fn rejects_unknown_subcommand() {

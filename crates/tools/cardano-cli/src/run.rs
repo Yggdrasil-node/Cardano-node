@@ -149,6 +149,21 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             // body. No LSQ client, no node socket.
             crate::era_based::transaction::run::run_transaction_txid_cmd(tx_file, tx_hex)
         }
+        Command::TransactionSign {
+            tx_file,
+            tx_hex,
+            signing_key_file,
+            out_file,
+        } => {
+            // R509: offline subcommand — Ed25519-sign a tx, replacing
+            // the witness set with a fresh single-signer one.
+            crate::era_based::transaction::run::run_transaction_sign_cmd(
+                tx_file,
+                tx_hex,
+                &signing_key_file,
+                &out_file,
+            )
+        }
         Command::AddressBuild {
             payment_verification_key_file,
             stake_verification_key_file,

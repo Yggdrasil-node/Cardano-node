@@ -3,16 +3,18 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** `cardano-cli/cardano-cli/src/Cardano/CLI/EraBased/Transaction/Run.hs`.
-//! R292 landed the file as an API skeleton. R508 (Phase 3.2) lands
-//! the first concrete subcommand — `run_transaction_txid_cmd`,
-//! mirroring upstream `runTransactionTxIdCmd`. Remaining transaction
-//! subcommands (`transaction build`, `transaction build-raw`,
-//! `transaction sign`, `transaction view`, …) port over subsequent
-//! rounds.
+//! R292 landed the file as an API skeleton. R508–R509 (Phase 3.2)
+//! land `run_transaction_txid_cmd` + `run_transaction_sign_cmd`,
+//! mirroring upstream `runTransactionTxIdCmd` /
+//! `runTransactionSignCmd`. Remaining transaction subcommands
+//! (`transaction build`, `transaction build-raw`,
+//! `transaction view`, …) port over subsequent rounds.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eyre::{Result, WrapErr};
+
+use crate::era_independent::address::run::read_verification_key_text_envelope;
 
 /// Run `transaction txid` — print the transaction id of a serialized
 /// transaction as 64-char lowercase hex.
@@ -32,6 +34,101 @@ pub fn run_transaction_txid_cmd(tx_file: Option<PathBuf>, tx_hex: Option<String>
     Ok(())
 }
 
+/// Run `transaction sign` — sign a transaction with one Ed25519
+/// signing key and write the signed CBOR to `out_file`.
+///
+/// Mirrors upstream `runTransactionSignCmd` from
+/// `Cardano.CLI.EraBased.Transaction.Run`. Yggdrasil's surface (the
+/// node binary's `cardano-cli transaction-sign` wrapper is the
+/// parity reference) is the single-signer form: it *replaces* the
+/// transaction's witness set with a fresh one carrying exactly the
+/// one `[vkey, signature]` pair, rather than appending to an
+/// existing multi-witness set.
+pub fn run_transaction_sign_cmd(
+    tx_file: Option<PathBuf>,
+    tx_hex: Option<String>,
+    signing_key_file: &Path,
+    out_file: &Path,
+) -> Result<()> {
+    let tx_bytes = read_tx_input(tx_file, tx_hex)?;
+    let sk_envelope = std::fs::read(signing_key_file).wrap_err_with(|| {
+        format!(
+            "failed to read --signing-key-file {}",
+            signing_key_file.display()
+        )
+    })?;
+    // A signing-key TextEnvelope carries the same `5820`-prefixed
+    // 32-byte payload shape as a verification-key envelope, so the
+    // shared decoder applies.
+    let sk_bytes = read_verification_key_text_envelope(&sk_envelope)?;
+    let signed_tx = sign_tx_with_fresh_witness_set(&tx_bytes, &sk_bytes)?;
+    std::fs::write(out_file, &signed_tx)
+        .wrap_err_with(|| format!("failed to write --out-file {}", out_file.display()))?;
+    Ok(())
+}
+
+/// Sign a transaction, replacing its witness set with a fresh
+/// single-signer set `{0: [[vkey, signature]]}`.
+///
+/// The transaction is the CBOR array `[body, witness_set, …tail]`.
+/// The body byte span is captured verbatim (`Decoder::raw_value`),
+/// the original witness set is skipped, and everything after it (the
+/// `tail` — `is_valid` flag, auxiliary data) is preserved. The
+/// txid (Blake2b-256 of the body) is Ed25519-signed; the result is
+/// re-assembled as `array(L) || body || fresh_wits || tail`.
+fn sign_tx_with_fresh_witness_set(tx_bytes: &[u8], sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
+    use yggdrasil_crypto::SigningKey;
+    use yggdrasil_ledger::cbor::{Decoder, Encoder};
+
+    // Parse the outer array, capture the body span, skip the old
+    // witness set, and remember the tail offset.
+    let mut dec = Decoder::new(tx_bytes);
+    let array_len = dec
+        .array()
+        .map_err(|e| eyre::eyre!("tx CBOR does not start with an array: {e}"))?;
+    if array_len < 2 {
+        eyre::bail!(
+            "tx CBOR outer array must have at least 2 elements (body + witness set); got {array_len}"
+        );
+    }
+    let body_bytes = dec
+        .raw_value()
+        .map_err(|e| eyre::eyre!("failed to extract the transaction body bytes: {e}"))?
+        .to_vec();
+    dec.skip()
+        .map_err(|e| eyre::eyre!("failed to skip the original witness set: {e}"))?;
+    let tail = &tx_bytes[dec.position()..];
+
+    // Sign the txid (Blake2b-256 of the body) with the supplied SK.
+    let sk = SigningKey::from_bytes(*sk_bytes);
+    let vk = sk
+        .verification_key()
+        .map_err(|e| eyre::eyre!("derive VK from SK failed: {e}"))?;
+    let txid = yggdrasil_ledger::compute_tx_id(&body_bytes);
+    let sig = sk
+        .sign(&txid.0)
+        .map_err(|e| eyre::eyre!("sign txid failed: {e}"))?;
+
+    // Fresh witness set = `{0: [[vk_bytes, sig_bytes]]}`.
+    let mut wits = Encoder::new();
+    wits.map(1);
+    wits.unsigned(0);
+    wits.array(1);
+    wits.array(2);
+    wits.bytes(&vk.to_bytes());
+    wits.bytes(&sig.to_bytes());
+    let wits_bytes = wits.into_bytes();
+
+    // Re-assemble: outer array(L) || body || fresh wits || tail.
+    let mut header = Encoder::new();
+    header.array(array_len);
+    let mut out = header.into_bytes();
+    out.extend_from_slice(&body_bytes);
+    out.extend_from_slice(&wits_bytes);
+    out.extend_from_slice(tail);
+    Ok(out)
+}
+
 /// Resolve the `--tx-file` / `--tx-hex` flag pair to raw transaction
 /// bytes. clap's `conflicts_with` already rejects "both"; this
 /// handles the "file", "hex", and "neither" cases.
@@ -47,7 +144,7 @@ fn read_tx_input(tx_file: Option<PathBuf>, tx_hex: Option<String>) -> Result<Vec
             hex::decode(stripped).wrap_err("invalid hex in --tx-hex")
         }
         (None, None) => {
-            eyre::bail!("transaction txid requires either --tx-file or --tx-hex")
+            eyre::bail!("this transaction subcommand requires either --tx-file or --tx-hex")
         }
         (Some(_), Some(_)) => {
             unreachable!("clap's conflicts_with prevents --tx-file + --tx-hex both being set")
@@ -127,6 +224,73 @@ mod tests {
         assert!(
             err.to_string().contains("does not start with an array"),
             "error must explain the array requirement; got {err}"
+        );
+    }
+
+    /// `sign_tx_with_fresh_witness_set` preserves the body, keeps the
+    /// outer array length, and installs a `{0: [[vk, sig]]}` witness
+    /// set carrying the VK derived from the supplied SK.
+    #[test]
+    fn sign_installs_fresh_single_signer_witness_set() {
+        use yggdrasil_ledger::cbor::Decoder;
+
+        // Minimal unsigned tx `[ {}, {} ]` — body + (empty) witness set.
+        let tx = vec![0x82, 0xA0, 0xA0];
+        let sk_bytes = [7_u8; 32];
+        let signed = sign_tx_with_fresh_witness_set(&tx, &sk_bytes).expect("sign minimal tx");
+
+        let mut dec = Decoder::new(&signed);
+        assert_eq!(
+            dec.array().expect("signed tx is an array"),
+            2,
+            "outer length preserved"
+        );
+        assert_eq!(
+            dec.raw_value().expect("body span"),
+            &[0xA0],
+            "the body must be byte-identical to the unsigned tx"
+        );
+        // Witness set: a 1-entry map keyed 0, value a 1-element array
+        // of a 2-element [vk, sig] array.
+        assert_eq!(dec.map().expect("witness map"), 1);
+        assert_eq!(dec.unsigned().expect("witness key"), 0);
+        assert_eq!(dec.array().expect("vkey-witness list"), 1);
+        assert_eq!(dec.array().expect("vkey-witness pair"), 2);
+        let vk = dec.bytes().expect("vk bytes");
+        let sig = dec.bytes().expect("sig bytes");
+        assert_eq!(vk.len(), 32, "Ed25519 verification key is 32 bytes");
+        assert_eq!(sig.len(), 64, "Ed25519 signature is 64 bytes");
+
+        let expected_vk = yggdrasil_crypto::SigningKey::from_bytes(sk_bytes)
+            .verification_key()
+            .expect("derive VK")
+            .to_bytes();
+        assert_eq!(vk, expected_vk, "witness VK must match the supplied SK");
+    }
+
+    /// Ed25519 signing is deterministic — signing the same tx with
+    /// the same key twice yields byte-identical output.
+    #[test]
+    fn sign_is_deterministic() {
+        let tx = vec![0x82, 0xA0, 0xA0];
+        let a = sign_tx_with_fresh_witness_set(&tx, &[9_u8; 32]).expect("sign a");
+        let b = sign_tx_with_fresh_witness_set(&tx, &[9_u8; 32]).expect("sign b");
+        assert_eq!(
+            a, b,
+            "deterministic Ed25519 signing must reproduce the signed tx"
+        );
+    }
+
+    /// `sign_tx_with_fresh_witness_set` rejects an outer array with
+    /// fewer than 2 elements (no witness-set slot).
+    #[test]
+    fn sign_rejects_too_short_outer_array() {
+        // `[ {} ]` = 0x81 0xA0 — a 1-element array.
+        let err = sign_tx_with_fresh_witness_set(&[0x81, 0xA0], &[1_u8; 32])
+            .expect_err("1-element tx array must bail");
+        assert!(
+            err.to_string().contains("at least 2 elements"),
+            "error must explain the ≥2-element requirement; got {err}"
         );
     }
 }
