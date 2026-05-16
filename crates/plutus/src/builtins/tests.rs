@@ -1621,8 +1621,13 @@ fn bitwise_binop_empty() {
 
 // ===================================================================
 // int_to_scalar_bytes
+//
+// Phase 5.4: `int_to_scalar_bytes` is a BLS-only helper, gated behind
+// the `bls12-381` Cargo feature — these direct-call tests carry the
+// same gate so `cargo test --no-default-features` still compiles.
 // ===================================================================
 
+#[cfg(feature = "bls12-381")]
 #[test]
 fn int_to_scalar_bytes_zero() {
     let (bytes, neg) = int_to_scalar_bytes(0);
@@ -1630,6 +1635,7 @@ fn int_to_scalar_bytes_zero() {
     assert!(!neg);
 }
 
+#[cfg(feature = "bls12-381")]
 #[test]
 fn int_to_scalar_bytes_positive() {
     let (bytes, neg) = int_to_scalar_bytes(256);
@@ -1637,6 +1643,7 @@ fn int_to_scalar_bytes_positive() {
     assert_eq!(bytes, vec![1, 0]); // 256 big-endian
 }
 
+#[cfg(feature = "bls12-381")]
 #[test]
 fn int_to_scalar_bytes_negative() {
     let (bytes, neg) = int_to_scalar_bytes(-42);
@@ -1644,6 +1651,7 @@ fn int_to_scalar_bytes_negative() {
     assert_eq!(bytes, vec![42]);
 }
 
+#[cfg(feature = "bls12-381")]
 #[test]
 fn int_to_scalar_bytes_min() {
     let (_, neg) = int_to_scalar_bytes(i128::MIN);

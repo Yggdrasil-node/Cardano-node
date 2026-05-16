@@ -23,6 +23,7 @@ use num_bigint::{BigInt, Sign};
 use num_integer::Integer as NumInteger;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use yggdrasil_crypto::blake2b;
+#[cfg(feature = "bls12-381")]
 use yggdrasil_crypto::bls12_381;
 #[cfg(feature = "secp256k1")]
 use yggdrasil_crypto::secp256k1;
@@ -556,117 +557,46 @@ pub fn evaluate_builtin(
 
         // ---------------------------------------------------------------
         // PlutusV3 — BLS12-381
+        //
+        // Phase 5.4: the 17 BLS12-381 builtins are gated behind the
+        // `bls12-381` Cargo feature (default-on). The dispatch body
+        // is extracted into `dispatch_bls12_381_builtin` (itself
+        // `#[cfg]`-gated) rather than `#[cfg]`-splitting all 17 arms
+        // inline. The `DefaultFun` enum variants stay unconditional
+        // (wire-level flat tags) — same rationale as the secp256k1
+        // gate above; only the dispatch is gated. With the feature
+        // off, evaluation surfaces a structured `BuiltinError`.
         // ---------------------------------------------------------------
-        Bls12_381_G1_Add => {
-            let a = get_g1(&args[0])?;
-            let b = get_g1(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
-                bls12_381::g1_add(a, b),
-            )))
-        }
-        Bls12_381_G1_Neg => {
-            let a = get_g1(&args[0])?;
-            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
-                bls12_381::g1_neg(a),
-            )))
-        }
-        Bls12_381_G1_ScalarMul => {
-            let scalar = get_int(&args[0])?;
-            let point = get_g1(&args[1])?;
-            let (magnitude, negative) = int_to_scalar_bytes(scalar);
-            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
-                bls12_381::g1_scalar_mul(&magnitude, negative, point),
-            )))
-        }
-        Bls12_381_G1_Equal => {
-            let a = get_g1(&args[0])?;
-            let b = get_g1(&args[1])?;
-            Ok(Value::Constant(Constant::Bool(bls12_381::g1_equal(a, b))))
-        }
-        Bls12_381_G1_HashToGroup => {
-            let msg = get_bytestring(&args[0])?;
-            let dst = get_bytestring(&args[1])?;
-            let point = bls12_381::g1_hash_to_group(msg, dst)
-                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
-            Ok(Value::Constant(Constant::Bls12_381_G1_Element(point)))
-        }
-        Bls12_381_G1_Compress => {
-            let point = get_g1(&args[0])?;
-            Ok(Value::Constant(Constant::ByteString(
-                bls12_381::g1_compress(point).to_vec(),
-            )))
-        }
-        Bls12_381_G1_Uncompress => {
-            let bs = get_bytestring(&args[0])?;
-            let point = bls12_381::g1_uncompress(bs)
-                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
-            Ok(Value::Constant(Constant::Bls12_381_G1_Element(point)))
-        }
-        Bls12_381_G2_Add => {
-            let a = get_g2(&args[0])?;
-            let b = get_g2(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
-                bls12_381::g2_add(a, b),
-            )))
-        }
-        Bls12_381_G2_Neg => {
-            let a = get_g2(&args[0])?;
-            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
-                bls12_381::g2_neg(a),
-            )))
-        }
-        Bls12_381_G2_ScalarMul => {
-            let scalar = get_int(&args[0])?;
-            let point = get_g2(&args[1])?;
-            let (magnitude, negative) = int_to_scalar_bytes(scalar);
-            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
-                bls12_381::g2_scalar_mul(&magnitude, negative, point),
-            )))
-        }
-        Bls12_381_G2_Equal => {
-            let a = get_g2(&args[0])?;
-            let b = get_g2(&args[1])?;
-            Ok(Value::Constant(Constant::Bool(bls12_381::g2_equal(a, b))))
-        }
-        Bls12_381_G2_HashToGroup => {
-            let msg = get_bytestring(&args[0])?;
-            let dst = get_bytestring(&args[1])?;
-            let point = bls12_381::g2_hash_to_group(msg, dst)
-                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
-            Ok(Value::Constant(Constant::Bls12_381_G2_Element(point)))
-        }
-        Bls12_381_G2_Compress => {
-            let point = get_g2(&args[0])?;
-            Ok(Value::Constant(Constant::ByteString(
-                bls12_381::g2_compress(point).to_vec(),
-            )))
-        }
-        Bls12_381_G2_Uncompress => {
-            let bs = get_bytestring(&args[0])?;
-            let point = bls12_381::g2_uncompress(bs)
-                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
-            Ok(Value::Constant(Constant::Bls12_381_G2_Element(point)))
-        }
-        Bls12_381_MillerLoop => {
-            let g1 = get_g1(&args[0])?;
-            let g2 = get_g2(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(
-                bls12_381::miller_loop(g1, g2),
-            ))))
-        }
-        Bls12_381_MulMlResult => {
-            let a = get_ml(&args[0])?;
-            let b = get_ml(&args[1])?;
-            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(
-                bls12_381::mul_ml_result(a, b),
-            ))))
-        }
-        Bls12_381_FinalVerify => {
-            let a = get_ml(&args[0])?;
-            let b = get_ml(&args[1])?;
-            Ok(Value::Constant(Constant::Bool(bls12_381::final_verify(
-                a, b,
-            ))))
+        Bls12_381_G1_Add
+        | Bls12_381_G1_Neg
+        | Bls12_381_G1_ScalarMul
+        | Bls12_381_G1_Equal
+        | Bls12_381_G1_HashToGroup
+        | Bls12_381_G1_Compress
+        | Bls12_381_G1_Uncompress
+        | Bls12_381_G2_Add
+        | Bls12_381_G2_Neg
+        | Bls12_381_G2_ScalarMul
+        | Bls12_381_G2_Equal
+        | Bls12_381_G2_HashToGroup
+        | Bls12_381_G2_Compress
+        | Bls12_381_G2_Uncompress
+        | Bls12_381_MillerLoop
+        | Bls12_381_MulMlResult
+        | Bls12_381_FinalVerify => {
+            #[cfg(feature = "bls12-381")]
+            let result = dispatch_bls12_381_builtin(fun, args);
+            #[cfg(not(feature = "bls12-381"))]
+            let result = {
+                let _ = args;
+                Err(MachineError::BuiltinError {
+                    builtin: "bls12_381".into(),
+                    message: "BLS12-381 builtins are not compiled in; rebuild \
+                              yggdrasil-plutus with the `bls12-381` feature"
+                        .into(),
+                })
+            };
+            result
         }
 
         Keccak_256 => {
@@ -1011,8 +941,140 @@ fn data_variant_name(d: &PlutusData) -> String {
 
 // ---------------------------------------------------------------------------
 // BLS12-381 helpers
+//
+// All gated behind the `bls12-381` Cargo feature: `dispatch_bls12_381_builtin`
+// holds the 17-arm BLS dispatch extracted from `evaluate_builtin`, and the
+// `get_g1` / `get_g2` / `get_ml` / `int_to_scalar_bytes` helpers it depends on
+// are BLS-only call sites. With the feature off the whole block is absent and
+// `evaluate_builtin`'s combined BLS arm surfaces a `BuiltinError` instead.
 // ---------------------------------------------------------------------------
 
+/// Dispatch the 17 BLS12-381 builtins (CIP-0381 G1 / G2 / pairing ops).
+///
+/// Extracted from `evaluate_builtin` so the `bls12-381` feature gate is a
+/// single `#[cfg]` on this fn + its one call site, rather than 17 inline
+/// arm splits. `evaluate_builtin` only routes the `Bls12_381_*` variants
+/// here — hence the `unreachable!` catch-all.
+#[cfg(feature = "bls12-381")]
+fn dispatch_bls12_381_builtin(fun: DefaultFun, args: &[Value]) -> Result<Value, MachineError> {
+    use DefaultFun::*;
+    match fun {
+        Bls12_381_G1_Add => {
+            let a = get_g1(&args[0])?;
+            let b = get_g1(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
+                bls12_381::g1_add(a, b),
+            )))
+        }
+        Bls12_381_G1_Neg => {
+            let a = get_g1(&args[0])?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
+                bls12_381::g1_neg(a),
+            )))
+        }
+        Bls12_381_G1_ScalarMul => {
+            let scalar = get_int(&args[0])?;
+            let point = get_g1(&args[1])?;
+            let (magnitude, negative) = int_to_scalar_bytes(scalar);
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(
+                bls12_381::g1_scalar_mul(&magnitude, negative, point),
+            )))
+        }
+        Bls12_381_G1_Equal => {
+            let a = get_g1(&args[0])?;
+            let b = get_g1(&args[1])?;
+            Ok(Value::Constant(Constant::Bool(bls12_381::g1_equal(a, b))))
+        }
+        Bls12_381_G1_HashToGroup => {
+            let msg = get_bytestring(&args[0])?;
+            let dst = get_bytestring(&args[1])?;
+            let point = bls12_381::g1_hash_to_group(msg, dst)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(point)))
+        }
+        Bls12_381_G1_Compress => {
+            let point = get_g1(&args[0])?;
+            Ok(Value::Constant(Constant::ByteString(
+                bls12_381::g1_compress(point).to_vec(),
+            )))
+        }
+        Bls12_381_G1_Uncompress => {
+            let bs = get_bytestring(&args[0])?;
+            let point = bls12_381::g1_uncompress(bs)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G1_Element(point)))
+        }
+        Bls12_381_G2_Add => {
+            let a = get_g2(&args[0])?;
+            let b = get_g2(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
+                bls12_381::g2_add(a, b),
+            )))
+        }
+        Bls12_381_G2_Neg => {
+            let a = get_g2(&args[0])?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
+                bls12_381::g2_neg(a),
+            )))
+        }
+        Bls12_381_G2_ScalarMul => {
+            let scalar = get_int(&args[0])?;
+            let point = get_g2(&args[1])?;
+            let (magnitude, negative) = int_to_scalar_bytes(scalar);
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(
+                bls12_381::g2_scalar_mul(&magnitude, negative, point),
+            )))
+        }
+        Bls12_381_G2_Equal => {
+            let a = get_g2(&args[0])?;
+            let b = get_g2(&args[1])?;
+            Ok(Value::Constant(Constant::Bool(bls12_381::g2_equal(a, b))))
+        }
+        Bls12_381_G2_HashToGroup => {
+            let msg = get_bytestring(&args[0])?;
+            let dst = get_bytestring(&args[1])?;
+            let point = bls12_381::g2_hash_to_group(msg, dst)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(point)))
+        }
+        Bls12_381_G2_Compress => {
+            let point = get_g2(&args[0])?;
+            Ok(Value::Constant(Constant::ByteString(
+                bls12_381::g2_compress(point).to_vec(),
+            )))
+        }
+        Bls12_381_G2_Uncompress => {
+            let bs = get_bytestring(&args[0])?;
+            let point = bls12_381::g2_uncompress(bs)
+                .map_err(|e| MachineError::CryptoError(format!("{e}")))?;
+            Ok(Value::Constant(Constant::Bls12_381_G2_Element(point)))
+        }
+        Bls12_381_MillerLoop => {
+            let g1 = get_g1(&args[0])?;
+            let g2 = get_g2(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(
+                bls12_381::miller_loop(g1, g2),
+            ))))
+        }
+        Bls12_381_MulMlResult => {
+            let a = get_ml(&args[0])?;
+            let b = get_ml(&args[1])?;
+            Ok(Value::Constant(Constant::Bls12_381_MlResult(Box::new(
+                bls12_381::mul_ml_result(a, b),
+            ))))
+        }
+        Bls12_381_FinalVerify => {
+            let a = get_ml(&args[0])?;
+            let b = get_ml(&args[1])?;
+            Ok(Value::Constant(Constant::Bool(bls12_381::final_verify(
+                a, b,
+            ))))
+        }
+        other => unreachable!("dispatch_bls12_381_builtin received a non-BLS builtin: {other:?}"),
+    }
+}
+
+#[cfg(feature = "bls12-381")]
 fn get_g1(val: &Value) -> Result<&yggdrasil_crypto::G1Element, MachineError> {
     match val.as_constant()? {
         Constant::Bls12_381_G1_Element(e) => Ok(e),
@@ -1023,6 +1085,7 @@ fn get_g1(val: &Value) -> Result<&yggdrasil_crypto::G1Element, MachineError> {
     }
 }
 
+#[cfg(feature = "bls12-381")]
 fn get_g2(val: &Value) -> Result<&yggdrasil_crypto::G2Element, MachineError> {
     match val.as_constant()? {
         Constant::Bls12_381_G2_Element(e) => Ok(e),
@@ -1033,6 +1096,7 @@ fn get_g2(val: &Value) -> Result<&yggdrasil_crypto::G2Element, MachineError> {
     }
 }
 
+#[cfg(feature = "bls12-381")]
 fn get_ml(val: &Value) -> Result<&yggdrasil_crypto::MlResult, MachineError> {
     match val.as_constant()? {
         Constant::Bls12_381_MlResult(r) => Ok(r.as_ref()),
@@ -1044,6 +1108,7 @@ fn get_ml(val: &Value) -> Result<&yggdrasil_crypto::MlResult, MachineError> {
 }
 
 /// Converts a Plutus integer to (magnitude_bytes, negative) for BLS scalar mul.
+#[cfg(feature = "bls12-381")]
 fn int_to_scalar_bytes<N: Into<BigInt>>(val: N) -> (Vec<u8>, bool) {
     let val = val.into();
     let negative = val.sign() == Sign::Minus;

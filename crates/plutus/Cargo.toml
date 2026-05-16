@@ -42,9 +42,13 @@ serde_json.workspace = true
 # flat tags 52/53); with the feature off, evaluation surfaces a
 # `MachineError::BuiltinError` instead of dispatching the crypto.
 #
-# `bls12-381`: not yet `#[cfg]`-gated — the BLS dispatch is an
-# 18-arm block plus `get_g1` / `get_g2` helpers; gating it cleanly
-# is a follow-on round.
+# `bls12-381` (Phase 5.4 — wired): gates the 17 BLS12-381 builtins
+# (CIP-0381). The dispatch is extracted into the `#[cfg]`-gated
+# `dispatch_bls12_381_builtin` fn (so the gate is one `#[cfg]` + one
+# call site, not 17 inline arm splits); the `get_g1` / `get_g2` /
+# `get_ml` / `int_to_scalar_bytes` BLS-only helpers carry the same
+# gate. `DefaultFun` variants stay unconditional (wire-level flat
+# tags); feature-off evaluation surfaces a `MachineError::BuiltinError`.
 # ──────────────────────────────────────────────────────────────────────
 [features]
 default = ["secp256k1", "bls12-381"]
