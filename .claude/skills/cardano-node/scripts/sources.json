@@ -1,0 +1,30 @@
+{
+  "_comment": "Config for sync_docs.sh. Tracks Cardano Developer Portal markdown sources from GitHub.",
+  "repo": "cardano-foundation/developer-portal",
+  "branch": "staging",
+  "pin_commit": null,
+
+  "_include_paths_comment": "Files at these paths (or matching these path prefixes) are tracked. Trailing slash = directory tree; no trailing slash = exact file.",
+  "include_paths": [
+    "docs/operate-a-stake-pool/",
+    "docs/get-started/infrastructure/node/",
+    "docs/get-started/networks/testnets.md",
+    "docs/learn/educational-resources/air-gap.md",
+    "docs/learn/cardano-cli/security/secure-workflow.md"
+  ],
+
+  "_exclude_paths_comment": "Optional exclusions, applied after include_paths.",
+  "exclude_paths": [],
+
+  "_slug_rules_comment": "First matching prefix wins. After stripping, '/' becomes '-' and '.md' is dropped, then 'replace' is prepended. As a final step, if the resulting slug has its last directory component duplicated in the filename (e.g. monitoring/monitoring-overview), the duplicate is collapsed.",
+  "slug_rules": [
+    { "match": "docs/operate-a-stake-pool/deployment-scenarios/",         "replace": "deployment-" },
+    { "match": "docs/operate-a-stake-pool/relay-configuration/",          "replace": "" },
+    { "match": "docs/operate-a-stake-pool/",                              "replace": "" },
+    { "match": "docs/get-started/infrastructure/node/new-tracing-system/", "replace": "new-tracing-" },
+    { "match": "docs/get-started/infrastructure/node/",                   "replace": "" },
+    { "match": "docs/get-started/networks/",                              "replace": "" },
+    { "match": "docs/learn/educational-resources/",                       "replace": "learn-" },
+    { "match": "docs/learn/cardano-cli/security/",                        "replace": "learn-cardano-cli-" }
+  ]
+}
