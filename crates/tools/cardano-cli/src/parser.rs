@@ -226,6 +226,54 @@ mod tests {
         );
     }
 
+    /// The socket-only `query-*` subcommands all parse to their
+    /// expected variant with just `--socket-path`.
+    #[test]
+    fn parses_socket_only_query_subcommands() {
+        let stake_distribution = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-stake-distribution",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            stake_distribution,
+            Command::QueryStakeDistribution {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+        let stake_pools = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-stake-pools",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            stake_pools,
+            Command::QueryStakePools {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+        let protocol_parameters = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-protocol-parameters",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            protocol_parameters,
+            Command::QueryProtocolParameters {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+    }
+
     /// `address-key-gen --verification-key-file … --signing-key-file …`
     /// parses to the expected variant.
     #[test]

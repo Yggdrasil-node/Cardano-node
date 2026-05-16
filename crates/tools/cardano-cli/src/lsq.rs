@@ -61,6 +61,14 @@ pub enum NtcQuery {
     CurrentEra,
     /// `query-system-start` — system start time (`GetSystemStart`).
     SystemStart,
+    /// `query-stake-distribution` — per-pool active-stake
+    /// distribution.
+    StakeDistribution,
+    /// `query-stake-pools` — the set of registered stake-pool ids.
+    StakePools,
+    /// `query-protocol-parameters` — the current protocol
+    /// parameters.
+    ProtocolParameters,
 }
 
 impl NtcQuery {
@@ -73,6 +81,9 @@ impl NtcQuery {
             NtcQuery::ChainBlockNo => "query-chain-block-no",
             NtcQuery::CurrentEra => "query-current-era",
             NtcQuery::SystemStart => "query-system-start",
+            NtcQuery::StakeDistribution => "query-stake-distribution",
+            NtcQuery::StakePools => "query-stake-pools",
+            NtcQuery::ProtocolParameters => "query-protocol-parameters",
         }
     }
 }
@@ -144,6 +155,9 @@ mod tests {
             NtcQuery::ChainBlockNo,
             NtcQuery::CurrentEra,
             NtcQuery::SystemStart,
+            NtcQuery::StakeDistribution,
+            NtcQuery::StakePools,
+            NtcQuery::ProtocolParameters,
         ] {
             let err = client
                 .run_query(&socket, 764_824_073, query)

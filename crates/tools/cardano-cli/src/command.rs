@@ -97,6 +97,39 @@ pub enum Command {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Query the running node for the per-pool active-stake
+    /// distribution. Targets a `yggdrasil-node` NtC socket.
+    QueryStakeDistribution {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the set of registered stake-pool
+    /// ids. Targets a `yggdrasil-node` NtC socket.
+    QueryStakePools {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the current protocol parameters.
+    /// Targets a `yggdrasil-node` NtC socket.
+    QueryProtocolParameters {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
     /// Generate a fresh Ed25519 payment keypair, writing both keys
     /// as TextEnvelope JSON files. Mirrors upstream `address key-gen`
     /// (`Cardano.CLI.EraIndependent.Address.Command.AddressKeyGen`).

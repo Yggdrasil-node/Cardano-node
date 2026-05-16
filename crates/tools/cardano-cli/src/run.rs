@@ -135,6 +135,27 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             let magic = network_magic.unwrap_or(764_824_073);
             client.run_query(&socket_path, magic, NtcQuery::SystemStart)
         }
+        Command::QueryStakeDistribution {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::StakeDistribution)
+        }
+        Command::QueryStakePools {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::StakePools)
+        }
+        Command::QueryProtocolParameters {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::ProtocolParameters)
+        }
         Command::AddressKeyGen {
             verification_key_file,
             signing_key_file,
@@ -360,6 +381,30 @@ mod tests {
                 },
                 NtcQuery::SystemStart,
                 4,
+            ),
+            (
+                Command::QueryStakeDistribution {
+                    socket_path: socket.clone(),
+                    network_magic: Some(5),
+                },
+                NtcQuery::StakeDistribution,
+                5,
+            ),
+            (
+                Command::QueryStakePools {
+                    socket_path: socket.clone(),
+                    network_magic: Some(6),
+                },
+                NtcQuery::StakePools,
+                6,
+            ),
+            (
+                Command::QueryProtocolParameters {
+                    socket_path: socket.clone(),
+                    network_magic: Some(7),
+                },
+                NtcQuery::ProtocolParameters,
+                7,
             ),
         ];
         for (command, expected_query, expected_magic) in cases {

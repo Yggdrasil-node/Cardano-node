@@ -81,6 +81,69 @@ fn plan_for(query: NtcQuery) -> QueryPlan {
             query_label: "GetSystemStart",
             decode: decode_system_start_result,
         },
+        NtcQuery::StakeDistribution => QueryPlan {
+            query_bytes: encode_single_tag_query(5),
+            query_label: "GetStakeDistribution",
+            decode: decode_stake_distribution_result,
+        },
+        NtcQuery::StakePools => QueryPlan {
+            query_bytes: encode_single_tag_query(15),
+            query_label: "GetStakePools",
+            decode: decode_stake_pools_result,
+        },
+        NtcQuery::ProtocolParameters => QueryPlan {
+            query_bytes: encode_single_tag_query(102),
+            query_label: "GetProtocolParameters",
+            decode: decode_protocol_parameters_result,
+        },
+    }
+}
+
+/// CBOR-encode a single-element `[tag]` query envelope.
+///
+/// `query-stake-distribution` / `query-stake-pools` /
+/// `query-protocol-parameters` use yggdrasil-node's NtC dispatcher
+/// tags (5 / 15 / 102) — these are yggdrasil-node-specific (not the
+/// upstream `BlockQuery` wrapper), so these subcommands target a
+/// running `yggdrasil-node`. Mirrors the encoding the node binary's
+/// own `cardano-cli` wrapper sends (`node/src/commands/query.rs`).
+fn encode_single_tag_query(tag: u64) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(1).unsigned(tag);
+    enc.into_bytes()
+}
+
+/// Decode the `GetStakeDistribution` reply — a complex per-pool
+/// structure surfaced as raw CBOR hex (matches the node binary's
+/// `decode_ntc_result` `StakeDistribution` arm).
+fn decode_stake_distribution_result(result: &[u8]) -> serde_json::Value {
+    json!({ "stake_distribution_cbor": hex::encode(result) })
+}
+
+/// Decode the `GetStakePools` reply — a CBOR array of 28-byte pool
+/// hashes, surfaced as a hex-string list plus a count. Mirrors the
+/// node binary's `decode_ntc_result` `StakePools` arm.
+fn decode_stake_pools_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    let mut pools: Vec<String> = Vec::new();
+    if let Ok(n) = dec.array() {
+        for _ in 0..n {
+            if let Ok(hash) = dec.bytes() {
+                pools.push(hex::encode(hash));
+            }
+        }
+    }
+    json!({ "stake_pools": pools, "count": pools.len() })
+}
+
+/// Decode the `GetProtocolParameters` reply — `f6` (CBOR null) when
+/// no parameters are available yet, otherwise raw CBOR hex. Mirrors
+/// the node binary's `decode_ntc_result` `ProtocolParams` arm.
+fn decode_protocol_parameters_result(result: &[u8]) -> serde_json::Value {
+    if result == [0xf6] {
+        json!({ "protocol_parameters": serde_json::Value::Null })
+    } else {
+        json!({ "protocol_parameters": hex::encode(result) })
     }
 }
 
@@ -507,5 +570,55 @@ mod tests {
     fn decode_system_start_unknown_shape() {
         let v = decode_system_start_result(&[0x00]);
         assert_eq!(v, json!({ "system_start_cbor": "00" }));
+    }
+
+    /// `encode_single_tag_query` produces the canonical `[tag]` CBOR
+    /// for the yggdrasil-node dispatcher tags.
+    #[test]
+    fn encode_single_tag_query_emits_canonical_cbor() {
+        assert_eq!(encode_single_tag_query(5), vec![0x81, 0x05]);
+        assert_eq!(encode_single_tag_query(15), vec![0x81, 0x0f]);
+        // tag 102 needs the 1-byte-uint CBOR prefix 0x18.
+        assert_eq!(encode_single_tag_query(102), vec![0x81, 0x18, 0x66]);
+    }
+
+    /// `decode_stake_distribution_result` surfaces the raw reply as
+    /// hex.
+    #[test]
+    fn decode_stake_distribution_is_raw_hex() {
+        let v = decode_stake_distribution_result(&[0xaa, 0xbb]);
+        assert_eq!(v, json!({ "stake_distribution_cbor": "aabb" }));
+    }
+
+    /// `decode_stake_pools_result` reads a CBOR array of pool hashes
+    /// into a hex-string list + count.
+    #[test]
+    fn decode_stake_pools_reads_hash_array() {
+        // CBOR `[ h'aa…(28)', h'bb…(28)' ]`.
+        let mut bytes = vec![0x82];
+        bytes.push(0x58);
+        bytes.push(0x1c);
+        bytes.extend(std::iter::repeat_n(0xaa, 28));
+        bytes.push(0x58);
+        bytes.push(0x1c);
+        bytes.extend(std::iter::repeat_n(0xbb, 28));
+        let v = decode_stake_pools_result(&bytes);
+        assert_eq!(v["count"], 2);
+        assert_eq!(v["stake_pools"][0], "aa".repeat(28));
+        assert_eq!(v["stake_pools"][1], "bb".repeat(28));
+    }
+
+    /// `decode_protocol_parameters_result` maps CBOR null (`f6`) to
+    /// a JSON null and any other payload to raw hex.
+    #[test]
+    fn decode_protocol_parameters_null_vs_hex() {
+        assert_eq!(
+            decode_protocol_parameters_result(&[0xf6]),
+            json!({ "protocol_parameters": serde_json::Value::Null })
+        );
+        assert_eq!(
+            decode_protocol_parameters_result(&[0x01, 0x02]),
+            json!({ "protocol_parameters": "0102" })
+        );
     }
 }
