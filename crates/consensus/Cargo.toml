@@ -19,30 +19,5 @@ yggdrasil-ledger.workspace = true
 tempfile = "3"
 yggdrasil-storage = { path = "../storage" }
 
-# ──────────────────────────────────────────────────────────────────────
-# Wave 3 PR 5 — feature-flag declarations.
-#
-# `experimental-genesis` (off-by-default) was intended to wall off
-# in-progress Ouroboros Genesis (density-based chain selection) from
-# the verified Praos path. Today the flag is **decorative** — no
-# `#[cfg(feature = "experimental-genesis")]` gates exist, so the
-# default build is byte-identical with or without it.
-#
-# Phase 5.4 audit (2026-05): the flag's premise has drifted. The
-# `genesis_density` module it was meant to gate (`DensityWindow`,
-# `DEFAULT_SLOT_WINDOW`, `DEFAULT_LOW_DENSITY_THRESHOLD`) is now
-# load-bearing in the verified Praos sync path — `yggdrasil-node-sync`'s
-# `DensityRegistry` and the network governor's `peer_metric`
-# chain-quality scoring both consume it unconditionally. Gating the
-# module off (the off-by-default direction) would break the default
-# build of `yggdrasil-node-sync`. Wiring this flag now needs a
-# re-scope: decide which subset of genesis-density code is genuinely
-# experimental vs. the now-production density-tracking primitive.
-# Not a mechanical `#[cfg]` insertion.
-# ──────────────────────────────────────────────────────────────────────
-[features]
-default = []
-experimental-genesis = []
-
 [lints]
 workspace = true

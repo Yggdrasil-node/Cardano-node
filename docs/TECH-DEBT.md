@@ -143,10 +143,19 @@ soak is operator-driven work.
   workspace-default `forge` OFF so they don't pull the
   block-producer crate transitively.
 
+- ✅ **4 drifted flags removed** (Phase 5 follow-on): the Phase 5.4
+  audit found `yggdrasil-consensus/experimental-genesis`,
+  `yggdrasil-network/serde-traces`, and
+  `yggdrasil-storage/{lmdb, mem-only}` had drifted premises — each
+  gated zero `#[cfg]` sites and could not be meaningfully wired
+  (genesis-density tracking became load-bearing in the verified
+  Praos path; the network crate has no trace-type `serde` derives;
+  the storage backends are both always-compiled and additive, not
+  a compile-time choice). Re-scope outcome: the dead declarations
+  were removed rather than carried as decorative flags.
+
 - ⏳ Other declared-but-not-gating flags: `yggdrasil-ledger/plutus`,
-  `yggdrasil-consensus/experimental-genesis`,
-  `yggdrasil-network/{ntn, ntc, serde-traces}`,
-  `yggdrasil-storage/{lmdb, mem-only}`,
+  `yggdrasil-network/{ntn, ntc}`,
   `yggdrasil-plutus/{secp256k1, bls12-381}`,
   binary's `yggdrasil-node/{plutus, ntc-socket, tracer-forwarder}`.
   Each is a separate per-flag PR. `plutus` is the next-biggest
@@ -154,10 +163,7 @@ soak is operator-driven work.
   per-era ledger apply rules); `ntn` / `ntc` gate full mini-
   protocol module trees in `yggdrasil-network`; `secp256k1` /
   `bls12-381` gate per-builtin dispatch arms in
-  `yggdrasil-plutus::builtins`. `serde-traces` is decorative
-  today (no trace-type serde derives currently in the network
-  crate); a follow-on round will surface derives on the trace
-  types newly added under `crates/network/src/protocols/`.
+  `yggdrasil-plutus::builtins`.
 
 **Desired end state.** Each flag actually conditionally compiles
 the code paths it names. Per-flag follow-on PRs land
@@ -165,10 +171,11 @@ incrementally as operator demand surfaces (e.g., a sister tool
 that needs `--no-default-features --features=slim` to drop
 Plutus would drive the `plutus` flag work).
 
-**Scope.** Per-flag PRs. `forge` is closed; per remaining flag:
-~1-3 days each depending on the cross-crate coupling. `plutus`
-is multi-day because Plutus types are referenced from ~8 ledger
-files including era-specific apply rules.
+**Scope.** Per-flag PRs. `forge` is closed and the 4 drifted flags
+are closed by removal; per remaining flag: ~1-3 days each depending
+on the cross-crate coupling. `plutus` is multi-day because Plutus
+types are referenced from ~8 ledger files including era-specific
+apply rules.
 
 ## yggdrasil-cardano-cli — 3-subcommand surface closed, broader migration is the open arc
 
