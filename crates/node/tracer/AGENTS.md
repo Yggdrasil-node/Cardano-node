@@ -82,3 +82,35 @@ mini-protocol concurrently on a shared bearer) and operator
 conformance soak against
 `.reference-haskell-cardano-node/install/bin/cardano-tracer`
 (needs `setup-reference.sh` without `--sources-only`).
+
+### Live conformance tests — `tests/cardano_tracer_conformance.rs`
+
+- `handshake_completes_against_upstream_cardano_tracer` — GREEN.
+  Spawns the vendored `cardano-tracer 11.0.1` and drives
+  `MuxConnection::run_initiator_handshake` (Mux mini-protocol 0).
+- `trace_objects_delivered_to_upstream_cardano_tracer` — `#[ignore]`d
+  (task #19 outcome b, documented parity gap). Drives the
+  TraceForward mini-protocol (num 2) end-to-end via
+  `forwarding_task::run_via_mux`. Run live, cardano-tracer accepts
+  the `MsgTraceObjectsReply` SDU but logs 0 bytes — its `runPeer`
+  decoder silently rejects the reply. Two upstream-CBOR shape
+  mismatches were pinned from on-wire capture and are recorded in
+  the test docstring:
+  1. **`NumberOfTraceObjects` codec bug** in `mini_protocol.rs`
+     (`encode_request` / `decode_message`): the upstream
+     `newtype { nTraceObjects :: Word16 }` with
+     `deriving anyclass Serialise` is generic-wrapped as
+     `[constructor_tag(0), word16]`, NOT a bare CBOR uint. Captured
+     request: `83 01 f5 82 00 18 64` = `[1, true, [0,100]]`.
+     **Separately actionable** — fix the request codec.
+  2. **`Serialise TraceObject` shape unverifiable**: the instance
+     lives in `Cardano.Logging.Types` in the `trace-dispatcher`
+     package, which is NOT vendored under
+     `.reference-haskell-cardano-node/`. Yggdrasil's `to_cbor`
+     8-element array is a best-effort guess. UNBLOCK: vendor
+     `trace-dispatcher` (extend `setup-reference.sh`), mirror the
+     real `Serialise` instance, fix `TraceObject::to_cbor`, then
+     un-`ignore` the test.
+
+  Both tests self-skip when the binary is absent; CI stays green
+  (`#[ignore]` skips the delivery test under `cargo test-all`).
