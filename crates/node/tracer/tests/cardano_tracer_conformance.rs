@@ -392,23 +392,29 @@ async fn trace_objects_delivered_to_upstream_cardano_tracer() {
     // into the void in a way that could wedge the bearer.
     let _trace_rx = conn.subscribe(TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM).await;
 
-    // Spawn the read-task so inbound SDUs (the acceptor's requests,
-    // plus EKG / DataPoint mini-protocol traffic) are drained off
-    // the bearer instead of back-pressuring it.
-    let _read_task = conn.spawn_read_task();
-
-    // Spawn the egress scheduler (`muxer`) — slice (b). Upstream
-    // `Network.Mux.hs` forks the `muxer`/`demuxer` job pair only
-    // AFTER the Handshake mini-protocol has completed; this mirrors
-    // that ordering exactly (handshake above → muxer here). Once the
-    // muxer is running, `run_via_mux`'s `send_sdu` calls `enqueue`
-    // onto the shared egress FIFO and the muxer drains it. The
-    // default `EgressConfig` uses a `u16::MAX` `sdu_size`, so a
-    // `MsgTraceObjectsReply` SDU is written un-segmented — one
+    // Run the supervised bearer lifecycle — slice (c). `run` forks
+    // BOTH the read-task (the demuxer analogue, draining the
+    // acceptor's request SDUs + EKG / DataPoint traffic off the
+    // bearer) AND the egress scheduler (`muxer`) into one
+    // `tokio::task::JoinSet`, and supervises them: the first job to
+    // fail tears the other down. This mirrors upstream
+    // `Network.Mux.run`, which forks the `muxer`/`demuxer` job pair
+    // into a `JobPool` AFTER the Handshake mini-protocol has
+    // completed — exactly the ordering here (handshake above → `run`
+    // here). The default `EgressConfig` uses a `u16::MAX` `sdu_size`,
+    // so a `MsgTraceObjectsReply` SDU is written un-segmented — one
     // `send_sdu` → one SDU on the wire, byte-identical to the
-    // pre-scheduler direct write.
-    let _muxer_task = conn
-        .spawn_muxer_task(yggdrasil_node_tracer::trace_forwarder::egress::EgressConfig::default());
+    // pre-scheduler direct write. `run` is spawned detached; the
+    // `Harness` SIGKILLs cardano-tracer on drop, which EOFs the
+    // bearer and winds the supervised jobs down.
+    let mux_run_conn = Arc::clone(&conn);
+    let _mux_run = tokio::spawn(async move {
+        mux_run_conn
+            .run(Some(
+                yggdrasil_node_tracer::trace_forwarder::egress::EgressConfig::default(),
+            ))
+            .await
+    });
 
     // The known TraceObject stream. Each `to_machine` carries a
     // unique marker so the log-file assertion is unambiguous. The

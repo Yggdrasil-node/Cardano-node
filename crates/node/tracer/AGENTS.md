@@ -49,10 +49,18 @@ The crate ships:
   (`EgressQueue` / `TranslocationServiceRequest` / `Wanton` /
   `muxer` / `processSingleWanton`); `MuxConnection::spawn_muxer_task`
   forks the `muxer` after the handshake and `send_sdu` then enqueues
-  a demand instead of writing directly. Remaining: bearer-task
-  supervision (round (c)) — the current forwarding task is
-  write-only and works against a request-tolerant acceptor like
-  cardano-tracer.
+  a demand instead of writing directly. **Bearer-task supervision**
+  has now landed (task #19, full Network.Mux arc, slice (c) — the
+  final slice): `MuxConnection::run(Option<EgressConfig>)` forks the
+  read-task + the muxer-task into one `tokio::task::JoinSet` and
+  supervises them — first job to fail (or panic) aborts the sibling,
+  clean producer-drop + bearer-EOF exits both `Ok` (mirrors upstream
+  `Network.Mux.run`'s `JobPool` + `monitor` loop and `withJobPool`
+  sibling-cancel). `run` returns a `MuxRunResult { read_outcome,
+  muxer_outcome, first_failure }`. The full Network.Mux semantics
+  arc (slices a + b + c) is COMPLETE; the only remaining
+  pre-`verified_11_0_1` item is the operator-driven 24h conformance
+  soak.
 
 ## Rules — Non-Negotiable
 
@@ -157,11 +165,43 @@ prometheus` and finish the cardano-tracer Mux Layer 2/3 protocol.
   3 in `mux_connection.rs`) including a deterministic round-robin
   fairness test (`A,B,A,B,A,B` interleaving). Bearer-task
   supervision (c) is the remaining follow-on round.
+- task #19 full-Network.Mux arc, slice (c) — **bearer-task
+  supervision**, the FINAL slice. `MuxConnection::run(Option<
+  EgressConfig>)` is the supervised lifecycle entry point and a
+  faithful mirror of upstream `Network.Mux.run` (`Network/Mux.hs`),
+  which forks the `muxer`/`demuxer` job pair into a `JobPool` and
+  runs a `monitor` loop — first job to fail propagates, `withJobPool`
+  cancels the sibling. Yggdrasil's `run` owns a
+  `tokio::task::JoinSet` of exactly two jobs — the read-task (demuxer
+  analogue) and the muxer-task (egress muxer) — and `select`s the
+  first to finish: a job that returns `Err`/panics aborts the
+  sibling and drains the set (`first_failure` names the trigger,
+  the sibling is `Cancelled`); a job that returns `Ok` triggers a
+  bounded `MUX_RUN_SHUTDOWN_GRACE = 2s` wait for the sibling. New
+  `MuxConnection::shutdown()` — the analogue of upstream
+  `Network.Mux.stop` — drops the stashed `EgressDemand` (muxer
+  drains its FIFO, exits `Ok`) and sets a flag so a subsequent
+  read-task `UnexpectedEof` is re-classified clean (upstream's
+  `DemuxerException BearerClosed` "normal shutdown"). `run` returns
+  a `MuxRunResult { read_outcome: JobOutcome<MuxConnectionError>,
+  muxer_outcome: Option<JobOutcome<EgressError>>, first_failure:
+  Option<FailedJob> }`. `spawn_read_task`/`spawn_muxer_task` stay
+  public as escape hatches (the unit tests drive them directly).
+  NOT done: per-mini-protocol tasks — upstream forks one job per
+  mini-protocol, but cardano-tracer's two-sub-protocol use
+  (Handshake then TraceObject) does not need it; deliberately out of
+  scope to keep the slice risk-bounded. 4 new deterministic unit
+  tests in `mux_connection.rs` (muxer-write-failure cancels the
+  read-task; read-task `IngressQueueOverRun` cancels the muxer;
+  clean producer-drop + bearer-EOF exits both `Ok`; muxer-less
+  `run(None)`) — none rely on async race timing. The conformance
+  test `trace_objects_delivered_to_upstream_cardano_tracer` was
+  migrated to `run()` (the three `spawn_*` lines replaced by one
+  detached `run()` task); both live conformance tests stay GREEN.
 
-Remaining pre-`verified_11_0_1`: bearer-task supervision
-(round (c): cohesive shutdown when any sub-task fails) — the bearer
-deadlock, the ingress queue limits, and the egress scheduler are
-now done — plus an operator conformance soak against
+The full Network.Mux semantics arc (slices a + b + c) is COMPLETE.
+Remaining pre-`verified_11_0_1`: only the operator-driven 24h
+conformance soak against
 `.reference-haskell-cardano-node/install/bin/cardano-tracer`
 (needs `setup-reference.sh` without `--sources-only`).
 
@@ -171,14 +211,17 @@ now done — plus an operator conformance soak against
   Spawns the vendored `cardano-tracer 11.0.1` and drives
   `MuxConnection::run_initiator_handshake` (Mux mini-protocol 0).
 - `trace_objects_delivered_to_upstream_cardano_tracer` — GREEN
-  (task #19 closeout, outcome a). Drives the TraceForward
-  mini-protocol (num 2) end-to-end via
-  `forwarding_task::run_via_mux`: cardano-tracer accepts the
-  `MsgTraceObjectsReply` SDU and writes every forwarded
-  TraceObject's `to_machine` text into its `FileMode` log. It was
-  un-`ignore`d once three trace-forward CBOR codecs were corrected
-  to the upstream `Codec.Serialise` byte shapes (read from the
-  now-vendored `trace-dispatcher` source — see below).
+  (task #19 closeout, outcome a; slice (c) migrated it to
+  `MuxConnection::run`). Drives the TraceForward mini-protocol
+  (num 2) end-to-end via `forwarding_task::run_via_mux`, with the
+  read-task + muxer-task forked + supervised by a detached
+  `MuxConnection::run(Some(EgressConfig::default()))` task:
+  cardano-tracer accepts the `MsgTraceObjectsReply` SDU and writes
+  every forwarded TraceObject's `to_machine` text into its
+  `FileMode` log. It was un-`ignore`d once three trace-forward CBOR
+  codecs were corrected to the upstream `Codec.Serialise` byte
+  shapes (read from the now-vendored `trace-dispatcher` source —
+  see below).
 
   Both tests self-skip when the binary is absent (override with
   `YGGDRASIL_CARDANO_TRACER_BIN`); CI's `--sources-only` reference

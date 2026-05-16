@@ -109,16 +109,51 @@
 //!   the API stays usable for callers that never spawn a muxer (the
 //!   pre-existing `send_sdu` round-trip unit tests).
 //!
-//! Bearer-task supervision (cohesive shutdown when the muxer, the
-//! read-task, or the bearer fails) is the next follow-on round.
+//! ## Bearer-task supervision (slice c)
+//!
+//! [`MuxConnection::run`] is the supervised lifecycle entry point and
+//! the last slice of the full `Network.Mux` arc. It mirrors upstream
+//! `Network.Mux.run` (`Network/Mux.hs`), which forks the
+//! `muxer`/`demuxer` job pair into a `JobPool` and runs a `monitor`
+//! loop: the first job to fail tears the whole mux down, and the
+//! `withJobPool` `bracket` cancels every still-running sibling.
+//!
+//! `run` owns a `tokio::task::JoinSet` of exactly two jobs — the
+//! read-task ([`Self::spawn_read_task`], the demuxer analogue) and the
+//! muxer-task ([`Self::spawn_muxer_task`], the egress muxer). It
+//! `select`s the first job to finish:
+//!
+//! - **First job fails** → the supervisor `abort`s the sibling and
+//!   drains it. Mirrors upstream's `MuxerException` / `DemuxerException`
+//!   → `Failed` → `throwIO`, plus `withJobPool`'s sibling-cancel. The
+//!   per-job outcomes are surfaced in [`MuxRunResult`]; `first_failure`
+//!   names the job that triggered the tear-down.
+//! - **First job exits `Ok`** → the supervisor waits a bounded grace
+//!   period for the sibling to also finish cleanly; if it does, both
+//!   outcomes are `Ok`. This is the clean-shutdown path: the producer
+//!   drops the egress demand (muxer drains its FIFO and exits `Ok`)
+//!   and the bearer EOFs (read-task's `read_sdu` returns
+//!   `UnexpectedEof`). A read-task `UnexpectedEof` **after** the muxer
+//!   has exited `Ok` is re-classified as a clean shutdown — the
+//!   Yggdrasil analogue of upstream's `DemuxerException BearerClosed`
+//!   "when all mini-protocols stopped indicates a normal shutdown".
+//!
+//! `run` does NOT fork one job per mini-protocol — upstream does, but
+//! cardano-tracer's two-sub-protocol use (Handshake then TraceObject)
+//! does not need it, and that would widen the slice past a
+//! risk-bounded change. [`Self::spawn_read_task`] /
+//! [`Self::spawn_muxer_task`] stay public as escape hatches for
+//! callers (and unit tests) that want to drive the two halves
+//! directly.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
 use super::bearer::{Bearer, BearerError, BearerReader, BearerWriter};
 use super::egress::{EgressConfig, EgressDemand, EgressError, egress_channel, run_muxer};
@@ -181,6 +216,83 @@ impl core::fmt::Display for MuxConnectionError {
 }
 
 impl std::error::Error for MuxConnectionError {}
+
+/// Outcome of one supervised bearer job (the read-task or the
+/// muxer-task) as seen by [`MuxConnection::run`].
+///
+/// Mirrors the per-job result discrimination upstream `Network.Mux`'s
+/// `monitor` loop draws from a `JobResult`: a job either ran to a
+/// clean finish, failed with an error, or was cancelled by the
+/// supervisor because its sibling failed first.
+#[derive(Debug)]
+pub enum JobOutcome<E> {
+    /// The job finished cleanly. For the read-task this is a bearer
+    /// EOF at a frame boundary after the muxer already stopped (the
+    /// Yggdrasil analogue of upstream `DemuxerException BearerClosed`
+    /// "normal shutdown"); for the muxer-task this is every
+    /// [`EgressDemand`] producer being dropped so the muxer drained
+    /// its FIFO and returned `Ok`.
+    Completed,
+    /// The job returned an error from its `Result`.
+    Failed(E),
+    /// The supervisor aborted this job because its sibling failed
+    /// (or finished) first. Mirrors upstream `withJobPool`'s
+    /// `uninterruptibleCancel` of still-running sibling jobs.
+    ///
+    /// The discriminator is `tokio::task::JoinError::is_cancelled` —
+    /// "the abort signal won the race", not merely "the task produced
+    /// no result". A job aborted mid-`read_sdu` may instead surface
+    /// as [`Self::Failed`] (e.g. a bearer `UnexpectedEof`) if the
+    /// in-flight read resolves before the abort fires; both are valid
+    /// tear-down signals and `first_failure` is the field that names
+    /// the actual culprit.
+    Cancelled,
+    /// The job's task panicked (a `JoinError` that is not a
+    /// cancellation).
+    Panicked,
+}
+
+/// Which supervised bearer job triggered a [`MuxConnection::run`]
+/// tear-down.
+///
+/// Mirrors the upstream distinction between a `MuxerException` and a
+/// `DemuxerException` in `Network.Mux`'s `monitor` loop — both are
+/// fatal, but knowing which side failed first is the diagnostic the
+/// operator needs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FailedJob {
+    /// The read-task (the demuxer analogue) failed first.
+    ReadTask,
+    /// The muxer-task (the egress muxer) failed first.
+    MuxerTask,
+}
+
+/// Result of a supervised [`MuxConnection::run`] lifecycle.
+///
+/// Mirrors upstream `Network.Mux`'s terminal `Status` (`Stopped` vs
+/// `Failed`): when `first_failure` is `None` both jobs finished
+/// cleanly (`Stopped`); when it is `Some(job)` that job failed (or
+/// panicked) and the supervisor tore the bearer down (`Failed`),
+/// aborting the sibling.
+#[derive(Debug)]
+pub struct MuxRunResult {
+    /// Outcome of the read-task (demuxer analogue).
+    pub read_outcome: JobOutcome<MuxConnectionError>,
+    /// Outcome of the muxer-task (egress muxer). `None` when `run`
+    /// was called without a muxer (no [`EgressConfig`] supplied).
+    pub muxer_outcome: Option<JobOutcome<EgressError>>,
+    /// The job whose failure tore the bearer down, or `None` for a
+    /// clean shutdown of both jobs.
+    pub first_failure: Option<FailedJob>,
+}
+
+impl MuxRunResult {
+    /// `true` when both supervised jobs finished cleanly — the
+    /// upstream `Stopped` terminal status.
+    pub fn is_clean_shutdown(&self) -> bool {
+        self.first_failure.is_none()
+    }
+}
 
 /// Per-mini-protocol ingress queue limits.
 ///
@@ -343,7 +455,18 @@ where
     /// `enqueue`s onto the shared FIFO instead of writing directly.
     /// Behind a tokio Mutex so `spawn_muxer_task` can install it and
     /// `send_sdu` can read it without a data race.
+    ///
+    /// [`Self::shutdown`] sets this back to `None`, which drops the
+    /// last [`EgressDemand`] and lets the muxer-task drain its FIFO
+    /// and exit `Ok` — the producer-drop half of a clean shutdown.
     egress: Arc<Mutex<Option<EgressDemand>>>,
+    /// Set by [`Self::shutdown`]. The supervised [`Self::run`] loop
+    /// consults this when classifying a read-task `UnexpectedEof`: an
+    /// EOF observed *after* an operator-requested shutdown is a clean
+    /// stop (upstream `Network.Mux`'s `DemuxerException BearerClosed`
+    /// "normal shutdown"), not a fault. Shared (`Arc`) so the
+    /// `run` future and `shutdown` callers see the same flag.
+    shutdown_initiated: Arc<AtomicBool>,
 }
 
 impl<S> MuxConnection<S>
@@ -362,7 +485,48 @@ where
             reader: Arc::new(Mutex::new(reader)),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
             egress: Arc::new(Mutex::new(None)),
+            shutdown_initiated: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Request a clean shutdown of the supervised bearer lifecycle.
+    ///
+    /// This is Yggdrasil's analogue of upstream `Network.Mux.stop`
+    /// (which writes `CmdShutdown` to the mux control queue; the
+    /// `monitor` loop then unwinds the job pool). It does two things:
+    ///
+    /// 1. Drops the stashed [`EgressDemand`] (sets `self.egress` back
+    ///    to `None`). With no producer handle left, the muxer-task's
+    ///    wake channel closes; the muxer drains whatever is still on
+    ///    its FIFO and returns `Ok` — the producer-drop half of a
+    ///    clean shutdown. A `send_sdu` issued after this falls back to
+    ///    the direct-write path.
+    /// 2. Sets [`Self::shutdown_initiated`] so that when the bearer
+    ///    subsequently EOFs and the read-task returns
+    ///    `UnexpectedEof`, [`Self::run`]'s supervisor re-classifies
+    ///    that EOF as a clean stop ([`JobOutcome::Completed`]) rather
+    ///    than a fault.
+    ///
+    /// Idempotent: calling it twice is harmless. It does NOT itself
+    /// close the bearer — the caller still EOFs the transport (or the
+    /// peer does) to wind the read-task down. After both halves stop,
+    /// [`Self::run`] returns a [`MuxRunResult`] with
+    /// `first_failure == None`.
+    pub async fn shutdown(&self) {
+        self.shutdown_initiated.store(true, Ordering::Release);
+        *self.egress.lock().await = None;
+    }
+
+    /// `true` once the egress scheduler (`muxer`) has been installed
+    /// — i.e. [`Self::spawn_muxer_task`] (directly, or via
+    /// [`Self::run`]) has stashed the [`EgressDemand`]. Test-only
+    /// introspection: lets a test deterministically wait for the
+    /// muxer to be live before issuing a [`Self::send_sdu`] that must
+    /// route through the scheduler rather than the direct-write
+    /// fallback.
+    #[cfg(test)]
+    pub(crate) async fn muxer_installed(&self) -> bool {
+        self.egress.lock().await.is_some()
     }
 
     /// Send one outbound SDU.
@@ -641,6 +805,425 @@ where
                 }
             }
         })
+    }
+
+    /// Run the supervised bearer lifecycle: fork the read-task and the
+    /// muxer-task into one [`JoinSet`], wait for the first to finish,
+    /// and tear the other down cohesively.
+    ///
+    /// This is the slice-(c) entry point and a faithful mirror of
+    /// upstream `Network.Mux.run` (`Network/Mux.hs`): `run` forks the
+    /// `muxer`/`demuxer` job pair into a `JobPool` and a `monitor`
+    /// loop watches them — the first job to fail propagates its
+    /// exception and `withJobPool`'s `bracket` `uninterruptibleCancel`s
+    /// the still-running sibling. Yggdrasil's [`JoinSet`] gives the
+    /// same "first-to-finish wins, abort the rest" structure.
+    ///
+    /// Call contract — the same ordering upstream uses (handshake over
+    /// a direct-write channel, *then* fork the job pair):
+    ///
+    /// 1. [`Self::run_initiator_handshake`] FIRST (direct bearer
+    ///    write/read; no supervised job exists yet).
+    /// 2. [`Self::subscribe`] / [`Self::subscribe_with_limits`] for
+    ///    every inbound mini-protocol — BEFORE `run`, because the
+    ///    read-task drops SDUs with no registered subscriber.
+    /// 3. `run(Some(config))` — forks both jobs and supervises them.
+    ///
+    /// `egress_config`:
+    /// - `Some(config)` — fork the muxer-task; [`Self::send_sdu`]
+    ///   routes through the egress scheduler. This is the
+    ///   cardano-tracer path.
+    /// - `None` — supervise the read-task only; `send_sdu` keeps the
+    ///   direct-write fallback. `muxer_outcome` in the result is
+    ///   `None`.
+    ///
+    /// ### Outcome classification
+    ///
+    /// - **A job returns `Err` or panics** → the supervisor `abort`s
+    ///   the sibling, drains the [`JoinSet`], and reports
+    ///   `first_failure = Some(job)`; the aborted sibling's outcome is
+    ///   [`JobOutcome::Cancelled`]. Mirrors upstream's `MuxerException`
+    ///   / `DemuxerException` → `Failed` tear-down.
+    /// - **A job returns `Ok`** → the supervisor waits a bounded grace
+    ///   period ([`MUX_RUN_SHUTDOWN_GRACE`]) for the sibling to also
+    ///   finish. If the sibling finishes `Ok` within the grace,
+    ///   `first_failure = None` (clean shutdown — upstream `Stopped`).
+    ///   If it does not, it is aborted and reported `Cancelled` with
+    ///   `first_failure` naming the *sibling* (it failed to shut down
+    ///   in time — a soft failure).
+    /// - **Read-task `UnexpectedEof` after the muxer already exited
+    ///   `Ok`, or after [`Self::shutdown`] was called** →
+    ///   re-classified [`JobOutcome::Completed`], not `Failed`. This
+    ///   is the clean producer-drop + bearer-EOF path: the Yggdrasil
+    ///   analogue of upstream treating a `DemuxerException
+    ///   BearerClosed` "when all mini-protocols stopped" as a normal
+    ///   shutdown rather than a fault.
+    pub async fn run(&self, egress_config: Option<EgressConfig>) -> MuxRunResult {
+        // One JoinSet of both jobs. The two jobs have different
+        // `Result` error types, so each spawned future maps its
+        // outcome into the shared `JobReport` discriminant before the
+        // JoinSet ever sees it.
+        let mut jobs: JoinSet<JobReport> = JoinSet::new();
+
+        // Demuxer analogue — the read-task.
+        let read_handle = self.spawn_read_task();
+        jobs.spawn(async move {
+            match read_handle.await {
+                Ok(Ok(())) => JobReport::Read(JobTermination::Ok),
+                Ok(Err(e)) => JobReport::Read(JobTermination::Err(e)),
+                Err(join_err) => JobReport::Read(join_termination(join_err)),
+            }
+        });
+
+        // Egress muxer — only when a config was supplied.
+        let has_muxer = egress_config.is_some();
+        if let Some(config) = egress_config {
+            let muxer_handle = self.spawn_muxer_task(config);
+            jobs.spawn(async move {
+                match muxer_handle.await {
+                    Ok(Ok(())) => JobReport::Muxer(JobTermination::Ok),
+                    Ok(Err(e)) => JobReport::Muxer(JobTermination::Err(e)),
+                    Err(join_err) => JobReport::Muxer(join_termination(join_err)),
+                }
+            });
+        }
+
+        supervise(jobs, has_muxer, Arc::clone(&self.shutdown_initiated)).await
+    }
+}
+
+/// Bounded grace period the supervisor waits for the *sibling* job to
+/// finish after the first job has exited cleanly.
+///
+/// Upstream `Network.Mux`'s `monitor` waits 2 s for the egress queue
+/// to drain on a `CmdShutdown` (`timeout 2 $ … tryPeekTBQueue`).
+/// Yggdrasil uses the same 2 s budget: a clean producer-drop has the
+/// muxer drain its FIFO and the read-task observe bearer EOF promptly,
+/// so 2 s is generous; a sibling that overshoots it is aborted.
+pub const MUX_RUN_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How one supervised job terminated, with its error type erased into
+/// the shared report.
+enum JobTermination<E> {
+    /// The job's `Result` was `Ok(())`.
+    Ok,
+    /// The job's `Result` was `Err`.
+    Err(E),
+    /// The job's task was cancelled (aborted) — `JoinError::is_cancelled`.
+    Cancelled,
+    /// The job's task panicked.
+    Panicked,
+}
+
+/// Classify a `tokio::task::JoinError` into the [`JobTermination`]
+/// discriminant. A cancelled task (`abort`) is NOT a failure — it is
+/// the supervisor's own doing — so it maps to `Cancelled`, not
+/// `Panicked`.
+fn join_termination<E>(join_err: tokio::task::JoinError) -> JobTermination<E> {
+    if join_err.is_cancelled() {
+        JobTermination::Cancelled
+    } else {
+        JobTermination::Panicked
+    }
+}
+
+/// One supervised job's identity + termination, as the [`JoinSet`]
+/// in [`MuxConnection::run`] yields it.
+enum JobReport {
+    /// The read-task (demuxer analogue) terminated.
+    Read(JobTermination<MuxConnectionError>),
+    /// The muxer-task (egress muxer) terminated.
+    Muxer(JobTermination<EgressError>),
+}
+
+/// Convert a read-task [`JobTermination`] into the public
+/// [`JobOutcome`]. `eof_is_clean` carries the slice-(c)
+/// re-classification: a bearer `UnexpectedEof` is a clean shutdown —
+/// not a fault — when the muxer has already finished `Ok`, when an
+/// operator [`MuxConnection::shutdown`] was requested, or when there
+/// is no muxer at all (a read-only `run`). It is then reported
+/// [`JobOutcome::Completed`] rather than [`JobOutcome::Failed`]
+/// (upstream `BearerClosed` "normal shutdown").
+fn read_outcome(
+    term: JobTermination<MuxConnectionError>,
+    eof_is_clean: bool,
+) -> JobOutcome<MuxConnectionError> {
+    match term {
+        JobTermination::Ok => JobOutcome::Completed,
+        JobTermination::Cancelled => JobOutcome::Cancelled,
+        JobTermination::Panicked => JobOutcome::Panicked,
+        JobTermination::Err(MuxConnectionError::Bearer(BearerError::UnexpectedEof))
+            if eof_is_clean =>
+        {
+            JobOutcome::Completed
+        }
+        JobTermination::Err(e) => JobOutcome::Failed(e),
+    }
+}
+
+/// Convert a muxer-task [`JobTermination`] into the public
+/// [`JobOutcome`].
+fn muxer_outcome(term: JobTermination<EgressError>) -> JobOutcome<EgressError> {
+    match term {
+        JobTermination::Ok => JobOutcome::Completed,
+        JobTermination::Cancelled => JobOutcome::Cancelled,
+        JobTermination::Panicked => JobOutcome::Panicked,
+        JobTermination::Err(e) => JobOutcome::Failed(e),
+    }
+}
+
+/// `true` when a [`JobTermination`] represents a fault (an `Err` or a
+/// panic) — i.e. a tear-down trigger. A cancellation is the
+/// supervisor's own doing and is NOT a fault.
+fn termination_is_fault<E>(term: &JobTermination<E>) -> bool {
+    matches!(term, JobTermination::Err(_) | JobTermination::Panicked)
+}
+
+/// `true` when a read-task [`JobTermination`] is a bearer
+/// `UnexpectedEof` AND an operator shutdown has been requested — i.e.
+/// the EOF is the expected end of a clean shutdown, not a fault.
+/// Mirrors upstream `Network.Mux` treating `DemuxerException
+/// BearerClosed` as a normal stop "when all mini-protocols stopped".
+fn read_eof_is_clean_shutdown(
+    term: &JobTermination<MuxConnectionError>,
+    shutdown_initiated: &AtomicBool,
+) -> bool {
+    matches!(
+        term,
+        JobTermination::Err(MuxConnectionError::Bearer(BearerError::UnexpectedEof))
+    ) && shutdown_initiated.load(Ordering::Acquire)
+}
+
+/// Drive the two-job [`JoinSet`] supervision loop. Factored out of
+/// [`MuxConnection::run`] so the body is independent of the generic
+/// `S` transport parameter — the [`JoinSet`] only ever yields the
+/// already-type-erased [`JobReport`].
+///
+/// `shutdown_initiated` is consulted when classifying a read-task
+/// `UnexpectedEof`: an EOF after [`MuxConnection::shutdown`] is a
+/// clean stop, never a fault — so the supervisor must not treat it as
+/// a tear-down trigger even when the read-task is the FIRST job to
+/// finish.
+async fn supervise(
+    mut jobs: JoinSet<JobReport>,
+    has_muxer: bool,
+    shutdown_initiated: Arc<AtomicBool>,
+) -> MuxRunResult {
+    // First job to finish. `join_next` yields `None` only if the set
+    // is empty — `run` always spawns at least the read-task, so the
+    // first `join_next` is always `Some`.
+    let first = match jobs.join_next().await {
+        Some(Ok(report)) => report,
+        // The JoinSet wrapper futures never panic and are never
+        // aborted before this point, so a `JoinError` here is not
+        // reachable in practice; treat it conservatively as a
+        // read-task panic so the function stays total.
+        Some(Err(_)) | None => {
+            return MuxRunResult {
+                read_outcome: JobOutcome::Panicked,
+                muxer_outcome: has_muxer.then_some(JobOutcome::Cancelled),
+                first_failure: Some(FailedJob::ReadTask),
+            };
+        }
+    };
+
+    // Did the first job fault? If so we tear the sibling down. A
+    // read-task `UnexpectedEof` is NOT a fault when it is the
+    // expected end of a clean stop: after an operator shutdown, or —
+    // for a muxer-less `run(None)` — any bearer EOF (there is no
+    // egress side that could still be mid-shutdown).
+    let read_eof_clean = |t: &JobTermination<MuxConnectionError>| {
+        read_eof_is_clean_shutdown(t, &shutdown_initiated)
+            || (!has_muxer
+                && matches!(
+                    t,
+                    JobTermination::Err(MuxConnectionError::Bearer(BearerError::UnexpectedEof))
+                ))
+    };
+    let first_faulted = match &first {
+        JobReport::Read(t) => termination_is_fault(t) && !read_eof_clean(t),
+        JobReport::Muxer(t) => termination_is_fault(t),
+    };
+
+    let mut read_term: Option<JobTermination<MuxConnectionError>> = None;
+    let mut muxer_term: Option<JobTermination<EgressError>> = None;
+    // Which job triggered the tear-down (a fault, or an overshoot of
+    // the shutdown grace period). `None` once both jobs are accounted
+    // for cleanly.
+    let mut trigger: Option<FailedJob> = None;
+    record_report(first, &mut read_term, &mut muxer_term);
+
+    if first_faulted {
+        // First job FAILED — name it as the trigger, abort the
+        // sibling, and drain. Mirrors upstream `withJobPool`'s
+        // `uninterruptibleCancel` of the still-running sibling once
+        // one job throws.
+        trigger = Some(match (&read_term, &muxer_term) {
+            (Some(_), _) => FailedJob::ReadTask,
+            (_, Some(_)) => FailedJob::MuxerTask,
+            // Unreachable: `record_report` of the faulted first job
+            // filled exactly one slot.
+            (None, None) => FailedJob::ReadTask,
+        });
+        jobs.abort_all();
+        drain_aborted(&mut jobs, &mut read_term, &mut muxer_term).await;
+        return finalize(
+            read_term,
+            muxer_term,
+            trigger,
+            has_muxer,
+            &shutdown_initiated,
+        );
+    }
+
+    // First job finished CLEANLY. If `run` was called without a
+    // muxer there is no sibling — the single read-task finishing is
+    // the whole shutdown.
+    if !has_muxer {
+        return finalize(
+            read_term,
+            muxer_term,
+            trigger,
+            has_muxer,
+            &shutdown_initiated,
+        );
+    }
+
+    // Wait a bounded grace period for the sibling to also finish.
+    match tokio::time::timeout(MUX_RUN_SHUTDOWN_GRACE, jobs.join_next()).await {
+        Ok(Some(Ok(report))) => {
+            // Sibling finished on its own. If it faulted, name it as
+            // the trigger; `finalize` then reports it `Failed`. A
+            // read-task `UnexpectedEof` is a clean stop — not a fault
+            // — when the FIRST job was the muxer finishing `Ok` (the
+            // bearer then closed as part of that clean shutdown) or
+            // after an operator [`MuxConnection::shutdown`].
+            let muxer_finished_ok = matches!(muxer_term, Some(JobTermination::Ok));
+            let sibling_faulted = match &report {
+                JobReport::Read(t) => {
+                    termination_is_fault(t)
+                        && !read_eof_is_clean_shutdown(t, &shutdown_initiated)
+                        && !(muxer_finished_ok
+                            && matches!(
+                                t,
+                                JobTermination::Err(MuxConnectionError::Bearer(
+                                    BearerError::UnexpectedEof
+                                ))
+                            ))
+                }
+                JobReport::Muxer(t) => termination_is_fault(t),
+            };
+            if sibling_faulted {
+                trigger = Some(match report {
+                    JobReport::Read(_) => FailedJob::ReadTask,
+                    JobReport::Muxer(_) => FailedJob::MuxerTask,
+                });
+            }
+            record_report(report, &mut read_term, &mut muxer_term);
+        }
+        Ok(Some(Err(_))) | Ok(None) => {
+            // Sibling's wrapper future panicked or the set drained
+            // unexpectedly — fill the empty slot as a panic and name
+            // it the trigger.
+            if read_term.is_none() {
+                read_term = Some(JobTermination::Panicked);
+                trigger = Some(FailedJob::ReadTask);
+            } else if muxer_term.is_none() {
+                muxer_term = Some(JobTermination::Panicked);
+                trigger = Some(FailedJob::MuxerTask);
+            }
+        }
+        Err(_elapsed) => {
+            // The sibling overshot the grace period — IT is the
+            // trigger (failing to shut down in time is a soft
+            // fault). Abort it and drain.
+            trigger = Some(if read_term.is_none() {
+                FailedJob::ReadTask
+            } else {
+                FailedJob::MuxerTask
+            });
+            jobs.abort_all();
+            drain_aborted(&mut jobs, &mut read_term, &mut muxer_term).await;
+        }
+    }
+    finalize(
+        read_term,
+        muxer_term,
+        trigger,
+        has_muxer,
+        &shutdown_initiated,
+    )
+}
+
+/// Drain a [`JoinSet`] after [`JoinSet::abort_all`], recording each
+/// yielded job into the matching termination slot. A yielded job that
+/// already mapped its own outcome keeps that outcome (it finished in
+/// the abort race); a job whose wrapper future was aborted before it
+/// could map a result is recorded [`JobTermination::Cancelled`] on
+/// whichever slot is still empty.
+async fn drain_aborted(
+    jobs: &mut JoinSet<JobReport>,
+    read_term: &mut Option<JobTermination<MuxConnectionError>>,
+    muxer_term: &mut Option<JobTermination<EgressError>>,
+) {
+    while let Some(joined) = jobs.join_next().await {
+        match joined {
+            Ok(report) => record_report(report, read_term, muxer_term),
+            Err(_) => {
+                if read_term.is_none() {
+                    *read_term = Some(JobTermination::Cancelled);
+                } else if muxer_term.is_none() {
+                    *muxer_term = Some(JobTermination::Cancelled);
+                }
+            }
+        }
+    }
+}
+
+/// Route one [`JobReport`] into the matching `read_term` / `muxer_term`
+/// slot.
+fn record_report(
+    report: JobReport,
+    read_term: &mut Option<JobTermination<MuxConnectionError>>,
+    muxer_term: &mut Option<JobTermination<EgressError>>,
+) {
+    match report {
+        JobReport::Read(t) => *read_term = Some(t),
+        JobReport::Muxer(t) => *muxer_term = Some(t),
+    }
+}
+
+/// Assemble the final [`MuxRunResult`] from the two collected
+/// terminations and the supervisor's `trigger` decision.
+///
+/// `trigger` is the job the supervisor identified as causing the
+/// tear-down — a faulted job, an over-grace-period job, or `None` for
+/// a clean shutdown. The read-task's `UnexpectedEof` re-classification
+/// is applied here via [`read_outcome`]: the EOF is treated as a
+/// clean stop when the muxer finished `Ok`, when an operator
+/// [`MuxConnection::shutdown`] was requested, or when there is no
+/// muxer (`has_muxer == false`).
+fn finalize(
+    read_term: Option<JobTermination<MuxConnectionError>>,
+    muxer_term: Option<JobTermination<EgressError>>,
+    trigger: Option<FailedJob>,
+    has_muxer: bool,
+    shutdown_initiated: &AtomicBool,
+) -> MuxRunResult {
+    // Gate for the read-task's `UnexpectedEof` → `Completed`
+    // re-classification: the muxer finished `Ok`, an operator
+    // shutdown was requested, or there is no muxer at all.
+    let eof_is_clean = matches!(muxer_term, Some(JobTermination::Ok))
+        || shutdown_initiated.load(Ordering::Acquire)
+        || !has_muxer;
+    // A missing read termination should be impossible (the read-task
+    // is always spawned); default to a panic so the fault surfaces.
+    let read_term = read_term.unwrap_or(JobTermination::Panicked);
+
+    MuxRunResult {
+        read_outcome: read_outcome(read_term, eof_is_clean),
+        muxer_outcome: muxer_term.map(muxer_outcome),
+        first_failure: trigger,
     }
 }
 
@@ -1279,6 +1862,327 @@ mod mux_connection_tests {
         assert_eq!(
             observed, expected,
             "send_sdu via the muxer must round-robin between mini-protocols"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Slice (c): bearer-task supervision (`MuxConnection::run`).
+    // ------------------------------------------------------------------
+
+    /// A deterministic mock transport for the supervision tests.
+    ///
+    /// Reads always return `Poll::Pending` — the read-task parks
+    /// inside `read_sdu().await` and never makes progress on its own,
+    /// so the *only* way it terminates is the supervisor aborting it.
+    /// Writes always fail with a broken-pipe `io::Error` — the muxer's
+    /// first `write_sdu` faults immediately. There is no async race:
+    /// both behaviours are decided synchronously at `poll_*` time.
+    struct ReadPendingWriteFails;
+
+    impl tokio::io::AsyncRead for ReadPendingWriteFails {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            // Never readable — the read-task blocks forever until the
+            // supervisor aborts it.
+            std::task::Poll::Pending
+        }
+    }
+
+    impl tokio::io::AsyncWrite for ReadPendingWriteFails {
+        fn poll_write(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "mock transport: writes always fail",
+            )))
+        }
+
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "mock transport: writes always fail",
+            )))
+        }
+
+        fn poll_shutdown(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// Supervision test (i): a muxer bearer-write failure tears the
+    /// read-task down.
+    ///
+    /// Deterministic — no reliance on async race timing:
+    ///
+    /// * The mock transport's writes fail synchronously, so the
+    ///   muxer's first `write_sdu` faults the instant a demand is
+    ///   enqueued.
+    /// * The mock transport's reads are `Poll::Pending` forever, so
+    ///   the read-task can ONLY terminate by the supervisor aborting
+    ///   it — there is no path where the read-task finishes first.
+    ///
+    /// Expected `MuxRunResult`: `first_failure == Some(MuxerTask)`,
+    /// the muxer outcome is a `Failed(EgressError::Bearer)`, and the
+    /// read-task outcome is `Cancelled`. Mirrors upstream
+    /// `Network.Mux`'s `MuxerException` → `Failed` → `withJobPool`
+    /// cancelling the demuxer sibling.
+    #[tokio::test]
+    async fn run_muxer_write_failure_cancels_read_task() {
+        use crate::trace_forwarder::egress::EgressConfig;
+
+        let conn = Arc::new(MuxConnection::new(Bearer::new(ReadPendingWriteFails)));
+
+        // Spawn the supervised lifecycle.
+        let run_conn = Arc::clone(&conn);
+        let run_handle =
+            tokio::spawn(async move { run_conn.run(Some(EgressConfig::default())).await });
+
+        // Deterministically wait for `run` to install the muxer
+        // before enqueueing: a `send_sdu` issued before the muxer is
+        // live would take the direct-write fallback (which on this
+        // mock transport fails immediately) instead of the scheduler
+        // path the test means to exercise.
+        while !conn.muxer_installed().await {
+            tokio::task::yield_now().await;
+        }
+
+        // Enqueue one demand: the muxer pops it, calls `write_sdu`,
+        // and the mock transport fails the write → muxer faults.
+        let header = SduHeader {
+            timestamp: 0,
+            mini_protocol_num: TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM,
+            direction: MiniProtocolDir::Initiator,
+            length: 4,
+        };
+        conn.send_sdu(&header, b"abcd")
+            .await
+            .expect("send_sdu enqueues the demand");
+
+        let result = tokio::time::timeout(Duration::from_secs(5), run_handle)
+            .await
+            .expect("run() completed within 5s — supervisor did not hang")
+            .expect("run() task did not panic");
+
+        assert_eq!(
+            result.first_failure,
+            Some(FailedJob::MuxerTask),
+            "a muxer write failure must be the tear-down trigger"
+        );
+        assert!(
+            matches!(
+                result.muxer_outcome,
+                Some(JobOutcome::Failed(EgressError::Bearer(_)))
+            ),
+            "muxer outcome must be a Failed bearer error; got {:?}",
+            result.muxer_outcome
+        );
+        assert!(
+            matches!(result.read_outcome, JobOutcome::Cancelled),
+            "the read-task must be cancelled by the supervisor when the \
+             muxer fails; got {:?}",
+            result.read_outcome
+        );
+        assert!(!result.is_clean_shutdown());
+    }
+
+    /// Supervision test (ii): a read-task `IngressQueueOverRun` tears
+    /// the muxer down.
+    ///
+    /// Deterministic — no reliance on async race timing:
+    ///
+    /// * Two over-cap SDUs are written to the server end and the
+    ///   server end is then dropped, all BEFORE `run()` is spawned —
+    ///   the bytes are buffered in the duplex pipe, so the read-task
+    ///   reads them as soon as it starts and trips the 10-byte cap on
+    ///   the second SDU. `IngressQueueOverRun` is returned with
+    ///   certainty.
+    /// * The muxer has no demand enqueued, so it sits blocked on its
+    ///   wake channel — it can ONLY terminate by the supervisor
+    ///   aborting it.
+    ///
+    /// Expected `MuxRunResult`: `first_failure == Some(ReadTask)`, the
+    /// read outcome is `Failed(IngressQueueOverRun)`, the muxer
+    /// outcome is `Cancelled`. Mirrors upstream `Network.Mux`'s
+    /// `DemuxerException` (a non-`BearerClosed` demuxer fault) →
+    /// `Failed` → `withJobPool` cancelling the muxer sibling.
+    #[tokio::test]
+    async fn run_read_task_over_run_cancels_muxer() {
+        use crate::trace_forwarder::egress::EgressConfig;
+        use tokio::io::AsyncWriteExt;
+
+        let (client, mut server) = tokio::io::duplex(4096);
+        let conn = Arc::new(MuxConnection::new(Bearer::new(client)));
+
+        // Subscribe with a tiny 10-byte ingress cap. Hold the
+        // receiver so dispatched bytes stay charged (not drained).
+        let _rx = conn
+            .subscribe_with_limits(
+                TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM,
+                MiniProtocolLimits {
+                    maximum_ingress_queue: 10,
+                },
+            )
+            .await;
+
+        // Pre-load two 6-byte SDUs into the pipe BEFORE spawning
+        // `run`: 6 fits (<= 10), 6 more makes 12 > 10 → over-run.
+        let write_one = |bytes: &[u8]| {
+            let header = SduHeader {
+                timestamp: 0,
+                mini_protocol_num: TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM,
+                direction: MiniProtocolDir::Responder,
+                length: bytes.len() as u16,
+            };
+            super::super::mux::encode_sdu_header(&header).expect("encode header")
+        };
+        server.write_all(&write_one(b"aaaaaa")).await.expect("hdr1");
+        server.write_all(b"aaaaaa").await.expect("payload1");
+        server.write_all(&write_one(b"bbbbbb")).await.expect("hdr2");
+        server.write_all(b"bbbbbb").await.expect("payload2");
+        drop(server);
+
+        // Spawn the supervised lifecycle. The read-task drains the
+        // pre-loaded SDUs and over-runs on the second; the muxer is
+        // idle (no demand enqueued).
+        let run_conn = Arc::clone(&conn);
+        let run_handle =
+            tokio::spawn(async move { run_conn.run(Some(EgressConfig::default())).await });
+
+        let result = tokio::time::timeout(Duration::from_secs(5), run_handle)
+            .await
+            .expect("run() completed within 5s — supervisor did not hang")
+            .expect("run() task did not panic");
+
+        assert_eq!(
+            result.first_failure,
+            Some(FailedJob::ReadTask),
+            "an ingress over-run must be the tear-down trigger"
+        );
+        assert!(
+            matches!(
+                result.read_outcome,
+                JobOutcome::Failed(MuxConnectionError::IngressQueueOverRun { .. })
+            ),
+            "read outcome must be a Failed IngressQueueOverRun; got {:?}",
+            result.read_outcome
+        );
+        assert!(
+            matches!(result.muxer_outcome, Some(JobOutcome::Cancelled)),
+            "the muxer must be cancelled by the supervisor when the \
+             read-task over-runs; got {:?}",
+            result.muxer_outcome
+        );
+        assert!(!result.is_clean_shutdown());
+    }
+
+    /// Supervision test (iii): a clean producer-drop + bearer-EOF
+    /// shuts both jobs down `Ok`.
+    ///
+    /// Deterministic — no reliance on async race timing:
+    ///
+    /// * `shutdown()` is called explicitly: it drops the stashed
+    ///   `EgressDemand` (the muxer's wake channel closes → the muxer
+    ///   drains its empty FIFO and returns `Ok`) and sets the
+    ///   shutdown flag.
+    /// * `drop(server)` then EOFs the bearer: the read-task's
+    ///   `read_sdu` returns `UnexpectedEof`. Because the shutdown flag
+    ///   is set (and the muxer already finished `Ok`), the supervisor
+    ///   re-classifies that EOF as a clean stop, not a fault.
+    ///
+    /// Both signals are issued by the test itself, in a fixed order —
+    /// nothing depends on which job the runtime happens to schedule
+    /// first. Expected `MuxRunResult`: `is_clean_shutdown()`, both
+    /// outcomes `Completed`. Mirrors upstream `Network.Mux` reaching
+    /// the `Stopped` terminal status on an orderly shutdown.
+    #[tokio::test]
+    async fn run_clean_shutdown_exits_both_ok() {
+        use crate::trace_forwarder::egress::EgressConfig;
+
+        let (client, server) = tokio::io::duplex(4096);
+        let conn = Arc::new(MuxConnection::new(Bearer::new(client)));
+
+        let run_conn = Arc::clone(&conn);
+        let run_handle =
+            tokio::spawn(async move { run_conn.run(Some(EgressConfig::default())).await });
+
+        // Deterministically wait for `run` to install both jobs
+        // before we signal shutdown — otherwise `shutdown()` could
+        // clear the egress slot before `spawn_muxer_task` fills it.
+        while !conn.muxer_installed().await {
+            tokio::task::yield_now().await;
+        }
+
+        // Producer-drop: drop the EgressDemand → the muxer drains its
+        // FIFO and exits Ok. Also sets the shutdown flag.
+        conn.shutdown().await;
+        // Bearer-EOF: the read-task's pending read returns
+        // UnexpectedEof, re-classified clean because the flag is set.
+        drop(server);
+
+        let result = tokio::time::timeout(Duration::from_secs(5), run_handle)
+            .await
+            .expect("run() completed within 5s — clean shutdown did not hang")
+            .expect("run() task did not panic");
+
+        assert!(
+            result.is_clean_shutdown(),
+            "producer-drop + bearer-EOF must be a clean shutdown; \
+             first_failure = {:?}",
+            result.first_failure
+        );
+        assert!(
+            matches!(result.read_outcome, JobOutcome::Completed),
+            "read-task must complete cleanly; got {:?}",
+            result.read_outcome
+        );
+        assert!(
+            matches!(result.muxer_outcome, Some(JobOutcome::Completed)),
+            "muxer-task must complete cleanly; got {:?}",
+            result.muxer_outcome
+        );
+    }
+
+    /// `run(None)` supervises the read-task alone — the muxer-less
+    /// path. A clean bearer EOF is `Completed` (no muxer means the
+    /// EOF is vacuously a clean stop), and `muxer_outcome` is `None`.
+    #[tokio::test]
+    async fn run_without_muxer_supervises_read_task_only() {
+        let (client, server) = tokio::io::duplex(4096);
+        let conn = Arc::new(MuxConnection::new(Bearer::new(client)));
+
+        let run_conn = Arc::clone(&conn);
+        let run_handle = tokio::spawn(async move { run_conn.run(None).await });
+
+        tokio::task::yield_now().await;
+        // EOF the bearer — the sole supervised job (read-task) ends.
+        drop(server);
+
+        let result = tokio::time::timeout(Duration::from_secs(5), run_handle)
+            .await
+            .expect("run() completed within 5s")
+            .expect("run() task did not panic");
+
+        assert!(result.is_clean_shutdown());
+        assert!(
+            matches!(result.read_outcome, JobOutcome::Completed),
+            "muxer-less run: a bearer EOF is a clean read-task stop; got {:?}",
+            result.read_outcome
+        );
+        assert!(
+            result.muxer_outcome.is_none(),
+            "run(None) has no muxer outcome"
         );
     }
 }
