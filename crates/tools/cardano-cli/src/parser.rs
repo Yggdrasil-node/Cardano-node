@@ -388,6 +388,30 @@ mod tests {
         );
     }
 
+    /// `transaction-submit --tx-hex … --socket-path …` parses to the
+    /// expected variant.
+    #[test]
+    fn parses_transaction_submit() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "transaction-submit",
+            "--tx-hex",
+            "82a0a0",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::TransactionSubmit {
+                tx_file: None,
+                tx_hex: Some("82a0a0".to_string()),
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+    }
+
     /// `address-key-gen --verification-key-file … --signing-key-file …`
     /// parses to the expected variant.
     #[test]

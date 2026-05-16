@@ -27,7 +27,9 @@ use std::path::Path;
 use eyre::{Result, WrapErr};
 use serde_json::json;
 use yggdrasil_ledger::{Decoder, Encoder};
-use yggdrasil_network::{AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect};
+use yggdrasil_network::{
+    AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
+};
 
 use crate::lsq::{LsqClient, NtcQuery};
 
@@ -369,6 +371,42 @@ impl LsqClient for TokioLsqClient {
             print_json(&decode(&result))
         })
     }
+
+    fn submit_tx(&self, socket_path: &Path, network_magic: u32, tx_bytes: &[u8]) -> Result<()> {
+        run_blocking(submit_tx_inner(socket_path, network_magic, tx_bytes))
+    }
+}
+
+/// Open the NtC socket, submit `tx_bytes` over the LocalTxSubmission
+/// mini-protocol, and print the accept/reject outcome as JSON.
+///
+/// Mirrors `node/src/commands/submit_tx.rs::run_submit_tx`. A
+/// rejection is a normal outcome (printed as
+/// `{"result":"rejected","reason":…}`), not an `Err` — only a
+/// connection/transport failure bails.
+async fn submit_tx_inner(socket_path: &Path, network_magic: u32, tx_bytes: &[u8]) -> Result<()> {
+    // `query_only = false` — a submitting client is not query-only.
+    let mut conn = ntc_connect(socket_path, network_magic, false)
+        .await
+        .wrap_err_with(|| {
+            format!(
+                "failed to connect to NtC socket {} (network_magic={network_magic})",
+                socket_path.display()
+            )
+        })?;
+
+    let tx_handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION)
+        .ok_or_else(|| eyre::eyre!("NTC_LOCAL_TX_SUBMISSION mini-protocol handle missing"))?;
+    let mut client = LocalTxSubmissionClient::new(tx_handle);
+
+    let outcome = match client.submit(tx_bytes.to_vec()).await {
+        Ok(()) => json!({ "result": "accepted" }),
+        Err(e) => json!({ "result": "rejected", "reason": e.to_string() }),
+    };
+    let _ = client.done().await;
+    print_json(&outcome)
 }
 
 /// Build a single-threaded tokio runtime and drive `fut` to
@@ -951,6 +989,26 @@ mod tests {
         assert_eq!(
             decode_ledger_counts_result(&[0x00]),
             json!({ "ledger_counts_cbor": "00" })
+        );
+    }
+
+    /// `TokioLsqClient::submit_tx` against a missing socket bails
+    /// with the wrapped NtC-connect error — same failure-mode
+    /// contract as the query path.
+    #[test]
+    fn submit_tx_against_missing_socket_returns_wrapped_error() {
+        let client = TokioLsqClient;
+        let err = client
+            .submit_tx(
+                &PathBuf::from("/tmp/yggdrasil-cardano-cli-nonexistent-socket"),
+                764_824_073,
+                &[0x82, 0xa0, 0xa0],
+            )
+            .expect_err("missing socket must bail");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("failed to connect to NtC socket"),
+            "error must carry the eyre socket-path context; got {msg}"
         );
     }
 }

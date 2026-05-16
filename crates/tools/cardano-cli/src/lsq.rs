@@ -130,9 +130,17 @@ impl NtcQuery {
     }
 }
 
-/// LSQ client surface the library dispatches through.
+/// Node-to-client operations surface the library dispatches through.
 ///
-/// Strict mirror: none. Rust-side trait abstraction over `Cardano.Api.queryNodeLocalState`.
+/// Strict mirror: none. Rust-side trait abstraction over the NtC
+/// mini-protocols `Cardano.Api` exposes inline.
+///
+/// The name retains the historical `Lsq` (it began as a
+/// LocalStateQuery-only abstraction); it now also carries
+/// [`LsqClient::submit_tx`] (LocalTxSubmission). The two NtC
+/// operations the standalone binary needs — query + submit — share
+/// the same socket / runtime construction, so one trait + one
+/// concrete impl serves both.
 ///
 /// Concrete implementations:
 ///
@@ -141,7 +149,7 @@ impl NtcQuery {
 /// - `TokioLsqClient` (in this crate, behind the `lsq-tokio`
 ///   feature) — builds a `tokio` runtime per call, opens a
 ///   Unix-socket NtC connection through `yggdrasil-network`, drives
-///   the `LocalStateQuery` mini-protocol, prints the JSON envelope.
+///   the relevant mini-protocol, prints the JSON envelope.
 pub trait LsqClient {
     /// Run one [`NtcQuery`] against the node and render the result
     /// as JSON.
@@ -157,27 +165,43 @@ pub trait LsqClient {
     ///   (mainnet=764_824_073 / preprod=1 / preview=2 / custom).
     /// - `query` — which [`NtcQuery`] to run.
     fn run_query(&self, socket_path: &Path, network_magic: u32, query: NtcQuery) -> Result<()>;
+
+    /// Submit a serialized transaction via the LocalTxSubmission
+    /// mini-protocol and render the accept/reject outcome as JSON.
+    ///
+    /// Mirrors `node/src/commands/submit_tx.rs::run_submit_tx`.
+    /// `tx_bytes` is the complete CBOR transaction.
+    fn submit_tx(&self, socket_path: &Path, network_magic: u32, tx_bytes: &[u8]) -> Result<()>;
 }
 
 /// In-crate "no concrete LSQ impl wired" sentinel.
 ///
 /// Used by library-side tests + by callers (e.g. the standalone
 /// `yggdrasil-cardano-cli` binary's `main.rs`) that don't plug a
-/// real LSQ client through. Its `run_query` returns the documented
+/// real client through. Both methods return the documented
 /// deferral error pointing operators at the node binary's wrapper.
 pub struct DeferralLsqClient;
 
 impl LsqClient for DeferralLsqClient {
     fn run_query(&self, _socket_path: &Path, _network_magic: u32, query: NtcQuery) -> Result<()> {
-        let subcommand = query.subcommand_name();
-        eyre::bail!(
-            "{subcommand}: today's library crate doesn't carry the tokio + yggdrasil-network \
-             deps needed to open a NtC socket; use the node binary's \
-             `yggdrasil-node cardano-cli {subcommand} --socket-path=…` subcommand for now. \
-             Library-side wiring lands once a concrete `LsqClient` impl is plugged in \
-             at the binary entry-point."
-        );
+        deferral_bail(query.subcommand_name())
     }
+
+    fn submit_tx(&self, _socket_path: &Path, _network_magic: u32, _tx_bytes: &[u8]) -> Result<()> {
+        deferral_bail("transaction-submit")
+    }
+}
+
+/// Shared deferral error for [`DeferralLsqClient`] — every NtC
+/// operation bails the same way when no concrete impl is wired.
+fn deferral_bail(subcommand: &str) -> Result<()> {
+    eyre::bail!(
+        "{subcommand}: today's library crate doesn't carry the tokio + yggdrasil-network \
+         deps needed to open a NtC socket; use the node binary's \
+         `yggdrasil-node cardano-cli {subcommand} …` subcommand for now. \
+         Library-side wiring lands once a concrete `LsqClient` impl is plugged in \
+         at the binary entry-point."
+    );
 }
 
 #[cfg(test)]
@@ -235,6 +259,7 @@ mod tests {
         struct StubClient {
             expected_magic: u32,
             last_query: Cell<Option<NtcQuery>>,
+            last_submit_len: Cell<Option<usize>>,
         }
         impl LsqClient for StubClient {
             fn run_query(&self, _socket: &Path, magic: u32, query: NtcQuery) -> Result<()> {
@@ -247,10 +272,21 @@ mod tests {
                 self.last_query.set(Some(query));
                 Ok(())
             }
+            fn submit_tx(&self, _socket: &Path, magic: u32, tx_bytes: &[u8]) -> Result<()> {
+                if magic != self.expected_magic {
+                    eyre::bail!(
+                        "magic mismatch: got {magic}, expected {}",
+                        self.expected_magic
+                    );
+                }
+                self.last_submit_len.set(Some(tx_bytes.len()));
+                Ok(())
+            }
         }
         let client = StubClient {
             expected_magic: 1,
             last_query: Cell::new(None),
+            last_submit_len: Cell::new(None),
         };
         client
             .run_query(&PathBuf::from("/x"), 1, NtcQuery::CurrentEra)
@@ -264,5 +300,14 @@ mod tests {
             .run_query(&PathBuf::from("/x"), 2, NtcQuery::Tip)
             .expect_err("stub with mismatched magic bails");
         assert!(err.to_string().contains("magic mismatch"));
+        // `submit_tx` reaches the impl with the tx bytes intact.
+        client
+            .submit_tx(&PathBuf::from("/x"), 1, &[0xaa, 0xbb, 0xcc])
+            .expect("submit_tx with matching magic succeeds");
+        assert_eq!(
+            client.last_submit_len.get(),
+            Some(3),
+            "submit_tx must forward the tx bytes to the impl"
+        );
     }
 }

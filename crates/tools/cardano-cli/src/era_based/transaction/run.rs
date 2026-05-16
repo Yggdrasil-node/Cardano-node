@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use eyre::{Result, WrapErr};
 
 use crate::era_independent::address::run::read_verification_key_text_envelope;
+use crate::lsq::LsqClient;
 
 /// Run `transaction txid` — print the transaction id of a serialized
 /// transaction as 64-char lowercase hex.
@@ -127,6 +128,25 @@ fn sign_tx_with_fresh_witness_set(tx_bytes: &[u8], sk_bytes: &[u8; 32]) -> Resul
     out.extend_from_slice(&wits_bytes);
     out.extend_from_slice(tail);
     Ok(out)
+}
+
+/// Run `transaction submit` — submit a serialized transaction to a
+/// running node over the NtC LocalTxSubmission mini-protocol.
+///
+/// Mirrors upstream `runTransactionSubmitCmd` from
+/// `Cardano.CLI.EraBased.Transaction.Run`. The transaction is read
+/// from `--tx-file` / `--tx-hex`; the actual socket drive is the
+/// `client`'s job (the `LsqClient` trait — see `crate::lsq`). The
+/// accept/reject outcome is printed by the client as JSON.
+pub fn run_transaction_submit_cmd(
+    tx_file: Option<PathBuf>,
+    tx_hex: Option<String>,
+    socket_path: &Path,
+    network_magic: u32,
+    client: &dyn LsqClient,
+) -> Result<()> {
+    let tx_bytes = read_tx_input(tx_file, tx_hex)?;
+    client.submit_tx(socket_path, network_magic, &tx_bytes)
 }
 
 /// Resolve the `--tx-file` / `--tx-hex` flag pair to raw transaction

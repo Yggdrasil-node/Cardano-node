@@ -297,6 +297,23 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 &out_file,
             )
         }
+        Command::TransactionSubmit {
+            tx_file,
+            tx_hex,
+            socket_path,
+            network_magic,
+        } => {
+            // R513: NtC LocalTxSubmission — drives through the same
+            // client trait the query subcommands use.
+            let magic = network_magic.unwrap_or(764_824_073);
+            crate::era_based::transaction::run::run_transaction_submit_cmd(
+                tx_file,
+                tx_hex,
+                &socket_path,
+                magic,
+                client,
+            )
+        }
         Command::AddressBuild {
             payment_verification_key_file,
             stake_verification_key_file,
@@ -431,6 +448,10 @@ mod tests {
         impl crate::lsq::LsqClient for RecordingClient {
             fn run_query(&self, socket: &Path, magic: u32, query: NtcQuery) -> eyre::Result<()> {
                 *self.seen.borrow_mut() = Some((query, socket.to_path_buf(), magic));
+                Ok(())
+            }
+            fn submit_tx(&self, _socket: &Path, _magic: u32, _tx: &[u8]) -> eyre::Result<()> {
+                // This test exercises only the query dispatch arms.
                 Ok(())
             }
         }
@@ -613,6 +634,52 @@ mod tests {
         }
     }
 
+    /// `run_command_with` dispatches `TransactionSubmit` through the
+    /// client's `submit_tx`, forwarding the resolved tx bytes +
+    /// magic. The `--tx-hex` arm is exercised so the test needs no
+    /// filesystem fixture.
+    #[test]
+    fn transaction_submit_dispatches_through_client() {
+        use std::cell::RefCell;
+        use std::path::{Path, PathBuf};
+
+        struct SubmitRecorder {
+            seen: RefCell<Option<(Vec<u8>, u32)>>,
+        }
+        impl crate::lsq::LsqClient for SubmitRecorder {
+            fn run_query(
+                &self,
+                _socket: &Path,
+                _magic: u32,
+                _query: crate::lsq::NtcQuery,
+            ) -> eyre::Result<()> {
+                unreachable!("this test exercises only TransactionSubmit")
+            }
+            fn submit_tx(&self, _socket: &Path, magic: u32, tx: &[u8]) -> eyre::Result<()> {
+                *self.seen.borrow_mut() = Some((tx.to_vec(), magic));
+                Ok(())
+            }
+        }
+        let client = SubmitRecorder {
+            seen: RefCell::new(None),
+        };
+        run_command_with(
+            Command::TransactionSubmit {
+                tx_file: None,
+                tx_hex: Some("aabbcc".to_string()),
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: Some(2),
+            },
+            &client,
+        )
+        .expect("run_command_with must succeed for TransactionSubmit");
+        assert_eq!(
+            client.seen.borrow().clone(),
+            Some((vec![0xaa, 0xbb, 0xcc], 2)),
+            "TransactionSubmit must forward the decoded tx bytes + magic to submit_tx"
+        );
+    }
+
     /// `run_command_with` falls back to mainnet magic when the
     /// `network_magic` field is None. Pins the fallback behavior so
     /// the operator doesn't have to pass `--network-magic` on
@@ -632,6 +699,10 @@ mod tests {
                 magic: u32,
                 _query: crate::lsq::NtcQuery,
             ) -> eyre::Result<()> {
+                self.magic.set(magic);
+                Ok(())
+            }
+            fn submit_tx(&self, _socket: &Path, magic: u32, _tx: &[u8]) -> eyre::Result<()> {
                 self.magic.set(magic);
                 Ok(())
             }

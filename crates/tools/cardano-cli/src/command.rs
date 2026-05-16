@@ -307,6 +307,24 @@ pub enum Command {
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
+    /// Submit a serialized transaction to a running node over the
+    /// NtC LocalTxSubmission mini-protocol. Mirrors upstream
+    /// `transaction submit` (`Cardano.CLI.EraBased.Transaction.Command`).
+    TransactionSubmit {
+        /// Path to a file containing the CBOR-encoded signed tx.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR signed-tx bytes.
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
     /// Sign a transaction with a single Ed25519 signing key,
     /// replacing the witness set with a fresh single-signer one.
     /// Mirrors upstream `transaction sign`
