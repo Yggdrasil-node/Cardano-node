@@ -98,6 +98,14 @@ pub trait LsqClient {
     /// upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`.
     /// Same parameters as [`LsqClient::query_tip`].
     fn query_current_era(&self, socket_path: &Path, network_magic: u32) -> Result<()>;
+
+    /// Query the running node for its system start time and render
+    /// the result as JSON.
+    ///
+    /// Mirrors `GetSystemStart` from upstream
+    /// `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`. Same
+    /// parameters as [`LsqClient::query_tip`].
+    fn query_system_start(&self, socket_path: &Path, network_magic: u32) -> Result<()>;
 }
 
 /// In-crate "no concrete LSQ impl wired" sentinel.
@@ -122,6 +130,10 @@ impl LsqClient for DeferralLsqClient {
 
     fn query_current_era(&self, _socket_path: &Path, _network_magic: u32) -> Result<()> {
         deferral_bail("query-current-era")
+    }
+
+    fn query_system_start(&self, _socket_path: &Path, _network_magic: u32) -> Result<()> {
+        deferral_bail("query-system-start")
     }
 }
 
@@ -160,6 +172,10 @@ mod tests {
             (
                 client.query_current_era(&socket, 764_824_073),
                 "query-current-era",
+            ),
+            (
+                client.query_system_start(&socket, 764_824_073),
+                "query-system-start",
             ),
         ];
         for (call, name) in cases {
@@ -201,6 +217,15 @@ mod tests {
                 Ok(())
             }
             fn query_current_era(&self, _socket: &Path, magic: u32) -> Result<()> {
+                if magic != self.expected_magic {
+                    eyre::bail!(
+                        "magic mismatch: got {magic}, expected {}",
+                        self.expected_magic
+                    );
+                }
+                Ok(())
+            }
+            fn query_system_start(&self, _socket: &Path, magic: u32) -> Result<()> {
                 if magic != self.expected_magic {
                     eyre::bail!(
                         "magic mismatch: got {magic}, expected {}",

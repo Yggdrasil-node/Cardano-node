@@ -85,6 +85,19 @@ impl LsqClient for TokioLsqClient {
             print_json(&decode_current_era_result(&result))
         })
     }
+
+    fn query_system_start(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
+        run_blocking(async {
+            let result = acquire_query_release(
+                socket_path,
+                network_magic,
+                encode_get_system_start_query(),
+                "GetSystemStart",
+            )
+            .await?;
+            print_json(&decode_system_start_result(&result))
+        })
+    }
 }
 
 /// Build a single-threaded tokio runtime and drive `fut` to
@@ -215,6 +228,84 @@ fn decode_current_era_result(result: &[u8]) -> serde_json::Value {
         _ => 0,
     };
     json!({ "era": era })
+}
+
+/// CBOR-encode the `GetSystemStart = [1]` query envelope.
+///
+/// Mirrors upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query` —
+/// `[1]` is the single-element array with tag 1 = `GetSystemStart`.
+fn encode_get_system_start_query() -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(1).unsigned(1u64);
+    enc.into_bytes()
+}
+
+/// Decode the upstream `GetSystemStart` reply — the 3-element CBOR
+/// array `[year, dayOfYear, picosecondsOfDay]` (`UTCTime` as
+/// `Cardano.Slotting.Time.SystemStart`).
+///
+/// Surfaces both the raw structured fields and a derived ISO-8601
+/// `time` string. Mirrors `node/src/commands/query.rs::decode_ntc_result`'s
+/// `QueryCommand::SystemStart` arm.
+fn decode_system_start_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    match dec.array() {
+        Ok(3) => {
+            let year = dec.unsigned().unwrap_or(0);
+            let day_of_year = dec.unsigned().unwrap_or(1);
+            let picoseconds_of_day = dec.unsigned().unwrap_or(0);
+            json!({
+                "system_start": {
+                    "year": year,
+                    "dayOfYear": day_of_year,
+                    "picosecondsOfDay": picoseconds_of_day,
+                    "time": format_utc_time(year, day_of_year, picoseconds_of_day),
+                }
+            })
+        }
+        _ => json!({ "system_start_cbor": hex::encode(result) }),
+    }
+}
+
+/// Format `(year, day-of-year, picoseconds-of-day)` as an ISO-8601
+/// `YYYY-MM-DDThh:mm:ssZ` string.
+///
+/// Civil-date arithmetic with proleptic-Gregorian leap-year rules —
+/// mirrors `node/src/commands/query.rs::format_utc_time` so the
+/// standalone binary's `query system-start` output matches the node
+/// binary's wrapper byte-for-byte.
+fn format_utc_time(year: u64, day_of_year: u64, picoseconds_of_day: u64) -> String {
+    let is_leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let month_days: [u64; 12] = [
+        31,
+        if is_leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut remaining = day_of_year.saturating_sub(1);
+    let mut month: u32 = 1;
+    let mut day_of_month: u32 = 1;
+    for (idx, &md) in month_days.iter().enumerate() {
+        if remaining < md {
+            month = (idx as u32) + 1;
+            day_of_month = (remaining as u32) + 1;
+            break;
+        }
+        remaining -= md;
+    }
+    let total_seconds = picoseconds_of_day / 1_000_000_000_000;
+    let hour = (total_seconds / 3600) % 24;
+    let minute = (total_seconds / 60) % 60;
+    let second = total_seconds % 60;
+    format!("{year:04}-{month:02}-{day_of_month:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
 /// Decode the upstream `Ouroboros.Network.Block.encodePoint` reply.
@@ -387,5 +478,52 @@ mod tests {
     fn decode_current_era_defaults_on_unknown_shape() {
         let v = decode_current_era_result(&[0x00]);
         assert_eq!(v, json!({ "era": 0 }));
+    }
+
+    /// `encode_get_system_start_query` produces the canonical CBOR
+    /// `[1]` byte sequence.
+    #[test]
+    fn encode_get_system_start_query_emits_canonical_cbor() {
+        assert_eq!(encode_get_system_start_query(), vec![0x81, 0x01]);
+    }
+
+    /// `format_utc_time` renders civil dates correctly, including
+    /// the leap-year boundary. 2024 is a leap year, so day-of-year
+    /// 60 is Feb 29; 2023 is not, so day 60 is Mar 1.
+    #[test]
+    fn format_utc_time_handles_leap_years() {
+        // 2024-01-01T00:00:00Z — day-of-year 1.
+        assert_eq!(format_utc_time(2024, 1, 0), "2024-01-01T00:00:00Z");
+        // Day 60 of a leap year (2024) is Feb 29.
+        assert_eq!(format_utc_time(2024, 60, 0), "2024-02-29T00:00:00Z");
+        // Day 60 of a non-leap year (2023) is Mar 1.
+        assert_eq!(format_utc_time(2023, 60, 0), "2023-03-01T00:00:00Z");
+        // Picoseconds-of-day → hh:mm:ss: 3661 s = 01:01:01.
+        assert_eq!(
+            format_utc_time(2022, 1, 3661 * 1_000_000_000_000),
+            "2022-01-01T01:01:01Z"
+        );
+    }
+
+    /// `decode_system_start_result` reads the 3-element
+    /// `[year, dayOfYear, picosecondsOfDay]` reply and derives the
+    /// ISO-8601 `time` string.
+    #[test]
+    fn decode_system_start_reads_three_element_array() {
+        // CBOR `[2017, 244, 0]` = 0x83 0x19 0x07 0xE1 0x18 0xF4 0x00.
+        let bytes = vec![0x83, 0x19, 0x07, 0xE1, 0x18, 0xF4, 0x00];
+        let v = decode_system_start_result(&bytes);
+        assert_eq!(v["system_start"]["year"], 2017);
+        assert_eq!(v["system_start"]["dayOfYear"], 244);
+        assert_eq!(v["system_start"]["picosecondsOfDay"], 0);
+        assert_eq!(v["system_start"]["time"], "2017-09-01T00:00:00Z");
+    }
+
+    /// `decode_system_start_result` falls back to a raw-hex dump for
+    /// an unrecognized payload shape.
+    #[test]
+    fn decode_system_start_unknown_shape() {
+        let v = decode_system_start_result(&[0x00]);
+        assert_eq!(v, json!({ "system_start_cbor": "00" }));
     }
 }

@@ -130,6 +130,14 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             let magic = network_magic.unwrap_or(764_824_073);
             client.query_current_era(&socket_path, magic)
         }
+        Command::QuerySystemStart {
+            socket_path,
+            network_magic,
+        } => {
+            // R510: fourth LSQ subcommand — `GetSystemStart`.
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.query_system_start(&socket_path, magic)
+        }
         Command::AddressKeyGen {
             verification_key_file,
             signing_key_file,
@@ -324,6 +332,11 @@ mod tests {
                     Some(("current-era".to_string(), socket.to_path_buf(), magic));
                 Ok(())
             }
+            fn query_system_start(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
+                *self.seen.borrow_mut() =
+                    Some(("system-start".to_string(), socket.to_path_buf(), magic));
+                Ok(())
+            }
         }
         let client = RecordingClient {
             seen: RefCell::new(None),
@@ -377,6 +390,24 @@ mod tests {
             )),
             "QueryCurrentEra must dispatch query_current_era with the args forwarded"
         );
+        // …and QuerySystemStart.
+        run_command_with(
+            Command::QuerySystemStart {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: Some(4),
+            },
+            &client,
+        )
+        .expect("run_command_with must succeed for QuerySystemStart");
+        assert_eq!(
+            client.seen.borrow().clone(),
+            Some((
+                "system-start".to_string(),
+                PathBuf::from("/tmp/node.socket"),
+                4
+            )),
+            "QuerySystemStart must dispatch query_system_start with the args forwarded"
+        );
     }
 
     /// `run_command_with` falls back to mainnet magic when the
@@ -401,6 +432,10 @@ mod tests {
                 Ok(())
             }
             fn query_current_era(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
+                self.magic.set(magic);
+                Ok(())
+            }
+            fn query_system_start(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
                 self.magic.set(magic);
                 Ok(())
             }
