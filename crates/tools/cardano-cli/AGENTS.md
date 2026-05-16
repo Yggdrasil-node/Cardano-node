@@ -178,6 +178,17 @@ remaining commands and a separate binary is justified.
   post-R508. The standalone binary now exposes **9 operational
   subcommands**: the R503–R506 introspection trio plus the full
   offline key / address / txid toolkit.
+- **R509 (Phase 3.2, 2026-05) — `transaction sign` ported.**
+  `era_based/transaction/run.rs::run_transaction_sign_cmd` (mirrors
+  upstream `runTransactionSignCmd`) Ed25519-signs a transaction,
+  replacing its witness set with a fresh single-signer
+  `{0: [[vkey, signature]]}` set: the CBOR body span is captured
+  verbatim, the original witness set skipped, the tail preserved,
+  and the txid signed. No new deps. 4 new tests; 48 tests total
+  post-R509. **10 operational subcommands** in the standalone
+  binary. Operator smoke confirms the key-gen → sign → txid
+  roundtrip preserves the tx body byte-for-byte
+  (`txid(signed) == txid(unsigned)`).
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -282,12 +293,15 @@ binary exposes 9 operational subcommands:
 | `StakeAddressKeyGen` | ✅ migrated (R508) | `era_based/stake_address/run.rs::run_stake_address_key_gen_cmd` — stake keypair |
 | `StakeAddressBuild` | ✅ migrated (R508) | `era_based/stake_address/run.rs::run_stake_address_build_cmd` — Shelley reward address, Bech32 |
 | `TransactionTxid` | ✅ migrated (R508) | `era_based/transaction/run.rs::run_transaction_txid_cmd` — Blake2b-256 of the CBOR tx body |
+| `TransactionSign` | ✅ migrated (R509) | `era_based/transaction/run.rs::run_transaction_sign_cmd` — Ed25519 single-signer; fresh `{0:[[vk,sig]]}` witness set |
 
 The standalone binary's offline operator toolkit (keys / addresses /
-txid) is complete. The next subcommand tranche — `transaction sign`,
-`transaction build`, `transaction build-raw`, `transaction view` —
-needs the tx-builder / witness-construction primitives and is a
-separate, larger arc.
+txid / single-signer signing) is complete — 10 operational
+subcommands. The next subcommand tranche — `transaction build`,
+`transaction build-raw`, `transaction view`, `transaction submit` —
+needs substantively new primitives (tx-builder with coin selection +
+fee minimization, era-aware CBOR pretty-printer, the NtC
+LocalTxSubmission protocol) and is a separate, larger arc.
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
