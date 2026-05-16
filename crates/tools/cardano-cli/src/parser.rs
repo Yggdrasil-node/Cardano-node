@@ -412,6 +412,40 @@ mod tests {
         );
     }
 
+    /// `transaction-build` parses inputs / outputs / change-address /
+    /// total-input plus the defaulted fee coefficients.
+    #[test]
+    fn parses_transaction_build() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "transaction-build",
+            "--tx-in",
+            "aa#0",
+            "--tx-out",
+            "addr_test1xyz+4000000",
+            "--change-address",
+            "addr_test1chg",
+            "--total-input-lovelace",
+            "10000000",
+            "--out-file",
+            "/tmp/tx.built",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::TransactionBuild {
+                tx_in: vec!["aa#0".to_string()],
+                tx_out: vec!["addr_test1xyz+4000000".to_string()],
+                change_address: "addr_test1chg".to_string(),
+                total_input_lovelace: 10_000_000,
+                min_fee_a: 44,
+                min_fee_b: 155_381,
+                witness_count: 1,
+                out_file: PathBuf::from("/tmp/tx.built"),
+            }
+        );
+    }
+
     /// `transaction-build-raw` parses repeatable `--tx-in` / `--tx-out`
     /// plus `--fee` and `--out-file`.
     #[test]

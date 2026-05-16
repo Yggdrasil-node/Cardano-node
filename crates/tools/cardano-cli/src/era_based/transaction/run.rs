@@ -149,6 +149,161 @@ pub fn run_transaction_submit_cmd(
     client.submit_tx(socket_path, network_magic, &tx_bytes)
 }
 
+/// Fee-model inputs for `transaction build`'s balancing loop:
+/// the linear-fee coefficients (`min_fee = a × size + b`) plus the
+/// number of vkey witnesses the *signed* tx will carry (the fee
+/// estimate reserves ~100 bytes per witness).
+#[derive(Clone, Copy, Debug)]
+pub struct FeeParams {
+    /// Linear fee coefficient — lovelace per serialized byte.
+    pub min_fee_a: u64,
+    /// Constant fee term — lovelace.
+    pub min_fee_b: u64,
+    /// Expected vkey-witness count of the signed transaction.
+    pub witness_count: u64,
+}
+
+/// Run `transaction build` — assemble an unsigned Conway tx,
+/// computing the fee automatically and balancing the remainder into
+/// a change output.
+///
+/// Mirrors upstream `runTransactionBuildCmd` in spirit. Yggdrasil's
+/// **offline variant**: the fee coefficients and total input
+/// lovelace are operator-supplied (not node-queried), so the whole
+/// command is deterministic. The fee/change algorithm is the
+/// `balance_conway_tx` pure function below — exhaustively
+/// unit-tested on the balance invariant
+/// `total_input == Σ outputs + fee + change`.
+pub fn run_transaction_build_cmd(
+    tx_ins: &[String],
+    tx_outs: &[String],
+    change_address: &str,
+    total_input_lovelace: u64,
+    fee_params: FeeParams,
+    out_file: &Path,
+) -> Result<()> {
+    use yggdrasil_ledger::{BabbageTxOut, ShelleyTxIn};
+
+    if tx_ins.is_empty() {
+        eyre::bail!("transaction build requires at least one --tx-in");
+    }
+    let inputs: Vec<ShelleyTxIn> = tx_ins
+        .iter()
+        .map(|s| parse_tx_in(s))
+        .collect::<Result<_>>()?;
+    let outputs: Vec<BabbageTxOut> = tx_outs
+        .iter()
+        .map(|s| parse_tx_out(s))
+        .collect::<Result<_>>()?;
+    let (_hrp, change_addr_bytes) = bech32::decode(change_address.trim())
+        .map_err(|e| eyre::eyre!("--change-address {change_address:?} is not valid Bech32: {e}"))?;
+
+    let tx_cbor = balance_conway_tx(
+        inputs,
+        outputs,
+        change_addr_bytes,
+        total_input_lovelace,
+        fee_params,
+    )?;
+    std::fs::write(out_file, &tx_cbor)
+        .wrap_err_with(|| format!("failed to write --out-file {}", out_file.display()))?;
+    Ok(())
+}
+
+/// Balance a Conway transaction: iterate the fee/change fixpoint
+/// until stable and return the final unsigned tx CBOR.
+///
+/// On each iteration: `change = total_input − Σ explicit_outputs −
+/// fee`; build the body with the explicit outputs plus a change
+/// output; serialize the full unsigned tx; recompute
+/// `fee = min_fee_a × (size + witness_count × 100) + min_fee_b`.
+/// The witness padding reserves ~100 bytes per vkey witness the
+/// *signed* tx will carry, since `build` emits an unsigned tx. The
+/// loop converges in a few iterations (fee depends only on the few
+/// CBOR bytes of the fee + change fields). On exit the returned tx
+/// satisfies `total_input == Σ outputs + fee + change` exactly.
+fn balance_conway_tx(
+    inputs: Vec<yggdrasil_ledger::ShelleyTxIn>,
+    outputs: Vec<yggdrasil_ledger::BabbageTxOut>,
+    change_address: Vec<u8>,
+    total_input: u64,
+    fee_params: FeeParams,
+) -> Result<Vec<u8>> {
+    use yggdrasil_ledger::cbor::{CborEncode, Encoder};
+    use yggdrasil_ledger::{BabbageTxOut, ConwayTxBody, Value};
+
+    let FeeParams {
+        min_fee_a,
+        min_fee_b,
+        witness_count,
+    } = fee_params;
+
+    let explicit_out: u64 = outputs.iter().map(|o| o.amount.coin()).sum();
+
+    let mut fee: u64 = 0;
+    for _ in 0..16 {
+        let change = total_input
+            .checked_sub(explicit_out)
+            .and_then(|rem| rem.checked_sub(fee))
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "inputs ({total_input} lovelace) cannot cover outputs \
+                     ({explicit_out}) + fee ({fee})"
+                )
+            })?;
+
+        let mut outs = outputs.clone();
+        outs.push(BabbageTxOut {
+            address: change_address.clone(),
+            amount: Value::Coin(change),
+            datum_option: None,
+            script_ref: None,
+        });
+        let body = ConwayTxBody {
+            inputs: inputs.clone(),
+            outputs: outs,
+            fee,
+            ttl: None,
+            certificates: None,
+            withdrawals: None,
+            auxiliary_data_hash: None,
+            validity_interval_start: None,
+            mint: None,
+            script_data_hash: None,
+            collateral: None,
+            required_signers: None,
+            network_id: None,
+            collateral_return: None,
+            total_collateral: None,
+            reference_inputs: None,
+            voting_procedures: None,
+            proposal_procedures: None,
+            current_treasury_value: None,
+            treasury_donation: None,
+        };
+        let mut enc = Encoder::new();
+        body.encode_cbor(&mut enc);
+        let body_cbor = enc.into_bytes();
+
+        let mut tx_cbor = Vec::with_capacity(body_cbor.len() + 4);
+        tx_cbor.push(0x84);
+        tx_cbor.extend_from_slice(&body_cbor);
+        tx_cbor.extend_from_slice(&[0xa0, 0xf5, 0xf6]);
+
+        let estimated_signed_size = tx_cbor.len() as u64 + witness_count.saturating_mul(100);
+        let new_fee = min_fee_a
+            .saturating_mul(estimated_signed_size)
+            .saturating_add(min_fee_b);
+        if new_fee == fee {
+            // Fixpoint: `tx_cbor` was built with exactly this `fee`
+            // and the matching `change`, so the tx balances.
+            return Ok(tx_cbor);
+        }
+        fee = new_fee;
+    }
+    eyre::bail!("transaction build fee did not converge after 16 iterations")
+}
+
 /// Run `transaction build-raw` — assemble an unsigned Conway
 /// transaction from explicit `--tx-in` / `--tx-out` / `--fee` and
 /// write the raw CBOR to `out_file`.
@@ -602,6 +757,94 @@ mod tests {
         assert_eq!(v["witness_set_cbor"], "a0", "witness set is the empty map");
         assert_eq!(v["tail_cbor"], "f5f6", "tail is is_valid(true) + aux(null)");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `balance_conway_tx` produces a tx that satisfies the balance
+    /// invariant `total_input == Σ outputs (incl. change) + fee`,
+    /// and whose fee is exactly the linear formula applied to the
+    /// witness-padded size of the tx it returns. Decoding the result
+    /// with `ConwayTxBody::decode_cbor` verifies this end-to-end.
+    #[test]
+    fn build_balances_total_input_against_outputs_and_fee() {
+        use yggdrasil_ledger::cbor::{CborDecode, Decoder};
+        use yggdrasil_ledger::{BabbageTxOut, ConwayTxBody, ShelleyTxIn, Value};
+
+        let inputs = vec![ShelleyTxIn {
+            transaction_id: [0xab_u8; 32],
+            index: 0,
+        }];
+        let outputs = vec![BabbageTxOut {
+            address: vec![0x60_u8; 29],
+            amount: Value::Coin(4_000_000),
+            datum_option: None,
+            script_ref: None,
+        }];
+        let total_input: u64 = 10_000_000;
+        let fee_params = FeeParams {
+            min_fee_a: 44,
+            min_fee_b: 155_381,
+            witness_count: 1,
+        };
+        let tx = balance_conway_tx(inputs, outputs, vec![0x61_u8; 29], total_input, fee_params)
+            .expect("balance must succeed when inputs cover outputs + fee");
+
+        let mut dec = Decoder::new(&tx);
+        assert_eq!(dec.array().expect("tx array"), 4);
+        let body_bytes = dec.raw_value().expect("body span");
+        let mut bd = Decoder::new(body_bytes);
+        let body = ConwayTxBody::decode_cbor(&mut bd).expect("decode the built body");
+
+        let out_sum: u64 = body.outputs.iter().map(|o| o.amount.coin()).sum();
+        assert_eq!(
+            total_input,
+            out_sum + body.fee,
+            "balance invariant: total input == Σ outputs (incl. change) + fee"
+        );
+        // The explicit output is preserved; the change output is appended.
+        assert_eq!(body.outputs.len(), 2);
+        assert_eq!(body.outputs[0].amount.coin(), 4_000_000);
+        // The fee is exactly the fixpoint of the linear formula on
+        // the witness-padded size of the returned tx.
+        let padded_size = tx.len() as u64 + fee_params.witness_count * 100;
+        assert_eq!(
+            body.fee,
+            fee_params.min_fee_a * padded_size + fee_params.min_fee_b,
+            "fee must be the converged linear-formula fixpoint"
+        );
+    }
+
+    /// `balance_conway_tx` bails when the inputs cannot cover the
+    /// explicit outputs plus the fee.
+    #[test]
+    fn build_rejects_insufficient_input() {
+        use yggdrasil_ledger::{BabbageTxOut, ShelleyTxIn, Value};
+        let inputs = vec![ShelleyTxIn {
+            transaction_id: [0_u8; 32],
+            index: 0,
+        }];
+        let outputs = vec![BabbageTxOut {
+            address: vec![0x60_u8; 29],
+            amount: Value::Coin(9_999_999),
+            datum_option: None,
+            script_ref: None,
+        }];
+        // Only 1 lovelace of input — cannot cover the output + fee.
+        let err = balance_conway_tx(
+            inputs,
+            outputs,
+            vec![0x61_u8; 29],
+            1,
+            FeeParams {
+                min_fee_a: 44,
+                min_fee_b: 155_381,
+                witness_count: 1,
+            },
+        )
+        .expect_err("insufficient input must bail");
+        assert!(
+            err.to_string().contains("cannot cover"),
+            "error must explain the shortfall; got {err}"
+        );
     }
 
     /// `build-raw` bails when no inputs or no outputs are supplied.

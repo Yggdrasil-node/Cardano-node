@@ -307,6 +307,46 @@ pub enum Command {
         #[arg(long, conflicts_with = "tx_file")]
         tx_hex: Option<String>,
     },
+    /// Assemble an unsigned Conway transaction, computing the fee
+    /// automatically and balancing the remainder into a change
+    /// output. Mirrors upstream `transaction build`
+    /// (`Cardano.CLI.EraBased.Transaction.Command`).
+    ///
+    /// Yggdrasil's offline variant: the fee coefficients and the
+    /// total input lovelace are supplied explicitly (`--min-fee-a` /
+    /// `--min-fee-b` / `--total-input-lovelace`) rather than queried
+    /// from a node, so the whole command is deterministic and
+    /// verifiable without a live socket. The node-auto-query mode is
+    /// a follow-on.
+    TransactionBuild {
+        /// A transaction input, `TXID#INDEX`. Repeatable.
+        #[arg(long = "tx-in")]
+        tx_in: Vec<String>,
+        /// A transaction output, `ADDRESS+LOVELACE`. Repeatable.
+        #[arg(long = "tx-out")]
+        tx_out: Vec<String>,
+        /// Bech32 address that receives the balancing change output.
+        #[arg(long)]
+        change_address: String,
+        /// Total lovelace across all `--tx-in` inputs being spent.
+        #[arg(long)]
+        total_input_lovelace: u64,
+        /// Linear fee coefficient (lovelace per byte). Defaults to
+        /// the Cardano mainnet value.
+        #[arg(long, default_value_t = 44)]
+        min_fee_a: u64,
+        /// Constant fee term (lovelace). Defaults to the Cardano
+        /// mainnet value.
+        #[arg(long, default_value_t = 155_381)]
+        min_fee_b: u64,
+        /// Number of vkey witnesses the signed tx will carry — the
+        /// fee estimate reserves ~100 bytes each.
+        #[arg(long, default_value_t = 1)]
+        witness_count: u64,
+        /// Path to write the unsigned transaction CBOR.
+        #[arg(long)]
+        out_file: PathBuf,
+    },
     /// Assemble an unsigned Conway transaction from explicit inputs,
     /// outputs, and fee (no coin selection / fee balancing). Mirrors
     /// upstream `transaction build-raw`

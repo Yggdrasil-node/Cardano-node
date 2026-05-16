@@ -297,6 +297,31 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 &out_file,
             )
         }
+        Command::TransactionBuild {
+            tx_in,
+            tx_out,
+            change_address,
+            total_input_lovelace,
+            min_fee_a,
+            min_fee_b,
+            witness_count,
+            out_file,
+        } => {
+            // R515: offline subcommand — auto fee + change balancing
+            // via the `balance_conway_tx` fixpoint.
+            crate::era_based::transaction::run::run_transaction_build_cmd(
+                &tx_in,
+                &tx_out,
+                &change_address,
+                total_input_lovelace,
+                crate::era_based::transaction::run::FeeParams {
+                    min_fee_a,
+                    min_fee_b,
+                    witness_count,
+                },
+                &out_file,
+            )
+        }
         Command::TransactionBuildRaw {
             tx_in,
             tx_out,
