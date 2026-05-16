@@ -30,15 +30,25 @@ tempfile = "3"
 #   * `ntc`           — Node-to-Client mini-protocols (default).
 #                       Required by every sister tool that talks to
 #                       a running yggdrasil-node.
-#   * `serde-traces`  — Derive `serde::Serialize` on trace event types
-#                       so the cardano-tracer forwarder layer (Wave 6
-#                       PR 17) can emit them over the Unix socket.
-#                       Default-on because trace forwarding is the
-#                       standard operator config.
+#   * `serde-traces`  — was intended to gate `serde::Serialize`
+#                       derives on trace-event types so the
+#                       cardano-tracer forwarder layer could emit
+#                       them over the Unix socket.
 #
-# All three are default-on today, so the default build is byte-identical;
-# no `#[cfg(feature = "...")]` gates exist yet. Wave 5/6/8 adds the
-# actual conditional compilation.
+# All three are default-on; the default build is byte-identical with
+# or without them. As of the Phase 5.4 audit (2026-05) all three
+# remain **decorative** — no `#[cfg(feature = "...")]` gates
+# reference them:
+#   * `ntn` / `ntc` — wiring these means gating whole mini-protocol
+#     module trees; large but mechanically tractable, deferred.
+#   * `serde-traces` — premise drifted: this crate's `serde` derives
+#     are on *config* types (`LocalRootConfig`, `PeerAdvertise`,
+#     `UseLedgerPeers`, `UseBootstrapPeers`) that are parsed from
+#     operator JSON regardless of trace forwarding. There are no
+#     standalone trace-event types here deriving `serde` — trace
+#     forwarding goes through `crates/telemetry`'s Haskell-JSON
+#     formatter, not `serde` on network types. Wiring `serde-traces`
+#     needs a re-scope (decide what, if anything, it should gate).
 # ──────────────────────────────────────────────────────────────────────
 [features]
 default = ["ntn", "ntc", "serde-traces"]

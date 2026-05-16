@@ -23,14 +23,19 @@ tempfile = "3"
 # embedded / WASM target that can't access disk-backed storage:
 #   * `lmdb`     — file-backed immutable / volatile / ledger DBs
 #                  (default). Required by every operator deployment.
-#   * `mem-only` — in-memory-only storage stack. Enables `cargo fuzz`
-#                  targets and the Wave 9 PR 28 `mux_sdu_frame` /
-#                  `mempool_admission` fuzz harnesses to run without
-#                  filesystem touchpoints.
+#   * `mem-only` — in-memory-only storage stack.
 #
-# Both default-on today (mem-only is additive, not exclusive); the
-# default build is byte-identical. Wave 5+ adds the actual `#[cfg]`
-# gates around the file-backed code paths.
+# Phase 5.4 audit (2026-05): both flags remain **decorative** — no
+# `#[cfg(feature = "...")]` gates reference them. The flag pair does
+# not model a backend *choice*: the in-memory implementations
+# (`InMemoryLedgerStore`, `InMemoryVolatile`) and the file-backed
+# ones (`file_immutable` / `file_volatile` / `file_ledger`) are both
+# always compiled and both always public — `mem-only` is additive,
+# not exclusive. The in-memory stack is used by this crate's own
+# tests and the fuzz harnesses unconditionally. Wiring these flags
+# as a genuine compile-time backend selection needs a refactor that
+# first makes the two backends mutually exclusive (today they are
+# not). Not a mechanical `#[cfg]` insertion.
 # ──────────────────────────────────────────────────────────────────────
 [features]
 default = ["lmdb"]
