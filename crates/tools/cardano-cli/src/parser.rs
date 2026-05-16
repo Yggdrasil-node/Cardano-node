@@ -309,6 +309,30 @@ mod tests {
         );
     }
 
+    /// `stake-address-build --stake-verification-key-file …
+    /// --testnet-magic …` parses to the expected variant.
+    #[test]
+    fn parses_stake_address_build_testnet() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "stake-address-build",
+            "--stake-verification-key-file",
+            "/tmp/s.vkey",
+            "--testnet-magic",
+            "2",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::StakeAddressBuild {
+                stake_verification_key_file: PathBuf::from("/tmp/s.vkey"),
+                mainnet: false,
+                testnet_magic: Some(2),
+                out_file: None,
+            }
+        );
+    }
+
     /// Unknown subcommand surfaces through `ParseError::Clap`.
     #[test]
     fn rejects_unknown_subcommand() {

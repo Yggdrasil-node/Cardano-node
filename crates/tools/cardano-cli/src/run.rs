@@ -165,6 +165,20 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 out_file.as_deref(),
             )
         }
+        Command::StakeAddressBuild {
+            stake_verification_key_file,
+            mainnet,
+            testnet_magic,
+            out_file,
+        } => {
+            // R508: offline subcommand — Bech32 reward (stake) address.
+            crate::era_based::stake_address::run::run_stake_address_build_cmd(
+                &stake_verification_key_file,
+                mainnet,
+                testnet_magic,
+                out_file.as_deref(),
+            )
+        }
     }
 }
 

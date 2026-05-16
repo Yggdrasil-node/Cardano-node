@@ -160,7 +160,10 @@ fn build_shelley_address_bech32(
 /// The `cborHex` field must be exactly 34 bytes: the 2-byte CBOR
 /// bytes-string-of-length-32 prefix `0x5820` followed by the
 /// 32-byte key. Mirrors the inverse of [`write_text_envelope`].
-fn read_verification_key_text_envelope(envelope_bytes: &[u8]) -> Result<[u8; 32]> {
+///
+/// `pub` so the EraBased `stake-address build` runner can decode a
+/// stake verification key with the same logic.
+pub fn read_verification_key_text_envelope(envelope_bytes: &[u8]) -> Result<[u8; 32]> {
     let envelope: serde_json::Value = serde_json::from_slice(envelope_bytes)
         .map_err(|e| eyre::eyre!("TextEnvelope is not valid JSON: {e}"))?;
     let cbor_hex = envelope

@@ -135,4 +135,22 @@ pub enum Command {
         #[arg(long)]
         out_file: Option<PathBuf>,
     },
+    /// Build a Shelley reward (stake) address (Bech32) from a stake
+    /// verification key. Mirrors upstream `stake-address build`
+    /// (`Cardano.CLI.EraBased.StakeAddress.Command`).
+    StakeAddressBuild {
+        /// Path to the stake verification-key TextEnvelope.
+        #[arg(long)]
+        stake_verification_key_file: PathBuf,
+        /// Use the mainnet network ID (1) and the `stake` HRP.
+        #[arg(long, conflicts_with = "testnet_magic")]
+        mainnet: bool,
+        /// Use a testnet network ID (0) and the `stake_test` HRP.
+        #[arg(long, conflicts_with = "mainnet")]
+        testnet_magic: Option<u32>,
+        /// Optional output file; when omitted the address prints to
+        /// stdout.
+        #[arg(long)]
+        out_file: Option<PathBuf>,
+    },
 }
