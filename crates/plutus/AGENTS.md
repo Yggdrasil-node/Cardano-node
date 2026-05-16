@@ -85,6 +85,24 @@ extended 1280-1400, and general 102.
 - Flat decoder handles tags 9/10/11 for BLS types.
 - `MachineError::CryptoError(String)` variant added for BLS operation failures.
 
+### Feature flags (Phase 5.4 — wired)
+Both default-on; the default build is byte-identical to the pre-gate build.
+- **`secp256k1`** — gates the `VerifyEcdsaSecp256k1Signature` /
+  `VerifySchnorrSecp256k1Signature` dispatch-arm *bodies* in
+  `evaluate_builtin`, the `verify_*_secp256k1` helpers, and the
+  `yggdrasil_crypto::secp256k1` import.
+- **`bls12-381`** — gates the extracted `dispatch_bls12_381_builtin`
+  fn (17-arm BLS dispatch), the `get_g1` / `get_g2` / `get_ml` /
+  `int_to_scalar_bytes` helpers, the `bls12_381` import, and the
+  4 `int_to_scalar_bytes_*` unit tests.
+- **Invariant**: the `DefaultFun` enum variants + the `Type` /
+  `Constant` BLS variants stay **unconditional** regardless of the
+  flags — they are wire-level flat-encoding tags; gating them would
+  break flat-decode of any PlutusV3 script that merely mentions the
+  builtin. With a feature off, evaluation of that builtin surfaces a
+  `MachineError::BuiltinError` ("…not compiled in; rebuild with the
+  `<flag>` feature"). Mirrors the `forge`-flag dispatch-gating pattern.
+
 ## Next Steps
 1. Add integration tests with on-chain script samples and upstream vector parity checks for budget accounting.
 2. Wire `into_ledger_error()` into the ledger/node boundary so operational errors are collapsed before reporting.
