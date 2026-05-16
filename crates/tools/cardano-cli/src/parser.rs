@@ -351,6 +351,43 @@ mod tests {
         );
     }
 
+    /// The 8 socket-only ledger-introspection `query-*` subcommands
+    /// all parse cleanly with just `--socket-path`. They share the
+    /// `{ socket_path, network_magic }` shape, so a parse-success
+    /// check over the names plus one full-variant assertion covers
+    /// the clap wiring.
+    #[test]
+    fn parses_ledger_introspection_query_subcommands() {
+        let socket = "/tmp/node.socket";
+        for name in [
+            "query-treasury-and-reserves",
+            "query-account-state",
+            "query-genesis-delegations",
+            "query-stability-window",
+            "query-num-dormant-epochs",
+            "query-expected-network-id",
+            "query-deposit-pot",
+            "query-ledger-counts",
+        ] {
+            parse_command(["yggdrasil-cardano-cli", name, "--socket-path", socket])
+                .unwrap_or_else(|e| panic!("{name} must parse; got {e:?}"));
+        }
+        // Full-variant assertion for one representative.
+        assert_eq!(
+            parse_command([
+                "yggdrasil-cardano-cli",
+                "query-deposit-pot",
+                "--socket-path",
+                socket,
+            ])
+            .expect("parse"),
+            Command::QueryDepositPot {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+            }
+        );
+    }
+
     /// `address-key-gen --verification-key-file … --signing-key-file …`
     /// parses to the expected variant.
     #[test]

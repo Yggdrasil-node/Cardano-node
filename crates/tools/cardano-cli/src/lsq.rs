@@ -82,6 +82,22 @@ pub enum NtcQuery {
     /// `query-committee-state` — the constitutional-committee state
     /// (Conway governance).
     CommitteeState,
+    /// `query-treasury-and-reserves` — the treasury + reserves pots.
+    TreasuryAndReserves,
+    /// `query-account-state` — treasury / reserves / total-deposits.
+    AccountState,
+    /// `query-genesis-delegations` — the genesis-delegation map.
+    GenesisDelegations,
+    /// `query-stability-window` — the stability-window slot count.
+    StabilityWindow,
+    /// `query-num-dormant-epochs` — the Conway dormant-epoch counter.
+    NumDormantEpochs,
+    /// `query-expected-network-id` — the node's configured network id.
+    ExpectedNetworkId,
+    /// `query-deposit-pot` — the key/pool/DRep/proposal deposit pots.
+    DepositPot,
+    /// `query-ledger-counts` — ledger-state cardinality counters.
+    LedgerCounts,
 }
 
 impl NtcQuery {
@@ -102,6 +118,14 @@ impl NtcQuery {
             NtcQuery::GovState => "query-gov-state",
             NtcQuery::DrepState => "query-drep-state",
             NtcQuery::CommitteeState => "query-committee-state",
+            NtcQuery::TreasuryAndReserves => "query-treasury-and-reserves",
+            NtcQuery::AccountState => "query-account-state",
+            NtcQuery::GenesisDelegations => "query-genesis-delegations",
+            NtcQuery::StabilityWindow => "query-stability-window",
+            NtcQuery::NumDormantEpochs => "query-num-dormant-epochs",
+            NtcQuery::ExpectedNetworkId => "query-expected-network-id",
+            NtcQuery::DepositPot => "query-deposit-pot",
+            NtcQuery::LedgerCounts => "query-ledger-counts",
         }
     }
 }
@@ -181,6 +205,14 @@ mod tests {
             NtcQuery::GovState,
             NtcQuery::DrepState,
             NtcQuery::CommitteeState,
+            NtcQuery::TreasuryAndReserves,
+            NtcQuery::AccountState,
+            NtcQuery::GenesisDelegations,
+            NtcQuery::StabilityWindow,
+            NtcQuery::NumDormantEpochs,
+            NtcQuery::ExpectedNetworkId,
+            NtcQuery::DepositPot,
+            NtcQuery::LedgerCounts,
         ] {
             let err = client
                 .run_query(&socket, 764_824_073, query)

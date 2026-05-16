@@ -191,6 +191,62 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             let magic = network_magic.unwrap_or(764_824_073);
             client.run_query(&socket_path, magic, NtcQuery::CommitteeState)
         }
+        Command::QueryTreasuryAndReserves {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::TreasuryAndReserves)
+        }
+        Command::QueryAccountState {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::AccountState)
+        }
+        Command::QueryGenesisDelegations {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::GenesisDelegations)
+        }
+        Command::QueryStabilityWindow {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::StabilityWindow)
+        }
+        Command::QueryNumDormantEpochs {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::NumDormantEpochs)
+        }
+        Command::QueryExpectedNetworkId {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::ExpectedNetworkId)
+        }
+        Command::QueryDepositPot {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::DepositPot)
+        }
+        Command::QueryLedgerCounts {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::LedgerCounts)
+        }
         Command::AddressKeyGen {
             verification_key_file,
             signing_key_file,
@@ -480,6 +536,70 @@ mod tests {
                 },
                 NtcQuery::CommitteeState,
                 12,
+            ),
+            (
+                Command::QueryTreasuryAndReserves {
+                    socket_path: socket.clone(),
+                    network_magic: Some(13),
+                },
+                NtcQuery::TreasuryAndReserves,
+                13,
+            ),
+            (
+                Command::QueryAccountState {
+                    socket_path: socket.clone(),
+                    network_magic: Some(14),
+                },
+                NtcQuery::AccountState,
+                14,
+            ),
+            (
+                Command::QueryGenesisDelegations {
+                    socket_path: socket.clone(),
+                    network_magic: Some(15),
+                },
+                NtcQuery::GenesisDelegations,
+                15,
+            ),
+            (
+                Command::QueryStabilityWindow {
+                    socket_path: socket.clone(),
+                    network_magic: Some(16),
+                },
+                NtcQuery::StabilityWindow,
+                16,
+            ),
+            (
+                Command::QueryNumDormantEpochs {
+                    socket_path: socket.clone(),
+                    network_magic: Some(17),
+                },
+                NtcQuery::NumDormantEpochs,
+                17,
+            ),
+            (
+                Command::QueryExpectedNetworkId {
+                    socket_path: socket.clone(),
+                    network_magic: Some(18),
+                },
+                NtcQuery::ExpectedNetworkId,
+                18,
+            ),
+            (
+                Command::QueryDepositPot {
+                    socket_path: socket.clone(),
+                    network_magic: Some(19),
+                },
+                NtcQuery::DepositPot,
+                19,
+            ),
+            (
+                Command::QueryLedgerCounts {
+                    socket_path: socket.clone(),
+                    network_magic: Some(20),
+                },
+                NtcQuery::LedgerCounts,
+                20,
             ),
         ];
         for (command, expected_query, expected_magic) in cases {

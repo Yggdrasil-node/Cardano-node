@@ -121,6 +121,159 @@ fn plan_for(query: NtcQuery) -> QueryPlan {
             query_label: "GetCommitteeState",
             decode: decode_committee_state_result,
         },
+        NtcQuery::TreasuryAndReserves => QueryPlan {
+            query_bytes: encode_single_tag_query(7),
+            query_label: "GetTreasuryAndReserves",
+            decode: decode_treasury_and_reserves_result,
+        },
+        NtcQuery::AccountState => QueryPlan {
+            query_bytes: encode_single_tag_query(13),
+            query_label: "GetAccountState",
+            decode: decode_account_state_result,
+        },
+        NtcQuery::GenesisDelegations => QueryPlan {
+            query_bytes: encode_single_tag_query(18),
+            query_label: "GetGenesisDelegations",
+            decode: decode_genesis_delegations_result,
+        },
+        NtcQuery::StabilityWindow => QueryPlan {
+            query_bytes: encode_single_tag_query(19),
+            query_label: "GetStabilityWindow",
+            decode: decode_stability_window_result,
+        },
+        NtcQuery::NumDormantEpochs => QueryPlan {
+            query_bytes: encode_single_tag_query(20),
+            query_label: "GetNumDormantEpochs",
+            decode: decode_num_dormant_epochs_result,
+        },
+        NtcQuery::ExpectedNetworkId => QueryPlan {
+            query_bytes: encode_single_tag_query(21),
+            query_label: "GetExpectedNetworkId",
+            decode: decode_expected_network_id_result,
+        },
+        NtcQuery::DepositPot => QueryPlan {
+            query_bytes: encode_single_tag_query(22),
+            query_label: "GetDepositPot",
+            decode: decode_deposit_pot_result,
+        },
+        NtcQuery::LedgerCounts => QueryPlan {
+            query_bytes: encode_single_tag_query(23),
+            query_label: "GetLedgerCounts",
+            decode: decode_ledger_counts_result,
+        },
+    }
+}
+
+/// Decode the `GetTreasuryAndReserves` reply — the 2-element CBOR
+/// array `[treasury, reserves]` (lovelace). Mirrors the node
+/// binary's `decode_ntc_result` `TreasuryAndReserves` arm.
+fn decode_treasury_and_reserves_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    if dec.array().ok() == Some(2) {
+        let treasury = dec.unsigned().unwrap_or(0);
+        let reserves = dec.unsigned().unwrap_or(0);
+        json!({ "treasury_lovelace": treasury, "reserves_lovelace": reserves })
+    } else {
+        json!({ "result_cbor": hex::encode(result) })
+    }
+}
+
+/// Decode the `GetAccountState` reply — `[treasury, reserves,
+/// total_deposits]`. Mirrors the node binary's `AccountState` arm.
+fn decode_account_state_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    if dec.array().ok() == Some(3) {
+        let treasury = dec.unsigned().unwrap_or(0);
+        let reserves = dec.unsigned().unwrap_or(0);
+        let deposits = dec.unsigned().unwrap_or(0);
+        json!({
+            "treasury_lovelace": treasury,
+            "reserves_lovelace": reserves,
+            "total_deposits_lovelace": deposits,
+        })
+    } else {
+        json!({ "account_state_cbor": hex::encode(result) })
+    }
+}
+
+/// Decode the `GetGenesisDelegations` reply (raw CBOR hex — the
+/// value side carries multiple sub-entries per genesis key).
+fn decode_genesis_delegations_result(result: &[u8]) -> serde_json::Value {
+    json!({ "genesis_delegations_cbor": hex::encode(result) })
+}
+
+/// Decode the `GetStabilityWindow` reply — CBOR null (`f6`) when
+/// unset, otherwise a plain unsigned slot count.
+fn decode_stability_window_result(result: &[u8]) -> serde_json::Value {
+    if result == [0xf6] {
+        json!({ "stability_window": serde_json::Value::Null })
+    } else {
+        let mut dec = Decoder::new(result);
+        json!({ "stability_window_slots": dec.unsigned().unwrap_or(0) })
+    }
+}
+
+/// Decode the `GetNumDormantEpochs` reply — a plain unsigned count.
+fn decode_num_dormant_epochs_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    json!({ "num_dormant_epochs": dec.unsigned().unwrap_or(0) })
+}
+
+/// Decode the `GetExpectedNetworkId` reply — CBOR null (`f6`) when
+/// no expectation is configured, otherwise a plain unsigned id.
+fn decode_expected_network_id_result(result: &[u8]) -> serde_json::Value {
+    if result == [0xf6] {
+        json!({ "expected_network_id": serde_json::Value::Null })
+    } else {
+        let mut dec = Decoder::new(result);
+        json!({ "expected_network_id": dec.unsigned().unwrap_or(0) })
+    }
+}
+
+/// Decode the `GetDepositPot` reply — the 4-element CBOR array
+/// `[key, pool, drep, proposal]` (lovelace), surfaced with a derived
+/// total. Mirrors the node binary's `DepositPot` arm.
+fn decode_deposit_pot_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    if dec.array().ok() == Some(4) {
+        let key = dec.unsigned().unwrap_or(0);
+        let pool = dec.unsigned().unwrap_or(0);
+        let drep = dec.unsigned().unwrap_or(0);
+        let proposal = dec.unsigned().unwrap_or(0);
+        json!({
+            "key_deposits_lovelace": key,
+            "pool_deposits_lovelace": pool,
+            "drep_deposits_lovelace": drep,
+            "proposal_deposits_lovelace": proposal,
+            "total_lovelace": key + pool + drep + proposal,
+        })
+    } else {
+        json!({ "deposit_pot_cbor": hex::encode(result) })
+    }
+}
+
+/// Decode the `GetLedgerCounts` reply — the 6-element CBOR array of
+/// ledger-state cardinality counters. Mirrors the node binary's
+/// `LedgerCounts` arm.
+fn decode_ledger_counts_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    if dec.array().ok() == Some(6) {
+        let stake_credentials = dec.unsigned().unwrap_or(0);
+        let pools = dec.unsigned().unwrap_or(0);
+        let dreps = dec.unsigned().unwrap_or(0);
+        let committee_members = dec.unsigned().unwrap_or(0);
+        let governance_actions = dec.unsigned().unwrap_or(0);
+        let gen_delegs = dec.unsigned().unwrap_or(0);
+        json!({
+            "stake_credentials": stake_credentials,
+            "pools": pools,
+            "dreps": dreps,
+            "committee_members": committee_members,
+            "governance_actions": governance_actions,
+            "gen_delegs": gen_delegs,
+        })
+    } else {
+        json!({ "ledger_counts_cbor": hex::encode(result) })
     }
 }
 
@@ -701,6 +854,103 @@ mod tests {
         assert_eq!(
             decode_committee_state_result(&[0x03]),
             json!({ "committee_state_cbor": "03" })
+        );
+    }
+
+    /// `decode_treasury_and_reserves_result` reads the 2-element
+    /// `[treasury, reserves]` array.
+    #[test]
+    fn decode_treasury_and_reserves_reads_pair() {
+        // CBOR `[10, 20]` = 0x82 0x0a 0x14.
+        let v = decode_treasury_and_reserves_result(&[0x82, 0x0a, 0x14]);
+        assert_eq!(
+            v,
+            json!({ "treasury_lovelace": 10, "reserves_lovelace": 20 })
+        );
+    }
+
+    /// `decode_account_state_result` reads the 3-element
+    /// `[treasury, reserves, total_deposits]` array.
+    #[test]
+    fn decode_account_state_reads_triple() {
+        // CBOR `[1, 2, 3]` = 0x83 0x01 0x02 0x03.
+        let v = decode_account_state_result(&[0x83, 0x01, 0x02, 0x03]);
+        assert_eq!(v["treasury_lovelace"], 1);
+        assert_eq!(v["reserves_lovelace"], 2);
+        assert_eq!(v["total_deposits_lovelace"], 3);
+    }
+
+    /// `decode_stability_window_result` maps CBOR null to JSON null
+    /// and a plain unsigned to the slot count.
+    #[test]
+    fn decode_stability_window_null_vs_slots() {
+        assert_eq!(
+            decode_stability_window_result(&[0xf6]),
+            json!({ "stability_window": serde_json::Value::Null })
+        );
+        // CBOR `129600` = 0x1a 0x00 0x01 0xfa 0x40.
+        assert_eq!(
+            decode_stability_window_result(&[0x1a, 0x00, 0x01, 0xfa, 0x40]),
+            json!({ "stability_window_slots": 129_600 })
+        );
+    }
+
+    /// `decode_num_dormant_epochs_result` reads a plain unsigned.
+    #[test]
+    fn decode_num_dormant_epochs_reads_count() {
+        assert_eq!(
+            decode_num_dormant_epochs_result(&[0x05]),
+            json!({ "num_dormant_epochs": 5 })
+        );
+    }
+
+    /// `decode_expected_network_id_result` maps CBOR null to JSON
+    /// null and a plain unsigned to the id.
+    #[test]
+    fn decode_expected_network_id_null_vs_id() {
+        assert_eq!(
+            decode_expected_network_id_result(&[0xf6]),
+            json!({ "expected_network_id": serde_json::Value::Null })
+        );
+        assert_eq!(
+            decode_expected_network_id_result(&[0x01]),
+            json!({ "expected_network_id": 1 })
+        );
+    }
+
+    /// `decode_deposit_pot_result` reads the 4-element pot array and
+    /// derives the total.
+    #[test]
+    fn decode_deposit_pot_reads_four_pots() {
+        // CBOR `[1, 2, 3, 4]` = 0x84 0x01 0x02 0x03 0x04.
+        let v = decode_deposit_pot_result(&[0x84, 0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(v["key_deposits_lovelace"], 1);
+        assert_eq!(v["proposal_deposits_lovelace"], 4);
+        assert_eq!(v["total_lovelace"], 10);
+    }
+
+    /// `decode_ledger_counts_result` reads the 6-element counter
+    /// array.
+    #[test]
+    fn decode_ledger_counts_reads_six_counters() {
+        // CBOR `[1, 2, 3, 4, 5, 6]`.
+        let v = decode_ledger_counts_result(&[0x86, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+        assert_eq!(v["stake_credentials"], 1);
+        assert_eq!(v["pools"], 2);
+        assert_eq!(v["gen_delegs"], 6);
+    }
+
+    /// The structured decoders fall back to a raw-hex dump when the
+    /// reply isn't the expected array shape.
+    #[test]
+    fn structured_decoders_fall_back_to_hex() {
+        assert_eq!(
+            decode_deposit_pot_result(&[0x00]),
+            json!({ "deposit_pot_cbor": "00" })
+        );
+        assert_eq!(
+            decode_ledger_counts_result(&[0x00]),
+            json!({ "ledger_counts_cbor": "00" })
         );
     }
 }

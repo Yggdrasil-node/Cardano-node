@@ -180,6 +180,86 @@ pub enum Command {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Query the running node for the treasury + reserves pots.
+    /// Targets a `yggdrasil-node` NtC socket.
+    QueryTreasuryAndReserves {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the account state (treasury /
+    /// reserves / total deposits). Targets a `yggdrasil-node` socket.
+    QueryAccountState {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the genesis-delegation map.
+    /// Targets a `yggdrasil-node` NtC socket.
+    QueryGenesisDelegations {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the stability-window slot count.
+    /// Targets a `yggdrasil-node` NtC socket.
+    QueryStabilityWindow {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the Conway dormant-epoch counter.
+    /// Targets a `yggdrasil-node` NtC socket.
+    QueryNumDormantEpochs {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for its configured network id.
+    /// Targets a `yggdrasil-node` NtC socket.
+    QueryExpectedNetworkId {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the key/pool/DRep/proposal deposit
+    /// pots. Targets a `yggdrasil-node` NtC socket.
+    QueryDepositPot {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for ledger-state cardinality counters.
+    /// Targets a `yggdrasil-node` NtC socket.
+    QueryLedgerCounts {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
     /// Generate a fresh Ed25519 payment keypair, writing both keys
     /// as TextEnvelope JSON files. Mirrors upstream `address key-gen`
     /// (`Cardano.CLI.EraIndependent.Address.Command.AddressKeyGen`).
