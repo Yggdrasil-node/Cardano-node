@@ -29,7 +29,7 @@ use serde_json::json;
 use yggdrasil_ledger::{Decoder, Encoder};
 use yggdrasil_network::{AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect};
 
-use crate::lsq::LsqClient;
+use crate::lsq::{LsqClient, NtcQuery};
 
 /// Concrete LSQ client that opens a Unix-socket NtC connection on
 /// each call, drives the LocalStateQuery mini-protocol, and renders
@@ -38,7 +38,7 @@ use crate::lsq::LsqClient;
 /// on; ignored otherwise.
 ///
 /// Zero-sized — all per-call state (socket, runtime, mini-protocol
-/// handles) is constructed and torn down inside `query_tip`. The
+/// handles) is constructed and torn down inside `run_query`. The
 /// upstream parity choice is to match `cardano-cli`'s one-shot
 /// behavior: one query per invocation, no persistent client state
 /// across calls.
@@ -46,56 +46,55 @@ use crate::lsq::LsqClient;
 /// [standalone-main]: ../main/index.html
 pub struct TokioLsqClient;
 
+/// Decoder for one LSQ reply — turns the raw CBOR result bytes into
+/// the JSON value the subcommand prints. One per [`NtcQuery`].
+type LsqReplyDecoder = fn(&[u8]) -> serde_json::Value;
+
+/// The per-query plan: the CBOR query envelope, an upstream query
+/// label for error context, and the reply decoder.
+struct QueryPlan {
+    query_bytes: Vec<u8>,
+    query_label: &'static str,
+    decode: LsqReplyDecoder,
+}
+
+/// Map an [`NtcQuery`] variant to its CBOR encode + reply decoder.
+fn plan_for(query: NtcQuery) -> QueryPlan {
+    match query {
+        NtcQuery::Tip => QueryPlan {
+            query_bytes: encode_get_chain_point_query(),
+            query_label: "GetChainPoint",
+            decode: decode_chain_point_result,
+        },
+        NtcQuery::ChainBlockNo => QueryPlan {
+            query_bytes: encode_get_chain_block_no_query(),
+            query_label: "GetChainBlockNo",
+            decode: decode_chain_block_no_result,
+        },
+        NtcQuery::CurrentEra => QueryPlan {
+            query_bytes: encode_get_current_era_query(),
+            query_label: "GetCurrentEra",
+            decode: decode_current_era_result,
+        },
+        NtcQuery::SystemStart => QueryPlan {
+            query_bytes: encode_get_system_start_query(),
+            query_label: "GetSystemStart",
+            decode: decode_system_start_result,
+        },
+    }
+}
+
 impl LsqClient for TokioLsqClient {
-    fn query_tip(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
-        run_blocking(async {
-            let result = acquire_query_release(
-                socket_path,
-                network_magic,
-                encode_get_chain_point_query(),
-                "GetChainPoint",
-            )
-            .await?;
-            print_json(&decode_chain_point_result(&result))
-        })
-    }
-
-    fn query_chain_block_no(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
-        run_blocking(async {
-            let result = acquire_query_release(
-                socket_path,
-                network_magic,
-                encode_get_chain_block_no_query(),
-                "GetChainBlockNo",
-            )
-            .await?;
-            print_json(&decode_chain_block_no_result(&result))
-        })
-    }
-
-    fn query_current_era(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
-        run_blocking(async {
-            let result = acquire_query_release(
-                socket_path,
-                network_magic,
-                encode_get_current_era_query(),
-                "GetCurrentEra",
-            )
-            .await?;
-            print_json(&decode_current_era_result(&result))
-        })
-    }
-
-    fn query_system_start(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
-        run_blocking(async {
-            let result = acquire_query_release(
-                socket_path,
-                network_magic,
-                encode_get_system_start_query(),
-                "GetSystemStart",
-            )
-            .await?;
-            print_json(&decode_system_start_result(&result))
+    fn run_query(&self, socket_path: &Path, network_magic: u32, query: NtcQuery) -> Result<()> {
+        let QueryPlan {
+            query_bytes,
+            query_label,
+            decode,
+        } = plan_for(query);
+        run_blocking(async move {
+            let result =
+                acquire_query_release(socket_path, network_magic, query_bytes, query_label).await?;
+            print_json(&decode(&result))
         })
     }
 }
@@ -335,16 +334,17 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// Calling `query_tip` against a nonexistent socket path bails
-    /// with a wrapped IO error rather than panicking. Pins the
+    /// Running a query against a nonexistent socket path bails with
+    /// a wrapped IO error rather than panicking. Pins the
     /// failure-mode contract: errors travel through `eyre` with the
     /// socket-path + network-magic context.
     #[test]
-    fn query_tip_against_missing_socket_returns_wrapped_error() {
+    fn run_query_against_missing_socket_returns_wrapped_error() {
         let client = TokioLsqClient;
-        let result = client.query_tip(
+        let result = client.run_query(
             &PathBuf::from("/tmp/yggdrasil-cardano-cli-nonexistent-socket"),
             764_824_073,
+            NtcQuery::Tip,
         );
         let err = result.expect_err("missing socket must bail");
         let msg = format!("{err:#}");
@@ -432,24 +432,6 @@ mod tests {
         // CBOR single integer 0x05 — not an array.
         let v = decode_chain_block_no_result(&[0x05]);
         assert_eq!(v, json!({ "chain_block_no_cbor": "05" }));
-    }
-
-    /// `query_chain_block_no` against a missing socket bails with the
-    /// same wrapped IO-error contract as `query_tip`.
-    #[test]
-    fn query_chain_block_no_against_missing_socket_returns_wrapped_error() {
-        let client = TokioLsqClient;
-        let err = client
-            .query_chain_block_no(
-                &PathBuf::from("/tmp/yggdrasil-cardano-cli-nonexistent-socket"),
-                764_824_073,
-            )
-            .expect_err("missing socket must bail");
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("failed to connect to NtC socket"),
-            "error must carry the eyre socket-path context; got {msg}"
-        );
     }
 
     /// `encode_get_current_era_query` produces the nested CBOR

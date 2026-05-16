@@ -16,7 +16,7 @@ pub mod mnemonic;
 use eyre::Result;
 
 use crate::command::Command;
-use crate::lsq::{DeferralLsqClient, LsqClient};
+use crate::lsq::{DeferralLsqClient, LsqClient, NtcQuery};
 
 /// Run a parsed `Command` against the local environment.
 ///
@@ -106,37 +106,34 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             socket_path,
             network_magic,
         } => {
-            // R505: dispatch through the LSQ-client trait. The
-            // library carries the dispatch logic + variant decode;
-            // the client owns the wire-protocol drive + stdout
-            // rendering. Network-magic fallback mirrors upstream's
-            // mainnet default when the operator omits it.
+            // R505+: dispatch through the LSQ-client trait. The
+            // library carries the dispatch logic; the client owns
+            // the wire-protocol drive + decode + stdout rendering.
+            // Network-magic fallback mirrors upstream's mainnet
+            // default when the operator omits it.
             let magic = network_magic.unwrap_or(764_824_073);
-            client.query_tip(&socket_path, magic)
+            client.run_query(&socket_path, magic, NtcQuery::Tip)
         }
         Command::QueryChainBlockNo {
             socket_path,
             network_magic,
         } => {
-            // R510: second LSQ subcommand — `GetChainBlockNo`.
             let magic = network_magic.unwrap_or(764_824_073);
-            client.query_chain_block_no(&socket_path, magic)
+            client.run_query(&socket_path, magic, NtcQuery::ChainBlockNo)
         }
         Command::QueryCurrentEra {
             socket_path,
             network_magic,
         } => {
-            // R510: third LSQ subcommand — `GetCurrentEra`.
             let magic = network_magic.unwrap_or(764_824_073);
-            client.query_current_era(&socket_path, magic)
+            client.run_query(&socket_path, magic, NtcQuery::CurrentEra)
         }
         Command::QuerySystemStart {
             socket_path,
             network_magic,
         } => {
-            // R510: fourth LSQ subcommand — `GetSystemStart`.
             let magic = network_magic.unwrap_or(764_824_073);
-            client.query_system_start(&socket_path, magic)
+            client.run_query(&socket_path, magic, NtcQuery::SystemStart)
         }
         Command::AddressKeyGen {
             verification_key_file,
@@ -306,108 +303,74 @@ mod tests {
         );
     }
 
-    /// `run_command_with` dispatches `QueryTip` through a custom
-    /// [`LsqClient`] impl. Pins the trait integration end-to-end —
-    /// the binary crate's eventual concrete impl will plug in here.
+    /// `run_command_with` dispatches each `Command::Query*` variant
+    /// through a custom [`LsqClient`] impl with the right
+    /// [`NtcQuery`] + socket + magic. Pins the trait integration
+    /// end-to-end — the binary crate's concrete impl plugs in here.
     #[test]
-    fn query_tip_dispatches_through_custom_lsq_client() {
+    fn query_commands_dispatch_through_custom_lsq_client() {
+        use crate::lsq::NtcQuery;
         use std::cell::RefCell;
         use std::path::{Path, PathBuf};
 
         struct RecordingClient {
-            seen: RefCell<Option<(String, PathBuf, u32)>>,
+            seen: RefCell<Option<(NtcQuery, PathBuf, u32)>>,
         }
         impl crate::lsq::LsqClient for RecordingClient {
-            fn query_tip(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
-                *self.seen.borrow_mut() = Some(("tip".to_string(), socket.to_path_buf(), magic));
-                Ok(())
-            }
-            fn query_chain_block_no(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
-                *self.seen.borrow_mut() =
-                    Some(("chain-block-no".to_string(), socket.to_path_buf(), magic));
-                Ok(())
-            }
-            fn query_current_era(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
-                *self.seen.borrow_mut() =
-                    Some(("current-era".to_string(), socket.to_path_buf(), magic));
-                Ok(())
-            }
-            fn query_system_start(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
-                *self.seen.borrow_mut() =
-                    Some(("system-start".to_string(), socket.to_path_buf(), magic));
+            fn run_query(&self, socket: &Path, magic: u32, query: NtcQuery) -> eyre::Result<()> {
+                *self.seen.borrow_mut() = Some((query, socket.to_path_buf(), magic));
                 Ok(())
             }
         }
         let client = RecordingClient {
             seen: RefCell::new(None),
         };
-        run_command_with(
-            Command::QueryTip {
-                socket_path: PathBuf::from("/tmp/node.socket"),
-                network_magic: Some(1),
-            },
-            &client,
-        )
-        .expect("run_command_with must succeed with a custom client");
-        assert_eq!(
-            client.seen.borrow().clone(),
-            Some(("tip".to_string(), PathBuf::from("/tmp/node.socket"), 1)),
-            "QueryTip must dispatch query_tip with the socket path + magic forwarded verbatim"
-        );
-        // The same client also services QueryChainBlockNo.
-        run_command_with(
-            Command::QueryChainBlockNo {
-                socket_path: PathBuf::from("/tmp/node.socket"),
-                network_magic: Some(2),
-            },
-            &client,
-        )
-        .expect("run_command_with must succeed for QueryChainBlockNo");
-        assert_eq!(
-            client.seen.borrow().clone(),
-            Some((
-                "chain-block-no".to_string(),
-                PathBuf::from("/tmp/node.socket"),
-                2
-            )),
-            "QueryChainBlockNo must dispatch query_chain_block_no with the args forwarded"
-        );
-        // …and QueryCurrentEra.
-        run_command_with(
-            Command::QueryCurrentEra {
-                socket_path: PathBuf::from("/tmp/node.socket"),
-                network_magic: Some(3),
-            },
-            &client,
-        )
-        .expect("run_command_with must succeed for QueryCurrentEra");
-        assert_eq!(
-            client.seen.borrow().clone(),
-            Some((
-                "current-era".to_string(),
-                PathBuf::from("/tmp/node.socket"),
-                3
-            )),
-            "QueryCurrentEra must dispatch query_current_era with the args forwarded"
-        );
-        // …and QuerySystemStart.
-        run_command_with(
-            Command::QuerySystemStart {
-                socket_path: PathBuf::from("/tmp/node.socket"),
-                network_magic: Some(4),
-            },
-            &client,
-        )
-        .expect("run_command_with must succeed for QuerySystemStart");
-        assert_eq!(
-            client.seen.borrow().clone(),
-            Some((
-                "system-start".to_string(),
-                PathBuf::from("/tmp/node.socket"),
-                4
-            )),
-            "QuerySystemStart must dispatch query_system_start with the args forwarded"
-        );
+        let socket = PathBuf::from("/tmp/node.socket");
+        // Each Query* command maps to its NtcQuery variant; the
+        // tuple's magic doubles as a per-case discriminator.
+        let cases = [
+            (
+                Command::QueryTip {
+                    socket_path: socket.clone(),
+                    network_magic: Some(1),
+                },
+                NtcQuery::Tip,
+                1_u32,
+            ),
+            (
+                Command::QueryChainBlockNo {
+                    socket_path: socket.clone(),
+                    network_magic: Some(2),
+                },
+                NtcQuery::ChainBlockNo,
+                2,
+            ),
+            (
+                Command::QueryCurrentEra {
+                    socket_path: socket.clone(),
+                    network_magic: Some(3),
+                },
+                NtcQuery::CurrentEra,
+                3,
+            ),
+            (
+                Command::QuerySystemStart {
+                    socket_path: socket.clone(),
+                    network_magic: Some(4),
+                },
+                NtcQuery::SystemStart,
+                4,
+            ),
+        ];
+        for (command, expected_query, expected_magic) in cases {
+            run_command_with(command, &client)
+                .expect("run_command_with must succeed with a custom client");
+            assert_eq!(
+                client.seen.borrow().clone(),
+                Some((expected_query, socket.clone(), expected_magic)),
+                "each Query* command must forward its NtcQuery + socket + magic verbatim"
+            );
+        }
     }
 
     /// `run_command_with` falls back to mainnet magic when the
@@ -423,19 +386,12 @@ mod tests {
             magic: Cell<u32>,
         }
         impl crate::lsq::LsqClient for MagicCapture {
-            fn query_tip(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
-                self.magic.set(magic);
-                Ok(())
-            }
-            fn query_chain_block_no(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
-                self.magic.set(magic);
-                Ok(())
-            }
-            fn query_current_era(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
-                self.magic.set(magic);
-                Ok(())
-            }
-            fn query_system_start(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
+            fn run_query(
+                &self,
+                _socket: &Path,
+                magic: u32,
+                _query: crate::lsq::NtcQuery,
+            ) -> eyre::Result<()> {
                 self.magic.set(magic);
                 Ok(())
             }
