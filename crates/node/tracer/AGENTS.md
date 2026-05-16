@@ -35,11 +35,18 @@ The crate ships:
   the bearer into independent `BearerReader`/`BearerWriter` halves
   and `MuxConnection` holds each behind its own tokio mutex, so the
   read-task's pending `read_sdu` never starves a concurrent
-  `send_sdu`. Remaining: a fully bidirectional Mux state-machine
-  driver (per-mini-protocol ingress/egress queue limits, scheduler
-  fairness, bearer-task supervision — the current forwarding task
-  is write-only and works against a request-tolerant acceptor like
-  cardano-tracer).
+  `send_sdu`. Per-mini-protocol **ingress** queue limits have
+  landed (task #19, full Network.Mux arc, slice (a)): each
+  subscriber carries a `MiniProtocolLimits` byte cap (default
+  `MiniProtocolLimits::CARDANO_TRACER_DEFAULT` = `i32::MAX`, the
+  Rust analogue of cardano-tracer's `maxBound :: Int`); the
+  read-task byte-accounts every dispatched payload and an over-cap
+  SDU returns `MuxConnectionError::IngressQueueOverRun` from the
+  read-loop (mirrors upstream `Network.Mux.Ingress.demuxer`'s
+  `IngressQueueOverRun` throw + bearer tear-down). Remaining: the
+  egress scheduler (round (b)) and bearer-task supervision
+  (round (c)) — the current forwarding task is write-only and
+  works against a request-tolerant acceptor like cardano-tracer.
 
 ## Rules — Non-Negotiable
 
@@ -94,11 +101,33 @@ prometheus` and finish the cardano-tracer Mux Layer 2/3 protocol.
   corrected. Regression test
   `mux_connection_send_sdu_not_blocked_by_pending_read` hangs on
   the pre-fix single-mutex code, passes after the split.
+- task #19 full-Network.Mux arc, slice (a) — per-mini-protocol
+  **ingress** queue limits. `mux_connection.rs` gains
+  `MiniProtocolLimits { maximum_ingress_queue: usize }` (mirrors
+  upstream `Network.Mux.Types.MiniProtocolLimits`) with
+  `CARDANO_TRACER_DEFAULT = i32::MAX` (the Rust analogue of the
+  `maxBound :: Int` every cardano-tracer sub-protocol uses per
+  `Cardano.Tracer.Acceptors.{Client,Server}.hs`). Each subscriber
+  now owns a byte-accounted ingress queue: `subscribe` /
+  `subscribe_with_limits` register the cap, the read-task
+  byte-charges every dispatched payload against it via an
+  `AtomicUsize`, and an over-cap SDU returns the new
+  `MuxConnectionError::IngressQueueOverRun { mini_protocol_num,
+  direction }` from the read-loop and exits (mirrors
+  `Network.Mux.Ingress.demuxer`'s `IngressQueueOverRun` STM throw +
+  bearer tear-down — byte-accounted, NOT producer backpressure).
+  `subscribe` now returns an `IngressReceiver` wrapper that frees
+  the SDU's bytes on `recv()`. 5 new unit tests (default-cap pin,
+  16 KiB-admitted, over-run tear-down, drain-frees-bytes,
+  inclusive boundary). Egress queue (b) and bearer-task supervision
+  (c) are follow-on rounds.
 
-Remaining pre-`verified_11_0_1`: the rest of the bidirectional Mux
-state-machine driver (per-mini-protocol ingress/egress queue
-limits, scheduler fairness, bearer-task supervision — the bearer
-deadlock itself is now fixed) and operator conformance soak against
+Remaining pre-`verified_11_0_1`: the egress scheduler (round (b):
+`Network.Mux.Egress` — `EgressQueue` / `TranslocationServiceRequest`
+/ `Wanton` / `muxer` round-robin) and bearer-task supervision
+(round (c): cohesive shutdown when any sub-task fails) — the bearer
+deadlock and the ingress queue limits are now done — plus an
+operator conformance soak against
 `.reference-haskell-cardano-node/install/bin/cardano-tracer`
 (needs `setup-reference.sh` without `--sources-only`).
 

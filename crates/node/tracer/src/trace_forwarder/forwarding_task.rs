@@ -285,6 +285,15 @@ where
     let (header, payload) = build_reply_sdu(buffer)?;
     mux.send_sdu(&header, &payload).await.map_err(|e| match e {
         super::mux_connection::MuxConnectionError::Bearer(b) => ForwardingTaskError::Bearer(b),
+        // `IngressQueueOverRun` is a read-loop-only error
+        // (`MuxConnection::spawn_read_task`): it surfaces when a
+        // *received* SDU exceeds a mini-protocol's ingress cap.
+        // `send_sdu` only ever writes, so it cannot produce one.
+        // Map it to a generic bearer error rather than panicking,
+        // keeping the write path total without an `unreachable!`.
+        super::mux_connection::MuxConnectionError::IngressQueueOverRun { .. } => {
+            ForwardingTaskError::Bearer(BearerError::UnexpectedEof)
+        }
     })?;
     buffer.clear();
     Ok(())
