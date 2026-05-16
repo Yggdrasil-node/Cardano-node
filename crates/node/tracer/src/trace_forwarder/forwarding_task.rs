@@ -304,7 +304,8 @@ mod forwarding_task_tests {
             to_namespace: vec!["Net".to_string()],
             to_severity: TraceSeverity::Info,
             to_details: TraceDetail::DNormal,
-            to_timestamp: (2026, 135, 0),
+            // (posix_seconds, picoseconds_of_second).
+            to_timestamp: (1_767_312_000, 0),
             to_hostname: "test".to_string(),
             to_thread_id: "t1".to_string(),
         }

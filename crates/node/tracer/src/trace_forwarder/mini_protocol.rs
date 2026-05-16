@@ -4,30 +4,40 @@
 //! ## Wire format (per `trace-forward/src/Trace/Forward/Protocol/TraceObject/Codec.hs`)
 //!
 //! Each message is a CBOR array whose first element is a tag word
-//! identifying the message type:
+//! identifying the message type (`codecTraceObjectForward`'s
+//! `encode` does `encodeListLen N <> encodeWord tag <> …`):
 //!
 //! | tag | message                       | shape                                                       |
 //! | --- | ----------------------------- | ----------------------------------------------------------- |
-//! | 1   | `MsgTraceObjectsRequest`      | `[1, blocking::Bool, NumberOfTraceObjects::Word16]` (len 3) |
+//! | 1   | `MsgTraceObjectsRequest`      | `[1, blocking::Bool, NumberOfTraceObjects]` (len 3)         |
 //! | 2   | `MsgDone`                     | `[2]` (len 1)                                               |
-//! | 3   | `MsgTraceObjectsReply`        | `[3, [TraceObject_1, …, TraceObject_n]]` (len 2)            |
+//! | 3   | `MsgTraceObjectsReply`        | `[3, replyList]` (len 2)                                    |
 //!
-//! `NumberOfTraceObjects` is upstream-encoded as a CBOR unsigned
-//! integer via the `Serialise Word16` instance — the codec callers
-//! pass a Word16-bounded value; the encoder writes it as a CBOR uint
-//! (one of the standard CBOR major-0 forms).
+//! `NumberOfTraceObjects` is **not** a bare CBOR uint. Upstream
+//! (`Trace/Forward/Protocol/TraceObject/Type.hs`) declares it as
+//! `newtype NumberOfTraceObjects = NumberOfTraceObjects { nTraceObjects :: Word16 }`
+//! with `deriving anyclass Serialise`, and `codecTraceObjectForward`
+//! is wired with `CBOR.encode`/`CBOR.decode` (`Codec.Serialise`).
+//! `cborg`'s generic `Serialise` for a single-field single-constructor
+//! type goes through `GSerialiseEncode (K1 i a)`, which emits
+//! `encodeListLen 2 <> encodeWord 0 <> encode field` — i.e. a
+//! 2-element CBOR array `[0, word16]`. This was confirmed on the
+//! wire: cardano-tracer's `MsgTraceObjectsRequest` for 100 objects
+//! is `83 01 f5 82 00 18 64` = `[1, true, [0, 100]]`.
+//!
+//! `replyList` is `Serialise [TraceObject]` — `codecTraceObjectForward`
+//! passes `CBOR.encode :: [lo] -> Encoding`. `cborg`'s
+//! `defaultEncodeList` encodes an **empty** list as `encodeListLen 0`
+//! (a definite `array(0)`, `0x80`) and a **non-empty** list as
+//! `encodeListLenIndef <> elems <> encodeBreak` (`0x9f … 0xff`).
+//! Each element is one `TraceObject` encoded via
+//! [`super::TraceObject::to_cbor`].
 //!
 //! `blocking` is a CBOR boolean (`true` for `TokBlocking`, `false`
 //! for `TokNonBlocking`).
 //!
 //! In the blocking sub-state the reply list MUST be non-empty;
 //! the decoder enforces this.
-//!
-//! The TraceObject payload itself is encoded via the existing
-//! [`super::TraceObject::to_cbor`] (the 8-element array from
-//! Layer 1, also byte-pinned in this crate's tests). The reply
-//! codec just emits a CBOR array prefix followed by each
-//! TraceObject's pre-encoded bytes.
 //!
 //! ## Naming parity
 //!
@@ -133,14 +143,57 @@ impl std::error::Error for ProtocolError {}
 
 /// Encode a `MsgTraceObjectsRequest` to its CBOR wire form.
 ///
-/// Wire shape: `[1, blocking::Bool, n::Word16]` — CBOR list-len 3.
+/// Wire shape: `[1, blocking::Bool, NumberOfTraceObjects]` — CBOR
+/// list-len 3. `NumberOfTraceObjects` is itself the 2-element array
+/// `[0, n]` produced by `cborg`'s generic `Serialise` for the
+/// single-field newtype (see the module docstring).
 pub fn encode_request(blocking: bool, n: u16) -> Vec<u8> {
     let mut enc = Encoder::new();
     enc.array(3);
     enc.unsigned(1);
     enc.bool(blocking);
-    enc.unsigned(u64::from(n));
+    encode_number_of_trace_objects(&mut enc, n);
     enc.into_bytes()
+}
+
+/// Append a generic-`Serialise`-encoded `NumberOfTraceObjects` to
+/// `enc`: the 2-element CBOR array `[0, n]` (constructor tag 0 then
+/// the `Word16` payload as a CBOR uint), per `cborg`'s
+/// `GSerialiseEncode (K1 i a)` instance for a single-field
+/// single-constructor newtype.
+fn encode_number_of_trace_objects(enc: &mut Encoder, n: u16) {
+    enc.array(2);
+    enc.unsigned(0);
+    enc.unsigned(u64::from(n));
+}
+
+/// Decode a generic-`Serialise`-encoded `NumberOfTraceObjects`
+/// (`[0, n]`) from `dec`. Inverse of [`encode_number_of_trace_objects`].
+fn decode_number_of_trace_objects(dec: &mut Decoder<'_>) -> Result<u16, ProtocolError> {
+    let len = dec
+        .array()
+        .map_err(|e| ProtocolError::Cbor(format!("NumberOfTraceObjects array: {e}")))?;
+    if len != 2 {
+        return Err(ProtocolError::Cbor(format!(
+            "NumberOfTraceObjects must be a 2-element array [0, n]; got length {len}"
+        )));
+    }
+    let ctor = dec
+        .unsigned()
+        .map_err(|e| ProtocolError::Cbor(format!("NumberOfTraceObjects tag: {e}")))?;
+    if ctor != 0 {
+        return Err(ProtocolError::Cbor(format!(
+            "NumberOfTraceObjects constructor tag must be 0; got {ctor}"
+        )));
+    }
+    let n_u64 = dec
+        .unsigned()
+        .map_err(|e| ProtocolError::Cbor(format!("NumberOfTraceObjects value: {e}")))?;
+    u16::try_from(n_u64).map_err(|_| {
+        ProtocolError::Cbor(format!(
+            "NumberOfTraceObjects {n_u64} exceeds Word16 max 65535"
+        ))
+    })
 }
 
 /// Encode a `MsgDone` to its CBOR wire form.
@@ -155,23 +208,36 @@ pub fn encode_done() -> Vec<u8> {
 
 /// Encode a `MsgTraceObjectsReply` to its CBOR wire form.
 ///
-/// Wire shape: `[3, [TraceObject_1, …, TraceObject_n]]` —
-/// CBOR list-len 2, with the reply list nested as an inner CBOR
-/// array. Each `TraceObject` is encoded via
+/// Wire shape: `[3, replyList]` — CBOR list-len 2, with the reply
+/// list being `Serialise [TraceObject]`. Per `cborg`'s
+/// `defaultEncodeList`:
+///
+/// * an empty list encodes as a definite `array(0)` (`0x80`);
+/// * a non-empty list encodes as an indefinite-length list
+///   (`0x9f` … items … `0xff`).
+///
+/// Each `TraceObject` element is encoded via
 /// [`super::TraceObject::to_cbor`].
 pub fn encode_reply(traces: &[TraceObject]) -> Vec<u8> {
     let mut enc = Encoder::new();
     enc.array(2);
     enc.unsigned(3);
-    // Inner array of TraceObjects: encode each one as already-CBOR'd
-    // bytes and concatenate. The CBOR-encoded TraceObject is itself
-    // a complete CBOR value, so appending it after the array-len
-    // header keeps the result a valid CBOR sequence.
-    enc.array(traces.len() as u64);
+    if traces.is_empty() {
+        // `defaultEncodeList []` = `encodeListLen 0`.
+        enc.array(0);
+        return enc.into_bytes();
+    }
+    // `defaultEncodeList (x:xs)` = indefinite list 0x9f … 0xff.
+    // Each CBOR-encoded TraceObject is itself a complete CBOR value,
+    // so appending the pre-encoded bytes after the indefinite-array
+    // marker keeps the result valid CBOR.
+    enc.array_indef();
     let mut bytes = enc.into_bytes();
     for to in traces {
         bytes.extend_from_slice(&to.to_cbor());
     }
+    // CBOR break stop-code (0xff) closes the indefinite-length list.
+    bytes.push(0xff);
     bytes
 }
 
@@ -207,14 +273,9 @@ pub fn decode_message(buf: &[u8]) -> Result<TraceForwardMessage, ProtocolError> 
             let blocking = dec
                 .bool()
                 .map_err(|e| ProtocolError::Cbor(format!("blocking bool: {e}")))?;
-            let n_u64 = dec
-                .unsigned()
-                .map_err(|e| ProtocolError::Cbor(format!("n: {e}")))?;
-            let n = u16::try_from(n_u64).map_err(|_| {
-                ProtocolError::Cbor(format!(
-                    "NumberOfTraceObjects {n_u64} exceeds Word16 max 65535"
-                ))
-            })?;
+            // `NumberOfTraceObjects` is the generic-Serialise newtype
+            // envelope `[0, word16]`, not a bare CBOR uint.
+            let n = decode_number_of_trace_objects(&mut dec)?;
             Ok(TraceForwardMessage::Request { blocking, n })
         }
         2 => {
@@ -235,19 +296,40 @@ pub fn decode_message(buf: &[u8]) -> Result<TraceForwardMessage, ProtocolError> 
                     expected_len: 2,
                 });
             }
-            let inner_len = dec
-                .array()
-                .map_err(|e| ProtocolError::Cbor(format!("reply array: {e}")))?;
-            let mut traces = Vec::with_capacity(inner_len as usize);
-            for _ in 0..inner_len {
-                // Slice out the next TraceObject's bytes via raw_value()
-                // then hand the slice to the Layer-1 decoder.
-                let to_bytes = dec
-                    .raw_value()
-                    .map_err(|e| ProtocolError::Cbor(format!("reply TraceObject: {e}")))?;
-                let to = TraceObject::from_cbor_bytes(to_bytes)
-                    .map_err(|e| ProtocolError::Cbor(format!("TraceObject decode: {e}")))?;
-                traces.push(to);
+            // `Serialise [TraceObject]` — an empty list is a definite
+            // `array(0)`; a non-empty list is the indefinite-length
+            // form `0x9f … 0xff`. `array_begin` returns `Some(n)` for
+            // the definite case and `None` for the indefinite case.
+            let mut traces = Vec::new();
+            match dec
+                .array_begin()
+                .map_err(|e| ProtocolError::Cbor(format!("reply array: {e}")))?
+            {
+                Some(n) => {
+                    for _ in 0..n {
+                        // Slice the next TraceObject's bytes via
+                        // raw_value() then hand the slice to the
+                        // Layer-1 decoder.
+                        let to_bytes = dec
+                            .raw_value()
+                            .map_err(|e| ProtocolError::Cbor(format!("reply TraceObject: {e}")))?;
+                        let to = TraceObject::from_cbor_bytes(to_bytes)
+                            .map_err(|e| ProtocolError::Cbor(format!("TraceObject decode: {e}")))?;
+                        traces.push(to);
+                    }
+                }
+                None => {
+                    while !dec.is_break() {
+                        let to_bytes = dec
+                            .raw_value()
+                            .map_err(|e| ProtocolError::Cbor(format!("reply TraceObject: {e}")))?;
+                        let to = TraceObject::from_cbor_bytes(to_bytes)
+                            .map_err(|e| ProtocolError::Cbor(format!("TraceObject decode: {e}")))?;
+                        traces.push(to);
+                    }
+                    dec.consume_break()
+                        .map_err(|e| ProtocolError::Cbor(format!("reply break: {e}")))?;
+                }
             }
             Ok(TraceForwardMessage::Reply(traces))
         }
@@ -260,29 +342,45 @@ mod mini_protocol_tests {
     use super::*;
     use crate::trace_forwarder::{TraceDetail, TraceSeverity};
 
-    /// `MsgTraceObjectsRequest` wire shape: CBOR `[1, blocking, n]` —
-    /// 3-element array, tag=1, then a CBOR bool, then a CBOR uint
-    /// equal to `n`.
+    /// `MsgTraceObjectsRequest` wire shape: CBOR
+    /// `[1, blocking::Bool, [0, n]]` — a 3-element array (tag=1, a
+    /// CBOR bool, then the generic-`Serialise` `NumberOfTraceObjects`
+    /// envelope `[0, n]`).
     #[test]
     fn encode_request_byte_shape_blocking_n_zero() {
-        // Choose blocking=true, n=0 so the byte shape is the
-        // most-stable possible:
-        //   array-len-3   = 0x83
-        //   uint(1)       = 0x01
-        //   bool(true)    = 0xf5
-        //   uint(0)       = 0x00
+        // blocking=true, n=0:
+        //   array-len-3        = 0x83
+        //   uint(1)            = 0x01
+        //   bool(true)         = 0xf5
+        //   array-len-2        = 0x82   ← NumberOfTraceObjects newtype
+        //   uint(0)            = 0x00   ← generic constructor tag
+        //   uint(0)            = 0x00   ← nTraceObjects = 0
         let bytes = encode_request(true, 0);
-        assert_eq!(bytes, vec![0x83, 0x01, 0xf5, 0x00]);
+        assert_eq!(bytes, vec![0x83, 0x01, 0xf5, 0x82, 0x00, 0x00]);
     }
 
     /// `MsgTraceObjectsRequest` with blocking=false, n=255 — the n
-    /// crosses the small-uint / one-byte-uint boundary at 24, then
-    /// the one-byte-uint encoding takes one prefix + one byte.
+    /// crosses the small-uint / one-byte-uint boundary at 24.
     #[test]
     fn encode_request_byte_shape_nonblocking_n_255() {
-        // n=255 (0xFF) → 0x18 0xFF (uint8 prefix + value).
+        // n=255 (0xFF) → 0x18 0xFF (uint8 prefix + value), inside the
+        // 2-element NumberOfTraceObjects envelope.
         let bytes = encode_request(false, 255);
-        assert_eq!(bytes, vec![0x83, 0x01, 0xf4, 0x18, 0xff]);
+        assert_eq!(bytes, vec![0x83, 0x01, 0xf4, 0x82, 0x00, 0x18, 0xff]);
+    }
+
+    /// Pin the exact `MsgTraceObjectsRequest` cardano-tracer sends for
+    /// a blocking request of 100 objects. Captured on the wire from
+    /// the live upstream `cardano-tracer 11.0.1` acceptor:
+    /// `83 01 f5 82 00 18 64` = `[1, true, [0, 100]]`.
+    #[test]
+    fn encode_request_matches_captured_upstream_blocking_100() {
+        let bytes = encode_request(true, 100);
+        assert_eq!(
+            bytes,
+            vec![0x83, 0x01, 0xf5, 0x82, 0x00, 0x18, 0x64],
+            "must match the cardano-tracer 11.0.1 on-wire MsgTraceObjectsRequest"
+        );
     }
 
     /// `MsgDone` wire shape: CBOR `[2]` — 1-element array, tag=2.
@@ -292,7 +390,8 @@ mod mini_protocol_tests {
         assert_eq!(bytes, vec![0x81, 0x02]);
     }
 
-    /// `MsgTraceObjectsReply` with an empty inner list.
+    /// `MsgTraceObjectsReply` with an empty inner list — `Serialise []`
+    /// encodes the empty list as a definite `array(0)`.
     #[test]
     fn encode_reply_empty_byte_shape() {
         let bytes = encode_reply(&[]);
@@ -300,26 +399,30 @@ mod mini_protocol_tests {
         assert_eq!(bytes, vec![0x82, 0x03, 0x80]);
     }
 
-    /// `MsgTraceObjectsReply` with one TraceObject. The header bytes
-    /// `0x82 0x03 0x81` are pinned; the inner TraceObject CBOR is
-    /// pinned in the Layer 1 tests already.
+    /// `MsgTraceObjectsReply` with one TraceObject. The non-empty
+    /// reply list is the indefinite-length form, so the header is
+    /// `0x82 0x03 0x9f` and the message ends with the `0xff` break.
     #[test]
-    fn encode_reply_one_trace_object_prefix() {
+    fn encode_reply_one_trace_object_shape() {
         let to = TraceObject {
             to_human: None,
             to_machine: String::new(),
             to_namespace: vec![],
             to_severity: TraceSeverity::Info,
             to_details: TraceDetail::DMinimal,
-            to_timestamp: (2026, 0, 0),
+            to_timestamp: (1_767_312_000, 0),
             to_hostname: String::new(),
             to_thread_id: String::new(),
         };
         let bytes = encode_reply(std::slice::from_ref(&to));
-        // Prefix: 0x82 = array-len-2; 0x03 = uint(3); 0x81 = array-len-1.
-        assert_eq!(&bytes[..3], &[0x82, 0x03, 0x81]);
-        // Tail: the TraceObject's own CBOR (8-element array).
-        assert_eq!(&bytes[3..], to.to_cbor().as_slice());
+        // Prefix: 0x82 = array-len-2; 0x03 = uint(3); 0x9f = indefinite array.
+        assert_eq!(&bytes[..3], &[0x82, 0x03, 0x9f]);
+        // Middle: the TraceObject's own CBOR (9-element array).
+        let obj_cbor = to.to_cbor();
+        assert_eq!(&bytes[3..3 + obj_cbor.len()], obj_cbor.as_slice());
+        // Tail: the CBOR break stop-code closing the indefinite list.
+        assert_eq!(bytes.last(), Some(&0xff));
+        assert_eq!(bytes.len(), 3 + obj_cbor.len() + 1);
     }
 
     /// Round-trip the request encoding for several (blocking, n)
@@ -354,8 +457,10 @@ mod mini_protocol_tests {
     }
 
     /// Round-trip a non-empty reply with two TraceObjects. The
-    /// outer reply decoder now slices each TraceObject via
-    /// `Decoder::raw_value()` and runs them through
+    /// outer reply decoder slices each TraceObject via
+    /// `Decoder::raw_value()` (which correctly skips the per-object
+    /// indefinite-length `to_namespace` list and the tagged
+    /// `to_timestamp` map) and runs them through
     /// `TraceObject::from_cbor_bytes` — both elements come back
     /// byte-identical.
     #[test]
@@ -367,7 +472,7 @@ mod mini_protocol_tests {
                 to_namespace: vec!["Net".into(), "ChainSync".into()],
                 to_severity: TraceSeverity::Info,
                 to_details: TraceDetail::DNormal,
-                to_timestamp: (2026, 130, 0),
+                to_timestamp: (1_767_312_000, 0),
                 to_hostname: "h1".into(),
                 to_thread_id: "t1".into(),
             },
@@ -377,7 +482,7 @@ mod mini_protocol_tests {
                 to_namespace: vec!["Consensus".into()],
                 to_severity: TraceSeverity::Warning,
                 to_details: TraceDetail::DDetailed,
-                to_timestamp: (2026, 130, 1_000_000_000_000),
+                to_timestamp: (1_767_312_000, 1_000_000_000),
                 to_hostname: "h2".into(),
                 to_thread_id: "t2".into(),
             },
@@ -385,6 +490,33 @@ mod mini_protocol_tests {
         let bytes = encode_reply(&traces);
         let msg = decode_message(&bytes).expect("decode reply");
         assert_eq!(msg, TraceForwardMessage::Reply(traces));
+    }
+
+    /// The decoder also accepts a definite-length reply list — a
+    /// conformant peer MAY send `Serialise []` as a definite array
+    /// (the empty-list branch), and a non-empty definite array is
+    /// still valid CBOR a tolerant decoder should accept.
+    #[test]
+    fn decode_accepts_definite_length_reply_list() {
+        let to = TraceObject {
+            to_human: None,
+            to_machine: "x".into(),
+            to_namespace: vec![],
+            to_severity: TraceSeverity::Info,
+            to_details: TraceDetail::DNormal,
+            to_timestamp: (1_767_312_000, 0),
+            to_hostname: String::new(),
+            to_thread_id: String::new(),
+        };
+        // Hand-build a [3, [obj]] reply with a *definite* inner array.
+        let mut enc = Encoder::new();
+        enc.array(2);
+        enc.unsigned(3);
+        enc.array(1);
+        let mut bytes = enc.into_bytes();
+        bytes.extend_from_slice(&to.to_cbor());
+        let msg = decode_message(&bytes).expect("decode definite-length reply");
+        assert_eq!(msg, TraceForwardMessage::Reply(vec![to]));
     }
 
     /// Unknown tag rejected.
@@ -420,6 +552,24 @@ mod mini_protocol_tests {
                 }
             ),
             "expected ArityMismatch{{tag:1, got:2, exp:3}}; got {err:?}"
+        );
+    }
+
+    /// A `NumberOfTraceObjects` encoded as a bare CBOR uint (the
+    /// pre-fix Yggdrasil shape) is rejected — proves the codec now
+    /// requires the generic-`Serialise` 2-element envelope.
+    #[test]
+    fn decode_rejects_bare_uint_number_of_trace_objects() {
+        let mut enc = Encoder::new();
+        enc.array(3);
+        enc.unsigned(1);
+        enc.bool(true);
+        enc.unsigned(100); // bare uint instead of [0, 100]
+        let bytes = enc.into_bytes();
+        let err = decode_message(&bytes).unwrap_err();
+        assert!(
+            matches!(err, ProtocolError::Cbor(_)),
+            "bare-uint NumberOfTraceObjects must be rejected; got {err:?}"
         );
     }
 }

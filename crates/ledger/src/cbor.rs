@@ -119,6 +119,27 @@ impl Encoder {
         self
     }
 
+    /// Encodes an indefinite-length array header (CBOR major type 4,
+    /// additional info 31 = `0x9f`).
+    ///
+    /// The caller must encode zero or more items, then close the array
+    /// with [`break_stop`](Self::break_stop). This is the shape `cborg`'s
+    /// `Codec.Serialise` `defaultEncodeList` emits for any non-empty
+    /// list (`encodeListLenIndef <> … <> encodeBreak`).
+    ///
+    /// Reference: RFC 8949 §3.2.1; `Codec.Serialise.Class.defaultEncodeList`.
+    pub fn array_indef(&mut self) -> &mut Self {
+        self.buf.push((MAJOR_ARRAY << 5) | AI_INDEF);
+        self
+    }
+
+    /// Encodes the CBOR break stop-code (`0xff`) that terminates an
+    /// indefinite-length array, map, byte string, or text string.
+    pub fn break_stop(&mut self) -> &mut Self {
+        self.buf.push(BREAK);
+        self
+    }
+
     /// Encodes the CBOR `null` value (major type 7, additional info 22).
     pub fn null(&mut self) -> &mut Self {
         self.buf.push((MAJOR_SIMPLE << 5) | 22);

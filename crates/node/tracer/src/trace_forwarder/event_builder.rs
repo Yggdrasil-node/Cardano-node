@@ -45,8 +45,9 @@ use super::{TraceDetail, TraceObject, TraceSeverity};
 ///   `Debug` because upstream `Cardano.Logging.Types.SeverityS` has
 ///   no TRACE; this matches the existing `haskell_json` mapping.
 /// - `to_details` defaults to [`TraceDetail::DNormal`].
-/// - `to_timestamp` is `(year, dayOfYear, picosecondsOfDay)` derived
-///   from `SystemTime::now()`.
+/// - `to_timestamp` is `(posix_seconds, picoseconds_of_second)`
+///   derived from `SystemTime::now()` — the decomposition
+///   `Codec.Serialise`'s `Serialise UTCTime` instance encodes.
 /// - `to_hostname` is the configured value or `"yggdrasil"`. The
 ///   caller supplies this so the binary that owns the network-level
 ///   hostname doesn't get re-read on every event.
@@ -98,53 +99,26 @@ where
     }
 }
 
-/// Compute the `(year, dayOfYear, picosecondsOfDay)` triple for a
-/// `SystemTime` instant.
+/// Compute the `(posix_seconds, picoseconds_of_second)` pair for a
+/// `SystemTime` instant — the decomposition `Codec.Serialise`'s
+/// `Serialise UTCTime` instance encodes.
 ///
-/// `year` is the Gregorian calendar year; `dayOfYear` is 1-indexed
-/// (Jan 1 = 1); `picosecondsOfDay` is total picoseconds since 00:00:00
-/// UTC of the same day.
+/// Upstream's `encode` does `properFraction (utcTimeToPOSIXSeconds t)`
+/// to split the POSIX time into a whole-seconds integer plus a
+/// fractional part, then `psecs = round (frac * 1e12)`. This helper
+/// produces the same pair: `posix_seconds` is whole seconds since the
+/// 1970 epoch; `picoseconds_of_second` is the sub-second remainder
+/// scaled to picoseconds (`0 ≤ psecs < 1_000_000_000_000`).
 ///
-/// Uses the Howard Hinnant civil-date algorithm to convert seconds-
-/// since-epoch into a calendar date without a chrono / time dep.
-pub fn build_trace_timestamp(when: SystemTime) -> (u64, u64, u64) {
+/// Note `SystemTime` resolution on most platforms is nanoseconds, so
+/// the picosecond field is always a multiple of 1000.
+pub fn build_trace_timestamp(when: SystemTime) -> (u64, u64) {
     let dur = when.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = dur.as_secs();
-    let nanos_of_sec = dur.subsec_nanos();
-
-    let days = (secs / 86_400) as i64;
-    let secs_of_day = secs % 86_400;
-
-    // Civil-date conversion (Hinnant).
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = (z - era * 146_097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y_anchor_mar = (yoe as i64) + era * 400;
-    let doy_anchor_mar = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy_anchor_mar + 2) / 153;
-    let d = doy_anchor_mar - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if m <= 2 {
-        y_anchor_mar + 1
-    } else {
-        y_anchor_mar
-    };
-
-    // Day-of-year from (year, month, day):
-    // cumulative days at start of each month in a non-leap year.
-    const CUM_DAYS: [u64; 12] = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
-    let leap_add = if is_leap_year(year) && m > 2 { 1 } else { 0 };
-    let day_of_year = CUM_DAYS[(m - 1) as usize] + d as u64 + leap_add;
-
-    // picosecondsOfDay = (seconds_of_day * 1e12) + (nanos * 1000).
-    let picos_of_day = secs_of_day * 1_000_000_000_000 + (nanos_of_sec as u64) * 1_000;
-
-    (year as u64, day_of_year, picos_of_day)
-}
-
-fn is_leap_year(year: i64) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    // nanos → picoseconds (×1000); subsec_nanos is < 1e9 so the
+    // result is < 1e12, satisfying the upstream `0 ≤ psecs < 1e12`.
+    let picos_of_sec = u64::from(dur.subsec_nanos()) * 1_000;
+    (secs, picos_of_sec)
 }
 
 /// Tracing field visitor that emits each field as a JSON value into
@@ -203,56 +177,63 @@ impl tracing::field::Visit for MachineJsonFieldVisitor<'_> {
 mod event_builder_tests {
     use super::*;
 
-    /// Year-day-of-year-picosecond conversion for a known UTC
-    /// instant. 2026-01-01T00:00:00Z → (2026, 1, 0). 2026-12-31T23:59:59Z
-    /// is day-of-year 365 (2026 is non-leap). Leap-year check:
-    /// 2024-12-31T00:00:00Z → (2024, 366, 0).
+    /// `(posix_seconds, picoseconds_of_second)` for known UTC
+    /// instants — whole-second times produce a zero picosecond field.
     #[test]
-    fn timestamp_year_doy_picos_known_dates() {
-        // 2026-01-01T00:00:00Z → unix epoch + (56 years from 1970-01-01).
-        // Compute via std::time arithmetic to avoid chrono dep.
-        let unix_2026_01_01 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1767225600); // 2026-01-01T00:00:00Z
-        let (year, doy, picos) = build_trace_timestamp(unix_2026_01_01);
-        assert_eq!(year, 2026);
-        assert_eq!(doy, 1);
-        assert_eq!(picos, 0);
+    fn timestamp_posix_secs_known_dates() {
+        // 2026-01-01T00:00:00Z = 1_767_225_600 POSIX seconds.
+        let unix_2026_01_01 =
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_767_225_600);
+        assert_eq!(build_trace_timestamp(unix_2026_01_01), (1_767_225_600, 0));
 
-        // 2024-12-31T00:00:00Z. Day-of-year 366 (leap).
-        let unix_2024_12_31 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1735603200);
-        let (year, doy, picos) = build_trace_timestamp(unix_2024_12_31);
-        assert_eq!(year, 2024);
-        assert_eq!(doy, 366);
-        assert_eq!(picos, 0);
-
-        // 2025-12-31T00:00:00Z. Day-of-year 365 (non-leap).
-        let unix_2025_12_31 = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1767139200);
-        let (year, doy, _) = build_trace_timestamp(unix_2025_12_31);
-        assert_eq!(year, 2025);
-        assert_eq!(doy, 365);
+        // The 1970 epoch itself → (0, 0).
+        assert_eq!(build_trace_timestamp(SystemTime::UNIX_EPOCH), (0, 0));
     }
 
-    /// Picoseconds-of-day at 12:34:56.789_000_000 UTC on a known day.
+    /// The sub-second remainder is scaled nanoseconds → picoseconds
+    /// (×1000), and the whole-seconds component is unaffected.
     #[test]
-    fn timestamp_picos_of_day_at_midday() {
-        // 2026-05-15T12:34:56.789Z = 2026-05-15T00:00:00Z + (12*3600
-        // + 34*60 + 56) seconds + 789 millis.
-        let base = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1778803200); // 2026-05-15T00:00:00Z
-        let when = base
-            + std::time::Duration::from_secs(12 * 3600 + 34 * 60 + 56)
+    fn timestamp_picoseconds_of_second() {
+        // 2026-05-15T00:00:00Z + 789 ms.
+        let when = SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_778_803_200)
             + std::time::Duration::from_millis(789);
-        let (_year, _doy, picos) = build_trace_timestamp(when);
-        // (45296 secs) * 1e12 + 789_000_000 nanos * 1000.
-        let expected = (12_u64 * 3600 + 34 * 60 + 56) * 1_000_000_000_000 + 789_000_000 * 1_000;
-        assert_eq!(picos, expected);
+        let (secs, picos) = build_trace_timestamp(when);
+        assert_eq!(secs, 1_778_803_200);
+        // 789 ms = 789_000_000 ns → ×1000 = 789_000_000_000 ps.
+        assert_eq!(picos, 789_000_000_000);
+        // Picoseconds of a second must stay strictly below 1e12.
+        assert!(picos < 1_000_000_000_000);
+
+        // A nanosecond-resolution remainder scales by exactly 1000.
+        let when_ns = SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(100)
+            + std::time::Duration::from_nanos(123_456_789);
+        assert_eq!(build_trace_timestamp(when_ns), (100, 123_456_789_000));
     }
 
-    /// Leap-year helper handles century rule.
+    /// A built `TraceObject`'s timestamp survives a `to_cbor` /
+    /// `from_cbor_bytes` round-trip — proves the new
+    /// `(secs, picos)` pair lines up with the `Serialise UTCTime`
+    /// codec end-to-end.
     #[test]
-    fn is_leap_year_examples() {
-        assert!(is_leap_year(2024)); // div by 4, not by 100
-        assert!(!is_leap_year(2025));
-        assert!(!is_leap_year(1900)); // div by 100, not by 400
-        assert!(is_leap_year(2000)); // div by 400
-        assert!(is_leap_year(2400)); // div by 400
+    fn built_trace_object_timestamp_round_trips_through_cbor() {
+        let when = SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_778_803_200)
+            + std::time::Duration::from_millis(456);
+        let ts = build_trace_timestamp(when);
+        let obj = TraceObject {
+            to_human: None,
+            to_machine: "{}".into(),
+            to_namespace: vec!["Yggdrasil".into()],
+            to_severity: TraceSeverity::Info,
+            to_details: TraceDetail::DNormal,
+            to_timestamp: ts,
+            to_hostname: "h".into(),
+            to_thread_id: "t".into(),
+        };
+        let decoded = TraceObject::from_cbor_bytes(&obj.to_cbor()).expect("round-trip");
+        assert_eq!(decoded.to_timestamp, ts);
+        assert_eq!(decoded, obj);
     }
 }

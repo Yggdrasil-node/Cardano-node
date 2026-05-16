@@ -64,6 +64,15 @@ cd deps
 # vendored for the R326-R459 sister-tools port arc — they're consumed via
 # cardano-haskell-packages (CHaP) by upstream cardano-node, not via git
 # submodules, but Yggdrasil needs the source for strict 1:1 file-mirror parity.
+# hermod-tracing carries the `trace-dispatcher` package (cabal name;
+# module namespace `Cardano.Logging`, e.g. `Cardano.Logging.Types`).
+# As of trace-dispatcher 2.12.x it is no longer in-repo under
+# cardano-node/trace-dispatcher/ — it was extracted into the standalone
+# IntersectMBO/hermod-tracing repo and is pulled from CHaP by
+# trace-forward.cabal (`trace-dispatcher ^>= 2.12`). Yggdrasil's
+# cardano-tracer trace-forwarder needs `Cardano.Logging.Types`'
+# `Serialise TraceObject` instance for byte-accurate codec parity, so the
+# source is vendored here under deps/hermod-tracing/trace-dispatcher/.
 for entry in \
     "cardano-base|https://github.com/IntersectMBO/cardano-base.git" \
     "cardano-cli|https://github.com/IntersectMBO/cardano-cli.git" \
@@ -74,6 +83,7 @@ for entry in \
     "bech32|https://github.com/IntersectMBO/bech32.git" \
     "kes-agent|https://github.com/input-output-hk/kes-agent.git" \
     "dmq-node|https://github.com/IntersectMBO/dmq-node.git" \
+    "hermod-tracing|https://github.com/IntersectMBO/hermod-tracing.git" \
 ; do
     repo="${entry%%|*}"
     url="${entry##*|}"

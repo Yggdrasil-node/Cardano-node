@@ -293,102 +293,57 @@ fn read_all_files_recursive(root: &std::path::Path) -> String {
 /// marker string inside its `to_machine` field; the test polls the
 /// `logRoot` subtree and asserts every marker appears.
 ///
-/// # `#[ignore]` — DOCUMENTED PARITY GAP (task #19, outcome b)
+/// # Parity status — GREEN (task #19 closeout, outcome a)
 ///
-/// This test is `#[ignore]`d because, run live against
-/// `cardano-tracer 11.0.1`, it does **not** converge: cardano-tracer
-/// receives Yggdrasil's `MsgTraceObjectsReply` SDU but writes nothing
-/// to its log files. Two distinct upstream-CBOR shape mismatches
-/// were pinned empirically (the vendored upstream cardano-tracer
-/// binary spawned in `AcceptAt` mode, its SDUs captured on the wire):
+/// This test runs live against `cardano-tracer 11.0.1` and
+/// converges: cardano-tracer accepts Yggdrasil's
+/// `MsgTraceObjectsReply` SDU and writes each forwarded
+/// TraceObject's `to_machine` text verbatim into its `FileMode`
+/// log. It was un-`ignore`d once the trace-forward CBOR codecs were
+/// corrected to the upstream `Codec.Serialise` byte shapes.
 ///
-/// ## 1. `NumberOfTraceObjects` is generic-`Serialise`-wrapped
+/// Three distinct CBOR-shape bugs were pinned empirically (the
+/// vendored upstream cardano-tracer binary spawned in `AcceptAt`
+/// mode, its SDUs captured on the wire) and then fixed by reading
+/// the now-vendored upstream source — `trace-dispatcher` is checked
+/// out at `.reference-haskell-cardano-node/deps/hermod-tracing/`
+/// (it was extracted from `cardano-node` into the standalone
+/// `IntersectMBO/hermod-tracing` repo at `trace-dispatcher 2.12.x`)
+/// and `Codec.Serialise`'s generic instances come from
+/// `well-typed/cborg`'s `Codec/Serialise/Class.hs`:
 ///
-/// cardano-tracer's acceptor sends, on mini-protocol 2, the 7-byte
-/// `MsgTraceObjectsRequest` payload:
+/// 1. **`NumberOfTraceObjects` is generic-`Serialise`-wrapped.**
+///    cardano-tracer's acceptor sends `MsgTraceObjectsRequest` as
+///    `83 01 f5 82 00 18 64` = `[1, true, [0, 100]]`.
+///    `NumberOfTraceObjects` (`newtype { nTraceObjects :: Word16 }`,
+///    `deriving anyclass Serialise`) is NOT a bare uint — `cborg`'s
+///    `GSerialiseEncode (K1 i a)` wraps the single-field newtype as
+///    `[0, word16]`. `mini_protocol.rs` now encodes/decodes that
+///    2-element envelope.
 ///
-/// ```text
-///   83 01 f5 82 00 18 64
-///   ── ── ── ───────────
-///   │  │  │  └─ array(2): [ uint(0), uint(100) ]   ← NumberOfTraceObjects
-///   │  │  └──── true  (TokBlocking)
-///   │  └─────── uint(1)  (MsgTraceObjectsRequest tag)
-///   └────────── array(3)
-/// ```
+/// 2. **`Serialise TraceObject` is a 9-element array, not 8.** The
+///    upstream record (`Cardano.Logging.Types.TraceObject`, 8
+///    fields, `deriving anyclass Serialise`) serialises via
+///    `cborg`'s generic product encoder
+///    `GSerialiseEncode (f :*: g)` as
+///    `encodeListLen (8 + 1) <> encodeWord 0 <> <fields…>` — a
+///    9-element array led by the constructor tag `0`. Each field
+///    has its own `Serialise` shape: `Maybe a` is `[]`/`[x]`,
+///    `[Text]` is `array(0)` (empty) or an indefinite list
+///    (non-empty), `SeverityS`/`DetailLevel` are nullary-sum
+///    `[idx]`, and `UTCTime` is the extended-time form
+///    `tag(1000) {1: secs, -12: psecs}`. `TraceObject::to_cbor`
+///    now emits exactly that.
 ///
-/// `NumberOfTraceObjects` (a `newtype { nTraceObjects :: Word16 }`
-/// with `deriving anyclass Serialise` in
-/// `trace-forward/src/Trace/Forward/Protocol/TraceObject/Type.hs`)
-/// is therefore NOT a bare CBOR uint — the `DeriveAnyClass` generic
-/// `Serialise` instance wraps the single-constructor record as
-/// `[constructor_tag(0), <word16>]`. Yggdrasil's
-/// `mini_protocol::{encode_request,decode_message}` model it as a
-/// bare uint; `decode_message` fails on cardano-tracer's real
-/// request with `CBOR: type mismatch (expected major 0, got 4)`.
-/// (This is a separately-actionable codec bug in `mini_protocol.rs`;
-/// it does NOT block delivery because `run_via_mux` never decodes
-/// the request — it is recorded here as the on-wire evidence.)
-///
-/// ## 2. `Serialise TraceObject` shape — unverifiable from vendored source
-///
-/// The reply list is encoded upstream via `Codec.Serialise`'s
-/// `Serialise [lo]` with `lo = Cardano.Logging.TraceObject`
-/// (`codecTraceObjectForward CBOR.encode CBOR.decode …` in
-/// `Trace.Forward.Run.TraceObject.Forwarder`). Yggdrasil emits, for
-/// one TraceObject, a plain 8-element CBOR array, e.g.:
-///
-/// ```text
-///   88 f6 6c 44 49 41 47 4d 41 52 4b 45 52 34 32 81 …
-///   ── ── ─────────────────────────────────────────
-///   │  │  └─ text "DIAGMARKER42" (toMachine) …
-///   │  └──── null  (toHuman = Nothing)
-///   └─────── array(8)
-/// ```
-///
-/// wrapped into a 53-byte `MsgTraceObjectsReply` payload
-/// `82 03 81 <TraceObject…>`. Yggdrasil's `run_via_mux` writes this
-/// SDU successfully (the forwarding task returns `Ok`), and
-/// cardano-tracer neither exits nor prints to its inherited stderr —
-/// but it logs **0 bytes**. cardano-tracer's `runPeer` typed-protocol
-/// decoder silently rejected the reply (the cardano-tracer Mux runs
-/// with `Mux.nullTracers`, so a `DeserialiseFailure` in the mp-2
-/// mini-protocol thread is swallowed without a stderr line).
-///
-/// The root cause is that the upstream `Serialise TraceObject`
-/// instance lives in `Cardano.Logging.Types`, in the
-/// **`trace-dispatcher`** package (cabal name; module namespace
-/// `Cardano.Logging`). That package is **NOT vendored** under
-/// `.reference-haskell-cardano-node/` — `trace-forward.cabal`
-/// depends on `trace-dispatcher ^>= 2.12` but only `trace-forward/`
-/// itself is checked out. Finding 1 proves the upstream codec uses
-/// `DeriveAnyClass`/`Generic` `Serialise` wrapping for its
-/// `trace-forward` newtypes; by the same mechanism `TraceObject`'s
-/// record (and its `toTimestamp :: UTCTime`, `toSeverity`,
-/// `toDetails` fields) is almost certainly NOT a bare 8-element
-/// array. The exact shape cannot be confirmed without the upstream
-/// source, so reshaping `TraceObject::to_cbor` here would be a guess.
-///
-/// ## Unblock path
-///
-/// Vendor `trace-dispatcher` into `.reference-haskell-cardano-node/`
-/// (extend `scripts/setup-reference.sh`) so `Cardano.Logging.Types`'
-/// `Serialise TraceObject` instance can be read and mirrored
-/// byte-for-byte; then fix `TraceObject::to_cbor` and
-/// `mini_protocol.rs`'s `NumberOfTraceObjects` codec and un-`ignore`
-/// this test. Alternatively, pin a manual CBOR fixture captured from
-/// a live `cardano-node` → `cardano-tracer` session.
-///
-/// Until then the test stays `#[ignore]`d: it still compiles, still
-/// self-skips when the binary is absent, and — run with
-/// `--ignored` — drives the live pipeline up to the exact,
-/// documented failure point above.
+/// 3. **The reply list is an indefinite-length list.** The reply is
+///    `Serialise [TraceObject]`; `cborg`'s `defaultEncodeList`
+///    encodes a non-empty list as `0x9f … 0xff`, not a
+///    definite-length array. `mini_protocol::encode_reply` now does
+///    so (an empty list stays the definite `array(0)`).
 ///
 /// Self-skips when the upstream binary is absent (same pattern as
 /// the handshake test). Override with `YGGDRASIL_CARDANO_TRACER_BIN`.
 #[tokio::test]
-#[ignore = "documented parity gap: upstream `Serialise TraceObject` byte shape \
-            cannot be confirmed — `trace-dispatcher` is not vendored. \
-            See the test docstring for the captured on-wire evidence."]
 async fn trace_objects_delivered_to_upstream_cardano_tracer() {
     let Some(bin) = cardano_tracer_bin() else {
         eprintln!(
@@ -471,7 +426,10 @@ async fn trace_objects_delivered_to_upstream_cardano_tracer() {
             to_namespace: vec!["Yggdrasil".into(), "Conformance".into()],
             to_severity: TraceSeverity::Info,
             to_details: TraceDetail::DNormal,
-            to_timestamp: (2026, 136, 0),
+            // (posix_seconds, picoseconds_of_second) — the
+            // decomposition `Serialise UTCTime` encodes.
+            // 1_778_889_600 = 2026-05-16T00:00:00Z.
+            to_timestamp: (1_778_889_600, 0),
             to_hostname: "yggdrasil-conformance".into(),
             to_thread_id: format!("t{i}"),
         })
@@ -503,15 +461,18 @@ async fn trace_objects_delivered_to_upstream_cardano_tracer() {
     assert!(
         all_delivered,
         "TraceObject delivery to upstream cardano-tracer 11.0.1 not observed \
-         within 12s — this is the DOCUMENTED PARITY GAP this `#[ignore]`d \
-         test pins (see the test docstring).\n\
+         within 12s — this is a REGRESSION in the trace-forward CBOR codecs \
+         (see the test docstring for the three byte shapes this test locks: \
+         the `NumberOfTraceObjects` newtype envelope, the 9-element \
+         generic-Serialise `TraceObject` array, and the indefinite-length \
+         reply list).\n\
          Forwarding task outcome: {forward_outcome:?}  \
          (an `Ok(..)` here means Yggdrasil's `MsgTraceObjectsReply` SDU was \
-         written to the bearer successfully — cardano-tracer received it and \
-         still logged nothing, so its `runPeer` decoder silently rejected the \
-         reply; the most likely cause is that the upstream `Serialise \
-         TraceObject` byte shape disagrees with Yggdrasil's 8-element-array \
-         `TraceObject::to_cbor` — see the test docstring).\n\
+         written to the bearer successfully — if cardano-tracer received it \
+         and still logged nothing, its `runPeer` decoder rejected the reply, \
+         so the most likely cause is `TraceObject::to_cbor` or \
+         `mini_protocol::encode_reply` drifting off the upstream \
+         `Codec.Serialise` byte shape).\n\
          Markers expected: {markers:?}\n\
          logRoot subtree contents ({} bytes):\n{log_dump}",
         log_dump.len(),

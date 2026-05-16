@@ -19,20 +19,22 @@ The crate ships:
   configurable `--metrics-port` (Wave 6 PR 16 replaces this with
   `PrometheusBuilder::with_http_listener`).
 - `trace_forwarder` — the cardano-tracer Unix-socket forwarder.
-  Phase 2.B (Wave 6 PR 17 / R502) has now landed nine of the
-  eleven sub-items: Layer 1 codecs (encoder + decoder in
-  `trace_forwarder.rs`), Layer 2 TraceForward CBOR codec
-  (`mini_protocol.rs`), Layer 3 SDU codec (`mux.rs`), AF_UNIX
-  bearer (`bearer.rs`), `tracing::Event`→`TraceObject` builder
-  (`event_builder.rs`), write-only forwarding task
+  Phase 2.B (Wave 6 PR 17 / R502) has landed: Layer 1 codecs
+  (encoder + decoder in `trace_forwarder.rs`), Layer 2 TraceForward
+  CBOR codec (`mini_protocol.rs`), Layer 3 SDU codec (`mux.rs`),
+  AF_UNIX bearer (`bearer.rs`), `tracing::Event`→`TraceObject`
+  builder (`event_builder.rs`), write-only forwarding task
   (`forwarding_task.rs`), `tracing-subscriber::Layer<S>` adapter
   (`layer.rs`), Handshake mini-protocol codec (`handshake.rs`),
-  Handshake initiator state-machine driver
-  (`handshake_driver.rs`). Remaining: bidirectional Mux state-
-  machine driver (ingress/egress scheduler for per-mini-protocol
-  Request/Reply pacing — distinct from the one-shot Handshake
-  driver) and live conformance test against the upstream
-  `cardano-tracer` binary.
+  Handshake initiator state-machine driver (`handshake_driver.rs`),
+  and `MuxConnection` (`mux_connection.rs`). Both live conformance
+  tests against the upstream `cardano-tracer 11.0.1` binary are
+  GREEN — the handshake and the full TraceObject-delivery pipeline
+  (see "Live conformance tests" below). Remaining: a fully
+  bidirectional Mux state-machine driver (ingress/egress scheduler
+  for per-mini-protocol Request/Reply pacing — the current
+  forwarding task is write-only and works against a request-
+  tolerant acceptor like cardano-tracer).
 
 ## Rules — Non-Negotiable
 
@@ -88,29 +90,54 @@ conformance soak against
 - `handshake_completes_against_upstream_cardano_tracer` — GREEN.
   Spawns the vendored `cardano-tracer 11.0.1` and drives
   `MuxConnection::run_initiator_handshake` (Mux mini-protocol 0).
-- `trace_objects_delivered_to_upstream_cardano_tracer` — `#[ignore]`d
-  (task #19 outcome b, documented parity gap). Drives the
-  TraceForward mini-protocol (num 2) end-to-end via
-  `forwarding_task::run_via_mux`. Run live, cardano-tracer accepts
-  the `MsgTraceObjectsReply` SDU but logs 0 bytes — its `runPeer`
-  decoder silently rejects the reply. Two upstream-CBOR shape
-  mismatches were pinned from on-wire capture and are recorded in
-  the test docstring:
-  1. **`NumberOfTraceObjects` codec bug** in `mini_protocol.rs`
-     (`encode_request` / `decode_message`): the upstream
-     `newtype { nTraceObjects :: Word16 }` with
-     `deriving anyclass Serialise` is generic-wrapped as
-     `[constructor_tag(0), word16]`, NOT a bare CBOR uint. Captured
-     request: `83 01 f5 82 00 18 64` = `[1, true, [0,100]]`.
-     **Separately actionable** — fix the request codec.
-  2. **`Serialise TraceObject` shape unverifiable**: the instance
-     lives in `Cardano.Logging.Types` in the `trace-dispatcher`
-     package, which is NOT vendored under
-     `.reference-haskell-cardano-node/`. Yggdrasil's `to_cbor`
-     8-element array is a best-effort guess. UNBLOCK: vendor
-     `trace-dispatcher` (extend `setup-reference.sh`), mirror the
-     real `Serialise` instance, fix `TraceObject::to_cbor`, then
-     un-`ignore` the test.
+- `trace_objects_delivered_to_upstream_cardano_tracer` — GREEN
+  (task #19 closeout, outcome a). Drives the TraceForward
+  mini-protocol (num 2) end-to-end via
+  `forwarding_task::run_via_mux`: cardano-tracer accepts the
+  `MsgTraceObjectsReply` SDU and writes every forwarded
+  TraceObject's `to_machine` text into its `FileMode` log. It was
+  un-`ignore`d once three trace-forward CBOR codecs were corrected
+  to the upstream `Codec.Serialise` byte shapes (read from the
+  now-vendored `trace-dispatcher` source — see below).
 
-  Both tests self-skip when the binary is absent; CI stays green
-  (`#[ignore]` skips the delivery test under `cargo test-all`).
+  Both tests self-skip when the binary is absent (override with
+  `YGGDRASIL_CARDANO_TRACER_BIN`); CI's `--sources-only` reference
+  tree has no `install/bin/`, so the live tests skip there while
+  staying green.
+
+### trace-forward CBOR codec — upstream byte shapes (task #19 closeout)
+
+The trace-forward codecs are wired with `Codec.Serialise`'s generic
+`encode`/`decode`. Three shapes were corrected to match upstream
+byte-for-byte; all are pinned by unit tests + the live conformance
+test:
+
+1. **`NumberOfTraceObjects`** (`mini_protocol.rs`) — the upstream
+   `newtype { nTraceObjects :: Word16 }` with
+   `deriving anyclass Serialise` is generic-encoded by `cborg`'s
+   `GSerialiseEncode (K1 i a)` as the 2-element array
+   `[0, word16]`, NOT a bare CBOR uint. On-wire confirmation:
+   cardano-tracer's `MsgTraceObjectsRequest` for 100 objects is
+   `83 01 f5 82 00 18 64` = `[1, true, [0, 100]]`.
+2. **`TraceObject`** (`trace_forwarder.rs`) — the 8-field
+   single-constructor record (`Cardano.Logging.Types.TraceObject`,
+   `deriving anyclass Serialise`) is generic-encoded by `cborg`'s
+   `GSerialiseEncode (f :*: g)` as a **9-element** array
+   `[0, …8 fields…]` (constructor tag `0` then the fields). Field
+   shapes: `Maybe a` → `[]`/`[x]`; `[Text]` → `array(0)` (empty) or
+   indefinite list `0x9f…0xff` (non-empty); `SeverityS`/
+   `DetailLevel` → nullary-sum `[idx]`; `UTCTime` → extended-time
+   `tag(1000) {1: secs, -12: psecs}`. `TraceObject::to_timestamp`
+   is therefore `(posix_seconds, picoseconds_of_second)`.
+3. **Reply list** (`mini_protocol.rs::encode_reply`) — the
+   `MsgTraceObjectsReply` list is `Serialise [TraceObject]`;
+   `cborg`'s `defaultEncodeList` encodes a non-empty list as the
+   indefinite-length form `0x9f…0xff` (an empty list stays the
+   definite `array(0)`).
+
+Upstream source for the codec shapes is vendored at
+`.reference-haskell-cardano-node/deps/hermod-tracing/trace-dispatcher/src/Cardano/Logging/Types.hs`
+(the `trace-dispatcher` package — extracted from `cardano-node`
+into the standalone `IntersectMBO/hermod-tracing` repo as of
+`trace-dispatcher 2.12.x`); the generic-`Serialise` instances are
+in `well-typed/cborg`'s `Codec/Serialise/Class.hs`.

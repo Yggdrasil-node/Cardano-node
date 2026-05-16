@@ -30,6 +30,7 @@ A full Haskell `cardano-node` checkout (with all dependency repos AND a working 
 | `.reference-haskell-cardano-node/deps/ouroboros-consensus/` | consensus protocol, ChainDB, mempool |
 | `.reference-haskell-cardano-node/deps/ouroboros-network/` | mux, mini-protocols, peer selection |
 | `.reference-haskell-cardano-node/deps/plutus/` | Plutus core, CEK machine, builtins |
+| `.reference-haskell-cardano-node/deps/hermod-tracing/` | `trace-dispatcher` package — `Cardano.Logging.*` (`TraceObject` + its `Serialise` instance) |
 
 **Binaries — compiled Haskell tooling for forensic comparison:**
 

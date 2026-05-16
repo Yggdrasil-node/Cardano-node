@@ -5,8 +5,9 @@
 //! Upstream `cardano-tracer` forwarding has three distinct layers:
 //!
 //! 1. **Application codec** — each trace event is encoded as a
-//!    `TraceObject` (8-element CBOR array per
-//!    `Cardano.Logging.Types.TraceObject`).  This is the layer
+//!    `TraceObject` via the generic `Codec.Serialise` instance
+//!    `Cardano.Logging.Types` derives (`deriving anyclass Serialise`):
+//!    a 9-element CBOR array `[0, …8 fields…]`.  This is the layer
 //!    [`TraceObject::to_cbor`] implements faithfully and is unit-tested
 //!    against pinned upstream-shape wire bytes.
 //! 2. **Mini-protocol layer** — `Trace.Forward.Protocol.TraceObject`
@@ -117,11 +118,17 @@ pub mod mux_connection;
 // TraceObject — application-layer codec
 // ---------------------------------------------------------------------------
 
-/// Severity classification carried in every `TraceObject`.  The wire
-/// encoding matches upstream `Cardano.Logging.Types.SeverityS` —
-/// CBOR text strings spelt exactly as in the Haskell source so the
-/// JSON view rendered by `cardano-tracer` matches `cardano-node`'s
-/// own `tracingFormat = JSON` output.
+/// Severity classification carried in every `TraceObject`.
+///
+/// Mirrors upstream `Cardano.Logging.Types.SeverityS` (in the
+/// `trace-dispatcher` package, vendored at
+/// `.reference-haskell-cardano-node/deps/hermod-tracing/trace-dispatcher/src/Cardano/Logging/Types.hs`).
+/// Upstream derives `Serialise` via `deriving anyclass` over the
+/// 8-constructor nullary sum: `cborg`'s generic `GSerialiseSum`
+/// encodes a nullary constructor as a 1-element CBOR array carrying
+/// the constructor index (`encodeListLen 1 <> encodeWord conNumber`)
+/// — NOT a CBOR text string. The index follows the declaration
+/// order: `Debug = 0 … Emergency = 7`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TraceSeverity {
     Debug,
@@ -135,8 +142,9 @@ pub enum TraceSeverity {
 }
 
 impl TraceSeverity {
-    /// Wire-format text representation per upstream
-    /// `Cardano.Logging.Types.SeverityS`.
+    /// Human-readable label per upstream `SeverityS`'s `Show`
+    /// instance. Used for diagnostics / display only — it is NOT the
+    /// CBOR wire form (see [`Self::constructor_index`]).
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Debug => "Debug",
@@ -149,10 +157,44 @@ impl TraceSeverity {
             Self::Emergency => "Emergency",
         }
     }
+
+    /// Generic-`Serialise` constructor index — the value `cborg`'s
+    /// `GSerialiseSum.conNumber` emits for this nullary constructor.
+    pub fn constructor_index(self) -> u64 {
+        match self {
+            Self::Debug => 0,
+            Self::Info => 1,
+            Self::Notice => 2,
+            Self::Warning => 3,
+            Self::Error => 4,
+            Self::Critical => 5,
+            Self::Alert => 6,
+            Self::Emergency => 7,
+        }
+    }
+
+    /// Inverse of [`Self::constructor_index`].
+    pub fn from_constructor_index(idx: u64) -> Option<Self> {
+        Some(match idx {
+            0 => Self::Debug,
+            1 => Self::Info,
+            2 => Self::Notice,
+            3 => Self::Warning,
+            4 => Self::Error,
+            5 => Self::Critical,
+            6 => Self::Alert,
+            7 => Self::Emergency,
+            _ => return None,
+        })
+    }
 }
 
-/// Detail level controlling per-namespace verbosity.  Wire encoding
-/// matches upstream `Cardano.Logging.Types.DetailLevel`.
+/// Detail level controlling per-namespace verbosity.
+///
+/// Mirrors upstream `Cardano.Logging.Types.DetailLevel`. Same
+/// generic-`Serialise` nullary-sum encoding as [`TraceSeverity`]: a
+/// 1-element CBOR array carrying the constructor index
+/// `DMinimal = 0 … DMaximum = 3`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TraceDetail {
     DMinimal,
@@ -162,6 +204,8 @@ pub enum TraceDetail {
 }
 
 impl TraceDetail {
+    /// Human-readable label per upstream `DetailLevel`'s `Show`
+    /// instance. Diagnostics / display only — not the CBOR wire form.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::DMinimal => "DMinimal",
@@ -170,29 +214,75 @@ impl TraceDetail {
             Self::DMaximum => "DMaximum",
         }
     }
+
+    /// Generic-`Serialise` constructor index.
+    pub fn constructor_index(self) -> u64 {
+        match self {
+            Self::DMinimal => 0,
+            Self::DNormal => 1,
+            Self::DDetailed => 2,
+            Self::DMaximum => 3,
+        }
+    }
+
+    /// Inverse of [`Self::constructor_index`].
+    pub fn from_constructor_index(idx: u64) -> Option<Self> {
+        Some(match idx {
+            0 => Self::DMinimal,
+            1 => Self::DNormal,
+            2 => Self::DDetailed,
+            3 => Self::DMaximum,
+            _ => return None,
+        })
+    }
 }
 
 /// One trace event in the wire shape consumed by upstream
 /// `cardano-tracer` over the `TraceForward` mini-protocol.
 ///
-/// CBOR encoding: an 8-element definite-length array
+/// # Wire format — generic `Serialise` for `TraceObject`
+///
+/// The upstream record (`Cardano.Logging.Types.TraceObject`, in the
+/// `trace-dispatcher` package) derives its `Serialise` instance via
+/// `deriving anyclass (Serialise, NFData)` over an 8-field
+/// single-constructor record:
+///
+/// ```haskell
+/// data TraceObject = TraceObject
+///   { toHuman :: !(Maybe Text), toMachine :: !Text, toNamespace :: ![Text]
+///   , toSeverity :: !SeverityS, toDetails :: !DetailLevel
+///   , toTimestamp :: !UTCTime, toHostname :: !Text, toThreadId :: !Text }
+///   deriving stock (Eq, Show, Generic)
+///   deriving anyclass (Serialise, NFData)
+/// ```
+///
+/// `cborg`'s generic product encoder (`GSerialiseEncode (f :*: g)`)
+/// serialises a single-constructor record as
+/// `encodeListLen (nFields + 1) <> encodeWord 0 <> <fields…>` — i.e.
+/// a **9-element CBOR array** whose first element is the constructor
+/// tag `0`, followed by the 8 fields encoded sequentially with no
+/// per-field wrapper:
 ///
 /// ```text
-///   [ to_human       :: nullable text
-///   , to_machine     :: text
-///   , to_namespace   :: [text]
-///   , to_severity    :: text
-///   , to_details     :: text
-///   , to_timestamp   :: [year, dayOfYear, picosecondsOfDay]
-///   , to_hostname    :: text
-///   , to_thread_id   :: text
+///   [ 0                                ; constructor tag (uint)
+///   , to_human     :: [] | [text]      ; Serialise (Maybe a): Nothing=[], Just x=[x]
+///   , to_machine   :: text
+///   , to_namespace :: [] | (_ text*)   ; Serialise [a]: []=array(0), else indef 0x9f..0xff
+///   , to_severity  :: [uint]           ; nullary-sum: 1-elem array of constructor index
+///   , to_details   :: [uint]           ; nullary-sum: 1-elem array of constructor index
+///   , to_timestamp :: 1000({1: secs, -12: psecs})  ; Serialise UTCTime, tag 1000 map(2)
+///   , to_hostname  :: text
+///   , to_thread_id :: text
 ///   ]
 /// ```
 ///
 /// References:
-/// - `Cardano.Logging.Types.TraceObject`
-/// - `Codec.CBOR.Encoding` instances (`encodeMaybeText`, `encodeUTCTime`)
-/// - `cardano-node` issue tracker conformance examples
+/// - `Cardano.Logging.Types.TraceObject` (vendored under
+///   `deps/hermod-tracing/trace-dispatcher/src/Cardano/Logging/Types.hs`)
+/// - `Codec.Serialise.Class` generic instances (`well-typed/cborg`):
+///   `GSerialiseEncode (f :*: g)`, `Serialise (Maybe a)`,
+///   `Serialise [a]` / `defaultEncodeList`, `GSerialiseSum`,
+///   `Serialise UTCTime`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TraceObject {
     pub to_human: Option<String>,
@@ -200,9 +290,14 @@ pub struct TraceObject {
     pub to_namespace: Vec<String>,
     pub to_severity: TraceSeverity,
     pub to_details: TraceDetail,
-    /// `(year, dayOfYear, picosecondsOfDay)` — same shape as upstream
-    /// `Cardano.Slotting.Time.SystemStart`'s `UTCTime` encoding.
-    pub to_timestamp: (u64, u64, u64),
+    /// `(posix_seconds, picoseconds_of_second)` — the decomposition
+    /// `Codec.Serialise`'s `Serialise UTCTime` instance encodes:
+    /// `properFraction (utcTimeToPOSIXSeconds t)` yields whole
+    /// seconds since the 1970 POSIX epoch plus a fractional part,
+    /// and `psecs = round (frac * 1e12)`. The first element is
+    /// therefore POSIX seconds (always non-negative for node
+    /// timestamps); the second is `0 ≤ picos < 1_000_000_000_000`.
+    pub to_timestamp: (u64, u64),
     pub to_hostname: String,
     pub to_thread_id: String,
 }
@@ -211,36 +306,62 @@ impl TraceObject {
     /// Produce the canonical CBOR wire representation that
     /// `cardano-tracer`'s `TraceForward` codec expects.  Round-trip
     /// safe with [`Self::from_cbor_bytes`].
+    ///
+    /// Byte-for-byte equivalent of `Codec.Serialise`'s generic
+    /// `encode :: TraceObject -> Encoding` — see the type-level
+    /// docstring for the derivation.
     pub fn to_cbor(&self) -> Vec<u8> {
         let mut enc = Encoder::new();
-        enc.array(8);
-        // toHuman :: Maybe Text — null when absent.
+        // Single-constructor record → 9-element array: constructor
+        // tag 0 followed by the 8 fields.
+        enc.array(9);
+        enc.unsigned(0);
+        // toHuman :: Maybe Text — Serialise (Maybe a):
+        //   Nothing  → encodeListLen 0
+        //   Just x   → encodeListLen 1 <> encode x
         match &self.to_human {
             None => {
-                enc.null();
+                enc.array(0);
             }
             Some(t) => {
+                enc.array(1);
                 enc.text(t);
             }
         }
-        // toMachine :: Text
+        // toMachine :: Text → encodeString.
         enc.text(&self.to_machine);
-        // toNamespace :: [Text]
-        enc.array(self.to_namespace.len() as u64);
-        for ns in &self.to_namespace {
-            enc.text(ns);
+        // toNamespace :: [Text] — Serialise [a] / defaultEncodeList:
+        //   []        → encodeListLen 0
+        //   non-empty → encodeListLenIndef <> elems <> encodeBreak
+        if self.to_namespace.is_empty() {
+            enc.array(0);
+        } else {
+            enc.array_indef();
+            for ns in &self.to_namespace {
+                enc.text(ns);
+            }
+            enc.break_stop();
         }
-        // toSeverity :: SeverityS (encoded as Text)
-        enc.text(self.to_severity.as_str());
-        // toDetails :: DetailLevel (encoded as Text)
-        enc.text(self.to_details.as_str());
-        // toTimestamp :: UTCTime — [year, dayOfYear, picosecondsOfDay]
-        // matching upstream `Cardano.Slotting.Time.SystemStart`'s shape.
-        let (year, doy, picos) = self.to_timestamp;
-        enc.array(3);
-        enc.unsigned(year);
-        enc.unsigned(doy);
-        enc.unsigned(picos);
+        // toSeverity :: SeverityS — generic nullary-sum: 1-element
+        // array carrying the constructor index.
+        enc.array(1);
+        enc.unsigned(self.to_severity.constructor_index());
+        // toDetails :: DetailLevel — same nullary-sum encoding.
+        enc.array(1);
+        enc.unsigned(self.to_details.constructor_index());
+        // toTimestamp :: UTCTime — Serialise UTCTime extended-time
+        // form: tag 1000, map of 2 entries { 1: secs, -12: psecs }.
+        let (secs, psecs) = self.to_timestamp;
+        enc.tag(1000);
+        enc.map(2);
+        enc.unsigned(1);
+        // `secs` is encoded via `encodeInt64`; for the non-negative
+        // POSIX seconds of any real node timestamp that is identical
+        // to a major-0 unsigned encoding.
+        enc.unsigned(secs);
+        enc.integer(-12);
+        // `psecs` is `encodeWord64` — a plain major-0 unsigned.
+        enc.unsigned(psecs);
         // toHostname :: Text
         enc.text(&self.to_hostname);
         // toThreadId :: Text
@@ -248,14 +369,17 @@ impl TraceObject {
         enc.into_bytes()
     }
 
-    /// Decode a CBOR-encoded `TraceObject` per the upstream wire
-    /// shape produced by `to_cbor`. Inverse of the encoder.
+    /// Decode a CBOR-encoded `TraceObject` per the upstream
+    /// generic-`Serialise` wire shape produced by [`Self::to_cbor`].
+    /// Inverse of the encoder.
     ///
     /// Errors out on:
-    ///   - outer array length ≠ 8,
-    ///   - `to_severity` / `to_details` strings that don't match a
-    ///     known upstream variant,
-    ///   - inner timestamp array length ≠ 3,
+    ///   - outer array length ≠ 9,
+    ///   - constructor tag ≠ 0,
+    ///   - a `to_human` `Maybe` envelope whose array length ≠ 0/1,
+    ///   - a `to_severity` / `to_details` constructor index outside
+    ///     the known range,
+    ///   - a `to_timestamp` not encoded as tag-1000 `{1: …, -12: …}`,
     ///   - any underlying CBOR decode failure.
     pub fn from_cbor_bytes(bytes: &[u8]) -> Result<Self, TraceObjectDecodeError> {
         use yggdrasil_ledger::cbor::Decoder;
@@ -264,99 +388,150 @@ impl TraceObject {
         let outer_len = dec
             .array()
             .map_err(|e| TraceObjectDecodeError::Cbor(format!("outer array: {e}")))?;
-        if outer_len != 8 {
+        if outer_len != 9 {
             return Err(TraceObjectDecodeError::WrongOuterArity(outer_len));
         }
+        // Constructor tag — single-constructor record → always 0.
+        let ctor = dec
+            .unsigned()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("constructor tag: {e}")))?;
+        if ctor != 0 {
+            return Err(TraceObjectDecodeError::WrongConstructorTag(ctor));
+        }
 
-        // Field 0: to_human :: Maybe Text. Peek at the next CBOR byte
-        // to decide whether to read null or text — the existing
-        // Decoder doesn't expose a peek API, so try `null()` first
-        // by inspecting the remaining input.
-        let to_human = if dec.peek_is_null() {
-            dec.null()
-                .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_human null: {e}")))?;
-            None
-        } else {
-            let s = dec
-                .text()
-                .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_human text: {e}")))?;
-            Some(s.to_owned())
+        // Field 1: to_human :: Maybe Text — Serialise (Maybe a):
+        //   array(0) → Nothing ; array(1) <text> → Just.
+        let human_len = dec
+            .array()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_human Maybe array: {e}")))?;
+        let to_human = match human_len {
+            0 => None,
+            1 => {
+                let s = dec
+                    .text()
+                    .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_human text: {e}")))?;
+                Some(s.to_owned())
+            }
+            other => return Err(TraceObjectDecodeError::WrongMaybeArity(other)),
         };
 
-        // Field 1: to_machine :: Text.
+        // Field 2: to_machine :: Text.
         let to_machine = dec
             .text()
             .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_machine: {e}")))?
             .to_owned();
 
-        // Field 2: to_namespace :: [Text].
-        let ns_len = dec
-            .array()
-            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_namespace array: {e}")))?;
-        let mut to_namespace = Vec::with_capacity(ns_len as usize);
-        for _ in 0..ns_len {
-            let s = dec
-                .text()
-                .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_namespace element: {e}")))?;
-            to_namespace.push(s.to_owned());
+        // Field 3: to_namespace :: [Text] — Serialise [a] is either a
+        // definite array(0) (the empty-list case) or an indefinite
+        // 0x9f…0xff list (the non-empty case). `array_begin` handles
+        // both: `Some(n)` definite, `None` indefinite.
+        let mut to_namespace = Vec::new();
+        match dec
+            .array_begin()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_namespace array: {e}")))?
+        {
+            Some(n) => {
+                for _ in 0..n {
+                    let s = dec.text().map_err(|e| {
+                        TraceObjectDecodeError::Cbor(format!("to_namespace element: {e}"))
+                    })?;
+                    to_namespace.push(s.to_owned());
+                }
+            }
+            None => {
+                while !dec.is_break() {
+                    let s = dec.text().map_err(|e| {
+                        TraceObjectDecodeError::Cbor(format!("to_namespace element: {e}"))
+                    })?;
+                    to_namespace.push(s.to_owned());
+                }
+                dec.consume_break().map_err(|e| {
+                    TraceObjectDecodeError::Cbor(format!("to_namespace break: {e}"))
+                })?;
+            }
         }
 
-        // Field 3: to_severity :: Text → TraceSeverity.
-        let sev_str = dec
-            .text()
-            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_severity text: {e}")))?;
-        let to_severity = match sev_str {
-            "Debug" => TraceSeverity::Debug,
-            "Info" => TraceSeverity::Info,
-            "Notice" => TraceSeverity::Notice,
-            "Warning" => TraceSeverity::Warning,
-            "Error" => TraceSeverity::Error,
-            "Critical" => TraceSeverity::Critical,
-            "Alert" => TraceSeverity::Alert,
-            "Emergency" => TraceSeverity::Emergency,
-            other => {
-                return Err(TraceObjectDecodeError::UnknownSeverity(other.to_owned()));
-            }
-        };
-
-        // Field 4: to_details :: Text → TraceDetail.
-        let det_str = dec
-            .text()
-            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_details text: {e}")))?;
-        let to_details = match det_str {
-            "DMinimal" => TraceDetail::DMinimal,
-            "DNormal" => TraceDetail::DNormal,
-            "DDetailed" => TraceDetail::DDetailed,
-            "DMaximum" => TraceDetail::DMaximum,
-            other => {
-                return Err(TraceObjectDecodeError::UnknownDetail(other.to_owned()));
-            }
-        };
-
-        // Field 5: to_timestamp :: [year, dayOfYear, picosecondsOfDay].
-        let ts_len = dec
+        // Field 4: to_severity :: SeverityS — 1-element array of the
+        // generic constructor index.
+        let sev_len = dec
             .array()
-            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp array: {e}")))?;
-        if ts_len != 3 {
-            return Err(TraceObjectDecodeError::WrongTimestampArity(ts_len));
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_severity array: {e}")))?;
+        if sev_len != 1 {
+            return Err(TraceObjectDecodeError::WrongEnumArity {
+                field: "to_severity",
+                got: sev_len,
+            });
         }
-        let year = dec
+        let sev_idx = dec
             .unsigned()
-            .map_err(|e| TraceObjectDecodeError::Cbor(format!("year: {e}")))?;
-        let doy = dec
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_severity index: {e}")))?;
+        let to_severity = TraceSeverity::from_constructor_index(sev_idx)
+            .ok_or(TraceObjectDecodeError::UnknownSeverity(sev_idx))?;
+
+        // Field 5: to_details :: DetailLevel — same nullary-sum form.
+        let det_len = dec
+            .array()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_details array: {e}")))?;
+        if det_len != 1 {
+            return Err(TraceObjectDecodeError::WrongEnumArity {
+                field: "to_details",
+                got: det_len,
+            });
+        }
+        let det_idx = dec
             .unsigned()
-            .map_err(|e| TraceObjectDecodeError::Cbor(format!("dayOfYear: {e}")))?;
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_details index: {e}")))?;
+        let to_details = TraceDetail::from_constructor_index(det_idx)
+            .ok_or(TraceObjectDecodeError::UnknownDetail(det_idx))?;
+
+        // Field 6: to_timestamp :: UTCTime — Serialise UTCTime
+        // extended-time form: tag 1000, map of 2 entries keyed
+        // `1` (seconds, signed) and `-12` (picoseconds, unsigned).
+        let ts_tag = dec
+            .tag()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp tag: {e}")))?;
+        if ts_tag != 1000 {
+            return Err(TraceObjectDecodeError::WrongTimestampTag(ts_tag));
+        }
+        let ts_map_len = dec
+            .map()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp map: {e}")))?;
+        if ts_map_len != 2 {
+            return Err(TraceObjectDecodeError::WrongTimestampArity(ts_map_len));
+        }
+        let k0 = dec
+            .integer()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp key 0: {e}")))?;
+        if k0 != 1 {
+            return Err(TraceObjectDecodeError::Cbor(format!(
+                "timestamp: expected map key 1, got {k0}"
+            )));
+        }
+        let secs_i = dec
+            .integer()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp seconds: {e}")))?;
+        let secs = u64::try_from(secs_i).map_err(|_| {
+            TraceObjectDecodeError::Cbor(format!("timestamp seconds {secs_i} is negative"))
+        })?;
+        let k1 = dec
+            .integer()
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp key 1: {e}")))?;
+        if k1 != -12 {
+            return Err(TraceObjectDecodeError::Cbor(format!(
+                "timestamp: expected map key -12, got {k1}"
+            )));
+        }
         let picos = dec
             .unsigned()
-            .map_err(|e| TraceObjectDecodeError::Cbor(format!("picosecondsOfDay: {e}")))?;
+            .map_err(|e| TraceObjectDecodeError::Cbor(format!("timestamp picoseconds: {e}")))?;
 
-        // Field 6: to_hostname :: Text.
+        // Field 7: to_hostname :: Text.
         let to_hostname = dec
             .text()
             .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_hostname: {e}")))?
             .to_owned();
 
-        // Field 7: to_thread_id :: Text.
+        // Field 8: to_thread_id :: Text.
         let to_thread_id = dec
             .text()
             .map_err(|e| TraceObjectDecodeError::Cbor(format!("to_thread_id: {e}")))?
@@ -368,7 +543,7 @@ impl TraceObject {
             to_namespace,
             to_severity,
             to_details,
-            to_timestamp: (year, doy, picos),
+            to_timestamp: (secs, picos),
             to_hostname,
             to_thread_id,
         })
@@ -380,14 +555,27 @@ impl TraceObject {
 pub enum TraceObjectDecodeError {
     /// Underlying CBOR decode failure with the field name + reason.
     Cbor(String),
-    /// Outer array length wasn't 8.
+    /// Outer array length wasn't 9 (constructor tag + 8 fields).
     WrongOuterArity(u64),
-    /// Inner timestamp array length wasn't 3.
+    /// Constructor tag wasn't 0 (the single `TraceObject` constructor).
+    WrongConstructorTag(u64),
+    /// A `Maybe`-field envelope had an array length other than 0 or 1.
+    WrongMaybeArity(u64),
+    /// A nullary-sum-encoded enum field had an array length ≠ 1.
+    WrongEnumArity {
+        /// Which field carried the malformed enum envelope.
+        field: &'static str,
+        /// The decoded array length.
+        got: u64,
+    },
+    /// `to_timestamp` wasn't tagged with the extended-time tag 1000.
+    WrongTimestampTag(u64),
+    /// `to_timestamp` map length wasn't 2.
     WrongTimestampArity(u64),
-    /// `to_severity` text wasn't a recognised `SeverityS` variant.
-    UnknownSeverity(String),
-    /// `to_details` text wasn't a recognised `DetailLevel` variant.
-    UnknownDetail(String),
+    /// `to_severity` constructor index was outside the known range.
+    UnknownSeverity(u64),
+    /// `to_details` constructor index was outside the known range.
+    UnknownDetail(u64),
 }
 
 impl core::fmt::Display for TraceObjectDecodeError {
@@ -396,17 +584,34 @@ impl core::fmt::Display for TraceObjectDecodeError {
             Self::Cbor(msg) => write!(f, "CBOR decode error: {msg}"),
             Self::WrongOuterArity(n) => write!(
                 f,
-                "TraceObject outer array length must be 8 per upstream wire format; got {n}"
+                "TraceObject outer array length must be 9 (constructor tag + 8 fields) \
+                 per upstream generic-Serialise wire format; got {n}"
+            ),
+            Self::WrongConstructorTag(n) => write!(
+                f,
+                "TraceObject constructor tag must be 0 (single constructor); got {n}"
+            ),
+            Self::WrongMaybeArity(n) => write!(
+                f,
+                "Maybe-field envelope array length must be 0 (Nothing) or 1 (Just); got {n}"
+            ),
+            Self::WrongEnumArity { field, got } => write!(
+                f,
+                "{field} nullary-sum enum envelope array length must be 1; got {got}"
+            ),
+            Self::WrongTimestampTag(n) => write!(
+                f,
+                "timestamp must carry the extended-time CBOR tag 1000; got tag {n}"
             ),
             Self::WrongTimestampArity(n) => write!(
                 f,
-                "timestamp array length must be 3 (year, dayOfYear, picosecondsOfDay); got {n}"
+                "timestamp extended-time map length must be 2 (keys 1 and -12); got {n}"
             ),
-            Self::UnknownSeverity(s) => {
-                write!(f, "unknown SeverityS variant: {s:?}")
+            Self::UnknownSeverity(idx) => {
+                write!(f, "unknown SeverityS constructor index: {idx}")
             }
-            Self::UnknownDetail(s) => {
-                write!(f, "unknown DetailLevel variant: {s:?}")
+            Self::UnknownDetail(idx) => {
+                write!(f, "unknown DetailLevel constructor index: {idx}")
             }
         }
     }
@@ -472,12 +677,14 @@ mod tests {
     use super::*;
     use yggdrasil_ledger::cbor::Decoder;
 
-    /// Pin the upstream `TraceObject` wire shape: an 8-element
-    /// definite-length CBOR array whose fields decode in the
-    /// `(toHuman, toMachine, toNamespace, toSeverity, toDetails,
-    /// toTimestamp, toHostname, toThreadId)` order.  A future bump to
-    /// any field's encoding shows up here as a failing test rather
-    /// than as silently-malformed traces seen by `cardano-tracer`.
+    /// Pin the upstream `TraceObject` wire shape produced by the
+    /// `Codec.Serialise` generic instance: a 9-element definite-length
+    /// CBOR array whose first element is the constructor tag `0`,
+    /// followed by the 8 fields in `(toHuman, toMachine, toNamespace,
+    /// toSeverity, toDetails, toTimestamp, toHostname, toThreadId)`
+    /// order.  A future bump to any field's encoding shows up here as
+    /// a failing test rather than as silently-malformed traces seen by
+    /// `cardano-tracer`.
     #[test]
     fn trace_object_cbor_round_trip_matches_upstream_shape() {
         let obj = TraceObject {
@@ -486,7 +693,8 @@ mod tests {
             to_namespace: vec!["Net".into(), "Governor".into()],
             to_severity: TraceSeverity::Info,
             to_details: TraceDetail::DNormal,
-            to_timestamp: (2026, 122, 0),
+            // 1_767_312_000 = 2026-01-02T00:00:00Z; 250 ms → 2.5e11 ps.
+            to_timestamp: (1_767_312_000, 250_000_000_000),
             to_hostname: "yggdrasil".into(),
             to_thread_id: "t1".into(),
         };
@@ -496,54 +704,108 @@ mod tests {
         // either the encoder or the array layout surfaces as a typed
         // decode error rather than as a silent byte-shape change.
         let mut dec = Decoder::new(&bytes);
-        let len = dec.array().expect("8-element array");
-        assert_eq!(len, 8, "TraceObject wire format must be 8-element array");
-        // toHuman
+        let len = dec.array().expect("9-element array");
+        assert_eq!(
+            len, 9,
+            "TraceObject generic-Serialise wire format must be 9-element array"
+        );
+        // constructor tag
+        assert_eq!(dec.unsigned().expect("constructor tag"), 0);
+        // toHuman :: Maybe Text — Just → array(1) <text>.
+        assert_eq!(dec.array().expect("toHuman Maybe array"), 1);
         assert_eq!(dec.text().expect("toHuman text"), "hello world");
         // toMachine
         assert_eq!(dec.text().expect("toMachine text"), "{\"k\":\"v\"}");
-        // toNamespace
-        let ns_len = dec.array().expect("namespace array");
-        assert_eq!(ns_len, 2);
+        // toNamespace — non-empty → indefinite-length list 0x9f..0xff.
+        assert_eq!(
+            dec.array_begin().expect("namespace array"),
+            None,
+            "non-empty [Text] must encode as an indefinite-length list"
+        );
         assert_eq!(dec.text().expect("ns[0]"), "Net");
         assert_eq!(dec.text().expect("ns[1]"), "Governor");
-        // toSeverity
-        assert_eq!(dec.text().expect("severity text"), "Info");
-        // toDetails
-        assert_eq!(dec.text().expect("details text"), "DNormal");
-        // toTimestamp = [year, dayOfYear, picosecondsOfDay]
-        let ts_len = dec.array().expect("timestamp array");
-        assert_eq!(ts_len, 3);
-        assert_eq!(dec.unsigned().expect("year"), 2026);
-        assert_eq!(dec.unsigned().expect("dayOfYear"), 122);
-        assert_eq!(dec.unsigned().expect("picosecondsOfDay"), 0);
+        dec.consume_break().expect("namespace break");
+        // toSeverity — 1-element array of constructor index (Info = 1).
+        assert_eq!(dec.array().expect("severity array"), 1);
+        assert_eq!(dec.unsigned().expect("severity index"), 1);
+        // toDetails — 1-element array of constructor index (DNormal = 1).
+        assert_eq!(dec.array().expect("details array"), 1);
+        assert_eq!(dec.unsigned().expect("details index"), 1);
+        // toTimestamp — Serialise UTCTime: tag 1000, map { 1: secs, -12: psecs }.
+        assert_eq!(dec.tag().expect("timestamp tag"), 1000);
+        assert_eq!(dec.map().expect("timestamp map"), 2);
+        assert_eq!(dec.integer().expect("ts key 0"), 1);
+        assert_eq!(dec.integer().expect("ts seconds"), 1_767_312_000);
+        assert_eq!(dec.integer().expect("ts key 1"), -12);
+        assert_eq!(dec.unsigned().expect("ts picoseconds"), 250_000_000_000);
         // toHostname
         assert_eq!(dec.text().expect("hostname"), "yggdrasil");
         // toThreadId
         assert_eq!(dec.text().expect("thread_id"), "t1");
     }
 
-    /// `toHuman` is `Maybe Text` upstream — a `None` encodes as CBOR
-    /// `null` (`0xf6`), not as an empty string.  Pin this so a future
-    /// `to_human: ""` shortcut doesn't silently change semantics.
+    /// Pin the exact byte string for a minimal `TraceObject` so the
+    /// generic-`Serialise` envelope (constructor tag, `Nothing` =
+    /// `array(0)`, empty `[Text]` = `array(0)`, nullary-sum enum =
+    /// `array(1) <idx>`, `UTCTime` = `tag(1000) map(2)`) is locked
+    /// byte-for-byte against `Codec.Serialise`.
     #[test]
-    fn trace_object_to_human_none_encodes_as_cbor_null() {
+    fn trace_object_cbor_exact_byte_shape_minimal() {
+        let obj = TraceObject {
+            to_human: None,
+            to_machine: String::new(),
+            to_namespace: Vec::new(),
+            to_severity: TraceSeverity::Debug, // index 0
+            to_details: TraceDetail::DMinimal, // index 0
+            to_timestamp: (0, 0),
+            to_hostname: String::new(),
+            to_thread_id: String::new(),
+        };
+        // 0x89                  array(9)
+        // 0x00                  constructor tag 0
+        // 0x80                  toHuman  = Nothing → array(0)
+        // 0x60                  toMachine = "" (text len 0)
+        // 0x80                  toNamespace = [] → array(0)
+        // 0x81 0x00             toSeverity = array(1) [uint 0]
+        // 0x81 0x00             toDetails  = array(1) [uint 0]
+        // 0xd9 0x03 0xe8        tag(1000)
+        // 0xa2                  map(2)
+        // 0x01 0x00             key 1 → secs 0
+        // 0x2b 0x00             key -12 (0x2b = nint 11) → psecs 0
+        // 0x60                  toHostname = ""
+        // 0x60                  toThreadId = ""
+        let expected: Vec<u8> = vec![
+            0x89, 0x00, 0x80, 0x60, 0x80, 0x81, 0x00, 0x81, 0x00, 0xd9, 0x03, 0xe8, 0xa2, 0x01,
+            0x00, 0x2b, 0x00, 0x60, 0x60,
+        ];
+        assert_eq!(obj.to_cbor(), expected, "minimal TraceObject byte shape");
+    }
+
+    /// `toHuman` is `Maybe Text` upstream — `Serialise (Maybe a)`
+    /// encodes `Nothing` as `encodeListLen 0` (a CBOR `array(0)`,
+    /// byte `0x80`), NOT as CBOR `null` and NOT as an empty string.
+    #[test]
+    fn trace_object_to_human_none_encodes_as_empty_array() {
         let obj = TraceObject {
             to_human: None,
             to_machine: String::new(),
             to_namespace: Vec::new(),
             to_severity: TraceSeverity::Debug,
             to_details: TraceDetail::DMinimal,
-            to_timestamp: (0, 0, 0),
+            to_timestamp: (0, 0),
             to_hostname: String::new(),
             to_thread_id: String::new(),
         };
         let bytes = obj.to_cbor();
         let mut dec = Decoder::new(&bytes);
-        let _ = dec.array().expect("array len");
-        // Peek at the next byte: must be CBOR `null` (`0xf6`).
-        // We use `null()` (returns `()` for null) to verify the type.
-        dec.null().expect("toHuman None must encode as CBOR null");
+        let _ = dec.array().expect("outer array");
+        let _ = dec.unsigned().expect("constructor tag");
+        // toHuman Nothing must be a 0-element array.
+        assert_eq!(
+            dec.array().expect("toHuman Nothing must be array(0)"),
+            0,
+            "Serialise (Maybe a) encodes Nothing as encodeListLen 0"
+        );
     }
 
     /// Encode → decode round-trip: every shape that the encoder
@@ -558,7 +820,7 @@ mod tests {
                 to_namespace: vec!["Net".into(), "Governor".into()],
                 to_severity: TraceSeverity::Info,
                 to_details: TraceDetail::DNormal,
-                to_timestamp: (2026, 122, 0),
+                to_timestamp: (1_767_312_000, 122),
                 to_hostname: "yggdrasil".into(),
                 to_thread_id: "t1".into(),
             },
@@ -569,18 +831,18 @@ mod tests {
                 to_namespace: Vec::new(),
                 to_severity: TraceSeverity::Debug,
                 to_details: TraceDetail::DMinimal,
-                to_timestamp: (0, 0, 0),
+                to_timestamp: (0, 0),
                 to_hostname: String::new(),
                 to_thread_id: String::new(),
             },
-            // All severities + details exercised.
+            // All severities + details exercised; large psecs value.
             TraceObject {
                 to_human: Some("emergency".into()),
                 to_machine: "msg".into(),
                 to_namespace: vec!["A".into(), "B".into(), "C".into()],
                 to_severity: TraceSeverity::Emergency,
                 to_details: TraceDetail::DMaximum,
-                to_timestamp: (2099, 365, 86_400_000_000_000_000),
+                to_timestamp: (4_102_444_800, 999_999_999_999),
                 to_hostname: "h".into(),
                 to_thread_id: "t".into(),
             },
@@ -593,74 +855,101 @@ mod tests {
         }
     }
 
-    /// Decoder rejects an outer array of length ≠ 8.
+    /// Decoder rejects an outer array of length ≠ 9.
     #[test]
     fn trace_object_decoder_rejects_wrong_outer_arity() {
-        // Build a fake CBOR with a 7-element outer array.
+        // Build a fake CBOR with an 8-element outer array.
         let mut enc = yggdrasil_ledger::cbor::Encoder::new();
-        enc.array(7);
-        for _ in 0..7 {
+        enc.array(8);
+        for _ in 0..8 {
             enc.null();
         }
         let bytes = enc.into_bytes();
         let err = TraceObject::from_cbor_bytes(&bytes).expect_err("wrong arity must fail");
         assert!(
-            matches!(err, TraceObjectDecodeError::WrongOuterArity(7)),
-            "expected WrongOuterArity(7); got {err:?}"
+            matches!(err, TraceObjectDecodeError::WrongOuterArity(8)),
+            "expected WrongOuterArity(8); got {err:?}"
         );
     }
 
-    /// Decoder rejects an unknown `SeverityS` text variant.
+    /// Decoder rejects an out-of-range `SeverityS` constructor index.
     #[test]
     fn trace_object_decoder_rejects_unknown_severity() {
         let mut enc = yggdrasil_ledger::cbor::Encoder::new();
-        enc.array(8);
-        enc.null(); // to_human
+        enc.array(9);
+        enc.unsigned(0); // constructor tag
+        enc.array(0); // to_human = Nothing
         enc.text(""); // to_machine
-        enc.array(0); // to_namespace
-        enc.text("Bogus"); // to_severity — invalid
-        enc.text("DMinimal"); // to_details
-        enc.array(3);
+        enc.array(0); // to_namespace = []
+        enc.array(1);
+        enc.unsigned(99); // to_severity index — out of range
+        enc.array(1);
+        enc.unsigned(0); // to_details
+        enc.tag(1000);
+        enc.map(2);
+        enc.unsigned(1);
         enc.unsigned(0);
-        enc.unsigned(0);
+        enc.integer(-12);
         enc.unsigned(0);
         enc.text(""); // to_hostname
         enc.text(""); // to_thread_id
         let bytes = enc.into_bytes();
         let err = TraceObject::from_cbor_bytes(&bytes).expect_err("unknown severity must fail");
         assert!(
-            matches!(err, TraceObjectDecodeError::UnknownSeverity(ref s) if s == "Bogus"),
-            "expected UnknownSeverity(\"Bogus\"); got {err:?}"
+            matches!(err, TraceObjectDecodeError::UnknownSeverity(99)),
+            "expected UnknownSeverity(99); got {err:?}"
         );
     }
 
-    /// All severities have stable upstream-spelled wire labels.
+    /// All severities have stable upstream constructor indices
+    /// (`Debug = 0 … Emergency = 7`, the declaration order).
     #[test]
-    fn trace_severity_wire_labels_match_upstream() {
-        for (variant, label) in [
-            (TraceSeverity::Debug, "Debug"),
-            (TraceSeverity::Info, "Info"),
-            (TraceSeverity::Notice, "Notice"),
-            (TraceSeverity::Warning, "Warning"),
-            (TraceSeverity::Error, "Error"),
-            (TraceSeverity::Critical, "Critical"),
-            (TraceSeverity::Alert, "Alert"),
-            (TraceSeverity::Emergency, "Emergency"),
+    fn trace_severity_constructor_indices_match_upstream() {
+        for (variant, idx) in [
+            (TraceSeverity::Debug, 0),
+            (TraceSeverity::Info, 1),
+            (TraceSeverity::Notice, 2),
+            (TraceSeverity::Warning, 3),
+            (TraceSeverity::Error, 4),
+            (TraceSeverity::Critical, 5),
+            (TraceSeverity::Alert, 6),
+            (TraceSeverity::Emergency, 7),
         ] {
-            assert_eq!(variant.as_str(), label, "wire label drift on {variant:?}");
+            assert_eq!(
+                variant.constructor_index(),
+                idx,
+                "constructor-index drift on {variant:?}"
+            );
+            assert_eq!(
+                TraceSeverity::from_constructor_index(idx),
+                Some(variant),
+                "round-trip drift on {variant:?}"
+            );
         }
+        assert_eq!(TraceSeverity::from_constructor_index(8), None);
     }
 
-    /// All detail levels have stable upstream-spelled wire labels.
+    /// All detail levels have stable upstream constructor indices
+    /// (`DMinimal = 0 … DMaximum = 3`).
     #[test]
-    fn trace_detail_wire_labels_match_upstream() {
-        for (variant, label) in [
-            (TraceDetail::DMinimal, "DMinimal"),
-            (TraceDetail::DNormal, "DNormal"),
-            (TraceDetail::DDetailed, "DDetailed"),
-            (TraceDetail::DMaximum, "DMaximum"),
+    fn trace_detail_constructor_indices_match_upstream() {
+        for (variant, idx) in [
+            (TraceDetail::DMinimal, 0),
+            (TraceDetail::DNormal, 1),
+            (TraceDetail::DDetailed, 2),
+            (TraceDetail::DMaximum, 3),
         ] {
-            assert_eq!(variant.as_str(), label, "wire label drift on {variant:?}");
+            assert_eq!(
+                variant.constructor_index(),
+                idx,
+                "constructor-index drift on {variant:?}"
+            );
+            assert_eq!(
+                TraceDetail::from_constructor_index(idx),
+                Some(variant),
+                "round-trip drift on {variant:?}"
+            );
         }
+        assert_eq!(TraceDetail::from_constructor_index(4), None);
     }
 }
