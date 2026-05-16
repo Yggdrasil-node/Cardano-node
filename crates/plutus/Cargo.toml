@@ -31,9 +31,20 @@ serde_json.workspace = true
 # build time and is irrelevant to integer/bytestring builtin fuzzing)
 # without touching the rest of the CEK machine.
 #
-# Both default-on today; the default build is byte-identical. Wave 5+
-# adds `#[cfg(feature = "...")]` gates around the corresponding
-# builtin dispatch arms in `src/builtins/`.
+# Both default-on; the default build is byte-identical to the
+# pre-flag build.
+#
+# `secp256k1` (Phase 5.4 — wired): gates the `evaluate_builtin`
+# dispatch arms for `VerifyEcdsaSecp256k1Signature` /
+# `VerifySchnorrSecp256k1Signature` + the `verify_*_secp256k1`
+# helpers + the `yggdrasil_crypto::secp256k1` import. The
+# `DefaultBuiltin` enum variants stay unconditional (wire-level
+# flat tags 52/53); with the feature off, evaluation surfaces a
+# `MachineError::BuiltinError` instead of dispatching the crypto.
+#
+# `bls12-381`: not yet `#[cfg]`-gated — the BLS dispatch is an
+# 18-arm block plus `get_g1` / `get_g2` helpers; gating it cleanly
+# is a follow-on round.
 # ──────────────────────────────────────────────────────────────────────
 [features]
 default = ["secp256k1", "bls12-381"]

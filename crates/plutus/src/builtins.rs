@@ -24,6 +24,7 @@ use num_integer::Integer as NumInteger;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use yggdrasil_crypto::blake2b;
 use yggdrasil_crypto::bls12_381;
+#[cfg(feature = "secp256k1")]
 use yggdrasil_crypto::secp256k1;
 use yggdrasil_ledger::cbor::{CborEncode, Encoder};
 use yggdrasil_ledger::plutus::PlutusData;
@@ -496,20 +497,61 @@ pub fn evaluate_builtin(
 
         // ---------------------------------------------------------------
         // PlutusV2 — secp256k1
+        //
+        // Phase 5.4: the two secp256k1 builtins are gated behind the
+        // `secp256k1` Cargo feature (default-on). The `DefaultBuiltin`
+        // enum variants stay present unconditionally — they are
+        // wire-level flat-encoding tags (52 / 53) and gating the
+        // variants would break decoding of any PlutusV3 script that
+        // merely *mentions* them. Only the dispatch-arm body is
+        // gated: with the feature off, evaluation surfaces a
+        // structured `BuiltinError` rather than calling into
+        // `yggdrasil_crypto::secp256k1`. Mirrors the `forge`-flag
+        // pattern (gate the dispatch, keep the type surface).
         // ---------------------------------------------------------------
         VerifyEcdsaSecp256k1Signature => {
-            let vk = get_bytestring(&args[0])?;
-            let msg = get_bytestring(&args[1])?;
-            let sig = get_bytestring(&args[2])?;
-            let valid = verify_ecdsa_secp256k1(vk, msg, sig);
-            Ok(Value::Constant(Constant::Bool(valid)))
+            #[cfg(feature = "secp256k1")]
+            let result = {
+                let vk = get_bytestring(&args[0])?;
+                let msg = get_bytestring(&args[1])?;
+                let sig = get_bytestring(&args[2])?;
+                Ok(Value::Constant(Constant::Bool(verify_ecdsa_secp256k1(
+                    vk, msg, sig,
+                ))))
+            };
+            #[cfg(not(feature = "secp256k1"))]
+            let result = {
+                let _ = args;
+                Err(MachineError::BuiltinError {
+                    builtin: "verifyEcdsaSecp256k1Signature".into(),
+                    message: "secp256k1 builtins are not compiled in; rebuild \
+                              yggdrasil-plutus with the `secp256k1` feature"
+                        .into(),
+                })
+            };
+            result
         }
         VerifySchnorrSecp256k1Signature => {
-            let vk = get_bytestring(&args[0])?;
-            let msg = get_bytestring(&args[1])?;
-            let sig = get_bytestring(&args[2])?;
-            let valid = verify_schnorr_secp256k1(vk, msg, sig);
-            Ok(Value::Constant(Constant::Bool(valid)))
+            #[cfg(feature = "secp256k1")]
+            let result = {
+                let vk = get_bytestring(&args[0])?;
+                let msg = get_bytestring(&args[1])?;
+                let sig = get_bytestring(&args[2])?;
+                Ok(Value::Constant(Constant::Bool(verify_schnorr_secp256k1(
+                    vk, msg, sig,
+                ))))
+            };
+            #[cfg(not(feature = "secp256k1"))]
+            let result = {
+                let _ = args;
+                Err(MachineError::BuiltinError {
+                    builtin: "verifySchnorrSecp256k1Signature".into(),
+                    message: "secp256k1 builtins are not compiled in; rebuild \
+                              yggdrasil-plutus with the `secp256k1` feature"
+                        .into(),
+                })
+            };
+            result
         }
 
         // ---------------------------------------------------------------
@@ -1112,11 +1154,18 @@ fn data_preview(data: &PlutusData) -> String {
 ///
 /// Returns `false` for malformed keys/signatures rather than erroring,
 /// matching Plutus semantics where cryptographic failures yield `False`.
+///
+/// Gated behind the `secp256k1` Cargo feature — see the dispatch-arm
+/// comment in `evaluate_builtin` for the rationale.
+#[cfg(feature = "secp256k1")]
 fn verify_ecdsa_secp256k1(vk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     secp256k1::verify_ecdsa(vk, msg, sig).unwrap_or(false)
 }
 
 /// secp256k1 Schnorr (BIP-340) signature verification.
+///
+/// Gated behind the `secp256k1` Cargo feature.
+#[cfg(feature = "secp256k1")]
 fn verify_schnorr_secp256k1(vk: &[u8], msg: &[u8], sig: &[u8]) -> bool {
     secp256k1::verify_schnorr(vk, msg, sig).unwrap_or(false)
 }
