@@ -72,6 +72,19 @@ impl LsqClient for TokioLsqClient {
             print_json(&decode_chain_block_no_result(&result))
         })
     }
+
+    fn query_current_era(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
+        run_blocking(async {
+            let result = acquire_query_release(
+                socket_path,
+                network_magic,
+                encode_get_current_era_query(),
+                "GetCurrentEra",
+            )
+            .await?;
+            print_json(&decode_current_era_result(&result))
+        })
+    }
 }
 
 /// Build a single-threaded tokio runtime and drive `fut` to
@@ -174,6 +187,34 @@ fn decode_chain_block_no_result(result: &[u8]) -> serde_json::Value {
         }
         _ => json!({ "chain_block_no_cbor": hex::encode(result) }),
     }
+}
+
+/// CBOR-encode the `GetCurrentEra` query envelope.
+///
+/// Mirrors upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query` —
+/// `BlockQuery (QueryHardFork GetCurrentEra)` is the nested
+/// `[0, [2, [1]]]`: outer `BlockQuery` tag 0, `QueryHardFork` tag 2,
+/// `GetCurrentEra` tag 1.
+fn encode_get_current_era_query() -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(2).unsigned(0u64);
+    enc.array(2).unsigned(2u64);
+    enc.array(1).unsigned(1u64);
+    enc.into_bytes()
+}
+
+/// Decode the upstream `GetCurrentEra` reply — an `EraIndex`,
+/// encoded as the single-element array `[era_index]`.
+///
+/// Mirrors `node/src/commands/query.rs::decode_ntc_result`'s
+/// `QueryCommand::CurrentEra` arm.
+fn decode_current_era_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    let era = match dec.array() {
+        Ok(1) => dec.unsigned().unwrap_or(0),
+        _ => 0,
+    };
+    json!({ "era": era })
 }
 
 /// Decode the upstream `Ouroboros.Network.Block.encodePoint` reply.
@@ -318,5 +359,33 @@ mod tests {
             msg.contains("failed to connect to NtC socket"),
             "error must carry the eyre socket-path context; got {msg}"
         );
+    }
+
+    /// `encode_get_current_era_query` produces the nested CBOR
+    /// `[0, [2, [1]]]` byte sequence.
+    #[test]
+    fn encode_get_current_era_query_emits_canonical_cbor() {
+        // `[0,[2,[1]]]` = 0x82 0x00 0x82 0x02 0x81 0x01.
+        assert_eq!(
+            encode_get_current_era_query(),
+            vec![0x82, 0x00, 0x82, 0x02, 0x81, 0x01]
+        );
+    }
+
+    /// `decode_current_era_result` reads the `[era_index]`
+    /// single-element array.
+    #[test]
+    fn decode_current_era_reads_era_index() {
+        // CBOR `[6]` = 0x81 0x06 — era index 6 (Conway).
+        let v = decode_current_era_result(&[0x81, 0x06]);
+        assert_eq!(v, json!({ "era": 6 }));
+    }
+
+    /// `decode_current_era_result` defaults to era 0 for an
+    /// unrecognized shape rather than panicking.
+    #[test]
+    fn decode_current_era_defaults_on_unknown_shape() {
+        let v = decode_current_era_result(&[0x00]);
+        assert_eq!(v, json!({ "era": 0 }));
     }
 }

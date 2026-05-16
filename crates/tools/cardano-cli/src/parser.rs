@@ -186,6 +186,26 @@ mod tests {
         );
     }
 
+    /// `query-current-era --socket-path …` parses to the expected
+    /// variant.
+    #[test]
+    fn parses_query_current_era() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-current-era",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::QueryCurrentEra {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+    }
+
     /// `address-key-gen --verification-key-file … --signing-key-file …`
     /// parses to the expected variant.
     #[test]

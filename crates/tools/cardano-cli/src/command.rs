@@ -73,6 +73,18 @@ pub enum Command {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Query the running node for its current ledger era. Mirrors
+    /// `GetCurrentEra` from
+    /// `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`.
+    QueryCurrentEra {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
     /// Generate a fresh Ed25519 payment keypair, writing both keys
     /// as TextEnvelope JSON files. Mirrors upstream `address key-gen`
     /// (`Cardano.CLI.EraIndependent.Address.Command.AddressKeyGen`).

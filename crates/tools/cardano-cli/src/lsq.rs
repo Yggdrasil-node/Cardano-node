@@ -90,6 +90,14 @@ pub trait LsqClient {
     /// `Ouroboros.Consensus.Ledger.Query`. Same parameters as
     /// [`LsqClient::query_tip`].
     fn query_chain_block_no(&self, socket_path: &Path, network_magic: u32) -> Result<()>;
+
+    /// Query the running node for its current ledger era and render
+    /// the result as JSON.
+    ///
+    /// Mirrors `BlockQuery (QueryHardFork GetCurrentEra)` from
+    /// upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`.
+    /// Same parameters as [`LsqClient::query_tip`].
+    fn query_current_era(&self, socket_path: &Path, network_magic: u32) -> Result<()>;
 }
 
 /// In-crate "no concrete LSQ impl wired" sentinel.
@@ -110,6 +118,10 @@ impl LsqClient for DeferralLsqClient {
 
     fn query_chain_block_no(&self, _socket_path: &Path, _network_magic: u32) -> Result<()> {
         deferral_bail("query-chain-block-no")
+    }
+
+    fn query_current_era(&self, _socket_path: &Path, _network_magic: u32) -> Result<()> {
+        deferral_bail("query-current-era")
     }
 }
 
@@ -145,6 +157,10 @@ mod tests {
                 client.query_chain_block_no(&socket, 764_824_073),
                 "query-chain-block-no",
             ),
+            (
+                client.query_current_era(&socket, 764_824_073),
+                "query-current-era",
+            ),
         ];
         for (call, name) in cases {
             let err = call.expect_err("DeferralLsqClient must bail");
@@ -176,6 +192,15 @@ mod tests {
                 Ok(())
             }
             fn query_chain_block_no(&self, _socket: &Path, magic: u32) -> Result<()> {
+                if magic != self.expected_magic {
+                    eyre::bail!(
+                        "magic mismatch: got {magic}, expected {}",
+                        self.expected_magic
+                    );
+                }
+                Ok(())
+            }
+            fn query_current_era(&self, _socket: &Path, magic: u32) -> Result<()> {
                 if magic != self.expected_magic {
                     eyre::bail!(
                         "magic mismatch: got {magic}, expected {}",
