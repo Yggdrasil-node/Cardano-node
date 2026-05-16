@@ -212,6 +212,19 @@ remaining commands and a separate binary is justified.
   `yggdrasil-node`, mirroring the node binary's wrapper rather than
   upstream's `BlockQuery` wrapper). 67 tests total post-R511.
   **16 operational subcommands** in the standalone binary.
+- **R512 (Phase 3.2, 2026-05) — LSQ query surface completed.** The
+  remaining 13 `query-*` subcommands ported across two batches —
+  5 Conway governance queries (drep-stake-distribution /
+  constitution / gov-state / drep-state / committee-state) and 8
+  ledger-introspection queries (treasury-and-reserves /
+  account-state / genesis-delegations / stability-window /
+  num-dormant-epochs / expected-network-id / deposit-pot /
+  ledger-counts). All socket-only, all via the `NtcQuery` enum.
+  Structured decoders for the array-shaped replies (deposit-pot,
+  ledger-counts, …), raw-hex passthrough for the complex
+  governance structures. 78 tests total post-R512. **29
+  operational subcommands** — the standalone binary now carries the
+  full 20-query LocalStateQuery surface plus the offline toolkit.
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -317,18 +330,14 @@ binary exposes 9 operational subcommands:
 | `StakeAddressBuild` | ✅ migrated (R508) | `era_based/stake_address/run.rs::run_stake_address_build_cmd` — Shelley reward address, Bech32 |
 | `TransactionTxid` | ✅ migrated (R508) | `era_based/transaction/run.rs::run_transaction_txid_cmd` — Blake2b-256 of the CBOR tx body |
 | `TransactionSign` | ✅ migrated (R509) | `era_based/transaction/run.rs::run_transaction_sign_cmd` — Ed25519 single-signer; fresh `{0:[[vk,sig]]}` witness set |
-| `QueryChainBlockNo` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_chain_block_no` — `GetChainBlockNo` LSQ |
-| `QueryCurrentEra` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_current_era` — `GetCurrentEra` LSQ |
-| `QuerySystemStart` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs` — `GetSystemStart` LSQ + `format_utc_time` |
-| `QueryStakeDistribution` | ✅ migrated (R511) | `NtcQuery::StakeDistribution` — yggdrasil-node dispatcher tag 5 |
-| `QueryStakePools` | ✅ migrated (R511) | `NtcQuery::StakePools` — yggdrasil-node dispatcher tag 15 |
-| `QueryProtocolParameters` | ✅ migrated (R511) | `NtcQuery::ProtocolParameters` — yggdrasil-node dispatcher tag 102 |
+| `Query*` (20 LSQ subcommands) | ✅ migrated (R510–R512) | `lsq.rs` `NtcQuery` enum + `lsq_tokio.rs` `plan_for`: tip / chain-block-no / current-era / system-start / stake-distribution / stake-pools / protocol-parameters / drep-stake-distribution / constitution / gov-state / drep-state / committee-state / treasury-and-reserves / account-state / genesis-delegations / stability-window / num-dormant-epochs / expected-network-id / deposit-pot / ledger-counts |
 
-The standalone binary now exposes 16 operational subcommands — the
-offline operator toolkit (keys / addresses / txid / single-signer
-signing) plus 7 LocalStateQuery introspection queries. Adding a
-further `query-*` is now one `NtcQuery` enum variant + one
-`plan_for` arm. The next non-query tranche — `transaction build`,
+The standalone binary now exposes **29 operational subcommands** —
+the offline operator toolkit (keys / addresses / txid /
+single-signer signing) plus the complete 20-query LocalStateQuery
+surface the node binary's `cardano-cli` wrapper carries. Adding a
+further `query-*` is one `NtcQuery` enum variant + one `plan_for`
+arm. The next non-query tranche — `transaction build`,
 `transaction build-raw`, `transaction view`, `transaction submit` —
 needs substantively new primitives (tx-builder with coin selection +
 fee minimization, era-aware CBOR pretty-printer, the NtC
