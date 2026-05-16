@@ -201,6 +201,17 @@ remaining commands and a separate binary is justified.
   civil-date helper mirroring the node binary's. 15 new tests; 63
   tests total post-R510. **13 operational subcommands** in the
   standalone binary.
+- **R511 (Phase 3.2, 2026-05) — LSQ client refactored + 3 more
+  queries.** The `LsqClient` trait collapsed from 4 methods to a
+  single `run_query(socket, magic, NtcQuery)` — `NtcQuery` is an
+  enum, so adding a query is one variant + one `plan_for` arm + an
+  encode/decode pair, with no trait change or per-impl method.
+  On top of that: `query-stake-distribution` / `query-stake-pools`
+  / `query-protocol-parameters` ported (yggdrasil-node NtC
+  dispatcher tags 5 / 15 / 102 — these target a running
+  `yggdrasil-node`, mirroring the node binary's wrapper rather than
+  upstream's `BlockQuery` wrapper). 67 tests total post-R511.
+  **16 operational subcommands** in the standalone binary.
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -308,16 +319,20 @@ binary exposes 9 operational subcommands:
 | `TransactionSign` | ✅ migrated (R509) | `era_based/transaction/run.rs::run_transaction_sign_cmd` — Ed25519 single-signer; fresh `{0:[[vk,sig]]}` witness set |
 | `QueryChainBlockNo` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_chain_block_no` — `GetChainBlockNo` LSQ |
 | `QueryCurrentEra` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_current_era` — `GetCurrentEra` LSQ |
-| `QuerySystemStart` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_system_start` — `GetSystemStart` LSQ + `format_utc_time` |
+| `QuerySystemStart` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs` — `GetSystemStart` LSQ + `format_utc_time` |
+| `QueryStakeDistribution` | ✅ migrated (R511) | `NtcQuery::StakeDistribution` — yggdrasil-node dispatcher tag 5 |
+| `QueryStakePools` | ✅ migrated (R511) | `NtcQuery::StakePools` — yggdrasil-node dispatcher tag 15 |
+| `QueryProtocolParameters` | ✅ migrated (R511) | `NtcQuery::ProtocolParameters` — yggdrasil-node dispatcher tag 102 |
 
-The standalone binary now exposes 13 operational subcommands — the
+The standalone binary now exposes 16 operational subcommands — the
 offline operator toolkit (keys / addresses / txid / single-signer
-signing) plus 4 LocalStateQuery introspection queries. The next
-subcommand tranche — `transaction build`, `transaction build-raw`,
-`transaction view`, `transaction submit` — needs substantively new
-primitives (tx-builder with coin selection + fee minimization,
-era-aware CBOR pretty-printer, the NtC LocalTxSubmission protocol)
-and is a separate, larger arc.
+signing) plus 7 LocalStateQuery introspection queries. Adding a
+further `query-*` is now one `NtcQuery` enum variant + one
+`plan_for` arm. The next non-query tranche — `transaction build`,
+`transaction build-raw`, `transaction view`, `transaction submit` —
+needs substantively new primitives (tx-builder with coin selection +
+fee minimization, era-aware CBOR pretty-printer, the NtC
+LocalTxSubmission protocol) and is a separate, larger arc.
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
