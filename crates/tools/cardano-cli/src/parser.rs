@@ -166,6 +166,28 @@ mod tests {
         );
     }
 
+    /// `address-key-gen --verification-key-file … --signing-key-file …`
+    /// parses to the expected variant.
+    #[test]
+    fn parses_address_key_gen() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "address-key-gen",
+            "--verification-key-file",
+            "/tmp/p.vkey",
+            "--signing-key-file",
+            "/tmp/p.skey",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::AddressKeyGen {
+                verification_key_file: PathBuf::from("/tmp/p.vkey"),
+                signing_key_file: PathBuf::from("/tmp/p.skey"),
+            }
+        );
+    }
+
     /// Unknown subcommand surfaces through `ParseError::Clap`.
     #[test]
     fn rejects_unknown_subcommand() {

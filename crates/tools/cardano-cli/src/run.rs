@@ -114,6 +114,17 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             let magic = network_magic.unwrap_or(764_824_073);
             client.query_tip(&socket_path, magic)
         }
+        Command::AddressKeyGen {
+            verification_key_file,
+            signing_key_file,
+        } => {
+            // R507: pure-crypto subcommand — no LSQ client, no node
+            // socket. Dispatches to the strict-mirror Run module.
+            crate::era_independent::address::run::run_address_key_gen_cmd(
+                &verification_key_file,
+                &signing_key_file,
+            )
+        }
     }
 }
 

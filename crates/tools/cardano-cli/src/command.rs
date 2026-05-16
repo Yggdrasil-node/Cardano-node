@@ -62,4 +62,15 @@ pub enum Command {
         #[arg(long)]
         network_magic: Option<u32>,
     },
+    /// Generate a fresh Ed25519 payment keypair, writing both keys
+    /// as TextEnvelope JSON files. Mirrors upstream `address key-gen`
+    /// (`Cardano.CLI.EraIndependent.Address.Command.AddressKeyGen`).
+    AddressKeyGen {
+        /// Path to write the verification (public) key TextEnvelope.
+        #[arg(long)]
+        verification_key_file: PathBuf,
+        /// Path to write the signing (private) key TextEnvelope.
+        #[arg(long)]
+        signing_key_file: PathBuf,
+    },
 }
