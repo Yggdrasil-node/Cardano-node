@@ -189,6 +189,18 @@ remaining commands and a separate binary is justified.
   binary. Operator smoke confirms the key-gen → sign → txid
   roundtrip preserves the tx body byte-for-byte
   (`txid(signed) == txid(unsigned)`).
+- **R510 (Phase 3.2, 2026-05) — LSQ query surface extended.** The
+  `LsqClient` trait grew from 1 to 4 methods — `query_chain_block_no`
+  / `query_current_era` / `query_system_start` join `query_tip`.
+  `lsq_tokio.rs` factored the socket-drive flow into a shared
+  `acquire_query_release` helper, so each new query is just an
+  encode + decode pair (`GetChainBlockNo` `[2]`, `GetCurrentEra`
+  `[0,[2,[1]]]`, `GetSystemStart` `[1]` — all upstream-canonical
+  tags, so they work against an upstream cardano-node as well as
+  yggdrasil-node). `query-system-start` carries a `format_utc_time`
+  civil-date helper mirroring the node binary's. 15 new tests; 63
+  tests total post-R510. **13 operational subcommands** in the
+  standalone binary.
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -294,14 +306,18 @@ binary exposes 9 operational subcommands:
 | `StakeAddressBuild` | ✅ migrated (R508) | `era_based/stake_address/run.rs::run_stake_address_build_cmd` — Shelley reward address, Bech32 |
 | `TransactionTxid` | ✅ migrated (R508) | `era_based/transaction/run.rs::run_transaction_txid_cmd` — Blake2b-256 of the CBOR tx body |
 | `TransactionSign` | ✅ migrated (R509) | `era_based/transaction/run.rs::run_transaction_sign_cmd` — Ed25519 single-signer; fresh `{0:[[vk,sig]]}` witness set |
+| `QueryChainBlockNo` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_chain_block_no` — `GetChainBlockNo` LSQ |
+| `QueryCurrentEra` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_current_era` — `GetCurrentEra` LSQ |
+| `QuerySystemStart` | ✅ migrated (R510) | `lsq.rs` + `lsq_tokio.rs::query_system_start` — `GetSystemStart` LSQ + `format_utc_time` |
 
-The standalone binary's offline operator toolkit (keys / addresses /
-txid / single-signer signing) is complete — 10 operational
-subcommands. The next subcommand tranche — `transaction build`,
-`transaction build-raw`, `transaction view`, `transaction submit` —
-needs substantively new primitives (tx-builder with coin selection +
-fee minimization, era-aware CBOR pretty-printer, the NtC
-LocalTxSubmission protocol) and is a separate, larger arc.
+The standalone binary now exposes 13 operational subcommands — the
+offline operator toolkit (keys / addresses / txid / single-signer
+signing) plus 4 LocalStateQuery introspection queries. The next
+subcommand tranche — `transaction build`, `transaction build-raw`,
+`transaction view`, `transaction submit` — needs substantively new
+primitives (tx-builder with coin selection + fee minimization,
+era-aware CBOR pretty-printer, the NtC LocalTxSubmission protocol)
+and is a separate, larger arc.
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
