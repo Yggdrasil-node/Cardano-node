@@ -240,9 +240,7 @@ impl EgressDemand {
             queue.push_back(TranslocationServiceRequest {
                 mini_protocol_num,
                 direction,
-                wanton: Wanton {
-                    remaining: payload,
-                },
+                wanton: Wanton { remaining: payload },
             });
         }
         // Wake the muxer. A full channel (capacity 1) means a wake is
@@ -336,7 +334,12 @@ async fn process_single_wanton(
     // `sdu_size` is u16::MAX-bounded for the trace-forwarder, but the
     // public `EgressConfig` lets a test pass a tiny value, so clamp
     // defensively: an SDU's length field is a `u16`.
-    let take = demand.wanton.remaining.len().min(sdu_size).min(u16::MAX as usize);
+    let take = demand
+        .wanton
+        .remaining
+        .len()
+        .min(sdu_size)
+        .min(u16::MAX as usize);
     // Split the front fragment off; `rest` is the tail still to send.
     let rest = demand.wanton.remaining.split_off(take);
     let frag = demand.wanton.remaining;
@@ -538,7 +541,10 @@ mod egress_tests {
                 .await
                 .expect("read within 2s")
                 .expect("read sdu");
-        assert_eq!(header.mini_protocol_num, TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM);
+        assert_eq!(
+            header.mini_protocol_num,
+            TRACE_OBJECT_FORWARD_MINI_PROTOCOL_NUM
+        );
         assert_eq!(header.direction, MiniProtocolDir::Initiator);
         assert_eq!(payload, b"hello egress");
 
@@ -706,7 +712,11 @@ mod egress_tests {
                     .await
                     .expect("read within 2s")
                     .expect("read sdu");
-            assert_eq!(payload, vec![i], "demand {i} arrived out of order or was lost");
+            assert_eq!(
+                payload,
+                vec![i],
+                "demand {i} arrived out of order or was lost"
+            );
         }
 
         drop(demand);
@@ -807,8 +817,14 @@ mod egress_tests {
     /// the live conformance test — fails here first.
     #[test]
     fn default_config_does_not_segment_trace_sdus() {
-        assert_eq!(EgressConfig::default(), EgressConfig::CARDANO_TRACER_DEFAULT);
-        assert_eq!(EgressConfig::CARDANO_TRACER_DEFAULT.sdu_size, u16::MAX as usize);
+        assert_eq!(
+            EgressConfig::default(),
+            EgressConfig::CARDANO_TRACER_DEFAULT
+        );
+        assert_eq!(
+            EgressConfig::CARDANO_TRACER_DEFAULT.sdu_size,
+            u16::MAX as usize
+        );
         assert_eq!(
             EgressConfig::CARDANO_TRACER_DEFAULT.batch_size,
             u16::MAX as usize
