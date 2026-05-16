@@ -155,6 +155,29 @@ remaining commands and a separate binary is justified.
   `decode_unknown_shape_falls_back_to_raw_hex`,
   `encode_get_chain_point_query_emits_canonical_cbor`). 19 tests
   total in the crate post-R506.
+- **R507–R508 (Phase 3.2, 2026-05) — offline operator toolkit
+  ported.** Six pure-crypto / pure-codec subcommands migrated into
+  the standalone library — they need neither tokio nor a node
+  socket, so they belong to the always-available (slim-build)
+  surface:
+  - `address key-gen` / `address key-hash` / `address build`
+    (`era_independent/address/run.rs`, mirroring upstream
+    `runAddressKeyGenCmd` / `runAddressKeyHashCmd` /
+    `runAddressBuildCmd`).
+  - `stake-address key-gen` / `stake-address build`
+    (`era_based/stake_address/run.rs`, mirroring
+    `runStakeAddressKeyGenCmd` / `runStakeAddressBuildCmd`).
+  - `transaction txid` (`era_based/transaction/run.rs`, mirroring
+    `runTransactionTxIdCmd`).
+  New unconditional deps: `hex`, `yggdrasil-crypto`,
+  `yggdrasil-ledger`, `bech32` — the offline-tooling dependency set
+  (all stay in the `--no-default-features` slim build, since that
+  build's purpose is exactly the offline operator toolkit).
+  `lsq-tokio` now gates only the networking surface (tokio +
+  yggdrasil-network). 25 new tests; 44 tests total in the crate
+  post-R508. The standalone binary now exposes **9 operational
+  subcommands**: the R503–R506 introspection trio plus the full
+  offline key / address / txid toolkit.
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -245,15 +268,26 @@ week follow-up rounds. Each port requires:
    the byte-equivalence verification status against the upstream
    binary at `.reference-haskell-cardano-node/install/bin/cardano-cli`.
 
-The pending migrations as of R506 closure (run-dispatcher operational
-for all 3 of 3 surface commands; standalone binary is feature-complete
-for the current `Command` enum):
+Subcommand-migration status as of R508 closure — the standalone
+binary exposes 9 operational subcommands:
 
 | Subcommand | Status | Migration shape |
 |---|---|---|
 | `Version` | ✅ migrated (R296 helpers, R503 dispatcher) | library-side `run::run_command` dispatches to `helper::version_info()` |
 | `ShowUpstreamConfig` | ✅ migrated (R297 helpers, R504 dispatcher) | library-side `run::run_command` dispatches to `environment::resolve_upstream_reference_paths` → `extract_reference_network_magic` → `run_show_upstream_config` |
 | `QueryTip` | ✅ migrated (R505 trait, R506 concrete impl) | library defines `trait LsqClient`; binary's `main.rs` constructs `TokioLsqClient` (gated by `lsq-tokio` feature, default on) and passes it to `run_command_with`. Slim build (`--no-default-features`) falls back to `DeferralLsqClient`. |
+| `AddressKeyGen` | ✅ migrated (R507) | `era_independent/address/run.rs::run_address_key_gen_cmd` — Ed25519 keypair → two TextEnvelope files |
+| `AddressKeyHash` | ✅ migrated (R507) | `era_independent/address/run.rs::run_address_key_hash_cmd` — Blake2b-224 of a VK |
+| `AddressBuild` | ✅ migrated (R508) | `era_independent/address/run.rs::run_address_build_cmd` — Shelley payment address, Bech32 |
+| `StakeAddressKeyGen` | ✅ migrated (R508) | `era_based/stake_address/run.rs::run_stake_address_key_gen_cmd` — stake keypair |
+| `StakeAddressBuild` | ✅ migrated (R508) | `era_based/stake_address/run.rs::run_stake_address_build_cmd` — Shelley reward address, Bech32 |
+| `TransactionTxid` | ✅ migrated (R508) | `era_based/transaction/run.rs::run_transaction_txid_cmd` — Blake2b-256 of the CBOR tx body |
+
+The standalone binary's offline operator toolkit (keys / addresses /
+txid) is complete. The next subcommand tranche — `transaction sign`,
+`transaction build`, `transaction build-raw`, `transaction view` —
+needs the tx-builder / witness-construction primitives and is a
+separate, larger arc.
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
