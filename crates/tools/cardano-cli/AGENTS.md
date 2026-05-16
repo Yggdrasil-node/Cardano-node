@@ -225,6 +225,19 @@ remaining commands and a separate binary is justified.
   governance structures. 78 tests total post-R512. **29
   operational subcommands** — the standalone binary now carries the
   full 20-query LocalStateQuery surface plus the offline toolkit.
+- **R513 (Phase 3.3, 2026-05) — `transaction submit` + `view`.**
+  `transaction submit` adds the second NtC mini-protocol — the
+  `LsqClient` trait grew a `submit_tx` method alongside `run_query`
+  (one trait, both NtC operations; concrete `TokioLsqClient` drives
+  `LocalTxSubmissionClient`, mirroring the node binary's
+  `run_submit_tx`). `transaction view` is a **shallow** structural
+  view — txid + top-level CBOR elements as hex, deliberately not a
+  full per-era tx-body decode (the `view` field says so). 84 tests
+  total post-R513. **31 operational subcommands**. Only
+  `transaction build` / `build-raw` remain — fresh tx-body
+  wire-format encoding, tracked separately as the hazard-flagged
+  tx-construction tranche (needs upstream-binary byte captures per
+  the wire-shape-pin discipline).
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -330,18 +343,21 @@ binary exposes 9 operational subcommands:
 | `StakeAddressBuild` | ✅ migrated (R508) | `era_based/stake_address/run.rs::run_stake_address_build_cmd` — Shelley reward address, Bech32 |
 | `TransactionTxid` | ✅ migrated (R508) | `era_based/transaction/run.rs::run_transaction_txid_cmd` — Blake2b-256 of the CBOR tx body |
 | `TransactionSign` | ✅ migrated (R509) | `era_based/transaction/run.rs::run_transaction_sign_cmd` — Ed25519 single-signer; fresh `{0:[[vk,sig]]}` witness set |
+| `TransactionSubmit` | ✅ migrated (R513) | `era_based/transaction/run.rs::run_transaction_submit_cmd` — NtC LocalTxSubmission via `LsqClient::submit_tx` |
+| `TransactionView` | ✅ migrated (R513) | `era_based/transaction/run.rs::run_transaction_view_cmd` — shallow structural view (txid + top-level CBOR hex) |
 | `Query*` (20 LSQ subcommands) | ✅ migrated (R510–R512) | `lsq.rs` `NtcQuery` enum + `lsq_tokio.rs` `plan_for`: tip / chain-block-no / current-era / system-start / stake-distribution / stake-pools / protocol-parameters / drep-stake-distribution / constitution / gov-state / drep-state / committee-state / treasury-and-reserves / account-state / genesis-delegations / stability-window / num-dormant-epochs / expected-network-id / deposit-pot / ledger-counts |
+| `TransactionBuild` / `TransactionBuildRaw` | ⏳ deferred | fresh per-era tx-body CBOR *encoding* — needs upstream-binary byte captures per the wire-shape-pin discipline; tracked as the tx-construction tranche |
 
-The standalone binary now exposes **29 operational subcommands** —
-the offline operator toolkit (keys / addresses / txid /
-single-signer signing) plus the complete 20-query LocalStateQuery
-surface the node binary's `cardano-cli` wrapper carries. Adding a
-further `query-*` is one `NtcQuery` enum variant + one `plan_for`
-arm. The next non-query tranche — `transaction build`,
-`transaction build-raw`, `transaction view`, `transaction submit` —
-needs substantively new primitives (tx-builder with coin selection +
-fee minimization, era-aware CBOR pretty-printer, the NtC
-LocalTxSubmission protocol) and is a separate, larger arc.
+The standalone binary now exposes **31 operational subcommands** —
+the offline operator toolkit (keys / addresses / txid / single-signer
+signing / shallow tx-view), the complete 20-query LocalStateQuery
+surface, and `transaction submit`. The only subcommands still
+deferred are `transaction build` / `build-raw`: full tx construction
+(coin selection + fee minimization + fresh per-era tx-body CBOR
+*encoding*). Per the wire-shape-pin discipline, the tx-body encoder
+must be byte-pinned against captures from a running upstream
+`cardano-cli`, not derived from the CDDL alone — so that work is a
+deliberate, separate arc rather than a mirror-the-pattern port.
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
