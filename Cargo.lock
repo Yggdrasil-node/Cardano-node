@@ -3419,8 +3419,11 @@ dependencies = [
  "eyre",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
+ "yggdrasil-crypto",
  "yggdrasil-ledger",
+ "yggdrasil-storage",
  "yggdrasil-telemetry",
 ]
 

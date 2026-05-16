@@ -1,8 +1,8 @@
 # Guidance for the pure-Rust port of upstream `db-synthesizer`.
 
-**Status:** `partial` (post-R335-pattern skeleton). Concrete
-subcommand dispatch lands at **R409+** per the R326-R459
-sister-tools port arc plan. Scope band: **MEDIUM**.
+**Status:** `partial` (Phase 4 R1 forge-loop slice shipped — see
+below). Genesis loading (R2) + the Praos VRF/KES/OpCert forge path
+(R3) remain. Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -21,28 +21,39 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `node/src/block_producer.rs` Forging logic.
 
-## Current functional surface (post-R441)
+## Current functional surface (post Phase 4 R1)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
 - ✅ `<binary> --version` byte-equivalent to upstream.
 - ✅ Typed `parser::Args` dispatch — forge-limit (slot/block/epoch) +
   open-mode (create/create-force/append) parsed + validated.
-- ❌ Forge loop — returns `RunError::ForgeLoopDeferred { config,
-  chain_db, limit, mode }` (R441 structured deferral). See **Carve-out
-  inventory** below.
-- ❌ End-to-end behavioral tests against upstream binary — pending
-  Phase C authorization checkpoint (cardano-cli MVS in the parallel
-  C-arc must complete first).
+- ✅ Forge loop (Phase 4 R1) — `forging.rs` ports `Forging.hs`'s
+  `runForge` control loop (`ForgeState`, `forgingDone`,
+  `nextForgeState`); `run.rs` ports `Run.hs`'s `preOpenChainDB` +
+  `synthesize`. `lib::run` synthesizes a real on-disk ChainDB; the
+  `ForgeLoopDeferred` stub is retired. Blocks are deterministic,
+  prev-hash-threaded, **non-Praos** structural blocks — see the
+  carve-out inventory below.
+- 🟡 Genesis loading (Phase 4 R2) — epoch length + era are
+  placeholder stubs until `config.json` / `ShelleyGenesis` parsing
+  lands.
+- 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
+  structurally valid but not Praos-valid until the VRF/KES/OpCert
+  leader check + KES-signed `forgeBlock` land.
+- ❌ Byte-equivalence soak vs the upstream binary's ChainDB chunk
+  format — deferred to the integration round.
 
-## Carve-out inventory (R441 structured deferral surface)
+## Carve-out inventory (Phase 4 R2/R3 deferral surface)
 
-`crates/tools/db-synthesizer/src/status.rs` ships
-`forge_loop_status()` returning a `ForgeLoopStatus` descriptor.
+The Phase 4 R1 forge-loop slice (`forging.rs` + `run.rs`) is shipped.
+`crates/tools/db-synthesizer/src/status.rs` ships `forge_loop_status()`
+returning a `ForgeLoopStatus` descriptor of the two surviving carve-outs:
 
-| Carve-out                            | Status helper                       | Deferral rationale (one-liner)                                            |
-|--------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
-| Forge loop + Run.hs supervisor       | `status::forge_loop_status()`       | Gated on Phase C authorization checkpoint (cardano-cli MVS C-arc); once unlocked, leverages `node/src/block_producer.rs` for actual block-construction logic. |
+| Carve-out         | Slice | Deferral rationale (one-liner)                                            |
+|-------------------|-------|---------------------------------------------------------------------------|
+| Genesis loading   | R2    | `Run.hs` `initialize` — parse `config.json`'s NodeConfigStub, load + validate `ShelleyGenesis`, build `CardanoProtocolParams`. Until then epoch length + era are placeholder stubs (`STUB_EPOCH_SIZE` / `SYNTH_ERA`). |
+| Praos forge path  | R3    | `checkShouldForge` (VRF/KES/OpCert leader check) + KES-signed `forgeBlock`, leveraging `crates/node/block-producer`. Until then `synth_structural_block` emits deterministic non-Praos structural blocks. |
 
 ## Build + run
 

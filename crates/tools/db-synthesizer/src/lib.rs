@@ -8,21 +8,23 @@
 //! Per-leaf module mirrors land in subsequent rounds per the
 //! Sister-Tools Pure-Rust Port plan.
 //!
-//! Layout mapping (R378 ships orphans.rs; later rounds populate the rest):
+//! Layout mapping (Phase 4 R1 ships forging.rs + run.rs):
 //!
 //! | Upstream `.hs`                                | Yggdrasil `.rs`              |
 //! |-----------------------------------------------|------------------------------|
 //! | `Tools/DBSynthesizer/Types.hs`                | `types.rs`                   |
 //! | `app/DBSynthesizer/Parsers.hs`                | `parser.rs`                  |
-//! | `Tools/DBSynthesizer/Forging.hs`              | `forging.rs` (pending)       |
-//! | `Tools/DBSynthesizer/Run.hs`                  | `run.rs` (pending)           |
+//! | `Tools/DBSynthesizer/Forging.hs`              | `forging.rs`                 |
+//! | `Tools/DBSynthesizer/Run.hs`                  | `run.rs`                     |
 //! | `Tools/DBSynthesizer/Orphans.hs`              | `orphans.rs`                 |
 
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod forging;
 pub mod orphans;
 pub mod parser;
+pub mod run;
 pub mod status;
 pub mod types;
 
@@ -65,53 +67,54 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// R364 lands argv → [`parser::Args`] dispatch. The actual forging
-/// loop (Forging.hs port leveraging node/src/block_producer.rs) +
-/// Run.hs supervisor land in subsequent rounds per the per-tool
-/// roadmap (gated on Phase C entry per the plan's Phase C
-/// authorization checkpoint).
+/// **Phase 4 R1 slice:** wires argv → [`parser::Args`] → the
+/// [`run::synthesize_default`] supervisor, replacing the former
+/// `ForgeLoopDeferred` structured-deferral stub. On a `--blocks N` /
+/// `--slots N` / `--epochs N` invocation the synthesizer opens (or
+/// creates) the ChainDB at `--db` and forges `N` deterministic
+/// structural blocks, then prints upstream-shaped progress lines.
+///
+/// Mirror of upstream `app/db-synthesizer.hs`'s `main`:
+/// `initialize paths creds forgeOpts >>= either die (synthesize ...)`.
+///
+/// **Carve-out (this slice):** upstream's `initialize` loads the
+/// node config + Shelley genesis and builds a Praos `BlockForging`
+/// credential set; this slice stubs the epoch size + era (see
+/// [`run::synthesize_default`]) and forges *non-Praos* structural
+/// blocks (see [`forging`]'s module note). The `--config` /
+/// credential flags are parsed + accepted but the genesis-loading and
+/// Praos-forging paths land in db-synthesizer R2/R3. The result is a
+/// structurally-valid ChainDB that yggdrasil's own `FileImmutable` /
+/// `db-analyser` can open and walk — not yet a Praos-valid chain.
 pub fn run(args: &parser::Args) -> eyre::Result<()> {
-    let limit = match args.options.limit {
-        types::ForgeLimit::Slot(s) => format!("slots={}", s.0),
-        types::ForgeLimit::Block(b) => format!("blocks={b}"),
-        types::ForgeLimit::Epoch(e) => format!("epochs={e}"),
-    };
+    let outcome = run::synthesize_default(args.options, &args.paths.chain_db)?;
+
+    // Upstream-shaped progress reporting (mirror of Run.hs's putStrLn
+    // lines + app/db-synthesizer.hs's "--> done" line).
     let mode = match args.options.open_mode {
-        types::DBSynthesizerOpenMode::OpenCreate => "create",
-        types::DBSynthesizerOpenMode::OpenCreateForce => "create-force",
-        types::DBSynthesizerOpenMode::OpenAppend => "append",
+        types::DBSynthesizerOpenMode::OpenCreate => "OpenCreate",
+        types::DBSynthesizerOpenMode::OpenCreateForce => "OpenCreateForce",
+        types::DBSynthesizerOpenMode::OpenAppend => "OpenAppend",
     };
-    Err(RunError::ForgeLoopDeferred {
-        config: args.paths.config.display().to_string(),
-        chain_db: args.paths.chain_db.display().to_string(),
-        limit,
-        mode: mode.to_string(),
-    }
-    .into())
+    println!("--> opening ChainDB on file system with mode: {mode}");
+    println!("--> starting at: SlotNo {}", outcome.resumed_from.0);
+    println!(
+        "--> forged and adopted {} blocks; reached SlotNo {}",
+        outcome.forge.result.forged, outcome.forge.final_state.current_slot.0
+    );
+    println!(
+        "--> done; result: ForgeResult {{resultForged = {}}}",
+        outcome.forge.result.forged
+    );
+    Ok(())
 }
 
 /// Errors from the db-synthesizer `run` entry point.
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
-    /// Forge loop + Run.hs supervisor are deferred. Mirror of
-    /// upstream `Cardano.Tools.DBSynthesizer.{Forging, Run}`.
-    /// Yggdrasil's port is gated on the Phase C authorization
-    /// checkpoint per the playful-tickling-plum.md plan (the
-    /// cardano-cli MVS in the parallel C-arc must complete first).
-    #[error(
-        "yggdrasil-db-synthesizer: forge loop deferred — gated on Phase C authorization \
-         checkpoint (see crates/db-synthesizer/src/status.rs::forge_loop_status for the \
-         full deferral rationale). Resolved CLI: config={config}, db={chain_db}, \
-         limit={limit}, mode={mode}."
-    )]
-    ForgeLoopDeferred {
-        /// Path to the config file the operator supplied.
-        config: String,
-        /// Path to the ChainDB the operator supplied.
-        chain_db: String,
-        /// Forge-limit rendering (slots / blocks / epochs).
-        limit: String,
-        /// DB-open-mode rendering (create / create-force / append).
-        mode: String,
-    },
+    /// The synthesize supervisor failed (ChainDB open / mode check /
+    /// block append). Mirror of upstream `Cardano.Tools.DBSynthesizer.Run`
+    /// surfacing a `preOpenChainDB` `fail` or a ChainDB-write error.
+    #[error(transparent)]
+    Synthesize(#[from] run::RunError),
 }
