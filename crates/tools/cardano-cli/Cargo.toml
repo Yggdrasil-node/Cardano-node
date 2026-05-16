@@ -31,7 +31,6 @@ workspace = true
 default = ["lsq-tokio"]
 lsq-tokio = [
     "dep:tokio",
-    "dep:yggdrasil-ledger",
     "dep:yggdrasil-network",
 ]
 
@@ -42,22 +41,28 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
-# Unconditional deps. `hex` + `yggdrasil-crypto` back the pure-crypto
-# subcommands (`address key-gen` etc.) that need neither tokio nor a
-# node socket — they belong to the always-available library surface.
-# `yggdrasil-crypto` is layer-1, dependency-light, pure-Rust (no FFI),
-# so it does not bloat the slim (`--no-default-features`) build.
+# Unconditional deps backing the offline-tooling subcommand surface
+# (key-gen / key-hash / address-build / transaction-txid …) — all
+# the subcommands that need neither tokio nor a node socket. They
+# stay in the slim (`--no-default-features`) build because that
+# build's purpose is exactly the offline operator toolkit.
+#   * `hex` — TextEnvelope cborHex + txid hex encode/decode.
+#   * `yggdrasil-crypto` — layer-1, dependency-light, pure-Rust
+#     (no FFI): Ed25519 keypairs + Blake2b hashing.
+#   * `yggdrasil-ledger` — CBOR `Decoder` + `compute_tx_id` for
+#     `transaction txid` (R508: promoted from the lsq-tokio gate to
+#     unconditional; the LSQ client also uses its `Encoder`/`Decoder`
+#     but the txid path needs it without tokio).
 hex = { workspace = true }
 yggdrasil-crypto = { workspace = true }
+yggdrasil-ledger = { workspace = true }
 
 # R506 lsq-tokio gated deps — only compiled when the feature is on.
 # Required so the binary's concrete `LsqClient` impl can build a
-# tokio runtime, open the Unix NtC socket via yggdrasil-network's
-# `ntc_connect`, drive the LSQ mini-protocol, and decode the CBOR
-# Tip result through yggdrasil-ledger's `Decoder`. Library callers
-# never see these deps unless they opt in.
+# tokio runtime and open the Unix NtC socket via yggdrasil-network's
+# `ntc_connect` to drive the LSQ mini-protocol. Library callers never
+# see these deps unless they opt in.
 tokio = { workspace = true, optional = true }
-yggdrasil-ledger = { workspace = true, optional = true }
 yggdrasil-network = { workspace = true, optional = true }
 
 # Standalone binary target. Operators install via:

@@ -97,4 +97,16 @@ pub enum Command {
         #[arg(long)]
         signing_key_file: PathBuf,
     },
+    /// Print the transaction id (Blake2b-256 of the CBOR tx body)
+    /// of a serialized transaction. Mirrors upstream
+    /// `transaction txid` (`Cardano.CLI.EraBased.Transaction.Command`).
+    TransactionTxid {
+        /// Path to a file containing the CBOR-encoded transaction.
+        #[arg(long, conflicts_with = "tx_hex")]
+        tx_file: Option<PathBuf>,
+        /// Hex-encoded CBOR transaction bytes (a leading `0x` and
+        /// surrounding whitespace are tolerated).
+        #[arg(long, conflicts_with = "tx_file")]
+        tx_hex: Option<String>,
+    },
 }

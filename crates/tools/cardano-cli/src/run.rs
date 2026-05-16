@@ -144,6 +144,11 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 &signing_key_file,
             )
         }
+        Command::TransactionTxid { tx_file, tx_hex } => {
+            // R508: offline subcommand — Blake2b-256 of the CBOR tx
+            // body. No LSQ client, no node socket.
+            crate::era_based::transaction::run::run_transaction_txid_cmd(tx_file, tx_hex)
+        }
     }
 }
 

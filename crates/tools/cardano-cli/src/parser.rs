@@ -229,6 +229,43 @@ mod tests {
         );
     }
 
+    /// `transaction-txid --tx-hex …` parses to the expected variant.
+    #[test]
+    fn parses_transaction_txid_with_hex() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "transaction-txid",
+            "--tx-hex",
+            "82a0a0",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::TransactionTxid {
+                tx_file: None,
+                tx_hex: Some("82a0a0".to_string()),
+            }
+        );
+    }
+
+    /// `transaction-txid` rejects `--tx-file` + `--tx-hex` together
+    /// (clap `conflicts_with`).
+    #[test]
+    fn transaction_txid_rejects_both_tx_flags() {
+        let result = parse_command([
+            "yggdrasil-cardano-cli",
+            "transaction-txid",
+            "--tx-file",
+            "/tmp/tx.cbor",
+            "--tx-hex",
+            "82a0a0",
+        ]);
+        assert!(
+            matches!(result, Err(ParseError::Clap(_))),
+            "conflicting --tx-file + --tx-hex must be a clap error; got {result:?}"
+        );
+    }
+
     /// Unknown subcommand surfaces through `ParseError::Clap`.
     #[test]
     fn rejects_unknown_subcommand() {
