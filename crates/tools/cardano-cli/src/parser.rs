@@ -166,6 +166,26 @@ mod tests {
         );
     }
 
+    /// `query-chain-block-no --socket-path …` parses with the
+    /// canonical socket-path argument.
+    #[test]
+    fn parses_query_chain_block_no() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-chain-block-no",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::QueryChainBlockNo {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+    }
+
     /// `address-key-gen --verification-key-file … --signing-key-file …`
     /// parses to the expected variant.
     #[test]

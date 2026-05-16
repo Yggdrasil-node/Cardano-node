@@ -48,22 +48,56 @@ pub struct TokioLsqClient;
 
 impl LsqClient for TokioLsqClient {
     fn query_tip(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_io()
-            .enable_time()
-            .build()
-            .wrap_err("failed to build tokio current-thread runtime")?;
+        run_blocking(async {
+            let result = acquire_query_release(
+                socket_path,
+                network_magic,
+                encode_get_chain_point_query(),
+                "GetChainPoint",
+            )
+            .await?;
+            print_json(&decode_chain_point_result(&result))
+        })
+    }
 
-        rt.block_on(query_tip_inner(socket_path, network_magic))
+    fn query_chain_block_no(&self, socket_path: &Path, network_magic: u32) -> Result<()> {
+        run_blocking(async {
+            let result = acquire_query_release(
+                socket_path,
+                network_magic,
+                encode_get_chain_block_no_query(),
+                "GetChainBlockNo",
+            )
+            .await?;
+            print_json(&decode_chain_block_no_result(&result))
+        })
     }
 }
 
-/// Async body of `TokioLsqClient::query_tip`. Open + handshake +
-/// acquire + query + decode + print + release + done.
+/// Build a single-threaded tokio runtime and drive `fut` to
+/// completion. Each `TokioLsqClient` call is one-shot (matches
+/// upstream `cardano-cli`'s per-invocation behavior), so the runtime
+/// is constructed + torn down per call.
+fn run_blocking<F: std::future::Future<Output = Result<()>>>(fut: F) -> Result<()> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .wrap_err("failed to build tokio current-thread runtime")?
+        .block_on(fut)
+}
+
+/// Open the NtC socket, acquire at VolatileTip, run one
+/// LocalStateQuery, release + done, and return the raw CBOR result.
 ///
-/// Mirrors `node/src/commands/query.rs::run_query`'s flow restricted
-/// to the `QueryCommand::Tip` arm.
-async fn query_tip_inner(socket_path: &Path, network_magic: u32) -> Result<()> {
+/// Mirrors `node/src/commands/query.rs::run_query`'s socket-drive
+/// flow. `query_label` names the query for the error context only.
+async fn acquire_query_release(
+    socket_path: &Path,
+    network_magic: u32,
+    query_bytes: Vec<u8>,
+    query_label: &str,
+) -> Result<Vec<u8>> {
     let mut conn = ntc_connect(socket_path, network_magic, true)
         .await
         .wrap_err_with(|| {
@@ -84,20 +118,22 @@ async fn query_tip_inner(socket_path: &Path, network_magic: u32) -> Result<()> {
         .await
         .wrap_err("LocalStateQuery acquire failed")?;
 
-    let query_bytes = encode_get_chain_point_query();
     let result = client
         .query(query_bytes)
         .await
-        .wrap_err("LocalStateQuery `GetChainPoint` query failed")?;
-
-    let json_val = decode_chain_point_result(&result);
-    println!("{}", serde_json::to_string_pretty(&json_val)?);
+        .wrap_err_with(|| format!("LocalStateQuery `{query_label}` query failed"))?;
 
     // Best-effort cleanup; failures here are non-fatal because the
     // remote may already have torn the socket down by the time we
     // get here.
     let _ = client.release().await;
     let _ = client.done().await;
+    Ok(result)
+}
+
+/// Pretty-print a `serde_json::Value` to stdout.
+fn print_json(value: &serde_json::Value) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
 
@@ -109,6 +145,35 @@ fn encode_get_chain_point_query() -> Vec<u8> {
     let mut enc = Encoder::new();
     enc.array(1).unsigned(3u64);
     enc.into_bytes()
+}
+
+/// CBOR-encode the `GetChainBlockNo = [2]` query envelope.
+///
+/// Mirrors upstream `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`:
+/// `[2]` is the single-element array with tag 2 = `GetChainBlockNo`.
+fn encode_get_chain_block_no_query() -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(1).unsigned(2u64);
+    enc.into_bytes()
+}
+
+/// Decode the upstream `Cardano.Slotting.Block.encodeChainBlockNo`
+/// reply: `Origin = [0]`, `At b = [1, b]` (mirrors
+/// `Ouroboros.Network.Block.Tip.tipBlockNo`).
+///
+/// Mirrors `node/src/commands/query.rs::decode_ntc_result`'s
+/// `QueryCommand::ChainBlockNo` arm.
+fn decode_chain_block_no_result(result: &[u8]) -> serde_json::Value {
+    let mut dec = Decoder::new(result);
+    match dec.array() {
+        Ok(1) => json!({ "chain_block_no": serde_json::Value::Null }),
+        Ok(2) => {
+            let _tag = dec.unsigned().unwrap_or(1);
+            let block_no = dec.unsigned().unwrap_or(0);
+            json!({ "chain_block_no": block_no })
+        }
+        _ => json!({ "chain_block_no_cbor": hex::encode(result) }),
+    }
 }
 
 /// Decode the upstream `Ouroboros.Network.Block.encodePoint` reply.
@@ -201,5 +266,57 @@ mod tests {
         // CBOR encoding of `[3]` is `0x81 0x03` — 1-element array
         // containing the unsigned int 3.
         assert_eq!(bytes, vec![0x81, 0x03]);
+    }
+
+    /// `encode_get_chain_block_no_query` produces the canonical CBOR
+    /// `[2]` byte sequence.
+    #[test]
+    fn encode_get_chain_block_no_query_emits_canonical_cbor() {
+        assert_eq!(encode_get_chain_block_no_query(), vec![0x81, 0x02]);
+    }
+
+    /// `decode_chain_block_no_result` recognizes `Origin = [0]` (a
+    /// 1-element array) → null block number.
+    #[test]
+    fn decode_chain_block_no_origin() {
+        // CBOR `[0]` = 0x81 0x00.
+        let v = decode_chain_block_no_result(&[0x81, 0x00]);
+        assert_eq!(v, json!({ "chain_block_no": serde_json::Value::Null }));
+    }
+
+    /// `decode_chain_block_no_result` recognizes `At b = [1, b]` (a
+    /// 2-element array) → the block number.
+    #[test]
+    fn decode_chain_block_no_at_block() {
+        // CBOR `[1, 42]` = 0x82 0x01 0x18 0x2a.
+        let v = decode_chain_block_no_result(&[0x82, 0x01, 0x18, 0x2a]);
+        assert_eq!(v, json!({ "chain_block_no": 42 }));
+    }
+
+    /// `decode_chain_block_no_result` falls back to a raw-hex dump
+    /// for unrecognized payloads.
+    #[test]
+    fn decode_chain_block_no_unknown_shape() {
+        // CBOR single integer 0x05 — not an array.
+        let v = decode_chain_block_no_result(&[0x05]);
+        assert_eq!(v, json!({ "chain_block_no_cbor": "05" }));
+    }
+
+    /// `query_chain_block_no` against a missing socket bails with the
+    /// same wrapped IO-error contract as `query_tip`.
+    #[test]
+    fn query_chain_block_no_against_missing_socket_returns_wrapped_error() {
+        let client = TokioLsqClient;
+        let err = client
+            .query_chain_block_no(
+                &PathBuf::from("/tmp/yggdrasil-cardano-cli-nonexistent-socket"),
+                764_824_073,
+            )
+            .expect_err("missing socket must bail");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("failed to connect to NtC socket"),
+            "error must carry the eyre socket-path context; got {msg}"
+        );
     }
 }

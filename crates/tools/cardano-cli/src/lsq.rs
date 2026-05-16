@@ -67,8 +67,8 @@ use eyre::Result;
 ///   point + block number, prints the JSON envelope upstream
 ///   `cardano-cli query tip` emits.
 pub trait LsqClient {
-    /// Query the running node for tip / chain-point / block-no and
-    /// render the result.
+    /// Query the running node for its tip (chain point) and render
+    /// the result as JSON.
     ///
     /// Mirrors the inline call in upstream
     /// `Cardano.CLI.Compatible.Run.Tip.runTipCmd`. The impl owns
@@ -82,6 +82,14 @@ pub trait LsqClient {
     /// - `network_magic` — protocol magic for the handshake
     ///   (mainnet=764_824_073 / preprod=1 / preview=2 / custom).
     fn query_tip(&self, socket_path: &Path, network_magic: u32) -> Result<()>;
+
+    /// Query the running node for its current chain block number and
+    /// render the result as JSON.
+    ///
+    /// Mirrors `GetChainBlockNo` from upstream
+    /// `Ouroboros.Consensus.Ledger.Query`. Same parameters as
+    /// [`LsqClient::query_tip`].
+    fn query_chain_block_no(&self, socket_path: &Path, network_magic: u32) -> Result<()>;
 }
 
 /// In-crate "no concrete LSQ impl wired" sentinel.
@@ -97,14 +105,25 @@ pub struct DeferralLsqClient;
 
 impl LsqClient for DeferralLsqClient {
     fn query_tip(&self, _socket_path: &Path, _network_magic: u32) -> Result<()> {
-        eyre::bail!(
-            "query-tip: today's library crate doesn't carry the tokio + yggdrasil-network \
-             deps needed to open a NtC socket; use the node binary's \
-             `yggdrasil-node cardano-cli query-tip --socket-path=…` subcommand for now. \
-             Library-side wiring lands once a concrete `LsqClient` impl is plugged in \
-             at the binary entry-point."
-        );
+        deferral_bail("query-tip")
     }
+
+    fn query_chain_block_no(&self, _socket_path: &Path, _network_magic: u32) -> Result<()> {
+        deferral_bail("query-chain-block-no")
+    }
+}
+
+/// Shared deferral error for [`DeferralLsqClient`] — every LSQ
+/// subcommand bails the same way (pointing operators at the node
+/// binary's wrapper) when no concrete `LsqClient` impl is plugged in.
+fn deferral_bail(subcommand: &str) -> Result<()> {
+    eyre::bail!(
+        "{subcommand}: today's library crate doesn't carry the tokio + yggdrasil-network \
+         deps needed to open a NtC socket; use the node binary's \
+         `yggdrasil-node cardano-cli {subcommand} --socket-path=…` subcommand for now. \
+         Library-side wiring lands once a concrete `LsqClient` impl is plugged in \
+         at the binary entry-point."
+    );
 }
 
 #[cfg(test)]
@@ -112,19 +131,29 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    /// `DeferralLsqClient::query_tip` returns the structured deferral
-    /// error rather than panicking or printing. Pins the error string
-    /// so the operator-facing message stays stable.
+    /// `DeferralLsqClient`'s LSQ methods return the structured
+    /// deferral error rather than panicking or printing. Pins the
+    /// error string — including the subcommand name — so the
+    /// operator-facing message stays stable for both methods.
     #[test]
     fn deferral_client_bails_with_structured_error() {
         let client = DeferralLsqClient;
-        let result = client.query_tip(&PathBuf::from("/unused.socket"), 764_824_073);
-        let err = result.expect_err("DeferralLsqClient must bail");
-        let msg = err.to_string();
-        assert!(
-            msg.contains("query-tip") && msg.contains("LsqClient"),
-            "error must point at LsqClient wiring; got {msg}"
-        );
+        let socket = PathBuf::from("/unused.socket");
+        let cases = [
+            (client.query_tip(&socket, 764_824_073), "query-tip"),
+            (
+                client.query_chain_block_no(&socket, 764_824_073),
+                "query-chain-block-no",
+            ),
+        ];
+        for (call, name) in cases {
+            let err = call.expect_err("DeferralLsqClient must bail");
+            let msg = err.to_string();
+            assert!(
+                msg.contains(name) && msg.contains("LsqClient"),
+                "error must name the subcommand + point at LsqClient wiring; got {msg}"
+            );
+        }
     }
 
     /// A custom `LsqClient` impl can plug in arbitrary behavior.
@@ -146,6 +175,15 @@ mod tests {
                 }
                 Ok(())
             }
+            fn query_chain_block_no(&self, _socket: &Path, magic: u32) -> Result<()> {
+                if magic != self.expected_magic {
+                    eyre::bail!(
+                        "magic mismatch: got {magic}, expected {}",
+                        self.expected_magic
+                    );
+                }
+                Ok(())
+            }
         }
         let client = StubClient { expected_magic: 1 };
         client
@@ -155,5 +193,8 @@ mod tests {
             .query_tip(&PathBuf::from("/x"), 2)
             .expect_err("stub with mismatched magic bails");
         assert!(err.to_string().contains("magic mismatch"));
+        client
+            .query_chain_block_no(&PathBuf::from("/x"), 1)
+            .expect("query_chain_block_no stub with matching magic succeeds");
     }
 }

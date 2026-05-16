@@ -114,6 +114,14 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
             let magic = network_magic.unwrap_or(764_824_073);
             client.query_tip(&socket_path, magic)
         }
+        Command::QueryChainBlockNo {
+            socket_path,
+            network_magic,
+        } => {
+            // R510: second LSQ subcommand — `GetChainBlockNo`.
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.query_chain_block_no(&socket_path, magic)
+        }
         Command::AddressKeyGen {
             verification_key_file,
             signing_key_file,
@@ -291,11 +299,16 @@ mod tests {
         use std::path::{Path, PathBuf};
 
         struct RecordingClient {
-            seen: RefCell<Option<(PathBuf, u32)>>,
+            seen: RefCell<Option<(String, PathBuf, u32)>>,
         }
         impl crate::lsq::LsqClient for RecordingClient {
             fn query_tip(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
-                *self.seen.borrow_mut() = Some((socket.to_path_buf(), magic));
+                *self.seen.borrow_mut() = Some(("tip".to_string(), socket.to_path_buf(), magic));
+                Ok(())
+            }
+            fn query_chain_block_no(&self, socket: &Path, magic: u32) -> eyre::Result<()> {
+                *self.seen.borrow_mut() =
+                    Some(("chain-block-no".to_string(), socket.to_path_buf(), magic));
                 Ok(())
             }
         }
@@ -310,11 +323,28 @@ mod tests {
             &client,
         )
         .expect("run_command_with must succeed with a custom client");
-        let captured = client.seen.borrow().clone();
         assert_eq!(
-            captured,
-            Some((PathBuf::from("/tmp/node.socket"), 1)),
-            "custom client must see the socket path + magic forwarded verbatim"
+            client.seen.borrow().clone(),
+            Some(("tip".to_string(), PathBuf::from("/tmp/node.socket"), 1)),
+            "QueryTip must dispatch query_tip with the socket path + magic forwarded verbatim"
+        );
+        // The same client also services QueryChainBlockNo.
+        run_command_with(
+            Command::QueryChainBlockNo {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: Some(2),
+            },
+            &client,
+        )
+        .expect("run_command_with must succeed for QueryChainBlockNo");
+        assert_eq!(
+            client.seen.borrow().clone(),
+            Some((
+                "chain-block-no".to_string(),
+                PathBuf::from("/tmp/node.socket"),
+                2
+            )),
+            "QueryChainBlockNo must dispatch query_chain_block_no with the args forwarded"
         );
     }
 
@@ -332,6 +362,10 @@ mod tests {
         }
         impl crate::lsq::LsqClient for MagicCapture {
             fn query_tip(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
+                self.magic.set(magic);
+                Ok(())
+            }
+            fn query_chain_block_no(&self, _socket: &Path, magic: u32) -> eyre::Result<()> {
                 self.magic.set(magic);
                 Ok(())
             }
