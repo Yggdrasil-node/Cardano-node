@@ -207,6 +207,28 @@ mod tests {
         );
     }
 
+    /// `stake-address-key-gen --verification-key-file …
+    /// --signing-key-file …` parses to the expected variant.
+    #[test]
+    fn parses_stake_address_key_gen() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "stake-address-key-gen",
+            "--verification-key-file",
+            "/tmp/s.vkey",
+            "--signing-key-file",
+            "/tmp/s.skey",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::StakeAddressKeyGen {
+                verification_key_file: PathBuf::from("/tmp/s.vkey"),
+                signing_key_file: PathBuf::from("/tmp/s.skey"),
+            }
+        );
+    }
+
     /// Unknown subcommand surfaces through `ParseError::Clap`.
     #[test]
     fn rejects_unknown_subcommand() {

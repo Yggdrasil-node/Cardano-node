@@ -83,4 +83,18 @@ pub enum Command {
         #[arg(long)]
         payment_verification_key_file: PathBuf,
     },
+    /// Generate a fresh Ed25519 stake keypair (delegation /
+    /// reward-account credential), writing both keys as TextEnvelope
+    /// JSON files. Mirrors upstream `stake-address key-gen`
+    /// (`Cardano.CLI.EraBased.StakeAddress.Command`). Identical
+    /// entropy + wire shape to `address key-gen`; only the
+    /// TextEnvelope `type` metadata differs.
+    StakeAddressKeyGen {
+        /// Path to write the stake verification (public) key TextEnvelope.
+        #[arg(long)]
+        verification_key_file: PathBuf,
+        /// Path to write the stake signing (private) key TextEnvelope.
+        #[arg(long)]
+        signing_key_file: PathBuf,
+    },
 }

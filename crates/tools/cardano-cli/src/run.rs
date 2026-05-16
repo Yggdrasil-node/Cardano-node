@@ -133,6 +133,17 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
                 &payment_verification_key_file,
             )
         }
+        Command::StakeAddressKeyGen {
+            verification_key_file,
+            signing_key_file,
+        } => {
+            // R508: pure-crypto subcommand — stake keypair, identical
+            // to address key-gen but `KeyKind::Stake` metadata.
+            crate::era_based::stake_address::run::run_stake_address_key_gen_cmd(
+                &verification_key_file,
+                &signing_key_file,
+            )
+        }
     }
 }
 
