@@ -233,11 +233,21 @@ remaining commands and a separate binary is justified.
   `run_submit_tx`). `transaction view` is a **shallow** structural
   view — txid + top-level CBOR elements as hex, deliberately not a
   full per-era tx-body decode (the `view` field says so). 84 tests
-  total post-R513. **31 operational subcommands**. Only
-  `transaction build` / `build-raw` remain — fresh tx-body
-  wire-format encoding, tracked separately as the hazard-flagged
-  tx-construction tranche (needs upstream-binary byte captures per
-  the wire-shape-pin discipline).
+  total post-R513. **31 operational subcommands**.
+- **R514 (Phase 3.3, 2026-05) — `transaction build-raw`.** Assembles
+  an unsigned Conway tx from explicit `--tx-in` / `--tx-out` /
+  `--fee`. Crucially **not** a hand-rolled wire-format encoder: the
+  body is a typed `yggdrasil_ledger::ConwayTxBody` encoded by that
+  type's existing parity-built `CborEncode` impl, then wrapped in
+  the canonical 4-element Conway tx array — so `build-raw` *reuses*
+  the ledger parity surface rather than creating a new one (which
+  is what sidesteps the wire-shape-pin hazard). `parse_tx_in` /
+  `parse_tx_out` (Bech32 address decode) map the CLI args. 89 tests
+  total post-R514. **32 operational subcommands**. Only
+  `transaction build` remains — automatic coin selection + fee
+  minimization, which needs UTxO-value lookup + protocol-parameter
+  CBOR decoding + iterative fee convergence (a genuine algorithm,
+  not a mirror-the-pattern port).
 
 ### Phase F operator surface (2026-05 — landed in the binary)
 
@@ -346,18 +356,18 @@ binary exposes 9 operational subcommands:
 | `TransactionSubmit` | ✅ migrated (R513) | `era_based/transaction/run.rs::run_transaction_submit_cmd` — NtC LocalTxSubmission via `LsqClient::submit_tx` |
 | `TransactionView` | ✅ migrated (R513) | `era_based/transaction/run.rs::run_transaction_view_cmd` — shallow structural view (txid + top-level CBOR hex) |
 | `Query*` (20 LSQ subcommands) | ✅ migrated (R510–R512) | `lsq.rs` `NtcQuery` enum + `lsq_tokio.rs` `plan_for`: tip / chain-block-no / current-era / system-start / stake-distribution / stake-pools / protocol-parameters / drep-stake-distribution / constitution / gov-state / drep-state / committee-state / treasury-and-reserves / account-state / genesis-delegations / stability-window / num-dormant-epochs / expected-network-id / deposit-pot / ledger-counts |
-| `TransactionBuild` / `TransactionBuildRaw` | ⏳ deferred | fresh per-era tx-body CBOR *encoding* — needs upstream-binary byte captures per the wire-shape-pin discipline; tracked as the tx-construction tranche |
+| `TransactionBuildRaw` | ✅ migrated (R514) | `era_based/transaction/run.rs::run_transaction_build_raw_cmd` — typed `ConwayTxBody` via the ledger's parity `CborEncode`, wrapped as `[body,{},true,null]` |
+| `TransactionBuild` | ⏳ deferred | automatic coin selection + fee minimization — needs UTxO-value lookup + protocol-parameter CBOR decode + iterative fee convergence |
 
-The standalone binary now exposes **31 operational subcommands** —
+The standalone binary now exposes **32 operational subcommands** —
 the offline operator toolkit (keys / addresses / txid / single-signer
-signing / shallow tx-view), the complete 20-query LocalStateQuery
-surface, and `transaction submit`. The only subcommands still
-deferred are `transaction build` / `build-raw`: full tx construction
-(coin selection + fee minimization + fresh per-era tx-body CBOR
-*encoding*). Per the wire-shape-pin discipline, the tx-body encoder
-must be byte-pinned against captures from a running upstream
-`cardano-cli`, not derived from the CDDL alone — so that work is a
-deliberate, separate arc rather than a mirror-the-pattern port.
+signing / shallow tx-view / `build-raw`), the complete 20-query
+LocalStateQuery surface, and `transaction submit`. The only
+subcommand still deferred is `transaction build`: automatic coin
+selection + fee minimization, which needs UTxO-value lookup +
+protocol-parameter CBOR decoding + iterative fee convergence — a
+genuine algorithm, a deliberate separate arc rather than a
+mirror-the-pattern port.
 
 Subcommands beyond the current 3-command surface (the full upstream
 `cardano-cli` has hundreds of subcommands across Byron / Compatible
