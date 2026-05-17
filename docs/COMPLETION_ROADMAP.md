@@ -84,12 +84,16 @@ item is byte-equivalence evidence against a real upstream `cardano-cli 11.0`
 binary — Category-B operator-soak work, tracked by the `parity-matrix.json`
 `sister-tool.cardano-cli` entry (`implemented_needs_11_0_1_evidence`).
 
-### A3 — db-synthesizer Phase 4 R2–R3
-`crates/tools/db-synthesizer` shipped the forge-loop slice (Phase 4 R1). R2 =
-genesis/`ShelleyGenesis` config loading; R3 = the Praos forge path
-(VRF/KES/OpCert leader check) so synthesized blocks are structurally Praos.
-**Scope:** 2 rounds. **Exit:** synthesizer produces a Praos-valid on-disk
-ChainDB; `db-analyser` validates it.
+### A3 — db-synthesizer Phase 4 R3 (R1 ✅, R2 ✅ done 2026-05-17)
+`crates/tools/db-synthesizer` shipped the forge-loop slice (Phase 4 R1) and the
+R2 genesis-loading slice (round 504, commit `a46bae1` — `run::synthesize_from_config`
+resolves the real Shelley-genesis `epochLength` from `--config`, mirroring
+upstream `Run.initConf`). **Remaining — R3:** the Praos forge path —
+`initProtocol`/`mkConsensusProtocolCardano` (hard-fork era plan) + the
+VRF/KES/OpCert leader check + KES-signed `forgeBlock` — so synthesized blocks
+are structurally Praos. **Scope:** 1 round, protocol-critical — author a
+`parity-plan` and leverage `crates/node/block-producer`. **Exit:** synthesizer
+produces a Praos-valid on-disk ChainDB that `db-analyser` validates.
 
 ### A4 — Skeleton sister-tool build-out
 Six tools are skeleton-only — each its own multi-round arc:
