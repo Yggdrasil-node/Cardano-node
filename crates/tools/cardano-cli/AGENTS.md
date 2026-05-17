@@ -39,10 +39,11 @@ Mirrors upstream `Cardano.CLI.*` subtree:
 
 The crate exposes `yggdrasil_cardano_cli::*` as a workspace-internal
 library; the `yggdrasil-node` binary consumes specific helpers (see
-"Integration with `node` crate" below). There is no separate
-`yggdrasil-cardano-cli` binary today — operators continue to use
-`yggdrasil-node cardano-cli <subcommand>` until R298+ migrates the
-remaining commands and a separate binary is justified.
+"Integration with `node` crate" below). The standalone
+`yggdrasil-cardano-cli` binary (`main.rs`, shipped R506) exposes 33
+operational subcommands — the cardano-cli C-arc completed at R515.
+Operators can use the standalone binary or `yggdrasil-node cardano-cli
+<subcommand>` interchangeably.
 
 ##  Rules *Non-Negotiable*
 
@@ -71,7 +72,7 @@ remaining commands and a separate binary is justified.
 - [Cardano API serialise text-envelope](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Api/SerialiseTextEnvelope.hs) — text-envelope codec used by key/cert files.
 - [cardano-cli release notes / changelog](.reference-haskell-cardano-node/deps/cardano-cli/cardano-cli/CHANGELOG.md) — track upstream subcommand additions.
 
-## Current Status (post-R297)
+## Current Status (post-R515 — C-arc complete)
 
 - **R289 — bootstrap.** Workspace crate skeleton + 8 top-level
   namespace files. Ships compileable placeholder enums per leaf.
@@ -381,8 +382,8 @@ protocol-parameter + UTxO-value resolution) is a possible future
 enhancement, but not required for the operator workflows the
 standalone binary targets.
 
-Subcommands beyond the current 3-command surface (the full upstream
-`cardano-cli` has hundreds of subcommands across Byron / Compatible
+Subcommands beyond the current 33-subcommand C-arc surface (the full
+upstream `cardano-cli` has hundreds of subcommands across Byron / Compatible
 / EraBased / EraIndependent / Legacy) are out-of-scope until
 operator demand prioritizes specific port targets. The leaf
 placeholder enums make incremental ports cheap (one subcommand at

@@ -190,60 +190,6 @@ on the cross-crate coupling. `plutus` is multi-day because Plutus
 types are referenced from ~8 ledger files including era-specific
 apply rules.
 
-## yggdrasil-cardano-cli — 3-subcommand surface closed, broader migration is the open arc
-
-**Owner:** packaging (sister-tools layout)
-
-**State today (R506 closure, May 2026).** All three subcommands that
-the library's `Command` enum exposes are now operationally wired in
-the standalone `yggdrasil-cardano-cli` binary. `cargo install --path
-crates/tools/cardano-cli` produces a feature-complete binary; the
-slim build (`--no-default-features`) trades the LSQ-touching
-`query-tip` capability for a smaller dep footprint.
-
-Operator-visible coverage today (3 of 3 surface commands ✅):
-
-- ✅ `yggdrasil-cardano-cli version` (R296 helpers, R503 dispatcher) —
-  emits the canonical `helper::version_info()` banner.
-- ✅ `yggdrasil-cardano-cli --version` / `--help` — clap-standard
-  output to stdout, exit 0.
-- ✅ `yggdrasil-cardano-cli show-upstream-config --network <preset>`
-  (R297 helpers, R504 dispatcher) — resolves config + topology
-  paths against the vendored
-  `crates/node/yggdrasil-node/configuration/<preset>/` tree (or
-  operator-supplied `--upstream-config-root`), extracts the
-  network magic from `config.json` (or falls back to the
-  well-known constant per preset), emits operator JSON
-  byte-equivalent to the node binary's wrapper.
-- ✅ `yggdrasil-cardano-cli query-tip --socket-path <socket>
-  [--network-magic <magic>]` (R505 trait, R506 concrete impl) —
-  default build (`lsq-tokio` feature on) opens a Unix-socket NtC
-  connection via `yggdrasil_network::ntc_connect`, drives the
-  LocalStateQuery mini-protocol to acquire VolatileTip + send
-  the CBOR `[3]` `GetChainPoint` query, prints the JSON envelope
-  the node binary's wrapper already emits. Slim build
-  (`--no-default-features`) falls back to the structured
-  deferral message pointing at `yggdrasil-node cardano-cli
-  query-tip`.
-
-**Remaining (the actual open arc).** Migrating the broader
-cardano-cli subcommand surface (~150 upstream `.hs` files, ~30
-operator-essential subcommands beyond the current 3) into the
-library so `yggdrasil-cardano-cli <any_subcommand>` works
-standalone. The node binary's `cardano-cli` subcommand group
-(35 commands) is the parity reference; the C-arc migration
-tracked in
-`crates/tools/cardano-cli/AGENTS.md`'s "Migration roadmap
-(R298+ deferred)" section is the multi-week port plan.
-
-**Scope.** Per-subcommand follow-on rounds, each ~1-3 days
-depending on what auxiliary deps the subcommand brings (tokio +
-yggdrasil-network for socket-touching commands — already gated
-behind the `lsq-tokio` feature post-R506; bech32 for address
-commands; yggdrasil-crypto for key-management commands; full
-tx-builder primitives for `transaction build` /
-`transaction build-raw`).
-
 ## cardano-submit-api validation error: structured mapping (Phase 1 — raw-bytes carrier landed)
 
 **Owner:** sister-tools (Wave 6 PR 18 / cardano-submit-api web round, Phase 4.A)

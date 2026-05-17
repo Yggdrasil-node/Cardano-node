@@ -72,13 +72,17 @@ per-era ledger apply-rule files and needs a slim-build soundness decision
 node — a candidate for removal rather than wiring. **Exit:** the chosen flag
 conditionally compiles the code it names; `cargo lint-no-default` stays green.
 
-### A2 — cardano-cli subcommand migration  (`TECH-DEBT.md` §"yggdrasil-cardano-cli")
-`crates/tools/cardano-cli` has 3 of ~35 operator subcommands wired standalone
-(`version`, `show-upstream-config`, `query-tip`). The `LsqClient` trait
-abstraction (R505–R506) unblocks the socket-touching commands. **Scope:**
-per-subcommand rounds, ~1–3 days each (~30 subcommands). **Exit:**
-`yggdrasil-cardano-cli <subcommand>` byte-equivalent to the node binary's
-`cardano-cli` group and to upstream `cardano-cli 11.0`.
+### A2 — cardano-cli subcommand migration — ✅ COMPLETE (verified 2026-05-17)
+The cardano-cli C-arc closed at R515. `crates/tools/cardano-cli/src/command.rs`
+carries all **33 `Command` variants**, `run.rs` dispatches them, and the crate
+has 92 passing tests. The standalone `yggdrasil-cardano-cli` binary covers the
+offline operator toolkit (keys / addresses / txid / sign / build / build-raw /
+view), the full 20-query LocalStateQuery surface, and `transaction submit`.
+The roadmap and `TECH-DEBT.md` previously listed this as "3/35" — stale; the
+central docs lagged `crates/tools/cardano-cli/AGENTS.md`. The only outstanding
+item is byte-equivalence evidence against a real upstream `cardano-cli 11.0`
+binary — Category-B operator-soak work, tracked by the `parity-matrix.json`
+`sister-tool.cardano-cli` entry (`implemented_needs_11_0_1_evidence`).
 
 ### A3 — db-synthesizer Phase 4 R2–R3
 `crates/tools/db-synthesizer` shipped the forge-loop slice (Phase 4 R1). R2 =
