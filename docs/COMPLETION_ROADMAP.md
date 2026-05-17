@@ -86,14 +86,33 @@ binary — Category-B operator-soak work, tracked by the `parity-matrix.json`
 
 ### A3 — db-synthesizer Phase 4 R3 (R1 ✅, R2 ✅ done 2026-05-17)
 `crates/tools/db-synthesizer` shipped the forge-loop slice (Phase 4 R1) and the
-R2 genesis-loading slice (round 504, commit `a46bae1` — `run::synthesize_from_config`
-resolves the real Shelley-genesis `epochLength` from `--config`, mirroring
-upstream `Run.initConf`). **Remaining — R3:** the Praos forge path —
-`initProtocol`/`mkConsensusProtocolCardano` (hard-fork era plan) + the
-VRF/KES/OpCert leader check + KES-signed `forgeBlock` — so synthesized blocks
-are structurally Praos. **Scope:** 1 round, protocol-critical — author a
-`parity-plan` and leverage `crates/node/block-producer`. **Exit:** synthesizer
-produces a Praos-valid on-disk ChainDB that `db-analyser` validates.
+R2 genesis-loading slice (round 504, commit `a46bae1`). **Remaining — R3 is a
+multi-slice arc.** The earlier "1 round" estimate was wrong: grounding (2026-05-18)
+against upstream `runForge` showed the synthesizer's flat `FileImmutable` loop
+carries none of the ledger state / `ChainDepState` / consensus config that real
+Praos forging needs. Verified decomposition:
+
+- **R3a — credential loading.** Wire the operator `cert`/`vrf`/`kes`/`bulk`
+  paths into validated forger credentials. Credential model verified via the
+  `haskell-reference-auditor` (2026-05-18, `Cardano.Node.Protocol.Shelley`
+  `readLeaderCredentialsSingleton`/`Bulk`): the cold issuer VKey is the trailing
+  32-byte field of the `NodeOperationalCertificate` text-envelope — there is no
+  separate cold-vkey artifact or CLI flag upstream. Prep findings in
+  `crates/node/block-producer`: `decode_opcert_cbor` already parses that cold
+  vkey but discards it; `load_block_producer_credentials` takes a divergent
+  separate `issuer_vkey_path`; the singleton path is missing upstream's
+  `MismatchedKesKey` check (KES key ↔ opcert hot-vkey). R3a starts by making
+  `OpCert` carry the embedded cold vkey, then a `issuer_vkey_path`-free loader.
+- **R3b — consensus config.** Port `Run.initProtocol` /
+  `mkConsensusProtocolCardano` — parse every era genesis file + the hard-fork
+  config into the protocol params the leader check + forge need.
+- **R3c — Praos forge loop.** Re-architect `run_forge` to thread an evolving
+  ledger state + `ChainDepState` per slot, run `check_should_forge` (VRF) and
+  `forge_block` (KES). The hard part.
+
+**Each slice is its own protocol-critical round** — author a `parity-plan`
+first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**
+synthesizer produces a Praos-valid on-disk ChainDB that `db-analyser` validates.
 
 ### A4 — Skeleton sister-tool build-out
 Six tools are skeleton-only — each its own multi-round arc:
