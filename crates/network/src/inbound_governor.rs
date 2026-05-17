@@ -8,7 +8,7 @@
 //! manager.
 //!
 //! The design mirrors our outbound governor (`governor.rs`): all decisions
-//! are pure and testable; effectful connection management stays in `node/`.
+//! are pure and testable; effectful connection management stays in `crates/node/`.
 //!
 //! ## Naming parity
 //!

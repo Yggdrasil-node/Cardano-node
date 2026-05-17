@@ -20,7 +20,7 @@
 //! with era-correct hash-prefix selection (R211 lesson: Byron EBB
 //! uses `0x82 0x00`, main uses `0x82 0x01`).
 //!
-//! Public functions moved from `node/src/sync.rs`:
+//! Public functions moved from `crates/node/sync/src/lib.rs`:
 //!
 //! - `fetch_range_blocks` — raw byte BlockFetch range.
 //! - `fetch_range_blocks_typed` — typed `ShelleyBlock` range.
@@ -34,7 +34,7 @@
 //! - `point_bytes_from_raw_header_or_tip` — same, with tip fallback.
 //! - `map_blockfetch_error` — typed-decode-error reclassification.
 //!
-//! Extracted from `node/src/sync.rs` in R500 (sync.rs R-arc, 3rd
+//! Extracted from `crates/node/sync/src/lib.rs` in R500 (sync.rs R-arc, 3rd
 //! slice). See `docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md`
 //! for the multi-round plan.
 

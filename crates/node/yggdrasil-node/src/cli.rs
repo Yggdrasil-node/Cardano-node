@@ -69,7 +69,7 @@ pub(crate) enum Command {
         ///
         /// Round 166 — bumped default from 30 to 50 after the initial-sync
         /// rollback fix in `update_ledger_checkpoint_after_progress`
-        /// (`node/src/sync.rs`).  The fix detects the
+        /// (`crates/node/sync/src/lib.rs`).  The fix detects the
         /// `[RollBackward(Origin), RollForward(...)]` shape every fresh
         /// ChainSync session opens with and bypasses the heavy
         /// `recover_ledger_state_chaindb` call (which replays the volatile

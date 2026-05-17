@@ -21,7 +21,7 @@
 /// Unix; `Ctrl-C` on non-Unix). Returns the human-readable name of the
 /// signal that fired so the trace logs identify which one was caught.
 ///
-/// Used by `node/src/main.rs::run_node` as the top of a `tokio::select!`
+/// Used by `crates/node/yggdrasil-node/src/main.rs::run_node` as the top of a `tokio::select!`
 /// arm that completes when the signal arrives, gracefully draining the
 /// governor / sync / NtC server tasks before exiting.
 #[cfg(unix)]

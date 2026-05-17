@@ -1301,7 +1301,7 @@ fn extract_block_tx_byte_spans_returns_on_wire_bytes_for_indefinite_encoding() {
 /// `extract_block_tx_byte_spans` used strict `dec.array()` for that
 /// array, which fails with `CborInvalidAdditionalInfo(31)`. The error
 /// propagated up to the apply-path macro
-/// `node/src/sync.rs::alonzo_family_block_to_block_with_spans` which
+/// `crates/node/sync/src/lib.rs::alonzo_family_block_to_block_with_spans` which
 /// then fell back to `tx_body.to_cbor_bytes()` re-serialisation —
 /// producing a `tx_body_hash` that differed from the on-wire
 /// (indefinite) hash the signer signed. The signature was

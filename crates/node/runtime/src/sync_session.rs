@@ -334,7 +334,7 @@ pub(super) fn refresh_chain_db_reconnect_fallback_peers(
     // peers (loaded from `peerSnapshotFile`) are eligible immediately at
     // reconnect time, while live-ledger-derived peers continue to wait for
     // the `useLedgerAfterSlot` gate. Upstream parity: see
-    // `node/src/main.rs::evaluate_ledger_derived_startup_fallbacks` for the
+    // `crates/node/yggdrasil-node/src/main.rs::evaluate_ledger_derived_startup_fallbacks` for the
     // companion change at startup, and
     // `crates/network/src/ledger_peers_provider.rs::always_eligible_snapshot_peers`
     // for the underlying primitive.

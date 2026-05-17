@@ -547,7 +547,7 @@ lockstep:
 | `plutus` | `4cd40a14e364…` (R216 advance) | **in-sync** |
 | `cardano-node` | `799325937a45…` | **in-sync** |
 
-Drift detector (`bash node/scripts/check_upstream_drift.sh`) reports
+Drift detector (`bash crates/node/yggdrasil-node/scripts/check_upstream_drift.sh`) reports
 `drifted=0 unreachable=0 total=6`. Three drift-guard tests pass
 (format, cardinality, vendored-directory match). R201 → R216 → R239 → R243 → R245
 demonstrates the audit baseline is actively maintained against
@@ -613,7 +613,7 @@ graduates this empirical evidence into the shipped default while
 preserving operator override (`MaxConcurrentBlockFetchPeers = 1` for
 strict single-peer audit/replay parity).
 
-R240 (`node/scripts/parallel_blockfetch_soak.sh`) remains the
+R240 (`crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh`) remains the
 operator-facing soak harness for stress-testing knob > 2 or running
 endurance verification: starts the node with the requested
 concurrency knob, captures Prometheus snapshots, asserts worker
@@ -656,7 +656,7 @@ curl -s http://127.0.0.1:12400/metrics | grep apply_batch
 # Expected: 10 bucket lines + _sum + _count
 
 # Drift detector
-bash node/scripts/check_upstream_drift.sh
+bash crates/node/yggdrasil-node/scripts/check_upstream_drift.sh
 # Expected: drifted=0 unreachable=0 total=6
 
 # Workspace gates

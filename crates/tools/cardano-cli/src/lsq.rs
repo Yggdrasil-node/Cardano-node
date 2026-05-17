@@ -169,7 +169,7 @@ pub trait LsqClient {
     /// Submit a serialized transaction via the LocalTxSubmission
     /// mini-protocol and render the accept/reject outcome as JSON.
     ///
-    /// Mirrors `node/src/commands/submit_tx.rs::run_submit_tx`.
+    /// Mirrors `crates/node/yggdrasil-node/src/commands/submit_tx.rs::run_submit_tx`.
     /// `tx_bytes` is the complete CBOR transaction.
     fn submit_tx(&self, socket_path: &Path, network_magic: u32, tx_bytes: &[u8]) -> Result<()>;
 }

@@ -13,7 +13,7 @@
 //! gracefully falls back to the deferral path rather than failing to
 //! compile.
 //!
-//! Wire-protocol drive mirrors `node/src/commands/query.rs::run_query`
+//! Wire-protocol drive mirrors `crates/node/yggdrasil-node/src/commands/query.rs::run_query`
 //! (the node binary's NtC LocalStateQuery dispatcher): open Unix
 //! socket via `yggdrasil_network::ntc_connect`, acquire at
 //! VolatileTip, send the CBOR-encoded `GetChainPoint = [3]` query,
@@ -317,7 +317,7 @@ fn decode_committee_state_result(result: &[u8]) -> serde_json::Value {
 /// tags (5 / 15 / 102) — these are yggdrasil-node-specific (not the
 /// upstream `BlockQuery` wrapper), so these subcommands target a
 /// running `yggdrasil-node`. Mirrors the encoding the node binary's
-/// own `cardano-cli` wrapper sends (`node/src/commands/query.rs`).
+/// own `cardano-cli` wrapper sends (`crates/node/yggdrasil-node/src/commands/query.rs`).
 fn encode_single_tag_query(tag: u64) -> Vec<u8> {
     let mut enc = Encoder::new();
     enc.array(1).unsigned(tag);
@@ -380,7 +380,7 @@ impl LsqClient for TokioLsqClient {
 /// Open the NtC socket, submit `tx_bytes` over the LocalTxSubmission
 /// mini-protocol, and print the accept/reject outcome as JSON.
 ///
-/// Mirrors `node/src/commands/submit_tx.rs::run_submit_tx`. A
+/// Mirrors `crates/node/yggdrasil-node/src/commands/submit_tx.rs::run_submit_tx`. A
 /// rejection is a normal outcome (printed as
 /// `{"result":"rejected","reason":…}`), not an `Err` — only a
 /// connection/transport failure bails.
@@ -425,7 +425,7 @@ fn run_blocking<F: std::future::Future<Output = Result<()>>>(fut: F) -> Result<(
 /// Open the NtC socket, acquire at VolatileTip, run one
 /// LocalStateQuery, release + done, and return the raw CBOR result.
 ///
-/// Mirrors `node/src/commands/query.rs::run_query`'s socket-drive
+/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::run_query`'s socket-drive
 /// flow. `query_label` names the query for the error context only.
 async fn acquire_query_release(
     socket_path: &Path,
@@ -496,7 +496,7 @@ fn encode_get_chain_block_no_query() -> Vec<u8> {
 /// reply: `Origin = [0]`, `At b = [1, b]` (mirrors
 /// `Ouroboros.Network.Block.Tip.tipBlockNo`).
 ///
-/// Mirrors `node/src/commands/query.rs::decode_ntc_result`'s
+/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
 /// `QueryCommand::ChainBlockNo` arm.
 fn decode_chain_block_no_result(result: &[u8]) -> serde_json::Value {
     let mut dec = Decoder::new(result);
@@ -528,7 +528,7 @@ fn encode_get_current_era_query() -> Vec<u8> {
 /// Decode the upstream `GetCurrentEra` reply — an `EraIndex`,
 /// encoded as the single-element array `[era_index]`.
 ///
-/// Mirrors `node/src/commands/query.rs::decode_ntc_result`'s
+/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
 /// `QueryCommand::CurrentEra` arm.
 fn decode_current_era_result(result: &[u8]) -> serde_json::Value {
     let mut dec = Decoder::new(result);
@@ -554,7 +554,7 @@ fn encode_get_system_start_query() -> Vec<u8> {
 /// `Cardano.Slotting.Time.SystemStart`).
 ///
 /// Surfaces both the raw structured fields and a derived ISO-8601
-/// `time` string. Mirrors `node/src/commands/query.rs::decode_ntc_result`'s
+/// `time` string. Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
 /// `QueryCommand::SystemStart` arm.
 fn decode_system_start_result(result: &[u8]) -> serde_json::Value {
     let mut dec = Decoder::new(result);
@@ -580,7 +580,7 @@ fn decode_system_start_result(result: &[u8]) -> serde_json::Value {
 /// `YYYY-MM-DDThh:mm:ssZ` string.
 ///
 /// Civil-date arithmetic with proleptic-Gregorian leap-year rules —
-/// mirrors `node/src/commands/query.rs::format_utc_time` so the
+/// mirrors `crates/node/yggdrasil-node/src/commands/query.rs::format_utc_time` so the
 /// standalone binary's `query system-start` output matches the node
 /// binary's wrapper byte-for-byte.
 fn format_utc_time(year: u64, day_of_year: u64, picoseconds_of_day: u64) -> String {
@@ -622,7 +622,7 @@ fn format_utc_time(year: u64, day_of_year: u64, picoseconds_of_day: u64) -> Stri
 /// - Origin: `encodeListLen 0` → `[]` → empty array.
 /// - BlockPoint: `encodeListLen 2 <> slot <> hash` → `[slot, hash]`.
 ///
-/// Mirrors `node/src/commands/query.rs::decode_ntc_result`'s
+/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
 /// `QueryCommand::Tip` arm. Captured against `cardano-node 10.7.1`
 /// socat-proxy bytes in the upstream-regression test
 /// `upstream_get_chain_point_returns_encoded_tip_point`.

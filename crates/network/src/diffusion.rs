@@ -1,12 +1,12 @@
 //! Diffusion-layer types for server-side protocol multiplexing,
 //! per-connection lifecycle management, and accept-loop rate limiting.
 //!
-//! This module provides the pure types that the runtime (`node/`) uses
+//! This module provides the pure types that the runtime (`crates/node/`) uses
 //! to compose the outbound governor, inbound governor, connection
 //! manager, and server into a cohesive diffusion component.
 //!
 //! All types are data-only; effectful orchestration (tokio tasks, TCP
-//! listeners, mux spawning) belongs in `node/`.
+//! listeners, mux spawning) belongs in `crates/node/`.
 //!
 //! Reference:
 //! - `ouroboros-network-framework/src/Ouroboros/Network/Mux.hs`

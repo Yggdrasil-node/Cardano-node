@@ -14,7 +14,7 @@ apply directly here. Three validators guard this tree's invariants:
   This directory hosts the source-of-truth `parity-matrix.json`.
 - `python3 scripts/check-fixture-manifest.py` (CI gate since R303) —
   cross-checks the `cardano-base` SHA pin across
-  `node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
+  `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
   `specs/upstream-test-vectors/cardano-base/<SHA>/`, `SPECS.md`,
   and `UPSTREAM_PARITY.md` (this directory's own pin matrix).
 - `python3 scripts/check-strict-mirror.py --fail-on-violation`
@@ -33,9 +33,9 @@ immutable once committed.
 ## Scope
 - `ARCHITECTURE.md`, `DEPENDENCIES.md`, `SPECS.md`, `CONTRIBUTING.md`, and the
   per-cycle audit/parity docs (`archive/PARITY_PLAN.md`, `PARITY_SUMMARY.md`,
-  `AUDIT_VERIFICATION_*.md`, `MANUAL_TEST_RUNBOOK.md`,
-  `UPSTREAM_PARITY.md`, `archive/UPSTREAM_RESEARCH.md`,
-  `REAL_PREPROD_POOL_VERIFICATION.md`).
+  `PARITY_PROOF.md`, `UPSTREAM_PARITY.md`, `COMPLETION_ROADMAP.md`,
+  `TECH-DEBT.md`, `AUDIT_VERIFICATION_*.md`, `MANUAL_TEST_RUNBOOK.md`,
+  `archive/UPSTREAM_RESEARCH.md`, `REAL_PREPROD_POOL_VERIFICATION.md`).
 - `parity-matrix.json` — machine-readable Rust ↔ Haskell parity inventory
   (validated by `scripts/check-parity-matrix.py`). The `reference.tag`
   tracks the latest IntersectMBO/cardano-node release; bump it whenever

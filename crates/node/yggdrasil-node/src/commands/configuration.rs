@@ -62,7 +62,7 @@ pub fn load_effective_config(
 }
 
 /// Resolve the on-disk directory shipping the vendored upstream-parity
-/// configs for a network preset, e.g. `node/configuration/preview`.
+/// configs for a network preset, e.g. `crates/node/yggdrasil-node/configuration/preview`.
 pub fn preset_config_base_dir(preset: NetworkPreset) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("configuration")

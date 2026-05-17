@@ -5,7 +5,7 @@
 //! envelopes) into stdout-friendly bytes. Most upstream renderers
 //! use `Aeson` for JSON + `cardano-api` for text-envelope CBOR; the
 //! Yggdrasil port uses `serde_json` + the `text-envelope` codec from
-//! `node/src/block_producer.rs`.
+//! `crates/node/block-producer/src/lib.rs`.
 //!
 //! ## Naming parity
 //!

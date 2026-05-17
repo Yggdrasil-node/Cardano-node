@@ -23,7 +23,7 @@ use crate::governor::GovernorAction;
 /// Runtime-side executor for peer connection lifecycle actions.
 ///
 /// The network crate owns only pure decision logic. Runtime implementations
-/// (for example in `node/`) provide effectful behavior for each action.
+/// (for example in `crates/node/`) provide effectful behavior for each action.
 pub trait PeerStateActions {
     /// Runtime-specific error type for action execution.
     type Error;

@@ -6,11 +6,11 @@
 //! at the file-name level (snake_case-of-PascalCase).
 //!
 //! The crate exists as a separate workspace member (rather than
-//! growing inside `node/src/`) because the cardano-cli surface is
+//! growing inside `crates/node/yggdrasil-node/src/`) because the cardano-cli surface is
 //! large (~150 upstream files), has its own dependency graph
 //! (cardano-api types, transaction-construction, key derivation,
-//! text-envelope codec), and shipping it independently keeps `node/`
-//! an integration layer per the workspace topology rule in
+//! text-envelope codec), and shipping it independently keeps
+//! `crates/node/` an integration layer per the workspace topology rule in
 //! [`CLAUDE.md`](../../CLAUDE.md).
 //!
 //! ## Phase F — R289 bootstrap
@@ -18,7 +18,7 @@
 //! R289 lands the crate skeleton. The Byron / Compatible / Shelley /
 //! Alonzo / Babbage / Conway clusters land in R290–R295 (~150 files
 //! total). The `yggdrasil-node cardano-cli` subcommand currently
-//! delegates to `node/src/commands/cardano_cli.rs`; the delegation
+//! delegates to `crates/node/yggdrasil-node/src/commands/cardano_cli.rs`; the delegation
 //! moves through this crate as the per-cluster rounds land.
 //!
 //! ## Naming parity

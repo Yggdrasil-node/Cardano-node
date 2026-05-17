@@ -19,7 +19,7 @@
 //! `Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck`
 //! as a focused module; the upstream `.hs` additionally carries
 //! ChainSync-client wiring (the Yggdrasil equivalent lives in
-//! `node/src/runtime/sync_session.rs`).
+//! `crates/node/runtime/src/sync_session.rs`).
 
 use std::time::Duration;
 

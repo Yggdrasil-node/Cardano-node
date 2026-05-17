@@ -15,7 +15,7 @@
 //! `preview/alonzo-genesis.json`. PlutusV2 enters the chain via
 //! protocol-parameter updates (positional-array form) and PlutusV3 lives
 //! in `conway-genesis.json` as a positional array. Both are pinned by a
-//! parallel `node/tests/preview_cost_model_byte_equal.rs` fixture which
+//! parallel `crates/node/yggdrasil-node/tests/preview_cost_model_byte_equal.rs` fixture which
 //! can call `node::genesis::build_plutus_cost_model_from_protocol_values_for_protocol`
 //! directly. The same fixture pins `BuiltinSemanticsVariant` selection
 //! across the PV<9 / PV≥9 boundary that the runtime uses for V2.

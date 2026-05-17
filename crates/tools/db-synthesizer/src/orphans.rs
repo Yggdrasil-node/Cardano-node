@@ -32,7 +32,7 @@
 //!   (the node-side configuration module). Upstream's own comment
 //!   declares them DUPLICATE. The Yggdrasil-side parallel types live
 //!   in the runtime layer (e.g. node configuration in
-//!   `node/src/config.rs`), and db-synthesizer does not need to
+//!   `crates/node/config/src/lib.rs`), and db-synthesizer does not need to
 //!   re-deserialize them — it operates on the raw JSON `Value`
 //!   stashed in [`NodeConfigStub::node_config`] and feeds that to
 //!   the runtime layer when wiring up the synthesizer's underlying

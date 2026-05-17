@@ -33,6 +33,18 @@ members = [
     # name `yggdrasil-node` and the shipped binary name are unchanged.
     # ──────────────────────────────────────────────────────────────────
     "crates/node/yggdrasil-node",
+    # Wave 5 sub-crate extractions — runtime logic split out of the binary
+    # crate. Listed explicitly so workspace membership does not depend on
+    # them remaining path-dependencies of `yggdrasil-node`.
+    "crates/node/block-producer",
+    "crates/node/config",
+    "crates/node/genesis",
+    "crates/node/ntc-server",
+    "crates/node/ntn-server",
+    "crates/node/plutus-eval",
+    "crates/node/runtime",
+    "crates/node/sync",
+    "crates/node/tracer",
 
     # ──────────────────────────────────────────────────────────────────
     # Sister tools — operator binaries / SPO tooling, organized under

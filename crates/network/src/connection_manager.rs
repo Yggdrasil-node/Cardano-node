@@ -6,17 +6,17 @@
 //! `release_outbound`, `release_inbound`, `promoted_to_warm_remote`,
 //! `demoted_to_cold_remote`) inspects the current per-peer
 //! [`ConnectionState`] map and returns a new state together with side-effect
-//! descriptors that the runtime (in `node/`) must execute.
+//! descriptors that the runtime (in `crates/node/`) must execute.
 //!
 //! Design mirrors the inbound governor (`inbound_governor.rs`) and outbound
 //! governor (`governor.rs`): all decisions are pure and testable; effectful
-//! connection management stays in `node/`.
+//! connection management stays in `crates/node/`.
 //!
 //! Reference: `ouroboros-network-framework/src/Ouroboros/Network/ConnectionManager/Core.hs`
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror:** none. Yggdrasil-side connection-manager surface. Upstream's `Ouroboros.Network.ConnectionManager.Core` is a large IO-effectful module; Yggdrasil exposes a smaller pure surface (`Provenance`, `DataFlow`, `AbstractState`, `ConnectionState`, error variants) consumed by `inbound_governor.rs` and `peer.rs`. The full I/O-effectful CM behaviors live inside `node/src/runtime/`.
+//! **Strict mirror:** none. Yggdrasil-side connection-manager surface. Upstream's `Ouroboros.Network.ConnectionManager.Core` is a large IO-effectful module; Yggdrasil exposes a smaller pure surface (`Provenance`, `DataFlow`, `AbstractState`, `ConnectionState`, error variants) consumed by `inbound_governor.rs` and `peer.rs`. The full I/O-effectful CM behaviors live inside `crates/node/runtime/src/`.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;

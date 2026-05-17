@@ -978,7 +978,7 @@ fn parse_real_mainnet_alonzo_genesis() {
 
 /// Pin the JSON-parse path for preprod's `genDelegs` field byte-for-byte.
 ///
-/// Loads the vendored `node/configuration/preprod/shelley-genesis.json` —
+/// Loads the vendored `crates/node/yggdrasil-node/configuration/preprod/shelley-genesis.json` —
 /// which `diff` confirms is byte-identical to
 /// `.reference-haskell-cardano-node/install/share/preprod/shelley-genesis.json` —
 /// runs it through `load_shelley_genesis_bootstrap`, and asserts the 7
@@ -986,7 +986,7 @@ fn parse_real_mainnet_alonzo_genesis() {
 /// expected delegate + vrf hashes.
 ///
 /// This is R253 sub-candidate (1) gen_delegs activation timing: we
-/// already proved (in `node/src/sync.rs::tpraos_overlay_matches_upstream_classifyoverlayslot_preprod_429460_window`)
+/// already proved (in `crates/node/sync/src/lib.rs::tpraos_overlay_matches_upstream_classifyoverlayslot_preprod_429460_window`)
 /// that yggdrasil's overlay classification matches upstream when given
 /// the right map. Here we verify the JSON-parse path itself doesn't
 /// silently corrupt the map between `shelley-genesis.json` on disk and

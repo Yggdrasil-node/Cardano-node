@@ -49,6 +49,13 @@ description: "Architecture, parity, and contributing references for developers a
       <span class="yg-card-desc">Pinned IntersectMBO commit SHAs, subsystem-reference table, drift snapshot, open gaps.</span>
     </a>
   </li>
+  <li>
+    <a class="yg-card" href="{{ '/COMPLETION_ROADMAP/' | relative_url }}">
+      <span class="yg-card-arrow">→</span>
+      <span class="yg-card-title">Completion roadmap</span>
+      <span class="yg-card-desc">Forward-looking backlog of remaining work to fully complete the project — executable now, operator-soak gated, and running-Haskell-node gated.</span>
+    </a>
+  </li>
 </ul>
 
 ### Archived planning docs

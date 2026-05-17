@@ -46,7 +46,7 @@ pub fn run_command(command: Command) -> Result<()> {
 /// pointing operators at the node binary's wrapper) or a future
 /// concrete impl supplied by the binary crate (tokio + yggdrasil-
 /// network backed). The node binary's existing
-/// `node/src/commands/cardano_cli.rs` doesn't go through this
+/// `crates/node/yggdrasil-node/src/commands/cardano_cli.rs` doesn't go through this
 /// crate's `Command` enum and stays unaffected.
 ///
 /// # Per-arm dispatch
@@ -432,7 +432,7 @@ mod tests {
 
     /// With a valid network preset the runner attempts path
     /// resolution. In a workspace-test environment without a real
-    /// `node/configuration/<network>/config.json`, this either
+    /// `crates/node/yggdrasil-node/configuration/<network>/config.json`, this either
     /// succeeds (when the vendored configs are present, the
     /// canonical case) or surfaces a structured path-resolution
     /// error from `environment::resolve_upstream_reference_paths`.

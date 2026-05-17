@@ -131,7 +131,7 @@ pub use accept::{run_local_accept_loop, run_local_client_session};
 /// LSQ-protocol era ordinal used by `QueryHardFork::GetCurrentEra` and
 /// the `[era_index, era_specific_query]` envelope.
 ///
-/// This is distinct from the on-wire `era_tag` in `node/src/sync.rs`
+/// This is distinct from the on-wire `era_tag` in `crates/node/sync/src/lib.rs`
 /// (which numbers Byron-EBB and Byron-Main separately) because the LSQ
 /// protocol collapses Byron into a single ordinal. The mapping here
 /// matches upstream `Ouroboros.Consensus.Cardano.Block::CardanoEras`
@@ -192,7 +192,7 @@ mod lsq_era_index {
 /// wrong epoch boundaries.
 ///
 /// Reference: per-network `shelley-genesis.json` in
-/// [`node/configuration/`](../../node/configuration/).
+/// [`crates/node/yggdrasil-node/configuration/`](../../node/configuration/).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkPreset {
     /// `network_magic = 1`, Shelley `epochLength=432_000` (5-day

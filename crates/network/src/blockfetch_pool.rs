@@ -39,7 +39,7 @@
 //! semantics where Yggdrasil needs explicit `(slot, hash)`
 //! gating ahead of the validator). Pure data + decision logic
 //! with no I/O; the runtime wiring lives in
-//! `node/src/runtime/`.
+//! `crates/node/runtime/src/`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;

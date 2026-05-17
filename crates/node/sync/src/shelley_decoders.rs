@@ -11,7 +11,7 @@
 //! to the storage `Block` wrapper that is byte-exact-fee-correct
 //! per `Cardano.Ledger.Shelley.Tx.minfee`.
 //!
-//! Public functions moved from `node/src/sync.rs`:
+//! Public functions moved from `crates/node/sync/src/lib.rs`:
 //!
 //! - `shelley_block_to_block` — full conversion with span extraction.
 //! - `shelley_block_to_block_with_spans` — hot-path variant taking
@@ -24,7 +24,7 @@
 //! Phase-35 multi-era decoders and Phase-40 mempool eviction (still
 //! resident in `sync.rs`) keep working.
 //!
-//! Extracted from `node/src/sync.rs` in R499 (sync.rs R-arc, 2nd
+//! Extracted from `crates/node/sync/src/lib.rs` in R499 (sync.rs R-arc, 2nd
 //! slice). See `docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md`
 //! for the multi-round plan.
 

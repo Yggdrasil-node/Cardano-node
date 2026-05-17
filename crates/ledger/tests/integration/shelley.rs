@@ -647,7 +647,7 @@ fn alonzo_submitted_tx_round_trip_preserves_id_and_raw_bytes() {
 /// the typed encoder produces canonical bytes whose hash differs from
 /// the on-wire hash.  The mempool-eviction divergence motivated by this
 /// guard is captured in the `extract_tx_ids` doc comment in
-/// `node/src/sync.rs`.
+/// `crates/node/sync/src/lib.rs`.
 ///
 /// Reference: `Cardano.Ledger.Core.txIdTxBody` — hashes the original wire
 /// bytes, not a re-serialisation.

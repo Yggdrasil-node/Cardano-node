@@ -3,8 +3,8 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** none. Yggdrasil-side synthesis crate that
-//! consolidates fixtures and helpers used across `node/tests/`,
-//! `node/src/runtime/tests.rs`, and the per-crate `tests/` trees.
+//! consolidates fixtures and helpers used across `crates/node/yggdrasil-node/tests/`,
+//! `crates/node/runtime/src/tests.rs`, and the per-crate `tests/` trees.
 //! Upstream `cardano-node` distributes equivalent helpers across
 //! `Test.ThreadNet.*`, `Test.Util.*`, and per-package `test/` trees;
 //! Yggdrasil pulls the Rust-side equivalents into one crate so a

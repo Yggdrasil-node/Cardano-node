@@ -863,7 +863,7 @@ pub fn encode_interpreter_minimal(_epoch_size: u64, _slot_length_secs: u64) -> V
 /// drive the [`encode_interpreter_for_network`] /
 /// [`encode_system_start_for_network`] outputs.  Per-network
 /// constants come from
-/// [`node/configuration/<network>/shelley-genesis.json`](../../../../node/configuration/).
+/// [`crates/node/yggdrasil-node/configuration/<network>/shelley-genesis.json`](../../../../node/configuration/).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkKind {
     /// Preprod: `epochLength=432_000` (5-day epochs),

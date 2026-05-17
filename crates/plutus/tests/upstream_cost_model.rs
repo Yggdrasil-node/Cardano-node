@@ -1,7 +1,7 @@
 //! End-to-end Plutus cost-model integration test.
 //!
 //! Loads the **real** PlutusV1 cost-model values from the vendored
-//! `node/configuration/preview/alonzo-genesis.json` (a faithful copy of
+//! `crates/node/yggdrasil-node/configuration/preview/alonzo-genesis.json` (a faithful copy of
 //! the upstream IntersectMBO preview alonzo-genesis), constructs a
 //! [`CostModel`] via [`CostModel::from_alonzo_genesis_params`] (the same
 //! path the runtime uses on startup), and evaluates a script that

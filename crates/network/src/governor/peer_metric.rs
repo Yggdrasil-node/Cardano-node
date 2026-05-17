@@ -289,7 +289,7 @@ pub struct PeerMetrics {
     /// `density ∈ [0.0, ~1.0]` is the per-peer chain-quality signal
     /// derived from the consensus-side `DensityWindow` sliding window.
     /// Updated by the runtime each governor tick from the
-    /// `node/src/sync.rs::DensityRegistry`.  Consumed by
+    /// `crates/node/sync/src/lib.rs::DensityRegistry`.  Consumed by
     /// [`PeerMetrics::combined_score`] and [`PeerMetrics::is_low_density`]
     /// to bias hot demotion away from healthy chain-quality peers and
     /// toward laggards.
@@ -402,7 +402,7 @@ impl PeerMetrics {
 /// for runtime configuration.  The `hot_peers_remote()` free function
 /// derives the current remote-hot set directly from a [`PeerRegistry`]
 /// snapshot so callers (e.g. the multi-peer BlockFetch dispatcher in
-/// `node/src/sync.rs`) can route work across the active peers without
+/// `crates/node/sync/src/lib.rs`) can route work across the active peers without
 /// duplicating registry traversal.
 ///
 /// Reference: `Ouroboros.Network.PeerSelection.Governor.HotPeers` in
@@ -461,7 +461,7 @@ impl Default for HotPeerScheduling {
 ///
 /// - [`evaluate_hot_promotions`] to know who is already hot before
 ///   computing promotions.
-/// - The runtime's multi-peer BlockFetch dispatcher in `node/src/sync.rs`
+/// - The runtime's multi-peer BlockFetch dispatcher in `crates/node/sync/src/lib.rs`
 ///   to spread fetches across all hot peers.
 ///
 /// Mirrors `hotPeers` derivation in upstream

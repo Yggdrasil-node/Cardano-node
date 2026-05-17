@@ -31,7 +31,7 @@
 //! fire-and-forget egress so the `Forwarder` backend doesn't crash
 //! the tracer pipeline when the operator configures it.  A startup
 //! `Startup.TraceForwarderStub` Warning makes the parity gap explicit
-//! to operators (see `node/src/main.rs`).  A real `cardano-tracer`
+//! to operators (see `crates/node/yggdrasil-node/src/main.rs`).  A real `cardano-tracer`
 //! will reject the wire format at the transport level; events routed
 //! only to the `Forwarder` backend are silently dropped.  Plain stdout
 //! backends (`Stdout HumanFormatColoured`, `Stdout HumanFormat`,

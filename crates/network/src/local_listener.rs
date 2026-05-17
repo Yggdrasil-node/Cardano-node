@@ -8,7 +8,7 @@
 //!   peer's data; the trace-forwarder handshake gets layered on top
 //!   in subsequent rounds (R420+ `Acceptors/Server.hs`).
 //! * Path-based addressing with stale-socket cleanup on bind
-//!   (mirrors `node/src/local_server/accept.rs`'s pattern) and
+//!   (mirrors `crates/node/ntc-server/src/accept.rs`'s pattern) and
 //!   socket-file removal on drop.
 //! * `chmod 0o660` permission gate so a non-root user on a multi-
 //!   tenant host cannot speak the trace-forward protocol against
@@ -58,7 +58,7 @@ use tokio::net::{UnixListener, UnixStream};
 
 /// Default Unix-socket permission applied at bind. `0o660` allows
 /// owner + group read/write but blocks world access — same gate
-/// applied to the NtC socket in `node/src/local_server/accept.rs`.
+/// applied to the NtC socket in `crates/node/ntc-server/src/accept.rs`.
 pub const SOCKET_PERMISSIONS: u32 = 0o660;
 
 // ---------------------------------------------------------------------------

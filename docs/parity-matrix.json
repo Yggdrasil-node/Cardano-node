@@ -410,13 +410,13 @@
         "R334 closeout: AGENTS.md updated to deployment-ready state with comparison-with-upstream procedure; CHANGELOG entry; parity-matrix transition partial -> verified_11_0_1.",
         "Pure-Rust deps used: bech32 v0.11 (MIT, BIP-0173/Bech32m), bs58 v0.5 (MIT/Apache-2.0, Bitcoin alphabet), hex v0.4 (MIT/Apache-2.0). All license-compatible per deny.toml.",
         "Test count: 31 (23 unit + 8 integration). Workspace: 4856 -> 4887 (+31).",
-        "Drop-in invocation: `node/scripts/run-tools.sh bech32 <args>` produces byte-equivalent output to `.reference-haskell-cardano-node/install/bin/bech32 <args>`."
+        "Drop-in invocation: `crates/node/yggdrasil-node/scripts/run-tools.sh bech32 <args>` produces byte-equivalent output to `.reference-haskell-cardano-node/install/bin/bech32 <args>`."
       ],
       "remaining_work": [],
       "acceptance": [
         "✓ `bech32 --help` byte-equivalent to upstream (golden-test pinned).",
         "✓ Per-subcommand stdout/stderr byte-equivalent on documented fixtures (4 round-trip tests pass).",
-        "✓ `node/scripts/run-tools.sh bech32` invokes the yggdrasil binary; SPO automation can swap upstream binary without script change.",
+        "✓ `crates/node/yggdrasil-node/scripts/run-tools.sh bech32` invokes the yggdrasil binary; SPO automation can swap upstream binary without script change.",
         "✓ Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "✓ `cargo test -p yggdrasil-bech32` green.",
         "✓ Parity-matrix entry: status verified_11_0_1."
@@ -511,12 +511,12 @@
         "Binary runs end-to-end against a real cardano-node socket with /metrics scraping; subject to live-rehearsal validation at R345."
       ],
       "remaining_work": [
-        "R346 closeout: parity-matrix promotion to verified_11_0_1 (gated on operator running node/scripts/compare_submit_api_to_upstream.sh against a live cardano-node and reporting an empty diff)."
+        "R346 closeout: parity-matrix promotion to verified_11_0_1 (gated on operator running crates/node/yggdrasil-node/scripts/compare_submit_api_to_upstream.sh against a live cardano-node and reporting an empty diff)."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-submit-api --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/cardano-submit-api/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh cardano-submit-api` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh cardano-submit-api` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-cardano-submit-api --test integration` green."
       ]
@@ -555,7 +555,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/kes-agent --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/kes-agent/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh kes-agent` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh kes-agent` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-kes-agent --test integration` green."
       ]
@@ -593,7 +593,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/kes-agent-control --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/kes-agent-control/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh kes-agent-control` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh kes-agent-control` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-kes-agent-control --test integration` green."
       ]
@@ -652,7 +652,7 @@
         "R468 cardano-tracer TLS termination via axum-server-rustls: closes tls_bind_plan_status + force_ssl_unsupported_status + tls_termination_status. Adds axum-server 0.7 (default-features=false, features=[tls-rustls]) + rustls 0.23 (default-features=false, features=[ring, std, tls12]) to workspace with R468 audit entry in docs/DEPENDENCIES.md (no openssl/native-tls per deny.toml:90; picked ring over aws-lc-rs because aws-lc-sys C bindings violate no-FFI spirit). serve_router_with_tls in handlers/http_server.rs installs the ring CryptoProvider (idempotent), loads cert+optional chain into a tempfile-concatenated PEM, binds via axum_server::bind_rustls. run_prometheus_server + run_monitoring_server gain tls_certificate: Option<&Certificate> param and route via TLS when endpoint.force_ssl == Some(true). run_metrics_servers (R464) threads config.tls_certificate.as_ref() through. Operators with valid PEM materials get real TLS termination on Prometheus + Monitoring endpoints.",
         "R469 DataPointRequestors registry + askNodeName closure: closes ask_node_name_status (mis-classified as deferred since R452-R458 actually shipped DataPointRequestor). crates/tools/cardano-tracer/src/types.rs adds DataPointRequestors = Registry<NodeId, DataPointRequestor>. crates/tools/cardano-tracer/src/utils.rs ships ask_data_point + ask_node_name. ask_node_name mirrors upstream askNodeNameRaw: fast-path cache hit on connected_nodes_names → ask forwarder for NodeInfo data-point → parse JSON, extract niName → fall back to NodeId string on empty/missing → register resolved name for subsequent lookups. The tracer-trace channel from MetaTrace.hs (only used for error-logging in upstream) is replaced with silent error-swallowing matching upstream's case-Nothing-fallback semantics.",
         "R470 DataPointRequestors plumbing into Acceptors spawn body: closes the R469 inert-plumbing gap. AcceptorsServerState gains data_point_requestors: DataPointRequestors. The per-connection spawn body in server.rs + client.rs registers the freshly-minted requestor under the conn_token's NodeId immediately after handshake. acceptors/utils.rs adds remove_disconnected_node_full that wraps remove_disconnected_node_with_registry + drops the requestor entry; teardown paths in both server.rs and client.rs route through it. Mirror of R465's HandleRegistry plumbing pattern. Without this, ask_node_name would always return the NodeId-fallback in production because no requestor would be registered for any live NodeId.",
-        "R471-R473 DataPoint forwarder-side port arc: completes the trace-forward DataPoint sub-protocol port (R452-R459 shipped the acceptor side; R471-R473 shipped the forwarder side). R471 ports Trace.Forward.Protocol.DataPoint.Forwarder.hs as crates/network/src/data_point_forwarder.rs (DataPointForwarder driver with wait_for_request + send_reply). R472 extends crates/network/src/protocols/data_point_forward_utils.rs with forwarder-side DataPointStore + init_data_point_store + write_to_store + read_from_store. R473 ports Trace.Forward.Run.DataPoint.Forwarder.hs as crates/network/src/data_point_run_forwarder.rs (forward_data_points_init / forward_data_points_resp mux-level entries pairing the R471 driver with the R472 store). The trace-forward 2-sided port is now structurally complete in crates/network/. Note: the forwarder side ships as a callable library API but is not yet wired into a node-binary trace-source (Yggdrasil's node/ crate doesn't currently generate trace objects to forward)."
+        "R471-R473 DataPoint forwarder-side port arc: completes the trace-forward DataPoint sub-protocol port (R452-R459 shipped the acceptor side; R471-R473 shipped the forwarder side). R471 ports Trace.Forward.Protocol.DataPoint.Forwarder.hs as crates/network/src/data_point_forwarder.rs (DataPointForwarder driver with wait_for_request + send_reply). R472 extends crates/network/src/protocols/data_point_forward_utils.rs with forwarder-side DataPointStore + init_data_point_store + write_to_store + read_from_store. R473 ports Trace.Forward.Run.DataPoint.Forwarder.hs as crates/network/src/data_point_run_forwarder.rs (forward_data_points_init / forward_data_points_resp mux-level entries pairing the R471 driver with the R472 store). The trace-forward 2-sided port is now structurally complete in crates/network/. Note: the forwarder side ships as a callable library API but is not yet wired into a node-binary trace-source (Yggdrasil's crates/node/yggdrasil-node crate doesn't currently generate trace objects to forward)."
       ],
       "remaining_work": [
         "Upstream-byte-equivalence for the TraceObject Serialise wire format: R437 ships a Yggdrasil-canonical 6-field CBOR-array shape; matching upstream's Cardano.Logging.TraceObject Serialise instance byte-for-byte requires consulting the cardano-logging Hackage source (not vendored under .reference-haskell-cardano-node/). Fresh-arc-shaped item — affects byte-level interoperability with upstream cardano-node forwarders only.",
@@ -665,7 +665,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-tracer --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/cardano-tracer/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh cardano-tracer` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh cardano-tracer` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-cardano-tracer --test integration` green."
       ]
@@ -696,12 +696,12 @@
         "R349 Run.hs equivalent: run.rs lands the open-ChainDB + dispatch + report procedure. resolve_target maps TruncateAfter::TruncateAfterSlot through verbatim and TruncateAfter::TruncateAfterBlock to a slot via immutable-DB scan (errors on BlockNumberNotFound). run_with_store generic over ImmutableStore for unit-testability against InMemoryImmutable. run() opens FileImmutable at db_dir + delegates. lib.rs::run() now calls run::run + reports `truncated immutable DB at slot N: K block(s) removed` to stderr (verbose-mode adds open-trace + resolve-trace lines). 30 db-truncater tests (was 22 at R348, +8 in run.rs: 3 resolve_target + 4 run_with_store + 1 tempdir-backed FileImmutable smoke). Workspace: 5,142 → 5,150."
       ],
       "remaining_work": [
-        "R351 closeout: parity-matrix promotion to verified_11_0_1 (gated on operator running node/scripts/compare_db_truncater_to_upstream.sh against synthesized upstream + yggdrasil ChainDBs and reporting all stages passed; storage-format divergence acknowledged: yggdrasil's ChainDB format differs from upstream so this is semantic parity not byte-format parity)."
+        "R351 closeout: parity-matrix promotion to verified_11_0_1 (gated on operator running crates/node/yggdrasil-node/scripts/compare_db_truncater_to_upstream.sh against synthesized upstream + yggdrasil ChainDBs and reporting all stages passed; storage-format divergence acknowledged: yggdrasil's ChainDB format differs from upstream so this is semantic parity not byte-format parity)."
       ],
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-truncater --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/db-truncater/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh db-truncater` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh db-truncater` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-db-truncater --test integration` green."
       ]
@@ -745,7 +745,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-analyser --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/db-analyser/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh db-analyser` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh db-analyser` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-db-analyser --test integration` green."
       ]
@@ -785,7 +785,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/snapshot-converter --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/snapshot-converter/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh snapshot-converter` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh snapshot-converter` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-snapshot-converter --test integration` green."
       ]
@@ -812,7 +812,7 @@
         "R335-pattern skeleton: lib.rs + main.rs + parser.rs + golden test landed for db-synthesizer.",
         "Byte-equivalent --help and --version captured from upstream db-synthesizer binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
         "R354 typed-config surface: types.rs ports the full upstream Types.hs surface — NodeConfigStub (6-field record with serde_json::Value for the untyped node-config JSON, optional Dijkstra-genesis-file), NodeFilePaths (config + chain_db), NodeCredentials (cert/VRF/KES/bulk Option<PathBuf> 4-tuple), ForgeLimit (Block u64 | Slot SlotNo | Epoch u64), ForgeResult newtype (forged: i64), DBSynthesizerOpenMode (OpenCreate [default] | OpenCreateForce | OpenAppend), DBSynthesizerOptions (limit + open_mode), DBSynthesizerConfig (5-field record). Carve-outs documented: Aeson.Value → serde_json::Value; ProtocolFilepaths collapsed to NodeCredentials struct of paths; ShelleyGenesis kept as serde_json::Value at the surface layer (typed parsing happens in yggdrasil-ledger when actually loaded). 16 db-synthesizer tests at R354 (was 8 at R335 + 8 types unit + 0 changes to parser tests).",
-        "R378 Orphans.hs port: orphans.rs ports the JSON-deserialization + file-path-adjustment surface used by db-synthesizer's typed config types — AdjustFilePaths trait + impls for NodeConfigStub (5 paths adjusted, including Option<Dijkstra>) and NodeCredentials (4 Option<PathBuf> paths adjusted), plus a custom serde::Deserialize impl on NodeConfigStub enforcing the upstream `Protocol = Cardano` assertion (with byte-equivalent error messages) + parse_node_config_stub() public entry-point + NodeConfigStubParseError enum (5 variants). Carve-outs: NodeHardForkProtocolConfiguration + NodeByronProtocolConfiguration FromJSON instances NOT ported (upstream's own DUPLICATE comment marks them as re-implementations to avoid an import cycle on Cardano.Node.Configuration.POM; Yggdrasil-side parallels live in node/src/config.rs). 13 orphans.rs unit tests covering complete-stub round-trip + missing-Dijkstra + explicit-null-Dijkstra + non-object rejection + wrong-Protocol rejection (with upstream-exact error wording) + missing-Protocol + missing-required-genesis + non-string-genesis-path + node_config preservation + adjust_file_paths for NodeConfigStub all-paths + NodeConfigStub None-Dijkstra pass-through + adjust_file_paths for NodeCredentials all-present-paths + NodeCredentials all-None pass-through. Adds serde workspace dependency (was serde_json-only).",
+        "R378 Orphans.hs port: orphans.rs ports the JSON-deserialization + file-path-adjustment surface used by db-synthesizer's typed config types — AdjustFilePaths trait + impls for NodeConfigStub (5 paths adjusted, including Option<Dijkstra>) and NodeCredentials (4 Option<PathBuf> paths adjusted), plus a custom serde::Deserialize impl on NodeConfigStub enforcing the upstream `Protocol = Cardano` assertion (with byte-equivalent error messages) + parse_node_config_stub() public entry-point + NodeConfigStubParseError enum (5 variants). Carve-outs: NodeHardForkProtocolConfiguration + NodeByronProtocolConfiguration FromJSON instances NOT ported (upstream's own DUPLICATE comment marks them as re-implementations to avoid an import cycle on Cardano.Node.Configuration.POM; Yggdrasil-side parallels live in crates/node/config/src/lib.rs). 13 orphans.rs unit tests covering complete-stub round-trip + missing-Dijkstra + explicit-null-Dijkstra + non-object rejection + wrong-Protocol rejection (with upstream-exact error wording) + missing-Protocol + missing-required-genesis + non-string-genesis-path + node_config preservation + adjust_file_paths for NodeConfigStub all-paths + NodeConfigStub None-Dijkstra pass-through + adjust_file_paths for NodeCredentials all-present-paths + NodeCredentials all-None pass-through. Adds serde workspace dependency (was serde_json-only).",
         "Phase 4 R1 forge-loop slice: forging.rs ports Cardano.Tools.DBSynthesizer.Forging — the runForge control loop (ForgeState accumulator, forgingDone / nextForgeState slot+epoch arithmetic, BlockContext prev-hash derivation) + synth_structural_block, a deterministic non-Praos structurally-valid Block (empty tx list; Blake2b-256 header hash over prev_hash||slot||block_no; genuinely prev-hash-threaded). run.rs ports Cardano.Tools.DBSynthesizer.Run — preOpenChainDB mode semantics (OpenCreate / OpenCreateForce / OpenAppend; the checkIsDB sub-directory heuristic) + synthesize (open ChainDB via FileImmutable, tip-driven resume slot, drive run_forge). lib.rs::run dispatches through synthesize_default; the ForgeLoopDeferred stub is retired. ~30 unit tests + 7 tests/integration.rs end-to-end tests (argv → run → on-disk ChainDB reopened by FileImmutable; block count, prev-hash threading, create/append/force semantics, determinism). Carve-outs explicit in the module docstrings: genesis loading is the R2 slice; the Praos VRF/KES/OpCert forge path is the R3 slice."
       ],
       "remaining_work": [
@@ -824,7 +824,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/db-synthesizer --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/db-synthesizer/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh db-synthesizer` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh db-synthesizer` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-db-synthesizer --test integration` green."
       ]
@@ -864,7 +864,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/cardano-testnet --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/cardano-testnet/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh cardano-testnet` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh cardano-testnet` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-cardano-testnet --test integration` green."
       ]
@@ -903,7 +903,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/tx-generator --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/tx-generator/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh tx-generator` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh tx-generator` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-tx-generator --test integration` green."
       ]
@@ -941,7 +941,7 @@
       "acceptance": [
         "`<binary> --help` byte-equivalent to upstream `.reference-haskell-cardano-node/install/bin/dmq-node --help` (modulo program name).",
         "Per-subcommand stdout/stderr byte-equivalent on a defined fixture set, OR documented in `crates/dmq-node/AGENTS.md` as semantically-equivalent.",
-        "`node/scripts/run-tools.sh dmq-node` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
+        "`crates/node/yggdrasil-node/scripts/run-tools.sh dmq-node` invokes the yggdrasil binary; replacing upstream binary in an SPO setup produces no observable behavior change.",
         "Strict-mirror gate green (every production .rs declares one of two canonical docstring forms).",
         "`cargo test -p yggdrasil-dmq-node --test integration` green."
       ]

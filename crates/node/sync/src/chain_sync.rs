@@ -17,7 +17,7 @@
 //! storage `ChainDB` apply path; Yggdrasil collapses the driver into
 //! these helper functions.
 //!
-//! Public functions moved from `node/src/sync.rs`:
+//! Public functions moved from `crates/node/sync/src/lib.rs`:
 //!
 //! - `sync_step` — single raw step.
 //! - `sync_step_decoded` — single step with decoded `ShelleyBlock` payloads.
@@ -32,7 +32,7 @@
 //!
 //! Plus the `TypedIntersectResult` enum.
 //!
-//! Extracted from `node/src/sync.rs` in R501 (sync.rs R-arc, 4th
+//! Extracted from `crates/node/sync/src/lib.rs` in R501 (sync.rs R-arc, 4th
 //! slice). See `docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md`
 //! for the multi-round plan.
 

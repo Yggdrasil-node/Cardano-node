@@ -149,7 +149,7 @@ fn main() -> Result<()> {
     }
 }
 
-// Shutdown signal handler moved to `node/src/handlers/shutdown.rs` in R257
+// Shutdown signal handler moved to `crates/node/yggdrasil-node/src/handlers/shutdown.rs` in R257
 // (Phase D-runtime first slice) to mirror upstream
 // `Cardano.Node.Handlers.Shutdown`.
 mod handlers;

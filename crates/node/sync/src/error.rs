@@ -3,7 +3,7 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** none. Yggdrasil-side aggregate error type for
-//! the node-to-node sync orchestration runtime in `node/src/sync.rs`.
+//! the node-to-node sync orchestration runtime in `crates/node/sync/src/lib.rs`.
 //! Wraps upstream protocol-client errors from
 //! `Ouroboros.Network.{ChainSync,BlockFetch,KeepAlive}.Client` plus
 //! `Ouroboros.Consensus` validation errors, and surfaces the
@@ -15,7 +15,7 @@
 //! `Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment`
 //! — errors that result in `throwTo PeerSentAnInvalidBlockException`.
 //!
-//! Extracted from `node/src/sync.rs` in R498 (sync.rs R-arc, 1st
+//! Extracted from `crates/node/sync/src/lib.rs` in R498 (sync.rs R-arc, 1st
 //! slice). See `docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md`
 //! for the multi-round plan.
 
