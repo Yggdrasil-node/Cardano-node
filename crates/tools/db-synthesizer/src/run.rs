@@ -14,16 +14,19 @@
 //! - [`synthesize`] — mirror of upstream `synthesize`: opens the
 //!   ChainDB at `confDbDir`, finds the resume slot from the current
 //!   tip, and drives [`crate::forging::run_forge`].
+//! - [`resolve_epoch_size_from_config`] — mirror of the genesis-loading
+//!   half of upstream `initialize`/`initConf`: `config.json` →
+//!   `NodeConfigStub` → Shelley genesis → real `epochLength` (R2).
+//! - [`synthesize_from_config`] — the production entry point: resolve
+//!   the genesis epoch length, then [`synthesize`].
 //!
-//! ## Carve-outs (NOT ported this round — Phase 4 R2/R3 slice boundary)
+//! ## Carve-out (Phase 4 R3 slice boundary)
 //!
-//! - **`initialize`** — upstream reads `config.json`, parses the
-//!   `NodeConfigStub`, loads + validates `ShelleyGenesis`, and builds
-//!   a `CardanoProtocolParams` via `mkConsensusProtocolCardano`. That
-//!   is the genesis-loading round (db-synthesizer R2). This slice
-//!   instead stubs the epoch length to [`STUB_EPOCH_SIZE`] and the
-//!   synthesis era to [`SYNTH_ERA`]; `orphans::parse_node_config_stub`
-//!   already exists and will be wired here in R2.
+//! - **`initialize` — protocol-building half.** Upstream's
+//!   `initProtocol` builds `CardanoProtocolParams` via
+//!   `mkConsensusProtocolCardano` (the multi-era hard-fork plan).
+//!   Until that lands, synthesized blocks keep the [`SYNTH_ERA`]
+//!   structural stamp.
 //! - **The Praos forge path** (`BlockForging`, `checkShouldForge`,
 //!   `forgeBlock`) — the per-slot VRF/KES/OpCert leader check. See
 //!   [`crate::forging`]'s module note. This slice forges deterministic
@@ -39,22 +42,24 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use yggdrasil_ledger::{Era, Point, SlotNo};
+use yggdrasil_node_genesis::load_shelley_genesis;
 use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
 
 use crate::forging::{ForgeRunOutcome, run_forge};
+use crate::orphans::{AdjustFilePaths, parse_node_config_stub};
 use crate::types::{DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit};
 
-/// Stubbed epoch length used until genesis loading lands (R2).
+/// Fallback epoch length for the config-free [`synthesize_default`]
+/// convenience.
 ///
-/// Mirror of upstream's `sgEpochLength confShelleyGenesis`. The
-/// mainnet Shelley genesis ships `epochLength = 432000`; this slice
-/// uses that value verbatim as a placeholder so the
-/// [`ForgeLimit::Epoch`] arithmetic is exercised against a realistic
-/// constant. It is replaced by the parsed genesis value in R2.
-pub const STUB_EPOCH_SIZE: u64 = 432_000;
+/// `432000` is the mainnet Shelley `epochLength`. The production entry
+/// point [`synthesize_from_config`] parses the real `sgEpochLength`
+/// from the node config's Shelley genesis (R2); this constant only
+/// backs the config-free test / convenience helper.
+pub const DEFAULT_EPOCH_SIZE: u64 = 432_000;
 
 /// Era tag stamped onto synthesized structural blocks until the
-/// genesis-derived hard-fork era plan is wired (R2).
+/// genesis-derived hard-fork era plan is wired (R3 — `initProtocol`).
 pub const SYNTH_ERA: Era = Era::Shelley;
 
 /// Directory names that mark a directory as a ChainDB.
@@ -94,6 +99,33 @@ pub enum RunError {
         #[source]
         source: std::io::Error,
     },
+    /// The node `config.json` could not be read. Mirror of upstream
+    /// `initConf`'s `handleIOExceptT show (BS.readFile nfpConfig)`.
+    #[error("initialize: cannot read config '{path}': {source}")]
+    ConfigRead {
+        /// Config-file path.
+        path: String,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The node `config.json` is not valid JSON.
+    #[error("initialize: config '{path}' is not valid JSON: {source}")]
+    ConfigParse {
+        /// Config-file path.
+        path: String,
+        /// Underlying JSON error.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The node `config.json` is not a well-formed `NodeConfigStub`.
+    /// Mirror of upstream `initConf`'s `readJson` failure path.
+    #[error("initialize: {0}")]
+    ConfigStub(#[from] crate::orphans::NodeConfigStubParseError),
+    /// The Shelley genesis file referenced by the config could not be
+    /// loaded. Mirror of upstream `initConf`'s `readFileJson` failure.
+    #[error("initialize: cannot load Shelley genesis: {0}")]
+    GenesisLoad(#[from] yggdrasil_node_genesis::GenesisLoadError),
 }
 
 /// Whether a directory's sub-directory set marks it as a ChainDB.
@@ -176,9 +208,9 @@ pub struct SynthesizeOutcome {
 /// opens the ChainDB, computes the resume slot from the current tip
 /// (`Origin → 0`, `At s → succ s`), and runs the forge loop.
 ///
-/// `epoch_size` is the Shelley-genesis epoch length — stubbed to
-/// [`STUB_EPOCH_SIZE`] by [`synthesize_default`] until genesis loading
-/// lands (R2).
+/// `epoch_size` is the Shelley-genesis `sgEpochLength`. The production
+/// path [`synthesize_from_config`] resolves it from the node config;
+/// [`synthesize_default`] passes [`DEFAULT_EPOCH_SIZE`].
 pub fn synthesize(
     options: DBSynthesizerOptions,
     db_dir: &Path,
@@ -203,17 +235,81 @@ pub fn synthesize(
     })
 }
 
-/// [`synthesize`] with the stubbed epoch size + era.
+/// [`synthesize`] with [`DEFAULT_EPOCH_SIZE`] + [`SYNTH_ERA`].
 ///
-/// This is the entry point the run-loop dispatch ([`crate::run`])
-/// uses until genesis loading lands. It is split out so R2 can wire
-/// the genesis-derived `epoch_size`/`era` through [`synthesize`]
-/// without re-touching the dispatch.
+/// A config-free convenience: forges without reading a node
+/// `config.json`. The production run-loop dispatch ([`crate::run`])
+/// goes through [`synthesize_from_config`], which resolves the real
+/// genesis epoch length; `synthesize_default` backs unit tests and
+/// callers without a config file.
 pub fn synthesize_default(
     options: DBSynthesizerOptions,
     db_dir: &Path,
 ) -> Result<SynthesizeOutcome, RunError> {
-    synthesize(options, db_dir, STUB_EPOCH_SIZE, SYNTH_ERA)
+    synthesize(options, db_dir, DEFAULT_EPOCH_SIZE, SYNTH_ERA)
+}
+
+/// Resolve the real Shelley-genesis epoch length from the node
+/// `config.json`.
+///
+/// Mirror of the genesis-loading half of upstream
+/// `Cardano.Tools.DBSynthesizer.Run.initialize` (`initConf`): read the
+/// config file, parse it into a
+/// [`NodeConfigStub`](crate::types::NodeConfigStub), resolve the
+/// embedded genesis paths relative to the config file's own directory
+/// (upstream `relativeToConfig`), load the Shelley genesis, and return
+/// its `epochLength`. Upstream `synthesize` then uses
+/// `epochSize = sgEpochLength confShelleyGenesis`.
+///
+/// The protocol-building half (`initProtocol` /
+/// `mkConsensusProtocolCardano`) is the db-synthesizer R3 carve-out.
+pub fn resolve_epoch_size_from_config(config_path: &Path) -> Result<u64, RunError> {
+    let raw = std::fs::read_to_string(config_path).map_err(|source| RunError::ConfigRead {
+        path: config_path.display().to_string(),
+        source,
+    })?;
+    let value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|source| RunError::ConfigParse {
+            path: config_path.display().to_string(),
+            source,
+        })?;
+    let stub = parse_node_config_stub(value)?;
+
+    // Upstream `relativeToConfig = (</>) . takeDirectory <$> makeAbsolute
+    // nfpConfig`: genesis paths embedded in the config are resolved
+    // against the config file's own absolute directory. `PathBuf::join`
+    // mirrors Haskell `(</>)` — an absolute genesis path is kept as-is.
+    let abs_config = std::path::absolute(config_path).map_err(|source| RunError::ConfigRead {
+        path: config_path.display().to_string(),
+        source,
+    })?;
+    let config_dir = abs_config
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let stub = stub.adjust_file_paths(|p| config_dir.join(p));
+
+    let genesis = load_shelley_genesis(&stub.shelley_genesis_file)?;
+    Ok(genesis.epoch_length)
+}
+
+/// [`synthesize`] driven by the operator's node `config.json`.
+///
+/// The production entry point [`crate::run`] uses: it resolves the
+/// real epoch length via [`resolve_epoch_size_from_config`] (the
+/// genesis-loading half of upstream `Run.initialize`) and forges with
+/// it — mirror of upstream `app/db-synthesizer.hs`'s
+/// `initialize … >>= synthesize …` for the epoch-size path.
+///
+/// The era stays [`SYNTH_ERA`]; the genesis-derived hard-fork era plan
+/// needs `initProtocol` and is the db-synthesizer R3 carve-out.
+pub fn synthesize_from_config(
+    options: DBSynthesizerOptions,
+    config_path: &Path,
+    db_dir: &Path,
+) -> Result<SynthesizeOutcome, RunError> {
+    let epoch_size = resolve_epoch_size_from_config(config_path)?;
+    synthesize(options, db_dir, epoch_size, SYNTH_ERA)
 }
 
 /// Whether the supplied [`ForgeLimit`] would forge zero blocks.
@@ -400,5 +496,89 @@ mod tests {
         assert_eq!(outcome.forge.result.forged, 0);
         let reopened = FileImmutable::open(&target).unwrap();
         assert_eq!(reopened.len(), 0);
+    }
+
+    /// Write a `config.json` + Shelley genesis pair into `dir`.
+    /// `shelley_rel` is the (possibly nested) `ShelleyGenesisFile` path
+    /// recorded in the config — relative paths exercise the
+    /// config-directory resolution. Returns the config path.
+    fn write_config(dir: &Path, shelley_rel: &str, epoch_length: u64) -> std::path::PathBuf {
+        let genesis = dir.join(shelley_rel);
+        if let Some(parent) = genesis.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&genesis, format!(r#"{{"epochLength":{epoch_length}}}"#)).unwrap();
+        let config = dir.join("config.json");
+        let config_json = format!(
+            r#"{{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"{shelley_rel}","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"}}"#
+        );
+        std::fs::write(&config, config_json).unwrap();
+        config
+    }
+
+    #[test]
+    fn resolve_epoch_size_reads_non_default_epoch_length() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 86_400 (the preview epoch length) is deliberately != the
+        // 432_000 DEFAULT_EPOCH_SIZE, so a stubbed read would be caught.
+        let config = write_config(tmp.path(), "shelley-genesis.json", 86_400);
+        let epoch = resolve_epoch_size_from_config(&config).unwrap();
+        assert_eq!(epoch, 86_400);
+        assert_ne!(epoch, DEFAULT_EPOCH_SIZE);
+    }
+
+    #[test]
+    fn resolve_epoch_size_resolves_genesis_path_relative_to_config_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        // ShelleyGenesisFile sits in a sub-directory of the config dir;
+        // upstream `relativeToConfig` resolves it there.
+        let config = write_config(tmp.path(), "genesis/shelley.json", 21_600);
+        assert_eq!(resolve_epoch_size_from_config(&config).unwrap(), 21_600);
+    }
+
+    #[test]
+    fn resolve_epoch_size_errors_on_missing_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist.json");
+        let err = resolve_epoch_size_from_config(&missing).expect_err("rejects");
+        assert!(matches!(err, RunError::ConfigRead { .. }));
+    }
+
+    #[test]
+    fn resolve_epoch_size_errors_on_missing_genesis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config.json");
+        std::fs::write(
+            &config,
+            r#"{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"absent-shelley.json","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"}"#,
+        )
+        .unwrap();
+        let err = resolve_epoch_size_from_config(&config).expect_err("rejects");
+        assert!(matches!(err, RunError::GenesisLoad(_)));
+    }
+
+    #[test]
+    fn resolve_epoch_size_errors_on_non_cardano_protocol() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config.json");
+        std::fs::write(&config, r#"{"Protocol":"Byron"}"#).unwrap();
+        let err = resolve_epoch_size_from_config(&config).expect_err("rejects");
+        assert!(matches!(err, RunError::ConfigStub(_)));
+    }
+
+    #[test]
+    fn synthesize_from_config_creates_chain_db() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = write_config(tmp.path(), "shelley-genesis.json", 86_400);
+        let target = tmp.path().join("synth-db");
+        let outcome = synthesize_from_config(
+            opts(ForgeLimit::Block(4), DBSynthesizerOpenMode::OpenCreate),
+            &config,
+            &target,
+        )
+        .unwrap();
+        assert_eq!(outcome.forge.result.forged, 4);
+        let reopened = FileImmutable::open(&target).unwrap();
+        assert_eq!(reopened.len(), 4);
     }
 }

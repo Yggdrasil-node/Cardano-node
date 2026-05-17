@@ -67,27 +67,29 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// **Phase 4 R1 slice:** wires argv → [`parser::Args`] → the
-/// [`run::synthesize_default`] supervisor, replacing the former
-/// `ForgeLoopDeferred` structured-deferral stub. On a `--blocks N` /
-/// `--slots N` / `--epochs N` invocation the synthesizer opens (or
-/// creates) the ChainDB at `--db` and forges `N` deterministic
-/// structural blocks, then prints upstream-shaped progress lines.
+/// **Phase 4 R2 slice:** wires argv → [`parser::Args`] → the
+/// [`run::synthesize_from_config`] supervisor. The synthesizer reads
+/// the `--config` node config to resolve the real Shelley-genesis
+/// epoch length, opens (or creates) the ChainDB at `--db`, forges the
+/// `--blocks N` / `--slots N` / `--epochs N` deterministic structural
+/// blocks, then prints upstream-shaped progress lines.
 ///
 /// Mirror of upstream `app/db-synthesizer.hs`'s `main`:
 /// `initialize paths creds forgeOpts >>= either die (synthesize ...)`.
 ///
-/// **Carve-out (this slice):** upstream's `initialize` loads the
-/// node config + Shelley genesis and builds a Praos `BlockForging`
-/// credential set; this slice stubs the epoch size + era (see
-/// [`run::synthesize_default`]) and forges *non-Praos* structural
-/// blocks (see [`forging`]'s module note). The `--config` /
-/// credential flags are parsed + accepted but the genesis-loading and
-/// Praos-forging paths land in db-synthesizer R2/R3. The result is a
-/// structurally-valid ChainDB that yggdrasil's own `FileImmutable` /
-/// `db-analyser` can open and walk — not yet a Praos-valid chain.
+/// **Carve-out (R3):** upstream's `initialize` also builds the full
+/// multi-era `CardanoProtocolParams` and a Praos `BlockForging`
+/// credential set. This slice ports the genesis-loading half — the
+/// real epoch length is now read from `--config` — but the Praos
+/// forge path (`initProtocol` + the VRF/KES/OpCert leader check) is
+/// the remaining db-synthesizer R3 carve-out, so the forged blocks
+/// are still *non-Praos* structural blocks (see [`forging`]'s module
+/// note). The result is a structurally-valid ChainDB that yggdrasil's
+/// own `FileImmutable` / `db-analyser` can open and walk — not yet a
+/// Praos-valid chain.
 pub fn run(args: &parser::Args) -> eyre::Result<()> {
-    let outcome = run::synthesize_default(args.options, &args.paths.chain_db)?;
+    let outcome =
+        run::synthesize_from_config(args.options, &args.paths.config, &args.paths.chain_db)?;
 
     // Upstream-shaped progress reporting (mirror of Run.hs's putStrLn
     // lines + app/db-synthesizer.hs's "--> done" line).

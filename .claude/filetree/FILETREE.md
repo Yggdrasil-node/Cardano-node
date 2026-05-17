@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-17T21:08:57Z
-- Files described: 1340
+- Generated at: 2026-05-17T21:52:52Z
+- Files described: 1341
 
 ## Workspace
 
@@ -2155,6 +2155,8 @@
   - R502 — `config.verbose` wire-up: ---.
 - `docs/operational-runs/2026-05-12-round-503-select-db-start-point-wire-up.md`
   - R503 — `config.select_db` wire-up for `At(slot)` start point: ---.
+- `docs/operational-runs/2026-05-17-round-504-db-synthesizer-r2-genesis-loading.md`
+  - Round 504 — db-synthesizer Phase 4 R2: genesis / config loading: **Date:** 2026-05-17.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

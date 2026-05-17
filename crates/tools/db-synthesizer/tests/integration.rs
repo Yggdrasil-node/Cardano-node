@@ -1,8 +1,8 @@
-//! End-to-end integration tests for the db-synthesizer Phase 4 R1
-//! forge-loop slice.
+//! End-to-end integration tests for the db-synthesizer Phase 4
+//! forge-loop (R1) + genesis-loading (R2) slices.
 //!
 //! These exercise the full argv → `parser::Args` → `lib::run` →
-//! `run::synthesize_default` path and verify the synthesized ChainDB
+//! `run::synthesize_from_config` path and verify the synthesized ChainDB
 //! is structurally valid: it can be reopened from disk by yggdrasil's
 //! own `FileImmutable` and the block count / chaining invariants
 //! hold.
@@ -25,14 +25,29 @@ use yggdrasil_db_synthesizer::{parser, run};
 use yggdrasil_ledger::{BlockNo, HeaderHash, Point, SlotNo};
 use yggdrasil_storage::{FileImmutable, ImmutableStore};
 
-/// Build a minimal `parser::Args` for a `--blocks N` invocation.
-fn args_for(config: &str, db: &std::path::Path, n: u64, mode: &str) -> parser::Args {
-    let db = db.to_string_lossy().into_owned();
+/// Build a `parser::Args` for a `--blocks N` invocation, writing a
+/// real `config.json` + Shelley genesis into `tmp`.
+///
+/// R2: `lib::run` resolves the Shelley-genesis epoch length from the
+/// `--config` node config, so the integration path needs a genuine
+/// config file (R1 ignored it).
+fn args_for(tmp: &std::path::Path, db: &std::path::Path, n: u64, mode: &str) -> parser::Args {
+    std::fs::write(
+        tmp.join("shelley-genesis.json"),
+        r#"{"epochLength":432000}"#,
+    )
+    .unwrap();
+    let config = tmp.join("config.json");
+    std::fs::write(
+        &config,
+        r#"{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"shelley-genesis.json","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"}"#,
+    )
+    .unwrap();
     let mut argv = vec![
         "--config".to_string(),
-        config.to_string(),
+        config.to_string_lossy().into_owned(),
         "--db".to_string(),
-        db,
+        db.to_string_lossy().into_owned(),
         "--blocks".to_string(),
         n.to_string(),
     ];
@@ -48,7 +63,7 @@ fn args_for(config: &str, db: &std::path::Path, n: u64, mode: &str) -> parser::A
 fn run_synthesizes_chain_db_that_reopens_from_disk() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().join("chaindb");
-    let args = args_for("/unused/config.json", &target, 12, "create");
+    let args = args_for(tmp.path(), &target, 12, "create");
 
     // The former `ForgeLoopDeferred` stub returned Err here.
     yggdrasil_db_synthesizer::run(&args).expect("run succeeds");
@@ -63,7 +78,7 @@ fn run_synthesizes_chain_db_that_reopens_from_disk() {
 fn synthesized_chain_is_prev_hash_threaded() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().join("chaindb");
-    let args = args_for("/unused/config.json", &target, 8, "create");
+    let args = args_for(tmp.path(), &target, 8, "create");
     yggdrasil_db_synthesizer::run(&args).expect("run succeeds");
 
     let store = FileImmutable::open(&target).expect("reopens");
@@ -91,12 +106,12 @@ fn append_mode_resumes_and_extends_chain_db() {
     let target = tmp.path().join("chaindb");
 
     // First pass: create with 5 blocks.
-    let create = args_for("/unused/config.json", &target, 5, "create");
+    let create = args_for(tmp.path(), &target, 5, "create");
     yggdrasil_db_synthesizer::run(&create).expect("create succeeds");
     assert_eq!(FileImmutable::open(&target).unwrap().len(), 5);
 
     // Second pass: append 7 more — total 12.
-    let append = args_for("/unused/config.json", &target, 7, "append");
+    let append = args_for(tmp.path(), &target, 7, "append");
     yggdrasil_db_synthesizer::run(&append).expect("append succeeds");
 
     let store = FileImmutable::open(&target).expect("reopens");
@@ -114,11 +129,11 @@ fn force_mode_overwrites_existing_chain_db() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().join("chaindb");
 
-    let create = args_for("/unused/config.json", &target, 20, "create");
+    let create = args_for(tmp.path(), &target, 20, "create");
     yggdrasil_db_synthesizer::run(&create).expect("create succeeds");
 
     // Force-recreate with a shorter chain.
-    let force = args_for("/unused/config.json", &target, 3, "force");
+    let force = args_for(tmp.path(), &target, 3, "force");
     yggdrasil_db_synthesizer::run(&force).expect("force succeeds");
 
     let store = FileImmutable::open(&target).expect("reopens");
@@ -130,12 +145,12 @@ fn create_mode_refuses_existing_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().join("chaindb");
 
-    let create = args_for("/unused/config.json", &target, 4, "create");
+    let create = args_for(tmp.path(), &target, 4, "create");
     yggdrasil_db_synthesizer::run(&create).expect("first create succeeds");
 
     // A second create against the now-existing dir must fail with the
     // upstream-shaped AlreadyExists error.
-    let create_again = args_for("/unused/config.json", &target, 4, "create");
+    let create_again = args_for(tmp.path(), &target, 4, "create");
     let err = yggdrasil_db_synthesizer::run(&create_again).expect_err("second create fails");
     let msg = format!("{err:#}");
     assert!(msg.contains("already exists"), "got: {msg}");
@@ -145,7 +160,7 @@ fn create_mode_refuses_existing_directory() {
 fn zero_block_limit_is_a_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().join("chaindb");
-    let args = args_for("/unused/config.json", &target, 0, "create");
+    let args = args_for(tmp.path(), &target, 0, "create");
     yggdrasil_db_synthesizer::run(&args).expect("run succeeds");
 
     let store = FileImmutable::open(&target).expect("reopens");

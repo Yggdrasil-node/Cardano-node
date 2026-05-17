@@ -1,8 +1,8 @@
 # Guidance for the pure-Rust port of upstream `db-synthesizer`.
 
-**Status:** `partial` (Phase 4 R1 forge-loop slice shipped — see
-below). Genesis loading (R2) + the Praos VRF/KES/OpCert forge path
-(R3) remain. Scope band: **MEDIUM**.
+**Status:** `partial` (Phase 4 R1 forge-loop + R2 genesis-loading
+slices shipped — see below). The Praos VRF/KES/OpCert forge path
+(R3) remains. Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -21,7 +21,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `node/src/block_producer.rs` Forging logic.
 
-## Current functional surface (post Phase 4 R1)
+## Current functional surface (post Phase 4 R2)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -35,25 +35,28 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
   `ForgeLoopDeferred` stub is retired. Blocks are deterministic,
   prev-hash-threaded, **non-Praos** structural blocks — see the
   carve-out inventory below.
-- 🟡 Genesis loading (Phase 4 R2) — epoch length + era are
-  placeholder stubs until `config.json` / `ShelleyGenesis` parsing
-  lands.
+- ✅ Genesis loading (Phase 4 R2) — `run::resolve_epoch_size_from_config`
+  reads `--config`, parses the `NodeConfigStub`, resolves the genesis
+  paths relative to the config directory, and loads the real
+  Shelley-genesis `epochLength`; `run::synthesize_from_config` is the
+  production entry point. (The synthesis era stays a structural
+  `Shelley` stamp until the R3 hard-fork plan.)
 - 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
   structurally valid but not Praos-valid until the VRF/KES/OpCert
   leader check + KES-signed `forgeBlock` land.
 - ❌ Byte-equivalence soak vs the upstream binary's ChainDB chunk
   format — deferred to the integration round.
 
-## Carve-out inventory (Phase 4 R2/R3 deferral surface)
+## Carve-out inventory (Phase 4 R3 deferral surface)
 
-The Phase 4 R1 forge-loop slice (`forging.rs` + `run.rs`) is shipped.
+The Phase 4 R1 forge-loop slice (`forging.rs` + `run.rs`) and the R2
+genesis-loading slice (`run::synthesize_from_config`) are shipped.
 `crates/tools/db-synthesizer/src/status.rs` ships `forge_loop_status()`
-returning a `ForgeLoopStatus` descriptor of the two surviving carve-outs:
+returning a `ForgeLoopStatus` descriptor of the one surviving carve-out:
 
 | Carve-out         | Slice | Deferral rationale (one-liner)                                            |
 |-------------------|-------|---------------------------------------------------------------------------|
-| Genesis loading   | R2    | `Run.hs` `initialize` — parse `config.json`'s NodeConfigStub, load + validate `ShelleyGenesis`, build `CardanoProtocolParams`. Until then epoch length + era are placeholder stubs (`STUB_EPOCH_SIZE` / `SYNTH_ERA`). |
-| Praos forge path  | R3    | `checkShouldForge` (VRF/KES/OpCert leader check) + KES-signed `forgeBlock`, leveraging `crates/node/block-producer`. Until then `synth_structural_block` emits deterministic non-Praos structural blocks. |
+| Praos forge path  | R3    | `checkShouldForge` (VRF/KES/OpCert leader check) + KES-signed `forgeBlock`, leveraging `crates/node/block-producer`, plus `initProtocol` / `mkConsensusProtocolCardano` for the hard-fork era plan. Until then `synthesize` emits deterministic non-Praos structural blocks stamped `SYNTH_ERA`. |
 
 ## Build + run
 
@@ -62,8 +65,8 @@ returning a `ForgeLoopStatus` descriptor of the two surviving carve-outs:
 cargo build --release -p yggdrasil-db-synthesizer
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh db-synthesizer --help
-node/scripts/run-tools.sh db-synthesizer --version
+crates/node/yggdrasil-node/scripts/run-tools.sh db-synthesizer --help
+crates/node/yggdrasil-node/scripts/run-tools.sh db-synthesizer --version
 
 # Or invoke the binary directly:
 target/release/db-synthesizer --help
