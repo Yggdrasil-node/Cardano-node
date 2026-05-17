@@ -58,12 +58,19 @@ green, one `docs/operational-runs/` doc, one commit. Use the
 first for any slice touching protocol/CBOR/crypto behavior.
 
 ### A1 — Feature-flag gating  (`TECH-DEBT.md` §"Wave 3 / Wave 5 feature flags")
-Declared-but-not-gating flags still to wire: `yggdrasil-ledger/plutus`,
-`yggdrasil-network/{ntn,ntc}`, `yggdrasil-plutus/{secp256k1,bls12-381}`, and
-the binary's `yggdrasil-node/{plutus,ntc-socket,tracer-forwarder}`. Each is a
-separate PR; `plutus` is the largest (~8 ledger files). **Scope:** ~1–3 days
-per flag. **Exit:** each flag conditionally compiles the code it names;
-`cargo lint-no-default` stays green.
+Status verified 2026-05-17: `forge` and `yggdrasil-plutus/{secp256k1,
+bls12-381}` are already wired (real `#[cfg]` sites; `--no-default-features`
+builds and `cargo lint-no-default` clean). The genuinely-inert flags that
+remain are `yggdrasil-ledger/plutus` and `yggdrasil-network/{ntn,ntc}`
+(0 `#[cfg]` sites). `ntc` is the cleanly wireable one — a relay/producer with
+the node-to-client local socket excluded is still a valid node — but it is a
+multi-crate round (`yggdrasil-network` NtC modules + the
+`yggdrasil-node-ntc-server` crate + the binary's `query`/`submit-tx`
+subcommands). `plutus` gates the Alonzo+ phase-2 witness paths across ~8
+per-era ledger apply-rule files and needs a slim-build soundness decision
+(a node without it skips phase-2 validation). `ntn` is required by every
+node — a candidate for removal rather than wiring. **Exit:** the chosen flag
+conditionally compiles the code it names; `cargo lint-no-default` stays green.
 
 ### A2 — cardano-cli subcommand migration  (`TECH-DEBT.md` §"yggdrasil-cardano-cli")
 `crates/tools/cardano-cli` has 3 of ~35 operator subcommands wired standalone

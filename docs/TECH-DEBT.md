@@ -154,16 +154,28 @@ soak is operator-driven work.
   a compile-time choice). Re-scope outcome: the dead declarations
   were removed rather than carried as decorative flags.
 
-- ⏳ Other declared-but-not-gating flags: `yggdrasil-ledger/plutus`,
-  `yggdrasil-network/{ntn, ntc}`,
-  `yggdrasil-plutus/{secp256k1, bls12-381}`,
-  binary's `yggdrasil-node/{plutus, ntc-socket, tracer-forwarder}`.
-  Each is a separate per-flag PR. `plutus` is the next-biggest
-  individual scope (gating the Alonzo+ phase-2 witness paths in
-  per-era ledger apply rules); `ntn` / `ntc` gate full mini-
-  protocol module trees in `yggdrasil-network`; `secp256k1` /
-  `bls12-381` gate per-builtin dispatch arms in
-  `yggdrasil-plutus::builtins`.
+- ✅ **`yggdrasil-plutus/{secp256k1, bls12-381}`** (verified 2026-05-17):
+  both already gate real `#[cfg]` sites — the per-builtin dispatch arms
+  in `crates/plutus/src/builtins.rs` carry `#[cfg(feature = "...")]` with
+  `#[cfg(not(feature = "..."))]` fallback-error paths, the crypto helper
+  fns and the builtin tests are gated, and `cargo check` /
+  `cargo lint-no-default` both pass under `--no-default-features`. This
+  entry previously listed them as pending; that was stale.
+
+- ⏳ Genuinely-inert flags (0 `#[cfg]` sites today): `yggdrasil-ledger/plutus`
+  and `yggdrasil-network/{ntn, ntc}`. `plutus` is the biggest scope (gating
+  the Alonzo+ phase-2 witness paths across ~8 per-era ledger apply-rule
+  files) and needs an explicit slim-build soundness decision — a node built
+  without it skips phase-2 script validation and is no longer a full
+  consensus participant. `ntc` (the node-to-client local-socket surface) is
+  the cleanly wireable one: a relay / producer with `ntc` off is still a
+  valid node; wiring it is a multi-crate round (`yggdrasil-network` NtC
+  modules + the `yggdrasil-node-ntc-server` crate + the binary's `query` /
+  `submit-tx` subcommands). `ntn` (node-to-node) is required by every node,
+  so it is a candidate for *removal* rather than wiring — same disposition
+  as the 4 drifted flags above. The binary declares only `forge` /
+  `relay-only`; the earlier mention of `yggdrasil-node/{plutus, ntc-socket,
+  tracer-forwarder}` flags here was aspirational — they do not exist.
 
 **Desired end state.** Each flag actually conditionally compiles
 the code paths it names. Per-flag follow-on PRs land
@@ -171,8 +183,9 @@ incrementally as operator demand surfaces (e.g., a sister tool
 that needs `--no-default-features --features=slim` to drop
 Plutus would drive the `plutus` flag work).
 
-**Scope.** Per-flag PRs. `forge` is closed and the 4 drifted flags
-are closed by removal; per remaining flag: ~1-3 days each depending
+**Scope.** Per-flag PRs. `forge`, `secp256k1`, and `bls12-381` are
+closed (wired) and the 4 drifted flags are closed by removal; per
+remaining flag (`plutus` / `ntn` / `ntc`): ~1-3 days each depending
 on the cross-crate coupling. `plutus` is multi-day because Plutus
 types are referenced from ~8 ledger files including era-specific
 apply rules.
