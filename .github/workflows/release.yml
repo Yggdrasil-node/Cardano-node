@@ -221,7 +221,7 @@ jobs:
       # verify via `gh attestation verify <archive> --repo <repo>` or
       # `slsa-verifier`.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             ${{ steps.stage.outputs.archive }}
