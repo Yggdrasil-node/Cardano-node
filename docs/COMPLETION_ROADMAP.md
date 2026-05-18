@@ -169,11 +169,19 @@ Praos forging needs. Verified decomposition:
   from the sync pipeline and upstream `runForge` gets from the ChainDB.
   Verified decomposition:
   - 🟡 **R3c-1 — initial ledger + nonce state.** Construct the
-    `pInfoInitLedger` analog — the initial `LedgerState` (`LedgerState::new`
-    + `configure_pending_shelley_genesis_utxo` + `seed_byron_genesis_utxo`)
-    and `NonceEvolutionState::new(praos_nonce)` from the R3b-3
-    `CardanoProtocolParams`. No genesis→`LedgerState` constructor exists —
-    mostly new orchestration.
+    `pInfoInitLedger` analog. Grounding (2026-05-19) found the faithful
+    genesis→`LedgerState` build is the ~115-line `strict_base_ledger_state`
+    (`yggdrasil-node/src/startup.rs`) — UTxO + stake + delegs + protocol
+    params + epoch config — which lives in the `yggdrasil-node` *binary*
+    crate, tied to `NodeConfigFile`. The synthesizer needs the identical
+    state; duplicating 115 drift-prone lines is wrong. Two sub-slices:
+    - 🟡 **R3c-1a** — extract a shared `build_base_ledger_state(genesis
+      pieces…) -> LedgerState` into a library crate
+      (`yggdrasil-node-genesis`); refactor `startup.rs::strict_base_ledger_state`
+      to call it (node behavior unchanged, four gates green).
+    - 🟡 **R3c-1b** — db-synthesizer builds its initial `LedgerState` from
+      the R3b-1 `GenesisBundle` via that shared builder, plus
+      `NonceEvolutionState::new(praos_nonce)`.
   - 🟡 **R3c-2 — bulk credentials + multi-forger.** Port `mkForgers` /
     `shelleyBulkCredsFile` to a `Vec<BlockProducerCredentials>` parser; the
     per-slot loop picks the first leader. No Rust bulk-creds parser exists.
