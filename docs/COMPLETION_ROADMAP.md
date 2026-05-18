@@ -175,10 +175,12 @@ Praos forging needs. Verified decomposition:
     params + epoch config — which lives in the `yggdrasil-node` *binary*
     crate, tied to `NodeConfigFile`. The synthesizer needs the identical
     state; duplicating 115 drift-prone lines is wrong. Two sub-slices:
-    - 🟡 **R3c-1a** — extract a shared `build_base_ledger_state(genesis
-      pieces…) -> LedgerState` into a library crate
-      (`yggdrasil-node-genesis`); refactor `startup.rs::strict_base_ledger_state`
-      to call it (node behavior unchanged, four gates green).
+    - ✅ **R3c-1a** (round 514, commit `c19b8f8`) — extracted the shared
+      `build_base_ledger_state` + `BaseLedgerStateInputs` into
+      `yggdrasil-node-genesis`; `startup.rs::strict_base_ledger_state`
+      refactored to load-pieces + call the shared builder. Behavior-
+      preserving — node unchanged, four gates green (6,539 tests, the
+      baseline, 0 fail).
     - 🟡 **R3c-1b** — db-synthesizer builds its initial `LedgerState` from
       the R3b-1 `GenesisBundle` via that shared builder, plus
       `NonceEvolutionState::new(praos_nonce)`.
