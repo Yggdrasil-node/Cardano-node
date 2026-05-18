@@ -158,9 +158,35 @@ Praos forging needs. Verified decomposition:
     the Shelley-family hashes — nothing to fold in. **A3 R3b is complete.**
   Scope boundary: R3b stops at the config bundle. Building the initial
   `ExtLedgerState` the synthesizer forges on (`pInfoInitLedger`) is R3c.
-- **R3c — Praos forge loop.** Re-architect `run_forge` to thread an evolving
-  ledger state + `ChainDepState` per slot, run `check_should_forge` (VRF) and
-  `forge_block` (KES). The hard part.
+- **R3c — Praos forge loop.** Re-architect `run_forge` to forge Praos-valid
+  blocks. Grounding (2026-05-18) verified R3c is a **6-slice arc** — the
+  roadmap's "hard part". The forge *cryptography* is ~100% reuse
+  (`crates/node/block-producer`, R3a-complete — `check_should_forge` /
+  `forge_block` callable as-is; zero new VRF/KES/OpCert/CBOR code). What is
+  genuinely new is the **offline state-evolution orchestration** — the
+  synthesizer is the first yggdrasil forge path with no network and no wall
+  clock, so it must own the ledger / nonce / stake evolution the runtime gets
+  from the sync pipeline and upstream `runForge` gets from the ChainDB.
+  Verified decomposition:
+  - 🟡 **R3c-1 — initial ledger + nonce state.** Construct the
+    `pInfoInitLedger` analog — the initial `LedgerState` (`LedgerState::new`
+    + `configure_pending_shelley_genesis_utxo` + `seed_byron_genesis_utxo`)
+    and `NonceEvolutionState::new(praos_nonce)` from the R3b-3
+    `CardanoProtocolParams`. No genesis→`LedgerState` constructor exists —
+    mostly new orchestration.
+  - 🟡 **R3c-2 — bulk credentials + multi-forger.** Port `mkForgers` /
+    `shelleyBulkCredsFile` to a `Vec<BlockProducerCredentials>` parser; the
+    per-slot loop picks the first leader. No Rust bulk-creds parser exists.
+  - 🟡 **R3c-3 — thread evolving state.** Extend `run_forge`'s `ForgeState`
+    to carry `LedgerState` + `NonceEvolutionState`, applying both per block.
+    Blocks stay structural here — a four-gates-green intermediate.
+  - 🟡 **R3c-4 — real Praos forge.** Replace `synth_structural_block` with
+    `check_should_forge` (skip on `NotLeader`) + `forge_block` +
+    `forged_block_to_storage_block`. High reuse of `crates/node/block-producer`.
+  - 🟡 **R3c-5 — epoch-boundary stake rebuild.** Recompute the leader-check
+    `sigma` per epoch via `compute_stake_snapshot` / `apply_epoch_boundary`.
+  - 🟡 **R3c-6 — `FileImmutable` → `ChainDb` migration.** Persist a
+    `LedgerStore` snapshot so `db-analyser` can validate the synthesized chain.
 
 **Each slice is its own protocol-critical round** — author a `parity-plan`
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**
