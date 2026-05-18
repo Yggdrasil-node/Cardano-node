@@ -21,28 +21,19 @@
 //! | `instance FromJSON NodeConfigStub`                      | `serde::Deserialize` impl on `NodeConfigStub` |
 //! | `instance AdjustFilePaths NodeConfigStub`               | [`AdjustFilePaths`] impl on `NodeConfigStub` |
 //! | `instance AdjustFilePaths NodeCredentials`              | [`AdjustFilePaths`] impl on `NodeCredentials` |
-//! | `instance FromJSON NodeHardForkProtocolConfiguration`   | (carve-out — see below)                     |
-//! | `instance FromJSON NodeByronProtocolConfiguration`      | (carve-out — see below)                     |
+//! | `instance FromJSON NodeHardForkProtocolConfiguration`   | `#[derive(Deserialize)]` on the `types.rs` struct (R3b-2) |
+//! | `instance FromJSON NodeByronProtocolConfiguration`      | `#[derive(Deserialize)]` on the `types.rs` struct (R3b-2) |
 //!
-//! Carve-outs (NOT ported, by design):
-//!
-//! - **`NodeHardForkProtocolConfiguration` + `NodeByronProtocolConfiguration`
-//!   FromJSON instances**: upstream re-implements these instances
-//!   here to avoid an import dependency on `Cardano.Node.Configuration.POM`
-//!   (the node-side configuration module). Upstream's own comment
-//!   declares them DUPLICATE. The Yggdrasil-side parallel types live
-//!   in the runtime layer (e.g. node configuration in
-//!   `crates/node/config/src/lib.rs`), and db-synthesizer does not need to
-//!   re-deserialize them — it operates on the raw JSON `Value`
-//!   stashed in [`NodeConfigStub::node_config`] and feeds that to
-//!   the runtime layer when wiring up the synthesizer's underlying
-//!   protocol info.
-//! - **`Cardano.Chain.Update.ApplicationName` hard-coded
-//!   "cardano-sl"**: upstream's `NodeByronProtocolConfiguration`
-//!   parser hard-codes the Byron application name to `"cardano-sl"`.
-//!   When Yggdrasil eventually grows its own
-//!   `NodeByronProtocolConfiguration` type at the node-runtime layer,
-//!   it will mirror this constant.
+//! Phase 4 R3b-2 ported the Byron + HardFork `FromJSON` instances:
+//! [`crate::types::NodeByronProtocolConfiguration`] and
+//! [`crate::types::NodeHardForkProtocolConfiguration`] carry
+//! `#[derive(serde::Deserialize)]` with `#[serde(rename / default)]`
+//! attributes mirroring `Orphans.hs`'s field-by-field decoding. They
+//! need no hand-written impl in this module — unlike [`NodeConfigStub`],
+//! whose custom `Deserialize` exists only for its `Protocol == "Cardano"`
+//! cross-field assertion. The hard-coded Byron `ApplicationName`
+//! (`"cardano-sl"`, upstream `pure (ApplicationName "cardano-sl")`) is a
+//! `#[serde(skip, default = …)]` field.
 
 use std::path::PathBuf;
 

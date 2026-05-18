@@ -15,6 +15,15 @@
 //! - [`DBSynthesizerOptions`] — `data DBSynthesizerOptions = DBSynthesizerOptions { synthLimit, synthOpenMode }`.
 //! - [`DBSynthesizerConfig`] — `data DBSynthesizerConfig = DBSynthesizerConfig { confConfigStub, confOptions, confProtocolCredentials, confShelleyGenesis, confDbDir }`.
 //!
+//! The per-era protocol-configuration records ([`NodeByronProtocolConfiguration`],
+//! [`NodeShelleyProtocolConfiguration`], [`NodeAlonzoProtocolConfiguration`],
+//! [`NodeConwayProtocolConfiguration`], [`NodeDijkstraProtocolConfiguration`],
+//! [`NodeHardForkProtocolConfiguration`]) mirror db-synthesizer's vendored
+//! `unstable-cardano-tools/Cardano/Node/Types.hs` — the records
+//! `DBSynthesizer/Orphans.hs` writes `FromJSON` for (Phase 4 R3b-2). They
+//! live in this module to keep the db-synthesizer config-type surface in one
+//! place.
+//!
 //! Carve-outs (NOT ported, by design):
 //!
 //! - **`ncsNodeConfig :: Aeson.Value`**: upstream stores the node-config
@@ -33,8 +42,10 @@
 
 use std::path::PathBuf;
 
+use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use yggdrasil_ledger::SlotNo;
+use yggdrasil_node_config::RequiresNetworkMagic;
 
 /// Operator-supplied node-configuration stub.
 ///
@@ -65,6 +76,146 @@ pub struct NodeConfigStub {
     /// Path to the Dijkstra-genesis file (`None` if the era is not yet
     /// activated in this node's config).
     pub dijkstra_genesis_file: Option<PathBuf>,
+}
+
+/// Shelley-era protocol configuration.
+///
+/// Upstream `NodeShelleyProtocolConfiguration`
+/// (`unstable-cardano-tools/Cardano/Node/Types.hs`). Upstream
+/// `initProtocol` inline-constructs this from the [`NodeConfigStub`]
+/// path (hash `Nothing`), so it carries no `Deserialize` impl.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeShelleyProtocolConfiguration {
+    /// Path to the Shelley-genesis file.
+    pub shelley_genesis_file: PathBuf,
+    /// Optional expected Shelley-genesis hash.
+    pub shelley_genesis_file_hash: Option<String>,
+}
+
+/// Alonzo-era protocol configuration. See [`NodeShelleyProtocolConfiguration`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeAlonzoProtocolConfiguration {
+    /// Path to the Alonzo-genesis file.
+    pub alonzo_genesis_file: PathBuf,
+    /// Optional expected Alonzo-genesis hash.
+    pub alonzo_genesis_file_hash: Option<String>,
+}
+
+/// Conway-era protocol configuration. See [`NodeShelleyProtocolConfiguration`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeConwayProtocolConfiguration {
+    /// Path to the Conway-genesis file.
+    pub conway_genesis_file: PathBuf,
+    /// Optional expected Conway-genesis hash.
+    pub conway_genesis_file_hash: Option<String>,
+}
+
+/// Dijkstra-era protocol configuration. See [`NodeShelleyProtocolConfiguration`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NodeDijkstraProtocolConfiguration {
+    /// Path to the Dijkstra-genesis file.
+    pub dijkstra_genesis_file: PathBuf,
+    /// Optional expected Dijkstra-genesis hash.
+    pub dijkstra_genesis_file_hash: Option<String>,
+}
+
+/// Upstream `Orphans.hs` hard-codes the Byron update-application name.
+fn default_byron_application_name() -> String {
+    "cardano-sl".to_owned()
+}
+
+/// Upstream `Orphans.hs` defaults the Byron application version to `1`.
+fn default_byron_application_version() -> u64 {
+    1
+}
+
+/// Upstream `Orphans.hs` defaults `RequiresNetworkMagic` to `RequiresNoMagic`.
+fn default_byron_req_network_magic() -> RequiresNetworkMagic {
+    RequiresNetworkMagic::RequiresNoMagic
+}
+
+/// Byron-era protocol configuration.
+///
+/// Upstream `NodeByronProtocolConfiguration`
+/// (`unstable-cardano-tools/Cardano/Node/Types.hs`) — a 9-field record.
+/// The `Deserialize` impl mirrors `DBSynthesizer/Orphans.hs`'s `FromJSON`
+/// instance: `ByronGenesisFile` and `LastKnownBlockVersion-{Major,Minor}`
+/// are required, the rest default. `application_name` is hard-coded
+/// `"cardano-sl"` and never read from JSON — upstream
+/// `pure (ApplicationName "cardano-sl")`.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct NodeByronProtocolConfiguration {
+    /// Path to the Byron-genesis file.
+    #[serde(rename = "ByronGenesisFile")]
+    pub byron_genesis_file: PathBuf,
+    /// Optional expected Byron-genesis hash.
+    #[serde(rename = "ByronGenesisHash", default)]
+    pub byron_genesis_file_hash: Option<String>,
+    /// Whether Byron headers carry the network magic inline.
+    #[serde(
+        rename = "RequiresNetworkMagic",
+        default = "default_byron_req_network_magic"
+    )]
+    pub byron_req_network_magic: RequiresNetworkMagic,
+    /// Optional PBFT signature threshold.
+    #[serde(rename = "PBftSignatureThreshold", default)]
+    pub byron_pbft_signature_thresh: Option<f64>,
+    /// Byron update-application name — hard-coded `"cardano-sl"`.
+    #[serde(skip, default = "default_byron_application_name")]
+    pub byron_application_name: String,
+    /// Byron application (software) version.
+    #[serde(
+        rename = "ApplicationVersion",
+        default = "default_byron_application_version"
+    )]
+    pub byron_application_version: u64,
+    /// Supported protocol version — major component.
+    #[serde(rename = "LastKnownBlockVersion-Major")]
+    pub byron_supported_protocol_version_major: u16,
+    /// Supported protocol version — minor component.
+    #[serde(rename = "LastKnownBlockVersion-Minor")]
+    pub byron_supported_protocol_version_minor: u16,
+    /// Supported protocol version — alt component.
+    #[serde(rename = "LastKnownBlockVersion-Alt", default)]
+    pub byron_supported_protocol_version_alt: u8,
+}
+
+/// Hard-fork protocol configuration — the `Test*HardForkAtEpoch`
+/// overrides.
+///
+/// Upstream `NodeHardForkProtocolConfiguration`
+/// (`unstable-cardano-tools/Cardano/Node/Types.hs`) — an 8-field record
+/// (the `*HardForkAtVersion` fields of `cardano-node`'s separate copy of
+/// `Cardano.Node.Types` are absent from this vendored copy). The
+/// `Deserialize` impl mirrors `DBSynthesizer/Orphans.hs`: every key is
+/// optional.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+pub struct NodeHardForkProtocolConfiguration {
+    /// Whether not-yet-released eras are advertised. Must stay `false`
+    /// on mainnet.
+    #[serde(rename = "TestEnableDevelopmentHardForkEras", default)]
+    pub test_enable_development_hard_fork_eras: bool,
+    /// Force the Shelley hard fork at this epoch (testing only).
+    #[serde(rename = "TestShelleyHardForkAtEpoch", default)]
+    pub test_shelley_hard_fork_at_epoch: Option<u64>,
+    /// Force the Allegra hard fork at this epoch (testing only).
+    #[serde(rename = "TestAllegraHardForkAtEpoch", default)]
+    pub test_allegra_hard_fork_at_epoch: Option<u64>,
+    /// Force the Mary hard fork at this epoch (testing only).
+    #[serde(rename = "TestMaryHardForkAtEpoch", default)]
+    pub test_mary_hard_fork_at_epoch: Option<u64>,
+    /// Force the Alonzo hard fork at this epoch (testing only).
+    #[serde(rename = "TestAlonzoHardForkAtEpoch", default)]
+    pub test_alonzo_hard_fork_at_epoch: Option<u64>,
+    /// Force the Babbage hard fork at this epoch (testing only).
+    #[serde(rename = "TestBabbageHardForkAtEpoch", default)]
+    pub test_babbage_hard_fork_at_epoch: Option<u64>,
+    /// Force the Conway hard fork at this epoch (testing only).
+    #[serde(rename = "TestConwayHardForkAtEpoch", default)]
+    pub test_conway_hard_fork_at_epoch: Option<u64>,
+    /// Force the Dijkstra hard fork at this epoch (testing only).
+    #[serde(rename = "TestDijkstraHardForkAtEpoch", default)]
+    pub test_dijkstra_hard_fork_at_epoch: Option<u64>,
 }
 
 /// Operator-supplied node file paths.
@@ -304,5 +455,104 @@ mod tests {
         };
         assert_eq!(config.db_dir.to_str(), Some("/var/lib/cardano/db"));
         assert_eq!(config.options.limit, ForgeLimit::Slot(SlotNo(100_000)));
+    }
+
+    #[test]
+    fn node_byron_protocol_configuration_parses_minimal_with_defaults() {
+        // Only the three required keys; everything else defaults.
+        let json = r#"{
+            "ByronGenesisFile": "byron.json",
+            "LastKnownBlockVersion-Major": 1,
+            "LastKnownBlockVersion-Minor": 0
+        }"#;
+        let cfg: NodeByronProtocolConfiguration = serde_json::from_str(json).expect("parses");
+        assert_eq!(cfg.byron_genesis_file, PathBuf::from("byron.json"));
+        assert_eq!(cfg.byron_genesis_file_hash, None);
+        assert_eq!(
+            cfg.byron_req_network_magic,
+            RequiresNetworkMagic::RequiresNoMagic,
+        );
+        assert_eq!(cfg.byron_pbft_signature_thresh, None);
+        // Hard-coded upstream — never read from JSON.
+        assert_eq!(cfg.byron_application_name, "cardano-sl");
+        assert_eq!(cfg.byron_application_version, 1);
+        assert_eq!(cfg.byron_supported_protocol_version_major, 1);
+        assert_eq!(cfg.byron_supported_protocol_version_minor, 0);
+        assert_eq!(cfg.byron_supported_protocol_version_alt, 0);
+    }
+
+    #[test]
+    fn node_byron_protocol_configuration_reads_explicit_fields_and_ignores_unknown() {
+        let json = r#"{
+            "Protocol": "Cardano",
+            "ByronGenesisFile": "b.json",
+            "ByronGenesisHash": "abc123",
+            "RequiresNetworkMagic": "RequiresMagic",
+            "PBftSignatureThreshold": 0.22,
+            "ApplicationVersion": 3,
+            "LastKnownBlockVersion-Major": 2,
+            "LastKnownBlockVersion-Minor": 1,
+            "LastKnownBlockVersion-Alt": 4,
+            "SomeUnrelatedKey": [1, 2, 3]
+        }"#;
+        let cfg: NodeByronProtocolConfiguration = serde_json::from_str(json).expect("parses");
+        assert_eq!(cfg.byron_genesis_file_hash, Some("abc123".to_owned()));
+        assert_eq!(
+            cfg.byron_req_network_magic,
+            RequiresNetworkMagic::RequiresMagic
+        );
+        assert_eq!(cfg.byron_pbft_signature_thresh, Some(0.22));
+        assert_eq!(cfg.byron_application_version, 3);
+        assert_eq!(cfg.byron_supported_protocol_version_major, 2);
+        assert_eq!(cfg.byron_supported_protocol_version_alt, 4);
+        // The hard-coded name holds even when other keys are present.
+        assert_eq!(cfg.byron_application_name, "cardano-sl");
+    }
+
+    #[test]
+    fn node_hard_fork_protocol_configuration_parses_empty_object() {
+        let cfg: NodeHardForkProtocolConfiguration = serde_json::from_str("{}").expect("parses");
+        assert!(!cfg.test_enable_development_hard_fork_eras);
+        assert_eq!(cfg.test_shelley_hard_fork_at_epoch, None);
+        assert_eq!(cfg.test_conway_hard_fork_at_epoch, None);
+        assert_eq!(cfg.test_dijkstra_hard_fork_at_epoch, None);
+    }
+
+    #[test]
+    fn node_hard_fork_protocol_configuration_reads_epoch_overrides() {
+        let json = r#"{
+            "TestEnableDevelopmentHardForkEras": true,
+            "TestShelleyHardForkAtEpoch": 1,
+            "TestConwayHardForkAtEpoch": 42
+        }"#;
+        let cfg: NodeHardForkProtocolConfiguration = serde_json::from_str(json).expect("parses");
+        assert!(cfg.test_enable_development_hard_fork_eras);
+        assert_eq!(cfg.test_shelley_hard_fork_at_epoch, Some(1));
+        assert_eq!(cfg.test_conway_hard_fork_at_epoch, Some(42));
+        assert_eq!(cfg.test_mary_hard_fork_at_epoch, None);
+    }
+
+    #[test]
+    fn era_protocol_configurations_construct() {
+        let shelley = NodeShelleyProtocolConfiguration {
+            shelley_genesis_file: PathBuf::from("s.json"),
+            shelley_genesis_file_hash: None,
+        };
+        let alonzo = NodeAlonzoProtocolConfiguration {
+            alonzo_genesis_file: PathBuf::from("a.json"),
+            alonzo_genesis_file_hash: Some("h".to_owned()),
+        };
+        let conway = NodeConwayProtocolConfiguration {
+            conway_genesis_file: PathBuf::from("c.json"),
+            conway_genesis_file_hash: None,
+        };
+        let dijkstra = NodeDijkstraProtocolConfiguration {
+            dijkstra_genesis_file: PathBuf::from("d.json"),
+            dijkstra_genesis_file_hash: None,
+        };
+        assert_eq!(shelley.shelley_genesis_file, PathBuf::from("s.json"));
+        assert_eq!(alonzo.alonzo_genesis_file_hash, Some("h".to_owned()));
+        assert_eq!(conway.conway_genesis_file, PathBuf::from("c.json"));
+        assert_eq!(dijkstra.dijkstra_genesis_file, PathBuf::from("d.json"));
     }
 }
