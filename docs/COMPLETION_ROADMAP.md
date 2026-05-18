@@ -146,10 +146,16 @@ Praos forging needs. Verified decomposition:
     `#[derive(Deserialize)]` (`#[serde(rename/default)]` mirroring
     `Orphans.hs`'s `FromJSON`); the 4 era structs need no deserializer.
     `RequiresNetworkMagic` reused from `yggdrasil-node-config`.
-  - 🟡 **R3b-3 — `CardanoProtocolParams` mirror + orchestration.** A 6-field
-    aggregator mirroring upstream `Ouroboros.Consensus.Cardano.Node`, plus
-    `mk_consensus_protocol_cardano` folding R3b-1 + R3b-2 + R3a credentials;
-    `initialize` then returns `(DBSynthesizerConfig, CardanoProtocolParams)`.
+  - ✅ **R3b-3** (round 512, commit `a0e7b1b`) — `CardanoProtocolParams`
+    aggregator: `run::load_consensus_protocol` / `mk_consensus_protocol_cardano`
+    fold R3b-1's `GenesisBundle` + R3b-2's per-era configs into a
+    synthesizer-scoped 6-field `CardanoProtocolParams` (upstream field
+    *names*, simplified types — faithful mirrors of the hard-fork-combinator
+    `NP` / `TransitionConfig` machinery are not on the db-synthesizer arc and
+    a single-era forge consumes none of it). Hard-fork triggers case-mapped
+    from `Test*HardForkAtEpoch`; `ProtVer` `(11,0)`/`(10,7)` on the dev flag.
+    Genesis-hash verification: upstream `initProtocol` passes `Nothing` for
+    the Shelley-family hashes — nothing to fold in. **A3 R3b is complete.**
   Scope boundary: R3b stops at the config bundle. Building the initial
   `ExtLedgerState` the synthesizer forges on (`pInfoInitLedger`) is R3c.
 - **R3c — Praos forge loop.** Re-architect `run_forge` to thread an evolving
