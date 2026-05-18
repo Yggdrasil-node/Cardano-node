@@ -107,9 +107,21 @@ Praos forging needs. Verified decomposition:
     and the new `load_operational_certificate_with_issuer` surfaces it. Carried
     *alongside* `OpCert` in a tuple — the 45-site `yggdrasil_consensus::OpCert`
     type is untouched (zero blast radius).
-  - 🟡 **Slice 2** — `issuer_vkey_path`-free `load_block_producer_credentials`
-    (derive the header issuer key from the loaded opcert) + the upstream
-    `MismatchedKesKey` cross-check.
+  - ✅ **Slice 2** (round 506, commit `91e1ee3`) — `MismatchedKesKey` check:
+    `load_block_producer_credentials` now rejects a (KES key, opcert) pair
+    where `derive_sum_kes_vk(kes_key) != operational_cert.hot_vkey`, mirroring
+    upstream `opCertKesKeyCheck` (`Cardano.Node.Protocol.Shelley`). Additive —
+    function signature unchanged, zero caller blast radius.
+  - 🟡 **Slice 3** — `issuer_vkey_path` removal (the upstream-divergent
+    separate cold-vkey input). Drop `load_block_producer_credentials`'s
+    `issuer_vkey_path` param; source the issuer cold vkey from
+    `load_operational_certificate_with_issuer` (error on `None` — bare-`OCert`
+    envelopes are test fixtures, not operator artifacts). Remove the
+    `--shelley-operational-certificate-issuer-vkey` CLI flag from `Run` +
+    `ValidateConfig`, the `NodeConfigFile::shelley_operational_certificate_issuer_vkey`
+    field, and update `apply_block_producer_credential_overrides` + the 2 call
+    sites (`validate_config.rs`). Breaking operator-surface change — its own
+    round.
 - **R3b — consensus config.** Port `Run.initProtocol` /
   `mkConsensusProtocolCardano` — parse every era genesis file + the hard-fork
   config into the protocol params the leader check + forge need.
