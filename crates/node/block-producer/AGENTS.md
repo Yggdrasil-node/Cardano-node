@@ -18,6 +18,16 @@ The crate ships `BlockProducerCredentials`, `ForgedBlock`,
 `load_block_producer_credentials`, and the supporting per-credential
 parse / KES-period / VRF-key helpers.
 
+`load_operational_certificate_with_issuer` (A3 R3a slice 1) recovers
+the cold issuer verification key embedded in the upstream
+`[OCert, cold_vkey]` text-envelope wrapper — `decode_opcert_cbor`
+already parsed that trailing 32-byte field but discarded it. The
+upstream credential model derives the header `issuer_vkey` from this
+field; `load_block_producer_credentials` still takes a separate
+`issuer_vkey_path` (a known divergence from upstream's
+`Cardano.Node.Protocol.Shelley` leader-credential loader). Folding the
+embedded key into the credential loader is the remaining R3a work.
+
 ## Rules — Non-Negotiable
 
 - **Security-sensitive.** Every public function that touches KES
@@ -38,4 +48,5 @@ carries the `## Naming parity` stanza.
 
 ## R-arc tracking
 
-Wave 5 PR 10.
+Wave 5 PR 10. A3 R3a slice 1 (round 505) — opcert loader carries the
+embedded cold issuer vkey.

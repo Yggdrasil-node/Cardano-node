@@ -317,10 +317,35 @@ const OPCERT_TYPE: &str = "NodeOperationalCertificate";
 ///
 /// The CBOR payload is either the direct `OCert` array or the wrapped
 /// upstream `cardano-cli node issue-op-cert` payload containing
-/// `[OCert, cold_vkey]`.
+/// `[OCert, cold_vkey]`. To also recover the cold issuer verification
+/// key carried by the wrapped form, use
+/// [`load_operational_certificate_with_issuer`].
 ///
 /// Reference: `OCert` in `Cardano.Protocol.TPraos.OCert`.
 pub fn load_operational_certificate(path: &Path) -> Result<OpCert, BlockProducerError> {
+    load_operational_certificate_with_issuer(path).map(|(opcert, _issuer)| opcert)
+}
+
+/// Load an operational certificate together with the cold issuer
+/// verification key embedded in the upstream `[OCert, cold_vkey]`
+/// text-envelope wrapper.
+///
+/// Returns `(OpCert, Some(cold_vkey))` for the wrapped upstream
+/// `cardano-cli node issue-op-cert` payload, or `(OpCert, None)` for the
+/// bare `OCert`-array form.
+///
+/// Upstream's `OperationalCertificate` (cardano-api) carries the cold
+/// issuer verification key as the second field of the two-element
+/// `NodeOperationalCertificate` text envelope; the leader-credential
+/// loader derives the header `issuer_vkey` from that field rather than
+/// from a separate cold-vkey file. This accessor surfaces it so callers
+/// need not be handed a separate cold-vkey path.
+///
+/// Reference: `OCert` in `Cardano.Protocol.TPraos.OCert`;
+/// `OperationalCertificate` in `cardano-api`.
+pub fn load_operational_certificate_with_issuer(
+    path: &Path,
+) -> Result<(OpCert, Option<VerificationKey>), BlockProducerError> {
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
     if type_tag != OPCERT_TYPE {
         return Err(BlockProducerError::TypeMismatch {
@@ -341,7 +366,14 @@ pub fn load_operational_certificate(path: &Path) -> Result<OpCert, BlockProducer
 /// , cold_vkey_bytes(32)
 /// ]
 /// ```
-fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerError> {
+///
+/// Returns the decoded [`OpCert`] paired with the cold issuer
+/// verification key — `Some` for the wrapped `[OCert, cold_vkey]` form,
+/// `None` for the bare `OCert` array.
+fn decode_opcert_cbor(
+    data: &[u8],
+    path: &Path,
+) -> Result<(OpCert, Option<VerificationKey>), BlockProducerError> {
     use std::io::Cursor;
 
     let mut cursor = Cursor::new(data);
@@ -352,11 +384,14 @@ fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerE
 
     let first = read_cbor_byte(&mut cursor).map_err(|_| err("truncated CBOR"))?;
 
-    let opcert = match first {
-        // Historical/internal fixture shape: OCert directly.
-        0x84 => decode_opcert_fields(&mut cursor, path)?,
+    let decoded = match first {
+        // Historical/internal fixture shape: OCert directly — this form
+        // carries no cold verification key.
+        0x84 => (decode_opcert_fields(&mut cursor, path)?, None),
         // Upstream cardano-cli text envelope shape:
-        // [OCert, cold verification key].
+        // [OCert, cold verification key]. The trailing 32-byte field is
+        // the cold issuer VKey — the second constructor field of
+        // upstream's `OperationalCertificate`.
         0x82 => {
             let nested = read_cbor_byte(&mut cursor).map_err(|_| err("truncated OCert CBOR"))?;
             if nested != 0x84 {
@@ -373,7 +408,9 @@ fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerE
                     cold_vkey_raw.len()
                 )));
             }
-            opcert
+            let mut cold_arr = [0u8; 32];
+            cold_arr.copy_from_slice(&cold_vkey_raw);
+            (opcert, Some(VerificationKey::from_bytes(cold_arr)))
         }
         _ => {
             return Err(err(&format!(
@@ -386,7 +423,7 @@ fn decode_opcert_cbor(data: &[u8], path: &Path) -> Result<OpCert, BlockProducerE
         return Err(err("trailing bytes after operational certificate"));
     }
 
-    Ok(opcert)
+    Ok(decoded)
 }
 
 fn decode_opcert_fields(
@@ -1693,6 +1730,67 @@ mod tests {
         assert_eq!(opcert.sequence_number, 0);
         assert_eq!(opcert.kes_period, 856);
         assert_eq!(opcert.sigma.0, sigma);
+    }
+
+    #[test]
+    fn load_opcert_with_issuer_recovers_wrapped_cold_vkey() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Upstream `cardano-cli node issue-op-cert` text-envelope shape:
+        // [OCert, cold_vkey]. The trailing 32-byte field is the cold
+        // issuer verification key.
+        let hot_vkey = [0x41u8; 32];
+        let cold_vkey = [0x42u8; 32];
+        let sigma = [0x43u8; 64];
+
+        let mut cbor = Vec::new();
+        cbor.push(0x82); // array(2): [OCert, cold_vkey]
+        cbor.push(0x84); // OCert array(4)
+        cbor.extend_from_slice(&cbor_bstr(&hot_vkey));
+        cbor.push(0x07); // sequence_number
+        cbor.push(0x09); // kes_period
+        cbor.extend_from_slice(&cbor_bstr(&sigma));
+        cbor.extend_from_slice(&cbor_bstr(&cold_vkey));
+
+        let json = make_text_envelope("NodeOperationalCertificate", "", &hex::encode(&cbor));
+        let path = write_temp_file(&dir, "wrapped.opcert", &json);
+
+        let (opcert, issuer) =
+            load_operational_certificate_with_issuer(&path).expect("load opcert + issuer");
+        assert_eq!(opcert.hot_vkey.to_bytes(), hot_vkey);
+        assert_eq!(opcert.sequence_number, 7);
+        assert_eq!(
+            issuer,
+            Some(VerificationKey::from_bytes(cold_vkey)),
+            "the cold issuer vkey embedded in the [OCert, cold_vkey] wrapper must be recovered",
+        );
+    }
+
+    #[test]
+    fn load_opcert_with_issuer_bare_ocert_carries_no_cold_vkey() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Bare `OCert` array(4) form: no trailing cold verification key.
+        let hot_vkey = [0x51u8; 32];
+        let sigma = [0x52u8; 64];
+
+        let mut cbor = Vec::new();
+        cbor.push(0x84); // OCert array(4)
+        cbor.extend_from_slice(&cbor_bstr(&hot_vkey));
+        cbor.push(0x01); // sequence_number
+        cbor.push(0x02); // kes_period
+        cbor.extend_from_slice(&cbor_bstr(&sigma));
+
+        let json = make_text_envelope("NodeOperationalCertificate", "", &hex::encode(&cbor));
+        let path = write_temp_file(&dir, "bare.opcert", &json);
+
+        let (opcert, issuer) =
+            load_operational_certificate_with_issuer(&path).expect("load opcert");
+        assert_eq!(opcert.hot_vkey.to_bytes(), hot_vkey);
+        assert_eq!(
+            issuer, None,
+            "the bare OCert form carries no embedded cold verification key",
+        );
     }
 
     #[test]
