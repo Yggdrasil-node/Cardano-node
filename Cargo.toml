@@ -173,7 +173,7 @@ rustls-pemfile = "2"
 # Pinned `default-features = false, features = ["tls-rustls"]` to use
 # tokio-rustls (no native-tls); same audit posture as `lettre`
 # (R403). MIT/Apache-2.0 dual-licensed; pure Rust transitive deps.
-axum-server = { version = "0.7", default-features = false, features = ["tls-rustls"] }
+axum-server = { version = "0.8", default-features = false, features = ["tls-rustls"] }
 # R468 audit: rustls 0.23 requires the application to install a
 # CryptoProvider explicitly before ServerConfig::builder. Yggdrasil
 # picks `ring` (license-clarified in deny.toml — MIT AND ISC AND
