@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install Rust 1.95.0 (workspace MSRV)
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2

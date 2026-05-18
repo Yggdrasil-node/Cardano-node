@@ -18,7 +18,7 @@ jobs:
       # the workspace MSRV declared in [workspace.package].rust-version
       # and miss MSRV regressions.
       - name: Install Rust toolchain (pinned to rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@1.95.0
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           components: clippy,rustfmt
 
