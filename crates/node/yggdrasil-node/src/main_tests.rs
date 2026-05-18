@@ -562,7 +562,6 @@ fn validate_config_report_rejects_missing_complete_block_producer_credentials() 
     cfg.shelley_kes_key = Some("missing-kes.skey".to_owned());
     cfg.shelley_vrf_key = Some("missing-vrf.skey".to_owned());
     cfg.shelley_operational_certificate = Some("missing-opcert.cert".to_owned());
-    cfg.shelley_operational_certificate_issuer_vkey = Some("missing-cold.vkey".to_owned());
 
     let err = validate_config_report(&cfg, None)
         .expect_err("complete but unreadable block producer credentials must fail");

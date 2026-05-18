@@ -79,7 +79,6 @@ pub(crate) struct RunCmdArgs {
     pub(crate) shelley_kes_key: Option<PathBuf>,
     pub(crate) shelley_vrf_key: Option<PathBuf>,
     pub(crate) shelley_operational_certificate: Option<PathBuf>,
-    pub(crate) shelley_operational_certificate_issuer_vkey: Option<PathBuf>,
 }
 
 /// Drive the `run` subcommand: build a [`RunNodeRequest`] from the
@@ -109,7 +108,6 @@ pub(crate) fn run_subcommand(args: RunCmdArgs) -> Result<()> {
         shelley_kes_key,
         shelley_vrf_key,
         shelley_operational_certificate,
-        shelley_operational_certificate_issuer_vkey,
     } = args;
 
     let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
@@ -143,7 +141,6 @@ pub(crate) fn run_subcommand(args: RunCmdArgs) -> Result<()> {
         shelley_kes_key.as_ref(),
         shelley_vrf_key.as_ref(),
         shelley_operational_certificate.as_ref(),
-        shelley_operational_certificate_issuer_vkey.as_ref(),
     );
 
     if let Some(max_frequency) = checkpoint_trace_max_frequency {

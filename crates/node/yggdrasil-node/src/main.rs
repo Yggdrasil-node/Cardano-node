@@ -43,7 +43,6 @@ fn main() -> Result<()> {
             shelley_kes_key,
             shelley_vrf_key,
             shelley_operational_certificate,
-            shelley_operational_certificate_issuer_vkey,
         } => commands::validate_config::run_validate_config_subcommand(
             config,
             network,
@@ -55,7 +54,6 @@ fn main() -> Result<()> {
             shelley_kes_key,
             shelley_vrf_key,
             shelley_operational_certificate,
-            shelley_operational_certificate_issuer_vkey,
         ),
         Command::Status {
             config,
@@ -86,7 +84,6 @@ fn main() -> Result<()> {
             shelley_kes_key,
             shelley_vrf_key,
             shelley_operational_certificate,
-            shelley_operational_certificate_issuer_vkey,
         } => commands::run::run_subcommand(commands::run::RunCmdArgs {
             config,
             network,
@@ -110,7 +107,6 @@ fn main() -> Result<()> {
             shelley_kes_key,
             shelley_vrf_key,
             shelley_operational_certificate,
-            shelley_operational_certificate_issuer_vkey,
         }),
         #[cfg(unix)]
         Command::Query {

@@ -128,10 +128,6 @@ pub(crate) enum Command {
         /// Required for block production.
         #[arg(long)]
         shelley_operational_certificate: Option<PathBuf>,
-        /// Path to the issuer cold verification key file (text-envelope format).
-        /// Required for strict external validation parity of forged headers.
-        #[arg(long)]
-        shelley_operational_certificate_issuer_vkey: Option<PathBuf>,
     },
     /// Validate config, snapshot inputs, and any existing on-disk storage state.
     ValidateConfig {
@@ -167,9 +163,6 @@ pub(crate) enum Command {
         /// Path to the operational certificate file (text-envelope format).
         #[arg(long)]
         shelley_operational_certificate: Option<PathBuf>,
-        /// Path to the issuer cold verification key file (text-envelope format).
-        #[arg(long)]
-        shelley_operational_certificate_issuer_vkey: Option<PathBuf>,
     },
     /// Inspect on-disk storage and report current sync status.
     Status {

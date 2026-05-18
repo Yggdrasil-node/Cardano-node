@@ -126,8 +126,8 @@ pub fn apply_inbound_listen_overrides(
     Ok(())
 }
 
-/// Overlay block-producer credential paths from the four
-/// `--shelley-{kes,vrf,operational-certificate,operational-certificate-issuer-vkey}`
+/// Overlay block-producer credential paths from the three
+/// `--shelley-{kes,vrf,operational-certificate}`
 /// CLI flags onto the file config. Each override is independent — an
 /// operator can supply a subset; the final composition is validated
 /// downstream by `validate_config::ensure_block_producer_credential_policy`.
@@ -136,7 +136,6 @@ pub fn apply_block_producer_credential_overrides(
     shelley_kes_key: Option<&PathBuf>,
     shelley_vrf_key: Option<&PathBuf>,
     shelley_operational_certificate: Option<&PathBuf>,
-    shelley_operational_certificate_issuer_vkey: Option<&PathBuf>,
 ) {
     if let Some(p) = shelley_kes_key {
         file_cfg.shelley_kes_key = Some(p.display().to_string());
@@ -146,9 +145,6 @@ pub fn apply_block_producer_credential_overrides(
     }
     if let Some(p) = shelley_operational_certificate {
         file_cfg.shelley_operational_certificate = Some(p.display().to_string());
-    }
-    if let Some(p) = shelley_operational_certificate_issuer_vkey {
-        file_cfg.shelley_operational_certificate_issuer_vkey = Some(p.display().to_string());
     }
 }
 

@@ -110,6 +110,18 @@ pub enum BlockProducerError {
         kes_path: String,
         opcert_path: String,
     },
+    /// The operational certificate text envelope is the bare `OCert`
+    /// form and embeds no cold issuer verification key.
+    ///
+    /// Block production needs the cold vkey for the header `issuer_vkey`;
+    /// `cardano-cli node issue-op-cert` always emits the wrapped
+    /// `[OCert, cold_vkey]` form that carries it.
+    #[error(
+        "operational certificate at {path} embeds no cold verification \
+         key (expected the [OCert, cold_vkey] text-envelope form \
+         produced by `cardano-cli node issue-op-cert`)"
+    )]
+    OpCertMissingIssuerKey { path: String },
     /// The node is not a leader for the requested slot.
     #[error("not elected leader for slot {0}")]
     NotLeader(u64),
@@ -664,8 +676,13 @@ pub struct BlockProducerCredentials {
 /// Validates that the KES key depth is consistent with the operational
 /// certificate and config parameters, that the supplied KES key matches
 /// the KES key certified by the operational certificate, and that the
-/// operational certificate signature matches the configured issuer cold
-/// verification key.
+/// operational certificate is internally consistent (its signature
+/// verifies against its own embedded cold verification key).
+///
+/// The block header `issuer_vkey` is the cold verification key embedded
+/// in the operational certificate's `[OCert, cold_vkey]` text-envelope
+/// wrapper — mirroring upstream, where `OperationalCertificate` carries
+/// the cold key and there is no separate issuer-vkey input.
 ///
 /// Reference: upstream node startup in `Cardano.Node.Run.handleSimpleNode`;
 /// the KES-key match mirrors `opCertKesKeyCheck` in
@@ -674,14 +691,21 @@ pub fn load_block_producer_credentials(
     kes_key_path: &Path,
     vrf_key_path: &Path,
     opcert_path: &Path,
-    issuer_vkey_path: &Path,
     slots_per_kes_period: u64,
     max_kes_evolutions: u64,
 ) -> Result<BlockProducerCredentials, BlockProducerError> {
     let vrf_signing_key = load_vrf_signing_key(vrf_key_path)?;
     let vrf_verification_key = vrf_signing_key.verification_key();
     let kes_signing_key = load_kes_signing_key(kes_key_path)?;
-    let operational_cert = load_operational_certificate(opcert_path)?;
+    // The header `issuer_vkey` is the cold vkey embedded in the opcert's
+    // `[OCert, cold_vkey]` wrapper. Extract it first — a bare `OCert`
+    // envelope embeds none and cannot drive block production.
+    let (operational_cert, embedded_issuer) =
+        load_operational_certificate_with_issuer(opcert_path)?;
+    let issuer_vkey =
+        embedded_issuer.ok_or_else(|| BlockProducerError::OpCertMissingIssuerKey {
+            path: opcert_path.display().to_string(),
+        })?;
 
     // Upstream `opCertKesKeyCheck` (`Cardano.Node.Protocol.Shelley`): the
     // KES verification key derived from the supplied KES signing key must
@@ -698,11 +722,14 @@ pub fn load_block_producer_credentials(
         });
     }
 
-    let issuer_vkey = load_issuer_verification_key(issuer_vkey_path)?;
-
+    // The operational certificate's signature must verify against its
+    // own embedded cold verification key — an internal-consistency
+    // (tamper) check; a well-formed `cardano-cli`-issued opcert always
+    // passes.
     operational_cert.verify(&issuer_vkey).map_err(|e| {
         BlockProducerError::Crypto(format!(
-            "operational certificate does not verify against issuer key: {e}"
+            "operational certificate sigma does not verify against its \
+             embedded cold verification key: {e}"
         ))
     })?;
 
@@ -1827,17 +1854,16 @@ mod tests {
     }
 
     #[test]
-    fn load_block_producer_credentials_rejects_mismatched_issuer_key() {
+    fn load_block_producer_credentials_rejects_opcert_with_inconsistent_cold_vkey() {
         use yggdrasil_crypto::ed25519::SigningKey;
 
         let dir = tempfile::tempdir().unwrap();
 
         // VRF signing key file.
-        let vrf_key_bytes = [0xABu8; 64];
         let vrf_json = make_text_envelope(
             "VrfSigningKey_PraosVRF",
             "",
-            &hex::encode(cbor_bstr(&vrf_key_bytes)),
+            &hex::encode(cbor_bstr(&[0xABu8; 64])),
         );
         let vrf_path = write_temp_file(&dir, "vrf.skey", &vrf_json);
 
@@ -1850,54 +1876,84 @@ mod tests {
         );
         let kes_path = write_temp_file(&dir, "kes.skey", &kes_json);
 
-        // Build an opcert signed by cold key A.
-        let cold_sk_a = SigningKey::from_bytes([0x11u8; 32]);
         let kes_sk = gen_sum_kes_signing_key(&kes_seed, 0).expect("kes sk");
         let kes_vk = derive_sum_kes_vk(&kes_sk).expect("kes vk");
 
+        // The OCert is signed by cold key A...
+        let cold_sk_a = SigningKey::from_bytes([0x11u8; 32]);
         let mut signable = [0u8; 48];
         signable[..32].copy_from_slice(&kes_vk.to_bytes());
         signable[32..40].copy_from_slice(&0u64.to_be_bytes());
         signable[40..48].copy_from_slice(&0u64.to_be_bytes());
         let sigma = cold_sk_a.sign(&signable).expect("opcert signature");
 
+        // ...but the `[OCert, cold_vkey]` wrapper embeds a *different*
+        // cold key B. The loader takes the issuer vkey from the embedded
+        // key (B), and the OCert sigma (signed by A) fails to verify.
+        let cold_vk_b = SigningKey::from_bytes([0x22u8; 32])
+            .verification_key()
+            .expect("derive cold vkey B");
+
         let mut opcert_cbor = Vec::new();
-        opcert_cbor.push(0x84); // array(4)
+        opcert_cbor.push(0x82); // array(2): [OCert, cold_vkey]
+        opcert_cbor.push(0x84); // OCert array(4)
         // hot_vkey = this test's KES verification key, so the
-        // MismatchedKesKey check passes and we reach the issuer-verify
-        // failure asserted below.
+        // MismatchedKesKey check passes and we reach the verify failure.
         opcert_cbor.extend_from_slice(&cbor_bstr(&kes_vk.to_bytes()));
         opcert_cbor.push(0x00); // sequence_number = 0
         opcert_cbor.push(0x00); // kes_period = 0
         opcert_cbor.extend_from_slice(&cbor_bstr(&sigma.0));
+        opcert_cbor.extend_from_slice(&cbor_bstr(&cold_vk_b.to_bytes()));
         let opcert_json =
             make_text_envelope("NodeOperationalCertificate", "", &hex::encode(opcert_cbor));
-        let opcert_path = write_temp_file(&dir, "node.cert", &opcert_json);
+        let opcert_path = write_temp_file(&dir, "node.opcert", &opcert_json);
 
-        // Issuer key file uses different cold key B.
-        let cold_vk_b = SigningKey::from_bytes([0x22u8; 32])
-            .verification_key()
-            .expect("derive verification key");
-        let issuer_json = make_text_envelope(
-            "StakePoolVerificationKey_ed25519",
-            "",
-            &hex::encode(cbor_bstr(&cold_vk_b.to_bytes())),
-        );
-        let issuer_path = write_temp_file(&dir, "cold.vkey", &issuer_json);
-
-        let err = load_block_producer_credentials(
-            &kes_path,
-            &vrf_path,
-            &opcert_path,
-            &issuer_path,
-            129_600,
-            62,
-        )
-        .expect_err("mismatched issuer key must fail credential loading");
+        let err = load_block_producer_credentials(&kes_path, &vrf_path, &opcert_path, 129_600, 62)
+            .expect_err("opcert whose embedded cold vkey did not sign it must fail");
 
         assert!(
             err.to_string()
-                .contains("operational certificate does not verify against issuer key"),
+                .contains("does not verify against its embedded cold verification key"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_block_producer_credentials_rejects_bare_opcert_without_embedded_cold_vkey() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // VRF + KES signing key files (valid — the bare-opcert rejection
+        // fires before the KES-match check).
+        let vrf_json = make_text_envelope(
+            "VrfSigningKey_PraosVRF",
+            "",
+            &hex::encode(cbor_bstr(&[0xABu8; 64])),
+        );
+        let vrf_path = write_temp_file(&dir, "vrf.skey", &vrf_json);
+
+        let kes_json = make_text_envelope(
+            "KesSigningKey_ed25519_kes_2^0",
+            "",
+            &hex::encode(cbor_bstr(&[0xCDu8; 32])),
+        );
+        let kes_path = write_temp_file(&dir, "kes.skey", &kes_json);
+
+        // Bare `OCert` array(4) form — no embedded cold vkey.
+        let mut opcert_cbor = Vec::new();
+        opcert_cbor.push(0x84); // OCert array(4)
+        opcert_cbor.extend_from_slice(&cbor_bstr(&[0x11u8; 32]));
+        opcert_cbor.push(0x00); // sequence_number = 0
+        opcert_cbor.push(0x00); // kes_period = 0
+        opcert_cbor.extend_from_slice(&cbor_bstr(&[0x22u8; 64]));
+        let opcert_json =
+            make_text_envelope("NodeOperationalCertificate", "", &hex::encode(opcert_cbor));
+        let opcert_path = write_temp_file(&dir, "bare.opcert", &opcert_json);
+
+        let err = load_block_producer_credentials(&kes_path, &vrf_path, &opcert_path, 129_600, 62)
+            .expect_err("bare-form opcert without an embedded cold vkey must be rejected");
+
+        assert!(
+            matches!(err, BlockProducerError::OpCertMissingIssuerKey { .. }),
             "unexpected error: {err}"
         );
     }
@@ -1931,9 +1987,8 @@ mod tests {
         let kes_sk_x = gen_sum_kes_signing_key(&kes_seed_x, 0).expect("kes sk X");
         let kes_vk_x = derive_sum_kes_vk(&kes_sk_x).expect("kes vk X");
 
-        // Opcert signed by a cold key; the same cold key is the issuer,
-        // so the *only* inconsistency is the KES key — the test reaches
-        // the MismatchedKesKey check regardless of check ordering.
+        // Wrapped `[OCert, cold_vkey]` opcert signed by a cold key (the
+        // wrapped form is required — the loader rejects bare opcerts).
         let cold_sk = SigningKey::from_bytes([0x11u8; 32]);
         let cold_vk = cold_sk.verification_key().expect("derive cold vkey");
 
@@ -1944,31 +1999,19 @@ mod tests {
         let sigma = cold_sk.sign(&signable).expect("opcert signature");
 
         let mut opcert_cbor = Vec::new();
-        opcert_cbor.push(0x84); // array(4)
+        opcert_cbor.push(0x82); // array(2): [OCert, cold_vkey]
+        opcert_cbor.push(0x84); // OCert array(4)
         opcert_cbor.extend_from_slice(&cbor_bstr(&kes_vk_x.to_bytes()));
         opcert_cbor.push(0x00); // sequence_number = 0
         opcert_cbor.push(0x00); // kes_period = 0
         opcert_cbor.extend_from_slice(&cbor_bstr(&sigma.0));
+        opcert_cbor.extend_from_slice(&cbor_bstr(&cold_vk.to_bytes()));
         let opcert_json =
             make_text_envelope("NodeOperationalCertificate", "", &hex::encode(opcert_cbor));
-        let opcert_path = write_temp_file(&dir, "node.cert", &opcert_json);
+        let opcert_path = write_temp_file(&dir, "node.opcert", &opcert_json);
 
-        let issuer_json = make_text_envelope(
-            "StakePoolVerificationKey_ed25519",
-            "",
-            &hex::encode(cbor_bstr(&cold_vk.to_bytes())),
-        );
-        let issuer_path = write_temp_file(&dir, "cold.vkey", &issuer_json);
-
-        let err = load_block_producer_credentials(
-            &kes_path,
-            &vrf_path,
-            &opcert_path,
-            &issuer_path,
-            129_600,
-            62,
-        )
-        .expect_err("KES key not matching the opcert must fail credential loading");
+        let err = load_block_producer_credentials(&kes_path, &vrf_path, &opcert_path, 129_600, 62)
+            .expect_err("KES key not matching the opcert must fail credential loading");
 
         assert!(
             matches!(err, BlockProducerError::MismatchedKesKey { .. }),

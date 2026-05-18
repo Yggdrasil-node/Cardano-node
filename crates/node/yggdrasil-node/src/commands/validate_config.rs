@@ -109,12 +109,6 @@ fn block_producer_credential_fields(
             "ShelleyOperationalCertificate",
             file_cfg.shelley_operational_certificate.is_some(),
         ),
-        (
-            "ShelleyOperationalCertificateIssuerVkey",
-            file_cfg
-                .shelley_operational_certificate_issuer_vkey
-                .is_some(),
-        ),
     ];
 
     let mut present = Vec::new();
@@ -147,9 +141,8 @@ fn ensure_block_producer_credential_policy(
         let (present, missing) = block_producer_credential_fields(file_cfg);
         bail!(
             "block producer credentials are partially configured; present: {}; missing: {}. \
-             Provide all four ShelleyKesKey, ShelleyVrfKey, ShelleyOperationalCertificate, \
-             ShelleyOperationalCertificateIssuerVkey, or pass --non-producing-node to run \
-             explicitly as a relay/non-producing node",
+             Provide all three ShelleyKesKey, ShelleyVrfKey, ShelleyOperationalCertificate, \
+             or pass --non-producing-node to run explicitly as a relay/non-producing node",
             present.join(", "),
             missing.join(", "),
         );
@@ -227,18 +220,6 @@ pub fn load_configured_block_producer_credentials(
             )),
             config_base_dir,
         ),
-        &crate::resolve_config_path(
-            std::path::Path::new(
-                file_cfg
-                    .shelley_operational_certificate_issuer_vkey
-                    .as_ref()
-                    .expect(
-                        "complete block producer credentials include \
-                         ShelleyOperationalCertificateIssuerVkey",
-                    ),
-            ),
-            config_base_dir,
-        ),
         file_cfg.slots_per_kes_period,
         file_cfg.max_kes_evolutions,
     )
@@ -261,7 +242,6 @@ pub(crate) fn run_validate_config_subcommand(
     shelley_kes_key: Option<PathBuf>,
     shelley_vrf_key: Option<PathBuf>,
     shelley_operational_certificate: Option<PathBuf>,
-    shelley_operational_certificate_issuer_vkey: Option<PathBuf>,
 ) -> Result<()> {
     let (mut file_cfg, config_base_dir) = load_effective_config(config, network)?;
     apply_topology_override(
@@ -278,7 +258,6 @@ pub(crate) fn run_validate_config_subcommand(
         shelley_kes_key.as_ref(),
         shelley_vrf_key.as_ref(),
         shelley_operational_certificate.as_ref(),
-        shelley_operational_certificate_issuer_vkey.as_ref(),
     );
     let report = if non_producing_node {
         validate_config_report_with_role(&file_cfg, config_base_dir.as_deref(), non_producing_node)?
