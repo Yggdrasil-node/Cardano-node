@@ -130,11 +130,13 @@ Praos forging needs. Verified decomposition:
   genesis, verifies hashes, and exposes `shelley_genesis_hash_to_praos_nonce`;
   R3a supplies credential loading. New code is aggregator structs + JSON
   parsers + one orchestration fn — no new crypto / ledger / consensus algorithm.
-  - 🟡 **R3b-1 — multi-era genesis bundle.** Lift `synthesize_from_config`
-    from Shelley-only to a typed `GenesisBundle` (byron / shelley / alonzo /
-    conway, `Option` dijkstra), wiring the existing `genesis` loaders + hash
-    verifiers + the praos-nonce derivation. Mirrors the `Cardano.hs`
-    genesis-reading half (upstream lines 102-149).
+  - ✅ **R3b-1** (round 510, commit `73ffcb4`) — multi-era genesis bundle:
+    `load_genesis_bundle` reads every era's genesis (Byron / Shelley /
+    Alonzo / Conway) into a typed `GenesisBundle` plus the initial Praos
+    nonce, wiring the existing `genesis`-crate loaders;
+    `synthesize_from_config` builds it. Hash verification deferred to
+    R3b-3 (needs the config's `*GenesisHash` fields); Dijkstra omitted
+    (era not yet activated — no `load_dijkstra_genesis`).
   - 🟡 **R3b-2 — per-era protocol configs + hard-fork triggers.** Six new
     `serde` parsers — `Node{Byron,Shelley,Alonzo,Conway,Dijkstra}ProtocolConfiguration`
     + `NodeHardForkProtocolConfiguration` — off the stashed `NodeConfigStub`
