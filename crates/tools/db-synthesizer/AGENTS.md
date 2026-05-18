@@ -21,7 +21,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `node/src/block_producer.rs` Forging logic.
 
-## Current functional surface (post Phase 4 R2)
+## Current functional surface (post Phase 4 R3b-1)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -38,9 +38,15 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
 - ✅ Genesis loading (Phase 4 R2) — `run::resolve_epoch_size_from_config`
   reads `--config`, parses the `NodeConfigStub`, resolves the genesis
   paths relative to the config directory, and loads the real
-  Shelley-genesis `epochLength`; `run::synthesize_from_config` is the
-  production entry point. (The synthesis era stays a structural
+  Shelley-genesis `epochLength`. (The synthesis era stays a structural
   `Shelley` stamp until the R3 hard-fork plan.)
+- ✅ Multi-era genesis bundle (Phase 4 R3b-1) — `run::load_genesis_bundle`
+  reads every era's genesis (Byron / Shelley / Alonzo / Conway) into a
+  typed `GenesisBundle` and derives the initial Praos nonce
+  (`genesisHashToPraosNonce`); `run::synthesize_from_config` is the
+  production entry point. The per-era protocol configs + hard-fork
+  triggers (R3b-2) and the `CardanoProtocolParams` aggregator (R3b-3)
+  remain.
 - 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
   structurally valid but not Praos-valid until the VRF/KES/OpCert
   leader check + KES-signed `forgeBlock` land.

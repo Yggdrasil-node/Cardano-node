@@ -26,17 +26,26 @@ use yggdrasil_ledger::{BlockNo, HeaderHash, Point, SlotNo};
 use yggdrasil_storage::{FileImmutable, ImmutableStore};
 
 /// Build a `parser::Args` for a `--blocks N` invocation, writing a
-/// real `config.json` + Shelley genesis into `tmp`.
+/// real `config.json` + every era's genesis into `tmp`.
 ///
-/// R2: `lib::run` resolves the Shelley-genesis epoch length from the
-/// `--config` node config, so the integration path needs a genuine
-/// config file (R1 ignored it).
+/// `lib::run` resolves the genesis (epoch length + the R3b-1
+/// `GenesisBundle`) from the `--config` node config, so the integration
+/// path needs a genuine config file with every era's genesis present
+/// (R1 ignored the config entirely).
 fn args_for(tmp: &std::path::Path, db: &std::path::Path, n: u64, mode: &str) -> parser::Args {
     std::fs::write(
         tmp.join("shelley-genesis.json"),
         r#"{"epochLength":432000}"#,
     )
     .unwrap();
+    // R3b-1: `run` loads every era's genesis via `load_genesis_bundle`.
+    std::fs::write(tmp.join("byron.json"), "{}").unwrap();
+    std::fs::write(
+        tmp.join("alonzo.json"),
+        r#"{"executionPrices":{"prMem":{"numerator":1,"denominator":1},"prSteps":{"numerator":1,"denominator":1}},"maxTxExUnits":{"exUnitsMem":1,"exUnitsSteps":1},"maxBlockExUnits":{"exUnitsMem":1,"exUnitsSteps":1}}"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.join("conway.json"), "{}").unwrap();
     let config = tmp.join("config.json");
     std::fs::write(
         &config,

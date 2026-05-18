@@ -25,8 +25,11 @@
 //! - **`initialize` — protocol-building half.** Upstream's
 //!   `initProtocol` builds `CardanoProtocolParams` via
 //!   `mkConsensusProtocolCardano` (the multi-era hard-fork plan).
-//!   Until that lands, synthesized blocks keep the [`SYNTH_ERA`]
-//!   structural stamp.
+//!   R3b-1 ports the genesis-reading half — [`load_genesis_bundle`]
+//!   reads every era's genesis plus the initial Praos nonce; the
+//!   per-era protocol configs / hard-fork triggers (R3b-2) and the
+//!   `CardanoProtocolParams` aggregator (R3b-3) remain. Until those
+//!   land, synthesized blocks keep the [`SYNTH_ERA`] structural stamp.
 //! - **The Praos forge path** (`BlockForging`, `checkShouldForge`,
 //!   `forgeBlock`) — the per-slot VRF/KES/OpCert leader check. See
 //!   [`crate::forging`]'s module note. This slice forges deterministic
@@ -41,13 +44,17 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use yggdrasil_ledger::{Era, Point, SlotNo};
-use yggdrasil_node_genesis::load_shelley_genesis;
+use yggdrasil_ledger::{Era, Nonce, Point, SlotNo};
+use yggdrasil_node_genesis::{
+    AlonzoGenesis, ByronGenesisUtxoEntry, ConwayGenesis, ShelleyGenesis, compute_genesis_file_hash,
+    load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis, load_shelley_genesis,
+    shelley_genesis_hash_to_praos_nonce,
+};
 use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
 
 use crate::forging::{ForgeRunOutcome, run_forge};
 use crate::orphans::{AdjustFilePaths, parse_node_config_stub};
-use crate::types::{DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit};
+use crate::types::{DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit, NodeConfigStub};
 
 /// Fallback epoch length for the config-free [`synthesize_default`]
 /// convenience.
@@ -122,9 +129,10 @@ pub enum RunError {
     /// Mirror of upstream `initConf`'s `readJson` failure path.
     #[error("initialize: {0}")]
     ConfigStub(#[from] crate::orphans::NodeConfigStubParseError),
-    /// The Shelley genesis file referenced by the config could not be
-    /// loaded. Mirror of upstream `initConf`'s `readFileJson` failure.
-    #[error("initialize: cannot load Shelley genesis: {0}")]
+    /// A genesis file referenced by the config could not be loaded.
+    /// Mirror of upstream `initConf` / `mkConsensusProtocolCardano`
+    /// genesis-read failures.
+    #[error("initialize: cannot load genesis: {0}")]
     GenesisLoad(#[from] yggdrasil_node_genesis::GenesisLoadError),
 }
 
@@ -264,6 +272,21 @@ pub fn synthesize_default(
 /// The protocol-building half (`initProtocol` /
 /// `mkConsensusProtocolCardano`) is the db-synthesizer R3 carve-out.
 pub fn resolve_epoch_size_from_config(config_path: &Path) -> Result<u64, RunError> {
+    let stub = resolve_node_config_stub(config_path)?;
+    let genesis = load_shelley_genesis(&stub.shelley_genesis_file)?;
+    Ok(genesis.epoch_length)
+}
+
+/// Read the node `config.json`, parse it into a [`NodeConfigStub`], and
+/// resolve the embedded genesis paths relative to the config file's own
+/// directory.
+///
+/// Mirror of the `relativeToConfig` half of upstream
+/// `Cardano.Tools.DBSynthesizer.Run.initialize` — `relativeToConfig =
+/// (</>) . takeDirectory <$> makeAbsolute nfpConfig` resolves genesis
+/// paths against the config file's absolute directory. `PathBuf::join`
+/// mirrors Haskell `(</>)`: an absolute genesis path is kept as-is.
+fn resolve_node_config_stub(config_path: &Path) -> Result<NodeConfigStub, RunError> {
     let raw = std::fs::read_to_string(config_path).map_err(|source| RunError::ConfigRead {
         path: config_path.display().to_string(),
         source,
@@ -275,10 +298,6 @@ pub fn resolve_epoch_size_from_config(config_path: &Path) -> Result<u64, RunErro
         })?;
     let stub = parse_node_config_stub(value)?;
 
-    // Upstream `relativeToConfig = (</>) . takeDirectory <$> makeAbsolute
-    // nfpConfig`: genesis paths embedded in the config are resolved
-    // against the config file's own absolute directory. `PathBuf::join`
-    // mirrors Haskell `(</>)` — an absolute genesis path is kept as-is.
     let abs_config = std::path::absolute(config_path).map_err(|source| RunError::ConfigRead {
         path: config_path.display().to_string(),
         source,
@@ -287,29 +306,88 @@ pub fn resolve_epoch_size_from_config(config_path: &Path) -> Result<u64, RunErro
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let stub = stub.adjust_file_paths(|p| config_dir.join(p));
+    Ok(stub.adjust_file_paths(|p| config_dir.join(p)))
+}
 
-    let genesis = load_shelley_genesis(&stub.shelley_genesis_file)?;
-    Ok(genesis.epoch_length)
+/// Every-era genesis loaded from the node config, plus the initial
+/// Praos nonce.
+///
+/// Upstream `mkConsensusProtocolCardano` (`Cardano.Node.Protocol.Cardano`)
+/// reads the per-era genesis files inline while building
+/// `CardanoProtocolParams`; there is no upstream `GenesisBundle` type.
+/// This aggregate collects that genesis-reading step as a typed value
+/// so the R3b-3 `mk_consensus_protocol_cardano` orchestration can fold
+/// it. Dijkstra is omitted — that era is not yet activated in yggdrasil
+/// (no `load_dijkstra_genesis`); upstream defaults it to an empty
+/// genesis when the config omits it.
+#[derive(Clone, Debug)]
+pub struct GenesisBundle {
+    /// Byron genesis UTxO entries (`nonAvvmBalances` + `avvmDistr`).
+    pub byron: Vec<ByronGenesisUtxoEntry>,
+    /// Parsed Shelley genesis.
+    pub shelley: ShelleyGenesis,
+    /// Parsed Alonzo genesis.
+    pub alonzo: AlonzoGenesis,
+    /// Parsed Conway genesis.
+    pub conway: ConwayGenesis,
+    /// Initial Praos nonce — the Blake2b-256 hash of the Shelley genesis
+    /// file (upstream `genesisHashToPraosNonce`).
+    pub praos_nonce: Nonce,
+}
+
+/// Load every era's genesis referenced by the node `config.json` and
+/// derive the initial Praos nonce.
+///
+/// The genesis-reading half of upstream `mkConsensusProtocolCardano`
+/// (`Cardano.Node.Protocol.Cardano`): with the config-relative genesis
+/// paths resolved ([`resolve_node_config_stub`]), read the Byron /
+/// Shelley / Alonzo / Conway genesis files and derive the initial Praos
+/// nonce from the Shelley genesis file hash (`genesisHashToPraosNonce`).
+///
+/// The per-era protocol configs + hard-fork triggers (R3b-2) and the
+/// `CardanoProtocolParams` aggregator (R3b-3) that fold this bundle are
+/// the remaining db-synthesizer R3b carve-out.
+pub fn load_genesis_bundle(config_path: &Path) -> Result<GenesisBundle, RunError> {
+    let stub = resolve_node_config_stub(config_path)?;
+
+    let byron = load_byron_genesis_utxo(&stub.byron_genesis_file)?;
+    let shelley = load_shelley_genesis(&stub.shelley_genesis_file)?;
+    let alonzo = load_alonzo_genesis(&stub.alonzo_genesis_file)?;
+    let conway = load_conway_genesis(&stub.conway_genesis_file)?;
+
+    // Upstream `genesisHashToPraosNonce`: the initial Praos nonce is the
+    // Blake2b-256 hash of the Shelley genesis file's raw bytes.
+    let shelley_hash = compute_genesis_file_hash(&stub.shelley_genesis_file)?;
+    let hash_hex: String = shelley_hash.iter().map(|b| format!("{b:02x}")).collect();
+    let praos_nonce = shelley_genesis_hash_to_praos_nonce(&hash_hex)?;
+
+    Ok(GenesisBundle {
+        byron,
+        shelley,
+        alonzo,
+        conway,
+        praos_nonce,
+    })
 }
 
 /// [`synthesize`] driven by the operator's node `config.json`.
 ///
-/// The production entry point [`crate::run`] uses: it resolves the
-/// real epoch length via [`resolve_epoch_size_from_config`] (the
-/// genesis-loading half of upstream `Run.initialize`) and forges with
-/// it — mirror of upstream `app/db-synthesizer.hs`'s
+/// The production entry point [`crate::run`] uses: it loads every era's
+/// genesis via [`load_genesis_bundle`] (the genesis-loading half of
+/// upstream `Run.initialize`) and forges with the Shelley-genesis
+/// `epochLength` — mirror of upstream `app/db-synthesizer.hs`'s
 /// `initialize … >>= synthesize …` for the epoch-size path.
 ///
-/// The era stays [`SYNTH_ERA`]; the genesis-derived hard-fork era plan
-/// needs `initProtocol` and is the db-synthesizer R3 carve-out.
+/// The era stays [`SYNTH_ERA`]; consuming the rest of the
+/// [`GenesisBundle`] for a Praos-valid forge needs R3b-2 / R3b-3 / R3c
+/// and is the remaining db-synthesizer R3 carve-out.
 pub fn synthesize_from_config(
     options: DBSynthesizerOptions,
     config_path: &Path,
     db_dir: &Path,
 ) -> Result<SynthesizeOutcome, RunError> {
-    let epoch_size = resolve_epoch_size_from_config(config_path)?;
-    synthesize(options, db_dir, epoch_size, SYNTH_ERA)
+    let bundle = load_genesis_bundle(config_path)?;
+    synthesize(options, db_dir, bundle.shelley.epoch_length, SYNTH_ERA)
 }
 
 /// Whether the supplied [`ForgeLimit`] would forge zero blocks.
@@ -498,16 +576,26 @@ mod tests {
         assert_eq!(reopened.len(), 0);
     }
 
-    /// Write a `config.json` + Shelley genesis pair into `dir`.
+    /// Minimal `AlonzoGenesis`-parseable JSON — `AlonzoGenesis` requires
+    /// `executionPrices` / `maxTxExUnits` / `maxBlockExUnits` (no serde
+    /// defaults), so an empty object does not parse.
+    const MINIMAL_ALONZO_GENESIS: &str = r#"{"executionPrices":{"prMem":{"numerator":1,"denominator":1},"prSteps":{"numerator":1,"denominator":1}},"maxTxExUnits":{"exUnitsMem":1,"exUnitsSteps":1},"maxBlockExUnits":{"exUnitsMem":1,"exUnitsSteps":1}}"#;
+
+    /// Write a `config.json` + every era's genesis into `dir`.
     /// `shelley_rel` is the (possibly nested) `ShelleyGenesisFile` path
     /// recorded in the config — relative paths exercise the
-    /// config-directory resolution. Returns the config path.
+    /// config-directory resolution. The Byron / Alonzo / Conway genesis
+    /// are minimal parseable fixtures. Returns the config path.
     fn write_config(dir: &Path, shelley_rel: &str, epoch_length: u64) -> std::path::PathBuf {
         let genesis = dir.join(shelley_rel);
         if let Some(parent) = genesis.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(&genesis, format!(r#"{{"epochLength":{epoch_length}}}"#)).unwrap();
+        // R3b-1: `synthesize_from_config` loads every era's genesis.
+        std::fs::write(dir.join("byron.json"), "{}").unwrap();
+        std::fs::write(dir.join("alonzo.json"), MINIMAL_ALONZO_GENESIS).unwrap();
+        std::fs::write(dir.join("conway.json"), "{}").unwrap();
         let config = dir.join("config.json");
         let config_json = format!(
             r#"{{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"{shelley_rel}","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"}}"#
@@ -580,5 +668,45 @@ mod tests {
         assert_eq!(outcome.forge.result.forged, 4);
         let reopened = FileImmutable::open(&target).unwrap();
         assert_eq!(reopened.len(), 4);
+    }
+
+    #[test]
+    fn load_genesis_bundle_loads_every_era_and_derives_nonce() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = write_config(tmp.path(), "shelley-genesis.json", 86_400);
+
+        let bundle = load_genesis_bundle(&config).expect("load genesis bundle");
+
+        // The Shelley epoch length is the one written into the fixture.
+        assert_eq!(bundle.shelley.epoch_length, 86_400);
+        // Byron genesis `{}` has no nonAvvmBalances entries.
+        assert!(bundle.byron.is_empty());
+        // The initial Praos nonce is the Shelley genesis file hash —
+        // a concrete hash, never the neutral nonce.
+        assert!(
+            matches!(bundle.praos_nonce, Nonce::Hash(_)),
+            "praos nonce must be the Shelley genesis hash",
+        );
+    }
+
+    #[test]
+    fn load_genesis_bundle_errors_on_missing_era_genesis() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A config whose Alonzo genesis file does not exist.
+        std::fs::write(
+            tmp.path().join("shelley-genesis.json"),
+            r#"{"epochLength":432000}"#,
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("byron.json"), "{}").unwrap();
+        std::fs::write(tmp.path().join("conway.json"), "{}").unwrap();
+        let config = tmp.path().join("config.json");
+        std::fs::write(
+            &config,
+            r#"{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"shelley-genesis.json","AlonzoGenesisFile":"absent-alonzo.json","ConwayGenesisFile":"conway.json"}"#,
+        )
+        .unwrap();
+        let err = load_genesis_bundle(&config).expect_err("missing Alonzo genesis must fail");
+        assert!(matches!(err, RunError::GenesisLoad(_)));
     }
 }
