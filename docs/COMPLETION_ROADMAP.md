@@ -124,7 +124,27 @@ Praos forging needs. Verified decomposition:
     and the operator manual / runbooks.
 - **R3b — consensus config.** Port `Run.initProtocol` /
   `mkConsensusProtocolCardano` — parse every era genesis file + the hard-fork
-  config into the protocol params the leader check + forge need.
+  config into the protocol params the leader check + forge need. Grounding
+  (2026-05-18) verified R3b is a **3-slice arc and overwhelmingly wiring** of
+  existing yggdrasil machinery: `crates/node/genesis` already parses every era
+  genesis, verifies hashes, and exposes `shelley_genesis_hash_to_praos_nonce`;
+  R3a supplies credential loading. New code is aggregator structs + JSON
+  parsers + one orchestration fn — no new crypto / ledger / consensus algorithm.
+  - 🟡 **R3b-1 — multi-era genesis bundle.** Lift `synthesize_from_config`
+    from Shelley-only to a typed `GenesisBundle` (byron / shelley / alonzo /
+    conway, `Option` dijkstra), wiring the existing `genesis` loaders + hash
+    verifiers + the praos-nonce derivation. Mirrors the `Cardano.hs`
+    genesis-reading half (upstream lines 102-149).
+  - 🟡 **R3b-2 — per-era protocol configs + hard-fork triggers.** Six new
+    `serde` parsers — `Node{Byron,Shelley,Alonzo,Conway,Dijkstra}ProtocolConfiguration`
+    + `NodeHardForkProtocolConfiguration` — off the stashed `NodeConfigStub`
+    JSON value (the carve-out `orphans.rs` punted). No new behavior.
+  - 🟡 **R3b-3 — `CardanoProtocolParams` mirror + orchestration.** A 6-field
+    aggregator mirroring upstream `Ouroboros.Consensus.Cardano.Node`, plus
+    `mk_consensus_protocol_cardano` folding R3b-1 + R3b-2 + R3a credentials;
+    `initialize` then returns `(DBSynthesizerConfig, CardanoProtocolParams)`.
+  Scope boundary: R3b stops at the config bundle. Building the initial
+  `ExtLedgerState` the synthesizer forges on (`pInfoInitLedger`) is R3c.
 - **R3c — Praos forge loop.** Re-architect `run_forge` to thread an evolving
   ledger state + `ChainDepState` per slot, run `check_should_forge` (VRF) and
   `forge_block` (KES). The hard part.
