@@ -25,8 +25,12 @@ already parsed that trailing 32-byte field but discarded it. The
 upstream credential model derives the header `issuer_vkey` from this
 field; `load_block_producer_credentials` still takes a separate
 `issuer_vkey_path` (a known divergence from upstream's
-`Cardano.Node.Protocol.Shelley` leader-credential loader). Folding the
-embedded key into the credential loader is the remaining R3a work.
+`Cardano.Node.Protocol.Shelley` leader-credential loader).
+`load_block_producer_credentials` also enforces upstream
+`opCertKesKeyCheck` (A3 R3a slice 2) — the supplied KES key must match
+the operational certificate's hot vkey, else
+`BlockProducerError::MismatchedKesKey`. Dropping the divergent
+`issuer_vkey_path` input is the remaining R3a slice 3 work.
 
 ## Rules — Non-Negotiable
 
@@ -48,5 +52,6 @@ carries the `## Naming parity` stanza.
 
 ## R-arc tracking
 
-Wave 5 PR 10. A3 R3a slice 1 (round 505) — opcert loader carries the
-embedded cold issuer vkey.
+Wave 5 PR 10. A3 R3a — slice 1 (round 505): opcert loader carries the
+embedded cold issuer vkey; slice 2 (round 506): `MismatchedKesKey`
+credential check.

@@ -35,8 +35,8 @@ use yggdrasil_consensus::{
 };
 use yggdrasil_crypto::ed25519::{Signature, VerificationKey};
 use yggdrasil_crypto::sum_kes::{
-    SumKesSignature, SumKesSigningKey, SumKesVerificationKey, gen_sum_kes_signing_key,
-    sign_sum_kes, update_sum_kes,
+    SumKesSignature, SumKesSigningKey, SumKesVerificationKey, derive_sum_kes_vk,
+    gen_sum_kes_signing_key, sign_sum_kes, update_sum_kes,
 };
 use yggdrasil_crypto::vrf::{VRF_SIGNING_KEY_SIZE, VrfOutput, VrfSecretKey, VrfVerificationKey};
 use yggdrasil_ledger::{
@@ -97,6 +97,19 @@ pub enum BlockProducerError {
     /// KES period check failed.
     #[error("KES period check failed: {0}")]
     KesPeriod(String),
+    /// The KES signing key does not match the KES verification key
+    /// embedded in the operational certificate.
+    ///
+    /// Reference: `MismatchedKesKey` in `Cardano.Node.Protocol.Shelley`
+    /// (`opCertKesKeyCheck`).
+    #[error(
+        "the KES key provided at {kes_path} does not match the KES key \
+         specified in the operational certificate at {opcert_path}"
+    )]
+    MismatchedKesKey {
+        kes_path: String,
+        opcert_path: String,
+    },
     /// The node is not a leader for the requested slot.
     #[error("not elected leader for slot {0}")]
     NotLeader(u64),
@@ -649,10 +662,14 @@ pub struct BlockProducerCredentials {
 /// Load block producer credentials from text-envelope files.
 ///
 /// Validates that the KES key depth is consistent with the operational
-/// certificate and config parameters, and verifies that the operational
-/// certificate signature matches the configured issuer cold verification key.
+/// certificate and config parameters, that the supplied KES key matches
+/// the KES key certified by the operational certificate, and that the
+/// operational certificate signature matches the configured issuer cold
+/// verification key.
 ///
-/// Reference: upstream node startup in `Cardano.Node.Run.handleSimpleNode`.
+/// Reference: upstream node startup in `Cardano.Node.Run.handleSimpleNode`;
+/// the KES-key match mirrors `opCertKesKeyCheck` in
+/// `Cardano.Node.Protocol.Shelley`.
 pub fn load_block_producer_credentials(
     kes_key_path: &Path,
     vrf_key_path: &Path,
@@ -665,6 +682,22 @@ pub fn load_block_producer_credentials(
     let vrf_verification_key = vrf_signing_key.verification_key();
     let kes_signing_key = load_kes_signing_key(kes_key_path)?;
     let operational_cert = load_operational_certificate(opcert_path)?;
+
+    // Upstream `opCertKesKeyCheck` (`Cardano.Node.Protocol.Shelley`): the
+    // KES verification key derived from the supplied KES signing key must
+    // match the hot KES key the operational certificate certifies — else
+    // every forged header's KES signature would fail at every peer.
+    // Upstream compares `verificationKeyHash` of both keys; comparing the
+    // raw key bytes is equivalent (and stricter — no intermediate hash).
+    let supplied_kes_vk = derive_sum_kes_vk(&kes_signing_key)
+        .map_err(|e| BlockProducerError::Crypto(e.to_string()))?;
+    if supplied_kes_vk.to_bytes() != operational_cert.hot_vkey.to_bytes() {
+        return Err(BlockProducerError::MismatchedKesKey {
+            kes_path: kes_key_path.display().to_string(),
+            opcert_path: opcert_path.display().to_string(),
+        });
+    }
+
     let issuer_vkey = load_issuer_verification_key(issuer_vkey_path)?;
 
     operational_cert.verify(&issuer_vkey).map_err(|e| {
@@ -1830,6 +1863,9 @@ mod tests {
 
         let mut opcert_cbor = Vec::new();
         opcert_cbor.push(0x84); // array(4)
+        // hot_vkey = this test's KES verification key, so the
+        // MismatchedKesKey check passes and we reach the issuer-verify
+        // failure asserted below.
         opcert_cbor.extend_from_slice(&cbor_bstr(&kes_vk.to_bytes()));
         opcert_cbor.push(0x00); // sequence_number = 0
         opcert_cbor.push(0x00); // kes_period = 0
@@ -1862,6 +1898,80 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("operational certificate does not verify against issuer key"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn load_block_producer_credentials_rejects_mismatched_kes_key() {
+        use yggdrasil_crypto::ed25519::SigningKey;
+
+        let dir = tempfile::tempdir().unwrap();
+
+        // VRF signing key file.
+        let vrf_json = make_text_envelope(
+            "VrfSigningKey_PraosVRF",
+            "",
+            &hex::encode(cbor_bstr(&[0xABu8; 64])),
+        );
+        let vrf_path = write_temp_file(&dir, "vrf.skey", &vrf_json);
+
+        // Supplied KES signing key — seed Y.
+        let kes_seed_y = [0xCDu8; 32];
+        let kes_json = make_text_envelope(
+            "KesSigningKey_ed25519_kes_2^0",
+            "",
+            &hex::encode(cbor_bstr(&kes_seed_y)),
+        );
+        let kes_path = write_temp_file(&dir, "kes.skey", &kes_json);
+
+        // The operational certificate certifies a *different* KES key —
+        // seed X — so the supplied KES key does not match the opcert.
+        let kes_seed_x = [0xEFu8; 32];
+        let kes_sk_x = gen_sum_kes_signing_key(&kes_seed_x, 0).expect("kes sk X");
+        let kes_vk_x = derive_sum_kes_vk(&kes_sk_x).expect("kes vk X");
+
+        // Opcert signed by a cold key; the same cold key is the issuer,
+        // so the *only* inconsistency is the KES key — the test reaches
+        // the MismatchedKesKey check regardless of check ordering.
+        let cold_sk = SigningKey::from_bytes([0x11u8; 32]);
+        let cold_vk = cold_sk.verification_key().expect("derive cold vkey");
+
+        let mut signable = [0u8; 48];
+        signable[..32].copy_from_slice(&kes_vk_x.to_bytes());
+        signable[32..40].copy_from_slice(&0u64.to_be_bytes());
+        signable[40..48].copy_from_slice(&0u64.to_be_bytes());
+        let sigma = cold_sk.sign(&signable).expect("opcert signature");
+
+        let mut opcert_cbor = Vec::new();
+        opcert_cbor.push(0x84); // array(4)
+        opcert_cbor.extend_from_slice(&cbor_bstr(&kes_vk_x.to_bytes()));
+        opcert_cbor.push(0x00); // sequence_number = 0
+        opcert_cbor.push(0x00); // kes_period = 0
+        opcert_cbor.extend_from_slice(&cbor_bstr(&sigma.0));
+        let opcert_json =
+            make_text_envelope("NodeOperationalCertificate", "", &hex::encode(opcert_cbor));
+        let opcert_path = write_temp_file(&dir, "node.cert", &opcert_json);
+
+        let issuer_json = make_text_envelope(
+            "StakePoolVerificationKey_ed25519",
+            "",
+            &hex::encode(cbor_bstr(&cold_vk.to_bytes())),
+        );
+        let issuer_path = write_temp_file(&dir, "cold.vkey", &issuer_json);
+
+        let err = load_block_producer_credentials(
+            &kes_path,
+            &vrf_path,
+            &opcert_path,
+            &issuer_path,
+            129_600,
+            62,
+        )
+        .expect_err("KES key not matching the opcert must fail credential loading");
+
+        assert!(
+            matches!(err, BlockProducerError::MismatchedKesKey { .. }),
             "unexpected error: {err}"
         );
     }
