@@ -112,17 +112,16 @@ Praos forging needs. Verified decomposition:
     where `derive_sum_kes_vk(kes_key) != operational_cert.hot_vkey`, mirroring
     upstream `opCertKesKeyCheck` (`Cardano.Node.Protocol.Shelley`). Additive —
     function signature unchanged, zero caller blast radius.
-  - 🟡 **Slice 3** — `issuer_vkey_path` removal (the upstream-divergent
-    separate cold-vkey input). Drop `load_block_producer_credentials`'s
-    `issuer_vkey_path` param; source the issuer cold vkey from
-    `load_operational_certificate_with_issuer` (error on `None` — bare-`OCert`
-    envelopes are test fixtures, not operator artifacts). Remove the
-    `--shelley-operational-certificate-issuer-vkey` CLI flag from `Run` +
-    `ValidateConfig`, the `NodeConfigFile::shelley_operational_certificate_issuer_vkey`
-    field, and update `apply_block_producer_credential_overrides` + the 2
-    `load_block_producer_credentials` call sites (the production call in
-    `validate_config.rs` + the unit test in `block-producer/src/lib.rs`).
-    Breaking operator-surface change — its own round.
+  - ✅ **Slice 3** (round 507, commit `0089c6a`) — `issuer_vkey_path`
+    removal: `load_block_producer_credentials` drops the param and sources
+    the issuer cold vkey from `load_operational_certificate_with_issuer`
+    (a bare-`OCert` envelope → `OpCertMissingIssuerKey`). The
+    upstream-divergent `--shelley-operational-certificate-issuer-vkey` CLI
+    flag and `NodeConfigFile` field are removed end-to-end (cli / main / run /
+    configuration / validate_config + the 3 config presets); the
+    credential-policy set is now 3 fields, not 4. **A3 R3a is complete.**
+    Follow-up: a doc-only round must sweep `docs/manual/*.md` mentions of the
+    removed flag.
 - **R3b — consensus config.** Port `Run.initProtocol` /
   `mkConsensusProtocolCardano` — parse every era genesis file + the hard-fork
   config into the protocol params the leader check + forge need.
