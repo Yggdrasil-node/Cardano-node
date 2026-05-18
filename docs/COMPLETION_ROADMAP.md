@@ -137,20 +137,15 @@ Praos forging needs. Verified decomposition:
     `synthesize_from_config` builds it. Hash verification deferred to
     R3b-3 (needs the config's `*GenesisHash` fields); Dijkstra omitted
     (era not yet activated — no `load_dijkstra_genesis`).
-  - 🟡 **R3b-2 — per-era protocol configs + hard-fork triggers.** Grounding
-    (2026-05-18) corrected the shape: it is **6 structs + 2 deserializers**,
-    not "six parsers". Mirror target is db-synthesizer's *own* vendored
-    `unstable-cardano-tools/Cardano/Node/Types.hs` (record declarations) +
-    `DBSynthesizer/Orphans.hs` (the `FromJSON` impls) — NOT `cardano-node`'s
-    separate `Cardano.Node.Types`, which has drifted (a 7-field Byron). In
-    `types.rs` declare `NodeByronProtocolConfiguration` (9 fields),
-    `NodeHardForkProtocolConfiguration` (8 fields —
-    `TestEnableDevelopmentHardForkEras` + 7 `*HardForkAtEpoch`, no
-    `*AtVersion`), and `Node{Shelley,Alonzo,Conway,Dijkstra}ProtocolConfiguration`
-    (2 fields each). The Byron + HardFork `Deserialize` impls go in
-    `orphans.rs` (the carve-out it punted); the 4 era structs get no
-    deserializer — upstream `initProtocol` inline-constructs them from
-    `NodeConfigStub` paths. No new behavior.
+  - ✅ **R3b-2** (round 511, commit `f560692`) — per-era protocol-config
+    types: `types.rs` declares `NodeByronProtocolConfiguration` (9 fields),
+    `NodeHardForkProtocolConfiguration` (8 fields), and the four
+    `Node{Shelley,Alonzo,Conway,Dijkstra}ProtocolConfiguration` records,
+    mirroring db-synthesizer's vendored
+    `unstable-cardano-tools/Cardano/Node/Types.hs`. Byron + HardFork carry
+    `#[derive(Deserialize)]` (`#[serde(rename/default)]` mirroring
+    `Orphans.hs`'s `FromJSON`); the 4 era structs need no deserializer.
+    `RequiresNetworkMagic` reused from `yggdrasil-node-config`.
   - 🟡 **R3b-3 — `CardanoProtocolParams` mirror + orchestration.** A 6-field
     aggregator mirroring upstream `Ouroboros.Consensus.Cardano.Node`, plus
     `mk_consensus_protocol_cardano` folding R3b-1 + R3b-2 + R3a credentials;
