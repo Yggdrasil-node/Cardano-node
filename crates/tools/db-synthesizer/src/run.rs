@@ -25,11 +25,12 @@
 //! - **`initialize` — protocol-building half.** Upstream's
 //!   `initProtocol` builds `CardanoProtocolParams` via
 //!   `mkConsensusProtocolCardano` (the multi-era hard-fork plan).
-//!   R3b-1 ports the genesis-reading half — [`load_genesis_bundle`]
-//!   reads every era's genesis plus the initial Praos nonce; the
-//!   per-era protocol configs / hard-fork triggers (R3b-2) and the
-//!   `CardanoProtocolParams` aggregator (R3b-3) remain. Until those
-//!   land, synthesized blocks keep the [`SYNTH_ERA`] structural stamp.
+//!   R3b-1 ported the genesis-reading half ([`load_genesis_bundle`]),
+//!   R3b-2 the per-era protocol-config types, and R3b-3
+//!   [`load_consensus_protocol`] / [`mk_consensus_protocol_cardano`]
+//!   the [`CardanoProtocolParams`] aggregate. Until the Praos forge
+//!   loop (R3c) consumes it, synthesized blocks keep the [`SYNTH_ERA`]
+//!   structural stamp.
 //! - **The Praos forge path** (`BlockForging`, `checkShouldForge`,
 //!   `forgeBlock`) — the per-slot VRF/KES/OpCert leader check. See
 //!   [`crate::forging`]'s module note. This slice forges deterministic
@@ -54,7 +55,10 @@ use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
 
 use crate::forging::{ForgeRunOutcome, run_forge};
 use crate::orphans::{AdjustFilePaths, parse_node_config_stub};
-use crate::types::{DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit, NodeConfigStub};
+use crate::types::{
+    DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit, NodeByronProtocolConfiguration,
+    NodeConfigStub, NodeHardForkProtocolConfiguration,
+};
 
 /// Fallback epoch length for the config-free [`synthesize_default`]
 /// convenience.
@@ -134,6 +138,15 @@ pub enum RunError {
     /// genesis-read failures.
     #[error("initialize: cannot load genesis: {0}")]
     GenesisLoad(#[from] yggdrasil_node_genesis::GenesisLoadError),
+    /// A `Node{Byron,HardFork}ProtocolConfiguration` could not be parsed
+    /// from the node-config JSON. Mirror of upstream `initProtocol`'s
+    /// `eitherParseJson` failure.
+    #[error("initialize: cannot parse protocol configuration from node config: {source}")]
+    ProtocolConfigParse {
+        /// Underlying JSON error.
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 /// Whether a directory's sub-directory set marks it as a ChainDB.
@@ -349,7 +362,11 @@ pub struct GenesisBundle {
 /// the remaining db-synthesizer R3b carve-out.
 pub fn load_genesis_bundle(config_path: &Path) -> Result<GenesisBundle, RunError> {
     let stub = resolve_node_config_stub(config_path)?;
+    load_genesis_bundle_from_stub(&stub)
+}
 
+/// [`load_genesis_bundle`] from an already-resolved [`NodeConfigStub`].
+fn load_genesis_bundle_from_stub(stub: &NodeConfigStub) -> Result<GenesisBundle, RunError> {
     let byron = load_byron_genesis_utxo(&stub.byron_genesis_file)?;
     let shelley = load_shelley_genesis(&stub.shelley_genesis_file)?;
     let alonzo = load_alonzo_genesis(&stub.alonzo_genesis_file)?;
@@ -368,6 +385,174 @@ pub fn load_genesis_bundle(config_path: &Path) -> Result<GenesisBundle, RunError
         conway,
         praos_nonce,
     })
+}
+
+/// When an era's hard fork activates.
+///
+/// Synthesizer-scoped 2-variant mirror of upstream `CardanoHardForkTrigger`
+/// (`Ouroboros.Consensus.Cardano.Node`): a fork fires either at its
+/// default protocol-version bump, or — for testing — at an explicit
+/// epoch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HardForkTrigger {
+    /// Fork at the era's default protocol-version bump.
+    AtDefaultVersion,
+    /// Fork at this exact epoch (a `Test*HardForkAtEpoch` override).
+    AtEpoch(u64),
+}
+
+impl HardForkTrigger {
+    /// Map an optional `Test*HardForkAtEpoch` config value to a trigger.
+    fn from_test_epoch(epoch: Option<u64>) -> Self {
+        match epoch {
+            Some(e) => Self::AtEpoch(e),
+            None => Self::AtDefaultVersion,
+        }
+    }
+}
+
+/// Per-era hard-fork triggers.
+///
+/// Synthesizer-scoped mirror of upstream `CardanoHardForkTriggers`
+/// (`Ouroboros.Consensus.Cardano.Node`) — upstream's is a typed `NP`
+/// n-ary product over the hard-fork-combinator era list; this is a flat
+/// per-Shelley-era struct of [`HardForkTrigger`]s case-mapped from
+/// [`NodeHardForkProtocolConfiguration`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CardanoHardForkTriggers {
+    /// Shelley hard-fork trigger.
+    pub shelley: HardForkTrigger,
+    /// Allegra hard-fork trigger.
+    pub allegra: HardForkTrigger,
+    /// Mary hard-fork trigger.
+    pub mary: HardForkTrigger,
+    /// Alonzo hard-fork trigger.
+    pub alonzo: HardForkTrigger,
+    /// Babbage hard-fork trigger.
+    pub babbage: HardForkTrigger,
+    /// Conway hard-fork trigger.
+    pub conway: HardForkTrigger,
+    /// Dijkstra hard-fork trigger.
+    pub dijkstra: HardForkTrigger,
+}
+
+/// Shelley-based protocol parameters.
+///
+/// Synthesizer-scoped mirror of upstream `ProtocolParamsShelleyBased`
+/// (`Ouroboros.Consensus.Shelley.Node.Common`). Upstream also carries
+/// the Shelley leader credentials; the synthesizer threads credentials
+/// separately, so this keeps just `shelleyBasedInitialNonce`.
+#[derive(Clone, Debug)]
+pub struct ShelleyBasedProtocolParams {
+    /// Initial Praos nonce — `genesisHashToPraosNonce` of the Shelley
+    /// genesis hash.
+    pub initial_nonce: Nonce,
+}
+
+/// Block checkpoints.
+///
+/// Upstream `mkConsensusProtocolCardano` always supplies
+/// `emptyCheckpointsMap`; the synthesizer carries this zero-field type
+/// so [`CardanoProtocolParams`] keeps the upstream field name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CheckpointsMap;
+
+/// Cardano consensus protocol parameters.
+///
+/// Synthesizer-scoped mirror of upstream `CardanoProtocolParams`
+/// (`Ouroboros.Consensus.Cardano.Node`). Upstream's field types are the
+/// full hard-fork-combinator machinery (`ProtocolParamsByron` carrying
+/// the entire Byron `Genesis.Config`, `CardanoHardForkTriggers` as a
+/// typed `NP`, an era-crossing `TransitionConfig`). The db-synthesizer
+/// forges single-era and consumes none of that, so this keeps the six
+/// upstream field *names* with synthesizer-scoped types wrapping the
+/// already-built genesis bundle (R3b-1) and per-era configs (R3b-2).
+///
+/// ## Naming parity
+///
+/// **Strict mirror:** none. Synthesizer-scoped simplification of
+/// `CardanoProtocolParams` + `ProtocolParamsShelleyBased` /
+/// `CardanoHardForkTriggers` / `CheckpointsMap` from upstream
+/// `Ouroboros.Consensus.Cardano.Node`.
+#[derive(Clone, Debug)]
+pub struct CardanoProtocolParams {
+    /// Byron protocol configuration (R3b-2).
+    pub byron_protocol_params: NodeByronProtocolConfiguration,
+    /// Shelley-based protocol parameters.
+    pub shelley_based_protocol_params: ShelleyBasedProtocolParams,
+    /// Per-era hard-fork triggers.
+    pub cardano_hard_fork_triggers: CardanoHardForkTriggers,
+    /// Every era's genesis — the `mkLatestTransitionConfig` analog.
+    pub cardano_ledger_transition_config: GenesisBundle,
+    /// Block checkpoints — always empty for the synthesizer.
+    pub cardano_checkpoints: CheckpointsMap,
+    /// `(major, minor)` protocol version the synthesized chain declares.
+    pub cardano_protocol_version: (u64, u64),
+}
+
+/// Fold the parsed config pieces into [`CardanoProtocolParams`].
+///
+/// Synthesizer-scoped mirror of upstream `mkConsensusProtocolCardano`
+/// (`Cardano.Node.Protocol.Cardano`): assembles the Byron + hard-fork
+/// protocol configs (R3b-2) and the multi-era genesis bundle (R3b-1)
+/// into the [`CardanoProtocolParams`] aggregate. Operator credentials
+/// are threaded into the forge separately (R3a / R3c), not here.
+pub fn mk_consensus_protocol_cardano(
+    byron: NodeByronProtocolConfiguration,
+    hard_fork: NodeHardForkProtocolConfiguration,
+    bundle: GenesisBundle,
+) -> CardanoProtocolParams {
+    let cardano_hard_fork_triggers = CardanoHardForkTriggers {
+        shelley: HardForkTrigger::from_test_epoch(hard_fork.test_shelley_hard_fork_at_epoch),
+        allegra: HardForkTrigger::from_test_epoch(hard_fork.test_allegra_hard_fork_at_epoch),
+        mary: HardForkTrigger::from_test_epoch(hard_fork.test_mary_hard_fork_at_epoch),
+        alonzo: HardForkTrigger::from_test_epoch(hard_fork.test_alonzo_hard_fork_at_epoch),
+        babbage: HardForkTrigger::from_test_epoch(hard_fork.test_babbage_hard_fork_at_epoch),
+        conway: HardForkTrigger::from_test_epoch(hard_fork.test_conway_hard_fork_at_epoch),
+        dijkstra: HardForkTrigger::from_test_epoch(hard_fork.test_dijkstra_hard_fork_at_epoch),
+    };
+
+    // Upstream `Cardano.hs`: `ProtVer 11 0` when development hard-fork
+    // eras are enabled, else `ProtVer 10 7`.
+    let cardano_protocol_version = if hard_fork.test_enable_development_hard_fork_eras {
+        (11, 0)
+    } else {
+        (10, 7)
+    };
+
+    let shelley_based_protocol_params = ShelleyBasedProtocolParams {
+        initial_nonce: bundle.praos_nonce,
+    };
+
+    CardanoProtocolParams {
+        byron_protocol_params: byron,
+        shelley_based_protocol_params,
+        cardano_hard_fork_triggers,
+        cardano_ledger_transition_config: bundle,
+        cardano_checkpoints: CheckpointsMap,
+        cardano_protocol_version,
+    }
+}
+
+/// Load the Cardano consensus protocol parameters from the operator's
+/// node `config.json`.
+///
+/// The protocol-building half of upstream
+/// `Cardano.Tools.DBSynthesizer.Run.initProtocol`: parses the Byron and
+/// hard-fork protocol configurations from the node-config JSON, loads
+/// the multi-era genesis bundle, and folds them via
+/// [`mk_consensus_protocol_cardano`].
+pub fn load_consensus_protocol(config_path: &Path) -> Result<CardanoProtocolParams, RunError> {
+    let stub = resolve_node_config_stub(config_path)?;
+
+    let byron: NodeByronProtocolConfiguration = serde_json::from_value(stub.node_config.clone())
+        .map_err(|source| RunError::ProtocolConfigParse { source })?;
+    let hard_fork: NodeHardForkProtocolConfiguration =
+        serde_json::from_value(stub.node_config.clone())
+            .map_err(|source| RunError::ProtocolConfigParse { source })?;
+
+    let bundle = load_genesis_bundle_from_stub(&stub)?;
+    Ok(mk_consensus_protocol_cardano(byron, hard_fork, bundle))
 }
 
 /// [`synthesize`] driven by the operator's node `config.json`.
@@ -598,7 +783,7 @@ mod tests {
         std::fs::write(dir.join("conway.json"), "{}").unwrap();
         let config = dir.join("config.json");
         let config_json = format!(
-            r#"{{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"{shelley_rel}","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"}}"#
+            r#"{{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"{shelley_rel}","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json","LastKnownBlockVersion-Major":1,"LastKnownBlockVersion-Minor":0}}"#
         );
         std::fs::write(&config, config_json).unwrap();
         config
@@ -708,5 +893,78 @@ mod tests {
         .unwrap();
         let err = load_genesis_bundle(&config).expect_err("missing Alonzo genesis must fail");
         assert!(matches!(err, RunError::GenesisLoad(_)));
+    }
+
+    #[test]
+    fn hard_fork_trigger_maps_test_epoch() {
+        assert_eq!(
+            HardForkTrigger::from_test_epoch(Some(42)),
+            HardForkTrigger::AtEpoch(42),
+        );
+        assert_eq!(
+            HardForkTrigger::from_test_epoch(None),
+            HardForkTrigger::AtDefaultVersion,
+        );
+    }
+
+    #[test]
+    fn load_consensus_protocol_builds_cardano_protocol_params() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = write_config(tmp.path(), "shelley-genesis.json", 86_400);
+
+        let params = load_consensus_protocol(&config).expect("load consensus protocol");
+
+        // Byron config — the required LastKnownBlockVersion keys parsed.
+        assert_eq!(
+            params
+                .byron_protocol_params
+                .byron_supported_protocol_version_major,
+            1,
+        );
+        // The genesis bundle is threaded as the transition config.
+        assert_eq!(
+            params.cardano_ledger_transition_config.shelley.epoch_length,
+            86_400,
+        );
+        // The Shelley-based initial nonce is the genesis hash.
+        assert!(matches!(
+            params.shelley_based_protocol_params.initial_nonce,
+            Nonce::Hash(_),
+        ));
+        // No `Test*HardForkAtEpoch` overrides in the fixture config.
+        assert_eq!(
+            params.cardano_hard_fork_triggers.conway,
+            HardForkTrigger::AtDefaultVersion,
+        );
+        // Development hard-fork eras off -> ProtVer 10.7.
+        assert_eq!(params.cardano_protocol_version, (10, 7));
+    }
+
+    #[test]
+    fn mk_consensus_protocol_cardano_maps_hard_fork_epochs_and_dev_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = write_config(tmp.path(), "shelley-genesis.json", 432_000);
+        let bundle = load_genesis_bundle(&config).expect("bundle");
+
+        let byron: NodeByronProtocolConfiguration = serde_json::from_str(
+            r#"{"ByronGenesisFile":"byron.json","LastKnownBlockVersion-Major":1,"LastKnownBlockVersion-Minor":0}"#,
+        )
+        .expect("byron config");
+        let hard_fork: NodeHardForkProtocolConfiguration = serde_json::from_str(
+            r#"{"TestEnableDevelopmentHardForkEras":true,"TestConwayHardForkAtEpoch":7}"#,
+        )
+        .expect("hard-fork config");
+
+        let params = mk_consensus_protocol_cardano(byron, hard_fork, bundle);
+        assert_eq!(
+            params.cardano_hard_fork_triggers.conway,
+            HardForkTrigger::AtEpoch(7),
+        );
+        assert_eq!(
+            params.cardano_hard_fork_triggers.shelley,
+            HardForkTrigger::AtDefaultVersion,
+        );
+        // Development hard-fork eras on -> ProtVer 11.0.
+        assert_eq!(params.cardano_protocol_version, (11, 0));
     }
 }

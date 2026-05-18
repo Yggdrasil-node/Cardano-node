@@ -21,7 +21,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `node/src/block_producer.rs` Forging logic.
 
-## Current functional surface (post Phase 4 R3b-2)
+## Current functional surface (post Phase 4 R3b)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -51,8 +51,13 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
   `Node{Shelley,Alonzo,Conway,Dijkstra}ProtocolConfiguration` records,
   mirroring `unstable-cardano-tools/Cardano/Node/Types.hs`. Byron +
   HardFork derive `Deserialize` (the `Orphans.hs` `FromJSON` carve-out).
-  The `CardanoProtocolParams` aggregator + `mk_consensus_protocol_cardano`
-  orchestration (R3b-3) remain.
+- ✅ Consensus protocol params (Phase 4 R3b-3 — **R3b complete**) —
+  `run::load_consensus_protocol` / `run::mk_consensus_protocol_cardano`
+  fold the genesis bundle (R3b-1) + per-era configs (R3b-2) into
+  `CardanoProtocolParams` — a synthesizer-scoped 6-field mirror of
+  upstream `Ouroboros.Consensus.Cardano.Node` (`CardanoHardForkTriggers`
+  case-mapped from the hard-fork config; `(major, minor)` protocol
+  version). Wiring it into a Praos-valid forge is R3c.
 - 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
   structurally valid but not Praos-valid until the VRF/KES/OpCert
   leader check + KES-signed `forgeBlock` land.
