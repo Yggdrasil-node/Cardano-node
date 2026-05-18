@@ -91,7 +91,7 @@ Use a separate volume per network — chain databases are not interchangeable.
 
 ## Block production via Docker
 
-A block producer needs four credential files mounted read-only:
+A block producer needs three credential files mounted read-only:
 
 ```yaml
 services:
@@ -113,7 +113,6 @@ services:
       - --shelley-kes-key=/var/lib/yggdrasil/keys/kes.skey
       - --shelley-vrf-key=/var/lib/yggdrasil/keys/vrf.skey
       - --shelley-operational-certificate=/var/lib/yggdrasil/keys/node.opcert
-      - --shelley-operational-certificate-issuer-vkey=/var/lib/yggdrasil/keys/cold.vkey
 
 volumes:
   producer-db:

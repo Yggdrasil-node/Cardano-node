@@ -120,8 +120,8 @@ Praos forging needs. Verified decomposition:
     flag and `NodeConfigFile` field are removed end-to-end (cli / main / run /
     configuration / validate_config + the 3 config presets); the
     credential-policy set is now 3 fields, not 4. **A3 R3a is complete.**
-    Follow-up: a doc-only round must sweep `docs/manual/*.md` mentions of the
-    removed flag.
+    Follow-up (round 508): swept the removed flag from the producer scripts
+    and the operator manual / runbooks.
 - **R3b — consensus config.** Port `Run.initProtocol` /
   `mkConsensusProtocolCardano` — parse every era genesis file + the hard-fork
   config into the protocol params the leader check + forge need.

@@ -117,9 +117,8 @@ These are pulled from the Shelley genesis but exposed as config keys for explici
 | `shelley_kes_key`                      | string  | none    | `ShelleyKesKey`                           | Path to KES `.skey`. |
 | `shelley_vrf_key`                      | string  | none    | `ShelleyVrfKey`                           | Path to VRF `.skey`. |
 | `shelley_operational_certificate`      | string  | none    | `ShelleyOperationalCertificate`           | Path to OpCert `.cert`. |
-| `shelley_operational_certificate_issuer_vkey`| string| none | `ShelleyOperationalCertificateIssuerVkey` | Path to cold-key `.vkey`. |
 
-If all four are supplied, the node activates block production. Otherwise it runs as a relay.
+If all three are supplied, the node activates block production. Otherwise it runs as a relay.
 
 ### NtC (local) socket
 
@@ -171,10 +170,9 @@ Every flag listed in the table below overrides the corresponding config key when
 | `--shelley-kes-key <path>`        | `shelley_kes_key`                      |
 | `--shelley-vrf-key <path>`        | `shelley_vrf_key`                      |
 | `--shelley-operational-certificate <path>`| `shelley_operational_certificate`|
-| `--shelley-operational-certificate-issuer-vkey <path>`| `shelley_operational_certificate_issuer_vkey` |
 
 Unspecified flags fall through to config file → preset default.
-Producer credential fields are atomic: provide all four fields to enable forging, provide none for relay/sync-only mode, or pass `--non-producing-node` to force relay mode while leaving credential paths in the file.
+Producer credential fields are atomic: provide all three fields to enable forging, provide none for relay/sync-only mode, or pass `--non-producing-node` to force relay mode while leaving credential paths in the file.
 
 ## Topology file
 

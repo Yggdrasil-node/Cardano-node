@@ -71,12 +71,11 @@ yggdrasil-node run [flags]
 | `--shelley-kes-key <path>`                | path    | none          | KES signing key (block production). |
 | `--shelley-vrf-key <path>`                | path    | none          | VRF signing key. |
 | `--shelley-operational-certificate <path>`| path    | none          | OpCert. |
-| `--shelley-operational-certificate-issuer-vkey <path>`| path | none      | Cold-key vkey for OpCert verification. |
 
 ### Behavior
 
 - If `--peer` is omitted, the node tries the preset's primary peer, then falls back to topology-derived peers.
-- If all four block-production credentials are present, the forge loop is activated unless `--non-producing-node` is set.
+- If all three block-production credentials are present, the forge loop is activated unless `--non-producing-node` is set.
 - A partial block-production credential set is a startup error unless `--non-producing-node` is set.
 - Graceful shutdown on `SIGINT` or `SIGTERM`.
 - Exit status 0 on clean shutdown, non-zero on unrecoverable error.
@@ -109,8 +108,7 @@ $ yggdrasil-node run \
     --metrics-port 12798 \
     --shelley-kes-key keys/kes.skey \
     --shelley-vrf-key keys/vrf.skey \
-    --shelley-operational-certificate keys/node.opcert \
-    --shelley-operational-certificate-issuer-vkey keys/cold.vkey
+    --shelley-operational-certificate keys/node.opcert
 ```
 
 ---

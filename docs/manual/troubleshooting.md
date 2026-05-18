@@ -31,15 +31,14 @@ GenesisLoadError::HashMismatch {
 
 This check is intentional — a wrong genesis file silently corrupts every subsequent ledger state.
 
-### `OpCert signature verification failed against issuer cold key`
+### `operational certificate sigma does not verify against its embedded cold verification key`
 
-**Cause**: The OpCert was issued by a different cold key than the one configured.
+**Cause**: The operational certificate is malformed — the cold verification key embedded in its `[OCert, cold_vkey]` text envelope did not sign the certificate body. A certificate produced by `cardano-cli node issue-op-cert` is always internally consistent, so this points to a corrupt or hand-edited file.
 
 **Resolution**:
 
-1. Confirm `--shelley-operational-certificate-issuer-vkey` points to the correct cold-key vkey.
-2. Re-run `cardano-cli node issue-op-cert` with the cold key whose vkey you have configured.
-3. Restart with the new OpCert.
+1. Re-run `cardano-cli node issue-op-cert` to produce a fresh operational certificate.
+2. Restart with the new OpCert.
 
 ### `KES period <n> outside valid OpCert window`
 

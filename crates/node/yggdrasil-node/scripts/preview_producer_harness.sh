@@ -442,7 +442,6 @@ write_config() {
       --arg kes "$KEY_DIR/kes.skey" \
       --arg vrf "$KEY_DIR/vrf.skey" \
       --arg opcert "$KEY_DIR/node.opcert" \
-      --arg issuer "$KEY_DIR/cold.vkey" \
       '{
         peer_addr: $peer,
         storage_dir: $storage,
@@ -475,8 +474,7 @@ write_config() {
         TurnOnLogMetrics: true,
         ShelleyKesKey: $kes,
         ShelleyVrfKey: $vrf,
-        ShelleyOperationalCertificate: $opcert,
-        ShelleyOperationalCertificateIssuerVkey: $issuer
+        ShelleyOperationalCertificate: $opcert
       }' >"$config_path"
   else
     jq -n \

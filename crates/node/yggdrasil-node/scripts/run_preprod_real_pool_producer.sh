@@ -16,7 +16,6 @@ EXPECT_ADOPTED_EVENTS="${EXPECT_ADOPTED_EVENTS:-0}"
 KESSKEY_PATH="${KES_SKEY_PATH:-}"
 VRF_SKEY_PATH="${VRF_SKEY_PATH:-}"
 OPCERT_PATH="${OPCERT_PATH:-}"
-ISSUER_VKEY_PATH="${ISSUER_VKEY_PATH:-}"
 
 usage() {
   cat <<'EOF'
@@ -24,7 +23,6 @@ Usage:
   KES_SKEY_PATH=/abs/path/kes.skey \
   VRF_SKEY_PATH=/abs/path/vrf.skey \
   OPCERT_PATH=/abs/path/node.cert \
-  ISSUER_VKEY_PATH=/abs/path/cold.vkey \
   node/scripts/run_preprod_real_pool_producer.sh
 
 Optional env:
@@ -85,7 +83,6 @@ main() {
   require_file "$KESSKEY_PATH" "KES_SKEY_PATH"
   require_file "$VRF_SKEY_PATH" "VRF_SKEY_PATH"
   require_file "$OPCERT_PATH" "OPCERT_PATH"
-  require_file "$ISSUER_VKEY_PATH" "ISSUER_VKEY_PATH"
 
   mkdir -p "$LOG_DIR" "$DB_DIR"
   local log_file="$LOG_DIR/preprod-real-pool-$(date +%Y%m%d-%H%M%S).log"
@@ -103,8 +100,7 @@ main() {
         --database-path "$DB_DIR" \
         --shelley-kes-key "$KESSKEY_PATH" \
         --shelley-vrf-key "$VRF_SKEY_PATH" \
-        --shelley-operational-certificate "$OPCERT_PATH" \
-        --shelley-operational-certificate-issuer-vkey "$ISSUER_VKEY_PATH"
+        --shelley-operational-certificate "$OPCERT_PATH"
   ) >"$log_file" 2>&1 &
   local pid=$!
 

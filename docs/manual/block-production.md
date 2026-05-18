@@ -130,8 +130,7 @@ Add to `config.json`:
 {
   "ShelleyKesKey": "/var/lib/yggdrasil/keys/kes.skey",
   "ShelleyVrfKey": "/var/lib/yggdrasil/keys/vrf.skey",
-  "ShelleyOperationalCertificate": "/var/lib/yggdrasil/keys/node.opcert",
-  "ShelleyOperationalCertificateIssuerVkey": "/var/lib/yggdrasil/keys/cold.vkey"
+  "ShelleyOperationalCertificate": "/var/lib/yggdrasil/keys/node.opcert"
 }
 ```
 
@@ -143,11 +142,10 @@ $ yggdrasil-node run \
     --database-path /var/lib/yggdrasil/db \
     --shelley-kes-key /var/lib/yggdrasil/keys/kes.skey \
     --shelley-vrf-key /var/lib/yggdrasil/keys/vrf.skey \
-    --shelley-operational-certificate /var/lib/yggdrasil/keys/node.opcert \
-    --shelley-operational-certificate-issuer-vkey /var/lib/yggdrasil/keys/cold.vkey
+    --shelley-operational-certificate /var/lib/yggdrasil/keys/node.opcert
 ```
 
-When all four are present, `ShelleyGenesis.systemStart` is available, and the `active_slot_coeff` config key is valid, the node activates the forge loop. A partial credential set is a startup error; pass `--non-producing-node` only when intentionally running this config as a relay/non-producing node.
+When all three are present, `ShelleyGenesis.systemStart` is available, and the `active_slot_coeff` config key is valid, the node activates the forge loop. A partial credential set is a startup error; pass `--non-producing-node` only when intentionally running this config as a relay/non-producing node.
 
 ### Startup verification
 
@@ -155,7 +153,7 @@ On startup with credentials configured, the node:
 
 1. Loads each key file and parses the text envelope.
 2. Computes the cold-key Blake2b-224 hash → derived pool ID.
-3. Verifies the OpCert signature against the configured issuer cold-key vkey. **If the OpCert was issued by a different cold key, startup fails with a clear error.**
+3. Verifies the operational certificate is internally consistent — its signature must verify against the cold verification key embedded in the certificate's text envelope. **If the embedded cold key did not sign the certificate, startup fails with a clear error.**
 4. Derives the absolute current slot from `ShelleyGenesis.systemStart` + `slotLength`, matching upstream block-forging slot-clock semantics.
 5. Waits for live epoch nonce and active stake-snapshot sigma before attempting leadership checks.
 6. Checks the OpCert `kes_period` lies within the valid window for the current slot.

@@ -15,7 +15,6 @@ This workflow verifies yggdrasil block-producer runtime behavior against the rea
   - KES signing key (text envelope)
   - VRF signing key (text envelope)
   - Node operational certificate (text envelope)
-  - Issuer cold verification key (text envelope)
 - Pool has active stake/delegation on preprod if you want forged blocks to appear/adopt.
 - yggdrasil binary is built:
   - `cargo build -p yggdrasil-node`
@@ -27,7 +26,6 @@ This workflow verifies yggdrasil block-producer runtime behavior against the rea
 KES_SKEY_PATH=/abs/path/kes.skey \
 VRF_SKEY_PATH=/abs/path/vrf.skey \
 OPCERT_PATH=/abs/path/node.cert \
-ISSUER_VKEY_PATH=/abs/path/cold.vkey \
 node/scripts/run_preprod_real_pool_producer.sh
 ```
 
@@ -37,7 +35,6 @@ Strict mode for active pools (longer observation window):
 KES_SKEY_PATH=/abs/path/kes.skey \
 VRF_SKEY_PATH=/abs/path/vrf.skey \
 OPCERT_PATH=/abs/path/node.cert \
-ISSUER_VKEY_PATH=/abs/path/cold.vkey \
 RUN_SECONDS=900 \
 EXPECT_FORGE_EVENTS=1 \
 EXPECT_ADOPTED_EVENTS=1 \

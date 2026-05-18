@@ -9,7 +9,7 @@ nav_order: 8
 
 **Purpose**: ordered checklist for the operator running `yggdrasil-node` against real Cardano networks (preprod first, then mainnet) with the supporting scripts created in Slices L–N. This is the document referenced as the bring-up runbook in `archive/AUDIT_VERIFICATION_2026Q2.md`.
 
-**Audience**: someone with shell access to a host that can reach the public Cardano relay set, optionally with a real pool's KES/VRF/OpCert/issuer-vkey credentials, and (optionally) a running upstream Haskell `cardano-node` for hash comparison.
+**Audience**: someone with shell access to a host that can reach the public Cardano relay set, optionally with a real pool's KES/VRF/OpCert credentials, and (optionally) a running upstream Haskell `cardano-node` for hash comparison.
 
 **When to use this**: after the audit/bring-up plan slices have landed (or when validating the as-is 99% codebase). Designed to be exercised end-to-end at least once before declaring the node "manually verified".
 
@@ -25,7 +25,7 @@ nav_order: 8
   ```
   (debug build works for short smoke tests but is much slower at block validation.)
 - Optional but recommended for hash-comparison: an upstream `cardano-cli` binary on `$PATH` and (separately) a running `cardano-node` syncing the same network with a known `--socket-path`.
-- Optional for producer mode: a real pool's `kes.skey`, `vrf.skey`, `node.cert`, and `cold.vkey` (issuer vkey).
+- Optional for producer mode: a real pool's `kes.skey`, `vrf.skey`, and `node.cert`.
 - Optional for upstream E2E parity (§8.5): Docker or Podman for the
   official `cardano-node-tests` `runner/runc.sh` wrapper. The
   repository devcontainer provisions Docker CLI access through the
@@ -156,7 +156,6 @@ Verify the node reaches `bootstrap peer connected` in the log and exposes `yggdr
 KES_SKEY_PATH=/secure/preprod/kes.skey \
 VRF_SKEY_PATH=/secure/preprod/vrf.skey \
 OPCERT_PATH=/secure/preprod/node.cert \
-ISSUER_VKEY_PATH=/secure/preprod/cold.vkey \
 RUN_SECONDS=600 \
 EXPECT_FORGE_EVENTS=1 \
 node/scripts/run_preprod_real_pool_producer.sh
@@ -196,7 +195,6 @@ For longer settling, bump `RUN_SECONDS=3600` (1 hour) and tail the log to observ
 KES_SKEY_PATH=/secure/mainnet/kes.skey \
 VRF_SKEY_PATH=/secure/mainnet/vrf.skey \
 OPCERT_PATH=/secure/mainnet/node.cert \
-ISSUER_VKEY_PATH=/secure/mainnet/cold.vkey \
 RUN_SECONDS=3600 \
 EXPECT_FORGE_EVENTS=0 \
 node/scripts/run_mainnet_real_pool_producer.sh

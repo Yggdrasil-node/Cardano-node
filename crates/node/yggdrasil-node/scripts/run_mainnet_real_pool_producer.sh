@@ -9,8 +9,8 @@ set -euo pipefail
 #     defaults to 2 since mainnet should always reach >=2 hot peers within
 #     the settle window.
 #   - Credentials are MANDATORY for producer-mode runs; the script aborts
-#     with usage if any of KES_SKEY_PATH / VRF_SKEY_PATH / OPCERT_PATH /
-#     ISSUER_VKEY_PATH is unset. This is a safety guard: silently running
+#     with usage if any of KES_SKEY_PATH / VRF_SKEY_PATH / OPCERT_PATH is
+#     unset. This is a safety guard: silently running
 #     a producer without credentials on mainnet would create operational
 #     ambiguity if it appears to start "fine".
 #   - RELAY_ONLY=1 short-circuits the credential requirement and runs the
@@ -31,7 +31,6 @@ METRICS_PORT="${METRICS_PORT:-9001}"
 KESSKEY_PATH="${KES_SKEY_PATH:-}"
 VRF_SKEY_PATH="${VRF_SKEY_PATH:-}"
 OPCERT_PATH="${OPCERT_PATH:-}"
-ISSUER_VKEY_PATH="${ISSUER_VKEY_PATH:-}"
 
 usage() {
   cat <<'EOF'
@@ -41,7 +40,6 @@ Usage:
     KES_SKEY_PATH=/abs/path/kes.skey \
     VRF_SKEY_PATH=/abs/path/vrf.skey \
     OPCERT_PATH=/abs/path/node.cert \
-    ISSUER_VKEY_PATH=/abs/path/cold.vkey \
     node/scripts/run_mainnet_real_pool_producer.sh
 
   Relay-only (sync without forging; recommended first dry run):
@@ -130,7 +128,6 @@ main() {
     require_file "$KESSKEY_PATH" "KES_SKEY_PATH"
     require_file "$VRF_SKEY_PATH" "VRF_SKEY_PATH"
     require_file "$OPCERT_PATH" "OPCERT_PATH"
-    require_file "$ISSUER_VKEY_PATH" "ISSUER_VKEY_PATH"
   else
     echo "[info] RELAY_ONLY=1 — running in sync-only mode (no forging)"
   fi
@@ -160,7 +157,6 @@ main() {
       --shelley-kes-key "$KESSKEY_PATH"
       --shelley-vrf-key "$VRF_SKEY_PATH"
       --shelley-operational-certificate "$OPCERT_PATH"
-      --shelley-operational-certificate-issuer-vkey "$ISSUER_VKEY_PATH"
     )
   fi
 
