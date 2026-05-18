@@ -24,7 +24,7 @@
 use eyre::{Result, WrapErr};
 use serde_json::json;
 
-use yggdrasil_ledger::{Era, GenesisDelegationState, LedgerState, StakeCredential};
+use yggdrasil_ledger::{Era, LedgerState};
 use yggdrasil_node_config::NodeConfigFile;
 use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
@@ -82,105 +82,31 @@ pub fn strict_base_ledger_state(
         .verify_known_genesis_hashes(config_base_dir)
         .wrap_err("genesis hash verification failed")?;
 
-    let mut state = LedgerState::new(Era::Byron);
-    state.set_expected_network_id(file_cfg.expected_network_id());
-
-    // Seed the multi-era UTxO with Byron genesis distributions so the
-    // first Byron transaction that spends a genesis output can resolve
-    // its inputs.  Without this seeding every Byron block beyond the
-    // genesis-funded first transaction would fail with `InputNotFound`.
-    //
-    // Reference: `Cardano.Chain.Genesis.UTxO.genesisUtxo`.
-    let byron_entries = file_cfg
-        .load_byron_genesis_utxo(config_base_dir)
-        .wrap_err("failed to load Byron genesis UTxO")?;
-    let byron_initial_lovelace = byron_entries
-        .iter()
-        .fold(0u64, |sum, entry| sum.saturating_add(entry.amount));
-    if !byron_entries.is_empty() {
-        state.seed_byron_genesis_utxo(
-            byron_entries
-                .into_iter()
-                .map(|entry| (entry.address, entry.amount)),
-        );
-    }
-    if let Some(bootstrap) = file_cfg
-        .load_shelley_genesis_bootstrap(config_base_dir)
-        .wrap_err("failed to load Shelley genesis bootstrap")?
-    {
-        let shelley_initial_lovelace = bootstrap
-            .initial_funds
-            .iter()
-            .fold(0u64, |sum, (_, txout)| sum.saturating_add(txout.amount));
-        let initial_circulation = byron_initial_lovelace.saturating_add(shelley_initial_lovelace);
-        state.configure_pending_shelley_genesis_utxo(bootstrap.initial_funds);
-        state.configure_pending_shelley_genesis_stake(
-            bootstrap
-                .staking
-                .into_iter()
-                .map(|(credential, pool)| (StakeCredential::AddrKeyHash(credential), pool))
-                .collect(),
-        );
-        state.configure_pending_shelley_genesis_delegs(
-            bootstrap
-                .gen_delegs
-                .into_iter()
-                .map(|(genesis_hash, parsed)| {
-                    (
-                        genesis_hash,
-                        GenesisDelegationState {
-                            delegate: parsed.delegate,
-                            vrf: parsed.vrf,
-                        },
-                    )
-                })
-                .collect(),
-        );
-        state.set_genesis_update_quorum(bootstrap.update_quorum);
-        state.set_max_lovelace_supply(bootstrap.max_lovelace_supply);
-        state.accounting_mut().reserves = bootstrap
-            .max_lovelace_supply
-            .saturating_sub(initial_circulation);
-        state.set_slots_per_epoch(bootstrap.epoch_length);
-        state.set_active_slot_coeff(yggdrasil_ledger::UnitInterval {
-            numerator: bootstrap.active_slots_coeff.0,
-            denominator: bootstrap.active_slots_coeff.1,
-        });
-        // R264 — feed the Byron→Shelley boundary into the ledger so
-        // PPUP / MIR / blocks_made first-slot math respects the
-        // era-aware schedule on chains with a Byron prefix
-        // (mainnet, preprod). Without this, those checks use
-        // `(current_epoch + 1) * slots_per_epoch` (fixed-length
-        // anchored at slot 0) and silently distort reward-cycle
-        // accounting + protocol-update timing.
-        state.set_byron_shelley_transition(file_cfg.byron_to_shelley_slot.map(|boundary| {
-            (
-                boundary,
-                file_cfg
-                    .first_shelley_epoch
-                    .unwrap_or(boundary / file_cfg.byron_epoch_length.max(1)),
-            )
-        }));
-        // Compute stability_window = 3k/f from genesis config so the
-        // ledger PPUP rule can enforce the exact upstream slot-of-no-return.
-        if file_cfg.active_slot_coeff > 0.0 {
-            let sw = (3.0 * file_cfg.security_param_k as f64 / file_cfg.active_slot_coeff) as u64;
-            state.set_stability_window(sw);
-        }
-    }
-    if let Some(params) = file_cfg
-        .load_genesis_protocol_params(config_base_dir)
-        .wrap_err("failed to load genesis protocol parameters")?
-    {
-        state.set_protocol_params(params);
-    }
-    if let Some(enact) = file_cfg
-        .load_genesis_enact_state(config_base_dir)
-        .wrap_err("failed to load genesis enact state")?
-    {
-        *state.enact_state_mut() = enact;
-    }
-    Ok(state)
+    // Load every genesis piece, then hand them to the shared
+    // `build_base_ledger_state` builder. Keeping the construction in a
+    // library crate lets the db-synthesizer seed a byte-identical
+    // initial ledger state (A3 R3c-1a).
+    let inputs = yggdrasil_node_genesis::BaseLedgerStateInputs {
+        expected_network_id: file_cfg.expected_network_id(),
+        byron_entries: file_cfg
+            .load_byron_genesis_utxo(config_base_dir)
+            .wrap_err("failed to load Byron genesis UTxO")?,
+        shelley_bootstrap: file_cfg
+            .load_shelley_genesis_bootstrap(config_base_dir)
+            .wrap_err("failed to load Shelley genesis bootstrap")?,
+        protocol_params: file_cfg
+            .load_genesis_protocol_params(config_base_dir)
+            .wrap_err("failed to load genesis protocol parameters")?,
+        enact_state: file_cfg
+            .load_genesis_enact_state(config_base_dir)
+            .wrap_err("failed to load genesis enact state")?,
+        byron_to_shelley_slot: file_cfg.byron_to_shelley_slot,
+        first_shelley_epoch: file_cfg.first_shelley_epoch,
+        byron_epoch_length: file_cfg.byron_epoch_length,
+        active_slot_coeff: file_cfg.active_slot_coeff,
+        security_param_k: file_cfg.security_param_k,
+    };
+    Ok(yggdrasil_node_genesis::build_base_ledger_state(inputs))
 }
 
 /// Best-effort variant of [`strict_base_ledger_state`] that swallows

@@ -15,6 +15,11 @@ The crate ships:
 - `build_protocol_parameters` — assembles a `ProtocolParameters`
   from the loaded values so the node can seed initial ledger state
   with network-accurate validation rules.
+- `build_base_ledger_state` (+ `BaseLedgerStateInputs`) — the shared
+  genesis→`LedgerState` builder (A3 R3c-1a): seeds the initial
+  Byron-era multi-era `LedgerState` from pre-loaded genesis pieces, so
+  the node (`startup.rs`) and the db-synthesizer build a byte-identical
+  initial state.
 - `slot_to_posix_ms`, `initial_funds_pseudo_txin`,
   `build_plutus_cost_model_from_protocol_values_for_protocol`, etc. —
   the operator helpers consumed by `yggdrasil-node`'s
@@ -43,4 +48,5 @@ loaders into one Rust module.
 
 Wave 5 PR 7+8 (extracted alongside yggdrasil-node-config because
 `NodeConfigFile::verify_known_genesis_hashes` and several other
-methods on `NodeConfigFile` return `GenesisLoadError`).
+methods on `NodeConfigFile` return `GenesisLoadError`). A3 R3c-1a
+(round 514) — added the shared `build_base_ledger_state` builder.

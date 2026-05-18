@@ -52,8 +52,9 @@ use yggdrasil_ledger::plutus_validation::PlutusVersion;
 use yggdrasil_ledger::protocol_params::{CostModels, DRepVotingThresholds, PoolVotingThresholds};
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::{
-    AddrKeyHash, Address, Anchor, EnactState, GenesisDelegateHash, GenesisHash, Nonce, PoolKeyHash,
-    ProtocolParameters, ShelleyTxIn, ShelleyTxOut, VrfKeyHash,
+    AddrKeyHash, Address, Anchor, EnactState, Era, GenesisDelegateHash, GenesisDelegationState,
+    GenesisHash, LedgerState, Nonce, PoolKeyHash, ProtocolParameters, ShelleyTxIn, ShelleyTxOut,
+    StakeCredential, VrfKeyHash,
 };
 use yggdrasil_plutus::{BuiltinSemanticsVariant, CostModel, CostModelError};
 
@@ -2594,6 +2595,155 @@ fn f64_to_rational(f: f64) -> (u64, u64) {
     let denom = 1_000_000_000u64;
     let numer = (f * denom as f64).round() as u64;
     (numer, denom)
+}
+
+// ---------------------------------------------------------------------------
+// Base ledger-state seeding
+// ---------------------------------------------------------------------------
+
+/// Pre-loaded genesis pieces + scalar runtime config needed to seed the
+/// initial Byron-era [`LedgerState`].
+///
+/// The caller loads each piece (this crate's `load_*` genesis loaders)
+/// and reads the scalar config off the operator's node config, then
+/// hands the bundle to [`build_base_ledger_state`].
+#[derive(Debug)]
+pub struct BaseLedgerStateInputs {
+    /// Resolved Cardano network id.
+    pub expected_network_id: u8,
+    /// Byron genesis UTxO entries (`load_byron_genesis_utxo`).
+    pub byron_entries: Vec<ByronGenesisUtxoEntry>,
+    /// Parsed Shelley genesis bootstrap bundle; `None` pre-Shelley.
+    pub shelley_bootstrap: Option<ShelleyGenesisBootstrap>,
+    /// Genesis protocol parameters.
+    pub protocol_params: Option<ProtocolParameters>,
+    /// Genesis Conway enact state.
+    pub enact_state: Option<EnactState>,
+    /// Absolute slot of the Byron→Shelley boundary.
+    pub byron_to_shelley_slot: Option<u64>,
+    /// First Shelley epoch number (recomputed from the boundary if absent).
+    pub first_shelley_epoch: Option<u64>,
+    /// Byron epoch length in slots.
+    pub byron_epoch_length: u64,
+    /// Active-slot coefficient `f`.
+    pub active_slot_coeff: f64,
+    /// Security parameter `k`.
+    pub security_param_k: u64,
+}
+
+/// Build the initial Byron-era multi-era [`LedgerState`] from pre-loaded
+/// genesis pieces.
+///
+/// The pure-construction half of the node's `strict_base_ledger_state`:
+/// seeds the multi-era UTxO with Byron genesis distributions, stages the
+/// Shelley-genesis UTxO / stake / delegations, and applies the genesis
+/// protocol parameters + enact state. The caller performs genesis-file
+/// loading + hash verification and packs the results into
+/// [`BaseLedgerStateInputs`]; every step here is infallible. Sharing
+/// this builder keeps the node and the db-synthesizer seeding a
+/// byte-identical initial ledger state.
+///
+/// ## Naming parity
+///
+/// **Strict mirror:** none. Yggdrasil-side genesis→`LedgerState` seeding
+/// — upstream instantiates the initial ledger state from a `ProtocolInfo`
+/// record (`Ouroboros.Consensus.Node.Genesis`), not a multi-era
+/// `LedgerState`.
+pub fn build_base_ledger_state(inputs: BaseLedgerStateInputs) -> LedgerState {
+    let BaseLedgerStateInputs {
+        expected_network_id,
+        byron_entries,
+        shelley_bootstrap,
+        protocol_params,
+        enact_state,
+        byron_to_shelley_slot,
+        first_shelley_epoch,
+        byron_epoch_length,
+        active_slot_coeff,
+        security_param_k,
+    } = inputs;
+
+    let mut state = LedgerState::new(Era::Byron);
+    state.set_expected_network_id(expected_network_id);
+
+    // Seed the multi-era UTxO with Byron genesis distributions so the
+    // first Byron transaction that spends a genesis output can resolve
+    // its inputs. Reference: `Cardano.Chain.Genesis.UTxO.genesisUtxo`.
+    let byron_initial_lovelace = byron_entries
+        .iter()
+        .fold(0u64, |sum, entry| sum.saturating_add(entry.amount));
+    if !byron_entries.is_empty() {
+        state.seed_byron_genesis_utxo(
+            byron_entries
+                .into_iter()
+                .map(|entry| (entry.address, entry.amount)),
+        );
+    }
+    if let Some(bootstrap) = shelley_bootstrap {
+        let shelley_initial_lovelace = bootstrap
+            .initial_funds
+            .iter()
+            .fold(0u64, |sum, (_, txout)| sum.saturating_add(txout.amount));
+        let initial_circulation = byron_initial_lovelace.saturating_add(shelley_initial_lovelace);
+        state.configure_pending_shelley_genesis_utxo(bootstrap.initial_funds);
+        state.configure_pending_shelley_genesis_stake(
+            bootstrap
+                .staking
+                .into_iter()
+                .map(|(credential, pool)| (StakeCredential::AddrKeyHash(credential), pool))
+                .collect(),
+        );
+        state.configure_pending_shelley_genesis_delegs(
+            bootstrap
+                .gen_delegs
+                .into_iter()
+                .map(|(genesis_hash, parsed)| {
+                    (
+                        genesis_hash,
+                        GenesisDelegationState {
+                            delegate: parsed.delegate,
+                            vrf: parsed.vrf,
+                        },
+                    )
+                })
+                .collect(),
+        );
+        state.set_genesis_update_quorum(bootstrap.update_quorum);
+        state.set_max_lovelace_supply(bootstrap.max_lovelace_supply);
+        state.accounting_mut().reserves = bootstrap
+            .max_lovelace_supply
+            .saturating_sub(initial_circulation);
+        state.set_slots_per_epoch(bootstrap.epoch_length);
+        state.set_active_slot_coeff(UnitInterval {
+            numerator: bootstrap.active_slots_coeff.0,
+            denominator: bootstrap.active_slots_coeff.1,
+        });
+        // R264 — feed the Byron→Shelley boundary into the ledger so
+        // PPUP / MIR / blocks_made first-slot math respects the
+        // era-aware schedule on chains with a Byron prefix (mainnet,
+        // preprod). Without this, those checks use `(current_epoch + 1)
+        // * slots_per_epoch` (fixed-length anchored at slot 0) and
+        // silently distort reward-cycle accounting + update timing.
+        state.set_byron_shelley_transition(byron_to_shelley_slot.map(|boundary| {
+            (
+                boundary,
+                first_shelley_epoch.unwrap_or(boundary / byron_epoch_length.max(1)),
+            )
+        }));
+        // Compute stability_window = 3k/f from genesis config so the
+        // ledger PPUP rule can enforce the exact upstream slot-of-no-return.
+        if active_slot_coeff > 0.0 {
+            let sw = (3.0 * security_param_k as f64 / active_slot_coeff) as u64;
+            state.set_stability_window(sw);
+        }
+    }
+    if let Some(params) = protocol_params {
+        state.set_protocol_params(params);
+    }
+    if let Some(enact) = enact_state {
+        *state.enact_state_mut() = enact;
+    }
+    state
 }
 
 // ---------------------------------------------------------------------------
