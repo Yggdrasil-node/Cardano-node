@@ -101,8 +101,15 @@ Praos forging needs. Verified decomposition:
   `crates/node/block-producer`: `decode_opcert_cbor` already parses that cold
   vkey but discards it; `load_block_producer_credentials` takes a divergent
   separate `issuer_vkey_path`; the singleton path is missing upstream's
-  `MismatchedKesKey` check (KES key ↔ opcert hot-vkey). R3a starts by making
-  `OpCert` carry the embedded cold vkey, then a `issuer_vkey_path`-free loader.
+  `MismatchedKesKey` check (KES key ↔ opcert hot-vkey).
+  - ✅ **Slice 1** (round 505, commit `55ee243`) — opcert loader carries the
+    cold vkey: `decode_opcert_cbor` returns `(OpCert, Option<VerificationKey>)`
+    and the new `load_operational_certificate_with_issuer` surfaces it. Carried
+    *alongside* `OpCert` in a tuple — the 45-site `yggdrasil_consensus::OpCert`
+    type is untouched (zero blast radius).
+  - 🟡 **Slice 2** — `issuer_vkey_path`-free `load_block_producer_credentials`
+    (derive the header issuer key from the loaded opcert) + the upstream
+    `MismatchedKesKey` cross-check.
 - **R3b — consensus config.** Port `Run.initProtocol` /
   `mkConsensusProtocolCardano` — parse every era genesis file + the hard-fork
   config into the protocol params the leader check + forge need.
