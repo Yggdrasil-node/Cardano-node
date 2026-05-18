@@ -119,9 +119,10 @@ Praos forging needs. Verified decomposition:
     envelopes are test fixtures, not operator artifacts). Remove the
     `--shelley-operational-certificate-issuer-vkey` CLI flag from `Run` +
     `ValidateConfig`, the `NodeConfigFile::shelley_operational_certificate_issuer_vkey`
-    field, and update `apply_block_producer_credential_overrides` + the 2 call
-    sites (`validate_config.rs`). Breaking operator-surface change — its own
-    round.
+    field, and update `apply_block_producer_credential_overrides` + the 2
+    `load_block_producer_credentials` call sites (the production call in
+    `validate_config.rs` + the unit test in `block-producer/src/lib.rs`).
+    Breaking operator-surface change — its own round.
 - **R3b — consensus config.** Port `Run.initProtocol` /
   `mkConsensusProtocolCardano` — parse every era genesis file + the hard-fork
   config into the protocol params the leader check + forge need.
