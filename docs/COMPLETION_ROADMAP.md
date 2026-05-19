@@ -168,7 +168,7 @@ Praos forging needs. Verified decomposition:
   clock, so it must own the ledger / nonce / stake evolution the runtime gets
   from the sync pipeline and upstream `runForge` gets from the ChainDB.
   Verified decomposition:
-  - 🟡 **R3c-1 — initial ledger + nonce state.** Construct the
+  - ✅ **R3c-1 — initial ledger + nonce state.** Construct the
     `pInfoInitLedger` analog. Grounding (2026-05-19) found the faithful
     genesis→`LedgerState` build is the ~115-line `strict_base_ledger_state`
     (`yggdrasil-node/src/startup.rs`) — UTxO + stake + delegs + protocol
@@ -186,9 +186,13 @@ Praos forging needs. Verified decomposition:
       `LedgerState` (via the shared `build_base_ledger_state`) +
       `NonceEvolutionState`, returned as `InitialForgeState`. **A3 R3c-1
       is complete.**
-  - 🟡 **R3c-2 — bulk credentials + multi-forger.** Port `mkForgers` /
-    `shelleyBulkCredsFile` to a `Vec<BlockProducerCredentials>` parser; the
-    per-slot loop picks the first leader. No Rust bulk-creds parser exists.
+  - ✅ **R3c-2 — bulk credentials + multi-forger** (round 516, commit
+    `305e0b0`). `load_bulk_block_producer_credentials` — a
+    `yggdrasil-node-block-producer` port of `readLeaderCredentialsBulk` —
+    parses the inline `[cert,vrf,kes]` text-envelope triples;
+    `run::read_leader_credentials` returns the singleton ∪ bulk
+    `Vec<BlockProducerCredentials>` forger set. The per-slot loop picking
+    the first leader is R3c-4.
   - 🟡 **R3c-3 — thread evolving state.** Extend `run_forge`'s `ForgeState`
     to carry `LedgerState` + `NonceEvolutionState`, applying both per block.
     Blocks stay structural here — a four-gates-green intermediate.
