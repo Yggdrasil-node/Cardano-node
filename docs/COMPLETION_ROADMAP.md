@@ -181,9 +181,11 @@ Praos forging needs. Verified decomposition:
       refactored to load-pieces + call the shared builder. Behavior-
       preserving — node unchanged, four gates green (6,539 tests, the
       baseline, 0 fail).
-    - 🟡 **R3c-1b** — db-synthesizer builds its initial `LedgerState` from
-      the R3b-1 `GenesisBundle` via that shared builder, plus
-      `NonceEvolutionState::new(praos_nonce)`.
+    - ✅ **R3c-1b** (round 515, commit `c902285`) — db-synthesizer's
+      `load_initial_forge_state` builds the genesis-seeded initial
+      `LedgerState` (via the shared `build_base_ledger_state`) +
+      `NonceEvolutionState`, returned as `InitialForgeState`. **A3 R3c-1
+      is complete.**
   - 🟡 **R3c-2 — bulk credentials + multi-forger.** Port `mkForgers` /
     `shelleyBulkCredsFile` to a `Vec<BlockProducerCredentials>` parser; the
     per-slot loop picks the first leader. No Rust bulk-creds parser exists.
