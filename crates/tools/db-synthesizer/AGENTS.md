@@ -58,6 +58,11 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
   upstream `Ouroboros.Consensus.Cardano.Node` (`CardanoHardForkTriggers`
   case-mapped from the hard-fork config; `(major, minor)` protocol
   version). Wiring it into a Praos-valid forge is R3c.
+- ✅ Initial forge state (Phase 4 R3c-1a/1b) — `run::load_initial_forge_state`
+  builds the genesis-seeded initial `LedgerState` (via the shared
+  `yggdrasil-node-genesis::build_base_ledger_state`) plus the Praos
+  `NonceEvolutionState`. Threading this state through a Praos forge loop
+  is the remaining R3c-2…R3c-6 work.
 - 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
   structurally valid but not Praos-valid until the VRF/KES/OpCert
   leader check + KES-signed `forgeBlock` land.

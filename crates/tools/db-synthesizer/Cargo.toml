@@ -35,6 +35,7 @@ yggdrasil-ledger = { path = "../../ledger" }
 yggdrasil-storage = { path = "../../storage" }
 yggdrasil-node-genesis = { path = "../../node/genesis" }
 yggdrasil-node-config = { path = "../../node/config" }
+yggdrasil-consensus = { path = "../../consensus" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -45,11 +45,14 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use yggdrasil_ledger::{Era, Nonce, Point, SlotNo};
+use yggdrasil_consensus::NonceEvolutionState;
+use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, SlotNo};
+use yggdrasil_node_config::MAINNET_NETWORK_MAGIC;
 use yggdrasil_node_genesis::{
-    AlonzoGenesis, ByronGenesisUtxoEntry, ConwayGenesis, ShelleyGenesis, compute_genesis_file_hash,
-    load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis, load_shelley_genesis,
-    shelley_genesis_hash_to_praos_nonce,
+    AlonzoGenesis, BaseLedgerStateInputs, ByronGenesisUtxoEntry, ConwayGenesis, ShelleyGenesis,
+    build_genesis_enact_state, build_protocol_parameters, build_shelley_genesis_bootstrap,
+    compute_genesis_file_hash, load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis,
+    load_shelley_genesis, shelley_genesis_hash_to_praos_nonce,
 };
 use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
 
@@ -555,6 +558,80 @@ pub fn load_consensus_protocol(config_path: &Path) -> Result<CardanoProtocolPara
     Ok(mk_consensus_protocol_cardano(byron, hard_fork, bundle))
 }
 
+/// The synthesizer's seeded initial forge state.
+///
+/// The genesis-seeded initial `LedgerState` (built via the shared
+/// `yggdrasil-node-genesis` builder) plus the Praos `NonceEvolutionState`
+/// seeded from the genesis nonce — the synthesizer-side analog of the
+/// node's initial `(LedgerState, ChainDepState)` pair, and the
+/// `pInfoInitLedger` analog the R3c Praos forge loop will thread.
+#[derive(Clone, Debug)]
+pub struct InitialForgeState {
+    /// Initial multi-era ledger state, genesis-seeded.
+    pub ledger_state: LedgerState,
+    /// Initial Praos nonce-evolution state.
+    pub nonce_evolution: NonceEvolutionState,
+}
+
+/// Build the synthesizer's [`InitialForgeState`] from a loaded genesis
+/// bundle.
+///
+/// The synthesizer-side analog of the node's `strict_base_ledger_state`:
+/// it folds the [`GenesisBundle`] (R3b-1) through the shared
+/// `yggdrasil_node_genesis::build_base_ledger_state` (R3c-1a) so the
+/// db-synthesizer and the node seed a byte-identical initial ledger
+/// state, and seeds `NonceEvolutionState` from the genesis Praos nonce.
+fn build_initial_forge_state(bundle: &GenesisBundle) -> Result<InitialForgeState, RunError> {
+    let inputs = BaseLedgerStateInputs {
+        // The node derives the network id from the mandatory
+        // `NodeConfigFile::network_magic`; the synthesizer falls back
+        // through the optional Shelley-genesis `networkMagic` (present
+        // in every vendored mainnet / preprod / preview genesis).
+        expected_network_id: bundle
+            .shelley
+            .network_magic
+            .map(|m| u8::from(m == MAINNET_NETWORK_MAGIC))
+            .unwrap_or(0),
+        byron_entries: bundle.byron.clone(),
+        shelley_bootstrap: Some(build_shelley_genesis_bootstrap(&bundle.shelley)?),
+        protocol_params: Some(build_protocol_parameters(
+            &bundle.shelley,
+            &bundle.alonzo,
+            Some(&bundle.conway),
+        )?),
+        enact_state: build_genesis_enact_state(Some(&bundle.conway))?,
+        // The Byron→Shelley boundary scalars are yggdrasil-internal node
+        // config keys, absent from every genesis file; the synthesizer
+        // forges a single-era Shelley-stamped chain, so the defaults
+        // (no boundary, the default Byron epoch length) are exact.
+        byron_to_shelley_slot: None,
+        first_shelley_epoch: None,
+        byron_epoch_length: 21_600,
+        active_slot_coeff: bundle.shelley.active_slots_coeff,
+        security_param_k: bundle.shelley.security_param,
+    };
+
+    Ok(InitialForgeState {
+        ledger_state: yggdrasil_node_genesis::build_base_ledger_state(inputs),
+        nonce_evolution: NonceEvolutionState::new(bundle.praos_nonce),
+    })
+}
+
+/// Load the synthesizer's [`InitialForgeState`] from the operator's node
+/// `config.json`.
+///
+/// Mirror of the ledger-seeding half of upstream
+/// `Cardano.Tools.DBSynthesizer.Run.synthesize` (the `pInfoInitLedger`
+/// the forge loop runs on): resolves the config stub, loads the
+/// multi-era genesis bundle, and builds the genesis-seeded initial
+/// ledger + nonce state. The R3c Praos forge loop threads this state
+/// slot-to-slot.
+pub fn load_initial_forge_state(config_path: &Path) -> Result<InitialForgeState, RunError> {
+    let stub = resolve_node_config_stub(config_path)?;
+    let bundle = load_genesis_bundle_from_stub(&stub)?;
+    build_initial_forge_state(&bundle)
+}
+
 /// [`synthesize`] driven by the operator's node `config.json`.
 ///
 /// The production entry point [`crate::run`] uses: it loads every era's
@@ -966,5 +1043,23 @@ mod tests {
         );
         // Development hard-fork eras on -> ProtVer 11.0.
         assert_eq!(params.cardano_protocol_version, (11, 0));
+    }
+
+    #[test]
+    fn load_initial_forge_state_builds_genesis_seeded_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = write_config(tmp.path(), "shelley-genesis.json", 86_400);
+
+        let forge_state = load_initial_forge_state(&config).expect("load initial forge state");
+
+        // `build_base_ledger_state` roots the state at the Byron era
+        // (Shelley genesis UTxO is staged for lazy materialization).
+        assert_eq!(forge_state.ledger_state.current_era(), Era::Byron);
+        // The nonce-evolution state is seeded from the genesis Praos
+        // nonce — a concrete hash, never the neutral nonce.
+        assert!(matches!(
+            forge_state.nonce_evolution.epoch_nonce,
+            Nonce::Hash(_),
+        ));
     }
 }
