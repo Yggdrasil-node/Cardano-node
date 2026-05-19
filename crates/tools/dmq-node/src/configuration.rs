@@ -102,9 +102,14 @@ pub fn resolve_configuration(cli: PartialConfig) -> Result<Configuration, Config
 mod tests {
     use super::*;
 
-    use std::io::Write;
+    use std::{
+        io::Write,
+        sync::atomic::{AtomicU64, Ordering},
+    };
 
     use crate::types::{LocalAddress, NetworkMagic};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn write_temp_json(contents: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir();
@@ -113,8 +118,13 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let path = dir.join(format!("yggdrasil-dmq-test-{pid}-{stamp}.json"));
-        let mut file = std::fs::File::create(&path).expect("create temp file");
+        let seq = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let path = dir.join(format!("yggdrasil-dmq-test-{pid}-{stamp}-{seq}.json"));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .expect("create temp file");
         file.write_all(contents.as_bytes())
             .expect("write temp file");
         path

@@ -12,7 +12,8 @@ set -euo pipefail
 #   MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
 #   RUN_SECONDS=21600 \
 #   HASKELL_SOCK=/tmp/cardano.sock \
-#   node/scripts/parallel_blockfetch_soak.sh
+#   REQUIRE_TIP_COMPARISON=1 \
+#   crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh
 #
 # Exit codes:
 #   0  soak completed and all enabled assertions passed
@@ -42,6 +43,7 @@ COMPARE_INTERVAL_S="${COMPARE_INTERVAL_S:-900}"
 START_DEADLINE_S="${START_DEADLINE_S:-90}"
 CARDANO_CLI="${CARDANO_CLI:-cardano-cli}"
 HASKELL_SOCK="${HASKELL_SOCK:-}"
+REQUIRE_TIP_COMPARISON="${REQUIRE_TIP_COMPARISON:-0}"
 
 case "$NETWORK" in
   mainnet) DEFAULT_NETWORK_MAGIC=764824073 ;;
@@ -77,7 +79,8 @@ Usage:
   NETWORK={mainnet|preprod|preview} \
   MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
   RUN_SECONDS=21600 \
-  node/scripts/parallel_blockfetch_soak.sh
+  REQUIRE_TIP_COMPARISON=1 \
+  crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh
 
 Optional env:
   YGG_BIN                           Default: target/release/yggdrasil-node if present, else target/debug/yggdrasil-node
@@ -94,6 +97,7 @@ Optional env:
   HASKELL_SOCK                      Optional cardano-node socket. Enables tip comparison.
   CARDANO_CLI                       Default: cardano-cli
   COMPARE_INTERVAL_S                Default: 900
+  REQUIRE_TIP_COMPARISON            Default: 0. Set 1 for sign-off runs that require Haskell comparison evidence.
   EXPECT_WORKERS                    Default: MAX_CONCURRENT_BLOCK_FETCH_PEERS
   REQUIRE_WORKERS                   Default: 1. Set 0 only for diagnostic captures.
   REQUIRE_PROGRESS                  Default: 1. Set 0 only when attaching to a deliberately idle network.
@@ -123,6 +127,15 @@ require_uint() {
   fi
 }
 
+require_bool01() {
+  local name="$1"
+  local value="$2"
+  if [[ "$value" != "0" && "$value" != "1" ]]; then
+    echo "ERROR: $name must be 0 or 1, got '$value'" >&2
+    exit 2
+  fi
+}
+
 require_uint "MAX_CONCURRENT_BLOCK_FETCH_PEERS" "$MAX_CONCURRENT_BLOCK_FETCH_PEERS"
 require_uint "EXPECT_WORKERS" "$EXPECT_WORKERS"
 require_uint "REQUIRE_WORKERS" "$REQUIRE_WORKERS"
@@ -131,6 +144,7 @@ require_uint "RUN_SECONDS" "$RUN_SECONDS"
 require_uint "SAMPLE_INTERVAL_S" "$SAMPLE_INTERVAL_S"
 require_uint "COMPARE_INTERVAL_S" "$COMPARE_INTERVAL_S"
 require_uint "START_DEADLINE_S" "$START_DEADLINE_S"
+require_bool01 "REQUIRE_TIP_COMPARISON" "$REQUIRE_TIP_COMPARISON"
 
 if (( MAX_CONCURRENT_BLOCK_FETCH_PEERS < 2 )); then
   echo "ERROR: MAX_CONCURRENT_BLOCK_FETCH_PEERS must be >= 2 for parallel BlockFetch rehearsal" >&2
@@ -139,6 +153,11 @@ fi
 
 if (( SAMPLE_INTERVAL_S == 0 )); then
   echo "ERROR: SAMPLE_INTERVAL_S must be > 0" >&2
+  exit 2
+fi
+
+if (( COMPARE_INTERVAL_S == 0 )); then
+  echo "ERROR: COMPARE_INTERVAL_S must be > 0" >&2
   exit 2
 fi
 
@@ -169,6 +188,17 @@ if [[ -n "$HASKELL_SOCK" ]]; then
   fi
   if [[ ! -S "$HASKELL_SOCK" ]]; then
     echo "ERROR: HASKELL_SOCK is not a unix socket: $HASKELL_SOCK" >&2
+    exit 2
+  fi
+fi
+
+if [[ "$REQUIRE_TIP_COMPARISON" == "1" ]]; then
+  if [[ -z "$HASKELL_SOCK" ]]; then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 requires HASKELL_SOCK" >&2
+    exit 2
+  fi
+  if (( COMPARE_INTERVAL_S > RUN_SECONDS )); then
+    echo "ERROR: REQUIRE_TIP_COMPARISON=1 but COMPARE_INTERVAL_S=$COMPARE_INTERVAL_S exceeds RUN_SECONDS=$RUN_SECONDS" >&2
     exit 2
   fi
 fi
@@ -407,6 +437,12 @@ if (( REQUIRE_PROGRESS != 0 )); then
     echo "[forensic] metrics snapshots: $METRICS_DIR" >&2
     exit 1
   fi
+fi
+
+if [[ "$REQUIRE_TIP_COMPARISON" == "1" && "$compare_passes" -eq 0 ]]; then
+  echo "ERROR: REQUIRE_TIP_COMPARISON=1 but no Haskell tip comparison passed" >&2
+  echo "[forensic] compare logs: $LOG_DIR" >&2
+  exit 1
 fi
 
 fetch_avg="$(avg_metric "$fetch_sum" "$fetch_count")"

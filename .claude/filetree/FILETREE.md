@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-17T23:02:19Z
-- Files described: 1341
+- Generated at: 2026-05-19T08:20:14Z
+- Files described: 1353
 
 ## Workspace
 
@@ -822,8 +822,12 @@
   - Shell helper script for install haskell cardano node workflows.
 - `crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh`
   - Shell helper script for parallel blockfetch soak workflows.
+- `crates/node/yggdrasil-node/scripts/preview_pool_activation_status.sh`
+  - Shell helper script for preview pool activation status workflows.
 - `crates/node/yggdrasil-node/scripts/preview_producer_harness.sh`
   - Shell helper script for preview producer harness workflows.
+- `crates/node/yggdrasil-node/scripts/register_preview_generated_pool.sh`
+  - Preview-only operator helper that builds/signs generated-pool registration transactions once the generated payment address is funded.
 - `crates/node/yggdrasil-node/scripts/restart_resilience.sh`
   - Shell helper script for restart resilience workflows.
 - `crates/node/yggdrasil-node/scripts/run-tools.sh`
@@ -832,6 +836,10 @@
   - Shell helper script for run mainnet real pool producer workflows.
 - `crates/node/yggdrasil-node/scripts/run_preprod_real_pool_producer.sh`
   - Shell helper script for run preprod real pool producer workflows.
+- `crates/node/yggdrasil-node/scripts/run_preview_active_pool_signoff.sh`
+  - Shell helper script for run preview active pool signoff workflows.
+- `crates/node/yggdrasil-node/scripts/run_preview_real_pool_producer.sh`
+  - Operator runner that validates real preview pool KES/VRF/OpCert paths and runs yggdrasil-node producer mode directly.
 - `crates/node/yggdrasil-node/scripts/yggdrasil-node.service`
   - Project file at crates/node/yggdrasil-node/scripts/yggdrasil-node.service.
 - `crates/node/yggdrasil-node/src/AGENTS.md`
@@ -2157,6 +2165,22 @@
   - R503 — `config.select_db` wire-up for `At(slot)` start point: ---.
 - `docs/operational-runs/2026-05-17-round-504-db-synthesizer-r2-genesis-loading.md`
   - Round 504 — db-synthesizer Phase 4 R2: genesis / config loading: **Date:** 2026-05-17.
+- `docs/operational-runs/2026-05-18-round-505-block-producer-opcert-issuer-vkey.md`
+  - Round 505 — block-producer A3 R3a slice 1: opcert loader carries the cold issuer vkey: **Date:** 2026-05-18.
+- `docs/operational-runs/2026-05-18-round-506-block-producer-mismatched-kes-key.md`
+  - Round 506 — block-producer A3 R3a slice 2: MismatchedKesKey credential check: **Date:** 2026-05-18.
+- `docs/operational-runs/2026-05-18-round-507-block-producer-remove-issuer-vkey-input.md`
+  - Round 507 — block-producer A3 R3a slice 3: remove the divergent issuer-vkey input: **Date:** 2026-05-18.
+- `docs/operational-runs/2026-05-18-round-508-operator-surface-issuer-vkey-sweep.md`
+  - Round 508 — operator-surface sweep: purge the removed issuer-vkey flag: **Date:** 2026-05-18.
+- `docs/operational-runs/2026-05-18-round-510-db-synthesizer-r3b1-genesis-bundle.md`
+  - Round 510 — db-synthesizer A3 R3b-1: multi-era genesis bundle: **Date:** 2026-05-18.
+- `docs/operational-runs/2026-05-18-round-511-db-synthesizer-r3b2-protocol-configs.md`
+  - Round 511 — db-synthesizer A3 R3b-2: per-era protocol-config types: **Date:** 2026-05-18.
+- `docs/operational-runs/2026-05-18-round-512-db-synthesizer-r3b3-protocol-params.md`
+  - Round 512 — db-synthesizer A3 R3b-3: CardanoProtocolParams aggregator: **Date:** 2026-05-18.
+- `docs/operational-runs/2026-05-19-round-513-full-project-parity-audit.md`
+  - Round 513 - full project parity audit with real preview block-producer plan: **Date:** 2026-05-19.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

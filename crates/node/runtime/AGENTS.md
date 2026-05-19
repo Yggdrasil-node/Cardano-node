@@ -12,6 +12,12 @@ block-producer loop, and bootstrap helpers. After this extraction
 the `yggdrasil-node` binary's `main.rs` is the only file left in the
 binary's `src/` aside from a thin CLI dispatcher.
 
+Sync session positioning is explicit: every freshly connected ChainSync client
+must send `MsgFindIntersect`, including `[Origin]`, before `MsgRequestNext`.
+Skipping the Origin intersection reproduced mainnet relay disconnects before
+any blocks were accepted; keep `sync_session::synchronize_chain_sync_to_point`
+aligned with upstream cursor-positioning behavior.
+
 ## Rules — Non-Negotiable
 
 - **Single integration boundary.** This crate is the only one that

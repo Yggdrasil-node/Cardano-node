@@ -47,16 +47,16 @@ POOL_METADATA_URL="${POOL_METADATA_URL:-https://yggdrasil-node.github.io/Cardano
 usage() {
   cat <<'EOF'
 Usage:
-  node/scripts/preview_producer_harness.sh generate
-  node/scripts/preview_producer_harness.sh wallet
-  node/scripts/preview_producer_harness.sh certs
-  node/scripts/preview_producer_harness.sh funding-address
-  node/scripts/preview_producer_harness.sh validate
-  node/scripts/preview_producer_harness.sh smoke-relay
-  node/scripts/preview_producer_harness.sh smoke-producer
-  node/scripts/preview_producer_harness.sh endurance-relay
-  node/scripts/preview_producer_harness.sh endurance-producer
-  node/scripts/preview_producer_harness.sh all
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh generate
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh wallet
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh certs
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh funding-address
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh validate
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh smoke-relay
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh smoke-producer
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh endurance-relay
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh endurance-producer
+  crates/node/yggdrasil-node/scripts/preview_producer_harness.sh all
 
 Commands:
   generate        Generate preview KES/VRF/cold/OpCert files and configs.
@@ -582,8 +582,8 @@ $YGG_BIN validate-config --config "$CONFIG_DIR/preview-producer.json"
 ## Smoke Runs
 
 \`\`\`bash
-RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-relay
-RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-producer
+RUN_SECONDS=60 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh smoke-relay
+RUN_SECONDS=60 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh smoke-producer
 \`\`\`
 
 The generated cold key is not registered as a preview stake pool. The producer

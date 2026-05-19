@@ -9,9 +9,9 @@ set -euo pipefail
 # installed.  Use `--force` to reinstall.
 #
 # Usage:
-#   node/scripts/install_haskell_cardano_node.sh           # install latest
-#   CARDANO_NODE_VERSION=10.7.1 node/scripts/install_haskell_cardano_node.sh
-#   node/scripts/install_haskell_cardano_node.sh --force
+#   crates/node/yggdrasil-node/scripts/install_haskell_cardano_node.sh           # install latest
+#   CARDANO_NODE_VERSION=10.7.1 crates/node/yggdrasil-node/scripts/install_haskell_cardano_node.sh
+#   crates/node/yggdrasil-node/scripts/install_haskell_cardano_node.sh --force
 #
 # Exit codes:
 #   0  installed (or already present, version matches)

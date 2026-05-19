@@ -148,16 +148,52 @@ Slash commands wired in [.claude/commands/](.claude/commands/):
 
 Sub-agents and skills under [.claude/agents/](.claude/agents/) + [.claude/skills/](.claude/skills/) encode the R-arc patterns confirmed across R271 (runtime split: 7,269 → 140 lines) and R273 (consensus + plutus subsystem splits).
 
-For fast preview-network block-producer rehearsal, the ignored harness bundle can generate upstream `cardano-cli` credentials, a funding wallet, registration certificates, configs, and bounded relay/producer smoke runs:
+For preview block-producer parity evidence, use a real registered/delegated preview pool's KES, VRF, and operational-certificate files. The generated preview harness remains useful for wallet/cert reference material and relay smoke, but its generated producer credentials are not accepted as the parity producer source.
 
 ```bash
 cargo build --release --bin yggdrasil-node
-FORCE=1 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh all
-RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh endurance-producer
-crates/node/yggdrasil-node/scripts/preview_producer_harness.sh funding-address
+RUN_ROOT=/tmp/cardano-reference PORT=3002 \
+  .reference-haskell-cardano-node/install/run-node.sh preview \
+  >/tmp/cardano-preview-reference.log 2>&1 &
+export HASKELL_SOCK="/tmp/cardano-reference/preview/socket/node.socket"
+
+KES_SKEY_PATH=/secure/preview/kes.skey \
+VRF_SKEY_PATH=/secure/preview/vrf.skey \
+OPCERT_PATH=/secure/preview/node.cert \
+target/release/yggdrasil-node validate-config \
+  --network preview \
+  --shelley-kes-key "$KES_SKEY_PATH" \
+  --shelley-vrf-key "$VRF_SKEY_PATH" \
+  --shelley-operational-certificate "$OPCERT_PATH"
+
+KES_SKEY_PATH=/secure/preview/kes.skey \
+VRF_SKEY_PATH=/secure/preview/vrf.skey \
+OPCERT_PATH=/secure/preview/node.cert \
+HASKELL_SOCK="$HASKELL_SOCK" \
+RUN_SECONDS=21600 \
+TIP_COMPARE_CHECKPOINTS=900,3600,21600 \
+REQUIRE_TIP_COMPARISON=1 \
+EXPECT_FORGE_EVENTS=1 \
+EXPECT_ADOPTED_EVENTS=1 \
+crates/node/yggdrasil-node/scripts/run_preview_real_pool_producer.sh
 ```
 
-The preview harness writes pool metadata into `tmp/preview-producer/metadata/` and commits that hash into the generated pool certificate. Defaults are ticker `RUST` and name `WORLDS FIRST RUST NODE`; override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before running `certs` when needed.
+For the epoch-1304 resume path, the wrapper below checks that the pool is
+active, starts or validates the local Haskell preview relay, waits for Haskell
+`syncProgress` to reach `HASKELL_SYNC_MIN_PERCENT` (default `99.00`), then runs
+the same producer command with the required 6-hour comparison window:
+
+```bash
+CRED_DIR=/tmp/ygg-preview-generated-bp-... \
+POOL_ID=pool1... \
+crates/node/yggdrasil-node/scripts/run_preview_active_pool_signoff.sh
+```
+
+The runner preflights `HASKELL_SOCK` with
+`cardano-cli query tip --testnet-magic 2` before starting Yggdrasil, then
+requires all configured Haskell checkpoints when `REQUIRE_TIP_COMPARISON=1`.
+
+For reference material only, `crates/node/yggdrasil-node/scripts/preview_producer_harness.sh` can generate a funding wallet, pool registration certificates, and pool metadata under `tmp/preview-producer/`. Defaults are ticker `RUST` and name `WORLDS FIRST RUST NODE`; override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before running `certs` when needed.
 
 ## Documentation
 

@@ -126,7 +126,7 @@ jobs:
           check-jsonschema --schemafile docs/parity-matrix.schema.json docs/parity-matrix.json
 
       # Fixture-manifest validator. Cross-checks the cardano-base
-      # SHA pin across `crates/node/yggdrasil-node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
+      # SHA pin across `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,
       # `specs/upstream-test-vectors/cardano-base/<SHA>/`,
       # `docs/SPECS.md`, and `docs/UPSTREAM_PARITY.md`. Asserts every
       # required upstream-vendored fixture corpus is present.
