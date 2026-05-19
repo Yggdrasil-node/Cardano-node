@@ -47,6 +47,10 @@ use std::path::Path;
 
 use yggdrasil_consensus::NonceEvolutionState;
 use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, SlotNo};
+use yggdrasil_node_block_producer::{
+    BlockProducerCredentials, BlockProducerError, load_block_producer_credentials,
+    load_bulk_block_producer_credentials,
+};
 use yggdrasil_node_config::MAINNET_NETWORK_MAGIC;
 use yggdrasil_node_genesis::{
     AlonzoGenesis, BaseLedgerStateInputs, ByronGenesisUtxoEntry, ConwayGenesis, ShelleyGenesis,
@@ -60,7 +64,7 @@ use crate::forging::{ForgeRunOutcome, run_forge};
 use crate::orphans::{AdjustFilePaths, parse_node_config_stub};
 use crate::types::{
     DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit, NodeByronProtocolConfiguration,
-    NodeConfigStub, NodeHardForkProtocolConfiguration,
+    NodeConfigStub, NodeCredentials, NodeHardForkProtocolConfiguration,
 };
 
 /// Fallback epoch length for the config-free [`synthesize_default`]
@@ -149,6 +153,21 @@ pub enum RunError {
         /// Underlying JSON error.
         #[source]
         source: serde_json::Error,
+    },
+    /// A leader-credential file (a singleton key/cert file or the bulk
+    /// credentials file) could not be loaded. Mirror of upstream
+    /// `readLeaderCredentials` surfacing a `PraosLeaderCredentialsError`.
+    #[error("initialize: cannot load leader credentials: {0}")]
+    Credentials(#[from] BlockProducerError),
+    /// Some — but not all — of the singleton operational-certificate /
+    /// VRF-key / KES-key credential files were supplied. Mirror of
+    /// upstream `readLeaderCredentialsSingleton`'s `OCertNotSpecified` /
+    /// `VRFKeyNotSpecified` / `KESKeyNotSpecified` — the three singleton
+    /// files are all-or-nothing.
+    #[error("initialize: incomplete singleton leader credentials — {missing} not specified")]
+    IncompleteCredentials {
+        /// Which of the three singleton credential files is missing.
+        missing: &'static str,
     },
 }
 
@@ -632,6 +651,74 @@ pub fn load_initial_forge_state(config_path: &Path) -> Result<InitialForgeState,
     build_initial_forge_state(&bundle)
 }
 
+/// Resolve the synthesizer's full set of block-producer leader
+/// credentials from a [`NodeCredentials`].
+///
+/// Mirror of `readLeaderCredentials` in `Cardano.Node.Protocol.Shelley`
+/// — upstream's `Run.hs` reaches it via `initProtocol`. The forger set
+/// is the union of the singleton CLI cert/vrf/kes triple and the
+/// bulk-credentials file; either, both, or neither may be supplied.
+///
+/// - The singleton triple is all-or-nothing — a partial set is
+///   [`RunError::IncompleteCredentials`] (mirror of
+///   `readLeaderCredentialsSingleton`).
+/// - An absent bulk file contributes nothing (mirror of upstream
+///   `readBulkFile Nothing = pure []`).
+///
+/// `slots_per_kes_period` / `max_kes_evolutions` come from the Shelley
+/// genesis (`sgSlotsPerKESPeriod` / `sgMaxKESEvolutions`). The R3c Praos
+/// forge loop picks the first slot-leader from the returned list.
+pub fn read_leader_credentials(
+    credentials: &NodeCredentials,
+    slots_per_kes_period: u64,
+    max_kes_evolutions: u64,
+) -> Result<Vec<BlockProducerCredentials>, RunError> {
+    let mut forgers = Vec::new();
+
+    // Singleton: the CLI-supplied cert/vrf/kes triple. Upstream
+    // `readLeaderCredentialsSingleton` accepts all three or none.
+    match (
+        &credentials.cert_file,
+        &credentials.vrf_file,
+        &credentials.kes_file,
+    ) {
+        (Some(cert), Some(vrf), Some(kes)) => {
+            forgers.push(load_block_producer_credentials(
+                kes,
+                vrf,
+                cert,
+                slots_per_kes_period,
+                max_kes_evolutions,
+            )?);
+        }
+        (None, None, None) => {}
+        (cert, vrf, _) => {
+            // Pattern-match precedence mirrors upstream: certificate,
+            // then VRF key, then KES key.
+            let missing = if cert.is_none() {
+                "operational certificate"
+            } else if vrf.is_none() {
+                "VRF key"
+            } else {
+                "KES key"
+            };
+            return Err(RunError::IncompleteCredentials { missing });
+        }
+    }
+
+    // Bulk: the inline-triple JSON file. An absent file contributes
+    // nothing (`readBulkFile Nothing = pure []`).
+    if let Some(bulk) = &credentials.bulk_file {
+        forgers.extend(load_bulk_block_producer_credentials(
+            bulk,
+            slots_per_kes_period,
+            max_kes_evolutions,
+        )?);
+    }
+
+    Ok(forgers)
+}
+
 /// [`synthesize`] driven by the operator's node `config.json`.
 ///
 /// The production entry point [`crate::run`] uses: it loads every era's
@@ -666,6 +753,8 @@ pub fn is_noop_limit(limit: ForgeLimit) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::types::{DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit};
 
@@ -674,6 +763,37 @@ mod tests {
             limit,
             open_mode: mode,
         }
+    }
+
+    #[test]
+    fn read_leader_credentials_empty_when_nothing_supplied() {
+        let creds = NodeCredentials::default();
+        let forgers = read_leader_credentials(&creds, 129_600, 62).unwrap();
+        assert!(
+            forgers.is_empty(),
+            "no credential files supplied — the forger set is empty"
+        );
+    }
+
+    #[test]
+    fn read_leader_credentials_rejects_partial_singleton() {
+        // VRF + KES supplied, the operational certificate missing.
+        let creds = NodeCredentials {
+            cert_file: None,
+            vrf_file: Some(PathBuf::from("/tmp/vrf.skey")),
+            kes_file: Some(PathBuf::from("/tmp/kes.skey")),
+            bulk_file: None,
+        };
+        let err = read_leader_credentials(&creds, 129_600, 62)
+            .expect_err("a partial singleton credential set must be rejected");
+        assert!(
+            matches!(
+                err,
+                RunError::IncompleteCredentials { missing }
+                    if missing == "operational certificate"
+            ),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

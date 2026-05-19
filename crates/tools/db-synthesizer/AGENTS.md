@@ -61,8 +61,15 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
 - ✅ Initial forge state (Phase 4 R3c-1a/1b) — `run::load_initial_forge_state`
   builds the genesis-seeded initial `LedgerState` (via the shared
   `yggdrasil-node-genesis::build_base_ledger_state`) plus the Praos
-  `NonceEvolutionState`. Threading this state through a Praos forge loop
-  is the remaining R3c-2…R3c-6 work.
+  `NonceEvolutionState`, returned as `InitialForgeState`.
+- ✅ Leader credentials (Phase 4 R3c-2) — `run::read_leader_credentials`
+  builds the synthesizer's `Vec<BlockProducerCredentials>` forger set:
+  the union of the singleton CLI cert/vrf/kes triple
+  (`load_block_producer_credentials`) and the inline-triple bulk file
+  (`load_bulk_block_producer_credentials` — a new
+  `yggdrasil-node-block-producer` port of `readLeaderCredentialsBulk`).
+  Threading the initial state + forger set through a Praos forge loop is
+  the remaining R3c-3…R3c-6 work.
 - 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
   structurally valid but not Praos-valid until the VRF/KES/OpCert
   leader check + KES-signed `forgeBlock` land.

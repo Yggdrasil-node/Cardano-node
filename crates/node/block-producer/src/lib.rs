@@ -22,10 +22,13 @@
 //! operator key files. Mirrors upstream
 //! `Cardano.CLI.Shelley.Run.Node.runIssueOpCert` plus the
 //! key-loading utilities in `Cardano.Api.SerialiseTextEnvelope`.
+//! The singleton + bulk leader-credential loaders mirror
+//! `readLeaderCredentials`, `readLeaderCredentialsBulk` and
+//! `opCertKesKeyCheck` in `Cardano.Node.Protocol.Shelley`.
 //! Upstream wires these in cardano-cli; Yggdrasil's runtime
 //! loads operator keys directly via this module.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use yggdrasil_consensus::mempool::MempoolEntry;
@@ -168,11 +171,22 @@ fn read_text_envelope(path: &Path) -> Result<(String, Vec<u8>), BlockProducerErr
             path: path.display().to_string(),
             source,
         })?;
-    let raw = hex::decode(&envelope.cbor_hex).map_err(|source| BlockProducerError::Hex {
-        path: path.display().to_string(),
-        source,
-    })?;
+    let raw = decode_envelope_hex(&envelope, path)?;
     Ok((envelope.type_tag, raw))
+}
+
+/// Hex-decode an already-parsed text envelope's `cborHex` field to raw
+/// CBOR bytes.
+///
+/// `loc` names the source for diagnostics — a real file path for the
+/// singleton key loaders, or upstream `mkCredentials`'s synthetic
+/// `<bulk-file>.<index>{cert,vrf,kes}` label for a bulk-credentials
+/// entry (`readLeaderCredentialsBulk`, `Cardano.Node.Protocol.Shelley`).
+fn decode_envelope_hex(envelope: &TextEnvelope, loc: &Path) -> Result<Vec<u8>, BlockProducerError> {
+    hex::decode(&envelope.cbor_hex).map_err(|source| BlockProducerError::Hex {
+        path: loc.display().to_string(),
+        source,
+    })
 }
 
 /// Reject the secret-key file when group or world bits are set in its
@@ -219,20 +233,33 @@ const VRF_SIGNING_KEY_TYPE: &str = "VrfSigningKey_PraosVRF";
 pub fn load_vrf_signing_key(path: &Path) -> Result<VrfSecretKey, BlockProducerError> {
     ensure_secret_file_mode(path)?;
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
+    parse_vrf_signing_key(&type_tag, &cbor_bytes, path)
+}
+
+/// Decode a VRF signing key from an already-parsed text envelope.
+///
+/// The envelope-decoding core of [`load_vrf_signing_key`], shared with
+/// the bulk-credentials path (which holds inline envelopes, not files).
+/// `loc` names the source for diagnostics.
+fn parse_vrf_signing_key(
+    type_tag: &str,
+    cbor_bytes: &[u8],
+    loc: &Path,
+) -> Result<VrfSecretKey, BlockProducerError> {
     if type_tag != VRF_SIGNING_KEY_TYPE {
         return Err(BlockProducerError::TypeMismatch {
-            path: path.display().to_string(),
+            path: loc.display().to_string(),
             expected: VRF_SIGNING_KEY_TYPE.to_owned(),
-            actual: type_tag,
+            actual: type_tag.to_owned(),
         });
     }
 
     // The CBOR payload is `bstr .size 64`, which means the raw CBOR has a
     // 2-byte header (0x5840) followed by 64 bytes. Strip CBOR wrapper.
-    let key_bytes = unwrap_cbor_bytes(&cbor_bytes, path)?;
+    let key_bytes = unwrap_cbor_bytes(cbor_bytes, loc)?;
     if key_bytes.len() != VRF_SIGNING_KEY_SIZE {
         return Err(BlockProducerError::PayloadLength {
-            path: path.display().to_string(),
+            path: loc.display().to_string(),
             expected: VRF_SIGNING_KEY_SIZE,
             actual: key_bytes.len(),
         });
@@ -265,22 +292,34 @@ const STAKE_POOL_VERIFICATION_KEY_TYPE: &str = "StakePoolVerificationKey_ed25519
 pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProducerError> {
     ensure_secret_file_mode(path)?;
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
+    parse_kes_signing_key(&type_tag, &cbor_bytes, path)
+}
+
+/// Decode a SumKES signing key from an already-parsed text envelope.
+///
+/// The envelope-decoding core of [`load_kes_signing_key`], shared with
+/// the bulk-credentials path. `loc` names the source for diagnostics.
+fn parse_kes_signing_key(
+    type_tag: &str,
+    cbor_bytes: &[u8],
+    loc: &Path,
+) -> Result<SumKesSigningKey, BlockProducerError> {
     if !type_tag.starts_with(KES_SIGNING_KEY_TYPE_PREFIX) {
         return Err(BlockProducerError::TypeMismatch {
-            path: path.display().to_string(),
+            path: loc.display().to_string(),
             expected: format!("{KES_SIGNING_KEY_TYPE_PREFIX}<depth>"),
-            actual: type_tag,
+            actual: type_tag.to_owned(),
         });
     }
     let depth_str = &type_tag[KES_SIGNING_KEY_TYPE_PREFIX.len()..];
     let depth: u32 = depth_str
         .parse()
         .map_err(|_| BlockProducerError::OpCertDecode {
-            path: path.display().to_string(),
+            path: loc.display().to_string(),
             detail: format!("cannot parse KES depth from type tag suffix '{depth_str}'"),
         })?;
 
-    let key_bytes = unwrap_cbor_bytes(&cbor_bytes, path)?;
+    let key_bytes = unwrap_cbor_bytes(cbor_bytes, loc)?;
     if key_bytes.len() == 32 {
         let mut seed = [0u8; 32];
         seed.copy_from_slice(key_bytes);
@@ -295,7 +334,7 @@ pub fn load_kes_signing_key(path: &Path) -> Result<SumKesSigningKey, BlockProduc
     }
 
     Err(BlockProducerError::OpCertDecode {
-        path: path.display().to_string(),
+        path: loc.display().to_string(),
         detail: format!(
             "KES signing key payload length {}, expected 32-byte seed or {expected_expanded_len}-byte expanded key for depth {depth}",
             key_bytes.len()
@@ -372,14 +411,28 @@ pub fn load_operational_certificate_with_issuer(
     path: &Path,
 ) -> Result<(OpCert, Option<VerificationKey>), BlockProducerError> {
     let (type_tag, cbor_bytes) = read_text_envelope(path)?;
+    parse_operational_certificate_with_issuer(&type_tag, &cbor_bytes, path)
+}
+
+/// Decode an operational certificate (with the optional embedded cold
+/// issuer vkey) from an already-parsed text envelope.
+///
+/// The envelope-decoding core of
+/// [`load_operational_certificate_with_issuer`], shared with the
+/// bulk-credentials path. `loc` names the source for diagnostics.
+fn parse_operational_certificate_with_issuer(
+    type_tag: &str,
+    cbor_bytes: &[u8],
+    loc: &Path,
+) -> Result<(OpCert, Option<VerificationKey>), BlockProducerError> {
     if type_tag != OPCERT_TYPE {
         return Err(BlockProducerError::TypeMismatch {
-            path: path.display().to_string(),
+            path: loc.display().to_string(),
             expected: OPCERT_TYPE.to_owned(),
-            actual: type_tag,
+            actual: type_tag.to_owned(),
         });
     }
-    decode_opcert_cbor(&cbor_bytes, path)
+    decode_opcert_cbor(cbor_bytes, loc)
 }
 
 /// Decode an operational certificate from raw CBOR bytes.
@@ -707,31 +760,13 @@ pub fn load_block_producer_credentials(
             path: opcert_path.display().to_string(),
         })?;
 
-    // Upstream `opCertKesKeyCheck` (`Cardano.Node.Protocol.Shelley`): the
-    // KES verification key derived from the supplied KES signing key must
-    // match the hot KES key the operational certificate certifies — else
-    // every forged header's KES signature would fail at every peer.
-    // Upstream compares `verificationKeyHash` of both keys; comparing the
-    // raw key bytes is equivalent (and stricter — no intermediate hash).
-    let supplied_kes_vk = derive_sum_kes_vk(&kes_signing_key)
-        .map_err(|e| BlockProducerError::Crypto(e.to_string()))?;
-    if supplied_kes_vk.to_bytes() != operational_cert.hot_vkey.to_bytes() {
-        return Err(BlockProducerError::MismatchedKesKey {
-            kes_path: kes_key_path.display().to_string(),
-            opcert_path: opcert_path.display().to_string(),
-        });
-    }
-
-    // The operational certificate's signature must verify against its
-    // own embedded cold verification key — an internal-consistency
-    // (tamper) check; a well-formed `cardano-cli`-issued opcert always
-    // passes.
-    operational_cert.verify(&issuer_vkey).map_err(|e| {
-        BlockProducerError::Crypto(format!(
-            "operational certificate sigma does not verify against its \
-             embedded cold verification key: {e}"
-        ))
-    })?;
+    check_opcert_kes_key(
+        &kes_signing_key,
+        &operational_cert,
+        &issuer_vkey,
+        kes_key_path,
+        opcert_path,
+    )?;
 
     Ok(BlockProducerCredentials {
         vrf_signing_key,
@@ -743,6 +778,126 @@ pub fn load_block_producer_credentials(
         slots_per_kes_period,
         max_kes_evolutions,
     })
+}
+
+/// Verify a supplied KES signing key against an operational
+/// certificate, and the certificate against its own cold key.
+///
+/// Two checks:
+///
+/// 1. The KES verification key derived from `kes_signing_key` must
+///    match the hot KES key `operational_cert` certifies — else every
+///    forged header's KES signature would fail at every peer. Upstream
+///    `opCertKesKeyCheck` (`Cardano.Node.Protocol.Shelley`) compares
+///    `verificationKeyHash` of both keys; comparing the raw key bytes
+///    is equivalent (and stricter — no intermediate hash).
+/// 2. The certificate's sigma must verify against its embedded cold
+///    verification key — an internal-consistency (tamper) check; a
+///    well-formed `cardano-cli`-issued opcert always passes.
+///
+/// The singleton credential path ([`load_block_producer_credentials`])
+/// runs this; the bulk path ([`load_bulk_block_producer_credentials`])
+/// deliberately does NOT — upstream `parseShelleyCredentials` builds
+/// each bulk leader credential as `PraosCredentialsUnsound`, skipping
+/// `opCertKesKeyCheck` entirely.
+fn check_opcert_kes_key(
+    kes_signing_key: &SumKesSigningKey,
+    operational_cert: &OpCert,
+    issuer_vkey: &VerificationKey,
+    kes_key_path: &Path,
+    opcert_path: &Path,
+) -> Result<(), BlockProducerError> {
+    let supplied_kes_vk = derive_sum_kes_vk(kes_signing_key)
+        .map_err(|e| BlockProducerError::Crypto(e.to_string()))?;
+    if supplied_kes_vk.to_bytes() != operational_cert.hot_vkey.to_bytes() {
+        return Err(BlockProducerError::MismatchedKesKey {
+            kes_path: kes_key_path.display().to_string(),
+            opcert_path: opcert_path.display().to_string(),
+        });
+    }
+
+    operational_cert.verify(issuer_vkey).map_err(|e| {
+        BlockProducerError::Crypto(format!(
+            "operational certificate sigma does not verify against its \
+             embedded cold verification key: {e}"
+        ))
+    })
+}
+
+/// Load a bulk set of block-producer credentials from a single JSON
+/// file of inline text-envelope triples.
+///
+/// Mirror of `readLeaderCredentialsBulk` / `parseShelleyCredentials`
+/// in `Cardano.Node.Protocol.Shelley`. The bulk-credentials file is a
+/// JSON array whose elements are 3-element arrays of inline
+/// text-envelope objects (`{type, description, cborHex}`) in
+/// `[cert, vrf, kes]` order — the credentials are embedded inline, NOT
+/// referenced by file path.
+///
+/// Unlike [`load_block_producer_credentials`] (the singleton path),
+/// this does NOT run [`check_opcert_kes_key`]: it mirrors upstream
+/// `parseShelleyCredentials`, which builds each entry as
+/// `PraosCredentialsUnsound` without `opCertKesKeyCheck`. A bulk entry
+/// is trusted to be internally consistent.
+///
+/// Each entry is decoded in the upstream `parseShelleyCredentials`
+/// order — operational certificate, then KES key, then VRF key — and a
+/// decode failure is reported against the upstream `mkCredentials`
+/// diagnostic label `<bulk-file>.<index>{cert,vrf,kes}`.
+pub fn load_bulk_block_producer_credentials(
+    bulk_path: &Path,
+    slots_per_kes_period: u64,
+    max_kes_evolutions: u64,
+) -> Result<Vec<BlockProducerCredentials>, BlockProducerError> {
+    // The bulk file embeds KES and VRF secret keys — hold it to the
+    // same owner-read-only discipline as the singleton `.skey` files.
+    ensure_secret_file_mode(bulk_path)?;
+    let contents = std::fs::read_to_string(bulk_path).map_err(|source| BlockProducerError::Io {
+        path: bulk_path.display().to_string(),
+        source,
+    })?;
+    let triples: Vec<[TextEnvelope; 3]> =
+        serde_json::from_str(&contents).map_err(|source| BlockProducerError::TextEnvelope {
+            path: bulk_path.display().to_string(),
+            source,
+        })?;
+
+    let mut credentials = Vec::with_capacity(triples.len());
+    for (index, [cert_env, vrf_env, kes_env]) in triples.into_iter().enumerate() {
+        // Mirror upstream `mkCredentials`'s `loc` diagnostic labels:
+        // `<bulk-file>.<index>{cert,vrf,kes}`.
+        let cert_loc = PathBuf::from(format!("{}.{index}cert", bulk_path.display()));
+        let vrf_loc = PathBuf::from(format!("{}.{index}vrf", bulk_path.display()));
+        let kes_loc = PathBuf::from(format!("{}.{index}kes", bulk_path.display()));
+
+        // Decode order mirrors `parseShelleyCredentials`: cert, kes, vrf.
+        let cert_cbor = decode_envelope_hex(&cert_env, &cert_loc)?;
+        let (operational_cert, embedded_issuer) =
+            parse_operational_certificate_with_issuer(&cert_env.type_tag, &cert_cbor, &cert_loc)?;
+        let issuer_vkey =
+            embedded_issuer.ok_or_else(|| BlockProducerError::OpCertMissingIssuerKey {
+                path: cert_loc.display().to_string(),
+            })?;
+
+        let kes_cbor = decode_envelope_hex(&kes_env, &kes_loc)?;
+        let kes_signing_key = parse_kes_signing_key(&kes_env.type_tag, &kes_cbor, &kes_loc)?;
+
+        let vrf_cbor = decode_envelope_hex(&vrf_env, &vrf_loc)?;
+        let vrf_signing_key = parse_vrf_signing_key(&vrf_env.type_tag, &vrf_cbor, &vrf_loc)?;
+        let vrf_verification_key = vrf_signing_key.verification_key();
+
+        credentials.push(BlockProducerCredentials {
+            vrf_signing_key,
+            vrf_verification_key,
+            kes_signing_key,
+            kes_current_period: 0,
+            operational_cert,
+            issuer_vkey,
+            slots_per_kes_period,
+            max_kes_evolutions,
+        });
+    }
+    Ok(credentials)
 }
 
 // ---------------------------------------------------------------------------
@@ -1851,6 +2006,109 @@ mod tests {
             issuer, None,
             "the bare OCert form carries no embedded cold verification key",
         );
+    }
+
+    #[test]
+    fn load_bulk_credentials_parses_inline_triples() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // A wrapped `[OCert, cold_vkey]` operational-certificate
+        // envelope. The bulk path skips `opCertKesKeyCheck`, so the
+        // sigma and KES-key match need only be well-formed, not
+        // cryptographically valid.
+        fn opcert_envelope(hot: u8, cold: u8, seq: u8) -> String {
+            let mut cbor = Vec::new();
+            cbor.push(0x82); // [OCert, cold_vkey]
+            cbor.push(0x84); // OCert array(4)
+            cbor.extend_from_slice(&cbor_bstr(&[hot; 32]));
+            cbor.push(seq); // sequence_number
+            cbor.push(0x00); // kes_period
+            cbor.extend_from_slice(&cbor_bstr(&[0x22; 64])); // sigma
+            cbor.extend_from_slice(&cbor_bstr(&[cold; 32])); // cold vkey
+            make_text_envelope("NodeOperationalCertificate", "", &hex::encode(cbor))
+        }
+        fn vrf_envelope(b: u8) -> String {
+            make_text_envelope(
+                "VrfSigningKey_PraosVRF",
+                "",
+                &hex::encode(cbor_bstr(&[b; 64])),
+            )
+        }
+        fn kes_envelope(b: u8) -> String {
+            make_text_envelope(
+                "KesSigningKey_ed25519_kes_2^0",
+                "",
+                &hex::encode(cbor_bstr(&[b; 32])),
+            )
+        }
+
+        // Two `[cert, vrf, kes]` triples.
+        let bulk = format!(
+            "[[{},{},{}],[{},{},{}]]",
+            opcert_envelope(0x11, 0xC0, 0x00),
+            vrf_envelope(0xA0),
+            kes_envelope(0xD0),
+            opcert_envelope(0x12, 0xC1, 0x01),
+            vrf_envelope(0xA1),
+            kes_envelope(0xD1),
+        );
+        let path = write_temp_file(&dir, "bulk.creds", &bulk);
+
+        let creds = load_bulk_block_producer_credentials(&path, 129_600, 62)
+            .expect("bulk credentials parse");
+        assert_eq!(creds.len(), 2);
+        assert_eq!(creds[0].operational_cert.hot_vkey.to_bytes(), [0x11; 32]);
+        assert_eq!(creds[0].issuer_vkey.to_bytes(), [0xC0; 32]);
+        assert_eq!(creds[0].operational_cert.sequence_number, 0);
+        assert_eq!(creds[1].operational_cert.hot_vkey.to_bytes(), [0x12; 32]);
+        assert_eq!(creds[1].issuer_vkey.to_bytes(), [0xC1; 32]);
+        assert_eq!(creds[1].operational_cert.sequence_number, 1);
+        // The slot / evolution scalars are threaded onto every entry.
+        assert_eq!(creds[1].slots_per_kes_period, 129_600);
+        assert_eq!(creds[1].max_kes_evolutions, 62);
+        assert_eq!(creds[1].kes_current_period, 0);
+    }
+
+    #[test]
+    fn load_bulk_credentials_reports_failing_entry_index() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let good_cert = {
+            let mut cbor = Vec::new();
+            cbor.push(0x82);
+            cbor.push(0x84);
+            cbor.extend_from_slice(&cbor_bstr(&[0x11; 32]));
+            cbor.push(0x00);
+            cbor.push(0x00);
+            cbor.extend_from_slice(&cbor_bstr(&[0x22; 64]));
+            cbor.extend_from_slice(&cbor_bstr(&[0xC0; 32]));
+            make_text_envelope("NodeOperationalCertificate", "", &hex::encode(cbor))
+        };
+        let vrf = make_text_envelope(
+            "VrfSigningKey_PraosVRF",
+            "",
+            &hex::encode(cbor_bstr(&[0xA0; 64])),
+        );
+        let kes = make_text_envelope(
+            "KesSigningKey_ed25519_kes_2^0",
+            "",
+            &hex::encode(cbor_bstr(&[0xD0; 32])),
+        );
+        // Entry index 1's certificate carries the wrong text-envelope type.
+        let bad_cert = make_text_envelope("WrongType", "", &hex::encode(cbor_bstr(&[0u8; 4])));
+
+        let bulk = format!("[[{good_cert},{vrf},{kes}],[{bad_cert},{vrf},{kes}]]");
+        let path = write_temp_file(&dir, "bulk-bad.creds", &bulk);
+
+        let err = load_bulk_block_producer_credentials(&path, 129_600, 62)
+            .expect_err("a malformed entry must fail the bulk load");
+        let msg = err.to_string();
+        // The diagnostic names the failing entry: `<bulk-file>.1cert`.
+        assert!(
+            msg.contains(".1cert"),
+            "expected the entry-1 cert loc label: {msg}"
+        );
+        assert!(msg.contains("unexpected text envelope type"), "{msg}");
     }
 
     #[test]

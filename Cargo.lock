@@ -3424,6 +3424,7 @@ dependencies = [
  "yggdrasil-consensus",
  "yggdrasil-crypto",
  "yggdrasil-ledger",
+ "yggdrasil-node-block-producer",
  "yggdrasil-node-config",
  "yggdrasil-node-genesis",
  "yggdrasil-storage",
