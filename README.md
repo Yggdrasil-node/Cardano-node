@@ -90,7 +90,11 @@ As of R248, every confirmed-active code-level parity slice tracked in [`docs/arc
 The remaining items are operator-time gates, not known code-level parity blockers:
 
 - **Phase E.2** — 24h+ mainnet sync rehearsal. Operator-time gate; yggdrasil's mainnet sync is end-to-end working (R211+R213) and exposes the observability surface needed for sign-off.
-- **Parallel BlockFetch default flip** — runbook §6.5 must pass with `parallel_blockfetch_soak.sh` before changing the default `max_concurrent_block_fetch_peers = 1`.
+- **Parallel BlockFetch sign-off** — runbook §6.5 remains open on current
+  evidence. The current default knob is `max_concurrent_block_fetch_peers = 2`,
+  but R513 bounded preview/mainnet diagnostics both observed
+  `yggdrasil_blockfetch_workers_registered = 0`; sign-off needs fresh worker
+  activation plus Haskell tip comparison evidence.
 - **Tracer interoperability** — extended `cardano-tracer` validation across the forwarder and stdout backends remains ongoing operational work.
 
 ## Workspace Layout
@@ -212,7 +216,9 @@ Yggdrasil 1.0 closes the 2026-Q2 audit. Post-1.0 work tracked through GitHub Iss
 
 - Sustained mainnet endurance soak (week-scale) with hash-compare against the Haskell node.
 - Extended `cardano-tracer` interoperability validation across both forwarder and stdout backends.
-- Default `max_concurrent_block_fetch_peers` flip from `1` to `2` once `MANUAL_TEST_RUNBOOK.md` §6.5 sign-off lands.
+- Current-code §6.5 parallel BlockFetch sign-off: worker activation, Haskell
+  tip comparison, and long-window soak evidence with
+  `parallel_blockfetch_soak.sh`.
 - Future Conway tail-parameter cost-model entries beyond the vendored 251-name surface in `crates/plutus`.
 
 ## License

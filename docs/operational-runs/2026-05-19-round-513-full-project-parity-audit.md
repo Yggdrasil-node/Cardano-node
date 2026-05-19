@@ -396,6 +396,45 @@ the final summary path if no Haskell tip comparison passed. This does not
 complete §6.5; it prevents a future long BlockFetch soak from being recorded as
 sign-off evidence without Haskell comparison coverage.
 
+Continuation bounded mainnet revalidation at `2026-05-19T09:36:30Z` used the
+same harness after the Origin-intersection runtime fix:
+
+```sh
+NETWORK=mainnet \
+RUN_SECONDS=180 \
+SAMPLE_INTERVAL_S=30 \
+COMPARE_INTERVAL_S=999999 \
+START_DEADLINE_S=120 \
+MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
+EXPECT_WORKERS=2 \
+REQUIRE_WORKERS=1 \
+REQUIRE_PROGRESS=1 \
+YGG_BIN=target/release/yggdrasil-node \
+crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh
+```
+
+Result: exit 1. The node progressed and stayed healthy, but worker activation
+again remained absent:
+
+```text
+ERROR: worker pool never reached EXPECT_WORKERS=2 (max observed 0)
+```
+
+Artifacts landed under `/tmp/ygg-blockfetch-soak-cXEJZZ/`. Key evidence:
+
+```text
+Net.PeerSelection ... evaluated ledger-derived startup fallbacks bigLedgerPeerCount=647 eligiblePeerCount=647 snapshotEligibleCount=647 ... latestSlot=null
+Net.PeerSelection ... refreshed reconnect peer candidates fallbackPeerCount=651 latestSlot=null preferredPeer=null
+bootstrap peer connected attempt=2 peer=187.127.162.198:3001
+Node.Sync ... finalPoint=BlockPoint(SlotNo(748), HeaderHash(9f13f74434079fc6...)) totalBlocks=750 totalRollbacks=1
+final metrics: yggdrasil_active_peers=1, yggdrasil_active_big_ledger_peers=0, yggdrasil_blockfetch_workers_registered=0, yggdrasil_blockfetch_workers_migrated_total=0
+```
+
+Interpretation: the current live mainnet path has healthy single-peer sync
+progress but does not currently promote any extra fallback or snapshot peers
+into BlockFetch workers inside this bounded window. That keeps §6.5 open even
+though earlier historical rounds recorded multi-peer activation evidence.
+
 Focused verification after this guard:
 
 ```sh
@@ -1254,7 +1293,7 @@ are supplied.
 | Bounded preprod relay-only diagnostic passes. | `RELAY_ONLY=1 RUN_SECONDS=180 YGG_BIN=target/release/yggdrasil-node ... run_preprod_real_pool_producer.sh` exits 0; log shows non-producing role, bootstrap peer connection, checkpoint progression, and `totalBlocks=1050`. | Verified diagnostic |
 | Bounded mainnet relay-only diagnostic passes. | The helper now sums non-big-ledger and big-ledger active-peer gauges, and the runtime sends `MsgFindIntersect [Origin]` before the first `MsgRequestNext`. The rebuilt `RELAY_ONLY=1 RUN_SECONDS=180 EXPECT_HOT_PEERS=1 ... run_mainnet_real_pool_producer.sh` exits 0, reports `active peers total=1 >= 1`, and syncs from Origin through mainnet slot `648` with `totalBlocks=650`. | Verified diagnostic |
 | Preprod/mainnet relay endurance soaks are complete. | Preprod and mainnet now both have bounded 180s relay-only diagnostics, but no current multi-hour endurance relay run was completed. | Not verified |
-| Section 6.5 BlockFetch soaks are complete. | Only a bounded preview diagnostic ran; worker assertion failed (`max observed 0`). | Not verified |
+| Section 6.5 BlockFetch soaks are complete. | Bounded preview and mainnet diagnostics both progressed the chain but failed worker activation (`max observed 0`); no 6h/24h Haskell-compared §6.5 sign-off run completed. | Not verified |
 | No parity docs/matrix are promoted without evidence. | No parity matrix entries were promoted. | Verified |
 
 ## Documentation And Matrix Impact
@@ -1303,7 +1342,7 @@ Prompt-to-artifact mapping:
 | Active registered/delegated preview credentials are available. | Pool registration/delegation is confirmed, but the current network tip is epoch `1302`; active pool evidence begins at epoch `1304`. | Pending active epoch |
 | Preview producer `validate-config` runs with KES/VRF/OpCert. | Generated credential validation exits 0 and reports complete block-producer credentials; the same credential paths are now registered/delegated on-chain, with active epoch pending. | Covered, activation pending |
 | Producer runtime evidence is collected. | Generated 90s run records `Startup.BlockProducer`, credential load, producer loop start, bootstrap connection, sync progress, and five metrics snapshots. Active-pool leader/forge/adoption evidence remains absent. | Partially covered |
-| Relay-only non-preview evidence is collected. | Bounded preprod relay-only run exits 0 with non-producing role, preprod bootstrap connection, and `totalBlocks=1050`. Bounded mainnet relay-only run exits 0 after the Origin-intersection fix, stays non-producing, reports `active peers total=1 >= 1`, and syncs through slot `648` with `totalBlocks=650`. Neither result replaces the requested endurance soaks. | Partially covered |
+| Relay-only non-preview evidence is collected. | Bounded preprod relay-only run exits 0 with non-producing role, preprod bootstrap connection, and `totalBlocks=1050`. Bounded mainnet relay-only run exits 0 after the Origin-intersection fix, stays non-producing, reports `active peers total=1 >= 1`, and syncs through slot `648` with `totalBlocks=650`. A separate bounded mainnet BlockFetch diagnostic also synced to slot `748`, but worker activation remained `0`. None of these results replace the requested endurance soaks. | Partially covered |
 | Haskell tip comparisons run at the configured checkpoints. | The runner and sign-off wrapper enforce the Haskell socket, sync-progress wait, and exact checkpoint count, but no active producer run has occurred yet. | Blocked |
 | Parity matrix is not promoted without producer evidence. | `git status --short docs/parity-matrix.json` and `git diff -- docs/parity-matrix.json` produced no output. | Covered |
 | Workspace diff is syntactically clean. | `git diff --check` exited 0. | Covered |
