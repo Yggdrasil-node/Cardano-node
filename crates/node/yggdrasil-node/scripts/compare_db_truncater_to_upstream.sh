@@ -32,7 +32,7 @@ set -euo pipefail
 #   UPSTREAM_DB=/path/to/upstream/preview/db \
 #   YGGDRASIL_DB=/path/to/yggdrasil/preview/db \
 #   TRUNCATE_AFTER_SLOT=100000 \
-#   node/scripts/compare_db_truncater_to_upstream.sh
+#   crates/node/yggdrasil-node/scripts/compare_db_truncater_to_upstream.sh
 #
 # Exit codes:
 #   0  --help / --version byte-equivalent + error-input rejection
@@ -55,7 +55,7 @@ Usage:
   UPSTREAM_DB=<path>          (path to an upstream-format ChainDB; required for stage 3)
   YGGDRASIL_DB=<path>         (path to a yggdrasil-format ChainDB; required for stage 3)
   TRUNCATE_AFTER_SLOT=<u64>   (truncate-after-slot target; required for stage 3)
-  node/scripts/compare_db_truncater_to_upstream.sh
+  crates/node/yggdrasil-node/scripts/compare_db_truncater_to_upstream.sh
 
 Stages:
   1. Byte-equivalent --help / --version.

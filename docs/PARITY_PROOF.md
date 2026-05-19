@@ -444,6 +444,13 @@ peer that registers as a worker subtracts ≈ `(fetch_avg / N)` from
 the per-batch fetch time, so operators can recover sync rate by
 adding topology peers.
 
+Current-code caveat (R513, 2026-05-19): bounded preview and mainnet
+revalidation both made single-peer sync progress but observed
+`yggdrasil_blockfetch_workers_registered = 0`. Treat the R218 table as
+historical proof that the multi-worker path can improve throughput when active,
+not as current §6.5 sign-off. Fresh 6h/24h Haskell-compared evidence is still
+required on the current runtime.
+
 ---
 
 ## 4b. Phase D.2 — Multi-session peer accounting (5 lifetime counters)
@@ -586,8 +593,8 @@ upstream while preserving SHA-anchored vendored fixture provenance.
 
 The remaining gates are no longer known code-level parity blockers.
 They require sustained operator time: the 24h+ mainnet rehearsal and
-the runbook §6.5 sign-off before changing the default
-`max_concurrent_block_fetch_peers`.
+the runbook §6.5 sign-off showing current worker activation and Haskell tip
+comparison coverage.
 
 ---
 

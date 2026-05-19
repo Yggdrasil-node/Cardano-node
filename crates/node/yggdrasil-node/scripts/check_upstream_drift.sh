@@ -2,32 +2,30 @@
 set -euo pipefail
 
 # Compare each pinned upstream IntersectMBO commit (from
-# node/src/upstream_pins.rs) against the live HEAD of the corresponding
-# repository. Outputs a JSON drift report.
+# crates/node/config/src/upstream_pins.rs) against the live HEAD of the
+# corresponding repository. Outputs a JSON drift report.
 #
 # Drift is INFORMATIONAL — this script never sets a non-zero exit on
 # drift alone. The audit baseline is allowed to lag upstream; what
 # matters is that the lag is visible.
 #
 # Usage:
-#   node/scripts/check_upstream_drift.sh                # human-readable summary
-#   node/scripts/check_upstream_drift.sh --json         # JSON only
-#   node/scripts/check_upstream_drift.sh --fail-on-drift  # exit 1 if any drift
+#   crates/node/yggdrasil-node/scripts/check_upstream_drift.sh                # human-readable summary
+#   crates/node/yggdrasil-node/scripts/check_upstream_drift.sh --json         # JSON only
+#   crates/node/yggdrasil-node/scripts/check_upstream_drift.sh --fail-on-drift  # exit 1 if any drift
 #
 # Exit codes:
 #   0  drift report produced successfully (drift may exist; see output)
 #   1  --fail-on-drift was set AND at least one repo drifted
 #   2  could not fetch live HEAD for one or more repos
-#   3  could not parse pinned SHAs from crates/node/yggdrasil-node/src/upstream_pins.rs
+#   3  could not parse pinned SHAs from crates/node/config/src/upstream_pins.rs
 
-# Wave 4 PR 6: paths now resolve relative to the script's own location
-# (the script lives inside the yggdrasil-node crate). WORKSPACE_ROOT walks
-# up to the repo root for consumers that need it; sibling files (src/,
-# configuration/) are reached via $(dirname ...)/../ to avoid hardcoding
-# the workspace layout.
+# Paths resolve relative to the script's own location. The upstream pin source
+# moved to the node config crate; WORKSPACE_ROOT keeps the source path explicit
+# and stable for operator invocations from any cwd.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-PINS_FILE="$SCRIPT_DIR/../src/upstream_pins.rs"
+PINS_FILE="$WORKSPACE_ROOT/crates/node/config/src/upstream_pins.rs"
 
 JSON_ONLY=0
 FAIL_ON_DRIFT=0
@@ -92,7 +90,7 @@ repo_url[kes-agent]="https://github.com/input-output-hk/kes-agent.git"
 repo_url[dmq-node]="https://github.com/IntersectMBO/dmq-node.git"
 
 # Canonical iteration order — pinned to the same order as
-# UPSTREAM_PINS in node/src/upstream_pins.rs so output rows match
+# UPSTREAM_PINS in crates/node/config/src/upstream_pins.rs so output rows match
 # row-by-row. The Rust drift-guard test pins cardinality at 9.
 PIN_ORDER=(
   cardano-base
@@ -184,7 +182,7 @@ else
   echo "[summary] drifted=$drifted_count unreachable=$unreachable_count total=$total_count"
   echo ""
   echo "Drift is informational. To advance a pin: edit"
-  echo "crates/node/yggdrasil-node/src/upstream_pins.rs, run the audit cadence against the new"
+  echo "crates/node/config/src/upstream_pins.rs, run the audit cadence against the new"
   echo "SHA, and update docs/UPSTREAM_PARITY.md with the rationale."
 fi
 

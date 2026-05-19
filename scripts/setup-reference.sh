@@ -127,6 +127,7 @@ cat > install/run-node.sh <<'LAUNCHER'
 # Launcher for the reference cardano-node.
 #   ./run-node.sh mainnet|preprod|preview
 # Override port: PORT=3002 ./run-node.sh preprod
+# Override DB/socket/log root: RUN_ROOT=/tmp/cardano-reference ./run-node.sh preview
 set -euo pipefail
 NET="${1:-mainnet}"
 PORT="${PORT:-3001}"
@@ -134,7 +135,8 @@ case "$NET" in mainnet|preprod|preview) ;;
   *) echo "usage: $0 {mainnet|preprod|preview}" >&2; exit 2 ;;
 esac
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUN="$ROOT/run/$NET"
+RUN_BASE="${RUN_ROOT:-$ROOT/run}"
+RUN="$RUN_BASE/$NET"
 mkdir -p "$RUN/db" "$RUN/socket" "$RUN/log"
 exec "$ROOT/bin/cardano-node" run \
     --config        "$ROOT/share/$NET/config.json" \

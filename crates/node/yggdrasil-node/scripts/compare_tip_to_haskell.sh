@@ -10,11 +10,11 @@ set -euo pipefail
 #
 # Usage:
 #   YGG_SOCK=/var/run/ygg.sock HASKELL_SOCK=/var/run/cardano.sock \
-#   NETWORK_MAGIC=764824073 node/scripts/compare_tip_to_haskell.sh
+#   NETWORK_MAGIC=764824073 crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh
 #
 # Or for a watching loop (every 15 min):
 #   watch -n 900 'YGG_SOCK=/tmp/ygg.sock HASKELL_SOCK=/tmp/cardano.sock \
-#     NETWORK_MAGIC=764824073 node/scripts/compare_tip_to_haskell.sh'
+#     NETWORK_MAGIC=764824073 crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh'
 #
 # Exit codes:
 #   0  tips match (slot AND hash equal)
@@ -36,7 +36,7 @@ Usage:
   YGG_SOCK=/path/to/yggdrasil.sock \
   HASKELL_SOCK=/path/to/cardano-node.sock \
   NETWORK_MAGIC=<u32> \
-  node/scripts/compare_tip_to_haskell.sh
+  crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh
 
 Required env:
   YGG_SOCK         Unix socket path of running yggdrasil-node (--socket-path)

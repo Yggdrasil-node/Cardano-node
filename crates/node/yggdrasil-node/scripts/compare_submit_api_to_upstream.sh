@@ -20,7 +20,7 @@ set -euo pipefail
 # Usage:
 #   UPSTREAM_PORT=18090 YGGDRASIL_PORT=18091 \
 #   UPSTREAM_METRICS_PORT=18181 YGGDRASIL_METRICS_PORT=18182 \
-#   node/scripts/compare_submit_api_to_upstream.sh
+#   crates/node/yggdrasil-node/scripts/compare_submit_api_to_upstream.sh
 #
 # Exit codes:
 #   0  every observable response (status + body) byte-identical between
@@ -48,7 +48,7 @@ Usage:
   YGGDRASIL_METRICS_PORT=<port>   (default 18182)
   HOST=<host>                     (default 127.0.0.1)
   SETTLE_SECONDS=<n>              (default 1)
-  node/scripts/compare_submit_api_to_upstream.sh
+  crates/node/yggdrasil-node/scripts/compare_submit_api_to_upstream.sh
 
 Compares yggdrasil-cardano-submit-api vs upstream cardano-submit-api
 across the canonical request surface. Both binaries must already be
@@ -70,7 +70,7 @@ Sample setup:
     --testnet-magic 2 --port 18091 --metrics-port 18182
 
   # Terminal 3: this script.
-  node/scripts/compare_submit_api_to_upstream.sh
+  crates/node/yggdrasil-node/scripts/compare_submit_api_to_upstream.sh
 EOF
   exit 3
 }

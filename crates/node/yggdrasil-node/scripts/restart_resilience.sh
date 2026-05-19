@@ -15,7 +15,7 @@ set -euo pipefail
 #   YGG_BIN=target/release/yggdrasil-node \
 #   NETWORK=preprod \
 #   CYCLES=12 \
-#   node/scripts/restart_resilience.sh
+#   crates/node/yggdrasil-node/scripts/restart_resilience.sh
 #
 # Exit codes:
 #   0  all cycles completed with monotonic tip progression
@@ -57,7 +57,7 @@ Usage:
   YGG_BIN=path/to/yggdrasil-node \
   NETWORK={mainnet|preprod|preview} \
   CYCLES=12 \
-  node/scripts/restart_resilience.sh
+  crates/node/yggdrasil-node/scripts/restart_resilience.sh
 
 Optional env:
   DB_DIR              Default: $RUN_DIR/db (mktemp -d -t ygg-restart-XXXXXX)

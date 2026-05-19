@@ -123,21 +123,20 @@ pub(super) fn trace_session_established(
 /// `Ouroboros.Network.Protocol.ChainSync.Client.chainSyncClientPeer` and
 /// `Ouroboros.Consensus.Network.NodeToNode` (typed ChainSync codec).
 ///
-/// When `from_point` is [`Point::Origin`] the call is a no-op because the
-/// peer's default read pointer is already at Origin.  Otherwise this issues a
-/// single-point intersection request; on `Found` the local point is preserved,
-/// on `NotFound` the local `from_point` is reset to [`Point::Origin`] so the
-/// next batch starts a fresh sync from genesis (matching upstream behaviour
-/// when no chain points are recognised by the peer).
+/// This also sends an explicit `MsgFindIntersect [Origin]` when `from_point`
+/// is [`Point::Origin`]. Mainnet peers can close fresh sessions that skip
+/// intersection and jump straight to `MsgRequestNext`, while upstream clients
+/// position the server cursor with ChainSync intersection before streaming.
+/// On `Found` the local point is preserved; on `NotFound` the local
+/// `from_point` is reset to [`Point::Origin`] so the next batch starts a fresh
+/// sync from genesis (matching upstream behaviour when no chain points are
+/// recognised by the peer).
 pub(super) async fn synchronize_chain_sync_to_point(
     chain_sync: &mut ChainSyncClient,
     from_point: &mut Point,
     tracer: &NodeTracer,
     peer_addr: SocketAddr,
 ) -> Result<(), SyncError> {
-    if matches!(from_point, Point::Origin) {
-        return Ok(());
-    }
     let candidates = vec![*from_point];
     let result = typed_find_intersect(chain_sync, &candidates).await?;
     match result {

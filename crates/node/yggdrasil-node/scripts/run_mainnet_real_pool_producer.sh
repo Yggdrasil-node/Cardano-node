@@ -40,10 +40,10 @@ Usage:
     KES_SKEY_PATH=/abs/path/kes.skey \
     VRF_SKEY_PATH=/abs/path/vrf.skey \
     OPCERT_PATH=/abs/path/node.cert \
-    node/scripts/run_mainnet_real_pool_producer.sh
+    crates/node/yggdrasil-node/scripts/run_mainnet_real_pool_producer.sh
 
   Relay-only (sync without forging; recommended first dry run):
-    RELAY_ONLY=1 node/scripts/run_mainnet_real_pool_producer.sh
+    RELAY_ONLY=1 crates/node/yggdrasil-node/scripts/run_mainnet_real_pool_producer.sh
 
 Optional env:
   CARDANO_BIN_DIR        Default: /tmp/cardano-bin
@@ -100,20 +100,24 @@ assert_hot_peers() {
   if [[ "$expected" -le 0 ]]; then
     return 0
   fi
-  local current
-  current="$(curl -fsS "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null \
-    | grep -E '^yggdrasil_active_peers\s' \
-    | awk '{print $2}' | head -1 || true)"
-  if [[ -z "$current" ]]; then
-    echo "[warn] could not read yggdrasil_active_peers from metrics endpoint" >&2
+  local metrics active_non_big active_big total
+  metrics="$(curl -fsS "http://127.0.0.1:${METRICS_PORT}/metrics" 2>/dev/null || true)"
+  active_non_big="$(printf '%s\n' "$metrics" \
+    | awk '$1 == "yggdrasil_active_peers" { print int($2); exit }')"
+  active_big="$(printf '%s\n' "$metrics" \
+    | awk '$1 == "yggdrasil_active_big_ledger_peers" { print int($2); exit }')"
+  if [[ -z "$active_non_big" && -z "$active_big" ]]; then
+    echo "[warn] could not read active peer gauges from metrics endpoint" >&2
     return 0
   fi
-  current="${current%.*}" # strip any decimal
-  if [[ "$current" -lt "$expected" ]]; then
-    echo "ERROR: yggdrasil_active_peers=$current < EXPECT_HOT_PEERS=$expected" >&2
+  active_non_big="${active_non_big:-0}"
+  active_big="${active_big:-0}"
+  total=$((active_non_big + active_big))
+  if [[ "$total" -lt "$expected" ]]; then
+    echo "ERROR: active peers total=$total < EXPECT_HOT_PEERS=$expected (yggdrasil_active_peers=$active_non_big yggdrasil_active_big_ledger_peers=$active_big)" >&2
     return 1
   fi
-  echo "[ok] yggdrasil_active_peers=$current >= $expected"
+  echo "[ok] active peers total=$total >= $expected (yggdrasil_active_peers=$active_non_big yggdrasil_active_big_ledger_peers=$active_big)"
 }
 
 main() {
@@ -158,6 +162,8 @@ main() {
       --shelley-vrf-key "$VRF_SKEY_PATH"
       --shelley-operational-certificate "$OPCERT_PATH"
     )
+  else
+    args+=(--non-producing-node)
   fi
 
   ( cd "$ROOT_DIR" && "$YGG_BIN" "${args[@]}" ) >"$log_file" 2>&1 &

@@ -91,19 +91,66 @@ Check current slot with `yggdrasil-node status` or via a query.
 
 The cold key should not normally live on the block producer — store it offline and only touch it for OpCert reissue.
 
+### Preview real-pool audit runner
+
+For preview producer parity evidence, run with a real registered/delegated
+preview pool's KES key, VRF key, and operational certificate. Validate the
+credentials before starting a long producer soak:
+
+```bash
+$ cargo build --release -p yggdrasil-node
+$ RUN_ROOT=/tmp/cardano-reference PORT=3002 \
+  .reference-haskell-cardano-node/install/run-node.sh preview \
+  >/tmp/cardano-preview-reference.log 2>&1 &
+$ export HASKELL_SOCK="/tmp/cardano-reference/preview/socket/node.socket"
+$ KES_SKEY_PATH=/secure/preview/kes.skey \
+  VRF_SKEY_PATH=/secure/preview/vrf.skey \
+  OPCERT_PATH=/secure/preview/node.cert \
+  target/release/yggdrasil-node validate-config \
+    --network preview \
+    --shelley-kes-key "$KES_SKEY_PATH" \
+    --shelley-vrf-key "$VRF_SKEY_PATH" \
+    --shelley-operational-certificate "$OPCERT_PATH"
+$ KES_SKEY_PATH=/secure/preview/kes.skey \
+  VRF_SKEY_PATH=/secure/preview/vrf.skey \
+  OPCERT_PATH=/secure/preview/node.cert \
+  HASKELL_SOCK="$HASKELL_SOCK" \
+  RUN_SECONDS=21600 \
+  TIP_COMPARE_CHECKPOINTS=900,3600,21600 \
+  REQUIRE_TIP_COMPARISON=1 \
+  EXPECT_FORGE_EVENTS=1 \
+  EXPECT_ADOPTED_EVENTS=1 \
+  crates/node/yggdrasil-node/scripts/run_preview_real_pool_producer.sh
+```
+
+For an active generated preview pool, use the wrapper below to combine the
+activation gate, Haskell relay socket setup, Haskell sync-progress wait, and
+real-pool producer sign-off:
+
+```bash
+$ CRED_DIR=/tmp/ygg-preview-generated-bp-... \
+  POOL_ID=pool1... \
+  crates/node/yggdrasil-node/scripts/run_preview_active_pool_signoff.sh
+```
+
+The runner records validation and runtime logs under `/tmp/ygg-real-preview/`
+by default and fails if credential load, block-producer startup, bootstrap
+connection, required forge/adoption evidence, or enabled Haskell tip-comparison
+checkpoints are missing. When `HASKELL_SOCK` is set, it first runs
+`cardano-cli query tip --testnet-magic 2` against that socket so a missing,
+stale, or wrong-network Haskell relay fails before the producer starts.
+
 ### Preview-only generated harness
 
 For fast preview-network runtime testing, the repository includes a harness that generates upstream `cardano-cli` text-envelope credentials and self-contained Yggdrasil configs under the ignored `tmp/` tree:
 
 ```bash
 $ cargo build --release -p yggdrasil-node
-$ FORCE=1 node/scripts/preview_producer_harness.sh generate
-$ node/scripts/preview_producer_harness.sh wallet
-$ node/scripts/preview_producer_harness.sh certs
-$ node/scripts/preview_producer_harness.sh validate
-$ RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-relay
-$ RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-producer
-$ RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 node/scripts/preview_producer_harness.sh endurance-producer
+$ FORCE=1 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh generate
+$ crates/node/yggdrasil-node/scripts/preview_producer_harness.sh wallet
+$ crates/node/yggdrasil-node/scripts/preview_producer_harness.sh certs
+$ crates/node/yggdrasil-node/scripts/preview_producer_harness.sh validate
+$ RUN_SECONDS=60 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh smoke-relay
 ```
 
 The default output directory is `tmp/preview-producer/`. It contains:
@@ -116,11 +163,14 @@ The default output directory is `tmp/preview-producer/`. It contains:
 - `config/preview-producer.json` — preview producer-mode config with generated credentials.
 - `run/run-preview-relay.sh` and `run/run-preview-producer.sh` — convenience launchers.
 
-The generated cold key is **not registered on-chain** until the certificate transaction is submitted. The producer smoke test proves credential loading, OpCert validation, preview bootstrap connection, metrics, sync, and forge-loop startup. Actual block adoption requires preview tADA, stake-pool registration, delegation, and enough active stake to win leader slots. With the default zero pledge, the funding address needs the preview stake-key deposit plus pool deposit and transaction fees before registration can be submitted. Override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before `certs` if you need different off-chain metadata committed into the pool certificate.
+The generated cold key is **not registered on-chain** until the certificate transaction is submitted. Use the generated material for wallet/cert reference and relay smoke only; parity producer evidence must come from the real-pool runner above. Actual block adoption requires preview tADA, stake-pool registration, delegation, and enough active stake to win leader slots. With the default zero pledge, the funding address needs the preview stake-key deposit plus pool deposit and transaction fees before registration can be submitted. Override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before `certs` if you need different off-chain metadata committed into the pool certificate.
 
 If you build the preview registration transaction manually with `cardano-cli transaction build-raw`, pass the certificate files in this order: `stake-registration.cert`, `pool-registration.cert`, then `stake-delegation.cert`. The delegation certificate depends on the pool already being present in the transaction certificate sequence.
 
-Use `endurance-producer` after the startup smoke when you need evidence that sync continues over the full bounded run. It samples Prometheus metrics for the whole `RUN_SECONDS` window and fails unless `yggdrasil_current_slot` advances by at least `MIN_SLOT_ADVANCE`.
+Use the real-pool runner above for producer endurance evidence. The generated
+`endurance-producer` harness path can still exercise sync mechanics, but it is
+not preview producer parity evidence for this audit; use execution-time real
+preview pool credential paths instead.
 
 ## Configuring Yggdrasil for block production
 
@@ -240,7 +290,7 @@ If you are migrating from `cardano-node` (Haskell) to Yggdrasil:
 5. Run both nodes in parallel for one or more KES periods. Compare `yggdrasil_current_slot`, `yggdrasil_current_block_number`, and forge events against the Haskell node.
 6. Cut over by stopping the Haskell node.
 
-The chain hashes are byte-identical between implementations, so you can hash-compare blocks at the same slot using [`node/scripts/compare_tip_to_haskell.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/node/scripts/compare_tip_to_haskell.sh).
+The chain hashes are byte-identical between implementations, so you can hash-compare blocks at the same slot using [`crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh).
 
 ## Where to go next
 

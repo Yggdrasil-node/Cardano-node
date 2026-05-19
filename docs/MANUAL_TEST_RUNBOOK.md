@@ -39,7 +39,74 @@ nav_order: 8
 
   Each directory contains the JSON config plus the four genesis files (Byron, Shelley, Alonzo, Conway). No download step is required.
 
-### 1a. Preview producer harness (fast local gate)
+### 1a. Preview producer audit inputs
+
+Use real preview pool credentials for producer-mode parity evidence. The
+generated preview harness is useful for wallet/cert reference material and relay
+smoke only; do not treat its generated KES/VRF/OpCert files as the producer
+credential source for a parity audit.
+
+```sh
+cargo build --release -p yggdrasil-node
+export YGG_BIN="$PWD/target/release/yggdrasil-node"
+
+RUN_ROOT=/tmp/cardano-reference PORT=3002 \
+  .reference-haskell-cardano-node/install/run-node.sh preview \
+  >/tmp/cardano-preview-reference.log 2>&1 &
+export HASKELL_SOCK="/tmp/cardano-reference/preview/socket/node.socket"
+
+KES_SKEY_PATH=/secure/preview/kes.skey \
+VRF_SKEY_PATH=/secure/preview/vrf.skey \
+OPCERT_PATH=/secure/preview/node.cert \
+target/release/yggdrasil-node validate-config \
+  --network preview \
+  --shelley-kes-key "$KES_SKEY_PATH" \
+  --shelley-vrf-key "$VRF_SKEY_PATH" \
+  --shelley-operational-certificate "$OPCERT_PATH"
+
+KES_SKEY_PATH=/secure/preview/kes.skey \
+VRF_SKEY_PATH=/secure/preview/vrf.skey \
+OPCERT_PATH=/secure/preview/node.cert \
+HASKELL_SOCK="$HASKELL_SOCK" \
+RUN_SECONDS=21600 \
+TIP_COMPARE_CHECKPOINTS=900,3600,21600 \
+REQUIRE_TIP_COMPARISON=1 \
+EXPECT_FORGE_EVENTS=1 \
+EXPECT_ADOPTED_EVENTS=1 \
+crates/node/yggdrasil-node/scripts/run_preview_real_pool_producer.sh
+```
+
+For the generated preview pool used by the parity audit, the active-epoch
+resume can be run through the wrapper below. It first gates on
+`preview_pool_activation_status.sh REQUIRE_ACTIVE=1`, then starts or validates a
+local Haskell preview relay socket, waits for Haskell `syncProgress` to reach
+`HASKELL_SYNC_MIN_PERCENT` (default `99.00`), then delegates to the real-pool
+producer runner with the same 6-hour acceptance settings. Use a pre-synced
+`HASKELL_SOCK` when possible; otherwise the wrapper waits before starting
+Yggdrasil so the first 15-minute checkpoint is not spent catching up from
+Origin.
+
+```sh
+CRED_DIR=/tmp/ygg-preview-generated-bp-... \
+POOL_ID=pool1... \
+crates/node/yggdrasil-node/scripts/run_preview_active_pool_signoff.sh
+```
+
+Pass conditions:
+- `validate-config` loads the real KES, VRF, and operational-certificate files
+  and reports producer credentials present.
+- The run log contains `Startup.BlockProducer`, `block producer credentials
+  loaded`, `block producer loop started`, and a preview bootstrap connection.
+- During an active-pool window, the run log contains leader election, local
+  block forging, and adopted forged block evidence.
+- With `HASKELL_SOCK` set to a local upstream Haskell preview relay socket,
+  tip comparisons pass at 15m, 60m, and 6h checkpoints.
+  The runner preflights that socket with
+  `cardano-cli query tip --testnet-magic 2` before starting Yggdrasil.
+- No `invalid VRF proof`, credential, KES expiry, or block-adoption errors
+  appear.
+
+### 1b. Preview generated harness (reference/relay material)
 
 Use preview when you need the fastest public-network startup/sync loop and do not yet have real preprod/mainnet pool credentials. The harness uses upstream `cardano-cli` to generate text-envelope cold, VRF, KES, and operational-certificate files, then writes self-contained preview relay and producer configs under `tmp/preview-producer/`.
 
@@ -47,23 +114,19 @@ Use preview when you need the fastest public-network startup/sync loop and do no
 cargo build --release -p yggdrasil-node
 export YGG_BIN="$PWD/target/release/yggdrasil-node"
 
-FORCE=1 node/scripts/preview_producer_harness.sh generate
-node/scripts/preview_producer_harness.sh wallet
-node/scripts/preview_producer_harness.sh certs
-node/scripts/preview_producer_harness.sh validate
-RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-relay
-RUN_SECONDS=60 node/scripts/preview_producer_harness.sh smoke-producer
-RUN_SECONDS=300 MIN_SLOT_ADVANCE=1000 node/scripts/preview_producer_harness.sh endurance-producer
+FORCE=1 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh generate
+crates/node/yggdrasil-node/scripts/preview_producer_harness.sh wallet
+crates/node/yggdrasil-node/scripts/preview_producer_harness.sh certs
+crates/node/yggdrasil-node/scripts/preview_producer_harness.sh validate
+RUN_SECONDS=60 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh smoke-relay
 ```
 
 Pass conditions:
 - `wallet` prints a preview payment address and stake address under `tmp/preview-producer/wallet/`.
 - `certs` emits stake registration, stake delegation, pool registration, pool-id files under `tmp/preview-producer/certs/`, and pool metadata under `tmp/preview-producer/metadata/` (default ticker `RUST`, name `WORLDS FIRST RUST NODE`).
-- `validate` reports relay credentials absent and producer credentials complete.
+- `validate` reports relay credentials absent and generated producer credentials complete for reference material.
 - `smoke-relay` observes preview bootstrap connection, metrics, and synced blocks.
-- `smoke-producer` observes `Startup.BlockProducer`, `block producer loop started`, preview bootstrap connection, metrics, and synced blocks.
-- `endurance-producer` runs for the full duration and proves the preview sync point advances by at least `MIN_SLOT_ADVANCE` slots.
-- No `invalid VRF proof` line appears.
+- No generated harness credential is used as parity producer evidence.
 
 R246 preview Plutus replay gate:
 
@@ -120,9 +183,60 @@ error, or panic in the log. Follow-up attempts to continue from
 reconnect/intersection; retry with alternate public-root peers before
 treating that as a ledger or Plutus regression.
 
-This does **not** prove real block adoption until the generated pool is registered and delegated on-chain. With the default zero pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the preview stake-key deposit plus pool deposit and transaction fees (currently 502 tADA plus fees from the vendored preview genesis), submit the generated certificates, then wait for active stake before expecting leader election.
+The generated harness material does **not** prove real block adoption for this
+audit. If you use it outside this audit to prepare a preview pool, the generated
+pool must still be registered and delegated on-chain. With the default zero
+pledge, fund `tmp/preview-producer/wallet/payment.addr` with at least the
+preview stake-key deposit plus pool deposit and transaction fees (currently 502
+tADA plus fees from the vendored preview genesis), submit the generated
+certificates, then wait for active stake before expecting leader election.
 
 When constructing the registration transaction manually, keep certificate order deterministic: stake-address registration first, pool registration second, stake delegation third. Submitting delegation before the pool-registration certificate is processed is rejected by the preview ledger as `DelegateeStakePoolNotRegisteredDELEG`.
+
+For the generated preview bundle created during the 2026-05-19 parity audit,
+the operator-side transaction helper supports both local-socket balanced build
+and explicit-UTxO offline build.
+
+```sh
+CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
+SOCKET_PATH=/tmp/preview/node.socket \
+crates/node/yggdrasil-node/scripts/register_preview_generated_pool.sh
+```
+
+When a synced local socket is unavailable but the funding UTxO is known, use
+the offline path:
+
+```sh
+CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
+OFFLINE_BUILD=1 \
+TX_IN=<funding-txid#ix> \
+INPUT_LOVELACE=<funding-lovelace> \
+PROTOCOL_PARAMS_FILE=/tmp/ygg-preview-generated-bp-20260519T052515Z/registration/protocol-params-epoch-1302-cli.json \
+KOIOS_SUBMIT=1 \
+crates/node/yggdrasil-node/scripts/register_preview_generated_pool.sh
+```
+
+The helper keeps certificates ordered as stake registration → pool registration
+→ stake delegation and signs with payment, stake, and cold keys. It does not
+submit by default; set `SUBMIT=1` for local-node submission or
+`KOIOS_SUBMIT=1` for preview public-submit CBOR submission only after reviewing
+the signed transaction. A submitted transaction still must be observed on-chain
+and the pool must become active before the producer run can claim
+leader-election, forged-block, or adopted-block evidence.
+
+Check activation readiness before starting the gated producer soak:
+
+```sh
+CRED_DIR=/tmp/ygg-preview-generated-bp-20260519T052515Z \
+POOL_ID=pool1rv9445xped56v36hneedxq96rg3l7hx490zg66pqkk7hcrtl26q \
+REQUIRE_ACTIVE=1 \
+crates/node/yggdrasil-node/scripts/preview_pool_activation_status.sh
+```
+
+Exit code `3` means the pool registration is visible but the active epoch has
+not started yet. Exit code `0` with `status=active` means the producer soak can
+be started with `EXPECT_FORGE_EVENTS=1`, `EXPECT_ADOPTED_EVENTS=1`, and
+`REQUIRE_TIP_COMPARISON=1` once `HASKELL_SOCK` is also available.
 
 ---
 
@@ -136,16 +250,17 @@ The preprod network is a stable, pool-registration-friendly testnet. Use it to v
 RUN_SECONDS=120 \
 EXPECT_FORGE_EVENTS=0 \
 EXPECT_ADOPTED_EVENTS=0 \
-node/scripts/run_preprod_real_pool_producer.sh
+crates/node/yggdrasil-node/scripts/run_preprod_real_pool_producer.sh
 ```
 
-The script aborts immediately if `KES_SKEY_PATH` etc. are missing — but you can run a relay-only sync by invoking the binary directly:
+The script aborts immediately if `KES_SKEY_PATH` etc. are missing in producer
+mode. For relay-only sync, use `RELAY_ONLY=1`, which passes
+`--non-producing-node` and skips credential loading:
 
 ```sh
-$YGG_BIN run --network preprod \
-  --database-path /tmp/ygg-preprod-db \
-  --socket-path /tmp/ygg-preprod.sock \
-  --metrics-port 9001
+RELAY_ONLY=1 \
+RUN_SECONDS=600 \
+crates/node/yggdrasil-node/scripts/run_preprod_real_pool_producer.sh
 ```
 
 Verify the node reaches `bootstrap peer connected` in the log and exposes `yggdrasil_current_slot` on `http://127.0.0.1:9001/metrics`.
@@ -158,7 +273,7 @@ VRF_SKEY_PATH=/secure/preprod/vrf.skey \
 OPCERT_PATH=/secure/preprod/node.cert \
 RUN_SECONDS=600 \
 EXPECT_FORGE_EVENTS=1 \
-node/scripts/run_preprod_real_pool_producer.sh
+crates/node/yggdrasil-node/scripts/run_preprod_real_pool_producer.sh
 ```
 
 Pass condition: script exits 0, log contains `Startup.BlockProducer`, `block producer loop started`, and at least one `elected as slot leader` / `forged local block` / `adopted forged block` line.
@@ -174,7 +289,7 @@ Failure to observe forge events on a 10-minute window is normal if the pool has 
 ```sh
 RELAY_ONLY=1 \
 RUN_SECONDS=600 \
-node/scripts/run_mainnet_real_pool_producer.sh
+crates/node/yggdrasil-node/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 Pass conditions (asserted by the script):
@@ -197,7 +312,7 @@ VRF_SKEY_PATH=/secure/mainnet/vrf.skey \
 OPCERT_PATH=/secure/mainnet/node.cert \
 RUN_SECONDS=3600 \
 EXPECT_FORGE_EVENTS=0 \
-node/scripts/run_mainnet_real_pool_producer.sh
+crates/node/yggdrasil-node/scripts/run_mainnet_real_pool_producer.sh
 ```
 
 `EXPECT_FORGE_EVENTS=0` is appropriate for a one-hour window — mainnet pool slots can be hours apart depending on stake. For a longer rehearsal that should observe a forge, set `EXPECT_FORGE_EVENTS=1` and `RUN_SECONDS` to at least 3× the pool's expected slot interval.
@@ -216,7 +331,7 @@ Both nodes must already be running and synced to roughly the same point.
 YGG_SOCK=/tmp/ygg-mainnet.sock \
 HASKELL_SOCK=/run/cardano-node/socket \
 NETWORK_MAGIC=764824073 \
-node/scripts/compare_tip_to_haskell.sh
+crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh
 ```
 
 Exit codes:
@@ -228,7 +343,7 @@ Exit codes:
 
 ```sh
 watch -n 900 'YGG_SOCK=/tmp/ygg.sock HASKELL_SOCK=/run/cardano.sock \
-  NETWORK_MAGIC=764824073 node/scripts/compare_tip_to_haskell.sh'
+  NETWORK_MAGIC=764824073 crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh'
 ```
 
 ### 5c. Decision tree on divergence
@@ -251,7 +366,7 @@ Kill/restart cycles validate the WAL + dirty-flag recovery (storage Round 83) ov
 NETWORK=preprod \
 CYCLES=12 \
 INTERVAL_BASE_S=300 \
-node/scripts/restart_resilience.sh
+crates/node/yggdrasil-node/scripts/restart_resilience.sh
 ```
 
 Pass condition: 12 cycles complete with monotonic tip progression at each settle window plus a final post-cycle recovery probe. The script asserts `tip[N+1] >= tip[N]` after every restart.
@@ -262,7 +377,7 @@ Pass condition: 12 cycles complete with monotonic tip progression at each settle
 NETWORK=mainnet \
 CYCLES=12 \
 INTERVAL_BASE_S=300 \
-node/scripts/restart_resilience.sh
+crates/node/yggdrasil-node/scripts/restart_resilience.sh
 ```
 
 Logs land at `$LOG_ROOT/cycle-NN.log` (default `/tmp/ygg-restart/`). Preserve them for forensic diff if any cycle reports non-monotonic regression (exit code 1).
@@ -280,16 +395,19 @@ NETWORK=preprod \
 MAX_CONCURRENT_BLOCK_FETCH_PEERS=2 \
 RUN_SECONDS=21600 \
 HASKELL_SOCK=/tmp/cardano.sock \
-node/scripts/parallel_blockfetch_soak.sh
+REQUIRE_TIP_COMPARISON=1 \
+crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh
 ```
 
 The harness starts `yggdrasil-node`, captures Prometheus snapshots,
-asserts worker registration/migration, optionally runs
-`compare_tip_to_haskell.sh` at `COMPARE_INTERVAL_S` cadence, scans logs
-for worker-channel failures, and writes a concise summary under
-`$LOG_DIR/summary.txt`. Use `RUN_SECONDS=86400` for the 24-hour soak
-steps and set `TOPOLOGY=/path/to/topology.json` when rehearsing with
-a custom multi-relay topology.
+asserts worker registration/migration, runs `compare_tip_to_haskell.sh` at
+`COMPARE_INTERVAL_S` cadence when `HASKELL_SOCK` is set, scans logs for
+worker-channel failures, and writes a concise summary under
+`$LOG_DIR/summary.txt`. Keep `REQUIRE_TIP_COMPARISON=1` for sign-off runs; it
+fails before startup when no Haskell socket is configured or when the comparison
+interval cannot fit inside the run window. Use `RUN_SECONDS=86400` for the
+24-hour soak steps and set `TOPOLOGY=/path/to/topology.json` when rehearsing
+with a custom multi-relay topology.
 
 ### 6.5a Two-peer parity check (preprod)
 
@@ -410,10 +528,10 @@ Run the existing tip-comparison harness from §5 against a Haskell node that's a
 YGG_SOCK=/tmp/ygg.sock \
 HASKELL_SOCK=/tmp/cardano.sock \
 NETWORK_MAGIC=1 \
-node/scripts/compare_tip_to_haskell.sh
+crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh
 
 # Watch loop, every 15 minutes:
-watch -n 900 'YGG_SOCK=/tmp/ygg.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 node/scripts/compare_tip_to_haskell.sh'
+watch -n 900 'YGG_SOCK=/tmp/ygg.sock HASKELL_SOCK=/tmp/cardano.sock NETWORK_MAGIC=1 crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh'
 ```
 
 **Pass criterion:** the Yggdrasil tip `{slot, hash, block, epoch}` must match the Haskell tip at every check for at least 6 hours after the multi-peer mode is engaged. Any divergence under parallel fetch indicates a bug in the dispatch / reorder / tentative-header path that does not surface in the single-peer path.
@@ -796,9 +914,9 @@ At the end of a successful rehearsal session, record (e.g. into a session log):
 
 - `archive/AUDIT_VERIFICATION_2026Q2.md` — gap status that this runbook closes
 - `docs/PARITY_SUMMARY.md` lines 303–307 — "Next Steps" defining the rehearsal cadence
-- `node/scripts/run_preprod_real_pool_producer.sh` — preprod rehearsal template
-- `node/scripts/run_mainnet_real_pool_producer.sh` — mainnet rehearsal (Slice L)
-- `node/scripts/compare_tip_to_haskell.sh` — hash-comparison harness (Slice M)
-- `node/scripts/restart_resilience.sh` — restart-resilience automation (Slice N)
-- `node/scripts/parallel_blockfetch_soak.sh` — §6.5 multi-peer BlockFetch soak automation
+- `crates/node/yggdrasil-node/scripts/run_preprod_real_pool_producer.sh` — preprod rehearsal template
+- `crates/node/yggdrasil-node/scripts/run_mainnet_real_pool_producer.sh` — mainnet rehearsal (Slice L)
+- `crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh` — hash-comparison harness (Slice M)
+- `crates/node/yggdrasil-node/scripts/restart_resilience.sh` — restart-resilience automation (Slice N)
+- `crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh` — §6.5 multi-peer BlockFetch soak automation
 - `IntersectMBO/cardano-node-tests` — upstream system/E2E parity harness and process taxonomy: <https://github.com/IntersectMBO/cardano-node-tests>, <https://tests.cardano.intersectmbo.org/>, <https://tests.cardano.intersectmbo.org/process.html>

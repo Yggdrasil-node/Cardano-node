@@ -75,7 +75,7 @@ release tags) or a Rust file was renamed without updating the matrix.
 
 Cross-checks the `cardano-base` SHA pin matrix:
 
-- `crates/node/yggdrasil-node/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT` (Rust constant).
+- `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT` (Rust constant).
 - `specs/upstream-test-vectors/cardano-base/<SHA>/` (vendored corpus directory).
 - `docs/SPECS.md` (provenance prose).
 - `docs/UPSTREAM_PARITY.md` (pin matrix table).
@@ -121,6 +121,11 @@ lockstep with `docs/parity-matrix.json::reference.tag`,
 `scripts/check-parity-matrix.py`, and prose mentions in `AGENTS.md` +
 `CLAUDE.md`. See `intersectmbo_version_policy.md` in agent memory for
 the full bump checklist.
+
+The generated `install/run-node.sh` launcher defaults to
+`.reference-haskell-cardano-node/install/run/<network>/`, but accepts
+`RUN_ROOT=/tmp/cardano-reference` so reference sockets and ChainDBs can live on
+a native Unix-socket-capable filesystem during local Haskell relay comparisons.
 
 ## Discovery script
 
@@ -189,4 +194,4 @@ which filename is "in scope".
   `.reference-haskell-cardano-node/`
 - Policy tag source-of-truth: [`docs/parity-matrix.json`](../docs/parity-matrix.json) (`reference.tag`)
 - Strict-mirror allowlist source-of-truth: [`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv)
-- Fixture-manifest pin source-of-truth: [`crates/node/yggdrasil-node/src/upstream_pins.rs`](../crates/node/yggdrasil-node/src/upstream_pins.rs) (`UPSTREAM_CARDANO_BASE_COMMIT`)
+- Fixture-manifest pin source-of-truth: [`crates/node/config/src/upstream_pins.rs`](../crates/node/config/src/upstream_pins.rs) (`UPSTREAM_CARDANO_BASE_COMMIT`)

@@ -59,7 +59,14 @@ The 2026-Q2 audit ([`docs/AUDIT_VERIFICATION_2026Q2.md`](archive/AUDIT_VERIFICAT
 
 Upstream parity testing is complete with CBOR golden round-trip tests and cross-subsystem integration tests. Wire-format field names align with official Cardano CDDL schemas.
 
-The remaining production-readiness gate is operator-side: the mainnet sync endurance run (`docs/MANUAL_TEST_RUNBOOK.md` §2–9) and ongoing operational hardening; the parallel-fetch rehearsal (§6.5) was completed at R218 (`docs/operational-runs/archive/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`), measured a 67% throughput delta, and graduated the default `max_concurrent_block_fetch_peers` from `1` to `2` at R258 (`docs/operational-runs/archive/2026-05-06-round-258-multipeer-default-graduation.md`).
+The remaining production-readiness gates are operator-side: the mainnet sync
+endurance run (`docs/MANUAL_TEST_RUNBOOK.md` §2–9), ongoing operational
+hardening, and the current §6.5 parallel-fetch sign-off. Historical rounds R218
+and R258 recorded multi-peer measurements and the default
+`max_concurrent_block_fetch_peers = 2`, but the 2026-05-19 full-parity audit
+revalidated preview and mainnet and observed healthy single-peer progress with
+`yggdrasil_blockfetch_workers_registered = 0`. Treat §6.5 as open until a
+fresh Haskell-compared 6h/24h run shows worker activation on the current code.
 
 Topology parsing and preset-specific config resolution currently stay in `node` because they are operational concerns tied to the node binary's config format. Once peer selection grows into ledger peers, peer sharing, or long-lived governor policy, that logic should move behind a network-crate boundary rather than continuing to grow in `node`.
 
@@ -69,7 +76,16 @@ Topology parsing and preset-specific config resolution currently stay in `node` 
 - Phase 3: peer registry state in `crates/network` is complete. The crate now exposes a minimal registry for peer source and status aligned with upstream `PeerSource` and `PeerStatus` concepts, including local root, public root, bootstrap, ledger, big-ledger, and peer-share origins plus cold, cooling, warm, and hot states. Root-provider refreshes already reconcile through this registry, and the crate now also exposes set-reconciliation helpers for ledger, big-ledger, and peer-share inputs so `node` does not need to hand-roll source bookkeeping. Ledger peer provider layer is complete: `LedgerPeerProvider` trait, `LedgerPeerSnapshot` normalization (deduplicates and enforces disjoint ledger/big-ledger sets), `LedgerPeerProviderRefresh` (combined/per-kind), `apply_ledger_peer_refresh()` helper, `refresh_ledger_peer_registry()` orchestration, and `ScriptedLedgerPeerProvider` for testing. Provider refreshes reconcile the `PeerRegistry` on crate-owned paths without node involvement.
 - Phase 4: consensus-network bridge for ledger peers is complete. The network crate owns the live orchestration seam (`live_refresh_ledger_peer_registry_observed`) and applies policy reconciliation from consensus-fed `(latest_slot, judgement, ledger_snapshot)` plus snapshot-file observations. Node runtime now provides storage-backed source adapters only, and consumes the same observed judgement returned by the network orchestration for governor mode/churn decisions, removing duplicate node-side ledger judgement derivation while preserving startup/reconnect ledger-peer refresh behavior.
 - Phase 5: governor-style policy. Only after the previous phases exist should Yggdrasil add promotion, demotion, peer sharing, public-root refresh backoff, churn, or Genesis-specific security behavior. The implementation should keep policy separate from mechanism, as in upstream `PeerSelectionActions`, `PeerSelectionPolicy`, and governor state modules. **Status: complete.** Promotion/demotion logic, peer sharing, public-root and big-ledger backoff, two-phase churn cycle, sensitive/normal mode, association mode, hot-peer scheduling, and density-biased demotion all live in `crates/network::governor`.
-- Phase 6: runtime multi-session orchestration. **Status: complete; default-on as of R258.** End-to-end multi-peer concurrent BlockFetch is wired and active by default (`max_concurrent_block_fetch_peers = 2`, matching upstream `bfcMaxConcurrencyBulkSync`). Operators wanting strict single-peer behaviour for replay/audit set the knob to `1`. The consensus-correctness contract is locked in `dispatch_range_with_tentative` and tested (announce → dispatch → clear-trap-on-failure).
+- Phase 6: runtime multi-session orchestration. **Status: primitives complete;
+  current operational sign-off open.** End-to-end multi-peer concurrent
+  BlockFetch primitives are wired, and the default knob is
+  `max_concurrent_block_fetch_peers = 2` (matching upstream
+  `bfcMaxConcurrencyBulkSync`). However, current live revalidation shows the
+  running preset paths still syncing through one active peer with zero
+  registered BlockFetch workers. Operators wanting strict single-peer behaviour
+  for replay/audit set the knob to `1`. The consensus-correctness contract is
+  locked in `dispatch_range_with_tentative` and tested
+  (announce → dispatch → clear-trap-on-failure).
 
   1. **Warm-peer BlockFetch handle accessor.** **Done** (Slice E-Phase6-Seam, commit `5d44c70`). `OutboundPeerManager::with_hot_block_fetch_clients<R>(&mut self, f: FnOnce(&mut [(SocketAddr, &mut BlockFetchClient)]) -> R) -> R` exposes hot peers' BlockFetch handles as a borrow-checked slice; `hot_peer_addrs()` is the cheap snapshot for sizing concurrency.
 
@@ -79,7 +95,19 @@ Topology parsing and preset-specific config resolution currently stay in `node` 
 
   4. **Connection-manager coordination.** **Done** (Slice E-Migration `0f612aa` + Slice E-Promote `1249f7f`). The governor's `evaluate_hot_promotions` produces N promotions per tick; `apply_cm_actions` calls `OutboundPeerManager::migrate_session_to_worker(peer)` after successful `promote_to_warm` when `max_concurrent_block_fetch_peers > 1`, emitting a `Net.BlockFetch.Worker` info trace.  On peer disconnect, the now-async `demote_to_cold` calls `unregister_worker(peer)` to remove the worker and `prune_closed()` to GC dead workers.  On reconnect, the next promote re-spawns a worker via `FetchWorkerHandle::spawn_with_block_fetch_client`.  The dispatcher's error-propagation path (drop pending oneshot receivers, propagate first error) is correct for mid-fetch peer loss — surviving workers stay alive for subsequent iterations; only the offending request's response is lost.
 
-  5. **Operational rollout.** **Done** (R258, `2026-05-06`). Default `max_concurrent_block_fetch_peers = 2` ships matching upstream `bfcMaxConcurrencyBulkSync = 2`. Graduated from the prior single-peer default after R218 measured a 67% mainnet throughput delta on the multi-peer path. The §6.5 parallel-fetch rehearsal (steps 6.5a–6.5f covering 2- and 4-peer soak with hash-comparison vs. Haskell node and restart-resilience cycles) remains in [`docs/MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) for operators stress-testing knob > 2 or running endurance soaks. Phase 6 observability (`yggdrasil_blockfetch_workers_registered` gauge + `_migrated_total` counter) gives operator dashboards the instrumentation needed to alert on stuck migration.
+  5. **Operational rollout.** **Open on current evidence.** Default
+     `max_concurrent_block_fetch_peers = 2` ships matching upstream
+     `bfcMaxConcurrencyBulkSync = 2`, and R218 historically measured a 67%
+     mainnet throughput delta on a multi-peer path. Current R513 revalidation
+     did not reproduce worker activation from the preset runtime paths
+     (`yggdrasil_blockfetch_workers_registered = 0` on bounded preview/mainnet
+     diagnostics). The §6.5 parallel-fetch rehearsal (steps 6.5a–6.5f covering
+     2- and 4-peer soak with hash-comparison vs. Haskell node and
+     restart-resilience cycles) remains in
+     [`docs/MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) for current
+     sign-off. Phase 6 observability (`yggdrasil_blockfetch_workers_registered`
+     gauge + `_migrated_total` counter) gives operator dashboards the
+     instrumentation needed to alert on stuck migration.
 
   Reference: upstream `Ouroboros.Network.BlockFetch.ClientRegistry` (per-peer `FetchClientStateVars`) + `Ouroboros.Network.BlockFetch.Decision.fetchDecisions` + `Ouroboros.Network.BlockFetch.State.completeBlockDownload`.
 

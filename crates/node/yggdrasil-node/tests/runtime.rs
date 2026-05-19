@@ -172,6 +172,85 @@ async fn spawn_verified_batch_responder(
     addr
 }
 
+async fn spawn_origin_intersect_required_verified_batch_responder(
+    magic: u32,
+    tip: Point,
+    block_bytes: Vec<u8>,
+    linger: std::time::Duration,
+) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local addr");
+
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut conn = peer_accept(stream, magic, &[HandshakeVersion(15)])
+            .await
+            .expect("accept handshake");
+
+        let mut cs = conn
+            .protocols
+            .remove(&MiniProtocolNum::CHAIN_SYNC)
+            .expect("chainsync handle");
+        let mut bf = conn
+            .protocols
+            .remove(&MiniProtocolNum::BLOCK_FETCH)
+            .expect("blockfetch handle");
+
+        let tip_obj = Tip::Tip(tip, BlockNo(0));
+        let cs_req = cs.recv().await.expect("cs recv intersect");
+        let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs intersect");
+        match cs_msg {
+            ChainSyncMessage::MsgFindIntersect { points } => {
+                assert_eq!(points, vec![Point::Origin.to_cbor_bytes()]);
+                cs.send(
+                    ChainSyncMessage::MsgIntersectFound {
+                        point: Point::Origin.to_cbor_bytes(),
+                        tip: tip_obj.to_cbor_bytes(),
+                    }
+                    .to_cbor(),
+                )
+                .await
+                .expect("send origin intersect");
+            }
+            other => panic!("expected origin MsgFindIntersect before RequestNext, got {other:?}"),
+        }
+
+        let cs_req = cs.recv().await.expect("cs recv request next");
+        let cs_msg = ChainSyncMessage::from_cbor(&cs_req).expect("decode cs request next");
+        assert_eq!(cs_msg, ChainSyncMessage::MsgRequestNext);
+
+        cs.send(
+            ChainSyncMessage::MsgRollForward {
+                header: vec![0x82, 0x00, 0x01],
+                tip: tip_obj.to_cbor_bytes(),
+            }
+            .to_cbor(),
+        )
+        .await
+        .expect("send rollforward");
+
+        let bf_req = bf.recv().await.expect("bf recv");
+        let _bf_msg = BlockFetchMessage::from_cbor(&bf_req).expect("decode bf request");
+
+        bf.send(BlockFetchMessage::MsgStartBatch.to_cbor())
+            .await
+            .expect("start batch");
+        bf.send(BlockFetchMessage::MsgBlock { block: block_bytes }.to_cbor())
+            .await
+            .expect("send block");
+        bf.send(BlockFetchMessage::MsgBatchDone.to_cbor())
+            .await
+            .expect("batch done");
+
+        tokio::time::sleep(linger).await;
+        conn.mux.abort();
+    });
+
+    addr
+}
+
 async fn spawn_verified_batch_responder_with_header(
     magic: u32,
     tip: Point,
@@ -1238,6 +1317,88 @@ async fn runtime_resume_sync_notifies_tip_waiters_after_batch_apply() {
     let outcome = sync_fut
         .await
         .expect("resume reconnecting verified sync service via chaindb");
+    assert!(outcome.sync.total_blocks >= 1);
+    assert_eq!(chain_db.volatile().tip(), tip);
+}
+
+#[tokio::test]
+async fn runtime_resume_sync_sends_find_intersect_even_from_origin() {
+    let magic = 81;
+    let block = build_multi_era_envelope(0, &build_byron_ebb_body(0, 1, &[0; 32]));
+    let tip = Point::BlockPoint(
+        SlotNo(0),
+        ByronBlock::decode_ebb(&block[2..])
+            .expect("decode ebb")
+            .header_hash(),
+    );
+    let addr = spawn_origin_intersect_required_verified_batch_responder(
+        magic,
+        tip,
+        block,
+        std::time::Duration::from_secs(2),
+    )
+    .await;
+
+    let node_config = NodeConfig {
+        peer_addr: addr,
+        network_magic: magic,
+        protocol_versions: vec![HandshakeVersion(15)],
+        peer_sharing: 1,
+    };
+    let service_config = VerifiedSyncServiceConfig {
+        batch_size: 1,
+        verification: VerificationConfig {
+            slots_per_kes_period: 129_600,
+            max_kes_evolutions: 62,
+            verify_body_hash: true,
+            max_major_protocol_version: None,
+            future_check: None,
+            ocert_counters: None,
+            pp_major_protocol_version: None,
+            network_magic: Some(magic),
+        },
+        nonce_config: None,
+        security_param: None,
+        checkpoint_policy: LedgerCheckpointPolicy::default(),
+        plutus_cost_model: None,
+        verify_vrf: false,
+        active_slot_coeff: None,
+        slot_length_secs: None,
+        system_start_unix_secs: None,
+        epoch_schedule: None,
+        block_fetch_pool: None,
+        max_concurrent_block_fetch_peers: 1,
+        density_registry: None,
+        shared_fetch_worker_pool: None,
+        shared_chainsync_worker_pool: None,
+    };
+
+    let mut chain_db = ChainDb::new(
+        InMemoryImmutable::default(),
+        InMemoryVolatile::default(),
+        InMemoryLedgerStore::default(),
+    );
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = shutdown_tx.send(());
+    });
+
+    let outcome = resume_reconnecting_verified_sync_service_chaindb(
+        &mut chain_db,
+        ResumeReconnectingVerifiedSyncRequest::new(
+            &node_config,
+            &[],
+            LedgerState::new(Era::Byron),
+            &service_config,
+        ),
+        async {
+            let _ = shutdown_rx.await;
+        },
+    )
+    .await
+    .expect("origin sync should intersect before request-next");
+
     assert!(outcome.sync.total_blocks >= 1);
     assert_eq!(chain_db.volatile().tip(), tip);
 }
