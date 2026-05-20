@@ -352,10 +352,23 @@ own parser / generator / submission implementation plus upstream
   {policyID = ScriptHash "..."},fromList [("<asset>",qty)])]))` Show
   output for non-empty multi-asset bundles, including `BTreeMap`
   byte-lex iteration order that mirrors upstream `Data.Map toAscList`.
-  The remaining tx-generator blockers are Plutus-bearing
-  Babbage/Conway `DumpToFile` rendering (inline datums, reference
-  scripts, Plutus witness sets, governance procedures) and
-  upstream-binary soak evidence.
+  R572 lifted the next boundary — `show_alonzo_witness_set` now
+  renders non-empty `plutus_data` and `redeemers` via upstream-
+  structured Show helpers (`show_plutus_data` for `Constr/Map/List/I/B`,
+  `show_haskell_bytestring` for Latin1 byte-string Show with `\NNN`
+  escapes and `\&` escape-boundary separator, `show_alonzo_tx_dats`
+  with sorted-DataHash + `tag 258` set-tag CBOR for the outer hash,
+  `show_alonzo_redeemers` with `(tag, index)` sorted + array-of-
+  `[tag,index,data,ex_units]` CBOR for the outer hash, plus
+  `show_alonzo_plutus_purpose` for the `AlonzoSpending` / `Minting` /
+  `Certifying` / `Rewarding` constructors and `show_alonzo_ex_units`
+  for the `ExUnits {exUnitsMem, exUnitsSteps}` record). Native scripts,
+  bootstrap witnesses, and Plutus V1/V2/V3 script-witness bytes are
+  the remaining `TxGenError` boundaries inside the witness set, plus
+  the inline datum / reference script paths on `BabbageTxOut`. The
+  remaining tx-generator blockers are those Plutus-script-witness
+  renderings, inline datums / reference scripts, governance
+  procedures, and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

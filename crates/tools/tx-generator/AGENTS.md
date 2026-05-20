@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R571 Mary multi-asset value DumpToFile rendering).
+**Status:** `partial` (post-R572 Plutus-bearing TxDats + Redeemers DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,37 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R572: `show_alonzo_witness_set` now renders non-empty
+  `plutus_data` and `redeemers` instead of returning `TxGenError`. New
+  helpers `show_plutus_data` (matching upstream stock-derived `Show
+  (PV1.Data)`: `Constr <i> [...]`, `Map [...]`, `List [...]`, `I <n>`,
+  `B <bytestring>`), `show_haskell_bytestring` (Latin1 byte-string
+  Show — printable ASCII inline, `"` and `\` escaped, `\n`/`\t`/`\r`
+  named escapes, `\NNN` decimal escapes for bytes >= 0x80 with `\&`
+  separator before following digits), `show_alonzo_tx_dats` (full
+  `MkTxDats (TxDatsRaw {unTxDatsRaw = fromList [(SafeHash
+  "<hex>",MkData I 42 (blake2b_256: SafeHash "<hex>"))...]}
+  (blake2b_256: SafeHash "<hex>"))` envelope with sorted DataHash
+  ordering and definite-length set-tag CBOR over each datum's
+  canonical CBOR for the outer hash), `show_alonzo_redeemers` (full
+  `MkRedeemers (RedeemersRaw {unRedeemersRaw = fromList
+  [(AlonzoSpending (AsIx {unAsIx = N}),(...Data...,ExUnits {exUnitsMem
+  = ..., exUnitsSteps = ...}))]} (blake2b_256: SafeHash "<hex>"))`
+  envelope with `(tag, index)` sorted ordering and definite-length
+  array-of-`[tag,index,data,ex_units]` CBOR for the outer hash), plus
+  `show_alonzo_plutus_purpose` (tag→constructor: 0
+  `AlonzoSpending`, 1 `AlonzoMinting`, 2 `AlonzoCertifying`, 3
+  `AlonzoRewarding`) and `show_alonzo_ex_units`. 7 focused unit tests
+  cover the renderer surface: integer signs, byte-string escapes
+  (printable, non-ASCII, escape-boundary, backslash/quote escapes),
+  List, Map+Constr nesting, single Spending redeemer, multi-redeemer
+  `(tag, index)` sort, single-datum TxDats. Native scripts, bootstrap
+  witnesses, and Plutus V1/V2/V3 script witnesses still return
+  `TxGenError` until their downstream mirrors land. Note: the
+  bytestring renderer matches structural Haskell `Show (ByteString)`
+  without the full mnemonic-escape set (`\NUL`, `\SOH`, ...,
+  `\DEL`); upstream-binary soak evidence will close that for byte
+  parity.
 - Shipped R571: `show_mary_value` now renders non-empty `MultiAsset`
   bundles for Mary/Alonzo/Babbage/Conway transaction outputs, mirroring
   upstream `Show (MaryValue)` and `Show (MultiAsset)`:
@@ -510,8 +541,19 @@ This crate's full implementation remains an A4 sister-tool build-out:
   Show output for non-empty multi-asset bundles. Lifts the multi-asset
   boundary across the Mary, Alonzo, Babbage, and Conway `tx_out`
   renderers in one round.
-- Next: Plutus-bearing Babbage/Conway `DumpToFile` Show coverage and
-  upstream-binary soak in strict-mirror-sized slices.
+- Shipped: Plutus-bearing TxDats + Redeemers DumpToFile rendering
+  (R572): `show_alonzo_witness_set` now renders non-empty
+  `plutus_data` and `redeemers` via `show_plutus_data`,
+  `show_haskell_bytestring`, `show_alonzo_tx_dats`,
+  `show_alonzo_redeemers`, `show_alonzo_plutus_purpose`, and
+  `show_alonzo_ex_units`, including blake2b_256 hashes computed from
+  the upstream-canonical CBOR shape (`tag 258` + array for TxDats,
+  array-of-`[tag,index,data,ex_units]` for Redeemers) and `(tag,
+  index)`-sorted redeemer ordering matching upstream `Map PlutusPurpose
+  AsIx era` traversal. Native scripts, bootstrap witnesses, and Plutus
+  V1/V2/V3 script witnesses still return `TxGenError`.
+- Next: Plutus V1/V2/V3 script-witness rendering, native-script
+  rendering, and upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

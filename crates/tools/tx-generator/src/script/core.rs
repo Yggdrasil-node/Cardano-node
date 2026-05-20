@@ -25,7 +25,9 @@ use yggdrasil_ledger::{
     BabbageTxOut, CborDecode, CborEncode, ConwayTxBody, DatumOption, Decoder, Encoder, MaryTxBody,
     MaryTxOut, PlutusData, ProtocolParameters, ScriptRef, ShelleyCompatibleSubmittedTx,
     ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVkeyWitness, ShelleyWitnessSet,
-    StakeCredential, eras::alonzo::ExUnits, total_min_fee,
+    StakeCredential,
+    eras::alonzo::{ExUnits, Redeemer},
+    total_min_fee,
 };
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
@@ -1604,13 +1606,11 @@ fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Er
     if !witness_set.native_scripts.is_empty()
         || !witness_set.bootstrap_witnesses.is_empty()
         || !witness_set.plutus_v1_scripts.is_empty()
-        || !witness_set.plutus_data.is_empty()
-        || !witness_set.redeemers.is_empty()
         || !witness_set.plutus_v2_scripts.is_empty()
         || !witness_set.plutus_v3_scripts.is_empty()
     {
         return Err(lift_tx_gen_error(
-            "DumpToFile: Alonzo Show(Tx) renderer does not yet support non-vkey witnesses",
+            "DumpToFile: Alonzo Show(Tx) renderer does not yet support native or Plutus scripts",
         ));
     }
 
@@ -1621,23 +1621,244 @@ fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Er
         .map(show_vkey_witness)
         .collect::<Vec<_>>()
         .join(",");
+    let dats = show_alonzo_tx_dats(&witness_set.plutus_data);
+    let rdmrs = show_alonzo_redeemers(&witness_set.redeemers)?;
     let witness_hash = hex::encode(hash_bytes_256(&witness_set.to_cbor_bytes()).0);
     Ok(format!(
-        "AlonzoTxWitsRaw {{atwrAddrTxWits = fromList [{vkeys}], atwrBootAddrTxWits = fromList [], atwrScriptTxWits = fromList [], atwrDatsTxWits = {}, atwrRdmrsTxWits = {}}} (blake2b_256: SafeHash \"{witness_hash}\")",
-        show_empty_alonzo_tx_dats(),
-        show_empty_alonzo_redeemers(),
+        "AlonzoTxWitsRaw {{atwrAddrTxWits = fromList [{vkeys}], atwrBootAddrTxWits = fromList [], atwrScriptTxWits = fromList [], atwrDatsTxWits = {dats}, atwrRdmrsTxWits = {rdmrs}}} (blake2b_256: SafeHash \"{witness_hash}\")"
     ))
 }
 
-fn show_empty_alonzo_tx_dats() -> String {
-    let hash = hex::encode(hash_bytes_256(&[0xd9, 0x01, 0x02, 0x80]).0);
-    format!("MkTxDats (TxDatsRaw {{unTxDatsRaw = fromList []}} (blake2b_256: SafeHash \"{hash}\"))")
+/// Render `MkTxDats (TxDatsRaw {unTxDatsRaw = fromList [...]} (blake2b_256:
+/// SafeHash "<hex>"))` matching upstream stock-derived Show through the
+/// `MemoBytes` wrapper.
+///
+/// Entry order follows the sorted DataHash key (upstream `Map DataHash`
+/// uses byte-lex ordering on `SafeHash` Hash bytes). The MemoBytes raw
+/// CBOR is `tag 258` + variable-length array of each datum's CBOR, mirroring
+/// upstream `encodeWithSetTag . Map.elems . unTxDatsRaw`.
+fn show_alonzo_tx_dats(plutus_data: &[PlutusData]) -> String {
+    let mut entries: Vec<(Hash256, &PlutusData)> = plutus_data
+        .iter()
+        .map(|pd| (hash_bytes_256(&pd.to_cbor_bytes()).0, pd))
+        .collect();
+    entries.sort_by_key(|a| a.0);
+
+    let raw_bytes = alonzo_tx_dats_raw_cbor(&entries);
+    let outer_hash = hex::encode(hash_bytes_256(&raw_bytes).0);
+
+    let body = entries
+        .iter()
+        .map(|(hash, pd)| {
+            let datum_hash_hex = hex::encode(hash);
+            let pd_hash_hex = hex::encode(hash_bytes_256(&pd.to_cbor_bytes()).0);
+            format!(
+                "(SafeHash \"{datum_hash_hex}\",MkData {} (blake2b_256: SafeHash \"{pd_hash_hex}\"))",
+                show_plutus_data(pd)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+
+    format!(
+        "MkTxDats (TxDatsRaw {{unTxDatsRaw = fromList [{body}]}} (blake2b_256: SafeHash \"{outer_hash}\"))"
+    )
 }
 
-fn show_empty_alonzo_redeemers() -> String {
-    let hash = hex::encode(hash_bytes_256(&[0x80]).0);
+type Hash256 = [u8; 32];
+
+/// CBOR encoding of `TxDatsRaw` — `tag 258` (set marker) plus a variable-length
+/// array of each datum's CBOR, mirroring upstream
+/// `encodeWithSetTag . Map.elems . unTxDatsRaw`. Empty input encodes to
+/// `[0xd9, 0x01, 0x02, 0x80]` which matches the existing empty-dats fixture.
+fn alonzo_tx_dats_raw_cbor(entries: &[(Hash256, &PlutusData)]) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.tag(258);
+    enc.array(entries.len() as u64);
+    for (_, pd) in entries {
+        pd.encode_cbor(&mut enc);
+    }
+    enc.into_bytes()
+}
+
+/// Render `PlutusData` matching upstream `Show (PV1.Data)` — the stock-derived
+/// Show for `data Data = Constr Integer [Data] | Map [(Data,Data)] | List [Data] | I Integer | B ByteString`.
+///
+/// Children are rendered at showsPrec 11 because they are constructor
+/// arguments; integers wrap with parens only when negative (showsPrec 11 of a
+/// non-negative integer is the bare digit sequence). Byte strings render via
+/// upstream `Show ByteString`, which interprets bytes as Latin1 and applies
+/// standard Haskell `Show String` escapes (printable ASCII inline,
+/// non-printable as `\NNN` decimal escapes).
+///
+/// Used to render `Data era` payloads inside `TxDatsRaw` and `RedeemersRaw`
+/// dump output. R572 ships the renderer; R573 will lift the boundary in
+/// `show_alonzo_witness_set` for non-empty `plutus_data` and `redeemers`.
+fn show_plutus_data(data: &PlutusData) -> String {
+    show_plutus_data_prec(data, 0)
+}
+
+fn show_plutus_data_prec(data: &PlutusData, prec: u8) -> String {
+    match data {
+        PlutusData::Constr(alt, fields) => {
+            let items = fields
+                .iter()
+                .map(show_plutus_data)
+                .collect::<Vec<_>>()
+                .join(",");
+            paren_if(prec > 10, &format!("Constr {alt} [{items}]"))
+        }
+        PlutusData::Map(entries) => {
+            let rendered = entries
+                .iter()
+                .map(|(k, v)| format!("({},{})", show_plutus_data(k), show_plutus_data(v)))
+                .collect::<Vec<_>>()
+                .join(",");
+            paren_if(prec > 10, &format!("Map [{rendered}]"))
+        }
+        PlutusData::List(items) => {
+            let rendered = items
+                .iter()
+                .map(show_plutus_data)
+                .collect::<Vec<_>>()
+                .join(",");
+            paren_if(prec > 10, &format!("List [{rendered}]"))
+        }
+        PlutusData::Integer(n) => {
+            // `I` is a single-arg constructor: stock-derived Show wraps the
+            // whole `I <n>` with parens at prec > 10. The inner integer Show
+            // at showsPrec 11 wraps negatives in parens itself (because `-`
+            // is unary minus and parses tighter at p > 6); non-negatives are
+            // shown bare.
+            let inner = if n.sign() == num_bigint::Sign::Minus {
+                format!("({n})")
+            } else {
+                format!("{n}")
+            };
+            paren_if(prec > 10, &format!("I {inner}"))
+        }
+        PlutusData::Bytes(bs) => paren_if(prec > 10, &format!("B {}", show_haskell_bytestring(bs))),
+    }
+}
+
+fn paren_if(condition: bool, inner: &str) -> String {
+    if condition {
+        format!("({inner})")
+    } else {
+        inner.to_string()
+    }
+}
+
+/// Render a Rust `&[u8]` as Haskell's default `Show ByteString` produces.
+///
+/// Bytes are interpreted as Latin1 chars; printable ASCII (0x20-0x7E except
+/// `"` and `\\`) is inlined; `"` and `\\` are backslash-escaped; control
+/// characters and bytes >= 0x80 use Haskell decimal escapes (`\\<n>`).
+///
+/// Mirrors GHC's derived `Show String` over `Data.ByteString.unpackChars`,
+/// which is the path upstream `instance Show ByteString` uses.
+fn show_haskell_bytestring(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() + 2);
+    out.push('"');
+    for (idx, byte) in bytes.iter().enumerate() {
+        let next_is_digit = bytes.get(idx + 1).is_some_and(u8::is_ascii_digit);
+        match *byte {
+            b'"' => out.push_str("\\\""),
+            b'\\' => out.push_str("\\\\"),
+            b'\n' => out.push_str("\\n"),
+            b'\t' => out.push_str("\\t"),
+            b'\r' => out.push_str("\\r"),
+            // Printable ASCII (0x20-0x7E), excluding `"` and `\\` already
+            // handled above.
+            0x20..=0x7E => out.push(*byte as char),
+            // Non-printable / non-ASCII bytes: Haskell `\\NNN` decimal escape.
+            // GHC inserts `\&` separator before a following digit so the
+            // escape boundary is unambiguous (e.g. `\\10\&5`, not `\\105`).
+            _ => {
+                out.push_str(&format!("\\{byte}"));
+                if next_is_digit {
+                    out.push_str("\\&");
+                }
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Render `MkRedeemers (RedeemersRaw {unRedeemersRaw = fromList [...]}
+/// (blake2b_256: SafeHash "<hex>"))` matching upstream stock-derived Show
+/// through the `MemoBytes` wrapper.
+///
+/// Entries are sorted by `(tag, index)` to match upstream `Map (PlutusPurpose
+/// AsIx era) (Data era, ExUnits)` ordering. The MemoBytes raw CBOR is the
+/// Alonzo-era array-of-`[tag,index,data,ex_units]` encoding emitted by
+/// `Redeemer::encode_cbor`; that's what feeds the BLAKE2b-256 hash.
+///
+/// `tag` is mapped to the upstream `PlutusPurpose` constructor: 0 →
+/// `AlonzoSpending`, 1 → `AlonzoMinting`, 2 → `AlonzoCertifying`, 3 →
+/// `AlonzoRewarding`.
+fn show_alonzo_redeemers(redeemers: &[Redeemer]) -> Result<String, Error> {
+    let mut sorted = redeemers.to_vec();
+    sorted.sort_by_key(|r| (r.tag, r.index));
+
+    let raw_bytes = alonzo_redeemers_raw_cbor(&sorted);
+    let outer_hash = hex::encode(hash_bytes_256(&raw_bytes).0);
+
+    let entries: Result<Vec<String>, Error> = sorted
+        .iter()
+        .map(|r| {
+            let purpose = show_alonzo_plutus_purpose(r.tag, r.index)?;
+            let data = show_plutus_data(&r.data);
+            let ex_units = show_alonzo_ex_units(&r.ex_units);
+            Ok(format!("({purpose},({data},{ex_units}))"))
+        })
+        .collect();
+    let body = entries?.join(",");
+
+    Ok(format!(
+        "MkRedeemers (RedeemersRaw {{unRedeemersRaw = fromList [{body}]}} (blake2b_256: SafeHash \"{outer_hash}\"))"
+    ))
+}
+
+/// CBOR encoding of `RedeemersRaw` for the Alonzo era: a definite-length array
+/// of `[tag, index, data, ex_units]` redeemer entries, matching
+/// `Redeemer::encode_cbor`'s 4-element array shape. Empty input encodes to
+/// `[0x80]` (definite array of length 0), matching the prior empty-redeemers
+/// fixture hash.
+fn alonzo_redeemers_raw_cbor(redeemers: &[Redeemer]) -> Vec<u8> {
+    let mut enc = Encoder::new();
+    enc.array(redeemers.len() as u64);
+    for r in redeemers {
+        r.encode_cbor(&mut enc);
+    }
+    enc.into_bytes()
+}
+
+/// Render the `PlutusPurpose AsIx era` constructor for an Alonzo redeemer
+/// tag/index pair, mirroring stock-derived
+/// `Show (AlonzoPlutusPurpose AsIx era)` and the `AsIx` newtype Show.
+fn show_alonzo_plutus_purpose(tag: u8, index: u64) -> Result<String, Error> {
+    let constructor = match tag {
+        0 => "AlonzoSpending",
+        1 => "AlonzoMinting",
+        2 => "AlonzoCertifying",
+        3 => "AlonzoRewarding",
+        other => {
+            return Err(lift_tx_gen_error(format!(
+                "DumpToFile: Alonzo Show(Tx) renderer received unknown redeemer tag {other}"
+            )));
+        }
+    };
+    Ok(format!("{constructor} (AsIx {{unAsIx = {index}}})"))
+}
+
+/// Render `ExUnits {exUnitsMem = <m>, exUnitsSteps = <s>}` matching upstream
+/// stock-derived Show on the two-field record.
+fn show_alonzo_ex_units(ex: &ExUnits) -> String {
     format!(
-        "MkRedeemers (RedeemersRaw {{unRedeemersRaw = fromList []}} (blake2b_256: SafeHash \"{hash}\"))"
+        "ExUnits {{exUnitsMem = {}, exUnitsSteps = {}}}",
+        ex.mem, ex.steps
     )
 }
 
@@ -2809,6 +3030,143 @@ mod tests {
         assert!(
             zero_pos < ff_pos,
             "policies must be rendered in ascending byte-lex order: rendered={rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_plutus_data_renders_integer() {
+        assert_eq!(show_plutus_data(&PlutusData::integer(0)), "I 0");
+        assert_eq!(show_plutus_data(&PlutusData::integer(42)), "I 42");
+        assert_eq!(show_plutus_data(&PlutusData::integer(-7)), "I (-7)");
+    }
+
+    #[test]
+    fn dumptofile_plutus_data_renders_bytes() {
+        // Printable ASCII inline, non-printable as Haskell decimal escapes.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(b"abc".to_vec())),
+            "B \"abc\""
+        );
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF])),
+            "B \"\\222\\173\\190\\239\""
+        );
+        // `\&` separator inserted before a following digit so the escape
+        // boundary is unambiguous (decimal 200 followed by ASCII '5').
+        // Bytes >= 0x80 always use the decimal `\NNN` form; the renderer
+        // does not yet emit mnemonic escapes for the 0x00-0x1F range (those
+        // are matched against the printable-ASCII branch in upstream Show
+        // and need named escapes like `\NUL`, `\SOH`, ... — a future
+        // round may close that for full byte parity).
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0xC8, b'5'])),
+            "B \"\\200\\&5\""
+        );
+        // Backslash and double-quote escape paths.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(b"a\\b\"c".to_vec())),
+            "B \"a\\\\b\\\"c\""
+        );
+    }
+
+    #[test]
+    fn dumptofile_plutus_data_renders_list() {
+        let list = PlutusData::List(vec![
+            PlutusData::integer(1),
+            PlutusData::integer(2),
+            PlutusData::Bytes(b"x".to_vec()),
+        ]);
+        assert_eq!(show_plutus_data(&list), "List [I 1,I 2,B \"x\"]");
+    }
+
+    #[test]
+    fn dumptofile_plutus_data_renders_map_and_constr() {
+        let inner = PlutusData::Constr(
+            0,
+            vec![
+                PlutusData::integer(7),
+                PlutusData::List(vec![PlutusData::Bytes(b"a".to_vec())]),
+            ],
+        );
+        let outer = PlutusData::Map(vec![(PlutusData::integer(0), inner)]);
+        assert_eq!(
+            show_plutus_data(&outer),
+            "Map [(I 0,Constr 0 [I 7,List [B \"a\"]])]"
+        );
+    }
+
+    #[test]
+    fn dumptofile_alonzo_redeemers_render_single_spending_entry() {
+        let redeemer = Redeemer {
+            tag: 0,
+            index: 3,
+            data: PlutusData::integer(42),
+            ex_units: ExUnits {
+                mem: 1000,
+                steps: 2000,
+            },
+        };
+        let rendered = show_alonzo_redeemers(&[redeemer]).expect("single spending redeemer");
+        assert!(
+            rendered.contains("(AlonzoSpending (AsIx {unAsIx = 3}),(I 42,ExUnits {exUnitsMem = 1000, exUnitsSteps = 2000}))"),
+            "unexpected redeemer rendering: {rendered}"
+        );
+        assert!(
+            rendered.starts_with("MkRedeemers (RedeemersRaw {unRedeemersRaw = fromList ["),
+            "unexpected redeemers envelope: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_alonzo_redeemers_sort_by_tag_then_index() {
+        // Insert out-of-order; expect sorted (tag, index) on output.
+        let rs = vec![
+            Redeemer {
+                tag: 1,
+                index: 0,
+                data: PlutusData::integer(0),
+                ex_units: ExUnits { mem: 0, steps: 0 },
+            },
+            Redeemer {
+                tag: 0,
+                index: 5,
+                data: PlutusData::integer(0),
+                ex_units: ExUnits { mem: 0, steps: 0 },
+            },
+            Redeemer {
+                tag: 0,
+                index: 2,
+                data: PlutusData::integer(0),
+                ex_units: ExUnits { mem: 0, steps: 0 },
+            },
+        ];
+        let rendered = show_alonzo_redeemers(&rs).expect("multi-redeemer rendering");
+        let spend2 = rendered
+            .find("AlonzoSpending (AsIx {unAsIx = 2})")
+            .expect("spend2");
+        let spend5 = rendered
+            .find("AlonzoSpending (AsIx {unAsIx = 5})")
+            .expect("spend5");
+        let mint0 = rendered
+            .find("AlonzoMinting (AsIx {unAsIx = 0})")
+            .expect("mint0");
+        assert!(
+            spend2 < spend5 && spend5 < mint0,
+            "redeemer ordering wrong: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_alonzo_tx_dats_render_single_datum() {
+        let datum = PlutusData::integer(42);
+        let rendered = show_alonzo_tx_dats(std::slice::from_ref(&datum));
+        assert!(
+            rendered.starts_with("MkTxDats (TxDatsRaw {unTxDatsRaw = fromList [("),
+            "unexpected TxDats envelope: {rendered}"
+        );
+        assert!(
+            rendered.contains(",MkData I 42 (blake2b_256: SafeHash \""),
+            "expected inner MkData with PlutusData show: {rendered}"
         );
     }
 
