@@ -24,12 +24,15 @@ use crate::generator_tx::sized_metadata::{TxMetadata, mk_metadata};
 use crate::script::aeson;
 use crate::script::env::{
     Env, Error, Fund, ProtocolParameterMode, WalletRef, get_env_keys, get_env_network_id,
-    get_env_socket_path, get_env_threads, get_env_threads_mut, get_env_wallets_mut,
-    get_proto_param_mode, lift_tx_gen_error, set_env_keys, set_env_threads, set_env_wallets,
-    set_proto_param_mode, trace_debug,
+    get_env_socket_path, get_env_threads, get_env_threads_mut, get_env_wallets,
+    get_env_wallets_mut, get_proto_param_mode, lift_tx_gen_error, set_env_keys, set_env_threads,
+    set_env_wallets, set_proto_param_mode, trace_debug,
 };
 use crate::script::types::{Generator, ProtocolParametersSource, SigningKeyEnvelope, SubmitMode};
+use crate::tx_generator::fund::get_fund_coin;
+use crate::tx_generator::utils::{include_change, inputs_to_outputs_with_fee};
 use crate::types::{AnyCardanoEra, Lovelace, TxGenTxParams};
+use crate::wallet::wallet_preview;
 
 /// Mainnet network magic used by node-to-client handshakes.
 ///
@@ -259,55 +262,74 @@ pub fn to_metadata(
 
 /// Mirror of upstream `submitAction`.
 pub fn submit_action(
-    _env: &mut Env,
+    env: &mut Env,
     era: AnyCardanoEra,
     submit_mode: &SubmitMode,
     generator: &Generator,
     tx_params: &TxGenTxParams,
 ) -> Result<(), Error> {
     with_era(era, |era| {
-        submit_in_era(era, submit_mode, generator, tx_params)
+        submit_in_era(env, era, submit_mode, generator, tx_params)
     })
 }
 
 /// Mirror of upstream `submitInEra`.
 pub fn submit_in_era(
+    env: &mut Env,
     era: AnyCardanoEra,
     _submit_mode: &SubmitMode,
     generator: &Generator,
-    _tx_params: &TxGenTxParams,
+    tx_params: &TxGenTxParams,
 ) -> Result<(), Error> {
-    preflight_generator_metadata(era, generator)?;
+    preflight_generator(env, era, generator, tx_params.tx_param_fee)?;
     Err(lift_tx_gen_error(
         "submitInEra: transaction generation is not yet implemented \
-         (pending GeneratorTx transaction/runtime slice after R541 SizedMetadata)",
+         (pending GeneratorTx transaction/runtime slice after R543 value splitting)",
     ))
 }
 
-fn preflight_generator_metadata(era: AnyCardanoEra, generator: &Generator) -> Result<(), Error> {
+fn preflight_generator(
+    env: &Env,
+    era: AnyCardanoEra,
+    generator: &Generator,
+    fee: Lovelace,
+) -> Result<(), Error> {
     match generator {
-        Generator::NtoM(_, _, _, _, metadata_size, _) => {
+        Generator::Split(wallet_name, _, _, coins) => {
+            let funds = wallet_preview(get_env_wallets(env, wallet_name)?, 1);
+            let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
+            include_change(fee, coins, &have).map_err(lift_tx_gen_error)?;
+            Ok(())
+        }
+        Generator::SplitN(wallet_name, _, count) => {
+            let funds = wallet_preview(get_env_wallets(env, wallet_name)?, 1);
+            let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
+            inputs_to_outputs_with_fee(fee, *count, &have).map_err(lift_tx_gen_error)?;
+            Ok(())
+        }
+        Generator::NtoM(wallet_name, _, inputs, outputs, metadata_size, _) => {
             let _ = to_metadata(era, *metadata_size)?;
+            let funds = wallet_preview(get_env_wallets(env, wallet_name)?, *inputs);
+            let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
+            inputs_to_outputs_with_fee(fee, *outputs, &have).map_err(lift_tx_gen_error)?;
             Ok(())
         }
         Generator::Sequence(generators) | Generator::RoundRobin(generators) => {
             for generator in generators {
-                preflight_generator_metadata(era, generator)?;
+                preflight_generator(env, era, generator, fee)?;
             }
             Ok(())
         }
         Generator::Cycle(generator) | Generator::Take(_, generator) => {
-            preflight_generator_metadata(era, generator)
+            preflight_generator(env, era, generator, fee)
         }
         Generator::OneOf(generators) => {
             for (generator, _weight) in generators {
-                preflight_generator_metadata(era, generator)?;
+                preflight_generator(env, era, generator, fee)?;
             }
             Ok(())
         }
-        Generator::SecureGenesis(_, _, _)
-        | Generator::Split(_, _, _, _)
-        | Generator::SplitN(_, _, _) => Ok(()),
+        Generator::SecureGenesis(_, _, _) => Ok(()),
     }
 }
 
@@ -633,6 +655,7 @@ mod tests {
 
     #[test]
     fn submit_in_era_preflights_ntom_metadata_size() {
+        let mut env = Env::empty_env();
         let generator = Generator::NtoM(
             "wallet".to_string(),
             PayMode::PayToAddr("key".to_string(), "wallet".to_string()),
@@ -642,6 +665,7 @@ mod tests {
             None,
         );
         let err = submit_in_era(
+            &mut env,
             AnyCardanoEra::Conway,
             &SubmitMode::DiscardTx,
             &generator,
@@ -657,6 +681,43 @@ mod tests {
             err,
             Error::TxGenError(
                 "Error : metadata must be 0 or at least 39 bytes in this era.".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn submit_in_era_preflights_splitn_value_split() {
+        let mut env = Env::empty_env();
+        init_wallet(&mut env, "wallet").expect("wallet");
+        define_signing_key(
+            &mut env,
+            "key",
+            SigningKeyEnvelope::payment_signing_key_shelley("5820abcd"),
+        );
+        add_fund(&mut env, AnyCardanoEra::Conway, "wallet", "abc#0", 9, "key").expect("fund");
+        let generator = Generator::SplitN(
+            "wallet".to_string(),
+            PayMode::PayToAddr("key".to_string(), "wallet".to_string()),
+            2,
+        );
+
+        let err = submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect_err("value split rejected");
+
+        assert_eq!(
+            err,
+            Error::TxGenError(
+                "inputsToOutputsWithFee: insufficient funds, inputs=[9], fee=10".to_string()
             )
         );
     }

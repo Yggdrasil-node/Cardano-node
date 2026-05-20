@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R542 Fund/FundQueue/Wallet slice). The old
+**Status:** `partial` (post-R543 Utils/value-splitting slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -116,6 +116,11 @@ approved synthesis area from the sister-tools plan.
   upstream paired-list FIFO queue behavior, `Fund` equality/order is
   keyed by `TxIn`, and wallet source/preview semantics match upstream
   before the remaining transaction-assembly slice consumes them.
+- Shipped R543: `Cardano.TxGenerator.Utils` pure value-splitting
+  surface. `tx_generator/utils.rs` ports `inputsToOutputsWithFee`,
+  `includeChange`, and the upstream `mkTxIn` parser; `Script/Core` now
+  preflights `Split`, `SplitN`, and `NtoM` wallet value splitting
+  before the remaining transaction-build sentinel.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the GeneratorTx
   construction and submission slices land.
@@ -187,7 +192,11 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `NtoM` additional-size payloads.
 - Shipped: Fund/FundQueue/Wallet runtime (R542): upstream FIFO-backed
   wallet storage, fund accessors, source, and preview behavior.
-- Next: port UTxO/value splitting plus the remaining GeneratorTx transaction construction and LocalSocket /
+- Shipped: TxGenerator Utils/value splitting (R543):
+  `inputsToOutputsWithFee`, `includeChange`, `mkTxIn`, and
+  `Script/Core.submitInEra` value preflight for `Split`, `SplitN`, and
+  `NtoM`.
+- Next: port UTxO output builders plus the remaining GeneratorTx transaction construction and LocalSocket /
   Benchmark submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

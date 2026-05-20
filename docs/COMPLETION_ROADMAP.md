@@ -247,9 +247,13 @@ own parser / generator / submission implementation plus upstream
   R542 added the upstream FIFO-backed fund/wallet queue surface
   (`Internal/Fifo.hs`, `Fund.hs`, `FundQueue.hs`, and
   `Benchmarking/Wallet.hs`) and moved `Script/Env` wallet state off the
-  ad hoc Vec carrier. The remaining tx-generator blocker is UTxO/value
-  splitting, transaction assembly, GeneratorTx / Submission
-  implementation, and upstream comparison evidence.
+  ad hoc Vec carrier. R543 added the `Cardano.TxGenerator.Utils` value
+  splitting surface (`inputsToOutputsWithFee`, `includeChange`,
+  `mkTxIn`) and wires `Script/Core.submitInEra` to preflight `Split`,
+  `SplitN`, and `NtoM` wallet value splitting before transaction
+  assembly. The remaining tx-generator blocker is UTxO output builders,
+  transaction assembly, GeneratorTx / Submission implementation, and
+  upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

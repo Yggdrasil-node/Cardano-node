@@ -33,6 +33,15 @@ pub type Lovelace = u64;
 /// Slot number used by upstream `TxGenTxParams`.
 pub type SlotNo = u64;
 
+/// Mirror of upstream `PayWithChange`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PayWithChange {
+    /// Upstream `PayExact [Coin]`.
+    PayExact(Vec<Lovelace>),
+    /// Upstream `PayWithChange Coin [Coin]`.
+    PayWithChange(Lovelace, Vec<Lovelace>),
+}
+
 /// Cardano era accepted by the upstream high-level JSON config.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AnyCardanoEra {
