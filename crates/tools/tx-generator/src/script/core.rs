@@ -7,7 +7,7 @@
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
 //! deterministic state-only operations, Plutus context construction,
 //! finite transaction-stream evaluation, LocalSocket submission,
-//! Benchmark submission control, Shelley-through-Babbage key-witnessed
+//! Benchmark submission control, Shelley-through-Conway key-witnessed
 //! `DumpToFile` rendering, and budget-summary projection. The remaining
 //! Plutus-bearing Alonzo-family `DumpToFile` witness shapes still return
 //! explicit `TxGenError` boundaries until their downstream mirrors land.
@@ -22,10 +22,10 @@ use serde_json::Value;
 use yggdrasil_crypto::{hash_bytes_224, hash_bytes_256};
 use yggdrasil_ledger::{
     Address, AllegraTxBody, AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, BabbageTxBody,
-    BabbageTxOut, CborDecode, CborEncode, DatumOption, Decoder, Encoder, MaryTxBody, MaryTxOut,
-    PlutusData, ProtocolParameters, ScriptRef, ShelleyCompatibleSubmittedTx, ShelleyTxBody,
-    ShelleyTxIn, ShelleyTxOut, ShelleyVkeyWitness, ShelleyWitnessSet, StakeCredential,
-    eras::alonzo::ExUnits, total_min_fee,
+    BabbageTxOut, CborDecode, CborEncode, ConwayTxBody, DatumOption, Decoder, Encoder, MaryTxBody,
+    MaryTxOut, PlutusData, ProtocolParameters, ScriptRef, ShelleyCompatibleSubmittedTx,
+    ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVkeyWitness, ShelleyWitnessSet,
+    StakeCredential, eras::alonzo::ExUnits, total_min_fee,
 };
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
@@ -1056,10 +1056,7 @@ fn show_tx_for_dump(generated: &GeneratedTx) -> Result<String, Error> {
         yggdrasil_ledger::MultiEraSubmittedTx::Mary(tx) => show_mary_tx_for_dump(tx),
         yggdrasil_ledger::MultiEraSubmittedTx::Alonzo(tx) => show_alonzo_tx_for_dump(tx),
         yggdrasil_ledger::MultiEraSubmittedTx::Babbage(tx) => show_babbage_tx_for_dump(tx),
-        tx => Err(lift_tx_gen_error(format!(
-            "DumpToFile: upstream Show(Tx) renderer is implemented for Shelley-through-Babbage key-witnessed transactions only; got {:?}",
-            tx.era()
-        ))),
+        yggdrasil_ledger::MultiEraSubmittedTx::Conway(tx) => show_conway_tx_for_dump(tx),
     }
 }
 
@@ -1235,6 +1232,91 @@ fn show_babbage_tx_for_dump(
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
     ))
+}
+
+fn show_conway_tx_for_dump(
+    tx: &AlonzoCompatibleSubmittedTx<ConwayTxBody>,
+) -> Result<String, Error> {
+    ensure_empty_or_absent(tx.body.certificates.as_deref(), "Conway", "ctbrCerts")?;
+    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Conway", "ctbrWithdrawals")?;
+    ensure_absent(
+        tx.body.auxiliary_data_hash.as_ref(),
+        "Conway",
+        "ctbrAuxDataHash",
+    )?;
+    ensure_empty_mint(tx.body.mint.as_ref(), "Conway", "ctbrMint")?;
+    ensure_absent(
+        tx.body.script_data_hash.as_ref(),
+        "Conway",
+        "ctbrScriptIntegrityHash",
+    )?;
+    ensure_empty_or_absent(
+        tx.body.collateral.as_deref(),
+        "Conway",
+        "ctbrCollateralInputs",
+    )?;
+    ensure_empty_or_absent(
+        tx.body.required_signers.as_deref(),
+        "Conway",
+        "ctbrReqSignerHashes",
+    )?;
+    ensure_absent(tx.body.network_id.as_ref(), "Conway", "ctbrNetworkId")?;
+    ensure_absent(
+        tx.body.collateral_return.as_ref(),
+        "Conway",
+        "ctbrCollateralReturn",
+    )?;
+    ensure_absent(
+        tx.body.total_collateral.as_ref(),
+        "Conway",
+        "ctbrTotalCollateral",
+    )?;
+    ensure_empty_or_absent(
+        tx.body.reference_inputs.as_deref(),
+        "Conway",
+        "ctbrReferenceInputs",
+    )?;
+    ensure_empty_voting_procedures(tx.body.voting_procedures.as_ref())?;
+    ensure_empty_or_absent(
+        tx.body.proposal_procedures.as_deref(),
+        "Conway",
+        "ctbrProposalProcedures",
+    )?;
+    ensure_absent(
+        tx.body.current_treasury_value.as_ref(),
+        "Conway",
+        "ctbrCurrentTreasuryValue",
+    )?;
+    if matches!(tx.body.treasury_donation, Some(donation) if donation != 0) {
+        return Err(lift_tx_gen_error(
+            "DumpToFile: Conway Show(Tx) renderer does not yet support non-zero ctbrTreasuryDonation",
+        ));
+    }
+    ensure_absent(tx.auxiliary_data.as_ref(), "Conway", "atAuxData")?;
+
+    let inputs = show_tx_in_list(&tx.body.inputs);
+    let outputs = show_babbage_tx_out_list(&tx.body.outputs)?;
+    let body_hash = hex::encode(hash_bytes_256(tx.raw_body()).0);
+    let witnesses = show_alonzo_witness_set(&tx.witness_set)?;
+    let is_valid = show_haskell_bool(tx.is_valid);
+
+    Ok(format!(
+        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = SNothing, ctbrVotingProcedures = VotingProcedures {{unVotingProcedures = fromList []}}, ctbrProposalProcedures = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrCurrentTreasuryValue = SNothing, ctbrTreasuryDonation = Coin 0}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        tx.body.fee,
+        show_strict_maybe_slot(tx.body.validity_interval_start),
+        show_strict_maybe_slot(tx.body.ttl),
+    ))
+}
+
+fn ensure_empty_voting_procedures(
+    procedures: Option<&yggdrasil_ledger::VotingProcedures>,
+) -> Result<(), Error> {
+    if procedures.is_some_and(|p| !p.procedures.is_empty()) {
+        return Err(lift_tx_gen_error(
+            "DumpToFile: Conway Show(Tx) renderer does not yet support non-empty ctbrVotingProcedures",
+        ));
+    }
+    Ok(())
 }
 
 fn ensure_absent<T>(value: Option<&T>, era: &str, field: &str) -> Result<(), Error> {
@@ -2747,6 +2829,71 @@ mod tests {
         assert!(rendered.contains("atWits = AlonzoTxWitsRaw"));
         assert!(rendered.contains("atwrDatsTxWits = MkTxDats"));
         assert!(rendered.contains("atwrRdmrsTxWits = MkRedeemers"));
+        assert!(rendered.contains("atIsValid = IsValid True"));
+        assert_eq!(rendered.lines().filter(|line| !line.is_empty()).count(), 1);
+    }
+
+    #[test]
+    fn dumptofile_submit_generates_conway_haskell_show_transaction() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Conway,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            100,
+            "key",
+        )
+        .expect("source fund");
+        let output_path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-conway-dump-{}.out",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&output_path);
+        let generator = Generator::SplitN(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DumpToFile(output_path.clone()),
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("conway dump submit");
+
+        let rendered = fs::read_to_string(&output_path).expect("conway dump output");
+        let _ = fs::remove_file(&output_path);
+        assert!(rendered.starts_with(
+            "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {atBody = MkConwayTxBody ConwayTxBodyRaw"
+        ));
+        assert!(rendered.contains("ctbrSpendInputs = fromList ["));
+        assert!(rendered.contains("ctbrCollateralInputs = fromList []"));
+        assert!(rendered.contains("ctbrReferenceInputs = fromList []"));
+        assert!(rendered.contains("ctbrCollateralReturn = SNothing"));
+        assert!(rendered.contains("ctbrTotalCollateral = SNothing"));
+        assert!(rendered.contains(
+            "ctbrCerts = OSet {osSSeq = StrictSeq {fromStrict = fromList []}, osSet = fromList []}"
+        ));
+        assert!(rendered.contains("ctbrVldt = ValidityInterval"));
+        assert!(rendered.contains(
+            "ctbrVotingProcedures = VotingProcedures {unVotingProcedures = fromList []}"
+        ));
+        assert!(rendered.contains("ctbrProposalProcedures = OSet"));
+        assert!(rendered.contains("ctbrCurrentTreasuryValue = SNothing"));
+        assert!(rendered.contains("ctbrTreasuryDonation = Coin 0"));
+        assert!(rendered.contains("Sized {sizedValue = ("));
+        assert!(rendered.contains(",NoDatum,SNothing), sizedSize = "));
+        assert!(rendered.contains("atWits = AlonzoTxWitsRaw"));
         assert!(rendered.contains("atIsValid = IsValid True"));
         assert_eq!(rendered.lines().filter(|line| !line.is_empty()).count(), 1);
     }

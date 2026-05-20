@@ -335,9 +335,20 @@ own parser / generator / submission implementation plus upstream
   (addr, val, datum, refScript), sizedSize = N}` output wrappers, the
   `NoDatum` / `DatumHash (SafeHash ...)` Babbage datum shape, and the
   `ShelleyTx ShelleyBasedEraBabbage (AlonzoTx ...)` envelope, reusing
-  `AlonzoTxWitsRaw` for the witness set. The remaining tx-generator
-  blockers are Plutus-bearing Babbage/Conway `DumpToFile` rendering and
-  upstream-binary soak evidence.
+  `AlonzoTxWitsRaw` for the witness set. R570 extended again into
+  Conway key-witnessed streams with the 19-field `ConwayTxBodyRaw`
+  governance-aware record (`ctbrSpendInputs` rename, combined
+  `ctbrVldt`, `ctbrCerts` as `OSet`, dropped `btbrUpdate`, plus
+  `ctbrVotingProcedures` / `ctbrProposalProcedures` /
+  `ctbrCurrentTreasuryValue` / `ctbrTreasuryDonation`) and the
+  `ShelleyTx ShelleyBasedEraConway (AlonzoTx ...)` envelope, reusing
+  the Babbage outputs renderer (Conway shares `BabbageTxOut`) and the
+  Alonzo witness renderer (Conway `TxWits = AlonzoTxWits`). The
+  `show_tx_for_dump` dispatch is now exhaustive across all
+  `MultiEraSubmittedTx` variants. The remaining tx-generator blockers
+  are Plutus-bearing Babbage/Conway `DumpToFile` rendering (inline
+  datums, reference scripts, Plutus witness sets, governance
+  procedures) and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

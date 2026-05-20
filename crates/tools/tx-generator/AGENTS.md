@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R569 Babbage key-witnessed DumpToFile slice). The old
+**Status:** `partial` (post-R570 Conway key-witnessed DumpToFile slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,13 +283,32 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R570: `SubmitMode::DumpToFile` now renders Conway
+  key-witnessed streams via `show_conway_tx_for_dump`. The body emits
+  the upstream 19-field `ConwayTxBodyRaw` record — renamed
+  `ctbrSpendInputs` (vs `btbrInputs`), combined `ctbrVldt`
+  `ValidityInterval`, `ctbrCerts` carried as an `OSet {osSSeq =
+  StrictSeq ..., osSet = ...}` (Conway moved off `StrictSeq`),
+  `btbrUpdate` dropped, plus the four governance fields
+  `ctbrVotingProcedures = VotingProcedures {unVotingProcedures = ...}`,
+  `ctbrProposalProcedures = OSet {...}`, `ctbrCurrentTreasuryValue =
+  SNothing`, `ctbrTreasuryDonation = Coin 0`. Outputs reuse
+  `show_babbage_tx_out_list` (Conway shares `BabbageTxOut`), witnesses
+  reuse `show_alonzo_witness_set` (Conway `TxWits = AlonzoTxWits`), and
+  the envelope reads `ShelleyTx ShelleyBasedEraConway (AlonzoTx
+  ...)`. The `show_tx_for_dump` match is now exhaustive across all
+  `MultiEraSubmittedTx` variants. Inline datums, reference scripts,
+  non-empty governance procedures, non-zero treasury donations, and the
+  remaining Plutus-bearing Conway shapes stay on explicit `TxGenError`
+  boundaries.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
 - Pending: extend `DumpToFile` Show rendering into Plutus-bearing
-  Babbage / Conway transactions and capture upstream-binary soak
-  evidence for Benchmark scripts.
+  Babbage / Conway transactions (inline datums, reference scripts,
+  Plutus witness sets, governance procedures) and capture
+  upstream-binary soak evidence for Benchmark scripts.
 
 ## Build + Run
 
@@ -462,6 +481,16 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `NoDatum` / `DatumHash` datum shape, and upstream `ShelleyTx
   ShelleyBasedEraBabbage (AlonzoTx ...)` envelope. Reference scripts
   and inline datums stay on explicit `TxGenError` boundaries.
+- Shipped: Conway key-witnessed DumpToFile rendering (R570):
+  `SubmitMode::DumpToFile` accepts Conway key-witnessed streams with
+  the 19-field `ConwayTxBodyRaw` record (governance-aware:
+  `ctbrSpendInputs` rename, `ctbrVldt`, `ctbrCerts` OSet, dropped
+  `btbrUpdate`, plus `ctbrVotingProcedures` / `ctbrProposalProcedures`
+  / `ctbrCurrentTreasuryValue` / `ctbrTreasuryDonation`), reusing
+  `show_babbage_tx_out_list` for outputs and `show_alonzo_witness_set`
+  for witnesses, and emits the `ShelleyTx ShelleyBasedEraConway
+  (AlonzoTx ...)` envelope. The match in `show_tx_for_dump` is now
+  exhaustive across `MultiEraSubmittedTx`.
 - Next: Plutus-bearing Babbage/Conway `DumpToFile` Show coverage and
   upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
