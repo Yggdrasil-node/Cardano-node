@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R589 full ByteString mnemonic-escape coverage — DumpToFile Show output now byte-equivalent to upstream for non-printable bytes).
+**Status:** `partial` (post-R590 bootstrap-witness key-hash sort — DumpToFile Show output now byte-equivalent to upstream for every multi-witness ordering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,16 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R590: ported upstream `bootstrapWitKeyHash` to yggdrasil
+  (`Blake2b-224 (SHA3-256 (prefix ++ key32 ++ chain_code32 ++
+  attributes))` with constant 6-byte Byron AddressInfo prefix
+  `[0x83, 0x00, 0x82, 0x00, 0x58, 0x40]`). New
+  `bootstrap_witness_key_hash` helper drives the new
+  `show_alonzo_bootstrap_witnesses` sort, closing the documented
+  multi-witness byte-parity caveat from R579. The renderer is now
+  byte-equivalent to upstream `Ord BootstrapWitness = comparing
+  bootstrapWitKeyHash` for any number of witnesses. 2 focused unit
+  tests: hash-domain invariant + multi-witness sort verification.
 - Shipped R589: `show_haskell_bytestring` now emits the full GHC
   `showLitChar` + `showLitString` escape table — closes the
   byte-parity gap documented since R572. New escape coverage:
@@ -873,9 +883,14 @@ This crate's full implementation remains an A4 sister-tool build-out:
   table. ByteString Show output is byte-equivalent to upstream
   for every byte value, closing the documented byte-parity gap
   from R572.
-- Next: upstream `bootstrapWitKeyHash` parity for multi-witness
-  sets (needs Byron AddressInfo packing port), and upstream-binary
-  soak in strict-mirror-sized slices.
+- Shipped: bootstrap-witness key-hash sort (R590): new
+  `bootstrap_witness_key_hash` ports upstream
+  `bootstrapWitKeyHash` (Blake2b-224 over SHA3-256 over Byron
+  AddressInfo prefix + key + chain_code + attributes). The
+  multi-witness sort order in `show_alonzo_bootstrap_witnesses`
+  is now byte-equivalent to upstream `Ord BootstrapWitness`.
+- Next: capture upstream-binary comparison evidence once a
+  runnable upstream binary environment is available.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

@@ -450,9 +450,16 @@ own parser / generator / submission implementation plus upstream
   for 0x0E, multi-letter mnemonics for the rest of 0x00-0x1F,
   `\DEL` for 0x7F, plus the existing `\NNN` decimal escapes for
   0x80-0xFF). ByteString Show is now byte-equivalent to upstream
-  for every byte. The remaining tx-generator blocker is upstream-
-  binary soak evidence (multi-witness `bootstrapWitKeyHash`
-  byte-parity needs the Byron AddressInfo packing port).
+  for every byte. R590 closed the bootstrap-witness multi-witness
+  byte-parity gap: new `bootstrap_witness_key_hash` ports upstream
+  `bootstrapWitKeyHash` (Blake2b-224 over SHA3-256 over the 6-byte
+  Byron AddressInfo prefix `[0x83 0x00 0x82 0x00 0x58 0x40]` plus
+  key + chain_code + attributes) and drives the
+  `show_alonzo_bootstrap_witnesses` sort. The multi-witness
+  ordering is now byte-equivalent to upstream `Ord BootstrapWitness
+  = comparing bootstrapWitKeyHash`. The remaining tx-generator
+  blocker is upstream-binary soak evidence — every documented
+  byte-parity gap inside yggdrasil is now closed.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

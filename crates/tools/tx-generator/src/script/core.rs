@@ -2339,23 +2339,15 @@ fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Er
 /// Render `atwrBootAddrTxWits = fromList [...]` matching upstream
 /// `Show (Set BootstrapWitness)`.
 ///
-/// Upstream sorts by `bootstrapWitKeyHash` (Blake2b-224 of the Byron
-/// AddressInfo built from public_key + chain_code + attributes); yggdrasil
-/// does not yet implement that hash. As a documented byte-parity caveat
-/// this renderer sorts by the canonical `(public_key, signature,
-/// chain_code, attributes)` tuple lex — deterministic within a session
-/// and stable across reruns, but not necessarily byte-equivalent to
-/// upstream for sets with multiple witnesses. Single-witness cases are
-/// byte-equivalent. A future round can close the upstream-order parity
-/// once a Byron AddressInfo port lands.
+/// Upstream `Ord BootstrapWitness = comparing bootstrapWitKeyHash`
+/// where `bootstrapWitKeyHash` is `Blake2b-224 (SHA3-256 (<Byron
+/// AddressInfo prefix> ++ key ++ chain_code ++ attributes))`. Yggdrasil
+/// now implements this via `bootstrap_witness_key_hash`, so the sort
+/// order is byte-equivalent to upstream for any number of witnesses.
 fn show_alonzo_bootstrap_witnesses(witnesses: &[yggdrasil_ledger::BootstrapWitness]) -> String {
     let mut sorted: Vec<&yggdrasil_ledger::BootstrapWitness> = witnesses.iter().collect();
-    sorted.sort_by(|a, b| {
-        a.public_key
-            .cmp(&b.public_key)
-            .then_with(|| a.signature.cmp(&b.signature))
-            .then_with(|| a.chain_code.cmp(&b.chain_code))
-            .then_with(|| a.attributes.cmp(&b.attributes))
+    sorted.sort_by_key(|bw| {
+        bootstrap_witness_key_hash(&bw.public_key, &bw.chain_code, &bw.attributes)
     });
     let body = sorted
         .iter()
@@ -2363,6 +2355,29 @@ fn show_alonzo_bootstrap_witnesses(witnesses: &[yggdrasil_ledger::BootstrapWitne
         .collect::<Vec<_>>()
         .join(",");
     format!("fromList [{body}]")
+}
+
+/// Compute the upstream `bootstrapWitKeyHash`:
+///
+/// `Blake2b-224 (SHA3-256 (prefix ++ key32 ++ chain_code32 ++ attributes))`
+///
+/// where prefix is the constant 6-byte Byron `AddressInfo` header
+/// `[0x83, 0x00, 0x82, 0x00, 0x58, 0x40]` (CBOR-shaped list-of-3-token,
+/// addrType=0, list-of-2-token, type=0, bytestring-len-64-token —
+/// matching `Cardano.Ledger.Keys.Bootstrap.bootstrapWitKeyHash`).
+fn bootstrap_witness_key_hash(
+    public_key: &[u8; 32],
+    chain_code: &[u8; 32],
+    attributes: &[u8],
+) -> [u8; 28] {
+    const PREFIX: [u8; 6] = [0x83, 0x00, 0x82, 0x00, 0x58, 0x40];
+    let mut buf = Vec::with_capacity(PREFIX.len() + 32 + 32 + attributes.len());
+    buf.extend_from_slice(&PREFIX);
+    buf.extend_from_slice(public_key);
+    buf.extend_from_slice(chain_code);
+    buf.extend_from_slice(attributes);
+    let sha3 = yggdrasil_crypto::sha3_256(&buf).0;
+    yggdrasil_crypto::hash_bytes_224(&sha3).0
 }
 
 /// Render a single `BootstrapWitness` matching upstream stock-derived
@@ -4830,17 +4845,44 @@ mod tests {
             chain_code: [0x00; 32],
             attributes: vec![],
         };
-        // Pass in reverse order to confirm sort.
+        // Pass in reverse order to confirm sort. Upstream `Ord
+        // BootstrapWitness = comparing bootstrapWitKeyHash`, so the
+        // post-sort order is whichever witness has the smaller
+        // Blake2b-224 over SHA3-256 over (prefix ++ key ++ chain_code ++
+        // attributes).
         let rendered = show_alonzo_bootstrap_witnesses(&[bw_b.clone(), bw_a.clone()]);
         assert!(rendered.starts_with("fromList [BootstrapWitness {bwKey = VKey"));
-        // 0x00 public_key must precede 0xFF public_key.
+        let hash_a =
+            bootstrap_witness_key_hash(&bw_a.public_key, &bw_a.chain_code, &bw_a.attributes);
+        let hash_b =
+            bootstrap_witness_key_hash(&bw_b.public_key, &bw_b.chain_code, &bw_b.attributes);
         let zero_pos = rendered
             .find("VerKeyEd25519DSIGN \"00000000")
             .expect("zero public_key");
         let ff_pos = rendered
             .find("VerKeyEd25519DSIGN \"ffffffff")
             .expect("ff public_key");
-        assert!(zero_pos < ff_pos, "expected lex sort: {rendered}");
+        if hash_a <= hash_b {
+            assert!(zero_pos < ff_pos, "expected hash sort: a < b in {rendered}");
+        } else {
+            assert!(ff_pos < zero_pos, "expected hash sort: b < a in {rendered}");
+        }
+    }
+
+    #[test]
+    fn dumptofile_bootstrap_witness_key_hash_matches_upstream_domain() {
+        // Verify the hash domain directly:
+        // Blake2b-224 (SHA3-256 ([0x83,0x00,0x82,0x00,0x58,0x40] ++ key ++ cc ++ attrs))
+        let key = [0x42_u8; 32];
+        let cc = [0x99_u8; 32];
+        let attrs: Vec<u8> = vec![0xAA, 0xBB];
+        let mut expected_input = vec![0x83_u8, 0x00, 0x82, 0x00, 0x58, 0x40];
+        expected_input.extend_from_slice(&key);
+        expected_input.extend_from_slice(&cc);
+        expected_input.extend_from_slice(&attrs);
+        let expected_sha3 = yggdrasil_crypto::sha3_256(&expected_input).0;
+        let expected = yggdrasil_crypto::hash_bytes_224(&expected_sha3).0;
+        assert_eq!(bootstrap_witness_key_hash(&key, &cc, &attrs), expected);
     }
 
     #[test]
