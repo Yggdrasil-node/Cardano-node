@@ -708,6 +708,281 @@ impl fmt::Display for IncompleteWithdrawals {
     }
 }
 
+/// 32-byte hash newtype used for upstream `TxAuxDataHash` and similar
+/// metadata hashes. Display matches upstream `Show TxAuxDataHash`
+/// shape: `TxAuxDataHash {unTxAuxDataHash = SafeHash "<hex>"}` —
+/// upstream's TxAuxDataHash is `newtype TxAuxDataHash = TxAuxDataHash
+/// (SafeHash StandardCrypto EraIndependentTxAuxData)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct TxAuxDataHash(pub [u8; 32]);
+
+impl fmt::Display for TxAuxDataHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TxAuxDataHash {{unTxAuxDataHash = SafeHash \"{}\"}}",
+            hex::encode(self.0)
+        )
+    }
+}
+
+/// `ShelleyUtxowPredFailure` mirror.
+///
+/// Upstream: `data ShelleyUtxowPredFailure era` from
+/// `Cardano.Ledger.Shelley.Rules.Utxow` with 11 variants encoded via
+/// an outer 2-element array `[tag, payload]` (except tag 9 which
+/// uses a 1-element array because it has no payload). The CBOR
+/// shape mirrors `Cardano.Ledger.Shelley.Rules.Utxow.encCBOR`.
+///
+/// R598 ships the enum + Display for all 11 variants and a CBOR
+/// decoder for the simple-payload tags (6/7/8/9). The remaining
+/// variants (0/1/2/3/4/5/10) carry raw inner CBOR pending
+/// per-variant NonEmptySet/sub-rule decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShelleyUtxowPredFailure {
+    /// Tag 0: witnesses which failed in `verifiedWits` —
+    /// `NonEmpty (VKey Witness)`. Raw payload pending decoder.
+    InvalidWitnessesUTXOW(Vec<u8>),
+    /// Tag 1: required vkey witnesses not supplied —
+    /// `NonEmptySet (KeyHash Witness)`. Raw payload pending decoder.
+    MissingVKeyWitnessesUTXOW(Vec<u8>),
+    /// Tag 2: required scripts not supplied —
+    /// `NonEmptySet ScriptHash`. Raw payload pending decoder.
+    MissingScriptWitnessesUTXOW(Vec<u8>),
+    /// Tag 3: scripts that failed validation —
+    /// `NonEmptySet ScriptHash`. Raw payload pending decoder.
+    ScriptWitnessNotValidatingUTXOW(Vec<u8>),
+    /// Tag 4: nested UTXO sub-rule failure — raw payload pending
+    /// `ShelleyUtxoPredFailure` decoder.
+    UtxoFailure(Vec<u8>),
+    /// Tag 5: insufficient genesis signatures for an MIR
+    /// certificate — `Set (KeyHash Witness)`. Raw payload pending
+    /// decoder.
+    MIRInsufficientGenesisSigsUTXOW(Vec<u8>),
+    /// Tag 6: tx body claims metadata but its hash field is
+    /// missing — the 32-byte hash that should have been present
+    /// (typed).
+    MissingTxBodyMetadataHash(TxAuxDataHash),
+    /// Tag 7: tx body references a metadata hash but the metadata
+    /// itself was not provided (typed).
+    MissingTxMetadata(TxAuxDataHash),
+    /// Tag 8: metadata hash in the body does not match the
+    /// supplied metadata (typed Mismatch).
+    ConflictingMetadataHash(Mismatch<TxAuxDataHash>),
+    /// Tag 9: metadata strings out of range — no payload.
+    InvalidMetadata,
+    /// Tag 10: extraneous scripts supplied beyond what the tx
+    /// required — `NonEmptySet ScriptHash`. Raw payload pending
+    /// decoder.
+    ExtraneousScriptWitnessesUTXOW(Vec<u8>),
+}
+
+impl ShelleyUtxowPredFailure {
+    /// Upstream CBOR tag (Word8) for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::InvalidWitnessesUTXOW(_) => 0,
+            Self::MissingVKeyWitnessesUTXOW(_) => 1,
+            Self::MissingScriptWitnessesUTXOW(_) => 2,
+            Self::ScriptWitnessNotValidatingUTXOW(_) => 3,
+            Self::UtxoFailure(_) => 4,
+            Self::MIRInsufficientGenesisSigsUTXOW(_) => 5,
+            Self::MissingTxBodyMetadataHash(_) => 6,
+            Self::MissingTxMetadata(_) => 7,
+            Self::ConflictingMetadataHash(_) => 8,
+            Self::InvalidMetadata => 9,
+            Self::ExtraneousScriptWitnessesUTXOW(_) => 10,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::InvalidWitnessesUTXOW(_) => "InvalidWitnessesUTXOW",
+            Self::MissingVKeyWitnessesUTXOW(_) => "MissingVKeyWitnessesUTXOW",
+            Self::MissingScriptWitnessesUTXOW(_) => "MissingScriptWitnessesUTXOW",
+            Self::ScriptWitnessNotValidatingUTXOW(_) => "ScriptWitnessNotValidatingUTXOW",
+            Self::UtxoFailure(_) => "UtxoFailure",
+            Self::MIRInsufficientGenesisSigsUTXOW(_) => "MIRInsufficientGenesisSigsUTXOW",
+            Self::MissingTxBodyMetadataHash(_) => "MissingTxBodyMetadataHash",
+            Self::MissingTxMetadata(_) => "MissingTxMetadata",
+            Self::ConflictingMetadataHash(_) => "ConflictingMetadataHash",
+            Self::InvalidMetadata => "InvalidMetadata",
+            Self::ExtraneousScriptWitnessesUTXOW(_) => "ExtraneousScriptWitnessesUTXOW",
+        }
+    }
+}
+
+impl fmt::Display for ShelleyUtxowPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ShelleyUtxowPredFailure era)`: `<Constructor> <payload>`.
+    /// Typed payloads (tags 6/7/8/9) render through their typed
+    /// Display; raw payloads (tags 0/1/2/3/4/5/10) emit a
+    /// `<raw-cbor N bytes>` marker pending typed decoders.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidWitnessesUTXOW(b)
+            | Self::MissingVKeyWitnessesUTXOW(b)
+            | Self::MissingScriptWitnessesUTXOW(b)
+            | Self::ScriptWitnessNotValidatingUTXOW(b)
+            | Self::UtxoFailure(b)
+            | Self::MIRInsufficientGenesisSigsUTXOW(b)
+            | Self::ExtraneousScriptWitnessesUTXOW(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::MissingTxBodyMetadataHash(h) => {
+                write!(f, "MissingTxBodyMetadataHash ({h})")
+            }
+            Self::MissingTxMetadata(h) => write!(f, "MissingTxMetadata ({h})"),
+            Self::ConflictingMetadataHash(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: mm.supplied,
+                    expected: mm.expected,
+                };
+                write!(f, "ConflictingMetadataHash ({typed})")
+            }
+            Self::InvalidMetadata => f.write_str("InvalidMetadata"),
+        }
+    }
+}
+
+impl ShelleyUtxowPredFailure {
+    /// Decode the full `ShelleyUtxowPredFailure` outer envelope from
+    /// CBOR bytes. Returns the typed variant on success; for
+    /// variants whose payload decoder is not yet ported, the
+    /// returned variant carries the raw inner CBOR.
+    ///
+    /// Upstream encoding (`Cardano.Ledger.Shelley.Rules.Utxow.encCBOR`)
+    /// wraps every variant in a CBOR array — length 2 for variants
+    /// with a payload, length 1 for `InvalidMetadata` (tag 9).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyUtxowPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(1..=2).contains(&len) {
+            return Err(DecoderError(format!(
+                "ShelleyUtxowPredFailure: expected 1- or 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyUtxowPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        if tag == 9 {
+            if len != 1 {
+                return Err(DecoderError(format!(
+                    "ShelleyUtxowPredFailure: InvalidMetadata uses 1-element array, got len {len}"
+                )));
+            }
+            return Ok(Self::InvalidMetadata);
+        }
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ShelleyUtxowPredFailure: tag {tag} uses 2-element array, got len {len}"
+            )));
+        }
+        // For tags whose payload decoder is not yet ported, capture
+        // the remaining bytes verbatim. We do that by re-encoding
+        // the decoder's tail; since yggdrasil_ledger::Decoder does
+        // not expose a tail accessor by default we just consume the
+        // next CBOR datum and forward the slice it occupied.
+        let payload_offset = dec.position();
+        match tag {
+            6 => {
+                let bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "MissingTxBodyMetadataHash: expected 32 bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "MissingTxBodyMetadataHash: expected 32-byte hash, got {} bytes",
+                        bytes.len()
+                    ))
+                })?;
+                Ok(Self::MissingTxBodyMetadataHash(TxAuxDataHash(arr)))
+            }
+            7 => {
+                let bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!("MissingTxMetadata: expected 32 bytes: {err:?}"))
+                })?;
+                let arr: [u8; 32] = bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "MissingTxMetadata: expected 32-byte hash, got {} bytes",
+                        bytes.len()
+                    ))
+                })?;
+                Ok(Self::MissingTxMetadata(TxAuxDataHash(arr)))
+            }
+            8 => {
+                let inner_len = dec.array().map_err(|err| {
+                    DecoderError(format!(
+                        "ConflictingMetadataHash: expected Mismatch 2-array: {err:?}"
+                    ))
+                })?;
+                if inner_len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConflictingMetadataHash: expected Mismatch 2-array, got len {inner_len}"
+                    )));
+                }
+                let supplied_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "ConflictingMetadataHash: expected supplied 32-byte hash: {err:?}"
+                    ))
+                })?;
+                let supplied: [u8; 32] = supplied_bytes.try_into().map_err(|_| {
+                    DecoderError("ConflictingMetadataHash: supplied hash not 32 bytes".to_string())
+                })?;
+                let expected_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "ConflictingMetadataHash: expected expected 32-byte hash: {err:?}"
+                    ))
+                })?;
+                let expected: [u8; 32] = expected_bytes.try_into().map_err(|_| {
+                    DecoderError("ConflictingMetadataHash: expected hash not 32 bytes".to_string())
+                })?;
+                Ok(Self::ConflictingMetadataHash(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied: TxAuxDataHash(supplied),
+                    expected: TxAuxDataHash(expected),
+                }))
+            }
+            // Variants whose typed payload decoder is not yet
+            // ported: capture the remaining bytes verbatim and
+            // route them through the raw-payload variant.
+            0..=5 | 10 => {
+                let raw = bytes
+                    .get(payload_offset..)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ShelleyUtxowPredFailure: payload offset out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(match tag {
+                    0 => Self::InvalidWitnessesUTXOW(raw),
+                    1 => Self::MissingVKeyWitnessesUTXOW(raw),
+                    2 => Self::MissingScriptWitnessesUTXOW(raw),
+                    3 => Self::ScriptWitnessNotValidatingUTXOW(raw),
+                    4 => Self::UtxoFailure(raw),
+                    5 => Self::MIRInsufficientGenesisSigsUTXOW(raw),
+                    10 => Self::ExtraneousScriptWitnessesUTXOW(raw),
+                    _ => unreachable!("tag range checked above"),
+                })
+            }
+            other => Err(DecoderError(format!(
+                "ShelleyUtxowPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
 /// Typed payload for `ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts`.
 ///
 /// Mirrors upstream `Withdrawals = Map AccountAddress Coin` from
@@ -1299,6 +1574,97 @@ mod tests {
         assert!(
             err.to_string().contains("invalid reward-account key"),
             "expected reject message, got {err}"
+        );
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_invalid_metadata_decodes_tag9() {
+        // Tag 9: 1-element CBOR array [0x81], tag 9 = 0x09
+        let cbor = [0x81_u8, 0x09];
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("InvalidMetadata");
+        assert_eq!(f, ShelleyUtxowPredFailure::InvalidMetadata);
+        assert_eq!(f.tag(), 9);
+        assert_eq!(f.constructor(), "InvalidMetadata");
+        assert_eq!(f.to_string(), "InvalidMetadata");
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_missing_tx_body_metadata_hash_decodes_tag6() {
+        // Tag 6: 2-element array [0x82, 0x06, bytes(32)]
+        let mut cbor = vec![0x82_u8, 0x06];
+        // CBOR bytes header for 32 bytes
+        cbor.extend_from_slice(&[0x58, 0x20]);
+        cbor.extend_from_slice(&[0xAB_u8; 32]);
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("MissingTxBodyMetadataHash");
+        assert!(matches!(
+            f,
+            ShelleyUtxowPredFailure::MissingTxBodyMetadataHash(TxAuxDataHash(arr))
+                if arr == [0xAB_u8; 32]
+        ));
+        assert!(f.to_string().starts_with(
+            "MissingTxBodyMetadataHash (TxAuxDataHash {unTxAuxDataHash = SafeHash \"ababab"
+        ));
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_missing_tx_metadata_decodes_tag7() {
+        let mut cbor = vec![0x82_u8, 0x07];
+        cbor.extend_from_slice(&[0x58, 0x20]);
+        cbor.extend_from_slice(&[0xCD_u8; 32]);
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("MissingTxMetadata");
+        assert!(matches!(f, ShelleyUtxowPredFailure::MissingTxMetadata(_)));
+        assert!(f.to_string().contains("MissingTxMetadata (TxAuxDataHash"));
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_conflicting_metadata_hash_decodes_tag8() {
+        // Tag 8: outer array [0x82, 0x08, Mismatch], inner Mismatch
+        // is [supplied 32-byte hash, expected 32-byte hash].
+        let mut cbor = vec![0x82_u8, 0x08, 0x82];
+        cbor.extend_from_slice(&[0x58, 0x20]);
+        cbor.extend_from_slice(&[0x11_u8; 32]);
+        cbor.extend_from_slice(&[0x58, 0x20]);
+        cbor.extend_from_slice(&[0x22_u8; 32]);
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("ConflictingMetadataHash");
+        if let ShelleyUtxowPredFailure::ConflictingMetadataHash(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelEQ);
+            assert_eq!(mm.supplied.0, [0x11_u8; 32]);
+            assert_eq!(mm.expected.0, [0x22_u8; 32]);
+        } else {
+            panic!("expected ConflictingMetadataHash, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(s.contains("Mismatch (RelEQ)"));
+        assert!(s.contains("supplied: TxAuxDataHash {unTxAuxDataHash = SafeHash \"11"));
+        assert!(s.contains("expected: TxAuxDataHash {unTxAuxDataHash = SafeHash \"22"));
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_routes_unported_tag_to_raw_variant() {
+        // Tag 1 (MissingVKeyWitnessesUTXOW) — payload decoder not
+        // yet ported, captured raw.
+        let mut cbor = vec![0x82_u8, 0x01];
+        cbor.extend_from_slice(&[0x9F, 0xFF]); // dummy indefinite array (empty)
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("MissingVKeyWitnessesUTXOW");
+        if let ShelleyUtxowPredFailure::MissingVKeyWitnessesUTXOW(payload) = &f {
+            assert_eq!(payload, &[0x9F_u8, 0xFF]);
+        } else {
+            panic!("expected MissingVKeyWitnessesUTXOW raw, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "MissingVKeyWitnessesUTXOW <raw-cbor 2 bytes>"
+        );
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_unknown_tag_rejects() {
+        // Tag 99 is not a valid variant.
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ShelleyUtxowPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
         );
     }
 

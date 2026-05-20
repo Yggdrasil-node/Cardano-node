@@ -492,11 +492,22 @@ helper render upstream's custom `Show (Mismatch r a)` as
 `IncompleteWithdrawals` enforces the NonEmpty invariant at decode
 time. `ShelleyLedgerPredFailure::Display` now emits typed shapes
 for tags 2 and 3, and continues marking tags 0/1 as raw-cbor
-pending the UTXOW/DELEGS sub-rule decoders. Phase-2.5+ remaining
-work: per-rule sub-decoders for UTXOW (10+ variants) + DELEGS
-(3 variants delegating into DELPL/POOL/DELEG sub-rules), then
-mirror the predicate-failure tree for Allegra/Mary/Alonzo/Babbage/
-Conway eras (Conway adds 4+ governance-specific variants).
+pending the UTXOW/DELEGS sub-rule decoders. R598 (2026-05-21) shipped the `ShelleyUtxowPredFailure` scaffold
+(tag-0 sub-rule of the LEDGER tree): 11-variant enum mirroring
+upstream `Cardano.Ledger.Shelley.Rules.Utxow` with `from_cbor`
+decoder handling the simple payloads — tag 6
+(`MissingTxBodyMetadataHash`), tag 7 (`MissingTxMetadata`), tag 8
+(`ConflictingMetadataHash` as a typed `Mismatch<TxAuxDataHash>`),
+and tag 9 (`InvalidMetadata` with no payload). Tags 0/1/2/3/4/5/10
+(NonEmptySet/NonEmpty/sub-rule payloads) carry raw inner CBOR
+pending their per-variant decoders. New `TxAuxDataHash` newtype
+mirrors upstream's 32-byte metadata-hash SafeHash shape.
+Phase-2.5+ remaining work: NonEmptySet decoder for the
+ScriptHash/KeyHash variants, `ShelleyUtxoPredFailure` (tag-4
+nested sub-rule), `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
+tree), wiring the typed decoder into `ShelleyLedgerPredFailure`,
+then mirroring the predicate-failure tree for Allegra/Mary/Alonzo/
+Babbage/Conway eras (Conway adds 4+ governance-specific variants).
 **Exit:** operators can pattern-match typed rejection variants
 without a CBOR re-walk.
 
