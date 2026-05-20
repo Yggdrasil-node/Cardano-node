@@ -5,10 +5,10 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
-description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface has byte-equivalent top-level help/version, Command.hs parsing, TestnetDiscovery, NixService high-level config parsing, Compiler.hs script generation, Script/Aeson JSON parsing, Script/Env+Action state execution, StartProtocol config-derived genesis/protocol env wiring, SecureGenesis initial-fund spending, Script/Core state plus NtC query helpers, metadata sizing, wallet queues, value splitting, UTxO output builders, static Plutus context wiring, key-spend transaction construction, finite submitInEra LocalSocket wiring, json_highlevel execution, and selftest DiscardTX execution; next work is script-spend integrity/pre-exec, exact DumpToFile rendering, benchmark submission, RoundRobin/OneOf parity evidence, and soak evidence."
+description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface has byte-equivalent top-level help/version, Command.hs parsing, TestnetDiscovery, NixService high-level config parsing, Compiler.hs script generation, Script/Aeson JSON parsing, Script/Env+Action state execution, StartProtocol config-derived genesis/protocol env wiring, SecureGenesis initial-fund spending, Script/Core state plus NtC query helpers, metadata sizing, wallet queues, value splitting, UTxO output builders, static Plutus context wiring, key-spend transaction construction, finite submitInEra LocalSocket wiring, json_highlevel execution, selftest DiscardTX execution, and RoundRobin/OneOf upstream-TODO error-shape parity; next work is script-spend integrity/pre-exec, exact DumpToFile rendering, benchmark submission, and soak evidence."
 
 # R327/R335 skeleton plus R533-R540 command/setup/compiler/script
-# mirrors plus R541-R553 GeneratorTx/TxGenerator/Plutus/runtime helper slices. The former cardano-cli CLI-MVS prerequisite is closed;
+# mirrors plus R541-R554 GeneratorTx/TxGenerator/Plutus/runtime helper slices. The former cardano-cli CLI-MVS prerequisite is closed;
 # tx-generator now needs its own GeneratorTx / Submission implementation
 # arc plus upstream comparison evidence.
 # Three Calibrate sub-trees (Compiler.hs + Benchmarking/Script/* +

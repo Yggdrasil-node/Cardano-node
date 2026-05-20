@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R553 selftest DiscardTX slice). The old
+**Status:** `partial` (post-R554 RoundRobin/OneOf error-shape slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -190,6 +190,12 @@ approved synthesis area from the sister-tools plan.
   against bundled upstream protocol parameters. `selftest FILEPATH`
   intentionally still reaches the shared `DumpToFile` boundary until
   exact `Show (Tx)` rendering lands.
+- Shipped R554: `RoundRobin` / `OneOf` upstream-TODO error-shape
+  parity. Upstream `Core.hs` intentionally crashes with
+  `return $ foldr1 Streaming.interleaves gList` and
+  `todo: implement Quickcheck style oneOf generator`; the Rust
+  `Script/Core` mirror now returns those exact `TxGenError` strings
+  instead of local placeholder wording.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
@@ -303,11 +309,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: selftest DiscardTX execution (R553):
   `Benchmarking.Script.Selftest` now builds and runs the upstream
   static self-test action list without an output file.
+- Shipped: RoundRobin/OneOf upstream-TODO parity (R554):
+  `Benchmarking.Script.Core` now preserves the exact upstream
+  unimplemented error text for both constructors.
 - Next: port Plutus `preExecutePlutusScript` /
   `plutusAutoScaleBlockfit`, script-spend script-integrity hashing,
-  exact `DumpToFile` rendering, Benchmark submission, and
-  `RoundRobin` / `OneOf` error-shape parity in strict-mirror-sized
-  slices.
+  exact `DumpToFile` rendering, and Benchmark submission in
+  strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

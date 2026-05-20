@@ -821,10 +821,10 @@ fn eval_generator(
             Ok(vec![generated])
         }
         Generator::RoundRobin(_) => Err(lift_tx_gen_error(
-            "RoundRobin: interleaved transaction streams are pending GeneratorTx scheduling",
+            "return $ foldr1 Streaming.interleaves gList",
         )),
         Generator::OneOf(_) => Err(lift_tx_gen_error(
-            "OneOf: weighted transaction streams are pending QuickCheck-style generator wiring",
+            "todo: implement Quickcheck style oneOf generator",
         )),
     }
 }
@@ -1649,6 +1649,54 @@ mod tests {
         let source_funds = get_env_wallets(&env, "source").expect("source").funds();
         assert_eq!(source_funds.len(), 1);
         assert_eq!(source_funds[0].lovelace, 970);
+    }
+
+    #[test]
+    fn round_robin_matches_upstream_unimplemented_error() {
+        let mut env = Env::empty_env();
+        seed_static_plutus_protocol_parameters(&mut env);
+
+        let err = submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &Generator::RoundRobin(Vec::new()),
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect_err("upstream TODO error");
+
+        assert_eq!(
+            err,
+            Error::TxGenError("return $ foldr1 Streaming.interleaves gList".to_string())
+        );
+    }
+
+    #[test]
+    fn one_of_matches_upstream_unimplemented_error() {
+        let mut env = Env::empty_env();
+        seed_static_plutus_protocol_parameters(&mut env);
+
+        let err = submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &Generator::OneOf(Vec::new()),
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect_err("upstream TODO error");
+
+        assert_eq!(
+            err,
+            Error::TxGenError("todo: implement Quickcheck style oneOf generator".to_string())
+        );
     }
 
     #[test]
