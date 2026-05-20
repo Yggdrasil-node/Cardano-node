@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T17:55:40Z
-- Files described: 1451
+- Generated at: 2026-05-20T21:50:10Z
+- Files described: 1475
 
 ## Workspace
 
@@ -2303,6 +2303,54 @@
 - `docs/operational-runs/2026-05-20-round-568-tx-generator-dumptofile-alonzo-key-witness.md`
   - Operational evidence for R568 tx-generator DumpToFile Alonzo key-witnessed rendering.
   - Lists upstream references, renderer boundaries, validation commands, and remaining Plutus/soak gaps.
+- `docs/operational-runs/2026-05-20-round-569-tx-generator-dumptofile-babbage-key-witness.md`
+  - Round 569 tx-generator DumpToFile Babbage key-witnessed: ---.
+- `docs/operational-runs/2026-05-20-round-570-tx-generator-dumptofile-conway-key-witness.md`
+  - Round 570 tx-generator DumpToFile Conway key-witnessed: ---.
+- `docs/operational-runs/2026-05-20-round-571-tx-generator-dumptofile-mary-multi-asset.md`
+  - Round 571 tx-generator DumpToFile Mary multi-asset values: ---.
+- `docs/operational-runs/2026-05-20-round-572-tx-generator-dumptofile-plutus-data-redeemers.md`
+  - Round 572 tx-generator DumpToFile TxDats + Redeemers: ---.
+- `docs/operational-runs/2026-05-20-round-573-tx-generator-dumptofile-inline-datum.md`
+  - Round 573 tx-generator DumpToFile inline datums: ---.
+- `docs/operational-runs/2026-05-20-round-574-tx-generator-dumptofile-plutus-reference-script.md`
+  - Round 574 tx-generator DumpToFile Plutus reference scripts: ---.
+- `docs/operational-runs/2026-05-20-round-575-tx-generator-dumptofile-plutus-witness-script.md`
+  - Round 575 tx-generator DumpToFile Plutus witness-set scripts: ---.
+- `docs/operational-runs/2026-05-20-round-576-tx-generator-dumptofile-conway-treasury.md`
+  - Round 576 tx-generator DumpToFile Conway treasury fields: ---.
+- `docs/operational-runs/2026-05-20-round-577-tx-generator-dumptofile-conway-voting-procedures.md`
+  - Round 577 tx-generator DumpToFile Conway VotingProcedures map: ---.
+- `docs/operational-runs/2026-05-20-round-578-tx-generator-dumptofile-native-script.md`
+  - Round 578 tx-generator DumpToFile native-script Timelock Show: ---.
+- `docs/operational-runs/2026-05-20-round-579-tx-generator-dumptofile-bootstrap-witness.md`
+  - Round 579 tx-generator DumpToFile bootstrap witnesses: ---.
+- `docs/operational-runs/2026-05-20-round-580-tx-generator-dumptofile-proposal-procedures.md`
+  - Round 580 tx-generator DumpToFile Conway ProposalProcedures: ---.
+- `docs/operational-runs/2026-05-20-round-581-tx-generator-dumptofile-treasury-withdrawals.md`
+  - Round 581 tx-generator DumpToFile TreasuryWithdrawals GovAction: ---.
+- `docs/operational-runs/2026-05-20-round-582-tx-generator-dumptofile-update-committee.md`
+  - Round 582 tx-generator DumpToFile UpdateCommittee GovAction: ---.
+- `docs/operational-runs/2026-05-20-round-583-tx-generator-dumptofile-parameter-change.md`
+  - Round 583 tx-generator DumpToFile ParameterChange GovAction: ---.
+- `docs/operational-runs/2026-05-20-round-584-tx-generator-dumptofile-pparams-coin-word.md`
+  - Round 584 tx-generator DumpToFile PParamsUpdate Coin + Word fields: ---.
+- `docs/operational-runs/2026-05-20-round-585-tx-generator-dumptofile-pparams-intervals.md`
+  - Round 585 tx-generator DumpToFile PParamsUpdate interval fields: ---.
+- `docs/operational-runs/2026-05-20-round-586-tx-generator-dumptofile-pparams-prices-exunits.md`
+  - Round 586 tx-generator DumpToFile PParamsUpdate Prices + OrdExUnits: ---.
+- `docs/operational-runs/2026-05-20-round-587-tx-generator-dumptofile-pparams-voting-thresholds.md`
+  - Round 587 tx-generator DumpToFile PParamsUpdate voting thresholds: ---.
+- `docs/operational-runs/2026-05-20-round-588-tx-generator-dumptofile-pparams-cost-models.md`
+  - Round 588 tx-generator DumpToFile PParamsUpdate CostModels: ---.
+- `docs/operational-runs/2026-05-20-round-589-tx-generator-dumptofile-bytestring-mnemonics.md`
+  - Round 589 tx-generator DumpToFile ByteString mnemonic escapes: ---.
+- `docs/operational-runs/2026-05-20-round-590-tx-generator-dumptofile-bootstrap-witness-key-hash.md`
+  - Round 590 tx-generator DumpToFile bootstrap-witness key-hash sort: ---.
+- `docs/operational-runs/2026-05-20-round-591-remove-inert-ntn-feature.md`
+  - Round 591 Remove inert ntn feature flag (A1 partial): ---.
+- `docs/operational-runs/2026-05-20-round-592-remove-inert-plutus-feature.md`
+  - Round 592 Remove inert plutus feature flag from yggdrasil-ledger (A1 partial): ---.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`
