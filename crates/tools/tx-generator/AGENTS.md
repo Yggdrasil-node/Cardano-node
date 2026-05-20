@@ -1,7 +1,7 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R570 Conway key-witnessed DumpToFile slice). The old
-cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
+**Status:** `partial` (post-R571 Mary multi-asset value DumpToFile rendering).
+The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
 
@@ -283,6 +283,19 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R571: `show_mary_value` now renders non-empty `MultiAsset`
+  bundles for Mary/Alonzo/Babbage/Conway transaction outputs, mirroring
+  upstream `Show (MaryValue)` and `Show (MultiAsset)`:
+  `MaryValue (Coin N) (MultiAsset (fromList [(PolicyID {policyID =
+  ScriptHash "<hex>"},fromList [("<asset-hex>",<qty>),...]),...]))`.
+  Entry order tracks `BTreeMap` byte-lex which matches upstream
+  `Data.Map toAscList` ordering on `PolicyID` (Ord via `ScriptHash`
+  Hash bytes) and `AssetName` (Ord via `ShortByteString` bytes). The
+  multi-asset boundary is now lifted from `show_mary_tx_out`,
+  `show_alonzo_tx_out`, and `show_babbage_tx_out` automatically (those
+  wrappers were only forwarding the rejection). Output renderers in
+  Mary/Alonzo/Babbage/Conway DumpToFile paths will pick this up once
+  gen_tx supports producing multi-asset outputs.
 - Shipped R570: `SubmitMode::DumpToFile` now renders Conway
   key-witnessed streams via `show_conway_tx_for_dump`. The body emits
   the upstream 19-field `ConwayTxBodyRaw` record — renamed
@@ -491,6 +504,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
   for witnesses, and emits the `ShelleyTx ShelleyBasedEraConway
   (AlonzoTx ...)` envelope. The match in `show_tx_for_dump` is now
   exhaustive across `MultiEraSubmittedTx`.
+- Shipped: Mary multi-asset value DumpToFile rendering (R571):
+  `show_mary_value` now produces the upstream `MaryValue (Coin N)
+  (MultiAsset (fromList [(PolicyID {...},fromList [(...,qty)])]))`
+  Show output for non-empty multi-asset bundles. Lifts the multi-asset
+  boundary across the Mary, Alonzo, Babbage, and Conway `tx_out`
+  renderers in one round.
 - Next: Plutus-bearing Babbage/Conway `DumpToFile` Show coverage and
   upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry

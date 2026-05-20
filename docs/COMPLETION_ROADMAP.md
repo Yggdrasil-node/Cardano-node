@@ -345,10 +345,17 @@ own parser / generator / submission implementation plus upstream
   the Babbage outputs renderer (Conway shares `BabbageTxOut`) and the
   Alonzo witness renderer (Conway `TxWits = AlonzoTxWits`). The
   `show_tx_for_dump` dispatch is now exhaustive across all
-  `MultiEraSubmittedTx` variants. The remaining tx-generator blockers
-  are Plutus-bearing Babbage/Conway `DumpToFile` rendering (inline
-  datums, reference scripts, Plutus witness sets, governance
-  procedures) and upstream-binary soak evidence.
+  `MultiEraSubmittedTx` variants. R571 lifted the multi-asset value
+  boundary across the Mary, Alonzo, Babbage, and Conway `tx_out`
+  renderers in one round by extending `show_mary_value` to produce
+  upstream `MaryValue (Coin N) (MultiAsset (fromList [(PolicyID
+  {policyID = ScriptHash "..."},fromList [("<asset>",qty)])]))` Show
+  output for non-empty multi-asset bundles, including `BTreeMap`
+  byte-lex iteration order that mirrors upstream `Data.Map toAscList`.
+  The remaining tx-generator blockers are Plutus-bearing
+  Babbage/Conway `DumpToFile` rendering (inline datums, reference
+  scripts, Plutus witness sets, governance procedures) and
+  upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

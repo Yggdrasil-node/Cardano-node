@@ -1496,17 +1496,44 @@ fn show_babbage_script_ref(script_ref: Option<&ScriptRef>) -> Result<String, Err
 }
 
 fn show_mary_value(value: &yggdrasil_ledger::Value) -> Result<String, Error> {
-    match value {
-        yggdrasil_ledger::Value::Coin(coin) => Ok(format!(
-            "MaryValue (Coin {coin}) (MultiAsset (fromList []))"
-        )),
-        yggdrasil_ledger::Value::CoinAndAssets(coin, assets) if assets.is_empty() => Ok(format!(
-            "MaryValue (Coin {coin}) (MultiAsset (fromList []))"
-        )),
-        yggdrasil_ledger::Value::CoinAndAssets(_, _) => Err(lift_tx_gen_error(
-            "DumpToFile: Mary Show(Tx) renderer does not yet support multi-asset values",
-        )),
-    }
+    let (coin, assets) = match value {
+        yggdrasil_ledger::Value::Coin(coin) => (*coin, None),
+        yggdrasil_ledger::Value::CoinAndAssets(coin, assets) => (*coin, Some(assets)),
+    };
+    let multi_asset = match assets {
+        None => "fromList []".to_string(),
+        Some(map) if map.is_empty() => "fromList []".to_string(),
+        Some(map) => show_multi_asset_entries(map),
+    };
+    Ok(format!(
+        "MaryValue (Coin {coin}) (MultiAsset ({multi_asset}))"
+    ))
+}
+
+/// Render the inner `fromList [...]` body of a non-empty `MultiAsset` map,
+/// mirroring upstream `Show (Map PolicyID (Map AssetName Integer))`:
+/// `fromList [(PolicyID {policyID = ScriptHash "<hex>"},fromList [("<asset-hex>",<qty>),...]),...]`.
+///
+/// Entry order follows `BTreeMap` byte-lex ordering, which matches upstream
+/// `Data.Map` `toAscList` ordering on `PolicyID` (Ord via `ScriptHash` ->
+/// `Hash.Hash` byte order) and `AssetName` (Ord via `ShortByteString` byte
+/// order).
+fn show_multi_asset_entries(ma: &yggdrasil_ledger::eras::mary::MultiAsset) -> String {
+    let policies: Vec<String> = ma
+        .iter()
+        .map(|(policy, assets)| {
+            let inner: Vec<String> = assets
+                .iter()
+                .map(|(asset, qty)| format!("(\"{}\",{qty})", hex::encode(asset)))
+                .collect();
+            format!(
+                "(PolicyID {{policyID = ScriptHash \"{}\"}},fromList [{}])",
+                hex::encode(policy),
+                inner.join(",")
+            )
+        })
+        .collect();
+    format!("fromList [{}]", policies.join(","))
 }
 
 fn show_shelley_address(address: &Address, era: &str) -> Result<String, Error> {
@@ -2720,6 +2747,88 @@ mod tests {
                 .expect("empty multi-asset value");
 
         assert_eq!(rendered, "MaryValue (Coin 90) (MultiAsset (fromList []))");
+    }
+
+    #[test]
+    fn dumptofile_mary_value_renders_single_asset() {
+        let mut inner = BTreeMap::new();
+        inner.insert(vec![0xDE, 0xAD, 0xBE, 0xEF], 7);
+        let mut ma = BTreeMap::new();
+        ma.insert([0x11; 28], inner);
+
+        let rendered = show_mary_value(&yggdrasil_ledger::Value::CoinAndAssets(42, ma))
+            .expect("single multi-asset value");
+
+        assert_eq!(
+            rendered,
+            "MaryValue (Coin 42) (MultiAsset (fromList [(PolicyID {policyID = ScriptHash \"11111111111111111111111111111111111111111111111111111111\"},fromList [(\"deadbeef\",7)])]))"
+        );
+    }
+
+    #[test]
+    fn dumptofile_mary_value_renders_empty_asset_name() {
+        let mut inner = BTreeMap::new();
+        inner.insert(Vec::new(), 1);
+        let mut ma = BTreeMap::new();
+        ma.insert([0xAB; 28], inner);
+
+        let rendered = show_mary_value(&yggdrasil_ledger::Value::CoinAndAssets(1, ma))
+            .expect("empty-asset-name multi-asset value");
+
+        assert_eq!(
+            rendered,
+            "MaryValue (Coin 1) (MultiAsset (fromList [(PolicyID {policyID = ScriptHash \"abababababababababababababababababababababababababababab\"},fromList [(\"\",1)])]))"
+        );
+    }
+
+    #[test]
+    fn dumptofile_mary_value_sorts_policies_by_byte_lex_order() {
+        let mut ma = BTreeMap::new();
+        let mut inner_b = BTreeMap::new();
+        inner_b.insert(vec![0x01], 9);
+        ma.insert([0xFF; 28], inner_b);
+
+        let mut inner_a = BTreeMap::new();
+        inner_a.insert(vec![0x02], 5);
+        ma.insert([0x00; 28], inner_a);
+
+        let rendered = show_mary_value(&yggdrasil_ledger::Value::CoinAndAssets(0, ma))
+            .expect("multi-policy multi-asset value");
+
+        // 0x00... policy must precede 0xFF... policy (BTreeMap iter is
+        // byte-lex ordered, matching upstream Data.Map toAscList on
+        // PolicyID / ScriptHash byte ordering). 28 bytes = 56 hex chars.
+        let zero_hex: String = std::iter::repeat_n('0', 56).collect();
+        let ff_hex: String = std::iter::repeat_n('f', 56).collect();
+        let zero_pos = rendered
+            .find(&format!("ScriptHash \"{zero_hex}\""))
+            .expect("zero-prefix policy rendered");
+        let ff_pos = rendered
+            .find(&format!("ScriptHash \"{ff_hex}\""))
+            .expect("ff-prefix policy rendered");
+        assert!(
+            zero_pos < ff_pos,
+            "policies must be rendered in ascending byte-lex order: rendered={rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_mary_value_sorts_assets_within_policy_by_byte_lex_order() {
+        let mut inner = BTreeMap::new();
+        inner.insert(vec![0xFF, 0xFF], 2);
+        inner.insert(vec![0x00, 0x00], 1);
+        let mut ma = BTreeMap::new();
+        ma.insert([0x55; 28], inner);
+
+        let rendered = show_mary_value(&yggdrasil_ledger::Value::CoinAndAssets(0, ma))
+            .expect("multi-asset-per-policy value");
+
+        let lo = rendered.find("(\"0000\",1)").expect("low asset rendered");
+        let hi = rendered.find("(\"ffff\",2)").expect("high asset rendered");
+        assert!(
+            lo < hi,
+            "assets within a policy must be rendered in ascending byte-lex order: rendered={rendered}"
+        );
     }
 
     #[test]
