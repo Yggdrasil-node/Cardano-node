@@ -528,14 +528,22 @@ upstream Quiet-derived `VKey (VerKeyEd25519DSIGN "<hex>")`;
 Display matching upstream `Show (NonEmpty a)`: `<head> :| [<tail>]`.
 After R601, **10 of the 11 `ShelleyUtxowPredFailure` variants
 carry fully-typed payloads** — only tag 4 (`UtxoFailure`, nested
-`ShelleyUtxoPredFailure` sub-rule) remains raw. Phase-2.5+
-remaining work: `ShelleyUtxoPredFailure` decoder for tag 4 (the
-biggest sub-rule, ~13 variants), `ShelleyDelegsPredFailure`
-(tag-1 of the LEDGER tree), wiring the typed
-`ShelleyUtxowPredFailure` decoder into
-`ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`, then mirroring
-the predicate-failure tree for Allegra/Mary/Alonzo/Babbage/Conway
-eras (Conway adds 4+ governance-specific variants).
+`ShelleyUtxoPredFailure` sub-rule) remains raw within the UTXOW
+sub-rule. R602 (2026-05-21) opened the `ShelleyUtxoPredFailure`
+scaffold (the nested UTXO sub-rule under UTXOW tag 4): 11-variant
+enum mirroring upstream `Cardano.Ledger.Shelley.Rules.Utxo`,
+shared `decode_mismatch_u64` helper, typed decoders for the
+Mismatch-payload tags 1 (`ExpiredUTxO` — SlotNo), 2
+(`MaxTxSizeUTxO` — Word32 narrowing), 4 (`FeeTooSmallUTxO` —
+Coin), plus the no-payload tag 3 (`InputSetEmptyUTxO`). Tags
+0/5/6/7/8/9/10 carry raw pending NonEmptySet TxIn / era-specific
+Value / NonEmpty TxOut / PPUP / Network+Addr / Network+AccountAddress
+decoders. Phase-2.5+ remaining work: per-variant decoders for
+those 7 raw UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of
+the LEDGER tree), wiring the typed `ShelleyUtxowPredFailure`
+decoder into `ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`,
+then mirroring the predicate-failure tree for Allegra/Mary/Alonzo/
+Babbage/Conway eras (Conway adds 4+ governance-specific variants).
 **Exit:** operators can pattern-match typed rejection variants
 without a CBOR re-walk.
 

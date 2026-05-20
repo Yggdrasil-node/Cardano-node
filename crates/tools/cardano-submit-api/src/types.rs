@@ -1375,6 +1375,262 @@ impl ShelleyUtxowPredFailure {
     }
 }
 
+/// `ShelleyUtxoPredFailure` mirror — nested sub-rule under
+/// `ShelleyUtxowPredFailure::UtxoFailure` (tag 4).
+///
+/// Upstream: `data ShelleyUtxoPredFailure era` from
+/// `Cardano.Ledger.Shelley.Rules.Utxo` with 11 variants encoded via
+/// upstream's `Sum` constructor — a CBOR list whose first element is
+/// the Word8 tag and remaining elements are payload parts.
+///
+/// R602 ships the enum + Display for all 11 variants and a CBOR
+/// decoder for the simple Mismatch-payload tags (1/2/3/4). The
+/// remaining variants (0/5/6/7/8/9/10) carry raw inner CBOR
+/// pending NonEmptySet TxIn / Value / NonEmpty TxOut / PPUP / Addr
+/// decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShelleyUtxoPredFailure {
+    /// Tag 0: bad transaction inputs — `NonEmptySet TxIn`.
+    /// Raw payload pending TxIn decoder.
+    BadInputsUTxO(Vec<u8>),
+    /// Tag 1: transaction expired — `Mismatch RelLTEQ SlotNo` where
+    /// supplied is the tx TTL and expected is the current slot.
+    ExpiredUTxO(Mismatch<u64>),
+    /// Tag 2: tx size too large — `Mismatch RelLTEQ Word32` where
+    /// supplied is the tx size and expected is the protocol max.
+    MaxTxSizeUTxO(Mismatch<u32>),
+    /// Tag 3: tx has no inputs — no payload.
+    InputSetEmptyUTxO,
+    /// Tag 4: fee too small — `Mismatch RelGTEQ Coin` where
+    /// supplied is the tx fee and expected is the min fee.
+    FeeTooSmallUTxO(Mismatch<u64>),
+    /// Tag 5: value not conserved — `Mismatch RelEQ (Value era)`.
+    /// Raw payload pending era-specific Value decoder (Shelley=Coin,
+    /// Mary+=MultiAsset).
+    ValueNotConservedUTxO(Vec<u8>),
+    /// Tag 6: outputs too small — `NonEmpty (TxOut era)`. Raw
+    /// payload pending era-specific TxOut decoder.
+    OutputTooSmallUTxO(Vec<u8>),
+    /// Tag 7: nested PPUP sub-rule failure. Raw payload pending
+    /// `ShelleyPpupPredFailure` decoder.
+    UpdateFailure(Vec<u8>),
+    /// Tag 8: addresses with wrong network ID. 3-element CBOR
+    /// array: `[8, expected-network, NonEmptySet Addr]`. Raw
+    /// payload pending Addr decoder.
+    WrongNetwork(Vec<u8>),
+    /// Tag 9: account addresses with wrong network ID. 3-element
+    /// CBOR array: `[9, expected-network, NonEmptySet AccountAddress]`.
+    /// Raw payload pending AccountAddress NonEmptySet decoder.
+    WrongNetworkWithdrawal(Vec<u8>),
+    /// Tag 10: bootstrap-address attributes too big —
+    /// `NonEmpty (TxOut era)`. Raw payload pending TxOut decoder.
+    OutputBootAddrAttrsTooBig(Vec<u8>),
+}
+
+impl ShelleyUtxoPredFailure {
+    /// Upstream CBOR tag (Word8) for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::BadInputsUTxO(_) => 0,
+            Self::ExpiredUTxO(_) => 1,
+            Self::MaxTxSizeUTxO(_) => 2,
+            Self::InputSetEmptyUTxO => 3,
+            Self::FeeTooSmallUTxO(_) => 4,
+            Self::ValueNotConservedUTxO(_) => 5,
+            Self::OutputTooSmallUTxO(_) => 6,
+            Self::UpdateFailure(_) => 7,
+            Self::WrongNetwork(_) => 8,
+            Self::WrongNetworkWithdrawal(_) => 9,
+            Self::OutputBootAddrAttrsTooBig(_) => 10,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::BadInputsUTxO(_) => "BadInputsUTxO",
+            Self::ExpiredUTxO(_) => "ExpiredUTxO",
+            Self::MaxTxSizeUTxO(_) => "MaxTxSizeUTxO",
+            Self::InputSetEmptyUTxO => "InputSetEmptyUTxO",
+            Self::FeeTooSmallUTxO(_) => "FeeTooSmallUTxO",
+            Self::ValueNotConservedUTxO(_) => "ValueNotConservedUTxO",
+            Self::OutputTooSmallUTxO(_) => "OutputTooSmallUTxO",
+            Self::UpdateFailure(_) => "UpdateFailure",
+            Self::WrongNetwork(_) => "WrongNetwork",
+            Self::WrongNetworkWithdrawal(_) => "WrongNetworkWithdrawal",
+            Self::OutputBootAddrAttrsTooBig(_) => "OutputBootAddrAttrsTooBig",
+        }
+    }
+}
+
+impl fmt::Display for ShelleyUtxoPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ShelleyUtxoPredFailure era)`: `<Constructor> <payload>`.
+    /// Typed Mismatch payloads (tags 1/2/4) render through their
+    /// typed Display; the InputSetEmptyUTxO variant (tag 3) has
+    /// no payload; raw payloads emit a `<raw-cbor N bytes>` marker.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BadInputsUTxO(b)
+            | Self::ValueNotConservedUTxO(b)
+            | Self::OutputTooSmallUTxO(b)
+            | Self::UpdateFailure(b)
+            | Self::WrongNetwork(b)
+            | Self::WrongNetworkWithdrawal(b)
+            | Self::OutputBootAddrAttrsTooBig(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ExpiredUTxO(mm) => write!(f, "ExpiredUTxO ({mm})"),
+            Self::MaxTxSizeUTxO(mm) => write!(f, "MaxTxSizeUTxO ({mm})"),
+            Self::InputSetEmptyUTxO => f.write_str("InputSetEmptyUTxO"),
+            Self::FeeTooSmallUTxO(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "FeeTooSmallUTxO ({typed})")
+            }
+        }
+    }
+}
+
+impl ShelleyUtxoPredFailure {
+    /// Decode the full `ShelleyUtxoPredFailure` outer envelope from
+    /// CBOR bytes. Upstream encoding wraps every variant in a CBOR
+    /// list whose first element is the Word8 tag and remaining
+    /// elements are payload parts. Length-1 for tag 3
+    /// (`InputSetEmptyUTxO`), length-2 for tags 0/1/2/4/5/6/7/10,
+    /// length-3 for tags 8/9 (`WrongNetwork[Withdrawal]`).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyUtxoPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(1..=3).contains(&len) {
+            return Err(DecoderError(format!(
+                "ShelleyUtxoPredFailure: expected 1- to 3-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyUtxoPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        if tag == 3 {
+            if len != 1 {
+                return Err(DecoderError(format!(
+                    "ShelleyUtxoPredFailure: InputSetEmptyUTxO uses 1-element array, got len {len}"
+                )));
+            }
+            return Ok(Self::InputSetEmptyUTxO);
+        }
+        let payload_offset = dec.position();
+        match tag {
+            // Mismatch RelLTEQ SlotNo (Word64) — Mismatch payload is
+            // a 2-element CBOR array [supplied, expected].
+            1 => {
+                let mm = decode_mismatch_u64(&mut dec, MismatchRelation::RelLTEQ)
+                    .map_err(|err| DecoderError(format!("ExpiredUTxO: {}", err.0)))?;
+                Ok(Self::ExpiredUTxO(mm))
+            }
+            // Mismatch RelLTEQ Word32 — supplied/expected fit u32.
+            2 => {
+                let inner_len = dec.array().map_err(|err| {
+                    DecoderError(format!("MaxTxSizeUTxO: expected Mismatch 2-array: {err:?}"))
+                })?;
+                if inner_len != 2 {
+                    return Err(DecoderError(format!(
+                        "MaxTxSizeUTxO: expected Mismatch 2-array, got len {inner_len}"
+                    )));
+                }
+                let supplied = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("MaxTxSizeUTxO: supplied: {err:?}")))?;
+                let expected = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("MaxTxSizeUTxO: expected: {err:?}")))?;
+                let supplied = u32::try_from(supplied).map_err(|_| {
+                    DecoderError(format!(
+                        "MaxTxSizeUTxO: supplied {supplied} does not fit Word32"
+                    ))
+                })?;
+                let expected = u32::try_from(expected).map_err(|_| {
+                    DecoderError(format!(
+                        "MaxTxSizeUTxO: expected {expected} does not fit Word32"
+                    ))
+                })?;
+                Ok(Self::MaxTxSizeUTxO(Mismatch {
+                    relation: MismatchRelation::RelLTEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            // Mismatch RelGTEQ Coin — Coin is Word64 in CBOR.
+            4 => {
+                let mm = decode_mismatch_u64(&mut dec, MismatchRelation::RelGTEQ)
+                    .map_err(|err| DecoderError(format!("FeeTooSmallUTxO: {}", err.0)))?;
+                Ok(Self::FeeTooSmallUTxO(mm))
+            }
+            // Variants whose typed payload decoder is not yet
+            // ported: capture the remaining bytes verbatim.
+            0 | 5 | 6 | 7 | 8 | 9 | 10 => {
+                let raw = bytes
+                    .get(payload_offset..)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ShelleyUtxoPredFailure: payload offset out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(match tag {
+                    0 => Self::BadInputsUTxO(raw),
+                    5 => Self::ValueNotConservedUTxO(raw),
+                    6 => Self::OutputTooSmallUTxO(raw),
+                    7 => Self::UpdateFailure(raw),
+                    8 => Self::WrongNetwork(raw),
+                    9 => Self::WrongNetworkWithdrawal(raw),
+                    10 => Self::OutputBootAddrAttrsTooBig(raw),
+                    _ => unreachable!("tag range checked above"),
+                })
+            }
+            other => Err(DecoderError(format!(
+                "ShelleyUtxoPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+/// Decode the canonical `Mismatch r Word64` 2-element CBOR array
+/// `[supplied, expected]` into a typed `Mismatch<u64>`.
+fn decode_mismatch_u64(
+    dec: &mut yggdrasil_ledger::Decoder<'_>,
+    relation: MismatchRelation,
+) -> Result<Mismatch<u64>, DecoderError> {
+    let inner_len = dec
+        .array()
+        .map_err(|err| DecoderError(format!("expected Mismatch 2-array: {err:?}")))?;
+    if inner_len != 2 {
+        return Err(DecoderError(format!(
+            "expected Mismatch 2-array, got len {inner_len}"
+        )));
+    }
+    let supplied = dec
+        .unsigned()
+        .map_err(|err| DecoderError(format!("supplied: {err:?}")))?;
+    let expected = dec
+        .unsigned()
+        .map_err(|err| DecoderError(format!("expected: {err:?}")))?;
+    Ok(Mismatch {
+        relation,
+        supplied,
+        expected,
+    })
+}
+
 /// Typed payload for `ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts`.
 ///
 /// Mirrors upstream `Withdrawals = Map AccountAddress Coin` from
@@ -2175,6 +2431,100 @@ mod tests {
         let s = keys.to_string();
         assert!(s.contains("VKey (VerKeyEd25519DSIGN \"1111"));
         assert!(s.contains(":| [VKey (VerKeyEd25519DSIGN \"2222"));
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_input_set_empty_decodes_tag3() {
+        // Tag 3: 1-element CBOR array [0x81, 0x03]
+        let cbor = [0x81_u8, 0x03];
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("InputSetEmptyUTxO");
+        assert_eq!(f, ShelleyUtxoPredFailure::InputSetEmptyUTxO);
+        assert_eq!(f.tag(), 3);
+        assert_eq!(f.to_string(), "InputSetEmptyUTxO");
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_expired_utxo_decodes_tag1() {
+        // Tag 1: outer [0x82, 0x01, mismatch-array]
+        // Mismatch [supplied=100, expected=99] (RelLTEQ — tx TTL was
+        // less than current slot).
+        let cbor = [0x82_u8, 0x01, 0x82, 0x18, 100, 0x18, 99];
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("ExpiredUTxO");
+        if let ShelleyUtxoPredFailure::ExpiredUTxO(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelLTEQ);
+            assert_eq!(mm.supplied, 100);
+            assert_eq!(mm.expected, 99);
+        } else {
+            panic!("expected ExpiredUTxO, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ExpiredUTxO (Mismatch (RelLTEQ) {supplied: 100, expected: 99})"
+        );
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_max_tx_size_decodes_tag2() {
+        let cbor = [0x82_u8, 0x02, 0x82, 0x19, 0x40, 0x00, 0x19, 0x20, 0x00];
+        // supplied=0x4000=16384, expected=0x2000=8192
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("MaxTxSizeUTxO");
+        if let ShelleyUtxoPredFailure::MaxTxSizeUTxO(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelLTEQ);
+            assert_eq!(mm.supplied, 16384_u32);
+            assert_eq!(mm.expected, 8192_u32);
+        } else {
+            panic!("expected MaxTxSizeUTxO, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "MaxTxSizeUTxO (Mismatch (RelLTEQ) {supplied: 16384, expected: 8192})"
+        );
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_fee_too_small_decodes_tag4() {
+        // Tag 4: outer [0x82, 0x04, mismatch-array]
+        let cbor = [
+            0x82_u8, 0x04, 0x82, 0x1A, 0x00, 0x01, 0x86, 0xA0, 0x1A, 0x00, 0x03, 0x0D, 0x40,
+        ];
+        // supplied=0x000186A0=100_000, expected=0x00030D40=200_000
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("FeeTooSmallUTxO");
+        if let ShelleyUtxoPredFailure::FeeTooSmallUTxO(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelGTEQ);
+            assert_eq!(mm.supplied, 100_000);
+            assert_eq!(mm.expected, 200_000);
+        } else {
+            panic!("expected FeeTooSmallUTxO, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "FeeTooSmallUTxO (Mismatch (RelGTEQ) {supplied: Coin 100000, expected: Coin 200000})"
+        );
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_routes_tag0_to_raw_variant() {
+        // Tag 0 (BadInputsUTxO) — NonEmptySet TxIn decoder not yet
+        // ported. Payload captured raw.
+        let mut cbor = vec![0x82_u8, 0x00];
+        cbor.extend_from_slice(&[0x9F, 0xFF]);
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("BadInputsUTxO");
+        if let ShelleyUtxoPredFailure::BadInputsUTxO(payload) = &f {
+            assert_eq!(payload, &[0x9F_u8, 0xFF]);
+        } else {
+            panic!("expected BadInputsUTxO raw, got {f:?}");
+        }
+        assert_eq!(f.to_string(), "BadInputsUTxO <raw-cbor 2 bytes>");
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ShelleyUtxoPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
+        );
     }
 
     #[test]
