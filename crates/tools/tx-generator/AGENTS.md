@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R562 LogTypes/SubmissionClient state-machine slice). The old
+**Status:** `partial` (post-R563 GeneratorTx.Submission stream-source slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -242,14 +242,20 @@ approved synthesis area from the sister-tools plan.
   provide upstream-shaped submission trace/summary types plus the pure
   request/response state machine for ack handling, tx-id announcement,
   tx-body lookup, unavailable accounting, and per-thread stats.
+- Shipped R563: `Cardano.Benchmarking.GeneratorTx.Submission` now
+  provides upstream-shaped `SubmissionParams`, `ReportRef`,
+  `SubmissionThreadReport`, report publication helpers,
+  `mkSubmissionSummary`, `StreamState`, `SharedTxStream`, and
+  `txStreamSource` over the R561 TPS throttle and R562
+  `SubmissionClient` source boundary.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
-- Pending: wire `GeneratorTx.Submission` / `walletBenchmark` around
-  the new throttle and submission-client primitives, then extend
-  `DumpToFile` Show rendering beyond the Allegra key-witnessed
-  selftest shape.
+- Pending: wire `walletBenchmark` node-to-node scheduler behavior
+  around the new throttle/submission-client/submission state machine,
+  then extend `DumpToFile` Show rendering beyond the Allegra
+  key-witnessed selftest shape.
 
 ## Build + Run
 
@@ -394,6 +400,10 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `generator_tx/submission_client.rs` port the upstream
   submission-summary/tracing carriers and the requestTxIds/requestTxs
   state machine that the later network loop will drive.
+- Shipped: GeneratorTx.Submission stream source (R563):
+  `generator_tx/submission.rs` ports the upstream report refs,
+  submission summaries, stream state, and `txStreamSource` bridge over
+  the TPS throttle and `TxSource` boundary.
 - Next: Benchmark submission scheduler/network wiring and broader
   `DumpToFile` Show coverage in
   strict-mirror-sized slices.

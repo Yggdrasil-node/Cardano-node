@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T15:04:35Z
-- Files described: 1444
+- Generated at: 2026-05-20T15:27:18Z
+- Files described: 1446
 
 ## Workspace
 
@@ -1770,6 +1770,8 @@
   - Transaction-stream generator runtime surface. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx.hs`.
 - `crates/tools/tx-generator/src/generator_tx/sized_metadata.rs`
   - Sized transaction-metadata construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx/SizedMetadata.
+- `crates/tools/tx-generator/src/generator_tx/submission.rs`
+  - Strict mirror of upstream `GeneratorTx.Submission`, porting report refs, submission summaries, stream state, and the throttled transaction stream source.
 - `crates/tools/tx-generator/src/generator_tx/submission_client.rs`
   - Strict mirror of upstream `GeneratorTx.SubmissionClient`, porting tx-id request handling, unacked-window accounting, tx lookup, and thread stats.
 - `crates/tools/tx-generator/src/lib.rs`
@@ -2285,6 +2287,8 @@
   - Operational run note for R561 tx-generator Benchmarking.Types and TpsThrottle parity work, including upstream references, validation, and remaining Benchmark submission gaps.
 - `docs/operational-runs/2026-05-20-round-562-tx-generator-submission-client.md`
   - Operational run note for R562 tx-generator LogTypes and SubmissionClient parity work, including upstream references, validation, and remaining Benchmark wiring gaps.
+- `docs/operational-runs/2026-05-20-round-563-tx-generator-submission.md`
+  - Operational run note for R563 tx-generator GeneratorTx.Submission report refs, summaries, stream state, validation, and remaining walletBenchmark gaps.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

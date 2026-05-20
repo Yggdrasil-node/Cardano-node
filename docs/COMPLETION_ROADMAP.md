@@ -312,10 +312,12 @@ own parser / generator / submission implementation plus upstream
   `Cardano.Benchmarking.Types` and `TpsThrottle` foundations for
   `GeneratorTx.Submission` and `walletBenchmark`; R562 added
   `Cardano.Benchmarking.LogTypes` plus the
-  `GeneratorTx.SubmissionClient` request-state core. The remaining
-  tx-generator blockers are `GeneratorTx.Submission` /
-  `walletBenchmark` network wiring, broader `DumpToFile` rendering
-  beyond the Allegra key-witnessed selftest shape, and soak evidence.
+  `GeneratorTx.SubmissionClient` request-state core; R563 added the
+  `GeneratorTx.Submission` report refs, submission summaries, stream
+  state, and `txStreamSource` bridge. The remaining tx-generator
+  blockers are `walletBenchmark` node-to-node scheduler/network
+  wiring, broader `DumpToFile` rendering beyond the Allegra
+  key-witnessed selftest shape, and soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
