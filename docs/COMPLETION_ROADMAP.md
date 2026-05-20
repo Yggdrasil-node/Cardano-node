@@ -551,11 +551,19 @@ AccountAddress]`) to typed payload. R605 (2026-05-21) opened the
 nested `ShelleyPpupPredFailure` scaffold (3-variant enum
 mirroring `Cardano.Ledger.Shelley.Rules.Ppup`:
 NonGenesisUpdatePPUP / PPUpdateWrongEpoch / PVCannotFollowPPUP)
-with `tag()`, `constructor()`, Display, and outer-envelope
-decoder. All 3 variants carry raw inner CBOR pending per-payload
-decoders. Wired `ShelleyUtxoPredFailure::UpdateFailure` (tag 7)
-to typed `ShelleyPpupPredFailure`. 7/11 UTXO variants now carry
-typed payloads; 4 raw remain (Value, TxOut x2, Network+Addr).
+with outer-envelope decoder. Wired
+`ShelleyUtxoPredFailure::UpdateFailure` (tag 7) to typed
+`ShelleyPpupPredFailure`. R606 (2026-05-21) shipped per-variant
+typed payload decoders for all 3 PPUP variants:
+`Mismatch<SetKeyHash>` with RelSubset for tag 0, `(EpochNo,
+EpochNo, VotingPeriod)` struct variant for tag 1 (with new
+`VotingPeriod` enum: Word8 0=VoteForThisEpoch / 1=VoteForNextEpoch),
+typed `ProtVer` (2-element record `{major, minor}` decoded from
+CBORGroup wire form) for tag 2. New `SetKeyHash::from_decoder`
+shared helper used by both the parent rejection list and the
+PPUP Mismatch decoder. **All 3 PPUP variants now carry typed
+payloads.** 7/11 UTXO variants typed; 4 raw remain (Value, TxOut
+x2, Network+Addr).
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

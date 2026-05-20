@@ -935,6 +935,12 @@ impl SetKeyHash {
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(bytes);
+        Self::from_decoder(&mut dec)
+    }
+
+    /// Decode from an in-progress `Decoder`. Used by parent payload
+    /// decoders that have already consumed the outer envelope.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
         let major = dec
             .peek_major()
             .map_err(|err| DecoderError(format!("SetKeyHash: peek: {err:?}")))?;
@@ -1947,6 +1953,90 @@ impl fmt::Display for NonEmptySetAccountAddress {
     }
 }
 
+/// Protocol version mirroring upstream `data ProtVer = ProtVer
+/// {pvMajor :: !Version, pvMinor :: !Natural}` from
+/// `Cardano.Ledger.BaseTypes`. CBOR wire format is a 2-element
+/// array `[major, minor]` (via CBORGroup). Display matches
+/// upstream stock-derived record Show:
+/// `ProtVer {pvMajor = <n>, pvMinor = <n>}`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct ProtVer {
+    /// Major protocol version (upstream `pvMajor :: Version` — a
+    /// Word that gates hard-fork era boundaries).
+    pub major: u64,
+    /// Minor protocol version (upstream `pvMinor :: Natural`).
+    pub minor: u64,
+}
+
+impl ProtVer {
+    /// Decode `ProtVer` as a CBOR 2-element array `[major, minor]`.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("ProtVer: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ProtVer: expected 2-array, got len {len}"
+            )));
+        }
+        let major = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("ProtVer: major: {err:?}")))?;
+        let minor = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("ProtVer: minor: {err:?}")))?;
+        Ok(Self { major, minor })
+    }
+}
+
+impl fmt::Display for ProtVer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ProtVer {{pvMajor = {}, pvMinor = {}}}",
+            self.major, self.minor
+        )
+    }
+}
+
+/// PPUP voting period mirroring upstream
+/// `data VotingPeriod = VoteForThisEpoch | VoteForNextEpoch`.
+/// CBOR encoding: Word8 (0=VoteForThisEpoch, 1=VoteForNextEpoch).
+/// Display matches upstream stock-derived constructor-name Show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum VotingPeriod {
+    /// Word8 = 0.
+    VoteForThisEpoch,
+    /// Word8 = 1.
+    VoteForNextEpoch,
+}
+
+impl VotingPeriod {
+    /// Decode `VotingPeriod` from the next CBOR Word8 in the
+    /// decoder.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let n = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("VotingPeriod: expected Word8: {err:?}")))?;
+        match n {
+            0 => Ok(Self::VoteForThisEpoch),
+            1 => Ok(Self::VoteForNextEpoch),
+            other => Err(DecoderError(format!(
+                "VotingPeriod: unknown voting period {other} (expected 0 or 1)"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for VotingPeriod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::VoteForThisEpoch => "VoteForThisEpoch",
+            Self::VoteForNextEpoch => "VoteForNextEpoch",
+        })
+    }
+}
+
 /// `ShelleyPpupPredFailure` mirror — nested PPUP sub-rule under
 /// `ShelleyUtxoPredFailure::UpdateFailure` (UTXO tag 7).
 ///
@@ -1960,22 +2050,25 @@ impl fmt::Display for NonEmptySetAccountAddress {
 ///   | PVCannotFollowPPUP ProtVer
 /// ```
 ///
-/// R605 ships the scaffold with all 3 variants carrying raw inner
-/// CBOR. Per-variant typed payload decoders (Mismatch SetKeyHash,
-/// 3-Word PPUpdateWrongEpoch, ProtVer 2-array) land in R606+.
+/// R606 wires all 3 variants to typed payloads.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyPpupPredFailure {
     /// Tag 0: update proposed by non-genesis key —
-    /// `Mismatch RelSubset (Set (KeyHash GenesisRole))`. Raw
-    /// payload pending decoder.
-    NonGenesisUpdatePPUP(Vec<u8>),
-    /// Tag 1: update proposed for wrong epoch —
-    /// `EpochNo EpochNo VotingPeriod` (3-element record). Raw
-    /// payload pending decoder.
-    PPUpdateWrongEpoch(Vec<u8>),
+    /// `Mismatch RelSubset (Set (KeyHash GenesisRole))`
+    /// (R606 typed via `Mismatch<SetKeyHash>` with `RelSubset`).
+    NonGenesisUpdatePPUP(Mismatch<SetKeyHash>),
+    /// Tag 1: update proposed for wrong epoch (R606 typed).
+    PPUpdateWrongEpoch {
+        /// Current epoch.
+        current: u64,
+        /// Epoch listed in the update.
+        proposed: u64,
+        /// Was the update intended for the current or next epoch?
+        period: VotingPeriod,
+    },
     /// Tag 2: protocol version cannot follow — `ProtVer`
-    /// (2-element record). Raw payload pending decoder.
-    PVCannotFollowPPUP(Vec<u8>),
+    /// (R606 typed via `ProtVer` 2-element record decode).
+    PVCannotFollowPPUP(ProtVer),
 }
 
 impl ShelleyPpupPredFailure {
@@ -1983,7 +2076,7 @@ impl ShelleyPpupPredFailure {
     pub fn tag(&self) -> u8 {
         match self {
             Self::NonGenesisUpdatePPUP(_) => 0,
-            Self::PPUpdateWrongEpoch(_) => 1,
+            Self::PPUpdateWrongEpoch { .. } => 1,
             Self::PVCannotFollowPPUP(_) => 2,
         }
     }
@@ -1992,16 +2085,16 @@ impl ShelleyPpupPredFailure {
     pub fn constructor(&self) -> &'static str {
         match self {
             Self::NonGenesisUpdatePPUP(_) => "NonGenesisUpdatePPUP",
-            Self::PPUpdateWrongEpoch(_) => "PPUpdateWrongEpoch",
+            Self::PPUpdateWrongEpoch { .. } => "PPUpdateWrongEpoch",
             Self::PVCannotFollowPPUP(_) => "PVCannotFollowPPUP",
         }
     }
 
     /// Decode the full `ShelleyPpupPredFailure` outer envelope from
-    /// CBOR bytes. Upstream encoding (via `Sum`) wraps every
-    /// variant in a CBOR list whose first element is the Word8 tag
-    /// and remaining elements are payload parts. R605 captures the
-    /// remaining elements verbatim for each variant.
+    /// CBOR bytes. Upstream encoding (via `Sum`) wraps every variant
+    /// in a CBOR list whose first element is the Word8 tag and
+    /// remaining elements are payload parts (tag 0/2 use a
+    /// 2-element envelope; tag 1 uses a 4-element envelope).
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(bytes);
@@ -2020,17 +2113,72 @@ impl ShelleyPpupPredFailure {
                 "ShelleyPpupPredFailure: expected Word8 tag: {err:?}"
             ))
         })?;
-        let payload_offset = dec.position();
-        let raw = bytes
-            .get(payload_offset..)
-            .ok_or_else(|| {
-                DecoderError("ShelleyPpupPredFailure: payload offset out of bounds".to_string())
-            })?
-            .to_vec();
         match tag {
-            0 => Ok(Self::NonGenesisUpdatePPUP(raw)),
-            1 => Ok(Self::PPUpdateWrongEpoch(raw)),
-            2 => Ok(Self::PVCannotFollowPPUP(raw)),
+            // Tag 0: `[0, Mismatch RelSubset (Set KeyHash)]` —
+            // Mismatch is encoded as a 2-element CBOR array
+            // `[supplied, expected]` per `EncCBOR (Mismatch r a)`.
+            0 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "NonGenesisUpdatePPUP: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let inner_len = dec.array().map_err(|err| {
+                    DecoderError(format!(
+                        "NonGenesisUpdatePPUP: expected Mismatch 2-array: {err:?}"
+                    ))
+                })?;
+                if inner_len != 2 {
+                    return Err(DecoderError(format!(
+                        "NonGenesisUpdatePPUP: expected Mismatch 2-array, got len {inner_len}"
+                    )));
+                }
+                let supplied = SetKeyHash::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("NonGenesisUpdatePPUP supplied: {}", err.0))
+                })?;
+                let expected = SetKeyHash::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("NonGenesisUpdatePPUP expected: {}", err.0))
+                })?;
+                Ok(Self::NonGenesisUpdatePPUP(Mismatch {
+                    relation: MismatchRelation::RelSubset,
+                    supplied,
+                    expected,
+                }))
+            }
+            // Tag 1: `[1, current, proposed, period]` — 4-element
+            // envelope: two EpochNo (Word64) + VotingPeriod (Word8).
+            1 => {
+                if len != 4 {
+                    return Err(DecoderError(format!(
+                        "PPUpdateWrongEpoch: expected 4-element envelope, got len {len}"
+                    )));
+                }
+                let current = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("PPUpdateWrongEpoch: current epoch: {err:?}"))
+                })?;
+                let proposed = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("PPUpdateWrongEpoch: proposed epoch: {err:?}"))
+                })?;
+                let period = VotingPeriod::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("PPUpdateWrongEpoch: {}", err.0)))?;
+                Ok(Self::PPUpdateWrongEpoch {
+                    current,
+                    proposed,
+                    period,
+                })
+            }
+            // Tag 2: `[2, ProtVer]` — ProtVer is encoded as a
+            // 2-element CBOR array (via CBORGroup).
+            2 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "PVCannotFollowPPUP: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let pv = ProtVer::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("PVCannotFollowPPUP: {}", err.0)))?;
+                Ok(Self::PVCannotFollowPPUP(pv))
+            }
             other => Err(DecoderError(format!(
                 "ShelleyPpupPredFailure: unknown variant tag {other}"
             ))),
@@ -2040,20 +2188,17 @@ impl ShelleyPpupPredFailure {
 
 impl fmt::Display for ShelleyPpupPredFailure {
     /// Render upstream stock-derived `Show
-    /// (ShelleyPpupPredFailure era)`: `<Constructor> <raw-cbor N
-    /// bytes>`. Typed payloads land in R606+.
+    /// (ShelleyPpupPredFailure era)`: `<Constructor> <payload>`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let payload = match self {
-            Self::NonGenesisUpdatePPUP(b)
-            | Self::PPUpdateWrongEpoch(b)
-            | Self::PVCannotFollowPPUP(b) => b,
-        };
-        write!(
-            f,
-            "{} <raw-cbor {} bytes>",
-            self.constructor(),
-            payload.len()
-        )
+        match self {
+            Self::NonGenesisUpdatePPUP(mm) => write!(f, "NonGenesisUpdatePPUP ({mm})"),
+            Self::PPUpdateWrongEpoch {
+                current,
+                proposed,
+                period,
+            } => write!(f, "PPUpdateWrongEpoch {current} {proposed} {period}"),
+            Self::PVCannotFollowPPUP(pv) => write!(f, "PVCannotFollowPPUP ({pv})"),
+        }
     }
 }
 
@@ -3047,10 +3192,68 @@ mod tests {
     }
 
     #[test]
-    fn shelley_ppup_pred_failure_display_marks_raw_cbor() {
+    fn shelley_ppup_pred_failure_pv_cannot_follow_decodes_tag2() {
+        // Tag 2: outer [0x82, 0x02, ProtVer-array]; ProtVer = [9, 0]
         let cbor = [0x82_u8, 0x02, 0x82, 0x09, 0x00];
         let f = ShelleyPpupPredFailure::from_cbor(&cbor).expect("PVCannotFollowPPUP");
-        assert_eq!(f.to_string(), "PVCannotFollowPPUP <raw-cbor 3 bytes>");
+        if let ShelleyPpupPredFailure::PVCannotFollowPPUP(pv) = &f {
+            assert_eq!(pv.major, 9);
+            assert_eq!(pv.minor, 0);
+        } else {
+            panic!("expected PVCannotFollowPPUP, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "PVCannotFollowPPUP (ProtVer {pvMajor = 9, pvMinor = 0})"
+        );
+    }
+
+    #[test]
+    fn shelley_ppup_pred_failure_pp_update_wrong_epoch_decodes_tag1() {
+        // Tag 1: outer [0x84, 0x01, 100, 99, 0]
+        let cbor = [0x84_u8, 0x01, 0x18, 100, 0x18, 99, 0x00];
+        let f = ShelleyPpupPredFailure::from_cbor(&cbor).expect("PPUpdateWrongEpoch");
+        if let ShelleyPpupPredFailure::PPUpdateWrongEpoch {
+            current,
+            proposed,
+            period,
+        } = &f
+        {
+            assert_eq!(*current, 100);
+            assert_eq!(*proposed, 99);
+            assert_eq!(*period, VotingPeriod::VoteForThisEpoch);
+        } else {
+            panic!("expected PPUpdateWrongEpoch, got {f:?}");
+        }
+        assert_eq!(f.to_string(), "PPUpdateWrongEpoch 100 99 VoteForThisEpoch");
+    }
+
+    #[test]
+    fn shelley_ppup_pred_failure_non_genesis_update_decodes_tag0() {
+        // Tag 0: outer [0x82, 0x00, [supplied-set, expected-set]]
+        // both sets tag 258 with 1 entry each.
+        let mut cbor = vec![0x82_u8, 0x00, 0x82];
+        // supplied
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02, 0x81, 0x58, 28]);
+        cbor.extend_from_slice(&[0x11_u8; 28]);
+        // expected
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02, 0x81, 0x58, 28]);
+        cbor.extend_from_slice(&[0x22_u8; 28]);
+        let f = ShelleyPpupPredFailure::from_cbor(&cbor).expect("NonGenesisUpdatePPUP");
+        if let ShelleyPpupPredFailure::NonGenesisUpdatePPUP(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelSubset);
+            assert_eq!(mm.supplied.entries.len(), 1);
+            assert_eq!(mm.expected.entries.len(), 1);
+        } else {
+            panic!("expected NonGenesisUpdatePPUP, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("NonGenesisUpdatePPUP (Mismatch (RelSubset)"),
+            "got: {s}"
+        );
+        assert!(s.contains("KeyHash {unKeyHash = \"1111"));
+        assert!(s.contains("KeyHash {unKeyHash = \"2222"));
     }
 
     #[test]
@@ -3066,19 +3269,24 @@ mod tests {
     #[test]
     fn shelley_utxo_pred_failure_update_failure_routes_to_typed_ppup() {
         // UTXO tag 7 with inner PPUP tag 2 (PVCannotFollowPPUP).
-        // Outer [0x82, 0x07, PPUP-bytes]; PPUP-bytes = [0x82, 0x02, 0x82, 0x09, 0x00]
+        // Outer [0x82, 0x07, PPUP-bytes]; PPUP-bytes = [0x82, 0x02, ProtVer]
         let cbor = [0x82_u8, 0x07, 0x82, 0x02, 0x82, 0x09, 0x00];
         let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("UpdateFailure");
         if let ShelleyUtxoPredFailure::UpdateFailure(ppup) = &f {
             assert_eq!(ppup.tag(), 2);
             assert_eq!(ppup.constructor(), "PVCannotFollowPPUP");
+            if let ShelleyPpupPredFailure::PVCannotFollowPPUP(pv) = ppup {
+                assert_eq!(pv.major, 9);
+                assert_eq!(pv.minor, 0);
+            } else {
+                panic!("expected inner PVCannotFollowPPUP, got {ppup:?}");
+            }
         } else {
             panic!("expected typed UpdateFailure, got {f:?}");
         }
-        let s = f.to_string();
-        assert!(
-            s.starts_with("UpdateFailure (PVCannotFollowPPUP <raw-cbor"),
-            "got: {s}"
+        assert_eq!(
+            f.to_string(),
+            "UpdateFailure (PVCannotFollowPPUP (ProtVer {pvMajor = 9, pvMinor = 0}))"
         );
     }
 
