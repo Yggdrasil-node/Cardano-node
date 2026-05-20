@@ -535,11 +535,15 @@ enum mirroring upstream `Cardano.Ledger.Shelley.Rules.Utxo`,
 shared `decode_mismatch_u64` helper, typed decoders for the
 Mismatch-payload tags 1 (`ExpiredUTxO` — SlotNo), 2
 (`MaxTxSizeUTxO` — Word32 narrowing), 4 (`FeeTooSmallUTxO` —
-Coin), plus the no-payload tag 3 (`InputSetEmptyUTxO`). Tags
-0/5/6/7/8/9/10 carry raw pending NonEmptySet TxIn / era-specific
-Value / NonEmpty TxOut / PPUP / Network+Addr / Network+AccountAddress
+Coin), plus the no-payload tag 3 (`InputSetEmptyUTxO`). R603
+(2026-05-21) shipped the `TxIn` decoder (TxId + TxIx newtypes +
+2-element CBOR array decode) and `NonEmptySetTxIn` carrier
+(BTreeSet, tag-258 tolerant, non-empty enforced); wired
+`ShelleyUtxoPredFailure::BadInputsUTxO` (tag 0) to typed payload.
+Tags 5/6/7/8/9/10 still carry raw pending era-specific Value /
+NonEmpty TxOut / PPUP / Network+Addr / Network+AccountAddress
 decoders. Phase-2.5+ remaining work: per-variant decoders for
-those 7 raw UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of
+those 6 raw UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of
 the LEDGER tree), wiring the typed `ShelleyUtxowPredFailure`
 decoder into `ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`,
 then mirroring the predicate-failure tree for Allegra/Mary/Alonzo/

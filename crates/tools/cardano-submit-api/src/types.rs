@@ -1390,9 +1390,9 @@ impl ShelleyUtxowPredFailure {
 /// decoders.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyUtxoPredFailure {
-    /// Tag 0: bad transaction inputs — `NonEmptySet TxIn`.
-    /// Raw payload pending TxIn decoder.
-    BadInputsUTxO(Vec<u8>),
+    /// Tag 0: bad transaction inputs — `NonEmptySet TxIn`
+    /// (R603 typed decoder).
+    BadInputsUTxO(NonEmptySetTxIn),
     /// Tag 1: transaction expired — `Mismatch RelLTEQ SlotNo` where
     /// supplied is the tx TTL and expected is the current slot.
     ExpiredUTxO(Mismatch<u64>),
@@ -1471,8 +1471,7 @@ impl fmt::Display for ShelleyUtxoPredFailure {
     /// no payload; raw payloads emit a `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BadInputsUTxO(b)
-            | Self::ValueNotConservedUTxO(b)
+            Self::ValueNotConservedUTxO(b)
             | Self::OutputTooSmallUTxO(b)
             | Self::UpdateFailure(b)
             | Self::WrongNetwork(b)
@@ -1480,6 +1479,7 @@ impl fmt::Display for ShelleyUtxoPredFailure {
             | Self::OutputBootAddrAttrsTooBig(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
             }
+            Self::BadInputsUTxO(set) => write!(f, "BadInputsUTxO ({set})"),
             Self::ExpiredUTxO(mm) => write!(f, "ExpiredUTxO ({mm})"),
             Self::MaxTxSizeUTxO(mm) => write!(f, "MaxTxSizeUTxO ({mm})"),
             Self::InputSetEmptyUTxO => f.write_str("InputSetEmptyUTxO"),
@@ -1575,9 +1575,17 @@ impl ShelleyUtxoPredFailure {
                     .map_err(|err| DecoderError(format!("FeeTooSmallUTxO: {}", err.0)))?;
                 Ok(Self::FeeTooSmallUTxO(mm))
             }
+            // Tag 0: NonEmptySet TxIn (R603 typed decoder).
+            0 => {
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ShelleyUtxoPredFailure: payload offset out of bounds".to_string())
+                })?;
+                let set = NonEmptySetTxIn::from_cbor(payload_bytes)?;
+                Ok(Self::BadInputsUTxO(set))
+            }
             // Variants whose typed payload decoder is not yet
             // ported: capture the remaining bytes verbatim.
-            0 | 5 | 6 | 7 | 8 | 9 | 10 => {
+            5..=10 => {
                 let raw = bytes
                     .get(payload_offset..)
                     .ok_or_else(|| {
@@ -1587,7 +1595,6 @@ impl ShelleyUtxoPredFailure {
                     })?
                     .to_vec();
                 Ok(match tag {
-                    0 => Self::BadInputsUTxO(raw),
                     5 => Self::ValueNotConservedUTxO(raw),
                     6 => Self::OutputTooSmallUTxO(raw),
                     7 => Self::UpdateFailure(raw),
@@ -1629,6 +1636,147 @@ fn decode_mismatch_u64(
         supplied,
         expected,
     })
+}
+
+/// 32-byte transaction-body hash newtype mirroring upstream
+/// `newtype TxId = TxId {unTxId :: SafeHash EraIndependentTxBody}`.
+/// Display matches upstream stock-derived record Show:
+/// `TxId {unTxId = SafeHash "<hex>"}`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct TxId(pub [u8; 32]);
+
+impl fmt::Display for TxId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TxId {{unTxId = SafeHash \"{}\"}}", hex::encode(self.0))
+    }
+}
+
+/// Transaction-output index newtype mirroring upstream
+/// `newtype TxIx = TxIx {unTxIx :: Word16}`. Display matches
+/// upstream stock-derived record Show: `TxIx {unTxIx = <n>}`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct TxIx(pub u16);
+
+impl fmt::Display for TxIx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TxIx {{unTxIx = {}}}", self.0)
+    }
+}
+
+/// Transaction input mirroring upstream `data TxIn = TxIn !TxId
+/// !TxIx`. CBOR wire format is a 2-element array `[txid, ix]`.
+/// Stock-derived Show: `TxIn (TxId {...}) (TxIx {...})` with each
+/// single-arg constructor wrapped in parens at showsPrec 11.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct TxIn {
+    /// 32-byte transaction-body hash.
+    pub tx_id: TxId,
+    /// Output index within the referenced transaction.
+    pub tx_ix: TxIx,
+}
+
+impl TxIn {
+    /// Decode a single TxIn from the canonical 2-element CBOR array.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("TxIn: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "TxIn: expected 2-array, got len {len}"
+            )));
+        }
+        let id_bytes = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("TxIn: expected TxId bytes: {err:?}")))?;
+        let id_arr: [u8; 32] = id_bytes.try_into().map_err(|_| {
+            DecoderError(format!(
+                "TxIn: TxId must be 32 bytes, got {}",
+                id_bytes.len()
+            ))
+        })?;
+        let ix = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("TxIn: expected TxIx: {err:?}")))?;
+        let ix = u16::try_from(ix)
+            .map_err(|_| DecoderError(format!("TxIn: TxIx {ix} does not fit Word16")))?;
+        Ok(Self {
+            tx_id: TxId(id_arr),
+            tx_ix: TxIx(ix),
+        })
+    }
+}
+
+impl fmt::Display for TxIn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TxIn ({}) ({})", self.tx_id, self.tx_ix)
+    }
+}
+
+/// Non-empty set of transaction inputs mirroring upstream
+/// `NonEmptySet TxIn`. Wire format and decoder semantics mirror
+/// `NonEmptySetScriptHash` (R599) — tag-258 tolerant, non-empty
+/// invariant enforced at decode time. Stored as `BTreeSet<TxIn>`
+/// so iteration follows upstream `Data.Set.toAscList` byte-lex
+/// order (TxIn's `Ord` instance compares by TxId then TxIx — same
+/// as upstream).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptySetTxIn {
+    /// Decoded set entries. Guaranteed non-empty by `from_cbor`.
+    pub entries: std::collections::BTreeSet<TxIn>,
+}
+
+impl NonEmptySetTxIn {
+    /// Decode `NonEmptySet TxIn` from canonical CBOR bytes.
+    /// Accepts the bare-list or tag-258 wrapped form.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("NonEmptySetTxIn: peek: {err:?}")))?;
+        if major == 6 {
+            let tag = dec
+                .tag()
+                .map_err(|err| DecoderError(format!("NonEmptySetTxIn: tag: {err:?}")))?;
+            if tag != 258 {
+                return Err(DecoderError(format!(
+                    "NonEmptySetTxIn: expected tag 258, got {tag}"
+                )));
+            }
+        }
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!("NonEmptySetTxIn: expected CBOR array: {err:?}"))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptySetTxIn: NonEmptySet requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = std::collections::BTreeSet::new();
+        for _ in 0..count {
+            entries.insert(TxIn::from_decoder(&mut dec)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptySetTxIn {
+    /// Render upstream `Show (NonEmptySet TxIn)`:
+    /// `NonEmptySet (fromList [<TxIn>, ...])`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptySet (fromList [")?;
+        let mut first = true;
+        for tx_in in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{tx_in}")?;
+        }
+        f.write_str("])")?;
+        Ok(())
+    }
 }
 
 /// Typed payload for `ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts`.
@@ -2503,18 +2651,60 @@ mod tests {
     }
 
     #[test]
-    fn shelley_utxo_pred_failure_routes_tag0_to_raw_variant() {
-        // Tag 0 (BadInputsUTxO) — NonEmptySet TxIn decoder not yet
-        // ported. Payload captured raw.
-        let mut cbor = vec![0x82_u8, 0x00];
+    fn shelley_utxo_pred_failure_routes_tag5_to_raw_variant() {
+        // Tag 5 (ValueNotConservedUTxO) — era-specific Value
+        // decoder not yet ported. Payload captured raw.
+        let mut cbor = vec![0x82_u8, 0x05];
         cbor.extend_from_slice(&[0x9F, 0xFF]);
-        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("BadInputsUTxO");
-        if let ShelleyUtxoPredFailure::BadInputsUTxO(payload) = &f {
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("ValueNotConservedUTxO");
+        if let ShelleyUtxoPredFailure::ValueNotConservedUTxO(payload) = &f {
             assert_eq!(payload, &[0x9F_u8, 0xFF]);
         } else {
-            panic!("expected BadInputsUTxO raw, got {f:?}");
+            panic!("expected ValueNotConservedUTxO raw, got {f:?}");
         }
-        assert_eq!(f.to_string(), "BadInputsUTxO <raw-cbor 2 bytes>");
+        assert_eq!(f.to_string(), "ValueNotConservedUTxO <raw-cbor 2 bytes>");
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_bad_inputs_decodes_tag0() {
+        // outer [0x82, 0x00, tag 258 + array(1) + TxIn]
+        // TxIn = [bytes(32), Word16] — id = 0xAA*32, ix = 7
+        let mut cbor = vec![0x82_u8, 0x00];
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02]); // tag 258
+        cbor.push(0x81); // array(1)
+        cbor.push(0x82); // TxIn 2-array
+        cbor.push(0x58); // bytes header
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xAA_u8; 32]);
+        cbor.push(0x07); // ix = 7
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("BadInputsUTxO");
+        if let ShelleyUtxoPredFailure::BadInputsUTxO(set) = &f {
+            assert_eq!(set.entries.len(), 1);
+            let tx_in = set.entries.iter().next().expect("one entry");
+            assert_eq!(tx_in.tx_id.0, [0xAA_u8; 32]);
+            assert_eq!(tx_in.tx_ix.0, 7);
+        } else {
+            panic!("expected BadInputsUTxO typed, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "BadInputsUTxO (NonEmptySet (fromList [TxIn (TxId {unTxId = SafeHash \"aaaa"
+            ),
+            "got: {s}"
+        );
+        assert!(s.contains("(TxIx {unTxIx = 7})"));
+    }
+
+    #[test]
+    fn non_empty_set_tx_in_rejects_empty_set() {
+        let cbor = vec![0xD9, 0x01, 0x02, 0x80];
+        let err = NonEmptySetTxIn::from_cbor(&cbor).expect_err("empty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmptySet requires at least one entry"),
+            "got: {err}"
+        );
     }
 
     #[test]
