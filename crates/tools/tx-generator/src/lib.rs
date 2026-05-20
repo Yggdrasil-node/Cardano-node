@@ -78,14 +78,15 @@ pub fn run_main() -> ExitCode {
 /// and finite submitInEra execution. R550 wires `json_highlevel`
 /// command execution through the compiled script runner. R551 wires
 /// `StartProtocol` config-derived env state so high-level execution
-/// advances beyond the protocol/bootstrap action.
+/// advances beyond the protocol/bootstrap action. R553 wires the
+/// `selftest` command for the upstream no-output-file path.
 pub fn run(command: command::Command) -> eyre::Result<()> {
-    match &command {
+    match command {
         Command::Json(file) => {
-            let script = parse_script_file_aeson(file)?;
+            let script = parse_script_file_aeson(&file)?;
             let mut env = Env::empty_env();
             run_script(&mut env, &script)?;
-            return Ok(());
+            Ok(())
         }
         Command::JsonHighLevel(cmd) => {
             let raw = std::fs::read_to_string(&cmd.config_file)?;
@@ -103,32 +104,25 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
             let script = compile_options(&final_opts)?;
             let mut env = Env::empty_env();
             run_script(&mut env, &script)?;
-            return Ok(());
+            Ok(())
         }
         Command::Compile(file) => {
-            let raw = std::fs::read_to_string(file)?;
+            let raw = std::fs::read_to_string(&file)?;
             let opts = parse_nix_service_options_str(&raw)?;
             let script = compile_options(&opts)?;
             let rendered = pretty_print(&script)?;
             std::io::stdout().write_all(rendered.as_bytes())?;
-            return Ok(());
+            Ok(())
         }
         Command::Version => {
             std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes())?;
-            return Ok(());
+            Ok(())
         }
-        Command::Selftest(_) => {}
+        Command::Selftest(out_file) => {
+            script::selftest::run_selftest(out_file.as_deref())?;
+            Ok(())
+        }
     }
-
-    Err(eyre::eyre!(
-        "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R551 StartProtocol env-wiring slice). Help/version compatibility, typed \
-         subcommand parsing, json_highlevel testnet discovery, and high-level \
-         NixServiceOptions parsing/compilation/execution plus low-level script JSON \
-         decoding plus deterministic state-only action execution and Script/Core \
-         NtC query helpers, sized-metadata construction, wallet queues, value splitting, UTxO output builders, static Plutus context loading, key-spend transaction construction, finite LocalSocket submitInEra execution, and high-level command execution are wired; selftest, script spends, benchmark submission, and exact DumpToFile rendering land in later strict slices of the tx-generator port arc.",
-        command.name()
-    ))
 }
 
 /// Mirror of upstream `quickTestPlutusDataOrDie`.
@@ -282,5 +276,13 @@ mod tests {
         assert!(err.to_string().contains("expected one of"));
 
         let _ = std::fs::remove_file(datum_path);
+    }
+
+    #[test]
+    fn selftest_command_dispatches_to_static_script() {
+        let err = run(Command::Selftest(Some(PathBuf::from("selftest.out"))))
+            .expect_err("dump mode boundary");
+
+        assert!(err.to_string().contains("DumpToFile"));
     }
 }

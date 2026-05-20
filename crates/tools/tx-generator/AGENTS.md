@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R552 SecureGenesis slice). The old
+**Status:** `partial` (post-R553 selftest DiscardTX slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -184,7 +184,13 @@ approved synthesis area from the sister-tools plan.
   address, spends the genesis pseudo-input with a GenesisUTxO witness,
   applies `txParamFee` / `txParamTTL`, and stores the generated payment
   fund in the target wallet.
-- Pending: `selftest` command execution. Low-level `json FILE` and
+- Shipped R553: `Benchmarking.Script.Selftest` no-output-file path.
+  `script/selftest.rs` ports the upstream static action list and the
+  `selftest` command now runs the full DiscardTX self-test script
+  against bundled upstream protocol parameters. `selftest FILEPATH`
+  intentionally still reaches the shared `DumpToFile` boundary until
+  exact `Show (Tx)` rendering lands.
+- Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
@@ -294,10 +300,14 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `Cardano.TxGenerator.Genesis` now spends Shelley genesis initial
   funds into wallet-managed payment funds, with hash-verified genesis
   loading during `startProtocol`.
+- Shipped: selftest DiscardTX execution (R553):
+  `Benchmarking.Script.Selftest` now builds and runs the upstream
+  static self-test action list without an output file.
 - Next: port Plutus `preExecutePlutusScript` /
   `plutusAutoScaleBlockfit`, script-spend script-integrity hashing,
-  exact `DumpToFile` rendering, Benchmark submission, `selftest`, and
-  `RoundRobin` / `OneOf` in strict-mirror-sized slices.
+  exact `DumpToFile` rendering, Benchmark submission, and
+  `RoundRobin` / `OneOf` error-shape parity in strict-mirror-sized
+  slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

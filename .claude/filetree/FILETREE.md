@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T10:16:14Z
-- Files described: 1427
+- Generated at: 2026-05-20T10:32:23Z
+- Files described: 1430
 
 ## Workspace
 
@@ -1736,6 +1736,8 @@
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
+- `crates/tools/tx-generator/data/protocol-parameters.json`
+  - Upstream tx-generator selftest protocol-parameters fixture copied from bench/tx-generator/data/protocol-parameters.json.
 - `crates/tools/tx-generator/scripts-fallback/EcdsaSecp256k1Loop.plutus`
   - Project file at crates/tools/tx-generator/scripts-fallback/EcdsaSecp256k1Loop.plutus.
 - `crates/tools/tx-generator/scripts-fallback/HashOntoG2AndAdd.plutus`
@@ -1783,6 +1785,8 @@
 - `crates/tools/tx-generator/src/script/env.rs`
   - Strict mirror of upstream tx-generator Script/Env state.
   - Carries protocol parameter mode, wallets, keys, tracers, and async-control placeholders.
+- `crates/tools/tx-generator/src/script/selftest.rs`
+  - Strict mirror of upstream `Cardano.Benchmarking.Script.Selftest`: builds and runs the static selftest action list.
 - `crates/tools/tx-generator/src/script/types.rs`
   - Generated script action and generator IR for `tx-generator`.
   - Mirrors upstream Script/Types.hs constructors and ObjectWithSingleField-style JSON wrappers.
@@ -2249,6 +2253,8 @@
   - Round 551 - tx-generator StartProtocol env wiring: Date: 2026-05-20.
 - `docs/operational-runs/2026-05-20-round-552-tx-generator-secure-genesis.md`
   - Round 552 evidence record for the tx-generator SecureGenesis implementation, including upstream references, code changes, focused validation, and remaining gaps.
+- `docs/operational-runs/2026-05-20-round-553-tx-generator-selftest.md`
+  - Round 553 evidence record for the tx-generator selftest DiscardTX implementation and remaining output-file boundary.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

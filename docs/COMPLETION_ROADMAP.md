@@ -289,11 +289,14 @@ own parser / generator / submission implementation plus upstream
   sentinel. R552 added `Cardano.TxGenerator.Genesis` and
   `SecureGenesis`: `startProtocol` now hash-verifies and loads Shelley
   initial funds, and `Submit ... SecureGenesis` spends the matching
-  genesis pseudo-input into a wallet-managed payment fund. The remaining
-  tx-generator blockers are Plutus pre-execution / auto-budget fitting,
+  genesis pseudo-input into a wallet-managed payment fund. R553 added
+  `Benchmarking.Script.Selftest` for the no-output-file path, so the
+  `selftest` command runs the upstream static DiscardTX action list
+  against bundled protocol parameters. The remaining tx-generator
+  blockers are Plutus pre-execution / auto-budget fitting,
   script-spend script-integrity hashing, exact `DumpToFile` rendering,
-  Benchmark submission, `selftest`, `RoundRobin` / `OneOf`, and
-  upstream comparison evidence.
+  Benchmark submission, `RoundRobin` / `OneOf` upstream-TODO
+  error-shape parity, and upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
