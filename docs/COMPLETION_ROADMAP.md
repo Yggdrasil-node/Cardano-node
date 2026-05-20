@@ -540,14 +540,21 @@ Coin), plus the no-payload tag 3 (`InputSetEmptyUTxO`). R603
 2-element CBOR array decode) and `NonEmptySetTxIn` carrier
 (BTreeSet, tag-258 tolerant, non-empty enforced); wired
 `ShelleyUtxoPredFailure::BadInputsUTxO` (tag 0) to typed payload.
-Tags 5/6/7/8/9/10 still carry raw pending era-specific Value /
-NonEmpty TxOut / PPUP / Network+Addr / Network+AccountAddress
-decoders. Phase-2.5+ remaining work: per-variant decoders for
-those 6 raw UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of
-the LEDGER tree), wiring the typed `ShelleyUtxowPredFailure`
-decoder into `ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`,
-then mirroring the predicate-failure tree for Allegra/Mary/Alonzo/
-Babbage/Conway eras (Conway adds 4+ governance-specific variants).
+Tags 5/6/7/8/10 still carry raw pending era-specific Value /
+NonEmpty TxOut / PPUP / Network+Addr decoders. R604 (2026-05-21)
+shipped the `Network` enum (Testnet=0/Mainnet=1, single-Word8
+CBOR encoding) and `NonEmptySetAccountAddress` decoder
+(BTreeSet<RewardAccount>, tag-258 tolerant), wiring
+`ShelleyUtxoPredFailure::WrongNetworkWithdrawal` (tag 9 —
+3-element envelope `[9, expected-network, NonEmptySet
+AccountAddress]`) to typed payload. 6/11 UTXO variants now carry
+typed payloads; 5 raw remain (Value, TxOut x2, PPUP, Network+Addr).
+Phase-2.5+ remaining work: per-variant decoders for those 5 raw
+UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
+tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
+`ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`, then mirroring
+the predicate-failure tree for Allegra/Mary/Alonzo/Babbage/Conway
+eras (Conway adds 4+ governance-specific variants).
 **Exit:** operators can pattern-match typed rejection variants
 without a CBOR re-walk.
 

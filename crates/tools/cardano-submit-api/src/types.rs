@@ -1419,9 +1419,14 @@ pub enum ShelleyUtxoPredFailure {
     /// payload pending Addr decoder.
     WrongNetwork(Vec<u8>),
     /// Tag 9: account addresses with wrong network ID. 3-element
-    /// CBOR array: `[9, expected-network, NonEmptySet AccountAddress]`.
-    /// Raw payload pending AccountAddress NonEmptySet decoder.
-    WrongNetworkWithdrawal(Vec<u8>),
+    /// CBOR array: `[9, expected-network, NonEmptySet AccountAddress]`
+    /// (R604 typed decoder).
+    WrongNetworkWithdrawal {
+        /// Network ID that the ledger expected.
+        expected: Network,
+        /// Account addresses with the wrong network ID.
+        wrongs: NonEmptySetAccountAddress,
+    },
     /// Tag 10: bootstrap-address attributes too big —
     /// `NonEmpty (TxOut era)`. Raw payload pending TxOut decoder.
     OutputBootAddrAttrsTooBig(Vec<u8>),
@@ -1440,7 +1445,7 @@ impl ShelleyUtxoPredFailure {
             Self::OutputTooSmallUTxO(_) => 6,
             Self::UpdateFailure(_) => 7,
             Self::WrongNetwork(_) => 8,
-            Self::WrongNetworkWithdrawal(_) => 9,
+            Self::WrongNetworkWithdrawal { .. } => 9,
             Self::OutputBootAddrAttrsTooBig(_) => 10,
         }
     }
@@ -1457,7 +1462,7 @@ impl ShelleyUtxoPredFailure {
             Self::OutputTooSmallUTxO(_) => "OutputTooSmallUTxO",
             Self::UpdateFailure(_) => "UpdateFailure",
             Self::WrongNetwork(_) => "WrongNetwork",
-            Self::WrongNetworkWithdrawal(_) => "WrongNetworkWithdrawal",
+            Self::WrongNetworkWithdrawal { .. } => "WrongNetworkWithdrawal",
             Self::OutputBootAddrAttrsTooBig(_) => "OutputBootAddrAttrsTooBig",
         }
     }
@@ -1475,9 +1480,11 @@ impl fmt::Display for ShelleyUtxoPredFailure {
             | Self::OutputTooSmallUTxO(b)
             | Self::UpdateFailure(b)
             | Self::WrongNetwork(b)
-            | Self::WrongNetworkWithdrawal(b)
             | Self::OutputBootAddrAttrsTooBig(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::WrongNetworkWithdrawal { expected, wrongs } => {
+                write!(f, "WrongNetworkWithdrawal {expected} ({wrongs})")
             }
             Self::BadInputsUTxO(set) => write!(f, "BadInputsUTxO ({set})"),
             Self::ExpiredUTxO(mm) => write!(f, "ExpiredUTxO ({mm})"),
@@ -1583,9 +1590,23 @@ impl ShelleyUtxoPredFailure {
                 let set = NonEmptySetTxIn::from_cbor(payload_bytes)?;
                 Ok(Self::BadInputsUTxO(set))
             }
+            // Tag 9: 3-element envelope `[9, expected-network,
+            // NonEmptySet AccountAddress]` (R604 typed decoder).
+            9 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "WrongNetworkWithdrawal: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let expected = Network::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetworkWithdrawal: {}", err.0)))?;
+                let wrongs = NonEmptySetAccountAddress::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetworkWithdrawal: {}", err.0)))?;
+                Ok(Self::WrongNetworkWithdrawal { expected, wrongs })
+            }
             // Variants whose typed payload decoder is not yet
             // ported: capture the remaining bytes verbatim.
-            5..=10 => {
+            5..=8 | 10 => {
                 let raw = bytes
                     .get(payload_offset..)
                     .ok_or_else(|| {
@@ -1599,7 +1620,6 @@ impl ShelleyUtxoPredFailure {
                     6 => Self::OutputTooSmallUTxO(raw),
                     7 => Self::UpdateFailure(raw),
                     8 => Self::WrongNetwork(raw),
-                    9 => Self::WrongNetworkWithdrawal(raw),
                     10 => Self::OutputBootAddrAttrsTooBig(raw),
                     _ => unreachable!("tag range checked above"),
                 })
@@ -1773,6 +1793,147 @@ impl fmt::Display for NonEmptySetTxIn {
             }
             first = false;
             write!(f, "{tx_in}")?;
+        }
+        f.write_str("])")?;
+        Ok(())
+    }
+}
+
+/// Cardano network identifier mirroring upstream `data Network =
+/// Testnet | Mainnet` from `Cardano.Ledger.BaseTypes`. CBOR encoding
+/// is a single Word8: 0=Testnet, 1=Mainnet. Display matches upstream
+/// stock-derived `Show Network`: the bare constructor name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum Network {
+    /// Testnet (Word8 = 0).
+    Testnet,
+    /// Mainnet (Word8 = 1).
+    Mainnet,
+}
+
+impl Network {
+    /// Decode `Network` from the next CBOR Word8 in the decoder.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let n = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("Network: expected Word8: {err:?}")))?;
+        match n {
+            0 => Ok(Self::Testnet),
+            1 => Ok(Self::Mainnet),
+            other => Err(DecoderError(format!(
+                "Network: unknown network id {other} (expected 0 or 1)"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for Network {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Testnet => "Testnet",
+            Self::Mainnet => "Mainnet",
+        })
+    }
+}
+
+/// Non-empty set of reward-account addresses mirroring upstream
+/// `NonEmptySet AccountAddress`. Wire format and decoder semantics
+/// mirror `NonEmptySetScriptHash` (R599) — tag-258 tolerant,
+/// non-empty invariant enforced. Stored as
+/// `BTreeSet<RewardAccount>` so iteration follows upstream
+/// `Data.Set.toAscList` byte-lex order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptySetAccountAddress {
+    /// Decoded set entries. Guaranteed non-empty by `from_cbor`.
+    pub entries: std::collections::BTreeSet<yggdrasil_ledger::RewardAccount>,
+}
+
+impl NonEmptySetAccountAddress {
+    /// Decode `NonEmptySet AccountAddress` from canonical CBOR
+    /// bytes. Accepts the bare-list or tag-258 wrapped form.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        Self::from_decoder(&mut dec)
+    }
+
+    /// Decode from an in-progress `Decoder`. Used by parent payload
+    /// decoders that have already consumed the outer envelope.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("NonEmptySetAccountAddress: peek: {err:?}")))?;
+        if major == 6 {
+            let tag = dec
+                .tag()
+                .map_err(|err| DecoderError(format!("NonEmptySetAccountAddress: tag: {err:?}")))?;
+            if tag != 258 {
+                return Err(DecoderError(format!(
+                    "NonEmptySetAccountAddress: expected tag 258, got {tag}"
+                )));
+            }
+        }
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptySetAccountAddress: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptySetAccountAddress: NonEmptySet requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = std::collections::BTreeSet::new();
+        for _ in 0..count {
+            let key_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptySetAccountAddress: expected AccountAddress bytes: {err:?}"
+                ))
+            })?;
+            let account =
+                yggdrasil_ledger::RewardAccount::from_bytes(key_bytes).ok_or_else(|| {
+                    DecoderError(format!(
+                        "NonEmptySetAccountAddress: invalid reward-account ({} bytes)",
+                        key_bytes.len()
+                    ))
+                })?;
+            entries.insert(account);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptySetAccountAddress {
+    /// Render upstream `Show (NonEmptySet AccountAddress)`:
+    /// `NonEmptySet (fromList [AccountAddress {...}, ...])`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptySet (fromList [")?;
+        let mut first = true;
+        for account in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            let network = match account.network {
+                0 => "Testnet",
+                1 => "Mainnet",
+                _ => "Unknown",
+            };
+            let inner = match account.credential {
+                yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => {
+                    format!(
+                        "KeyHashObj (KeyHash {{unKeyHash = \"{}\"}})",
+                        hex::encode(h)
+                    )
+                }
+                yggdrasil_ledger::StakeCredential::ScriptHash(h) => {
+                    format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
+                }
+            };
+            write!(
+                f,
+                "AccountAddress {{aaNetworkId = {network}, aaId = {inner}}}"
+            )?;
         }
         f.write_str("])")?;
         Ok(())
@@ -2694,6 +2855,67 @@ mod tests {
             "got: {s}"
         );
         assert!(s.contains("(TxIx {unTxIx = 7})"));
+    }
+
+    #[test]
+    fn network_from_decoder_round_trips() {
+        use yggdrasil_ledger::Decoder;
+        let mut dec0 = Decoder::new(&[0x00]);
+        assert_eq!(
+            Network::from_decoder(&mut dec0).expect("testnet"),
+            Network::Testnet
+        );
+        let mut dec1 = Decoder::new(&[0x01]);
+        assert_eq!(
+            Network::from_decoder(&mut dec1).expect("mainnet"),
+            Network::Mainnet
+        );
+        let mut dec_n = Decoder::new(&[0x09]);
+        let err = Network::from_decoder(&mut dec_n).expect_err("unknown rejects");
+        assert!(
+            err.to_string().contains("unknown network id 9"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_wrong_network_withdrawal_decodes_tag9() {
+        // outer [0x83, 0x09, network=0x01 mainnet, NonEmptySet (1 entry)]
+        let mut cbor = vec![0x83_u8, 0x09, 0x01];
+        // tag 258 + array(1) + bytes(29) for the AccountAddress
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02]);
+        cbor.push(0x81);
+        cbor.push(0x58);
+        cbor.push(29);
+        // Mainnet key-hash account: 0xE1 + 28 0x42 bytes
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x42_u8; 28]);
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("WrongNetworkWithdrawal");
+        if let ShelleyUtxoPredFailure::WrongNetworkWithdrawal { expected, wrongs } = &f {
+            assert_eq!(*expected, Network::Mainnet);
+            assert_eq!(wrongs.entries.len(), 1);
+        } else {
+            panic!("expected WrongNetworkWithdrawal, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "WrongNetworkWithdrawal Mainnet (NonEmptySet (fromList [AccountAddress {aaNetworkId = Mainnet, aaId = KeyHashObj"
+            ),
+            "got: {s}"
+        );
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_wrong_network_withdrawal_rejects_wrong_envelope_length() {
+        // 2-element envelope (missing wrongs) — should reject.
+        let cbor = vec![0x82_u8, 0x09, 0x01];
+        let err = ShelleyUtxoPredFailure::from_cbor(&cbor).expect_err("len-2 must reject");
+        assert!(
+            err.to_string()
+                .contains("WrongNetworkWithdrawal: expected 3-element envelope"),
+            "got: {err}"
+        );
     }
 
     #[test]
