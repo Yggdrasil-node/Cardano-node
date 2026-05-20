@@ -333,8 +333,8 @@ pub(super) fn refresh_chain_db_reconnect_fallback_peers(
     // peers (loaded from `peerSnapshotFile`) are eligible immediately at
     // reconnect time, while live-ledger-derived peers continue to wait for
     // the `useLedgerAfterSlot` gate. Upstream parity: see
-    // `crates/node/yggdrasil-node/src/main.rs::evaluate_ledger_derived_startup_fallbacks` for the
-    // companion change at startup, and
+    // `crates/node/cardano-node/src/ledger_peers.rs::configured_fallback_peers`
+    // for the companion change at startup, and
     // `crates/network/src/ledger_peers_provider.rs::always_eligible_snapshot_peers`
     // for the underlying primitive.
     let live_snapshot = LedgerPeerSnapshot::new(ledger_peers, Vec::new());

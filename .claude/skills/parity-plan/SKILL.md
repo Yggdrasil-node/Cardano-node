@@ -48,7 +48,7 @@ Reference target: IntersectMBO/cardano-node 11.0.1 (latest as of <date>)
 
 ## Rust files reviewed
 - crates/<crate>/src/<file>.rs:<line-range> — <current behavior>.
-- node/src/<file>.rs:<line-range> — <current behavior>.
+- crates/node/<crate>/src/<file>.rs:<line-range> — <current behavior>.
 
 ## Semantic gaps
 - <gap 1>: <Rust does X, Haskell does Y; observable difference: ...>.
@@ -64,7 +64,7 @@ Reference target: IntersectMBO/cardano-node 11.0.1 (latest as of <date>)
 - Specific commands or vectors:
   - `db-analyser --target-slot N --tx <txid>`
   - `specs/upstream-test-vectors/<file>`
-  - `node/scripts/compare_tip_to_haskell.sh`
+  - `scripts/compare_tip_to_haskell.sh`
 
 ## Next action
 - <implementation steps, only after user approval>.
@@ -78,19 +78,22 @@ Every plan MUST:
 - Cite at least one `.reference-haskell-cardano-node/...` path per
   semantic concern. Not github.com URLs — local paths only (the
   vendored tree is gitignored and stable across sessions).
-- Cite at least one `crates/...` or `node/...` path per Rust counterpart.
+- Cite at least one `crates/...` or `crates/node/...` path per Rust counterpart.
 - State the **specific bytes / predicate / trace event** that differs.
   "Behavior is wrong" is not a gap; "tag 0x82 vs 0x84 in field
   position 3" is.
 - State the **validation procedure** that proves parity is reached.
   Subjective claims like "looks right" are not validation.
 
-## Reference checkout freshness
+## Reference snapshot freshness
 
 If the local `.reference-haskell-cardano-node/install/bin/cardano-node
 --version` does not match `docs/parity-matrix.json::reference.tag`,
 run `bash scripts/setup-reference.sh --force` BEFORE deciding behavior.
-Stale references mislead parity decisions.
+The full install check requires Linux/WSL because the vendored upstream
+release bundle contains Linux binaries. For path-only source research,
+`bash scripts/setup-reference.sh --sources-only` is enough. Stale references
+mislead parity decisions.
 
 ## When the plan reveals an unresolvable blocker
 

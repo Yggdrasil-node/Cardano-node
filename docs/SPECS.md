@@ -55,7 +55,7 @@ status see [`docs/UPSTREAM_PARITY.md`](UPSTREAM_PARITY.md).
 - The current `crates/crypto` 80-byte Praos VRF fixtures are draft03-era vectors mirrored from `cardano-crypto-praos`; do not treat them as RFC 9381 final-format verification fixtures without explicit translation or replacement.
 - For networking behavior, trace message tags/flow to official Ouroboros protocol sources before introducing local terminology.
 - Strict 1:1 file-mirror policy (R274+): every new `.rs` under
-  `crates/<crate>/src/` and `node/src/` either snake-case-mirrors a
+  `crates/<crate>/src/` and `crates/node/*/src/` either snake-case-mirrors a
   single upstream `.hs` filename or carries a `## Naming parity`
   docstring stanza. Authoring-time guidance lives in
   [`.claude/skills/round-extraction/SKILL.md`](../.claude/skills/round-extraction/SKILL.md);

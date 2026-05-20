@@ -11,8 +11,8 @@
 //! * [`PeerListener::accept_peer`] — convenience wrapper combining the
 //!   two; retained for backwards compatibility.
 //!
-//! Reference: `ouroboros-network-framework` inbound-governor socket
-//! accept path (`Ouroboros.Network.Server2`).
+//! Reference: `ouroboros-network/ouroboros-network/framework/lib` inbound-
+//! governor socket accept path (`Ouroboros.Network.Server2`).
 //!
 //! ## Naming parity
 //!

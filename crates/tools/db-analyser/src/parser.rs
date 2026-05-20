@@ -57,7 +57,7 @@
 //!
 //! `--help` / `--version` text is byte-equivalent to the upstream
 //! `db-analyser` binary; fixtures captured at R335 live at
-//! `crates/db-analyser/tests/fixtures/upstream-{help,version}.txt`.
+//! `crates/tools/db-analyser/tests/fixtures/upstream-{help,version}.txt`.
 
 use std::path::PathBuf;
 

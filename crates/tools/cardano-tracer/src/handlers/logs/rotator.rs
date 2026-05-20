@@ -1019,7 +1019,7 @@ mod tests {
             let path = e.path();
             let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
             let ft = e.file_type().await.expect("file_type");
-            if ft.is_symlink() {
+            if ft.is_symlink() || (!cfg!(unix) && ft.is_file() && name == "node.json") {
                 symlinks.push(path);
             } else if ft.is_file() && name.starts_with("node-") && name.ends_with(".json") {
                 log_files.push(path);
@@ -1027,7 +1027,8 @@ mod tests {
         }
         // Expectations:
         // - At least 1 log file exists (the current one).
-        // - At least 1 symlink exists (the node.json convenience).
+        // - At least 1 node.json convenience pointer exists (Unix
+        //   symlink; non-Unix fallback file with the target path).
         // - Total log files is bounded by keep_files_num + 1 (current + retained).
         //   We allow some slack for in-flight rotations.
         assert!(
@@ -1036,7 +1037,7 @@ mod tests {
         );
         assert!(
             !symlinks.is_empty(),
-            "expected at least one node.json symlink"
+            "expected at least one node.json convenience pointer"
         );
         // Cap: keep_files_num=2 retains 2 older logs + 1 current
         // = 3 total. The age-based eviction wouldn't fire in this

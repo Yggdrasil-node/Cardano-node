@@ -13,9 +13,10 @@ Keep tests in this directory aligned with official wire behavior and typed proto
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Ouroboros network repository:](.reference-haskell-cardano-node/deps/ouroboros-network/)
-- [Protocol test suites:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols/test)
-- [Network framework tests:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-framework/test)
+- [Ouroboros network repository:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/)
+- [Protocol test suites:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/tests)
+- [Network framework IO tests:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/framework/io-tests)
+- [Network framework simulation tests:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/framework/sim-tests)
 - [Shelley networking spec:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec)
 
 ## Current Phase

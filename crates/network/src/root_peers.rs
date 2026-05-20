@@ -644,18 +644,21 @@ mod tests {
     #[test]
     fn topology_config_parses_each_shipped_network_preset() {
         for net in ["mainnet", "preprod", "preview"] {
-            // Wave 4 PR 6: node/ moved to crates/node/yggdrasil-node/;
-            // remap the manifest dir accordingly so this test still
-            // reads the shipped topology fixtures.
-            let path = format!(
-                "{}/configuration/{}/topology.json",
-                env!("CARGO_MANIFEST_DIR").replace("crates/network", "crates/node/yggdrasil-node"),
-                net
-            );
+            // Resolve from the crate manifest with path operations so Windows
+            // `\` separators do not break the root configuration lookup.
+            let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let workspace_root = manifest_dir
+                .parent()
+                .and_then(std::path::Path::parent)
+                .expect("network crate lives under crates/");
+            let path = workspace_root
+                .join("configuration")
+                .join(net)
+                .join("topology.json");
             let bytes =
-                std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {path}: {err}"));
+                std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("read {path:?}: {err}"));
             let parsed: TopologyConfig =
-                serde_json::from_str(&bytes).unwrap_or_else(|err| panic!("parse {path}: {err}"));
+                serde_json::from_str(&bytes).unwrap_or_else(|err| panic!("parse {path:?}: {err}"));
             // Real upstream topology files always set useLedgerAfterSlot to a
             // concrete network-specific slot so ledger-peer onboarding is
             // gated until after that slot.

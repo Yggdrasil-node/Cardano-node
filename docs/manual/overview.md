@@ -32,7 +32,7 @@ A relay node does jobs 1–3. A block producer does all four. Yggdrasil supports
 - **Five mini-protocols implemented end-to-end.** ChainSync, BlockFetch, KeepAlive, TxSubmission2, PeerSharing — both client and server sides.
 - **All eight eras supported.** Byron, Shelley, Allegra, Mary, Alonzo, Babbage, Conway. Era boundaries are handled by the same multi-era apply pipeline used in upstream.
 - **Plutus V1, V2, and V3.** Native CEK machine, calibrated cost model from genesis, V3 Conway script context.
-- **Drift detection against upstream.** A `node/scripts/check_upstream_drift.sh` tool compares pinned Haskell-node SHAs against live HEAD and surfaces lag.
+- **Drift detection against upstream.** `scripts/check_upstream_drift.sh` compares pinned Haskell-node SHAs against live HEAD and surfaces lag.
 
 ## How a Cardano node connects
 

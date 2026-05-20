@@ -49,6 +49,7 @@ The runtime image weighs in around 100 MB. The builder image is discarded after 
 |-------------------|-------------------------------|---------|
 | `YG_DB_PATH`      | `/var/lib/yggdrasil/db`       | Chain DB root inside the container. |
 | `YG_CONFIG_PATH`  | `/etc/yggdrasil`              | Custom config mount point. |
+| `YGGDRASIL_CONFIG_ROOT` | `/usr/share/yggdrasil/configuration` | Bundled preset root used by `--network mainnet|preprod|preview`. |
 
 ## Custom configuration
 

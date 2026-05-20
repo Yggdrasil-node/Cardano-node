@@ -21,7 +21,7 @@
 //! | `app/Main.hs`                                           | `main.rs`                           |
 //!
 //! Yggdrasil's binary is named `cardano-submit-api` (matching upstream
-//! exactly) for drop-in deployment via `crates/node/yggdrasil-node/scripts/run-tools.sh`.
+//! exactly) for drop-in deployment via `scripts/run-tools.sh`.
 
 use std::io::Write;
 use std::process::ExitCode;

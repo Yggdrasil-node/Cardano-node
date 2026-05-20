@@ -19,6 +19,16 @@ Resolution order, highest priority last:
 
 If you supply both `--network mainnet` and `--config custom.json`, the custom config wins, but unspecified values inherit from the preset.
 
+Preset-relative files such as `ShelleyGenesisFile`,
+`AlonzoGenesisFile`, `ConwayGenesisFile`, `ByronGenesisFile`,
+`TopologyFilePath`, and `PeerSnapshotFile` are resolved relative to the active
+preset directory. Source checkouts use `configuration/<preset>/`; release
+installs use `/usr/local/share/yggdrasil/configuration/<preset>/`; Docker images
+use `/usr/share/yggdrasil/configuration/<preset>/`. Set
+`YGGDRASIL_CONFIG_ROOT` to a custom root containing `mainnet/`, `preprod/`, and
+`preview/` when installing presets somewhere else. An explicit `--config` file
+uses that file's parent directory for its relative paths.
+
 ## Generate a starter config
 
 ```bash

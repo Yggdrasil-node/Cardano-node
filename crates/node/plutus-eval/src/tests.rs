@@ -45,8 +45,8 @@ fn gap_bp_v2_script_context_structural_shape() {
     // any future ScriptContext refactor.
     // Wave 5 PR 10: plutus-eval is now its own crate, so the
     // relative include_str! walks 4 `..` (src/ → plutus-eval/ →
-    // node/ → crates/ → workspace root). Was 5 when the file lived
-    // in crates/node/yggdrasil-node/src/plutus_eval/tests.rs.
+    // node/ → crates/ → workspace root). Older monolithic layouts
+    // needed a deeper relative walk.
     let captured_hex = include_str!(
         "../../../../docs/operational-runs/2026-05-06-round-266c-gap-bp-script-context.log"
     );

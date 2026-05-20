@@ -1,7 +1,7 @@
 # Round 508 — operator-surface sweep: purge the removed issuer-vkey flag
 
 **Date:** 2026-05-18
-**Area:** operator scripts + manual — `crates/node/yggdrasil-node/scripts/`, `docs/`
+**Area:** operator scripts + manual — `scripts/`, `docs/`
 **Upstream reference:** follow-up to round 507 (A3 R3a slice 3).
 
 ## Summary

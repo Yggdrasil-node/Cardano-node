@@ -10,8 +10,8 @@
 //! down.  Each protocol runs as an independent tokio task so a slow
 //! BlockFetch batch does not stall KeepAlive responses.
 //!
-//! Reference: `ouroboros-network-framework`'s inbound-governor session
-//! lifecycle.
+//! Reference: `ouroboros-network/ouroboros-network/framework/lib` inbound-
+//! governor session lifecycle.
 //!
 //! ## Naming parity
 //!

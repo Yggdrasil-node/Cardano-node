@@ -30,6 +30,7 @@
 //! Override the binary path with `YGGDRASIL_CARDANO_TRACER_BIN`;
 //! materialize the default with `bash scripts/setup-reference.sh`.
 
+#![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 
 use std::collections::BTreeMap;

@@ -11,7 +11,7 @@ You are a focused extraction specialist for Yggdrasil's R-arc rounds.
 Execute **one** filename-mirror split per round:
 
 - Take a target file (`crates/<crate>/src/<file>.rs` or
-  `node/src/<file>.rs`).
+  `crates/node/<crate>/src/<file>.rs`).
 - Identify the upstream Haskell mirror layout under
   `.reference-haskell-cardano-node/`.
 - Split into upstream-aligned sub-modules.

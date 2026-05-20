@@ -31,7 +31,7 @@ A parity plan must list:
    - Per-epoch chain-dep-state sidecar byte-match (consensus arcs).
 
 The plan must explain how the change reaches **100% parity** for the
-scoped behavior. If the reference checkout is incomplete, run
+scoped behavior. If the reference snapshot is incomplete, run
 `bash scripts/setup-reference.sh --force` before deciding behavior.
 
 Do not begin implementation until the plan is authored. If the plan

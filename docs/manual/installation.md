@@ -120,9 +120,14 @@ For convenience:
 ```bash
 # cp target/release/yggdrasil-node /usr/local/bin/
 # chmod 755 /usr/local/bin/yggdrasil-node
+# mkdir -p /usr/local/share/yggdrasil
+# cp -R configuration scripts /usr/local/share/yggdrasil/
 ```
 
 Or run directly from the build directory if you prefer not to install globally.
+`--network mainnet|preprod|preview` resolves the installed presets from
+`/usr/local/share/yggdrasil/configuration/`; set `YGGDRASIL_CONFIG_ROOT` if you
+install the configuration root somewhere else.
 
 ## Create a system user (production)
 

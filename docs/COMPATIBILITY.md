@@ -16,8 +16,8 @@ Authorities consulted by this contract:
 
 - `Cargo.toml::workspace.package.rust-version` — MSRV.
 - `docs/parity-matrix.json::reference.tag` — upstream policy tag.
-- `crates/node/yggdrasil-node/src/cli.rs` — CLI surface.
-- `crates/observability/yggdrasil-tracing/src/lib.rs::trace_fields` —
+- `crates/node/cardano-node/src/cli.rs` — CLI surface.
+- `crates/node/tracer/src/lib.rs::trace_fields` —
   log-field source-of-truth (Wave 6 PR 14).
 - `crates/observability/yggdrasil-metrics/src/lib.rs::register_all` —
   metric-name source-of-truth (Wave 6 PR 16).
@@ -49,7 +49,7 @@ The following top-level flags are stable from v1.0:
 ### Configuration JSON keys
 
 The keys present in the per-network config files at
-`crates/node/yggdrasil-node/configuration/{mainnet,preprod,preview}/config.json`
+`configuration/{mainnet,preprod,preview}/config.json`
 are stable from v1.0. Adding new optional keys with sensible defaults
 is *not* a break; removing or renaming an existing key is.
 
@@ -84,7 +84,7 @@ Histogram bucket boundaries are Tier 2 (see below).
 
 The Haskell-JSON log format emitted by default
 (`--log-format=haskell-json`, set via `LogFormat::HaskellJson` in
-`crates/observability/yggdrasil-tracing/src/lib.rs`) carries these
+`crates/telemetry/src/lib.rs`) carries these
 **non-negotiable** fields:
 
 | Field | Type | Source |
@@ -92,7 +92,7 @@ The Haskell-JSON log format emitted by default
 | `at` | RFC3339 sub-second | Timestamp; matches Haskell `Katip` `at`. |
 | `ns` | array of strings | Namespace, e.g. `["cardano.node.ChainDB"]`. |
 | `data` | object | Payload-specific event fields. |
-| `sev` | `Debug|Info|Notice|Warning|Error|Critical|Alert|Emergency` | Severity; matches `crates/node/yggdrasil-node/src/trace_forwarder.rs::TraceSeverity::as_str`. |
+| `sev` | `Debug|Info|Notice|Warning|Error|Critical|Alert|Emergency` | Severity; matches `crates/node/tracer/src/trace_forwarder.rs::TraceSeverity::as_str`. |
 | `thread` | string | OS thread ID. |
 
 Fields `host` and `app` are emitted when set; their absence is not a
@@ -125,7 +125,7 @@ Operators should treat these as best-effort. They may move between
 releases with one release of deprecation warning.
 
 - `--otlp-endpoint <url>` — OpenTelemetry OTLP collector forwarding.
-  Schema lives at `crates/observability/yggdrasil-tracing` (Wave 6).
+  Schema lives at `crates/telemetry` (Wave 6).
 - `--tracer-socket <path>` — `cardano-tracer` Unix-socket forwarder.
   Mux Layer 2/3 is being verified against a live tracer
   (Wave 6 PR 17, R502).
@@ -176,13 +176,13 @@ These categories are explicitly outside the stability contract:
 
 - **Performance characteristics.** A minor release may regress
   throughput or latency relative to the previous release; we ship
-  bench results in CI (`.github/workflows/bench.yml`, Wave 9 PR 28)
+  benchmarkable profiles (`release-debug`, `dist`, `bench`) and a
+  local `just bench` target
   but do not promise monotonic improvement.
 - **Memory layout / RSS.** ChainDB compaction, mempool admission
   budgets, and ledger-snapshot retention windows may evolve between
   releases.
-- **Container image layout.** The
-  `crates/node/yggdrasil-node/Dockerfile`-built image is
+- **Container image layout.** The root `Dockerfile`-built image is
   operator-convenience; build flags, base image, and exposed
   filesystem paths may change.
 

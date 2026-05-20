@@ -31,7 +31,7 @@
 //!
 //! `--help` / `--version` text is byte-equivalent to the upstream
 //! `cardano-testnet` binary; fixtures captured at R335 live at
-//! `crates/cardano-testnet/tests/fixtures/upstream-{help,version}.txt`.
+//! `crates/tools/cardano-testnet/tests/fixtures/upstream-{help,version}.txt`.
 
 /// Byte-for-byte mirror of upstream `cardano-testnet --help` (captured at R335).
 pub const HELP_TEXT: &str = include_str!("../tests/fixtures/upstream-help.txt");

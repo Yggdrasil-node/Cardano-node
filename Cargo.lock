@@ -3302,6 +3302,7 @@ dependencies = [
  "bech32",
  "clap",
  "eyre",
+ "getrandom 0.3.4",
  "hex",
  "serde",
  "serde_json",
@@ -3406,6 +3407,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "yggdrasil-consensus",
+ "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-storage",
  "yggdrasil-telemetry",
@@ -3530,7 +3532,6 @@ name = "yggdrasil-node"
 version = "0.2.0"
 dependencies = [
  "bech32",
- "ciborium",
  "clap",
  "eyre",
  "hex",

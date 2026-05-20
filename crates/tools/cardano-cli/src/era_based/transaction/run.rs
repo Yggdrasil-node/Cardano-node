@@ -77,7 +77,7 @@ pub fn run_transaction_sign_cmd(
 /// `tail` — `is_valid` flag, auxiliary data) is preserved. The
 /// txid (Blake2b-256 of the body) is Ed25519-signed; the result is
 /// re-assembled as `array(L) || body || fresh_wits || tail`.
-fn sign_tx_with_fresh_witness_set(tx_bytes: &[u8], sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
+pub fn sign_tx_with_fresh_witness_set(tx_bytes: &[u8], sk_bytes: &[u8; 32]) -> Result<Vec<u8>> {
     use yggdrasil_crypto::SigningKey;
     use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
@@ -497,13 +497,7 @@ fn read_tx_input(tx_file: Option<PathBuf>, tx_hex: Option<String>) -> Result<Vec
     match (tx_file, tx_hex) {
         (Some(path), None) => std::fs::read(&path)
             .wrap_err_with(|| format!("failed to read --tx-file {}", path.display())),
-        (None, Some(hex_str)) => {
-            // Tolerate a leading `0x` + surrounding whitespace for
-            // terminal-paste ergonomics.
-            let stripped = hex_str.trim();
-            let stripped = stripped.strip_prefix("0x").unwrap_or(stripped);
-            hex::decode(stripped).wrap_err("invalid hex in --tx-hex")
-        }
+        (None, Some(hex_str)) => decode_tx_hex_arg(&hex_str),
         (None, None) => {
             eyre::bail!("this transaction subcommand requires either --tx-file or --tx-hex")
         }
@@ -513,6 +507,18 @@ fn read_tx_input(tx_file: Option<PathBuf>, tx_hex: Option<String>) -> Result<Vec
     }
 }
 
+/// Lenient hex decoder for transaction `--tx-hex` CLI arguments.
+///
+/// Accepts whitespace-trimmed hex with an optional `0x` prefix. The
+/// upstream `cardano-cli` accepts the bare form; Yggdrasil also
+/// accepts the prefixed form because operators often paste serialized
+/// transaction bytes from tooling that includes the prefix.
+pub fn decode_tx_hex_arg(raw: &str) -> Result<Vec<u8>> {
+    let stripped = raw.trim();
+    let stripped = stripped.strip_prefix("0x").unwrap_or(stripped);
+    hex::decode(stripped).wrap_err("invalid hex in --tx-hex")
+}
+
 /// Compute the transaction id from a complete CBOR transaction.
 ///
 /// Every Cardano era encodes a transaction as a CBOR array whose
@@ -520,7 +526,7 @@ fn read_tx_input(tx_file: Option<PathBuf>, tx_hex: Option<String>) -> Result<Vec
 /// hash of that body's *raw* CBOR bytes — so the body byte span is
 /// captured verbatim via `Decoder::raw_value` rather than
 /// re-encoded. Delegates the hash to `yggdrasil_ledger::compute_tx_id`.
-fn compute_txid_from_tx_cbor(tx_bytes: &[u8]) -> Result<[u8; 32]> {
+pub fn compute_txid_from_tx_cbor(tx_bytes: &[u8]) -> Result<[u8; 32]> {
     use yggdrasil_ledger::cbor::Decoder;
     use yggdrasil_ledger::compute_tx_id;
 
@@ -556,6 +562,29 @@ mod tests {
         let bytes = read_tx_input(None, Some("  0xDEADbeef \n".to_string()))
             .expect("0x-prefixed hex must decode");
         assert_eq!(bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    /// `decode_tx_hex_arg` is the shared transaction-hex parser used
+    /// by both the standalone cardano-cli surface and the node wrapper.
+    #[test]
+    fn decode_tx_hex_arg_accepts_plain_and_prefixed_hex() {
+        assert_eq!(
+            decode_tx_hex_arg("deadbeef").expect("plain hex"),
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
+        assert_eq!(
+            decode_tx_hex_arg("\t0xDEADbeef\n").expect("prefixed hex"),
+            vec![0xDE, 0xAD, 0xBE, 0xEF]
+        );
+    }
+
+    #[test]
+    fn decode_tx_hex_arg_rejects_invalid_hex() {
+        let err = decode_tx_hex_arg("zzzz").expect_err("invalid hex must fail");
+        assert!(
+            err.to_string().contains("invalid hex in --tx-hex"),
+            "error must identify the CLI flag, got: {err}",
+        );
     }
 
     /// `compute_txid_from_tx_cbor` hashes the body span of a minimal

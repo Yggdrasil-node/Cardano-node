@@ -72,13 +72,23 @@
 
 use std::sync::Arc;
 
+#[cfg(any(test, unix))]
 use yggdrasil_ledger::LedgerError;
+#[cfg(any(test, unix))]
 use yggdrasil_ledger::cbor::Decoder;
+#[cfg(unix)]
 use yggdrasil_network::data_point_run_acceptor::accept_data_points_resp;
+#[cfg(unix)]
 use yggdrasil_network::local_listener::{LocalPeerListener, LocalPeerListenerError};
-use yggdrasil_network::mux::{MiniProtocolDir, MiniProtocolNum, ProtocolHandle, start_unix};
-use yggdrasil_network::protocols::{AcceptorConfiguration, DataPointAcceptorConfiguration};
+use yggdrasil_network::mux::MiniProtocolNum;
+#[cfg(unix)]
+use yggdrasil_network::mux::{MiniProtocolDir, ProtocolHandle, start_unix};
+use yggdrasil_network::protocols::AcceptorConfiguration;
+#[cfg(unix)]
+use yggdrasil_network::protocols::DataPointAcceptorConfiguration;
+#[cfg(unix)]
 use yggdrasil_network::trace_object_acceptor::TraceObjectAcceptorError;
+#[cfg(unix)]
 use yggdrasil_network::trace_object_run_acceptor::{
     AcceptTraceObjectsError, accept_trace_objects_resp,
 };
@@ -115,6 +125,7 @@ pub const DATA_POINTS_NUM: MiniProtocolNum = MiniProtocolNum(3);
 #[derive(Debug, thiserror::Error)]
 pub enum AcceptorsServerError {
     /// Failed to bind / accept on the local pipe listener.
+    #[cfg(unix)]
     #[error("local listener error: {0}")]
     LocalListener(#[from] LocalPeerListenerError),
 
@@ -125,6 +136,10 @@ pub enum AcceptorsServerError {
     /// Sub-protocol handle missing from the mux response.
     #[error("missing protocol handle: {0:?}")]
     MissingProtocolHandle(MiniProtocolNum),
+
+    /// LocalPipe trace-forwarder transport is unavailable on this platform.
+    #[error("{0}")]
+    UnsupportedLocalPipe(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -198,12 +213,21 @@ where
             // RemoteSocket path requires the trace-forwarder handshake
             // codec (deferred to R425+). Surface as an error rather
             // than silently no-oping so operators get a clear signal.
-            Err(AcceptorsServerError::LocalListener(
-                LocalPeerListenerError::Bind {
-                    path: std::path::PathBuf::from("<RemoteSocket placeholder>"),
-                    source: std::io::Error::other(do_listen_to_forwarder_socket_status()),
-                },
-            ))
+            #[cfg(unix)]
+            {
+                Err(AcceptorsServerError::LocalListener(
+                    LocalPeerListenerError::Bind {
+                        path: std::path::PathBuf::from("<RemoteSocket placeholder>"),
+                        source: std::io::Error::other(do_listen_to_forwarder_socket_status()),
+                    },
+                ))
+            }
+            #[cfg(not(unix))]
+            {
+                Err(AcceptorsServerError::UnsupportedLocalPipe(
+                    do_listen_to_forwarder_socket_status().to_string(),
+                ))
+            }
         }
     }
 }
@@ -221,203 +245,221 @@ pub async fn do_listen_to_forwarder_local<LoHandler>(
 where
     LoHandler: Fn(crate::types::NodeId, Vec<TraceObject>) + Send + Sync + 'static,
 {
-    let listener = LocalPeerListener::bind(&socket_path).await?;
-    let stop_flag = tf_config.should_we_stop.clone();
+    #[cfg(not(unix))]
+    {
+        let _ = (state, tf_config, lo_handler);
+        Err(AcceptorsServerError::UnsupportedLocalPipe(format!(
+            "LocalPipe trace-forwarder transport requires Unix-domain socket support: {}",
+            socket_path.display()
+        )))
+    }
 
-    loop {
-        // Race accept against the global brake.
-        let accept_result = tokio::select! {
-            biased;
-            v = listener.accept_unix() => v,
-            _ = wait_for_global_stop(&stop_flag) => return Ok(()),
-        };
+    #[cfg(unix)]
+    {
+        let listener = LocalPeerListener::bind(&socket_path).await?;
+        let stop_flag = tf_config.should_we_stop.clone();
 
-        let stream = accept_result.map_err(AcceptorsServerError::LocalListener)?;
-        let conn_state = state.clone();
-        let conn_config = tf_config.clone();
-        let conn_handler = Arc::clone(&lo_handler);
-
-        tokio::spawn(async move {
-            // Per-connection mux: handshake (R435) + trace-objects +
-            // data-points (R458) sub-protocols. EKG sub-protocol is
-            // still a deferred carve-out (Hackage-source synthesis).
-            let (mut handles, _mux) = start_unix(
-                stream,
-                MiniProtocolDir::Responder,
-                &[
-                    MiniProtocolNum::HANDSHAKE,
-                    TRACE_OBJECTS_NUM,
-                    DATA_POINTS_NUM,
-                ],
-                1, /* buffer hint */
-            );
-            let handshake_handle = match handles.remove(&MiniProtocolNum::HANDSHAKE) {
-                Some(h) => h,
-                None => return,
-            };
-            let trace_handle = match handles.remove(&TRACE_OBJECTS_NUM) {
-                Some(h) => h,
-                None => {
-                    // Mux setup didn't return a handle for the
-                    // trace-objects protocol — log + drop the
-                    // connection.
-                    return;
-                }
-            };
-            let data_points_handle = match handles.remove(&DATA_POINTS_NUM) {
-                Some(h) => h,
-                None => {
-                    // Mux setup didn't return a handle for the
-                    // data-points protocol — log + drop.
-                    return;
-                }
+        loop {
+            // Race accept against the global brake.
+            let accept_result = tokio::select! {
+                biased;
+                v = listener.accept_unix() => v,
+                _ = wait_for_global_stop(&stop_flag) => return Ok(()),
             };
 
-            // R436: gate the trace-objects acceptor on a successful
-            // handshake. The responder receives ProposeVersions,
-            // selects a compatible (version, magic) pair, and
-            // sends AcceptVersion. On no-overlap or magic-mismatch
-            // the responder sends Refuse and we drop the connection.
-            let local_versions = [
-                yggdrasil_network::protocols::ForwardingVersion::V1,
-                yggdrasil_network::protocols::ForwardingVersion::V2,
-            ];
-            let handshake_outcome =
+            let stream = accept_result.map_err(AcceptorsServerError::LocalListener)?;
+            let conn_state = state.clone();
+            let conn_config = tf_config.clone();
+            let conn_handler = Arc::clone(&lo_handler);
+
+            tokio::spawn(async move {
+                // Per-connection mux: handshake (R435) + trace-objects +
+                // data-points (R458) sub-protocols. EKG sub-protocol is
+                // still a deferred carve-out (Hackage-source synthesis).
+                let (mut handles, _mux) = start_unix(
+                    stream,
+                    MiniProtocolDir::Responder,
+                    &[
+                        MiniProtocolNum::HANDSHAKE,
+                        TRACE_OBJECTS_NUM,
+                        DATA_POINTS_NUM,
+                    ],
+                    1, /* buffer hint */
+                );
+                let handshake_handle = match handles.remove(&MiniProtocolNum::HANDSHAKE) {
+                    Some(h) => h,
+                    None => return,
+                };
+                let trace_handle = match handles.remove(&TRACE_OBJECTS_NUM) {
+                    Some(h) => h,
+                    None => {
+                        // Mux setup didn't return a handle for the
+                        // trace-objects protocol — log + drop the
+                        // connection.
+                        return;
+                    }
+                };
+                let data_points_handle = match handles.remove(&DATA_POINTS_NUM) {
+                    Some(h) => h,
+                    None => {
+                        // Mux setup didn't return a handle for the
+                        // data-points protocol — log + drop.
+                        return;
+                    }
+                };
+
+                // R436: gate the trace-objects acceptor on a successful
+                // handshake. The responder receives ProposeVersions,
+                // selects a compatible (version, magic) pair, and
+                // sends AcceptVersion. On no-overlap or magic-mismatch
+                // the responder sends Refuse and we drop the connection.
+                let local_versions = [
+                    yggdrasil_network::protocols::ForwardingVersion::V1,
+                    yggdrasil_network::protocols::ForwardingVersion::V2,
+                ];
+                let handshake_outcome =
                 yggdrasil_network::trace_object_forward_handshake_driver::run_handshake_responder(
                     handshake_handle,
                     &local_versions,
                     conn_state.network_magic,
                 )
                 .await;
-            if handshake_outcome.is_err() {
-                // Handshake refused / errored — close the connection.
-                // No registration cleanup needed since we haven't
-                // touched connected_nodes yet.
-                return;
-            }
+                if handshake_outcome.is_err() {
+                    // Handshake refused / errored — close the connection.
+                    // No registration cleanup needed since we haven't
+                    // touched connected_nodes yet.
+                    return;
+                }
 
-            // Resolve a NodeId from the stream's connection identity.
-            // R424 doesn't have access to a peer-address string from
-            // tokio's UnixStream (peer_addr returns abstract /
-            // unnamed for accept'd local sockets), so we use a
-            // synthesis fallback: a uuid-like string per connection
-            // attempt. Future-rounds will plumb a real connection
-            // identifier from the trace-forwarder handshake.
-            let conn_token = format!(
-                "LocalPipe-{}-{}",
-                socket_path_label(&conn_state),
-                conn_token_counter()
-            );
+                // Resolve a NodeId from the stream's connection identity.
+                // R424 doesn't have access to a peer-address string from
+                // tokio's UnixStream (peer_addr returns abstract /
+                // unnamed for accept'd local sockets), so we use a
+                // synthesis fallback: a uuid-like string per connection
+                // attempt. Future-rounds will plumb a real connection
+                // identifier from the trace-forwarder handshake.
+                let conn_token = format!(
+                    "LocalPipe-{}-{}",
+                    socket_path_label(&conn_state),
+                    conn_token_counter()
+                );
 
-            // Register the new connection.
-            let _new = crate::acceptors::utils::add_connected_node(
-                &conn_state.connected_nodes,
-                &conn_token,
-            );
-            let _stores = crate::acceptors::utils::prepare_metrics_stores(
-                &conn_state.connected_nodes,
-                &conn_state.accepted_metrics,
-                &conn_token,
-            )
-            .await;
+                // Register the new connection.
+                let _new = crate::acceptors::utils::add_connected_node(
+                    &conn_state.connected_nodes,
+                    &conn_token,
+                );
+                let _stores = crate::acceptors::utils::prepare_metrics_stores(
+                    &conn_state.connected_nodes,
+                    &conn_state.accepted_metrics,
+                    &conn_token,
+                )
+                .await;
 
-            // Per-connection error finalizer (mirror of upstream's
-            // `errorHandler connId = deregisterNodeId + removeDisconnectedNode + ...`).
-            let cleanup_state = conn_state.clone();
-            let cleanup_token = conn_token.clone();
-            let on_error = move |_e: &TraceObjectAcceptorError| {
-                let s = cleanup_state.clone();
-                let token = cleanup_token.clone();
-                tokio::spawn(async move {
-                    // R465: use the registry-aware variant so the
-                    // per-(node, LoggingParams) HandleRegistry
-                    // entries for this disconnecting forwarder are
-                    // dropped, closing the underlying FDs.
-                    crate::acceptors::utils::remove_disconnected_node_full(
-                        &s.connected_nodes,
-                        &s.connected_nodes_names,
-                        &s.accepted_metrics,
-                        &s.handle_registry,
-                        &s.data_point_requestors,
-                        &token,
-                    )
-                    .await;
-                });
-            };
-
-            // Wire the trace-objects sub-protocol handler.
-            let node_id = crate::utils::conn_id_to_node_id(&conn_token);
-            let node_id_for_lo = node_id.clone();
-            let handler = Arc::clone(&conn_handler);
-            let lo_handler_wrapper = move |payloads: Vec<TraceObject>| {
-                handler(node_id_for_lo.clone(), payloads);
-            };
-
-            // Build a DataPoint acceptor configuration whose brake
-            // flag is shared with the trace-objects brake (so a
-            // single connection-level brake trip stops both
-            // sub-protocols cleanly).
-            let dp_config = DataPointAcceptorConfiguration {
-                acceptor_tracer: conn_config.acceptor_tracer.clone(),
-                should_we_stop: conn_config.should_we_stop.clone(),
-            };
-            // Mint a fresh requestor for this connection + register
-            // it in the supervisor-shared DataPointRequestors
-            // registry under this connection's NodeId. External
-            // callers (e.g. ask_node_name in run.rs) look up the
-            // requestor by NodeId to ask for NodeInfo data-points.
-            // The teardown hook (remove_disconnected_node_with_registry)
-            // drops the registration on disconnect.
-            let dp_requestor = crate::acceptors::utils::prepare_data_point_requestor();
-            conn_state
-                .data_point_requestors
-                .insert(node_id.clone(), dp_requestor.clone());
-            let dp_on_error =
-                move |_e: &yggdrasil_network::data_point_acceptor::DataPointAcceptorError| {
-                    // R458: DataPoint error finalizer is currently a
-                    // no-op — the trace-objects on_error already
-                    // performs the per-connection cleanup (deregister
-                    // NodeId, drop metrics store) atomically. Both
-                    // sub-protocols share the same brake; a transport
-                    // error on one trips the other within ~50ms.
+                // Per-connection error finalizer (mirror of upstream's
+                // `errorHandler connId = deregisterNodeId + removeDisconnectedNode + ...`).
+                let cleanup_state = conn_state.clone();
+                let cleanup_token = conn_token.clone();
+                let on_error = move |_e: &TraceObjectAcceptorError| {
+                    let s = cleanup_state.clone();
+                    let token = cleanup_token.clone();
+                    tokio::spawn(async move {
+                        // R465: use the registry-aware variant so the
+                        // per-(node, LoggingParams) HandleRegistry
+                        // entries for this disconnecting forwarder are
+                        // dropped, closing the underlying FDs.
+                        crate::acceptors::utils::remove_disconnected_node_full(
+                            &s.connected_nodes,
+                            &s.connected_nodes_names,
+                            &s.accepted_metrics,
+                            &s.handle_registry,
+                            &s.data_point_requestors,
+                            &token,
+                        )
+                        .await;
+                    });
                 };
 
-            // Run trace-objects + data-points concurrently.
-            // tokio::join! awaits both; either an error or a clean
-            // shutdown on either side returns its result here, and
-            // the connection-level cleanup runs after both have
-            // wound down. Per upstream's Network.Mux semantics, the
-            // two sub-protocols share the mux's egress buffer but
-            // are otherwise independent.
-            let (trace_result, dp_result) = tokio::join!(
-                run_trace_objects_acceptor(conn_config, trace_handle, lo_handler_wrapper, on_error),
-                accept_data_points_resp(
-                    dp_config,
-                    data_points_handle,
-                    move || dp_requestor,
-                    dp_on_error,
-                )
-            );
+                // Wire the trace-objects sub-protocol handler.
+                let node_id = crate::utils::conn_id_to_node_id(&conn_token);
+                let node_id_for_lo = node_id.clone();
+                let handler = Arc::clone(&conn_handler);
+                let lo_handler_wrapper = move |payloads: Vec<TraceObject>| {
+                    handler(node_id_for_lo.clone(), payloads);
+                };
 
-            // Final cleanup on graceful shutdown.
-            let _ = trace_result;
-            let _ = dp_result;
-            crate::acceptors::utils::remove_disconnected_node_full(
-                &conn_state.connected_nodes,
-                &conn_state.connected_nodes_names,
-                &conn_state.accepted_metrics,
-                &conn_state.handle_registry,
-                &conn_state.data_point_requestors,
-                &conn_token,
-            )
-            .await;
-        });
+                // Build a DataPoint acceptor configuration whose brake
+                // flag is shared with the trace-objects brake (so a
+                // single connection-level brake trip stops both
+                // sub-protocols cleanly).
+                let dp_config = DataPointAcceptorConfiguration {
+                    acceptor_tracer: conn_config.acceptor_tracer.clone(),
+                    should_we_stop: conn_config.should_we_stop.clone(),
+                };
+                // Mint a fresh requestor for this connection + register
+                // it in the supervisor-shared DataPointRequestors
+                // registry under this connection's NodeId. External
+                // callers (e.g. ask_node_name in run.rs) look up the
+                // requestor by NodeId to ask for NodeInfo data-points.
+                // The teardown hook (remove_disconnected_node_with_registry)
+                // drops the registration on disconnect.
+                let dp_requestor = crate::acceptors::utils::prepare_data_point_requestor();
+                conn_state
+                    .data_point_requestors
+                    .insert(node_id.clone(), dp_requestor.clone());
+                let dp_on_error =
+                    move |_e: &yggdrasil_network::data_point_acceptor::DataPointAcceptorError| {
+                        // R458: DataPoint error finalizer is currently a
+                        // no-op — the trace-objects on_error already
+                        // performs the per-connection cleanup (deregister
+                        // NodeId, drop metrics store) atomically. Both
+                        // sub-protocols share the same brake; a transport
+                        // error on one trips the other within ~50ms.
+                    };
+
+                // Run trace-objects + data-points concurrently.
+                // tokio::join! awaits both; either an error or a clean
+                // shutdown on either side returns its result here, and
+                // the connection-level cleanup runs after both have
+                // wound down. Per upstream's Network.Mux semantics, the
+                // two sub-protocols share the mux's egress buffer but
+                // are otherwise independent.
+                let (trace_result, dp_result) = tokio::join!(
+                    run_trace_objects_acceptor(
+                        conn_config,
+                        trace_handle,
+                        lo_handler_wrapper,
+                        on_error
+                    ),
+                    accept_data_points_resp(
+                        dp_config,
+                        data_points_handle,
+                        move || dp_requestor,
+                        dp_on_error,
+                    )
+                );
+
+                // Final cleanup on graceful shutdown.
+                let _ = trace_result;
+                let _ = dp_result;
+                crate::acceptors::utils::remove_disconnected_node_full(
+                    &conn_state.connected_nodes,
+                    &conn_state.connected_nodes_names,
+                    &conn_state.accepted_metrics,
+                    &conn_state.handle_registry,
+                    &conn_state.data_point_requestors,
+                    &conn_token,
+                )
+                .await;
+            });
+        }
     }
 }
 
 /// Run the trace-objects sub-protocol responder over an already-
 /// established mux protocol handle. Mirror of upstream's
 /// `runTraceObjectsAcceptor tracerEnv tracerEnvRTView tfConfig errorHandler`.
+#[cfg(unix)]
 async fn run_trace_objects_acceptor<LoHandler, ErrHandler>(
     tf_config: AcceptorConfiguration,
     handle: ProtocolHandle,
@@ -445,6 +487,7 @@ where
 /// about upstream-byte-equivalence). The wire format is a CBOR
 /// array of per-trace-object 6-field arrays; the decoder reads
 /// the outer array length, then decodes each entry.
+#[cfg(any(test, unix))]
 fn decode_trace_objects(dec: &mut Decoder<'_>) -> Result<Vec<TraceObject>, LedgerError> {
     let count = dec.array()?;
     // Bound the per-batch count: even on a busy node, a single
@@ -498,6 +541,7 @@ fn decode_trace_objects(dec: &mut Decoder<'_>) -> Result<Vec<TraceObject>, Ledge
     Ok(out)
 }
 
+#[cfg(unix)]
 async fn wait_for_global_stop(stop_flag: &Arc<tokio::sync::RwLock<bool>>) {
     loop {
         if *stop_flag.read().await {
@@ -507,6 +551,7 @@ async fn wait_for_global_stop(stop_flag: &Arc<tokio::sync::RwLock<bool>>) {
     }
 }
 
+#[cfg(unix)]
 fn socket_path_label(state: &AcceptorsServerState) -> u32 {
     // Use network_magic as a label so multiple concurrent tracer
     // instances on the same host don't collide on synthetic conn
@@ -514,6 +559,7 @@ fn socket_path_label(state: &AcceptorsServerState) -> u32 {
     state.network_magic
 }
 
+#[cfg(unix)]
 fn conn_token_counter() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -635,9 +681,15 @@ mod tests {
         // is well-formed; use a thin newtype function so we don't
         // tangle the generic arg with the Arc<dyn> at the call site.
         let result = run_remote_socket_test_shim(state, how, config, handler).await;
+        #[cfg(unix)]
         assert!(matches!(
             result,
             Err(AcceptorsServerError::LocalListener(_))
+        ));
+        #[cfg(not(unix))]
+        assert!(matches!(
+            result,
+            Err(AcceptorsServerError::UnsupportedLocalPipe(_))
         ));
     }
 
@@ -667,6 +719,7 @@ mod tests {
     ///
     /// Closes the R459 advisor flag that the "boots with DataPoint
     /// multiplexed" claim was untested at the integration level.
+    #[cfg(unix)]
     #[tokio::test]
     async fn server_round_trips_both_sub_protocols_concurrently() {
         use yggdrasil_network::mux::MessageChannel;

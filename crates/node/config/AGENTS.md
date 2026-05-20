@@ -8,9 +8,11 @@ tools and downstream embedders without linking the whole runtime.
 
 Three modules:
 
-- `lib.rs` (the former `node/src/config.rs`): `NodeConfigFile`,
+- `lib.rs`: `NodeConfigFile`,
   `NetworkPreset`, `TraceNamespaceConfig`, the JSON-first deserializer
-  with PascalCase upstream-key aliases, peer-snapshot loaders, etc.
+  with PascalCase upstream-key aliases, peer-snapshot loaders, node-role
+  classification, Shelley block-producer credential policy helpers, and
+  config-owned preflight invariants/warnings.
 - `path_resolve`: pure-`std::path` helpers for resolving operator
   config / topology / database / socket paths. No I/O.
 - `upstream_pins`: `UPSTREAM_*_COMMIT` constants pinned at the
@@ -27,6 +29,14 @@ Three modules:
   `yggdrasil-consensus`, `yggdrasil-storage`, or any other node
   sub-crate. Adding a sibling-node-crate dep here would re-introduce
   the monolithic coupling that Wave 5 broke.
+- Keep node-role and block-producer credential field interpretation here.
+  The `yggdrasil-node` binary may load credential files because that
+  touches the block-producer crate, but it must reuse this crate's
+  `node_role_report` / `ensure_block_producer_credential_policy` logic.
+- Keep config-only `validate-config` checks here via
+  `node_config_preflight_report`. The binary may append diagnostics that
+  require storage/runtime/block-producer dependencies, but it should not
+  re-own pure `NodeConfigFile` invariants.
 - **Strict mirror.** The synthesis docstring at the top of `lib.rs`
   declares this crate as a Yggdrasil-side unification (upstream's
   config surface is split across multiple Haskell modules); the

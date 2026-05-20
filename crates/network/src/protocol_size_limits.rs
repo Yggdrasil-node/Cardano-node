@@ -6,8 +6,9 @@
 //! count any legitimate upstream peer can produce — they delay or reject
 //! pathological allocations, never legitimate messages.
 //!
-//! Reference: per-protocol codec modules in `ouroboros-network-protocols`
-//! and CBOR fragments in `cardano-cddl`.
+//! Reference: per-protocol codec modules in
+//! `ouroboros-network/ouroboros-network/protocols/lib` and CBOR
+//! fragments in `cardano-cddl`.
 //!
 //! See [`yggdrasil_ledger::vec_with_safe_capacity`] for the soft helper
 //! and [`yggdrasil_ledger::vec_with_strict_capacity`] for the hard one.

@@ -55,6 +55,18 @@ use yggdrasil_node_tracer::{NodeTracer, trace_fields};
 
 type CheckpointPersistenceOutcome = LedgerCheckpointUpdateOutcome;
 
+fn alternate_reconnect_peer(
+    primary_peer: std::net::SocketAddr,
+    fallback_peer_addrs: &[std::net::SocketAddr],
+    failed_peer: std::net::SocketAddr,
+) -> Option<std::net::SocketAddr> {
+    fallback_peer_addrs
+        .iter()
+        .copied()
+        .find(|peer| *peer != failed_peer)
+        .or_else(|| (primary_peer != failed_peer).then_some(primary_peer))
+}
+
 use super::keep_alive::{KeepAliveScheduler, trace_verified_sync_batch_applied};
 use super::peer_session::{
     ReconnectingSyncServiceOutcome, ReconnectingVerifiedSyncRequest,
@@ -279,8 +291,6 @@ where
                 m.inc_reconnects();
             }
         }
-        preferred_peer = Some(session.connected_peer_addr);
-
         trace_session_established(
             tracer,
             session.connected_peer_addr,
@@ -306,6 +316,11 @@ where
             );
             session.mux.abort();
             registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
+            preferred_peer = alternate_reconnect_peer(
+                node_config.peer_addr,
+                &refreshed_fallback_peers,
+                session.connected_peer_addr,
+            );
             run_state.record_reconnect_failure();
             continue;
         }
@@ -338,6 +353,11 @@ where
                 // `/metrics` during the reconnect window.
                 registry_mark_bootstrap_cooling(
                     peer_registry.as_ref(),
+                    session.connected_peer_addr,
+                );
+                preferred_peer = alternate_reconnect_peer(
+                    node_config.peer_addr,
+                    &refreshed_fallback_peers,
                     session.connected_peer_addr,
                 );
                 run_state.record_reconnect_failure();
@@ -724,10 +744,20 @@ where
                                             reg.set_status(session.connected_peer_addr, PeerStatus::PeerCold);
                                         }
                                     }
+                                    preferred_peer = alternate_reconnect_peer(
+                                        node_config.peer_addr,
+                                        &refreshed_fallback_peers,
+                                        session.connected_peer_addr,
+                                    );
                                     run_state.record_reconnect_failure();
                                     break;
                                 }
                                 BatchErrorDisposition::Reconnect => {
+                                    preferred_peer = alternate_reconnect_peer(
+                                        node_config.peer_addr,
+                                        &refreshed_fallback_peers,
+                                        session.connected_peer_addr,
+                                    );
                                     run_state.record_reconnect_failure();
                                     break;
                                 }
@@ -944,8 +974,6 @@ where
                 m.inc_reconnects();
             }
         }
-        preferred_peer = Some(session.connected_peer_addr);
-
         trace_session_established(
             tracer,
             session.connected_peer_addr,
@@ -971,6 +999,11 @@ where
             );
             session.mux.abort();
             registry_mark_bootstrap_cooling(peer_registry.as_ref(), session.connected_peer_addr);
+            preferred_peer = alternate_reconnect_peer(
+                node_config.peer_addr,
+                &refreshed_fallback_peers,
+                session.connected_peer_addr,
+            );
             run_state.record_reconnect_failure();
             continue;
         }
@@ -1003,6 +1036,11 @@ where
                 // `/metrics` during the reconnect window.
                 registry_mark_bootstrap_cooling(
                     peer_registry.as_ref(),
+                    session.connected_peer_addr,
+                );
+                preferred_peer = alternate_reconnect_peer(
+                    node_config.peer_addr,
+                    &refreshed_fallback_peers,
                     session.connected_peer_addr,
                 );
                 run_state.record_reconnect_failure();
@@ -1392,10 +1430,20 @@ where
                                             reg.set_status(session.connected_peer_addr, PeerStatus::PeerCold);
                                         }
                                     }
+                                    preferred_peer = alternate_reconnect_peer(
+                                        node_config.peer_addr,
+                                        &refreshed_fallback_peers,
+                                        session.connected_peer_addr,
+                                    );
                                     run_state.record_reconnect_failure();
                                     break;
                                 }
                                 BatchErrorDisposition::Reconnect => {
+                                    preferred_peer = alternate_reconnect_peer(
+                                        node_config.peer_addr,
+                                        &refreshed_fallback_peers,
+                                        session.connected_peer_addr,
+                                    );
                                     run_state.record_reconnect_failure();
                                     break;
                                 }
@@ -1548,6 +1596,13 @@ where
                 from_point,
             );
             session.mux.abort();
+            if let Some(peer) = alternate_reconnect_peer(
+                node_config.peer_addr,
+                fallback_peer_addrs,
+                session.connected_peer_addr,
+            ) {
+                attempt_state.record_success(peer);
+            }
             run_state.record_reconnect_failure();
             continue;
         }
@@ -1571,6 +1626,13 @@ where
                 // carry a peer_registry and never registers a Hot
                 // bootstrap peer (R168 wired the registry hooks only
                 // for the chaindb / shared_chaindb inner functions).
+                if let Some(peer) = alternate_reconnect_peer(
+                    node_config.peer_addr,
+                    fallback_peer_addrs,
+                    session.connected_peer_addr,
+                ) {
+                    attempt_state.record_success(peer);
+                }
                 run_state.record_reconnect_failure();
                 break;
             }
@@ -1670,6 +1732,13 @@ where
                             match disposition {
                                 BatchErrorDisposition::ReconnectAndPunish
                                 | BatchErrorDisposition::Reconnect => {
+                                    if let Some(peer) = alternate_reconnect_peer(
+                                        node_config.peer_addr,
+                                        fallback_peer_addrs,
+                                        session.connected_peer_addr,
+                                    ) {
+                                        attempt_state.record_success(peer);
+                                    }
                                     run_state.record_reconnect_failure();
                                     break;
                                 }

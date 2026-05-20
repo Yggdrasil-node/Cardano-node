@@ -19,9 +19,9 @@ This directory vendors official upstream vector and golden artifacts used for pa
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- Upstream `cardano-base` repository: <.reference-haskell-cardano-node/deps/cardano-base/>
-- Praos vector path: <.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-praos/test_vectors/>
-- BLS12-381 vector path: <.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>
+- Upstream `cardano-base` repository: <../../.reference-haskell-cardano-node/deps/cardano-base/>
+- Praos vector path: <../../.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-praos/test_vectors/>
+- BLS12-381 vector path: <../../.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/bls12-381-test-vectors/test_vectors/>
 
 ## Vendored Set (Current)
 

@@ -41,7 +41,7 @@ If touching the network / consensus / ledger surface:
 
 - [ ] No new entries in workspace-denied lints (`unwrap_used`, `todo!`, `dbg_macro`)
 - [ ] No new dependencies, OR each new dep justified in `docs/DEPENDENCIES.md`
-- [ ] `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh` still clean
+- [ ] `scripts/check_upstream_drift.sh` still clean
 - [ ] Upstream pinned SHAs in `crates/node/config/src/upstream_pins.rs` updated if relevant
 
 ## AGENTS.md updates

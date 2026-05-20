@@ -1,7 +1,7 @@
 //! End-to-end Plutus cost-model integration test.
 //!
 //! Loads the **real** PlutusV1 cost-model values from the vendored
-//! `crates/node/yggdrasil-node/configuration/preview/alonzo-genesis.json` (a faithful copy of
+//! `configuration/preview/alonzo-genesis.json` (a faithful copy of
 //! the upstream IntersectMBO preview alonzo-genesis), constructs a
 //! [`CostModel`] via [`CostModel::from_alonzo_genesis_params`] (the same
 //! path the runtime uses on startup), and evaluates a script that
@@ -25,8 +25,7 @@ use yggdrasil_plutus::{Constant, CostModel, DefaultFun, ExBudget, Term, Value, e
 
 /// Path to the preview alonzo-genesis vendored from upstream.  Pinned
 /// hash is asserted in `node::config::verify_known_genesis_hashes`.
-const PREVIEW_ALONZO_GENESIS: &str =
-    "../node/yggdrasil-node/configuration/preview/alonzo-genesis.json";
+const PREVIEW_ALONZO_GENESIS: &str = "../../configuration/preview/alonzo-genesis.json";
 
 /// Parse `PlutusV1` named cost-model entries from the alonzo-genesis JSON.
 /// Mirrors `node::genesis::build_protocol_parameter_cost_models` minus the

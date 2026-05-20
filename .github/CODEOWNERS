@@ -16,24 +16,25 @@
 
 # Crates — per-area owners can be added here as the team grows.
 /crates/crypto/        @FractionEstate
-/crates/cddl-codegen/  @FractionEstate
 /crates/ledger/        @FractionEstate
 /crates/storage/       @FractionEstate
 /crates/consensus/     @FractionEstate
-/crates/mempool/       @FractionEstate
+/crates/consensus/src/mempool/ @FractionEstate
 /crates/network/       @FractionEstate
 /crates/plutus/        @FractionEstate
+/crates/tools/         @FractionEstate
 
-# Node binary
-/node/                 @FractionEstate
+# Node runtime and support crates
+/crates/node/          @FractionEstate
 
 # Documentation site + reference docs
 /docs/                 @FractionEstate
 
 # CI and release infrastructure
 /.github/              @FractionEstate
+/scripts/              @FractionEstate
 
 # Vendored data — must not be hand-edited; flag any change for review.
 /specs/upstream-test-vectors/      @FractionEstate
 /specs/upstream-cddl-fragments/    @FractionEstate
-/node/configuration/               @FractionEstate
+/configuration/               @FractionEstate

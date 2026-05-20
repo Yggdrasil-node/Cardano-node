@@ -16,7 +16,11 @@ pub mod mnemonic;
 use eyre::Result;
 
 use crate::command::Command;
-use crate::lsq::{DeferralLsqClient, LsqClient, NtcQuery};
+use crate::lsq::{
+    DeferralLsqClient, LsqClient, NtcQuery, delegations_and_rewards_query_arg,
+    reward_balance_query_arg, stake_pool_params_query_arg, utxo_by_address_query_arg,
+    utxo_by_tx_in_query_arg,
+};
 
 /// Run a parsed `Command` against the local environment.
 ///
@@ -46,7 +50,7 @@ pub fn run_command(command: Command) -> Result<()> {
 /// pointing operators at the node binary's wrapper) or a future
 /// concrete impl supplied by the binary crate (tokio + yggdrasil-
 /// network backed). The node binary's existing
-/// `crates/node/yggdrasil-node/src/commands/cardano_cli.rs` doesn't go through this
+/// `crates/node/cardano-node/src/commands/cardano_cli.rs` doesn't go through this
 /// crate's `Command` enum and stays unaffected.
 ///
 /// # Per-arm dispatch
@@ -134,6 +138,20 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
         } => {
             let magic = network_magic.unwrap_or(764_824_073);
             client.run_query(&socket_path, magic, NtcQuery::SystemStart)
+        }
+        Command::QueryEraHistory {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::EraHistory)
+        }
+        Command::QueryCurrentEpoch {
+            socket_path,
+            network_magic,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, NtcQuery::CurrentEpoch)
         }
         Command::QueryStakeDistribution {
             socket_path,
@@ -246,6 +264,54 @@ pub fn run_command_with(command: Command, client: &dyn LsqClient) -> Result<()> 
         } => {
             let magic = network_magic.unwrap_or(764_824_073);
             client.run_query(&socket_path, magic, NtcQuery::LedgerCounts)
+        }
+        Command::QueryUtxo {
+            socket_path,
+            network_magic,
+            address,
+            tx_in,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            let query = match (address, tx_in) {
+                (Some(address), None) => utxo_by_address_query_arg(&address),
+                (None, Some(tx_in)) => utxo_by_tx_in_query_arg(&tx_in)?,
+                (None, None) => {
+                    eyre::bail!("query-utxo requires either --address or --tx-in; pass one of them")
+                }
+                (Some(_), Some(_)) => {
+                    unreachable!("clap's conflicts_with pair prevents both flags being set")
+                }
+            };
+            client.run_query(&socket_path, magic, query)
+        }
+        Command::QueryRewardBalance {
+            socket_path,
+            network_magic,
+            account,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, reward_balance_query_arg(&account))
+        }
+        Command::QueryDelegationsAndRewards {
+            socket_path,
+            network_magic,
+            credential,
+            is_key_hash,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(
+                &socket_path,
+                magic,
+                delegations_and_rewards_query_arg(&credential, is_key_hash),
+            )
+        }
+        Command::QueryStakePoolParams {
+            socket_path,
+            network_magic,
+            pool_hash,
+        } => {
+            let magic = network_magic.unwrap_or(764_824_073);
+            client.run_query(&socket_path, magic, stake_pool_params_query_arg(&pool_hash))
         }
         Command::AddressKeyGen {
             verification_key_file,
@@ -432,7 +498,7 @@ mod tests {
 
     /// With a valid network preset the runner attempts path
     /// resolution. In a workspace-test environment without a real
-    /// `crates/node/yggdrasil-node/configuration/<network>/config.json`, this either
+    /// `configuration/<network>/config.json`, this either
     /// succeeds (when the vendored configs are present, the
     /// canonical case) or surfaces a structured path-resolution
     /// error from `environment::resolve_upstream_reference_paths`.
@@ -538,132 +604,208 @@ mod tests {
                 4,
             ),
             (
-                Command::QueryStakeDistribution {
+                Command::QueryEraHistory {
                     socket_path: socket.clone(),
                     network_magic: Some(5),
                 },
-                NtcQuery::StakeDistribution,
+                NtcQuery::EraHistory,
                 5,
+            ),
+            (
+                Command::QueryCurrentEpoch {
+                    socket_path: socket.clone(),
+                    network_magic: Some(6),
+                },
+                NtcQuery::CurrentEpoch,
+                6,
+            ),
+            (
+                Command::QueryStakeDistribution {
+                    socket_path: socket.clone(),
+                    network_magic: Some(7),
+                },
+                NtcQuery::StakeDistribution,
+                7,
             ),
             (
                 Command::QueryStakePools {
                     socket_path: socket.clone(),
-                    network_magic: Some(6),
+                    network_magic: Some(8),
                 },
                 NtcQuery::StakePools,
-                6,
+                8,
             ),
             (
                 Command::QueryProtocolParameters {
                     socket_path: socket.clone(),
-                    network_magic: Some(7),
+                    network_magic: Some(9),
                 },
                 NtcQuery::ProtocolParameters,
-                7,
+                9,
             ),
             (
                 Command::QueryDrepStakeDistribution {
                     socket_path: socket.clone(),
-                    network_magic: Some(8),
+                    network_magic: Some(10),
                 },
                 NtcQuery::DrepStakeDistribution,
-                8,
+                10,
             ),
             (
                 Command::QueryConstitution {
                     socket_path: socket.clone(),
-                    network_magic: Some(9),
+                    network_magic: Some(11),
                 },
                 NtcQuery::Constitution,
-                9,
+                11,
             ),
             (
                 Command::QueryGovState {
                     socket_path: socket.clone(),
-                    network_magic: Some(10),
+                    network_magic: Some(12),
                 },
                 NtcQuery::GovState,
-                10,
+                12,
             ),
             (
                 Command::QueryDrepState {
                     socket_path: socket.clone(),
-                    network_magic: Some(11),
+                    network_magic: Some(13),
                 },
                 NtcQuery::DrepState,
-                11,
+                13,
             ),
             (
                 Command::QueryCommitteeState {
                     socket_path: socket.clone(),
-                    network_magic: Some(12),
+                    network_magic: Some(14),
                 },
                 NtcQuery::CommitteeState,
-                12,
+                14,
             ),
             (
                 Command::QueryTreasuryAndReserves {
                     socket_path: socket.clone(),
-                    network_magic: Some(13),
+                    network_magic: Some(15),
                 },
                 NtcQuery::TreasuryAndReserves,
-                13,
+                15,
             ),
             (
                 Command::QueryAccountState {
                     socket_path: socket.clone(),
-                    network_magic: Some(14),
+                    network_magic: Some(16),
                 },
                 NtcQuery::AccountState,
-                14,
+                16,
             ),
             (
                 Command::QueryGenesisDelegations {
                     socket_path: socket.clone(),
-                    network_magic: Some(15),
+                    network_magic: Some(17),
                 },
                 NtcQuery::GenesisDelegations,
-                15,
+                17,
             ),
             (
                 Command::QueryStabilityWindow {
                     socket_path: socket.clone(),
-                    network_magic: Some(16),
+                    network_magic: Some(18),
                 },
                 NtcQuery::StabilityWindow,
-                16,
+                18,
             ),
             (
                 Command::QueryNumDormantEpochs {
                     socket_path: socket.clone(),
-                    network_magic: Some(17),
+                    network_magic: Some(19),
                 },
                 NtcQuery::NumDormantEpochs,
-                17,
+                19,
             ),
             (
                 Command::QueryExpectedNetworkId {
                     socket_path: socket.clone(),
-                    network_magic: Some(18),
+                    network_magic: Some(20),
                 },
                 NtcQuery::ExpectedNetworkId,
-                18,
+                20,
             ),
             (
                 Command::QueryDepositPot {
                     socket_path: socket.clone(),
-                    network_magic: Some(19),
+                    network_magic: Some(21),
                 },
                 NtcQuery::DepositPot,
-                19,
+                21,
             ),
             (
                 Command::QueryLedgerCounts {
                     socket_path: socket.clone(),
-                    network_magic: Some(20),
+                    network_magic: Some(22),
                 },
                 NtcQuery::LedgerCounts,
-                20,
+                22,
+            ),
+            (
+                Command::QueryUtxo {
+                    socket_path: socket.clone(),
+                    network_magic: Some(23),
+                    address: Some("aabb".to_string()),
+                    tx_in: None,
+                },
+                NtcQuery::UtxoByAddress {
+                    address: vec![0xaa, 0xbb],
+                },
+                23,
+            ),
+            (
+                Command::QueryUtxo {
+                    socket_path: socket.clone(),
+                    network_magic: Some(24),
+                    address: None,
+                    tx_in: Some("ccdd#2".to_string()),
+                },
+                NtcQuery::UtxoByTxIn {
+                    tx_id: vec![0xcc, 0xdd],
+                    index: 2,
+                },
+                24,
+            ),
+            (
+                Command::QueryRewardBalance {
+                    socket_path: socket.clone(),
+                    network_magic: Some(25),
+                    account: "eeff".to_string(),
+                },
+                NtcQuery::RewardBalance {
+                    account: vec![0xee, 0xff],
+                },
+                25,
+            ),
+            (
+                Command::QueryDelegationsAndRewards {
+                    socket_path: socket.clone(),
+                    network_magic: Some(26),
+                    credential: "11".to_string(),
+                    is_key_hash: false,
+                },
+                NtcQuery::DelegationsAndRewards {
+                    credential: vec![0x11],
+                    is_key_hash: false,
+                },
+                26,
+            ),
+            (
+                Command::QueryStakePoolParams {
+                    socket_path: socket.clone(),
+                    network_magic: Some(27),
+                    pool_hash: "22".to_string(),
+                },
+                NtcQuery::StakePoolParams {
+                    pool_hash: vec![0x22],
+                },
+                27,
             ),
         ];
         for (command, expected_query, expected_magic) in cases {

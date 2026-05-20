@@ -52,7 +52,7 @@ Four gates green: `cargo fmt --all -- --check`, `cargo check-all`,
 **6,539 passing, 0 failing — unchanged from the R3b-3 baseline** (a
 behavior-preserving refactor adds no tests, removes none). The existing
 `strict_base_ledger_state_seeds_preview_reserves_from_genesis_supply`
-test (`yggdrasil-node/src/main_tests.rs`) exercises the full
+test (`crates/node/cardano-node/src/main_tests.rs`) exercises the full
 Byron+Shelley seeding path end-to-end through the new builder — its
 passing is the behavior-preservation proof.
 

@@ -6,7 +6,7 @@
 //!
 //! Reference: `Ouroboros.Network.Protocol.Limits` (`shortWait`, `longWait`,
 //! `waitForever`) and per-protocol codec modules in
-//! `ouroboros-network-protocols`.
+//! `ouroboros-network/ouroboros-network/protocols/lib`.
 //!
 //! ## Naming parity
 //!

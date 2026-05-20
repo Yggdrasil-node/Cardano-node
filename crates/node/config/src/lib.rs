@@ -42,10 +42,10 @@ use thiserror::Error;
 use yggdrasil_ledger::ProtocolParameters;
 pub use yggdrasil_network::derive_peer_snapshot_freshness;
 use yggdrasil_network::{
-    ConsensusMode, LedgerPeerSnapshot, LedgerPeerUseDecision, LedgerStateJudgement,
-    LocalRootConfig, PeerAccessPoint, PeerSnapshotFreshness, PublicRootConfig, TopologyConfig,
-    UseLedgerPeers, always_eligible_snapshot_peers, eligible_ledger_peer_candidates,
-    ordered_peer_fallbacks, resolve_peer_access_points,
+    ConsensusMode, GovernorTargets, LedgerPeerSnapshot, LedgerPeerUseDecision,
+    LedgerStateJudgement, LocalRootConfig, PeerAccessPoint, PeerSnapshotFreshness,
+    PublicRootConfig, TopologyConfig, UseLedgerPeers, always_eligible_snapshot_peers,
+    eligible_ledger_peer_candidates, ordered_peer_fallbacks, resolve_peer_access_points,
 };
 use yggdrasil_plutus::CostModel;
 
@@ -297,7 +297,7 @@ pub struct NodeConfigFile {
     /// fetch ranges across the registered workers in parallel.
     ///
     /// R218 operational verification on mainnet
-    /// (`docs/operational-runs/2026-04-30-round-218-*.md`) measured
+    /// (`docs/operational-runs/archive/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`) measured
     /// a **67% throughput gain** (3.33 → 5.55 blk/s) with knob=4
     /// settling at 2 active workers (per the
     /// `bfcMaxConcurrencyBulkSync = 2` upstream cap).
@@ -679,6 +679,463 @@ pub struct NodeConfigFile {
         skip_serializing_if = "Option::is_none"
     )]
     pub shelley_operational_certificate: Option<String>,
+}
+
+/// Whether the Shelley block-producer credential triple is absent,
+/// fully configured, or partially configured in a node config.
+///
+/// The triple matches the upstream node's block-production inputs:
+/// `ShelleyKesKey`, `ShelleyVrfKey`, and
+/// `ShelleyOperationalCertificate`. A partial triple is never enough
+/// to forge blocks and should be rejected unless the operator
+/// explicitly starts the node as non-producing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BlockProducerCredentialStatus {
+    /// None of the block-producer credential paths are configured.
+    Absent,
+    /// All three block-producer credential paths are configured.
+    Complete,
+    /// Some, but not all, block-producer credential paths are configured.
+    Partial,
+}
+
+/// Error returned when the configured block-producer credential policy is
+/// inconsistent with the requested node role.
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum BlockProducerCredentialPolicyError {
+    /// A producing node cannot start with only part of the required
+    /// Shelley credential triple.
+    #[error(
+        "block producer credentials are partially configured; present: {present}; missing: {missing}. \
+         Provide all three ShelleyKesKey, ShelleyVrfKey, ShelleyOperationalCertificate, \
+         or pass --non-producing-node to run explicitly as a relay/non-producing node"
+    )]
+    PartialCredentials {
+        /// Comma-separated upstream config field names that are present.
+        present: String,
+        /// Comma-separated upstream config field names that are missing.
+        missing: String,
+    },
+}
+
+/// Operator-facing node role resolved from configuration and CLI intent.
+///
+/// This is deliberately config-owned rather than binary-owned: `run`,
+/// `validate-config`, sister tools, and downstream embedders all need the
+/// same interpretation of the upstream credential fields and the
+/// Yggdrasil `--non-producing-node` switch.
+#[derive(Clone, Debug, Serialize)]
+pub struct NodeRoleValidationReport {
+    /// Resolved role label: `block-producer`, `relay`, `non-producing`,
+    /// or `sync-only`.
+    pub role: &'static str,
+    /// Whether the operator explicitly requested a non-producing node.
+    pub non_producing_node: bool,
+    /// Inbound listen address, if the config exposes relay service.
+    pub inbound_listen_addr: Option<String>,
+    /// Credential status string rendered for JSON reports and trace fields.
+    pub block_producer_credentials: &'static str,
+    /// Upstream credential fields present in the config.
+    pub credential_fields_present: Vec<&'static str>,
+    /// Upstream credential fields missing from the config.
+    pub credential_fields_missing: Vec<&'static str>,
+}
+
+/// Return the block-producer credential fields that are present and missing.
+pub fn block_producer_credential_fields(
+    file_cfg: &NodeConfigFile,
+) -> (Vec<&'static str>, Vec<&'static str>) {
+    let fields = [
+        ("ShelleyKesKey", file_cfg.shelley_kes_key.is_some()),
+        ("ShelleyVrfKey", file_cfg.shelley_vrf_key.is_some()),
+        (
+            "ShelleyOperationalCertificate",
+            file_cfg.shelley_operational_certificate.is_some(),
+        ),
+    ];
+
+    let mut present = Vec::new();
+    let mut missing = Vec::new();
+    for (field, is_present) in fields {
+        if is_present {
+            present.push(field);
+        } else {
+            missing.push(field);
+        }
+    }
+    (present, missing)
+}
+
+/// Return whether the Shelley block-producer credential triple is absent,
+/// complete, or partial.
+pub fn block_producer_credential_status(
+    file_cfg: &NodeConfigFile,
+) -> BlockProducerCredentialStatus {
+    let (present, missing) = block_producer_credential_fields(file_cfg);
+    match (present.is_empty(), missing.is_empty()) {
+        (true, false) => BlockProducerCredentialStatus::Absent,
+        (false, true) => BlockProducerCredentialStatus::Complete,
+        _ => BlockProducerCredentialStatus::Partial,
+    }
+}
+
+/// Enforce that producing nodes either provide the full Shelley credential
+/// triple or provide none of it.
+pub fn ensure_block_producer_credential_policy(
+    file_cfg: &NodeConfigFile,
+    non_producing_node: bool,
+) -> Result<BlockProducerCredentialStatus, BlockProducerCredentialPolicyError> {
+    let status = block_producer_credential_status(file_cfg);
+    if status == BlockProducerCredentialStatus::Partial && !non_producing_node {
+        let (present, missing) = block_producer_credential_fields(file_cfg);
+        return Err(BlockProducerCredentialPolicyError::PartialCredentials {
+            present: present.join(", "),
+            missing: missing.join(", "),
+        });
+    }
+    Ok(status)
+}
+
+/// Resolve the operator-facing node role from configuration and the
+/// `--non-producing-node` flag.
+pub fn node_role_report(
+    file_cfg: &NodeConfigFile,
+    non_producing_node: bool,
+) -> Result<NodeRoleValidationReport, BlockProducerCredentialPolicyError> {
+    let status = ensure_block_producer_credential_policy(file_cfg, non_producing_node)?;
+    let (present, missing) = block_producer_credential_fields(file_cfg);
+    let inbound_listen_addr = file_cfg.inbound_listen_addr.map(|addr| addr.to_string());
+    let role = if status == BlockProducerCredentialStatus::Complete && !non_producing_node {
+        "block-producer"
+    } else if inbound_listen_addr.is_some() {
+        "relay"
+    } else if non_producing_node {
+        "non-producing"
+    } else {
+        "sync-only"
+    };
+    let block_producer_credentials = match (non_producing_node, status) {
+        (true, BlockProducerCredentialStatus::Absent) => "absent",
+        (true, _) => "ignored-by-non-producing-node",
+        (false, BlockProducerCredentialStatus::Absent) => "absent",
+        (false, BlockProducerCredentialStatus::Complete) => "complete",
+        (false, BlockProducerCredentialStatus::Partial) => "partial",
+    };
+
+    Ok(NodeRoleValidationReport {
+        role,
+        non_producing_node,
+        inbound_listen_addr,
+        block_producer_credentials,
+        credential_fields_present: present,
+        credential_fields_missing: missing,
+    })
+}
+
+/// Pure node-config preflight result shared by the node binary and tools.
+#[derive(Clone, Debug, Serialize)]
+pub struct NodeConfigPreflightReport {
+    /// Operator-facing role resolved from the config and CLI intent.
+    pub node_role: NodeRoleValidationReport,
+    /// Non-fatal config diagnostics that should be surfaced to operators.
+    pub warnings: Vec<String>,
+}
+
+/// Hard failures returned by [`node_config_preflight_report`].
+#[derive(Clone, Debug, Error, PartialEq)]
+pub enum NodeConfigPreflightError {
+    /// A node cannot advertise an empty NtN protocol-version set.
+    #[error("node config must include at least one protocol version")]
+    EmptyProtocolVersions,
+    /// Ouroboros security parameter `k` must be positive.
+    #[error(
+        "security_param_k (Ouroboros k) must be > 0; a zero value collapses the stability window and makes Praos non-functional"
+    )]
+    ZeroSecurityParamK,
+    /// Epoch length must be positive.
+    #[error(
+        "epoch_length must be > 0; a zero value causes a divide-by-zero in slot-to-epoch conversion"
+    )]
+    ZeroEpochLength,
+    /// Byron epoch length must be positive when a Byron prefix exists.
+    #[error(
+        "byron_epoch_length must be > 0 when byron_to_shelley_slot is set; the Byron prefix is otherwise ill-formed"
+    )]
+    ZeroByronEpochLengthWithBoundary,
+    /// KES periods must contain at least one slot.
+    #[error(
+        "slots_per_kes_period must be > 0; a zero period makes KES evolution math ill-defined and blocks header verification"
+    )]
+    ZeroSlotsPerKesPeriod,
+    /// KES evolution cap must be positive.
+    #[error(
+        "max_kes_evolutions must be > 0; a zero cap means every KES period is immediately expired and all operational certificates are rejected"
+    )]
+    ZeroMaxKesEvolutions,
+    /// Active slot coefficient must be finite and in the upstream range.
+    #[error("active_slot_coeff must be finite and within (0, 1], got {0}")]
+    InvalidActiveSlotCoeff(f64),
+    /// Block-producer credential policy failed.
+    #[error(transparent)]
+    BlockProducerCredentialPolicy(#[from] BlockProducerCredentialPolicyError),
+}
+
+/// Validate the config-owned preflight invariants and return non-fatal
+/// warnings plus the resolved node role.
+///
+/// This intentionally excludes storage recovery, peer-snapshot loading,
+/// and feature-gated block-producer credential file loading because those
+/// require runtime/storage/block-producer dependencies owned by the node
+/// binary or sibling crates.
+pub fn node_config_preflight_report(
+    file_cfg: &NodeConfigFile,
+    config_base_dir: Option<&Path>,
+    non_producing_node: bool,
+) -> Result<NodeConfigPreflightReport, NodeConfigPreflightError> {
+    if file_cfg.protocol_versions.is_empty() {
+        return Err(NodeConfigPreflightError::EmptyProtocolVersions);
+    }
+
+    if file_cfg.security_param_k == 0 {
+        return Err(NodeConfigPreflightError::ZeroSecurityParamK);
+    }
+
+    if file_cfg.epoch_length == 0 {
+        return Err(NodeConfigPreflightError::ZeroEpochLength);
+    }
+
+    if file_cfg.byron_to_shelley_slot.is_some() && file_cfg.byron_epoch_length == 0 {
+        return Err(NodeConfigPreflightError::ZeroByronEpochLengthWithBoundary);
+    }
+
+    if file_cfg.slots_per_kes_period == 0 {
+        return Err(NodeConfigPreflightError::ZeroSlotsPerKesPeriod);
+    }
+
+    if file_cfg.max_kes_evolutions == 0 {
+        return Err(NodeConfigPreflightError::ZeroMaxKesEvolutions);
+    }
+
+    if !(file_cfg.active_slot_coeff.is_finite()
+        && file_cfg.active_slot_coeff > 0.0
+        && file_cfg.active_slot_coeff <= 1.0)
+    {
+        return Err(NodeConfigPreflightError::InvalidActiveSlotCoeff(
+            file_cfg.active_slot_coeff,
+        ));
+    }
+
+    let mut warnings = Vec::new();
+    let node_role = node_role_report(file_cfg, non_producing_node)?;
+    if node_role.block_producer_credentials == "ignored-by-non-producing-node" {
+        warnings.push(
+            "block producer credential paths are configured but --non-producing-node is set; \
+             credentials will be ignored and the forge loop will stay disabled"
+                .to_owned(),
+        );
+    }
+
+    // Surface genesis-hash mismatches in preflight warnings so operators see
+    // the corruption flag alongside other diagnostics.
+    if let Err(err) = file_cfg.verify_known_genesis_hashes(config_base_dir) {
+        warnings.push(format!("genesis hash verification: {err}"));
+    }
+
+    if file_cfg.byron_genesis_file.is_none()
+        && let Some(byron_hex) = file_cfg.byron_genesis_hash.as_deref()
+    {
+        if let Err(err) =
+            yggdrasil_node_genesis::parse_blake2b_256_hex(byron_hex, "ByronGenesisHash")
+        {
+            warnings.push(format!("ByronGenesisHash format: {err}"));
+        }
+    }
+
+    if let Some(proto) = file_cfg.protocol.as_deref()
+        && proto != "Cardano"
+    {
+        warnings.push(format!(
+            "Protocol = {proto:?} is not supported; Yggdrasil only implements \
+             \"Cardano\". The value would be silently ignored at runtime - fix the \
+             config to \"Cardano\" or upgrade to a node that implements the declared \
+             protocol family"
+        ));
+    }
+
+    if file_cfg.peer_sharing > 1 {
+        warnings.push(format!(
+            "peer_sharing = {} is outside the upstream-defined wire range {{0, 1}}; \
+             peers implementing strict codecs may reject this handshake. \
+             Use 0 (disabled) or 1 (enabled)",
+            file_cfg.peer_sharing,
+        ));
+    }
+
+    if let Some(mnv) = file_cfg.min_node_version.as_deref() {
+        let trimmed = mnv.trim();
+        let valid = !trimmed.is_empty()
+            && trimmed
+                .split('.')
+                .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit()));
+        if !valid {
+            warnings.push(format!(
+                "MinNodeVersion = {mnv:?} is not a dotted-numeric version string \
+                 (expected shape like \"10.6.2\"). The value is otherwise carried \
+                 through verbatim for upstream-config compatibility."
+            ));
+        }
+    }
+
+    let lkbv_present = [
+        file_cfg.last_known_block_version_major.is_some(),
+        file_cfg.last_known_block_version_minor.is_some(),
+        file_cfg.last_known_block_version_alt.is_some(),
+    ];
+    let set_count = lkbv_present.iter().filter(|b| **b).count();
+    if set_count != 0 && set_count != 3 {
+        warnings.push(format!(
+            "LastKnownBlockVersion triplet is partially set (Major: {}, Minor: {}, Alt: {}); \
+             upstream expects all three fields together or none. This is almost always a \
+             copy-paste bug",
+            if lkbv_present[0] { "set" } else { "missing" },
+            if lkbv_present[1] { "set" } else { "missing" },
+            if lkbv_present[2] { "set" } else { "missing" },
+        ));
+    }
+
+    if file_cfg.max_major_protocol_version < 2 {
+        warnings.push(format!(
+            "max_major_protocol_version = {} is pre-Shelley; Shelley-era \
+             and later blocks will be rejected as unsupported. \
+             Recommended: {} (Conway-era default)",
+            file_cfg.max_major_protocol_version, CONWAY_MAJOR_PROTOCOL_VERSION,
+        ));
+    }
+
+    if file_cfg.governor_tick_interval_secs == 0 {
+        warnings.push(
+            "governor_tick_interval_secs is 0; the governor loop will busy-\
+             spin at runtime-scheduler resolution and pin a CPU core. \
+             Recommended: 1-30"
+                .to_owned(),
+        );
+    }
+
+    let targets = GovernorTargets {
+        target_known: file_cfg.governor_target_known,
+        target_established: file_cfg.governor_target_established,
+        target_active: file_cfg.governor_target_active,
+        target_known_big_ledger: file_cfg.governor_target_known_big_ledger,
+        target_established_big_ledger: file_cfg.governor_target_established_big_ledger,
+        target_active_big_ledger: file_cfg.governor_target_active_big_ledger,
+        ..Default::default()
+    };
+    if !targets.is_sane() {
+        warnings.push(format!(
+            "governor targets violate upstream `sanePeerSelectionTargets` \
+             invariants (0 <= active <= established <= known; active <= 100, \
+             established <= 1000, known <= 10000; same for big-ledger). \
+             Got: target_known={}, target_established={}, target_active={}; \
+             target_known_big_ledger={}, target_established_big_ledger={}, \
+             target_active_big_ledger={}",
+            file_cfg.governor_target_known,
+            file_cfg.governor_target_established,
+            file_cfg.governor_target_active,
+            file_cfg.governor_target_known_big_ledger,
+            file_cfg.governor_target_established_big_ledger,
+            file_cfg.governor_target_active_big_ledger,
+        ));
+    }
+
+    if let Some(secs) = file_cfg.keepalive_interval_secs {
+        if secs >= 97 {
+            warnings.push(format!(
+                "keepalive_interval_secs = {secs} is >= the 97s upstream \
+                 KeepAlive client timeout; peers will disconnect before the \
+                 next heartbeat. Recommended: 10-60",
+            ));
+        } else if secs == 0 {
+            warnings.push(
+                "keepalive_interval_secs is 0; heartbeats will fire as \
+                 fast as the runtime can schedule them (wasteful). \
+                 Recommended: 10-60"
+                    .to_owned(),
+            );
+        }
+    }
+
+    const CHECKPOINT_INTERVAL_LOWER_SOFT_FLOOR: u64 = 32;
+
+    if file_cfg.checkpoint_interval_slots == 0 {
+        warnings.push(
+            "checkpoint_interval_slots is 0; checkpoint persistence cadence is effectively unbounded"
+                .to_owned(),
+        );
+    } else if file_cfg.checkpoint_interval_slots < CHECKPOINT_INTERVAL_LOWER_SOFT_FLOOR {
+        warnings.push(format!(
+            "checkpoint_interval_slots = {} is below the {}-slot soft floor; \
+             small cadences steal fsync bandwidth from the hot sync path \
+             and can noticeably slow catch-up. Recommended: 100-10_000",
+            file_cfg.checkpoint_interval_slots, CHECKPOINT_INTERVAL_LOWER_SOFT_FLOOR,
+        ));
+    } else if file_cfg.checkpoint_interval_slots > file_cfg.epoch_length {
+        warnings.push(format!(
+            "checkpoint_interval_slots = {} exceeds epoch_length = {}; \
+             a crash after an epoch boundary will force replay of the \
+             entire prior epoch on restart. Recommended: at most one \
+             checkpoint per epoch (i.e. interval <= epoch_length)",
+            file_cfg.checkpoint_interval_slots, file_cfg.epoch_length,
+        ));
+    }
+    if file_cfg.max_ledger_snapshots == 0 {
+        warnings.push(
+            "max_ledger_snapshots is 0; persisted ledger checkpoints will be pruned immediately"
+                .to_owned(),
+        );
+    }
+
+    if let Some(ckpt_file) = file_cfg.checkpoints_file.as_deref() {
+        let ckpt_path = path_resolve::resolve_config_path(Path::new(ckpt_file), config_base_dir);
+        if !ckpt_path.exists() {
+            warnings.push(format!(
+                "CheckpointsFile points at {} which does not exist; \
+                 checkpoint pinning will be disabled at runtime",
+                ckpt_path.display(),
+            ));
+        } else if let Some(expected_hex) = file_cfg.checkpoints_file_hash.as_deref()
+            && let Err(err) = yggdrasil_node_genesis::verify_genesis_file_hash(
+                &ckpt_path,
+                expected_hex,
+                "CheckpointsFileHash",
+            )
+        {
+            warnings.push(format!("CheckpointsFile hash verification: {err}"));
+        }
+    }
+
+    if let Some(explicit) = file_cfg.requires_network_magic {
+        let expected = RequiresNetworkMagic::default_for_magic(file_cfg.network_magic);
+        if explicit != expected {
+            warnings.push(format!(
+                "RequiresNetworkMagic = {:?} is inconsistent with network_magic = {}; \
+                 the canonical default for this magic is {:?}. Byron-era header \
+                 decoding expects the canonical shape and peers using the \
+                 default will disagree with this node",
+                explicit, file_cfg.network_magic, expected,
+            ));
+        }
+    }
+    if !(file_cfg.turn_on_logging && file_cfg.use_trace_dispatcher) {
+        warnings.push("runtime tracing is disabled for local operator output".to_owned());
+    }
+    if !file_cfg.turn_on_log_metrics {
+        warnings.push("trace metrics production is disabled".to_owned());
+    }
+
+    Ok(NodeConfigPreflightReport {
+        node_role,
+        warnings,
+    })
 }
 
 /// Errors returned while loading a P2P topology file.
@@ -1243,8 +1700,8 @@ fn default_max_kes_evolutions() -> u64 {
 ///
 /// `2` matches upstream `Ouroboros.Network.BlockFetch.Decision`'s
 /// `bfcMaxConcurrencyBulkSync = 2` — the canonical initial-sync
-/// concurrency cap.  R218 (`docs/operational-runs/2026-04-30-round-218-
-/// mainnet-multipeer-fetch-rate.md`) measured a 67% throughput gain
+/// concurrency cap.  R218
+/// (`docs/operational-runs/archive/2026-04-30-round-218-mainnet-multipeer-fetch-rate.md`) measured a 67% throughput gain
 /// (3.33 → 5.55 blk/s on mainnet) with knob=4 actually saturating at
 /// 2 workers because `bfcMaxConcurrencyBulkSync = 2` is the upstream
 /// ceiling for BulkSync mode.  Operators who want single-peer
@@ -1546,7 +2003,7 @@ pub fn default_config() -> NodeConfigFile {
 pub fn mainnet_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("valid default addr");
     let topology = resolve_topology_peers(
-        include_str!("../../yggdrasil-node/configuration/mainnet/topology.json"),
+        include_str!("../../../../configuration/mainnet/topology.json"),
         fallback_primary,
     );
 
@@ -1630,7 +2087,7 @@ pub fn mainnet_config() -> NodeConfigFile {
 pub fn preprod_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("fallback addr");
     let topology = resolve_topology_peers(
-        include_str!("../../yggdrasil-node/configuration/preprod/topology.json"),
+        include_str!("../../../../configuration/preprod/topology.json"),
         fallback_primary,
     );
 
@@ -1714,7 +2171,7 @@ pub fn preprod_config() -> NodeConfigFile {
 pub fn preview_config() -> NodeConfigFile {
     let fallback_primary = "3.125.94.58:3001".parse().expect("fallback addr");
     let topology = resolve_topology_peers(
-        include_str!("../../yggdrasil-node/configuration/preview/topology.json"),
+        include_str!("../../../../configuration/preview/topology.json"),
         fallback_primary,
     );
 

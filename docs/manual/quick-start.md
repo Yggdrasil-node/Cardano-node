@@ -28,7 +28,7 @@ $ yggdrasil-node validate-config --network mainnet --database-path "$YG_DB"
 
 Expected output: a report with zero errors. Warnings about "storage not initialized" or "no peer snapshot" are normal for a fresh node.
 
-If `validate-config` reports a `HashMismatch` for any genesis file, **stop**. The vendored config under `node/configuration/mainnet/` is corrupt or out of date. Reclone the repository.
+If `validate-config` reports a `HashMismatch` for any genesis file, **stop**. The vendored config under the active preset root is corrupt or out of date. In a release install that root is normally `/usr/local/share/yggdrasil/configuration/mainnet/`; in a source checkout it is `configuration/mainnet/`.
 
 ## 3. Start the node
 
@@ -101,7 +101,9 @@ After clean shutdown, restarting from the same `--database-path` resumes from th
 
 Your node:
 
-- Loaded the mainnet genesis files from `node/configuration/mainnet/`.
+- Loaded the mainnet genesis files from the active preset root
+  (`/usr/local/share/yggdrasil/configuration/mainnet/` after a release install,
+  or `configuration/mainnet/` in a source checkout).
 - Verified each genesis file hash matches the value pinned in the config.
 - Connected to the bootstrap peers listed in `topology.json`.
 - Negotiated the NtN handshake (versions 13/14) with each peer.

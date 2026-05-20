@@ -122,9 +122,16 @@ jobs:
         run: |
           set -euo pipefail
           cargo cyclonedx --format json --target-only --target ${{ matrix.target }}
-          sbom_src="crates/node/yggdrasil-node/yggdrasil-node.cdx.json"
+          # cargo-cyclonedx emits to the binary crate path. The crate
+          # directory follows upstream `cardano-node` naming; the
+          # package/binary artifact remains `yggdrasil-node`.
+          sbom_src="crates/node/cardano-node/yggdrasil-node.cdx.json"
           if [ ! -f "$sbom_src" ]; then
             sbom_src="$(find . -name 'yggdrasil-node*.cdx.json' -not -path './target/*' | head -1)"
+          fi
+          if [ -z "$sbom_src" ] || [ ! -f "$sbom_src" ]; then
+            echo "::error::cargo-cyclonedx did not produce a yggdrasil-node SBOM"
+            exit 1
           fi
           echo "sbom_src=$sbom_src" >> "$GITHUB_OUTPUT"
 
@@ -137,8 +144,8 @@ jobs:
           mkdir -p "$dir"
           cp target/${{ matrix.target }}/release/yggdrasil-node "$dir/"
           cp README.md LICENSE* "$dir/" 2>/dev/null || true
-          cp -r crates/node/yggdrasil-node/configuration "$dir/configuration"
-          cp -r crates/node/yggdrasil-node/scripts "$dir/scripts"
+          cp -r configuration "$dir/configuration"
+          cp -r scripts "$dir/scripts"
           cp "${{ steps.sbom.outputs.sbom_src }}" "$dir/yggdrasil-node-sbom.cdx.json"
           tar --sort=name \
               --owner=0 --group=0 --numeric-owner \

@@ -19,7 +19,7 @@
 //!
 //! Upstream's `bech32-th/src/Codec/Binary/Bech32/TH.hs` (Template
 //! Haskell helpers) has no Rust analog — Rust uses `macro_rules!`
-//! and proc-macros directly. No corresponding `crates/bech32/src/th.rs`
+//! and proc-macros directly. No corresponding `crates/tools/bech32/src/th.rs`
 //! is needed; the strict-mirror policy supports this absence per the
 //! `Setup.hs` / `Orphans.hs` precedents.
 

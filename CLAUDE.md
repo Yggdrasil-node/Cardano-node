@@ -13,7 +13,7 @@ The five verification gates in [Commands](#commands) below must all pass before 
 
 ## Upstream Reference Repo
 
-A full Haskell `cardano-node` checkout (with all dependency repos AND a working compiled install) lives at [`.reference-haskell-cardano-node/`](.reference-haskell-cardano-node/) — **read this for upstream parity research instead of fetching from GitHub**. Layout falls into three operational tiers:
+A full Haskell `cardano-node` source snapshot (with all dependency repos AND a working compiled install) lives at [`.reference-haskell-cardano-node/`](.reference-haskell-cardano-node/) — **read this for upstream parity research instead of fetching from GitHub**. Layout falls into three operational tiers:
 
 **Source — upstream repos for parity research and grep-target:**
 
@@ -48,14 +48,14 @@ A full Haskell `cardano-node` checkout (with all dependency repos AND a working 
 
 | Local path | What it contains |
 | --- | --- |
-| `.reference-haskell-cardano-node/install/share/{mainnet,preprod,preview}/` | per-network operator bundle (`config.json`, `topology.json`, `peer-snapshot.json`, `checkpoints.json`, `tracer-config.json`, `byron-genesis.json`, `shelley-genesis.json`, `alonzo-genesis.json`, `conway-genesis.json`, `submit-api-config.json`) — these are the canonical files yggdrasil's `crates/node/yggdrasil-node/configuration/{mainnet,preprod,preview}/` mirrors |
+| `.reference-haskell-cardano-node/install/share/{mainnet,preprod,preview}/` | per-network operator bundle (`config.json`, `topology.json`, `peer-snapshot.json`, `checkpoints.json`, `tracer-config.json`, `byron-genesis.json`, `shelley-genesis.json`, `alonzo-genesis.json`, `conway-genesis.json`, `submit-api-config.json`) — these are the canonical files yggdrasil's `configuration/{mainnet,preprod,preview}/` mirrors |
 | `.reference-haskell-cardano-node/install/run/<network>/db/` | live ChainDB of an actively-syncing Haskell node (use with `db-analyser` for byte-level on-chain comparison) |
 | `.reference-haskell-cardano-node/install/run/<network>/socket/` | NtC socket of the running Haskell node |
 | `.reference-haskell-cardano-node/install/run/<network>/log/` | the Haskell node's log output |
 | `.reference-haskell-cardano-node/install/run-node.sh` | startup script wired to `share/<network>/` |
 | `.reference-haskell-cardano-node/install/cardano-node-<VERSION>-sha256sums.txt` | binary-bundle checksum manifest for the locally-vendored install (may lag the policy tag tracked in `docs/parity-matrix.json`) |
 
-The vendored checkout is gitignored and authoritative for upstream Haskell module references. When reading or grepping upstream code, use these paths so the agent operates on a stable, locally-versioned tree rather than HEAD-of-master at GitHub. The compiled binaries under `install/bin/` are the canonical reference for running a Haskell node in parallel during a parity rehearsal — see `crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh` and `crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh` for harnesses that wire to them. **Do not edit anything under `.reference-haskell-cardano-node/`.**
+The vendored source snapshot is gitignored, metadata-free, and authoritative for upstream Haskell module references. When reading or grepping upstream code, use these paths so the agent operates on a stable, locally-versioned tree rather than HEAD-of-master at GitHub. The compiled binaries under `install/bin/` are the canonical reference for running a Haskell node in parallel during a parity rehearsal — see `scripts/parallel_blockfetch_soak.sh` and `scripts/compare_tip_to_haskell.sh` for harnesses that wire to them. **Do not edit anything under `.reference-haskell-cardano-node/`.**
 
 ## AGENTS.md Files Are Primary Context
 
@@ -72,12 +72,12 @@ Every meaningful subdirectory has an `@AGENTS.md`. They are operational, kept cu
 | [crates/consensus/src/mempool/AGENTS.md](crates/consensus/src/mempool/AGENTS.md) | Fee-ordered mempool, TTL, eviction, TxSubmission accounting |
 | [crates/network/AGENTS.md](crates/network/AGENTS.md) | Mux, mini-protocols, governor, peer registry, diffusion types |
 | [crates/plutus/AGENTS.md](crates/plutus/AGENTS.md) | CEK machine, builtins, cost model |
-| [crates/tools/cardano-cli/AGENTS.md](crates/tools/cardano-cli/AGENTS.md) | Pure-Rust port of `cardano-cli` (R289+, ~237 files mirroring 180 upstream `.hs`); Phase F bootstrap state + R298+ migration roadmap (R447: relocated under `crates/tools/`) |
-| [crates/node/yggdrasil-node/AGENTS.md](crates/node/yggdrasil-node/AGENTS.md) | Node binary — runtime orchestration boundary rules |
-| [crates/node/yggdrasil-node/src/AGENTS.md](crates/node/yggdrasil-node/src/AGENTS.md) | CLI, config, sync, server, block production |
-| [crates/node/yggdrasil-node/configuration/AGENTS.md](crates/node/yggdrasil-node/configuration/AGENTS.md) | Vendored mainnet/preprod/preview operator configs |
+| [crates/tools/cardano-cli/AGENTS.md](crates/tools/cardano-cli/AGENTS.md) | Pure-Rust port of `cardano-cli` (R289+, ~237 files mirroring 180 upstream `.hs`); C-arc closed, shared LSQ/submit helpers consumed by the node wrapper (R447: relocated under `crates/tools/`) |
+| [crates/node/cardano-node/AGENTS.md](crates/node/cardano-node/AGENTS.md) | Node binary — runtime orchestration boundary rules |
+| [crates/node/cardano-node/src/AGENTS.md](crates/node/cardano-node/src/AGENTS.md) | Binary source shell: CLI, command wrappers, startup assembly, process handlers |
+| [configuration/AGENTS.md](configuration/AGENTS.md) | Vendored mainnet/preprod/preview operator configs |
 | [docs/AGENTS.md](docs/AGENTS.md) | Architecture/dependency/spec/contributing docs policy |
-| [scripts/AGENTS.md](scripts/AGENTS.md) | CI parity validators (`check-strict-mirror`, `check-parity-matrix`, `check-fixture-manifest`, `check-reference-artifacts`) + `setup-reference.sh` |
+| [scripts/AGENTS.md](scripts/AGENTS.md) | CI parity validators, `setup-reference.sh`, and operator/runbook harnesses |
 | [specs/AGENTS.md](specs/AGENTS.md) | Pinned CDDL fixtures and provenance |
 | [specs/upstream-test-vectors/AGENTS.md](specs/upstream-test-vectors/AGENTS.md) | Vendored upstream vectors (must not be hand-edited) |
 | [.claude/AGENTS.md](.claude/AGENTS.md) | Claude Code harness config: session-start hook, permissions, Stop hook, subagents, skills, filetree, slash commands |
@@ -96,22 +96,24 @@ cargo test-all                               # cargo test  --workspace --all-fea
 cargo lint                                   # cargo clippy --workspace --all-targets --all-features -- -D warnings
 python3 scripts/check-strict-mirror.py --fail-on-violation
                                              # strict 1:1 file-mirror drift-guard (R288: fail-build)
+python3 scripts/check-stale-placement.py --self-test
+python3 scripts/check-stale-placement.py     # post-reorganization path/status guard
 ```
 
-All five are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
+All six are the required verification expectations before declaring work done. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the same set.
 
 Other parity-flow gates (run when the touched area is in scope):
 
 ```bash
 python3 scripts/check-parity-matrix.py            # validates docs/parity-matrix.json schema + on-disk paths (CI gate)
 python3 scripts/check-fixture-manifest.py         # cross-checks cardano-base SHA pin + vendored corpus (CI gate)
-python3 scripts/check-reference-artifacts.py      # validates .reference-haskell-cardano-node/install/ tree (local only)
+python3 scripts/check-reference-artifacts.py      # validates .reference-haskell-cardano-node/install/ tree (Linux/WSL local only)
 python3 scripts/audit-strict-mirror.py            # rebuild docs/strict-mirror-audit.tsv after a rename/annotate change
 python3 .claude/scripts/filetree.py check         # reports stale .claude/filetree/manifest.json entries
 bash    scripts/setup-reference.sh                # refresh .reference-haskell-cardano-node/ to the policy tag
 ```
 
-The first two (`check-parity-matrix.py` + `check-fixture-manifest.py`) run in CI on every build because they operate on checked-in files. `check-reference-artifacts.py` requires the vendored 1.3 GB upstream install tree (built by `setup-reference.sh`); it's a local/operator check, not a CI gate.
+The first two (`check-parity-matrix.py` + `check-fixture-manifest.py`) run in CI on every build because they operate on checked-in files. `check-reference-artifacts.py` requires the vendored 1.3 GB upstream install tree (built by `setup-reference.sh`) and a Linux/WSL shell to execute the Linux Haskell binaries; it's a local/operator check, not a CI gate.
 
 Parity-flow surfaces:
 
@@ -160,14 +162,18 @@ The `crates/node/` crates **must stay an integration layer**. Reusable policy, p
 
 ## Node Binary Surface
 
-`yggdrasil-node` exposes the following `clap` subcommands (see [crates/node/yggdrasil-node/src/cli.rs](crates/node/yggdrasil-node/src/cli.rs) for definitions and [crates/node/yggdrasil-node/src/AGENTS.md](crates/node/yggdrasil-node/src/AGENTS.md) for flags):
+`yggdrasil-node` exposes the following `clap` subcommands (see [crates/node/cardano-node/src/cli.rs](crates/node/cardano-node/src/cli.rs) for definitions and [crates/node/cardano-node/src/AGENTS.md](crates/node/cardano-node/src/AGENTS.md) for flags):
 
 - `run` — connect, sync, serve inbound peers, run governor + optional block producer.
 - `validate-config` — operator preflight for config, peer-snapshot inputs, recovery state, genesis-hash integrity, governor sanity, KES/Praos invariants.
 - `status` — inspect on-disk storage and report sync position, block counts, checkpoint state, ledger counts.
 - `default-config` — emit the default JSON config to stdout.
-- `cardano-cli` — pure-Rust subset (`version`, `show-upstream-config`, `query-tip`).
-- `query` (Unix) — NtC LocalStateQuery dispatcher plus upstream era-specific LSQ surface verified through `cardano-cli`; see [crates/node/yggdrasil-node/src/AGENTS.md](crates/node/yggdrasil-node/src/AGENTS.md) for the exact current dispatcher inventory.
+- `cardano-cli` — thin compatibility wrapper over migrated
+  `crates/tools/cardano-cli` helpers. The standalone
+  `yggdrasil-cardano-cli` binary owns the broader 40-command C-arc surface;
+  this node wrapper exposes the `CardanoCliCommand` variants declared in
+  `crates/node/cardano-node/src/cli.rs`.
+- `query` (Unix) — NtC LocalStateQuery dispatcher plus upstream era-specific LSQ surface verified through `cardano-cli`; see [crates/node/cardano-node/src/AGENTS.md](crates/node/cardano-node/src/AGENTS.md) for the exact current dispatcher inventory.
 - `submit-tx` (Unix) — NtC LocalTxSubmission with `0x`-prefix-tolerant `--tx-hex`.
 - `query tx-mempool` (Unix) — NtC LocalTxMonitor (`info`/`next-tx`/`tx-exists`).
 
@@ -186,7 +192,7 @@ The `crates/node/` crates **must stay an integration layer**. Reusable policy, p
 
 The full upstream Haskell repo + Haddock + ops-book reference list and the per-crate mapping (which Haskell module each Rust crate mirrors) live in [AGENTS.md](AGENTS.md). Anchor every parity-sensitive change to one of those upstream sources before introducing local terminology, behavior, or design.
 
-When citing upstream paths in commits, comments, and journal entries, use the local reference path (e.g. `.reference-haskell-cardano-node/deps/ouroboros-network/.../PeerSelection/Governor.hs`) rather than github URLs — the local checkout is gitignored and stable across sessions.
+When citing upstream paths in commits, comments, and journal entries, use the local reference path (e.g. `.reference-haskell-cardano-node/deps/ouroboros-network/.../PeerSelection/Governor.hs`) rather than github URLs — the local source snapshot is gitignored and stable across sessions.
 
 ## Workspace Lints
 
@@ -201,5 +207,5 @@ Tests can opt out of `unwrap_used` via the per-crate `#![cfg_attr(test, allow(cl
 - Keep `AGENTS.md` files operational (actionable rules + current status), not long-form documentation.
 - When a folder's `AGENTS.md` is outdated, missing, or incorrect, update it as part of the change.
 - Use upstream Haskell module references in commit messages, comments, and journal entries (e.g. `Ouroboros.Network.PeerSelection.Governor`, `Cardano.Ledger.Conway.Rules.Utxo`) so parity work and fixture comparison remain tractable.
-- Avoid hand-editing vendored data under `crates/node/yggdrasil-node/configuration/*`, `specs/upstream-test-vectors/`, and `.reference-haskell-cardano-node/`.
+- Avoid hand-editing vendored data under `configuration/*`, `specs/upstream-test-vectors/`, and `.reference-haskell-cardano-node/`.
 - Treat dated files under `docs/operational-runs/` as historical evidence. Update living status in `README.md`, `AGENTS.md`, `docs/archive/PARITY_PLAN.md`, `docs/PARITY_SUMMARY.md`, `docs/PARITY_PROOF.md`, `docs/UPSTREAM_PARITY.md`, and the manual/runbook rather than rewriting old run records, except to add a new run or correct a factual typo in that same record.

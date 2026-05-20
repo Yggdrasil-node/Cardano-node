@@ -9,12 +9,10 @@ multi-peer dispatch logic. Sister tools (`db-truncater`, `db-analyser`,
 binary drives the actual sync loop.
 
 Modules:
-  - `lib.rs` (former `node/src/sync.rs`, 8,615 LoC): the main
-    chain-sync state machine, intersect logic, header verification,
-    multi-peer dispatch.
-  - `chain_sync` + `block_fetch` + `error` + `shelley_decoders`
-    (former `node/src/sync/`): mini-protocol-aligned decomposition
-    from R500/R501.
+  - `lib.rs`: the main chain-sync state machine, intersect logic,
+    header verification, multi-peer dispatch.
+  - `chain_sync` + `block_fetch` + `error` + `shelley_decoders`:
+    mini-protocol-aligned decomposition from R500/R501.
   - `chainsync_worker.rs` + `blockfetch_worker.rs`: per-peer worker
     pool helpers, also from R500/R501.
 
@@ -31,8 +29,8 @@ Modules:
 
 ## Naming parity
 
-The lib.rs (former `node/src/sync.rs`) carries the `## Naming parity`
-stanza. Sub-modules carry their own per-file blocks.
+The lib.rs carries the `## Naming parity` stanza. Sub-modules carry
+their own per-file blocks.
 
 ## R-arc tracking
 

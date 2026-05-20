@@ -163,8 +163,8 @@ impl ChainState {
             // check above already catches re-application; in Shelley+
             // slots are strictly monotonic by construction (Praos
             // produces at most one block per slot).  Mirrors the
-            // ledger-side exemption in `LedgerState::apply_block` per
-            // `crates/ledger/src/state.rs:4062`.
+            // ledger-side exemption in `LedgerState::apply_block` in
+            // `crates/ledger/src/state.rs`.
             if entry.slot.0 < last.slot.0 {
                 return Err(ConsensusError::SlotNotIncreasing {
                     tip_slot: last.slot.0,

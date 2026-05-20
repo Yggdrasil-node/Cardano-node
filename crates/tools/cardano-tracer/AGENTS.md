@@ -107,8 +107,8 @@ Standalone trace-forwarder + log + metrics aggregator. Phase A.5 mini-arc R360-R
 cargo build --release -p yggdrasil-cardano-tracer
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh cardano-tracer --help
-node/scripts/run-tools.sh cardano-tracer --version
+scripts/run-tools.sh cardano-tracer --help
+scripts/run-tools.sh cardano-tracer --version
 
 # Or invoke the binary directly:
 target/release/cardano-tracer --help
@@ -137,7 +137,7 @@ cardano-logging Hackage package is not vendored locally).
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 

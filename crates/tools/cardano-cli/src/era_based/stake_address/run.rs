@@ -85,7 +85,10 @@ pub fn run_stake_address_build_cmd(
 /// reward address) + 28-byte stake-key hash = 29 raw bytes.
 /// Script-based reward addresses (type 15) are not yet supported.
 /// The Bech32 HRP is `stake` (mainnet) or `stake_test` (testnet).
-fn build_shelley_reward_address_bech32(network_id: u8, stake_hash: &[u8; 28]) -> Result<String> {
+pub fn build_shelley_reward_address_bech32(
+    network_id: u8,
+    stake_hash: &[u8; 28],
+) -> Result<String> {
     if network_id > 0x0F {
         eyre::bail!("network_id {network_id} must fit in 4 bits (0..=15)");
     }

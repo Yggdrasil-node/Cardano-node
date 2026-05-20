@@ -26,7 +26,7 @@ This workflow verifies yggdrasil block-producer runtime behavior against the rea
 KES_SKEY_PATH=/abs/path/kes.skey \
 VRF_SKEY_PATH=/abs/path/vrf.skey \
 OPCERT_PATH=/abs/path/node.cert \
-node/scripts/run_preprod_real_pool_producer.sh
+scripts/run_preprod_real_pool_producer.sh
 ```
 
 Strict mode for active pools (longer observation window):
@@ -38,7 +38,7 @@ OPCERT_PATH=/abs/path/node.cert \
 RUN_SECONDS=900 \
 EXPECT_FORGE_EVENTS=1 \
 EXPECT_ADOPTED_EVENTS=1 \
-node/scripts/run_preprod_real_pool_producer.sh
+scripts/run_preprod_real_pool_producer.sh
 ```
 
 ## What The Script Verifies
@@ -83,7 +83,7 @@ Path resolution order for upstream references:
 
 - `--upstream-config-root <root>` when provided
 - `/tmp/cardano-tooling/share/<network>` (official release layout)
-- fallback: vendored `node/configuration/<network>`
+- fallback: vendored `configuration/<network>`
 
 ---
 
@@ -129,7 +129,7 @@ Haskell node accepted.
 is the byte length of the **on-wire** transaction encoding.
 
 Yggdrasil's `*_block_to_block` converters in
-[`node/src/sync.rs`](https://github.com/yggdrasil-node/Cardano-node/blob/main/node/src/sync.rs)
+[`crates/node/sync/src/lib.rs`](https://github.com/yggdrasil-node/Cardano-node/blob/main/crates/node/sync/src/lib.rs)
 were re-serialising the typed `ShelleyTxBody` / `ShelleyWitnessSet`
 values to compute `tx_body_size`:
 
@@ -185,7 +185,7 @@ crash point:
 
 ### Audit linkage
 
-This bug was **not** flagged in [`docs/code-audit.md`](archive/code-audit.md)
+This bug was **not** flagged in [`docs/archive/code-audit.md`](archive/code-audit.md)
 because the audit's static-review pass did not exercise live preprod
 block validation across the Byron→Shelley boundary; it surfaced only
 during the operational quality-check pass on 2026-04-27.  The audit
@@ -193,4 +193,3 @@ finding M-6 (`saturating → checked` arithmetic in
 [`crates/ledger/src/utxo.rs`](../crates/ledger/src/utxo.rs)) addressed
 a parallel-but-distinct concern (value preservation, not fee
 calculation).
-

@@ -91,7 +91,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$CARDANO_NODE_TESTS_DIR/.bin"
           rm -rf "$CARDANO_NODE_TESTS_DIR/.yggdrasil-configuration"
-          cp -R yggdrasil/crates/node/yggdrasil-node/configuration "$CARDANO_NODE_TESTS_DIR/.yggdrasil-configuration"
+          cp -R yggdrasil/configuration "$CARDANO_NODE_TESTS_DIR/.yggdrasil-configuration"
           cp yggdrasil/target/x86_64-unknown-linux-musl/release/yggdrasil-node "$CARDANO_NODE_TESTS_DIR/.bin/yggdrasil-node"
           file "$CARDANO_NODE_TESTS_DIR/.bin/yggdrasil-node"
 

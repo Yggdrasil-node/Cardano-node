@@ -7,6 +7,8 @@ Usage:
 The script enforces:
   - Schema version matches the expected revision.
   - Reference tag matches the pinned IntersectMBO/cardano-node release.
+  - The local reference snapshot carries the generated REFERENCE_TAG marker
+    from scripts/setup-reference.sh and it matches the pinned release.
   - Every `haskell_reference[*].path` and `rust_surface[*].path` exists on disk.
   - Each entry's status is one of the allowed states and is consistent with
     the `implemented_evidence` and `remaining_work` lists.
@@ -19,6 +21,7 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -91,6 +94,7 @@ ALLOWED_MILESTONES |= _arc_range(450, 459)  # Phase D.1 — dmq-node.
 ALLOWED_MILESTONES |= _arc_range(460, 479)  # Phase D.2 — post-R459 follow-on arcs.
 ALLOWED_MILESTONES |= _arc_range(480, 499)  # Phase D.3 — db-analyser HasAnalysis arc closeout + room for the next 18 follow-ons.
 ALLOWED_MILESTONES |= _arc_range(500, 519)  # Phase 2.B follow-on — cardano-tracer Mux Layer 2/3 forwarder stack (R502 + R503 conformance + buffer).
+ALLOWED_MILESTONES |= _arc_range(520, 539)  # Phase 2.C follow-on — post-reorganization cleanup + sister-tool continuation.
 
 
 def fail(message: str) -> None:
@@ -147,6 +151,35 @@ def validate_path_list(entry: dict[str, Any], key: str, entry_id: str) -> None:
             fail(f"{entry_id}.{key}[{index}].path must not contain '..'")
         if not (ROOT / rel).exists():
             fail(f"{entry_id}.{key}[{index}].path does not exist: {rel}")
+
+
+def validate_reference_marker(local_root: str) -> None:
+    marker = ROOT / local_root / "REFERENCE_TAG"
+    if not marker.is_file():
+        fail(
+            f"reference snapshot marker missing: {marker.relative_to(ROOT)}; "
+            "run scripts/setup-reference.sh"
+        )
+    try:
+        actual = marker.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        fail(f"could not read {marker.relative_to(ROOT)}: {exc}")
+    if actual != REFERENCE_TAG:
+        fail(
+            f"reference snapshot marker must be {REFERENCE_TAG}, "
+            f"found {actual!r} in {marker.relative_to(ROOT)}"
+        )
+
+
+def validate_reference_metadata_free(local_root: str) -> None:
+    root = ROOT / local_root
+    for current, dirs, files in os.walk(root):
+        if ".git" in dirs or ".git" in files:
+            leaked = Path(current) / ".git"
+            fail(
+                "reference snapshot must be metadata-free; "
+                f"found git metadata at {leaked.relative_to(ROOT)}"
+            )
 
 
 def validate_entry(entry: dict[str, Any], seen: set[str]) -> None:
@@ -206,6 +239,8 @@ def main() -> int:
             f"reference.local_root does not exist; "
             f"run scripts/setup-reference.sh: {local_root}"
         )
+    validate_reference_marker(local_root)
+    validate_reference_metadata_free(local_root)
 
     entries = matrix.get("entries")
     if not isinstance(entries, list) or not entries:

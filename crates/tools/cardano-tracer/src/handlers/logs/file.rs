@@ -188,6 +188,13 @@ pub async fn write_trace_objects_to_file(
     file.flush()
         .await
         .map_err(super::utils::LogRotationError::Io)?;
+    // Windows can report a stale zero-length directory entry for an
+    // open tokio file after flush; force metadata visibility there so
+    // tests and rotation size checks observe the appended bytes.
+    #[cfg(windows)]
+    file.sync_data()
+        .await
+        .map_err(super::utils::LogRotationError::Io)?;
     Ok(prepared.len())
 }
 

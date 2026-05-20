@@ -16,11 +16,11 @@ Focus on implementation details for bearer I/O, mux/demux behavior, protocol dri
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Multiplexer (`network-mux`):](.reference-haskell-cardano-node/deps/ouroboros-network/network-mux)
-- [Network framework and handshake:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-framework)
-- [Typed mini-protocol implementations:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols)
-- [Outbound governor and peer selection:](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network)
-- [Cardano diffusion layer:](.reference-haskell-cardano-node/deps/ouroboros-network/cardano-diffusion)
+- [Multiplexer (`network-mux`):](../../../.reference-haskell-cardano-node/deps/ouroboros-network/network-mux)
+- [Network framework and handshake:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/)
+- [Typed mini-protocol implementations:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/lib/Ouroboros/Network/Protocol/)
+- [Outbound governor and peer selection:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/lib/Ouroboros/Network/)
+- [Cardano diffusion layer:](../../../.reference-haskell-cardano-node/deps/ouroboros-network/cardano-diffusion)
 - [Shelley networking spec PDF:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec)
 - [Network design document:](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design)
 - [Network Haddock:](https://ouroboros-network.cardano.intersectmbo.org/)

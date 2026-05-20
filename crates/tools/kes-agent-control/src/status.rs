@@ -4,7 +4,7 @@
 //! R440 surfaces the upstream `Cardano.KESAgent.Processes.ControlClient`
 //! socket I/O carve-out as a `*_status()` helper returning a
 //! structured descriptor, mirroring the precedent set by
-//! `crates/snapshot-converter/src/status.rs` (R439) +
+//! `crates/tools/snapshot-converter/src/status.rs` (R439) +
 //! cardano-tracer's R424-R429 carve-out inventory.
 //!
 //! ## Naming parity

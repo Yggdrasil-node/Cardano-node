@@ -15,14 +15,14 @@
 //!
 //! `--help` / `--version` text is byte-equivalent to the upstream
 //! `db-truncater` binary; fixtures captured at R335 live at
-//! `crates/db-truncater/tests/fixtures/upstream-{help,version}.txt`.
+//! `crates/tools/db-truncater/tests/fixtures/upstream-{help,version}.txt`.
 //!
 //! Carve-outs (NOT ported, by design):
 //!
 //! - Upstream's `parseCardanoArgs` (consensus-arg threading via
 //!   `CardanoBlockArgs`) is era-aware; Yggdrasil's storage layer is
 //!   era-agnostic at the on-disk level so this surface is collapsed.
-//!   Tracked in `crates/db-truncater/AGENTS.md`.
+//!   Tracked in `crates/tools/db-truncater/AGENTS.md`.
 
 use crate::types::{DBTruncaterConfig, TruncateAfter};
 use yggdrasil_ledger::{BlockNo, SlotNo};

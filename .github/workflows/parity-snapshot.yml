@@ -6,7 +6,7 @@ name: Parity snapshot
 # yggdrasil-node and a vendored upstream Haskell `cardano-node`, lets
 # both sync for the requested duration, then samples the chain tip
 # from each on the configured interval and runs the existing
-# `crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh`
+# `scripts/compare_tip_to_haskell.sh`
 # parity script. Any tip divergence in slot or hash fails the
 # workflow.
 #
@@ -125,8 +125,8 @@ jobs:
           # Launch yggdrasil-node in producer-disabled mode.
           ygg_log="tmp/parity-snapshot/ygg/yggdrasil-node.log"
           target/release/yggdrasil-node run \
-            --config "crates/node/yggdrasil-node/configuration/$NETWORK/config.json" \
-            --topology "crates/node/yggdrasil-node/configuration/$NETWORK/topology.json" \
+            --config "configuration/$NETWORK/config.json" \
+            --topology "configuration/$NETWORK/topology.json" \
             --database-path tmp/parity-snapshot/ygg/db \
             --socket-path tmp/parity-snapshot/ygg/node.sock \
             --port 3001 \
@@ -176,7 +176,7 @@ jobs:
                HASKELL_SOCK=tmp/parity-snapshot/haskell/node.sock \
                NETWORK_MAGIC=$NETWORK_MAGIC \
                SNAPSHOT_DIR=tmp/parity-snapshot/snapshots \
-               bash crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh; then
+               bash scripts/compare_tip_to_haskell.sh; then
               echo "[sample $sample_count] tips match"
             else
               rc=$?

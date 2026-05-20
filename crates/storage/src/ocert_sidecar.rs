@@ -53,11 +53,19 @@ fn parse_chain_dep_state_slot(path: &Path) -> Option<SlotNo> {
 }
 
 fn sync_dir(dir: Option<&Path>) -> std::io::Result<()> {
-    if let Some(d) = dir {
-        let f = fs::File::open(d)?;
-        f.sync_all()?;
+    #[cfg(windows)]
+    {
+        let _ = dir;
+        Ok(())
     }
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        if let Some(d) = dir {
+            let f = fs::File::open(d)?;
+            f.sync_all()?;
+        }
+        Ok(())
+    }
 }
 
 fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {

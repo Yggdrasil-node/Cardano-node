@@ -12,7 +12,7 @@
 //! governor (`governor.rs`): all decisions are pure and testable; effectful
 //! connection management stays in `crates/node/`.
 //!
-//! Reference: `ouroboros-network-framework/src/Ouroboros/Network/ConnectionManager/Core.hs`
+//! Reference: `ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/ConnectionManager/Core.hs`
 //!
 //! ## Naming parity
 //!

@@ -39,6 +39,8 @@ git clone https://github.com/yggdrasil-node/Cardano-node.git yggdrasil
 cd yggdrasil
 cargo build --release --bin yggdrasil-node
 sudo install -m 0755 target/release/yggdrasil-node /usr/local/bin/
+sudo mkdir -p /usr/local/share/yggdrasil
+sudo cp -R configuration scripts /usr/local/share/yggdrasil/
 yggdrasil-node validate-config --network mainnet --database-path /var/lib/yggdrasil/db
 ```
 
@@ -53,11 +55,16 @@ docker compose logs -f
 **From a published release tarball (Linux x86_64 / aarch64):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/crates/node/yggdrasil-node/scripts/install_from_release.sh | bash
+curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/scripts/install_from_release.sh | bash
 ```
 
 The installer verifies the downloaded archive against the published
-`SHA256SUMS.txt`. Full details: [Installing from Releases](https://yggdrasil-node.github.io/Cardano-node/manual/releases/).
+`SHA256SUMS.txt`, installs the binary, and places the bundled
+`configuration/` and `scripts/` trees under `/usr/local/share/yggdrasil/`.
+The `--network` presets resolve from that installed configuration root by
+default; set `YGGDRASIL_CONFIG_ROOT` to point at a custom root containing
+`mainnet/`, `preprod/`, and `preview/`.
+Full details: [Installing from Releases](https://yggdrasil-node.github.io/Cardano-node/manual/releases/).
 
 ## Current Status
 
@@ -132,12 +139,14 @@ All four must pass. The release build also runs `cargo doc --workspace --no-deps
 Yggdrasil tracks the **latest IntersectMBO/cardano-node release tag** as the parity target (currently `11.0.1`). Three additional gates surface parity-risk early:
 
 ```bash
-python3 scripts/check-parity-matrix.py   # validates docs/parity-matrix.json
-python3 .claude/scripts/filetree.py check # flags stale .claude/filetree manifest entries
-bash    scripts/setup-reference.sh        # refresh .reference-haskell-cardano-node/ to policy tag
+python3 scripts/check-parity-matrix.py          # validates docs/parity-matrix.json
+python3 scripts/check-stale-placement.py --self-test
+python3 scripts/check-stale-placement.py        # flags retired paths and stale current-status gates
+python3 .claude/scripts/filetree.py check       # flags stale .claude/filetree manifest entries
+bash    scripts/setup-reference.sh              # refresh reference snapshot + Linux/WSL install to policy tag
 ```
 
-Run `check-parity-matrix.py` whenever `docs/parity-matrix.json` changes or upstream paths move between releases. Run `filetree.py check` after filename-mirror restructures (R271-style runtime split, R273-style subsystem split). Run `setup-reference.sh` to upgrade the local Haskell tree when upstream ships a new release.
+Run `check-parity-matrix.py` whenever `docs/parity-matrix.json` changes or upstream paths move between releases. Run `check-stale-placement.py` after any post-reorganization move so retired locations cannot re-enter current docs, scripts, tracked files, Cargo metadata, node-crate-local operator artifact directories, release/repro packaging, Docker packaging, or the ignored metadata-free reference snapshot, and so stale current-status claims such as obsolete cardano-cli gate wording, old subcommand counts or subset wording, and old workspace-member gaps do not re-enter living docs. It also confirms the accepted replacement placements, canonical root configuration bundles, executable root shell scripts, and root operator/reference script entrypoints remain present. Run `filetree.py check` after filename-mirror restructures (R271-style runtime split, R273-style subsystem split). Run `setup-reference.sh --sources-only` for the portable source snapshot, or the full `setup-reference.sh` under Linux/WSL when upstream ships a new release and the compiled Haskell reference install must be refreshed.
 
 ### Claude Code workflow
 
@@ -179,7 +188,7 @@ TIP_COMPARE_CHECKPOINTS=900,3600,21600 \
 REQUIRE_TIP_COMPARISON=1 \
 EXPECT_FORGE_EVENTS=1 \
 EXPECT_ADOPTED_EVENTS=1 \
-crates/node/yggdrasil-node/scripts/run_preview_real_pool_producer.sh
+scripts/run_preview_real_pool_producer.sh
 ```
 
 For the epoch-1304 resume path, the wrapper below checks that the pool is
@@ -190,14 +199,14 @@ the same producer command with the required 6-hour comparison window:
 ```bash
 CRED_DIR=/tmp/ygg-preview-generated-bp-... \
 POOL_ID=pool1... \
-crates/node/yggdrasil-node/scripts/run_preview_active_pool_signoff.sh
+scripts/run_preview_active_pool_signoff.sh
 ```
 
 The runner preflights `HASKELL_SOCK` with
 `cardano-cli query tip --testnet-magic 2` before starting Yggdrasil, then
 requires all configured Haskell checkpoints when `REQUIRE_TIP_COMPARISON=1`.
 
-For reference material only, `crates/node/yggdrasil-node/scripts/preview_producer_harness.sh` can generate a funding wallet, pool registration certificates, and pool metadata under `tmp/preview-producer/`. Defaults are ticker `RUST` and name `WORLDS FIRST RUST NODE`; override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before running `certs` when needed.
+For reference material only, `scripts/preview_producer_harness.sh` can generate a funding wallet, pool registration certificates, and pool metadata under `tmp/preview-producer/`. Defaults are ticker `RUST` and name `WORLDS FIRST RUST NODE`; override `POOL_TICKER`, `POOL_NAME`, `POOL_DESCRIPTION`, `POOL_HOMEPAGE`, or `POOL_METADATA_URL` before running `certs` when needed.
 
 ## Documentation
 

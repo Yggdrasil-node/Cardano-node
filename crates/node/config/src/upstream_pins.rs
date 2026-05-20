@@ -8,7 +8,7 @@
 //! the exact files we ported from at the time, rather than chasing a
 //! moving `master`/`main` branch.
 //!
-//! The companion `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh` reads these
+//! The companion `scripts/check_upstream_drift.sh` reads these
 //! constants and compares each against live `git ls-remote HEAD` output,
 //! producing an informational JSON drift report. The drift report is
 //! NOT a build failure — drift is expected over time; what matters is
@@ -31,7 +31,7 @@
 //! dmq-node — the 3 sister-tool repos vendored at R326b for the
 //! R326–R459 sister-tools port arc). No upstream Haskell parallel
 //! — this is purely Yggdrasil's audit-time provenance manifest
-//! consumed by `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh`.
+//! consumed by `scripts/check_upstream_drift.sh`.
 
 /// `cardano-base` — already pinned via vendored test vectors under
 /// `specs/upstream-test-vectors/cardano-base/`. The SHA below mirrors
@@ -51,7 +51,7 @@ pub const UPSTREAM_CARDANO_BASE_COMMIT: &str = "7a8a991945d401d89e27f53b3d3bb464
 ///
 /// R201 audit baseline (2026-04-30) — advanced from
 /// `9ae77d611ad8…` to live HEAD reported by
-/// `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh`.
+/// `scripts/check_upstream_drift.sh`.
 ///
 /// R243 import-only refresh (2026-05-01) — advanced from
 /// `42d088ed84b7…` to live HEAD.  Upstream PR #5787 removes one
@@ -91,14 +91,14 @@ pub const UPSTREAM_CARDANO_LEDGER_COMMIT: &str = "ca9b8c285e4493f2d25354914f8aae
 
 /// `ouroboros-consensus` — Praos protocol, ChainDB, mempool, and storage
 /// design rationale ported into `crates/consensus/`, `crates/storage/`,
-/// `crates/mempool/`.
+/// `crates/consensus/src/mempool/`.
 ///
 /// R201 audit baseline (2026-04-30) — advanced from
 /// `91c8e1bb5d7f…` to live HEAD.
 ///
 /// R216 audit baseline refresh (2026-04-30) — advanced from
 /// `c368c2529f2f…` to live HEAD per
-/// `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh`.  No upstream-only changes
+/// `scripts/check_upstream_drift.sh`.  No upstream-only changes
 /// affect the ported subset (Praos hot-path, ChainDB volatile/immutable
 /// split, mempool revalidation) per R215 multi-network operational
 /// verification (preview Conway, preprod Allegra, mainnet Byron→Shelley
@@ -149,7 +149,7 @@ pub const UPSTREAM_OUROBOROS_NETWORK_COMMIT: &str = "8fe0f8ebc2623079edc7d708f19
 ///
 /// R216 audit baseline refresh (2026-04-30) — advanced from
 /// `e3eb4c76ea20…` to live HEAD per
-/// `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh`.  No upstream-only CEK or
+/// `scripts/check_upstream_drift.sh`.  No upstream-only CEK or
 /// cost-model changes affect the ported subset; the Plutus crate's
 /// integration tests + 4 745-test workspace gate continues to pass
 /// against the existing port.
@@ -248,7 +248,7 @@ pub const UPSTREAM_DMQ_NODE_COMMIT: &str = "bd5fbf69fcdeaa9d8b4a3d2b4554016d546b
 
 /// All pinned upstream commits, keyed by repository name.
 ///
-/// Used by `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh` to iterate every pin
+/// Used by `scripts/check_upstream_drift.sh` to iterate every pin
 /// and compare against live `git ls-remote HEAD` output. A future
 /// upstream addition that's worth auditing must extend BOTH this slice
 /// AND a top-level constant above; the drift-guard test below pins the

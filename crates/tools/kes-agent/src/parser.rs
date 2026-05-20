@@ -5,7 +5,7 @@
 //! **Strict mirror:** none. Yggdrasil-side parser shell with byte-
 //! equivalent `--help` / `--version` output captured from the
 //! upstream `kes-agent` binary at R335. The captured fixtures live at
-//! `crates/kes-agent/tests/fixtures/upstream-{help,version}.txt`
+//! `crates/tools/kes-agent/tests/fixtures/upstream-{help,version}.txt`
 //! and are the source of truth for both the runtime help-printing
 //! path and the golden tests.
 

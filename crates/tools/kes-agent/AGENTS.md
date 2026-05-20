@@ -19,7 +19,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/kes-agent/kes-agent/` (68 `.h
 
 ## Mini-arc scope
 
-**HIGHEST-STAKES** sister tool. KES key custody + period-rotation daemon. Phase A.3 mini-arc R344-R354 (11 rounds, MEDIUM). Socket protocol byte-equivalence is mandatory or live SPO setups break. R344 captures upstream socket trace as fixture before any code; R347 lands server-side socket protocol with golden vectors mandatory; R349 wires `crates/crypto/src/kes/` + `sum_kes/`; R353 live rehearsal vs upstream.
+**HIGHEST-STAKES** sister tool. KES key custody + period-rotation daemon. Phase A.3 mini-arc R344-R354 (11 rounds, MEDIUM). Socket protocol byte-equivalence is mandatory or live SPO setups break. R344 captures upstream socket trace as fixture before any code; R347 lands server-side socket protocol with golden vectors mandatory; R349 wires `crates/crypto/src/kes.rs` + `crates/crypto/src/sum_kes.rs`; R353 live rehearsal vs upstream.
 
 ## Current functional surface (post-R443)
 
@@ -38,7 +38,7 @@ returning a `DaemonStatus` descriptor.
 
 | Carve-out                            | Status helper             | Deferral rationale (one-liner)                                            |
 |--------------------------------------|---------------------------|---------------------------------------------------------------------------|
-| Daemon dispatch (socket server + KES key lifecycle + start/stop/run/restart/status subcommands) | `status::daemon_status()` | HIGHEST-STAKES parity per the R326-R459 plan: socket protocol must be byte-equivalent or live SPO setups break. Depends on `crates/crypto/src/kes/` + `sum_kes/` (shipped) + the byte-equivalent server-side socket protocol (R344-R354 mini-arc). |
+| Daemon dispatch (socket server + KES key lifecycle + start/stop/run/restart/status subcommands) | `status::daemon_status()` | HIGHEST-STAKES parity per the R326-R459 plan: socket protocol must be byte-equivalent or live SPO setups break. Depends on `crates/crypto/src/kes.rs` + `crates/crypto/src/sum_kes.rs` (shipped) + the byte-equivalent server-side socket protocol (R344-R354 mini-arc). |
 
 ## Build + run
 
@@ -47,8 +47,8 @@ returning a `DaemonStatus` descriptor.
 cargo build --release -p yggdrasil-kes-agent
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh kes-agent --help
-node/scripts/run-tools.sh kes-agent --version
+scripts/run-tools.sh kes-agent --help
+scripts/run-tools.sh kes-agent --version
 
 # Or invoke the binary directly:
 target/release/kes-agent --help
@@ -71,7 +71,7 @@ once concrete dispatch lands at `R345+`.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 

@@ -4,6 +4,8 @@
 Checks that `.reference-haskell-cardano-node/install/` has the
 binaries, network share dirs, and per-network operator-config files
 that Yggdrasil's parity-research and rehearsal scripts expect.
+This is a Linux/WSL operator gate because the vendored IntersectMBO
+release bundle contains Linux executables.
 
 Concretely:
 
@@ -57,7 +59,7 @@ REQUIRED_BINARIES = [
 REQUIRED_NETWORKS = ["mainnet", "preprod", "preview"]
 
 # Required per-network operator-config files. The list mirrors the
-# canonical bundle that Yggdrasil's `node/configuration/<network>/`
+# canonical bundle that Yggdrasil's `configuration/<network>/`
 # tree shadows.
 REQUIRED_NETWORK_FILES = [
     "config.json",
@@ -115,7 +117,7 @@ def installed_node_version() -> str:
             text=True,
             timeout=30,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         fail(f"failed to execute {binary.relative_to(ROOT)} --version: {exc}")
     # Output looks like: `cardano-node 11.0.1 - linux-x86_64 - ghc-9.6\n...`
     match = re.search(r"cardano-node\s+(\S+)", proc.stdout)
@@ -135,6 +137,13 @@ def main() -> None:
         fail(
             f"missing {INSTALL_ROOT.relative_to(ROOT)}; run "
             f"`bash scripts/setup-reference.sh` to populate it."
+        )
+    if sys.platform != "linux":
+        fail(
+            "this gate must run under Linux/WSL because "
+            ".reference-haskell-cardano-node/install/bin contains Linux "
+            "executables. Use `bash scripts/setup-reference.sh --sources-only` "
+            "for source/path checks on non-Linux hosts."
         )
 
     tag = policy_tag()

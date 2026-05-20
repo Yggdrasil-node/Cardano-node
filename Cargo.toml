@@ -27,12 +27,11 @@ members = [
 
     # ──────────────────────────────────────────────────────────────────
     # Main node binary — orchestration layer wrapping the core crates.
-    # Path layout after Wave 4 PR 6: re-homed under `crates/node/` so
-    # Wave 5 sub-crate extractions (`crates/node/{config,genesis,sync,
-    # mempool,...}/`) sit as siblings to the binary crate. The crate
-    # name `yggdrasil-node` and the shipped binary name are unchanged.
+    # The source directory uses upstream package naming (`cardano-node`)
+    # while the Cargo package and shipped binary remain `yggdrasil-node`
+    # for release compatibility.
     # ──────────────────────────────────────────────────────────────────
-    "crates/node/yggdrasil-node",
+    "crates/node/cardano-node",
     # Wave 5 sub-crate extractions — runtime logic split out of the binary
     # crate. Listed explicitly so workspace membership does not depend on
     # them remaining path-dependencies of `yggdrasil-node`.
@@ -56,8 +55,8 @@ members = [
 
     # cardano-cli — pure-Rust port of the upstream operator CLI
     # (~237 mirror files; ~3.9 KLOC). Library consumed by yggdrasil-node
-    # plus the eventual standalone binary. C-arc parallel port runs its
-    # own R-numbering and gates Phase C of the sister-tools plan.
+    # plus the standalone binary. The C-arc is closed; downstream tools
+    # now depend on their own parser/runtime ports and comparison evidence.
     "crates/tools/cardano-cli",
 
     # Tier 1 sister tools — deployment-essential SPO operations
@@ -75,10 +74,10 @@ members = [
     "crates/tools/snapshot-converter",    # partial — R446 format-version scaffolding
 
     # Tier 3 sister tools — testing + benchmarking
-    # (R408-R449 arc; HARD-GATED on cardano-cli C-arc CLI-MVS).
+    # (R408-R449 historical arc; current follow-ons continue in A4).
     "crates/tools/db-synthesizer",        # partial — R441 structured deferral surface
     "crates/tools/cardano-testnet",       # partial — R445 structured deferral surface
-    "crates/tools/tx-generator",          # skeleton — Phase C entry-gated on CLI-MVS at R408+
+    "crates/tools/tx-generator",          # skeleton — cardano-cli prerequisite closed; tx-generator parser/submission arc pending
 
     # Tier 4 sister project — Delegated Mempool Queue
     # (R450-R459 arc).
@@ -144,6 +143,7 @@ num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
 hex = "0.4"
+getrandom = "0.3"
 ripemd = "0.2"
 sha2 = "0.11.0"
 sha3 = "0.11"

@@ -10,7 +10,7 @@
 //!   Upstream uses `Network.Wai.Handler.Warp.runSettingsSocket` after
 //!   binding a TCP socket and tracing `EndpointListeningOnPort`. The
 //!   Rust port uses raw tokio TCP for the same flow (matching the
-//!   project's existing `crates/node/yggdrasil-node/src/metrics_server.rs` pattern); no
+//!   project's existing `crates/node/tracer/src/metrics_server.rs` pattern); no
 //!   axum/warp dependency is required.
 //!
 //! Carve-outs (NOT ported, by design):

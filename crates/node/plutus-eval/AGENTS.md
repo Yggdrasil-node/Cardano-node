@@ -25,8 +25,7 @@ selection.
 
 ## Naming parity
 
-Synthesis crate. The lib.rs (former node/src/plutus_eval.rs) carries
-the `## Naming parity` stanza.
+Synthesis crate. The lib.rs carries the `## Naming parity` stanza.
 
 ## R-arc tracking
 

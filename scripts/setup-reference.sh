@@ -7,8 +7,10 @@
 # and update docs/parity-matrix.json + scripts/check-parity-matrix.py to match.
 #
 # Re-run with --force to wipe and start fresh.
+# Use --sources-only on non-Linux hosts; the full install downloads and
+# executes IntersectMBO's linux-amd64 release bundle.
 #
-# Disk: ~1.3 GB total (~870 MB binaries + ~370 MB source clones).
+# Disk: ~1.3 GB total (~870 MB binaries + ~370 MB source snapshots).
 # Time: ~5 minutes on a typical connection.
 
 set -euo pipefail
@@ -40,24 +42,58 @@ for arg in "$@"; do
 done
 
 mkdir -p "$REF_DIR"
-cd "$REF_DIR"
 
-echo "==> materialising IntersectMBO/cardano-node $VERSION source"
-if [[ -d .git ]]; then
-    if git remote get-url origin >/dev/null 2>&1; then
-        git remote set-url origin "$CARDANO_NODE_REMOTE"
+TMP_ROOT="$(mktemp -d "$REF_DIR/.setup-tmp.XXXXXX")"
+cleanup_tmp() {
+    rm -rf "$TMP_ROOT"
+}
+trap cleanup_tmp EXIT
+
+copy_checkout_without_git() {
+    local url="$1"
+    local dest="$2"
+    local ref="${3:-}"
+    local tmp
+
+    tmp="$(mktemp -d "$TMP_ROOT/checkout.XXXXXX")"
+    if [[ -n "$ref" ]]; then
+        git clone --depth 1 --branch "$ref" "$url" "$tmp/repo"
     else
-        git remote add origin "$CARDANO_NODE_REMOTE"
+        git clone --depth 1 "$url" "$tmp/repo"
     fi
-    git fetch --tags --depth 1 origin "$VERSION"
-    git checkout --detach "$VERSION"
-else
-    git clone --depth 1 --branch "$VERSION" "$CARDANO_NODE_REMOTE" .
-fi
+
+    mkdir -p "$dest"
+    tar -C "$tmp/repo" --exclude=.git -cf - . | tar -C "$dest" -xf -
+    rm -rf "$tmp"
+}
+
+clean_reference_source_root() {
+    find "$REF_DIR" -mindepth 1 -maxdepth 1 \
+        ! -name deps \
+        ! -name install \
+        ! -name "$(basename "$TMP_ROOT")" \
+        -exec rm -rf {} +
+}
+
+assert_reference_has_no_git_metadata() {
+    local leaked
+
+    leaked="$(find "$REF_DIR" -name .git -print -quit)"
+    if [[ -n "$leaked" ]]; then
+        echo "error: reference tree contains git metadata: ${leaked#$ROOT_DIR/}" >&2
+        echo "       re-run with --force so setup-reference.sh can rebuild a metadata-free snapshot." >&2
+        exit 1
+    fi
+}
+
+echo "==> materialising IntersectMBO/cardano-node $VERSION source snapshot"
+clean_reference_source_root
+copy_checkout_without_git "$CARDANO_NODE_REMOTE" "$REF_DIR" "$VERSION"
+printf "%s\n" "$VERSION" > "$REF_DIR/REFERENCE_TAG"
 
 echo "==> cloning upstream library sources into deps/"
-mkdir -p deps
-cd deps
+mkdir -p "$REF_DIR/deps"
+cd "$REF_DIR/deps"
 # Format: "<dirname>|<git-url>"
 # IntersectMBO repos use the canonical org URL; kes-agent lives under the legacy
 # input-output-hk org. bech32, kes-agent, and dmq-node are sister-tool sources
@@ -87,19 +123,24 @@ for entry in \
 ; do
     repo="${entry%%|*}"
     url="${entry##*|}"
-    if [[ -d "$repo/.git" ]]; then
-        echo "    deps/$repo already present, refreshing tags"
-        git -C "$repo" fetch --tags --depth 1 origin
-    else
-        git clone --depth 1 "$url"
-    fi
+    echo "    materialising deps/$repo source snapshot"
+    rm -rf "$REF_DIR/deps/$repo"
+    copy_checkout_without_git "$url" "$REF_DIR/deps/$repo"
 done
-cd ..
+cd "$REF_DIR"
+
+assert_reference_has_no_git_metadata
 
 if [[ "$SOURCES_ONLY" -eq 1 ]]; then
     echo
     echo "=== reference sources fetched ($VERSION); --sources-only skipped install tarball ==="
     exit 0
+fi
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+    echo "error: full reference install uses IntersectMBO's linux-amd64 release tarball." >&2
+    echo "       Re-run under Linux/WSL, or use --sources-only for the portable source snapshot." >&2
+    exit 1
 fi
 
 echo "==> downloading cardano-node $VERSION release tarball"
@@ -147,6 +188,8 @@ exec "$ROOT/bin/cardano-node" run \
     --start-as-non-producing-node
 LAUNCHER
 chmod +x install/run-node.sh
+
+assert_reference_has_no_git_metadata
 
 echo
 echo "=== reference setup complete (cardano-node $VERSION) ==="

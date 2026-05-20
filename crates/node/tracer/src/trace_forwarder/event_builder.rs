@@ -110,8 +110,9 @@ where
 /// 1970 epoch; `picoseconds_of_second` is the sub-second remainder
 /// scaled to picoseconds (`0 ≤ psecs < 1_000_000_000_000`).
 ///
-/// Note `SystemTime` resolution on most platforms is nanoseconds, so
-/// the picosecond field is always a multiple of 1000.
+/// Note `SystemTime` resolution is platform-dependent, so the
+/// picosecond field reflects the granularity preserved by the OS
+/// timestamp representation.
 pub fn build_trace_timestamp(when: SystemTime) -> (u64, u64) {
     let dur = when.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = dur.as_secs();
@@ -205,11 +206,13 @@ mod event_builder_tests {
         // Picoseconds of a second must stay strictly below 1e12.
         assert!(picos < 1_000_000_000_000);
 
-        // A nanosecond-resolution remainder scales by exactly 1000.
+        // A platform-stable subsecond remainder scales by exactly
+        // 1000. Windows `SystemTime` stores 100 ns ticks, so avoid a
+        // test value that requires 1 ns precision.
         let when_ns = SystemTime::UNIX_EPOCH
             + std::time::Duration::from_secs(100)
-            + std::time::Duration::from_nanos(123_456_789);
-        assert_eq!(build_trace_timestamp(when_ns), (100, 123_456_789_000));
+            + std::time::Duration::from_nanos(123_456_700);
+        assert_eq!(build_trace_timestamp(when_ns), (100, 123_456_700_000));
     }
 
     /// A built `TraceObject`'s timestamp survives a `to_cbor` /

@@ -33,8 +33,8 @@
 //!   closes the channel, worker observes close and returns).
 //!
 //! Reference:
-//! [`Ouroboros.Network.ChainSync.Client`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/ChainSync/Client.hs);
-//! [`Ouroboros.Network.BlockFetch.Decision.fetchDecisions`](https://github.com/IntersectMBO/ouroboros-network/tree/main/ouroboros-network/src/Ouroboros/Network/BlockFetch/Decision.hs).
+//! `.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/lib/Ouroboros/Network/Protocol/ChainSync/Client.hs`;
+//! `.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/lib/Ouroboros/Network/BlockFetch/Decision.hs`.
 //!
 //! ## Naming parity
 //!

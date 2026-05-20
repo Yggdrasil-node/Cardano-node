@@ -37,7 +37,7 @@ entries against tag `11.0.1`; `check-fixture-manifest.py` over the
 > production `.rs` either mirrors a single upstream `.hs` by
 > snake_case basename or carries a `## Naming parity` docstring
 > stanza. All production `#[allow(dead_code)]` sites and the lone
-> production `TODO` were resolved. A new `crates/cardano-cli/`
+> production `TODO` were resolved. A new `crates/tools/cardano-cli/`
 > workspace member (R289–R295) mirrors the full upstream `Cardano.CLI.*`
 > surface (~237 Rust files mirroring 180 upstream `.hs`); concrete
 > migration kicked off via R296 (`Version`) + R297
@@ -174,10 +174,10 @@ $ cardano-cli conway query protocol-state --testnet-magic 2
 The current sidecars are persisted via:
 - `crates/storage/src/ocert_sidecar.rs` — atomic-write helpers for
   `chain_dep_state/<slot-hex>.cbor` and `stake_snapshots.cbor`
-- `node/src/sync.rs::update_ledger_checkpoint_after_progress` —
+- `crates/node/sync/src/lib.rs::update_ledger_checkpoint_after_progress` —
   persists ChainDepState only at checkpoint landing after nonce/OpCert
   updates
-- `node/src/local_server.rs::attach_chain_dep_state_from_sidecar` —
+- `crates/node/ntc-server/src/sessions.rs::attach_chain_dep_state_from_sidecar` —
   loads exact point sidecars at LSQ acquire time and attaches to
   `LedgerStateSnapshot` via the R192 `with_chain_dep_state` and R202
   `with_stake_snapshots` builders
@@ -554,7 +554,7 @@ lockstep:
 | `plutus` | `4cd40a14e364…` (R216 advance) | **in-sync** |
 | `cardano-node` | `799325937a45…` | **in-sync** |
 
-Drift detector (`bash crates/node/yggdrasil-node/scripts/check_upstream_drift.sh`) reports
+Drift detector (`bash scripts/check_upstream_drift.sh`) reports
 `drifted=0 unreachable=0 total=6`. Three drift-guard tests pass
 (format, cardinality, vendored-directory match). R201 → R216 → R239 → R243 → R245
 demonstrates the audit baseline is actively maintained against
@@ -620,7 +620,7 @@ graduates this empirical evidence into the shipped default while
 preserving operator override (`MaxConcurrentBlockFetchPeers = 1` for
 strict single-peer audit/replay parity).
 
-R240 (`crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh`) remains the
+R240 (`scripts/parallel_blockfetch_soak.sh`) remains the
 operator-facing soak harness for stress-testing knob > 2 or running
 endurance verification: starts the node with the requested
 concurrency knob, captures Prometheus snapshots, asserts worker
@@ -663,7 +663,7 @@ curl -s http://127.0.0.1:12400/metrics | grep apply_batch
 # Expected: 10 bucket lines + _sum + _count
 
 # Drift detector
-bash crates/node/yggdrasil-node/scripts/check_upstream_drift.sh
+bash scripts/check_upstream_drift.sh
 # Expected: drifted=0 unreachable=0 total=6
 
 # Workspace gates
@@ -804,7 +804,7 @@ exactly.  See R213 in `docs/operational-runs/`.
 R211 closed the Phase E.2 critical path with a two-bug cascade fix:
 
 **Bug 1 — wrong hash prefix for Byron EBB headers**.  yggdrasil's
-[`node/src/sync.rs::point_from_raw_header`](../node/src/sync.rs)
+[`crates/node/sync/src/block_fetch.rs::point_from_raw_header`](../crates/node/sync/src/block_fetch.rs)
 helper used `byron_main_header_hash` (prefix `[0x82, 0x01]`) for
 EBB-shape headers.  Byron EBBs require `[0x82, 0x00]` per
 `Cardano.Chain.Block.Header.boundaryHeaderHashAnnotated`.  Wrong
@@ -847,14 +847,14 @@ Comparison R210 → R211:
 | `cleared-origin` recoveries    |    12   |     0   |
 
 **Code changes** (4 files):
-- `node/src/sync.rs` — new `byron_ebb_header_hash` helper;
+- `crates/node/sync/src/block_fetch.rs` — new `byron_ebb_header_hash` helper;
   `decode_point_from_byron_raw_header` returns `Some(Point)` for
   EBBs (slot from inner `epoch * BYRON_SLOTS_PER_EPOCH`, hash via
   EBB prefix).
 - `crates/consensus/src/chain_state.rs` — slot check relaxed from
   `<=` to `<`.  Block-number contiguity check above catches
   re-application; Praos guarantees ≤ 1 block/slot post-Byron.
-- `node/src/runtime.rs` — R210's `YGG_SYNC_DEBUG=1` trace mirrored
+- `crates/node/runtime/src/reconnecting_sync.rs` — R210's `YGG_SYNC_DEBUG=1` trace mirrored
   to shared-chaindb apply call site (the production NtN+NtC path).
 - Test updates: `roll_forward_accepts_same_slot_byron_ebb_main_pair`,
   `point_from_raw_header_decodes_observed_byron_serialised_header_envelope`
@@ -874,7 +874,7 @@ canonical pattern for operational-parity work.
 
 R210 added an opt-in `YGG_SYNC_DEBUG=1` apply-side trace at the
 `apply_verified_progress_to_chaindb` call site in
-[`node/src/runtime.rs`](../node/src/runtime.rs) (~line 5008) to
+[`crates/node/runtime/src/reconnecting_sync.rs`](../crates/node/runtime/src/reconnecting_sync.rs) to
 answer R208's open question: is the stall at BlockFetch (zero
 blocks fetched per batch) or at apply (blocks fetched but
 silently rejected)?
@@ -920,7 +920,7 @@ or storage hand-off is now ruled out.
 **R211+ follow-up scope**: capture `MsgRequestRange` bytes via
 `tcpdump`/socat-relay against the same peer; run upstream
 `cardano-node 10.7.x` for byte-comparison; fix in
-[`crates/network/src/protocols/blockfetch_pool.rs`](../crates/network/src/protocols/blockfetch_pool.rs)
+[`crates/network/src/blockfetch_pool.rs`](../crates/network/src/blockfetch_pool.rs)
 or the `MsgRequestRange` encoder.
 
 The R210 instrumentation is permanent in the runtime, env-gated,
@@ -974,7 +974,7 @@ preprod (Shelley-era chain) without requiring `YGG_LSQ_ERA_FLOOR`.
 ## 9. References
 
 - Plan:
-  [`/home/vscode/.claude/plans/clever-shimmying-quokka.md`](/home/vscode/.claude/plans/clever-shimmying-quokka.md)
+  [`docs/archive/PARITY_PLAN.md`](archive/PARITY_PLAN.md)
 - Operational runs:
   [`docs/operational-runs/`](operational-runs/)
 - Cumulative parity matrix:
@@ -982,7 +982,7 @@ preprod (Shelley-era chain) without requiring `YGG_LSQ_ERA_FLOOR`.
 - Per-round summaries:
   [`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md)
 - Roadmap:
-  [`docs/PARITY_PLAN.md`](archive/PARITY_PLAN.md)
+  [`docs/COMPLETION_ROADMAP.md`](COMPLETION_ROADMAP.md)
 - Workspace journal:
   [`AGENTS.md`](../AGENTS.md)
 

@@ -111,7 +111,7 @@ pub enum RunError {
     #[error(
         "yggdrasil-snapshot-converter: {mode} mode dispatch deferred — convertSnapshot LSM/Mem \
          logic + filesystem-watcher daemon land when the yggdrasil-format LedgerStore reader/\
-         writer is wired (see crates/snapshot-converter/src/status.rs::convert_snapshot_status \
+         writer is wired (see crates/tools/snapshot-converter/src/status.rs::convert_snapshot_status \
          for the full deferral rationale)."
     )]
     ConvertSnapshotDeferred {

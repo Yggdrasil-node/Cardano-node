@@ -16,8 +16,7 @@ machines plus the Unix-socket accept loop.
 
 ## Naming parity
 
-Synthesis crate. The lib.rs (former node/src/local_server.rs) carries
-the `## Naming parity` stanza.
+Synthesis crate. The lib.rs carries the `## Naming parity` stanza.
 
 ## R-arc tracking
 

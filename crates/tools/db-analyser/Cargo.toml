@@ -30,6 +30,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 yggdrasil-consensus = { path = "../../consensus" }
+yggdrasil-crypto = { path = "../../crypto" }
 yggdrasil-ledger = { path = "../../ledger" }
 yggdrasil-storage = { path = "../../storage" }
 

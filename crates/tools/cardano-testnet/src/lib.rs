@@ -89,7 +89,7 @@ pub enum RunError {
     /// ledger's era surface being exposed at crate boundaries.
     #[error(
         "yggdrasil-cardano-testnet: `{subcommand}' subcommand era-aware dispatch deferred (see \
-         crates/cardano-testnet/src/status.rs::era_dispatch_status for the full deferral \
+         crates/tools/cardano-testnet/src/status.rs::era_dispatch_status for the full deferral \
          rationale)."
     )]
     SubcommandEraDispatchDeferred {

@@ -28,6 +28,8 @@ Defined as `.claude/skills/<name>/SKILL.md`:
 - [`parity-plan/SKILL.md`](skills/parity-plan/SKILL.md) — author a parity plan before substantive Yggdrasil code edits (CBOR shape, hash input, signature domain, ledger predicate, Plutus budget, network framing).
 - [`cardano-filetree-maintainer/SKILL.md`](skills/cardano-filetree-maintainer/SKILL.md) — invoke for filetree maintenance work flagged by `python3 .claude/scripts/filetree.py check`.
 
+- [`cardano-haskell-node/SKILL.md`](skills/cardano-haskell-node/SKILL.md) — operator reference for upstream Haskell `cardano-node` stake-pool administration. Use for Haskell-node operations, not Yggdrasil Rust implementation or file-mirror parity work.
+
 ## Slash commands
 
 Under `.claude/commands/`:
@@ -64,7 +66,7 @@ Under `.claude/commands/`:
 
 The parity-flow gates live outside this directory but are surfaced by it:
 
-- `python3 scripts/check-parity-matrix.py` — validates `docs/parity-matrix.json` schema + on-disk paths. The reference tag (`reference.tag`) MUST match the latest IntersectMBO/cardano-node release; bump in lockstep with `scripts/setup-reference.sh` (`CARDANO_NODE_VERSION`) and `scripts/check-parity-matrix.py` (`REFERENCE_TAG`).
+- `python3 scripts/check-parity-matrix.py` — validates `docs/parity-matrix.json` schema, on-disk paths, and `.reference-haskell-cardano-node/REFERENCE_TAG`. The reference tag (`reference.tag`) MUST match the latest IntersectMBO/cardano-node release; bump in lockstep with `scripts/setup-reference.sh` (`CARDANO_NODE_VERSION`) and `scripts/check-parity-matrix.py` (`REFERENCE_TAG`).
 - `python3 .claude/scripts/filetree.py check` — flags stale or missing description entries.
 - `bash scripts/setup-reference.sh [--force]` — refreshes `.reference-haskell-cardano-node/` to the policy tag.
 

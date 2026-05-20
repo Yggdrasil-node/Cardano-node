@@ -16,7 +16,7 @@ added R311), sweeps every production `.rs` to declare exactly one of
 two canonical docstring forms (`**Strict mirror:** <upstream/path.hs>`
 or `**Strict mirror:** none.`), purges all production
 `#[allow(dead_code)]` sites + the lone production TODO, expands a
-new `crates/cardano-cli/` workspace member mirroring the full
+new `crates/tools/cardano-cli/` workspace member mirroring the full
 upstream cardano-cli surface (~237 files), trims `docs/` from 23 to
 11 top-level markdown files (5 archived to `docs/archive/`), adds two
 new CI parity validators (`check-fixture-manifest.py` +
@@ -59,7 +59,7 @@ basename-heuristic reliance.
   scaffolding helpers (3 marked `#[cfg(test)]` for test-only seam
   use; 1 routed via `unregister_worker`; 1 already wired but
   carrying a stale allow).
-- **R289–R295 — `crates/cardano-cli/` workspace crate.** New
+- **R289–R295 — `crates/tools/cardano-cli/` workspace crate.** New
   `yggdrasil-cardano-cli` crate strict-mirrors all 180 upstream
   `Cardano.CLI.*` modules (~237 Rust files including parent shells).
   Sub-trees: Byron (10), Compatible (21), EraBased (57),
@@ -87,13 +87,13 @@ basename-heuristic reliance.
   `## Naming parity` blocks to 161 sub-module files across
   `crates/ledger/src/state/` (24), `consensus/{nonce,opcert,
   diffusion_pipelining}/` (9), `consensus/mempool/` (7),
-  `node/src/runtime/` (18), `network/governor/` (6), and the
+  `crates/node/runtime/src/` (18), `network/governor/` (6), and the
   R281 sweeper (97 residuals). Includes 3 `git mv` renames
   (`opcert.rs`/`opcert/` -> `ocert.rs`/`ocert/` for upstream
   `Cardano.Protocol.TPraos.OCert`).
 - **R283 — era_tag wiring.** Drops the stale `#[allow(dead_code)]`
-  on `node/src/sync.rs::mod era_tag`. Introduces a new named-
-  constant module `lsq_era_index` in `node/src/local_server.rs`
+  on `crates/node/sync/src/lib.rs::mod era_tag`. Introduces a new named-
+  constant module `lsq_era_index` in `crates/node/ntc-server/src/lib.rs`
   (collapses Byron into a single LSQ ordinal vs the wire-tag's two)
   and replaces magic-number era arms in `GetCurrentPParams`
   dispatch with named constants.
@@ -109,12 +109,12 @@ basename-heuristic reliance.
 ### Removed
 
 - **R282 — unused `TextEnvelope::description` field.** Drops the
-  `#[allow(dead_code)]` field in `node/src/block_producer.rs`. Serde's
+  `#[allow(dead_code)]` field in `crates/node/block-producer/src/lib.rs`. Serde's
   default behavior silently ignores unknown JSON keys, so wire-format
   compatibility with upstream-produced text-envelope files is
   preserved.
 - **R286 — `_runstate_impl_marker` + unused `mk_txout`.** Deletes
-  `node/src/runtime/reconnecting.rs::_runstate_impl_marker` (replaced
+  `crates/node/runtime/src/reconnecting.rs::_runstate_impl_marker` (replaced
   with a comment line carrying the same visual seam) and the unused
   `crates/ledger/src/eras/shelley.rs::mk_txout` test helper.
 
@@ -128,7 +128,7 @@ basename-heuristic reliance.
   published URLs. Trimmed `docs/PARITY_SUMMARY.md` from 485 -> 392
   lines by retiring six pre-execution planning sections superseded
   by the R269–R299 execution arc. Relocated `docs/poolMetaData.json`
-  (operator artifact, not a doc) to `node/configuration/`.
+  (operator artifact, not a doc) to `configuration/`.
 - **R301 — SPECS.md improvements.** Adds CIPs repository link,
   a new "Local parity surfaces (machine-readable)" section pointing
   at `parity-matrix.json` + `strict-mirror-audit.tsv` +
@@ -141,7 +141,7 @@ basename-heuristic reliance.
   the Commands section (line 96).
 - **R303 — two new CI parity validators.** Adds
   `scripts/check-fixture-manifest.py` (cross-checks the
-  `cardano-base` SHA pin across `node/src/upstream_pins.rs::
+  `cardano-base` SHA pin across `crates/node/config/src/upstream_pins.rs::
   UPSTREAM_CARDANO_BASE_COMMIT`, `specs/upstream-test-vectors/
   cardano-base/<SHA>/`, `docs/SPECS.md`, `docs/UPSTREAM_PARITY.md`;
   verifies 2 required corpora present) and
@@ -152,7 +152,7 @@ basename-heuristic reliance.
   reference-artifacts kept local-only (CI doesn't carry the 1.3 GB
   vendored install).
 - **R304 — refine strict-mirror citation in non-Rust dirs.**
-  Adjusts `specs/AGENTS.md` and `node/configuration/AGENTS.md`
+  Adjusts `specs/AGENTS.md` and `configuration/AGENTS.md`
   to clarify the strict-mirror policy applies to production `.rs`
   files only (vendored fixtures + operator config files don't
   fall under R274's file-naming policy).
@@ -161,11 +161,11 @@ basename-heuristic reliance.
   & parity", "Specs & dependencies", "Validation & release", and
   "Archived planning docs" sections. Updates `docs/AGENTS.md`
   policy + manual chapter inventory.
-- **R306 — `crates/cardano-cli/AGENTS.md`.** Adds operational guide
+- **R306 — `crates/tools/cardano-cli/AGENTS.md`.** Adds operational guide
   for the new workspace crate: directory shape, strict-mirror policy
   recap, current status (R289–R295 bootstrap, R296+R297 migration
-  kickoff), R298+ migration roadmap, integration with the `node`
-  binary. Registers the new AGENTS.md in `crates/AGENTS.md` and
+  kickoff), the then-active migration roadmap, integration with the
+  `node` binary. Registers the new AGENTS.md in `crates/AGENTS.md` and
   `CLAUDE.md`.
 - **R307 — PARITY_SUMMARY.md round-count + test-badge refresh.**
   Bumps round count from 251 to 306+; updates README test badge
@@ -186,7 +186,7 @@ basename-heuristic reliance.
   intended for Cargo's `target/debug/` build output. Without a
   leading slash or `**/` prefix, gitignore rules match files or
   dirs with that basename anywhere in the tree, silently swallowing
-  `crates/cardano-cli/src/era_independent/debug/` (12 R294 files
+  `crates/tools/cardano-cli/src/era_independent/debug/` (12 R294 files
   never tracked despite existing locally and being graded in
   `docs/strict-mirror-audit.tsv`). Fixed: replace bare `debug` and
   redundant bare `target` with anchored `/target/`. Stage the 12
@@ -1260,12 +1260,12 @@ basename-heuristic reliance.
 - **R451 — workspace Cargo.toml comment cleanup (final post-R447
   trailing references).** Updates 2 trailing references in
   `Cargo.toml`'s `[workspace.dependencies]` section that still
-  pointed at the pre-R447 `crates/bech32/` path:
-  - `bech32 = "0.11"` justification comment: "Foundation for
-    `crates/bech32/`" → "Foundation for `crates/tools/bech32/`"
-    + "R447 relocated under `crates/tools/`" annotation.
-  - `bs58 = "0.5"` justification comment: "Used by `crates/bech32/`"
-    → "Used by `crates/tools/bech32/` (R447 relocated)".
+  pointed at the legacy top-level bech32 crate path:
+  - `bech32 = "0.11"` justification comment now points at
+    `crates/tools/bech32/` and carries an "R447 relocated under
+    `crates/tools/`" annotation.
+  - `bs58 = "0.5"` justification comment now points at
+    `crates/tools/bech32/` with the same R447 relocation note.
   Post-R451 comprehensive audit (grep across `*.rs` / `*.toml` /
   `*.yml` / `*.yaml` / `*.sh` / `*.py` excluding `target/`):
   zero remaining stale `crates/<tool>/` references in production
@@ -1274,34 +1274,36 @@ basename-heuristic reliance.
   cross-reference has been retargeted to `crates/tools/<tool>/`.
   Workspace test count unchanged at 5,962. All 5 verification
   gates clean + parity-matrix gate clean.
-- **R450 — node-crate doc-comment path cleanup (post-R447
+- **R450 — node binary doc-comment path cleanup (post-R447
   trailing references).** Updates 4 production rustdoc comments
-  in the `node/` crate that still pointed at pre-R447
+  in the node binary surface that still pointed at pre-R447
   `crates/<tool>/` paths:
-  - `node/src/commands/cardano_cli.rs` (Strict-mirror docstring
-    citing `crates/cardano-cli/`)
-  - `node/src/upstream_pins.rs` — 3 sister-tool upstream-pin
-    descriptions (`crates/bech32/`, `crates/kes-agent/` +
-    `crates/kes-agent-control/`, `crates/dmq-node/`)
+  - `crates/node/cardano-node/src/commands/cardano_cli.rs` (Strict-mirror docstring
+    citing `crates/tools/cardano-cli/`)
+  - `crates/node/config/src/upstream_pins.rs` — 3 sister-tool upstream-pin
+    descriptions (`crates/tools/bech32/`, `crates/tools/kes-agent/` +
+    `crates/tools/kes-agent-control/`, `crates/tools/dmq-node/`)
   Each rewrite preserves the round-band annotation context
   (R331-R334 / R344-R354 / R355-R359 / R450-R459) and appends a
   "R447 relocated" note for searchability.
   Workspace test count unchanged at 5,962. All 5 verification
   gates clean.
-  Post-R450 audit: `grep -rE 'crates/(bech32|cardano-cli|cardano-submit-api|...etc.)/' node/ crates/AGENTS.md crates/*/AGENTS.md scripts/AGENTS.md docs/AGENTS.md docs/ARCHITECTURE.md specs/AGENTS.md` returns zero hits — all production code + living docs reference the post-R447 `crates/tools/<tool>/` layout. Historical operational-runs docs intentionally preserved per CLAUDE.md's historical-evidence rule.
+  Post-R450 audit: the production-code and living-doc grep for legacy
+  top-level sister-tool crate references returned zero hits across the node
+  crates, workspace AGENTS files, scripts, docs, and specs — all production
+  code + living docs reference the post-R447 `crates/tools/<tool>/` layout.
+  Historical operational-runs docs intentionally preserved per CLAUDE.md's
+  historical-evidence rule.
 - **R449 — post-R447 living-doc path cleanup (CLAUDE.md +
   DEPENDENCIES.md).** Updates the two non-historical documentation
   surfaces that still referenced pre-R447 `crates/<tool>/` paths:
   - **CLAUDE.md**: AGENTS.md index table row for cardano-cli
-    rewrites `crates/cardano-cli/AGENTS.md` →
-    `crates/tools/cardano-cli/AGENTS.md` + appends "(R447:
-    relocated under `crates/tools/`)" annotation.
+    now points at `crates/tools/cardano-cli/AGENTS.md` and appends
+    the "(R447: relocated under `crates/tools/`)" annotation.
   - **docs/DEPENDENCIES.md**: 2 forward-looking references updated
-    — the `bech32` workspace-dep justification's "Foundation for
-    `crates/bech32/`" reference (now `crates/tools/bech32/`) and
-    the deferred-tracing-appender pointer to
-    `crates/cardano-tracer/src/handlers/logs/rotator.rs` (now
-    under `crates/tools/cardano-tracer/`).
+    — the `bech32` workspace-dep justification now points at
+    `crates/tools/bech32/`, and the deferred-tracing-appender pointer
+    now points under `crates/tools/cardano-tracer/`.
   Historical docs (PARITY_SUMMARY.md, PARITY_PROOF.md,
   UPSTREAM_PARITY.md, top-level AGENTS.md's session-closure
   narratives, dated `docs/operational-runs/*` files) intentionally
@@ -1449,7 +1451,7 @@ basename-heuristic reliance.
   (replicates the R439-R444 `*_status()` pattern for the era-
   aware-dispatch carve-out; completes the sister-tools structural-
   deferral sweep started at R439).** Lands
-  `crates/cardano-testnet/src/status.rs` (new) + `lib.rs`
+  `crates/tools/cardano-testnet/src/status.rs` (new) + `lib.rs`
   refactor:
   - **status::Subcommand enum**: `Cardano | CreateEnv | Version` —
     3-variant identifier for the cardano-testnet top-level
@@ -1480,7 +1482,7 @@ basename-heuristic reliance.
 - **R444 — dmq-node: structured deferral surface (replicates
   the R439-R443 `*_status()` pattern for the dmq-node Diffusion
   / NodeKernel / PeerSelection wiring carve-out).** Lands
-  `crates/dmq-node/src/status.rs` (new) + `lib.rs` refactor:
+  `crates/tools/dmq-node/src/status.rs` (new) + `lib.rs` refactor:
   - **status::DiffusionWiringStatus**: 4-field descriptor +
     helper `diffusion_wiring_status()`. Documents that the
     diffusion wiring is gated on the dmq-node mini-arc
@@ -1498,7 +1500,7 @@ basename-heuristic reliance.
   entry sister-tool.dmq-node advanced: next_milestone R370 → R445.
 - **R443 — kes-agent: structured deferral surface (replicates
   the R439-R442 `*_status()` pattern for the kes-agent daemon
-  carve-out).** Lands `crates/kes-agent/src/status.rs` (new) +
+  carve-out).** Lands `crates/tools/kes-agent/src/status.rs` (new) +
   `lib.rs` refactor:
   - **status::DaemonStatus**: 4-field descriptor + helper
     `daemon_status()`. Documents that the daemon dispatch is
@@ -1517,7 +1519,7 @@ basename-heuristic reliance.
 - **R442 — db-analyser: structured deferral surface (replicates
   the R439-R441 `*_status()` pattern for the
   `Cardano.Tools.DBAnalyser.{HasAnalysis, Analysis, Run}`
-  carve-outs).** Lands in `crates/db-analyser/src/status.rs`
+  carve-outs).** Lands in `crates/tools/db-analyser/src/status.rs`
   (new) + `lib.rs` refactor:
   - **status::AnalysisDispatchStatus**: 4-field descriptor
     (status, depends_on, deferred_round, upstream_reference)
@@ -1537,7 +1539,7 @@ basename-heuristic reliance.
 - **R441 — db-synthesizer: structured deferral surface
   (replicates the R439-R440 `*_status()` pattern for the
   `Cardano.Tools.DBSynthesizer.{Forging, Run}` carve-outs).**
-  Lands in `crates/db-synthesizer/src/status.rs` (new) +
+  Lands in `crates/tools/db-synthesizer/src/status.rs` (new) +
   `lib.rs` refactor:
   - **status::ForgeLoopStatus**: 4-field descriptor (status,
     depends_on, deferred_round, upstream_reference) returned by
@@ -1557,7 +1559,7 @@ basename-heuristic reliance.
 - **R440 — kes-agent-control: structured deferral surface
   (replicates the R439 `*_status()` pattern for the
   `Cardano.KESAgent.Processes.ControlClient` socket I/O carve-
-  out).** Lands in `crates/kes-agent-control/src/status.rs` (new)
+  out).** Lands in `crates/tools/kes-agent-control/src/status.rs` (new)
   + `lib.rs` refactor. Three new public types + helpers:
   - **status::ControlClientStatus**: 4-field descriptor (status,
     depends_on, deferred_round, upstream_reference) returned by
@@ -1594,7 +1596,7 @@ basename-heuristic reliance.
 - **R439 — snapshot-converter: structured deferral surface
   (replaces the `Err(eyre::eyre!)` stub with a typed `RunError`
   enum + programmatic `*_status()` introspection helpers).** Lands
-  in `crates/snapshot-converter/src/status.rs` (new) +
+  in `crates/tools/snapshot-converter/src/status.rs` (new) +
   `lib.rs` refactor:
   - **RunMode enum**: `Daemon | Oneshot` — extracted from the
     inline string match in `run()`.
@@ -1663,18 +1665,18 @@ basename-heuristic reliance.
   byte-equivalence to upstream. Documented as a synthesis
   carve-out with operator-facing caveat.
   Three surfaces updated:
-  - **crates/cardano-tracer/src/logging.rs**: adds
+  - **crates/tools/cardano-tracer/src/logging.rs**: adds
     `TraceObject::to_cbor` / `TraceObject::from_cbor` methods.
     Wire format: 6-element CBOR array carrying `[to_human (text or
     null), to_machine (text), to_severity_code (uint 0-7 per RFC
     5424), to_namespace (text array), to_thread_id (text),
     to_timestamp_ms (signed int)]`. Pre-1970 timestamps round-trip
     via CBOR's negative-integer encoding.
-  - **crates/cardano-tracer/src/severity.rs**: adds
+  - **crates/tools/cardano-tracer/src/severity.rs**: adds
     `SeverityS::from_syslog_code(u8) → Option&lt;SeverityS&gt;` as the
     reverse of `syslog_code()`. Used by `from_cbor` to round-trip
     the severity field.
-  - **crates/cardano-tracer/src/acceptors/{server, client}.rs**:
+  - **crates/tools/cardano-tracer/src/acceptors/{server, client}.rs**:
     replaces the R424 stub `decode_trace_objects` (which returned
     `Vec::new()`) with real per-batch decoding. Each decoder reads
     the outer CBOR array's count, then decodes each entry using
@@ -2030,7 +2032,7 @@ basename-heuristic reliance.
     pointers, parity-matrix delta, operational rehearsal recipe,
     and follow-on arc plan (handshake codec, TraceObject CBOR codec,
     cardano-node forwarder side).
-  - `crates/cardano-tracer/AGENTS.md` refreshed: status block
+  - `crates/tools/cardano-tracer/AGENTS.md` refreshed: status block
     advanced from "post-R335-pattern skeleton" to "post-R411-R430
     arc — trace-forwarder TraceObject sub-protocol fully wired";
     functional-surface bullet list replaced with the 11-row
@@ -2056,7 +2058,7 @@ basename-heuristic reliance.
   the TLS bind-plan documentation + `force_ssl` operator-facing
   fallback status without bloating the workspace with a heavy
   TLS server dep. Two new public helpers in
-  `crates/cardano-tracer/src/handlers/http_server.rs`:
+  `crates/tools/cardano-tracer/src/handlers/http_server.rs`:
   - **tls_bind_plan_status() → &'static str**: authoritative
     deferral-plan descriptor. Documents the integration recipe
     for operators wanting TLS today (use `load_pem_certs` /
@@ -2116,7 +2118,7 @@ basename-heuristic reliance.
   tokio runtime. Earlier rounds shipped a stub returning an
   "unimplemented" error; R427 replaces that with the real
   supervisor. New file:
-  `crates/cardano-tracer/src/run.rs` (mirror of upstream's
+  `crates/tools/cardano-tracer/src/run.rs` (mirror of upstream's
   `Cardano.Tracer.Run.hs`).
   Public API:
   - **TracerParams**: 3-field record (tracer_config, state_dir,
@@ -2160,7 +2162,7 @@ basename-heuristic reliance.
   - **CurrentLogLock / CurrentDPLock**: deferred — Yggdrasil's
     `Arc&lt;RwLock&lt;...&gt;&gt;` runtime-state shape doesn't need separate
     per-resource locks for the bounded subset R427 wires.
-  Updates `crates/cardano-tracer/src/lib.rs` with `pub mod run`
+  Updates `crates/tools/cardano-tracer/src/lib.rs` with `pub mod run`
   declaration + the `run(args)` upgrade.
   Tests: yggdrasil-cardano-tracer 408 → 415 (+7:
   run_logs_rotator_status describes deferral; run_metrics_servers_status
@@ -2182,7 +2184,7 @@ basename-heuristic reliance.
   acceptor loops with auto-restart on transport interruption,
   matches upstream's exact retry intervals (1s initial pause; 10s
   server retry; 30s client retry). Lands in
-  `crates/cardano-tracer/src/acceptors/run.rs`. Public API:
+  `crates/tools/cardano-tracer/src/acceptors/run.rs`. Public API:
   - **run_acceptors(state, config, lo_handler) →
     Result&lt;(), AcceptorsSupervisorError&gt;**: top-level supervisor.
     Mirror of upstream's `runAcceptors`. Per the R398 plan's
@@ -2220,7 +2222,7 @@ basename-heuristic reliance.
   - `forwarderEndpoint = EKGF.LocalPipe p` — applies only to
     deferred EKG config; upstream comment notes it's "unused in the
     context of ouroboros-network mini-protocol application".
-  Updates `crates/cardano-tracer/src/acceptors.rs` with `pub mod
+  Updates `crates/tools/cardano-tracer/src/acceptors.rs` with `pub mod
   run`.
   Tests: yggdrasil-cardano-tracer 403 → 408 (+5: acceptors_configs
   uses supplied lo_request_num; acceptors_configs default brake
@@ -2242,7 +2244,7 @@ basename-heuristic reliance.
   cardano-node has bound (operator's `connectTo` mode) and runs
   the same per-connection sub-protocol drivers via R421's
   `accept_trace_objects_init`. New file:
-  `crates/cardano-tracer/src/acceptors/client.rs`.
+  `crates/tools/cardano-tracer/src/acceptors/client.rs`.
   Public API:
   - **run_acceptors_client(state, how_to_connect, tf_config,
     lo_handler) → Result&lt;(), AcceptorsServerError&gt;**: top-level
@@ -2272,8 +2274,8 @@ basename-heuristic reliance.
   for stable NodeId derivation (the client knows where it
   connected, unlike the server which can't easily extract a peer
   address from an accept'd Unix socket).
-  Updates `crates/cardano-tracer/src/acceptors.rs` with `pub mod
-  client`. Updates `crates/cardano-tracer/Cargo.toml` with
+  Updates `crates/tools/cardano-tracer/src/acceptors.rs` with `pub mod
+  client`. Updates `crates/tools/cardano-tracer/Cargo.toml` with
   `tempfile = "3"` dev-dep.
   Tests: yggdrasil-cardano-tracer 400 → 403 (+3:
   run_acceptors_client_remote_socket_returns_deferral_error;
@@ -2296,7 +2298,7 @@ basename-heuristic reliance.
   / `remove_disconnected_node` into a top-level mux dispatcher
   that accepts inbound forwarder connections over a Unix pipe and
   spawns per-connection trace-object acceptors. New file:
-  `crates/cardano-tracer/src/acceptors/server.rs`.
+  `crates/tools/cardano-tracer/src/acceptors/server.rs`.
   Public API:
   - **run_acceptors_server(state, how_to_connect, tf_config,
     lo_handler) → Result&lt;(), AcceptorsServerError&gt;**: top-level
@@ -2359,8 +2361,8 @@ basename-heuristic reliance.
     until the trace-dispatcher upstream package is ported (the
     full `Cardano.Logging.TraceObject` Serialise instance lives
     in upstream's `cardano-logging` package).
-  Updates `crates/cardano-tracer/src/acceptors.rs` with `pub mod
-  server`. Updates `crates/cardano-tracer/Cargo.toml` with
+  Updates `crates/tools/cardano-tracer/src/acceptors.rs` with `pub mod
+  server`. Updates `crates/tools/cardano-tracer/Cargo.toml` with
   `yggdrasil-ledger` + `yggdrasil-network` workspace dependencies.
   Tests: yggdrasil-cardano-tracer 394 → 400 (+6: protocol numbers
   match upstream wire assignment 1/2/3; do_listen_to_forwarder_socket_status
@@ -2383,11 +2385,11 @@ basename-heuristic reliance.
   `MetricsStore`, `MetricsLocalStore`) into the upstream-named call
   surface used by `Acceptors/Server.hs` (R424 pending) and
   `Acceptors/Client.hs` (R425 pending). Two new files:
-  - **crates/cardano-tracer/src/acceptors.rs**: parent shell module
+  - **crates/tools/cardano-tracer/src/acceptors.rs**: parent shell module
     with synthesis docstring documenting the
     `Cardano.Tracer.Acceptors.{Server, Client, Utils, Run}` namespace
     layout.
-  - **crates/cardano-tracer/src/acceptors/utils.rs** (mirror of
+  - **crates/tools/cardano-tracer/src/acceptors/utils.rs** (mirror of
     upstream's 140-line `Acceptors/Utils.hs`): four public functions
     + 2 status descriptors:
     - **add_connected_node(connected_nodes, remote_address) → bool**:
@@ -2428,7 +2430,7 @@ basename-heuristic reliance.
   - **TracerEnv-record-arg**: per the R398 plan's TracerEnv
     option (b) decision, helpers take the slice of state they need
     directly rather than coupling to the full TracerEnv record.
-  Updates `crates/cardano-tracer/src/lib.rs` with `pub mod acceptors`
+  Updates `crates/tools/cardano-tracer/src/lib.rs` with `pub mod acceptors`
   declaration.
   Tests: yggdrasil-cardano-tracer 385 → 394 (+9: add_connected_node
   inserts new + reports duplicate; conn-id sanitization strips
@@ -2847,7 +2849,7 @@ basename-heuristic reliance.
   - **crates/network/src/local_listener.rs**: `LocalPeerListener`
     struct wrapping `tokio::net::UnixListener` + bound path. `bind`
     constructor performs stale-socket cleanup (mirrors
-    `node/src/local_server/accept.rs`), binds via `UnixListener::bind`,
+    `crates/node/ntc-server/src/accept.rs`), binds via `UnixListener::bind`,
     and applies `chmod 0o660` (`SOCKET_PERMISSIONS = 0o660` const) so
     a non-root user on a multi-tenant host cannot speak trace-forward
     against a tracer running as a privileged user. `from_listener`
@@ -3030,7 +3032,7 @@ basename-heuristic reliance.
   R411 entry: see `docs/operational-runs/2026-05-10-round-411-arc-plan-r411-r430.md`
   for the full 20-round R411-R430 plan with per-decision tradeoff
   matrices + risk register. Three primary deliverables:
-  - **`crates/cardano-tracer/src/metrics_store.rs`**: new
+  - **`crates/tools/cardano-tracer/src/metrics_store.rs`**: new
     synthesis-stand-in for upstream's `System.Metrics.Store` (from
     the unvendored Hackage `ekg-core`). MetricValue enum
     (Counter/Gauge/Label) mirroring upstream's
@@ -3272,7 +3274,7 @@ basename-heuristic reliance.
   notification engine on tracer start. Uses every prior round's
   surface: R384's settings persistence + R386's Timer + R403's
   lettre + R404's makeAndSendNotification. New entry-point in
-  `crates/cardano-tracer/src/handlers/notifications/utils.rs`:
+  `crates/tools/cardano-tracer/src/handlers/notifications/utils.rs`:
   - init_events_queues(Option<&Path>, NodeIdResolver)
     async → (EventsQueues, EventsSenders). Mirror of upstream
     `initEventsQueues`.
@@ -3315,7 +3317,7 @@ basename-heuristic reliance.
   per-event-group queues, filters by last-seen timestamp, resolves
   node names, and sends notifications through R403's lettre-backed
   SMTP path. New entry-point in
-  `crates/cardano-tracer/src/handlers/notifications/send.rs`:
+  `crates/tools/cardano-tracer/src/handlers/notifications/send.rs`:
   - make_and_send_notification(EmailSettings, EventsQueues,
     EventGroup, &Arc<Mutex<i64>>, NodeIdResolver) async →
     StatusMessage. Mirror of upstream `makeAndSendNotification`.
@@ -3392,7 +3394,7 @@ basename-heuristic reliance.
   R390 LogRotationStatus carve-out + upgrades HandleRegistry to hold
   real file handles).** Lands the IO orchestration that was deferred
   at R390. Three workspace surfaces touched:
-  - **HandleRegistry value-type upgrade** in `crates/cardano-tracer/src/types.rs`:
+  - **HandleRegistry value-type upgrade** in `crates/tools/cardano-tracer/src/types.rs`:
     previously `Registry<HandleRegistryKey, ((), PathBuf)>`; now
     `Registry<HandleRegistryKey, (SharedLogFile, PathBuf)>` where
     `SharedLogFile = Arc<tokio::sync::Mutex<tokio::fs::File>>`. Arc
@@ -3880,17 +3882,14 @@ basename-heuristic reliance.
      reads as a status board now without cross-referencing the
      parity-matrix.
   3. **Skeleton-only outliers documented in `Cargo.toml`
-     description fields**. `kes-agent` (~150 LOC) now reads
-     "SKELETON STUB awaiting Phase A.3 entry at R344+ —
-     HIGHEST-STAKES sister-tool work; gated on upstream
-     socket-protocol byte-equivalence fixture capture per the R344
-     risk register entry." `tx-generator` (~150 LOC) reads
-     "SKELETON STUB gated on Phase C entry at R408+ — entry
-     depends on the cardano-cli C-arc CLI-MVS subset (keys / tx /
-     query / genesis / governance) reaching verified_11_0_1
-     status before tx-generator's submit driver can be wired."
-     The package-level comment block on each crate's Cargo.toml
-     also now cites the specific gating dependency.
+     description fields**. `kes-agent` (~150 LOC) still documents
+     the highest-stakes socket-protocol fixture prerequisite.
+     `tx-generator` (~150 LOC) now documents the current state:
+     byte-equivalent help/version skeleton, cardano-cli prerequisite
+     closed, and remaining work in tx-generator's own parser,
+     generator, submission, and soak-evidence arc. The package-level
+     comment block on each crate's Cargo.toml also cites the current
+     dependency or implementation blocker.
   No code changes; doc + workspace-structure round. All 5 cargo
   gates clean; workspace tests held at 5,611 (same as R391
   closeout). Strict-mirror gate clean (0 violations); parity-matrix
@@ -4332,7 +4331,7 @@ basename-heuristic reliance.
   ignore-rule to repo root (`/logs/`) plus explicit
   `**/run/logs/` + `**/*-runtime-logs/` patterns. Without the
   anchor, the rule was swallowing the new source-tree
-  `crates/cardano-tracer/src/handlers/logs/` directory — same drift
+  `crates/tools/cardano-tracer/src/handlers/logs/` directory — same drift
   class as R310/R311 (over-broad gitignore patterns hiding production
   source files). The strict-mirror gate (R311 index-vs-tree drift
   check) caught this in this same round; it warned that two new
@@ -4498,7 +4497,7 @@ basename-heuristic reliance.
     FromJSON instances are NOT ported. Upstream's own comment marks
     them as DUPLICATE — a re-implementation to avoid an import
     dependency on Cardano.Node.Configuration.POM. Yggdrasil-side
-    parallels live in node/src/config.rs. db-synthesizer operates on
+    parallels live in crates/node/config/src/lib.rs. db-synthesizer operates on
     the raw serde_json::Value stashed in
     NodeConfigStub::node_config and feeds that to the runtime layer.
   - The hard-coded Byron application name "cardano-sl" carve-out
@@ -5389,7 +5388,7 @@ basename-heuristic reliance.
   remaining_work refreshed with the per-module roadmap (Parsers →
   HasAnalysis → Analysis → CSV → Run + integration + closeout).
 - **R350 — db-truncater: comparison harness for operator soak vs upstream.**
-  Ships node/scripts/compare_db_truncater_to_upstream.sh — 200-line
+  Ships scripts/compare_db_truncater_to_upstream.sh — 200-line
   bash script for verification of yggdrasil-db-truncater against the
   upstream Haskell binary across the canonical surface. Three stages:
   (1) byte-equivalent --help / --version (already pinned by R335
@@ -5473,10 +5472,10 @@ basename-heuristic reliance.
   unchanged at 257 (a) + 215 (c) = 472 graded files (R338-R345
   populated already-tracked stub files rather than adding new ones).
   Notes: cardano-submit-api closeout to verified_11_0_1 gated on
-  operator running node/scripts/compare_submit_api_to_upstream.sh
+  operator running scripts/compare_submit_api_to_upstream.sh
   and reporting an empty diff.
 - **R345 — cardano-submit-api comparison harness: operator-runnable soak vs upstream.**
-  Ships node/scripts/compare_submit_api_to_upstream.sh — 175-line bash
+  Ships scripts/compare_submit_api_to_upstream.sh — 175-line bash
   script that POSTs canonical inputs (empty body, malformed CBOR) to
   both upstream and yggdrasil binaries and diffs HTTP status + response
   body, then scrapes /metrics from both and diffs the # HELP / # TYPE
@@ -5559,7 +5558,7 @@ basename-heuristic reliance.
   tx_submit_post placeholder returning 503 with byte-equivalent
   TxSubmitFail JSON for non-empty bodies and 400 TxSubmitEmpty for
   empty bodies). The raw-tokio TCP approach matches the existing
-  node/src/metrics_server.rs pattern; NO axum / hyper / tower / warp
+  crates/node/tracer/src/metrics_server.rs pattern; NO axum / hyper / tower / warp
   dependency added — just the workspace tokio dep already present.
   Carve-outs documented in strict-mirror docstrings:
   Network.Wai.Handler.Warp.runSettingsSocket / bindPortTCP →
@@ -5665,7 +5664,7 @@ basename-heuristic reliance.
   arc: vendored bech32 + kes-agent + dmq-node sources (R326b);
   created 12 sister-tool skeleton crates (R327); extended parity-
   matrix +12 entries + upstream_pins +3 SHAs + drift detector
-  cross-org URL support (R328); landed `node/scripts/run-tools.sh`
+  cross-org URL support (R328); landed `scripts/run-tools.sh`
   12-binary dispatcher (R329); added `bech32 v0.11` workspace dep
   (R330). Phase A.1 (R331-R334) shipped the **first sister tool with
   full deployment-ready 100% parity**: `bech32` is now drop-in

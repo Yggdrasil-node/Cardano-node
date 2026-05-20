@@ -77,8 +77,8 @@ operational certificate (slice 1's `load_operational_certificate_with_issuer`).
   `ShelleyOperationalCertificateIssuerVkey` key continues to parse —
   the key is silently ignored.
 
-`AGENTS.md`: `block-producer`, `yggdrasil-node`, and
-`yggdrasil-node/src` refreshed for the removed surface.
+`AGENTS.md`: `block-producer`, `crates/node/cardano-node`, and
+`crates/node/cardano-node/src` refreshed for the removed surface.
 
 ## Verification
 

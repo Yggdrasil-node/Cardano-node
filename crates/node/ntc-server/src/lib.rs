@@ -27,8 +27,8 @@
 //! ```
 //!
 //! Reference:
-//! `ouroboros-network-protocols` — `LocalTxSubmission`, `LocalStateQuery`,
-//! and `LocalTxMonitor`.
+//! `ouroboros-network/ouroboros-network/protocols/lib` — `LocalTxSubmission`,
+//! `LocalStateQuery`, and `LocalTxMonitor`.
 //!
 //! ## Naming parity
 //!
@@ -192,7 +192,7 @@ mod lsq_era_index {
 /// wrong epoch boundaries.
 ///
 /// Reference: per-network `shelley-genesis.json` in
-/// [`crates/node/yggdrasil-node/configuration/`](../../node/configuration/).
+/// `configuration/`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkPreset {
     /// `network_magic = 1`, Shelley `epochLength=432_000` (5-day

@@ -13,8 +13,8 @@
 //! gracefully falls back to the deferral path rather than failing to
 //! compile.
 //!
-//! Wire-protocol drive mirrors `crates/node/yggdrasil-node/src/commands/query.rs::run_query`
-//! (the node binary's NtC LocalStateQuery dispatcher): open Unix
+//! Wire-protocol drive is shared by the standalone cardano-cli binary
+//! and the node binary's compatibility wrappers: open Unix
 //! socket via `yggdrasil_network::ntc_connect`, acquire at
 //! VolatileTip, send the CBOR-encoded `GetChainPoint = [3]` query,
 //! decode the upstream `Ouroboros.Network.Block.encodePoint` reply
@@ -22,16 +22,23 @@
 //! identical to what the node binary's `cardano-cli query-tip`
 //! subcommand prints.
 
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use std::path::Path;
 
-use eyre::{Result, WrapErr};
+use eyre::Result;
+#[cfg(unix)]
+use eyre::WrapErr;
+#[cfg(unix)]
 use serde_json::json;
-use yggdrasil_ledger::{Decoder, Encoder};
+#[cfg(unix)]
 use yggdrasil_network::{
     AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
 };
 
 use crate::lsq::{LsqClient, NtcQuery};
+#[cfg(unix)]
+use crate::lsq::{QueryPlan, plan_for};
 
 /// Concrete LSQ client that opens a Unix-socket NtC connection on
 /// each call, drives the LocalStateQuery mini-protocol, and renders
@@ -48,331 +55,42 @@ use crate::lsq::{LsqClient, NtcQuery};
 /// [standalone-main]: ../main/index.html
 pub struct TokioLsqClient;
 
-/// Decoder for one LSQ reply — turns the raw CBOR result bytes into
-/// the JSON value the subcommand prints. One per [`NtcQuery`].
-type LsqReplyDecoder = fn(&[u8]) -> serde_json::Value;
-
-/// The per-query plan: the CBOR query envelope, an upstream query
-/// label for error context, and the reply decoder.
-struct QueryPlan {
-    query_bytes: Vec<u8>,
-    query_label: &'static str,
-    decode: LsqReplyDecoder,
-}
-
-/// Map an [`NtcQuery`] variant to its CBOR encode + reply decoder.
-fn plan_for(query: NtcQuery) -> QueryPlan {
-    match query {
-        NtcQuery::Tip => QueryPlan {
-            query_bytes: encode_get_chain_point_query(),
-            query_label: "GetChainPoint",
-            decode: decode_chain_point_result,
-        },
-        NtcQuery::ChainBlockNo => QueryPlan {
-            query_bytes: encode_get_chain_block_no_query(),
-            query_label: "GetChainBlockNo",
-            decode: decode_chain_block_no_result,
-        },
-        NtcQuery::CurrentEra => QueryPlan {
-            query_bytes: encode_get_current_era_query(),
-            query_label: "GetCurrentEra",
-            decode: decode_current_era_result,
-        },
-        NtcQuery::SystemStart => QueryPlan {
-            query_bytes: encode_get_system_start_query(),
-            query_label: "GetSystemStart",
-            decode: decode_system_start_result,
-        },
-        NtcQuery::StakeDistribution => QueryPlan {
-            query_bytes: encode_single_tag_query(5),
-            query_label: "GetStakeDistribution",
-            decode: decode_stake_distribution_result,
-        },
-        NtcQuery::StakePools => QueryPlan {
-            query_bytes: encode_single_tag_query(15),
-            query_label: "GetStakePools",
-            decode: decode_stake_pools_result,
-        },
-        NtcQuery::ProtocolParameters => QueryPlan {
-            query_bytes: encode_single_tag_query(102),
-            query_label: "GetProtocolParameters",
-            decode: decode_protocol_parameters_result,
-        },
-        NtcQuery::DrepStakeDistribution => QueryPlan {
-            query_bytes: encode_single_tag_query(17),
-            query_label: "GetDRepStakeDistribution",
-            decode: decode_drep_stake_distribution_result,
-        },
-        NtcQuery::Constitution => QueryPlan {
-            query_bytes: encode_single_tag_query(8),
-            query_label: "GetConstitution",
-            decode: decode_constitution_result,
-        },
-        NtcQuery::GovState => QueryPlan {
-            query_bytes: encode_single_tag_query(9),
-            query_label: "GetGovState",
-            decode: decode_gov_state_result,
-        },
-        NtcQuery::DrepState => QueryPlan {
-            query_bytes: encode_single_tag_query(10),
-            query_label: "GetDRepState",
-            decode: decode_drep_state_result,
-        },
-        NtcQuery::CommitteeState => QueryPlan {
-            query_bytes: encode_single_tag_query(11),
-            query_label: "GetCommitteeState",
-            decode: decode_committee_state_result,
-        },
-        NtcQuery::TreasuryAndReserves => QueryPlan {
-            query_bytes: encode_single_tag_query(7),
-            query_label: "GetTreasuryAndReserves",
-            decode: decode_treasury_and_reserves_result,
-        },
-        NtcQuery::AccountState => QueryPlan {
-            query_bytes: encode_single_tag_query(13),
-            query_label: "GetAccountState",
-            decode: decode_account_state_result,
-        },
-        NtcQuery::GenesisDelegations => QueryPlan {
-            query_bytes: encode_single_tag_query(18),
-            query_label: "GetGenesisDelegations",
-            decode: decode_genesis_delegations_result,
-        },
-        NtcQuery::StabilityWindow => QueryPlan {
-            query_bytes: encode_single_tag_query(19),
-            query_label: "GetStabilityWindow",
-            decode: decode_stability_window_result,
-        },
-        NtcQuery::NumDormantEpochs => QueryPlan {
-            query_bytes: encode_single_tag_query(20),
-            query_label: "GetNumDormantEpochs",
-            decode: decode_num_dormant_epochs_result,
-        },
-        NtcQuery::ExpectedNetworkId => QueryPlan {
-            query_bytes: encode_single_tag_query(21),
-            query_label: "GetExpectedNetworkId",
-            decode: decode_expected_network_id_result,
-        },
-        NtcQuery::DepositPot => QueryPlan {
-            query_bytes: encode_single_tag_query(22),
-            query_label: "GetDepositPot",
-            decode: decode_deposit_pot_result,
-        },
-        NtcQuery::LedgerCounts => QueryPlan {
-            query_bytes: encode_single_tag_query(23),
-            query_label: "GetLedgerCounts",
-            decode: decode_ledger_counts_result,
-        },
-    }
-}
-
-/// Decode the `GetTreasuryAndReserves` reply — the 2-element CBOR
-/// array `[treasury, reserves]` (lovelace). Mirrors the node
-/// binary's `decode_ntc_result` `TreasuryAndReserves` arm.
-fn decode_treasury_and_reserves_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    if dec.array().ok() == Some(2) {
-        let treasury = dec.unsigned().unwrap_or(0);
-        let reserves = dec.unsigned().unwrap_or(0);
-        json!({ "treasury_lovelace": treasury, "reserves_lovelace": reserves })
-    } else {
-        json!({ "result_cbor": hex::encode(result) })
-    }
-}
-
-/// Decode the `GetAccountState` reply — `[treasury, reserves,
-/// total_deposits]`. Mirrors the node binary's `AccountState` arm.
-fn decode_account_state_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    if dec.array().ok() == Some(3) {
-        let treasury = dec.unsigned().unwrap_or(0);
-        let reserves = dec.unsigned().unwrap_or(0);
-        let deposits = dec.unsigned().unwrap_or(0);
-        json!({
-            "treasury_lovelace": treasury,
-            "reserves_lovelace": reserves,
-            "total_deposits_lovelace": deposits,
-        })
-    } else {
-        json!({ "account_state_cbor": hex::encode(result) })
-    }
-}
-
-/// Decode the `GetGenesisDelegations` reply (raw CBOR hex — the
-/// value side carries multiple sub-entries per genesis key).
-fn decode_genesis_delegations_result(result: &[u8]) -> serde_json::Value {
-    json!({ "genesis_delegations_cbor": hex::encode(result) })
-}
-
-/// Decode the `GetStabilityWindow` reply — CBOR null (`f6`) when
-/// unset, otherwise a plain unsigned slot count.
-fn decode_stability_window_result(result: &[u8]) -> serde_json::Value {
-    if result == [0xf6] {
-        json!({ "stability_window": serde_json::Value::Null })
-    } else {
-        let mut dec = Decoder::new(result);
-        json!({ "stability_window_slots": dec.unsigned().unwrap_or(0) })
-    }
-}
-
-/// Decode the `GetNumDormantEpochs` reply — a plain unsigned count.
-fn decode_num_dormant_epochs_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    json!({ "num_dormant_epochs": dec.unsigned().unwrap_or(0) })
-}
-
-/// Decode the `GetExpectedNetworkId` reply — CBOR null (`f6`) when
-/// no expectation is configured, otherwise a plain unsigned id.
-fn decode_expected_network_id_result(result: &[u8]) -> serde_json::Value {
-    if result == [0xf6] {
-        json!({ "expected_network_id": serde_json::Value::Null })
-    } else {
-        let mut dec = Decoder::new(result);
-        json!({ "expected_network_id": dec.unsigned().unwrap_or(0) })
-    }
-}
-
-/// Decode the `GetDepositPot` reply — the 4-element CBOR array
-/// `[key, pool, drep, proposal]` (lovelace), surfaced with a derived
-/// total. Mirrors the node binary's `DepositPot` arm.
-fn decode_deposit_pot_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    if dec.array().ok() == Some(4) {
-        let key = dec.unsigned().unwrap_or(0);
-        let pool = dec.unsigned().unwrap_or(0);
-        let drep = dec.unsigned().unwrap_or(0);
-        let proposal = dec.unsigned().unwrap_or(0);
-        json!({
-            "key_deposits_lovelace": key,
-            "pool_deposits_lovelace": pool,
-            "drep_deposits_lovelace": drep,
-            "proposal_deposits_lovelace": proposal,
-            "total_lovelace": key + pool + drep + proposal,
-        })
-    } else {
-        json!({ "deposit_pot_cbor": hex::encode(result) })
-    }
-}
-
-/// Decode the `GetLedgerCounts` reply — the 6-element CBOR array of
-/// ledger-state cardinality counters. Mirrors the node binary's
-/// `LedgerCounts` arm.
-fn decode_ledger_counts_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    if dec.array().ok() == Some(6) {
-        let stake_credentials = dec.unsigned().unwrap_or(0);
-        let pools = dec.unsigned().unwrap_or(0);
-        let dreps = dec.unsigned().unwrap_or(0);
-        let committee_members = dec.unsigned().unwrap_or(0);
-        let governance_actions = dec.unsigned().unwrap_or(0);
-        let gen_delegs = dec.unsigned().unwrap_or(0);
-        json!({
-            "stake_credentials": stake_credentials,
-            "pools": pools,
-            "dreps": dreps,
-            "committee_members": committee_members,
-            "governance_actions": governance_actions,
-            "gen_delegs": gen_delegs,
-        })
-    } else {
-        json!({ "ledger_counts_cbor": hex::encode(result) })
-    }
-}
-
-// The five Conway governance queries surface complex per-era ledger
-// structures (`Constitution`, `GovActionsState`, DRep maps, …) as
-// raw CBOR hex under a descriptive key — matching the node binary's
-// `decode_ntc_result` arms. Decoding them into typed JSON is a
-// follow-on; the hex passthrough lets clients decode them today.
-
-/// Decode the `GetDRepStakeDistribution` reply (raw CBOR hex).
-fn decode_drep_stake_distribution_result(result: &[u8]) -> serde_json::Value {
-    json!({ "drep_stake_distribution_cbor": hex::encode(result) })
-}
-
-/// Decode the `GetConstitution` reply (raw CBOR hex).
-fn decode_constitution_result(result: &[u8]) -> serde_json::Value {
-    json!({ "constitution_cbor": hex::encode(result) })
-}
-
-/// Decode the `GetGovState` reply (raw CBOR hex).
-fn decode_gov_state_result(result: &[u8]) -> serde_json::Value {
-    json!({ "governance_actions_cbor": hex::encode(result) })
-}
-
-/// Decode the `GetDRepState` reply (raw CBOR hex).
-fn decode_drep_state_result(result: &[u8]) -> serde_json::Value {
-    json!({ "drep_state_cbor": hex::encode(result) })
-}
-
-/// Decode the `GetCommitteeState` reply (raw CBOR hex).
-fn decode_committee_state_result(result: &[u8]) -> serde_json::Value {
-    json!({ "committee_state_cbor": hex::encode(result) })
-}
-
-/// CBOR-encode a single-element `[tag]` query envelope.
-///
-/// `query-stake-distribution` / `query-stake-pools` /
-/// `query-protocol-parameters` use yggdrasil-node's NtC dispatcher
-/// tags (5 / 15 / 102) — these are yggdrasil-node-specific (not the
-/// upstream `BlockQuery` wrapper), so these subcommands target a
-/// running `yggdrasil-node`. Mirrors the encoding the node binary's
-/// own `cardano-cli` wrapper sends (`crates/node/yggdrasil-node/src/commands/query.rs`).
-fn encode_single_tag_query(tag: u64) -> Vec<u8> {
-    let mut enc = Encoder::new();
-    enc.array(1).unsigned(tag);
-    enc.into_bytes()
-}
-
-/// Decode the `GetStakeDistribution` reply — a complex per-pool
-/// structure surfaced as raw CBOR hex (matches the node binary's
-/// `decode_ntc_result` `StakeDistribution` arm).
-fn decode_stake_distribution_result(result: &[u8]) -> serde_json::Value {
-    json!({ "stake_distribution_cbor": hex::encode(result) })
-}
-
-/// Decode the `GetStakePools` reply — a CBOR array of 28-byte pool
-/// hashes, surfaced as a hex-string list plus a count. Mirrors the
-/// node binary's `decode_ntc_result` `StakePools` arm.
-fn decode_stake_pools_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    let mut pools: Vec<String> = Vec::new();
-    if let Ok(n) = dec.array() {
-        for _ in 0..n {
-            if let Ok(hash) = dec.bytes() {
-                pools.push(hex::encode(hash));
-            }
-        }
-    }
-    json!({ "stake_pools": pools, "count": pools.len() })
-}
-
-/// Decode the `GetProtocolParameters` reply — `f6` (CBOR null) when
-/// no parameters are available yet, otherwise raw CBOR hex. Mirrors
-/// the node binary's `decode_ntc_result` `ProtocolParams` arm.
-fn decode_protocol_parameters_result(result: &[u8]) -> serde_json::Value {
-    if result == [0xf6] {
-        json!({ "protocol_parameters": serde_json::Value::Null })
-    } else {
-        json!({ "protocol_parameters": hex::encode(result) })
-    }
-}
-
 impl LsqClient for TokioLsqClient {
     fn run_query(&self, socket_path: &Path, network_magic: u32, query: NtcQuery) -> Result<()> {
-        let QueryPlan {
-            query_bytes,
-            query_label,
-            decode,
-        } = plan_for(query);
-        run_blocking(async move {
-            let result =
-                acquire_query_release(socket_path, network_magic, query_bytes, query_label).await?;
-            print_json(&decode(&result))
-        })
+        #[cfg(not(unix))]
+        {
+            let _ = (socket_path, network_magic, query);
+            Err(eyre::eyre!(
+                "LocalStateQuery over node-to-client sockets requires Unix-domain socket support"
+            ))
+        }
+
+        #[cfg(unix)]
+        {
+            let QueryPlan {
+                query_bytes,
+                query_label,
+                decode,
+            } = plan_for(query);
+            run_blocking(async move {
+                let result =
+                    acquire_query_release(socket_path, network_magic, query_bytes, query_label)
+                        .await?;
+                print_json(&decode(&result))
+            })
+        }
     }
 
     fn submit_tx(&self, socket_path: &Path, network_magic: u32, tx_bytes: &[u8]) -> Result<()> {
+        #[cfg(not(unix))]
+        {
+            let _ = (socket_path, network_magic, tx_bytes);
+            Err(eyre::eyre!(
+                "LocalTxSubmission over node-to-client sockets requires Unix-domain socket support"
+            ))
+        }
+
+        #[cfg(unix)]
         run_blocking(submit_tx_inner(socket_path, network_magic, tx_bytes))
     }
 }
@@ -380,10 +98,11 @@ impl LsqClient for TokioLsqClient {
 /// Open the NtC socket, submit `tx_bytes` over the LocalTxSubmission
 /// mini-protocol, and print the accept/reject outcome as JSON.
 ///
-/// Mirrors `crates/node/yggdrasil-node/src/commands/submit_tx.rs::run_submit_tx`. A
-/// rejection is a normal outcome (printed as
+/// Shared LocalTxSubmission driver for `cardano-cli transaction submit`
+/// and `yggdrasil-node submit-tx`. A rejection is a normal outcome (printed as
 /// `{"result":"rejected","reason":…}`), not an `Err` — only a
 /// connection/transport failure bails.
+#[cfg(unix)]
 async fn submit_tx_inner(socket_path: &Path, network_magic: u32, tx_bytes: &[u8]) -> Result<()> {
     // `query_only = false` — a submitting client is not query-only.
     let mut conn = ntc_connect(socket_path, network_magic, false)
@@ -413,6 +132,7 @@ async fn submit_tx_inner(socket_path: &Path, network_magic: u32, tx_bytes: &[u8]
 /// completion. Each `TokioLsqClient` call is one-shot (matches
 /// upstream `cardano-cli`'s per-invocation behavior), so the runtime
 /// is constructed + torn down per call.
+#[cfg(unix)]
 fn run_blocking<F: std::future::Future<Output = Result<()>>>(fut: F) -> Result<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_io()
@@ -425,8 +145,9 @@ fn run_blocking<F: std::future::Future<Output = Result<()>>>(fut: F) -> Result<(
 /// Open the NtC socket, acquire at VolatileTip, run one
 /// LocalStateQuery, release + done, and return the raw CBOR result.
 ///
-/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::run_query`'s socket-drive
+/// Mirrors `crates/node/cardano-node/src/commands/query.rs::run_query`'s socket-drive
 /// flow. `query_label` names the query for the error context only.
+#[cfg(unix)]
 async fn acquire_query_release(
     socket_path: &Path,
     network_magic: u32,
@@ -472,176 +193,27 @@ fn print_json(value: &serde_json::Value) -> Result<()> {
     Ok(())
 }
 
-/// CBOR-encode the `GetChainPoint = [3]` query envelope.
-///
-/// Mirrors upstream `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`:
-/// `[3]` is the single-element array with tag 3 = `GetChainPoint`.
-fn encode_get_chain_point_query() -> Vec<u8> {
-    let mut enc = Encoder::new();
-    enc.array(1).unsigned(3u64);
-    enc.into_bytes()
-}
-
-/// CBOR-encode the `GetChainBlockNo = [2]` query envelope.
-///
-/// Mirrors upstream `Ouroboros.Consensus.Ledger.Query.queryEncodeNodeToClient`:
-/// `[2]` is the single-element array with tag 2 = `GetChainBlockNo`.
-fn encode_get_chain_block_no_query() -> Vec<u8> {
-    let mut enc = Encoder::new();
-    enc.array(1).unsigned(2u64);
-    enc.into_bytes()
-}
-
-/// Decode the upstream `Cardano.Slotting.Block.encodeChainBlockNo`
-/// reply: `Origin = [0]`, `At b = [1, b]` (mirrors
-/// `Ouroboros.Network.Block.Tip.tipBlockNo`).
-///
-/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
-/// `QueryCommand::ChainBlockNo` arm.
-fn decode_chain_block_no_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    match dec.array() {
-        Ok(1) => json!({ "chain_block_no": serde_json::Value::Null }),
-        Ok(2) => {
-            let _tag = dec.unsigned().unwrap_or(1);
-            let block_no = dec.unsigned().unwrap_or(0);
-            json!({ "chain_block_no": block_no })
-        }
-        _ => json!({ "chain_block_no_cbor": hex::encode(result) }),
-    }
-}
-
-/// CBOR-encode the `GetCurrentEra` query envelope.
-///
-/// Mirrors upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query` —
-/// `BlockQuery (QueryHardFork GetCurrentEra)` is the nested
-/// `[0, [2, [1]]]`: outer `BlockQuery` tag 0, `QueryHardFork` tag 2,
-/// `GetCurrentEra` tag 1.
-fn encode_get_current_era_query() -> Vec<u8> {
-    let mut enc = Encoder::new();
-    enc.array(2).unsigned(0u64);
-    enc.array(2).unsigned(2u64);
-    enc.array(1).unsigned(1u64);
-    enc.into_bytes()
-}
-
-/// Decode the upstream `GetCurrentEra` reply — an `EraIndex`,
-/// encoded as the single-element array `[era_index]`.
-///
-/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
-/// `QueryCommand::CurrentEra` arm.
-fn decode_current_era_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    let era = match dec.array() {
-        Ok(1) => dec.unsigned().unwrap_or(0),
-        _ => 0,
-    };
-    json!({ "era": era })
-}
-
-/// CBOR-encode the `GetSystemStart = [1]` query envelope.
-///
-/// Mirrors upstream `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query` —
-/// `[1]` is the single-element array with tag 1 = `GetSystemStart`.
-fn encode_get_system_start_query() -> Vec<u8> {
-    let mut enc = Encoder::new();
-    enc.array(1).unsigned(1u64);
-    enc.into_bytes()
-}
-
-/// Decode the upstream `GetSystemStart` reply — the 3-element CBOR
-/// array `[year, dayOfYear, picosecondsOfDay]` (`UTCTime` as
-/// `Cardano.Slotting.Time.SystemStart`).
-///
-/// Surfaces both the raw structured fields and a derived ISO-8601
-/// `time` string. Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
-/// `QueryCommand::SystemStart` arm.
-fn decode_system_start_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    match dec.array() {
-        Ok(3) => {
-            let year = dec.unsigned().unwrap_or(0);
-            let day_of_year = dec.unsigned().unwrap_or(1);
-            let picoseconds_of_day = dec.unsigned().unwrap_or(0);
-            json!({
-                "system_start": {
-                    "year": year,
-                    "dayOfYear": day_of_year,
-                    "picosecondsOfDay": picoseconds_of_day,
-                    "time": format_utc_time(year, day_of_year, picoseconds_of_day),
-                }
-            })
-        }
-        _ => json!({ "system_start_cbor": hex::encode(result) }),
-    }
-}
-
-/// Format `(year, day-of-year, picoseconds-of-day)` as an ISO-8601
-/// `YYYY-MM-DDThh:mm:ssZ` string.
-///
-/// Civil-date arithmetic with proleptic-Gregorian leap-year rules —
-/// mirrors `crates/node/yggdrasil-node/src/commands/query.rs::format_utc_time` so the
-/// standalone binary's `query system-start` output matches the node
-/// binary's wrapper byte-for-byte.
-fn format_utc_time(year: u64, day_of_year: u64, picoseconds_of_day: u64) -> String {
-    let is_leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
-    let month_days: [u64; 12] = [
-        31,
-        if is_leap { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut remaining = day_of_year.saturating_sub(1);
-    let mut month: u32 = 1;
-    let mut day_of_month: u32 = 1;
-    for (idx, &md) in month_days.iter().enumerate() {
-        if remaining < md {
-            month = (idx as u32) + 1;
-            day_of_month = (remaining as u32) + 1;
-            break;
-        }
-        remaining -= md;
-    }
-    let total_seconds = picoseconds_of_day / 1_000_000_000_000;
-    let hour = (total_seconds / 3600) % 24;
-    let minute = (total_seconds / 60) % 60;
-    let second = total_seconds % 60;
-    format!("{year:04}-{month:02}-{day_of_month:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-/// Decode the upstream `Ouroboros.Network.Block.encodePoint` reply.
-///
-/// - Origin: `encodeListLen 0` → `[]` → empty array.
-/// - BlockPoint: `encodeListLen 2 <> slot <> hash` → `[slot, hash]`.
-///
-/// Mirrors `crates/node/yggdrasil-node/src/commands/query.rs::decode_ntc_result`'s
-/// `QueryCommand::Tip` arm. Captured against `cardano-node 10.7.1`
-/// socat-proxy bytes in the upstream-regression test
-/// `upstream_get_chain_point_returns_encoded_tip_point`.
-fn decode_chain_point_result(result: &[u8]) -> serde_json::Value {
-    let mut dec = Decoder::new(result);
-    match dec.array() {
-        Ok(0) => json!({"tip": {"origin": true}}),
-        Ok(2) => {
-            let slot = dec.unsigned().unwrap_or(0);
-            let hash = dec.bytes().unwrap_or_default();
-            json!({"tip": {"origin": false, "slot": slot, "hash": hex::encode(hash)}})
-        }
-        _ => json!({"tip_cbor": hex::encode(result)}),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsq::{
+        decode_account_state_result, decode_chain_block_no_result, decode_chain_point_result,
+        decode_committee_state_result, decode_constitution_result, decode_current_epoch_result,
+        decode_current_era_result, decode_delegations_and_rewards_result,
+        decode_deposit_pot_result, decode_drep_stake_distribution_result, decode_drep_state_result,
+        decode_era_history_result, decode_expected_network_id_result, decode_gov_state_result,
+        decode_ledger_counts_result, decode_num_dormant_epochs_result,
+        decode_protocol_parameters_result, decode_reward_balance_result,
+        decode_stability_window_result, decode_stake_distribution_result,
+        decode_stake_pool_params_result, decode_stake_pools_result, decode_system_start_result,
+        decode_treasury_and_reserves_result, decode_utxo_result,
+        encode_delegations_and_rewards_query, encode_get_chain_block_no_query,
+        encode_get_chain_point_query, encode_get_current_era_query, encode_get_era_history_query,
+        encode_get_system_start_query, encode_reward_balance_query, encode_single_tag_query,
+        encode_stake_pool_params_query, encode_utxo_by_address_query, encode_utxo_by_tx_in_query,
+        format_utc_time,
+    };
+    use serde_json::json;
     use std::path::PathBuf;
 
     /// Running a query against a nonexistent socket path bails with
@@ -658,10 +230,16 @@ mod tests {
         );
         let err = result.expect_err("missing socket must bail");
         let msg = format!("{err:#}");
+        #[cfg(unix)]
         assert!(
             msg.contains("failed to connect to NtC socket")
                 && msg.contains("network_magic=764824073"),
             "error must carry the eyre socket-path + magic context; got {msg}"
+        );
+        #[cfg(not(unix))]
+        assert!(
+            msg.contains("requires Unix-domain socket support"),
+            "error must describe unsupported platform; got {msg}"
         );
     }
 
@@ -779,6 +357,16 @@ mod tests {
         assert_eq!(encode_get_system_start_query(), vec![0x81, 0x01]);
     }
 
+    /// `encode_get_era_history_query` produces the hard-fork
+    /// `GetInterpreter` query shape `[0, [2, [0]]]`.
+    #[test]
+    fn encode_get_era_history_query_emits_canonical_cbor() {
+        assert_eq!(
+            encode_get_era_history_query(),
+            vec![0x82, 0x00, 0x82, 0x02, 0x81, 0x00]
+        );
+    }
+
     /// `format_utc_time` renders civil dates correctly, including
     /// the leap-year boundary. 2024 is a leap year, so day-of-year
     /// 60 is Feb 29; 2023 is not, so day 60 is Mar 1.
@@ -869,6 +457,46 @@ mod tests {
         );
     }
 
+    /// Parameterized query plans preserve the node wrapper's prior
+    /// tag-and-argument CBOR envelopes and result JSON keys.
+    #[test]
+    fn parameterized_query_plans_match_node_wrapper_shapes() {
+        assert_eq!(
+            encode_utxo_by_address_query(&[0xaa, 0xbb]),
+            vec![0x82, 0x04, 0x42, 0xaa, 0xbb]
+        );
+        assert_eq!(
+            encode_reward_balance_query(&[0xcc]),
+            vec![0x82, 0x06, 0x41, 0xcc]
+        );
+        assert_eq!(
+            encode_utxo_by_tx_in_query(&[0xdd], 2),
+            vec![0x82, 0x0e, 0x81, 0x82, 0x41, 0xdd, 0x02]
+        );
+        assert_eq!(
+            encode_delegations_and_rewards_query(&[0xee, 0xff], false),
+            vec![0x82, 0x10, 0x81, 0x82, 0x01, 0x42, 0xee, 0xff]
+        );
+        assert_eq!(
+            encode_stake_pool_params_query(&[0x11]),
+            vec![0x82, 0x0c, 0x41, 0x11]
+        );
+
+        assert_eq!(decode_utxo_result(&[0x82]), json!({ "utxo_cbor": "82" }));
+        assert_eq!(
+            decode_reward_balance_result(&[0x19, 0x03, 0xe8]),
+            json!({ "reward_balance_lovelace": 1000 })
+        );
+        assert_eq!(
+            decode_delegations_and_rewards_result(&[0xaa]),
+            json!({ "delegations_and_rewards_cbor": "aa" })
+        );
+        assert_eq!(
+            decode_stake_pool_params_result(&[0xf6]),
+            json!({ "pool": serde_json::Value::Null })
+        );
+    }
+
     /// The 5 Conway governance decoders each surface the reply under
     /// their descriptive raw-hex key.
     #[test]
@@ -942,6 +570,21 @@ mod tests {
         );
     }
 
+    /// `decode_current_epoch_result` reads a plain unsigned epoch number.
+    #[test]
+    fn decode_current_epoch_reads_count() {
+        assert_eq!(decode_current_epoch_result(&[0x05]), json!({ "epoch": 5 }));
+    }
+
+    /// `decode_era_history_result` surfaces the interpreter as raw CBOR.
+    #[test]
+    fn decode_era_history_is_raw_hex() {
+        assert_eq!(
+            decode_era_history_result(&[0x82, 0x01, 0x02]),
+            json!({ "era_history_cbor": "820102" })
+        );
+    }
+
     /// `decode_expected_network_id_result` maps CBOR null to JSON
     /// null and a plain unsigned to the id.
     #[test]
@@ -1006,9 +649,15 @@ mod tests {
             )
             .expect_err("missing socket must bail");
         let msg = format!("{err:#}");
+        #[cfg(unix)]
         assert!(
             msg.contains("failed to connect to NtC socket"),
             "error must carry the eyre socket-path context; got {msg}"
+        );
+        #[cfg(not(unix))]
+        assert!(
+            msg.contains("requires Unix-domain socket support"),
+            "error must describe unsupported platform; got {msg}"
         );
     }
 }

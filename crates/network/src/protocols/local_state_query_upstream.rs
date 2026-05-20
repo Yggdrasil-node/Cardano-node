@@ -863,7 +863,7 @@ pub fn encode_interpreter_minimal(_epoch_size: u64, _slot_length_secs: u64) -> V
 /// drive the [`encode_interpreter_for_network`] /
 /// [`encode_system_start_for_network`] outputs.  Per-network
 /// constants come from
-/// [`crates/node/yggdrasil-node/configuration/<network>/shelley-genesis.json`](../../../../node/configuration/).
+/// `configuration/<network>/shelley-genesis.json`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkKind {
     /// Preprod: `epochLength=432_000` (5-day epochs),
@@ -1053,7 +1053,7 @@ fn encode_interpreter_preprod() -> Vec<u8> {
 /// Preview's `config.json` sets every `Test*HardForkAtEpoch=0`,
 /// meaning all hard forks occurred at epoch 0 and no Byron blocks
 /// were ever produced.  The on-disk
-/// [`shelley-genesis.json`](../../../../node/configuration/preview/shelley-genesis.json)
+/// `configuration/preview/shelley-genesis.json`
 /// pins `epochLength=86_400` (1-day epochs at 1s/slot).
 ///
 /// Emits a single open-ended Shelley-shape summary anchored at slot

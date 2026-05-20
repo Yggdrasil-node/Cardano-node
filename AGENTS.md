@@ -56,7 +56,7 @@
 
 ### Consensus (`crates/consensus`)
 - [Core consensus protocol modules](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol)
-- [Cardano-specific consensus integration (Praos, TPraos)](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol)
+- [Cardano-specific consensus integration (Praos, TPraos)](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol)
 - [Formal consensus Agda specification](.reference-haskell-cardano-node/deps/ouroboros-consensus/docs/agda-spec)
 - [Consensus tech report](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf)
 
@@ -67,8 +67,8 @@
 ### Network (`crates/network`)
 - [Networking repository root](.reference-haskell-cardano-node/deps/ouroboros-network/)
 - [Multiplexer implementation](.reference-haskell-cardano-node/deps/ouroboros-network/network-mux)
-- [Framework and handshake layer](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-framework)
-- [Mini-protocol implementations (ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing)](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network-protocols)
+- [Framework and handshake layer](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/)
+- [Mini-protocol implementations (ChainSync, BlockFetch, TxSubmission, KeepAlive, PeerSharing)](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/lib/Ouroboros/Network/Protocol/)
 - [Outbound governor and peer selection](.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network)
 - [Shelley networking spec PDF](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec)
 - [Network design document](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design)
@@ -121,11 +121,12 @@ Parity-flow gates (run when the touched area is in scope):
 
 - `python3 scripts/check-parity-matrix.py` — validates `docs/parity-matrix.json` schema + every `haskell_reference.path` and `rust_surface.path` exists on disk. Required when matrix entries, status, or paths change. **CI gate** since R303.
 - `python3 scripts/check-strict-mirror.py` — strict 1:1 file-mirror drift-guard. Walks production `.rs` files and flags any new file lacking either an upstream `.hs` mirror (by snake_case-of-PascalCase basename match) or a `## Naming parity` docstring stanza. Reads `docs/strict-mirror-audit.tsv` as the allowlist. Warn-only since R275 (`continue-on-error: true` in CI); flips to fail-build at R288.
+- `python3 scripts/check-stale-placement.py` — post-reorganization path and status guard. Fails if current code, CI, generated navigation, commands, resolved Cargo metadata, current operational-run notes, `[Unreleased]` changelog entries, living docs, or exact filesystem paths point back at the legacy node-local crate, nested `crates/node/*/{configuration,scripts}` operator-artifact directories, root/yggdrasil-node shorthand metadata, tests, configuration, script, tool-crate, or Claude-skill placements. It also rejects stale current-status claims from the cleanup arc, including obsolete node-local LSQ wording, old cardano-cli subcommand counts or three-command subset wording, old cardano-cli gate wording for tx-generator/cardano-testnet, and the closed workspace-member gap. It requires the accepted replacement placements to exist: `crates/node/cardano-node/`, the canonical root `configuration/` operator bundles, root operator/reference scripts, and `.claude/skills/cardano-haskell-node/`; every tracked root `scripts/*.sh` must remain executable in the Git index; release/repro workflows, Docker packaging, and the release installer must stage/copy/install root `configuration/` and `scripts/` from their accepted locations. It bucket-checks Cargo metadata so the shipped `yggdrasil-node` package stays at `crates/node/cardano-node/`, node support packages stay under `crates/node/`, and sister-tool packages stay under `crates/tools/`. It also fails if the vendored Haskell reference snapshot contains nested `.git` metadata, is not ignored by Git, is declared/tracked as a Git submodule, or has any regular file in the Git index. Tagged changelog history, old operational-run records, and run logs are excluded. When editing the guard, run `python3 scripts/check-stale-placement.py --self-test` as well.
 - `python3 scripts/check-fixture-manifest.py` — cross-checks the `cardano-base` SHA pin across `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`, `specs/upstream-test-vectors/cardano-base/<SHA>/`, `docs/SPECS.md`, and `docs/UPSTREAM_PARITY.md`; verifies every required upstream-vendored fixture corpus is present + non-empty. **CI gate** since R303.
-- `python3 scripts/check-reference-artifacts.py` — validates the vendored Haskell `.reference-haskell-cardano-node/install/` tree: required binaries are present + executable, every per-network share dir carries the canonical operator-config bundle, and `cardano-node --version` reports the policy tag from `docs/parity-matrix.json::reference.tag`. Local/operator gate (CI does not carry the 1.3 GB install tree).
+- `python3 scripts/check-reference-artifacts.py` — validates the vendored Haskell `.reference-haskell-cardano-node/install/` tree: required binaries are present + executable, every per-network share dir carries the canonical operator-config bundle, and `cardano-node --version` reports the policy tag from `docs/parity-matrix.json::reference.tag`. Linux/WSL local/operator gate (CI does not carry the 1.3 GB install tree).
 - `python3 scripts/audit-strict-mirror.py` — rebuilds `docs/strict-mirror-audit.tsv` after Phase B graduates rows. Required when the audit-table verdict for a Rust file changes (e.g., `git mv` rename, new `## Naming parity` block, or a new file lands).
 - `python3 .claude/scripts/filetree.py check` — flags stale `.claude/filetree/manifest.json` description entries. Required when filename-mirror restructures (R271-style) move tracked files.
-- `bash scripts/setup-reference.sh [--force]` — refreshes `.reference-haskell-cardano-node/` to the policy IntersectMBO tag. Required when the tag bumps or the local checkout drifts.
+- `bash scripts/setup-reference.sh [--force]` — refreshes `.reference-haskell-cardano-node/` to the policy IntersectMBO tag. Required when the tag bumps or the local reference snapshot drifts.
 
 **Strict 1:1 file-mirror policy (R274 onward).** Every production `.rs`
 under `crates/<crate>/src/` and `crates/node/*/src/` either mirrors a single

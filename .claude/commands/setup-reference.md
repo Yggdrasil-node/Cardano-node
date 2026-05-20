@@ -16,13 +16,23 @@ times — bump in lockstep across:
 - `docs/parity-matrix.json` (`reference.tag` + every `haskell_reference.path`)
 - `CLAUDE.md` and root `AGENTS.md` prose
 
-Pass `--force` to wipe and re-clone (~1.3 GB, ~5 minutes):
+Pass `--sources-only` to refresh the metadata-free source snapshot without
+downloading or executing the Linux binary bundle. This mode is portable across
+Windows/macOS/Linux and is enough for path-based parity checks:
+
+```bash
+bash scripts/setup-reference.sh --sources-only
+```
+
+Pass `--force` to wipe and rebuild the full source snapshot plus compiled
+install (~1.3 GB, ~5 minutes). The full install path requires Linux/WSL because
+the upstream release artifact is a Linux executable bundle:
 
 ```bash
 bash scripts/setup-reference.sh --force
 ```
 
-After the script completes, verify:
+After the full script completes on Linux/WSL, verify:
 
 - `.reference-haskell-cardano-node/install/bin/cardano-node --version`
   reports the policy tag.

@@ -12,9 +12,9 @@
 //! are shared between the LSQ and TxMonitor session loops.
 //!
 //! Reference:
-//! - <https://github.com/IntersectMBO/ouroboros-network/tree/master/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxSubmission>
-//! - <https://github.com/IntersectMBO/ouroboros-network/tree/master/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalStateQuery>
-//! - <https://github.com/IntersectMBO/ouroboros-network/tree/master/ouroboros-network-protocols/src/Ouroboros/Network/Protocol/LocalTxMonitor>
+//! - `.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/lib/Ouroboros/Network/Protocol/LocalTxSubmission`
+//! - `.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/lib/Ouroboros/Network/Protocol/LocalStateQuery`
+//! - `.reference-haskell-cardano-node/deps/ouroboros-network/ouroboros-network/protocols/lib/Ouroboros/Network/Protocol/LocalTxMonitor`
 //!
 //! ## Naming parity
 //!
@@ -25,11 +25,8 @@
 //! inline; Yggdrasil isolates the registry plus drivers for
 //! testability.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
-
-#[cfg(unix)]
-use std::path::PathBuf;
 
 use yggdrasil_consensus::mempool::SharedMempool;
 use yggdrasil_ledger::{CborDecode, Era, LedgerStateSnapshot, MultiEraSubmittedTx, Point, SlotNo};

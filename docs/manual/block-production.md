@@ -120,7 +120,7 @@ $ KES_SKEY_PATH=/secure/preview/kes.skey \
   REQUIRE_TIP_COMPARISON=1 \
   EXPECT_FORGE_EVENTS=1 \
   EXPECT_ADOPTED_EVENTS=1 \
-  crates/node/yggdrasil-node/scripts/run_preview_real_pool_producer.sh
+  scripts/run_preview_real_pool_producer.sh
 ```
 
 For an active generated preview pool, use the wrapper below to combine the
@@ -130,7 +130,7 @@ real-pool producer sign-off:
 ```bash
 $ CRED_DIR=/tmp/ygg-preview-generated-bp-... \
   POOL_ID=pool1... \
-  crates/node/yggdrasil-node/scripts/run_preview_active_pool_signoff.sh
+  scripts/run_preview_active_pool_signoff.sh
 ```
 
 The runner records validation and runtime logs under `/tmp/ygg-real-preview/`
@@ -146,11 +146,11 @@ For fast preview-network runtime testing, the repository includes a harness that
 
 ```bash
 $ cargo build --release -p yggdrasil-node
-$ FORCE=1 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh generate
-$ crates/node/yggdrasil-node/scripts/preview_producer_harness.sh wallet
-$ crates/node/yggdrasil-node/scripts/preview_producer_harness.sh certs
-$ crates/node/yggdrasil-node/scripts/preview_producer_harness.sh validate
-$ RUN_SECONDS=60 crates/node/yggdrasil-node/scripts/preview_producer_harness.sh smoke-relay
+$ FORCE=1 scripts/preview_producer_harness.sh generate
+$ scripts/preview_producer_harness.sh wallet
+$ scripts/preview_producer_harness.sh certs
+$ scripts/preview_producer_harness.sh validate
+$ RUN_SECONDS=60 scripts/preview_producer_harness.sh smoke-relay
 ```
 
 The default output directory is `tmp/preview-producer/`. It contains:
@@ -290,7 +290,7 @@ If you are migrating from `cardano-node` (Haskell) to Yggdrasil:
 5. Run both nodes in parallel for one or more KES periods. Compare `yggdrasil_current_slot`, `yggdrasil_current_block_number`, and forge events against the Haskell node.
 6. Cut over by stopping the Haskell node.
 
-The chain hashes are byte-identical between implementations, so you can hash-compare blocks at the same slot using [`crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh).
+The chain hashes are byte-identical between implementations, so you can hash-compare blocks at the same slot using [`scripts/compare_tip_to_haskell.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/scripts/compare_tip_to_haskell.sh).
 
 ## Where to go next
 

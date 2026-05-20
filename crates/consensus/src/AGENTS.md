@@ -12,17 +12,17 @@ This directory owns consensus implementation modules, not integration glue.
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Consensus source tree](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus)
-- [Protocol modules (`Abstract.hs`, `Praos.hs`, `Praos/Common.hs`, `TPraos.hs`)](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-protocol/src/Ouroboros/Consensus/Protocol)
-- [Cardano-specific consensus integration](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/)
-- [Block forge and header validation](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block)
-- [Consensus Agda specification](.reference-haskell-cardano-node/deps/ouroboros-consensus/docs/agda-spec/)
+- [Consensus source tree](../../../.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus)
+- [Protocol modules (`Abstract.hs`, `Praos.hs`, `Praos/Common.hs`, `TPraos.hs`)](../../../.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol)
+- [Cardano-specific consensus integration](../../../.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/)
+- [Block forge and header validation](../../../.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Block)
+- [Consensus Agda specification](../../../.reference-haskell-cardano-node/deps/ouroboros-consensus/docs/agda-spec/)
 - [Consensus tech report PDF](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf)
 - [Consensus Haddock](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/)
 
 ## Current Phase
 - Preserve the current separation between header verification, epoch nonce evolution, and volatile chain tracking.
-- `diffusion_pipelining.rs` now owns tentative-header criterion/state primitives (`TentativeHeaderState`, `TentativeState`, `PeerPipeliningState`) aligned with upstream `SupportsDiffusionPipelining`, so node/runtime wiring can keep DPvDV policy out of orchestration code.
+- `diffusion_pipelining.rs` now owns tentative-header criterion/state primitives (`TentativeHeaderState`, `TentativeState`, `PeerPipeliningState`) aligned with upstream `SupportsDiffusionPipelining`, so `crates/node/runtime` wiring can keep DPvDV policy out of orchestration code.
 - `in_future.rs` now owns upstream-aligned future-header judgement primitives (`ClockSkew`, `FutureSlotJudgement`, `judge_header_slot`) so node runtime can enforce `InFutureCheck`-style far-future rejection without embedding consensus math in orchestration code.
 - `opcert.rs` now owns `OcertCounters` (upstream `PraosState.csCounters`), a per-pool monotonic OpCert sequence-number tracker with `validate_and_update()` implementing the upstream `currentIssueNo` check from `Ouroboros.Consensus.Protocol.Praos`. Errors: `NoCounterForKeyHash`, `OcertCounterTooOld`, `OcertCounterTooFar`.
 - `nonce.rs` now owns `NonceDerivation` enum (TPraos / Praos): TPraos uses simple `Blake2b-256(output)` (upstream `hashVerifiedVRF`); Praos uses `Blake2b-256(Blake2b-256("N" || output))` (upstream `vrfNonceValue` from `Ouroboros.Consensus.Protocol.Praos.VRF`). `derive_vrf_nonce()` dispatches by derivation variant. `apply_block()` accepts `NonceDerivation` parameter so node-level sync can select per-era derivation.

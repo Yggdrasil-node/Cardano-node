@@ -55,7 +55,7 @@ implies = "safe-to-deploy"
 #
 # Example shape (commented out):
 # [[audits.ed25519-dalek]]
-# who = "FractionEstate <FractionEstate@users.noreply.github.com>"
+# who = "FractionEstate <noreply@fraction.estate>"
 # criteria = "crypto-reviewed"
 # version = "2.1.1"
 # notes = "Verified constant-time scalar ops; Zeroize on SigningKey; no unsafe in API surface."

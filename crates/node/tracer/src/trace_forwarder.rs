@@ -31,7 +31,7 @@
 //! fire-and-forget egress so the `Forwarder` backend doesn't crash
 //! the tracer pipeline when the operator configures it.  A startup
 //! `Startup.TraceForwarderStub` Warning makes the parity gap explicit
-//! to operators (see `crates/node/yggdrasil-node/src/main.rs`).  A real `cardano-tracer`
+//! to operators (see `crates/node/cardano-node/src/main.rs`).  A real `cardano-tracer`
 //! will reject the wire format at the transport level; events routed
 //! only to the `Forwarder` backend are silently dropped.  Plain stdout
 //! backends (`Stdout HumanFormatColoured`, `Stdout HumanFormat`,
@@ -94,8 +94,11 @@
 //! Upstream-side splits client / protocol / types into separate
 //! modules; Yggdrasil collapses into one file pending Phase D.
 
+#[cfg(unix)]
 use std::os::unix::net::UnixDatagram;
+#[cfg(unix)]
 use std::path::Path;
+#[cfg(unix)]
 use std::sync::Mutex;
 
 use yggdrasil_ledger::cbor::Encoder;
@@ -625,17 +628,30 @@ impl std::error::Error for TraceObjectDecodeError {}
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
+#[cfg(unix)]
 pub struct TraceForwarder {
     socket_path: String,
     socket: Mutex<Option<UnixDatagram>>,
 }
 
+#[derive(Debug)]
+#[cfg(not(unix))]
+pub struct TraceForwarder {
+    socket_path: String,
+}
+
 impl TraceForwarder {
+    #[cfg(unix)]
     pub fn new(socket_path: String) -> Self {
         Self {
             socket_path,
             socket: Mutex::new(None),
         }
+    }
+
+    #[cfg(not(unix))]
+    pub fn new(socket_path: String) -> Self {
+        Self { socket_path }
     }
 
     /// Returns the configured Unix-socket path.  Used by the runtime to
@@ -646,25 +662,33 @@ impl TraceForwarder {
     }
 
     pub fn send(&self, event: &serde_json::Value) {
-        // CBOR encoding via ciborium (RFC 8949). Replaces unmaintained
-        // serde_cbor (RUSTSEC-2021-0127). Audit finding M-4.
-        let mut encoded = Vec::new();
-        if ciborium::ser::into_writer(event, &mut encoded).is_err() {
-            return;
+        #[cfg(not(unix))]
+        {
+            let _ = event;
         }
-        let mut sock_guard = self
-            .socket
-            .lock()
-            .expect("trace forwarder socket mutex poisoned");
-        if sock_guard.is_none() {
-            let sock = UnixDatagram::unbound().ok();
-            if let Some(ref s) = sock {
-                let _ = s.connect(Path::new(&self.socket_path));
+
+        #[cfg(unix)]
+        {
+            // CBOR encoding via ciborium (RFC 8949). Replaces unmaintained
+            // serde_cbor (RUSTSEC-2021-0127). Audit finding M-4.
+            let mut encoded = Vec::new();
+            if ciborium::ser::into_writer(event, &mut encoded).is_err() {
+                return;
             }
-            *sock_guard = sock;
-        }
-        if let Some(ref sock) = *sock_guard {
-            let _ = sock.send(&encoded);
+            let mut sock_guard = self
+                .socket
+                .lock()
+                .expect("trace forwarder socket mutex poisoned");
+            if sock_guard.is_none() {
+                let sock = UnixDatagram::unbound().ok();
+                if let Some(ref s) = sock {
+                    let _ = s.connect(Path::new(&self.socket_path));
+                }
+                *sock_guard = sock;
+            }
+            if let Some(ref sock) = *sock_guard {
+                let _ = sock.send(&encoded);
+            }
         }
     }
 }

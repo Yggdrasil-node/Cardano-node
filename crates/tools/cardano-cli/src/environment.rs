@@ -6,7 +6,7 @@
 //! without explicit flags.
 //!
 //! R297 migrates `resolve_upstream_reference_paths` and
-//! `extract_reference_network_magic` from `crates/node/yggdrasil-node/src/commands/cardano_cli.rs`
+//! `extract_reference_network_magic` from `crates/node/cardano-node/src/commands/cardano_cli.rs`
 //! into this module. Both helpers were authored in the node binary
 //! before the new crate landed; the migration keeps cross-crate
 //! decoupling clean by taking `network_dir: &str` and `fallback_magic:
@@ -27,7 +27,7 @@ use serde_json::json;
 /// 1. Operator-supplied `--upstream-config-root` flag.
 /// 2. `CARDANO_NODE_UPSTREAM_CONFIG_ROOT` env var.
 /// 3. `/tmp/cardano-tooling/share` default (operator convention).
-/// 4. Vendored `crates/node/yggdrasil-node/configuration/<network>/` as last-resort.
+/// 4. Vendored `configuration/<network>/` as last-resort.
 ///
 /// Mirrors upstream `getEnvCli*` resolution from
 /// `Cardano.CLI.Environment`.
@@ -64,10 +64,10 @@ pub fn resolve_socket_path(override_path: Option<PathBuf>) -> Option<PathBuf> {
 /// `"preprod"`, `"preview"`); `upstream_config_root` is the operator-
 /// supplied override (typically `--upstream-config-root /tmp/cardano-tooling/share`).
 /// When the override is absent we fall back to `/tmp/cardano-tooling/share`,
-/// then to the vendored `crates/node/yggdrasil-node/configuration/<network_dir>` directory so
+/// then to the vendored `configuration/<network_dir>` directory so
 /// the subcommand still works without an upstream install.
 ///
-/// Migrated from `crates/node/yggdrasil-node/src/commands/cardano_cli.rs` in R297. Takes
+/// Migrated from `crates/node/cardano-node/src/commands/cardano_cli.rs` in R297. Takes
 /// `network_dir: &str` rather than `yggdrasil_node_config::NetworkPreset`
 /// to keep the new crate independent of the node binary's config types.
 pub fn resolve_upstream_reference_paths(
@@ -77,7 +77,7 @@ pub fn resolve_upstream_reference_paths(
     let mut root =
         upstream_config_root.unwrap_or_else(|| PathBuf::from("/tmp/cardano-tooling/share"));
     if !root.join(network_dir).is_dir() {
-        root = PathBuf::from("crates/node/yggdrasil-node/configuration");
+        root = PathBuf::from("configuration");
     }
 
     let config_path = root.join(network_dir).join("config.json");
@@ -98,7 +98,7 @@ pub fn resolve_upstream_reference_paths(
 /// `TestnetMagic` -> `NetworkMagic` -> the `networkMagic` field of the
 /// `ShelleyGenesisFile` it references -> `fallback_magic`.
 ///
-/// Migrated from `crates/node/yggdrasil-node/src/commands/cardano_cli.rs` in R297. Takes
+/// Migrated from `crates/node/cardano-node/src/commands/cardano_cli.rs` in R297. Takes
 /// `fallback_magic: u32` rather than deriving it from a NetworkPreset.
 pub fn extract_reference_network_magic(config_path: &Path, fallback_magic: u32) -> u32 {
     let config_json = std::fs::read(config_path)
@@ -149,7 +149,7 @@ pub fn extract_reference_network_magic(config_path: &Path, fallback_magic: u32) 
 /// stdout (the body of the `cardano-cli show-upstream-config`
 /// subcommand).
 ///
-/// Migrated from `crates/node/yggdrasil-node/src/commands/cardano_cli.rs` in R297. The node
+/// Migrated from `crates/node/cardano-node/src/commands/cardano_cli.rs` in R297. The node
 /// binary's existing handler now calls into this function.
 pub fn run_show_upstream_config(
     network_name: &str,

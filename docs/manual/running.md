@@ -41,6 +41,7 @@ ExecStart=/usr/local/bin/yggdrasil-node run \
     --database-path /var/lib/yggdrasil/db \
     --metrics-port 12798 \
     --port 3001
+Environment=YGGDRASIL_CONFIG_ROOT=/usr/local/share/yggdrasil/configuration
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
@@ -75,6 +76,9 @@ Apply and enable:
 
 Notes on the unit file:
 
+- **`YGGDRASIL_CONFIG_ROOT`**. This pins `--network mainnet` to the installed
+  preset bundle. The binary also probes `/usr/local/share/yggdrasil/configuration`
+  by default, but the explicit environment line makes custom prefixes obvious.
 - **`KillSignal=SIGINT`**. Yggdrasil installs a `tokio::signal::ctrl_c` handler that triggers graceful shutdown. systemd's default `SIGTERM` is also handled, but `SIGINT` matches the development behaviour.
 - **`TimeoutStopSec=60`**. Graceful shutdown drains in-flight peers; 60 s gives ample headroom. The actual drain typically completes in under 10 s.
 - **`Restart=always`**. The node will recover automatically from any uncaught panic. With proper logging, this should be a rare event — investigate every restart.
@@ -148,7 +152,7 @@ After a clean or unclean shutdown, restarting from the same `--database-path`:
 
 Total restart-to-syncing time on mainnet is typically under 60 seconds.
 
-For an automated restart-resilience verification, see [`node/scripts/restart_resilience.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/node/scripts/restart_resilience.sh) and runbook §4.
+For an automated restart-resilience verification, see [`scripts/restart_resilience.sh`](https://github.com/yggdrasil-node/Cardano-node/blob/main/scripts/restart_resilience.sh) and runbook §4.
 
 ## Updating the binary
 

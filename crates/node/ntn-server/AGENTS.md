@@ -19,8 +19,7 @@ PeerSharing. Mirrors upstream `Ouroboros.Network.Server`.
 
 ## Naming parity
 
-Synthesis crate. The lib.rs (former node/src/server.rs) carries the
-`## Naming parity` stanza.
+Synthesis crate. The lib.rs carries the `## Naming parity` stanza.
 
 ## R-arc tracking
 

@@ -10,7 +10,7 @@ for protocol-behavior changes; those go through `/parity-plan` first.
 
 ## Inputs
 
-- Target file (`crates/<crate>/src/<file>.rs` or `node/src/<file>.rs`).
+- Target file (`crates/<crate>/src/<file>.rs` or `crates/node/<crate>/src/<file>.rs`).
 - Round id (e.g. `R273i`).
 - Upstream Haskell mirror path under `.reference-haskell-cardano-node/`.
 

@@ -4,7 +4,8 @@
 //! machine that tracks per-connection lifecycle from reservation through
 //! negotiation, active data transfer, and termination.
 //!
-//! Reference: `ouroboros-network-framework/src/Ouroboros/Network/ConnectionManager/Types.hs`
+//! Reference:
+//! `ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/ConnectionManager/Types.hs`
 //! and `State.hs`.
 //!
 //! ## Naming parity
@@ -644,7 +645,7 @@ pub mod timeouts {
     ///
     /// Applied when a server driver is waiting for the next client message
     /// (client has protocol agency).  Corresponds to upstream `shortWait`
-    /// in `ouroboros-network-protocols` (60 s).  The TxSubmission blocking
+    /// in `ouroboros-network/ouroboros-network/protocols/lib` (60 s).  The TxSubmission blocking
     /// request is the only exception and has no deadline (`waitForever`).
     pub const PROTOCOL_RECV_TIMEOUT: Duration = Duration::from_secs(60);
 }

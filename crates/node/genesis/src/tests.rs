@@ -860,7 +860,7 @@ fn build_plutus_cost_model_rejects_partial_bitwise_tail_array() {
 /// extend `CONWAY_V3_PARAM_NAMES` AND extend `SUPPORTED_CONWAY_V3
 /// _ARRAY_LENGTHS` in lockstep.
 ///
-/// Reference: `crates/plutus/AGENTS.md:70`; upstream `cardano-node`
+/// Reference: `crates/plutus/AGENTS.md`; upstream `cardano-node`
 /// `cost-model.json` `plutusV3CostModel`.
 #[test]
 fn conway_v3_param_names_table_size_pinned_to_max_supported_length() {
@@ -952,7 +952,7 @@ fn shelley_genesis_json_round_trip() {
 #[test]
 fn parse_real_mainnet_shelley_genesis() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("configuration/mainnet/shelley-genesis.json");
+        .join("../../../configuration/mainnet/shelley-genesis.json");
     if !path.exists() {
         return; // skip if not present in CI
     }
@@ -966,7 +966,7 @@ fn parse_real_mainnet_shelley_genesis() {
 #[test]
 fn parse_real_mainnet_alonzo_genesis() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("configuration/mainnet/alonzo-genesis.json");
+        .join("../../../configuration/mainnet/alonzo-genesis.json");
     if !path.exists() {
         return; // skip if not present in CI
     }
@@ -978,7 +978,7 @@ fn parse_real_mainnet_alonzo_genesis() {
 
 /// Pin the JSON-parse path for preprod's `genDelegs` field byte-for-byte.
 ///
-/// Loads the vendored `crates/node/yggdrasil-node/configuration/preprod/shelley-genesis.json` —
+/// Loads the vendored `configuration/preprod/shelley-genesis.json` —
 /// which `diff` confirms is byte-identical to
 /// `.reference-haskell-cardano-node/install/share/preprod/shelley-genesis.json` —
 /// runs it through `load_shelley_genesis_bootstrap`, and asserts the 7
@@ -1001,7 +1001,7 @@ fn parse_real_mainnet_alonzo_genesis() {
 #[test]
 fn parse_real_preprod_shelley_genesis_gen_delegs_matches_upstream() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("configuration/preprod/shelley-genesis.json");
+        .join("../../../configuration/preprod/shelley-genesis.json");
     if !path.exists() {
         return;
     }
@@ -1084,7 +1084,7 @@ fn parse_real_preprod_shelley_genesis_gen_delegs_matches_upstream() {
 #[test]
 fn parse_real_mainnet_conway_genesis() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("configuration/mainnet/conway-genesis.json");
+        .join("../../../configuration/mainnet/conway-genesis.json");
     if !path.exists() {
         return; // skip if not present in CI
     }
@@ -1240,14 +1240,10 @@ fn compute_byron_genesis_file_hash_rejects_raw_control_byte_in_string() {
 
 #[test]
 fn compute_byron_genesis_file_hash_matches_vendored_preset_hashes() {
-    // Wave 5 PR 7+8: the vendored `configuration/` tree stayed with
-    // the `yggdrasil-node` binary crate when this module was
-    // extracted. Hop one level up from this crate's manifest
-    // (`crates/node/genesis/`) and into the sibling binary's tree.
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("genesis crate manifest dir has a parent")
-        .join("yggdrasil-node");
+    // The vendored `configuration/` tree mirrors upstream's repository
+    // root layout; hop from this crate's manifest
+    // (`crates/node/genesis/`) back to the workspace root.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cases = [
         (
             "mainnet",

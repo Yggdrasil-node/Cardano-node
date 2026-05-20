@@ -23,7 +23,7 @@ Subcommands:
 | `validate-config`   | Operator preflight — config + storage + credentials sanity. |
 | `status`            | Inspect on-disk database and report sync state. |
 | `default-config`    | Emit the default JSON config to stdout.         |
-| `cardano-cli`       | Pure-Rust subset of upstream `cardano-cli`.     |
+| `cardano-cli`       | Pure-Rust `cardano-cli` compatibility wrapper.  |
 | `query`             | NtC LocalStateQuery dispatcher (Unix only).     |
 | `submit-tx`         | NtC LocalTxSubmission (Unix only).              |
 
@@ -34,6 +34,13 @@ Global flags (apply to most subcommands):
 --network <preset>       mainnet | preprod | preview.
 --database-path <path>   Override storage_dir.
 ```
+
+`--network` resolves preset-relative files from the active preset root. Source
+checkouts use `configuration/<preset>/`, release installs use
+`/usr/local/share/yggdrasil/configuration/<preset>/`, Docker images use
+`/usr/share/yggdrasil/configuration/<preset>/`, and `YGGDRASIL_CONFIG_ROOT`
+overrides those defaults when it points at a root containing `mainnet/`,
+`preprod/`, and `preview/`.
 
 ---
 
@@ -228,23 +235,40 @@ Edit the file, then run with `--config /etc/yggdrasil/config.json`.
 
 ## `cardano-cli`
 
-A pure-Rust subset of upstream `cardano-cli`. Useful when you want to drop the Haskell-toolchain dependency for simple checks.
+A pure-Rust `cardano-cli` compatibility wrapper. Reusable command logic lives
+in `crates/tools/cardano-cli`; this node subcommand adapts the
+`CardanoCliCommand` variants declared in `crates/node/cardano-node/src/cli.rs`.
+The standalone `yggdrasil-cardano-cli` binary owns the broader 40-command C-arc
+surface.
 
-### Subcommands
+### Synopsis
 
 ```
-yggdrasil-node cardano-cli version
-yggdrasil-node cardano-cli show-upstream-config --network <preset>
-yggdrasil-node cardano-cli query-tip --network <preset> [--database-path <path>]
+yggdrasil-node cardano-cli [--network <preset>] [--upstream-config-root <path>] <subcommand> [flags]
 ```
 
-| Sub-subcommand           | Purpose |
-|--------------------------|---------|
-| `version`                | Print binary version. |
-| `show-upstream-config`   | Print the resolved preset config to stdout. |
-| `query-tip`              | Read tip slot/block/hash from on-disk storage (no network calls). |
+### Current Wrapper Groups
 
-For the full upstream `cardano-cli` surface (transaction building, key derivation, governance, etc.), continue using the Haskell `cardano-cli` against Yggdrasil's NtC socket.
+| Group | Subcommands |
+|-------|-------------|
+| Introspection | `version`, `show-upstream-config` |
+| LocalStateQuery | `query-tip`, `query-utxo`, `query-protocol-parameters`, `query-stake-pools`, `query-stake-distribution`, `query-current-era`, `query-chain-block-no`, `query-system-start`, `query-current-epoch`, `query-expected-network-id`, `query-era-history`, `query-treasury-and-reserves`, `query-drep-stake-distr`, `query-constitution`, `query-gov-state`, `query-drep-state`, `query-account-state`, `query-genesis-delegations`, `query-stability-window`, `query-num-dormant-epochs`, `query-deposit-pot`, `query-ledger-counts`, `query-reward-balance`, `query-delegations-and-rewards`, `query-stake-pool-params` |
+| Transaction | `transaction-submit`, `transaction-txid`, `transaction-sign` |
+| Keys and addresses | `address-key-gen`, `address-key-hash`, `address-build`, `stake-address-key-gen`, `stake-address-build` |
+
+Examples:
+
+```bash
+yggdrasil-node cardano-cli --network preprod version
+yggdrasil-node cardano-cli --network preprod show-upstream-config
+yggdrasil-node cardano-cli --network preprod query-tip --socket-path /run/yggdrasil/node.sock
+yggdrasil-node cardano-cli transaction-txid --tx-file tx.signed
+```
+
+For commands outside this wrapper, prefer the standalone
+`yggdrasil-cardano-cli` when it already covers the workflow. Use the upstream
+Haskell `cardano-cli` against Yggdrasil's NtC socket for upstream subcommands
+that have not yet been prioritized for the Rust port.
 
 ---
 

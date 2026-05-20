@@ -1,9 +1,9 @@
 # Guidance for the workspace-level scripts under `scripts/`.
 
-This directory hosts vendored-tree refresh tooling plus the four CI
-parity validators. None of the scripts execute Rust — they exist to
-police the boundary between the vendored upstream tree, the per-file
-parity allowlists, and the on-disk corpora used by the workspace tests.
+This directory hosts vendored-tree refresh tooling, CI parity validators, and
+operator/runbook shell helpers. The split matches the upstream Haskell
+repository's root `scripts/` placement while keeping validator scripts and
+operator scripts documented separately.
 
 ## Directory shape
 
@@ -12,9 +12,13 @@ scripts/
 ├── setup-reference.sh             # one-shot vendored-tree fetch (refresh helper)
 ├── audit-strict-mirror.py         # discovery script, populates docs/strict-mirror-audit.tsv
 ├── check-strict-mirror.py         # CI gate (R288): file-mirror drift detector
+├── check-stale-placement.py       # CI gate: post-reorganization path/status guard
 ├── check-parity-matrix.py         # CI gate: parity-matrix.json schema + paths
 ├── check-fixture-manifest.py      # CI gate (R303): cardano-base SHA pin consistency
-└── check-reference-artifacts.py   # local-only: validates .reference-haskell-cardano-node/install/
+├── check-reference-artifacts.py   # Linux/WSL local-only: validates .reference-haskell-cardano-node/install/
+├── check_upstream_drift.sh        # operator pin-drift report
+├── run-tools.sh                   # sister-tool launcher
+└── *producer* / *soak* helpers    # operator runbook harnesses
 ```
 
 ## Validators
@@ -22,7 +26,7 @@ scripts/
 ### `check-strict-mirror.py` (R275 warn-only → R288 fail-build, R311 drift-aware)
 
 Walks every production `.rs` under `crates/<crate>/src/` (including
-the `crates/node/yggdrasil-node/src/` binary-crate tree after Wave 4
+the `crates/node/cardano-node/src/` binary-crate tree after Wave 4
 PR 6 relocation), excluding `**/tests/**` + `target/`, and verifies
 each file either:
 
@@ -58,12 +62,84 @@ Runs on every push via `.github/workflows/ci.yml`. Failure modes:
   (e.g., `debug` instead of `/target/debug/`) and `git add` the file
   once the ignore rule is fixed.
 
+### `check-stale-placement.py` (CI gate)
+
+Validates current, non-historical surfaces after the node-crate
+reorganization. The guard fails if live code, CI, generated navigation,
+commands, resolved Cargo metadata, or living docs point at stale placements:
+the legacy node-local binary crate, old root-node or yggdrasil-node shorthand
+metadata/tests paths, node-local configuration/scripts directories,
+nested configuration/scripts under any `crates/node/*` package, or the old
+Claude skill path. It also fails on exact stale filesystem directories even if
+they are empty and untracked, including nested
+`crates/node/*/{configuration,scripts}/` and old top-level sister-tool crate
+directories.
+The same guard rejects stale current-status claims that proved easy to
+reintroduce during the cleanup: node-local parameterized LocalStateQuery
+wording, old cardano-cli subcommand counts and three-command subset wording,
+tx-generator/cardano-testnet still being described as blocked by the closed
+cardano-cli C-arc, and the closed workspace-member gap.
+It also fails if the vendored Haskell reference snapshot contains nested
+`.git` metadata, is not ignored by Git, or would otherwise stop being a
+metadata-free corpus. A `.gitmodules` entry or Git-index submodule entry for
+`.reference-haskell-cardano-node/` is rejected for the same reason. Any regular
+Git-index entry under that reference tree is also rejected; the reference corpus
+must remain local-only.
+The guard also asserts the accepted replacement placements still exist:
+`crates/node/cardano-node/{Cargo.toml,src/main.rs}`,
+the canonical `configuration/{mainnet,preprod,preview}/` operator bundles
+(`config.json`, `config-legacy.json`, `topology.json`,
+`{byron,shelley,alonzo,conway}-genesis.json`, `peer-snapshot.json`,
+`submit-api-config.json`, `tracer-config.json`, plus `checkpoints.json` where
+the preset carries it), `configuration/poolMetaData.json`, `scripts/run-tools.sh`,
+root reference/operator helpers under `scripts/` (`setup-reference.sh`,
+`install_haskell_cardano_node.sh`, `compare_tip_to_haskell.sh`,
+`parallel_blockfetch_soak.sh`, `preview_producer_harness.sh`, and
+`yggdrasil-node.service`), and
+`.claude/skills/cardano-haskell-node/SKILL.md`.
+Every tracked root `scripts/*.sh` file must also keep Git executable mode
+`100755`; the systemd unit template remains non-executable.
+Release/repro packaging surfaces are pinned too: `.github/workflows/release.yml`
+and `.github/workflows/repro-check.yml` must stage root `configuration/` and
+root `scripts/`, and the Dockerfile must copy root `configuration/` plus its
+root helper scripts from `scripts/`. Docker must also pin
+`YGGDRASIL_CONFIG_ROOT=/usr/share/yggdrasil/configuration` to the copied
+bundle. The release installer must require those bundles in the extracted
+archive and install them under `<prefix>/share/yggdrasil/`. The packaged
+`scripts/yggdrasil-node.service` unit must set
+`YGGDRASIL_CONFIG_ROOT=/usr/local/share/yggdrasil/configuration`. The
+`yggdrasil-node --network <preset>` resolver must also keep probing the
+installed configuration root `<prefix>/share/yggdrasil/configuration` after
+honoring `YGGDRASIL_CONFIG_ROOT`, so release installs do not depend on a source
+checkout.
+Cargo metadata is also bucket-checked: the shipped `yggdrasil-node` package
+must resolve from `crates/node/cardano-node/`, `yggdrasil-node-*` support
+packages must remain under `crates/node/`, and sister-tool packages must remain
+under `crates/tools/`.
+
+Historical evidence is intentionally excluded: tagged `CHANGELOG.md`
+sections, `docs/archive/**`, pre-R505 `docs/operational-runs/*.md` records,
+and operational-run logs/artifacts. The `[Unreleased]` changelog section and
+R505+ operational-run markdown from the post-reorganization cleanup window are
+scanned so new notes cannot reintroduce stale placement guidance. Current
+instructions must use `crates/node/cardano-node/`, `configuration/`, and
+`scripts/`.
+
+Run `python3 scripts/check-stale-placement.py --self-test` before the scan
+when editing the guard itself. CI runs both the self-test and the live tree
+scan. The live scan invokes `cargo metadata --no-deps` and falls back to
+`~/.cargo/bin/cargo` when the current shell's PATH has not inherited the Rust
+toolchain yet.
+
 ### `check-parity-matrix.py` (CI gate)
 
 Validates [`docs/parity-matrix.json`](../docs/parity-matrix.json):
 
 - JSON schema (top-level keys, per-entry shape).
 - `reference.tag` matches the policy tag (currently `11.0.1`).
+- `.reference-haskell-cardano-node/REFERENCE_TAG` matches the policy tag.
+- `.reference-haskell-cardano-node/` is metadata-free and contains no nested
+  `.git` directory or file.
 - Every `haskell_reference[*].path` exists under
   `.reference-haskell-cardano-node/...` at validation time.
 - Every `rust_surface[*].path` exists in the workspace.
@@ -89,8 +165,9 @@ vendored corpus directory is missing the SHA-named subdirectory.
 
 ### `check-reference-artifacts.py` (R303, local-only)
 
-NOT wired to CI (because CI doesn't carry the 1.3 GB vendored install).
-Validates `.reference-haskell-cardano-node/install/`:
+NOT wired to CI (because CI doesn't carry the 1.3 GB vendored install) and
+requires Linux/WSL because the IntersectMBO release bundle contains Linux
+executables. Validates `.reference-haskell-cardano-node/install/`:
 
 - `bin/cardano-node --version` matches the policy tag (currently `11.0.1`).
 - 9 binaries present + executable: `cardano-node`, `cardano-cli`,
@@ -110,11 +187,21 @@ vendored install lines up with the policy tag.
 ### `setup-reference.sh`
 
 One-shot script that brings `.reference-haskell-cardano-node/` to the
-policy tag. It clones (or pulls) the upstream `cardano-node` repo +
-all dependency repos AND fetches the corresponding compiled install
-bundle, populating `install/bin/`, `install/share/`, and the
-`<network>/db/` ChainDBs. The `--force` flag rebuilds from scratch
-even if the directory exists.
+policy tag. It uses temporary shallow clones, copies metadata-free source
+snapshots for the upstream `cardano-node` repo + all dependency repos, and
+fetches the corresponding compiled install bundle, populating `install/bin/`,
+`install/share/`, and the `<network>/db/` ChainDBs. The `--force` flag
+rebuilds from scratch even if the directory exists.
+
+`--sources-only` is portable and stops after refreshing the metadata-free
+source snapshot. The full install path requires Linux/WSL because it downloads
+and runs IntersectMBO's `linux-amd64` binary bundle.
+
+The refresh writes `.reference-haskell-cardano-node/REFERENCE_TAG` after the
+top-level source snapshot is materialised. That file replaces the old
+`git describe` check; the reference tree intentionally contains no nested
+`.git` metadata. `setup-reference.sh` fails if a future source refresh leaks
+git metadata back into the reference tree.
 
 The `CARDANO_NODE_VERSION` constant inside the script MUST stay in
 lockstep with `docs/parity-matrix.json::reference.tag`,
@@ -160,9 +247,11 @@ which filename is "in scope".
 - The four CI validators (strict-mirror, parity-matrix, fixture-manifest,
   reference-artifacts-local) MUST stay green between rounds. A failing
   validator is a closure-criterion violation, not a "fix later" item.
-- New scripts MUST follow the `kebab-case.py` naming convention.
-- Scripts MUST use `python3` (no virtualenv); only stdlib + system
-  cargo/git CLI invocations are allowed. No third-party Python deps.
+- New Python validators MUST follow the `kebab-case.py` naming convention and
+  use `python3` (no virtualenv); only stdlib + system cargo/git CLI
+  invocations are allowed. No third-party Python deps.
+- New operator shell helpers SHOULD use descriptive `snake_case.sh` names,
+  matching the existing runbook harnesses.
 - `setup-reference.sh` and `check-reference-artifacts.py` MUST cite
   the policy tag from `docs/parity-matrix.json::reference.tag` rather
   than hardcoding it; a tag bump should require updating exactly one
@@ -176,21 +265,20 @@ which filename is "in scope".
 ## Maintenance Guidance
 
 - When adding a new validator, decide CI vs local-only first
-  (`check-reference-artifacts.py` is local-only because the install
-  bundle is 1.3 GB).
+  (`check-reference-artifacts.py` is Linux/WSL local-only because the install
+  bundle is 1.3 GB and contains Linux executables).
 - Wire CI validators into `.github/workflows/ci.yml` after the existing
   cargo gates; warn-only first if the validator surfaces existing
   violations, then promote to fail-build once violations are resolved
   (the R275 → R288 pattern).
 - Document a new validator in CLAUDE.md's Commands section + the
   enclosing crate AGENTS.md if its scope is crate-local.
-- The `scripts/` tree is small by design — resist adding shell helpers
-  that belong in `crates/node/yggdrasil-node/scripts/` (operator-side)
-  or `.claude/scripts/` (Claude Code session-side).
+- Keep CI validators and operator harnesses named by purpose; do not add
+  session-local helpers here. Claude Code helpers belong in `.claude/scripts/`.
 
 ## Official Upstream References
 
-- Vendored upstream tree (gitignored, refreshed by `setup-reference.sh`):
+- Vendored upstream tree (gitignored, metadata-free, refreshed by `setup-reference.sh`):
   `.reference-haskell-cardano-node/`
 - Policy tag source-of-truth: [`docs/parity-matrix.json`](../docs/parity-matrix.json) (`reference.tag`)
 - Strict-mirror allowlist source-of-truth: [`docs/strict-mirror-audit.tsv`](../docs/strict-mirror-audit.tsv)

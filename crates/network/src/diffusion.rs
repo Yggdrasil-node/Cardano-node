@@ -9,15 +9,15 @@
 //! listeners, mux spawning) belongs in `crates/node/`.
 //!
 //! Reference:
-//! - `ouroboros-network-framework/src/Ouroboros/Network/Mux.hs`
+//! - `ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/Mux.hs`
 //!   (`TemperatureBundle`, `OuroborosBundle`, `ControlMessage`)
-//! - `ouroboros-network-framework/src/Ouroboros/Network/ConnectionHandler.hs`
+//! - `ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/ConnectionHandler.hs`
 //!   (`Handle`, `MkMuxConnectionHandler`)
-//! - `ouroboros-network-framework/src/Ouroboros/Network/Server2.hs`
+//! - `ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/Server2.hs`
 //!   (accept-loop rate limiting)
-//! - `ouroboros-network/src/Ouroboros/Network/PeerSelection/PeerStateActions.hs`
+//! - `ouroboros-network/ouroboros-network/lib/Ouroboros/Network/PeerSelection/PeerStateActions.hs`
 //!   (`PeerConnectionHandle`, `PeerStateActions`)
-//! - `ouroboros-network-framework/src/Ouroboros/Network/InboundGovernor.hs`
+//! - `ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/InboundGovernor.hs`
 //!   (`RethrowPolicy`, `ErrorPolicy`)
 //!
 //! ## Naming parity
@@ -30,7 +30,7 @@
 //! `Ouroboros.Network.ConnectionHandler.hs` (Handle,
 //! MkMuxConnectionHandler), and `Cardano.Network.Diffusion`
 //! config types. Upstream spreads these across
-//! `network-framework`; Yggdrasil collapses the data-only
+//! `framework/lib`; Yggdrasil collapses the data-only
 //! subset here since the runtime composes them.
 
 use std::net::SocketAddr;

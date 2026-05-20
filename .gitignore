@@ -68,14 +68,14 @@ Thumbs.db
 *.swp
 *.swo
 
-# Backups produced by node/scripts/backup_db.sh when run locally
+# Backups produced by scripts/backup_db.sh when run locally
 *.tar.gz.sha256
 yggdrasil-db-*.tar.gz
 
-# Vendored reference checkouts of upstream IntersectMBO source / binaries.
-# These are local-only references for parity research (see
-# docs/REFACTOR_BLUEPRINT.md). They MUST NOT enter the index — Yggdrasil
-# is a clean-room port and treats upstream code as documentation only.
+# Vendored metadata-free reference copies of upstream IntersectMBO source / binaries.
+# These are local-only references for parity research (see AGENTS.md and
+# docs/UPSTREAM_PARITY.md). They MUST NOT enter the index — Yggdrasil is a
+# clean-room port and treats upstream code as documentation only.
 **/.reference-haskell-cardano-node/
 **/.referance-haskell-install/
 **/.reference-haskell-install/
@@ -83,7 +83,7 @@ yggdrasil-db-*.tar.gz
 # Local logs
 *.log
 # Anchored to repo root so it doesn't swallow source dirs like
-# `crates/cardano-tracer/src/handlers/logs/` (R382).
+# `crates/tools/cardano-tracer/src/handlers/logs/` (R382).
 /logs/
 **/run/logs/
 **/*-runtime-logs/

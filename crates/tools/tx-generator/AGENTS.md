@@ -1,8 +1,9 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R335-pattern skeleton). Concrete
-subcommand dispatch lands at **R435+** per the R326-R459
-sister-tools port arc plan. Scope band: **LARGE**.
+**Status:** `partial` (post-R335-pattern skeleton). The old
+cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
+the tx-generator parser/Command/Submission implementation arc plus
+upstream comparison evidence. Scope band: **LARGE**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -19,7 +20,12 @@ Vendored at: `.reference-haskell-cardano-node/bench/tx-generator/` (46 `.hs` fil
 
 ## Mini-arc scope
 
-Transaction-stream load generator for benchmarking. Phase C.3 mini-arc R434-R449 (16 rounds, LARGE). Calibrate sub-tree carve-out (Compiler.hs, Benchmarking/Script/*, PureExample) approved at plan time. R443 lands Submission/SubmissionClient against yggdrasil-node-on-preview; R448 1-hour TPS soak.
+Transaction-stream load generator for benchmarking. The next arc should
+start from the vendored `Command.hs`, `Setup/*`, and
+`GeneratorTx/Submission.hs` surfaces, then finish with an end-to-end
+soak against a yggdrasil node on preview. The Calibrate sub-tree
+carve-out (Compiler.hs, Benchmarking/Script/*, PureExample) remains an
+approved synthesis area from the sister-tools plan.
 
 ## Current functional surface (R335-pattern skeleton)
 
@@ -29,7 +35,8 @@ Transaction-stream load generator for benchmarking. Phase C.3 mini-arc R434-R449
 - ✅ Arg passthrough captured into `parser::Args.passthrough` for
   later-round typed dispatch.
 - ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. Lands at `R435+`.
+  sentinel. The cardano-cli prerequisite is closed; this is now
+  tx-generator implementation debt.
 - ❌ End-to-end behavioral tests against upstream binary — pending
   concrete dispatch.
 
@@ -40,8 +47,8 @@ Transaction-stream load generator for benchmarking. Phase C.3 mini-arc R434-R449
 cargo build --release -p yggdrasil-tx-generator
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh tx-generator --help
-node/scripts/run-tools.sh tx-generator --version
+scripts/run-tools.sh tx-generator --help
+scripts/run-tools.sh tx-generator --version
 
 # Or invoke the binary directly:
 target/release/tx-generator --help
@@ -49,7 +56,7 @@ target/release/tx-generator --help
 
 The binary is named `tx-generator` (matching upstream exactly) — operators
 can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch lands at `R435+`.
+once concrete dispatch and upstream comparison evidence land.
 
 ##  Rules *Non-Negotiable*
 
@@ -64,15 +71,16 @@ once concrete dispatch lands at `R435+`.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 
-Per the R326-R459 plan, this crate's full implementation lands across
-the named mini-arc rounds:
+This crate's full implementation remains an A4 sister-tool build-out:
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- 🟡 Next: **R435** — first concrete-impl round of the mini-arc.
+- 🟡 Next: port the upstream command parser, setup discovery, generator
+  transaction construction, and submission client in strict-mirror-sized
+  slices.
 - 🟡 Closeout — when all subcommands are functional, parity-matrix
   entry advances `partial → verified_11_0_1`. Operators can then
   swap upstream binary for the yggdrasil binary without script
@@ -102,8 +110,8 @@ diff <(.reference-haskell-cardano-node/install/bin/tx-generator --version) \
 - Update this AGENTS.md when concrete subcommand implementations
   land (replace `❌ not yet implemented` rows with `✅ shipped` +
   round number).
-- Keep the per-tool migration round numbers in sync with the
-  authoritative plan file at `/home/daniel/.claude/plans/playful-tickling-plum.md`.
+- Keep the per-tool migration status in sync with
+  `docs/COMPLETION_ROADMAP.md` and `docs/parity-matrix.json`.
 - If upstream ships a new release: refresh the help/version
   fixtures, advance the relevant SHA pin in `upstream_pins.rs`,
   re-run the full cargo gate.

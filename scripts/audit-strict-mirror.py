@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Strict-mirror discovery audit for Yggdrasil's R274 round.
 
-Walks every production `.rs` under `crates/<crate>/src/` and `node/src/`,
+Walks every production `.rs` under `crates/<crate>/src/` and `crates/node/*/src/`,
 derives candidate upstream basenames via snake_case to PascalCase, looks
 each candidate up against the upstream Haskell tree, checks whether the
 Rust file already carries a `## Naming parity` docstring stanza, and
@@ -213,7 +213,7 @@ CRATE_AFFINITY: list[tuple[str, list[str]]] = [
     ("crates/storage/src/", ["/ouroboros-consensus/.../Storage/", "/ouroboros-consensus/"]),
     ("crates/plutus/src/", ["/plutus/"]),
     ("crates/crypto/src/", ["/cardano-base/cardano-crypto", "/cardano-base/"]),
-    ("crates/node/yggdrasil-node/src/", ["/cardano-node/", "/cardano-tracer/"]),
+    ("crates/node/cardano-node/src/", ["/cardano-node/", "/cardano-tracer/"]),
 ]
 
 
@@ -333,7 +333,7 @@ def iter_rust_files() -> list[Path]:
                 continue
             # Skip unit-test modules at any level. Convention: `tests.rs`
             # (sibling to a module file) and `*_tests.rs` (e.g.
-            # `node/src/main_tests.rs`). Tests are inline #[cfg(test)]
+            # `crates/node/cardano-node/src/main_tests.rs`). Tests are inline #[cfg(test)]
             # modules in Yggdrasil and never strict-mirror upstream files.
             if path.name == "tests.rs" or path.name.endswith("_tests.rs"):
                 continue

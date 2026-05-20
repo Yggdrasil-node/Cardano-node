@@ -48,8 +48,7 @@ input.
 
 ## Naming parity
 
-Synthesis crate. The lib.rs (former node/src/block_producer.rs)
-carries the `## Naming parity` stanza.
+Synthesis crate. The lib.rs carries the `## Naming parity` stanza.
 
 ## R-arc tracking
 

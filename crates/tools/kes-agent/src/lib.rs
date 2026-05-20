@@ -54,7 +54,7 @@ pub enum RunError {
     /// — gated on the named kes-agent mini-arc per the
     /// playful-tickling-plum.md plan (R344-R354).
     #[error(
-        "yggdrasil-kes-agent: daemon dispatch deferred (see crates/kes-agent/src/status.rs::\
+        "yggdrasil-kes-agent: daemon dispatch deferred (see crates/tools/kes-agent/src/status.rs::\
          daemon_status for the full deferral rationale). Help/version output IS \
          byte-equivalent to upstream."
     )]

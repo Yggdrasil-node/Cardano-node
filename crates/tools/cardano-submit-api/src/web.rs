@@ -42,6 +42,7 @@
 
 use std::sync::Arc;
 
+#[cfg(unix)]
 use yggdrasil_network::{LocalTxSubmissionClient, LocalTxSubmissionClientError, MiniProtocolNum};
 
 use crate::cli::types::{ConsensusModeParams, NetworkId, SocketPath, TxSubmitNodeParams};
@@ -224,6 +225,7 @@ pub async fn tx_submit_post(
 /// Returns `Ok(())` on `MsgAcceptTx`. Maps reject / protocol /
 /// connection failures into [`TxCmdError`] variants matching upstream
 /// `submitTxToNodeLocal`'s outcome surface.
+#[cfg(unix)]
 async fn submit_via_ntc(
     socket_path: &SocketPath,
     network_id: NetworkId,
@@ -273,6 +275,19 @@ async fn submit_via_ntc(
 
     let _ = client.done().await;
     result
+}
+
+#[cfg(not(unix))]
+async fn submit_via_ntc(
+    socket_path: &SocketPath,
+    network_id: NetworkId,
+    tx_bytes: Vec<u8>,
+) -> Result<(), TxCmdError> {
+    let _ = (network_id, tx_bytes);
+    Err(TxCmdError::TxCmdTxSubmitConnectionError(format!(
+        "node-to-client transaction submission requires Unix-domain socket support: {}",
+        socket_path.as_path().display()
+    )))
 }
 
 /// Convenience: bind to the [`std::net::SocketAddr`] form of a

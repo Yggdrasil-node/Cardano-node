@@ -57,7 +57,7 @@ operator-procedure level is sufficient.
 - **Operator soak vs. upstream binary** — the only remaining
   gate before parity-matrix `partial → verified_11_0_1`
   promotion. Operator runs
-  `node/scripts/compare_db_truncater_to_upstream.sh` against a
+  `scripts/compare_db_truncater_to_upstream.sh` against a
   synthesized upstream + yggdrasil ChainDB pair; the script
   asserts the post-truncate tip slot + block count match. This
   is an operator-side task — the crate code itself is complete.
@@ -69,11 +69,11 @@ operator-procedure level is sufficient.
 cargo build --release -p yggdrasil-db-truncater
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh db-truncater --help
-node/scripts/run-tools.sh db-truncater --version
+scripts/run-tools.sh db-truncater --help
+scripts/run-tools.sh db-truncater --version
 
 # Run a truncation:
-node/scripts/run-tools.sh db-truncater \
+scripts/run-tools.sh db-truncater \
   --db /path/to/chaindb \
   --truncate-after-slot 12345
 
@@ -103,7 +103,7 @@ chains.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 
@@ -115,7 +115,7 @@ Post-R349 status:
 - ✅ Typed config surface (R348).
 - ✅ `Run.hs` equivalent (R349).
 - 🟡 **Closeout** (operator side): run
-  `node/scripts/compare_db_truncater_to_upstream.sh` and report.
+  `scripts/compare_db_truncater_to_upstream.sh` and report.
   When the soak passes, parity-matrix advances `partial →
   verified_11_0_1`.
 
@@ -145,7 +145,7 @@ verified_11_0_1):
 ```bash
 # Synthesize an upstream + yggdrasil ChainDB pair, truncate both
 # to the same slot, diff the resulting tips:
-bash node/scripts/compare_db_truncater_to_upstream.sh
+bash scripts/compare_db_truncater_to_upstream.sh
 ```
 
 ## Maintenance Guidance

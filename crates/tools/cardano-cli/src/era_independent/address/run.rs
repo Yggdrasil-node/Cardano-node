@@ -129,7 +129,7 @@ pub fn run_address_build_cmd(
 /// The Bech32 HRP is `addr` (mainnet, `network_id == 1`) or
 /// `addr_test` (any other network) per
 /// `Cardano.Ledger.Address.serialiseAddrBech32`.
-fn build_shelley_address_bech32(
+pub fn build_shelley_address_bech32(
     network_id: u8,
     payment_hash: &[u8; 28],
     stake_hash: Option<&[u8; 28]>,
@@ -270,27 +270,14 @@ pub fn generate_keypair_to_envelopes(
 
 /// Read 32 cryptographically-secure random bytes from the OS.
 ///
-/// Uses `/dev/urandom` directly rather than pulling a `getrandom` /
-/// `rand` dep into the cardano-cli crate — every supported Yggdrasil
-/// platform provides the kernel entropy device. Non-Unix errors out
-/// cleanly rather than silently downgrading.
+/// Uses `getrandom` so key generation is backed by the host OS CSPRNG
+/// on Unix and non-Unix operator workstations without downgrading to
+/// deterministic or userspace entropy.
 fn read_os_entropy_32_bytes() -> Result<[u8; 32]> {
-    #[cfg(unix)]
-    {
-        use std::io::Read;
-        let mut buf = [0_u8; 32];
-        std::fs::File::open("/dev/urandom")
-            .wrap_err("open /dev/urandom failed")?
-            .read_exact(&mut buf)
-            .wrap_err("read 32 bytes from /dev/urandom failed")?;
-        Ok(buf)
-    }
-    #[cfg(not(unix))]
-    {
-        eyre::bail!(
-            "address key-gen needs /dev/urandom for entropy; not supported on this platform"
-        )
-    }
+    let mut buf = [0_u8; 32];
+    getrandom::fill(&mut buf)
+        .map_err(|e| eyre::eyre!("read 32 bytes from OS CSPRNG failed: {e}"))?;
+    Ok(buf)
 }
 
 /// Write a TextEnvelope JSON file (`{type, description, cborHex}`)
@@ -299,7 +286,7 @@ fn read_os_entropy_32_bytes() -> Result<[u8; 32]> {
 /// `cborHex` is `5820 || payload` — a CBOR major-type-2 byte string
 /// of length 32. When `private = true` on Unix the file is created
 /// `0o600` so the signing key is not world-readable.
-fn write_text_envelope(
+pub fn write_text_envelope(
     path: &Path,
     envelope_type: &str,
     description: &str,

@@ -96,6 +96,16 @@ jobs:
       - name: Strict-mirror drift-guard
         run: python3 scripts/check-strict-mirror.py --fail-on-violation
 
+      # Post-reorganization placement guard.
+      # Keeps current code, docs, generated filetree metadata, and CI from
+      # reintroducing legacy node-local metadata/test paths or node-crate-local
+      # script/configuration directories after the binary-crate,
+      # root-configuration, and root-scripts split.
+      - name: Stale-placement guard
+        run: |
+          python3 scripts/check-stale-placement.py --self-test
+          python3 scripts/check-stale-placement.py
+
       # Fetch upstream Haskell source trees only (no 870 MB install
       # tarball). Required by the parity-matrix validator below, which
       # asserts every `haskell_reference[*].path` exists on disk under

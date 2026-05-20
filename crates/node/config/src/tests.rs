@@ -505,18 +505,15 @@ fn vendored_preset_hashes_match_vendored_genesis_files_end_to_end() {
     // startup: each preset's preset constructor declares the
     // canonical *GenesisHash values, and `verify_known_genesis_hashes`
     // reads the vendored genesis files from
-    // `crates/node/yggdrasil-node/configuration/<network>/` and
+    // `configuration/<network>/` and
     // compares Blake2b-256 of the file bytes. If a vendored file is
     // updated without bumping the in-code hash (or vice versa), this
     // test fails immediately so the drift is caught at CI time.
     //
-    // Wave 5 PR 7+8: the `configuration/` tree stayed with the binary
-    // crate; remap CARGO_MANIFEST_DIR (which is `crates/node/config/`
-    // now) up one level and into `yggdrasil-node/`.
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("config crate manifest dir has a parent")
-        .join("yggdrasil-node");
+    // The `configuration/` tree mirrors upstream's repository-root
+    // layout; remap CARGO_MANIFEST_DIR (`crates/node/config/`) to the
+    // workspace root.
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for &preset in NetworkPreset::all() {
         let cfg = preset.to_config();
         let base = manifest_dir.join("configuration").join(preset.to_string());
@@ -822,12 +819,9 @@ fn mainnet_preset_matches_genesis() {
 #[test]
 fn mainnet_preset_loads_plutus_cost_model() {
     let cfg = NetworkPreset::Mainnet.to_config();
-    // Wave 5 PR 7+8: the `configuration/` tree lives with the binary
-    // crate; reach it relative to this crate's manifest dir.
-    let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("config crate manifest dir has a parent")
-        .join("yggdrasil-node/configuration/mainnet");
+    // The `configuration/` tree lives at the workspace root, matching
+    // the upstream Haskell repository layout.
+    let base_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../configuration/mainnet");
     let model = cfg
         .load_plutus_cost_model(Some(base_dir.as_path()))
         .expect("load plutus cost model")
@@ -897,7 +891,7 @@ fn explicit_bootstrap_peers_parse_from_json() {
 #[test]
 fn topology_parser_reads_bootstrap_peers() {
     let peers = parse_topology_bootstrap_peers(include_str!(
-        "../../yggdrasil-node/configuration/mainnet/topology.json"
+        "../../../../configuration/mainnet/topology.json"
     ));
     assert_eq!(peers.len(), 3);
     assert_eq!(peers[0].0, "backbone.cardano.iog.io");
@@ -1485,4 +1479,90 @@ fn max_major_protocol_version_round_trips_and_defaults() {
         }"#;
     let parsed: NodeConfigFile = serde_json::from_str(json).expect("deserialize");
     assert_eq!(parsed.max_major_protocol_version, 10);
+}
+
+#[test]
+fn block_producer_credential_status_tracks_upstream_field_triple() {
+    let mut cfg = default_config();
+    assert_eq!(
+        block_producer_credential_status(&cfg),
+        BlockProducerCredentialStatus::Absent
+    );
+
+    cfg.shelley_kes_key = Some("kes.skey".to_owned());
+    assert_eq!(
+        block_producer_credential_status(&cfg),
+        BlockProducerCredentialStatus::Partial
+    );
+
+    cfg.shelley_vrf_key = Some("vrf.skey".to_owned());
+    cfg.shelley_operational_certificate = Some("opcert.cert".to_owned());
+    assert_eq!(
+        block_producer_credential_status(&cfg),
+        BlockProducerCredentialStatus::Complete
+    );
+}
+
+#[test]
+fn node_role_report_rejects_partial_credentials_for_producing_node() {
+    let mut cfg = default_config();
+    cfg.shelley_kes_key = Some("kes.skey".to_owned());
+
+    let err = node_role_report(&cfg, false).expect_err("partial credentials must fail");
+    let msg = err.to_string();
+    assert!(msg.contains("partially configured"));
+    assert!(msg.contains("ShelleyKesKey"));
+    assert!(msg.contains("ShelleyVrfKey"));
+    assert!(msg.contains("ShelleyOperationalCertificate"));
+
+    let role = node_role_report(&cfg, true).expect("non-producing role tolerates ignored creds");
+    assert_eq!(role.role, "non-producing");
+    assert_eq!(
+        role.block_producer_credentials,
+        "ignored-by-non-producing-node"
+    );
+}
+
+#[test]
+fn node_config_preflight_report_rejects_zero_epoch_length() {
+    let mut cfg = default_config();
+    cfg.epoch_length = 0;
+
+    let err =
+        node_config_preflight_report(&cfg, None, false).expect_err("zero epoch length must fail");
+    assert_eq!(err, NodeConfigPreflightError::ZeroEpochLength);
+}
+
+#[test]
+fn node_config_preflight_report_surfaces_config_warnings() {
+    let mut cfg = default_config();
+    cfg.protocol = Some("RealPBFT".to_owned());
+    cfg.peer_sharing = 2;
+    cfg.min_node_version = Some("ten.six.two".to_owned());
+
+    let report = node_config_preflight_report(&cfg, None, false).expect("preflight report");
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Protocol") && warning.contains("RealPBFT")),
+        "protocol warning missing: {:?}",
+        report.warnings,
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("peer_sharing")),
+        "peer_sharing warning missing: {:?}",
+        report.warnings,
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("MinNodeVersion")),
+        "MinNodeVersion warning missing: {:?}",
+        report.warnings,
+    );
 }

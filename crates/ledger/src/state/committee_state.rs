@@ -15,7 +15,7 @@
 //!
 //! Extracted from `state.rs` in R269 eleventh slice as part of the strict
 //! 1:1 filename-mirror refactor — see
-//! `docs/operational-runs/2026-05-06-round-269k-state-committee-state-extraction.md`.
+//! `docs/operational-runs/archive/2026-05-06-round-269j-state-governance-and-committee-extraction.md`.
 //!
 //! ## Naming parity
 //!

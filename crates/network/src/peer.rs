@@ -10,7 +10,7 @@
 //! 3. **Data protocols** — on success, the remaining mini-protocol handles
 //!    (ChainSync, BlockFetch, TxSubmission2, KeepAlive) are ready for use.
 //!
-//! Reference: `ouroboros-network-framework/src/Ouroboros/Network/Protocol/Handshake/`.
+//! Reference: `ouroboros-network/ouroboros-network/framework/lib/Ouroboros/Network/Protocol/Handshake/`.
 //!
 //! ## Naming parity
 //!

@@ -226,6 +226,46 @@ mod tests {
         );
     }
 
+    /// `query-era-history --socket-path ...` parses to the expected
+    /// variant.
+    #[test]
+    fn parses_query_era_history() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-era-history",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::QueryEraHistory {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+    }
+
+    /// `query-current-epoch --socket-path ...` parses to the
+    /// expected variant.
+    #[test]
+    fn parses_query_current_epoch() {
+        let cmd = parse_command([
+            "yggdrasil-cardano-cli",
+            "query-current-epoch",
+            "--socket-path",
+            "/tmp/node.socket",
+        ])
+        .expect("parse");
+        assert_eq!(
+            cmd,
+            Command::QueryCurrentEpoch {
+                socket_path: PathBuf::from("/tmp/node.socket"),
+                network_magic: None,
+            }
+        );
+    }
+
     /// The socket-only `query-*` subcommands all parse to their
     /// expected variant with just `--socket-path`.
     #[test]
@@ -385,6 +425,112 @@ mod tests {
                 socket_path: PathBuf::from(socket),
                 network_magic: None,
             }
+        );
+    }
+
+    /// Parameterized query subcommands parse the upstream-shaped
+    /// argument forms and keep mutually-exclusive flags enforced by clap.
+    #[test]
+    fn parses_parameterized_query_subcommands() {
+        let socket = "/tmp/node.socket";
+        assert_eq!(
+            parse_command([
+                "yggdrasil-cardano-cli",
+                "query-utxo",
+                "--socket-path",
+                socket,
+                "--address",
+                "aabb",
+            ])
+            .expect("query-utxo --address must parse"),
+            Command::QueryUtxo {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+                address: Some("aabb".to_string()),
+                tx_in: None,
+            }
+        );
+        assert_eq!(
+            parse_command([
+                "yggdrasil-cardano-cli",
+                "query-utxo",
+                "--socket-path",
+                socket,
+                "--tx-in",
+                "ccdd#2",
+            ])
+            .expect("query-utxo --tx-in must parse"),
+            Command::QueryUtxo {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+                address: None,
+                tx_in: Some("ccdd#2".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_command([
+                "yggdrasil-cardano-cli",
+                "query-reward-balance",
+                "--socket-path",
+                socket,
+                "--account",
+                "eeff",
+            ])
+            .expect("query-reward-balance must parse"),
+            Command::QueryRewardBalance {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+                account: "eeff".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_command([
+                "yggdrasil-cardano-cli",
+                "query-delegations-and-rewards",
+                "--socket-path",
+                socket,
+                "--credential",
+                "11",
+                "--is-key-hash",
+                "false",
+            ])
+            .expect("query-delegations-and-rewards must parse"),
+            Command::QueryDelegationsAndRewards {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+                credential: "11".to_string(),
+                is_key_hash: false,
+            }
+        );
+        assert_eq!(
+            parse_command([
+                "yggdrasil-cardano-cli",
+                "query-stake-pool-params",
+                "--socket-path",
+                socket,
+                "--pool-hash",
+                "22",
+            ])
+            .expect("query-stake-pool-params must parse"),
+            Command::QueryStakePoolParams {
+                socket_path: PathBuf::from(socket),
+                network_magic: None,
+                pool_hash: "22".to_string(),
+            }
+        );
+        assert!(
+            parse_command([
+                "yggdrasil-cardano-cli",
+                "query-utxo",
+                "--socket-path",
+                socket,
+                "--address",
+                "aabb",
+                "--tx-in",
+                "ccdd#2",
+            ])
+            .is_err(),
+            "query-utxo must reject --address and --tx-in together"
         );
     }
 

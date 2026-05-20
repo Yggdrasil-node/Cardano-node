@@ -55,8 +55,8 @@ descriptor.
 cargo build --release -p yggdrasil-dmq-node
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh dmq-node --help
-node/scripts/run-tools.sh dmq-node --version
+scripts/run-tools.sh dmq-node --help
+scripts/run-tools.sh dmq-node --version
 
 # Or invoke the binary directly:
 target/release/dmq-node --help
@@ -79,7 +79,7 @@ once concrete dispatch lands at `R451+`.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 

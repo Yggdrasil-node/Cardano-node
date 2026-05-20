@@ -115,7 +115,7 @@ pub enum RunError {
     /// protocol must be byte-equivalent or live SPO setups break).
     #[error(
         "yggdrasil-kes-agent-control: ControlClient socket I/O for `{subcommand}' deferred — \
-         gated on the kes-agent server mini-arc (see crates/kes-agent-control/src/status.rs::\
+         gated on the kes-agent server mini-arc (see crates/tools/kes-agent-control/src/status.rs::\
          control_client_status for the full deferral rationale)."
     )]
     SubcommandSocketIoDeferred {

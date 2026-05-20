@@ -40,11 +40,11 @@ one session.
   validating the official networks (code-level parity closure, v0.2.0).
 - **Parity matrix:** 22 tracked entries — 2 `verified_11_0_1`,
   11 `implemented_needs_11_0_1_evidence`, 9 `partial`.
-- **Sister tools (13):** 1 verified (`bech32`); 2 functional-pending-soak
-  (`cardano-submit-api`, `db-truncater`); 4 functional-partial (`cardano-cli`
-  3/35 subcommands, `cardano-tracer`, `db-analyser`, `db-synthesizer`);
-  6 skeleton (`kes-agent`, `kes-agent-control`, `snapshot-converter`,
-  `tx-generator`, `dmq-node`, `cardano-testnet`).
+- **Sister tools (13):** 1 verified (`bech32`); 3 functional-pending-soak
+  (`cardano-cli` with 40 operational subcommands, `cardano-submit-api`,
+  `db-truncater`); 3 functional-partial (`cardano-tracer`, `db-analyser`,
+  `db-synthesizer`); 6 skeleton (`kes-agent`, `kes-agent-control`,
+  `snapshot-converter`, `tx-generator`, `dmq-node`, `cardano-testnet`).
 - **Reference parity tag:** `11.0.1`.
 
 ---
@@ -72,16 +72,20 @@ per-era ledger apply-rule files and needs a slim-build soundness decision
 node — a candidate for removal rather than wiring. **Exit:** the chosen flag
 conditionally compiles the code it names; `cargo lint-no-default` stays green.
 
-### A2 — cardano-cli subcommand migration — ✅ COMPLETE (verified 2026-05-17)
-The cardano-cli C-arc closed at R515. `crates/tools/cardano-cli/src/command.rs`
-carries all **33 `Command` variants**, `run.rs` dispatches them, and the crate
-has 92 passing tests. The standalone `yggdrasil-cardano-cli` binary covers the
+### A2 — cardano-cli subcommand migration — ✅ COMPLETE (verified 2026-05-20)
+The cardano-cli C-arc closed at R515 and the R527-R529 stale-placement
+cleanup moved the remaining query plans into the shared CLI crate.
+`crates/tools/cardano-cli/src/command.rs` carries all **40 `Command`
+variants**, `run.rs` dispatches them, and the crate has passing focused
+coverage for the post-R529 LSQ additions. The standalone
+`yggdrasil-cardano-cli` binary covers the
 offline operator toolkit (keys / addresses / txid / sign / build / build-raw /
-view), the full 20-query LocalStateQuery surface, and `transaction submit`.
-The roadmap and `TECH-DEBT.md` previously listed this as "3/35" — stale; the
-central docs lagged `crates/tools/cardano-cli/AGENTS.md`. The only outstanding
-item is byte-equivalence evidence against a real upstream `cardano-cli 11.0`
-binary — Category-B operator-soak work, tracked by the `parity-matrix.json`
+view), the full 27-query LocalStateQuery surface, and `transaction submit`.
+Older central docs undercounted the migrated subcommands; the current surface
+is the 40-command / 27-query split above, matching
+`crates/tools/cardano-cli/AGENTS.md`. The only outstanding item is
+byte-equivalence evidence against a real upstream `cardano-cli 11.0` binary —
+Category-B operator-soak work, tracked by the `parity-matrix.json`
 `sister-tool.cardano-cli` entry (`implemented_needs_11_0_1_evidence`).
 
 ### A3 — db-synthesizer Phase 4 R3 (R1 ✅, R2 ✅ done 2026-05-17)
@@ -171,7 +175,7 @@ Praos forging needs. Verified decomposition:
   - ✅ **R3c-1 — initial ledger + nonce state.** Construct the
     `pInfoInitLedger` analog. Grounding (2026-05-19) found the faithful
     genesis→`LedgerState` build is the ~115-line `strict_base_ledger_state`
-    (`yggdrasil-node/src/startup.rs`) — UTxO + stake + delegs + protocol
+    (`crates/node/cardano-node/src/startup.rs`) — UTxO + stake + delegs + protocol
     params + epoch config — which lives in the `yggdrasil-node` *binary*
     crate, tied to `NodeConfigFile`. The synthesizer needs the identical
     state; duplicating 115 drift-prone lines is wrong. Two sub-slices:
@@ -211,11 +215,13 @@ synthesizer produces a Praos-valid on-disk ChainDB that `db-analyser` validates.
 ### A4 — Skeleton sister-tool build-out
 Six tools are skeleton-only — each its own multi-round arc:
 `kes-agent`, `kes-agent-control`, `snapshot-converter`, `tx-generator`,
-`dmq-node`, `cardano-testnet`. Two are pre-gated: `kes-agent` on a
+`dmq-node`, `cardano-testnet`. One is still pre-gated: `kes-agent` on a
 socket-protocol byte-equivalence fixture capture (highest-stakes — key
-custody); `tx-generator` on the cardano-cli CLI-MVS (A2). **Scope:** ~5–8
-rounds per tool. **Exit:** each reaches `implemented_needs_11_0_1_evidence`
-in `parity-matrix.json`.
+custody). `tx-generator` is no longer blocked on the cardano-cli C-arc;
+that prerequisite closed at R515/R529, so its remaining blocker is its
+own parser / generator / submission implementation plus upstream
+comparison evidence. **Scope:** ~5–8 rounds per tool. **Exit:** each
+reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
 ### A5 — cardano-submit-api structured rejection enum  (`TECH-DEBT.md` §"validation error")
 Phase 1 (raw-bytes carrier) landed; Phase 2 — the structured per-era
@@ -223,24 +229,25 @@ Phase 1 (raw-bytes carrier) landed; Phase 2 — the structured per-era
 (~400 lines). **Scope:** 1 focused arc. **Exit:** operators can pattern-match
 typed rejection variants without a CBOR re-walk.
 
-### A6 — Workspace + documentation hygiene (now unblocked — Rust 1.95 installed)
-Toolchain-gated cleanup rounds deferred from the 2026-05-17 audit cleanup arc:
-- **Workspace members:** the 9 `crates/node/*` sub-crates
-  (`block-producer, config, genesis, ntc-server, ntn-server, plutus-eval,
-  runtime, sync, tracer`) are not in the root `Cargo.toml` `[workspace]
-  members` list, so `cargo check-all`/`lint`/`test-all` skip their own
-  `--all-targets`. Add them; verify with `cargo metadata`. Treat any
-  newly-surfaced standalone failure as its own round.
-- **`.rs` comment sweep:** ~95 stale `node/` path strings remain in
-  production `.rs` comments/docstrings; remap to `crates/node/<sub-crate>/...`
-  per-symbol (not blanket-prefix — files split across sub-crates).
-- **Parity-data files:** correct residual stale `node/scripts/...` strings in
-  `docs/parity-matrix.json`; verify each corrected path exists on disk before
-  editing; re-run `check-parity-matrix.py`.
-- **Historical-doc paths:** `node/src/*.rs` references inside the round-stamped
-  historical narrative of `PARITY_SUMMARY.md` / `PARITY_PROOF.md` were left
-  uncorrected during the cleanup (no-rewrite-history rule). Optional low-value
-  follow-up if a precise per-symbol remap is wanted.
+### A6 — Workspace + documentation hygiene
+Post-reorganization cleanup guardrails:
+- **Workspace members:** closed. The root `Cargo.toml` now explicitly lists
+  the shipped `crates/node/cardano-node` binary crate plus all 9 Wave 5
+  `crates/node/*` support crates (`block-producer`, `config`, `genesis`,
+  `ntc-server`, `ntn-server`, `plutus-eval`, `runtime`, `sync`, `tracer`),
+  so `cargo check-all`/`lint`/`test-all` can cover their own targets.
+  Current `cargo metadata --no-deps` evidence: 34 workspace packages total,
+  including 10 `crates/node/*` packages and 13 `crates/tools/*` packages.
+  Keep future extracted crates explicit in `[workspace].members`.
+- **`.rs` comment sweep:** live placement comments were normalized after the
+  Wave 5 crate split; keep future comments on `crates/node/<sub-crate>/...`
+  paths and leave upstream Haskell URLs unchanged.
+- **Parity-data files:** `docs/parity-matrix.json` now uses
+  `scripts/...` for operator scripts; keep
+  `check-parity-matrix.py` green after future path edits.
+- **Historical-doc paths:** round-stamped historical narratives now use the
+  post-split `crates/node/<sub-crate>/...` paths where they mention local Rust
+  files; keep upstream Haskell `cardano-node/...` URLs unchanged.
 - **Filetree descriptions:** `.claude/filetree/manifest.json` was bootstrapped
   2026-05-17 with auto-derived descriptions; refine the weak ones incrementally
   via the `cardano-filetree-maintainer` skill / `filetree-reviewer` agent.
@@ -274,7 +281,7 @@ update sites bridged.
 
 ### B5 — Production-readiness operator gates
 `MANUAL_TEST_RUNBOOK.md` §2–9 mainnet endurance rehearsal (24h+) and the §6.5
-parallel-fetch sign-off (`crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh`)
+parallel-fetch sign-off (`scripts/parallel_blockfetch_soak.sh`)
 before flipping the default `max_concurrent_block_fetch_peers` from 1 to 2.
 
 ---
@@ -317,9 +324,9 @@ side-by-side preview soak vs the Haskell node.
 | A1 feature flags | flags conditionally compile; `lint-no-default` green | none |
 | A2 cardano-cli ports | each subcommand byte-equivalent to upstream | none (vendored reference) |
 | A3 db-synthesizer R2–R3 | Praos-valid synthesized ChainDB | none |
-| A4 skeleton tools | each → `implemented_needs_11_0_1_evidence` | none (A4/kes-agent + tx-generator pre-gated internally) |
+| A4 skeleton tools | each → `implemented_needs_11_0_1_evidence` | none for tx-generator; kes-agent still needs socket-protocol fixtures |
 | A5 submit-api errors | typed rejection variants | none |
-| A6 hygiene | `cargo metadata` lists 24 members; gates green | none |
+| A6 hygiene | `cargo metadata --no-deps` lists 34 packages, including all 10 node packages; gates green | none |
 | B1 tracer Mux | 24h+ trace-forward soak clean | operator soak |
 | B2 submit-api soak | byte-equivalent vs upstream | operator soak |
 | B3 db-truncater soak | integration verified vs upstream | operator soak |

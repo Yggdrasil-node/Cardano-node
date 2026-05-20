@@ -162,8 +162,10 @@ jobs:
           cargo cyclonedx --format json --target-only --target ${{ matrix.target }}
           # cargo-cyclonedx emits to per-crate paths. Aggregate the
           # binary crate's SBOM into a single top-level artifact
-          # named for the release archive.
-          sbom_src="crates/node/yggdrasil-node/yggdrasil-node.cdx.json"
+          # named for the release archive. The crate directory follows
+          # upstream `cardano-node` naming; the package/binary artifact
+          # remains `yggdrasil-node`.
+          sbom_src="crates/node/cardano-node/yggdrasil-node.cdx.json"
           if [ ! -f "$sbom_src" ]; then
             # Fallback for older cargo-cyclonedx layout.
             sbom_src="$(find . -name 'yggdrasil-node*.cdx.json' -not -path './target/*' | head -1)"
@@ -192,8 +194,8 @@ jobs:
           cp target/${{ matrix.target }}/release/yggdrasil-node "$dir/"
           cp README.md LICENSE* "$dir/" 2>/dev/null || true
           # Wave 4 PR 6 follow-up: post-move paths.
-          cp -r crates/node/yggdrasil-node/configuration "$dir/configuration"
-          cp -r crates/node/yggdrasil-node/scripts "$dir/scripts"
+          cp -r configuration "$dir/configuration"
+          cp -r scripts "$dir/scripts"
           # Wave 7 PR 19: bundle the SBOM alongside the binary so
           # operators get the dep manifest in-tree.
           cp "${{ steps.sbom.outputs.sbom_src }}" "$dir/yggdrasil-node-sbom.cdx.json"

@@ -22,7 +22,7 @@ file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`.
 
 Upstream's `bech32-th/src/Codec/Binary/Bech32/TH.hs` (Template
 Haskell helpers) has no Rust analog — Rust uses `macro_rules!` /
-proc-macros directly. No `crates/bech32/src/th.rs` exists; the
+proc-macros directly. No `crates/tools/bech32/src/th.rs` exists; the
 strict-mirror policy supports this absence per the `Setup.hs` /
 `Orphans.hs` precedents.
 
@@ -37,9 +37,9 @@ strict-mirror policy supports this absence per the `Setup.hs` /
 cargo build --release --workspace
 
 # Run via the universal launcher (R329):
-node/scripts/run-tools.sh bech32 --help        # byte-equivalent to upstream
-node/scripts/run-tools.sh bech32 --version     # byte-equivalent to upstream
-echo "706174617465" | node/scripts/run-tools.sh bech32 base16_
+scripts/run-tools.sh bech32 --help        # byte-equivalent to upstream
+scripts/run-tools.sh bech32 --version     # byte-equivalent to upstream
+echo "706174617465" | scripts/run-tools.sh bech32 base16_
 # → base16_1wpshgct5v5r5mxh0
 
 # Or invoke the binary directly:
@@ -104,7 +104,7 @@ All pure Rust; no FFI; no native build requirements.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new bech32 release with different help output, refresh
   the fixtures + bump `UPSTREAM_BECH32_COMMIT` in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap (Phase A.1 — bech32, COMPLETE)
 
@@ -147,7 +147,7 @@ diff <(.reference-haskell-cardano-node/install/bin/bech32 --help) \
 - If upstream bumps the `bech32` package version: refresh the
   vendored source via `bash scripts/setup-reference.sh`, re-capture
   the help/version fixtures into `tests/fixtures/`, advance
-  `UPSTREAM_BECH32_COMMIT` in `node/src/upstream_pins.rs`, and run
+  `UPSTREAM_BECH32_COMMIT` in `crates/node/config/src/upstream_pins.rs`, and run
   the full cargo gate.
 - If a new subcommand or flag is added upstream: extend
   `parser::Args` + `parser::parse_args` to handle it; capture the

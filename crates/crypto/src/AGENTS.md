@@ -12,11 +12,11 @@ This directory is for pure Rust cryptographic implementation code and protocol-f
 - Always read the folder specific `**/AGENTS.md` files. They MUST stay current and MUST remain operational rather than long-form documentation. If the folder context is outdated, missing, or incorrect, update the relevant `AGENTS.md` file.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [`cardano-crypto-class` source tree](.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/src/Cardano/Crypto) (hash, Ed25519, VRF, KES abstractions)
-- [`cardano-crypto-praos` source tree](.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-praos/src/Cardano/Crypto) (Praos VRF and KES implementations)
-- [Peras-era crypto extensions](.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-peras)
-- [BLS12-381 class bindings](.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/src/Cardano/Crypto/EllipticCurve)
-- [`cardano-base` root](.reference-haskell-cardano-node/deps/cardano-base/) (shared crypto packages)
+- [`cardano-crypto-class` source tree](../../../.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/src/Cardano/Crypto) (hash, Ed25519, VRF, KES abstractions)
+- [`cardano-crypto-praos` source tree](../../../.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-praos/src/Cardano/Crypto) (Praos VRF and KES implementations)
+- [Peras-era crypto extensions](../../../.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-peras)
+- [BLS12-381 class bindings](../../../.reference-haskell-cardano-node/deps/cardano-base/cardano-crypto-class/src/Cardano/Crypto/EllipticCurve)
+- [`cardano-base` root](../../../.reference-haskell-cardano-node/deps/cardano-base/) (shared crypto packages)
 - [Haddock documentation](https://cardano-base.cardano.intersectmbo.org/haddocks/)
 
 ## Current Phase

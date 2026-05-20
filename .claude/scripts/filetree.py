@@ -35,7 +35,7 @@ AREA_ORDER = [
     "node",
     "docs",
     "scripts",
-    "share",
+    "configuration",
     "codex",
     "agents",
     "other",
@@ -47,7 +47,7 @@ AREA_TITLES = {
     "node": "Node",
     "docs": "Docs",
     "scripts": "Scripts",
-    "share": "Share",
+    "configuration": "Configuration",
     "codex": "Codex",
     "agents": "Agents",
     "other": "Other",
@@ -139,6 +139,14 @@ DESCRIPTION_OVERRIDES = {
         "Machine-readable parity-status inventory for Rust ↔ IntersectMBO/cardano-node features.",
         "Validated by scripts/check-parity-matrix.py; the reference.tag tracks the latest upstream release (currently 11.0.1).",
     ],
+    "docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md": [
+        "Historical R498-R510 sync split plan, now reflected in crates/node/sync/ and adjacent runtime crates.",
+        "Kept as operational evidence; current instructions live in the crate AGENTS.md files.",
+    ],
+    "docs/operational-runs/archive/2026-05-09-round-279-runtime-naming-parity.md": [
+        "Historical runtime naming-parity sweep, now represented by crates/node/runtime/.",
+        "Kept as archived operational evidence; current instructions live in crates/node/runtime/AGENTS.md.",
+    ],
     "rust-toolchain.toml": [
         "Rust toolchain pin for consistent compiler, formatter, and clippy behavior.",
         "Ensures contributors and automation use the same channel and components.",
@@ -147,9 +155,17 @@ DESCRIPTION_OVERRIDES = {
         "Stdlib-only validator for docs/parity-matrix.json schema, status, and on-disk paths.",
         "Bumps tag policy via REFERENCE_TAG; current target is 11.0.1.",
     ],
+    "scripts/check-reference-artifacts.py": [
+        "Linux/WSL local validator for the vendored Haskell cardano-node install tree.",
+        "Checks executable reference binaries, network share bundles, and cardano-node version policy.",
+    ],
+    "scripts/check-stale-placement.py": [
+        "Stdlib-only validator for stale post-reorganization source, config, script, and skill paths.",
+        "Scans current non-historical surfaces while excluding changelog and operational-run evidence.",
+    ],
     "scripts/setup-reference.sh": [
-        "Recreates .reference-haskell-cardano-node/ from the latest IntersectMBO/cardano-node release.",
-        "Default CARDANO_NODE_VERSION is 11.0.1; bump in lockstep with parity-matrix and check-parity-matrix.",
+        "Recreates the metadata-free .reference-haskell-cardano-node/ source snapshot and optional Linux install.",
+        "Default CARDANO_NODE_VERSION is 11.0.1; --sources-only skips the Linux binary bundle.",
     ],
 }
 
@@ -187,7 +203,14 @@ def git_ls_files() -> list[str]:
     for generated in GENERATED_PATHS:
         if (ROOT / generated).exists() or generated.endswith("manifest.json") or generated.endswith("FILETREE.md"):
             paths.append(generated)
-    return sorted(set(p.replace("\\", "/") for p in paths if p))
+    current = set()
+    for path in paths:
+        normalized = path.replace("\\", "/")
+        if not normalized:
+            continue
+        if normalized in GENERATED_PATHS or (ROOT / normalized).is_file():
+            current.add(normalized)
+    return sorted(current)
 
 
 def sha256_file(path: Path) -> str:
@@ -327,7 +350,7 @@ def json_description(path: str) -> list[str]:
     if path == "deny.toml":
         return ["Cargo-deny policy for auditing licenses, advisories, duplicate crates, and dependency bans."]
 
-    if parts and parts[0] == "share":
+    if parts and parts[0] == "configuration":
         network = parts[1] if len(parts) > 2 else "network"
         readable_network = network.replace("-", " ")
         if "genesis" in name:
@@ -350,7 +373,7 @@ def json_description(path: str) -> list[str]:
             return [f"Submit API configuration for Cardano {readable_network} transaction submission flows."]
         if "tracer" in name:
             return [f"Tracing configuration for Cardano {readable_network} node observability."]
-        return [f"Cardano {readable_network} shared JSON data file: {name}."]
+        return [f"Cardano {readable_network} configuration JSON data file: {name}."]
 
     if "test" in path or "fixture" in path:
         return [f"JSON fixture data for {stem.replace('-', ' ').replace('_', ' ')} tests."]
@@ -396,7 +419,10 @@ def default_description(path: str) -> list[str]:
 
 def make_entry(path: str, existing: dict[str, Any] | None = None, *, accept_current: bool) -> dict[str, Any]:
     existing = existing or {}
-    description = normalize_description(existing.get("description_lines")) or default_description(path)
+    if path in DESCRIPTION_OVERRIDES:
+        description = DESCRIPTION_OVERRIDES[path]
+    else:
+        description = normalize_description(existing.get("description_lines")) or default_description(path)
     description = normalize_description(description) or [f"Project file at {path}."]
 
     metadata = file_metadata(path) if accept_current else {
@@ -486,8 +512,8 @@ def area_for(path: str) -> str:
         return "docs"
     if top == "scripts":
         return "scripts"
-    if top == "share":
-        return "share"
+    if top == "configuration":
+        return "configuration"
     if top == ".codex":
         return "codex"
     if top == ".agents":

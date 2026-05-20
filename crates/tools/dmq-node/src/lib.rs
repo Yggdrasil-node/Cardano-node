@@ -114,7 +114,7 @@ pub enum RunError {
     /// project).
     #[error(
         "yggdrasil-dmq-node: Diffusion / NodeKernel / PeerSelection wiring deferred (see \
-         crates/dmq-node/src/status.rs::diffusion_wiring_status for the full deferral \
+         crates/tools/dmq-node/src/status.rs::diffusion_wiring_status for the full deferral \
          rationale). Resolved CLI: host={host}, local_socket={local_socket}, \
          config_file={config_file}, topology_file={topology_file}, \
          cardano_socket={cardano_socket}, cardano_magic={cardano_magic}, \

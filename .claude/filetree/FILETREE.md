@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-19T09:41:31Z
-- Files described: 1353
+- Generated at: 2026-05-20T01:00:57Z
+- Files described: 1371
 
 ## Workspace
 
@@ -579,6 +579,61 @@
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/node/block-producer/src/lib.rs`
   - Block producer credentials, text-envelope parsing, and leader check. This module implements the block-production side of the Praos protocol: loading signing credentials from standa
+- `crates/node/cardano-node/AGENTS.md`
+  - Scope: ﻿# yggdrasil-node binary crate.
+- `crates/node/cardano-node/Cargo.toml`
+  - Cargo manifest for the node crate.
+  - Declares crate metadata, dependencies, features, and local lint behavior.
+- `crates/node/cardano-node/src/AGENTS.md`
+  - Guidance for the yggdrasil-node binary source tree: Keep this directory as the executable shell for the node. The heavy runtime,.
+- `crates/node/cardano-node/src/cli.rs`
+  - Top-level `clap` subcommand definitions for the `yggdrasil-node` binary. Mirrors upstream `Cardano.Node.Parsers` (the `optparse-applicative` shape that defines `cardano-node`'s sub
+- `crates/node/cardano-node/src/commands.rs`
+  - Subcommand implementations for the `yggdrasil-node` binary. Mirrors upstream `Cardano.CLI.*` organization. Each submodule groups the helpers and dispatchers for one CLI subcommand
+- `crates/node/cardano-node/src/commands/cardano_cli.rs`
+  - Node-binary entry point for the `cardano-cli` subcommand surface. Thin dispatcher that routes the parsed `CardanoCliCommand` to the `yggdrasil-cardano-cli` crate's runners. Network
+- `crates/node/cardano-node/src/commands/configuration.rs`
+  - Rust source file for configuration behavior.
+- `crates/node/cardano-node/src/commands/query.rs`
+  - `query` subcommand: drive the running node's NtC `LocalStateQuery` mini-protocol with a CBOR-encoded query and pretty-print the response. Mirrors upstream `Cardano.CLI.Shelley.Run.
+- `crates/node/cardano-node/src/commands/run.rs`
+  - `run` subcommand: orchestrate node startup from operator CLI args. Builds a [`RunNodeRequest`] from the operator's `--config` / `--topology` / per-flag overrides, recovers existing
+- `crates/node/cardano-node/src/commands/status.rs`
+  - `status` subcommand: inspect on-disk Yggdrasil storage and report sync position, block counts, ledger checkpoint state, and the recovered ledger-state cardinalities for the latest
+- `crates/node/cardano-node/src/commands/submit_tx.rs`
+  - `submit-tx` subcommand: drive the running node's NtC `LocalTxSubmission` mini-protocol with a serialized transaction. Mirrors upstream `Cardano.CLI.Run.Transaction.Submit` (formerl
+- `crates/node/cardano-node/src/commands/tx_mempool.rs`
+  - `query tx-mempool` subcommand: drive the running node's NtC `LocalTxMonitor` mini-protocol to inspect the mempool snapshot. Mirrors upstream `Cardano.CLI.Shelley.Run.Query.runQuery
+- `crates/node/cardano-node/src/commands/validate_config.rs`
+  - `validate-config` subcommand: deep operator-side preflight check for a node config + topology + peer-snapshot bundle. Mirrors the upstream `Cardano.Node.Configuration.POM` validati
+- `crates/node/cardano-node/src/handlers.rs`
+  - Top-level event handlers wired by `run_node`. Mirrors upstream `Cardano.Node.Handlers.*`. Currently only `shutdown` is broken out as its own submodule; future.
+- `crates/node/cardano-node/src/handlers/shutdown.rs`
+  - Rust source file for shutdown behavior.
+- `crates/node/cardano-node/src/ledger_peers.rs`
+  - Ledger-derived fallback peer assembly. Mirrors upstream `Ouroboros.Network.PeerSelection.LedgerPeers` — at startup we resolve a `LedgerPeerSnapshot` from.
+- `crates/node/cardano-node/src/lib.rs`
+  - Yggdrasil node — integration layer wiring consensus, ledger, network, storage, and mempool crates into a running Cardano node. Wave 5 PR 13: module-level shims dropped. The remaini
+- `crates/node/cardano-node/src/main.rs`
+  - Rust source file for main behavior.
+- `crates/node/cardano-node/src/main_tests.rs`
+  - Tests for the parent module. Extracted from inline `#[cfg(test)] mod tests` block in R256 Phase H to keep the parent file readable. `use super::*;` still gives full access to the p
+- `crates/node/cardano-node/src/run_node.rs`
+  - Node runtime entry point and its driver request struct. Mirrors upstream `Cardano.Node.Run.run` — orchestrates storage recovery, tracer/metrics startup, network setup (mux server,.
+- `crates/node/cardano-node/src/startup.rs`
+  - Genesis-aware ledger-state seeding + startup tracing helpers used by `run_node` at the very top of the boot sequence. Mirrors the genesis-loading slice of upstream `Cardano.Node.Ru
+- `crates/node/cardano-node/tests/AGENTS.md`
+  - Guidance for node runtime and integration smoke tests.: Keep tests in this directory focused on node orchestration and cross-crate integration behavior.
+- `crates/node/cardano-node/tests/local_ntc.rs`
+  - End-to-end integration tests for the Node-to-Client (NtC) local socket surface. These tests bind a real Unix-domain socket via [`yggdrasil_node::run_local_accept_loop`], connect th
+- `crates/node/cardano-node/tests/preview_cost_model_byte_equal.rs`
+  - Byte-equal cost-model regression fixture (R266 step 1 — Gap BP narrowing). Companion to `crates/plutus/tests/preview_cost_model_byte_equal.rs`.
+- `crates/node/cardano-node/tests/runtime.rs`
+  - Rust integration or regression tests for runtime behavior.
+- `crates/node/cardano-node/tests/smoke.rs`
+  - Rust integration or regression tests for smoke behavior.
+- `crates/node/cardano-node/tests/sync.rs`
+  - Rust integration or regression tests for sync behavior.
 - `crates/node/config/AGENTS.md`
   - yggdrasil-node-config — node configuration + path resolution + upstream pins: Leaf-of-the-build-graph crate extracted from `yggdrasil-node` in.
 - `crates/node/config/Cargo.toml`
@@ -731,169 +786,6 @@
   - Minimal bidirectional Mux dispatcher. ## Naming parity **Strict mirror:** none. Yggdrasil-side bare-bones SDU demultiplexer for the upstream Network.Mux multiplexer at.
 - `crates/node/tracer/tests/cardano_tracer_conformance.rs`
   - Live conformance test — Yggdrasil trace-forwarder handshake against the upstream `cardano-tracer` binary. Task #19 (Phase 2.B closeout), remaining-work item 2. This test.
-- `crates/node/yggdrasil-node/AGENTS.md`
-  - Guidance for runtime orchestration, CLI, and integration work: Focus on wiring crates together cleanly, preserving deterministic startup and shutdown behavior, and keeping runtime
-- `crates/node/yggdrasil-node/Cargo.toml`
-  - Cargo manifest for the node crate.
-  - Declares crate metadata, dependencies, features, and local lint behavior.
-- `crates/node/yggdrasil-node/configuration/AGENTS.md`
-  - Guidance for node configuration references and preset layout.: This directory contains reference configuration files and per-network presets used to align Yggdrasil configuration h
-- `crates/node/yggdrasil-node/configuration/mainnet/alonzo-genesis.json`
-  - JSON data file for alonzo genesis.
-- `crates/node/yggdrasil-node/configuration/mainnet/byron-genesis.json`
-  - JSON data file for byron genesis.
-- `crates/node/yggdrasil-node/configuration/mainnet/checkpoints.json`
-  - JSON data file for checkpoints.
-- `crates/node/yggdrasil-node/configuration/mainnet/config-legacy.json`
-  - JSON data file for config legacy.
-- `crates/node/yggdrasil-node/configuration/mainnet/config.json`
-  - JSON data file for config.
-- `crates/node/yggdrasil-node/configuration/mainnet/conway-genesis.json`
-  - JSON data file for conway genesis.
-- `crates/node/yggdrasil-node/configuration/mainnet/peer-snapshot.json`
-  - JSON data file for peer snapshot.
-- `crates/node/yggdrasil-node/configuration/mainnet/shelley-genesis.json`
-  - JSON data file for shelley genesis.
-- `crates/node/yggdrasil-node/configuration/mainnet/submit-api-config.json`
-  - JSON data file for submit api config.
-- `crates/node/yggdrasil-node/configuration/mainnet/topology.json`
-  - JSON data file for topology.
-- `crates/node/yggdrasil-node/configuration/mainnet/tracer-config.json`
-  - JSON data file for tracer config.
-- `crates/node/yggdrasil-node/configuration/poolMetaData.json`
-  - JSON data file for poolMetaData.
-- `crates/node/yggdrasil-node/configuration/preprod/alonzo-genesis.json`
-  - JSON data file for alonzo genesis.
-- `crates/node/yggdrasil-node/configuration/preprod/byron-genesis.json`
-  - JSON data file for byron genesis.
-- `crates/node/yggdrasil-node/configuration/preprod/config-legacy.json`
-  - JSON data file for config legacy.
-- `crates/node/yggdrasil-node/configuration/preprod/config.json`
-  - JSON data file for config.
-- `crates/node/yggdrasil-node/configuration/preprod/conway-genesis.json`
-  - JSON data file for conway genesis.
-- `crates/node/yggdrasil-node/configuration/preprod/peer-snapshot.json`
-  - JSON data file for peer snapshot.
-- `crates/node/yggdrasil-node/configuration/preprod/shelley-genesis.json`
-  - JSON data file for shelley genesis.
-- `crates/node/yggdrasil-node/configuration/preprod/submit-api-config.json`
-  - JSON data file for submit api config.
-- `crates/node/yggdrasil-node/configuration/preprod/topology.json`
-  - JSON data file for topology.
-- `crates/node/yggdrasil-node/configuration/preprod/tracer-config.json`
-  - JSON data file for tracer config.
-- `crates/node/yggdrasil-node/configuration/preview/alonzo-genesis.json`
-  - JSON data file for alonzo genesis.
-- `crates/node/yggdrasil-node/configuration/preview/byron-genesis.json`
-  - JSON data file for byron genesis.
-- `crates/node/yggdrasil-node/configuration/preview/checkpoints.json`
-  - JSON data file for checkpoints.
-- `crates/node/yggdrasil-node/configuration/preview/config-legacy.json`
-  - JSON data file for config legacy.
-- `crates/node/yggdrasil-node/configuration/preview/config.json`
-  - JSON data file for config.
-- `crates/node/yggdrasil-node/configuration/preview/conway-genesis.json`
-  - JSON data file for conway genesis.
-- `crates/node/yggdrasil-node/configuration/preview/peer-snapshot.json`
-  - JSON data file for peer snapshot.
-- `crates/node/yggdrasil-node/configuration/preview/shelley-genesis.json`
-  - JSON data file for shelley genesis.
-- `crates/node/yggdrasil-node/configuration/preview/submit-api-config.json`
-  - JSON data file for submit api config.
-- `crates/node/yggdrasil-node/configuration/preview/topology.json`
-  - JSON data file for topology.
-- `crates/node/yggdrasil-node/configuration/preview/tracer-config.json`
-  - JSON data file for tracer config.
-- `crates/node/yggdrasil-node/scripts/backup_db.sh`
-  - Shell helper script for backup db workflows.
-- `crates/node/yggdrasil-node/scripts/check_upstream_drift.sh`
-  - Shell helper script for check upstream drift workflows.
-- `crates/node/yggdrasil-node/scripts/compare_db_truncater_to_upstream.sh`
-  - Shell helper script for compare db truncater to upstream workflows.
-- `crates/node/yggdrasil-node/scripts/compare_submit_api_to_upstream.sh`
-  - Shell helper script for compare submit api to upstream workflows.
-- `crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh`
-  - Shell helper script for compare tip to haskell workflows.
-- `crates/node/yggdrasil-node/scripts/healthcheck.sh`
-  - Shell helper script for healthcheck workflows.
-- `crates/node/yggdrasil-node/scripts/install_from_release.sh`
-  - Shell helper script for install from release workflows.
-- `crates/node/yggdrasil-node/scripts/install_haskell_cardano_node.sh`
-  - Shell helper script for install haskell cardano node workflows.
-- `crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh`
-  - Shell helper script for parallel blockfetch soak workflows.
-- `crates/node/yggdrasil-node/scripts/preview_pool_activation_status.sh`
-  - Shell helper script for preview pool activation status workflows.
-- `crates/node/yggdrasil-node/scripts/preview_producer_harness.sh`
-  - Shell helper script for preview producer harness workflows.
-- `crates/node/yggdrasil-node/scripts/register_preview_generated_pool.sh`
-  - Preview-only operator helper that builds/signs generated-pool registration transactions once the generated payment address is funded.
-- `crates/node/yggdrasil-node/scripts/restart_resilience.sh`
-  - Shell helper script for restart resilience workflows.
-- `crates/node/yggdrasil-node/scripts/run-tools.sh`
-  - Shell helper script for run tools workflows.
-- `crates/node/yggdrasil-node/scripts/run_mainnet_real_pool_producer.sh`
-  - Shell helper script for run mainnet real pool producer workflows.
-- `crates/node/yggdrasil-node/scripts/run_preprod_real_pool_producer.sh`
-  - Shell helper script for run preprod real pool producer workflows.
-- `crates/node/yggdrasil-node/scripts/run_preview_active_pool_signoff.sh`
-  - Shell helper script for run preview active pool signoff workflows.
-- `crates/node/yggdrasil-node/scripts/run_preview_real_pool_producer.sh`
-  - Operator runner that validates real preview pool KES/VRF/OpCert paths and runs yggdrasil-node producer mode directly.
-- `crates/node/yggdrasil-node/scripts/yggdrasil-node.service`
-  - Project file at crates/node/yggdrasil-node/scripts/yggdrasil-node.service.
-- `crates/node/yggdrasil-node/src/AGENTS.md`
-  - Guidance for node runtime and sync orchestration implementation details: Focus on runtime composition of network clients and orchestration helpers that remain thin integration laye
-- `crates/node/yggdrasil-node/src/bin/dump_block.rs`
-  - R251 forensic helper — clippy relaxations are intentional: this binary is not on the runtime hot path. The flagged lints (complex tuple return.
-- `crates/node/yggdrasil-node/src/cli.rs`
-  - Top-level `clap` subcommand definitions for the `yggdrasil-node` binary. Mirrors upstream `Cardano.Node.Parsers` (the `optparse-applicative` shape that defines `cardano-node`'s sub
-- `crates/node/yggdrasil-node/src/commands.rs`
-  - Subcommand implementations for the `yggdrasil-node` binary. Mirrors upstream `Cardano.CLI.*` organization. Each submodule groups the helpers and dispatchers for one CLI subcommand
-- `crates/node/yggdrasil-node/src/commands/cardano_cli.rs`
-  - Node-binary entry point for the `cardano-cli` subcommand surface. Thin dispatcher that routes the parsed `CardanoCliCommand` to the `yggdrasil-cardano-cli` crate's runners. Network
-- `crates/node/yggdrasil-node/src/commands/configuration.rs`
-  - Effective-config assembly: load the file config, then layer per-flag CLI overrides on top. Mirrors upstream `Cardano.Node.Configuration.POM` — the Haskell.
-- `crates/node/yggdrasil-node/src/commands/query.rs`
-  - `query` subcommand: drive the running node's NtC `LocalStateQuery` mini-protocol with a CBOR-encoded query and pretty-print the response. Mirrors upstream `Cardano.CLI.Shelley.Run.
-- `crates/node/yggdrasil-node/src/commands/run.rs`
-  - `run` subcommand: orchestrate node startup from operator CLI args. Builds a [`RunNodeRequest`] from the operator's `--config` / `--topology` / per-flag overrides, recovers existing
-- `crates/node/yggdrasil-node/src/commands/status.rs`
-  - `status` subcommand: inspect on-disk Yggdrasil storage and report sync position, block counts, ledger checkpoint state, and the recovered ledger-state cardinalities for the latest
-- `crates/node/yggdrasil-node/src/commands/submit_tx.rs`
-  - `submit-tx` subcommand: drive the running node's NtC `LocalTxSubmission` mini-protocol with a serialized transaction. Mirrors upstream `Cardano.CLI.Run.Transaction.Submit` (formerl
-- `crates/node/yggdrasil-node/src/commands/tx_mempool.rs`
-  - `query tx-mempool` subcommand: drive the running node's NtC `LocalTxMonitor` mini-protocol to inspect the mempool snapshot. Mirrors upstream `Cardano.CLI.Shelley.Run.Query.runQuery
-- `crates/node/yggdrasil-node/src/commands/validate_config.rs`
-  - `validate-config` subcommand: deep operator-side preflight check for a node config + topology + peer-snapshot bundle. Mirrors the upstream `Cardano.Node.Configuration.POM` validati
-- `crates/node/yggdrasil-node/src/handlers.rs`
-  - Top-level event handlers wired by `run_node`. Mirrors upstream `Cardano.Node.Handlers.*`. Currently only `shutdown` is broken out as its own submodule; future.
-- `crates/node/yggdrasil-node/src/handlers/shutdown.rs`
-  - Graceful shutdown signal handling. Mirrors upstream `Cardano.Node.Handlers.Shutdown` (189 lines / 6 KB). Yggdrasil's variant is much smaller because we only handle the signal.
-- `crates/node/yggdrasil-node/src/ledger_peers.rs`
-  - Ledger-derived fallback peer assembly. Mirrors upstream `Ouroboros.Network.PeerSelection.LedgerPeers` — at startup we resolve a `LedgerPeerSnapshot` from.
-- `crates/node/yggdrasil-node/src/lib.rs`
-  - Yggdrasil node — integration layer wiring consensus, ledger, network, storage, and mempool crates into a running Cardano node. Wave 5 PR 13: module-level shims dropped. The remaini
-- `crates/node/yggdrasil-node/src/main.rs`
-  - Rust source file for main behavior.
-- `crates/node/yggdrasil-node/src/main_tests.rs`
-  - Tests for the parent module. Extracted from inline `#[cfg(test)] mod tests` block in R256 Phase H to keep the parent file readable. `use super::*;` still gives full access to the p
-- `crates/node/yggdrasil-node/src/run_node.rs`
-  - Node runtime entry point and its driver request struct. Mirrors upstream `Cardano.Node.Run.run` — orchestrates storage recovery, tracer/metrics startup, network setup (mux server,.
-- `crates/node/yggdrasil-node/src/startup.rs`
-  - Genesis-aware ledger-state seeding + startup tracing helpers used by `run_node` at the very top of the boot sequence. Mirrors the genesis-loading slice of upstream `Cardano.Node.Ru
-- `crates/node/yggdrasil-node/tests/AGENTS.md`
-  - Guidance for node runtime and integration smoke tests.: Keep tests in this directory focused on node orchestration and cross-crate integration behavior.
-- `crates/node/yggdrasil-node/tests/local_ntc.rs`
-  - End-to-end integration tests for the Node-to-Client (NtC) local socket surface. These tests bind a real Unix-domain socket via [`yggdrasil_node::run_local_accept_loop`], connect th
-- `crates/node/yggdrasil-node/tests/preview_cost_model_byte_equal.rs`
-  - Byte-equal cost-model regression fixture (R266 step 1 — Gap BP narrowing). Companion to `crates/plutus/tests/preview_cost_model_byte_equal.rs`.
-- `crates/node/yggdrasil-node/tests/runtime.rs`
-  - Rust integration or regression tests for runtime behavior.
-- `crates/node/yggdrasil-node/tests/smoke.rs`
-  - Rust integration or regression tests for smoke behavior.
-- `crates/node/yggdrasil-node/tests/sync.rs`
-  - Rust integration or regression tests for sync behavior.
 - `crates/observability/yggdrasil-metrics/AGENTS.md`
   - yggdrasil-metrics — Prometheus metrics registry with EKG-parity names: Wave 6 PR 16. The source-of-truth for the EKG-parity metric name set.
 - `crates/observability/yggdrasil-metrics/Cargo.toml`
@@ -943,7 +835,8 @@
 - `crates/plutus/tests/preview_cost_model_byte_equal.rs`
   - Byte-equal cost-model regression fixture (R266 step 1 — Gap BP narrowing). Loads the vendored preview alonzo-genesis (PlutusV1 named cost-model.
 - `crates/plutus/tests/upstream_cost_model.rs`
-  - End-to-end Plutus cost-model integration test. Loads the **real** PlutusV1 cost-model values from the vendored `node/configuration/preview/alonzo-genesis.json` (a faithful copy of.
+  - End-to-end Plutus cost-model integration test loading real PlutusV1 values from configuration/preview/alonzo-genesis.json.
+  - Exercises CostModel deserialization and CEK execution against upstream preview genesis data.
 - `crates/storage/AGENTS.md`
   - Guidance for durable storage and snapshot work: Focus on rollback-aware persistence interfaces and stable on-disk boundaries.
 - `crates/storage/Cargo.toml`
@@ -1671,6 +1564,8 @@
   - Per-block ledger-op timing data point — fed into the `BenchmarkLedgerOps` analysis CSV/JSON output streams. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-c
 - `crates/tools/db-analyser/src/analysis/runner.rs`
   - Analysis dispatch core — drives a `Block` iterator through one of the 13 [`crate::types::AnalysisName`] variants. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ourob
+- `crates/tools/db-analyser/src/bin/dump_block.rs`
+  - R251 forensic helper — clippy relaxations are intentional: this binary is not on the runtime hot path. The flagged lints (complex tuple return.
 - `crates/tools/db-analyser/src/byron_ebbs.rs`
   - Byron known epoch-boundary blocks — registry consumed by db-analyser's `ShowEBBs` analysis (R475-R481 arc). ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-c
 - `crates/tools/db-analyser/src/csv.rs`
@@ -2146,7 +2041,8 @@
 - `docs/operational-runs/2026-05-11-round-498-cardano-submit-api-r344-doc-refresh.md`
   - R498 — cardano-submit-api AGENTS.md + parity-matrix refresh: ---.
 - `docs/operational-runs/2026-05-12-round-498-plan-sync-rs-split-arc.md`
-  - R498–R510 — `node/src/sync.rs` split arc plan: ---.
+  - Historical R498-R510 sync split plan, now reflected in crates/node/sync/ and adjacent runtime crates.
+  - Kept as operational evidence; current instructions live in the crate AGENTS.md files.
 - `docs/operational-runs/2026-05-12-round-498-sync-error-extraction.md`
   - R498 — `SyncError` extraction (sync.rs R-arc, slice 1/13): ---.
 - `docs/operational-runs/2026-05-12-round-499-shelley-decoders-extraction.md`
@@ -2181,6 +2077,38 @@
   - Round 512 — db-synthesizer A3 R3b-3: CardanoProtocolParams aggregator: **Date:** 2026-05-18.
 - `docs/operational-runs/2026-05-19-round-513-full-project-parity-audit.md`
   - Round 513 - full project parity audit with real preview block-producer plan: **Date:** 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-514-r3c1a-shared-base-ledger-builder.md`
+  - Round 514 — A3 R3c-1a: shared `build_base_ledger_state` extraction: **Date:** 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-515-r3c1b-synthesizer-initial-forge-state.md`
+  - Round 515 — A3 R3c-1b: synthesizer initial forge state: **Date:** 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-516-r3c2-bulk-leader-credentials.md`
+  - Round 516 — A3 R3c-2: bulk leader credentials: **Date:** 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-517-stale-placement-audit-hardening.md`
+  - Round 517 — stale-placement audit hardening: **Date:** 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-518-db-analyser-dump-block-relocation.md`
+  - Round 518 - db-analyser dump-block relocation: **Date:** 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-519-cardano-cli-helper-delegation.md`
+  - Round 519 - cardano-cli helper delegation: Date: 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-520-node-cardano-cli-runner-delegation.md`
+  - Round 520 - node cardano-cli runner delegation: Date: 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-521-config-node-role-policy-extraction.md`
+  - Round 521 - config node-role policy extraction: Date: 2026-05-19.
+- `docs/operational-runs/2026-05-19-round-522-config-preflight-extraction.md`
+  - Round 522 - config preflight extraction: Date: 2026-05-19.
+- `docs/operational-runs/2026-05-20-round-523-query-helper-delegation.md`
+  - Round 523 - query helper delegation: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-524-lsq-wire-plan-delegation.md`
+  - Round 524 - LSQ wire plan delegation: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-525-submit-tx-hex-parser-delegation.md`
+  - Round 525 - submit-tx hex parser delegation: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-526-submit-tx-socket-driver-delegation.md`
+  - Round 526 - submit-tx socket driver delegation: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-527-current-epoch-lsq-plan-delegation.md`
+  - Round 527 - current-epoch LSQ plan delegation: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-528-era-history-lsq-plan-delegation.md`
+  - Round 528 - era-history LSQ plan delegation: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-529-parameterized-lsq-plan-delegation.md`
+  - R529 Parameterized LSQ Plan Delegation: Date: 2026-05-20.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`
@@ -2468,7 +2396,8 @@
 - `docs/operational-runs/archive/2026-05-09-round-278-mempool-naming-parity.md`
   - Round 278 — `crates/consensus/src/mempool/` parity sweep: **Date:** 2026-05-09.
 - `docs/operational-runs/archive/2026-05-09-round-279-runtime-naming-parity.md`
-  - Round 279 — `node/src/runtime/` parity sweep: **Date:** 2026-05-09.
+  - Historical runtime naming-parity sweep, now represented by crates/node/runtime/.
+  - Kept as archived operational evidence; current instructions live in crates/node/runtime/AGENTS.md.
 - `docs/operational-runs/archive/2026-05-09-round-280-network-governor-naming-parity.md`
   - Round 280 — `crates/network/src/governor/` parity sweep: **Date:** 2026-05-09.
 - `docs/operational-runs/archive/2026-05-09-round-281-sweeper-naming-parity.md`
@@ -2520,21 +2449,164 @@
 ## Scripts
 
 - `scripts/AGENTS.md`
-  - Guidance for the workspace-level scripts under `scripts/`.: This directory hosts vendored-tree refresh tooling plus the four CI.
+  - Guidance for root scripts: parity validators, reference refresh helpers, and operator/runbook shell tools.
 - `scripts/audit-strict-mirror.py`
   - Project file at scripts/audit-strict-mirror.py.
+- `scripts/backup_db.sh`
+  - Shell helper script for backup db workflows.
 - `scripts/check-fixture-manifest.py`
   - Project file at scripts/check-fixture-manifest.py.
 - `scripts/check-parity-matrix.py`
   - Stdlib-only validator for docs/parity-matrix.json schema, status, and on-disk paths.
   - Bumps tag policy via REFERENCE_TAG; current target is 11.0.1.
 - `scripts/check-reference-artifacts.py`
-  - Project file at scripts/check-reference-artifacts.py.
+  - Linux/WSL local validator for the vendored Haskell cardano-node install tree.
+  - Checks executable reference binaries, network share bundles, and cardano-node version policy.
+- `scripts/check-stale-placement.py`
+  - Stdlib-only validator for stale post-reorganization source, config, script, and skill paths.
+  - Scans current non-historical surfaces while excluding changelog and operational-run evidence.
 - `scripts/check-strict-mirror.py`
   - Project file at scripts/check-strict-mirror.py.
+- `scripts/check_upstream_drift.sh`
+  - Shell helper script for check upstream drift workflows.
+- `scripts/compare_db_truncater_to_upstream.sh`
+  - Shell helper script for compare db truncater to upstream workflows.
+- `scripts/compare_submit_api_to_upstream.sh`
+  - Shell helper script for compare submit api to upstream workflows.
+- `scripts/compare_tip_to_haskell.sh`
+  - Shell helper script for compare tip to haskell workflows.
+- `scripts/healthcheck.sh`
+  - Shell helper script for healthcheck workflows.
+- `scripts/install_from_release.sh`
+  - Shell helper script for install from release workflows.
+- `scripts/install_haskell_cardano_node.sh`
+  - Shell helper script for install haskell cardano node workflows.
+- `scripts/parallel_blockfetch_soak.sh`
+  - Shell helper script for parallel blockfetch soak workflows.
+- `scripts/preview_pool_activation_status.sh`
+  - Shell helper script for preview pool activation status workflows.
+- `scripts/preview_producer_harness.sh`
+  - Shell helper script for preview producer harness workflows.
+- `scripts/register_preview_generated_pool.sh`
+  - Shell helper script for register preview generated pool workflows.
+- `scripts/restart_resilience.sh`
+  - Shell helper script for restart resilience workflows.
+- `scripts/run-tools.sh`
+  - Shell helper script for run tools workflows.
+- `scripts/run_mainnet_real_pool_producer.sh`
+  - Shell helper script for run mainnet real pool producer workflows.
+- `scripts/run_preprod_real_pool_producer.sh`
+  - Shell helper script for run preprod real pool producer workflows.
+- `scripts/run_preview_active_pool_signoff.sh`
+  - Shell helper script for run preview active pool signoff workflows.
+- `scripts/run_preview_real_pool_producer.sh`
+  - Shell helper script for run preview real pool producer workflows.
 - `scripts/setup-reference.sh`
-  - Recreates .reference-haskell-cardano-node/ from the latest IntersectMBO/cardano-node release.
-  - Default CARDANO_NODE_VERSION is 11.0.1; bump in lockstep with parity-matrix and check-parity-matrix.
+  - Recreates the metadata-free .reference-haskell-cardano-node/ source snapshot and optional Linux install.
+  - Default CARDANO_NODE_VERSION is 11.0.1; --sources-only skips the Linux binary bundle.
+- `scripts/yggdrasil-node.service`
+  - Project file at scripts/yggdrasil-node.service.
+
+## Configuration
+
+- `configuration/AGENTS.md`
+  - Guidance for the root configuration tree and per-network preset layout.
+  - Keeps Yggdrasil operator configs aligned with the upstream cardano-node bundles.
+- `configuration/mainnet/alonzo-genesis.json`
+  - Cardano mainnet genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/mainnet/byron-genesis.json`
+  - Cardano mainnet genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/mainnet/checkpoints.json`
+  - Known chain checkpoint data for Cardano mainnet synchronization validation.
+- `configuration/mainnet/config-legacy.json`
+  - Runtime node configuration for Cardano mainnet.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/mainnet/config.json`
+  - Runtime node configuration for Cardano mainnet.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/mainnet/conway-genesis.json`
+  - Cardano mainnet genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/mainnet/peer-snapshot.json`
+  - Peer snapshot data used for Cardano mainnet network bootstrap behavior.
+- `configuration/mainnet/shelley-genesis.json`
+  - Cardano mainnet genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/mainnet/submit-api-config.json`
+  - Runtime node configuration for Cardano mainnet.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/mainnet/topology.json`
+  - Peer topology configuration for Cardano mainnet network connectivity.
+- `configuration/mainnet/tracer-config.json`
+  - Runtime node configuration for Cardano mainnet.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/poolMetaData.json`
+  - Sample stake-pool metadata JSON kept with the operator configuration artifacts.
+- `configuration/preprod/alonzo-genesis.json`
+  - Cardano preprod genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preprod/byron-genesis.json`
+  - Cardano preprod genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preprod/config-legacy.json`
+  - Runtime node configuration for Cardano preprod.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/preprod/config.json`
+  - Runtime node configuration for Cardano preprod.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/preprod/conway-genesis.json`
+  - Cardano preprod genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preprod/peer-snapshot.json`
+  - Peer snapshot data used for Cardano preprod network bootstrap behavior.
+- `configuration/preprod/shelley-genesis.json`
+  - Cardano preprod genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preprod/submit-api-config.json`
+  - Runtime node configuration for Cardano preprod.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/preprod/topology.json`
+  - Peer topology configuration for Cardano preprod network connectivity.
+- `configuration/preprod/tracer-config.json`
+  - Runtime node configuration for Cardano preprod.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/preview/alonzo-genesis.json`
+  - Cardano preview genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preview/byron-genesis.json`
+  - Cardano preview genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preview/checkpoints.json`
+  - Known chain checkpoint data for Cardano preview synchronization validation.
+- `configuration/preview/config-legacy.json`
+  - Runtime node configuration for Cardano preview.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/preview/config.json`
+  - Runtime node configuration for Cardano preview.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/preview/conway-genesis.json`
+  - Cardano preview genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preview/peer-snapshot.json`
+  - Peer snapshot data used for Cardano preview network bootstrap behavior.
+- `configuration/preview/shelley-genesis.json`
+  - Cardano preview genesis configuration used by node startup and parity tests.
+  - Kept concise in the filetree because the JSON payload is large protocol data.
+- `configuration/preview/submit-api-config.json`
+  - Runtime node configuration for Cardano preview.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+- `configuration/preview/topology.json`
+  - Peer topology configuration for Cardano preview network connectivity.
+- `configuration/preview/tracer-config.json`
+  - Runtime node configuration for Cardano preview.
+  - Includes protocol, tracing, socket, and ledger-related settings consumed by the node.
+
+## Codex
+
+- `.codex/config.toml`
+  - TOML configuration file for config.
 
 ## Other
 
@@ -2586,89 +2658,90 @@
 - `.claude/skills/cardano-filetree-maintainer/SKILL.md`
   - Repo-local skill for reviewing stale filetree entries and refreshing their descriptions.
   - Limits maintenance work to stale files plus generated filetree metadata.
-- `.claude/skills/cardano-node/SKILL.md`
-  - Cardano Node & Stake Pool Operations: ---.
-- `.claude/skills/cardano-node/references/cli-commands.md`
+- `.claude/skills/cardano-haskell-node/SKILL.md`
+  - Operator-reference skill for upstream Haskell cardano-node stake-pool administration.
+  - Scoped away from Yggdrasil Rust implementation and file-mirror parity work.
+- `.claude/skills/cardano-haskell-node/references/cli-commands.md`
   - cardano-cli Command Reference: Commands target cardano-cli v11+ (Conway era, post-Chang hard fork).
-- `.claude/skills/cardano-node/references/community-tools.md`
+- `.claude/skills/cardano-haskell-node/references/community-tools.md`
   - Community Tools for Cardano SPOs: This file covers community-maintained tools that complement `cardano-cli`.
-- `.claude/skills/cardano-node/references/governance.md`
+- `.claude/skills/cardano-haskell-node/references/governance.md`
   - SPO Governance (Conway / CIP-1694): Cardano's Conway era introduced on-chain governance via.
-- `.claude/skills/cardano-node/references/hardening.md`
+- `.claude/skills/cardano-haskell-node/references/hardening.md`
   - Server Hardening for Cardano SPOs: A compromised relay or block producer can mean missed blocks at best, lost funds.
-- `.claude/skills/cardano-node/references/kes-rotation.md`
+- `.claude/skills/cardano-haskell-node/references/kes-rotation.md`
   - KES Key Rotation: KES (Key Evolving Signature) keys are time-limited hot keys used by the block.
-- `.claude/skills/cardano-node/references/monitoring.md`
+- `.claude/skills/cardano-haskell-node/references/monitoring.md`
   - Monitoring with the New Tracing System: `cardano-node` 10.2+ uses the new tracing system. The legacy direct EKG/Prometheus.
-- `.claude/skills/cardano-node/references/sources/basics-cardano-key-pairs.md`
+- `.claude/skills/cardano-haskell-node/references/sources/basics-cardano-key-pairs.md`
   - Wallet address key pairs: ---.
-- `.claude/skills/cardano-node/references/sources/basics-consensus-staking.md`
+- `.claude/skills/cardano-haskell-node/references/sources/basics-consensus-staking.md`
   - Understanding Consensus: ---.
-- `.claude/skills/cardano-node/references/sources/basics-hardware-requirements.md`
-  - Markdown documentation file at .claude/skills/cardano-node/references/sources/basics-hardware-requirements.md.
-- `.claude/skills/cardano-node/references/sources/basics-stake-pool-networking.md`
-  - Markdown documentation file at .claude/skills/cardano-node/references/sources/basics-stake-pool-networking.md.
-- `.claude/skills/cardano-node/references/sources/block-producer-deployment.md`
+- `.claude/skills/cardano-haskell-node/references/sources/basics-hardware-requirements.md`
+  - Markdown documentation file at .claude/skills/cardano-haskell-node/references/sources/basics-hardware-requirements.md.
+- `.claude/skills/cardano-haskell-node/references/sources/basics-stake-pool-networking.md`
+  - Markdown documentation file at .claude/skills/cardano-haskell-node/references/sources/basics-stake-pool-networking.md.
+- `.claude/skills/cardano-haskell-node/references/sources/block-producer-deployment.md`
   - Issue the operational certificate: ---.
-- `.claude/skills/cardano-node/references/sources/block-producer-generating-wallet-keys.md`
+- `.claude/skills/cardano-haskell-node/references/sources/block-producer-generating-wallet-keys.md`
   - Generate payment keys: ---.
-- `.claude/skills/cardano-node/references/sources/block-producer-kes-agent.md`
+- `.claude/skills/cardano-haskell-node/references/sources/block-producer-kes-agent.md`
   - Setup: ---.
-- `.claude/skills/cardano-node/references/sources/block-producer-keys.md`
+- `.claude/skills/cardano-haskell-node/references/sources/block-producer-keys.md`
   - Step 1 — Generate all keys on the air-gapped machine: ---.
-- `.claude/skills/cardano-node/references/sources/block-producer-mithril-signer-configuration.md`
+- `.claude/skills/cardano-haskell-node/references/sources/block-producer-mithril-signer-configuration.md`
   - Overview: ---.
-- `.claude/skills/cardano-node/references/sources/block-producer-register-stake-address.md`
+- `.claude/skills/cardano-haskell-node/references/sources/block-producer-register-stake-address.md`
   - Create the registration certificate: ---.
-- `.claude/skills/cardano-node/references/sources/block-producer-register-stake-pool.md`
+- `.claude/skills/cardano-haskell-node/references/sources/block-producer-register-stake-pool.md`
   - Create pool metadata: ---.
-- `.claude/skills/cardano-node/references/sources/cardano-components.md`
+- `.claude/skills/cardano-haskell-node/references/sources/cardano-components.md`
   - The software stack: ---.
-- `.claude/skills/cardano-node/references/sources/deployment-audit-your-node.md`
+- `.claude/skills/cardano-haskell-node/references/sources/deployment-audit-your-node.md`
   - What the script does :: ---.
-- `.claude/skills/cardano-node/references/sources/deployment-hardening-server.md`
+- `.claude/skills/cardano-haskell-node/references/sources/deployment-hardening-server.md`
   - 1. Non-root user: ---.
-- `.claude/skills/cardano-node/references/sources/deployment-improve-grafana-security.md`
+- `.claude/skills/cardano-haskell-node/references/sources/deployment-improve-grafana-security.md`
   - Option 1 — SSH tunnel (simplest, no public exposure): ---.
-- `.claude/skills/cardano-node/references/sources/governance-on-chain-polls.md`
+- `.claude/skills/cardano-haskell-node/references/sources/governance-on-chain-polls.md`
   - CIP-0094 - Poll participation: ---.
-- `.claude/skills/cardano-node/references/sources/governance-spo-governance.md`
+- `.claude/skills/cardano-haskell-node/references/sources/governance-spo-governance.md`
   - What SPOs vote on: ---.
-- `.claude/skills/cardano-node/references/sources/installing-cardano-node.md`
+- `.claude/skills/cardano-haskell-node/references/sources/installing-cardano-node.md`
   - Hardware requirements: ---.
-- `.claude/skills/cardano-node/references/sources/learn-air-gap.md`
+- `.claude/skills/cardano-haskell-node/references/sources/learn-air-gap.md`
   - Why use it: ---.
-- `.claude/skills/cardano-node/references/sources/learn-cardano-cli-secure-workflow.md`
+- `.claude/skills/cardano-haskell-node/references/sources/learn-cardano-cli-secure-workflow.md`
   - The three-step pattern: ---.
-- `.claude/skills/cardano-node/references/sources/monitoring-openblockperf.md`
+- `.claude/skills/cardano-haskell-node/references/sources/monitoring-openblockperf.md`
   - Why global monitoring?: ---.
-- `.claude/skills/cardano-node/references/sources/monitoring-overview.md`
+- `.claude/skills/cardano-haskell-node/references/sources/monitoring-overview.md`
   - What to monitor: ---.
-- `.claude/skills/cardano-node/references/sources/monitoring-prometheus-grafana.md`
+- `.claude/skills/cardano-haskell-node/references/sources/monitoring-prometheus-grafana.md`
   - Architecture: ---.
-- `.claude/skills/cardano-node/references/sources/new-tracing-cardano-tracer.md`
+- `.claude/skills/cardano-haskell-node/references/sources/new-tracing-cardano-tracer.md`
   - Cardano Tracer: ---.
-- `.claude/skills/cardano-node/references/sources/new-tracing-metrics-migration.md`
+- `.claude/skills/cardano-haskell-node/references/sources/new-tracing-metrics-migration.md`
   - Migrating metrics names: ---.
-- `.claude/skills/cardano-node/references/sources/new-tracing-quick-start.md`
+- `.claude/skills/cardano-haskell-node/references/sources/new-tracing-quick-start.md`
   - Introduction: ---.
-- `.claude/skills/cardano-node/references/sources/operator-tools-calidus-keys.md`
+- `.claude/skills/cardano-haskell-node/references/sources/operator-tools-calidus-keys.md`
   - Why they matter: ---.
-- `.claude/skills/cardano-node/references/sources/operator-tools-guild-ops-suite.md`
+- `.claude/skills/cardano-haskell-node/references/sources/operator-tools-guild-ops-suite.md`
   - Guild Operators Suite: ---.
-- `.claude/skills/cardano-node/references/sources/overview.md`
+- `.claude/skills/cardano-haskell-node/references/sources/overview.md`
   - The path: ---.
-- `.claude/skills/cardano-node/references/sources/relay-node-configuration.md`
+- `.claude/skills/cardano-haskell-node/references/sources/relay-node-configuration.md`
   - Relay topology: ---.
-- `.claude/skills/cardano-node/references/sources/running-cardano.md`
+- `.claude/skills/cardano-haskell-node/references/sources/running-cardano.md`
   - Networks and configuration files: ---.
-- `.claude/skills/cardano-node/references/sources/testnets.md`
+- `.claude/skills/cardano-haskell-node/references/sources/testnets.md`
   - Choosing a testnet: ---.
-- `.claude/skills/cardano-node/references/sources/topology.md`
+- `.claude/skills/cardano-haskell-node/references/sources/topology.md`
   - Topology file reference: ---.
-- `.claude/skills/cardano-node/scripts/sources.json`
+- `.claude/skills/cardano-haskell-node/scripts/sources.json`
   - JSON data file for sources.
-- `.claude/skills/cardano-node/scripts/sync_docs.sh`
+- `.claude/skills/cardano-haskell-node/scripts/sync_docs.sh`
   - Shell helper script for sync docs workflows.
 - `.claude/skills/continuous-agent-loop/SKILL.md`
   - Repo-local skill for the continuous-agent loop pattern used during long parity arcs.

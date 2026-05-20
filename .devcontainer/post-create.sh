@@ -85,8 +85,8 @@ install_static_link_tools() {
 
 install_haskell_cardano_node() {
   # Wave 4 PR 6: the operator script tree moved to
-  # crates/node/yggdrasil-node/scripts/ alongside the binary crate.
-  if ! "$REPO_ROOT/crates/node/yggdrasil-node/scripts/install_haskell_cardano_node.sh"; then
+  # scripts/ alongside the binary crate.
+  if ! "$REPO_ROOT/scripts/install_haskell_cardano_node.sh"; then
     echo "[devcontainer] install_haskell_cardano_node failed; re-run manually when network access is available" >&2
   fi
 }

@@ -23,11 +23,11 @@ macOS and Windows builds are not currently published. Build from source on those
 ## Quick install (one-liner)
 
 ```bash
-$ curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/node/scripts/install_from_release.sh \
+$ curl -fsSL https://raw.githubusercontent.com/yggdrasil-node/Cardano-node/main/scripts/install_from_release.sh \
     | bash
 ```
 
-This pulls the latest tagged release for your detected architecture, verifies the SHA256 against the published `SHA256SUMS.txt`, and installs to `/usr/local/bin/yggdrasil-node`.
+This pulls the latest tagged release for your detected architecture, verifies the SHA256 against the published `SHA256SUMS.txt`, installs the binary to `/usr/local/bin/yggdrasil-node`, and installs the bundled `configuration/` and `scripts/` trees under `/usr/local/share/yggdrasil/`. The `--network` presets resolve from that installed configuration root by default; set `YGGDRASIL_CONFIG_ROOT` to point at a custom root containing `mainnet/`, `preprod/`, and `preview/`.
 
 ## Manual install (verifiable)
 
@@ -64,6 +64,8 @@ Install where convenient:
 
 ```bash
 # sudo install -o root -g root -m 0755 yggdrasil-node /usr/local/bin/
+# sudo mkdir -p /usr/local/share/yggdrasil
+# sudo cp -R configuration scripts /usr/local/share/yggdrasil/
 # yggdrasil-node --version
 ```
 
@@ -74,6 +76,8 @@ $ yggdrasil-node --version
 yggdrasil-node 0.2.0 (commit abc1234)
 $ yggdrasil-node validate-config --network mainnet --database-path /tmp/empty
 ```
+
+`--network mainnet` resolves its config-relative genesis, topology, and peer-snapshot files from `/usr/local/share/yggdrasil/configuration/mainnet/` after install. For custom layouts, set `YGGDRASIL_CONFIG_ROOT=/path/to/configuration` or pass `--config /path/to/mainnet/config.json`.
 
 If `validate-config` reports zero errors and a few normal warnings (storage uninitialised, peer snapshot missing), you are ready to run.
 

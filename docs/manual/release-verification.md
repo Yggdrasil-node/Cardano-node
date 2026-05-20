@@ -143,14 +143,14 @@ build's resolved dep graph.
 
 - The Rust source code's correctness. The strict-mirror gate
   (`scripts/check-strict-mirror.py`) and the parity-matrix
-  (`docs/parity-matrix.json`, [Compatibility](COMPATIBILITY.md)) carry
+  (`docs/parity-matrix.json`, [Compatibility](../COMPATIBILITY.md)) carry
   that contract at development time; release verification confirms
   the binary you have matches the workflow that built it from a
   specific commit, not that the commit itself implements correct
   consensus.
 - The runtime behaviour against live mainnet. The §5 hash-comparison
   and §6.5 parallel-BlockFetch rehearsals in
-  [`docs/MANUAL_TEST_RUNBOOK.md`](MANUAL_TEST_RUNBOOK.md) cover that.
+  [`docs/MANUAL_TEST_RUNBOOK.md`](../MANUAL_TEST_RUNBOOK.md) cover that.
 
 ## See also
 

@@ -67,13 +67,15 @@ Vendored at: `.reference-haskell-cardano-node/cardano-submit-api/` (14 `.hs` fil
 cargo build --release -p yggdrasil-cardano-submit-api
 
 # Run via the universal launcher.
-node/scripts/run-tools.sh cardano-submit-api --help
-node/scripts/run-tools.sh cardano-submit-api --version
+scripts/run-tools.sh cardano-submit-api --help
+scripts/run-tools.sh cardano-submit-api --version
 
-# Live test against the upstream cardano-node socket on preview testnet:
+# Live test against the upstream cardano-node socket on preview testnet
+# after starting `.reference-haskell-cardano-node/install/run-node.sh preview`.
+export CARDANO_NODE_SOCKET_PATH=/path/to/live/upstream/node.socket
 target/release/cardano-submit-api \
-  --config node/configuration/preview/submit-api-config.json \
-  --socket-path .reference-haskell-cardano-node/install/run/preview/socket/node.socket \
+  --config configuration/preview/submit-api-config.json \
+  --socket-path "$CARDANO_NODE_SOCKET_PATH" \
   --testnet-magic 2 --port 8090
 # In another terminal:
 curl -X POST http://127.0.0.1:8090/api/submit/tx \
@@ -137,7 +139,7 @@ Key types:
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Comparison-with-upstream procedure
 

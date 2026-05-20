@@ -424,7 +424,7 @@ pub struct VerifiedSyncServiceConfig {
     /// Operator-configured upper bound on concurrent BlockFetch peers.
     ///
     /// Sourced from `NodeConfigFile.max_concurrent_block_fetch_peers`
-    /// (`crates/node/config/src/lib.rs:285`).  Defaults to `1` (legacy single-peer
+    /// (`crates/node/config/src/lib.rs`).  Defaults to `1` (legacy single-peer
     /// dispatch).  The runtime computes the effective per-tick concurrency
     /// via [`effective_block_fetch_concurrency`] which clamps this knob
     /// against the actual peer slice length, so any value `> 1` parses
@@ -4704,7 +4704,7 @@ pub async fn sync_batch_verified_with_tentative(
                     // real intermediate-boundary hashes for multi-peer
                     // BlockFetch dispatch.  No-op when the pool isn't
                     // wired through.  Reference: Finding A foundation in
-                    // `crates/node/yggdrasil-node/src/chainsync_worker.rs`.
+                    // `crates/node/sync/src/chainsync_worker.rs`.
                     if let (Some(Point::BlockPoint(slot, hash)), Some(ctx)) =
                         (header_point, multi_peer_dispatch.as_ref())
                     {
@@ -5456,7 +5456,7 @@ pub fn forget_peer_density(peer: SocketAddr, registry: &DensityRegistry) {
 // ---------------------------------------------------------------------------
 //
 // These helpers translate the `max_concurrent_block_fetch_peers`
-// configuration knob (`crates/node/config/src/lib.rs:285`) into per-peer fetch
+// configuration knob (`crates/node/config/src/lib.rs`) into per-peer fetch
 // assignments using the existing `BlockFetchPool` / `split_range` /
 // `ReorderBuffer` foundation in `crates/network/src/blockfetch_pool.rs`.
 //

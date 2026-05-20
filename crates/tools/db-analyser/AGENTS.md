@@ -64,6 +64,11 @@ layer diverges).
 - ✅ 6 integration tests at `tests/end_to_end_chain_walk.rs`
   exercise the production call path against a temp ChainDB.
 
+`src/bin/dump_block.rs` carries the R251 forensic immutable-chunk dumper used
+for byte-span investigations. It is intentionally colocated with `db-analyser`
+because its upstream analogue is operator-tooling-side block inspection, not
+node runtime wiring.
+
 ### Dispatch coverage matrix
 
 | AnalysisName | Verdict | Shipping round |
@@ -104,11 +109,11 @@ descriptor. **Post-R481 status:** `block-only-shipped`.
 cargo build --release -p yggdrasil-db-analyser
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh db-analyser --help
-node/scripts/run-tools.sh db-analyser --version
+scripts/run-tools.sh db-analyser --help
+scripts/run-tools.sh db-analyser --version
 
 # Run an analysis (R481+R482 wire-up):
-node/scripts/run-tools.sh db-analyser \
+scripts/run-tools.sh db-analyser \
   --db /path/to/chaindb \
   --analysis count-blocks
 
@@ -125,6 +130,8 @@ operator-readable error naming the dependency.
 
 - Every new sub-module file MUST mirror an upstream `.hs` file by
   snake_case basename or carry a `## Naming parity` block.
+- Developer diagnostics that inspect ChainDB or immutable chunk bytes belong in
+  this crate, not in the `crates/node/cardano-node` binary shell.
 - Wire-format / stdout byte-equivalence with upstream `db-analyser`
   is the acceptance gate for any concrete handler — see the
   carve-out inventory above for the documented stdout-shape soak.
@@ -135,7 +142,7 @@ operator-readable error naming the dependency.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 

@@ -3,8 +3,11 @@
 Focus on **strict 1:1 file-mirror parity** with upstream
 `cardano-cli/cardano-cli/src/Cardano/CLI/*.hs` and the operator-
 tooling subset that `yggdrasil-node` actually needs. The crate
-landed across R289–R295 as the Phase F bootstrap; concrete
-implementations port over multi-week R296+ follow-up work.
+landed across R289–R295 as the Phase F bootstrap, and the C-arc
+operator-essential concrete port is closed. Current work is keeping
+the standalone binary and the `yggdrasil-node` wrapper on the shared
+parser, LocalStateQuery, and submit helpers rather than reintroducing
+node-local command behavior.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -14,7 +17,7 @@ sibling collisions) OR carries a `## Naming parity` docstring stanza
 ending in `**Strict mirror:** none.` plus the upstream symbol(s)/
 file(s) the helper surfaces. CI gate: `python3 scripts/check-strict-mirror.py`
 (warn-only since R275; fail-build at R288). Allowlist source-of-truth:
-[`docs/strict-mirror-audit.tsv`](../../docs/strict-mirror-audit.tsv).
+[`docs/strict-mirror-audit.tsv`](../../../docs/strict-mirror-audit.tsv).
 
 This crate has the densest file-mirror surface in the workspace
 (237 Rust files mirror 180 upstream `.hs` files; the +57 are
@@ -40,10 +43,11 @@ Mirrors upstream `Cardano.CLI.*` subtree:
 The crate exposes `yggdrasil_cardano_cli::*` as a workspace-internal
 library; the `yggdrasil-node` binary consumes specific helpers (see
 "Integration with `node` crate" below). The standalone
-`yggdrasil-cardano-cli` binary (`main.rs`, shipped R506) exposes 33
-operational subcommands — the cardano-cli C-arc completed at R515.
-Operators can use the standalone binary or `yggdrasil-node cardano-cli
-<subcommand>` interchangeably.
+`yggdrasil-cardano-cli` binary (`main.rs`, shipped R506) exposes the
+current 40-command C-arc surface. The `yggdrasil-node cardano-cli`
+compatibility wrapper exposes the variants declared in
+`crates/node/cardano-node/src/cli.rs::CardanoCliCommand`; keep it as a
+thin adapter instead of duplicating runtime logic in the node crate.
 
 ##  Rules *Non-Negotiable*
 
@@ -60,6 +64,14 @@ Operators can use the standalone binary or `yggdrasil-node cardano-cli
 - `QueryTip` and other LSQ-client subcommands must NOT pull the
   tokio runtime or `commands::query::run_query` into this crate
   directly; an `LsqClient` trait abstraction is the migration path.
+- Shared pure LSQ/query helpers used by both the standalone binary
+  and the node wrapper live in `lsq.rs`. Keep `format_utc_time` and
+  `decode_optional_prefixed_hex` here rather than duplicating them in
+  `crates/node/cardano-node/src/commands/query.rs`.
+- Shared transaction-input helpers used by both the standalone binary
+  and the node wrapper live in `era_based::transaction::run`. Keep
+  `decode_tx_hex_arg` here rather than duplicating submit-tx parsing
+  in `crates/node/cardano-node/src/commands/submit_tx.rs`.
 - Wire-format byte-equivalence with upstream `cardano-cli` is the
   acceptance gate for any concrete implementation. Operators must
   be able to swap the upstream binary for `yggdrasil-cardano-cli`
@@ -67,10 +79,10 @@ Operators can use the standalone binary or `yggdrasil-node cardano-cli
 
 ## Official Upstream References
 
-- [cardano-cli library tree](.reference-haskell-cardano-node/deps/cardano-cli/cardano-cli/src/Cardano/CLI/) — the strict-mirror source.
-- [cardano-cli library cabal file](.reference-haskell-cardano-node/deps/cardano-cli/cardano-cli/cardano-cli.cabal) — module-list authority.
-- [Cardano API serialise text-envelope](.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Api/SerialiseTextEnvelope.hs) — text-envelope codec used by key/cert files.
-- [cardano-cli release notes / changelog](.reference-haskell-cardano-node/deps/cardano-cli/cardano-cli/CHANGELOG.md) — track upstream subcommand additions.
+- [cardano-cli library tree](../../../.reference-haskell-cardano-node/deps/cardano-cli/cardano-cli/src/Cardano/CLI/) — the strict-mirror source.
+- [cardano-cli library cabal file](../../../.reference-haskell-cardano-node/deps/cardano-cli/cardano-cli/cardano-cli.cabal) — module-list authority.
+- [Cardano API serialise text-envelope](../../../.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Api/SerialiseTextEnvelope.hs) — text-envelope codec used by key/cert files.
+- [cardano-cli release notes / changelog](../../../.reference-haskell-cardano-node/deps/cardano-cli/cardano-cli/CHANGELOG.md) — track upstream subcommand additions.
 
 ## Current Status (post-R515 — C-arc complete)
 
@@ -86,7 +98,7 @@ Operators can use the standalone binary or `yggdrasil-node cardano-cli
 - **R297 — ShowUpstreamConfig migration.** `environment::resolve_upstream_reference_paths`,
   `environment::extract_reference_network_magic`, and
   `environment::run_show_upstream_config` migrated from
-  `node/src/commands/cardano_cli.rs`. Wire output byte-identical.
+  `crates/node/cardano-node/src/commands/cardano_cli.rs`. Wire output byte-identical.
 - **R503 (Phase 5 follow-on, 2026-05) — `run::run_command`
   Version arm wired.** `Command::Version` now prints
   `helper::version_info()` (was R289-stub "skeleton…"
@@ -230,8 +242,9 @@ Operators can use the standalone binary or `yggdrasil-node cardano-cli
   `transaction submit` adds the second NtC mini-protocol — the
   `LsqClient` trait grew a `submit_tx` method alongside `run_query`
   (one trait, both NtC operations; concrete `TokioLsqClient` drives
-  `LocalTxSubmissionClient`, mirroring the node binary's
-  `run_submit_tx`). `transaction view` is a **shallow** structural
+  `LocalTxSubmissionClient`; as of R526 the node binary's
+  `submit-tx` wrapper delegates to this same client). `transaction
+  view` is a **shallow** structural
   view — txid + top-level CBOR elements as hex, deliberately not a
   full per-era tx-body decode (the `view` field says so). 84 tests
   total post-R513. **31 operational subcommands**.
@@ -256,25 +269,51 @@ Operators can use the standalone binary or `yggdrasil-node cardano-cli
   the balance invariant `total_input == Σ outputs + fee + change`
   verified end-to-end in tests by decoding the built tx with
   `ConwayTxBody::decode_cbor`. 92 tests total post-R515.
-  **33 operational subcommands — the cardano-cli C-arc is complete.**
+  **33 operational subcommands at R515; later LSQ cleanup rounds expanded
+  this to the current 40-command surface.**
+- **R523 (stale-placement cleanup, 2026-05) - shared LSQ query
+  helpers.** `lsq.rs` now owns the pure `format_utc_time` and
+  `decode_optional_prefixed_hex` helpers used by SystemStart rendering
+  and lenient query-argument parsing. `lsq_tokio.rs` and the node
+  binary's `commands/query.rs` both reuse this crate-owned surface,
+  preventing query-helper drift between the standalone cardano-cli and
+  the compatibility wrapper. 94 tests total post-R523.
+- **R524 (stale-placement cleanup, 2026-05) - shared LSQ wire plans.**
+  `lsq.rs` owns the migrated `NtcQuery` CBOR query plans and reply
+  decoders through `encode_query` / `decode_query_result`. The concrete
+  `TokioLsqClient` uses `plan_for`; the node binary's `commands/query.rs`
+  delegates migrated LSQ variants through the same API.
+- **R527 (stale-placement cleanup, 2026-05) - current-epoch LSQ plan.**
+  `NtcQuery::CurrentEpoch` now owns the Yggdrasil-extension `[101]`
+  query tag and the `{ "epoch": <u64> }` reply decoder. The node
+  binary maps `QueryCommand::CurrentEpoch` to this shared plan instead
+  of carrying a local encoder/decoder pair.
+- **R528 (stale-placement cleanup, 2026-05) - era-history LSQ plan.**
+  `NtcQuery::EraHistory` now owns the upstream hard-fork
+  `GetInterpreter` query shape `[0, [2, [0]]]` and the raw CBOR
+  `era_history_cbor` decoder. The node binary maps
+  `QueryCommand::EraHistory` to this shared plan instead of carrying a
+  local encoder/decoder pair.
+- **R529 (stale-placement cleanup, 2026-05) - parameterized LSQ plans.**
+  `NtcQuery` now carries the parameter bytes for `query-utxo`
+  (`--address` / `--tx-in`), `query-reward-balance`,
+  `query-delegations-and-rewards`, and `query-stake-pool-params`.
+  Both the standalone binary and the node wrapper dispatch those
+  queries through the shared `lsq.rs` encode/decode plans instead of
+  keeping node-local CBOR envelopes.
 
-### Phase F operator surface (2026-05 — landed in the binary)
+### Phase F operator surface (2026-05 - landed in the standalone binary)
 
-While THIS crate (the library `yggdrasil-cardano-cli`) is still
-in its R289 placeholder state for most subcommand families, the
-binary crate (`yggdrasil-node`) ships a `cardano-cli` subcommand
-group with 15 operator-essential commands that route through
-`crates/node/yggdrasil-node/src/commands/cardano_cli.rs` into
-the existing node helpers (`commands/query.rs`,
-`commands/submit_tx.rs`, `yggdrasil_crypto`,
-`yggdrasil_ledger::compute_tx_id`, the `bech32` workspace crate,
-and `/dev/urandom`). The split is intentional: the binary
-surface is "operator-ready"; the library surface stays
-placeholder-stage and waits for the C-arc migration.
+The library crate owns the migrated `cardano-cli` command surface; the
+binary crate (`yggdrasil-node`) keeps a compatibility `cardano-cli`
+subcommand group that adapts its parser to this crate's helpers,
+transaction runners, and shared NtC query/submission clients. Keep new
+operator behavior here first, then leave the node binary with a thin
+argument-adapter wrapper.
 
-Operator surface mapped to upstream `cardano-cli` (35 subcommands):
+Standalone operator surface mapped to upstream `cardano-cli` (40 subcommands):
 
-| `yggdrasil-node cardano-cli ...`            | `cardano-cli ...`                          |
+| `yggdrasil-cardano-cli ...`                 | `cardano-cli ...`                          |
 | ------------------------------------------- | ------------------------------------------ |
 | **Introspection**                           |                                            |
 | `version`                                   | `version`                                  |
@@ -309,6 +348,9 @@ Operator surface mapped to upstream `cardano-cli` (35 subcommands):
 | `transaction-submit`                        | `transaction submit`                       |
 | `transaction-txid`                          | `transaction txid`                         |
 | `transaction-sign` (single-signer)          | `transaction sign` (subset)                |
+| `transaction-view`                          | `transaction view`                         |
+| `transaction-build-raw`                     | `transaction build-raw`                    |
+| `transaction-build` (offline)               | `transaction build` (offline subset)       |
 | **Keys + Addresses**                        |                                            |
 | `address-key-gen`                           | `address key-gen`                          |
 | `address-key-hash`                          | `address key-hash`                         |
@@ -316,39 +358,29 @@ Operator surface mapped to upstream `cardano-cli` (35 subcommands):
 | `stake-address-key-gen`                     | `stake-address key-gen`                    |
 | `stake-address-build`                       | `stake-address build`                      |
 
-Not yet wired (each gated on a substantive new primitive — full
-tx construction with input selection + fees, new LSQ queries
-with Rust-side response decoders, per-era certificate encoders,
-era-history Interpreter CBOR decoder): `query leadership-schedule`,
-`query stake-snapshot`, `query slot-number`, `transaction build`,
-`transaction build-raw`, `transaction view`,
-`stake-pool registration-certificate`.
+Not yet wired (each gated on a substantive new primitive - leadership
+schedule calculation, stake snapshot decoding, slot/time conversion,
+per-era certificate encoders, or other upstream subcommand bodies):
+`query leadership-schedule`, `query stake-snapshot`, `query slot-number`,
+and `stake-pool registration-certificate`.
 
-The C-arc migration plan (below) is the path that lifts these
-binary-side handlers into THIS library crate so a standalone
-`cargo install --path crates/tools/cardano-cli` produces a
-parity-compatible `cardano-cli` binary independent of the node
-runtime.
+## Migration roadmap
 
-## Migration roadmap (R298+ deferred)
-
-Concrete subcommand implementations port from upstream over multi-
-week follow-up rounds. Each port requires:
+The operator-essential C-arc is complete. Future `cardano-cli`
+subcommand implementations should still follow the same porting loop:
 
 1. Read upstream `Cardano.CLI.<Cluster>.<Subcommand>.Run` for the
    semantic body.
-2. Implement the corresponding `crates/cardano-cli/src/<cluster>/<subcommand>/run.rs`
+2. Implement the corresponding `crates/tools/cardano-cli/src/<cluster>/<subcommand>/run.rs`
    leaf with byte-equivalent output.
-3. Migrate the per-subcommand integration from
-   `node/src/commands/cardano_cli.rs` (or a sibling node-binary
-   module) into the new crate, taking plain-data parameters at the
-   crate boundary.
+3. Keep reusable behavior in this crate first; the node binary should
+   adapt its parser to `Command`, `run_command_with`, `LsqClient`, or a
+   plain helper from this crate rather than owning the runtime body.
 4. Add a parity-matrix entry in `docs/parity-matrix.json` tracking
    the byte-equivalence verification status against the upstream
    binary at `.reference-haskell-cardano-node/install/bin/cardano-cli`.
 
-Subcommand-migration status as of R508 closure — the standalone
-binary exposes 9 operational subcommands:
+Current subcommand-migration status:
 
 | Subcommand | Status | Migration shape |
 |---|---|---|
@@ -364,14 +396,14 @@ binary exposes 9 operational subcommands:
 | `TransactionSign` | ✅ migrated (R509) | `era_based/transaction/run.rs::run_transaction_sign_cmd` — Ed25519 single-signer; fresh `{0:[[vk,sig]]}` witness set |
 | `TransactionSubmit` | ✅ migrated (R513) | `era_based/transaction/run.rs::run_transaction_submit_cmd` — NtC LocalTxSubmission via `LsqClient::submit_tx` |
 | `TransactionView` | ✅ migrated (R513) | `era_based/transaction/run.rs::run_transaction_view_cmd` — shallow structural view (txid + top-level CBOR hex) |
-| `Query*` (20 LSQ subcommands) | ✅ migrated (R510–R512) | `lsq.rs` `NtcQuery` enum + `lsq_tokio.rs` `plan_for`: tip / chain-block-no / current-era / system-start / stake-distribution / stake-pools / protocol-parameters / drep-stake-distribution / constitution / gov-state / drep-state / committee-state / treasury-and-reserves / account-state / genesis-delegations / stability-window / num-dormant-epochs / expected-network-id / deposit-pot / ledger-counts |
+| `Query*` (27 LSQ subcommands) | ✅ migrated (R510–R512, R527–R529) | `lsq.rs` `NtcQuery` enum + `lsq_tokio.rs` `plan_for`: tip / chain-block-no / current-era / system-start / era-history / current-epoch / stake-distribution / stake-pools / protocol-parameters / query-utxo by address / query-utxo by tx-in / reward-balance / delegations-and-rewards / stake-pool-params / drep-stake-distribution / constitution / gov-state / drep-state / committee-state / treasury-and-reserves / account-state / genesis-delegations / stability-window / num-dormant-epochs / expected-network-id / deposit-pot / ledger-counts |
 | `TransactionBuildRaw` | ✅ migrated (R514) | `era_based/transaction/run.rs::run_transaction_build_raw_cmd` — typed `ConwayTxBody` via the ledger's parity `CborEncode`, wrapped as `[body,{},true,null]` |
 | `TransactionBuild` | ✅ migrated (R515) | `era_based/transaction/run.rs::run_transaction_build_cmd` + `balance_conway_tx` — offline auto fee + change balancing (operator-supplied fee coefficients) |
 
-The standalone binary now exposes **33 operational subcommands —
+The standalone binary now exposes **40 operational subcommands —
 the cardano-cli C-arc is complete**: the offline operator toolkit
 (keys / addresses / txid / single-signer signing / shallow tx-view /
-`build-raw` / `build`), the complete 20-query LocalStateQuery
+`build-raw` / `build`), the complete 27-query LocalStateQuery
 surface, and `transaction submit`.
 
 `transaction build`'s offline variant takes the fee coefficients +
@@ -382,7 +414,7 @@ protocol-parameter + UTxO-value resolution) is a possible future
 enhancement, but not required for the operator workflows the
 standalone binary targets.
 
-Subcommands beyond the current 33-subcommand C-arc surface (the full
+Subcommands beyond the current 40-command C-arc surface (the full
 upstream `cardano-cli` has hundreds of subcommands across Byron / Compatible
 / EraBased / EraIndependent / Legacy) are out-of-scope until
 operator demand prioritizes specific port targets. The leaf
@@ -391,15 +423,30 @@ a time) without breaking the public path.
 
 ## Integration with `node` crate
 
-`node/src/commands/cardano_cli.rs` is the binary-side dispatcher.
+`crates/node/cardano-node/src/commands/cardano_cli.rs` is the binary-side dispatcher.
 It consumes:
 
-- `yggdrasil_cardano_cli::helper::version_info()` — `Version` arm.
+- `yggdrasil_cardano_cli::helper::version_info()` for `Version`.
 - `yggdrasil_cardano_cli::environment::{resolve_upstream_reference_paths,
-  extract_reference_network_magic, run_show_upstream_config}` —
-  `ShowUpstreamConfig` arm.
-- `crate::commands::query::run_query` (binary-local) — `QueryTip`
-  arm; pending migration to a trait abstraction.
+  extract_reference_network_magic, run_show_upstream_config}` for
+  `ShowUpstreamConfig`.
+- `era_independent::address::run::{run_address_key_gen_cmd,
+  run_address_key_hash_cmd, run_address_build_cmd}` for the offline
+  payment key/address surface.
+- `era_based::stake_address::run::{run_stake_address_key_gen_cmd,
+  run_stake_address_build_cmd}` for the offline stake key/address surface.
+- `era_based::transaction::run::{run_transaction_txid_cmd,
+  run_transaction_sign_cmd, run_transaction_submit_cmd}` for txid,
+  single-signer signing, and LocalTxSubmission.
+- `lsq_tokio::TokioLsqClient` for the shared socket driver behind
+  migrated LocalStateQuery commands and LocalTxSubmission.
+- `lsq::{NtcQuery, encode_query, decode_query_result,
+  decode_optional_prefixed_hex, format_utc_time}` for shared LSQ wire
+  plans, parameterized query-argument decoding, and SystemStart UTC
+  rendering.
+- `crate::commands::query::run_query` remains the binary-local top-level
+  `yggdrasil-node query ...` bridge, but its CBOR envelopes and reply
+  decoders should come from this crate.
 
 The dispatcher's `network_dir(NetworkPreset) -> &'static str` helper
 maps the binary's `NetworkPreset` enum to the on-disk sub-directory
@@ -408,16 +455,14 @@ this crate.
 
 ## Module layout (top-level only; sub-trees track upstream 1:1)
 
-- `command.rs` — top-level dispatch enum (3 variants today; grows
-  per R298+ migration).
+- `command.rs` — top-level dispatch enum for the migrated standalone
+  binary surface.
 - `run.rs` — top-level dispatcher (forwards to per-cluster runners).
 - `parser.rs` — clap-based parser shell. Operational since R503:
   `Args { command: Command }` wraps the `Command` `Subcommand` derive
   and `parse_command` invokes `Args::try_parse_from`. The node binary
-  still uses its own parser at `node/src/cli.rs` for the wider
-  cardano-cli surface; the library parser covers the standalone
-  binary's 3-subcommand surface (`version`, `show-upstream-config`,
-  `query-tip`).
+  still uses its own parser at `crates/node/cardano-node/src/cli.rs`,
+  but its runtime bodies should delegate into this crate.
 - `render.rs` — output formatting (`render_json`, `render_text`).
 - `option.rs` — shared option parsers (`parse_socket_path`,
   `parse_network_magic`).
@@ -436,3 +481,24 @@ Sub-trees (`byron/`, `compatible/`, `era_based/`, `era_independent/`,
 `type/`, `legacy/`, `io/`, `json/`, `os/`, `read/`, `run/`,
 `option/`) follow the upstream directory layout 1:1; see
 `docs/strict-mirror-audit.tsv` for the full per-file verdict table.
+
+## Recent cleanup notes
+
+- R525 moved the lenient transaction `--tx-hex` parser into
+  `era_based::transaction::run::decode_tx_hex_arg`. The node wrapper
+  may re-export it for compatibility, but transaction input parsing
+  should stay in this crate.
+- R526 made `lsq_tokio::TokioLsqClient` the shared LocalTxSubmission
+  socket driver for both `yggdrasil-cardano-cli transaction submit`
+  and `yggdrasil-node submit-tx`; node code should not recreate the
+  LocalTxSubmission client state machine.
+- R527 moved the `query-current-epoch` wire plan into `lsq.rs` as
+  `NtcQuery::CurrentEpoch`. New simple LSQ tags should land here
+  first, with the node binary acting only as a compatibility mapper.
+- R528 moved the `query-era-history` hard-fork `GetInterpreter` wire
+  plan into `lsq.rs` as `NtcQuery::EraHistory`. Fixed non-parameterized
+  hard-fork queries should follow that shared-plan pattern.
+- R529 moved the remaining parameterized query envelopes into `lsq.rs`
+  (`query-utxo`, `query-reward-balance`, `query-delegations-and-rewards`,
+  and `query-stake-pool-params`). Do not reintroduce node-local
+  parameterized LSQ encoders or decoders.

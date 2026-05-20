@@ -5,7 +5,7 @@ name: Parity drift
 # Polls the IntersectMBO/cardano-node "latest release" tag and compares
 # it against the policy tag pinned in `docs/parity-matrix.json::reference.tag`
 # (currently `11.0.1`, kept in lockstep with the `REFERENCE_TAG` constant
-# at `scripts/check-parity-matrix.py:33`). On drift, opens or updates a
+# in `scripts/check-parity-matrix.py`). On drift, opens or updates a
 # single `[parity-drift]` tracking issue with the new tag's release notes.
 #
 # Never fails CI — this is *informational* signal so the parity-matrix
@@ -94,7 +94,7 @@ jobs:
 
           ### Bump checklist (see \`docs/UPSTREAM_PARITY.md\`)
 
-          1. Update \`docs/parity-matrix.json::reference.tag\` and \`scripts/check-parity-matrix.py:33\` (\`REFERENCE_TAG\`).
+          1. Update \`docs/parity-matrix.json::reference.tag\` and \`scripts/check-parity-matrix.py\` (\`REFERENCE_TAG\`).
           2. Update \`scripts/setup-reference.sh\` \`CARDANO_NODE_VERSION\` constant.
           3. Re-fetch the reference tree: \`bash scripts/setup-reference.sh --force\`.
           4. Run \`python3 scripts/check-parity-matrix.py\`; fix every now-missing \`haskell_reference[*].path\` (upstream may have moved files).

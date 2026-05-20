@@ -39,7 +39,7 @@ pub enum Command {
     /// introspection helpers; Yggdrasil-specific utility.
     ShowUpstreamConfig {
         /// Network preset name (`mainnet` / `preprod` / `preview`).
-        /// Selects the `crates/node/yggdrasil-node/configuration/<network>/` sub-tree to
+        /// Selects the `configuration/<network>/` sub-tree to
         /// resolve config + topology paths against, plus the
         /// well-known network magic for the fallback if
         /// `config.json` lacks one.
@@ -47,7 +47,7 @@ pub enum Command {
         network: String,
         /// Override path for the upstream Haskell-share root
         /// (typically `/tmp/cardano-tooling/share`); falls back to
-        /// the vendored `crates/node/yggdrasil-node/configuration/<network>/` directory.
+        /// the vendored `configuration/<network>/` directory.
         #[arg(long)]
         upstream_config_root: Option<PathBuf>,
     },
@@ -89,6 +89,27 @@ pub enum Command {
     /// `GetSystemStart` from
     /// `Ouroboros.Consensus.HardFork.Combinator.Ledger.Query`.
     QuerySystemStart {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the hard-fork era interpreter.
+    /// Mirrors upstream `query era-history`.
+    QueryEraHistory {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+    },
+    /// Query the running node for the current epoch number.
+    QueryCurrentEpoch {
         /// Path to the node socket.
         #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
         socket_path: PathBuf,
@@ -259,6 +280,66 @@ pub enum Command {
         /// Override network magic.
         #[arg(long)]
         network_magic: Option<u32>,
+    },
+    /// Query UTxO entries by address or transaction input. Mirrors
+    /// upstream `query utxo` filtering shape.
+    QueryUtxo {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Filter UTxO set by raw address bytes encoded as hex.
+        #[arg(long, conflicts_with = "tx_in")]
+        address: Option<String>,
+        /// Filter UTxO set by transaction input in `TX_HASH#INDEX`
+        /// form.
+        #[arg(long, conflicts_with = "address")]
+        tx_in: Option<String>,
+    },
+    /// Query the reward balance for a reward account.
+    QueryRewardBalance {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Hex-encoded reward account bytes.
+        #[arg(long)]
+        account: String,
+    },
+    /// Query delegations and rewards for a stake credential.
+    QueryDelegationsAndRewards {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Hex-encoded credential hash.
+        #[arg(long)]
+        credential: String,
+        /// True for key-hash credentials, false for script hashes.
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        is_key_hash: bool,
+    },
+    /// Query the registered parameters of a specific stake pool.
+    QueryStakePoolParams {
+        /// Path to the node socket.
+        #[arg(long, env = "CARDANO_NODE_SOCKET_PATH")]
+        socket_path: PathBuf,
+        /// Override network magic instead of using the upstream
+        /// reference config.
+        #[arg(long)]
+        network_magic: Option<u32>,
+        /// Hex-encoded pool key hash.
+        #[arg(long)]
+        pool_hash: String,
     },
     /// Generate a fresh Ed25519 payment keypair, writing both keys
     /// as TextEnvelope JSON files. Mirrors upstream `address key-gen`

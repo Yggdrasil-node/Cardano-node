@@ -44,7 +44,7 @@ Companion CLI for kes-agent. Phase A.4 mini-arc R355-R359 (5 rounds, SMALL). R35
 
 | Carve-out                            | Status helper                       | Deferral rationale (one-liner)                                            |
 |--------------------------------------|-------------------------------------|---------------------------------------------------------------------------|
-| ControlClient socket I/O             | `status::control_client_status()`   | Gated on kes-agent server mini-arc (R344-R354 — highest-stakes parity: socket protocol must be byte-equivalent or live SPO setups break). KES key lifecycle in `crates/crypto/src/kes/` is already shipped; only the server-side socket protocol is missing. |
+| ControlClient socket I/O             | `status::control_client_status()`   | Gated on kes-agent server mini-arc (R344-R354 — highest-stakes parity: socket protocol must be byte-equivalent or live SPO setups break). KES key lifecycle in `crates/crypto/src/kes.rs` is already shipped; only the server-side socket protocol is missing. |
 
 ## Build + run
 
@@ -53,8 +53,8 @@ Companion CLI for kes-agent. Phase A.4 mini-arc R355-R359 (5 rounds, SMALL). R35
 cargo build --release -p yggdrasil-kes-agent-control
 
 # Run via the universal launcher (recommended).
-node/scripts/run-tools.sh kes-agent-control --help
-node/scripts/run-tools.sh kes-agent-control --version
+scripts/run-tools.sh kes-agent-control --help
+scripts/run-tools.sh kes-agent-control --version
 
 # Or invoke the binary directly:
 target/release/kes-agent-control --help
@@ -77,7 +77,7 @@ once concrete dispatch lands at `R356+`.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 

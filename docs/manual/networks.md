@@ -25,18 +25,25 @@ $ yggdrasil-node run --network preview ...
 
 The preset selects:
 
-- The genesis files (`byron-genesis.json`, `shelley-genesis.json`, `alonzo-genesis.json`, `conway-genesis.json`) — vendored under [`node/configuration/<preset>/`](https://github.com/yggdrasil-node/Cardano-node/tree/main/node/configuration).
+- The genesis files (`byron-genesis.json`, `shelley-genesis.json`, `alonzo-genesis.json`, `conway-genesis.json`) from the active preset root.
 - The network magic — the integer that identifies the network in NtN handshake `version_data`.
 - Bootstrap peers — IOG-operated entry points specific to each network.
 - Topology defaults — relays curated for each network.
 - Genesis-pinned protocol parameters (slot length, epoch length, security parameter `k`, active slot coefficient `f`, KES periods, etc.).
+
+In a source checkout the preset root is
+[`configuration/<preset>/`](https://github.com/yggdrasil-node/Cardano-node/tree/main/configuration).
+Release installs use `/usr/local/share/yggdrasil/configuration/<preset>/`, and
+Docker images use `/usr/share/yggdrasil/configuration/<preset>/`. Set
+`YGGDRASIL_CONFIG_ROOT` to a custom root containing `mainnet/`, `preprod/`, and
+`preview/` if you install the bundled presets somewhere else.
 
 ## What gets vendored per preset
 
 Each preset directory contains:
 
 ```
-node/configuration/<preset>/
+configuration/<preset>/
 ├── alonzo-genesis.json    # Plutus V1/V2 cost models, ExUnit prices, collateral parameters
 ├── byron-genesis.json     # Byron-era genesis: initial UTxO, genesis delegates
 ├── config.json            # Operator config (logging, metrics, governor targets, genesis hashes)
@@ -80,7 +87,14 @@ Yggdrasil does not ship a built-in custom-network preset, but you can run agains
 2. The network magic value.
 3. At least one peer address.
 
-Create a `custom.json` config based on `node/configuration/mainnet/config.json`, change the genesis paths, network magic, and topology. Run with `--config custom.json` instead of `--network <preset>`. See [Configuration]({{ "/manual/configuration/" | relative_url }}) for the full schema.
+Create a `custom.json` config based on the active mainnet preset
+`config.json`, change the genesis paths, network magic, and topology. In a
+source checkout that file is `configuration/mainnet/config.json`; after a
+release install it is
+`/usr/local/share/yggdrasil/configuration/mainnet/config.json`. Run with
+`--config custom.json` instead of `--network <preset>`. See
+[Configuration]({{ "/manual/configuration/" | relative_url }}) for the full
+schema.
 
 ## Switching networks on a single machine
 

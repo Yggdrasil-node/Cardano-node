@@ -19,7 +19,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 ## Mini-arc scope
 
-Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `node/src/block_producer.rs` Forging logic.
+Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `crates/node/block-producer/src/lib.rs` forging logic.
 
 ## Current functional surface (post Phase 4 R3b)
 
@@ -94,8 +94,8 @@ returning a `ForgeLoopStatus` descriptor of the one surviving carve-out:
 cargo build --release -p yggdrasil-db-synthesizer
 
 # Run via the universal launcher (recommended).
-crates/node/yggdrasil-node/scripts/run-tools.sh db-synthesizer --help
-crates/node/yggdrasil-node/scripts/run-tools.sh db-synthesizer --version
+scripts/run-tools.sh db-synthesizer --help
+scripts/run-tools.sh db-synthesizer --version
 
 # Or invoke the binary directly:
 target/release/db-synthesizer --help
@@ -118,7 +118,7 @@ once concrete dispatch lands at `R409+`.
   are the source of truth for `--help`/`--version`. If upstream
   ships a new release with different help output, refresh the
   fixtures + bump the relevant SHA pin in
-  `node/src/upstream_pins.rs` as a coordinated round.
+  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
 
 ## Round roadmap
 

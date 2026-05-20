@@ -59,7 +59,11 @@ parity-fixtures:
 parity-mirror:
     python3 scripts/check-strict-mirror.py --fail-on-violation
 
-parity-all: parity-check parity-fixtures parity-mirror
+placement-check:
+    python3 scripts/check-stale-placement.py --self-test
+    python3 scripts/check-stale-placement.py
+
+parity-all: parity-check parity-fixtures parity-mirror placement-check
 
 # Scaffold a parity-matrix.json entry for a newly-added Rust file.
 # Wave 9 PR 27 lands the xtask subcommand; this recipe wraps it.
@@ -77,10 +81,10 @@ upstream-full:
 
 # ─── Operational rehearsals (long-running) ────────────────────────────
 preview-producer:
-    bash crates/node/yggdrasil-node/scripts/preview_producer_harness.sh
+    bash scripts/preview_producer_harness.sh
 
 mainnet-relay-rehearsal:
-    bash crates/node/yggdrasil-node/scripts/parallel_blockfetch_soak.sh
+    bash scripts/parallel_blockfetch_soak.sh
 
 # ─── Sister-tool recipes (Wave 8 PR 24) ───────────────────────────────
 #
@@ -88,9 +92,8 @@ mainnet-relay-rehearsal:
 # `<tool>-help`, and (where a comparison harness exists) `<tool>-parity`
 # recipe. The recipes call `cargo` / `bash` against fully-qualified
 # crate names so they remain stable even after Wave 5 sub-crate
-# reorganization. Comparison harnesses migrated from
-# `node/scripts/compare_*_to_upstream.sh` to
-# `crates/node/yggdrasil-node/scripts/` during Wave 4 PR 6.
+# reorganization. Comparison harnesses live under
+# `scripts/` after Wave 4 PR 6.
 
 # cardano-cli — the Yggdrasil-side cardano-cli port
 cardano-cli-build:
@@ -120,7 +123,7 @@ cardano-submit-api-test:
     cargo nextest run --profile default -p yggdrasil-cardano-submit-api
 
 cardano-submit-api-parity:
-    bash crates/node/yggdrasil-node/scripts/compare_submit_api_to_upstream.sh
+    bash scripts/compare_submit_api_to_upstream.sh
 
 # cardano-tracer — trace-forwarder aggregator
 cardano-tracer-build:
@@ -147,7 +150,7 @@ db-truncater-test:
     cargo nextest run --profile default -p yggdrasil-db-truncater
 
 db-truncater-parity:
-    bash crates/node/yggdrasil-node/scripts/compare_db_truncater_to_upstream.sh
+    bash scripts/compare_db_truncater_to_upstream.sh
 
 # db-analyser — ChainDB forensic analyser
 db-analyser-build:
@@ -194,7 +197,7 @@ dmq-node-test:
 # Tip-compare against a running upstream cardano-node — runs from the
 # yggdrasil-node binary against the operator-configured Unix socket.
 tip-compare:
-    bash crates/node/yggdrasil-node/scripts/compare_tip_to_haskell.sh
+    bash scripts/compare_tip_to_haskell.sh
 
 # Build every sister tool in one shot. Useful for verifying the
 # `crates/tools/` tree hasn't drifted out of sync with the workspace.

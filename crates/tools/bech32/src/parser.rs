@@ -10,7 +10,7 @@
 //! so this module bypasses clap's auto-generated `--help` / `--version`
 //! and emits hand-crafted byte-equivalent output captured from the
 //! upstream binary at R332. The captured fixture lives at
-//! `crates/bech32/tests/fixtures/upstream-help.txt` and is the
+//! `crates/tools/bech32/tests/fixtures/upstream-help.txt` and is the
 //! source of truth for both the runtime help-printing path and the
 //! golden test in `tests/cli_help_golden.rs`.
 //!

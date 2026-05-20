@@ -24,7 +24,7 @@
 //!
 //! `--help` / `--version` text is byte-equivalent to the upstream
 //! `dmq-node` binary; fixtures captured at R335 live at
-//! `crates/dmq-node/tests/fixtures/upstream-{help,version}.txt`.
+//! `crates/tools/dmq-node/tests/fixtures/upstream-{help,version}.txt`.
 //! Note that upstream wires `--version` as a switch that flips
 //! `show_version: Some(true)`, so it does NOT short-circuit at parse
 //! time; a separate parse-error variant is reserved for `--help`

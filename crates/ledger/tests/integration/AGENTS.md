@@ -15,11 +15,11 @@ Keep modules in this folder focused on a single era family or ledger-state subdo
 - Always update this file when the integration module layout changes.
 
 ## Official Upstream References *Always research references and add or update links as needed*
-- [Shelley ledger tests](.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/test)
-- [Alonzo ledger tests](.reference-haskell-cardano-node/deps/cardano-ledger/eras/alonzo/test)
-- [Conway ledger tests (governance, ratification)](.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway/test)
+- [Shelley ledger tests](../../../../.reference-haskell-cardano-node/deps/cardano-ledger/eras/shelley/impl/test)
+- [Alonzo ledger tests](../../../../.reference-haskell-cardano-node/deps/cardano-ledger/eras/alonzo/impl/test)
+- [Conway ledger tests (governance, ratification)](../../../../.reference-haskell-cardano-node/deps/cardano-ledger/eras/conway/impl/test)
 - [Formal ledger rules (Agda)](https://github.com/IntersectMBO/formal-ledger-specifications)
-- [Ledger conformance test utilities](.reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-conformance)
+- [Ledger conformance test utilities](../../../../.reference-haskell-cardano-node/deps/cardano-ledger/libs/cardano-ledger-conformance)
 
 ## Current Phase
 - The integration test crate is organized into focused modules for core CBOR, Shelley, Allegra/Mary, Alonzo, Byron, Babbage, Conway, Praos block envelopes, governance updates, Plutus/script codecs, multi-era UTxO behavior, ledger-state subdomains, witness validation, and BBODY size accounting.

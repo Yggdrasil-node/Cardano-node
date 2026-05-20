@@ -75,7 +75,7 @@ The crate ships:
 
 ## Naming parity
 
-The lib.rs (former `node/src/tracer.rs`) carries the parity stanza.
+The lib.rs carries the parity stanza.
 `metrics_server.rs` and `trace_forwarder.rs` are synthesis (no
 upstream mirror); the `## Naming parity` blocks in those files
 declare so.

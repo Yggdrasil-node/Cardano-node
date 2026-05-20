@@ -25,7 +25,7 @@
 //!
 //! `--help` / `--version` text is byte-equivalent to the upstream
 //! `cardano-tracer` binary; fixtures captured at R335 live at
-//! `crates/cardano-tracer/tests/fixtures/upstream-{help,version}.txt`.
+//! `crates/tools/cardano-tracer/tests/fixtures/upstream-{help,version}.txt`.
 
 use std::path::PathBuf;
 

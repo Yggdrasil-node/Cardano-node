@@ -11,7 +11,7 @@
 //! bypasses clap's auto-generated `--help` / `--version` and emits
 //! hand-crafted byte-equivalent output captured from the upstream
 //! binary at R335. The captured fixtures live at
-//! `crates/cardano-submit-api/tests/fixtures/upstream-{help,version}.txt`
+//! `crates/tools/cardano-submit-api/tests/fixtures/upstream-{help,version}.txt`
 //! and are the source of truth for both the runtime help-printing
 //! path and the golden tests.
 
