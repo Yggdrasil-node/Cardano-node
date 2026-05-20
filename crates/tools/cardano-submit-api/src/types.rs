@@ -2730,10 +2730,21 @@ pub enum ShelleyPoolPredFailure {
     /// Tag 0: pool-key-hash not registered (R614 typed payload).
     StakePoolNotRegisteredOnKeyPOOL(KeyHash),
     /// Tag 1: pool retirement targets wrong epoch — payload is
-    /// `(Mismatch RelGT EpochNo, Mismatch RelLTEQ EpochNo)`
-    /// encoded as 4-element `[1, gtExpected, ltSupplied,
-    /// ltExpected]`. Raw payload pending decoder.
-    StakePoolRetirementWrongEpochPOOL(Vec<u8>),
+    /// `(Mismatch RelGT EpochNo, Mismatch RelLTEQ EpochNo)` per
+    /// upstream, flattened on the wire to 3 EpochNos
+    /// `[1, gtExpected, ltSupplied, ltExpected]` because the
+    /// two Mismatches share the same `supplied` field (R619 typed).
+    StakePoolRetirementWrongEpochPOOL {
+        /// The operator's submitted retirement epoch (shared
+        /// `supplied` across both Mismatches).
+        supplied: u64,
+        /// First Mismatch's `expected` — supplied must be `>`
+        /// this current epoch (RelGT relation).
+        gt_expected: u64,
+        /// Second Mismatch's `expected` — supplied must be `≤`
+        /// this max retirement epoch (RelLTEQ relation).
+        lt_expected: u64,
+    },
     /// Tag 3: pool cost below minimum — `Mismatch RelGTEQ Coin`
     /// encoded as 3-element `[3, supplied, expected]` (R616 typed).
     StakePoolCostTooLowPOOL(Mismatch<u64>),
@@ -2773,7 +2784,7 @@ impl ShelleyPoolPredFailure {
     pub fn tag(&self) -> u8 {
         match self {
             Self::StakePoolNotRegisteredOnKeyPOOL(_) => 0,
-            Self::StakePoolRetirementWrongEpochPOOL(_) => 1,
+            Self::StakePoolRetirementWrongEpochPOOL { .. } => 1,
             Self::StakePoolCostTooLowPOOL(_) => 3,
             Self::WrongNetworkPOOL { .. } => 4,
             Self::PoolMedataHashTooBig { .. } => 5,
@@ -2785,7 +2796,7 @@ impl ShelleyPoolPredFailure {
     pub fn constructor(&self) -> &'static str {
         match self {
             Self::StakePoolNotRegisteredOnKeyPOOL(_) => "StakePoolNotRegisteredOnKeyPOOL",
-            Self::StakePoolRetirementWrongEpochPOOL(_) => "StakePoolRetirementWrongEpochPOOL",
+            Self::StakePoolRetirementWrongEpochPOOL { .. } => "StakePoolRetirementWrongEpochPOOL",
             Self::StakePoolCostTooLowPOOL(_) => "StakePoolCostTooLowPOOL",
             Self::WrongNetworkPOOL { .. } => "WrongNetworkPOOL",
             Self::PoolMedataHashTooBig { .. } => "PoolMedataHashTooBig",
@@ -2849,16 +2860,26 @@ impl ShelleyPoolPredFailure {
                         "StakePoolRetirementWrongEpochPOOL: expected 4-element envelope, got len {len}"
                     )));
                 }
-                let payload_offset = dec.position();
-                let raw = bytes
-                    .get(payload_offset..)
-                    .ok_or_else(|| {
-                        DecoderError(
-                            "ShelleyPoolPredFailure: payload offset out of bounds".to_string(),
-                        )
-                    })?
-                    .to_vec();
-                Ok(Self::StakePoolRetirementWrongEpochPOOL(raw))
+                let gt_expected = dec.unsigned().map_err(|err| {
+                    DecoderError(format!(
+                        "StakePoolRetirementWrongEpochPOOL: gtExpected: {err:?}"
+                    ))
+                })?;
+                let supplied = dec.unsigned().map_err(|err| {
+                    DecoderError(format!(
+                        "StakePoolRetirementWrongEpochPOOL: ltSupplied: {err:?}"
+                    ))
+                })?;
+                let lt_expected = dec.unsigned().map_err(|err| {
+                    DecoderError(format!(
+                        "StakePoolRetirementWrongEpochPOOL: ltExpected: {err:?}"
+                    ))
+                })?;
+                Ok(Self::StakePoolRetirementWrongEpochPOOL {
+                    supplied,
+                    gt_expected,
+                    lt_expected,
+                })
             }
             // Tag 3: 3-element envelope `[3, supplied, expected]`
             // — `Mismatch RelGTEQ Coin` (R616 typed).
@@ -2992,12 +3013,22 @@ impl fmt::Display for ShelleyPoolPredFailure {
             Self::StakePoolNotRegisteredOnKeyPOOL(kh) => {
                 write!(f, "StakePoolNotRegisteredOnKeyPOOL ({kh})")
             }
-            Self::StakePoolRetirementWrongEpochPOOL(b) => {
-                write!(
-                    f,
-                    "StakePoolRetirementWrongEpochPOOL <raw-cbor {} bytes>",
-                    b.len()
-                )
+            Self::StakePoolRetirementWrongEpochPOOL {
+                supplied,
+                gt_expected,
+                lt_expected,
+            } => {
+                let gt = Mismatch {
+                    relation: MismatchRelation::RelGT,
+                    supplied: *supplied,
+                    expected: *gt_expected,
+                };
+                let lt = Mismatch {
+                    relation: MismatchRelation::RelLTEQ,
+                    supplied: *supplied,
+                    expected: *lt_expected,
+                };
+                write!(f, "StakePoolRetirementWrongEpochPOOL ({gt}) ({lt})")
             }
             Self::StakePoolCostTooLowPOOL(mm) => {
                 let typed = Mismatch {
@@ -4256,17 +4287,28 @@ mod tests {
     }
 
     #[test]
-    fn shelley_pool_pred_failure_retirement_wrong_epoch_stays_raw_tag1() {
-        // Tag 1 retains the flattened-Mismatch raw payload pending
-        // a dedicated decoder.
+    fn shelley_pool_pred_failure_retirement_wrong_epoch_decodes_tag1() {
+        // outer [0x84, 0x01, gt_expected=5, supplied=3, lt_expected=6]
+        // — flattened pair of Mismatches sharing the `supplied`
+        // field.
         let cbor = [0x84_u8, 0x01, 0x18, 0x05, 0x18, 0x03, 0x18, 0x06];
         let f =
             ShelleyPoolPredFailure::from_cbor(&cbor).expect("StakePoolRetirementWrongEpochPOOL");
-        assert_eq!(f.tag(), 1);
-        assert!(
-            f.to_string()
-                .starts_with("StakePoolRetirementWrongEpochPOOL <raw-cbor"),
-            "got: {f}"
+        if let ShelleyPoolPredFailure::StakePoolRetirementWrongEpochPOOL {
+            supplied,
+            gt_expected,
+            lt_expected,
+        } = &f
+        {
+            assert_eq!(*supplied, 3);
+            assert_eq!(*gt_expected, 5);
+            assert_eq!(*lt_expected, 6);
+        } else {
+            panic!("expected typed tag-1, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "StakePoolRetirementWrongEpochPOOL (Mismatch (RelGT) {supplied: 3, expected: 5}) (Mismatch (RelLTEQ) {supplied: 3, expected: 6})"
         );
     }
 

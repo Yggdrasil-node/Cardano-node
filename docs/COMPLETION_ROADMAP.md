@@ -635,12 +635,21 @@ ScriptHashObj — 2-element CBOR array `[tag, bytes(28)]` per
 upstream `EncCBOR (Credential kr)`) and wired DELEG tags 0
 (StakeKeyAlreadyRegisteredDELEG), 1 (StakeKeyNotRegisteredDELEG),
 3 (StakeDelegationImpossibleDELEG) to typed Credential payloads.
-**All 16 DELEG variants now carry typed payloads.** Combined
-with R616's POOL closure (5/6 typed, only flattened-Mismatch
-tag 1 remains), the Shelley LEDGER predicate-failure tree is
-~98% structurally typed; only POOL tag 1, per-TxOut Shelley/
-Babbage typed parse, and full typed `Addr` parse remain pending
-within Shelley.
+**All 16 DELEG variants now carry typed payloads.** R619
+(2026-05-21) closed POOL tag 1
+(StakePoolRetirementWrongEpochPOOL) — typed struct variant
+`{supplied, gt_expected, lt_expected}` reconstructing upstream's
+flattened-Mismatch encoding `[1, gtExpected, ltSupplied,
+ltExpected]` per upstream's `decCBOR` reconstruction of two
+Mismatches sharing the `supplied` field. Display reconstructs
+the upstream pair `(Mismatch (RelGT) {supplied, expected:
+gt_expected}) (Mismatch (RelLTEQ) {supplied, expected:
+lt_expected})`. **All 6 POOL variants now carry typed payloads.**
+The **entire Shelley LEDGER predicate-failure tree is now
+structurally typed** (LEDGER 4/4 + UTXOW 11/11 + UTXO 11/11 +
+PPUP 3/3 + DELEGS→DELPL→DELEG 16/16 + DELEGS→DELPL→POOL 6/6).
+Within Shelley, only per-TxOut typed parse (era-specific
+Shelley/Babbage) and full typed `Addr` parse remain pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
