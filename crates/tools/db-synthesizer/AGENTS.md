@@ -1,8 +1,9 @@
 # Guidance for the pure-Rust port of upstream `db-synthesizer`.
 
-**Status:** `partial` (Phase 4 R1 forge-loop + R2 genesis-loading
-slices shipped — see below). The Praos VRF/KES/OpCert forge path
-(R3) remains. Scope band: **MEDIUM**.
+**Status:** `partial` (Phase 4 R1/R2/R3b/R3c-1..R3c-4 shipped —
+see below). The Praos VRF/KES/OpCert forge path is live; the remaining
+R3c gap is epoch-boundary stake-distribution rebuild, followed by the
+upstream ChainDB byte-equivalence soak. Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -21,7 +22,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `crates/node/block-producer/src/lib.rs` forging logic.
 
-## Current functional surface (post Phase 4 R3c-3)
+## Current functional surface (post Phase 4 R3c-4)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -31,10 +32,9 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
 - ✅ Forge loop (Phase 4 R1) — `forging.rs` ports `Forging.hs`'s
   `runForge` control loop (`ForgeState`, `forgingDone`,
   `nextForgeState`); `run.rs` ports `Run.hs`'s `preOpenChainDB` +
-  `synthesize`. `lib::run` synthesizes a real on-disk ChainDB; the
-  `ForgeLoopDeferred` stub is retired. Blocks are deterministic,
-  prev-hash-threaded, **non-Praos** structural blocks — see the
-  carve-out inventory below.
+  `synthesize`. `lib::run` synthesizes a real on-disk ChainDB when
+  forgers are supplied and returns before opening the DB when the
+  forger set is empty, matching upstream `Run.hs`.
 - ✅ Genesis loading (Phase 4 R2) — `run::resolve_epoch_size_from_config`
   reads `--config`, parses the `NodeConfigStub`, resolves the genesis
   paths relative to the config directory, and loads the real
@@ -57,7 +57,7 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
   `CardanoProtocolParams` — a synthesizer-scoped 6-field mirror of
   upstream `Ouroboros.Consensus.Cardano.Node` (`CardanoHardForkTriggers`
   case-mapped from the hard-fork config; `(major, minor)` protocol
-  version). Wiring it into a Praos-valid forge is R3c.
+  version). R3c-4 consumes this in the production Praos forge path.
 - ✅ Initial forge state (Phase 4 R3c-1a/1b) — `run::load_initial_forge_state`
   builds the genesis-seeded initial `LedgerState` (via the shared
   `yggdrasil-node-genesis::build_base_ledger_state`) plus the Praos
@@ -72,27 +72,32 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
 - ✅ Evolving forge state (Phase 4 R3c-3) — `forging::ForgeState`
   now carries `LedgerState` + `NonceEvolutionState`;
   `run::synthesize_from_config` passes the genesis-seeded
-  `InitialForgeState` into `run_forge_with_state`; append-mode runs
+  `InitialForgeState` into `run_forge`; append-mode runs
   replay the existing ChainDB prefix into the supplied initial state
-  before forging more blocks. Blocks remain deterministic non-Praos
-  structural blocks until R3c-4.
-- 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
-  structurally valid but not Praos-valid until the VRF/KES/OpCert
-  leader check + KES-signed `forgeBlock` land.
+  before forging more blocks.
+- ✅ Praos forge path (Phase 4 R3c-4) — the production path uses the
+  shared `crates/node/block-producer` `checkShouldForge` /
+  `forgeBlock` equivalents: VRF/KES/OpCert leader checking, KES-signed
+  headers, raw Conway block CBOR persistence, and no-forgers early
+  return.
+- 🟡 Stake-distribution rebuild (Phase 4 R3c-5) — the R3c-4 path uses
+  the temporary full-stake synthesizer lottery until the upstream
+  forecast-ledger-view stake snapshot is ported.
 - ❌ Byte-equivalence soak vs the upstream binary's ChainDB chunk
   format — deferred to the integration round.
 
 ## Carve-out inventory (Phase 4 R3 deferral surface)
 
 The Phase 4 R1 forge-loop slice (`forging.rs` + `run.rs`), the R2
-genesis-loading slice (`run::synthesize_from_config`), and the R3c-3
-state-threading slice are shipped.
+genesis-loading slice (`run::synthesize_from_config`), the R3b
+consensus-protocol slice, and R3c-1..R3c-4 state / credential /
+Praos-forge slices are shipped.
 `crates/tools/db-synthesizer/src/status.rs` ships `forge_loop_status()`
 returning a `ForgeLoopStatus` descriptor of the one surviving carve-out:
 
 | Carve-out         | Slice | Deferral rationale (one-liner)                                            |
 |-------------------|-------|---------------------------------------------------------------------------|
-| Praos forge path  | R3    | `checkShouldForge` (VRF/KES/OpCert leader check) + KES-signed `forgeBlock`, leveraging `crates/node/block-producer`, plus `initProtocol` / `mkConsensusProtocolCardano` for the hard-fork era plan. Until then `synthesize` emits deterministic non-Praos structural blocks stamped `SYNTH_ERA`. |
+| Stake-distribution rebuild | R3c-5 | Replace the temporary full-stake synthesizer lottery with upstream's forecast-ledger-view stake distribution before final byte-equivalence soak. |
 
 ## Build + run
 
@@ -108,9 +113,9 @@ scripts/run-tools.sh db-synthesizer --version
 target/release/db-synthesizer --help
 ```
 
-The binary is named `db-synthesizer` (matching upstream exactly) — operators
-can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch lands at `R409+`.
+The binary is named `db-synthesizer` (matching upstream exactly).
+Operator swap-in remains gated on the R3c-5 stake-distribution rebuild
+and the upstream ChainDB byte-equivalence soak.
 
 ##  Rules *Non-Negotiable*
 
@@ -129,11 +134,14 @@ once concrete dispatch lands at `R409+`.
 
 ## Round roadmap
 
-Per the R326-R459 plan, this crate's full implementation lands across
-the named mini-arc rounds:
+Per the R326-R459 plan plus the R3c closeout slices, this crate's full
+implementation lands across the named mini-arc rounds:
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- 🟡 Next: **R409** — first concrete-impl round of the mini-arc.
+- ✅ R1/R2/R3b/R3c-1..R3c-4 shipped through the Praos forge path.
+- 🟡 Next: **R3c-5** — rebuild epoch stake distribution from the
+  forecast ledger view instead of the temporary full-stake synthesizer
+  lottery.
 - 🟡 Closeout — when all subcommands are functional, parity-matrix
   entry advances `partial → verified_11_0_1`. Operators can then
   swap upstream binary for the yggdrasil binary without script

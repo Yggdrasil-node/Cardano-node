@@ -197,17 +197,23 @@ Praos forging needs. Verified decomposition:
     `run::read_leader_credentials` returns the singleton ∪ bulk
     `Vec<BlockProducerCredentials>` forger set. The per-slot loop picking
     the first leader is R3c-4.
-  - ✅ **R3c-3 — thread evolving state** (round 530). `run_forge` now threads
+  - ✅ **R3c-3 — thread evolving state** (round 530). The forge loop now threads
     `LedgerState` + `NonceEvolutionState` through `ForgeState`; append-mode
     runs replay the existing ChainDB prefix into the genesis-seeded state
     before forging more blocks; each new structural block applies to cloned
     ledger/nonce state before append. Blocks stay structural here — a
     four-gates-green intermediate.
-  - 🟡 **R3c-4 — real Praos forge.** Replace `synth_structural_block` with
-    `check_should_forge` (skip on `NotLeader`) + `forge_block` +
-    `forged_block_to_storage_block`. High reuse of `crates/node/block-producer`.
+  - ✅ **R3c-4 — real Praos forge** (round 531). The production path now
+    consumes `BlockProducerCredentials`, runs the shared
+    `check_should_forge` leader check (skipping `NotLeader` slots), calls
+    `forge_block`, persists raw Conway block CBOR via
+    `forged_block_to_storage_block`, replays raw-CBOR VRF nonce inputs in
+    append mode, and returns before ChainDB open when no forgers are
+    supplied, matching upstream `Run.hs`.
   - 🟡 **R3c-5 — epoch-boundary stake rebuild.** Recompute the leader-check
-    `sigma` per epoch via `compute_stake_snapshot` / `apply_epoch_boundary`.
+    `sigma` per epoch via `compute_stake_snapshot` / `apply_epoch_boundary`;
+    R3c-4 uses a documented temporary full-stake synthesizer lottery until
+    this lands.
   - 🟡 **R3c-6 — `FileImmutable` → `ChainDb` migration.** Persist a
     `LedgerStore` snapshot so `db-analyser` can validate the synthesized chain.
 
@@ -326,7 +332,7 @@ side-by-side preview soak vs the Haskell node.
 |---|---|---|
 | A1 feature flags | flags conditionally compile; `lint-no-default` green | none |
 | A2 cardano-cli ports | each subcommand byte-equivalent to upstream | none (vendored reference) |
-| A3 db-synthesizer R2–R3 | Praos-valid synthesized ChainDB | none |
+| A3 db-synthesizer R2–R3 | Praos forge path plus stake-equivalent synthesized ChainDB | none |
 | A4 skeleton tools | each → `implemented_needs_11_0_1_evidence` | none for tx-generator; kes-agent still needs socket-protocol fixtures |
 | A5 submit-api errors | typed rejection variants | none |
 | A6 hygiene | `cargo metadata --no-deps` lists 34 packages, including all 10 node packages; gates green | none |

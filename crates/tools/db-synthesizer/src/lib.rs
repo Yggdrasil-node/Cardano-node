@@ -67,32 +67,36 @@ pub fn run_main() -> ExitCode {
 
 /// Concrete run-loop entry.
 ///
-/// **Phase 4 R2 slice:** wires argv → [`parser::Args`] → the
-/// [`run::synthesize_from_config`] supervisor. The synthesizer reads
-/// the `--config` node config to resolve the real Shelley-genesis
-/// epoch length, opens (or creates) the ChainDB at `--db`, forges the
-/// `--blocks N` / `--slots N` / `--epochs N` deterministic structural
-/// blocks, then prints upstream-shaped progress lines.
+/// Wires argv → [`parser::Args`] → the [`run::synthesize_from_config`]
+/// supervisor. The synthesizer reads `--config`, resolves the consensus
+/// protocol and leader credentials, opens (or creates) the ChainDB at
+/// `--db`, forges `--blocks N` / `--slots N` / `--epochs N` through the
+/// shared Praos leader-check + KES block forge path, then prints
+/// upstream-shaped progress lines.
 ///
 /// Mirror of upstream `app/db-synthesizer.hs`'s `main`:
 /// `initialize paths creds forgeOpts >>= either die (synthesize ...)`.
 ///
-/// **Carve-out (R3):** upstream's `initialize` also builds the full
-/// multi-era `CardanoProtocolParams` and a Praos `BlockForging`
-/// credential set. This slice ports the genesis-loading half — the
-/// real epoch length is now read from `--config` — but the Praos
-/// forge path (`initProtocol` + the VRF/KES/OpCert leader check) is
-/// the remaining db-synthesizer R3 carve-out, so the forged blocks
-/// are still *non-Praos* structural blocks (see [`forging`]'s module
-/// note). The result is a structurally-valid ChainDB that yggdrasil's
-/// own `FileImmutable` / `db-analyser` can open and walk — not yet a
-/// Praos-valid chain.
+/// **Remaining gap:** R3c-5 still has to rebuild the per-epoch stake
+/// distribution from the forecast ledger view. Until that lands, the
+/// synthesizer uses its temporary full-stake lottery placeholder while
+/// still producing Praos-forged blocks through `crates/node/block-producer`.
 pub fn run(args: &parser::Args) -> eyre::Result<()> {
-    let outcome =
-        run::synthesize_from_config(args.options, &args.paths.config, &args.paths.chain_db)?;
+    let outcome = run::synthesize_from_config(
+        args.options,
+        &args.credentials,
+        &args.paths.config,
+        &args.paths.chain_db,
+    )?;
 
     // Upstream-shaped progress reporting (mirror of Run.hs's putStrLn
     // lines + app/db-synthesizer.hs's "--> done" line).
+    if !outcome.chain_db_opened {
+        println!("--> no forgers found; leaving possibly existing ChainDB untouched");
+        println!("--> done; result: ForgeResult {{resultForged = 0}}");
+        return Ok(());
+    }
+
     let mode = match args.options.open_mode {
         types::DBSynthesizerOpenMode::OpenCreate => "OpenCreate",
         types::DBSynthesizerOpenMode::OpenCreateForce => "OpenCreateForce",

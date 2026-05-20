@@ -1,14 +1,11 @@
-//! Programmatic-introspection helpers for the db-synthesizer
-//! partially-deferred forge surface.
+//! Programmatic-introspection helpers for the db-synthesizer forge surface.
 //!
-//! The forge-loop *control path* and the `preOpenChainDB` supervisor
-//! are implemented as of the Phase 4 R1 slice ([`crate::forging`] +
-//! [`crate::run`]); genesis loading landed in R2
-//! ([`crate::run::synthesize_from_config`]); R3c-3 now threads the
-//! genesis-seeded ledger and nonce state through the structural forge
-//! loop. What remains deferred is the **Praos-forging** axis — the
-//! per-slot VRF/KES/OpCert leader check. This helper surfaces that
-//! surviving carve-out as a structured descriptor.
+//! The forge-loop control path, `preOpenChainDB` supervisor, genesis
+//! loading, consensus-protocol construction, leader credentials, evolving
+//! ledger / nonce state, and Praos leader-check + KES-signed block forge
+//! are now wired through the production path. The remaining known
+//! production gap is the epoch-boundary stake-distribution rebuild that
+//! upstream derives from the ledger view before calling `checkShouldForge`.
 //!
 //! Mirrors the precedent set by cardano-tracer's R424-R429
 //! carve-out inventory + snapshot-converter + kes-agent-control.
@@ -20,43 +17,35 @@
 
 /// Status descriptor for the partially-deferred forge surface.
 ///
-/// The deterministic non-Praos structural forge loop + genesis
-/// loading + ledger/nonce state threading are live; this descriptor tracks the *remaining*
-/// Praos-forging work that upstream's
-/// `Cardano.Tools.DBSynthesizer.Forging` performs (the per-slot
-/// VRF/KES/OpCert leader check + KES-signed header).
+/// Praos leader checking and KES-signed block forging are live. This
+/// descriptor tracks the remaining epoch-boundary stake-distribution
+/// rebuild plus the later ChainDB byte-equivalence soak.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ForgeLoopStatus {
     /// One-line summary of what is implemented vs. deferred.
     pub status: &'static str,
-    /// What the remaining deferred axis depends on — the missing
-    /// yggdrasil-side surface that needs to land first.
+    /// What the remaining deferred axis depends on.
     pub depends_on: &'static str,
     /// Round-number marker for tracking the deferred work.
     pub deferred_round: &'static str,
-    /// Pointer to the upstream Haskell entry points this surface
-    /// would mirror.
+    /// Pointer to the upstream Haskell entry points this surface mirrors.
     pub upstream_reference: &'static str,
 }
 
 /// Get the status descriptor for the db-synthesizer forge surface.
 ///
-/// As of Phase 4 R1+R2+R3c-3 the forge *control loop*, ChainDB
-/// supervisor, genesis loading, and evolving ledger/nonce state
-/// threading are live (`forging.rs` / `run.rs`); the Praos-forging
-/// path (VRF/KES/OpCert leader check) is the surviving carve-out
-/// reported here.
+/// R3c-4 wires the production path to the shared block-producer
+/// `checkShouldForge` / `forgeBlock` equivalents. R3c-5 remains: rebuild
+/// the epoch stake distribution from the forecast ledger view instead of
+/// using the current full-stake synthesizer placeholder.
 pub fn forge_loop_status() -> ForgeLoopStatus {
     ForgeLoopStatus {
-        status: "partial — forge control loop + preOpenChainDB supervisor (Phase 4 R1) \
-                 + genesis loading (R2) + ledger/nonce state threading (R3c-3) live; \
-                 Praos-forging path deferred",
-        depends_on: "The Praos-forging path (db-synthesizer R3: leverage \
-                     crates/node/block-producer for the per-slot VRF/KES/OpCert leader \
-                     check + KES-signed header). Genesis loading landed in R2 and R3c-3 \
-                     threads LedgerState + NonceEvolutionState through the loop; the \
-                     remaining structural block is still deterministic and non-Praos.",
-        deferred_round: "R3 of the Phase 4 db-synthesizer sister-tool arc",
+        status: "partial - forge control loop + ChainDB supervisor + genesis loading \
+                 + consensus protocol + leader credentials + Praos leader-check/KES forge live; \
+                 epoch stake-distribution rebuild deferred",
+        depends_on: "R3c-5 stake-distribution rebuild from the forecast ledger view, \
+                     then the integration byte-equivalence soak against upstream db-synthesizer.",
+        deferred_round: "R3c-5 of the Phase 4 db-synthesizer sister-tool arc",
         upstream_reference: ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/{Forging,Run}.hs",
     }
 }
@@ -69,10 +58,11 @@ mod tests {
     fn forge_loop_status_describes_partial_state() {
         let s = forge_loop_status();
         assert!(s.status.contains("partial"));
-        assert!(s.status.contains("Praos-forging"));
-        assert!(s.depends_on.contains("block-producer"));
-        assert!(s.depends_on.contains("VRF/KES/OpCert"));
-        assert!(s.deferred_round.contains("R3"));
+        assert!(s.status.contains("Praos leader-check"));
+        assert!(s.status.contains("KES forge"));
+        assert!(s.depends_on.contains("stake-distribution"));
+        assert!(s.depends_on.contains("byte-equivalence"));
+        assert!(s.deferred_round.contains("R3c-5"));
         assert!(s.upstream_reference.contains("Forging"));
         // The reference uses brace-expansion for the Forging+Run pair.
         assert!(s.upstream_reference.contains("Run"));

@@ -11,15 +11,15 @@
 //!   directory-state handling, including the `checkIsDB` heuristic
 //!   (a directory "looks like a ChainDB" iff every entry is one of
 //!   `immutable`/`ledger`/`volatile`/`gsm`).
-//! - [`synthesize`] — mirror of upstream `synthesize`: opens the
+//! - [`synthesize`] — config-free structural helper: opens the
 //!   ChainDB at `confDbDir`, finds the resume slot from the current
-//!   tip, and drives [`crate::forging::run_forge`].
+//!   tip, and drives [`crate::forging::run_structural_forge`].
 //! - [`resolve_epoch_size_from_config`] — mirror of the genesis-loading
 //!   half of upstream `initialize`/`initConf`: `config.json` →
 //!   `NodeConfigStub` → Shelley genesis → real `epochLength` (R2).
 //! - [`synthesize_from_config`] — the production entry point: resolve
-//!   the genesis epoch length, build the initial ledger / nonce forge
-//!   state, then drive the state-threaded forge loop.
+//!   the consensus protocol, build the initial ledger / nonce forge
+//!   state, read leader credentials, then drive the Praos forge loop.
 //!
 //! ## Carve-out (Phase 4 R3 slice boundary)
 //!
@@ -29,14 +29,11 @@
 //!   R3b-1 ported the genesis-reading half ([`load_genesis_bundle`]),
 //!   R3b-2 the per-era protocol-config types, and R3b-3
 //!   [`load_consensus_protocol`] / [`mk_consensus_protocol_cardano`]
-//!   the [`CardanoProtocolParams`] aggregate. Until the Praos forge
-//!   loop (R3c-4) consumes it, synthesized blocks keep the
-//!   [`SYNTH_ERA`] structural stamp. R3c-3 does consume the
-//!   genesis-seeded ledger and nonce state.
-//! - **The Praos forge path** (`BlockForging`, `checkShouldForge`,
-//!   `forgeBlock`) — the per-slot VRF/KES/OpCert leader check. See
-//!   [`crate::forging`]'s module note. This slice forges deterministic
-//!   non-Praos structural blocks.
+//!   the [`CardanoProtocolParams`] aggregate. R3c-4 consumes it for
+//!   Praos leader checking and KES-signed block forging.
+//! - **Epoch-boundary stake rebuild** — this slice uses the supplied
+//!   block-producer credentials with a full-stake synthesizer lottery
+//!   until R3c-5 ports the upstream stake-distribution rebuild.
 //!
 //! What this slice DOES port faithfully: the `preOpenChainDB` mode
 //! semantics (directory creation, the `OpenCreate`-refuses-non-empty
@@ -47,7 +44,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use yggdrasil_consensus::{EpochSize, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState};
+use yggdrasil_consensus::{
+    ActiveSlotCoeff, EpochSize, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState,
+};
 use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, SlotNo};
 use yggdrasil_node_block_producer::{
     BlockProducerCredentials, BlockProducerError, load_block_producer_credentials,
@@ -64,7 +63,7 @@ use yggdrasil_node_genesis::{
 use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
 
 use crate::forging::{
-    ForgeRunOutcome, ForgeRuntimeConfig, ForgeState, run_forge, run_forge_with_state,
+    ForgeRunOutcome, ForgeRuntimeConfig, ForgeState, run_forge, run_structural_forge,
 };
 use crate::orphans::{AdjustFilePaths, parse_node_config_stub};
 use crate::types::{
@@ -81,8 +80,11 @@ use crate::types::{
 /// backs the config-free test / convenience helper.
 pub const DEFAULT_EPOCH_SIZE: u64 = 432_000;
 
-/// Era tag stamped onto synthesized structural blocks until the
-/// genesis-derived hard-fork era plan is wired (R3 — `initProtocol`).
+/// Era tag stamped by the config-free structural helper.
+///
+/// The production path now forges Conway-shaped Praos blocks through
+/// `crates/node/block-producer`; this tag remains only for
+/// [`synthesize_default`] and focused structural tests.
 pub const SYNTH_ERA: Era = Era::Shelley;
 
 /// Directory names that mark a directory as a ChainDB.
@@ -103,6 +105,10 @@ pub enum RunError {
     /// Forge-loop failure after ChainDB open.
     #[error("forge error: {0}")]
     Forge(#[from] crate::forging::ForgeError),
+    /// Consensus parameter validation failed while building the Praos
+    /// forge runtime.
+    #[error("initialize: invalid consensus parameter: {0}")]
+    Consensus(#[from] yggdrasil_consensus::ConsensusError),
     /// `OpenCreate` was requested but the target directory already
     /// exists. Mirror of upstream's
     /// `"<loc> already exists. Use -f to overwrite or -a to append."`.
@@ -251,6 +257,12 @@ pub struct SynthesizeOutcome {
     /// Slot the forge loop resumed from (0 for a fresh ChainDB,
     /// `tip_slot + 1` when appending).
     pub resumed_from: SlotNo,
+    /// Whether this invocation opened the ChainDB.
+    ///
+    /// Upstream returns before opening the DB when the forger set is
+    /// empty; the CLI uses this to report that exact no-forgers path
+    /// without implying a DB mutation.
+    pub chain_db_opened: bool,
 }
 
 /// Open the ChainDB and synthesize blocks up to `options.limit`.
@@ -279,10 +291,11 @@ pub fn synthesize(
         Point::BlockPoint(slot, _) => SlotNo(slot.0 + 1),
     };
 
-    let forge = run_forge(era, epoch_size, resumed_from, options.limit, &mut store)?;
+    let forge = run_structural_forge(era, epoch_size, resumed_from, options.limit, &mut store)?;
     Ok(SynthesizeOutcome {
         forge,
         resumed_from,
+        chain_db_opened: true,
     })
 }
 
@@ -290,10 +303,24 @@ fn synthesize_with_forge_state(
     options: DBSynthesizerOptions,
     db_dir: &Path,
     epoch_size: u64,
-    era: Era,
     initial_state: InitialForgeState,
     runtime_config: ForgeRuntimeConfig,
+    forgers: &mut [BlockProducerCredentials],
 ) -> Result<SynthesizeOutcome, RunError> {
+    let forge_state =
+        ForgeState::initial(initial_state.ledger_state, initial_state.nonce_evolution);
+
+    if forgers.is_empty() {
+        return Ok(SynthesizeOutcome {
+            forge: ForgeRunOutcome {
+                result: crate::types::ForgeResult { forged: 0 },
+                final_state: forge_state,
+            },
+            resumed_from: SlotNo(0),
+            chain_db_opened: false,
+        });
+    }
+
     pre_open_chain_db(options.open_mode, db_dir)?;
 
     let mut store = FileImmutable::open(db_dir)?;
@@ -302,20 +329,19 @@ fn synthesize_with_forge_state(
         Point::BlockPoint(slot, _) => SlotNo(slot.0 + 1),
     };
 
-    let forge_state =
-        ForgeState::initial(initial_state.ledger_state, initial_state.nonce_evolution);
-    let forge = run_forge_with_state(
-        era,
+    let forge = run_forge(
         epoch_size,
         resumed_from,
         options.limit,
         &mut store,
         forge_state,
         runtime_config,
+        forgers,
     )?;
     Ok(SynthesizeOutcome {
         forge,
         resumed_from,
+        chain_db_opened: true,
     })
 }
 
@@ -421,8 +447,8 @@ pub struct GenesisBundle {
 /// nonce from the Shelley genesis file hash (`genesisHashToPraosNonce`).
 ///
 /// The per-era protocol configs + hard-fork triggers (R3b-2) and the
-/// `CardanoProtocolParams` aggregator (R3b-3) that fold this bundle are
-/// the remaining db-synthesizer R3b carve-out.
+/// `CardanoProtocolParams` aggregator (R3b-3) now fold this bundle in
+/// [`load_consensus_protocol`].
 pub fn load_genesis_bundle(config_path: &Path) -> Result<GenesisBundle, RunError> {
     let stub = resolve_node_config_stub(config_path)?;
     load_genesis_bundle_from_stub(&stub)
@@ -677,12 +703,16 @@ fn build_initial_forge_state(bundle: &GenesisBundle) -> Result<InitialForgeState
     })
 }
 
-fn build_forge_runtime_config(bundle: &GenesisBundle) -> Result<ForgeRuntimeConfig, RunError> {
+fn build_forge_runtime_config(
+    bundle: &GenesisBundle,
+    protocol_version: (u64, u64),
+) -> Result<ForgeRuntimeConfig, RunError> {
     let stability_window = if bundle.shelley.active_slots_coeff > 0.0 {
         (3.0 * bundle.shelley.security_param as f64 / bundle.shelley.active_slots_coeff) as u64
     } else {
         0
     };
+    let active_slot_coeff = ActiveSlotCoeff::new(bundle.shelley.active_slots_coeff)?;
     Ok(ForgeRuntimeConfig {
         nonce_config: NonceEvolutionConfig {
             epoch_size: EpochSize(bundle.shelley.epoch_length),
@@ -692,9 +722,15 @@ fn build_forge_runtime_config(bundle: &GenesisBundle) -> Result<ForgeRuntimeConf
             )?,
             byron_shelley_transition: None,
         },
-        // The structural chain is Shelley-stamped until R3c-4 replaces
-        // `synth_structural_block` with real Praos forging.
-        nonce_derivation: NonceDerivation::TPraos,
+        nonce_derivation: NonceDerivation::Praos,
+        active_slot_coeff,
+        // R3c-4 consumes the real Praos leader-check path. R3c-5 will
+        // replace this synthesizer-wide stake placeholder with the
+        // upstream epoch-boundary stake-distribution rebuild.
+        sigma_num: 1,
+        sigma_den: 1,
+        max_block_body_size: bundle.shelley.protocol_params.max_block_body_size,
+        protocol_version,
     })
 }
 
@@ -783,31 +819,38 @@ pub fn read_leader_credentials(
 
 /// [`synthesize`] driven by the operator's node `config.json`.
 ///
-/// The production entry point [`crate::run`] uses: it loads every era's
-/// genesis via [`load_genesis_bundle`] (the genesis-loading half of
-/// upstream `Run.initialize`) and forges with the Shelley-genesis
-/// `epochLength` — mirror of upstream `app/db-synthesizer.hs`'s
-/// `initialize … >>= synthesize …` for the epoch-size path.
+/// The production entry point [`crate::run`] uses: it loads the
+/// consensus protocol via [`load_consensus_protocol`], builds the
+/// genesis-seeded ledger / nonce state, reads leader credentials, and
+/// forges with the Shelley-genesis `epochLength` — mirror of upstream
+/// `app/db-synthesizer.hs`'s `initialize … >>= synthesize …` path.
 ///
-/// The era stays [`SYNTH_ERA`]; consuming the rest of the
-/// [`GenesisBundle`] for a Praos-valid forge needs R3b-2 / R3b-3 / R3c
-/// and is the remaining db-synthesizer R3 carve-out.
+/// If no forgers are supplied, this returns before opening the ChainDB,
+/// matching upstream `Run.hs`. If forgers are supplied, the loop uses
+/// the shared Praos leader-check + KES block forge path.
 pub fn synthesize_from_config(
     options: DBSynthesizerOptions,
+    credentials: &NodeCredentials,
     config_path: &Path,
     db_dir: &Path,
 ) -> Result<SynthesizeOutcome, RunError> {
-    let bundle = load_genesis_bundle(config_path)?;
+    let protocol = load_consensus_protocol(config_path)?;
+    let bundle = &protocol.cardano_ledger_transition_config;
     let epoch_size = bundle.shelley.epoch_length;
-    let initial_state = build_initial_forge_state(&bundle)?;
-    let runtime_config = build_forge_runtime_config(&bundle)?;
+    let initial_state = build_initial_forge_state(bundle)?;
+    let runtime_config = build_forge_runtime_config(bundle, protocol.cardano_protocol_version)?;
+    let mut forgers = read_leader_credentials(
+        credentials,
+        bundle.shelley.slots_per_kes_period,
+        bundle.shelley.max_kes_evolutions,
+    )?;
     synthesize_with_forge_state(
         options,
         db_dir,
         epoch_size,
-        SYNTH_ERA,
         initial_state,
         runtime_config,
+        &mut forgers,
     )
 }
 
@@ -1109,19 +1152,23 @@ mod tests {
     }
 
     #[test]
-    fn synthesize_from_config_creates_chain_db() {
+    fn synthesize_from_config_without_forgers_leaves_chain_db_untouched() {
         let tmp = tempfile::tempdir().unwrap();
         let config = write_config(tmp.path(), "shelley-genesis.json", 86_400);
         let target = tmp.path().join("synth-db");
         let outcome = synthesize_from_config(
             opts(ForgeLimit::Block(4), DBSynthesizerOpenMode::OpenCreate),
+            &NodeCredentials::default(),
             &config,
             &target,
         )
         .unwrap();
-        assert_eq!(outcome.forge.result.forged, 4);
-        let reopened = FileImmutable::open(&target).unwrap();
-        assert_eq!(reopened.len(), 4);
+        assert_eq!(outcome.forge.result.forged, 0);
+        assert!(!outcome.chain_db_opened);
+        assert!(
+            !target.exists(),
+            "upstream returns before opening the ChainDB when no forgers are available"
+        );
     }
 
     #[test]

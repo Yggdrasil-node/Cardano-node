@@ -1,5 +1,5 @@
-//! End-to-end integration tests for the db-synthesizer Phase 4
-//! forge-loop (R1) + genesis-loading (R2) slices.
+//! End-to-end integration tests for the db-synthesizer forge-loop,
+//! genesis-loading, and Praos block-production slices.
 //!
 //! These exercise the full argv → `parser::Args` → `lib::run` →
 //! `run::synthesize_from_config` path and verify the synthesized ChainDB
@@ -9,21 +9,75 @@
 //!
 //! What these tests establish:
 //! - `run()` no longer returns the `ForgeLoopDeferred` stub error.
-//! - `--blocks N` produces exactly `N` structurally-valid blocks on
-//!   disk under `--db`.
+//! - `--blocks N` produces exactly `N` Praos-forged blocks on disk
+//!   under `--db` when a bulk credential set is supplied.
 //! - The synthesized chain is genuinely prev-hash-threaded.
 //! - `preOpenChainDB` create / append / force semantics behave.
 //!
-//! What they explicitly do NOT establish (deferred to R2/R3):
-//! - Praos validity (no VRF/KES/OpCert).
+//! What they explicitly do NOT establish:
 //! - Byte-equivalence with the upstream `db-synthesizer` binary's
 //!   ChainDB chunk format.
 
 #![allow(clippy::unwrap_used)]
 
+use yggdrasil_crypto::vrf::VrfSecretKey;
 use yggdrasil_db_synthesizer::{parser, run};
 use yggdrasil_ledger::{BlockNo, HeaderHash, Point, SlotNo};
 use yggdrasil_storage::{FileImmutable, ImmutableStore};
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn cbor_bstr(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() + 2);
+    if bytes.len() < 24 {
+        out.push(0x40 | bytes.len() as u8);
+    } else if bytes.len() <= u8::MAX as usize {
+        out.push(0x58);
+        out.push(bytes.len() as u8);
+    } else {
+        panic!("test helper only supports small byte strings");
+    }
+    out.extend_from_slice(bytes);
+    out
+}
+
+fn text_envelope(type_tag: &str, cbor: &[u8]) -> String {
+    format!(
+        r#"{{"type":"{type_tag}","description":"","cborHex":"{}"}}"#,
+        hex_encode(cbor)
+    )
+}
+
+fn write_bulk_credentials(dir: &std::path::Path) -> std::path::PathBuf {
+    let mut opcert = Vec::new();
+    opcert.push(0x82); // [OCert, cold_vkey]
+    opcert.push(0x84); // OCert array(4)
+    opcert.extend_from_slice(&cbor_bstr(&[0x11; 32]));
+    opcert.push(0x00); // sequence_number
+    opcert.push(0x00); // kes_period
+    opcert.extend_from_slice(&cbor_bstr(&[0x22; 64]));
+    opcert.extend_from_slice(&cbor_bstr(&[0x33; 32]));
+
+    let vrf = VrfSecretKey::from_seed([0x44; 32]).to_bytes();
+    let kes_seed = [0x55; 32];
+    let bulk = format!(
+        "[[{},{},{}]]",
+        text_envelope("NodeOperationalCertificate", &opcert),
+        text_envelope("VrfSigningKey_PraosVRF", &cbor_bstr(&vrf)),
+        text_envelope("KesSigningKey_ed25519_kes_2^0", &cbor_bstr(&kes_seed)),
+    );
+    let path = dir.join("bulk-credentials.json");
+    std::fs::write(&path, bulk).unwrap();
+    path
+}
 
 /// Build a `parser::Args` for a `--blocks N` invocation, writing a
 /// real `config.json` + every era's genesis into `tmp`.
@@ -35,7 +89,7 @@ use yggdrasil_storage::{FileImmutable, ImmutableStore};
 fn args_for(tmp: &std::path::Path, db: &std::path::Path, n: u64, mode: &str) -> parser::Args {
     std::fs::write(
         tmp.join("shelley-genesis.json"),
-        r#"{"epochLength":432000}"#,
+        r#"{"activeSlotsCoeff":1.0,"epochLength":432000}"#,
     )
     .unwrap();
     // R3b-1: `run` loads every era's genesis via `load_genesis_bundle`.
@@ -49,14 +103,17 @@ fn args_for(tmp: &std::path::Path, db: &std::path::Path, n: u64, mode: &str) -> 
     let config = tmp.join("config.json");
     std::fs::write(
         &config,
-        r#"{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"shelley-genesis.json","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"}"#,
+        r#"{"Protocol":"Cardano","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"shelley-genesis.json","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json","LastKnownBlockVersion-Major":1,"LastKnownBlockVersion-Minor":0}"#,
     )
     .unwrap();
+    let bulk = write_bulk_credentials(tmp);
     let mut argv = vec![
         "--config".to_string(),
         config.to_string_lossy().into_owned(),
         "--db".to_string(),
         db.to_string_lossy().into_owned(),
+        "--bulk-credentials-file".to_string(),
+        bulk.to_string_lossy().into_owned(),
         "--blocks".to_string(),
         n.to_string(),
     ];
@@ -105,7 +162,7 @@ fn synthesized_chain_is_prev_hash_threaded() {
         assert_eq!(w[1].header.prev_hash, w[0].header.hash);
         assert_eq!(w[1].header.block_no.0, w[0].header.block_no.0 + 1);
         assert_eq!(w[1].header.slot_no.0, w[0].header.slot_no.0 + 1);
-        assert!(w[1].transactions.is_empty(), "structural blocks are empty");
+        assert!(w[1].transactions.is_empty(), "synthesized blocks are empty");
     }
 }
 

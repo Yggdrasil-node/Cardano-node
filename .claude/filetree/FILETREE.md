@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T01:48:33Z
-- Files described: 1372
+- Generated at: 2026-05-20T02:23:44Z
+- Files described: 1373
 
 ## Workspace
 
@@ -2111,6 +2111,8 @@
   - R529 Parameterized LSQ Plan Delegation: Date: 2026-05-20.
 - `docs/operational-runs/2026-05-20-round-530-db-synthesizer-state-threading.md`
   - R530 db-synthesizer State Threading: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-531-db-synthesizer-praos-forge.md`
+  - R531 db-synthesizer Praos Forge: Date: 2026-05-20.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`
