@@ -1411,9 +1411,9 @@ pub enum ShelleyUtxoPredFailure {
     /// Tag 6: outputs too small — `NonEmpty (TxOut era)`. Raw
     /// payload pending era-specific TxOut decoder.
     OutputTooSmallUTxO(Vec<u8>),
-    /// Tag 7: nested PPUP sub-rule failure. Raw payload pending
-    /// `ShelleyPpupPredFailure` decoder.
-    UpdateFailure(Vec<u8>),
+    /// Tag 7: nested PPUP sub-rule failure (R605 typed decoder
+    /// via `ShelleyPpupPredFailure`).
+    UpdateFailure(ShelleyPpupPredFailure),
     /// Tag 8: addresses with wrong network ID. 3-element CBOR
     /// array: `[8, expected-network, NonEmptySet Addr]`. Raw
     /// payload pending Addr decoder.
@@ -1478,11 +1478,11 @@ impl fmt::Display for ShelleyUtxoPredFailure {
         match self {
             Self::ValueNotConservedUTxO(b)
             | Self::OutputTooSmallUTxO(b)
-            | Self::UpdateFailure(b)
             | Self::WrongNetwork(b)
             | Self::OutputBootAddrAttrsTooBig(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
             }
+            Self::UpdateFailure(ppup) => write!(f, "UpdateFailure ({ppup})"),
             Self::WrongNetworkWithdrawal { expected, wrongs } => {
                 write!(f, "WrongNetworkWithdrawal {expected} ({wrongs})")
             }
@@ -1604,9 +1604,17 @@ impl ShelleyUtxoPredFailure {
                     .map_err(|err| DecoderError(format!("WrongNetworkWithdrawal: {}", err.0)))?;
                 Ok(Self::WrongNetworkWithdrawal { expected, wrongs })
             }
+            // Tag 7: nested PPUP sub-rule (R605 typed decoder).
+            7 => {
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ShelleyUtxoPredFailure: payload offset out of bounds".to_string())
+                })?;
+                let ppup = ShelleyPpupPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::UpdateFailure(ppup))
+            }
             // Variants whose typed payload decoder is not yet
             // ported: capture the remaining bytes verbatim.
-            5..=8 | 10 => {
+            5 | 6 | 8 | 10 => {
                 let raw = bytes
                     .get(payload_offset..)
                     .ok_or_else(|| {
@@ -1618,7 +1626,6 @@ impl ShelleyUtxoPredFailure {
                 Ok(match tag {
                     5 => Self::ValueNotConservedUTxO(raw),
                     6 => Self::OutputTooSmallUTxO(raw),
-                    7 => Self::UpdateFailure(raw),
                     8 => Self::WrongNetwork(raw),
                     10 => Self::OutputBootAddrAttrsTooBig(raw),
                     _ => unreachable!("tag range checked above"),
@@ -1937,6 +1944,116 @@ impl fmt::Display for NonEmptySetAccountAddress {
         }
         f.write_str("])")?;
         Ok(())
+    }
+}
+
+/// `ShelleyPpupPredFailure` mirror — nested PPUP sub-rule under
+/// `ShelleyUtxoPredFailure::UpdateFailure` (UTXO tag 7).
+///
+/// Upstream: `data ShelleyPpupPredFailure era` from
+/// `Cardano.Ledger.Shelley.Rules.Ppup` with 3 variants:
+///
+/// ```text
+/// data ShelleyPpupPredFailure era
+///   = NonGenesisUpdatePPUP (Mismatch RelSubset (Set (KeyHash GenesisRole)))
+///   | PPUpdateWrongEpoch EpochNo EpochNo VotingPeriod
+///   | PVCannotFollowPPUP ProtVer
+/// ```
+///
+/// R605 ships the scaffold with all 3 variants carrying raw inner
+/// CBOR. Per-variant typed payload decoders (Mismatch SetKeyHash,
+/// 3-Word PPUpdateWrongEpoch, ProtVer 2-array) land in R606+.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShelleyPpupPredFailure {
+    /// Tag 0: update proposed by non-genesis key —
+    /// `Mismatch RelSubset (Set (KeyHash GenesisRole))`. Raw
+    /// payload pending decoder.
+    NonGenesisUpdatePPUP(Vec<u8>),
+    /// Tag 1: update proposed for wrong epoch —
+    /// `EpochNo EpochNo VotingPeriod` (3-element record). Raw
+    /// payload pending decoder.
+    PPUpdateWrongEpoch(Vec<u8>),
+    /// Tag 2: protocol version cannot follow — `ProtVer`
+    /// (2-element record). Raw payload pending decoder.
+    PVCannotFollowPPUP(Vec<u8>),
+}
+
+impl ShelleyPpupPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::NonGenesisUpdatePPUP(_) => 0,
+            Self::PPUpdateWrongEpoch(_) => 1,
+            Self::PVCannotFollowPPUP(_) => 2,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::NonGenesisUpdatePPUP(_) => "NonGenesisUpdatePPUP",
+            Self::PPUpdateWrongEpoch(_) => "PPUpdateWrongEpoch",
+            Self::PVCannotFollowPPUP(_) => "PVCannotFollowPPUP",
+        }
+    }
+
+    /// Decode the full `ShelleyPpupPredFailure` outer envelope from
+    /// CBOR bytes. Upstream encoding (via `Sum`) wraps every
+    /// variant in a CBOR list whose first element is the Word8 tag
+    /// and remaining elements are payload parts. R605 captures the
+    /// remaining elements verbatim for each variant.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyPpupPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(2..=4).contains(&len) {
+            return Err(DecoderError(format!(
+                "ShelleyPpupPredFailure: expected 2- to 4-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyPpupPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload_offset = dec.position();
+        let raw = bytes
+            .get(payload_offset..)
+            .ok_or_else(|| {
+                DecoderError("ShelleyPpupPredFailure: payload offset out of bounds".to_string())
+            })?
+            .to_vec();
+        match tag {
+            0 => Ok(Self::NonGenesisUpdatePPUP(raw)),
+            1 => Ok(Self::PPUpdateWrongEpoch(raw)),
+            2 => Ok(Self::PVCannotFollowPPUP(raw)),
+            other => Err(DecoderError(format!(
+                "ShelleyPpupPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ShelleyPpupPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ShelleyPpupPredFailure era)`: `<Constructor> <raw-cbor N
+    /// bytes>`. Typed payloads land in R606+.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let payload = match self {
+            Self::NonGenesisUpdatePPUP(b)
+            | Self::PPUpdateWrongEpoch(b)
+            | Self::PVCannotFollowPPUP(b) => b,
+        };
+        write!(
+            f,
+            "{} <raw-cbor {} bytes>",
+            self.constructor(),
+            payload.len()
+        )
     }
 }
 
@@ -2902,6 +3019,65 @@ mod tests {
             s.starts_with(
                 "WrongNetworkWithdrawal Mainnet (NonEmptySet (fromList [AccountAddress {aaNetworkId = Mainnet, aaId = KeyHashObj"
             ),
+            "got: {s}"
+        );
+    }
+
+    #[test]
+    fn shelley_ppup_pred_failure_tag_dispatch() {
+        // Tag 0: outer [0x82, 0x00, payload]
+        let mut cbor = vec![0x82_u8, 0x00];
+        cbor.extend_from_slice(&[0x82, 0x80, 0x80]); // dummy mismatch
+        let f = ShelleyPpupPredFailure::from_cbor(&cbor).expect("NonGenesisUpdatePPUP");
+        assert_eq!(f.tag(), 0);
+        assert_eq!(f.constructor(), "NonGenesisUpdatePPUP");
+        assert!(matches!(f, ShelleyPpupPredFailure::NonGenesisUpdatePPUP(_)));
+
+        // Tag 1: outer [0x84, 0x01, ce, e, vp]
+        let cbor = [0x84_u8, 0x01, 0x18, 100, 0x18, 99, 0x00];
+        let f = ShelleyPpupPredFailure::from_cbor(&cbor).expect("PPUpdateWrongEpoch");
+        assert_eq!(f.tag(), 1);
+        assert_eq!(f.constructor(), "PPUpdateWrongEpoch");
+
+        // Tag 2: outer [0x82, 0x02, ProtVer-array]
+        let cbor = [0x82_u8, 0x02, 0x82, 0x09, 0x00];
+        let f = ShelleyPpupPredFailure::from_cbor(&cbor).expect("PVCannotFollowPPUP");
+        assert_eq!(f.tag(), 2);
+        assert_eq!(f.constructor(), "PVCannotFollowPPUP");
+    }
+
+    #[test]
+    fn shelley_ppup_pred_failure_display_marks_raw_cbor() {
+        let cbor = [0x82_u8, 0x02, 0x82, 0x09, 0x00];
+        let f = ShelleyPpupPredFailure::from_cbor(&cbor).expect("PVCannotFollowPPUP");
+        assert_eq!(f.to_string(), "PVCannotFollowPPUP <raw-cbor 3 bytes>");
+    }
+
+    #[test]
+    fn shelley_ppup_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 42, 0x40];
+        let err = ShelleyPpupPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 42"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_update_failure_routes_to_typed_ppup() {
+        // UTXO tag 7 with inner PPUP tag 2 (PVCannotFollowPPUP).
+        // Outer [0x82, 0x07, PPUP-bytes]; PPUP-bytes = [0x82, 0x02, 0x82, 0x09, 0x00]
+        let cbor = [0x82_u8, 0x07, 0x82, 0x02, 0x82, 0x09, 0x00];
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("UpdateFailure");
+        if let ShelleyUtxoPredFailure::UpdateFailure(ppup) = &f {
+            assert_eq!(ppup.tag(), 2);
+            assert_eq!(ppup.constructor(), "PVCannotFollowPPUP");
+        } else {
+            panic!("expected typed UpdateFailure, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("UpdateFailure (PVCannotFollowPPUP <raw-cbor"),
             "got: {s}"
         );
     }

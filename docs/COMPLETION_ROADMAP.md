@@ -547,8 +547,15 @@ CBOR encoding) and `NonEmptySetAccountAddress` decoder
 (BTreeSet<RewardAccount>, tag-258 tolerant), wiring
 `ShelleyUtxoPredFailure::WrongNetworkWithdrawal` (tag 9 —
 3-element envelope `[9, expected-network, NonEmptySet
-AccountAddress]`) to typed payload. 6/11 UTXO variants now carry
-typed payloads; 5 raw remain (Value, TxOut x2, PPUP, Network+Addr).
+AccountAddress]`) to typed payload. R605 (2026-05-21) opened the
+nested `ShelleyPpupPredFailure` scaffold (3-variant enum
+mirroring `Cardano.Ledger.Shelley.Rules.Ppup`:
+NonGenesisUpdatePPUP / PPUpdateWrongEpoch / PVCannotFollowPPUP)
+with `tag()`, `constructor()`, Display, and outer-envelope
+decoder. All 3 variants carry raw inner CBOR pending per-payload
+decoders. Wired `ShelleyUtxoPredFailure::UpdateFailure` (tag 7)
+to typed `ShelleyPpupPredFailure`. 7/11 UTXO variants now carry
+typed payloads; 4 raw remain (Value, TxOut x2, Network+Addr).
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
