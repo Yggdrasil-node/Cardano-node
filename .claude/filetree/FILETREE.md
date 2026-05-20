@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T15:46:34Z
-- Files described: 1447
+- Generated at: 2026-05-20T16:21:38Z
+- Files described: 1448
 
 ## Workspace
 
@@ -1732,7 +1732,7 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the post-R564 GeneratorTx.SubmissionClient wire-driver, DumpToFile, and walletBenchmark implementation arc.
+  - Tracks the post-R565 walletBenchmark control, Script/Core Benchmark wiring, DumpToFile, and soak-evidence arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
@@ -1767,7 +1767,7 @@
   - High-level option compiler for `tx-generator`.
   - Mirrors upstream Compiler.hs by turning NixServiceOptions into generated benchmark script actions.
 - `crates/tools/tx-generator/src/generator_tx.rs`
-  - Transaction-stream generator runtime surface. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx.hs`.
+  - Strict mirror of upstream `GeneratorTx.hs`, wiring walletBenchmark target resolution, NtN V14 connect, worker/feeder control, and summary collection.
 - `crates/tools/tx-generator/src/generator_tx/sized_metadata.rs`
   - Sized transaction-metadata construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx/SizedMetadata.
 - `crates/tools/tx-generator/src/generator_tx/submission.rs`
@@ -2291,6 +2291,9 @@
   - Operational run note for R563 tx-generator GeneratorTx.Submission report refs, summaries, stream state, validation, and remaining walletBenchmark gaps.
 - `docs/operational-runs/2026-05-20-round-564-tx-generator-submission-client-wire.md`
   - Round 564 operational evidence for the tx-generator SubmissionClient TxSubmission2 wire-driver slice.
+- `docs/operational-runs/2026-05-20-round-565-tx-generator-wallet-benchmark-control.md`
+  - Operational evidence for R565 tx-generator walletBenchmark NtN control/connect work.
+  - Lists the scope, upstream mirror changes, validation commands, and remaining Benchmark wiring gap.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

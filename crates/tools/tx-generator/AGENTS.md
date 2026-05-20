@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R564 SubmissionClient TxSubmission2 wire-driver slice). The old
+**Status:** `partial` (post-R565 walletBenchmark NtN control/connect slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -255,15 +255,20 @@ approved synthesis area from the sister-tools plan.
   tx-id replies, tx-body replies, or `MsgDone` on the wire. A muxed
   loopback test covers `MsgInit -> RequestTxIds -> RequestTxs ->
   MsgDone`.
+- Shipped R565: `Cardano.Benchmarking.GeneratorTx.walletBenchmark`
+  now resolves IPv4 target nodes, proposes upstream NtN V14
+  initiator-only version data, spawns one TxSubmission2 worker per
+  target, spawns the TPS feeder, exposes shutdown/summary control, and
+  has a peer-accept/peer-connect loopback test that submits generated
+  transactions through the negotiated TxSubmission2 mini-protocol.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
-- Pending: wire `walletBenchmark` target resolution/connect/spawn/
-  feeder-summary orchestration around the new throttle/
-  submission-client/submission/wire-driver state machine, then extend
-  `DumpToFile` Show rendering beyond the Allegra key-witnessed
-  selftest shape.
+- Pending: wire `SubmitMode::Benchmark` in `Script/Core.hs` into the
+  new `walletBenchmark` control, carry real `AsyncBenchmarkControl`
+  through `Script/Env.hs`, then extend `DumpToFile` Show rendering
+  beyond the Allegra key-witnessed selftest shape.
 
 ## Build + Run
 
@@ -416,8 +421,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `generator_tx/submission_client.rs` now bridges the upstream-shaped
   request state into the typed `yggdrasil_network` TxSubmission2
   client and has muxed loopback coverage through `TxSubmissionServer`.
-- Next: `walletBenchmark` target resolution/connect/spawn/
-  feeder-summary orchestration and broader
+- Shipped: walletBenchmark NtN control/connect layer (R565):
+  `generator_tx.rs` now owns `wallet_benchmark`, target IPv4
+  resolution, V14 NtN proposal construction, worker/feeder spawning,
+  shutdown, and summary collection with real peer-connect loopback
+  coverage.
+- Next: `Script/Core.hs` `SubmitMode::Benchmark` wiring plus broader
   `DumpToFile` Show coverage in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry

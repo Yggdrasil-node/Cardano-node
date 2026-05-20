@@ -159,6 +159,16 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
+    const PLUTUS_BUDGET_SUMMARY_FILE: &str = "plutus-budget-summary.json";
+
+    struct BudgetSummaryFileCleanup;
+
+    impl Drop for BudgetSummaryFileCleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+        }
+    }
+
     fn unique_temp_path(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -285,6 +295,8 @@ mod tests {
             "yggdrasil-tx-generator-command-{}.out",
             std::process::id()
         ));
+        let _cleanup = BudgetSummaryFileCleanup;
+        let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
         let _ = std::fs::remove_file(&output_path);
 
         run(Command::Selftest(Some(output_path.clone()))).expect("selftest command");

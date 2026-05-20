@@ -316,11 +316,14 @@ own parser / generator / submission implementation plus upstream
   `GeneratorTx.Submission` report refs, submission summaries, stream
   state, and `txStreamSource` bridge; R564 wired
   `GeneratorTx.SubmissionClient` to the typed TxSubmission2 network
-  driver with a muxed loopback test. The remaining tx-generator
-  blockers are `walletBenchmark` target resolution/connect/spawn/
-  feeder-summary orchestration around that request-state/throttle/
-  stream/wire-driver stack, broader `DumpToFile` rendering beyond the
-  Allegra key-witnessed selftest shape, and soak evidence.
+  driver with a muxed loopback test; R565 added the
+  `walletBenchmark` NtN control/connect layer, including IPv4 target
+  resolution, upstream V14 initiator-only proposals, worker/feeder
+  spawning, shutdown/summary control, and a peer-connect loopback test.
+  The remaining tx-generator blockers are `Script/Core.hs`
+  `SubmitMode::Benchmark` env-control wiring around that control layer,
+  broader `DumpToFile` rendering beyond the Allegra key-witnessed
+  selftest shape, and soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
