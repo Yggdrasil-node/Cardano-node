@@ -1672,12 +1672,6 @@ fn show_conway_pparams_update(
     if ppu.price_mem.is_some() != ppu.price_step.is_some() {
         set_fields.push("cppPrices (price_mem and price_step must be set together)");
     }
-    if ppu.pool_voting_thresholds.is_some() {
-        set_fields.push("cppPoolVotingThresholds");
-    }
-    if ppu.drep_voting_thresholds.is_some() {
-        set_fields.push("cppDRepVotingThresholds");
-    }
     if !set_fields.is_empty() {
         return Err(lift_tx_gen_error(format!(
             "DumpToFile: Conway Show(Tx) renderer does not yet support non-empty ParameterChange fields: {}",
@@ -1694,7 +1688,7 @@ fn show_conway_pparams_update(
     // primitive Show. Committee size, gov action deposit, etc match
     // similarly.
     Ok(format!(
-        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = {}, cppNOpt = {}, cppA0 = {}, cppRho = {}, cppTau = {}, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = {}, cppMaxTxExUnits = {}, cppMaxBlockExUnits = {}, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = SNothing, cppDRepVotingThresholds = SNothing, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = {}, cppGovActionLifetime = {}, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = {}, cppMinFeeRefScriptCostPerByte = {}}})",
+        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = {}, cppNOpt = {}, cppA0 = {}, cppRho = {}, cppTau = {}, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = {}, cppMaxTxExUnits = {}, cppMaxBlockExUnits = {}, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = {}, cppDRepVotingThresholds = {}, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = {}, cppGovActionLifetime = {}, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = {}, cppMinFeeRefScriptCostPerByte = {}}})",
         show_pparam_compact_coin(ppu.min_fee_a),
         show_pparam_compact_coin(ppu.min_fee_b),
         show_pparam_word(ppu.max_block_body_size),
@@ -1715,6 +1709,8 @@ fn show_conway_pparams_update(
         show_pparam_word(ppu.max_val_size),
         show_pparam_word(ppu.collateral_percentage),
         show_pparam_word(ppu.max_collateral_inputs),
+        show_pparam_pool_voting_thresholds(ppu.pool_voting_thresholds.as_ref()),
+        show_pparam_drep_voting_thresholds(ppu.drep_voting_thresholds.as_ref()),
         show_pparam_word(ppu.min_committee_size),
         show_pparam_epoch_interval(ppu.committee_term_limit),
         show_pparam_epoch_interval(ppu.gov_action_lifetime),
@@ -1794,6 +1790,52 @@ fn strip_outer_parens(s: &str) -> &str {
         &s[1..s.len() - 1]
     } else {
         s
+    }
+}
+
+/// Render `StrictMaybe PoolVotingThresholds`. Upstream is a stock-derived
+/// 5-field record. Each `UnitInterval` field renders bare (no outer
+/// parens) inside the record at p=0. Inside `SJust` at p=11 the record
+/// wraps with parens.
+fn show_pparam_pool_voting_thresholds(
+    value: Option<&yggdrasil_ledger::PoolVotingThresholds>,
+) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(t) => format!(
+            "SJust (PoolVotingThresholds {{pvtMotionNoConfidence = {}, pvtCommitteeNormal = {}, pvtCommitteeNoConfidence = {}, pvtHardForkInitiation = {}, pvtPPSecurityGroup = {}}})",
+            strip_outer_parens(&show_unit_interval(t.motion_no_confidence)),
+            strip_outer_parens(&show_unit_interval(t.committee_normal)),
+            strip_outer_parens(&show_unit_interval(t.committee_no_confidence)),
+            strip_outer_parens(&show_unit_interval(t.hard_fork_initiation)),
+            strip_outer_parens(&show_unit_interval(t.pp_security_group)),
+        ),
+    }
+}
+
+/// Render `StrictMaybe DRepVotingThresholds`. Upstream is a stock-derived
+/// 10-field record. Field order: motionNoConfidence, committeeNormal,
+/// committeeNoConfidence, updateToConstitution, hardForkInitiation,
+/// ppNetworkGroup, ppEconomicGroup, ppTechnicalGroup, ppGovGroup,
+/// treasuryWithdrawal.
+fn show_pparam_drep_voting_thresholds(
+    value: Option<&yggdrasil_ledger::DRepVotingThresholds>,
+) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(t) => format!(
+            "SJust (DRepVotingThresholds {{dvtMotionNoConfidence = {}, dvtCommitteeNormal = {}, dvtCommitteeNoConfidence = {}, dvtUpdateToConstitution = {}, dvtHardForkInitiation = {}, dvtPPNetworkGroup = {}, dvtPPEconomicGroup = {}, dvtPPTechnicalGroup = {}, dvtPPGovGroup = {}, dvtTreasuryWithdrawal = {}}})",
+            strip_outer_parens(&show_unit_interval(t.motion_no_confidence)),
+            strip_outer_parens(&show_unit_interval(t.committee_normal)),
+            strip_outer_parens(&show_unit_interval(t.committee_no_confidence)),
+            strip_outer_parens(&show_unit_interval(t.update_to_constitution)),
+            strip_outer_parens(&show_unit_interval(t.hard_fork_initiation)),
+            strip_outer_parens(&show_unit_interval(t.pp_network_group)),
+            strip_outer_parens(&show_unit_interval(t.pp_economic_group)),
+            strip_outer_parens(&show_unit_interval(t.pp_technical_group)),
+            strip_outer_parens(&show_unit_interval(t.pp_gov_group)),
+            strip_outer_parens(&show_unit_interval(t.treasury_withdrawal)),
+        ),
     }
 }
 
@@ -4222,6 +4264,53 @@ mod tests {
             msg.contains("cppPrices") && msg.contains("price_mem and price_step"),
             "expected pairing message: {msg}"
         );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_parameter_change_with_voting_thresholds() {
+        let half = yggdrasil_ledger::UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
+        let two_thirds = yggdrasil_ledger::UnitInterval {
+            numerator: 2,
+            denominator: 3,
+        };
+        let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            pool_voting_thresholds: Some(yggdrasil_ledger::PoolVotingThresholds {
+                motion_no_confidence: half,
+                committee_normal: half,
+                committee_no_confidence: two_thirds,
+                hard_fork_initiation: half,
+                pp_security_group: half,
+            }),
+            drep_voting_thresholds: Some(yggdrasil_ledger::DRepVotingThresholds {
+                motion_no_confidence: two_thirds,
+                committee_normal: half,
+                committee_no_confidence: two_thirds,
+                update_to_constitution: two_thirds,
+                hard_fork_initiation: two_thirds,
+                pp_network_group: half,
+                pp_economic_group: half,
+                pp_technical_group: half,
+                pp_gov_group: two_thirds,
+                treasury_withdrawal: two_thirds,
+            }),
+            ..Default::default()
+        };
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: update,
+            guardrails_script_hash: None,
+        };
+        let rendered = show_conway_gov_action(&parameter_change)
+            .expect("parameter change with voting thresholds");
+        assert!(rendered.contains(
+            "cppPoolVotingThresholds = SJust (PoolVotingThresholds {pvtMotionNoConfidence = 1 % 2, pvtCommitteeNormal = 1 % 2, pvtCommitteeNoConfidence = 2 % 3, pvtHardForkInitiation = 1 % 2, pvtPPSecurityGroup = 1 % 2})"
+        ));
+        assert!(rendered.contains(
+            "cppDRepVotingThresholds = SJust (DRepVotingThresholds {dvtMotionNoConfidence = 2 % 3, dvtCommitteeNormal = 1 % 2, dvtCommitteeNoConfidence = 2 % 3, dvtUpdateToConstitution = 2 % 3, dvtHardForkInitiation = 2 % 3, dvtPPNetworkGroup = 1 % 2, dvtPPEconomicGroup = 1 % 2, dvtPPTechnicalGroup = 1 % 2, dvtPPGovGroup = 2 % 3, dvtTreasuryWithdrawal = 2 % 3})"
+        ));
     }
 
     #[test]

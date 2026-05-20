@@ -434,10 +434,12 @@ own parser / generator / submission implementation plus upstream
   wired 3 more composite PParamsUpdate fields: `cppPrices`
   (Prices record combining yggdrasil's split `price_mem` +
   `price_step`), `cppMaxTxExUnits`, and `cppMaxBlockExUnits`
-  (`OrdExUnits` → ExUnits Show). 27/30 Conway PParamsUpdate fields
-  now render. The remaining tx-generator blockers are per-type
-  Shows for 3 composite fields (`CostModels`,
-  `PoolVotingThresholds`, `DRepVotingThresholds`) and
+  (`OrdExUnits` → ExUnits Show). R587 wired the
+  `cppPoolVotingThresholds` (5-field record) and
+  `cppDRepVotingThresholds` (10-field record) Show paths. 29/30
+  Conway PParamsUpdate fields now render. The remaining
+  tx-generator blocker is the last composite field
+  (`CostModels` — per-language cost-model arrays) and
   upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.

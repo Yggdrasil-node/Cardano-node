@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R586 PParamsUpdate Prices + OrdExUnits rendering — 27/30 PParamsUpdate fields render).
+**Status:** `partial` (post-R587 PParamsUpdate voting-threshold record rendering — 29/30 PParamsUpdate fields render; only cppCostModels remains).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,18 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R587: `show_conway_pparams_update` now renders 2 more
+  composite PParamsUpdate fields:
+  - `cppPoolVotingThresholds` (5-field record of UnitIntervals:
+    pvtMotionNoConfidence, pvtCommitteeNormal,
+    pvtCommitteeNoConfidence, pvtHardForkInitiation,
+    pvtPPSecurityGroup).
+  - `cppDRepVotingThresholds` (10-field record of UnitIntervals).
+  Both render as `SJust (RecordName {field = <num> % <den>, ...})`
+  matching stock-derived Show on a record with multiple
+  UnitInterval fields. 29/30 PParamsUpdate fields now render;
+  only cppCostModels remains. 1 focused unit test sets both fields
+  with realistic mainnet-shape values.
 - Shipped R586: `show_conway_pparams_update` now renders 3 more
   composite PParamsUpdate fields:
   - `cppPrices` combines yggdrasil's split `price_mem` +
@@ -818,10 +830,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `show_conway_pparams_update` now renders 3 more composite fields
   (cppPrices, cppMaxTxExUnits, cppMaxBlockExUnits). 27/30 Conway
   PParamsUpdate fields render.
-- Next: per-type Shows for the remaining 3 composite PParamsUpdate
-  fields (`CostModels`, `PoolVotingThresholds`,
-  `DRepVotingThresholds`), upstream `bootstrapWitKeyHash` parity,
-  and upstream-binary soak in strict-mirror-sized slices.
+- Shipped: PParamsUpdate voting-threshold records (R587):
+  `show_conway_pparams_update` now renders cppPoolVotingThresholds
+  (5-field record) and cppDRepVotingThresholds (10-field record).
+  29/30 PParamsUpdate fields render; only cppCostModels remains.
+- Next: cppCostModels record (per-language cost-model arrays —
+  the final PParamsUpdate field), upstream `bootstrapWitKeyHash`
+  parity, and upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
