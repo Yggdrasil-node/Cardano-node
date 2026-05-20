@@ -562,8 +562,13 @@ typed `ProtVer` (2-element record `{major, minor}` decoded from
 CBORGroup wire form) for tag 2. New `SetKeyHash::from_decoder`
 shared helper used by both the parent rejection list and the
 PPUP Mismatch decoder. **All 3 PPUP variants now carry typed
-payloads.** 7/11 UTXO variants typed; 4 raw remain (Value, TxOut
-x2, Network+Addr).
+payloads.** R607 (2026-05-21) added the `Addr` wrapper (raw-bytes
++ hex Display) and `NonEmptySetAddr` carrier (BTreeSet, tag-258
+tolerant), wiring `ShelleyUtxoPredFailure::WrongNetwork` (tag 8,
+3-element envelope `[8, expected-network, NonEmptySet Addr]`) to
+typed struct variant. 8/11 UTXO variants typed; 3 raw remain
+(Value, TxOut x2). Full typed `Addr` Show parse (Shelley vs
+Bootstrap address split) deferred to a follow-on round.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
