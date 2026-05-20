@@ -1279,11 +1279,8 @@ fn show_conway_tx_for_dump(
         "ctbrReferenceInputs",
     )?;
     let voting_procedures = show_conway_voting_procedures(tx.body.voting_procedures.as_ref());
-    ensure_empty_or_absent(
-        tx.body.proposal_procedures.as_deref(),
-        "Conway",
-        "ctbrProposalProcedures",
-    )?;
+    let proposal_procedures =
+        show_conway_proposal_procedures(tx.body.proposal_procedures.as_deref())?;
     let current_treasury_value = show_strict_maybe_coin(tx.body.current_treasury_value);
     let treasury_donation = show_coin(tx.body.treasury_donation.unwrap_or(0));
     ensure_absent(tx.auxiliary_data.as_ref(), "Conway", "atAuxData")?;
@@ -1295,7 +1292,7 @@ fn show_conway_tx_for_dump(
     let is_valid = show_haskell_bool(tx.is_valid);
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = SNothing, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = SNothing, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = {proposal_procedures}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1437,6 +1434,131 @@ fn show_anchor(anchor: &yggdrasil_ledger::Anchor) -> String {
 /// Render upstream `Show Url` via record-newtype `Url {urlToText = "..."}`.
 fn show_url(url: &str) -> String {
     format!("Url {{urlToText = {url:?}}}")
+}
+
+/// Render `ctbrProposalProcedures = OSet {osSSeq = StrictSeq {fromStrict =
+/// fromList [...]}, osSet = fromList [...]}` matching upstream stock-derived
+/// `Show (OSet (ProposalProcedure era))`.
+///
+/// Rejects ProposalProcedures carrying `GovAction` variants whose rendering
+/// is not yet ported (ParameterChange, TreasuryWithdrawals,
+/// UpdateCommittee — these wrap rich types like `ProtocolParameterUpdate`
+/// and `UnitInterval` whose Shows are deferred to a future round). The
+/// remaining 4 variants (InfoAction, NoConfidence, HardForkInitiation,
+/// NewConstitution) are rendered.
+fn show_conway_proposal_procedures(
+    procedures: Option<&[yggdrasil_ledger::ProposalProcedure]>,
+) -> Result<String, Error> {
+    let body = match procedures {
+        None | Some(&[]) => String::new(),
+        Some(items) => items
+            .iter()
+            .map(show_conway_proposal_procedure)
+            .collect::<Result<Vec<_>, _>>()?
+            .join(","),
+    };
+    Ok(format!(
+        "OSet {{osSSeq = StrictSeq {{fromStrict = fromList [{body}]}}, osSet = fromList [{body}]}}"
+    ))
+}
+
+/// Render upstream `Show (ProposalProcedure era)`: stock-derived record with
+/// `pProcDeposit :: Coin`, `pProcReturnAddr :: AccountAddress`, `pProcGovAction
+/// :: GovAction era`, `pProcAnchor :: Anchor`.
+fn show_conway_proposal_procedure(
+    proc: &yggdrasil_ledger::ProposalProcedure,
+) -> Result<String, Error> {
+    let return_addr = show_account_address(&proc.reward_account)?;
+    let gov_action = show_conway_gov_action(&proc.gov_action)?;
+    Ok(format!(
+        "ProposalProcedure {{pProcDeposit = {}, pProcReturnAddr = {return_addr}, pProcGovAction = {gov_action}, pProcAnchor = {}}}",
+        show_coin(proc.deposit),
+        show_anchor(&proc.anchor),
+    ))
+}
+
+/// Render upstream `Show AccountAddress`: stock-derived record with
+/// `aaNetworkId :: Network` (Testnet / Mainnet) and `aaId :: AccountId`
+/// (newtype-derived Show over `Credential Staking` — `KeyHashObj` /
+/// `ScriptHashObj`).
+fn show_account_address(reward_account_bytes: &[u8]) -> Result<String, Error> {
+    use yggdrasil_ledger::RewardAccount;
+    let ra = RewardAccount::from_bytes(reward_account_bytes).ok_or_else(|| {
+        lift_tx_gen_error(
+            "DumpToFile: Conway Show(Tx) renderer received invalid reward-account bytes",
+        )
+    })?;
+    let network = show_network(ra.network)?;
+    let inner = match ra.credential {
+        yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => format!(
+            "KeyHashObj (KeyHash {{unKeyHash = \"{}\"}})",
+            hex::encode(h)
+        ),
+        yggdrasil_ledger::StakeCredential::ScriptHash(h) => {
+            format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
+        }
+    };
+    Ok(format!(
+        "AccountAddress {{aaNetworkId = {network}, aaId = {inner}}}"
+    ))
+}
+
+/// Render upstream `Show (GovAction era)` for the 4 simple variants:
+/// `InfoAction`, `NoConfidence`, `HardForkInitiation`, `NewConstitution`.
+/// The 3 complex variants (`ParameterChange`, `TreasuryWithdrawals`,
+/// `UpdateCommittee`) return a typed `TxGenError` until their internal
+/// types (`ProtocolParameterUpdate`, `UnitInterval`) gain Show ports.
+fn show_conway_gov_action(action: &yggdrasil_ledger::GovAction) -> Result<String, Error> {
+    use yggdrasil_ledger::GovAction;
+    match action {
+        GovAction::InfoAction => Ok("InfoAction".to_string()),
+        GovAction::NoConfidence { prev_action_id } => Ok(format!(
+            "NoConfidence {}",
+            show_strict_maybe_gov_purpose_id(prev_action_id.as_ref())
+        )),
+        GovAction::HardForkInitiation {
+            prev_action_id,
+            protocol_version,
+        } => Ok(format!(
+            "HardForkInitiation {} (ProtVer {{pvMajor = Version {}, pvMinor = {}}})",
+            show_strict_maybe_gov_purpose_id(prev_action_id.as_ref()),
+            protocol_version.0,
+            protocol_version.1,
+        )),
+        GovAction::NewConstitution {
+            prev_action_id,
+            constitution,
+        } => {
+            let guardrails = match constitution.guardrails_script_hash {
+                None => "SNothing".to_string(),
+                Some(h) => format!("SJust (ScriptHash \"{}\")", hex::encode(h)),
+            };
+            Ok(format!(
+                "NewConstitution {} (Constitution {{constitutionAnchor = {}, constitutionGuardrailsScriptHash = {guardrails}}})",
+                show_strict_maybe_gov_purpose_id(prev_action_id.as_ref()),
+                show_anchor(&constitution.anchor),
+            ))
+        }
+        GovAction::ParameterChange { .. } => Err(lift_tx_gen_error(
+            "DumpToFile: Conway Show(Tx) renderer does not yet support ParameterChange GovAction (needs ProtocolParameterUpdate Show)",
+        )),
+        GovAction::TreasuryWithdrawals { .. } => Err(lift_tx_gen_error(
+            "DumpToFile: Conway Show(Tx) renderer does not yet support TreasuryWithdrawals GovAction (needs AccountAddress map Show)",
+        )),
+        GovAction::UpdateCommittee { .. } => Err(lift_tx_gen_error(
+            "DumpToFile: Conway Show(Tx) renderer does not yet support UpdateCommittee GovAction (needs UnitInterval Show)",
+        )),
+    }
+}
+
+/// Render `StrictMaybe (GovPurposeId p)`. `GovPurposeId` is a phantom-tagged
+/// newtype over `GovActionId` with `deriving newtype Show`, so its Show
+/// delegates directly to `GovActionId`'s record Show.
+fn show_strict_maybe_gov_purpose_id(value: Option<&yggdrasil_ledger::GovActionId>) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(id) => format!("(SJust {})", show_conway_gov_action_id(id)),
+    }
 }
 
 fn ensure_absent<T>(value: Option<&T>, era: &str, field: &str) -> Result<(), Error> {
@@ -3472,6 +3594,118 @@ mod tests {
             spend2 < spend5 && spend5 < mint0,
             "redeemer ordering wrong: {rendered}"
         );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_info_and_no_confidence() {
+        let info = yggdrasil_ledger::GovAction::InfoAction;
+        assert_eq!(show_conway_gov_action(&info).expect("info"), "InfoAction");
+
+        let nc_none = yggdrasil_ledger::GovAction::NoConfidence {
+            prev_action_id: None,
+        };
+        assert_eq!(
+            show_conway_gov_action(&nc_none).expect("nc-none"),
+            "NoConfidence SNothing"
+        );
+
+        let nc_some = yggdrasil_ledger::GovAction::NoConfidence {
+            prev_action_id: Some(yggdrasil_ledger::GovActionId {
+                transaction_id: [0xAB; 32],
+                gov_action_index: 4,
+            }),
+        };
+        let rendered = show_conway_gov_action(&nc_some).expect("nc-some");
+        assert!(rendered.starts_with("NoConfidence (SJust GovActionId {"));
+        assert!(rendered.contains("gaidGovActionIx = GovActionIx {unGovActionIx = 4}"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_hard_fork_initiation() {
+        let action = yggdrasil_ledger::GovAction::HardForkInitiation {
+            prev_action_id: None,
+            protocol_version: (11, 0),
+        };
+        let rendered = show_conway_gov_action(&action).expect("hard fork");
+        assert!(rendered.starts_with("HardForkInitiation SNothing (ProtVer {pvMajor = Version 11"));
+        assert!(rendered.contains("pvMinor = 0}"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_new_constitution() {
+        let constitution = yggdrasil_ledger::Constitution {
+            anchor: yggdrasil_ledger::Anchor {
+                url: "https://x.test/c".to_string(),
+                data_hash: [0x33; 32],
+            },
+            guardrails_script_hash: Some([0x44; 28]),
+        };
+        let action = yggdrasil_ledger::GovAction::NewConstitution {
+            prev_action_id: None,
+            constitution,
+        };
+        let rendered = show_conway_gov_action(&action).expect("new constitution");
+        assert!(
+            rendered
+                .contains("NewConstitution SNothing (Constitution {constitutionAnchor = Anchor")
+        );
+        assert!(rendered.contains("constitutionGuardrailsScriptHash = SJust (ScriptHash \"4444"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_rejects_complex_variants() {
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: Default::default(),
+            guardrails_script_hash: None,
+        };
+        let err =
+            show_conway_gov_action(&parameter_change).expect_err("parameter change should reject");
+        assert!(format!("{err}").contains("ParameterChange"));
+    }
+
+    #[test]
+    fn dumptofile_show_account_address_keyhash_and_script() {
+        // Mainnet key-hash reward account: header 0xE1.
+        let mut bytes = vec![0xE1_u8];
+        bytes.extend_from_slice(&[0x11; 28]);
+        let rendered = show_account_address(&bytes).expect("keyhash account");
+        assert!(
+            rendered.starts_with("AccountAddress {aaNetworkId = Mainnet, aaId = KeyHashObj"),
+            "unexpected keyhash rendering: {rendered}"
+        );
+
+        // Testnet script-hash reward account: header 0xF0.
+        let mut bytes = vec![0xF0_u8];
+        bytes.extend_from_slice(&[0x22; 28]);
+        let rendered = show_account_address(&bytes).expect("script account");
+        assert!(
+            rendered.starts_with("AccountAddress {aaNetworkId = Testnet, aaId = ScriptHashObj"),
+            "unexpected script rendering: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_proposal_procedures_empty_and_full() {
+        // Empty / None returns the prior `OSet {...empty...}` shape.
+        let empty = show_conway_proposal_procedures(None).expect("empty");
+        assert!(empty.contains("osSSeq = StrictSeq {fromStrict = fromList []}"));
+
+        let mut bytes = vec![0xE1_u8];
+        bytes.extend_from_slice(&[0x55; 28]);
+        let proc = yggdrasil_ledger::ProposalProcedure {
+            deposit: 500_000_000,
+            reward_account: bytes,
+            gov_action: yggdrasil_ledger::GovAction::InfoAction,
+            anchor: yggdrasil_ledger::Anchor {
+                url: "https://x.test".to_string(),
+                data_hash: [0x66; 32],
+            },
+        };
+        let rendered = show_conway_proposal_procedures(Some(&[proc])).expect("full");
+        assert!(rendered.contains("ProposalProcedure {pProcDeposit = Coin 500000000"));
+        assert!(rendered.contains("pProcGovAction = InfoAction"));
+        assert!(rendered.contains("pProcAnchor = Anchor {anchorUrl = Url"));
     }
 
     #[test]

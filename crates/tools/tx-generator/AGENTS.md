@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R579 bootstrap-witness DumpToFile rendering — witness set boundary-free).
+**Status:** `partial` (post-R580 Conway ProposalProcedures simple-variant DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,24 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R580: `show_conway_tx_for_dump` now renders non-empty
+  `ctbrProposalProcedures` map shell + `ProposalProcedure` record +
+  4 simple `GovAction` variants (`InfoAction`, `NoConfidence`,
+  `HardForkInitiation`, `NewConstitution`). Uses `RewardAccount::from_bytes`
+  to decode the `pProcReturnAddr` 29-byte reward-account bytes into
+  `AccountAddress {aaNetworkId, aaId = KeyHashObj/ScriptHashObj}`,
+  matching upstream stock-derived Show through the AccountId newtype.
+  Helpers: `show_conway_proposal_procedures`, `show_conway_proposal_procedure`,
+  `show_account_address`, `show_conway_gov_action`,
+  `show_strict_maybe_gov_purpose_id`. The 3 complex `GovAction`
+  variants (`ParameterChange` — needs `ProtocolParameterUpdate` Show,
+  `TreasuryWithdrawals` — needs the AccountAddress map Show,
+  `UpdateCommittee` — needs `UnitInterval` Show) return informative
+  `TxGenError` boundaries pending dedicated rounds. 6 focused unit
+  tests cover `InfoAction`/`NoConfidence` (SNothing+SJust),
+  `HardForkInitiation` with ProtVer, `NewConstitution` with anchor +
+  guardrails, ParameterChange rejection, AccountAddress key-hash +
+  script-hash decode, and the OSet shell empty + full case.
 - Shipped R579: `show_alonzo_witness_set` now renders non-empty
   bootstrap witnesses as `atwrBootAddrTxWits = fromList
   [BootstrapWitness {bwKey = VKey (VerKeyEd25519DSIGN "..."),
@@ -676,8 +694,17 @@ This crate's full implementation remains an A4 sister-tool build-out:
   witness set is boundary-free across vkey / native / Plutus / data
   / redeemer / bootstrap fields. Upstream-`Ord` byte-parity for
   multi-witness sets pending a Byron AddressInfo port.
-- Next: Conway `ProposalProcedures` map (GovAction 7+ variants +
-  AccountAddress decoding for `pProcReturnAddr`), upstream
+- Shipped: Conway ProposalProcedures simple-variant rendering
+  (R580): `show_conway_proposal_procedures` renders the OSet shell
+  + `ProposalProcedure` record + 4 simple GovAction variants
+  (`InfoAction`, `NoConfidence`, `HardForkInitiation`,
+  `NewConstitution`). AccountAddress decoding via
+  `RewardAccount::from_bytes`. 3 complex GovAction variants
+  (ParameterChange, TreasuryWithdrawals, UpdateCommittee) remain on
+  explicit `TxGenError`.
+- Next: ParameterChange / TreasuryWithdrawals / UpdateCommittee
+  GovAction Show coverage (needs ProtocolParameterUpdate /
+  AccountAddress-map / UnitInterval Show ports), upstream
   `bootstrapWitKeyHash` parity, and upstream-binary soak in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry

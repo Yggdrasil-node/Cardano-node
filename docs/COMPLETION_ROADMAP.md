@@ -404,10 +404,18 @@ own parser / generator / submission implementation plus upstream
   upstream `Ord BootstrapWitness` uses `bootstrapWitKeyHash` (Byron
   AddressInfo Blake2b-224); yggdrasil sorts by canonical `(pubkey,
   sig, chain_code, attrs)` tuple lex — single-witness cases byte-
-  equivalent, multi-witness pending a future round. The remaining
-  tx-generator blockers are Conway `ProposalProcedures` map rendering
-  (with `GovAction`'s 7+ variants and AccountAddress decoding) and
-  upstream-binary soak evidence.
+  equivalent, multi-witness pending a future round. R580 closed the
+  simple-variant `ProposalProcedures` rendering path:
+  `show_conway_proposal_procedures` renders the OSet shell, the
+  `ProposalProcedure` record (with `pProcReturnAddr` decoded from
+  yggdrasil's 29-byte reward-account bytes through
+  `RewardAccount::from_bytes`), and the 4 simple `GovAction` variants
+  (`InfoAction`, `NoConfidence`, `HardForkInitiation`,
+  `NewConstitution`). The remaining tx-generator blockers are the 3
+  complex `GovAction` variants (`ParameterChange` —
+  `ProtocolParameterUpdate` Show, `TreasuryWithdrawals` —
+  `AccountAddress`-map Show, `UpdateCommittee` — `UnitInterval`
+  Show) and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
