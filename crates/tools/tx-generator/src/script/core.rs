@@ -2553,32 +2553,66 @@ fn paren_if(condition: bool, inner: &str) -> String {
 
 /// Render a Rust `&[u8]` as Haskell's default `Show ByteString` produces.
 ///
-/// Bytes are interpreted as Latin1 chars; printable ASCII (0x20-0x7E except
-/// `"` and `\\`) is inlined; `"` and `\\` are backslash-escaped; control
-/// characters and bytes >= 0x80 use Haskell decimal escapes (`\\<n>`).
-///
 /// Mirrors GHC's derived `Show String` over `Data.ByteString.unpackChars`,
 /// which is the path upstream `instance Show ByteString` uses.
+///
+/// Escape table (matching GHC's `showLitChar` + `showLitString`):
+/// - `"` (0x22) → `\"` (always, via showLitString)
+/// - `\` (0x5C) → `\\`
+/// - 0x20-0x7E except above → inline
+/// - 0x07-0x0D → short `\a` `\b` `\t` `\n` `\v` `\f` `\r` aliases
+/// - 0x0E `\SO` → with `\&` protection before a following `H` so
+///   `\SOH` (Start Of Heading) and `\SO`+`H` stay distinguishable
+/// - 0x00-0x06, 0x0F-0x1F → multi-letter mnemonic
+///   (`\NUL`/`\SOH`/.../`\US`)
+/// - 0x7F → `\DEL`
+/// - 0x80-0xFF → `\NNN` decimal escape with `\&` separator before any
+///   following ASCII digit so the escape boundary is unambiguous
+const HASKELL_ASCII_TAB: &[&str] = &[
+    "NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS", "HT", "LF", "VT", "FF", "CR",
+    "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4", "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC",
+    "FS", "GS", "RS", "US",
+];
+
 fn show_haskell_bytestring(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() + 2);
     out.push('"');
     for (idx, byte) in bytes.iter().enumerate() {
-        let next_is_digit = bytes.get(idx + 1).is_some_and(u8::is_ascii_digit);
+        let next = bytes.get(idx + 1).copied();
         match *byte {
             b'"' => out.push_str("\\\""),
             b'\\' => out.push_str("\\\\"),
-            b'\n' => out.push_str("\\n"),
-            b'\t' => out.push_str("\\t"),
-            b'\r' => out.push_str("\\r"),
-            // Printable ASCII (0x20-0x7E), excluding `"` and `\\` already
-            // handled above.
+            // GHC `showLitChar` short-form aliases for 0x07-0x0D
+            // (BEL/BS/HT/LF/VT/FF/CR).
+            0x07 => out.push_str("\\a"),
+            0x08 => out.push_str("\\b"),
+            0x09 => out.push_str("\\t"),
+            0x0A => out.push_str("\\n"),
+            0x0B => out.push_str("\\v"),
+            0x0C => out.push_str("\\f"),
+            0x0D => out.push_str("\\r"),
+            // 0x0E SO — disambiguate from `\SOH` (Start Of Heading).
+            0x0E => {
+                out.push_str("\\SO");
+                if next == Some(b'H') {
+                    out.push_str("\\&");
+                }
+            }
+            // Multi-letter mnemonic for the remaining 0x00-0x1F controls.
+            0x00..=0x06 | 0x0F..=0x1F => {
+                out.push('\\');
+                out.push_str(HASKELL_ASCII_TAB[*byte as usize]);
+            }
+            // 0x7F DEL — always emitted as `\DEL`.
+            0x7F => out.push_str("\\DEL"),
+            // Printable ASCII (0x20-0x7E except `"` and `\\`).
             0x20..=0x7E => out.push(*byte as char),
-            // Non-printable / non-ASCII bytes: Haskell `\\NNN` decimal escape.
-            // GHC inserts `\&` separator before a following digit so the
-            // escape boundary is unambiguous (e.g. `\\10\&5`, not `\\105`).
-            _ => {
+            // 0x80-0xFF: decimal escape with `\&` separator before a
+            // following ASCII digit so the escape boundary is unambiguous
+            // (e.g. `\200\&5`, not `\2005`).
+            0x80..=0xFF => {
                 out.push_str(&format!("\\{byte}"));
-                if next_is_digit {
+                if next.is_some_and(|n| n.is_ascii_digit()) {
                     out.push_str("\\&");
                 }
             }
@@ -3868,6 +3902,41 @@ mod tests {
         assert_eq!(
             show_plutus_data(&PlutusData::Bytes(b"a\\b\"c".to_vec())),
             "B \"a\\\\b\\\"c\""
+        );
+    }
+
+    #[test]
+    fn dumptofile_plutus_data_renders_bytes_full_mnemonic_escapes() {
+        // 0x07-0x0D short-form aliases.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0x07, 0x08, 0x0B, 0x0C])),
+            "B \"\\a\\b\\v\\f\""
+        );
+        // 0x00-0x06 multi-letter mnemonics.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0x00, 0x01, 0x02, 0x03])),
+            "B \"\\NUL\\SOH\\STX\\ETX\""
+        );
+        // 0x0E SO with H lookahead: needs `\&` separator so `\SOH` (Start
+        // Of Heading) and `\SO`+`H` stay distinguishable.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0x0E, b'H'])),
+            "B \"\\SO\\&H\""
+        );
+        // 0x0E SO without H lookahead: no separator.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0x0E, b'I'])),
+            "B \"\\SOI\""
+        );
+        // 0x0F-0x1F multi-letter mnemonics.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0x0F, 0x1F])),
+            "B \"\\SI\\US\""
+        );
+        // 0x7F DEL.
+        assert_eq!(
+            show_plutus_data(&PlutusData::Bytes(vec![0x7F])),
+            "B \"\\DEL\""
         );
     }
 

@@ -442,10 +442,17 @@ own parser / generator / submission implementation plus upstream
   PlutusV1/V2/V3 valid; other tags → unknown) into the upstream
   `_costModelsValid` + `_costModelsUnknown` two-map shape. **All
   30/30 Conway PParamsUpdate fields now render** — the
-  PParamsUpdate Show surface is complete for the Conway era. The
-  remaining tx-generator blocker is upstream-binary soak
-  evidence (multi-witness `bootstrapWitKeyHash` byte-parity and
-  full Haskell `Show (ByteString)` mnemonic-escape coverage).
+  PParamsUpdate Show surface is complete for the Conway era. R589
+  closed the full Haskell `Show (ByteString)` mnemonic-escape
+  coverage gap: `show_haskell_bytestring` now emits the full GHC
+  `showLitChar` table (`\a`/`\b`/`\t`/`\n`/`\v`/`\f`/`\r` short
+  aliases for 0x07-0x0D, `\SO` with H-lookahead disambiguation
+  for 0x0E, multi-letter mnemonics for the rest of 0x00-0x1F,
+  `\DEL` for 0x7F, plus the existing `\NNN` decimal escapes for
+  0x80-0xFF). ByteString Show is now byte-equivalent to upstream
+  for every byte. The remaining tx-generator blocker is upstream-
+  binary soak evidence (multi-witness `bootstrapWitKeyHash`
+  byte-parity needs the Byron AddressInfo packing port).
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

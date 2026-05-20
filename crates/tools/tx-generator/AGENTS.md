@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R588 PParamsUpdate CostModels rendering — **all 30/30 Conway PParamsUpdate fields render**).
+**Status:** `partial` (post-R589 full ByteString mnemonic-escape coverage — DumpToFile Show output now byte-equivalent to upstream for non-printable bytes).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,19 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R589: `show_haskell_bytestring` now emits the full GHC
+  `showLitChar` + `showLitString` escape table — closes the
+  byte-parity gap documented since R572. New escape coverage:
+  short-form aliases for 0x07-0x0D (`\a` `\b` `\t` `\n` `\v` `\f`
+  `\r`), multi-letter mnemonic for 0x00-0x06 + 0x0F-0x1F (`\NUL`
+  `\SOH` ... `\US`), 0x0E `\SO` with `\&` H-lookahead disambiguation
+  for `\SOH`, 0x7F `\DEL`, plus the existing `\NNN` decimal for
+  0x80-0xFF with digit-lookahead `\&` separator. The ByteString
+  Show output is now byte-equivalent to upstream
+  `Data.ByteString.unpackChars + showLitString` for every byte
+  value. New `HASKELL_ASCII_TAB` constant carries the 32-entry
+  name table. 1 focused unit test covers the full escape matrix
+  including the `\SO`-vs-`\SOH` disambiguation.
 - Shipped R588: `show_conway_pparams_update` now renders the
   final composite PParamsUpdate field `cppCostModels`. Output
   matches upstream stock-derived `Show CostModels` two-field
@@ -855,9 +868,14 @@ This crate's full implementation remains an A4 sister-tool build-out:
   _costModelsValid (PlutusV1/V2/V3) + _costModelsUnknown (other
   tags). All 30/30 Conway PParamsUpdate fields now render — the
   PParamsUpdate Show surface is complete.
+- Shipped: full ByteString mnemonic-escape coverage (R589):
+  `show_haskell_bytestring` now emits the full GHC showLitChar
+  table. ByteString Show output is byte-equivalent to upstream
+  for every byte value, closing the documented byte-parity gap
+  from R572.
 - Next: upstream `bootstrapWitKeyHash` parity for multi-witness
-  sets, full Haskell `Show (ByteString)` mnemonic-escape coverage,
-  and upstream-binary soak in strict-mirror-sized slices.
+  sets (needs Byron AddressInfo packing port), and upstream-binary
+  soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
