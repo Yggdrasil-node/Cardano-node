@@ -987,6 +987,89 @@ impl fmt::Display for SetKeyHash {
     }
 }
 
+/// 32-byte verification-key newtype mirroring upstream
+/// `newtype VKey (kd :: KeyRole) = VKey {unVKey :: VerKeyDSIGN DSIGN}`
+/// from `Cardano.Ledger.Keys.Internal`. The phantom `kd :: KeyRole`
+/// does not affect wire format or Show. Display matches upstream's
+/// `deriving via Quiet (VKey kd) instance Show (VKey kd)`:
+/// `VKey (VerKeyEd25519DSIGN "<hex>")`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct VKey(pub [u8; 32]);
+
+impl fmt::Display for VKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "VKey (VerKeyEd25519DSIGN \"{}\")", hex::encode(self.0))
+    }
+}
+
+/// Non-empty list of verification keys mirroring upstream
+/// `NonEmpty (VKey Witness)` from `Data.List.NonEmpty`.
+///
+/// CBOR wire format is a regular CBOR array of 32-byte bytestrings
+/// with at least one entry (the NonEmpty invariant is enforced at
+/// decode time). Iteration preserves insertion order to match
+/// upstream `NonEmpty`'s sequential semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyVKey {
+    /// Decoded VKey entries. Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<VKey>,
+}
+
+impl NonEmptyVKey {
+    /// Decode `NonEmpty (VKey Witness)` from canonical CBOR bytes.
+    /// The wire format is a CBOR array with ≥ 1 entry, each entry
+    /// being a 32-byte bytestring.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec
+            .array()
+            .map_err(|err| DecoderError(format!("NonEmptyVKey: expected CBOR array: {err:?}")))?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyVKey: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let key_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!("NonEmptyVKey: expected VKey bytes: {err:?}"))
+            })?;
+            let arr: [u8; 32] = key_bytes.try_into().map_err(|_| {
+                DecoderError(format!(
+                    "NonEmptyVKey: VKey must be 32 bytes, got {}",
+                    key_bytes.len()
+                ))
+            })?;
+            entries.push(VKey(arr));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyVKey {
+    /// Render upstream `Show (NonEmpty a)`: `<head> :| [<tail>...]`.
+    /// `:|` is the upstream `NonEmpty` data-constructor written
+    /// infix. Single-entry case renders as `<head> :| []`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyVKey enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for k in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{k}")?;
+        }
+        f.write_str("]")?;
+        Ok(())
+    }
+}
+
 /// `ShelleyUtxowPredFailure` mirror.
 ///
 /// Upstream: `data ShelleyUtxowPredFailure era` from
@@ -1002,8 +1085,8 @@ impl fmt::Display for SetKeyHash {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyUtxowPredFailure {
     /// Tag 0: witnesses which failed in `verifiedWits` —
-    /// `NonEmpty (VKey Witness)`. Raw payload pending decoder.
-    InvalidWitnessesUTXOW(Vec<u8>),
+    /// `NonEmpty (VKey Witness)` (R601 typed decoder).
+    InvalidWitnessesUTXOW(NonEmptyVKey),
     /// Tag 1: required vkey witnesses not supplied —
     /// `NonEmptySet (KeyHash Witness)` (R600 typed decoder).
     MissingVKeyWitnessesUTXOW(NonEmptySetKeyHash),
@@ -1080,8 +1163,11 @@ impl fmt::Display for ShelleyUtxowPredFailure {
     /// `<raw-cbor N bytes>` marker pending typed decoders.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidWitnessesUTXOW(b) | Self::UtxoFailure(b) => {
+            Self::UtxoFailure(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::InvalidWitnessesUTXOW(keys) => {
+                write!(f, "InvalidWitnessesUTXOW ({keys})")
             }
             Self::MissingVKeyWitnessesUTXOW(set) => {
                 write!(f, "MissingVKeyWitnessesUTXOW ({set})")
@@ -1259,10 +1345,19 @@ impl ShelleyUtxowPredFailure {
                 let set = SetKeyHash::from_cbor(payload_bytes)?;
                 Ok(Self::MIRInsufficientGenesisSigsUTXOW(set))
             }
-            // Variants whose typed payload decoder is not yet
-            // ported: capture the remaining bytes verbatim and
-            // route them through the raw-payload variant.
-            0 | 4 => {
+            // Tag 0: NonEmpty (VKey Witness) (R601 typed decoder).
+            0 => {
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ShelleyUtxowPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let keys = NonEmptyVKey::from_cbor(payload_bytes)?;
+                Ok(Self::InvalidWitnessesUTXOW(keys))
+            }
+            // Tag 4: nested sub-rule — decoder pending. Capture
+            // the remaining bytes verbatim.
+            4 => {
                 let raw = bytes
                     .get(payload_offset..)
                     .ok_or_else(|| {
@@ -1271,11 +1366,7 @@ impl ShelleyUtxowPredFailure {
                         )
                     })?
                     .to_vec();
-                Ok(match tag {
-                    0 => Self::InvalidWitnessesUTXOW(raw),
-                    4 => Self::UtxoFailure(raw),
-                    _ => unreachable!("tag range checked above"),
-                })
+                Ok(Self::UtxoFailure(raw))
             }
             other => Err(DecoderError(format!(
                 "ShelleyUtxowPredFailure: unknown variant tag {other}"
@@ -2020,19 +2111,70 @@ mod tests {
     }
 
     #[test]
-    fn shelley_utxow_pred_failure_routes_tag0_to_raw_variant() {
-        // Tag 0 (InvalidWitnessesUTXOW) — typed decoder for
-        // `NonEmpty (VKey Witness)` not yet ported, payload
+    fn shelley_utxow_pred_failure_routes_tag4_to_raw_variant() {
+        // Tag 4 (UtxoFailure) — nested sub-rule decoder
+        // (ShelleyUtxoPredFailure) not yet ported, payload
         // captured raw.
-        let mut cbor = vec![0x82_u8, 0x00];
+        let mut cbor = vec![0x82_u8, 0x04];
         cbor.extend_from_slice(&[0x9F, 0xFF]); // dummy indefinite array (empty)
-        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("InvalidWitnessesUTXOW");
-        if let ShelleyUtxowPredFailure::InvalidWitnessesUTXOW(payload) = &f {
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("UtxoFailure");
+        if let ShelleyUtxowPredFailure::UtxoFailure(payload) = &f {
             assert_eq!(payload, &[0x9F_u8, 0xFF]);
         } else {
-            panic!("expected InvalidWitnessesUTXOW raw, got {f:?}");
+            panic!("expected UtxoFailure raw, got {f:?}");
         }
-        assert_eq!(f.to_string(), "InvalidWitnessesUTXOW <raw-cbor 2 bytes>");
+        assert_eq!(f.to_string(), "UtxoFailure <raw-cbor 2 bytes>");
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_invalid_witnesses_decodes_tag0() {
+        // outer [0x82, 0x00, array(1) + bytes(32)]
+        let mut cbor = vec![0x82_u8, 0x00];
+        cbor.push(0x81); // array(1)
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xEE_u8; 32]);
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("typed tag-0");
+        if let ShelleyUtxowPredFailure::InvalidWitnessesUTXOW(keys) = &f {
+            assert_eq!(keys.entries.len(), 1);
+            assert_eq!(keys.entries[0].0, [0xEE_u8; 32]);
+        } else {
+            panic!("expected InvalidWitnessesUTXOW typed, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("InvalidWitnessesUTXOW (VKey (VerKeyEd25519DSIGN \"eeee"),
+            "got: {s}"
+        );
+        assert!(s.ends_with(":| [])"));
+    }
+
+    #[test]
+    fn non_empty_vkey_rejects_empty_list() {
+        let cbor = vec![0x80_u8]; // empty array
+        let err = NonEmptyVKey::from_cbor(&cbor).expect_err("empty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn non_empty_vkey_multi_entry_renders_with_cons_separator() {
+        // array(2) + 2x bytes(32)
+        let mut cbor = vec![0x82_u8];
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x11_u8; 32]);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x22_u8; 32]);
+        let keys = NonEmptyVKey::from_cbor(&cbor).expect("two entries");
+        assert_eq!(keys.entries.len(), 2);
+        let s = keys.to_string();
+        assert!(s.contains("VKey (VerKeyEd25519DSIGN \"1111"));
+        assert!(s.contains(":| [VKey (VerKeyEd25519DSIGN \"2222"));
     }
 
     #[test]

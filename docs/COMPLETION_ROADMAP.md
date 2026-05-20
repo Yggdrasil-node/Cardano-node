@@ -520,12 +520,22 @@ Wired tag 1 (`MissingVKeyWitnessesUTXOW`) to `NonEmptySetKeyHash`
 and tag 5 (`MIRInsufficientGenesisSigsUTXOW`) to `SetKeyHash` —
 the latter renders as `fromList [...]` without a `NonEmptySet`
 wrapper because upstream uses the raw `Set` type for the MIR
-variant. Phase-2.5+ remaining work: `NonEmpty (VKey Witness)`
-for tag 0, `ShelleyUtxoPredFailure` (tag-4 nested sub-rule),
-`ShelleyDelegsPredFailure` (tag-1 of the LEDGER tree), wiring the
-typed decoder into `ShelleyLedgerPredFailure`, then mirroring the
-predicate-failure tree for Allegra/Mary/Alonzo/Babbage/Conway eras
-(Conway adds 4+ governance-specific variants).
+variant. R601 (2026-05-21) shipped the `NonEmpty (VKey Witness)` decoder
+plus typed payload for `ShelleyUtxowPredFailure::InvalidWitnessesUTXOW`
+(tag 0). New `VKey([u8; 32])` newtype with Display matching
+upstream Quiet-derived `VKey (VerKeyEd25519DSIGN "<hex>")`;
+`NonEmptyVKey` carrier (`Vec<VKey>` preserving insertion order) +
+Display matching upstream `Show (NonEmpty a)`: `<head> :| [<tail>]`.
+After R601, **10 of the 11 `ShelleyUtxowPredFailure` variants
+carry fully-typed payloads** — only tag 4 (`UtxoFailure`, nested
+`ShelleyUtxoPredFailure` sub-rule) remains raw. Phase-2.5+
+remaining work: `ShelleyUtxoPredFailure` decoder for tag 4 (the
+biggest sub-rule, ~13 variants), `ShelleyDelegsPredFailure`
+(tag-1 of the LEDGER tree), wiring the typed
+`ShelleyUtxowPredFailure` decoder into
+`ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`, then mirroring
+the predicate-failure tree for Allegra/Mary/Alonzo/Babbage/Conway
+eras (Conway adds 4+ governance-specific variants).
 **Exit:** operators can pattern-match typed rejection variants
 without a CBOR re-walk.
 
