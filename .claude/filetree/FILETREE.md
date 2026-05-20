@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T05:37:54Z
-- Files described: 1394
+- Generated at: 2026-05-20T06:02:32Z
+- Files described: 1397
 
 ## Workspace
 
@@ -1742,6 +1742,10 @@
 - `crates/tools/tx-generator/src/compiler.rs`
   - High-level option compiler for `tx-generator`.
   - Mirrors upstream Compiler.hs by turning NixServiceOptions into generated benchmark script actions.
+- `crates/tools/tx-generator/src/generator_tx.rs`
+  - Transaction-stream generator runtime surface. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx.hs`.
+- `crates/tools/tx-generator/src/generator_tx/sized_metadata.rs`
+  - Sized transaction-metadata construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx/SizedMetadata.
 - `crates/tools/tx-generator/src/lib.rs`
   - Pure-Rust port of upstream `tx-generator`.
   - Parent module wiring top-level parsing, script execution, testnet discovery, and command dispatch.
@@ -2181,6 +2185,8 @@
 - `docs/operational-runs/2026-05-20-round-540-tx-generator-script-core-ntc-query.md`
   - Operational run note for the R540 tx-generator Script/Core NtC query slice.
   - Records the current-era/protocol-parameter query wiring and remaining GeneratorTx gates.
+- `docs/operational-runs/2026-05-20-round-541-tx-generator-sized-metadata.md`
+  - Round R541 - tx-generator GeneratorTx/SizedMetadata mirror: Ported the upstream.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

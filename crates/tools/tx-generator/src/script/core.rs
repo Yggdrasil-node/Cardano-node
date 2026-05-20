@@ -20,6 +20,7 @@ use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQu
 #[cfg(unix)]
 use yggdrasil_network::{AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect};
 
+use crate::generator_tx::sized_metadata::{TxMetadata, mk_metadata};
 use crate::script::aeson;
 use crate::script::env::{
     Env, Error, Fund, ProtocolParameterMode, WalletRef, get_env_keys, get_env_network_id,
@@ -245,6 +246,17 @@ pub fn wait_for_era(env: &mut Env, era: AnyCardanoEra) -> Result<(), Error> {
     }
 }
 
+/// Mirror of upstream `toMetadata`.
+pub fn to_metadata(
+    era: AnyCardanoEra,
+    payload_size: Option<usize>,
+) -> Result<Option<TxMetadata>, Error> {
+    match payload_size {
+        None => Ok(None),
+        Some(size) => mk_metadata(era, size).map_err(lift_tx_gen_error),
+    }
+}
+
 /// Mirror of upstream `submitAction`.
 pub fn submit_action(
     _env: &mut Env,
@@ -253,19 +265,50 @@ pub fn submit_action(
     generator: &Generator,
     tx_params: &TxGenTxParams,
 ) -> Result<(), Error> {
-    with_era(era, |_era| submit_in_era(submit_mode, generator, tx_params))
+    with_era(era, |era| {
+        submit_in_era(era, submit_mode, generator, tx_params)
+    })
 }
 
 /// Mirror of upstream `submitInEra`.
 pub fn submit_in_era(
+    era: AnyCardanoEra,
     _submit_mode: &SubmitMode,
-    _generator: &Generator,
+    generator: &Generator,
     _tx_params: &TxGenTxParams,
 ) -> Result<(), Error> {
+    preflight_generator_metadata(era, generator)?;
     Err(lift_tx_gen_error(
         "submitInEra: transaction generation is not yet implemented \
-         (pending GeneratorTx runtime slice)",
+         (pending GeneratorTx transaction/runtime slice after R541 SizedMetadata)",
     ))
+}
+
+fn preflight_generator_metadata(era: AnyCardanoEra, generator: &Generator) -> Result<(), Error> {
+    match generator {
+        Generator::NtoM(_, _, _, _, metadata_size, _) => {
+            let _ = to_metadata(era, *metadata_size)?;
+            Ok(())
+        }
+        Generator::Sequence(generators) | Generator::RoundRobin(generators) => {
+            for generator in generators {
+                preflight_generator_metadata(era, generator)?;
+            }
+            Ok(())
+        }
+        Generator::Cycle(generator) | Generator::Take(_, generator) => {
+            preflight_generator_metadata(era, generator)
+        }
+        Generator::OneOf(generators) => {
+            for (generator, _weight) in generators {
+                preflight_generator_metadata(era, generator)?;
+            }
+            Ok(())
+        }
+        Generator::SecureGenesis(_, _, _)
+        | Generator::Split(_, _, _, _)
+        | Generator::SplitN(_, _, _) => Ok(()),
+    }
 }
 
 /// Mirror of upstream `initWallet`.
@@ -467,7 +510,7 @@ pub fn set_dummy_benchmark_control(env: &mut Env) {
 mod tests {
     use super::*;
     use crate::script::env::{Env, get_env_wallets, set_env_network_id, set_env_socket_path};
-    use crate::script::types::NetworkId;
+    use crate::script::types::{NetworkId, PayMode};
 
     #[test]
     fn with_era_rejects_byron_and_accepts_shelley_based_eras() {
@@ -572,6 +615,49 @@ mod tests {
         assert_eq!(
             encode_current_era_query(),
             vec![0x82, 0x00, 0x82, 0x02, 0x81, 0x01]
+        );
+    }
+
+    #[test]
+    fn to_metadata_preserves_upstream_sized_metadata_boundary() {
+        let metadata = to_metadata(AnyCardanoEra::Conway, Some(39))
+            .expect("metadata")
+            .expect("some metadata");
+
+        assert_eq!(metadata.to_cbor_bytes(), vec![0xa1, 0x00, 0x40]);
+        assert_eq!(
+            to_metadata(AnyCardanoEra::Conway, None).expect("metadata none"),
+            None
+        );
+    }
+
+    #[test]
+    fn submit_in_era_preflights_ntom_metadata_size() {
+        let generator = Generator::NtoM(
+            "wallet".to_string(),
+            PayMode::PayToAddr("key".to_string(), "wallet".to_string()),
+            1,
+            1,
+            Some(38),
+            None,
+        );
+        let err = submit_in_era(
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 1,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect_err("metadata size rejected");
+
+        assert_eq!(
+            err,
+            Error::TxGenError(
+                "Error : metadata must be 0 or at least 39 bytes in this era.".to_string()
+            )
         );
     }
 

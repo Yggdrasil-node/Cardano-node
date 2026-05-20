@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R540 Script/Core NtC query slice). The old
+**Status:** `partial` (post-R541 GeneratorTx/SizedMetadata slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -104,6 +104,12 @@ approved synthesis area from the sister-tools plan.
   preserve era-native protocol-parameter CBOR in
   `protocol-parameters-queried.json`, and keep non-Unix builds on an
   explicit Unix-socket boundary.
+- Shipped R541: `Benchmarking/GeneratorTx/SizedMetadata.hs`
+  transaction-metadata sizing surface. `generator_tx/sized_metadata.rs`
+  ports the upstream `mkMetadata` chunking algorithm, metadata cost step
+  assumptions, and CBOR map/bytes test pins; `Script/Core.toMetadata`
+  now preflights `NtoM` metadata payload sizes before the remaining
+  transaction-build sentinel.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the GeneratorTx
   construction and submission slices land.
@@ -170,7 +176,10 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: Script/Core NtC query behavior (R540): `queryEra` /
   `queryRemoteProtocolParameters` use upstream LocalStateQuery wire
   shapes and write queried protocol-parameter evidence.
-- Next: port GeneratorTx transaction construction and LocalSocket /
+- Shipped: GeneratorTx sized metadata (R541): `SizedMetadata.hs`
+  `mkMetadata` and cost assumptions feed `Script/Core.toMetadata` for
+  `NtoM` additional-size payloads.
+- Next: port the remaining GeneratorTx transaction construction and LocalSocket /
   Benchmark submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

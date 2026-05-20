@@ -241,9 +241,11 @@ own parser / generator / submission implementation plus upstream
   execution. R539 moved the Core-owned state helpers into a strict
   `Script/Core.hs` mirror. R540 wired the Core node-to-client
   current-era and protocol-parameter query path with upstream
-  LocalStateQuery envelopes. The remaining tx-generator blocker is
-  GeneratorTx / Submission implementation and upstream comparison
-  evidence.
+  LocalStateQuery envelopes. R541 added the strict
+  `GeneratorTx/SizedMetadata.hs` mirror (`mkMetadata` chunking, metadata
+  cost assumptions, and `Script/Core.toMetadata` preflight for `NtoM`).
+  The remaining tx-generator blocker is the rest of GeneratorTx /
+  Submission implementation and upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
