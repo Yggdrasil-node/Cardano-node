@@ -373,9 +373,12 @@ own parser / generator / submission implementation plus upstream
   reference-script path: `show_babbage_script_ref` renders Plutus
   V1/V2/V3 reference scripts as upstream `SJust PlutusScript
   PlutusV{1,2,3} ScriptHash "<hex>"` with Blake2b-224 over
-  (language-tag byte ++ script bytes). The remaining tx-generator
-  blockers are native-script reference rendering, Plutus-script-
-  witness bytes inside `show_alonzo_witness_set`, native scripts and
+  (language-tag byte ++ script bytes). R575 closed the Plutus
+  witness-set script path: `show_alonzo_witness_set` renders the
+  `atwrScriptTxWits` map as `fromList [(ScriptHash "<hex>",
+  PlutusScript PlutusV{N} ScriptHash "<hex>"),...]` sorted by
+  script-hash byte-lex order. The remaining tx-generator blockers
+  are native-script reference rendering, native scripts and
   bootstrap witnesses in the witness set, Conway governance
   procedures, and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each

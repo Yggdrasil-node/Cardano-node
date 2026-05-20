@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R574 Plutus reference-script DumpToFile rendering).
+**Status:** `partial` (post-R575 Plutus witness-set script DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,17 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R575: `show_alonzo_witness_set` now renders non-empty
+  Plutus V1/V2/V3 script-witness bytes as upstream `atwrScriptTxWits =
+  fromList [(ScriptHash "<hex>", PlutusScript PlutusV{N} ScriptHash
+  "<hex>"), ...]` matching `Show (Map ScriptHash (AlonzoScript era))`.
+  Entries sort by script-hash byte-lex order (mirroring upstream
+  `Data.Map toAscList`). Reuses R574's `plutus_script_hash`. Native
+  scripts and bootstrap witnesses remain `TxGenError` until the
+  Timelock Show is ported. 4 focused unit tests cover empty
+  script-witness map (regression guard), single PlutusV2 entry,
+  multi-version (V1+V2) byte-lex sort order, and native-script
+  rejection error.
 - Shipped R574: `show_babbage_script_ref` now renders Plutus
   reference scripts as upstream `SJust PlutusScript PlutusV{1,2,3}
   ScriptHash "<hex>"`, matching upstream `Show (AlonzoScript era)`
@@ -580,8 +591,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
   scripts as upstream `SJust PlutusScript PlutusV{1,2,3} ScriptHash
   "<hex>"` with Blake2b-224 over (language tag ++ script bytes).
   Native reference scripts remain on `TxGenError`.
-- Next: native-script reference rendering (Timelock Show), Plutus
-  V1/V2/V3 script-witness bytes inside `show_alonzo_witness_set`,
+- Shipped: Plutus witness-set script DumpToFile rendering (R575):
+  `show_alonzo_witness_set` now renders non-empty Plutus V1/V2/V3
+  script-witness bytes as `atwrScriptTxWits = fromList [(ScriptHash
+  "<hex>",PlutusScript PlutusV{N} ScriptHash "<hex>"),...]`. Entries
+  sort by script-hash byte-lex order.
+- Next: native-script reference rendering (Timelock Show),
+  native-script and bootstrap-witness rendering in the witness set,
   Conway governance procedures, and upstream-binary soak in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry

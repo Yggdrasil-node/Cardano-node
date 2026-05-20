@@ -1659,14 +1659,9 @@ fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet, era: &str) -> Resul
 }
 
 fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Error> {
-    if !witness_set.native_scripts.is_empty()
-        || !witness_set.bootstrap_witnesses.is_empty()
-        || !witness_set.plutus_v1_scripts.is_empty()
-        || !witness_set.plutus_v2_scripts.is_empty()
-        || !witness_set.plutus_v3_scripts.is_empty()
-    {
+    if !witness_set.native_scripts.is_empty() || !witness_set.bootstrap_witnesses.is_empty() {
         return Err(lift_tx_gen_error(
-            "DumpToFile: Alonzo Show(Tx) renderer does not yet support native or Plutus scripts",
+            "DumpToFile: Alonzo Show(Tx) renderer does not yet support native scripts or bootstrap witnesses",
         ));
     }
 
@@ -1677,12 +1672,47 @@ fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Er
         .map(show_vkey_witness)
         .collect::<Vec<_>>()
         .join(",");
+    let scripts = show_alonzo_script_witnesses(witness_set);
     let dats = show_alonzo_tx_dats(&witness_set.plutus_data);
     let rdmrs = show_alonzo_redeemers(&witness_set.redeemers)?;
     let witness_hash = hex::encode(hash_bytes_256(&witness_set.to_cbor_bytes()).0);
     Ok(format!(
-        "AlonzoTxWitsRaw {{atwrAddrTxWits = fromList [{vkeys}], atwrBootAddrTxWits = fromList [], atwrScriptTxWits = fromList [], atwrDatsTxWits = {dats}, atwrRdmrsTxWits = {rdmrs}}} (blake2b_256: SafeHash \"{witness_hash}\")"
+        "AlonzoTxWitsRaw {{atwrAddrTxWits = fromList [{vkeys}], atwrBootAddrTxWits = fromList [], atwrScriptTxWits = {scripts}, atwrDatsTxWits = {dats}, atwrRdmrsTxWits = {rdmrs}}} (blake2b_256: SafeHash \"{witness_hash}\")"
     ))
+}
+
+/// Render `atwrScriptTxWits = fromList [...]` matching upstream
+/// `Show (Map ScriptHash (AlonzoScript era))`.
+///
+/// Each Plutus script in the witness set becomes one entry keyed by its
+/// `ScriptHash` (Blake2b-224 over `language-tag ++ script_bytes`), with the
+/// value rendered through `Show (AlonzoScript era)` — the same custom Show
+/// shape used in R574's `show_babbage_script_ref`. Entries are sorted by
+/// script-hash byte-lex order matching upstream `Data.Map toAscList`.
+fn show_alonzo_script_witnesses(witness_set: &ShelleyWitnessSet) -> String {
+    let mut entries: Vec<([u8; 28], &str, &[u8])> = Vec::new();
+    for bytes in &witness_set.plutus_v1_scripts {
+        let hash = plutus_script_hash(1, bytes);
+        entries.push((hash, "PlutusV1", bytes));
+    }
+    for bytes in &witness_set.plutus_v2_scripts {
+        let hash = plutus_script_hash(2, bytes);
+        entries.push((hash, "PlutusV2", bytes));
+    }
+    for bytes in &witness_set.plutus_v3_scripts {
+        let hash = plutus_script_hash(3, bytes);
+        entries.push((hash, "PlutusV3", bytes));
+    }
+    entries.sort_by_key(|(hash, _, _)| *hash);
+    let body = entries
+        .iter()
+        .map(|(hash, lang, _)| {
+            let hex_hash = hex::encode(hash);
+            format!("(ScriptHash \"{hex_hash}\",PlutusScript {lang} ScriptHash \"{hex_hash}\")")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("fromList [{body}]")
 }
 
 /// Render `MkTxDats (TxDatsRaw {unTxDatsRaw = fromList [...]} (blake2b_256:
@@ -3209,6 +3239,109 @@ mod tests {
         assert!(
             spend2 < spend5 && spend5 < mint0,
             "redeemer ordering wrong: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_alonzo_witness_set_renders_empty_script_map() {
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let rendered = show_alonzo_witness_set(&ws).expect("empty witness set");
+        assert!(
+            rendered.contains("atwrScriptTxWits = fromList []"),
+            "empty witness set must keep `atwrScriptTxWits = fromList []`: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_alonzo_witness_set_renders_plutus_v2_script() {
+        let bytes = vec![0xCA, 0xFE, 0xBA, 0xBE];
+        let expected_hash = hex::encode(plutus_script_hash(2, &bytes));
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![bytes],
+            plutus_v3_scripts: vec![],
+        };
+        let rendered = show_alonzo_witness_set(&ws).expect("v2 witness set");
+        let expected_entry = format!(
+            "atwrScriptTxWits = fromList [(ScriptHash \"{expected_hash}\",PlutusScript PlutusV2 ScriptHash \"{expected_hash}\")]"
+        );
+        assert!(
+            rendered.contains(&expected_entry),
+            "expected witness-set script entry {expected_entry} not found in {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_alonzo_witness_set_sorts_scripts_by_hash_bytelex() {
+        // Two scripts whose hashes will be different. We don't know which
+        // sort-order will result from arbitrary bytes, so we sort the
+        // expected hashes manually and check the rendered order.
+        let bytes_a = vec![0x01];
+        let bytes_b = vec![0x02];
+        let hash_a = plutus_script_hash(1, &bytes_a);
+        let hash_b = plutus_script_hash(2, &bytes_b);
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![bytes_a],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![bytes_b],
+            plutus_v3_scripts: vec![],
+        };
+        let rendered = show_alonzo_witness_set(&ws).expect("multi-version witness set");
+        let pos_a = rendered.find(&hex::encode(hash_a)).expect("hash_a missing");
+        let pos_b = rendered.find(&hex::encode(hash_b)).expect("hash_b missing");
+        // Both hashes must appear; they should appear in byte-lex order.
+        if hash_a <= hash_b {
+            assert!(
+                pos_a < pos_b,
+                "expected byte-lex order: hash_a={} appears at {pos_a}, hash_b={} at {pos_b}: {rendered}",
+                hex::encode(hash_a),
+                hex::encode(hash_b)
+            );
+        } else {
+            assert!(
+                pos_b < pos_a,
+                "expected byte-lex order: hash_b={} appears at {pos_b}, hash_a={} at {pos_a}: {rendered}",
+                hex::encode(hash_b),
+                hex::encode(hash_a)
+            );
+        }
+    }
+
+    #[test]
+    fn dumptofile_alonzo_witness_set_rejects_native_scripts() {
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![yggdrasil_ledger::NativeScript::ScriptPubkey([0x11; 28])],
+            bootstrap_witnesses: vec![],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let err = show_alonzo_witness_set(&ws).expect_err("native should reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("native scripts or bootstrap witnesses"),
+            "expected native-script reject: {msg}"
         );
     }
 
