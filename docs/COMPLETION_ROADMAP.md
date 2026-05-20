@@ -615,9 +615,16 @@ Cert type, MIR Transfer/Negatives/ProducesNegative); tag 2
 payloads. New `VrfVerKeyHash` 32-byte newtype mirroring upstream
 `VRFVerKeyHash` record Show. The LEDGER → DELEGS → DELPL → POOL
 / DELEG chain now renders typed end-to-end through nested
-Display for the substantial majority of leaves. Only the 5
-remaining POOL variant payloads (1/3/4/5/6), the 7 remaining
-DELEG variants (Credential/MIRPot/Mismatch), per-TxOut
+Display for the substantial majority of leaves. R616 (2026-05-21) typed POOL tags 3 (`Mismatch RelGTEQ Coin` for
+StakePoolCostTooLowPOOL), 4 (`{ expected, supplied, pool_id }`
+struct for WrongNetworkPOOL — uses Network from R604), 5
+(`{ pool_id, size: u32 }` for PoolMedataHashTooBig with
+decode-time narrowing), and 6 (`{ pool_id, vrf_key_hash }` for
+VRFKeyHashAlreadyRegistered). 5 of 6 POOL variants now carry
+typed payloads — only tag 1
+(StakePoolRetirementWrongEpochPOOL — flattened 3-EpochNo
+encoding) remains raw pending dedicated decoder. The 7 remaining
+DELEG variants (Credential/MIRPot/Mismatch SlotNo), per-TxOut
 Shelley/Babbage typed parse, and full typed `Addr` parse remain
 pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw

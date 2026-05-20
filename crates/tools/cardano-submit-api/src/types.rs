@@ -2728,24 +2728,38 @@ pub enum ShelleyPoolPredFailure {
     /// encoded as 4-element `[1, gtExpected, ltSupplied,
     /// ltExpected]`. Raw payload pending decoder.
     StakePoolRetirementWrongEpochPOOL(Vec<u8>),
-    /// Tag 3: pool cost below minimum — payload is
-    /// `Mismatch RelGTEQ Coin` encoded as 3-element
-    /// `[3, supplied, expected]`. Raw pending decoder.
-    StakePoolCostTooLowPOOL(Vec<u8>),
-    /// Tag 4: pool registered on wrong network — payload is
-    /// `Mismatch RelEQ Network` + `KeyHash StakePool` encoded as
-    /// 4-element `[4, expected, supplied, kh]`. Raw pending
-    /// decoder.
-    WrongNetworkPOOL(Vec<u8>),
-    /// Tag 5: pool metadata hash too big — payload is
-    /// `KeyHash + Int` encoded as 3-element `[5, kh, size]`.
-    /// Raw pending decoder.
-    PoolMedataHashTooBig(Vec<u8>),
-    /// Tag 6: VRF key hash already registered — payload is
-    /// `KeyHash StakePool` + `VRFVerKeyHash StakePoolVRF`
-    /// encoded as 3-element `[6, kh, vrfkh]`. Raw pending
-    /// decoder.
-    VRFKeyHashAlreadyRegistered(Vec<u8>),
+    /// Tag 3: pool cost below minimum — `Mismatch RelGTEQ Coin`
+    /// encoded as 3-element `[3, supplied, expected]` (R616 typed).
+    StakePoolCostTooLowPOOL(Mismatch<u64>),
+    /// Tag 4: pool registered on wrong network — `Mismatch RelEQ
+    /// Network` + `KeyHash StakePool` encoded as 4-element
+    /// `[4, expected, supplied, kh]` (R616 typed).
+    WrongNetworkPOOL {
+        /// Expected (ledger) network.
+        expected: Network,
+        /// Supplied (operator) network.
+        supplied: Network,
+        /// Pool ID with the wrong network.
+        pool_id: KeyHash,
+    },
+    /// Tag 5: pool metadata hash too big — `KeyHash + Int` encoded
+    /// as 3-element `[5, kh, size]` (R616 typed; Int narrowed to
+    /// u32 at decode time).
+    PoolMedataHashTooBig {
+        /// Pool ID.
+        pool_id: KeyHash,
+        /// Size of the offending metadata hash in bytes.
+        size: u32,
+    },
+    /// Tag 6: VRF key hash already registered — `KeyHash StakePool` +
+    /// `VRFVerKeyHash StakePoolVRF` encoded as 3-element `[6, kh,
+    /// vrfkh]` (R616 typed).
+    VRFKeyHashAlreadyRegistered {
+        /// Pool ID.
+        pool_id: KeyHash,
+        /// The VRF key hash that is already registered.
+        vrf_key_hash: VrfVerKeyHash,
+    },
 }
 
 impl ShelleyPoolPredFailure {
@@ -2755,9 +2769,9 @@ impl ShelleyPoolPredFailure {
             Self::StakePoolNotRegisteredOnKeyPOOL(_) => 0,
             Self::StakePoolRetirementWrongEpochPOOL(_) => 1,
             Self::StakePoolCostTooLowPOOL(_) => 3,
-            Self::WrongNetworkPOOL(_) => 4,
-            Self::PoolMedataHashTooBig(_) => 5,
-            Self::VRFKeyHashAlreadyRegistered(_) => 6,
+            Self::WrongNetworkPOOL { .. } => 4,
+            Self::PoolMedataHashTooBig { .. } => 5,
+            Self::VRFKeyHashAlreadyRegistered { .. } => 6,
         }
     }
 
@@ -2767,9 +2781,9 @@ impl ShelleyPoolPredFailure {
             Self::StakePoolNotRegisteredOnKeyPOOL(_) => "StakePoolNotRegisteredOnKeyPOOL",
             Self::StakePoolRetirementWrongEpochPOOL(_) => "StakePoolRetirementWrongEpochPOOL",
             Self::StakePoolCostTooLowPOOL(_) => "StakePoolCostTooLowPOOL",
-            Self::WrongNetworkPOOL(_) => "WrongNetworkPOOL",
-            Self::PoolMedataHashTooBig(_) => "PoolMedataHashTooBig",
-            Self::VRFKeyHashAlreadyRegistered(_) => "VRFKeyHashAlreadyRegistered",
+            Self::WrongNetworkPOOL { .. } => "WrongNetworkPOOL",
+            Self::PoolMedataHashTooBig { .. } => "PoolMedataHashTooBig",
+            Self::VRFKeyHashAlreadyRegistered { .. } => "VRFKeyHashAlreadyRegistered",
         }
     }
 
@@ -2817,9 +2831,18 @@ impl ShelleyPoolPredFailure {
                 })?;
                 Ok(Self::StakePoolNotRegisteredOnKeyPOOL(KeyHash(arr)))
             }
-            // Tags 1/3/4/5/6: raw inner CBOR (typed decoders
-            // pending the Mismatch-relation + KeyHash-Int ports).
-            1 | 3 | 4 | 5 | 6 => {
+            // Tag 1: 4-element envelope `[1, gtExpected,
+            // ltSupplied, ltExpected]` — flattened pair of
+            // Mismatch EpochNo per upstream's bespoke encoding.
+            // Raw payload pending dedicated decoder (would need to
+            // reconstruct two Mismatches with shared supplied
+            // field).
+            1 => {
+                if len != 4 {
+                    return Err(DecoderError(format!(
+                        "StakePoolRetirementWrongEpochPOOL: expected 4-element envelope, got len {len}"
+                    )));
+                }
                 let payload_offset = dec.position();
                 let raw = bytes
                     .get(payload_offset..)
@@ -2829,13 +2852,121 @@ impl ShelleyPoolPredFailure {
                         )
                     })?
                     .to_vec();
-                Ok(match tag {
-                    1 => Self::StakePoolRetirementWrongEpochPOOL(raw),
-                    3 => Self::StakePoolCostTooLowPOOL(raw),
-                    4 => Self::WrongNetworkPOOL(raw),
-                    5 => Self::PoolMedataHashTooBig(raw),
-                    6 => Self::VRFKeyHashAlreadyRegistered(raw),
-                    _ => unreachable!("tag range checked above"),
+                Ok(Self::StakePoolRetirementWrongEpochPOOL(raw))
+            }
+            // Tag 3: 3-element envelope `[3, supplied, expected]`
+            // — `Mismatch RelGTEQ Coin` (R616 typed).
+            3 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "StakePoolCostTooLowPOOL: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let supplied = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("StakePoolCostTooLowPOOL: supplied: {err:?}"))
+                })?;
+                let expected = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("StakePoolCostTooLowPOOL: expected: {err:?}"))
+                })?;
+                Ok(Self::StakePoolCostTooLowPOOL(Mismatch {
+                    relation: MismatchRelation::RelGTEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            // Tag 4: 4-element envelope `[4, expected, supplied,
+            // kh]` — `Mismatch RelEQ Network + KeyHash StakePool`
+            // (R616 typed).
+            4 => {
+                if len != 4 {
+                    return Err(DecoderError(format!(
+                        "WrongNetworkPOOL: expected 4-element envelope, got len {len}"
+                    )));
+                }
+                let expected = Network::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetworkPOOL: {}", err.0)))?;
+                let supplied = Network::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetworkPOOL: {}", err.0)))?;
+                let kh_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!("WrongNetworkPOOL: expected KeyHash bytes: {err:?}"))
+                })?;
+                let arr: [u8; 28] = kh_bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "WrongNetworkPOOL: KeyHash must be 28 bytes, got {}",
+                        kh_bytes.len()
+                    ))
+                })?;
+                Ok(Self::WrongNetworkPOOL {
+                    expected,
+                    supplied,
+                    pool_id: KeyHash(arr),
+                })
+            }
+            // Tag 5: 3-element envelope `[5, kh, size]` — `KeyHash
+            // + Int` (R616 typed; Int narrowed to u32).
+            5 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "PoolMedataHashTooBig: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let kh_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "PoolMedataHashTooBig: expected KeyHash bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 28] = kh_bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "PoolMedataHashTooBig: KeyHash must be 28 bytes, got {}",
+                        kh_bytes.len()
+                    ))
+                })?;
+                let size = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("PoolMedataHashTooBig: size: {err:?}")))?;
+                let size = u32::try_from(size).map_err(|_| {
+                    DecoderError(format!(
+                        "PoolMedataHashTooBig: size {size} does not fit Word32"
+                    ))
+                })?;
+                Ok(Self::PoolMedataHashTooBig {
+                    pool_id: KeyHash(arr),
+                    size,
+                })
+            }
+            // Tag 6: 3-element envelope `[6, kh, vrfkh]` —
+            // `KeyHash + VRFVerKeyHash` (R616 typed).
+            6 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "VRFKeyHashAlreadyRegistered: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let kh_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "VRFKeyHashAlreadyRegistered: expected KeyHash bytes: {err:?}"
+                    ))
+                })?;
+                let kh_arr: [u8; 28] = kh_bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "VRFKeyHashAlreadyRegistered: KeyHash must be 28 bytes, got {}",
+                        kh_bytes.len()
+                    ))
+                })?;
+                let vrf_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "VRFKeyHashAlreadyRegistered: expected VRFVerKeyHash bytes: {err:?}"
+                    ))
+                })?;
+                let vrf_arr: [u8; 32] = vrf_bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "VRFKeyHashAlreadyRegistered: VRFVerKeyHash must be 32 bytes, got {}",
+                        vrf_bytes.len()
+                    ))
+                })?;
+                Ok(Self::VRFKeyHashAlreadyRegistered {
+                    pool_id: KeyHash(kh_arr),
+                    vrf_key_hash: VrfVerKeyHash(vrf_arr),
                 })
             }
             other => Err(DecoderError(format!(
@@ -2855,12 +2986,44 @@ impl fmt::Display for ShelleyPoolPredFailure {
             Self::StakePoolNotRegisteredOnKeyPOOL(kh) => {
                 write!(f, "StakePoolNotRegisteredOnKeyPOOL ({kh})")
             }
-            Self::StakePoolRetirementWrongEpochPOOL(b)
-            | Self::StakePoolCostTooLowPOOL(b)
-            | Self::WrongNetworkPOOL(b)
-            | Self::PoolMedataHashTooBig(b)
-            | Self::VRFKeyHashAlreadyRegistered(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::StakePoolRetirementWrongEpochPOOL(b) => {
+                write!(
+                    f,
+                    "StakePoolRetirementWrongEpochPOOL <raw-cbor {} bytes>",
+                    b.len()
+                )
+            }
+            Self::StakePoolCostTooLowPOOL(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "StakePoolCostTooLowPOOL ({typed})")
+            }
+            Self::WrongNetworkPOOL {
+                expected,
+                supplied,
+                pool_id,
+            } => {
+                let typed = Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied: *supplied,
+                    expected: *expected,
+                };
+                write!(f, "WrongNetworkPOOL ({typed}) ({pool_id})")
+            }
+            Self::PoolMedataHashTooBig { pool_id, size } => {
+                write!(f, "PoolMedataHashTooBig ({pool_id}) {size}")
+            }
+            Self::VRFKeyHashAlreadyRegistered {
+                pool_id,
+                vrf_key_hash,
+            } => {
+                write!(
+                    f,
+                    "VRFKeyHashAlreadyRegistered ({pool_id}) ({vrf_key_hash})"
+                )
             }
         }
     }
@@ -3798,16 +3961,117 @@ mod tests {
     }
 
     #[test]
-    fn shelley_pool_pred_failure_routes_unported_tags_to_raw() {
-        // tag 3 (StakePoolCostTooLowPOOL) — Mismatch payload
-        // pending. Captured raw.
+    fn shelley_pool_pred_failure_cost_too_low_decodes_tag3() {
+        // tag 3 (StakePoolCostTooLowPOOL): Mismatch RelGTEQ Coin
+        // — outer [0x83, 0x03, supplied=100, expected=200]
         let cbor = [0x83_u8, 0x03, 0x18, 0x64, 0x18, 0xC8];
         let f = ShelleyPoolPredFailure::from_cbor(&cbor).expect("StakePoolCostTooLowPOOL");
-        assert_eq!(f.tag(), 3);
-        assert_eq!(f.constructor(), "StakePoolCostTooLowPOOL");
+        if let ShelleyPoolPredFailure::StakePoolCostTooLowPOOL(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelGTEQ);
+            assert_eq!(mm.supplied, 100);
+            assert_eq!(mm.expected, 200);
+        } else {
+            panic!("expected typed StakePoolCostTooLowPOOL, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "StakePoolCostTooLowPOOL (Mismatch (RelGTEQ) {supplied: Coin 100, expected: Coin 200})"
+        );
+    }
+
+    #[test]
+    fn shelley_pool_pred_failure_wrong_network_decodes_tag4() {
+        // outer [0x84, 0x04, expected=1, supplied=0, bytes(28)]
+        let mut cbor = vec![0x84_u8, 0x04, 0x01, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x33_u8; 28]);
+        let f = ShelleyPoolPredFailure::from_cbor(&cbor).expect("WrongNetworkPOOL");
+        if let ShelleyPoolPredFailure::WrongNetworkPOOL {
+            expected,
+            supplied,
+            pool_id,
+        } = &f
+        {
+            assert_eq!(*expected, Network::Mainnet);
+            assert_eq!(*supplied, Network::Testnet);
+            assert_eq!(pool_id.0, [0x33_u8; 28]);
+        } else {
+            panic!("expected typed WrongNetworkPOOL, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("WrongNetworkPOOL (Mismatch (RelEQ) {supplied: Testnet, expected: Mainnet}) (KeyHash {unKeyHash = \"3333"),
+            "got: {s}"
+        );
+    }
+
+    #[test]
+    fn shelley_pool_pred_failure_metadata_hash_too_big_decodes_tag5() {
+        // outer [0x83, 0x05, bytes(28), size=4096]
+        let mut cbor = vec![0x83_u8, 0x05];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x44_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x10, 0x00]); // 4096
+        let f = ShelleyPoolPredFailure::from_cbor(&cbor).expect("PoolMedataHashTooBig");
+        if let ShelleyPoolPredFailure::PoolMedataHashTooBig { pool_id, size } = &f {
+            assert_eq!(pool_id.0, [0x44_u8; 28]);
+            assert_eq!(*size, 4096);
+        } else {
+            panic!("expected typed PoolMedataHashTooBig, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("PoolMedataHashTooBig (KeyHash {unKeyHash = \"4444"),
+            "got: {s}"
+        );
+        assert!(s.ends_with(") 4096"), "got: {s}");
+    }
+
+    #[test]
+    fn shelley_pool_pred_failure_vrf_already_registered_decodes_tag6() {
+        // outer [0x83, 0x06, bytes(28), bytes(32)]
+        let mut cbor = vec![0x83_u8, 0x06];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x55_u8; 28]);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x66_u8; 32]);
+        let f = ShelleyPoolPredFailure::from_cbor(&cbor).expect("VRFKeyHashAlreadyRegistered");
+        if let ShelleyPoolPredFailure::VRFKeyHashAlreadyRegistered {
+            pool_id,
+            vrf_key_hash,
+        } = &f
+        {
+            assert_eq!(pool_id.0, [0x55_u8; 28]);
+            assert_eq!(vrf_key_hash.0, [0x66_u8; 32]);
+        } else {
+            panic!("expected typed VRFKeyHashAlreadyRegistered, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("VRFKeyHashAlreadyRegistered (KeyHash {unKeyHash = \"5555"),
+            "got: {s}"
+        );
+        assert!(
+            s.contains("VRFVerKeyHash {unVRFVerKeyHash = \"6666"),
+            "got: {s}"
+        );
+    }
+
+    #[test]
+    fn shelley_pool_pred_failure_retirement_wrong_epoch_stays_raw_tag1() {
+        // Tag 1 retains the flattened-Mismatch raw payload pending
+        // a dedicated decoder.
+        let cbor = [0x84_u8, 0x01, 0x18, 0x05, 0x18, 0x03, 0x18, 0x06];
+        let f =
+            ShelleyPoolPredFailure::from_cbor(&cbor).expect("StakePoolRetirementWrongEpochPOOL");
+        assert_eq!(f.tag(), 1);
         assert!(
             f.to_string()
-                .starts_with("StakePoolCostTooLowPOOL <raw-cbor"),
+                .starts_with("StakePoolRetirementWrongEpochPOOL <raw-cbor"),
             "got: {f}"
         );
     }
