@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R547 static Plutus context slice). The old
+**Status:** `partial` (post-R548 key-spend transaction construction slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -144,6 +144,17 @@ approved synthesis area from the sister-tools plan.
   `mkUTxOScript` builders carrying real datum/redeemer/execution-unit
   witness data. AutoScript and pre-execution checking remain explicit
   `preExecutePlutusScript` / `plutusAutoScaleBlockfit` boundaries.
+- Shipped R548: `Cardano.TxGenerator.Tx` key-spend transaction
+  construction. `tx_generator/tx.rs` ports
+  `sourceToStoreTransaction`, `sourceToStoreTransactionNew`,
+  `sourceTransactionPreview`, `genTx`, and `txSizeInBytes` for
+  Shelley-family key-witnessed inputs. Generated transactions are real
+  `MultiEraSubmittedTx` values with vkey witnesses over the body hash,
+  metadata auxiliary-data hashes, collateral input fields, and tx-id-
+  based generated-fund storage. `wallet.rs` now carries upstream
+  `createAndStore`, `mangle`, and `mangleWithChange` helpers.
+  Plutus script spends remain an explicit script-integrity/pre-exec
+  boundary; creating script outputs is already wired from R546-R547.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the GeneratorTx
   construction and submission slices land.
@@ -233,9 +244,14 @@ This crate's full implementation remains an A4 sister-tool build-out:
   text-envelope/fallback-script loading, `PlutusContext.hs`
   detailed-schema script-data parsing and first-number mutation helper,
   plus static-budget `makePlutusContext` wiring for `PayToScript`.
-- Next: port Plutus `preExecutePlutusScript` / `plutusAutoScaleBlockfit`,
-  the remaining GeneratorTx transaction construction, and LocalSocket /
-  Benchmark submission in strict-mirror-sized slices.
+- Shipped: key-spend transaction construction (R548):
+  `Cardano.TxGenerator.Tx` source/store/preview functions plus
+  signed Shelley-family `genTx` for key-witnessed inputs, and
+  `Benchmarking.Wallet` create/store mangling helpers.
+- Next: wire `Script/Core.submitInEra` through the generated
+  transactions, then port Plutus `preExecutePlutusScript` /
+  `plutusAutoScaleBlockfit`, script-spend script-integrity hashing, and
+  LocalSocket / Benchmark submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

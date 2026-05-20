@@ -13,6 +13,7 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
+use thiserror::Error;
 
 /// Mirror of upstream `NumberOfInputsPerTx`.
 pub type NumberOfInputsPerTx = usize;
@@ -34,6 +35,23 @@ pub type Lovelace = u64;
 
 /// Slot number used by upstream `TxGenTxParams`.
 pub type SlotNo = u64;
+
+/// Mirror of upstream `TxGenError`.
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+pub enum TxGenError {
+    /// Upstream `ApiError`.
+    #[error("ApiError ({0})")]
+    ApiError(String),
+    /// Upstream `ProtocolError`.
+    #[error("ProtocolError ({0})")]
+    ProtocolError(String),
+    /// Upstream `PlutusError`.
+    #[error("ProtocolError ({0})")]
+    PlutusError(String),
+    /// Upstream `TxGenError`.
+    #[error("ApiError ({0:?})")]
+    TxGenError(String),
+}
 
 /// Mirror of upstream `PayWithChange`.
 #[derive(Clone, Debug, Eq, PartialEq)]

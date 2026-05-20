@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T08:07:26Z
-- Files described: 1420
+- Generated at: 2026-05-20T08:32:36Z
+- Files described: 1422
 
 ## Workspace
 
@@ -1809,6 +1809,8 @@
   - FIFO queue used by the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Internal/Fifo.hs`.
 - `crates/tools/tx-generator/src/tx_generator/plutus_context.rs`
   - Plutus budgeting and script-data helpers. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/PlutusContext.hs`.
+- `crates/tools/tx-generator/src/tx_generator/tx.rs`
+  - Transaction construction for the tx-generator runtime. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Tx.hs`.
 - `crates/tools/tx-generator/src/tx_generator/utils.rs`
   - Utility functions used across the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Utils.hs`.
 - `crates/tools/tx-generator/src/tx_generator/utxo.rs`
@@ -2233,6 +2235,8 @@
   - Round R546 - tx-generator script UTxO output builders: Ported the script-output half of:.
 - `docs/operational-runs/2026-05-20-round-547-tx-generator-static-plutus-context.md`
   - Round 547 - tx-generator static Plutus context: Ported upstream `Cardano.TxGenerator.Setup.Plutus.readPlutusScript` for.
+- `docs/operational-runs/2026-05-20-round-548-tx-generator-key-spend-tx.md`
+  - Operational run note for the R548 tx-generator key-spend transaction construction slice.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

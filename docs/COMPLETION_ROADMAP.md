@@ -268,10 +268,16 @@ own parser / generator / submission implementation plus upstream
   `Cardano.TxGenerator.PlutusContext.readScriptData`, bundled
   `scripts-fallback` resolution, detailed-schema Plutus data parsing,
   real datum/redeemer/execution-unit script witnesses, and
-  `PayToScript` -> `mkUTxOScript` wiring. The remaining tx-generator
-  blocker is Plutus pre-execution / auto-budget fitting, transaction
-  assembly, GeneratorTx / Submission implementation, and upstream
-  comparison evidence.
+  `PayToScript` -> `mkUTxOScript` wiring. R548 added the
+  `Cardano.TxGenerator.Tx` key-spend path:
+  `sourceToStoreTransaction`, `sourceToStoreTransactionNew`,
+  `sourceTransactionPreview`, signed Shelley-family `genTx`, tx-size
+  measurement, tx-id-based generated-fund storage, and the missing
+  `Benchmarking.Wallet` `createAndStore` / `mangle` helpers. The
+  remaining tx-generator blocker is `submitInEra` runtime wiring,
+  Plutus pre-execution / auto-budget fitting, script-spend
+  script-integrity hashing, GeneratorTx / Submission implementation,
+  and upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
