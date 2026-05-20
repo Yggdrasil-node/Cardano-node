@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-20T12:40:43Z",
+  "generated_at_utc": "2026-05-20T12:58:00Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -10508,12 +10508,12 @@
       "path": "crates/tools/tx-generator/AGENTS.md",
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `tx-generator`.",
-        "Tracks the post-R558 Script/Core, GeneratorTx, and Submission implementation arc."
+        "Tracks the post-R559 Script/Core, GeneratorTx, DumpToFile, and Submission implementation arc."
       ],
-      "content_sha256": "790722865cb2d5aec5a16f1ce94aaa124d2832aca2b022fd113a7428e08a2247",
-      "git_blob": "730997edc50b2ad5f433b2055edb2e6e30acda22",
-      "source_mtime_ns": 1779279715416081600,
-      "described_at_utc": "2026-05-20T12:27:33Z",
+      "content_sha256": "08549392dd4e7ef65abf5dee23abeb00a9df8f267538066f4aedde2ab086633b",
+      "git_blob": "7990a6aa3dcb124be2f3cfcd53089659b37f9fd7",
+      "source_mtime_ns": 1779281693887288900,
+      "described_at_utc": "2026-05-20T12:57:43Z",
       "generated_self_exempt": false
     },
     {
@@ -10522,10 +10522,10 @@
         "Cargo manifest for the tx-generator sister-tool crate.",
         "Declares direct dependencies for tx-generator runtime helpers plus crate metadata."
       ],
-      "content_sha256": "f9d85d17436e519cd82564438e680a982c37f5387613947b257c282ff5937b6e",
-      "git_blob": "752bb82fa06c1c27e3170157d525a80b2b5422ba",
-      "source_mtime_ns": 1779278405473779400,
-      "described_at_utc": "2026-05-20T12:07:49Z",
+      "content_sha256": "99d3c235977dd85d876ba45a37cd18bb839989aceb30afeef4b861af17ec32c1",
+      "git_blob": "54e7221f7ce9982ea2a7ea6784349c9c76335cb7",
+      "source_mtime_ns": 1779281704988897700,
+      "described_at_utc": "2026-05-20T12:57:43Z",
       "generated_self_exempt": false
     },
     {
@@ -10668,10 +10668,10 @@
         "Pure-Rust port of upstream `tx-generator`.",
         "Parent module wiring top-level parsing, json/json_highlevel execution, compile, version, and command dispatch."
       ],
-      "content_sha256": "31b5f11520c928c2f5332ecc07f12586a017e00812fac787b0b928e78fcdcacd",
-      "git_blob": "d4820edb66d9e9a3718b5b9593bf502d02f359f4",
-      "source_mtime_ns": 1779272822124152300,
-      "described_at_utc": "2026-05-20T11:41:22Z",
+      "content_sha256": "130606a3a295c682ae19c16073bdf66f2f56442135155c91ff219c359fb0f484",
+      "git_blob": "df00b7cbffb2238937edfd5ab7753cc54836472f",
+      "source_mtime_ns": 1779281488324686000,
+      "described_at_utc": "2026-05-20T12:57:44Z",
       "generated_self_exempt": false
     },
     {
@@ -10737,12 +10737,12 @@
       "path": "crates/tools/tx-generator/src/script/core.rs",
       "description_lines": [
         "Strict mirror of upstream tx-generator Script/Core state and NtC query helpers.",
-        "Owns Core action bodies, queryEra/queryRemoteProtocolParameters, transaction generation, and budget projection."
+        "Owns Core action bodies, queryEra/queryRemoteProtocolParameters, transaction generation, DumpToFile rendering, and budget projection."
       ],
-      "content_sha256": "cc523d3994e5bf5bafda93fa80f2a86741d79292e773f03f1c265371ff0fb152",
-      "git_blob": "fa1066c0a7941e3ac65f799ac33b63560bdc8062",
-      "source_mtime_ns": 1779279701317676400,
-      "described_at_utc": "2026-05-20T12:27:33Z",
+      "content_sha256": "f2aa293836ead982029341f9dc2ac4a7446ab50858f12c5eba20a6e259d16181",
+      "git_blob": "dce780070e2888ff01fa9fef3d42d66d41013dd4",
+      "source_mtime_ns": 1779282245203159800,
+      "described_at_utc": "2026-05-20T13:06:06Z",
       "generated_self_exempt": false
     },
     {
@@ -10760,12 +10760,12 @@
     {
       "path": "crates/tools/tx-generator/src/script/selftest.rs",
       "description_lines": [
-        "Strict mirror of upstream `Cardano.Benchmarking.Script.Selftest`: builds and runs the static selftest action list."
+        "Strict mirror of upstream `Cardano.Benchmarking.Script.Selftest`: builds and runs the static selftest action list, including output-file mode."
       ],
-      "content_sha256": "3b663ad9936a849c9809d12f5bb2883a3f70d05a3232282dec0ce3ab1b2d349f",
-      "git_blob": "de428c0cfe7471feadf33541953fcdae13122caa",
-      "source_mtime_ns": 1779280427863383800,
-      "described_at_utc": "2026-05-20T12:34:09Z",
+      "content_sha256": "92d27a4c3737c3d07f138e8770bec6c1cf505891b35a54b8d45ef173d1e3e65f",
+      "git_blob": "ec924cc725f47d712900637e0a24b9d8047c7df7",
+      "source_mtime_ns": 1779281488354223500,
+      "described_at_utc": "2026-05-20T12:57:44Z",
       "generated_self_exempt": false
     },
     {
@@ -11065,10 +11065,10 @@
       "description_lines": [
         "Completion Roadmap: ---."
       ],
-      "content_sha256": "be1778e8fb4ac6a3e4a75dec921734ea123790fc5f10aceca018406e2060c0d1",
-      "git_blob": "f4ca237c6f4867f9d9702a54a2c5ad8ea92400ef",
-      "source_mtime_ns": 1779279720953933900,
-      "described_at_utc": "2026-05-20T12:27:33Z",
+      "content_sha256": "67b197af80a78ddacf83dd62de43dd573e00b87274ea46691f4af26dfab18cc9",
+      "git_blob": "f2eba4f14b0126f7964514d504b7d92a6cfa1dac",
+      "source_mtime_ns": 1779281727503676600,
+      "described_at_utc": "2026-05-20T12:57:45Z",
       "generated_self_exempt": false
     },
     {
@@ -13343,6 +13343,18 @@
       "git_blob": "45b8bedd6089b481e577415c7effe4a0aa29db8a",
       "source_mtime_ns": 1779280832938765200,
       "described_at_utc": "2026-05-20T12:40:43Z"
+    },
+    {
+      "path": "docs/operational-runs/2026-05-20-round-559-tx-generator-dumptofile.md",
+      "description_lines": [
+        "Round 559 tx-generator DumpToFile evidence record.",
+        "Documents Allegra selftest Show(Tx) rendering and the remaining upstream byte-drift finding."
+      ],
+      "content_sha256": "2357d34a498ec5062eded128779ef8c0c4abe4b3f4c3faa59ea22656a7f0693d",
+      "git_blob": "6e476f3799696a27f997bff76a081edf89673b45",
+      "source_mtime_ns": 1779281749398052000,
+      "described_at_utc": "2026-05-20T12:57:52Z",
+      "generated_self_exempt": false
     },
     {
       "path": "docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md",

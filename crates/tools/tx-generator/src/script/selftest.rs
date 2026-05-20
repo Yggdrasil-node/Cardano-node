@@ -3,10 +3,8 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/Script/Selftest.hs`.
-//! Ports `runSelftest` and `testScript` for the deterministic
-//! no-output-file path. Supplying an output file still delegates to the
-//! shared `DumpToFile` boundary until exact upstream `Show (Tx)` rendering
-//! is ported.
+//! Ports `runSelftest` and `testScript`, including the deterministic
+//! Allegra `DumpToFile` self-test path.
 
 use std::path::{Path, PathBuf};
 
@@ -224,9 +222,27 @@ mod tests {
     }
 
     #[test]
-    fn run_selftest_with_output_file_reaches_dump_to_file_boundary() {
-        let err = run_selftest(Some(Path::new("selftest.out"))).expect_err("dump boundary");
+    fn run_selftest_with_output_file_writes_haskell_show_transactions() {
+        let output_path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-selftest-{}.out",
+            std::process::id()
+        ));
+        let _cleanup = BudgetSummaryFileCleanup;
+        let _ = std::fs::remove_file(&output_path);
+        let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
 
-        assert!(err.to_string().contains("DumpToFile"));
+        run_selftest(Some(&output_path)).expect("selftest dump");
+
+        let rendered = std::fs::read_to_string(&output_path).expect("dump output");
+        let _ = std::fs::remove_file(&output_path);
+        assert!(rendered.starts_with(
+            "\nShelleyTx ShelleyBasedEraAllegra (ShelleyTx {stBody = MkAllegraTxBody"
+        ));
+        assert_eq!(
+            rendered.lines().filter(|line| !line.is_empty()).count(),
+            4_000
+        );
+        assert!(rendered.contains("stWits = ShelleyTxWitsRaw"));
+        assert!(rendered.ends_with("stAuxData = SNothing})"));
     }
 }

@@ -280,9 +280,20 @@ mod tests {
 
     #[test]
     fn selftest_command_dispatches_to_static_script() {
-        let err = run(Command::Selftest(Some(PathBuf::from("selftest.out"))))
-            .expect_err("dump mode boundary");
+        let output_path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-command-{}.out",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&output_path);
 
-        assert!(err.to_string().contains("DumpToFile"));
+        run(Command::Selftest(Some(output_path.clone()))).expect("selftest command");
+
+        let rendered = std::fs::read_to_string(&output_path).expect("selftest dump");
+        let _ = std::fs::remove_file(&output_path);
+        assert!(rendered.starts_with("\nShelleyTx ShelleyBasedEraAllegra"));
+        assert_eq!(
+            rendered.lines().filter(|line| !line.is_empty()).count(),
+            4_000
+        );
     }
 }

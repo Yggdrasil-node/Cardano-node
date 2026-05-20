@@ -302,9 +302,15 @@ own parser / generator / submission implementation plus upstream
   R557 added upstream-shaped Plutus auto-budget fitting, binary-search
   loop calibration, budget summaries, and `AutoScript` wiring. R558
   wired successful `NtoM` previews to update the Plutus budget summary's
-  projected transaction size and fee before dumping. The
-  remaining tx-generator blockers are exact `DumpToFile` rendering,
-  Benchmark submission, and upstream comparison evidence.
+  projected transaction size and fee before dumping. R559 added the
+  Allegra selftest `DumpToFile` renderer for newline-prefixed Haskell
+  `Show (Tx)` output and captured upstream binary comparison evidence:
+  the renderer is functional, but the generated selftest stream still
+  drifts at the transaction body/signature bytes (`3986ae75...`
+  upstream input tx id vs `3f1ccb88...` Rust on the first final-stream
+  transaction). The remaining tx-generator blockers are that selftest
+  byte-drift fix, broader `DumpToFile` rendering beyond the Allegra
+  key-witnessed selftest shape, Benchmark submission, and soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

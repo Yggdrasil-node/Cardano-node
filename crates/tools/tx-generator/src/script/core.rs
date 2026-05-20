@@ -6,10 +6,11 @@
 //! Ports the state/query/runtime helper boundary consumed by
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
 //! deterministic state-only operations, Plutus context construction,
-//! finite transaction-stream evaluation, LocalSocket submission, and
-//! budget-summary projection. Benchmark submission and exact DumpToFile
-//! rendering still return explicit `TxGenError` boundaries until their
-//! downstream mirrors land.
+//! finite transaction-stream evaluation, LocalSocket submission,
+//! Allegra self-test `DumpToFile` rendering, and budget-summary
+//! projection. Benchmark submission and the remaining `DumpToFile`
+//! era/witness shapes still return explicit `TxGenError` boundaries
+//! until their downstream mirrors land.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -18,9 +19,11 @@ use std::time::Duration;
 
 use num_bigint::BigInt;
 use serde_json::Value;
+use yggdrasil_crypto::{hash_bytes_224, hash_bytes_256};
 use yggdrasil_ledger::{
-    CborDecode, Decoder, Encoder, PlutusData, ProtocolParameters, eras::alonzo::ExUnits,
-    total_min_fee,
+    Address, AllegraTxBody, CborDecode, CborEncode, Decoder, Encoder, PlutusData,
+    ProtocolParameters, ShelleyCompatibleSubmittedTx, ShelleyTxIn, ShelleyTxOut,
+    ShelleyVkeyWitness, ShelleyWitnessSet, StakeCredential, eras::alonzo::ExUnits, total_min_fee,
 };
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
@@ -925,9 +928,17 @@ pub fn submit_in_era(
         SubmitMode::Benchmark(_, _, _) => Err(lift_tx_gen_error(
             "benchmarkTxStream: Benchmark submission is pending GeneratorTx/Submission wiring",
         )),
-        SubmitMode::DumpToFile(_) => Err(lift_tx_gen_error(
-            "DumpToFile: upstream Show(Tx) rendering is pending Tx display parity evidence",
-        )),
+        SubmitMode::DumpToFile(file_path) => {
+            let txs = eval_generator(
+                env,
+                era,
+                generator,
+                tx_params,
+                tx_protocol_parameters.as_ref(),
+                None,
+            )?;
+            dump_txs_to_file(file_path, &txs)
+        }
         SubmitMode::DiscardTx => {
             let _txs = eval_generator(
                 env,
@@ -951,6 +962,194 @@ pub fn submit_in_era(
             submit_generated_txs_local_socket(env, &txs)
         }
     }
+}
+
+fn dump_txs_to_file(file_path: &Path, txs: &[GeneratedTx]) -> Result<(), Error> {
+    let mut rendered = String::new();
+    for tx in txs {
+        rendered.push_str(&show_tx_for_dump(tx)?);
+    }
+    fs::write(file_path, rendered).map_err(|err| {
+        lift_tx_gen_error(format!(
+            "DumpToFile: failed to write {}: {err}",
+            file_path.display()
+        ))
+    })
+}
+
+fn show_tx_for_dump(generated: &GeneratedTx) -> Result<String, Error> {
+    match &generated.tx {
+        yggdrasil_ledger::MultiEraSubmittedTx::Allegra(tx) => show_allegra_tx_for_dump(tx),
+        tx => Err(lift_tx_gen_error(format!(
+            "DumpToFile: upstream Show(Tx) renderer is implemented for Allegra self-test transactions only; got {:?}",
+            tx.era()
+        ))),
+    }
+}
+
+fn show_allegra_tx_for_dump(
+    tx: &ShelleyCompatibleSubmittedTx<AllegraTxBody>,
+) -> Result<String, Error> {
+    ensure_empty_or_absent(tx.body.certificates.as_deref(), "atbrCerts")?;
+    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "atbrWithdrawals")?;
+    ensure_absent(tx.body.update.as_ref(), "atbrUpdate")?;
+    ensure_absent(tx.body.auxiliary_data_hash.as_ref(), "atbrAuxDataHash")?;
+    ensure_absent(tx.auxiliary_data.as_ref(), "stAuxData")?;
+
+    let inputs = show_tx_in_list(&tx.body.inputs);
+    let outputs = show_shelley_tx_out_list(&tx.body.outputs)?;
+    let body_hash = hex::encode(hash_bytes_256(tx.raw_body()).0);
+    let witnesses = show_shelley_witness_set(&tx.witness_set)?;
+
+    Ok(format!(
+        "\nShelleyTx ShelleyBasedEraAllegra (ShelleyTx {{stBody = MkAllegraTxBody AllegraTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrAuxDataHash = SNothing, atbrMint = ()}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
+        tx.body.fee,
+        show_strict_maybe_slot(tx.body.validity_interval_start),
+        show_strict_maybe_slot(tx.body.ttl),
+    ))
+}
+
+fn ensure_absent<T>(value: Option<&T>, field: &str) -> Result<(), Error> {
+    if value.is_some() {
+        return Err(lift_tx_gen_error(format!(
+            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-empty {field}"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_empty_or_absent<T>(value: Option<&[T]>, field: &str) -> Result<(), Error> {
+    if value.is_some_and(|items| !items.is_empty()) {
+        return Err(lift_tx_gen_error(format!(
+            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-empty {field}"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_empty_or_absent_btree<K, V>(
+    value: Option<&BTreeMap<K, V>>,
+    field: &str,
+) -> Result<(), Error> {
+    if value.is_some_and(|items| !items.is_empty()) {
+        return Err(lift_tx_gen_error(format!(
+            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-empty {field}"
+        )));
+    }
+    Ok(())
+}
+
+fn show_strict_maybe_slot(slot: Option<u64>) -> String {
+    match slot {
+        Some(slot) => format!("SJust (SlotNo {slot})"),
+        None => "SNothing".to_string(),
+    }
+}
+
+fn show_tx_in_list(inputs: &[ShelleyTxIn]) -> String {
+    let mut sorted = inputs.to_vec();
+    sorted.sort();
+    sorted.iter().map(show_tx_in).collect::<Vec<_>>().join(",")
+}
+
+fn show_tx_in(input: &ShelleyTxIn) -> String {
+    format!(
+        "TxIn (TxId {{unTxId = SafeHash \"{}\"}}) (TxIx {{unTxIx = {}}})",
+        hex::encode(input.transaction_id),
+        input.index
+    )
+}
+
+fn show_shelley_tx_out_list(outputs: &[ShelleyTxOut]) -> Result<String, Error> {
+    outputs
+        .iter()
+        .map(show_shelley_tx_out)
+        .collect::<Result<Vec<_>, _>>()
+        .map(|items| items.join(","))
+}
+
+fn show_shelley_tx_out(output: &ShelleyTxOut) -> Result<String, Error> {
+    let address = Address::from_bytes(&output.address).ok_or_else(|| {
+        lift_tx_gen_error("DumpToFile: Allegra Show(Tx) renderer received invalid address bytes")
+    })?;
+    Ok(format!(
+        "({},Coin {})",
+        show_shelley_address(&address)?,
+        output.amount
+    ))
+}
+
+fn show_shelley_address(address: &Address) -> Result<String, Error> {
+    match address {
+        Address::Enterprise(enterprise) => Ok(format!(
+            "Addr {} {} StakeRefNull",
+            show_network(enterprise.network)?,
+            show_payment_credential(&enterprise.payment)
+        )),
+        _ => Err(lift_tx_gen_error(format!(
+            "DumpToFile: Allegra Show(Tx) renderer does not yet support address shape {address:?}"
+        ))),
+    }
+}
+
+fn show_network(network: u8) -> Result<&'static str, Error> {
+    match network {
+        0 => Ok("Testnet"),
+        1 => Ok("Mainnet"),
+        other => Err(lift_tx_gen_error(format!(
+            "DumpToFile: unsupported Shelley network id {other}"
+        ))),
+    }
+}
+
+fn show_payment_credential(credential: &StakeCredential) -> String {
+    match credential {
+        StakeCredential::AddrKeyHash(hash) => {
+            format!(
+                "(KeyHashObj (KeyHash {{unKeyHash = \"{}\"}}))",
+                hex::encode(hash)
+            )
+        }
+        StakeCredential::ScriptHash(hash) => {
+            format!("(ScriptHashObj (ScriptHash \"{}\"))", hex::encode(hash))
+        }
+    }
+}
+
+fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Error> {
+    if !witness_set.native_scripts.is_empty()
+        || !witness_set.bootstrap_witnesses.is_empty()
+        || !witness_set.plutus_v1_scripts.is_empty()
+        || !witness_set.plutus_data.is_empty()
+        || !witness_set.redeemers.is_empty()
+        || !witness_set.plutus_v2_scripts.is_empty()
+        || !witness_set.plutus_v3_scripts.is_empty()
+    {
+        return Err(lift_tx_gen_error(
+            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-vkey witnesses",
+        ));
+    }
+
+    let mut witnesses = witness_set.vkey_witnesses.clone();
+    witnesses.sort_by_key(|witness| witness.vkey);
+    let vkeys = witnesses
+        .iter()
+        .map(show_vkey_witness)
+        .collect::<Vec<_>>()
+        .join(",");
+    let witness_hash = hex::encode(hash_bytes_256(&witness_set.to_cbor_bytes()).0);
+    Ok(format!(
+        "ShelleyTxWitsRaw {{stwrAddrTxWits = fromList [{vkeys}], stwrScriptTxWits = fromList [], stwrBootAddrTxWits = fromList []}} (blake2b_256: SafeHash \"{witness_hash}\")"
+    ))
+}
+
+fn show_vkey_witness(witness: &ShelleyVkeyWitness) -> String {
+    let key_hash = hex::encode(hash_bytes_224(&witness.vkey).0);
+    format!(
+        "WitVKeyInternal {{wvkKey = VKey (VerKeyEd25519DSIGN \"{}\"), wvkSignature = SignedDSIGN (SigEd25519DSIGN \"{}\"), wvkKeyHash = KeyHash {{unKeyHash = \"{key_hash}\"}}}}",
+        hex::encode(witness.vkey),
+        hex::encode(witness.signature)
+    )
 }
 
 fn eval_generator(
