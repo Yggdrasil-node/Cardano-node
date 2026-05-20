@@ -21,33 +21,29 @@ serde_json.workspace = true
 proptest = { version = "1.7", default-features = false, features = ["std"] }
 
 # ──────────────────────────────────────────────────────────────────────
-# Wave 3 PR 5 — feature-flag declarations.
+# Feature flags.
 #
-# `plutus` (default) was intended to drop the Alonzo+ phase-2
-# witness-resolution path for sister tools that only walk block
-# headers. Today the flag is **decorative** — no
-# `#[cfg(feature = "plutus")]` gates exist; the default build is
-# byte-identical with or without it.
-#
-# Phase 5.4 audit (2026-05): wiring this flag has no real payoff and
-# is mis-scoped. This crate does NOT depend on `crates/plutus` — the
-# heavy CEK-machine / cost-model code lives behind the inverted
-# `PlutusEvaluator` trait, wired by `crates/node/plutus-eval` and the
-# node binary, not here. `crates/ledger`'s own phase-2 code
-# (`plutus_validation.rs`) is ~1.4 KLoC of pure trait-orchestration
-# with no heavy dependency tree, and `validate_plutus_scripts`
-# already takes `Option<&dyn PlutusEvaluator>` — the evaluator is
-# already optional at the call boundary. Gating `plutus_validation`
-# off would not slim the dependency graph or the binary; it would
-# only remove validation logic — a correctness hazard, not a
-# build-slimming win. Genuine Plutus build-slimming belongs at the
+# `plutus` was removed in R592. The Phase 5.4 audit (2026-05)
+# concluded the flag was mis-scoped: this crate does NOT depend on
+# `crates/plutus` — the heavy CEK-machine / cost-model code lives
+# behind the inverted `PlutusEvaluator` trait, wired by
+# `crates/node/plutus-eval` and the node binary, not here.
+# `crates/ledger`'s own phase-2 code (`plutus_validation.rs`) is
+# ~1.4 KLoC of pure trait-orchestration with no heavy dependency
+# tree, and `validate_plutus_scripts` already takes
+# `Option<&dyn PlutusEvaluator>` — the evaluator is already optional
+# at the call boundary. Gating `plutus_validation` off would not
+# slim the dependency graph or the binary; it would only remove
+# validation logic — a correctness hazard, not a build-slimming win.
+# Genuine Plutus build-slimming belongs at the
 # `crates/node/plutus-eval` bridge / node-binary level (gate
 # `crates/plutus` itself out of the graph), not on this crate's
 # feature flag.
+#
+# 0 `#[cfg(feature = "plutus")]` gates in `crates/ledger/src/` and
+# 0 downstream consumers opted in or out, so removal is a no-op
+# behaviour change.
 # ──────────────────────────────────────────────────────────────────────
-[features]
-default = ["plutus"]
-plutus = []
 
 [lints]
 workspace = true

@@ -58,22 +58,24 @@ green, one `docs/operational-runs/` doc, one commit. Use the
 first for any slice touching protocol/CBOR/crypto behavior.
 
 ### A1 — Feature-flag gating  (`TECH-DEBT.md` §"Wave 3 / Wave 5 feature flags")
-Status verified 2026-05-20 (R591 update): `forge` and
-`yggdrasil-plutus/{secp256k1, bls12-381}` are already wired (real `#[cfg]`
-sites; `--no-default-features` builds and `cargo lint-no-default` clean).
-The R591 round removed the inert `yggdrasil-network/ntn` flag entirely —
-0 `#[cfg]` sites, 0 downstream consumers, every yggdrasil consumer needs
-node-to-node mini-protocols, so removal was preferred over wiring.
-The genuinely-inert flags that remain are `yggdrasil-ledger/plutus` and
-`yggdrasil-network/ntc` (0 `#[cfg]` sites). `ntc` is cleanly wireable
-— a relay/producer with the node-to-client local socket excluded is
-still a valid node — but it is a multi-crate round (`yggdrasil-network`
-NtC modules + the `yggdrasil-node-ntc-server` crate + the binary's
-`query`/`submit-tx` subcommands). `plutus` gates the Alonzo+ phase-2
-witness paths across ~8 per-era ledger apply-rule files and needs a
-slim-build soundness decision (a node without it skips phase-2
-validation). **Exit:** each remaining flag conditionally compiles the
-code it names; `cargo lint-no-default` stays green.
+Status verified 2026-05-20 (R591+R592 update): `forge` and
+`yggdrasil-plutus/{secp256k1, bls12-381}` are wired (real `#[cfg]`
+sites; `--no-default-features` builds and `cargo lint-no-default`
+clean). R591 removed the inert `yggdrasil-network/ntn` flag. R592
+removed the inert `yggdrasil-ledger/plutus` flag — the Phase-5.4
+audit comment in `crates/ledger/Cargo.toml` had explicitly identified
+it as mis-scoped: gating off `plutus_validation` would only remove
+validation logic without slimming the dependency graph (this crate
+never depended on `crates/plutus`; the heavy CEK-machine code lives
+behind the inverted `PlutusEvaluator` trait wired by
+`crates/node/plutus-eval`).
+The remaining inert flag is `yggdrasil-network/ntc` (0 `#[cfg]`
+sites). `ntc` is cleanly wireable — a relay/producer with the
+node-to-client local socket excluded is still a valid node — but it
+is a multi-crate round (`yggdrasil-network` NtC modules + the
+`yggdrasil-node-ntc-server` crate + the binary's `query`/`submit-tx`
+subcommands). **Exit:** the remaining `ntc` flag conditionally
+compiles the code it names; `cargo lint-no-default` stays green.
 
 ### A2 — cardano-cli subcommand migration — ✅ COMPLETE (verified 2026-05-20)
 The cardano-cli C-arc closed at R515 and the R527-R529 stale-placement
