@@ -107,12 +107,11 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R547 static Plutus context slice). Help/version compatibility, typed \
+         (R549 finite submitInEra slice). Help/version compatibility, typed \
          subcommand parsing, json_highlevel testnet discovery, and high-level \
          NixServiceOptions parsing/compilation plus low-level script JSON \
          decoding plus deterministic state-only action execution and Script/Core \
-         NtC query helpers, sized-metadata construction, wallet queues, value splitting, UTxO output builders, and static Plutus context loading are wired; full transaction generation \
-         and submission land in later strict slices of the tx-generator port arc.",
+         NtC query helpers, sized-metadata construction, wallet queues, value splitting, UTxO output builders, static Plutus context loading, key-spend transaction construction, and finite LocalSocket submitInEra execution are wired; script spends, benchmark submission, exact DumpToFile rendering, and high-level execution land in later strict slices of the tx-generator port arc.",
         command.name()
     ))
 }

@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T08:32:36Z
-- Files described: 1422
+- Generated at: 2026-05-20T08:58:40Z
+- Files described: 1423
 
 ## Workspace
 
@@ -2237,6 +2237,9 @@
   - Round 547 - tx-generator static Plutus context: Ported upstream `Cardano.TxGenerator.Setup.Plutus.readPlutusScript` for.
 - `docs/operational-runs/2026-05-20-round-548-tx-generator-key-spend-tx.md`
   - Operational run note for the R548 tx-generator key-spend transaction construction slice.
+- `docs/operational-runs/2026-05-20-round-549-tx-generator-submit-in-era.md`
+  - Operational run note for the R549 tx-generator finite submitInEra / LocalSocket slice.
+  - Documents key-spend stream execution, wallet mutation, remaining parity boundaries, and focused validation.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

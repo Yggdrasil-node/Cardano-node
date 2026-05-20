@@ -273,11 +273,15 @@ own parser / generator / submission implementation plus upstream
   `sourceToStoreTransaction`, `sourceToStoreTransactionNew`,
   `sourceTransactionPreview`, signed Shelley-family `genTx`, tx-size
   measurement, tx-id-based generated-fund storage, and the missing
-  `Benchmarking.Wallet` `createAndStore` / `mangle` helpers. The
-  remaining tx-generator blocker is `submitInEra` runtime wiring,
-  Plutus pre-execution / auto-budget fitting, script-spend
-  script-integrity hashing, GeneratorTx / Submission implementation,
-  and upstream comparison evidence.
+  `Benchmarking.Wallet` `createAndStore` / `mangle` helpers. R549
+  wired finite `Script/Core.submitInEra` execution for key-spend
+  `Split`, `SplitN`, `NtoM`, `Sequence`, and `Take (Cycle ...)`
+  generators, including source/destination wallet mutation,
+  `DiscardTX`, `NtoM` preview traces, and NtC LocalTxSubmission for
+  `LocalSocket`. The remaining tx-generator blockers are Plutus
+  pre-execution / auto-budget fitting, script-spend script-integrity
+  hashing, exact `DumpToFile` rendering, Benchmark submission,
+  `json_highlevel` execution, and upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

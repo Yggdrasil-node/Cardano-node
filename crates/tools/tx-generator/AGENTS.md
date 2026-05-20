@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R548 key-spend transaction construction slice). The old
+**Status:** `partial` (post-R549 finite submitInEra / LocalSocket slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -155,9 +155,19 @@ approved synthesis area from the sister-tools plan.
   `createAndStore`, `mangle`, and `mangleWithChange` helpers.
   Plutus script spends remain an explicit script-integrity/pre-exec
   boundary; creating script outputs is already wired from R546-R547.
-- Pending: concrete command execution. Dispatch returns a
-  command-specific "not yet implemented" sentinel until the GeneratorTx
-  construction and submission slices land.
+- Shipped R549: `Benchmarking.Script.Core.submitInEra` finite
+  key-spend runtime wiring. `script/core.rs` now evaluates `Split`,
+  `SplitN`, `NtoM`, `Sequence`, and `Take (Cycle ...)` into real
+  generated transactions, mutates source/destination wallets through
+  upstream-shaped source/store semantics, previews `NtoM` tx size
+  traces, supports `DiscardTX`, and submits finite streams over NtC
+  LocalTxSubmission for `LocalSocket`. `DumpToFile` remains blocked on
+  byte-equivalent upstream `Show (Tx)` rendering; benchmark mode remains
+  blocked on the `GeneratorTx.Submission` client/scheduler slice.
+- Pending: concrete `json_highlevel` command execution. Low-level
+  `json FILE` runs supported script actions, including finite
+  key-spend Submit actions, but high-level configs still stop after
+  compilation until the remaining runtime slices land.
 - Pending: end-to-end behavioral tests against the upstream binary.
 
 ## Build + Run
@@ -248,10 +258,14 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `Cardano.TxGenerator.Tx` source/store/preview functions plus
   signed Shelley-family `genTx` for key-witnessed inputs, and
   `Benchmarking.Wallet` create/store mangling helpers.
-- Next: wire `Script/Core.submitInEra` through the generated
-  transactions, then port Plutus `preExecutePlutusScript` /
-  `plutusAutoScaleBlockfit`, script-spend script-integrity hashing, and
-  LocalSocket / Benchmark submission in strict-mirror-sized slices.
+- Shipped: finite `submitInEra` runtime wiring (R549):
+  `Script/Core.submitInEra` now evaluates finite key-spend generators,
+  updates wallets, supports `DiscardTX`, and drives `LocalSocket`
+  through NtC LocalTxSubmission.
+- Next: port Plutus `preExecutePlutusScript` /
+  `plutusAutoScaleBlockfit`, script-spend script-integrity hashing,
+  exact `DumpToFile` rendering, Benchmark submission, and
+  `json_highlevel` execution in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

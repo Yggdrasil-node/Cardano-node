@@ -5,11 +5,11 @@
 //! **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/Script/Core.hs`.
 //! Ports the state/query/runtime helper boundary consumed by
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
-//! deterministic state-only operations plus the static-budget Plutus
-//! context path. Auto-budget fitting, transaction stream evaluation,
-//! and submission still return explicit `TxGenError` boundaries until
-//! their downstream `GeneratorTx`, Plutus evaluator, and node-runtime
-//! mirrors land.
+//! deterministic state-only operations, the static-budget Plutus context
+//! path, finite key-spend transaction-stream evaluation, and LocalSocket
+//! submission. Auto-budget fitting, script-spend integrity, benchmark
+//! submission, and exact DumpToFile rendering still return explicit
+//! `TxGenError` boundaries until their downstream mirrors land.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +19,9 @@ use serde_json::Value;
 use yggdrasil_ledger::{CborDecode, Decoder, Encoder, PlutusData, ProtocolParameters};
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
-use yggdrasil_network::{AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect};
+use yggdrasil_network::{
+    AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
+};
 
 use crate::generator_tx::sized_metadata::{TxMetadata, mk_metadata};
 use crate::script::aeson;
@@ -38,12 +40,14 @@ use crate::tx_generator::fund::{
     FundWitness, ScriptWitnessForSpending, get_fund_coin, get_fund_tx_in,
 };
 use crate::tx_generator::plutus_context::read_script_data;
+use crate::tx_generator::tx::{GeneratedTx, gen_tx, source_transaction_preview, tx_size_in_bytes};
 use crate::tx_generator::utils::{include_change, inputs_to_outputs_with_fee};
 use crate::tx_generator::utxo::{
-    ScriptInAnyLang, ToUtxo, key_address, mk_utxo_script, mk_utxo_variant, script_address,
+    ScriptInAnyLang, ToUtxo, ToUtxoList, key_address, mk_utxo_script, mk_utxo_variant,
+    script_address,
 };
-use crate::types::{AnyCardanoEra, ExecutionUnits, Lovelace, TxGenTxParams};
-use crate::wallet::wallet_preview;
+use crate::types::{AnyCardanoEra, ExecutionUnits, Lovelace, PayWithChange, TxGenTxParams};
+use crate::wallet::{mangle_repeat, mangle_with_change, wallet_preview, wallet_source};
 
 /// Mainnet network magic used by node-to-client handshakes.
 ///
@@ -619,26 +623,43 @@ pub fn submit_action(
 pub fn submit_in_era(
     env: &mut Env,
     era: AnyCardanoEra,
-    _submit_mode: &SubmitMode,
+    submit_mode: &SubmitMode,
     generator: &Generator,
     tx_params: &TxGenTxParams,
 ) -> Result<(), Error> {
-    preflight_generator(env, era, generator, tx_params.tx_param_fee)?;
-    Err(lift_tx_gen_error(
-        "submitInEra: transaction generation is not yet implemented \
-         (pending GeneratorTx transaction/runtime slice after R543 value splitting)",
-    ))
+    let _protocol_parameters = get_protocol_parameters(env)?;
+    match submit_mode {
+        SubmitMode::NodeToNode(_) => Err(lift_tx_gen_error("NodeToNode deprecated: ToDo: remove")),
+        SubmitMode::Benchmark(_, _, _) => Err(lift_tx_gen_error(
+            "benchmarkTxStream: Benchmark submission is pending GeneratorTx/Submission wiring",
+        )),
+        SubmitMode::DumpToFile(_) => Err(lift_tx_gen_error(
+            "DumpToFile: upstream Show(Tx) rendering is pending Tx display parity evidence",
+        )),
+        SubmitMode::DiscardTx => {
+            let _txs = eval_generator(env, era, generator, tx_params, None)?;
+            Ok(())
+        }
+        SubmitMode::LocalSocket => {
+            let txs = eval_generator(env, era, generator, tx_params, None)?;
+            submit_generated_txs_local_socket(env, &txs)
+        }
+    }
 }
 
-fn preflight_generator(
+fn eval_generator(
     env: &mut Env,
     era: AnyCardanoEra,
     generator: &Generator,
-    fee: Lovelace,
-) -> Result<(), Error> {
+    tx_params: &TxGenTxParams,
+    limit: Option<usize>,
+) -> Result<Vec<GeneratedTx>, Error> {
+    if matches!(limit, Some(0)) {
+        return Ok(Vec::new());
+    }
+
     match generator {
         Generator::Split(wallet_name, pay_mode, pay_mode_change, coins) => {
-            let funds = wallet_preview(get_env_wallets(env, wallet_name)?, 1);
             let output = interpret_pay_mode(env, era, pay_mode)?;
             trace_debug(
                 env,
@@ -649,51 +670,271 @@ fn preflight_generator(
                 env,
                 &format!("split change address : {}", change.address_hex),
             );
-            let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
-            include_change(fee, coins, &have).map_err(lift_tx_gen_error)?;
-            Ok(())
+            let input_funds = take_wallet_funds(env, wallet_name, 1)?;
+            let have = input_funds.iter().map(get_fund_coin).collect::<Vec<_>>();
+            let split =
+                include_change(tx_params.tx_param_fee, coins, &have).map_err(lift_tx_gen_error)?;
+            let destinations = split_destinations(
+                &split,
+                &change.destination_wallet,
+                &output.destination_wallet,
+            );
+            let to_utxo_list = mangle_with_change(&change.to_utxo, &output.to_utxo, split)
+                .map_err(lift_tx_gen_error)?;
+            let generated = generate_and_store(
+                env,
+                TxGenerationPlan {
+                    era,
+                    collateral_funds: &[],
+                    fee: tx_params.tx_param_fee,
+                    metadata: None,
+                    input_funds: &input_funds,
+                    to_utxo_list,
+                    destinations,
+                },
+            )?;
+            Ok(vec![generated])
         }
         Generator::SplitN(wallet_name, pay_mode, count) => {
-            let funds = wallet_preview(get_env_wallets(env, wallet_name)?, 1);
             let output = interpret_pay_mode(env, era, pay_mode)?;
             trace_debug(
                 env,
                 &format!("SplitN output address : {}", output.address_hex),
             );
-            let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
-            inputs_to_outputs_with_fee(fee, *count, &have).map_err(lift_tx_gen_error)?;
-            Ok(())
+            let input_funds = take_wallet_funds(env, wallet_name, 1)?;
+            let have = input_funds.iter().map(get_fund_coin).collect::<Vec<_>>();
+            let values = inputs_to_outputs_with_fee(tx_params.tx_param_fee, *count, &have)
+                .map_err(lift_tx_gen_error)?;
+            let to_utxo_list =
+                mangle_repeat(&output.to_utxo, &values).map_err(lift_tx_gen_error)?;
+            let destinations = std::iter::repeat_n(output.destination_wallet.clone(), values.len())
+                .collect::<Vec<_>>();
+            let generated = generate_and_store(
+                env,
+                TxGenerationPlan {
+                    era,
+                    collateral_funds: &[],
+                    fee: tx_params.tx_param_fee,
+                    metadata: None,
+                    input_funds: &input_funds,
+                    to_utxo_list,
+                    destinations,
+                },
+            )?;
+            Ok(vec![generated])
         }
         Generator::NtoM(wallet_name, pay_mode, inputs, outputs, metadata_size, collateral) => {
-            let funds = wallet_preview(get_env_wallets(env, wallet_name)?, *inputs);
-            let _collaterals = select_collateral_funds(env, era, collateral.as_deref())?;
+            let collaterals = select_collateral_funds(env, era, collateral.as_deref())?;
             let output = interpret_pay_mode(env, era, pay_mode)?;
             trace_debug(
                 env,
                 &format!("NtoM output address : {}", output.address_hex),
             );
-            let _ = to_metadata(era, *metadata_size)?;
-            let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
-            inputs_to_outputs_with_fee(fee, *outputs, &have).map_err(lift_tx_gen_error)?;
-            Ok(())
+            let metadata = to_metadata(era, *metadata_size)?;
+            preview_ntom_transaction(
+                env,
+                NtoMPreviewPlan {
+                    era,
+                    wallet_name,
+                    inputs: *inputs,
+                    outputs: *outputs,
+                    fee: tx_params.tx_param_fee,
+                    collateral_funds: &collaterals.funds,
+                    metadata: metadata.as_ref(),
+                    output: &output,
+                },
+            )?;
+
+            let input_funds = take_wallet_funds(env, wallet_name, *inputs)?;
+            let have = input_funds.iter().map(get_fund_coin).collect::<Vec<_>>();
+            let values = inputs_to_outputs_with_fee(tx_params.tx_param_fee, *outputs, &have)
+                .map_err(lift_tx_gen_error)?;
+            let to_utxo_list =
+                mangle_repeat(&output.to_utxo, &values).map_err(lift_tx_gen_error)?;
+            let destinations = std::iter::repeat_n(output.destination_wallet.clone(), values.len())
+                .collect::<Vec<_>>();
+            let generated = generate_and_store(
+                env,
+                TxGenerationPlan {
+                    era,
+                    collateral_funds: &collaterals.funds,
+                    fee: tx_params.tx_param_fee,
+                    metadata: metadata.as_ref(),
+                    input_funds: &input_funds,
+                    to_utxo_list,
+                    destinations,
+                },
+            )?;
+            Ok(vec![generated])
         }
-        Generator::Sequence(generators) | Generator::RoundRobin(generators) => {
+        Generator::Sequence(generators) => {
+            let mut generated = Vec::new();
             for generator in generators {
-                preflight_generator(env, era, generator, fee)?;
+                let remaining = limit.map(|max| max.saturating_sub(generated.len()));
+                if matches!(remaining, Some(0)) {
+                    break;
+                }
+                generated.extend(eval_generator(env, era, generator, tx_params, remaining)?);
             }
-            Ok(())
+            Ok(generated)
         }
-        Generator::Cycle(generator) | Generator::Take(_, generator) => {
-            preflight_generator(env, era, generator, fee)
-        }
-        Generator::OneOf(generators) => {
-            for (generator, _weight) in generators {
-                preflight_generator(env, era, generator, fee)?;
+        Generator::Cycle(generator) => {
+            let Some(limit) = limit else {
+                return Err(lift_tx_gen_error(
+                    "Cycle: finite submit modes require an enclosing Take",
+                ));
+            };
+            let mut generated = Vec::new();
+            while generated.len() < limit {
+                let remaining = limit - generated.len();
+                let batch = eval_generator(env, era, generator, tx_params, Some(remaining))?;
+                if batch.is_empty() {
+                    return Err(lift_tx_gen_error(
+                        "Cycle: inner generator produced no transactions",
+                    ));
+                }
+                generated.extend(batch);
             }
-            Ok(())
+            Ok(generated)
         }
-        Generator::SecureGenesis(_, _, _) => Ok(()),
+        Generator::Take(count, generator) => {
+            let effective_limit = limit.map_or(*count, |max| max.min(*count));
+            eval_generator(env, era, generator, tx_params, Some(effective_limit))
+        }
+        Generator::RoundRobin(_) => Err(lift_tx_gen_error(
+            "RoundRobin: interleaved transaction streams are pending GeneratorTx scheduling",
+        )),
+        Generator::OneOf(_) => Err(lift_tx_gen_error(
+            "OneOf: weighted transaction streams are pending QuickCheck-style generator wiring",
+        )),
+        Generator::SecureGenesis(_, _, _) => Err(lift_tx_gen_error(
+            "SecureGenesis: genesisSecureInitialFund is pending Genesis transaction wiring",
+        )),
     }
+}
+
+fn take_wallet_funds(env: &mut Env, wallet_name: &str, count: usize) -> Result<Vec<Fund>, Error> {
+    let wallet = get_env_wallets_mut(env, wallet_name)?;
+    wallet_source(wallet, count).map_err(lift_tx_gen_error)
+}
+
+fn split_destinations(
+    split: &PayWithChange,
+    change_wallet: &str,
+    payment_wallet: &str,
+) -> Vec<String> {
+    match split {
+        PayWithChange::PayExact(payments) => {
+            std::iter::repeat_n(payment_wallet.to_string(), payments.len()).collect()
+        }
+        PayWithChange::PayWithChange(_, payments) => {
+            let mut destinations = Vec::with_capacity(payments.len() + 1);
+            destinations.push(change_wallet.to_string());
+            destinations.extend(std::iter::repeat_n(
+                payment_wallet.to_string(),
+                payments.len(),
+            ));
+            destinations
+        }
+    }
+}
+
+struct TxGenerationPlan<'a> {
+    era: AnyCardanoEra,
+    collateral_funds: &'a [Fund],
+    fee: Lovelace,
+    metadata: Option<&'a TxMetadata>,
+    input_funds: &'a [Fund],
+    to_utxo_list: ToUtxoList,
+    destinations: Vec<String>,
+}
+
+fn generate_and_store(env: &mut Env, plan: TxGenerationPlan<'_>) -> Result<GeneratedTx, Error> {
+    let generated = gen_tx(
+        plan.era,
+        &env.env_keys,
+        plan.collateral_funds,
+        plan.fee,
+        plan.metadata,
+        plan.input_funds,
+        &plan.to_utxo_list.outputs,
+    )
+    .map_err(|err| lift_tx_gen_error(err.to_string()))?;
+    store_generated_funds(env, &plan.to_utxo_list, &plan.destinations, &generated)?;
+    Ok(generated)
+}
+
+fn store_generated_funds(
+    env: &mut Env,
+    to_utxo_list: &ToUtxoList,
+    destinations: &[String],
+    generated: &GeneratedTx,
+) -> Result<(), Error> {
+    let tx_id_hex = hex::encode(generated.tx_id.0);
+    let funds = to_utxo_list.funds_for_tx_id(&tx_id_hex);
+    if funds.len() != destinations.len() {
+        return Err(lift_tx_gen_error(format!(
+            "submitInEra: generated {} funds for {} destinations",
+            funds.len(),
+            destinations.len()
+        )));
+    }
+
+    for (wallet_name, fund) in destinations.iter().zip(funds) {
+        get_env_wallets_mut(env, wallet_name)?.insert_fund(fund);
+    }
+    Ok(())
+}
+
+struct NtoMPreviewPlan<'a> {
+    era: AnyCardanoEra,
+    fee: Lovelace,
+    inputs: usize,
+    outputs: usize,
+    wallet_name: &'a str,
+    collateral_funds: &'a [Fund],
+    metadata: Option<&'a TxMetadata>,
+    output: &'a InterpretedPayMode,
+}
+
+fn preview_ntom_transaction(env: &mut Env, plan: NtoMPreviewPlan<'_>) -> Result<(), Error> {
+    let preview_funds = wallet_preview(get_env_wallets(env, plan.wallet_name)?, plan.inputs);
+    let preview = source_transaction_preview(
+        |funds, tx_outs| {
+            gen_tx(
+                plan.era,
+                &env.env_keys,
+                plan.collateral_funds,
+                plan.fee,
+                plan.metadata,
+                funds,
+                tx_outs,
+            )
+        },
+        &preview_funds,
+        |coins| {
+            inputs_to_outputs_with_fee(plan.fee, plan.outputs, coins)
+                .map_err(crate::types::TxGenError::TxGenError)
+        },
+        |values: Vec<Lovelace>| {
+            mangle_repeat(&plan.output.to_utxo, &values)
+                .map_err(crate::types::TxGenError::TxGenError)
+        },
+    );
+
+    match preview {
+        Ok(tx) => {
+            trace_debug(
+                env,
+                &format!("Projected Tx size in bytes: {}", tx_size_in_bytes(&tx)),
+            );
+            trace_debug(env, "Projected Tx fee in Coin: Nothing");
+        }
+        Err(err) => {
+            trace_debug(env, &format!("Error creating Tx preview: {err}"));
+        }
+    }
+    Ok(())
 }
 
 fn collateral_supported_in_era(era: AnyCardanoEra) -> bool {
@@ -755,6 +996,66 @@ fn run_local_state_query(
             query_bytes,
             query_label,
         ))
+}
+
+fn submit_generated_txs_local_socket(env: &Env, txs: &[GeneratedTx]) -> Result<(), Error> {
+    let connect_info = get_local_connect_info(env)?;
+    run_local_tx_submission(&connect_info, txs)
+}
+
+fn run_local_tx_submission(
+    connect_info: &LocalConnectInfo,
+    txs: &[GeneratedTx],
+) -> Result<(), Error> {
+    #[cfg(not(unix))]
+    {
+        let _ = (connect_info, txs);
+        Err(lift_tx_gen_error(
+            "LocalTxSubmission over node-to-client sockets requires Unix-domain socket support",
+        ))
+    }
+
+    #[cfg(unix)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|err| lift_tx_gen_error(format!("LocalTxSubmission runtime: {err}")))?
+        .block_on(run_local_tx_submission_async(connect_info, txs))
+}
+
+#[cfg(unix)]
+async fn run_local_tx_submission_async(
+    connect_info: &LocalConnectInfo,
+    txs: &[GeneratedTx],
+) -> Result<(), Error> {
+    let mut conn = ntc_connect(&connect_info.socket_path, connect_info.network_magic, true)
+        .await
+        .map_err(|err| {
+            lift_tx_gen_error(format!(
+                "LocalTxSubmission connect {} (network_magic={}): {err}",
+                connect_info.socket_path.display(),
+                connect_info.network_magic
+            ))
+        })?;
+    let tx_handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_TX_SUBMISSION)
+        .ok_or_else(|| lift_tx_gen_error("NTC_LOCAL_TX_SUBMISSION mini-protocol handle missing"))?;
+    let mut client = LocalTxSubmissionClient::new(tx_handle);
+    for tx in txs {
+        client.submit(tx.tx.raw_cbor()).await.map_err(|err| {
+            lift_tx_gen_error(format!(
+                "LocalTxSubmission rejected {}: {err}",
+                hex::encode(tx.tx_id.0)
+            ))
+        })?;
+    }
+    client
+        .done()
+        .await
+        .map_err(|err| lift_tx_gen_error(format!("LocalTxSubmission done failed: {err}")))?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -911,6 +1212,8 @@ mod tests {
     use crate::types::{PlutusScriptRef, TxGenPlutusType};
     use std::path::PathBuf;
 
+    const INPUT_TX_ID: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
     fn signing_key(byte: u8) -> SigningKeyEnvelope {
         SigningKeyEnvelope::payment_signing_key_shelley(format!("5820{}", hex::encode([byte; 32])))
     }
@@ -1061,6 +1364,7 @@ mod tests {
     fn submit_in_era_preflights_ntom_metadata_size() {
         let mut env = Env::empty_env();
         seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
         add_fund(
             &mut env,
             AnyCardanoEra::Conway,
@@ -1103,6 +1407,7 @@ mod tests {
     fn submit_in_era_preflights_splitn_value_split() {
         let mut env = Env::empty_env();
         seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
         add_fund(&mut env, AnyCardanoEra::Conway, "source", "abc#0", 9, "key").expect("fund");
         let generator = Generator::SplitN(
             "source".to_string(),
@@ -1129,6 +1434,139 @@ mod tests {
                 "inputsToOutputsWithFee: insufficient funds, inputs=[9], fee=10".to_string()
             )
         );
+    }
+
+    #[test]
+    fn discard_submit_generates_key_spend_tx_and_updates_destination_wallet() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Conway,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            100,
+            "key",
+        )
+        .expect("source fund");
+        let generator = Generator::SplitN(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("discard submit");
+
+        assert!(
+            get_env_wallets(&env, "source")
+                .expect("source")
+                .funds()
+                .is_empty()
+        );
+        let dest_funds = get_env_wallets(&env, "dest").expect("dest").funds();
+        assert_eq!(dest_funds.len(), 1);
+        assert_eq!(dest_funds[0].lovelace, 90);
+        assert_ne!(dest_funds[0].tx_in, format!("{INPUT_TX_ID}#0"));
+    }
+
+    #[test]
+    fn split_submit_stores_change_and_payments_in_their_target_wallets() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Conway,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            1_000,
+            "key",
+        )
+        .expect("source fund");
+        let generator = Generator::Split(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            PayMode::PayToAddr("key".to_string(), "source".to_string()),
+            vec![100, 200],
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("split submit");
+
+        let source_funds = get_env_wallets(&env, "source").expect("source").funds();
+        let dest_funds = get_env_wallets(&env, "dest").expect("dest").funds();
+        assert_eq!(source_funds.len(), 1);
+        assert_eq!(source_funds[0].lovelace, 690);
+        assert_eq!(
+            dest_funds
+                .iter()
+                .map(|fund| fund.lovelace)
+                .collect::<Vec<_>>(),
+            vec![100, 200]
+        );
+    }
+
+    #[test]
+    fn take_cycle_generates_the_requested_number_of_transactions() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Conway,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            1_000,
+            "key",
+        )
+        .expect("source fund");
+        let generator = Generator::Take(
+            3,
+            Box::new(Generator::Cycle(Box::new(Generator::SplitN(
+                "source".to_string(),
+                PayMode::PayToAddr("key".to_string(), "source".to_string()),
+                1,
+            )))),
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("cycle submit");
+
+        let source_funds = get_env_wallets(&env, "source").expect("source").funds();
+        assert_eq!(source_funds.len(), 1);
+        assert_eq!(source_funds[0].lovelace, 970);
     }
 
     #[test]
