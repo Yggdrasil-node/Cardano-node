@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R543 Utils/value-splitting slice). The old
+**Status:** `partial` (post-R544 UTxO output-builder slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -121,6 +121,11 @@ approved synthesis area from the sister-tools plan.
   `includeChange`, and the upstream `mkTxIn` parser; `Script/Core` now
   preflights `Split`, `SplitN`, and `NtoM` wallet value splitting
   before the remaining transaction-build sentinel.
+- Shipped R544: `Cardano.TxGenerator.UTxO` output-builder surface.
+  `tx_generator/utxo.rs` ports `ToUTxO`, `ToUTxOList`,
+  `makeToUTxOList`, key-address derivation, and the key-witness
+  `mkUTxOVariant` path across Shelley-family output encodings. Script
+  outputs stay with the Plutus witness-builder slice.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the GeneratorTx
   construction and submission slices land.
@@ -196,8 +201,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `inputsToOutputsWithFee`, `includeChange`, `mkTxIn`, and
   `Script/Core.submitInEra` value preflight for `Split`, `SplitN`, and
   `NtoM`.
-- Next: port UTxO output builders plus the remaining GeneratorTx transaction construction and LocalSocket /
-  Benchmark submission in strict-mirror-sized slices.
+- Shipped: TxGenerator UTxO output builders (R544):
+  `ToUTxO`, `ToUTxOList`, `makeToUTxOList`, key-address derivation,
+  and key-witnessed `mkUTxOVariant` output/fund construction.
+- Next: port the remaining GeneratorTx transaction construction,
+  script-output/witness plumbing, and LocalSocket / Benchmark
+  submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T06:32:47Z
-- Files described: 1406
+- Generated at: 2026-05-20T06:50:30Z
+- Files described: 1408
 
 ## Workspace
 
@@ -1793,6 +1793,8 @@
   - FIFO queue used by the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Internal/Fifo.hs`.
 - `crates/tools/tx-generator/src/tx_generator/utils.rs`
   - Utility functions used across the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Utils.hs`.
+- `crates/tools/tx-generator/src/tx_generator/utxo.rs`
+  - UTxO output builders for transaction generation. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/UTxO.hs`.
 - `crates/tools/tx-generator/src/types.rs`
   - High-level transaction-generator configuration types.
   - Mirrors the upstream TxGenerator.Types subset required by NixService and later Compiler slices.
@@ -2205,6 +2207,8 @@
   - Round R542 - tx-generator Fund/FundQueue/Wallet mirror: Ported the upstream wallet/fund queue support used by.
 - `docs/operational-runs/2026-05-20-round-543-tx-generator-utils-value-splitting.md`
   - Round R543 - tx-generator Utils value-splitting mirror: Ported the pure value-splitting helpers used by.
+- `docs/operational-runs/2026-05-20-round-544-tx-generator-utxo.md`
+  - Round R544 - tx-generator UTxO output-builder mirror: Ported the key-output builder surface from:.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

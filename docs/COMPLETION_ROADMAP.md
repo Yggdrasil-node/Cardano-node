@@ -251,9 +251,13 @@ own parser / generator / submission implementation plus upstream
   splitting surface (`inputsToOutputsWithFee`, `includeChange`,
   `mkTxIn`) and wires `Script/Core.submitInEra` to preflight `Split`,
   `SplitN`, and `NtoM` wallet value splitting before transaction
-  assembly. The remaining tx-generator blocker is UTxO output builders,
-  transaction assembly, GeneratorTx / Submission implementation, and
-  upstream comparison evidence.
+  assembly. R544 added the `Cardano.TxGenerator.UTxO` key-output
+  builder surface (`ToUTxO`, `ToUTxOList`, `makeToUTxOList`, and
+  key-witnessed `mkUTxOVariant`) using ledger-native Shelley-family
+  outputs and pure-Rust signing-key derivation. The remaining
+  tx-generator blocker is transaction assembly, script-output/witness
+  plumbing, GeneratorTx / Submission implementation, and upstream
+  comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
