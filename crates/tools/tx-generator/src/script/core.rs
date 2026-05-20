@@ -1669,14 +1669,8 @@ fn show_conway_pparams_update(
     if ppu.cost_models.is_some() {
         set_fields.push("cppCostModels");
     }
-    if ppu.price_mem.is_some() || ppu.price_step.is_some() {
-        set_fields.push("cppPrices");
-    }
-    if ppu.max_tx_ex_units.is_some() {
-        set_fields.push("cppMaxTxExUnits");
-    }
-    if ppu.max_block_ex_units.is_some() {
-        set_fields.push("cppMaxBlockExUnits");
+    if ppu.price_mem.is_some() != ppu.price_step.is_some() {
+        set_fields.push("cppPrices (price_mem and price_step must be set together)");
     }
     if ppu.pool_voting_thresholds.is_some() {
         set_fields.push("cppPoolVotingThresholds");
@@ -1700,7 +1694,7 @@ fn show_conway_pparams_update(
     // primitive Show. Committee size, gov action deposit, etc match
     // similarly.
     Ok(format!(
-        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = {}, cppNOpt = {}, cppA0 = {}, cppRho = {}, cppTau = {}, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = SNothing, cppMaxTxExUnits = SNothing, cppMaxBlockExUnits = SNothing, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = SNothing, cppDRepVotingThresholds = SNothing, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = {}, cppGovActionLifetime = {}, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = {}, cppMinFeeRefScriptCostPerByte = {}}})",
+        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = {}, cppNOpt = {}, cppA0 = {}, cppRho = {}, cppTau = {}, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = {}, cppMaxTxExUnits = {}, cppMaxBlockExUnits = {}, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = SNothing, cppDRepVotingThresholds = SNothing, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = {}, cppGovActionLifetime = {}, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = {}, cppMinFeeRefScriptCostPerByte = {}}})",
         show_pparam_compact_coin(ppu.min_fee_a),
         show_pparam_compact_coin(ppu.min_fee_b),
         show_pparam_word(ppu.max_block_body_size),
@@ -1715,6 +1709,9 @@ fn show_conway_pparams_update(
         show_pparam_ratio_interval(ppu.tau),
         show_pparam_compact_coin(ppu.min_pool_cost),
         show_pparam_compact_coin(ppu.coins_per_utxo_byte),
+        show_pparam_prices(ppu.price_mem, ppu.price_step),
+        show_pparam_ex_units(ppu.max_tx_ex_units.as_ref()),
+        show_pparam_ex_units(ppu.max_block_ex_units.as_ref()),
         show_pparam_word(ppu.max_val_size),
         show_pparam_word(ppu.collateral_percentage),
         show_pparam_word(ppu.max_collateral_inputs),
@@ -1751,6 +1748,52 @@ fn show_pparam_ratio_interval(value: Option<yggdrasil_ledger::UnitInterval>) -> 
     match value {
         None => "SNothing".to_string(),
         Some(ui) => format!("SJust {}", show_unit_interval(ui)),
+    }
+}
+
+/// Render a `StrictMaybe Prices` PParamsUpdate field. Upstream `Prices` is
+/// stock-derived record Show: `Prices {prMem = <num> % <den>, prSteps =
+/// <num> % <den>}`. yggdrasil splits Prices into two `price_mem` and
+/// `price_step` Option<UnitInterval> fields; both must be set together to
+/// form a valid Prices value. Empty pair renders as `SNothing`, both Some
+/// renders as `SJust (Prices {...})`. The mixed-Some/None case is caught
+/// earlier by the field-rejection list.
+fn show_pparam_prices(
+    price_mem: Option<yggdrasil_ledger::UnitInterval>,
+    price_step: Option<yggdrasil_ledger::UnitInterval>,
+) -> String {
+    match (price_mem, price_step) {
+        (Some(mem), Some(step)) => format!(
+            "SJust (Prices {{prMem = {}, prSteps = {}}})",
+            // Strip the always-wrapping parens from show_unit_interval —
+            // record fields show at p=0 so the inner ratio renders bare.
+            strip_outer_parens(&show_unit_interval(mem)),
+            strip_outer_parens(&show_unit_interval(step)),
+        ),
+        _ => "SNothing".to_string(),
+    }
+}
+
+/// Render a `StrictMaybe OrdExUnits` PParamsUpdate field. `OrdExUnits` is
+/// `newtype OrdExUnits = OrdExUnits ExUnits deriving newtype Show`, so its
+/// Show delegates to `Show ExUnits` (record-shaped). Inside `SJust` at p=11
+/// the ExUnits record wraps with parens: `SJust (ExUnits {exUnitsMem =
+/// <m>, exUnitsSteps = <s>})`.
+fn show_pparam_ex_units(value: Option<&yggdrasil_ledger::eras::alonzo::ExUnits>) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(eu) => format!("SJust ({})", show_alonzo_ex_units(eu)),
+    }
+}
+
+/// Strip a single layer of outer parens from a string. Used when a helper
+/// renders a value wrapped in parens for constructor-argument safety but
+/// a caller needs the bare form (e.g. inside a record field at p=0).
+fn strip_outer_parens(s: &str) -> &str {
+    if s.starts_with('(') && s.ends_with(')') {
+        &s[1..s.len() - 1]
+    } else {
+        s
     }
 }
 
@@ -4114,6 +4157,71 @@ mod tests {
         assert!(rendered.contains("cppRho = SJust (3 % 1000)"));
         assert!(rendered.contains("cppTau = SJust (2 % 10)"));
         assert!(rendered.contains("cppMinFeeRefScriptCostPerByte = SJust (44 % 1)"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_parameter_change_with_prices_and_exunits() {
+        // cppPrices: requires both price_mem and price_step set.
+        // cppMaxTxExUnits / cppMaxBlockExUnits: ExUnits record.
+        let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            price_mem: Some(yggdrasil_ledger::UnitInterval {
+                numerator: 577,
+                denominator: 10000,
+            }),
+            price_step: Some(yggdrasil_ledger::UnitInterval {
+                numerator: 721,
+                denominator: 10_000_000,
+            }),
+            max_tx_ex_units: Some(yggdrasil_ledger::eras::alonzo::ExUnits {
+                mem: 14_000_000,
+                steps: 10_000_000_000,
+            }),
+            max_block_ex_units: Some(yggdrasil_ledger::eras::alonzo::ExUnits {
+                mem: 62_000_000,
+                steps: 20_000_000_000,
+            }),
+            ..Default::default()
+        };
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: update,
+            guardrails_script_hash: None,
+        };
+        let rendered = show_conway_gov_action(&parameter_change)
+            .expect("parameter change with prices+exunits");
+        assert!(rendered.contains(
+            "cppPrices = SJust (Prices {prMem = 577 % 10000, prSteps = 721 % 10000000})"
+        ));
+        assert!(rendered.contains(
+            "cppMaxTxExUnits = SJust (ExUnits {exUnitsMem = 14000000, exUnitsSteps = 10000000000})"
+        ));
+        assert!(rendered.contains(
+            "cppMaxBlockExUnits = SJust (ExUnits {exUnitsMem = 62000000, exUnitsSteps = 20000000000})"
+        ));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_pparam_prices_rejects_unpaired() {
+        // Setting only price_mem without price_step must be reported.
+        let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            price_mem: Some(yggdrasil_ledger::UnitInterval {
+                numerator: 1,
+                denominator: 2,
+            }),
+            ..Default::default()
+        };
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: update,
+            guardrails_script_hash: None,
+        };
+        let err =
+            show_conway_gov_action(&parameter_change).expect_err("unpaired prices should reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("cppPrices") && msg.contains("price_mem and price_step"),
+            "expected pairing message: {msg}"
+        );
     }
 
     #[test]

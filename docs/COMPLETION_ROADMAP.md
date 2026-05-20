@@ -430,10 +430,13 @@ own parser / generator / submission implementation plus upstream
   R585 wired 8 interval PParamsUpdate fields through
   `show_pparam_epoch_interval` (4 EpochInterval as `SJust
   (EpochInterval N)`) and `show_pparam_ratio_interval` (4
-  UnitInterval/NonNegativeInterval as `SJust (num % den)`). 24/30
-  Conway PParamsUpdate fields now render. The remaining
-  tx-generator blockers are per-type Shows for 6 composite fields
-  (`Prices`, `OrdExUnits` x2, `CostModels`,
+  UnitInterval/NonNegativeInterval as `SJust (num % den)`). R586
+  wired 3 more composite PParamsUpdate fields: `cppPrices`
+  (Prices record combining yggdrasil's split `price_mem` +
+  `price_step`), `cppMaxTxExUnits`, and `cppMaxBlockExUnits`
+  (`OrdExUnits` → ExUnits Show). 27/30 Conway PParamsUpdate fields
+  now render. The remaining tx-generator blockers are per-type
+  Shows for 3 composite fields (`CostModels`,
   `PoolVotingThresholds`, `DRepVotingThresholds`) and
   upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
