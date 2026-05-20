@@ -20,7 +20,8 @@ another. A small set of stale current-status claims is guarded here too:
 obsolete node-local LSQ wording, old cardano-cli counts and gate wording, old
 three-command node-wrapper cardano-cli subset wording, stale active-migration
 wording for the closed cardano-cli C-arc, obsolete parity-summary baselines,
-and the closed workspace-member gap.
+obsolete proof/upstream verification baselines, and the closed
+workspace-member gap.
 
 The vendored Haskell reference snapshot is allowed to contain source files and
 reference artifacts, but it must not retain nested Git metadata. It is a
@@ -378,7 +379,20 @@ STALE_PATTERNS = {
     "stale parity summary baseline wording": re.compile(
         r"394\+ parity rounds completed|"
         r"Workspace tests: \*\*5,638 passing|"
-        r"post-R394"
+        r"post-R394|"
+        r"249 parity rounds covering"
+    ),
+    "stale parity proof baseline wording": re.compile(
+        r"Cumulative arc\*\*: R1\s*(?:→|->)\s*R320\+|"
+        r"Workspace tests\*\*: 4,982 passing|"
+        r'canonical reference for "what works end-to-end" today|'
+        r"check-parity-matrix\.py` over 8 entries"
+    ),
+    "stale upstream parity baseline wording": re.compile(
+        r"Last updated: 2026-05-05; header|"
+        r"Five-gate snapshot \(post-R311|"
+        r"`cargo test --workspace --all-features`: 4,982 passing / 0 failing|"
+        r"`check-parity-matrix\.py` \(8 entries"
     ),
     "stale tx-generator cardano-cli prerequisite gate": re.compile(
         r"cardano-cli C-arc CLI-MVS|"
@@ -456,6 +470,36 @@ SELF_TEST_STALE_CASES = (
         "stale parity summary baseline wording",
     ),
     ("post-R394", "stale parity summary baseline wording"),
+    ("249 parity rounds covering", "stale parity summary baseline wording"),
+    ("**Cumulative arc**: R1 -> R320+", "stale parity proof baseline wording"),
+    (
+        "**Workspace tests**: 4,982 passing, 0 failing",
+        "stale parity proof baseline wording",
+    ),
+    (
+        'canonical reference for "what works end-to-end" today',
+        "stale parity proof baseline wording",
+    ),
+    (
+        "check-parity-matrix.py` over 8 entries",
+        "stale parity proof baseline wording",
+    ),
+    (
+        "Last updated: 2026-05-05; header + verification-baseline refreshed",
+        "stale upstream parity baseline wording",
+    ),
+    (
+        "### Five-gate snapshot (post-R311, 2026-05-09)",
+        "stale upstream parity baseline wording",
+    ),
+    (
+        "`cargo test --workspace --all-features`: 4,982 passing / 0 failing",
+        "stale upstream parity baseline wording",
+    ),
+    (
+        "`check-parity-matrix.py` (8 entries against tag `11.0.1`)",
+        "stale upstream parity baseline wording",
+    ),
     (
         "tx-generator on the cardano-cli CLI-MVS (A2)",
         "stale tx-generator cardano-cli prerequisite gate",

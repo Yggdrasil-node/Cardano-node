@@ -6,12 +6,15 @@ Keep these documents synchronized with the implemented workspace, not with specu
 
 `docs/` carries policy + parity + operator-facing markdown, not Rust
 code, so the workspace strict-mirror file-policy (R274+) does not
-apply directly here. Three validators guard this tree's invariants:
+apply directly here. Four validators guard this tree's invariants:
 
 - `python3 scripts/check-parity-matrix.py` (CI gate since R303) —
   validates `parity-matrix.json` schema + every
   `haskell_reference.path` and `rust_surface.path` exists on disk.
   This directory hosts the source-of-truth `parity-matrix.json`.
+- `python3 scripts/check-stale-placement.py` — rejects current-facing
+  stale post-reorganization paths and status baselines in living docs,
+  including obsolete parity-summary/proof/upstream verification claims.
 - `python3 scripts/check-fixture-manifest.py` (CI gate since R303) —
   cross-checks the `cardano-base` SHA pin across
   `crates/node/config/src/upstream_pins.rs::UPSTREAM_CARDANO_BASE_COMMIT`,

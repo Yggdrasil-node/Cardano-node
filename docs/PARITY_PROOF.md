@@ -7,18 +7,18 @@ nav_order: 1
 
 # Yggdrasil Parity Proof Report
 
-**Document round**: §1–§9 evidence captured at R248 (2026-05-02);
-header refreshed R308 (2026-05-09); R313–R320 docstring-classification
-arc note added R321 (2026-05-09).
-**Cumulative arc**: R1 → R320+
+**Document round**: §1-§9 evidence captured at R248 (2026-05-02);
+header refreshed R308 (2026-05-09); R313-R320 docstring-classification
+arc note added R321 (2026-05-09); live-status header refreshed after
+the R517-R529 post-reorganization cleanup (2026-05-20).
+**Cumulative arc**: R1 -> R529+ for the implementation journal; the
+detailed proof body below remains the preserved R248/R320 evidence set.
 **Build**: `target/release/yggdrasil-node` (Cargo `release` profile, Rust 1.95.0)
-**Workspace tests**: 4,982 passing, 0 failing (post-R336 sister-tools Phase A skeleton milestone; +126 since R325 baseline). Five gates clean
-(`cargo fmt --check`, `cargo check-all`, `cargo lint`, `cargo test-all`,
-`python3 scripts/check-strict-mirror.py --fail-on-violation`); the
-parity-flow validators clean too (`check-parity-matrix.py` over 8
-entries against tag `11.0.1`; `check-fixture-manifest.py` over the
-`cardano-base` SHA pin matrix; `check-reference-artifacts.py` over the
-`11.0.1` install with 9 binaries + 3 network bundles).
+**Workspace tests**: latest broad baseline captured 2026-05-17 on Rust
+1.95.0: 6,519 passing, 0 failing, 3 ignored, with `cargo fmt --all --
+--check`, `cargo check-all`, `cargo lint`, and `cargo test-all` clean.
+The R529 docs/guard refresh revalidated focused status gates, not the
+full cargo suite.
 
 > **R273-rename + R274–R311 file-mirror & tech-debt arc + R313–R320
 > docstring-classification cleanup** (closed 2026-05-09). The
@@ -49,10 +49,12 @@ entries against tag `11.0.1`; `check-fixture-manifest.py` over the
 > the file-naming policy and reduced tech debt without changing any
 > closure status.
 
-This report documents yggdrasil's parity status against upstream
-IntersectMBO Cardano node / cardano-cli behavior. It is the
-canonical reference for "what works end-to-end" today and what
-remains. Each claim cites the round that closed it and the
+This report preserves yggdrasil's accumulated proof evidence against
+upstream IntersectMBO Cardano node / cardano-cli behavior. Use
+[`docs/PARITY_SUMMARY.md`](PARITY_SUMMARY.md),
+[`docs/COMPLETION_ROADMAP.md`](COMPLETION_ROADMAP.md), and
+[`docs/parity-matrix.json`](parity-matrix.json) for the current live
+status; each proof claim below cites the round that closed it and the
 operational evidence captured under `docs/operational-runs/`.
 
 ---

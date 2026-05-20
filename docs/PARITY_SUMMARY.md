@@ -55,7 +55,7 @@ Historical R326-R394 detail remains below for audit continuity, but the current 
 | **CLI & Config** | JSON+YAML config loading + genesis loading + topology file loading + query/submit wrappers complete | ✅ 100% |
 | **Monitoring** | NodeMetrics (40+ counters/gauges/histograms) + Prometheus + coloured stdout + detail levels + upstream backend recognition + Forwarder socket transport | ✅ 98% |
 
-**Overall Node Readiness**: ~99% (can sync official networks, validates blocks correctly, comprehensive monitoring with trace forwarding wired, 249 parity rounds covering 745+ upstream rule areas verified with zero open code-level parity blockers)
+**Overall Node Readiness**: high-parity implementation suitable for continued operator-evidence closure. The node can sync official networks and validates blocks correctly on the documented paths, while the remaining full-completion gates are the open parity gaps and operator-side evidence listed at the top of this document and in `docs/COMPLETION_ROADMAP.md`.
 
 ---
 
