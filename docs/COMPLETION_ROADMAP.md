@@ -601,13 +601,23 @@ tag 2 deliberately skipped per upstream) and wired
 `ShelleyDelplPredFailure::PoolFailure(Vec<u8>)` →
 `PoolFailure(ShelleyPoolPredFailure)`. The simplest variant
 `StakePoolNotRegisteredOnKeyPOOL` (tag 0, single 28-byte
-KeyHash) carries a fully typed payload; tags 1/3/4/5/6 (Mismatch
-+ KeyHash-Int variants) keep raw payloads pending the
-Mismatch-RelGT / Mismatch-RelGTEQ / Mismatch-RelEQ + KeyHash-Int
-ports. The LEDGER → DELEGS → DELPL → POOL chain now renders
-typed end-to-end through nested Display. Only the
-`ShelleyDelegPredFailure` decoder (DELPL tag 1, the sibling
-sub-rule), the 5 remaining POOL variant payloads, per-TxOut
+KeyHash) carries a fully typed payload; tags 1/3/4/5/6 keep raw
+payloads pending Mismatch + KeyHash-Int ports. R615 (2026-05-21)
+added `ShelleyDelegPredFailure` 16-variant scaffold (tags 0-9 +
+11-16 mirroring upstream's `Cardano.Ledger.Shelley.Rules.Deleg`
+— tag 10 deliberately skipped) and wired
+`ShelleyDelplPredFailure::DelegFailure(Vec<u8>)` →
+`DelegFailure(ShelleyDelegPredFailure)`. **9 of 16 DELEG variants
+now carry typed payloads**: no-payload tags 4/11/12/14 (Wrong
+Cert type, MIR Transfer/Negatives/ProducesNegative); tag 2
+(Coin); tags 5/6/16 (KeyHash); tag 9 (VRFVerKeyHash). Variants
+0/1/3/7/8/13/15 (Credential/MIRPot/Mismatch SlotNo) keep raw
+payloads. New `VrfVerKeyHash` 32-byte newtype mirroring upstream
+`VRFVerKeyHash` record Show. The LEDGER → DELEGS → DELPL → POOL
+/ DELEG chain now renders typed end-to-end through nested
+Display for the substantial majority of leaves. Only the 5
+remaining POOL variant payloads (1/3/4/5/6), the 7 remaining
+DELEG variants (Credential/MIRPot/Mismatch), per-TxOut
 Shelley/Babbage typed parse, and full typed `Addr` parse remain
 pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw

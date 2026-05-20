@@ -2629,9 +2629,9 @@ pub enum ShelleyDelplPredFailure {
     /// Tag 0: nested POOL sub-rule failure (R614 wired to typed
     /// `ShelleyPoolPredFailure`).
     PoolFailure(ShelleyPoolPredFailure),
-    /// Tag 1: nested DELEG sub-rule failure. Raw payload pending
-    /// `ShelleyDelegPredFailure` decoder.
-    DelegFailure(Vec<u8>),
+    /// Tag 1: nested DELEG sub-rule failure (R615 wired to typed
+    /// `ShelleyDelegPredFailure`).
+    DelegFailure(ShelleyDelegPredFailure),
 }
 
 impl ShelleyDelplPredFailure {
@@ -2682,8 +2682,11 @@ impl ShelleyDelplPredFailure {
                 let pool = ShelleyPoolPredFailure::from_cbor(payload_bytes)?;
                 Ok(Self::PoolFailure(pool))
             }
-            // Tag 1: DELEG sub-rule raw pending its decoder.
-            1 => Ok(Self::DelegFailure(payload_bytes.to_vec())),
+            // Tag 1: typed DELEG sub-rule (R615).
+            1 => {
+                let deleg = ShelleyDelegPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::DelegFailure(deleg))
+            }
             other => Err(DecoderError(format!(
                 "ShelleyDelplPredFailure: unknown variant tag {other}"
             ))),
@@ -2699,9 +2702,7 @@ impl fmt::Display for ShelleyDelplPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PoolFailure(pool) => write!(f, "PoolFailure ({pool})"),
-            Self::DelegFailure(b) => {
-                write!(f, "DelegFailure <raw-cbor {} bytes>", b.len())
-            }
+            Self::DelegFailure(deleg) => write!(f, "DelegFailure ({deleg})"),
         }
     }
 }
@@ -2860,6 +2861,316 @@ impl fmt::Display for ShelleyPoolPredFailure {
             | Self::PoolMedataHashTooBig(b)
             | Self::VRFKeyHashAlreadyRegistered(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+        }
+    }
+}
+
+/// `ShelleyDelegPredFailure` mirror — nested sub-rule under
+/// `ShelleyDelplPredFailure::DelegFailure` (DELPL tag 1).
+///
+/// Upstream: `data ShelleyDelegPredFailure era` from
+/// `Cardano.Ledger.Shelley.Rules.Deleg` with 16 variants encoded
+/// via CBOR `Sum` tags 0..9 + 11..16 (tag 10 deliberately
+/// skipped per upstream's `encCBOR`).
+///
+/// R615 ships the enum + decoders for the simplest variants
+/// (no-payload tags 4/11/12/14 + tag-2 Coin + KeyHash tags
+/// 5/6/16 + VRFVerKeyHash tag 9). Variants carrying Credential
+/// (0/1/3), MIRPot + Mismatch/Coin (7/13/15), and SlotNo
+/// Mismatch (8) keep raw payloads pending typed decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShelleyDelegPredFailure {
+    /// Tag 0: stake-key credential already registered. Raw
+    /// payload pending Credential decoder.
+    StakeKeyAlreadyRegisteredDELEG(Vec<u8>),
+    /// Tag 1: stake-key credential not registered. Raw payload.
+    StakeKeyNotRegisteredDELEG(Vec<u8>),
+    /// Tag 2: stake-key has non-zero account balance — `Coin`
+    /// (R615 typed).
+    StakeKeyNonZeroAccountBalanceDELEG(u64),
+    /// Tag 3: stake-key credential not registered for delegation.
+    /// Raw payload pending Credential decoder.
+    StakeDelegationImpossibleDELEG(Vec<u8>),
+    /// Tag 4: wrong cert type — no payload.
+    WrongCertificateTypeDELEG,
+    /// Tag 5: genesis key not in mapping — `KeyHash GenesisRole`
+    /// (R615 typed via [`KeyHash`] — phantom role doesn't affect
+    /// wire format).
+    GenesisKeyNotInMappingDELEG(KeyHash),
+    /// Tag 6: duplicate genesis delegate — `KeyHash
+    /// GenesisDelegate` (R615 typed).
+    DuplicateGenesisDelegateDELEG(KeyHash),
+    /// Tag 7: insufficient instantaneous rewards — `MIRPot +
+    /// Mismatch RelLTEQ Coin`. Raw payload.
+    InsufficientForInstantaneousRewardsDELEG(Vec<u8>),
+    /// Tag 8: MIR cert too late in epoch — `Mismatch RelLT
+    /// SlotNo`. Raw payload.
+    MIRCertificateTooLateinEpochDELEG(Vec<u8>),
+    /// Tag 9: duplicate genesis VRF — `VRFVerKeyHash GenDelegVRF`
+    /// (32 bytes, R615 typed via raw bytes wrapper).
+    DuplicateGenesisVRFDELEG(VrfVerKeyHash),
+    // Tag 10 deliberately skipped per upstream.
+    /// Tag 11: MIR transfer not currently allowed — no payload.
+    MIRTransferNotCurrentlyAllowed,
+    /// Tag 12: MIR negatives not currently allowed — no payload.
+    MIRNegativesNotCurrentlyAllowed,
+    /// Tag 13: insufficient for transfer — `MIRPot + Mismatch
+    /// RelLTEQ Coin`. Raw payload.
+    InsufficientForTransferDELEG(Vec<u8>),
+    /// Tag 14: MIR produces negative update — no payload.
+    MIRProducesNegativeUpdate,
+    /// Tag 15: MIR negative transfer — `MIRPot + Coin`. Raw
+    /// payload.
+    MIRNegativeTransfer(Vec<u8>),
+    /// Tag 16: delegatee pool not registered — `KeyHash
+    /// StakePool` (R615 typed).
+    DelegateeNotRegisteredDELEG(KeyHash),
+}
+
+/// 32-byte VRF verification-key hash newtype mirroring upstream
+/// `newtype VRFVerKeyHash (r :: KeyRoleVRF) = VRFVerKeyHash
+/// {unVRFVerKeyHash :: Hash HASH (VerKeyVRF VRF)}`. Display
+/// matches upstream stock-derived Show:
+/// `VRFVerKeyHash {unVRFVerKeyHash = "<hex>"}`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct VrfVerKeyHash(pub [u8; 32]);
+
+impl fmt::Display for VrfVerKeyHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "VRFVerKeyHash {{unVRFVerKeyHash = \"{}\"}}",
+            hex::encode(self.0)
+        )
+    }
+}
+
+impl ShelleyDelegPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::StakeKeyAlreadyRegisteredDELEG(_) => 0,
+            Self::StakeKeyNotRegisteredDELEG(_) => 1,
+            Self::StakeKeyNonZeroAccountBalanceDELEG(_) => 2,
+            Self::StakeDelegationImpossibleDELEG(_) => 3,
+            Self::WrongCertificateTypeDELEG => 4,
+            Self::GenesisKeyNotInMappingDELEG(_) => 5,
+            Self::DuplicateGenesisDelegateDELEG(_) => 6,
+            Self::InsufficientForInstantaneousRewardsDELEG(_) => 7,
+            Self::MIRCertificateTooLateinEpochDELEG(_) => 8,
+            Self::DuplicateGenesisVRFDELEG(_) => 9,
+            Self::MIRTransferNotCurrentlyAllowed => 11,
+            Self::MIRNegativesNotCurrentlyAllowed => 12,
+            Self::InsufficientForTransferDELEG(_) => 13,
+            Self::MIRProducesNegativeUpdate => 14,
+            Self::MIRNegativeTransfer(_) => 15,
+            Self::DelegateeNotRegisteredDELEG(_) => 16,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::StakeKeyAlreadyRegisteredDELEG(_) => "StakeKeyAlreadyRegisteredDELEG",
+            Self::StakeKeyNotRegisteredDELEG(_) => "StakeKeyNotRegisteredDELEG",
+            Self::StakeKeyNonZeroAccountBalanceDELEG(_) => "StakeKeyNonZeroAccountBalanceDELEG",
+            Self::StakeDelegationImpossibleDELEG(_) => "StakeDelegationImpossibleDELEG",
+            Self::WrongCertificateTypeDELEG => "WrongCertificateTypeDELEG",
+            Self::GenesisKeyNotInMappingDELEG(_) => "GenesisKeyNotInMappingDELEG",
+            Self::DuplicateGenesisDelegateDELEG(_) => "DuplicateGenesisDelegateDELEG",
+            Self::InsufficientForInstantaneousRewardsDELEG(_) => {
+                "InsufficientForInstantaneousRewardsDELEG"
+            }
+            Self::MIRCertificateTooLateinEpochDELEG(_) => "MIRCertificateTooLateinEpochDELEG",
+            Self::DuplicateGenesisVRFDELEG(_) => "DuplicateGenesisVRFDELEG",
+            Self::MIRTransferNotCurrentlyAllowed => "MIRTransferNotCurrentlyAllowed",
+            Self::MIRNegativesNotCurrentlyAllowed => "MIRNegativesNotCurrentlyAllowed",
+            Self::InsufficientForTransferDELEG(_) => "InsufficientForTransferDELEG",
+            Self::MIRProducesNegativeUpdate => "MIRProducesNegativeUpdate",
+            Self::MIRNegativeTransfer(_) => "MIRNegativeTransfer",
+            Self::DelegateeNotRegisteredDELEG(_) => "DelegateeNotRegisteredDELEG",
+        }
+    }
+
+    /// Decode the full `ShelleyDelegPredFailure` outer envelope
+    /// from CBOR bytes. Upstream encoding (via `Sum`) uses 1-, 2-,
+    /// or 3-element envelopes depending on the payload. R615
+    /// decodes the simplest variants typed; complex variants keep
+    /// raw bytes pending Credential / MIRPot / Mismatch ports.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyDelegPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(1..=3).contains(&len) {
+            return Err(DecoderError(format!(
+                "ShelleyDelegPredFailure: expected 1- to 3-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyDelegPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let no_payload_check = |actual: u64, label: &str| {
+            if actual != 1 {
+                Err(DecoderError(format!(
+                    "{label}: expected 1-element envelope, got len {actual}"
+                )))
+            } else {
+                Ok(())
+            }
+        };
+        let two_element_check = |actual: u64, label: &str| {
+            if actual != 2 {
+                Err(DecoderError(format!(
+                    "{label}: expected 2-element envelope, got len {actual}"
+                )))
+            } else {
+                Ok(())
+            }
+        };
+        let read_keyhash = |dec: &mut Decoder<'_>, label: &str| -> Result<KeyHash, DecoderError> {
+            let bytes = dec
+                .bytes()
+                .map_err(|err| DecoderError(format!("{label}: expected KeyHash bytes: {err:?}")))?;
+            let arr: [u8; 28] = bytes.try_into().map_err(|_| {
+                DecoderError(format!(
+                    "{label}: KeyHash must be 28 bytes, got {}",
+                    bytes.len()
+                ))
+            })?;
+            Ok(KeyHash(arr))
+        };
+        match tag {
+            // No-payload variants.
+            4 => {
+                no_payload_check(len, "WrongCertificateTypeDELEG")?;
+                Ok(Self::WrongCertificateTypeDELEG)
+            }
+            11 => {
+                no_payload_check(len, "MIRTransferNotCurrentlyAllowed")?;
+                Ok(Self::MIRTransferNotCurrentlyAllowed)
+            }
+            12 => {
+                no_payload_check(len, "MIRNegativesNotCurrentlyAllowed")?;
+                Ok(Self::MIRNegativesNotCurrentlyAllowed)
+            }
+            14 => {
+                no_payload_check(len, "MIRProducesNegativeUpdate")?;
+                Ok(Self::MIRProducesNegativeUpdate)
+            }
+            // Tag 2: Coin (Word64).
+            2 => {
+                two_element_check(len, "StakeKeyNonZeroAccountBalanceDELEG")?;
+                let coin = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("StakeKeyNonZeroAccountBalanceDELEG: coin: {err:?}"))
+                })?;
+                Ok(Self::StakeKeyNonZeroAccountBalanceDELEG(coin))
+            }
+            // Tags 5/6/16: KeyHash (28 bytes).
+            5 => {
+                two_element_check(len, "GenesisKeyNotInMappingDELEG")?;
+                let kh = read_keyhash(&mut dec, "GenesisKeyNotInMappingDELEG")?;
+                Ok(Self::GenesisKeyNotInMappingDELEG(kh))
+            }
+            6 => {
+                two_element_check(len, "DuplicateGenesisDelegateDELEG")?;
+                let kh = read_keyhash(&mut dec, "DuplicateGenesisDelegateDELEG")?;
+                Ok(Self::DuplicateGenesisDelegateDELEG(kh))
+            }
+            16 => {
+                two_element_check(len, "DelegateeNotRegisteredDELEG")?;
+                let kh = read_keyhash(&mut dec, "DelegateeNotRegisteredDELEG")?;
+                Ok(Self::DelegateeNotRegisteredDELEG(kh))
+            }
+            // Tag 9: VRFVerKeyHash (32 bytes).
+            9 => {
+                two_element_check(len, "DuplicateGenesisVRFDELEG")?;
+                let bytes_payload = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "DuplicateGenesisVRFDELEG: expected VRFVerKeyHash bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 32] = bytes_payload.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "DuplicateGenesisVRFDELEG: VRFVerKeyHash must be 32 bytes, got {}",
+                        bytes_payload.len()
+                    ))
+                })?;
+                Ok(Self::DuplicateGenesisVRFDELEG(VrfVerKeyHash(arr)))
+            }
+            // Tags with raw payloads pending typed decoders.
+            0 | 1 | 3 | 7 | 8 | 13 | 15 => {
+                let payload_offset = dec.position();
+                let raw = bytes
+                    .get(payload_offset..)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ShelleyDelegPredFailure: payload offset out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(match tag {
+                    0 => Self::StakeKeyAlreadyRegisteredDELEG(raw),
+                    1 => Self::StakeKeyNotRegisteredDELEG(raw),
+                    3 => Self::StakeDelegationImpossibleDELEG(raw),
+                    7 => Self::InsufficientForInstantaneousRewardsDELEG(raw),
+                    8 => Self::MIRCertificateTooLateinEpochDELEG(raw),
+                    13 => Self::InsufficientForTransferDELEG(raw),
+                    15 => Self::MIRNegativeTransfer(raw),
+                    _ => unreachable!("tag set above"),
+                })
+            }
+            other => Err(DecoderError(format!(
+                "ShelleyDelegPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ShelleyDelegPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ShelleyDelegPredFailure era)`. Typed variants route
+    /// through their typed inner Display; raw variants emit a
+    /// `<raw-cbor N bytes>` marker.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StakeKeyAlreadyRegisteredDELEG(b)
+            | Self::StakeKeyNotRegisteredDELEG(b)
+            | Self::StakeDelegationImpossibleDELEG(b)
+            | Self::InsufficientForInstantaneousRewardsDELEG(b)
+            | Self::MIRCertificateTooLateinEpochDELEG(b)
+            | Self::InsufficientForTransferDELEG(b)
+            | Self::MIRNegativeTransfer(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::StakeKeyNonZeroAccountBalanceDELEG(coin) => {
+                write!(
+                    f,
+                    "StakeKeyNonZeroAccountBalanceDELEG ({})",
+                    CoinShow(*coin)
+                )
+            }
+            Self::WrongCertificateTypeDELEG => f.write_str("WrongCertificateTypeDELEG"),
+            Self::GenesisKeyNotInMappingDELEG(kh) => {
+                write!(f, "GenesisKeyNotInMappingDELEG ({kh})")
+            }
+            Self::DuplicateGenesisDelegateDELEG(kh) => {
+                write!(f, "DuplicateGenesisDelegateDELEG ({kh})")
+            }
+            Self::DuplicateGenesisVRFDELEG(vrf) => {
+                write!(f, "DuplicateGenesisVRFDELEG ({vrf})")
+            }
+            Self::MIRTransferNotCurrentlyAllowed => f.write_str("MIRTransferNotCurrentlyAllowed"),
+            Self::MIRNegativesNotCurrentlyAllowed => f.write_str("MIRNegativesNotCurrentlyAllowed"),
+            Self::MIRProducesNegativeUpdate => f.write_str("MIRProducesNegativeUpdate"),
+            Self::DelegateeNotRegisteredDELEG(kh) => {
+                write!(f, "DelegateeNotRegisteredDELEG ({kh})")
             }
         }
     }
@@ -3513,15 +3824,120 @@ mod tests {
 
     #[test]
     fn shelley_delpl_pred_failure_deleg_failure_decodes_tag1() {
-        let cbor = [0x82_u8, 0x01, 0x40];
+        // DELPL tag 1 with inner DELEG tag 4 (WrongCertificateTypeDELEG,
+        // no payload). Outer [0x82, 0x01, [0x81, 0x04]].
+        let cbor = [0x82_u8, 0x01, 0x81, 0x04];
         let f = ShelleyDelplPredFailure::from_cbor(&cbor).expect("DelegFailure");
-        if let ShelleyDelplPredFailure::DelegFailure(payload) = &f {
-            assert_eq!(payload, &[0x40_u8]);
+        if let ShelleyDelplPredFailure::DelegFailure(deleg) = &f {
+            assert_eq!(deleg.tag(), 4);
+            assert!(matches!(
+                deleg,
+                ShelleyDelegPredFailure::WrongCertificateTypeDELEG
+            ));
         } else {
-            panic!("expected DelegFailure, got {f:?}");
+            panic!("expected typed DelegFailure, got {f:?}");
         }
         assert_eq!(f.tag(), 1);
         assert_eq!(f.constructor(), "DelegFailure");
+        assert_eq!(f.to_string(), "DelegFailure (WrongCertificateTypeDELEG)");
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_no_payload_variants() {
+        for (cbor_tag, expected_name) in [
+            (4_u8, "WrongCertificateTypeDELEG"),
+            (11_u8, "MIRTransferNotCurrentlyAllowed"),
+            (12_u8, "MIRNegativesNotCurrentlyAllowed"),
+            (14_u8, "MIRProducesNegativeUpdate"),
+        ] {
+            let cbor = [0x81_u8, cbor_tag];
+            let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("DELEG no-payload");
+            assert_eq!(f.tag(), cbor_tag);
+            assert_eq!(f.constructor(), expected_name);
+            assert_eq!(f.to_string(), expected_name);
+        }
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_coin_decodes_tag2() {
+        // outer [0x82, 0x02, coin=12345]
+        let cbor = [0x82_u8, 0x02, 0x19, 0x30, 0x39];
+        let f =
+            ShelleyDelegPredFailure::from_cbor(&cbor).expect("StakeKeyNonZeroAccountBalanceDELEG");
+        if let ShelleyDelegPredFailure::StakeKeyNonZeroAccountBalanceDELEG(coin) = &f {
+            assert_eq!(*coin, 12345);
+        } else {
+            panic!("expected StakeKeyNonZeroAccountBalanceDELEG, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "StakeKeyNonZeroAccountBalanceDELEG (Coin 12345)"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_keyhash_decodes_tag5() {
+        // outer [0x82, 0x05, bytes(28)] for GenesisKeyNotInMappingDELEG
+        let mut cbor = vec![0x82_u8, 0x05];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x99_u8; 28]);
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("GenesisKeyNotInMappingDELEG");
+        if let ShelleyDelegPredFailure::GenesisKeyNotInMappingDELEG(kh) = &f {
+            assert_eq!(kh.0, [0x99_u8; 28]);
+        } else {
+            panic!("expected GenesisKeyNotInMappingDELEG, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("GenesisKeyNotInMappingDELEG (KeyHash {unKeyHash = \"9999"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_vrf_decodes_tag9() {
+        // outer [0x82, 0x09, bytes(32)] for DuplicateGenesisVRFDELEG
+        let mut cbor = vec![0x82_u8, 0x09];
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x55_u8; 32]);
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("DuplicateGenesisVRFDELEG");
+        if let ShelleyDelegPredFailure::DuplicateGenesisVRFDELEG(vrf) = &f {
+            assert_eq!(vrf.0, [0x55_u8; 32]);
+        } else {
+            panic!("expected DuplicateGenesisVRFDELEG, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("DuplicateGenesisVRFDELEG (VRFVerKeyHash {unVRFVerKeyHash = \"5555"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_routes_unported_tag0_to_raw() {
+        let cbor = [0x82_u8, 0x00, 0x40];
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("StakeKeyAlreadyRegisteredDELEG");
+        assert_eq!(f.tag(), 0);
+        assert_eq!(f.constructor(), "StakeKeyAlreadyRegisteredDELEG");
+        assert!(
+            f.to_string()
+                .starts_with("StakeKeyAlreadyRegisteredDELEG <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_unknown_tag_rejects() {
+        // Tag 10 was deliberately skipped by upstream, so it must
+        // be rejected.
+        let cbor = vec![0x82_u8, 0x0A, 0x40];
+        let err = ShelleyDelegPredFailure::from_cbor(&cbor).expect_err("tag 10 must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 10"),
+            "got: {err}"
+        );
     }
 
     #[test]
