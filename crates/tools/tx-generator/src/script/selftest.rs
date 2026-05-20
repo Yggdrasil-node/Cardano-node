@@ -163,6 +163,16 @@ mod tests {
     use super::*;
     use crate::script::types::ProtocolParametersSource;
 
+    const PLUTUS_BUDGET_SUMMARY_FILE: &str = "plutus-budget-summary.json";
+
+    struct BudgetSummaryFileCleanup;
+
+    impl Drop for BudgetSummaryFileCleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+        }
+    }
+
     #[test]
     fn test_script_matches_upstream_selftest_shape() {
         let script = test_script(
@@ -207,6 +217,9 @@ mod tests {
 
     #[test]
     fn run_selftest_discard_executes_complete_static_script() {
+        let _cleanup = BudgetSummaryFileCleanup;
+        let _ = std::fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+
         run_selftest(None).expect("selftest discard");
     }
 

@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T12:12:43Z
-- Files described: 1434
+- Generated at: 2026-05-20T12:40:43Z
+- Files described: 1435
 
 ## Workspace
 
@@ -1732,7 +1732,7 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the R551 StartProtocol env-wiring slice plus the remaining GeneratorTx / Submission arc.
+  - Tracks the post-R558 Script/Core, GeneratorTx, and Submission implementation arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
@@ -1781,7 +1781,7 @@
   - Parses low-level script files and preserves ObjectWithSingleField round-trip behavior.
 - `crates/tools/tx-generator/src/script/core.rs`
   - Strict mirror of upstream tx-generator Script/Core state and NtC query helpers.
-  - Owns Core action bodies, queryEra/queryRemoteProtocolParameters, and transaction-generation boundaries.
+  - Owns Core action bodies, queryEra/queryRemoteProtocolParameters, transaction generation, and budget projection.
 - `crates/tools/tx-generator/src/script/env.rs`
   - Strict mirror of upstream tx-generator Script/Env state.
   - Carries protocol parameter mode, wallets, keys, tracers, and async-control placeholders.
@@ -2263,6 +2263,8 @@
   - Round 556 evidence record for tx-generator Plutus pre-execution checking.
 - `docs/operational-runs/2026-05-20-round-557-tx-generator-plutus-auto-budget.md`
   - Round 557 evidence record for tx-generator Plutus auto-budget fitting and AutoScript summary wiring.
+- `docs/operational-runs/2026-05-20-round-558-tx-generator-budget-summary-projection.md`
+  - Operational run note for the R558 tx-generator NtoM budget-summary projection slice.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

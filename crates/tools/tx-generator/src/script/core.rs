@@ -5,11 +5,11 @@
 //! **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/Script/Core.hs`.
 //! Ports the state/query/runtime helper boundary consumed by
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
-//! deterministic state-only operations, the static-budget Plutus context
-//! path, finite key-spend transaction-stream evaluation, and LocalSocket
-//! submission. Auto-budget fitting, script-spend integrity, benchmark
-//! submission, and exact DumpToFile rendering still return explicit
-//! `TxGenError` boundaries until their downstream mirrors land.
+//! deterministic state-only operations, Plutus context construction,
+//! finite transaction-stream evaluation, LocalSocket submission, and
+//! budget-summary projection. Benchmark submission and exact DumpToFile
+//! rendering still return explicit `TxGenError` boundaries until their
+//! downstream mirrors land.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,6 +20,7 @@ use num_bigint::BigInt;
 use serde_json::Value;
 use yggdrasil_ledger::{
     CborDecode, Decoder, Encoder, PlutusData, ProtocolParameters, eras::alonzo::ExUnits,
+    total_min_fee,
 };
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
@@ -1274,17 +1275,57 @@ fn preview_ntom_transaction(env: &mut Env, plan: NtoMPreviewPlan<'_>) -> Result<
 
     match preview {
         Ok(tx) => {
+            let tx_size = tx_size_in_bytes(&tx);
+            let tx_fee = projected_tx_fee(plan.protocol_parameters, &tx, tx_size);
+            trace_debug(env, &format!("Projected Tx size in bytes: {tx_size}"));
             trace_debug(
                 env,
-                &format!("Projected Tx size in bytes: {}", tx_size_in_bytes(&tx)),
+                &format!(
+                    "Projected Tx fee in Coin: {}",
+                    projected_tx_fee_trace(tx_fee)
+                ),
             );
-            trace_debug(env, "Projected Tx fee in Coin: Nothing");
+            update_env_summary_projection(env, tx_size, tx_fee);
+            dump_budget_summary_if_existing(env)?;
         }
         Err(err) => {
             trace_debug(env, &format!("Error creating Tx preview: {err}"));
         }
     }
     Ok(())
+}
+
+fn projected_tx_fee(
+    protocol_parameters: Option<&ProtocolParameters>,
+    tx: &GeneratedTx,
+    tx_size: usize,
+) -> Option<Lovelace> {
+    protocol_parameters.map(|parameters| {
+        let total_ex_units = tx.tx.total_ex_units();
+        total_min_fee(parameters, tx_size, total_ex_units.as_ref())
+    })
+}
+
+fn projected_tx_fee_trace(fee: Option<Lovelace>) -> String {
+    match fee {
+        Some(fee) => format!("Just (Coin {fee})"),
+        None => "Nothing".to_string(),
+    }
+}
+
+fn update_env_summary_projection(env: &mut Env, tx_size: usize, tx_fee: Option<Lovelace>) {
+    let Some(Value::Object(mut summary)) = get_env_summary(env).cloned() else {
+        return;
+    };
+    summary.insert("projectedTxSize".to_string(), serde_json::json!(tx_size));
+    summary.insert(
+        "projectedTxFee".to_string(),
+        match tx_fee {
+            Some(fee) => serde_json::json!(fee),
+            None => Value::Null,
+        },
+    );
+    set_env_summary(env, Value::Object(summary));
 }
 
 fn collateral_supported_in_era(era: AnyCardanoEra) -> bool {
@@ -1663,6 +1704,50 @@ mod tests {
         out
     }
 
+    struct BudgetSummaryFileCleanup;
+
+    impl Drop for BudgetSummaryFileCleanup {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
+        }
+    }
+
+    #[test]
+    fn projected_tx_fee_trace_matches_upstream_maybe_coin_shape() {
+        assert_eq!(projected_tx_fee_trace(None), "Nothing");
+        assert_eq!(projected_tx_fee_trace(Some(123_456)), "Just (Coin 123456)");
+    }
+
+    #[test]
+    fn env_summary_projection_updates_size_and_fee_fields() {
+        let mut env = Env::empty_env();
+        set_env_summary(
+            &mut env,
+            serde_json::json!({
+                "perTxExecutionUnits": {
+                    "memory": 10,
+                    "steps": 20
+                },
+                "projectedTxSize": null,
+                "projectedTxFee": null
+            }),
+        );
+
+        update_env_summary_projection(&mut env, 1_024, Some(172_381));
+
+        let summary = get_env_summary(&env).expect("summary");
+        assert_eq!(summary["projectedTxSize"], serde_json::json!(1_024));
+        assert_eq!(summary["projectedTxFee"], serde_json::json!(172_381));
+        assert_eq!(
+            summary["perTxExecutionUnits"]["memory"],
+            serde_json::json!(10)
+        );
+        assert_eq!(
+            summary["perTxExecutionUnits"]["steps"],
+            serde_json::json!(20)
+        );
+    }
+
     #[test]
     fn with_era_rejects_byron_and_accepts_shelley_based_eras() {
         assert_eq!(
@@ -1905,6 +1990,8 @@ mod tests {
 
     #[test]
     fn discard_submit_spends_script_fund_and_updates_destination_wallet() {
+        let _cleanup = BudgetSummaryFileCleanup;
+        let _ = fs::remove_file(PLUTUS_BUDGET_SUMMARY_FILE);
         let mut env = Env::empty_env();
         seed_pay_to_addr_env(&mut env);
         seed_static_plutus_protocol_parameters(&mut env);

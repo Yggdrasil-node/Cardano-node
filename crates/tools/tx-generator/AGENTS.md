@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R557 Plutus auto-budget slice). The old
+**Status:** `partial` (post-R558 NtoM budget-summary projection slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -217,6 +217,11 @@ approved synthesis area from the sister-tools plan.
   binary-search boundary. `Script/Core.makePlutusContext` now resolves
   `AutoScript` budgets, writes `plutus-budget-summary.json`, and parses
   `maxBlockExecutionUnits` from JSON protocol parameters.
+- Shipped R558: `Benchmarking.Script.Core.previewNtoMTransaction`
+  summary projection. Successful `NtoM` previews now trace the
+  projected transaction size and upstream-shaped `Maybe Coin` fee text,
+  update `projectedTxSize` / `projectedTxFee` in the environment budget
+  summary when one exists, and refresh `plutus-budget-summary.json`.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
@@ -344,6 +349,10 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `Cardano.TxGenerator.PlutusContext` now fits loop redeemers with the
   upstream binary-search strategy and `Benchmarking.Script.Core` writes
   `plutus-budget-summary.json` for `AutoScript`.
+- Shipped: NtoM preview budget-summary projection (R558):
+  `Benchmarking.Script.Core.previewNtoMTransaction` now feeds the
+  projected serialized transaction size and calculated fee back into the
+  Plutus budget summary before dumping it.
 - Next: exact `DumpToFile` rendering and Benchmark submission in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry

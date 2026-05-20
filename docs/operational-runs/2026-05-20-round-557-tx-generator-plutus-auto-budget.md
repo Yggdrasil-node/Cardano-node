@@ -68,6 +68,6 @@ filetree check: clean
 ## Remaining Tx-Generator Gaps
 
 Exact `DumpToFile` rendering, Benchmark submission, and upstream binary
-comparison evidence remain open. `previewNtoMTransaction` still needs to
-feed projected transaction size/fee back into the budget summary after
-the exact upstream rendering/fee evidence is in place.
+comparison evidence remain open. R558 follows this round by wiring
+`previewNtoMTransaction` projected size/fee values back into the budget
+summary before the dump.

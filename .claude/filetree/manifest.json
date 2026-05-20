@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-20T12:12:43Z",
+  "generated_at_utc": "2026-05-20T12:40:43Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -10508,12 +10508,12 @@
       "path": "crates/tools/tx-generator/AGENTS.md",
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `tx-generator`.",
-        "Tracks the R551 StartProtocol env-wiring slice plus the remaining GeneratorTx / Submission arc."
+        "Tracks the post-R558 Script/Core, GeneratorTx, and Submission implementation arc."
       ],
-      "content_sha256": "bf823772760c38fa8e97121324518e12f62b1653880b37b21738857d0e5d0d7c",
-      "git_blob": "9b4a5d6f9c798d99723b9a5a0a2af130a38d7202",
-      "source_mtime_ns": 1779278422472540200,
-      "described_at_utc": "2026-05-20T12:07:49Z",
+      "content_sha256": "790722865cb2d5aec5a16f1ce94aaa124d2832aca2b022fd113a7428e08a2247",
+      "git_blob": "730997edc50b2ad5f433b2055edb2e6e30acda22",
+      "source_mtime_ns": 1779279715416081600,
+      "described_at_utc": "2026-05-20T12:27:33Z",
       "generated_self_exempt": false
     },
     {
@@ -10737,12 +10737,12 @@
       "path": "crates/tools/tx-generator/src/script/core.rs",
       "description_lines": [
         "Strict mirror of upstream tx-generator Script/Core state and NtC query helpers.",
-        "Owns Core action bodies, queryEra/queryRemoteProtocolParameters, and transaction-generation boundaries."
+        "Owns Core action bodies, queryEra/queryRemoteProtocolParameters, transaction generation, and budget projection."
       ],
-      "content_sha256": "e44d8fba3bd64650568016d838997668140fbe9bf039ed565292892c5166d7c1",
-      "git_blob": "e1df21fe2ace6cba6f730e2733704b29ef099048",
-      "source_mtime_ns": 1779278314899867600,
-      "described_at_utc": "2026-05-20T12:07:49Z",
+      "content_sha256": "cc523d3994e5bf5bafda93fa80f2a86741d79292e773f03f1c265371ff0fb152",
+      "git_blob": "fa1066c0a7941e3ac65f799ac33b63560bdc8062",
+      "source_mtime_ns": 1779279701317676400,
+      "described_at_utc": "2026-05-20T12:27:33Z",
       "generated_self_exempt": false
     },
     {
@@ -10762,10 +10762,10 @@
       "description_lines": [
         "Strict mirror of upstream `Cardano.Benchmarking.Script.Selftest`: builds and runs the static selftest action list."
       ],
-      "content_sha256": "dfbbaed359373d559abe8353ce7544719b5aaa3cb39d3d3dd165d038f902e0f1",
-      "git_blob": "ccab37763e370705f7aa26e1c33d05e1f0ea40e6",
-      "source_mtime_ns": 1779272979223436800,
-      "described_at_utc": "2026-05-20T11:41:23Z",
+      "content_sha256": "3b663ad9936a849c9809d12f5bb2883a3f70d05a3232282dec0ce3ab1b2d349f",
+      "git_blob": "de428c0cfe7471feadf33541953fcdae13122caa",
+      "source_mtime_ns": 1779280427863383800,
+      "described_at_utc": "2026-05-20T12:34:09Z",
       "generated_self_exempt": false
     },
     {
@@ -11065,10 +11065,10 @@
       "description_lines": [
         "Completion Roadmap: ---."
       ],
-      "content_sha256": "c1365f4de2d5b6d48c9e2bb76bb1f323c6a5fe4dce9d6f6ceaa8ada543988699",
-      "git_blob": "9b8c98b21a7d95d4ad20ada58074cbb6d43ed7a6",
-      "source_mtime_ns": 1779278438411494000,
-      "described_at_utc": "2026-05-20T12:07:49Z",
+      "content_sha256": "be1778e8fb4ac6a3e4a75dec921734ea123790fc5f10aceca018406e2060c0d1",
+      "git_blob": "f4ca237c6f4867f9d9702a54a2c5ad8ea92400ef",
+      "source_mtime_ns": 1779279720953933900,
+      "described_at_utc": "2026-05-20T12:27:33Z",
       "generated_self_exempt": false
     },
     {
@@ -11131,10 +11131,10 @@
       "description_lines": [
         "PARITY & FUNCTION SUMMARY FOR MANAGEMENT: ---."
       ],
-      "content_sha256": "f7b688f9b2b43b1a47689beec823985f44444e2e8727cf3ad5e7b71ffa9b5b91",
-      "git_blob": "877adc10441c39b665ee6f5d62f241c12118a2d2",
-      "source_mtime_ns": 1779278477991990600,
-      "described_at_utc": "2026-05-20T12:07:49Z",
+      "content_sha256": "c2f79b7c55406cf22db5c002a39b44a02e6c705e22eff561369c4ee2dda5257a",
+      "git_blob": "23b9dde24e52b3f0c97f08d7103569219b387ff2",
+      "source_mtime_ns": 1779279761373188500,
+      "described_at_utc": "2026-05-20T12:27:33Z",
       "generated_self_exempt": false
     },
     {
@@ -13327,11 +13327,22 @@
       "description_lines": [
         "Round 557 evidence record for tx-generator Plutus auto-budget fitting and AutoScript summary wiring."
       ],
-      "content_sha256": "58c97194cab3215e04a5f2419125fc23bf79d971c4c3958f859a6fe77825dd27",
-      "git_blob": "6cca8876c09e01ff23e4dcec886b469d6c302d1e",
-      "source_mtime_ns": 1779279155066975400,
-      "described_at_utc": "2026-05-20T12:12:43Z",
+      "content_sha256": "82cad6ad6b7a8ec28ed4d32b74373fb1103766443d2c2e76b22b485f748fae8b",
+      "git_blob": "4cf16a008f18017e55e0017f807e65e60ef9a792",
+      "source_mtime_ns": 1779279767230043000,
+      "described_at_utc": "2026-05-20T12:27:33Z",
       "generated_self_exempt": false
+    },
+    {
+      "path": "docs/operational-runs/2026-05-20-round-558-tx-generator-budget-summary-projection.md",
+      "generated_self_exempt": false,
+      "description_lines": [
+        "Operational run note for the R558 tx-generator NtoM budget-summary projection slice."
+      ],
+      "content_sha256": "a89ba4848580f5b566587f1973c378f949a927ab9ebedafd2bf23f4c86bf287c",
+      "git_blob": "45b8bedd6089b481e577415c7effe4a0aa29db8a",
+      "source_mtime_ns": 1779280832938765200,
+      "described_at_utc": "2026-05-20T12:40:43Z"
     },
     {
       "path": "docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md",
