@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T08:58:40Z
-- Files described: 1423
+- Generated at: 2026-05-20T09:22:39Z
+- Files described: 1424
 
 ## Workspace
 
@@ -1732,10 +1732,10 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the R540 NtC query slice plus the remaining GeneratorTx / Submission arc.
+  - Tracks the R550 json_highlevel execution slice plus the remaining GeneratorTx / Submission arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
-  - Declares direct dependencies for Script/Core NtC query helpers plus crate metadata.
+  - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
 - `crates/tools/tx-generator/scripts-fallback/EcdsaSecp256k1Loop.plutus`
   - Project file at crates/tools/tx-generator/scripts-fallback/EcdsaSecp256k1Loop.plutus.
 - `crates/tools/tx-generator/scripts-fallback/HashOntoG2AndAdd.plutus`
@@ -1762,7 +1762,7 @@
   - Sized transaction-metadata construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx/SizedMetadata.
 - `crates/tools/tx-generator/src/lib.rs`
   - Pure-Rust port of upstream `tx-generator`.
-  - Parent module wiring top-level parsing, script execution, testnet discovery, and command dispatch.
+  - Parent module wiring top-level parsing, json/json_highlevel execution, compile, version, and command dispatch.
 - `crates/tools/tx-generator/src/main.rs`
   - Binary entry point for the `tx-generator` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_tx_generator::run_m
 - `crates/tools/tx-generator/src/parser.rs`
@@ -2240,6 +2240,9 @@
 - `docs/operational-runs/2026-05-20-round-549-tx-generator-submit-in-era.md`
   - Operational run note for the R549 tx-generator finite submitInEra / LocalSocket slice.
   - Documents key-spend stream execution, wallet mutation, remaining parity boundaries, and focused validation.
+- `docs/operational-runs/2026-05-20-round-550-tx-generator-json-highlevel.md`
+  - Operational run note for the R550 tx-generator json_highlevel execution slice.
+  - Documents config mangling, Plutus data preflight, generated-script execution, remaining boundaries, and focused validation.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

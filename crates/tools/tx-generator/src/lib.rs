@@ -16,6 +16,8 @@ use script::env::Env;
 use script::run_script;
 use setup::nix_service::{mangle_node_config, mangle_tracer_config, parse_nix_service_options_str};
 use setup::testnet_discovery::discover_testnet_config;
+use tx_generator::plutus_context::read_script_data;
+use types::TxGenPlutusParams;
 
 pub mod command;
 pub mod compiler;
@@ -72,8 +74,9 @@ pub fn run_main() -> ExitCode {
 /// adds the `GeneratorTx/SizedMetadata.hs` sizing helper used by
 /// `NtoM`; R542/R543 add wallet queues and upstream value-splitting
 /// preflight; R544-R547 add UTxO output builders and static Plutus
-/// context loading. Full transaction construction and submission
-/// execution still land in later strict slices.
+/// context loading. R548/R549 add key-spend transaction construction
+/// and finite submitInEra execution. R550 wires `json_highlevel`
+/// command execution through the compiled script runner.
 pub fn run(command: command::Command) -> eyre::Result<()> {
     match &command {
         Command::Json(file) => {
@@ -90,9 +93,15 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
             } else {
                 parse_nix_service_options_str(&raw)?
             };
+            let initial_opts = opts.clone();
             let opts = mangle_node_config(opts, cmd.node_config.clone())?;
-            let _final_opts = mangle_tracer_config(opts, cmd.cardano_tracer.clone());
-            let _script = compile_options(&_final_opts)?;
+            let final_opts = mangle_tracer_config(opts, cmd.cardano_tracer.clone());
+            println!("--> initial options:\n{initial_opts:?}\n--> final options:\n{final_opts:?}");
+            quick_test_plutus_data_or_die(&final_opts)?;
+            let script = compile_options(&final_opts)?;
+            let mut env = Env::empty_env();
+            run_script(&mut env, &script)?;
+            return Ok(());
         }
         Command::Compile(file) => {
             let raw = std::fs::read_to_string(file)?;
@@ -102,16 +111,160 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
             std::io::stdout().write_all(rendered.as_bytes())?;
             return Ok(());
         }
-        Command::Selftest(_) | Command::Version => {}
+        Command::Version => {
+            std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes())?;
+            return Ok(());
+        }
+        Command::Selftest(_) => {}
     }
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R549 finite submitInEra slice). Help/version compatibility, typed \
+         (R550 json_highlevel execution slice). Help/version compatibility, typed \
          subcommand parsing, json_highlevel testnet discovery, and high-level \
-         NixServiceOptions parsing/compilation plus low-level script JSON \
+         NixServiceOptions parsing/compilation/execution plus low-level script JSON \
          decoding plus deterministic state-only action execution and Script/Core \
-         NtC query helpers, sized-metadata construction, wallet queues, value splitting, UTxO output builders, static Plutus context loading, key-spend transaction construction, and finite LocalSocket submitInEra execution are wired; script spends, benchmark submission, exact DumpToFile rendering, and high-level execution land in later strict slices of the tx-generator port arc.",
+         NtC query helpers, sized-metadata construction, wallet queues, value splitting, UTxO output builders, static Plutus context loading, key-spend transaction construction, finite LocalSocket submitInEra execution, and high-level command execution are wired; selftest, script spends, benchmark submission, and exact DumpToFile rendering land in later strict slices of the tx-generator port arc.",
         command.name()
     ))
+}
+
+/// Mirror of upstream `quickTestPlutusDataOrDie`.
+fn quick_test_plutus_data_or_die(opts: &setup::nix_service::NixServiceOptions) -> eyre::Result<()> {
+    let Some(TxGenPlutusParams::PlutusOn {
+        plutus_datum,
+        plutus_redeemer,
+        ..
+    }) = opts.nix_plutus.as_ref()
+    else {
+        println!("--> success: quickTestPlutusDataOrDie []");
+        return Ok(());
+    };
+
+    let files = [plutus_datum.as_ref(), plutus_redeemer.as_ref()]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    for file in &files {
+        read_script_data(file)
+            .map_err(|err| eyre::eyre!("quickTestPlutusDataOrDie ({}): {err}", file.display()))?;
+    }
+    println!("--> success: quickTestPlutusDataOrDie {files:?}");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::command::JsonHighLevelCommand;
+    use crate::setup::nix_service::parse_nix_service_options_value;
+    use crate::types::{PlutusScriptRef, TxGenPlutusType};
+    use serde_json::json;
+    use std::path::{Path, PathBuf};
+
+    fn unique_temp_path(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-{name}-{}-{nanos}",
+            std::process::id(),
+        ))
+    }
+
+    fn write(path: &Path, content: &str) {
+        std::fs::write(path, content).expect("write temp file");
+    }
+
+    fn high_level_config(config_path: &Path, node_config_path: &Path) {
+        write(
+            config_path,
+            &serde_json::to_string(&json!({
+                "debugMode": true,
+                "tx_count": 1,
+                "tps": 10.0,
+                "inputs_per_tx": 1,
+                "outputs_per_tx": 1,
+                "tx_fee": 212345,
+                "min_utxo_value": 1000000,
+                "add_tx_size": 0,
+                "init_cooldown": 0.0,
+                "era": "Conway",
+                "keepalive": 45,
+                "localNodeSocketPath": "node.socket",
+                "nodeConfigFile": node_config_path,
+                "sigKey": "genesis-utxo.skey",
+                "targetNodes": [
+                    {"addr": "127.0.0.1", "port": 30000, "name": "node0"}
+                ],
+                "plutus": null
+            }))
+            .expect("render config"),
+        );
+    }
+
+    #[test]
+    fn json_highlevel_runs_compiled_script_until_runtime_boundary() {
+        let config_path = unique_temp_path("highlevel-config.json");
+        let node_config_path = unique_temp_path("node-config.json");
+        high_level_config(&config_path, &node_config_path);
+        write(&node_config_path, "{}");
+
+        let err = run(Command::JsonHighLevel(JsonHighLevelCommand {
+            config_file: config_path.clone(),
+            testnet_config: None,
+            node_config: None,
+            cardano_tracer: None,
+        }))
+        .expect_err("StartProtocol boundary is reached");
+
+        assert!(err.to_string().contains("action #7 failed"));
+        assert!(err.to_string().contains("startProtocol"));
+
+        let _ = std::fs::remove_file(config_path);
+        let _ = std::fs::remove_file(node_config_path);
+    }
+
+    #[test]
+    fn quick_test_plutus_data_reports_bad_datum_before_compile_run() {
+        let datum_path = unique_temp_path("bad-datum.json");
+        write(&datum_path, "{\"notDetailedSchema\": true}");
+        let mut opts = parse_nix_service_options_value(json!({
+            "debugMode": true,
+            "tx_count": 1,
+            "tps": 10.0,
+            "inputs_per_tx": 1,
+            "outputs_per_tx": 1,
+            "tx_fee": 212345,
+            "min_utxo_value": 1000000,
+            "add_tx_size": 0,
+            "init_cooldown": 0.0,
+            "era": "Conway",
+            "keepalive": 45,
+            "localNodeSocketPath": "node.socket",
+            "nodeConfigFile": "config.json",
+            "sigKey": "genesis-utxo.skey",
+            "targetNodes": [
+                {"addr": "127.0.0.1", "port": 30000, "name": "node0"}
+            ],
+            "plutus": null
+        }))
+        .expect("config parses");
+        opts.nix_plutus = Some(TxGenPlutusParams::PlutusOn {
+            plutus_type: TxGenPlutusType::CustomScript,
+            plutus_script: PlutusScriptRef::Named("Loop".to_string()),
+            plutus_datum: Some(datum_path.clone()),
+            plutus_redeemer: None,
+            plutus_exec_memory: Some(1),
+            plutus_exec_steps: Some(1),
+        });
+
+        let err = quick_test_plutus_data_or_die(&opts).expect_err("datum preflight fails");
+
+        assert!(err.to_string().contains("quickTestPlutusDataOrDie"));
+        assert!(err.to_string().contains("expected one of"));
+
+        let _ = std::fs::remove_file(datum_path);
+    }
 }

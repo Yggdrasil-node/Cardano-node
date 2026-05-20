@@ -278,10 +278,15 @@ own parser / generator / submission implementation plus upstream
   `Split`, `SplitN`, `NtoM`, `Sequence`, and `Take (Cycle ...)`
   generators, including source/destination wallet mutation,
   `DiscardTX`, `NtoM` preview traces, and NtC LocalTxSubmission for
-  `LocalSocket`. The remaining tx-generator blockers are Plutus
+  `LocalSocket`. R550 wired `Benchmarking.Command.runCommand`
+  high-level execution: `json_highlevel` now performs config
+  discovery/mangling, initial/final option reporting, Plutus
+  datum/redeemer preflight, `compileOptions`, and `run_script`; the
+  `version` subcommand is concrete. The remaining tx-generator blockers are Plutus
   pre-execution / auto-budget fitting, script-spend script-integrity
   hashing, exact `DumpToFile` rendering, Benchmark submission,
-  `json_highlevel` execution, and upstream comparison evidence.
+  `selftest`, `SecureGenesis`, `RoundRobin` / `OneOf`, and upstream
+  comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

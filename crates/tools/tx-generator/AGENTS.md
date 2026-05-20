@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R549 finite submitInEra / LocalSocket slice). The old
+**Status:** `partial` (post-R550 json_highlevel execution slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -164,10 +164,17 @@ approved synthesis area from the sister-tools plan.
   LocalTxSubmission for `LocalSocket`. `DumpToFile` remains blocked on
   byte-equivalent upstream `Show (Tx)` rendering; benchmark mode remains
   blocked on the `GeneratorTx.Submission` client/scheduler slice.
-- Pending: concrete `json_highlevel` command execution. Low-level
-  `json FILE` runs supported script actions, including finite
-  key-spend Submit actions, but high-level configs still stop after
-  compilation until the remaining runtime slices land.
+- Shipped R550: `Benchmarking.Command.runCommand` high-level execution
+  path. `json_highlevel FILE` now parses/discovers config, applies
+  node/tracer overrides, prints initial/final option snapshots, runs
+  upstream `quickTestPlutusDataOrDie`-style datum/redeemer preflight,
+  compiles with `compileOptions`, and passes the generated script to
+  `run_script`. The explicit `version` subcommand now emits the same
+  version fixture as top-level `--version`.
+- Pending: `selftest` command execution. Low-level `json FILE` and
+  high-level `json_highlevel FILE` now run supported script actions,
+  including finite key-spend Submit actions, and stop only at the next
+  explicit runtime parity boundary.
 - Pending: end-to-end behavioral tests against the upstream binary.
 
 ## Build + Run
@@ -262,10 +269,15 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `Script/Core.submitInEra` now evaluates finite key-spend generators,
   updates wallets, supports `DiscardTX`, and drives `LocalSocket`
   through NtC LocalTxSubmission.
+- Shipped: high-level command execution (R550):
+  `Benchmarking.Command.runCommand` now drives `json_highlevel` through
+  config discovery/mangling, Plutus data preflight, `compileOptions`,
+  and `run_script`; `version` subcommand is concrete.
 - Next: port Plutus `preExecutePlutusScript` /
   `plutusAutoScaleBlockfit`, script-spend script-integrity hashing,
-  exact `DumpToFile` rendering, Benchmark submission, and
-  `json_highlevel` execution in strict-mirror-sized slices.
+  exact `DumpToFile` rendering, Benchmark submission, `selftest`, and
+  `SecureGenesis` / `RoundRobin` / `OneOf` in strict-mirror-sized
+  slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
