@@ -436,11 +436,16 @@ own parser / generator / submission implementation plus upstream
   `price_step`), `cppMaxTxExUnits`, and `cppMaxBlockExUnits`
   (`OrdExUnits` → ExUnits Show). R587 wired the
   `cppPoolVotingThresholds` (5-field record) and
-  `cppDRepVotingThresholds` (10-field record) Show paths. 29/30
-  Conway PParamsUpdate fields now render. The remaining
-  tx-generator blocker is the last composite field
-  (`CostModels` — per-language cost-model arrays) and
-  upstream-binary soak evidence.
+  `cppDRepVotingThresholds` (10-field record) Show paths. R588
+  closed the final composite field `cppCostModels`, splitting
+  yggdrasil's `BTreeMap<u8, Vec<i64>>` by language tag (0/1/2 →
+  PlutusV1/V2/V3 valid; other tags → unknown) into the upstream
+  `_costModelsValid` + `_costModelsUnknown` two-map shape. **All
+  30/30 Conway PParamsUpdate fields now render** — the
+  PParamsUpdate Show surface is complete for the Conway era. The
+  remaining tx-generator blocker is upstream-binary soak
+  evidence (multi-witness `bootstrapWitKeyHash` byte-parity and
+  full Haskell `Show (ByteString)` mnemonic-escape coverage).
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

@@ -1666,9 +1666,6 @@ fn show_conway_pparams_update(
     if ppu.min_utxo_value.is_some() {
         set_fields.push("min_utxo_value (Shelley-era only — no Conway field)");
     }
-    if ppu.cost_models.is_some() {
-        set_fields.push("cppCostModels");
-    }
     if ppu.price_mem.is_some() != ppu.price_step.is_some() {
         set_fields.push("cppPrices (price_mem and price_step must be set together)");
     }
@@ -1688,7 +1685,7 @@ fn show_conway_pparams_update(
     // primitive Show. Committee size, gov action deposit, etc match
     // similarly.
     Ok(format!(
-        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = {}, cppNOpt = {}, cppA0 = {}, cppRho = {}, cppTau = {}, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = {}, cppMaxTxExUnits = {}, cppMaxBlockExUnits = {}, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = {}, cppDRepVotingThresholds = {}, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = {}, cppGovActionLifetime = {}, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = {}, cppMinFeeRefScriptCostPerByte = {}}})",
+        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = {}, cppNOpt = {}, cppA0 = {}, cppRho = {}, cppTau = {}, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = {}, cppPrices = {}, cppMaxTxExUnits = {}, cppMaxBlockExUnits = {}, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = {}, cppDRepVotingThresholds = {}, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = {}, cppGovActionLifetime = {}, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = {}, cppMinFeeRefScriptCostPerByte = {}}})",
         show_pparam_compact_coin(ppu.min_fee_a),
         show_pparam_compact_coin(ppu.min_fee_b),
         show_pparam_word(ppu.max_block_body_size),
@@ -1703,6 +1700,7 @@ fn show_conway_pparams_update(
         show_pparam_ratio_interval(ppu.tau),
         show_pparam_compact_coin(ppu.min_pool_cost),
         show_pparam_compact_coin(ppu.coins_per_utxo_byte),
+        show_pparam_cost_models(ppu.cost_models.as_ref()),
         show_pparam_prices(ppu.price_mem, ppu.price_step),
         show_pparam_ex_units(ppu.max_tx_ex_units.as_ref()),
         show_pparam_ex_units(ppu.max_block_ex_units.as_ref()),
@@ -1793,7 +1791,43 @@ fn strip_outer_parens(s: &str) -> &str {
     }
 }
 
-/// Render `StrictMaybe PoolVotingThresholds`. Upstream is a stock-derived
+/// Render `StrictMaybe CostModels` matching upstream stock-derived
+/// `Show CostModels`: 2-field record `CostModels {_costModelsValid =
+/// fromList [(<Language>, CostModel <Language> [<cost-array>]),...],
+/// _costModelsUnknown = fromList [(<tag>, [<costs>]),...]}`. Yggdrasil's
+/// `CostModels = BTreeMap<u8, Vec<i64>>` flattens valid + unknown; this
+/// helper splits by language tag (0=PlutusV1, 1=PlutusV2, 2=PlutusV3)
+/// into the upstream two-map shape, with `CostModel <Language>
+/// <Int64-list>` per known entry (upstream `Show CostModel` is a custom
+/// `"CostModel " <> show lang <> " " <> show cm` formatter).
+fn show_pparam_cost_models(value: Option<&std::collections::BTreeMap<u8, Vec<i64>>>) -> String {
+    let Some(models) = value else {
+        return "SNothing".to_string();
+    };
+    let mut valid_entries: Vec<String> = Vec::new();
+    let mut unknown_entries: Vec<String> = Vec::new();
+    for (tag, costs) in models {
+        let cost_list = format!(
+            "[{}]",
+            costs
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        match *tag {
+            0 => valid_entries.push(format!("(PlutusV1,CostModel PlutusV1 {cost_list})")),
+            1 => valid_entries.push(format!("(PlutusV2,CostModel PlutusV2 {cost_list})")),
+            2 => valid_entries.push(format!("(PlutusV3,CostModel PlutusV3 {cost_list})")),
+            other => unknown_entries.push(format!("({other},{cost_list})")),
+        }
+    }
+    format!(
+        "SJust (CostModels {{_costModelsValid = fromList [{}], _costModelsUnknown = fromList [{}]}})",
+        valid_entries.join(","),
+        unknown_entries.join(",")
+    )
+}
 /// 5-field record. Each `UnitInterval` field renders bare (no outer
 /// parens) inside the record at p=0. Inside `SJust` at p=11 the record
 /// wraps with parens.
@@ -4314,12 +4348,33 @@ mod tests {
     }
 
     #[test]
-    fn dumptofile_show_conway_gov_action_parameter_change_with_pending_field_rejects() {
-        // Non-empty PParamsUpdate with a field whose per-type Show is
-        // still pending (cppCostModels -> CostModels record) rejects
-        // with a clear message naming the field.
+    fn dumptofile_show_conway_gov_action_parameter_change_with_cost_models() {
+        let mut models: BTreeMap<u8, Vec<i64>> = BTreeMap::new();
+        models.insert(0, vec![100, 200]);
+        models.insert(2, vec![300]);
+        models.insert(7, vec![999]); // unknown tag → _costModelsUnknown
         let update = yggdrasil_ledger::ProtocolParameterUpdate {
-            cost_models: Some(std::collections::BTreeMap::new()),
+            cost_models: Some(models),
+            ..Default::default()
+        };
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: update,
+            guardrails_script_hash: None,
+        };
+        let rendered =
+            show_conway_gov_action(&parameter_change).expect("parameter change with cost models");
+        assert!(rendered.contains(
+            "cppCostModels = SJust (CostModels {_costModelsValid = fromList [(PlutusV1,CostModel PlutusV1 [100,200]),(PlutusV3,CostModel PlutusV3 [300])], _costModelsUnknown = fromList [(7,[999])]})"
+        ));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_parameter_change_rejects_shelley_only_field() {
+        // Setting min_utxo_value (a Shelley-era-only PParamsUpdate field
+        // that Conway dropped) reports an explicit boundary error.
+        let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            min_utxo_value: Some(1_000_000),
             ..Default::default()
         };
         let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
@@ -4328,10 +4383,10 @@ mod tests {
             guardrails_script_hash: None,
         };
         let err = show_conway_gov_action(&parameter_change)
-            .expect_err("pending parameter change should reject");
+            .expect_err("Shelley-only PParamsUpdate field should reject");
         let msg = format!("{err}");
         assert!(
-            msg.contains("cppCostModels"),
+            msg.contains("min_utxo_value"),
             "expected field-name in error: {msg}"
         );
     }
