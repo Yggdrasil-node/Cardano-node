@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R578 native-script Timelock DumpToFile rendering).
+**Status:** `partial` (post-R579 bootstrap-witness DumpToFile rendering — witness set boundary-free).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,22 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R579: `show_alonzo_witness_set` now renders non-empty
+  bootstrap witnesses as `atwrBootAddrTxWits = fromList
+  [BootstrapWitness {bwKey = VKey (VerKeyEd25519DSIGN "..."),
+  bwSignature = SignedDSIGN (SigEd25519DSIGN "..."), bwChainCode =
+  ChainCode "...", bwAttributes = "..."}]` matching upstream
+  stock-derived `Show BootstrapWitness`. The witness set is now
+  boundary-free — every `ShelleyWitnessSet` field renders for
+  Alonzo/Babbage/Conway DumpToFile. Documented byte-parity caveat:
+  upstream `Ord BootstrapWitness = comparing bootstrapWitKeyHash`
+  (Byron AddressInfo Blake2b-224) is not yet implemented in
+  yggdrasil, so multi-witness sets sort by canonical `(public_key,
+  signature, chain_code, attributes)` tuple lex — deterministic
+  within a session but not byte-equivalent to upstream. Single-
+  witness cases are byte-equivalent. 3 focused unit tests cover the
+  BootstrapWitness record shape, empty/full Set rendering with sort
+  verification, and end-to-end witness-set integration.
 - Shipped R578: native-script Timelock Show rendering for both
   reference-script and witness-set paths. `show_babbage_script_ref`
   now renders `Script::Native(NativeScript)` as `SJust NativeScript
@@ -655,10 +671,15 @@ This crate's full implementation remains an A4 sister-tool build-out:
   both reference-script and witness-set paths now accept native
   scripts via `show_native_script` (all 6 TimelockRaw variants:
   signature / allOf / anyOf / mOf / timeStart / timeExpire).
-- Next: bootstrap-witness rendering in the witness set, Conway
-  `ProposalProcedures` map (GovAction 7+ variants), AccountAddress
-  decoding for withdrawals/treasury return addresses, and
-  upstream-binary soak in strict-mirror-sized slices.
+- Shipped: bootstrap-witness DumpToFile rendering (R579):
+  `show_alonzo_witness_set` now renders bootstrap witnesses; the
+  witness set is boundary-free across vkey / native / Plutus / data
+  / redeemer / bootstrap fields. Upstream-`Ord` byte-parity for
+  multi-witness sets pending a Byron AddressInfo port.
+- Next: Conway `ProposalProcedures` map (GovAction 7+ variants +
+  AccountAddress decoding for `pProcReturnAddr`), upstream
+  `bootstrapWitKeyHash` parity, and upstream-binary soak in
+  strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

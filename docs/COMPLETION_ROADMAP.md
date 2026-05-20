@@ -395,10 +395,19 @@ own parser / generator / submission implementation plus upstream
   variants (`TimelockSignature`, `TimelockAllOf`, `TimelockAnyOf`,
   `TimelockMOf`, `TimelockTimeStart`, `TimelockTimeExpire`), with
   the outer MemoBytes hash computed as `Blake2b-256` over the
-  canonical native-script CBOR. The remaining tx-generator blockers
-  are bootstrap-witness rendering, Conway `ProposalProcedures` map
-  rendering (with `GovAction`'s 7+ variants and AccountAddress
-  decoding), and upstream-binary soak evidence.
+  canonical native-script CBOR. R579 closed the bootstrap-witness
+  path: `show_alonzo_witness_set` now renders non-empty bootstrap
+  witnesses as `atwrBootAddrTxWits = fromList [BootstrapWitness
+  {bwKey, bwSignature, bwChainCode, bwAttributes}]`. The witness set
+  is now boundary-free across all 5 carrier fields (vkey, native,
+  Plutus, data, redeemer, bootstrap). Documented byte-parity caveat:
+  upstream `Ord BootstrapWitness` uses `bootstrapWitKeyHash` (Byron
+  AddressInfo Blake2b-224); yggdrasil sorts by canonical `(pubkey,
+  sig, chain_code, attrs)` tuple lex — single-witness cases byte-
+  equivalent, multi-witness pending a future round. The remaining
+  tx-generator blockers are Conway `ProposalProcedures` map rendering
+  (with `GovAction`'s 7+ variants and AccountAddress decoding) and
+  upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

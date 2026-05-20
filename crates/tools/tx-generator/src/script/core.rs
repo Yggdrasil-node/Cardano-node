@@ -1835,12 +1835,6 @@ fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet, era: &str) -> Resul
 }
 
 fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Error> {
-    if !witness_set.bootstrap_witnesses.is_empty() {
-        return Err(lift_tx_gen_error(
-            "DumpToFile: Alonzo Show(Tx) renderer does not yet support bootstrap witnesses",
-        ));
-    }
-
     let mut witnesses = witness_set.vkey_witnesses.clone();
     witnesses.sort_by_key(|witness| witness.vkey);
     let vkeys = witnesses
@@ -1848,13 +1842,57 @@ fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Er
         .map(show_vkey_witness)
         .collect::<Vec<_>>()
         .join(",");
+    let boot = show_alonzo_bootstrap_witnesses(&witness_set.bootstrap_witnesses);
     let scripts = show_alonzo_script_witnesses(witness_set);
     let dats = show_alonzo_tx_dats(&witness_set.plutus_data);
     let rdmrs = show_alonzo_redeemers(&witness_set.redeemers)?;
     let witness_hash = hex::encode(hash_bytes_256(&witness_set.to_cbor_bytes()).0);
     Ok(format!(
-        "AlonzoTxWitsRaw {{atwrAddrTxWits = fromList [{vkeys}], atwrBootAddrTxWits = fromList [], atwrScriptTxWits = {scripts}, atwrDatsTxWits = {dats}, atwrRdmrsTxWits = {rdmrs}}} (blake2b_256: SafeHash \"{witness_hash}\")"
+        "AlonzoTxWitsRaw {{atwrAddrTxWits = fromList [{vkeys}], atwrBootAddrTxWits = {boot}, atwrScriptTxWits = {scripts}, atwrDatsTxWits = {dats}, atwrRdmrsTxWits = {rdmrs}}} (blake2b_256: SafeHash \"{witness_hash}\")"
     ))
+}
+
+/// Render `atwrBootAddrTxWits = fromList [...]` matching upstream
+/// `Show (Set BootstrapWitness)`.
+///
+/// Upstream sorts by `bootstrapWitKeyHash` (Blake2b-224 of the Byron
+/// AddressInfo built from public_key + chain_code + attributes); yggdrasil
+/// does not yet implement that hash. As a documented byte-parity caveat
+/// this renderer sorts by the canonical `(public_key, signature,
+/// chain_code, attributes)` tuple lex — deterministic within a session
+/// and stable across reruns, but not necessarily byte-equivalent to
+/// upstream for sets with multiple witnesses. Single-witness cases are
+/// byte-equivalent. A future round can close the upstream-order parity
+/// once a Byron AddressInfo port lands.
+fn show_alonzo_bootstrap_witnesses(witnesses: &[yggdrasil_ledger::BootstrapWitness]) -> String {
+    let mut sorted: Vec<&yggdrasil_ledger::BootstrapWitness> = witnesses.iter().collect();
+    sorted.sort_by(|a, b| {
+        a.public_key
+            .cmp(&b.public_key)
+            .then_with(|| a.signature.cmp(&b.signature))
+            .then_with(|| a.chain_code.cmp(&b.chain_code))
+            .then_with(|| a.attributes.cmp(&b.attributes))
+    });
+    let body = sorted
+        .iter()
+        .map(|bw| show_bootstrap_witness(bw))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("fromList [{body}]")
+}
+
+/// Render a single `BootstrapWitness` matching upstream stock-derived
+/// `Show BootstrapWitness`: record with four fields wrapping VKey,
+/// SignedDSIGN, ChainCode (`Quiet`-shown), and the raw attribute
+/// ByteArray.
+fn show_bootstrap_witness(bw: &yggdrasil_ledger::BootstrapWitness) -> String {
+    format!(
+        "BootstrapWitness {{bwKey = VKey (VerKeyEd25519DSIGN \"{}\"), bwSignature = SignedDSIGN (SigEd25519DSIGN \"{}\"), bwChainCode = ChainCode {}, bwAttributes = {}}}",
+        hex::encode(bw.public_key),
+        hex::encode(bw.signature),
+        show_haskell_bytestring(&bw.chain_code),
+        show_haskell_bytestring(&bw.attributes),
+    )
 }
 
 /// Render `atwrScriptTxWits = fromList [...]` matching upstream
@@ -3727,6 +3765,78 @@ mod tests {
         assert!(
             rendered.contains("(blake2b_256: SafeHash \""),
             "expected blake2b_256 SafeHash inside MemoBytes show: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_bootstrap_witness_record_form() {
+        let bw = yggdrasil_ledger::BootstrapWitness {
+            public_key: [0x11; 32],
+            signature: [0x22; 64],
+            chain_code: [0x33; 32],
+            attributes: vec![0xAA, 0xBB],
+        };
+        let rendered = show_bootstrap_witness(&bw);
+        assert!(rendered.starts_with("BootstrapWitness {bwKey = VKey (VerKeyEd25519DSIGN \""));
+        assert!(rendered.contains("bwSignature = SignedDSIGN (SigEd25519DSIGN \""));
+        assert!(rendered.contains("bwChainCode = ChainCode \""));
+        assert!(rendered.contains("bwAttributes = \"\\170\\187\""));
+    }
+
+    #[test]
+    fn dumptofile_show_alonzo_bootstrap_witnesses_empty_and_full() {
+        // Empty path keeps the prior `fromList []` shape.
+        assert_eq!(show_alonzo_bootstrap_witnesses(&[]), "fromList []");
+
+        let bw_a = yggdrasil_ledger::BootstrapWitness {
+            public_key: [0x00; 32],
+            signature: [0x00; 64],
+            chain_code: [0x00; 32],
+            attributes: vec![],
+        };
+        let bw_b = yggdrasil_ledger::BootstrapWitness {
+            public_key: [0xFF; 32],
+            signature: [0x00; 64],
+            chain_code: [0x00; 32],
+            attributes: vec![],
+        };
+        // Pass in reverse order to confirm sort.
+        let rendered = show_alonzo_bootstrap_witnesses(&[bw_b.clone(), bw_a.clone()]);
+        assert!(rendered.starts_with("fromList [BootstrapWitness {bwKey = VKey"));
+        // 0x00 public_key must precede 0xFF public_key.
+        let zero_pos = rendered
+            .find("VerKeyEd25519DSIGN \"00000000")
+            .expect("zero public_key");
+        let ff_pos = rendered
+            .find("VerKeyEd25519DSIGN \"ffffffff")
+            .expect("ff public_key");
+        assert!(zero_pos < ff_pos, "expected lex sort: {rendered}");
+    }
+
+    #[test]
+    fn dumptofile_alonzo_witness_set_renders_bootstrap_witness_entry() {
+        let bw = yggdrasil_ledger::BootstrapWitness {
+            public_key: [0x44; 32],
+            signature: [0x55; 64],
+            chain_code: [0x66; 32],
+            attributes: vec![],
+        };
+        let ws = ShelleyWitnessSet {
+            vkey_witnesses: vec![],
+            native_scripts: vec![],
+            bootstrap_witnesses: vec![bw],
+            plutus_v1_scripts: vec![],
+            plutus_data: vec![],
+            redeemers: vec![],
+            plutus_v2_scripts: vec![],
+            plutus_v3_scripts: vec![],
+        };
+        let rendered = show_alonzo_witness_set(&ws).expect("bootstrap witness set");
+        assert!(
+            rendered.contains(
+                "atwrBootAddrTxWits = fromList [BootstrapWitness {bwKey = VKey (VerKeyEd25519DSIGN \""
+            ),
+            "expected non-empty bootstrap witness in witness-set rendering: {rendered}"
         );
     }
 
