@@ -9,8 +9,12 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+use command::Command;
+use setup::testnet_discovery::discover_testnet_config;
+
 pub mod command;
 pub mod parser;
+pub mod setup;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {
@@ -45,14 +49,25 @@ pub fn run_main() -> ExitCode {
 /// Concrete run-loop entry.
 ///
 /// R533 wires the upstream-shaped [`command::Command`] parser and
-/// dispatch boundary. Individual command execution still lands in the
-/// later `Script`, `Compiler`, `Setup`, and `GeneratorTx` slices.
+/// dispatch boundary. R534 prepares `json_highlevel --testnet-config-dir`
+/// by running the upstream-shaped testnet discovery merge. Individual
+/// command execution still lands in the later `Script`, `Compiler`, and
+/// `GeneratorTx` slices.
 pub fn run(command: command::Command) -> eyre::Result<()> {
+    if let Command::JsonHighLevel(cmd) = &command
+        && let Some(testnet_config) = &cmd.testnet_config
+    {
+        let raw = std::fs::read_to_string(&cmd.config_file)?;
+        let user_config = serde_json::from_str(&raw)?;
+        let _merged_config = discover_testnet_config(testnet_config, user_config)?;
+    }
+
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R533 command parser slice). Help/version compatibility and typed \
-         subcommand parsing are wired; concrete command implementations land \
-         in later strict slices of the tx-generator port arc.",
+         (R534 setup discovery slice). Help/version compatibility, typed \
+         subcommand parsing, and json_highlevel testnet discovery are wired; \
+         concrete command implementations land in later strict slices of the \
+         tx-generator port arc.",
         command.name()
     ))
 }

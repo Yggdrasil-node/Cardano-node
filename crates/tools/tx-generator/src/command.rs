@@ -6,9 +6,11 @@
 //! Ports the upstream `Command` sum type and `commandParser` grammar:
 //! `json`, `json_highlevel`, `compile`, `selftest`, and `version`.
 //! Runtime execution of the parsed commands remains in later strict
-//! slices for `Script`, `Compiler`, `Setup`, and `GeneratorTx`.
+//! slices for `Script`, `Compiler`, and `GeneratorTx`.
 
 use std::path::PathBuf;
+
+use crate::setup::testnet_discovery::TestnetConfig;
 
 /// Mirror of upstream `data Command`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,13 +38,6 @@ impl Command {
             Command::Version => "version",
         }
     }
-}
-
-/// Mirror of upstream `TestnetConfig`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TestnetConfig {
-    /// `--testnet-config-dir DIR`
-    pub testnet_config_dir: PathBuf,
 }
 
 /// Arguments carried by upstream `JsonHL`.
@@ -177,7 +172,7 @@ fn parse_json_highlevel(rest: &[String]) -> Result<Command, CommandParseError> {
                     return Err(CommandParseError::DuplicateOption("--testnet-config-dir"));
                 }
                 parsed.testnet_config = Some(TestnetConfig {
-                    testnet_config_dir: PathBuf::from(value),
+                    tc_dir: PathBuf::from(value),
                 });
             }
             "--nodeConfig" => {
@@ -209,7 +204,7 @@ fn parse_json_highlevel(rest: &[String]) -> Result<Command, CommandParseError> {
                     return Err(CommandParseError::DuplicateOption("--testnet-config-dir"));
                 }
                 parsed.testnet_config = Some(TestnetConfig {
-                    testnet_config_dir: PathBuf::from(&other["--testnet-config-dir=".len()..]),
+                    tc_dir: PathBuf::from(&other["--testnet-config-dir=".len()..]),
                 });
             }
             other if other.starts_with("--nodeConfig=") => {
@@ -317,7 +312,7 @@ mod tests {
             Command::JsonHighLevel(JsonHighLevelCommand {
                 config_file: PathBuf::from("config.json"),
                 testnet_config: Some(TestnetConfig {
-                    testnet_config_dir: PathBuf::from("testnet"),
+                    tc_dir: PathBuf::from("testnet"),
                 }),
                 node_config: Some(PathBuf::from("node.json")),
                 cardano_tracer: Some(PathBuf::from("tracer.sock")),
@@ -339,7 +334,7 @@ mod tests {
             Command::JsonHighLevel(JsonHighLevelCommand {
                 config_file: PathBuf::from("config.json"),
                 testnet_config: Some(TestnetConfig {
-                    testnet_config_dir: PathBuf::from("testnet"),
+                    tc_dir: PathBuf::from("testnet"),
                 }),
                 node_config: Some(PathBuf::from("node.json")),
                 cardano_tracer: Some(PathBuf::from("tracer.sock")),

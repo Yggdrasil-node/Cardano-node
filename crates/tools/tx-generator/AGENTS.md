@@ -1,8 +1,8 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R533 Command parser slice). The old
+**Status:** `partial` (post-R534 TestnetDiscovery slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
-the tx-generator Setup / Script / GeneratorTx / Submission
+the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
 **LARGE**.
 
@@ -39,9 +39,16 @@ approved synthesis area from the sister-tools plan.
   `json_highlevel`, `compile`, `selftest`, and `version`.
 - Shipped R533: `parser::Args` now carries typed `command::Command`
   instead of raw passthrough.
+- Shipped R534: `Setup/TestnetDiscovery.hs` surface. `setup/testnet_discovery.rs`
+  discovers `cardano-testnet` output directories, reads node port files,
+  builds localhost `targetNodes`, and deep-merges discovered connection
+  settings over user JSON config.
+- Shipped R534: `json_highlevel --testnet-config-dir DIR` now reads the
+  high-level config JSON and performs testnet discovery before reaching
+  the command-execution sentinel.
 - Pending: concrete command execution. Dispatch returns a
-  command-specific "not yet implemented" sentinel until the Setup /
-  Script / GeneratorTx / Submission slices land.
+  command-specific "not yet implemented" sentinel until the Script /
+  GeneratorTx / Submission slices land.
 - Pending: end-to-end behavioral tests against the upstream binary.
 
 ## Build + Run
@@ -84,8 +91,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: skeleton (R327 + R335-pattern bulk skeleton at R335-R336).
 - Shipped: Command parser (R533): `Command.hs` `Command`,
   `TestnetConfig`, and command-parser grammar.
-- Next: port upstream setup discovery, generator transaction
-  construction, and submission client in strict-mirror-sized slices.
+- Shipped: Testnet discovery (R534): `Setup/TestnetDiscovery.hs`
+  path conventions, node discovery, JSON deep-merge, and runtime
+  `json_highlevel --testnet-config-dir` preparation.
+- Next: port upstream script compile/run behavior, generator
+  transaction construction, and submission client in strict-mirror-sized
+  slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
