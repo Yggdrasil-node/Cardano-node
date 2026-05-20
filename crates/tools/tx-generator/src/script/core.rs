@@ -16,6 +16,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use num_bigint::BigInt;
 use serde_json::Value;
 use yggdrasil_ledger::{
     CborDecode, Decoder, Encoder, PlutusData, ProtocolParameters, eras::alonzo::ExUnits,
@@ -30,9 +31,9 @@ use crate::generator_tx::sized_metadata::{TxMetadata, mk_metadata};
 use crate::script::aeson;
 use crate::script::env::{
     Env, Error, Fund, ProtocolParameterMode, WalletRef, get_env_genesis, get_env_keys,
-    get_env_network_id, get_env_socket_path, get_env_threads, get_env_threads_mut, get_env_wallets,
-    get_env_wallets_mut, get_proto_param_mode, lift_tx_gen_error, set_env_keys, set_env_threads,
-    set_env_wallets, set_proto_param_mode, trace_debug,
+    get_env_network_id, get_env_socket_path, get_env_summary, get_env_threads, get_env_threads_mut,
+    get_env_wallets, get_env_wallets_mut, get_proto_param_mode, lift_tx_gen_error, set_env_keys,
+    set_env_summary, set_env_threads, set_env_wallets, set_proto_param_mode, trace_debug,
 };
 use crate::script::types::{
     Generator, PayMode, ProtocolParametersSource, ScriptBudget, ScriptSpec, SigningKeyEnvelope,
@@ -43,14 +44,19 @@ use crate::tx_generator::fund::{
     FundWitness, ScriptWitnessForSpending, get_fund_coin, get_fund_tx_in,
 };
 use crate::tx_generator::genesis::genesis_secure_initial_fund;
-use crate::tx_generator::plutus_context::read_script_data;
+use crate::tx_generator::plutus_context::{
+    PlutusAutoBudget, PlutusBudgetFittingStrategy, plutus_auto_scale_blockfit, read_script_data,
+    script_data_modify_number,
+};
 use crate::tx_generator::tx::{GeneratedTx, gen_tx, source_transaction_preview, tx_size_in_bytes};
 use crate::tx_generator::utils::{include_change, inputs_to_outputs_with_fee};
 use crate::tx_generator::utxo::{
     ScriptInAnyLang, ToUtxo, ToUtxoList, key_address, mk_utxo_script, mk_utxo_variant,
     script_address,
 };
-use crate::types::{AnyCardanoEra, ExecutionUnits, Lovelace, PayWithChange, TxGenTxParams};
+use crate::types::{
+    AnyCardanoEra, ExecutionUnits, Lovelace, PayWithChange, TxGenPlutusType, TxGenTxParams,
+};
 use crate::wallet::{mangle_repeat, mangle_with_change, wallet_preview, wallet_source};
 
 /// Mainnet network magic used by node-to-client handshakes.
@@ -60,6 +66,7 @@ use crate::wallet::{mangle_repeat, mangle_with_change, wallet_preview, wallet_so
 pub const MAINNET_NETWORK_MAGIC: u32 = 764_824_073;
 
 const PROTOCOL_PARAMETERS_QUERIED_FILE: &str = "protocol-parameters-queried.json";
+const PLUTUS_BUDGET_SUMMARY_FILE: &str = "plutus-budget-summary.json";
 
 /// Mirror of upstream `withEra`.
 pub fn with_era<T>(
@@ -353,7 +360,7 @@ struct ExecutionUnitPrices {
     price_execution_steps: f64,
 }
 
-/// Mirror of upstream `makePlutusContext` for the static-budget path.
+/// Mirror of upstream `makePlutusContext`.
 pub fn make_plutus_context(
     env: &mut Env,
     _era: AnyCardanoEra,
@@ -401,12 +408,60 @@ pub fn make_plutus_context(
                     )));
                 }
             }
-            (script_data, redeemer, units.clone())
+            (script_data, redeemer, *units)
         }
-        ScriptBudget::AutoScript(_, _) => {
-            return Err(lift_tx_gen_error(
-                "makePlutusContext: AutoScript is pending plutusAutoScaleBlockfit",
-            ));
+        ScriptBudget::AutoScript(redeemer_file, tx_inputs) => {
+            let redeemer = read_script_data(redeemer_file).map_err(lift_tx_gen_error)?;
+            let strategy = match script_spec.script_spec_plutus_type {
+                TxGenPlutusType::LimitTxPerBlock8 => {
+                    PlutusBudgetFittingStrategy::TargetTxsPerBlock(8)
+                }
+                TxGenPlutusType::LimitTxPerBlock4 => {
+                    PlutusBudgetFittingStrategy::TargetTxsPerBlock(4)
+                }
+                _ => PlutusBudgetFittingStrategy::TargetTxExpenditure,
+            };
+            let auto_budget = PlutusAutoBudget {
+                auto_budget_units: script_parameters.max_tx_execution_units,
+                auto_budget_datum: PlutusData::integer(0),
+                auto_budget_redeemer: script_data_modify_number(&redeemer, |_| {
+                    BigInt::from(1_000_000u64)
+                }),
+                auto_budget_upper_bound_hint: None,
+            };
+            let pre_execution_parameters =
+                ledger_protocol_parameters(&protocol_parameters, "makePlutusContext")?
+                    .ok_or_else(|| {
+                        Error::WalletError(format!(
+                            "makePlutusContext preExecuteScript failed: preExecutePlutusScript: cost model unavailable for: {:?}",
+                            script.language
+                        ))
+                    })?;
+            let script_info = (resolved_to.to_string(), strategy.to_string());
+            trace_debug(
+                env,
+                &format!(
+                    "Plutus auto mode : Available budget per Tx: {:?} -- split between inputs per Tx: {}",
+                    script_parameters.max_tx_execution_units, tx_inputs
+                ),
+            );
+
+            let (summary, auto_budget, pre_run) = plutus_auto_scale_blockfit(
+                &pre_execution_parameters,
+                script_info,
+                &script,
+                auto_budget,
+                strategy,
+                *tx_inputs,
+            )
+            .map_err(lift_tx_gen_error)?;
+            set_env_summary(env, summary.to_json_value());
+            dump_budget_summary_if_existing(env)?;
+            (
+                auto_budget.auto_budget_datum,
+                auto_budget.auto_budget_redeemer,
+                pre_run,
+            )
         }
     };
 
@@ -438,6 +493,27 @@ pub fn make_plutus_context(
         script_data,
         script_fee,
     })
+}
+
+/// Mirror of upstream `dumpBudgetSummaryIfExisting`.
+fn dump_budget_summary_if_existing(env: &mut Env) -> Result<(), Error> {
+    let summary = get_env_summary(env)
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+    let rendered = serde_json::to_string_pretty(&summary)
+        .map_err(|err| lift_tx_gen_error(format!("prettyPrintOrdered: {err}")))?;
+    fs::write(PLUTUS_BUDGET_SUMMARY_FILE, format!("{rendered}\n")).map_err(|err| {
+        lift_tx_gen_error(format!(
+            "dumpBudgetSummaryIfExisting: write {PLUTUS_BUDGET_SUMMARY_FILE}: {err}"
+        ))
+    })?;
+    trace_debug(
+        env,
+        &format!(
+            "dumpBudgetSummaryIfExisting : budget summary created/updated in: {PLUTUS_BUDGET_SUMMARY_FILE}"
+        ),
+    );
+    Ok(())
 }
 
 /// Mirror of upstream `interpretPayMode`.
@@ -615,6 +691,9 @@ fn ledger_protocol_parameters(
     if let Some(max_tx_ex_units) = parse_optional_max_tx_ex_units(value, error_context)? {
         parameters.max_tx_ex_units = Some(max_tx_ex_units);
     }
+    if let Some(max_block_ex_units) = parse_optional_max_block_ex_units(value, error_context)? {
+        parameters.max_block_ex_units = Some(max_block_ex_units);
+    }
     Ok(Some(parameters))
 }
 
@@ -670,24 +749,55 @@ fn parse_optional_max_tx_ex_units(
     value: &Value,
     error_context: &str,
 ) -> Result<Option<ExUnits>, Error> {
-    let Some(max_tx) = value
-        .get("maxTxExecutionUnits")
-        .or_else(|| value.get("max_tx_execution_units"))
-        .or_else(|| value.get("maxTxExUnits"))
-        .or_else(|| value.get("max_tx_ex_units"))
-    else {
+    parse_optional_ex_units(
+        value,
+        error_context,
+        &[
+            "maxTxExecutionUnits",
+            "max_tx_execution_units",
+            "maxTxExUnits",
+            "max_tx_ex_units",
+        ],
+        "maxTxExecutionUnits",
+    )
+}
+
+fn parse_optional_max_block_ex_units(
+    value: &Value,
+    error_context: &str,
+) -> Result<Option<ExUnits>, Error> {
+    parse_optional_ex_units(
+        value,
+        error_context,
+        &[
+            "maxBlockExecutionUnits",
+            "max_block_execution_units",
+            "maxBlockExUnits",
+            "max_block_ex_units",
+        ],
+        "maxBlockExecutionUnits",
+    )
+}
+
+fn parse_optional_ex_units(
+    value: &Value,
+    error_context: &str,
+    names: &[&str],
+    label: &str,
+) -> Result<Option<ExUnits>, Error> {
+    let Some(ex_units) = names.iter().find_map(|name| value.get(*name)) else {
         return Ok(None);
     };
-    let steps_field = format!("{error_context}: maxTxExecutionUnits.steps");
-    let memory_field = format!("{error_context}: maxTxExecutionUnits.memory");
+    let steps_field = format!("{error_context}: {label}.steps");
+    let memory_field = format!("{error_context}: {label}.memory");
     Ok(Some(ExUnits {
         steps: parse_json_u64_field(
-            max_tx,
+            ex_units,
             &["steps", "executionSteps", "exUnitsSteps"],
             &steps_field,
         )?,
         mem: parse_json_u64_field(
-            max_tx,
+            ex_units,
             &["memory", "mem", "executionMemory", "exUnitsMem"],
             &memory_field,
         )?,
@@ -1503,6 +1613,10 @@ mod tests {
                 "maxTxExecutionUnits": {
                     "memory": 14_000_000,
                     "steps": 10_000_000_000u64
+                },
+                "maxBlockExecutionUnits": {
+                    "memory": 50_000_000,
+                    "steps": 40_000_000_000u64
                 }
             })),
         );

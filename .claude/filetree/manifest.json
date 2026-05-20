@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-20T11:41:39Z",
+  "generated_at_utc": "2026-05-20T12:12:43Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -10510,10 +10510,10 @@
         "Guidance for the pure-Rust port of upstream `tx-generator`.",
         "Tracks the R551 StartProtocol env-wiring slice plus the remaining GeneratorTx / Submission arc."
       ],
-      "content_sha256": "53fb4f9f5ebc9315b0acc42b20cabaef6ad464c341e7178f3f528e5cc3e9325b",
-      "git_blob": "dc2671e639b5559a07913625f4c985f4b2b893d4",
-      "source_mtime_ns": 1779276569723071900,
-      "described_at_utc": "2026-05-20T11:41:22Z",
+      "content_sha256": "bf823772760c38fa8e97121324518e12f62b1653880b37b21738857d0e5d0d7c",
+      "git_blob": "9b4a5d6f9c798d99723b9a5a0a2af130a38d7202",
+      "source_mtime_ns": 1779278422472540200,
+      "described_at_utc": "2026-05-20T12:07:49Z",
       "generated_self_exempt": false
     },
     {
@@ -10522,10 +10522,10 @@
         "Cargo manifest for the tx-generator sister-tool crate.",
         "Declares direct dependencies for tx-generator runtime helpers plus crate metadata."
       ],
-      "content_sha256": "428dd16de3b04b2f238af924f0d5ca376a5c0cfa4da7a1c5407aaeb4f914cbda",
-      "git_blob": "4dde7dde449dcccb5fe51435bf00f6de20459122",
-      "source_mtime_ns": 1779276560864652500,
-      "described_at_utc": "2026-05-20T11:41:22Z",
+      "content_sha256": "f9d85d17436e519cd82564438e680a982c37f5387613947b257c282ff5937b6e",
+      "git_blob": "752bb82fa06c1c27e3170157d525a80b2b5422ba",
+      "source_mtime_ns": 1779278405473779400,
+      "described_at_utc": "2026-05-20T12:07:49Z",
       "generated_self_exempt": false
     },
     {
@@ -10739,10 +10739,10 @@
         "Strict mirror of upstream tx-generator Script/Core state and NtC query helpers.",
         "Owns Core action bodies, queryEra/queryRemoteProtocolParameters, and transaction-generation boundaries."
       ],
-      "content_sha256": "a96a5bbbbf405dcb2673d930eaa79bb9016f7970825b7cbc589af156c0fd0ddd",
-      "git_blob": "737864e13b89ae96827d96c36e0991b3aeb7b1c4",
-      "source_mtime_ns": 1779277147500597400,
-      "described_at_utc": "2026-05-20T11:41:23Z",
+      "content_sha256": "e44d8fba3bd64650568016d838997668140fbe9bf039ed565292892c5166d7c1",
+      "git_blob": "e1df21fe2ace6cba6f730e2733704b29ef099048",
+      "source_mtime_ns": 1779278314899867600,
+      "described_at_utc": "2026-05-20T12:07:49Z",
       "generated_self_exempt": false
     },
     {
@@ -10898,10 +10898,10 @@
       "description_lines": [
         "Plutus budgeting and script-data helpers. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/PlutusContext.hs`."
       ],
-      "content_sha256": "361e8c4962954453ac4bc11dbeca63f908573f25c742eb46049122de372e7c36",
-      "git_blob": "c4bec66162e9397bb669d942779025cdbf953119",
-      "source_mtime_ns": 1779277186401312500,
-      "described_at_utc": "2026-05-20T11:41:23Z",
+      "content_sha256": "c1b60ce1a41f43a2c443a491fec2f3936f7f417f499a3b603b9c851ec151c00c",
+      "git_blob": "d9a4c9a8eb3bf2f9285b6285768cce3ec8293bfb",
+      "source_mtime_ns": 1779278351824644200,
+      "described_at_utc": "2026-05-20T12:07:49Z",
       "generated_self_exempt": false
     },
     {
@@ -10943,10 +10943,10 @@
         "High-level transaction-generator configuration types.",
         "Mirrors the upstream TxGenerator.Types subset required by NixService and later Compiler slices."
       ],
-      "content_sha256": "0d3061f2cd0a84f09cbf9791990c5a2b48c8ad10ea6be62496bbc966a50cd03b",
-      "git_blob": "906493c5561c75c4178c22ba802c0236d6f46c7b",
-      "source_mtime_ns": 1779265257337161800,
-      "described_at_utc": "2026-05-20T11:41:23Z",
+      "content_sha256": "3e588a3e6a2511af0bfa513194c9f62ea685e2bf09e336ef1060622ecfc47cdf",
+      "git_blob": "7a8335e752d6efcc3cdabe9e3ba523916bd59774",
+      "source_mtime_ns": 1779278021056971900,
+      "described_at_utc": "2026-05-20T12:07:49Z",
       "generated_self_exempt": false
     },
     {
@@ -11065,10 +11065,10 @@
       "description_lines": [
         "Completion Roadmap: ---."
       ],
-      "content_sha256": "b4a2fe816cb4774f04a860f4289bb709ad3a3cc75754ce710298a73814d098bd",
-      "git_blob": "b4ae4b29fcf2e14f409f7354d9728c230ccc048c",
-      "source_mtime_ns": 1779276698874329600,
-      "described_at_utc": "2026-05-20T11:41:24Z",
+      "content_sha256": "c1365f4de2d5b6d48c9e2bb76bb1f323c6a5fe4dce9d6f6ceaa8ada543988699",
+      "git_blob": "9b8c98b21a7d95d4ad20ada58074cbb6d43ed7a6",
+      "source_mtime_ns": 1779278438411494000,
+      "described_at_utc": "2026-05-20T12:07:49Z",
       "generated_self_exempt": false
     },
     {
@@ -11131,10 +11131,10 @@
       "description_lines": [
         "PARITY & FUNCTION SUMMARY FOR MANAGEMENT: ---."
       ],
-      "content_sha256": "8f5157f4f719f519ac77b857611b50ee9310f51e5a808b2400c321fa46da43dd",
-      "git_blob": "c43876be41ebf62cc2bad6e61b2537cdabe39485",
-      "source_mtime_ns": 1779276698874329600,
-      "described_at_utc": "2026-05-20T11:41:24Z",
+      "content_sha256": "f7b688f9b2b43b1a47689beec823985f44444e2e8727cf3ad5e7b71ffa9b5b91",
+      "git_blob": "877adc10441c39b665ee6f5d62f241c12118a2d2",
+      "source_mtime_ns": 1779278477991990600,
+      "described_at_utc": "2026-05-20T12:07:49Z",
       "generated_self_exempt": false
     },
     {
@@ -13320,6 +13320,17 @@
       "git_blob": "af45f92532ac844e160c26f667ea09de712911ef",
       "source_mtime_ns": 1779276582758931400,
       "described_at_utc": "2026-05-20T11:41:31Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "docs/operational-runs/2026-05-20-round-557-tx-generator-plutus-auto-budget.md",
+      "description_lines": [
+        "Round 557 evidence record for tx-generator Plutus auto-budget fitting and AutoScript summary wiring."
+      ],
+      "content_sha256": "58c97194cab3215e04a5f2419125fc23bf79d971c4c3958f859a6fe77825dd27",
+      "git_blob": "6cca8876c09e01ff23e4dcec886b469d6c302d1e",
+      "source_mtime_ns": 1779279155066975400,
+      "described_at_utc": "2026-05-20T12:12:43Z",
       "generated_self_exempt": false
     },
     {

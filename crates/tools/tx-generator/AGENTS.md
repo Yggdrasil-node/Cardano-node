@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R556 Plutus pre-execution slice). The old
+**Status:** `partial` (post-R557 Plutus auto-budget slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -143,8 +143,8 @@ approved synthesis area from the sister-tools plan.
   `script/core.rs` now resolves `PayToScript` static budgets into
   `mkUTxOScript` builders carrying real datum/redeemer/execution-unit
   witness data. R556 extends the static path with upstream-shaped
-  `preExecutePlutusScript` checking; AutoScript remains on the
-  `plutusAutoScaleBlockfit` boundary.
+  `preExecutePlutusScript` checking; R557 wires upstream-shaped
+  AutoScript budget fitting through `plutusAutoScaleBlockfit`.
 - Shipped R548: `Cardano.TxGenerator.Tx` key-spend transaction
   construction. `tx_generator/tx.rs` ports
   `sourceToStoreTransaction`, `sourceToStoreTransactionNew`,
@@ -210,6 +210,13 @@ approved synthesis area from the sister-tools plan.
   `ExecutionUnits`. `Script/Core.makePlutusContext` now honors
   `StaticScriptBudget(..., withCheck=true)` and rejects mismatched
   stated budgets like upstream.
+- Shipped R557: `Cardano.TxGenerator.PlutusContext` auto-budget fitting.
+  `tx_generator/plutus_context.rs` now ports `PlutusAutoBudget`,
+  `PlutusBudgetFittingStrategy`, `plutusAutoBudgetMaxOut`,
+  `plutusAutoScaleBlockfit`, `plutusBudgetSummary`, and the upstream
+  binary-search boundary. `Script/Core.makePlutusContext` now resolves
+  `AutoScript` budgets, writes `plutus-budget-summary.json`, and parses
+  `maxBlockExecutionUnits` from JSON protocol parameters.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
@@ -333,8 +340,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `Cardano.TxGenerator.Setup.Plutus.preExecutePlutusScript` now
   pre-runs static-budget scripts with the shared CEK evaluator and
   `Benchmarking.Script.Core.makePlutusContext` honors `withCheck`.
-- Next: port Plutus `plutusAutoScaleBlockfit`, exact `DumpToFile`
-  rendering, and Benchmark submission in strict-mirror-sized slices.
+- Shipped: Plutus auto-budget fitting (R557):
+  `Cardano.TxGenerator.PlutusContext` now fits loop redeemers with the
+  upstream binary-search strategy and `Benchmarking.Script.Core` writes
+  `plutus-budget-summary.json` for `AutoScript`.
+- Next: exact `DumpToFile` rendering and Benchmark submission in
+  strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

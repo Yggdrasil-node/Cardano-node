@@ -224,7 +224,7 @@ impl Serialize for PlutusScriptRef {
 }
 
 /// Execution unit budget used by static Plutus script settings.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionUnits {
     /// Execution steps.
     #[serde(rename = "executionSteps")]
