@@ -5,17 +5,18 @@
 //! **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/Script/Core.hs`.
 //! Ports the state/query/runtime helper boundary consumed by
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
-//! deterministic state-only operations; protocol queries, transaction
-//! stream evaluation, Plutus context construction, and submission still
-//! return explicit `TxGenError` boundaries until their downstream
-//! `GeneratorTx` and node-runtime mirrors land.
+//! deterministic state-only operations plus the static-budget Plutus
+//! context path. Auto-budget fitting, transaction stream evaluation,
+//! and submission still return explicit `TxGenError` boundaries until
+//! their downstream `GeneratorTx`, Plutus evaluator, and node-runtime
+//! mirrors land.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
-use yggdrasil_ledger::{Decoder, Encoder};
+use yggdrasil_ledger::{CborDecode, Decoder, Encoder, PlutusData, ProtocolParameters};
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
 use yggdrasil_network::{AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect};
@@ -29,12 +30,19 @@ use crate::script::env::{
     set_env_wallets, set_proto_param_mode, trace_debug,
 };
 use crate::script::types::{
-    Generator, PayMode, ProtocolParametersSource, SigningKeyEnvelope, SubmitMode,
+    Generator, PayMode, ProtocolParametersSource, ScriptBudget, ScriptSpec, SigningKeyEnvelope,
+    SubmitMode,
 };
-use crate::tx_generator::fund::{get_fund_coin, get_fund_tx_in};
+use crate::setup::plutus::read_plutus_script;
+use crate::tx_generator::fund::{
+    FundWitness, ScriptWitnessForSpending, get_fund_coin, get_fund_tx_in,
+};
+use crate::tx_generator::plutus_context::read_script_data;
 use crate::tx_generator::utils::{include_change, inputs_to_outputs_with_fee};
-use crate::tx_generator::utxo::{ToUtxo, key_address, mk_utxo_variant};
-use crate::types::{AnyCardanoEra, Lovelace, TxGenTxParams};
+use crate::tx_generator::utxo::{
+    ScriptInAnyLang, ToUtxo, key_address, mk_utxo_script, mk_utxo_variant, script_address,
+};
+use crate::types::{AnyCardanoEra, ExecutionUnits, Lovelace, TxGenTxParams};
 use crate::wallet::wallet_preview;
 
 /// Mainnet network magic used by node-to-client handshakes.
@@ -312,9 +320,101 @@ pub struct InterpretedPayMode {
     pub address_hex: String,
 }
 
+/// Result returned by upstream `makePlutusContext`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlutusContext {
+    /// Spending witness for generated script funds.
+    pub witness: FundWitness,
+    /// Plutus script in an upstream language wrapper.
+    pub script: ScriptInAnyLang,
+    /// Datum placed on generated script outputs.
+    pub script_data: PlutusData,
+    /// Script fee computed from execution-unit prices.
+    pub script_fee: Lovelace,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ScriptProtocolParameters {
+    execution_unit_prices: ExecutionUnitPrices,
+    max_tx_execution_units: ExecutionUnits,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ExecutionUnitPrices {
+    price_execution_memory: f64,
+    price_execution_steps: f64,
+}
+
+/// Mirror of upstream `makePlutusContext` for the static-budget path.
+pub fn make_plutus_context(
+    env: &mut Env,
+    _era: AnyCardanoEra,
+    script_spec: &ScriptSpec,
+) -> Result<PlutusContext, Error> {
+    let protocol_parameters = get_protocol_parameters(env)?;
+    let script_parameters = script_protocol_parameters(&protocol_parameters)?;
+    let (script, resolved_to) =
+        read_plutus_script(&script_spec.script_spec_file).map_err(lift_tx_gen_error)?;
+
+    trace_debug(
+        env,
+        &format!(
+            "Plutus auto mode : Available budget per TX: {:?}",
+            script_parameters.max_tx_execution_units
+        ),
+    );
+
+    let (script_data, script_redeemer, execution_units) = match &script_spec.script_spec_budget {
+        ScriptBudget::StaticScriptBudget(data_file, redeemer_file, units, with_check) => {
+            let script_data = read_script_data(data_file).map_err(lift_tx_gen_error)?;
+            let redeemer = read_script_data(redeemer_file).map_err(lift_tx_gen_error)?;
+            if *with_check {
+                return Err(lift_tx_gen_error(
+                    "makePlutusContext: StaticScriptBudget pre-execution check is pending preExecutePlutusScript",
+                ));
+            }
+            (script_data, redeemer, units.clone())
+        }
+        ScriptBudget::AutoScript(_, _) => {
+            return Err(lift_tx_gen_error(
+                "makePlutusContext: AutoScript is pending plutusAutoScaleBlockfit/preExecutePlutusScript",
+            ));
+        }
+    };
+
+    trace_debug(
+        env,
+        &format!(
+            "Plutus Benchmark : Script: {:?}, ResolvedTo: {}, Datum: {:?}, Redeemer: {:?}, StatedBudget: {:?}",
+            script_spec.script_spec_file,
+            resolved_to,
+            script_data,
+            script_redeemer,
+            execution_units
+        ),
+    );
+
+    let script_fee =
+        script_fee_from_prices(&script_parameters.execution_unit_prices, &execution_units)?;
+    let witness = FundWitness::ScriptWitness(ScriptWitnessForSpending {
+        language: format!("{:?}", script.language),
+        script_bytes: script.bytes.clone(),
+        datum: script_data.clone(),
+        redeemer: script_redeemer,
+        execution_units,
+    });
+
+    Ok(PlutusContext {
+        witness,
+        script,
+        script_data,
+        script_fee,
+    })
+}
+
 /// Mirror of upstream `interpretPayMode`.
 pub fn interpret_pay_mode(
-    env: &Env,
+    env: &mut Env,
     era: AnyCardanoEra,
     pay_mode: &PayMode,
 ) -> Result<InterpretedPayMode, Error> {
@@ -334,13 +434,172 @@ pub fn interpret_pay_mode(
                 address_hex,
             })
         }
-        PayMode::PayToScript(_script_spec, dest_wallet) => {
+        PayMode::PayToScript(script_spec, dest_wallet) => {
             let _wallet_ref = get_env_wallets(env, dest_wallet)?;
-            Err(lift_tx_gen_error(
-                "interpretPayMode: PayToScript is pending makePlutusContext",
-            ))
+            let context = make_plutus_context(env, era, script_spec)?;
+            let address_hex = hex::encode(script_address(&network_id, &context.script));
+            let to_utxo = mk_utxo_script(
+                era,
+                network_id,
+                context.script.clone(),
+                context.script_data,
+                context.witness,
+            )
+            .map_err(lift_tx_gen_error)?;
+            Ok(InterpretedPayMode {
+                address_hex,
+                to_utxo,
+                destination_wallet: dest_wallet.clone(),
+            })
         }
     }
+}
+
+fn script_protocol_parameters(value: &Value) -> Result<ScriptProtocolParameters, Error> {
+    if let Some(cbor_hex) = value.get("eraNativeCborHex").and_then(Value::as_str) {
+        let bytes = hex::decode(cbor_hex).map_err(|err| {
+            lift_tx_gen_error(format!(
+                "makePlutusContext: eraNativeCborHex is not valid hex: {err}"
+            ))
+        })?;
+        let params = ProtocolParameters::from_cbor_bytes(&bytes).map_err(|err| {
+            lift_tx_gen_error(format!(
+                "makePlutusContext: could not decode era-native protocol parameters: {err}"
+            ))
+        })?;
+        let price_mem = params.price_mem.ok_or_else(|| {
+            Error::WalletError(
+                "unexpected protocolParamPrices == Nothing in runPlutusBenchmark".to_string(),
+            )
+        })?;
+        let price_step = params.price_step.ok_or_else(|| {
+            Error::WalletError(
+                "unexpected protocolParamPrices == Nothing in runPlutusBenchmark".to_string(),
+            )
+        })?;
+        let max_tx_ex_units = params
+            .max_tx_ex_units
+            .ok_or_else(|| lift_tx_gen_error("Cannot determine protocolParamMaxTxExUnits"))?;
+        return Ok(ScriptProtocolParameters {
+            execution_unit_prices: ExecutionUnitPrices {
+                price_execution_memory: unit_interval_to_f64(price_mem)?,
+                price_execution_steps: unit_interval_to_f64(price_step)?,
+            },
+            max_tx_execution_units: ExecutionUnits {
+                execution_steps: max_tx_ex_units.steps,
+                execution_memory: max_tx_ex_units.mem,
+            },
+        });
+    }
+
+    let prices = value.get("executionUnitPrices").ok_or_else(|| {
+        Error::WalletError(
+            "unexpected protocolParamPrices == Nothing in runPlutusBenchmark".to_string(),
+        )
+    })?;
+    let max_tx = value
+        .get("maxTxExecutionUnits")
+        .ok_or_else(|| lift_tx_gen_error("Cannot determine protocolParamMaxTxExUnits"))?;
+
+    Ok(ScriptProtocolParameters {
+        execution_unit_prices: ExecutionUnitPrices {
+            price_execution_memory: parse_json_f64_field(
+                prices,
+                &["priceMemory", "priceMem", "memory", "executionMemory"],
+                "executionUnitPrices.priceMemory",
+            )?,
+            price_execution_steps: parse_json_f64_field(
+                prices,
+                &["priceSteps", "priceStep", "steps", "executionSteps"],
+                "executionUnitPrices.priceSteps",
+            )?,
+        },
+        max_tx_execution_units: ExecutionUnits {
+            execution_steps: parse_json_u64_field(
+                max_tx,
+                &["steps", "executionSteps"],
+                "maxTxExecutionUnits.steps",
+            )?,
+            execution_memory: parse_json_u64_field(
+                max_tx,
+                &["memory", "mem", "executionMemory"],
+                "maxTxExecutionUnits.memory",
+            )?,
+        },
+    })
+}
+
+fn script_fee_from_prices(
+    prices: &ExecutionUnitPrices,
+    execution_units: &ExecutionUnits,
+) -> Result<Lovelace, Error> {
+    let fee = (execution_units.execution_steps as f64 * prices.price_execution_steps)
+        + (execution_units.execution_memory as f64 * prices.price_execution_memory);
+    if !fee.is_finite() || fee < 0.0 {
+        return Err(lift_tx_gen_error(
+            "makePlutusContext: script fee calculation produced a non-finite value",
+        ));
+    }
+    if fee.ceil() > u64::MAX as f64 {
+        return Err(lift_tx_gen_error(
+            "makePlutusContext: script fee exceeds Lovelace range",
+        ));
+    }
+    Ok(fee.ceil() as Lovelace)
+}
+
+fn parse_json_f64_field(value: &Value, names: &[&str], label: &str) -> Result<f64, Error> {
+    let field = find_json_field(value, names, label)?;
+    match field {
+        Value::Number(number) => number
+            .as_f64()
+            .ok_or_else(|| lift_tx_gen_error(format!("{label}: expected finite number"))),
+        Value::Object(object) => {
+            let numerator = object
+                .get("numerator")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| lift_tx_gen_error(format!("{label}.numerator: expected number")))?;
+            let denominator = object
+                .get("denominator")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| {
+                    lift_tx_gen_error(format!("{label}.denominator: expected number"))
+                })?;
+            if denominator == 0.0 {
+                Err(lift_tx_gen_error(format!(
+                    "{label}.denominator: expected non-zero number"
+                )))
+            } else {
+                Ok(numerator / denominator)
+            }
+        }
+        _ => Err(lift_tx_gen_error(format!("{label}: expected number"))),
+    }
+}
+
+fn parse_json_u64_field(value: &Value, names: &[&str], label: &str) -> Result<u64, Error> {
+    find_json_field(value, names, label)?
+        .as_u64()
+        .ok_or_else(|| lift_tx_gen_error(format!("{label}: expected unsigned integer")))
+}
+
+fn find_json_field<'a>(value: &'a Value, names: &[&str], label: &str) -> Result<&'a Value, Error> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| lift_tx_gen_error(format!("{label}: expected object")))?;
+    names
+        .iter()
+        .find_map(|name| object.get(*name))
+        .ok_or_else(|| lift_tx_gen_error(format!("{label}: missing field")))
+}
+
+fn unit_interval_to_f64(value: yggdrasil_ledger::UnitInterval) -> Result<f64, Error> {
+    if value.denominator == 0 {
+        return Err(lift_tx_gen_error(
+            "makePlutusContext: execution unit price denominator is zero",
+        ));
+    }
+    Ok(value.numerator as f64 / value.denominator as f64)
 }
 
 /// Mirror of upstream `submitAction`.
@@ -646,7 +905,11 @@ pub fn set_dummy_benchmark_control(env: &mut Env) {
 mod tests {
     use super::*;
     use crate::script::env::{Env, get_env_wallets, set_env_network_id, set_env_socket_path};
-    use crate::script::types::{NetworkId, PayMode};
+    use crate::script::types::{NetworkId, PayMode, ScriptBudget, ScriptSpec};
+    use crate::tx_generator::fund::get_fund_witness;
+    use crate::tx_generator::utxo::script_data_hash;
+    use crate::types::{PlutusScriptRef, TxGenPlutusType};
+    use std::path::PathBuf;
 
     fn signing_key(byte: u8) -> SigningKeyEnvelope {
         SigningKeyEnvelope::payment_signing_key_shelley(format!("5820{}", hex::encode([byte; 32])))
@@ -657,6 +920,22 @@ mod tests {
         init_wallet(env, "source").expect("source wallet");
         init_wallet(env, "dest").expect("dest wallet");
         define_signing_key(env, "key", signing_key(7));
+    }
+
+    fn seed_static_plutus_protocol_parameters(env: &mut Env) {
+        set_proto_param_mode(
+            env,
+            ProtocolParameterMode::ProtocolParameterLocal(serde_json::json!({
+                "executionUnitPrices": {
+                    "priceMemory": 2.0,
+                    "priceSteps": 0.5
+                },
+                "maxTxExecutionUnits": {
+                    "memory": 14_000_000,
+                    "steps": 10_000_000_000u64
+                }
+            })),
+        );
     }
 
     #[test]
@@ -859,13 +1138,64 @@ mod tests {
         let pay_mode = PayMode::PayToAddr("key".to_string(), "dest".to_string());
 
         let interpreted =
-            interpret_pay_mode(&env, AnyCardanoEra::Conway, &pay_mode).expect("pay mode");
+            interpret_pay_mode(&mut env, AnyCardanoEra::Conway, &pay_mode).expect("pay mode");
 
         assert_eq!(interpreted.to_utxo.era(), AnyCardanoEra::Conway);
         assert_eq!(interpreted.to_utxo.key_name(), Some("key"));
         assert_eq!(interpreted.destination_wallet, "dest");
         assert_eq!(interpreted.address_hex.len(), 58);
         assert!(interpreted.address_hex.starts_with("60"));
+    }
+
+    #[test]
+    fn interpret_pay_mode_builds_static_script_output_builder_and_witness() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        let pay_mode = PayMode::PayToScript(
+            ScriptSpec {
+                script_spec_file: PlutusScriptRef::Named("Loop".to_string()),
+                script_spec_budget: ScriptBudget::StaticScriptBudget(
+                    PathBuf::new(),
+                    PathBuf::new(),
+                    ExecutionUnits {
+                        execution_steps: 10,
+                        execution_memory: 20,
+                    },
+                    false,
+                ),
+                script_spec_plutus_type: TxGenPlutusType::CustomScript,
+            },
+            "dest".to_string(),
+        );
+
+        let interpreted =
+            interpret_pay_mode(&mut env, AnyCardanoEra::Alonzo, &pay_mode).expect("pay mode");
+
+        assert_eq!(interpreted.destination_wallet, "dest");
+        assert_eq!(interpreted.to_utxo.key_name(), None);
+        assert_eq!(interpreted.address_hex.len(), 58);
+        assert!(interpreted.address_hex.starts_with("70"));
+
+        let (output, pending) = interpreted.to_utxo.build(2_000_000).expect("output");
+        let datum = PlutusData::integer(0);
+        assert_eq!(output.datum_hash(), Some(script_data_hash(&datum)));
+        let fund = pending.fund_for_tx_id(0, "00");
+        match get_fund_witness(AnyCardanoEra::Alonzo, &fund).expect("witness") {
+            FundWitness::ScriptWitness(witness) => {
+                assert_eq!(witness.language, "PlutusV1");
+                assert_eq!(witness.datum, datum);
+                assert_eq!(witness.redeemer, PlutusData::integer(0));
+                assert_eq!(
+                    witness.execution_units,
+                    ExecutionUnits {
+                        execution_steps: 10,
+                        execution_memory: 20,
+                    }
+                );
+            }
+            FundWitness::KeyWitnessForSpending => panic!("expected script witness"),
+        }
     }
 
     #[test]
@@ -876,7 +1206,7 @@ mod tests {
         let pay_mode = PayMode::PayToAddr("key".to_string(), "dest".to_string());
 
         assert_eq!(
-            interpret_pay_mode(&env, AnyCardanoEra::Conway, &pay_mode),
+            interpret_pay_mode(&mut env, AnyCardanoEra::Conway, &pay_mode),
             Err(Error::UserError("Unset Genesis".to_string()))
         );
     }

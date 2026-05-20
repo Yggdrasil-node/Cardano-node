@@ -8,15 +8,31 @@
 
 use std::cmp::Ordering;
 
-use crate::types::{AnyCardanoEra, Lovelace};
+use crate::types::{AnyCardanoEra, ExecutionUnits, Lovelace};
+use yggdrasil_ledger::PlutusData;
+
+/// Rust carrier for upstream `PlutusScriptWitness ...`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScriptWitnessForSpending {
+    /// Upstream Plutus language tag rendered for diagnostics.
+    pub language: String,
+    /// Serialised Plutus script bytes.
+    pub script_bytes: Vec<u8>,
+    /// Datum supplied with the spending witness.
+    pub datum: PlutusData,
+    /// Redeemer supplied with the spending witness.
+    pub redeemer: PlutusData,
+    /// Execution units stated for the script witness.
+    pub execution_units: ExecutionUnits,
+}
 
 /// Mirror of upstream `Witness WitCtxTxIn era` for this pure-Rust slice.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FundWitness {
     /// Upstream `KeyWitness KeyWitnessForSpending`.
     KeyWitnessForSpending,
-    /// Placeholder for later script witnesses.
-    ScriptWitness(String),
+    /// Upstream `ScriptWitness ScriptWitnessForSpending`.
+    ScriptWitness(ScriptWitnessForSpending),
 }
 
 /// Mirror of upstream `FundInEra era`.
@@ -79,10 +95,7 @@ impl Fund {
             era,
             tx_in: tx_in.into(),
             lovelace,
-            key_name: match &witness {
-                FundWitness::KeyWitnessForSpending => String::new(),
-                FundWitness::ScriptWitness(script) => script.clone(),
-            },
+            key_name: String::new(),
             witness,
             signing_key: None,
         }
@@ -180,17 +193,27 @@ mod tests {
 
     #[test]
     fn script_fund_has_witness_and_no_signing_key() {
+        let witness = ScriptWitnessForSpending {
+            language: "PlutusV2".to_string(),
+            script_bytes: vec![1, 2, 3],
+            datum: PlutusData::integer(0),
+            redeemer: PlutusData::integer(1),
+            execution_units: ExecutionUnits {
+                execution_steps: 3,
+                execution_memory: 2,
+            },
+        };
         let fund = Fund::script_fund(
             AnyCardanoEra::Conway,
             "abc#0",
             12,
-            FundWitness::ScriptWitness("validator".to_string()),
+            FundWitness::ScriptWitness(witness.clone()),
         );
 
         assert_eq!(get_fund_key(&fund), None);
         assert_eq!(
             get_fund_witness(AnyCardanoEra::Conway, &fund),
-            Ok(FundWitness::ScriptWitness("validator".to_string()))
+            Ok(FundWitness::ScriptWitness(witness))
         );
         assert_eq!(fund.fund_in_era().fund_signing_key, None);
     }

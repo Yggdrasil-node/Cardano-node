@@ -71,8 +71,9 @@ pub fn run_main() -> ExitCode {
 /// node-to-client current-era and protocol-parameter query path. R541
 /// adds the `GeneratorTx/SizedMetadata.hs` sizing helper used by
 /// `NtoM`; R542/R543 add wallet queues and upstream value-splitting
-/// preflight. Full transaction construction and submission execution
-/// still land in later strict slices.
+/// preflight; R544-R547 add UTxO output builders and static Plutus
+/// context loading. Full transaction construction and submission
+/// execution still land in later strict slices.
 pub fn run(command: command::Command) -> eyre::Result<()> {
     match &command {
         Command::Json(file) => {
@@ -106,11 +107,11 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R540 Script/Core NtC query slice). Help/version compatibility, typed \
+         (R547 static Plutus context slice). Help/version compatibility, typed \
          subcommand parsing, json_highlevel testnet discovery, and high-level \
          NixServiceOptions parsing/compilation plus low-level script JSON \
          decoding plus deterministic state-only action execution and Script/Core \
-         NtC query helpers, sized-metadata construction, wallet queues, and value splitting are wired; full transaction generation \
+         NtC query helpers, sized-metadata construction, wallet queues, value splitting, UTxO output builders, and static Plutus context loading are wired; full transaction generation \
          and submission land in later strict slices of the tx-generator port arc.",
         command.name()
     ))

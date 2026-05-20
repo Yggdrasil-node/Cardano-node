@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T07:40:31Z
-- Files described: 1410
+- Generated at: 2026-05-20T08:07:26Z
+- Files described: 1420
 
 ## Workspace
 
@@ -1736,6 +1736,20 @@
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for Script/Core NtC query helpers plus crate metadata.
+- `crates/tools/tx-generator/scripts-fallback/EcdsaSecp256k1Loop.plutus`
+  - Project file at crates/tools/tx-generator/scripts-fallback/EcdsaSecp256k1Loop.plutus.
+- `crates/tools/tx-generator/scripts-fallback/HashOntoG2AndAdd.plutus`
+  - Project file at crates/tools/tx-generator/scripts-fallback/HashOntoG2AndAdd.plutus.
+- `crates/tools/tx-generator/scripts-fallback/Loop.plutus`
+  - Project file at crates/tools/tx-generator/scripts-fallback/Loop.plutus.
+- `crates/tools/tx-generator/scripts-fallback/Loop2024.plutus`
+  - Project file at crates/tools/tx-generator/scripts-fallback/Loop2024.plutus.
+- `crates/tools/tx-generator/scripts-fallback/LoopV3.plutus`
+  - Project file at crates/tools/tx-generator/scripts-fallback/LoopV3.plutus.
+- `crates/tools/tx-generator/scripts-fallback/Ripemd160.plutus`
+  - Project file at crates/tools/tx-generator/scripts-fallback/Ripemd160.plutus.
+- `crates/tools/tx-generator/scripts-fallback/SchnorrSecp256k1Loop.plutus`
+  - Project file at crates/tools/tx-generator/scripts-fallback/SchnorrSecp256k1Loop.plutus.
 - `crates/tools/tx-generator/src/command.rs`
   - Typed command surface for the `tx-generator` binary.
   - Mirrors upstream Command.hs commandParser for json, json_highlevel, compile, selftest, and version.
@@ -1778,6 +1792,8 @@
 - `crates/tools/tx-generator/src/setup/nix_service.rs`
   - High-level Nix-service configuration for `tx-generator`.
   - Mirrors upstream Setup/NixService.hs option parsing, node descriptions, overrides, and projections.
+- `crates/tools/tx-generator/src/setup/plutus.rs`
+  - Plutus script loading helpers. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Setup/Plutus.hs`.
 - `crates/tools/tx-generator/src/setup/testnet_discovery.rs`
   - `cardano-testnet` output directory discovery for `tx-generator`.
   - Mirrors upstream Setup/TestnetDiscovery.hs path discovery, node ports, JSON merge, and typed NixService output.
@@ -1791,6 +1807,8 @@
   - Internal transaction-generator support namespace. ## Naming parity **Strict mirror:** none. Parent shell for upstream `Cardano.TxGenerator.Internal.*` modules. Concrete leaf files
 - `crates/tools/tx-generator/src/tx_generator/internal/fifo.rs`
   - FIFO queue used by the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Internal/Fifo.hs`.
+- `crates/tools/tx-generator/src/tx_generator/plutus_context.rs`
+  - Plutus budgeting and script-data helpers. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/PlutusContext.hs`.
 - `crates/tools/tx-generator/src/tx_generator/utils.rs`
   - Utility functions used across the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Utils.hs`.
 - `crates/tools/tx-generator/src/tx_generator/utxo.rs`
@@ -2213,6 +2231,8 @@
   - Round R545 - tx-generator Script/Core pay-mode preflight: Ported the transaction-stream preflight boundary from:.
 - `docs/operational-runs/2026-05-20-round-546-tx-generator-script-utxo.md`
   - Round R546 - tx-generator script UTxO output builders: Ported the script-output half of:.
+- `docs/operational-runs/2026-05-20-round-547-tx-generator-static-plutus-context.md`
+  - Round 547 - tx-generator static Plutus context: Ported upstream `Cardano.TxGenerator.Setup.Plutus.readPlutusScript` for.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

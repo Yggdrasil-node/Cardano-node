@@ -9,6 +9,8 @@
 
 use std::path::PathBuf;
 
+use std::fmt;
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
@@ -128,6 +130,27 @@ pub enum PlutusScriptRef {
     Named(String),
     /// Upstream `Right FilePath`.
     File(PathBuf),
+}
+
+/// Mirror of upstream `TxGenPlutusResolvedTo`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TxGenPlutusResolvedTo {
+    /// `ResolvedToLibrary`.
+    ResolvedToLibrary(String),
+    /// `ResolvedToFallback`.
+    ResolvedToFallback(PathBuf),
+    /// `ResolvedToFileName`.
+    ResolvedToFileName(PathBuf),
+}
+
+impl fmt::Display for TxGenPlutusResolvedTo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ResolvedToLibrary(name) => write!(f, "builtin: {name}"),
+            Self::ResolvedToFallback(path) => write!(f, "fallback: {}", path.display()),
+            Self::ResolvedToFileName(path) => write!(f, "file: {}", path.display()),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for PlutusScriptRef {

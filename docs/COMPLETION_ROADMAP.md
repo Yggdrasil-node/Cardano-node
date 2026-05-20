@@ -262,10 +262,16 @@ own parser / generator / submission implementation plus upstream
   `Cardano.TxGenerator.UTxO.mkUTxOScript` output/fund builder surface:
   Plutus script enterprise addresses, datum-hash outputs for
   Alonzo/Babbage-family eras, script-language support checks, and
-  script-witnessed generated funds without signing keys. The remaining
-  tx-generator blocker is `makePlutusContext`, transaction assembly,
-  GeneratorTx / Submission implementation, and upstream comparison
-  evidence.
+  script-witnessed generated funds without signing keys. R547 added the
+  static-budget `makePlutusContext` path by porting
+  `Cardano.TxGenerator.Setup.Plutus.readPlutusScript`,
+  `Cardano.TxGenerator.PlutusContext.readScriptData`, bundled
+  `scripts-fallback` resolution, detailed-schema Plutus data parsing,
+  real datum/redeemer/execution-unit script witnesses, and
+  `PayToScript` -> `mkUTxOScript` wiring. The remaining tx-generator
+  blocker is Plutus pre-execution / auto-budget fitting, transaction
+  assembly, GeneratorTx / Submission implementation, and upstream
+  comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

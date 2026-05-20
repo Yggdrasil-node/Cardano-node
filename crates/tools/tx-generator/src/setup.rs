@@ -7,4 +7,5 @@
 //! mirror their canonical upstream files one-to-one.
 
 pub mod nix_service;
+pub mod plutus;
 pub mod testnet_discovery;

@@ -421,12 +421,25 @@ fn signing_key_seed(signing_key: &SigningKeyEnvelope) -> Result<[u8; 32], String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tx_generator::fund::{get_fund_key, get_fund_witness};
+    use crate::tx_generator::fund::{ScriptWitnessForSpending, get_fund_key, get_fund_witness};
 
     const TX_ID: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
     fn signing_key(byte: u8) -> SigningKeyEnvelope {
         SigningKeyEnvelope::payment_signing_key_shelley(format!("5820{}", hex::encode([byte; 32])))
+    }
+
+    fn script_witness(script: &ScriptInAnyLang, datum: &PlutusData) -> FundWitness {
+        FundWitness::ScriptWitness(ScriptWitnessForSpending {
+            language: format!("{:?}", script.language),
+            script_bytes: script.bytes.clone(),
+            datum: datum.clone(),
+            redeemer: PlutusData::integer(1),
+            execution_units: crate::types::ExecutionUnits {
+                execution_steps: 3,
+                execution_memory: 2,
+            },
+        })
     }
 
     #[test]
@@ -530,7 +543,7 @@ mod tests {
             NetworkId::Testnet(42),
             script.clone(),
             datum.clone(),
-            FundWitness::ScriptWitness("validator".to_string()),
+            script_witness(&script, &datum),
         )
         .expect("builder");
 
@@ -550,7 +563,7 @@ mod tests {
         assert_eq!(get_fund_key(&fund), None);
         assert_eq!(
             get_fund_witness(AnyCardanoEra::Alonzo, &fund),
-            Ok(FundWitness::ScriptWitness("validator".to_string()))
+            Ok(script_witness(&script, &datum))
         );
         assert_eq!(fund.fund_in_era().fund_signing_key, None);
     }
@@ -562,9 +575,9 @@ mod tests {
         let builder = mk_utxo_script(
             AnyCardanoEra::Babbage,
             NetworkId::Mainnet,
-            script,
+            script.clone(),
             datum.clone(),
-            FundWitness::ScriptWitness("validator".to_string()),
+            script_witness(&script, &datum),
         )
         .expect("builder");
 
@@ -582,9 +595,9 @@ mod tests {
         let shelley = mk_utxo_script(
             AnyCardanoEra::Shelley,
             NetworkId::Testnet(0),
-            script_v1,
+            script_v1.clone(),
             datum.clone(),
-            FundWitness::ScriptWitness("validator".to_string()),
+            script_witness(&script_v1, &datum),
         )
         .expect("builder");
 
@@ -597,9 +610,9 @@ mod tests {
         let alonzo = mk_utxo_script(
             AnyCardanoEra::Alonzo,
             NetworkId::Testnet(0),
-            script_v2,
-            datum,
-            FundWitness::ScriptWitness("validator".to_string()),
+            script_v2.clone(),
+            datum.clone(),
+            script_witness(&script_v2, &datum),
         )
         .expect("builder");
 

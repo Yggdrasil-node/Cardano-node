@@ -1,10 +1,9 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R546 script UTxO output-builder slice). The old
+**Status:** `partial` (post-R547 static Plutus context slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
-the tx-generator Script / GeneratorTx / Submission
-implementation arc plus upstream comparison evidence. Scope band:
-**LARGE**.
+the tx-generator Script / GeneratorTx / Submission implementation arc
+plus upstream comparison evidence. Scope band: **LARGE**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -137,6 +136,14 @@ approved synthesis area from the sister-tools plan.
   enterprise addresses, datum-hash outputs for Alonzo and Babbage-family
   eras, era/language support errors, and script-witnessed funds with no
   signing key; `PayToScript` now waits only on `makePlutusContext`.
+- Shipped R547: static-budget `makePlutusContext` path.
+  `setup/plutus.rs` ports upstream `.plutus` text-envelope loading and
+  bundled `scripts-fallback` resolution; `tx_generator/plutus_context.rs`
+  ports detailed-schema `readScriptData` plus `scriptDataModifyNumber`;
+  `script/core.rs` now resolves `PayToScript` static budgets into
+  `mkUTxOScript` builders carrying real datum/redeemer/execution-unit
+  witness data. AutoScript and pre-execution checking remain explicit
+  `preExecutePlutusScript` / `plutusAutoScaleBlockfit` boundaries.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the GeneratorTx
   construction and submission slices land.
@@ -222,9 +229,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: TxGenerator script UTxO output builders (R546):
   `mkUTxOScript`, Plutus script address hashing, datum hashes, and
   script-witnessed generated funds without signing keys.
-- Next: port Plutus `makePlutusContext`, the remaining GeneratorTx
-  transaction construction, and LocalSocket / Benchmark submission in
-  strict-mirror-sized slices.
+- Shipped: static Plutus context (R547): `Setup/Plutus.hs`
+  text-envelope/fallback-script loading, `PlutusContext.hs`
+  detailed-schema script-data parsing and first-number mutation helper,
+  plus static-budget `makePlutusContext` wiring for `PayToScript`.
+- Next: port Plutus `preExecutePlutusScript` / `plutusAutoScaleBlockfit`,
+  the remaining GeneratorTx transaction construction, and LocalSocket /
+  Benchmark submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

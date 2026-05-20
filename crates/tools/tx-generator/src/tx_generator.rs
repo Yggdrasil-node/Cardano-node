@@ -9,5 +9,6 @@
 pub mod fund;
 pub mod fund_queue;
 pub mod internal;
+pub mod plutus_context;
 pub mod utils;
 pub mod utxo;
