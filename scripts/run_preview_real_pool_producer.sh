@@ -291,7 +291,6 @@ main() {
     exit 0
   fi
 
-  ensure_tools
   require_file "$KES_SKEY_PATH_VALUE" "KES_SKEY_PATH"
   require_file "$VRF_SKEY_PATH" "VRF_SKEY_PATH"
   require_file "$OPCERT_PATH" "OPCERT_PATH"
@@ -301,6 +300,7 @@ main() {
   require_bool01 "EXPECT_FORGE_EVENTS" "$EXPECT_FORGE_EVENTS"
   require_bool01 "EXPECT_ADOPTED_EVENTS" "$EXPECT_ADOPTED_EVENTS"
   require_bool01 "REQUIRE_TIP_COMPARISON" "$REQUIRE_TIP_COMPARISON"
+  ensure_tools
 
   local tip_checkpoints=()
   parse_tip_checkpoints "$TIP_COMPARE_CHECKPOINTS" tip_checkpoints

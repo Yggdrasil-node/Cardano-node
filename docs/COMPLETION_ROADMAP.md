@@ -326,8 +326,11 @@ own parser / generator / submission implementation plus upstream
   submission/summary test. R567 extended `SubmitMode::DumpToFile`
   beyond the Allegra fixture to Shelley and Mary key-witnessed streams
   with upstream-shaped body/witness hashes and explicit unsupported-
-  field boundaries. The remaining tx-generator blockers are Alonzo-
-  family `DumpToFile` rendering and upstream-binary soak evidence.
+  field boundaries. R568 added the matching Alonzo key-witnessed
+  renderer with `AlonzoTxBodyRaw`, `AlonzoTxWitsRaw`, empty `TxDats`
+  / `Redeemers`, and `IsValid` fields. The remaining tx-generator
+  blockers are Plutus-bearing Alonzo-family `DumpToFile` rendering and
+  upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

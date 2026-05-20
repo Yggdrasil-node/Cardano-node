@@ -7,10 +7,10 @@
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
 //! deterministic state-only operations, Plutus context construction,
 //! finite transaction-stream evaluation, LocalSocket submission,
-//! Benchmark submission control, Shelley/Mary-family `DumpToFile`
-//! rendering, and budget-summary projection. The remaining Alonzo-family
-//! `DumpToFile` era/witness shapes still return explicit `TxGenError`
-//! boundaries until their downstream mirrors land.
+//! Benchmark submission control, Shelley-through-Alonzo key-witnessed
+//! `DumpToFile` rendering, and budget-summary projection. The remaining
+//! Plutus-bearing Alonzo-family `DumpToFile` witness shapes still return
+//! explicit `TxGenError` boundaries until their downstream mirrors land.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -21,10 +21,10 @@ use num_bigint::BigInt;
 use serde_json::Value;
 use yggdrasil_crypto::{hash_bytes_224, hash_bytes_256};
 use yggdrasil_ledger::{
-    Address, AllegraTxBody, CborDecode, CborEncode, Decoder, Encoder, MaryTxBody, MaryTxOut,
-    PlutusData, ProtocolParameters, ShelleyCompatibleSubmittedTx, ShelleyTxBody, ShelleyTxIn,
-    ShelleyTxOut, ShelleyVkeyWitness, ShelleyWitnessSet, StakeCredential, eras::alonzo::ExUnits,
-    total_min_fee,
+    Address, AllegraTxBody, AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, CborDecode,
+    CborEncode, Decoder, Encoder, MaryTxBody, MaryTxOut, PlutusData, ProtocolParameters,
+    ShelleyCompatibleSubmittedTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVkeyWitness,
+    ShelleyWitnessSet, StakeCredential, eras::alonzo::ExUnits, total_min_fee,
 };
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
@@ -1053,8 +1053,9 @@ fn show_tx_for_dump(generated: &GeneratedTx) -> Result<String, Error> {
         yggdrasil_ledger::MultiEraSubmittedTx::Shelley(tx) => show_shelley_tx_for_dump(tx),
         yggdrasil_ledger::MultiEraSubmittedTx::Allegra(tx) => show_allegra_tx_for_dump(tx),
         yggdrasil_ledger::MultiEraSubmittedTx::Mary(tx) => show_mary_tx_for_dump(tx),
+        yggdrasil_ledger::MultiEraSubmittedTx::Alonzo(tx) => show_alonzo_tx_for_dump(tx),
         tx => Err(lift_tx_gen_error(format!(
-            "DumpToFile: upstream Show(Tx) renderer is implemented for Shelley/Mary-family key-witnessed transactions only; got {:?}",
+            "DumpToFile: upstream Show(Tx) renderer is implemented for Shelley-through-Alonzo key-witnessed transactions only; got {:?}",
             tx.era()
         ))),
     }
@@ -1135,6 +1136,46 @@ fn show_mary_tx_for_dump(tx: &ShelleyCompatibleSubmittedTx<MaryTxBody>) -> Resul
     ))
 }
 
+fn show_alonzo_tx_for_dump(
+    tx: &AlonzoCompatibleSubmittedTx<AlonzoTxBody>,
+) -> Result<String, Error> {
+    ensure_empty_or_absent(tx.body.certificates.as_deref(), "Alonzo", "atbrCerts")?;
+    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Alonzo", "atbrWithdrawals")?;
+    ensure_absent(tx.body.update.as_ref(), "Alonzo", "atbrUpdate")?;
+    ensure_absent(
+        tx.body.auxiliary_data_hash.as_ref(),
+        "Alonzo",
+        "atbrAuxDataHash",
+    )?;
+    ensure_empty_mint(tx.body.mint.as_ref(), "Alonzo", "atbrMint")?;
+    ensure_absent(
+        tx.body.script_data_hash.as_ref(),
+        "Alonzo",
+        "atbrScriptIntegrityHash",
+    )?;
+    ensure_empty_or_absent(tx.body.collateral.as_deref(), "Alonzo", "atbrCollateral")?;
+    ensure_empty_or_absent(
+        tx.body.required_signers.as_deref(),
+        "Alonzo",
+        "atbrReqSignerHashes",
+    )?;
+    ensure_absent(tx.body.network_id.as_ref(), "Alonzo", "atbrTxNetworkId")?;
+    ensure_absent(tx.auxiliary_data.as_ref(), "Alonzo", "atAuxData")?;
+
+    let inputs = show_tx_in_list(&tx.body.inputs);
+    let outputs = show_alonzo_tx_out_list(&tx.body.outputs)?;
+    let body_hash = hex::encode(hash_bytes_256(tx.raw_body()).0);
+    let witnesses = show_alonzo_witness_set(&tx.witness_set)?;
+    let is_valid = show_haskell_bool(tx.is_valid);
+
+    Ok(format!(
+        "\nShelleyTx ShelleyBasedEraAlonzo (AlonzoTx {{atBody = MkAlonzoTxBody AlonzoTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrCollateral = fromList [], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrTxFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrReqSignerHashes = fromList [], atbrMint = MultiAsset (fromList []), atbrScriptIntegrityHash = SNothing, atbrAuxDataHash = SNothing, atbrTxNetworkId = SNothing}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        tx.body.fee,
+        show_strict_maybe_slot(tx.body.validity_interval_start),
+        show_strict_maybe_slot(tx.body.ttl),
+    ))
+}
+
 fn ensure_absent<T>(value: Option<&T>, era: &str, field: &str) -> Result<(), Error> {
     if value.is_some() {
         return Err(lift_tx_gen_error(format!(
@@ -1184,6 +1225,10 @@ fn show_strict_maybe_slot(slot: Option<u64>) -> String {
         Some(slot) => format!("SJust (SlotNo {slot})"),
         None => "SNothing".to_string(),
     }
+}
+
+fn show_haskell_bool(value: bool) -> &'static str {
+    if value { "True" } else { "False" }
 }
 
 fn show_tx_in_list(inputs: &[ShelleyTxIn]) -> String {
@@ -1236,6 +1281,30 @@ fn show_mary_tx_out(output: &MaryTxOut) -> Result<String, Error> {
     Ok(format!(
         "({},{})",
         show_shelley_address(&address, "Mary")?,
+        show_mary_value(&output.amount)?
+    ))
+}
+
+fn show_alonzo_tx_out_list(outputs: &[AlonzoTxOut]) -> Result<String, Error> {
+    outputs
+        .iter()
+        .map(show_alonzo_tx_out)
+        .collect::<Result<Vec<_>, _>>()
+        .map(|items| items.join(","))
+}
+
+fn show_alonzo_tx_out(output: &AlonzoTxOut) -> Result<String, Error> {
+    let address = Address::from_bytes(&output.address).ok_or_else(|| {
+        lift_tx_gen_error("DumpToFile: Alonzo Show(Tx) renderer received invalid address bytes")
+    })?;
+    let datum_hash = output
+        .datum_hash
+        .as_ref()
+        .map(|hash| format!("SJust (SafeHash \"{}\")", hex::encode(hash)))
+        .unwrap_or_else(|| "SNothing".to_string());
+    Ok(format!(
+        "({},{},{datum_hash})",
+        show_shelley_address(&address, "Alonzo")?,
         show_mary_value(&output.amount)?
     ))
 }
@@ -1316,6 +1385,47 @@ fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet, era: &str) -> Resul
     Ok(format!(
         "ShelleyTxWitsRaw {{stwrAddrTxWits = fromList [{vkeys}], stwrScriptTxWits = fromList [], stwrBootAddrTxWits = fromList []}} (blake2b_256: SafeHash \"{witness_hash}\")"
     ))
+}
+
+fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Error> {
+    if !witness_set.native_scripts.is_empty()
+        || !witness_set.bootstrap_witnesses.is_empty()
+        || !witness_set.plutus_v1_scripts.is_empty()
+        || !witness_set.plutus_data.is_empty()
+        || !witness_set.redeemers.is_empty()
+        || !witness_set.plutus_v2_scripts.is_empty()
+        || !witness_set.plutus_v3_scripts.is_empty()
+    {
+        return Err(lift_tx_gen_error(
+            "DumpToFile: Alonzo Show(Tx) renderer does not yet support non-vkey witnesses",
+        ));
+    }
+
+    let mut witnesses = witness_set.vkey_witnesses.clone();
+    witnesses.sort_by_key(|witness| witness.vkey);
+    let vkeys = witnesses
+        .iter()
+        .map(show_vkey_witness)
+        .collect::<Vec<_>>()
+        .join(",");
+    let witness_hash = hex::encode(hash_bytes_256(&witness_set.to_cbor_bytes()).0);
+    Ok(format!(
+        "AlonzoTxWitsRaw {{atwrAddrTxWits = fromList [{vkeys}], atwrBootAddrTxWits = fromList [], atwrScriptTxWits = fromList [], atwrDatsTxWits = {}, atwrRdmrsTxWits = {}}} (blake2b_256: SafeHash \"{witness_hash}\")",
+        show_empty_alonzo_tx_dats(),
+        show_empty_alonzo_redeemers(),
+    ))
+}
+
+fn show_empty_alonzo_tx_dats() -> String {
+    let hash = hex::encode(hash_bytes_256(&[0xd9, 0x01, 0x02, 0x80]).0);
+    format!("MkTxDats (TxDatsRaw {{unTxDatsRaw = fromList []}} (blake2b_256: SafeHash \"{hash}\"))")
+}
+
+fn show_empty_alonzo_redeemers() -> String {
+    let hash = hex::encode(hash_bytes_256(&[0x80]).0);
+    format!(
+        "MkRedeemers (RedeemersRaw {{unRedeemersRaw = fromList []}} (blake2b_256: SafeHash \"{hash}\"))"
+    )
 }
 
 fn show_vkey_witness(witness: &ShelleyVkeyWitness) -> String {
@@ -2424,6 +2534,58 @@ mod tests {
                 .expect("empty multi-asset value");
 
         assert_eq!(rendered, "MaryValue (Coin 90) (MultiAsset (fromList []))");
+    }
+
+    #[test]
+    fn dumptofile_submit_generates_alonzo_haskell_show_transaction() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Alonzo,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            100,
+            "key",
+        )
+        .expect("source fund");
+        let output_path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-alonzo-dump-{}.out",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&output_path);
+        let generator = Generator::SplitN(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Alonzo,
+            &SubmitMode::DumpToFile(output_path.clone()),
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("alonzo dump submit");
+
+        let rendered = fs::read_to_string(&output_path).expect("alonzo dump output");
+        let _ = fs::remove_file(&output_path);
+        assert!(rendered.starts_with(
+            "\nShelleyTx ShelleyBasedEraAlonzo (AlonzoTx {atBody = MkAlonzoTxBody AlonzoTxBodyRaw"
+        ));
+        assert!(rendered.contains("atbrCollateral = fromList []"));
+        assert!(rendered.contains("atbrScriptIntegrityHash = SNothing"));
+        assert!(rendered.contains("atWits = AlonzoTxWitsRaw"));
+        assert!(rendered.contains("atwrDatsTxWits = MkTxDats"));
+        assert!(rendered.contains("atwrRdmrsTxWits = MkRedeemers"));
+        assert!(rendered.contains("atIsValid = IsValid True"));
+        assert_eq!(rendered.lines().filter(|line| !line.is_empty()).count(), 1);
     }
 
     #[test]

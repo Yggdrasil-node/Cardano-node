@@ -14,6 +14,7 @@ tmp/
 
 # cargo expand / cargo audit local caches
 .cargo-expand/
+.codex-tools/
 
 # RustRover / JetBrains
 #.idea/

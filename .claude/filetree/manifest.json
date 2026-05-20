@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-20T17:10:19Z",
+  "generated_at_utc": "2026-05-20T17:55:40Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -947,10 +947,10 @@
         "Ignore rules for build outputs, local caches, vendored Haskell reference source, and operator artifacts.",
         "Keeps heavyweight generated artifacts and secrets out of version control."
       ],
-      "content_sha256": "ab7786700d481b43d37b8d2d74728c4c2147610978747fcb7350a6ca0876b7af",
-      "git_blob": "11da248cf3eb86302012d7e7026523f3f5f8d62d",
-      "source_mtime_ns": 1779219742213743400,
-      "described_at_utc": "2026-05-20T11:40:52Z",
+      "content_sha256": "bbe8518aca0a4c2e1762ab5abe2d3536fb76c7abcf7954357265afb43f0b751e",
+      "git_blob": "d8ab4be29450d26a85797ee0c8f11eab169bce0c",
+      "source_mtime_ns": 1779300574134880600,
+      "described_at_utc": "2026-05-20T18:09:34Z",
       "generated_self_exempt": false
     },
     {
@@ -10508,12 +10508,12 @@
       "path": "crates/tools/tx-generator/AGENTS.md",
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `tx-generator`.",
-        "Tracks the post-R567 DumpToFile, Alonzo-family renderer, and soak-evidence arc."
+        "Tracks the post-R568 DumpToFile, Plutus-bearing Alonzo-family renderer, and soak-evidence arc."
       ],
-      "content_sha256": "45eb8beea607ef199165be3b5a658170ba1b5bd93b86697c034edd5b001c22a6",
-      "git_blob": "a660f662d7dbc8ea3b545f9f91d86511b78d9e6c",
-      "source_mtime_ns": 1779296220914974300,
-      "described_at_utc": "2026-05-20T16:35:27Z",
+      "content_sha256": "610c3680ee264231c785d3f6a5f08bd1d080e641653196baec261c5ae5cd726a",
+      "git_blob": "f100bddce8fe77e409b4f25aea27a00f1d68bed5",
+      "source_mtime_ns": 1779299122300017400,
+      "described_at_utc": "2026-05-20T17:49:10Z",
       "generated_self_exempt": false
     },
     {
@@ -10522,10 +10522,10 @@
         "Cargo manifest for the tx-generator sister-tool crate.",
         "Declares direct dependencies for tx-generator runtime helpers plus crate metadata."
       ],
-      "content_sha256": "6d556937b3c3a87afb4970d97a4c224eee4b2cbc0397cbd676d2c2593e6bdd85",
-      "git_blob": "90cdcf3870c8e178f49b343cf53032eb1d7a4eda",
-      "source_mtime_ns": 1779296209054995700,
-      "described_at_utc": "2026-05-20T16:35:27Z",
+      "content_sha256": "36da4a3df15e95cbe4ae0e82e64d24760a840e2ec30451ba5d90dbf851f19aee",
+      "git_blob": "e6ecc36fd8144ddc7236338e9b2afe2a4d7d9079",
+      "source_mtime_ns": 1779299096293633000,
+      "described_at_utc": "2026-05-20T17:49:10Z",
       "generated_self_exempt": false
     },
     {
@@ -10805,10 +10805,10 @@
         "Strict mirror of upstream tx-generator Script/Core state, NtC query, and submit helpers.",
         "Owns Core action bodies, transaction generation, Benchmark control launch, DumpToFile rendering, and budget projection."
       ],
-      "content_sha256": "d3fc50563d5e765268d45984471b0f5bcea25ac4ea77d1c7f1de6ea3f7df8a2b",
-      "git_blob": "b45c7e8a26fc7a70a9bb3ba9dd6f254e29399785",
-      "source_mtime_ns": 1779297508896376000,
-      "described_at_utc": "2026-05-20T17:24:23Z",
+      "content_sha256": "6c428611a92f92e33edd3ee2cb4a8d57bef0d201dcb95c9ce91061b14fb4220a",
+      "git_blob": "46ad716208842a53655b4b060f28d7fc52699058",
+      "source_mtime_ns": 1779299028713466900,
+      "described_at_utc": "2026-05-20T17:49:10Z",
       "generated_self_exempt": false
     },
     {
@@ -11131,10 +11131,10 @@
       "description_lines": [
         "Completion Roadmap: ---."
       ],
-      "content_sha256": "2f36af20fcd14669913ef840782e6044e2e0af5cff0c8925e0c9213bfa81f0b7",
-      "git_blob": "b2e25ceba8cb350c2b0dec1981c21d5c37516547",
-      "source_mtime_ns": 1779296228127268900,
-      "described_at_utc": "2026-05-20T16:35:27Z",
+      "content_sha256": "8cbc3e79bb89c3e2234c80f2be7e960054b4c71e284437f7577e87818973acfa",
+      "git_blob": "38f4724e76cc28c0097f2fbbe07055d78a42748f",
+      "source_mtime_ns": 1779299140751162400,
+      "described_at_utc": "2026-05-20T17:49:10Z",
       "generated_self_exempt": false
     },
     {
@@ -11197,10 +11197,10 @@
       "description_lines": [
         "PARITY & FUNCTION SUMMARY FOR MANAGEMENT: ---."
       ],
-      "content_sha256": "a71ef49b0f411c3697a0dff6248038faada722faae0a756df5b64782009b1eec",
-      "git_blob": "98b8e58fcfa72e1ba1669296bef33ce46ee23466",
-      "source_mtime_ns": 1779296278425585700,
-      "described_at_utc": "2026-05-20T16:35:27Z",
+      "content_sha256": "0b3051835d1b5b3972aec786e3a4aa46ef88848f421ebe9aabb92481fdde37c0",
+      "git_blob": "17b9ea03cc8cb990c2ae1a628f781e4964b84b32",
+      "source_mtime_ns": 1779299190074213300,
+      "described_at_utc": "2026-05-20T17:49:10Z",
       "generated_self_exempt": false
     },
     {
@@ -13515,6 +13515,18 @@
       "generated_self_exempt": false
     },
     {
+      "path": "docs/operational-runs/2026-05-20-round-568-tx-generator-dumptofile-alonzo-key-witness.md",
+      "description_lines": [
+        "Operational evidence for R568 tx-generator DumpToFile Alonzo key-witnessed rendering.",
+        "Lists upstream references, renderer boundaries, validation commands, and remaining Plutus/soak gaps."
+      ],
+      "content_sha256": "f305467f9c9fa830997ba128b55c95b88229f4e717180f35fbadd749b733ac28",
+      "git_blob": "873a92d9bc700e6d6e0ea801ab5012ec1230a9df",
+      "source_mtime_ns": 1779299350505114200,
+      "described_at_utc": "2026-05-20T17:49:10Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md",
       "description_lines": [
         "Round 151 \u2014 ChainSync worker pool runtime wiring + observability: Date: 2026-04-27."
@@ -15303,10 +15315,10 @@
         "Machine-readable parity-status inventory for Rust \u2194 IntersectMBO/cardano-node features.",
         "Validated by scripts/check-parity-matrix.py; the reference.tag tracks the latest upstream release (currently 11.0.1)."
       ],
-      "content_sha256": "cab2e897466f8b323f83fe1f05c1f38cf22a981942bd07a3c0679dd1d73731cb",
-      "git_blob": "0dc167d735c4ff7cf8d3a1a9917be98a7450ace4",
-      "source_mtime_ns": 1779297003010029600,
-      "described_at_utc": "2026-05-20T16:35:27Z",
+      "content_sha256": "84bbb23a33589ca8c080e8d664b5d5c4e236230f63b58a4cdff412035ec45a7c",
+      "git_blob": "59b750bd53f68d10095dc4e07929dfde8d04964d",
+      "source_mtime_ns": 1779299350415598600,
+      "described_at_utc": "2026-05-20T17:49:10Z",
       "generated_self_exempt": false
     },
     {
@@ -15670,10 +15682,10 @@
       "description_lines": [
         "Shell helper script for run preview real pool producer workflows."
       ],
-      "content_sha256": "8d5eb3f36c33e54dfcf517346b1dc2d380020d2234bf74ac71564dd39ddaa60a",
-      "git_blob": "e1efa1c27c58befe6506bc2b04c3ed215fede8fe",
-      "source_mtime_ns": 1779204506493754900,
-      "described_at_utc": "2026-05-20T11:41:38Z",
+      "content_sha256": "3b063e944e78cfd964eca8c9bb23c272ef613aba87053842e9528f5d56a830b6",
+      "git_blob": "0281681eade0b4c68aa251920ec77f1dbab556c2",
+      "source_mtime_ns": 1779300116067491300,
+      "described_at_utc": "2026-05-20T18:01:56Z",
       "generated_self_exempt": false
     },
     {

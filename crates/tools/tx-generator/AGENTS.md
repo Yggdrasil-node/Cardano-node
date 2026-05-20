@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R567 Shelley/Mary DumpToFile slice). The old
+**Status:** `partial` (post-R568 Alonzo key-witnessed DumpToFile slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -267,18 +267,19 @@ approved synthesis area from the sister-tools plan.
   Tokio runtime alive across `Submit` and `WaitBenchmark`, and has a
   script-core loopback test covering generated transaction submission
   plus summary tracing.
-- Shipped R567: `SubmitMode::DumpToFile` now renders Haskell-shaped
-  Shelley and Mary key-witnessed streams in addition to the byte-
-  equivalent Allegra selftest fixture. Unsupported optional fields,
-  multi-asset Mary values, and non-vkey witnesses remain explicit
-  `TxGenError` boundaries instead of approximate `Show` output.
+- Shipped R567/R568: `SubmitMode::DumpToFile` now renders
+  Haskell-shaped Shelley, Mary, and Alonzo key-witnessed streams in
+  addition to the byte-equivalent Allegra selftest fixture. Unsupported
+  optional fields, multi-asset Mary/Alonzo values, Plutus-bearing Alonzo
+  witnesses, and non-vkey witnesses remain explicit `TxGenError`
+  boundaries instead of approximate `Show` output.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
-- Pending: extend `DumpToFile` Show rendering into Alonzo-family
-  transactions and capture upstream-binary soak evidence for Benchmark
-  scripts.
+- Pending: extend `DumpToFile` Show rendering into Plutus-bearing
+  Alonzo-family transactions and capture upstream-binary soak evidence
+  for Benchmark scripts.
 
 ## Build + Run
 
@@ -440,12 +441,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `SubmitMode::Benchmark` now evaluates generated transactions,
   launches `wallet_benchmark`, stores a real `AsyncBenchmarkControl`
   with its runtime in `Env`, and `WaitBenchmark` traces the summary.
-- Shipped: Shelley/Mary DumpToFile rendering (R567):
-  `SubmitMode::DumpToFile` now accepts Shelley and Mary key-witnessed
-  streams, preserving upstream constructor names and body/witness
-  hashes while rejecting unsupported optional fields explicitly.
-- Next: Alonzo-family `DumpToFile` Show coverage and upstream-binary
-  soak in strict-mirror-sized slices.
+- Shipped: Shelley/Mary/Alonzo key-witnessed DumpToFile rendering
+  (R567/R568): `SubmitMode::DumpToFile` now accepts Shelley, Mary, and
+  Alonzo key-witnessed streams, preserving upstream constructor names
+  and body/witness hashes while rejecting unsupported optional fields
+  explicitly.
+- Next: Plutus-bearing Alonzo-family `DumpToFile` Show coverage and
+  upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
