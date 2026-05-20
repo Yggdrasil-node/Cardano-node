@@ -522,6 +522,92 @@ impl fmt::Display for ShelleyLedgerPredFailure {
     }
 }
 
+/// Typed payload for `ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts`.
+///
+/// Mirrors upstream `Withdrawals = Map AccountAddress Coin` from
+/// `Cardano.Ledger.Address`. The CBOR encoding is a single map where
+/// keys are 29-byte reward-account address bytes and values are
+/// non-negative coin amounts.
+///
+/// Yggdrasil reuses the existing `RewardAccount` codec for keys; the
+/// map is stored as `BTreeMap<RewardAccount, u64>` so its iteration
+/// order matches upstream `Data.Map.toAscList` byte-lex sort.
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct Withdrawals {
+    /// Map of reward-account address → withdrawal amount (lovelace).
+    pub entries: std::collections::BTreeMap<yggdrasil_ledger::RewardAccount, u64>,
+}
+
+impl Withdrawals {
+    /// Decode `Withdrawals` from canonical Shelley-era CBOR bytes.
+    /// Returns the parsed map alongside the raw bytes for callers
+    /// that want to keep both views.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec
+            .map()
+            .map_err(|err| DecoderError(format!("Withdrawals: expected CBOR map: {err:?}")))?;
+        let mut entries = std::collections::BTreeMap::new();
+        for _ in 0..count {
+            let key_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!("Withdrawals: expected map key bytes: {err:?}"))
+            })?;
+            let account =
+                yggdrasil_ledger::RewardAccount::from_bytes(key_bytes).ok_or_else(|| {
+                    DecoderError(format!(
+                        "Withdrawals: invalid reward-account key ({} bytes)",
+                        key_bytes.len()
+                    ))
+                })?;
+            let coin = dec.unsigned().map_err(|err| {
+                DecoderError(format!("Withdrawals: expected coin value: {err:?}"))
+            })?;
+            entries.insert(account, coin);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for Withdrawals {
+    /// Render upstream `Show Withdrawals`: `Withdrawals {unWithdrawals
+    /// = fromList [(AccountAddress {...}, Coin <n>),...]}`. The map
+    /// entries iterate in `BTreeMap` byte-lex order matching upstream
+    /// `Data.Map.toAscList`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Withdrawals {unWithdrawals = fromList [")?;
+        let mut first = true;
+        for (account, coin) in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            let network = match account.network {
+                0 => "Testnet",
+                1 => "Mainnet",
+                _ => "Unknown",
+            };
+            let inner = match account.credential {
+                yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => {
+                    format!(
+                        "KeyHashObj (KeyHash {{unKeyHash = \"{}\"}})",
+                        hex::encode(h)
+                    )
+                }
+                yggdrasil_ledger::StakeCredential::ScriptHash(h) => {
+                    format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
+                }
+            };
+            write!(
+                f,
+                "(AccountAddress {{aaNetworkId = {network}, aaId = {inner}}},Coin {coin})"
+            )?;
+        }
+        f.write_str("]}")?;
+        Ok(())
+    }
+}
+
 /// Custom `Serialize` that emits ONLY the rendered string so the
 /// upstream JSON `{"contents":"<rendered>"}` wire shape stays
 /// byte-equivalent. The raw CBOR bytes are deliberately not
@@ -919,6 +1005,60 @@ mod tests {
     fn shelley_ledger_pred_failure_display_marks_raw_cbor() {
         let f = ShelleyLedgerPredFailure::UtxowFailure(vec![0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(f.to_string(), "UtxowFailure <raw-cbor 4 bytes>");
+    }
+
+    #[test]
+    fn withdrawals_from_cbor_empty_map() {
+        // CBOR empty map: 0xa0
+        let w = Withdrawals::from_cbor(&[0xa0]).expect("empty map");
+        assert!(w.entries.is_empty());
+        assert_eq!(w.to_string(), "Withdrawals {unWithdrawals = fromList []}");
+    }
+
+    #[test]
+    fn withdrawals_from_cbor_one_entry() {
+        // Build a mainnet key-hash reward account: 0xE1 + 28 0x11 bytes,
+        // coin 1_000_000 (0x1A000F4240 = 4-byte unsigned).
+        let mut cbor = vec![0xa1_u8]; // map with 1 entry
+        // Key: bytes-29 prefix + 29 bytes
+        cbor.push(0x58); // bytes with 1-byte length follows
+        cbor.push(29);
+        cbor.push(0xE1); // mainnet key-hash header
+        cbor.extend_from_slice(&[0x11_u8; 28]);
+        // Value: coin 1_000_000
+        cbor.extend_from_slice(&[0x1A, 0x00, 0x0F, 0x42, 0x40]);
+
+        let w = Withdrawals::from_cbor(&cbor).expect("single entry");
+        assert_eq!(w.entries.len(), 1);
+        let (account, coin) = w.entries.iter().next().expect("has entry");
+        assert_eq!(account.network, 1);
+        assert_eq!(*coin, 1_000_000);
+        assert!(matches!(
+            account.credential,
+            yggdrasil_ledger::StakeCredential::AddrKeyHash(_)
+        ));
+        assert!(
+            w.to_string().contains(
+                "aaNetworkId = Mainnet, aaId = KeyHashObj (KeyHash {unKeyHash = \"11111111"
+            )
+        );
+        assert!(w.to_string().ends_with(",Coin 1000000)]}"));
+    }
+
+    #[test]
+    fn withdrawals_from_cbor_rejects_invalid_account_bytes() {
+        // CBOR map with 1 entry, but key is a 28-byte string (one byte
+        // short for a reward account, which must be 29 bytes).
+        let mut cbor = vec![0xa1_u8];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x11_u8; 28]);
+        cbor.push(0x01); // any value
+        let err = Withdrawals::from_cbor(&cbor).expect_err("invalid account");
+        assert!(
+            err.to_string().contains("invalid reward-account key"),
+            "expected reject message, got {err}"
+        );
     }
 
     #[test]

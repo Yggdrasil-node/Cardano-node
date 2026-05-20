@@ -472,18 +472,26 @@ reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 Phase 1 (raw-bytes carrier) landed pre-R594. R594 shipped the
 Phase-2 type-level scaffold: `TxValidationErrorInCardanoMode`
 era-tagged enum + `TxValidationEra` discriminator + `EraApplyTxError`
-payload. R595 (2026-05-20) added the Phase-2.5 scaffold for the
+payload. R595 added the Phase-2.5 scaffold for the
 Shelley LEDGER predicate-failure variant set: `ShelleyLedgerPredFailure`
 4-variant enum (UtxowFailure / DelegsFailure /
 ShelleyWithdrawalsMissingAccounts / ShelleyIncompleteWithdrawals)
-with `tag()` (matches upstream CBOR Word8 0/1/2/3), `constructor()`
-(upstream stock-derived Show name), `raw_inner()` (raw payload
-bytes), and Display impl marking the rendering as raw-cbor pending
-per-variant payload decoders. Phase-2.5+ remaining work: per-rule
+with `tag()`, `constructor()`, `raw_inner()`, and a Display impl
+marking the rendering as raw-cbor pending per-variant payload
+decoders. R596 (2026-05-21) shipped the first typed payload
+decoder: `Withdrawals::from_cbor` decodes the tag-2 payload
+(`Map AccountAddress Coin`) into `BTreeMap<RewardAccount, u64>`
+via the existing `yggdrasil-ledger` `Decoder` + `RewardAccount`
+codec. New `yggdrasil-ledger.workspace = true` dep on
+`cardano-submit-api/Cargo.toml`. Display impl emits upstream
+`Withdrawals {unWithdrawals = fromList [...]}` shape with
+mainnet/testnet network discrimination and KeyHashObj/ScriptHashObj
+credential rendering. Phase-2.5+ remaining work: per-rule
 sub-decoders for UTXOW + DELEGS (each ~10 sub-variants), typed
-`Withdrawals` decoder for tag 2, typed `NonEmptyMap (Mismatch RelEQ
-Coin)` decoder for tag 3. **Exit:** operators can pattern-match
-typed rejection variants without a CBOR re-walk.
+`NonEmptyMap (Mismatch RelEQ Coin)` decoder for tag 3, wiring the
+typed `Withdrawals` decoder into the variant payload itself.
+**Exit:** operators can pattern-match typed rejection variants
+without a CBOR re-walk.
 
 ### A6 — Workspace + documentation hygiene
 Post-reorganization cleanup guardrails:
