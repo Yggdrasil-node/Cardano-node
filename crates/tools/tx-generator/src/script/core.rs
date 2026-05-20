@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
-use yggdrasil_ledger::{CborDecode, Decoder, Encoder, PlutusData, ProtocolParameters};
+use yggdrasil_ledger::{
+    CborDecode, Decoder, Encoder, PlutusData, ProtocolParameters, eras::alonzo::ExUnits,
+};
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
 use yggdrasil_network::{
@@ -36,7 +38,7 @@ use crate::script::types::{
     Generator, PayMode, ProtocolParametersSource, ScriptBudget, ScriptSpec, SigningKeyEnvelope,
     SubmitMode,
 };
-use crate::setup::plutus::read_plutus_script;
+use crate::setup::plutus::{pre_execute_plutus_script, read_plutus_script};
 use crate::tx_generator::fund::{
     FundWitness, ScriptWitnessForSpending, get_fund_coin, get_fund_tx_in,
 };
@@ -375,15 +377,35 @@ pub fn make_plutus_context(
             let script_data = read_script_data(data_file).map_err(lift_tx_gen_error)?;
             let redeemer = read_script_data(redeemer_file).map_err(lift_tx_gen_error)?;
             if *with_check {
-                return Err(lift_tx_gen_error(
-                    "makePlutusContext: StaticScriptBudget pre-execution check is pending preExecutePlutusScript",
-                ));
+                let pre_execution_parameters =
+                    ledger_protocol_parameters(&protocol_parameters, "makePlutusContext")?
+                        .ok_or_else(|| {
+                            Error::WalletError(format!(
+                                "makePlutusContext preExecuteScript failed: preExecutePlutusScript: cost model unavailable for: {:?}",
+                                script.language
+                            ))
+                        })?;
+                let pre_execution_units = pre_execute_plutus_script(
+                    &pre_execution_parameters,
+                    &script,
+                    &script_data,
+                    &redeemer,
+                )
+                .map_err(|err| {
+                    Error::WalletError(format!("makePlutusContext preExecuteScript failed: {err}"))
+                })?;
+                if units != &pre_execution_units {
+                    return Err(Error::WalletError(format!(
+                        " Stated execution Units do not match result of pre execution.  Stated value : {:?} PreExecution result : {:?}",
+                        units, pre_execution_units
+                    )));
+                }
             }
             (script_data, redeemer, units.clone())
         }
         ScriptBudget::AutoScript(_, _) => {
             return Err(lift_tx_gen_error(
-                "makePlutusContext: AutoScript is pending plutusAutoScaleBlockfit/preExecutePlutusScript",
+                "makePlutusContext: AutoScript is pending plutusAutoScaleBlockfit",
             ));
         }
     };
@@ -536,15 +558,24 @@ fn script_protocol_parameters(value: &Value) -> Result<ScriptProtocolParameters,
 }
 
 fn tx_protocol_parameters(value: &Value) -> Result<Option<ProtocolParameters>, Error> {
+    ledger_protocol_parameters(value, "genTx")
+}
+
+fn ledger_protocol_parameters(
+    value: &Value,
+    error_context: &str,
+) -> Result<Option<ProtocolParameters>, Error> {
     if let Some(cbor_hex) = value.get("eraNativeCborHex").and_then(Value::as_str) {
         let bytes = hex::decode(cbor_hex).map_err(|err| {
-            lift_tx_gen_error(format!("genTx: eraNativeCborHex is not valid hex: {err}"))
+            lift_tx_gen_error(format!(
+                "{error_context}: eraNativeCborHex is not valid hex: {err}"
+            ))
         })?;
         return ProtocolParameters::from_cbor_bytes(&bytes)
             .map(Some)
             .map_err(|err| {
                 lift_tx_gen_error(format!(
-                    "genTx: could not decode era-native protocol parameters: {err}"
+                    "{error_context}: could not decode era-native protocol parameters: {err}"
                 ))
             });
     }
@@ -556,19 +587,23 @@ fn tx_protocol_parameters(value: &Value) -> Result<Option<ProtocolParameters>, E
     else {
         return Ok(None);
     };
-    let cost_model_object = cost_models_value
-        .as_object()
-        .ok_or_else(|| lift_tx_gen_error("genTx: costModels: expected object"))?;
+    let cost_model_object = cost_models_value.as_object().ok_or_else(|| {
+        lift_tx_gen_error(format!("{error_context}: costModels: expected object"))
+    })?;
     let mut cost_models = BTreeMap::new();
     for (language, model) in cost_model_object {
-        let key = cost_model_language_key(language)?;
+        let key = cost_model_language_key(language, error_context)?;
         let entries = model.as_array().ok_or_else(|| {
-            lift_tx_gen_error(format!("genTx: costModels.{language}: expected array"))
+            lift_tx_gen_error(format!(
+                "{error_context}: costModels.{language}: expected array"
+            ))
         })?;
         let mut values = Vec::with_capacity(entries.len());
         for (index, entry) in entries.iter().enumerate() {
             values.push(cost_model_entry_i64(entry).map_err(|err| {
-                lift_tx_gen_error(format!("genTx: costModels.{language}[{index}]: {err}"))
+                lift_tx_gen_error(format!(
+                    "{error_context}: costModels.{language}[{index}]: {err}"
+                ))
             })?);
         }
         cost_models.insert(key, values);
@@ -576,18 +611,93 @@ fn tx_protocol_parameters(value: &Value) -> Result<Option<ProtocolParameters>, E
 
     let mut parameters = ProtocolParameters::alonzo_defaults();
     parameters.cost_models = Some(cost_models);
+    parameters.protocol_version = parse_optional_protocol_version(value, error_context)?;
+    if let Some(max_tx_ex_units) = parse_optional_max_tx_ex_units(value, error_context)? {
+        parameters.max_tx_ex_units = Some(max_tx_ex_units);
+    }
     Ok(Some(parameters))
 }
 
-fn cost_model_language_key(language: &str) -> Result<u8, Error> {
+fn cost_model_language_key(language: &str, error_context: &str) -> Result<u8, Error> {
     match language {
         "PlutusV1" | "PlutusScriptV1" | "0" => Ok(0),
         "PlutusV2" | "PlutusScriptV2" | "1" => Ok(1),
         "PlutusV3" | "PlutusScriptV3" | "2" => Ok(2),
         other => Err(lift_tx_gen_error(format!(
-            "genTx: unsupported cost model language `{other}`"
+            "{error_context}: unsupported cost model language `{other}`"
         ))),
     }
+}
+
+fn parse_optional_protocol_version(
+    value: &Value,
+    error_context: &str,
+) -> Result<Option<(u64, u64)>, Error> {
+    let Some(protocol_version) = value
+        .get("protocolVersion")
+        .or_else(|| value.get("protocol_version"))
+    else {
+        return Ok(ProtocolParameters::alonzo_defaults().protocol_version);
+    };
+
+    if let Some(array) = protocol_version.as_array() {
+        if array.len() != 2 {
+            return Err(lift_tx_gen_error(format!(
+                "{error_context}: protocolVersion: expected 2-element array"
+            )));
+        }
+        return Ok(Some((
+            json_u64_value(&array[0], &format!("{error_context}: protocolVersion[0]"))?,
+            json_u64_value(&array[1], &format!("{error_context}: protocolVersion[1]"))?,
+        )));
+    }
+
+    Ok(Some((
+        parse_json_u64_field(
+            protocol_version,
+            &["major", "protocolMajor"],
+            "protocolVersion.major",
+        )?,
+        parse_json_u64_field(
+            protocol_version,
+            &["minor", "protocolMinor"],
+            "protocolVersion.minor",
+        )?,
+    )))
+}
+
+fn parse_optional_max_tx_ex_units(
+    value: &Value,
+    error_context: &str,
+) -> Result<Option<ExUnits>, Error> {
+    let Some(max_tx) = value
+        .get("maxTxExecutionUnits")
+        .or_else(|| value.get("max_tx_execution_units"))
+        .or_else(|| value.get("maxTxExUnits"))
+        .or_else(|| value.get("max_tx_ex_units"))
+    else {
+        return Ok(None);
+    };
+    let steps_field = format!("{error_context}: maxTxExecutionUnits.steps");
+    let memory_field = format!("{error_context}: maxTxExecutionUnits.memory");
+    Ok(Some(ExUnits {
+        steps: parse_json_u64_field(
+            max_tx,
+            &["steps", "executionSteps", "exUnitsSteps"],
+            &steps_field,
+        )?,
+        mem: parse_json_u64_field(
+            max_tx,
+            &["memory", "mem", "executionMemory", "exUnitsMem"],
+            &memory_field,
+        )?,
+    }))
+}
+
+fn json_u64_value(value: &Value, field: &str) -> Result<u64, Error> {
+    value
+        .as_u64()
+        .ok_or_else(|| lift_tx_gen_error(format!("{field}: expected unsigned integer")))
 }
 
 fn cost_model_entry_i64(value: &Value) -> Result<i64, String> {
@@ -1346,6 +1456,7 @@ mod tests {
     use std::path::PathBuf;
 
     const INPUT_TX_ID: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    const THREE_ARG_UNIT_FLAT: &[u8] = &[0x01, 0x00, 0x00, 0x22, 0x24, 0x98, 0x00];
 
     fn signing_key(byte: u8) -> SigningKeyEnvelope {
         SigningKeyEnvelope::payment_signing_key_shelley(format!("5820{}", hex::encode([byte; 32])))
@@ -1395,6 +1506,47 @@ mod tests {
                 }
             })),
         );
+    }
+
+    fn seed_real_plutus_protocol_parameters(env: &mut Env) {
+        let parameters: Value =
+            serde_json::from_str(include_str!("../../data/protocol-parameters.json"))
+                .expect("protocol parameters JSON");
+        set_proto_param_mode(
+            env,
+            ProtocolParameterMode::ProtocolParameterLocal(parameters),
+        );
+    }
+
+    fn write_temp_v1_plutus_script(name: &str, flat_bytes: &[u8]) -> PathBuf {
+        let script_bytes = cbor_bytes(flat_bytes);
+        let envelope_bytes = cbor_bytes(&script_bytes);
+        let path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-{name}-{}-{:?}.plutus",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+        ));
+        let text = serde_json::json!({
+            "type": "PlutusScriptV1",
+            "description": "",
+            "cborHex": hex::encode(envelope_bytes)
+        });
+        fs::write(
+            &path,
+            serde_json::to_string(&text).expect("serialize envelope"),
+        )
+        .expect("write temp script");
+        path
+    }
+
+    fn cbor_bytes(payload: &[u8]) -> Vec<u8> {
+        assert!(payload.len() < 24);
+        let mut out = Vec::with_capacity(payload.len() + 1);
+        out.push(0x40 | payload.len() as u8);
+        out.extend_from_slice(payload);
+        out
     }
 
     #[test]
@@ -1954,6 +2106,40 @@ mod tests {
                 );
             }
             FundWitness::KeyWitnessForSpending => panic!("expected script witness"),
+        }
+    }
+
+    #[test]
+    fn make_plutus_context_with_check_rejects_mismatched_pre_execution_units() {
+        let mut env = Env::empty_env();
+        seed_real_plutus_protocol_parameters(&mut env);
+        let script_path = write_temp_v1_plutus_script("pre-execute-mismatch", THREE_ARG_UNIT_FLAT);
+        let script_spec = ScriptSpec {
+            script_spec_file: PlutusScriptRef::File(script_path.clone()),
+            script_spec_budget: ScriptBudget::StaticScriptBudget(
+                PathBuf::new(),
+                PathBuf::new(),
+                ExecutionUnits {
+                    execution_steps: 1,
+                    execution_memory: 1,
+                },
+                true,
+            ),
+            script_spec_plutus_type: TxGenPlutusType::CustomScript,
+        };
+
+        let err = make_plutus_context(&mut env, AnyCardanoEra::Alonzo, &script_spec)
+            .expect_err("withCheck mismatch");
+
+        let _ = fs::remove_file(script_path);
+        match err {
+            Error::WalletError(message) => {
+                assert!(
+                    message.contains("Stated execution Units do not match result of pre execution")
+                );
+                assert!(message.contains("PreExecution result"));
+            }
+            other => panic!("expected WalletError, got {other:?}"),
         }
     }
 

@@ -297,9 +297,11 @@ own parser / generator / submission implementation plus upstream
   intentional `Core.hs` crash messages. R555 added script-spend
   transaction assembly: `genTx` now carries Plutus scripts, datums,
   redeemers, collateral key witnesses, and script-integrity hashes for
-  static-budget script funds. The remaining tx-generator blockers are
-  Plutus pre-execution / auto-budget fitting, exact `DumpToFile`
-  rendering, Benchmark submission, and upstream comparison evidence.
+  static-budget script funds. R556 added Plutus pre-execution checking
+  for static `withCheck` budgets via the shared pure-Rust CEK evaluator.
+  The remaining tx-generator blockers are Plutus auto-budget fitting,
+  exact `DumpToFile` rendering, Benchmark submission, and upstream
+  comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

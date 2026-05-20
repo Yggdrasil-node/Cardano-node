@@ -3789,6 +3789,7 @@ dependencies = [
  "yggdrasil-network",
  "yggdrasil-node-config",
  "yggdrasil-node-genesis",
+ "yggdrasil-plutus",
  "yggdrasil-telemetry",
 ]
 

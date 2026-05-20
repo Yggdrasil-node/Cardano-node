@@ -33,7 +33,8 @@ pub enum ScriptLanguage {
 }
 
 impl ScriptLanguage {
-    fn plutus_version(self) -> PlutusVersion {
+    /// Convert the generator language wrapper to the ledger Plutus version.
+    pub fn plutus_version(self) -> PlutusVersion {
         match self {
             Self::PlutusV1 => PlutusVersion::V1,
             Self::PlutusV2 => PlutusVersion::V2,

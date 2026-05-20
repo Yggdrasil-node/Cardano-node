@@ -117,8 +117,8 @@ fn store(
 /// Mirror of upstream `genTx`.
 ///
 /// This slice constructs and signs Shelley-family transactions for key
-/// witnesses and Plutus script-spending witnesses. Plutus pre-execution and
-/// auto-budget fitting land in the dedicated Setup/PlutusContext slices.
+/// witnesses and Plutus script-spending witnesses. Auto-budget fitting
+/// lands in the dedicated PlutusContext slice.
 #[allow(clippy::too_many_arguments)]
 pub fn gen_tx(
     era: AnyCardanoEra,

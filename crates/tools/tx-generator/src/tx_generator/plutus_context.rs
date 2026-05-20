@@ -5,8 +5,7 @@
 //! **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/PlutusContext.hs`.
 //! Ports the script-data loading and `scriptDataModifyNumber` helpers
 //! consumed by `Script/Core.makePlutusContext`. Auto-budget fitting is
-//! left on an explicit `plutusAutoScaleBlockfit` boundary until the
-//! generator wires Plutus pre-execution.
+//! left on an explicit `plutusAutoScaleBlockfit` boundary.
 
 use std::path::Path;
 

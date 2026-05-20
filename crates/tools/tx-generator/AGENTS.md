@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R555 script-spend transaction assembly slice). The old
+**Status:** `partial` (post-R556 Plutus pre-execution slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -142,8 +142,9 @@ approved synthesis area from the sister-tools plan.
   ports detailed-schema `readScriptData` plus `scriptDataModifyNumber`;
   `script/core.rs` now resolves `PayToScript` static budgets into
   `mkUTxOScript` builders carrying real datum/redeemer/execution-unit
-  witness data. AutoScript and pre-execution checking remain explicit
-  `preExecutePlutusScript` / `plutusAutoScaleBlockfit` boundaries.
+  witness data. R556 extends the static path with upstream-shaped
+  `preExecutePlutusScript` checking; AutoScript remains on the
+  `plutusAutoScaleBlockfit` boundary.
 - Shipped R548: `Cardano.TxGenerator.Tx` key-spend transaction
   construction. `tx_generator/tx.rs` ports
   `sourceToStoreTransaction`, `sourceToStoreTransactionNew`,
@@ -199,9 +200,16 @@ approved synthesis area from the sister-tools plan.
   now accepts ledger protocol parameters, includes Plutus V1/V2/V3
   scripts, datums, redeemers, and `script_data_hash` in Alonzo-family
   transactions, signs collateral keys, and lets finite `DiscardTX`
-  streams spend script funds with static budgets. Plutus
-  `preExecutePlutusScript` / auto-budget fitting remain separate
-  runtime gaps.
+  streams spend script funds with static budgets. R556 extends this
+  path with pre-execution checking for static budgets.
+- Shipped R556: `Cardano.TxGenerator.Setup.Plutus.preExecutePlutusScript`.
+  `setup/plutus.rs` now decodes Plutus V1/V2/V3 scripts through the
+  shared pure-Rust Flat decoder, builds the upstream dummy
+  `ScriptContext` shapes, runs the CEK evaluator with active cost
+  models and per-transaction limits, and returns measured
+  `ExecutionUnits`. `Script/Core.makePlutusContext` now honors
+  `StaticScriptBudget(..., withCheck=true)` and rejects mismatched
+  stated budgets like upstream.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
@@ -321,9 +329,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: script-spend transaction assembly (R555):
   `Cardano.TxGenerator.Tx.genTx` now builds script-spend witness sets
   and script-integrity hashes for static-budget Plutus funds.
-- Next: port Plutus `preExecutePlutusScript` /
-  `plutusAutoScaleBlockfit`, exact `DumpToFile` rendering, and
-  Benchmark submission in strict-mirror-sized slices.
+- Shipped: Plutus pre-execution checking (R556):
+  `Cardano.TxGenerator.Setup.Plutus.preExecutePlutusScript` now
+  pre-runs static-budget scripts with the shared CEK evaluator and
+  `Benchmarking.Script.Core.makePlutusContext` honors `withCheck`.
+- Next: port Plutus `plutusAutoScaleBlockfit`, exact `DumpToFile`
+  rendering, and Benchmark submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
