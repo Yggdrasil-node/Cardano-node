@@ -543,6 +543,10 @@ pub struct Mismatch<T> {
 pub enum MismatchRelation {
     /// Supplied is required to equal expected.
     RelEQ,
+    /// Supplied is required to be < expected.
+    RelLT,
+    /// Supplied is required to be > expected.
+    RelGT,
     /// Supplied is required to be ≤ expected.
     RelLTEQ,
     /// Supplied is required to be ≥ expected.
@@ -557,6 +561,8 @@ impl MismatchRelation {
     pub fn type_rep(self) -> &'static str {
         match self {
             Self::RelEQ => "RelEQ",
+            Self::RelLT => "RelLT",
+            Self::RelGT => "RelGT",
             Self::RelLTEQ => "RelLTEQ",
             Self::RelGTEQ => "RelGTEQ",
             Self::RelSubset => "RelSubset",
@@ -3065,11 +3071,16 @@ pub enum ShelleyDelegPredFailure {
     /// GenesisDelegate` (R615 typed).
     DuplicateGenesisDelegateDELEG(KeyHash),
     /// Tag 7: insufficient instantaneous rewards — `MIRPot +
-    /// Mismatch RelLTEQ Coin`. Raw payload.
-    InsufficientForInstantaneousRewardsDELEG(Vec<u8>),
+    /// Mismatch RelLTEQ Coin` (R617 typed).
+    InsufficientForInstantaneousRewardsDELEG {
+        /// Which pot the rewards were drawn from.
+        pot: MirPot,
+        /// Supplied vs expected coin mismatch.
+        mismatch: Mismatch<u64>,
+    },
     /// Tag 8: MIR cert too late in epoch — `Mismatch RelLT
-    /// SlotNo`. Raw payload.
-    MIRCertificateTooLateinEpochDELEG(Vec<u8>),
+    /// SlotNo` (R617 typed).
+    MIRCertificateTooLateinEpochDELEG(Mismatch<u64>),
     /// Tag 9: duplicate genesis VRF — `VRFVerKeyHash GenDelegVRF`
     /// (32 bytes, R615 typed via raw bytes wrapper).
     DuplicateGenesisVRFDELEG(VrfVerKeyHash),
@@ -3079,13 +3090,22 @@ pub enum ShelleyDelegPredFailure {
     /// Tag 12: MIR negatives not currently allowed — no payload.
     MIRNegativesNotCurrentlyAllowed,
     /// Tag 13: insufficient for transfer — `MIRPot + Mismatch
-    /// RelLTEQ Coin`. Raw payload.
-    InsufficientForTransferDELEG(Vec<u8>),
+    /// RelLTEQ Coin` (R617 typed).
+    InsufficientForTransferDELEG {
+        /// Which pot the transfer was attempted from.
+        pot: MirPot,
+        /// Supplied vs expected coin mismatch.
+        mismatch: Mismatch<u64>,
+    },
     /// Tag 14: MIR produces negative update — no payload.
     MIRProducesNegativeUpdate,
-    /// Tag 15: MIR negative transfer — `MIRPot + Coin`. Raw
-    /// payload.
-    MIRNegativeTransfer(Vec<u8>),
+    /// Tag 15: MIR negative transfer — `MIRPot + Coin` (R617 typed).
+    MIRNegativeTransfer {
+        /// Which pot the negative transfer targets.
+        pot: MirPot,
+        /// Attempted transfer amount.
+        amount: u64,
+    },
     /// Tag 16: delegatee pool not registered — `KeyHash
     /// StakePool` (R615 typed).
     DelegateeNotRegisteredDELEG(KeyHash),
@@ -3109,6 +3129,43 @@ impl fmt::Display for VrfVerKeyHash {
     }
 }
 
+/// MIR (Move Instantaneous Rewards) pot mirroring upstream
+/// `data MIRPot = ReservesMIR | TreasuryMIR` from
+/// `Cardano.Ledger.Shelley.TxCert`. CBOR encoding is a Word8:
+/// 0 = ReservesMIR, 1 = TreasuryMIR.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum MirPot {
+    /// Word8 = 0.
+    ReservesMIR,
+    /// Word8 = 1.
+    TreasuryMIR,
+}
+
+impl MirPot {
+    /// Decode `MIRPot` from the next CBOR Word8.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let n = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("MIRPot: expected Word8: {err:?}")))?;
+        match n {
+            0 => Ok(Self::ReservesMIR),
+            1 => Ok(Self::TreasuryMIR),
+            other => Err(DecoderError(format!(
+                "MIRPot: unknown pot {other} (expected 0 or 1)"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for MirPot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::ReservesMIR => "ReservesMIR",
+            Self::TreasuryMIR => "TreasuryMIR",
+        })
+    }
+}
+
 impl ShelleyDelegPredFailure {
     /// Upstream CBOR tag for this variant.
     pub fn tag(&self) -> u8 {
@@ -3120,14 +3177,14 @@ impl ShelleyDelegPredFailure {
             Self::WrongCertificateTypeDELEG => 4,
             Self::GenesisKeyNotInMappingDELEG(_) => 5,
             Self::DuplicateGenesisDelegateDELEG(_) => 6,
-            Self::InsufficientForInstantaneousRewardsDELEG(_) => 7,
+            Self::InsufficientForInstantaneousRewardsDELEG { .. } => 7,
             Self::MIRCertificateTooLateinEpochDELEG(_) => 8,
             Self::DuplicateGenesisVRFDELEG(_) => 9,
             Self::MIRTransferNotCurrentlyAllowed => 11,
             Self::MIRNegativesNotCurrentlyAllowed => 12,
-            Self::InsufficientForTransferDELEG(_) => 13,
+            Self::InsufficientForTransferDELEG { .. } => 13,
             Self::MIRProducesNegativeUpdate => 14,
-            Self::MIRNegativeTransfer(_) => 15,
+            Self::MIRNegativeTransfer { .. } => 15,
             Self::DelegateeNotRegisteredDELEG(_) => 16,
         }
     }
@@ -3142,16 +3199,16 @@ impl ShelleyDelegPredFailure {
             Self::WrongCertificateTypeDELEG => "WrongCertificateTypeDELEG",
             Self::GenesisKeyNotInMappingDELEG(_) => "GenesisKeyNotInMappingDELEG",
             Self::DuplicateGenesisDelegateDELEG(_) => "DuplicateGenesisDelegateDELEG",
-            Self::InsufficientForInstantaneousRewardsDELEG(_) => {
+            Self::InsufficientForInstantaneousRewardsDELEG { .. } => {
                 "InsufficientForInstantaneousRewardsDELEG"
             }
             Self::MIRCertificateTooLateinEpochDELEG(_) => "MIRCertificateTooLateinEpochDELEG",
             Self::DuplicateGenesisVRFDELEG(_) => "DuplicateGenesisVRFDELEG",
             Self::MIRTransferNotCurrentlyAllowed => "MIRTransferNotCurrentlyAllowed",
             Self::MIRNegativesNotCurrentlyAllowed => "MIRNegativesNotCurrentlyAllowed",
-            Self::InsufficientForTransferDELEG(_) => "InsufficientForTransferDELEG",
+            Self::InsufficientForTransferDELEG { .. } => "InsufficientForTransferDELEG",
             Self::MIRProducesNegativeUpdate => "MIRProducesNegativeUpdate",
-            Self::MIRNegativeTransfer(_) => "MIRNegativeTransfer",
+            Self::MIRNegativeTransfer { .. } => "MIRNegativeTransfer",
             Self::DelegateeNotRegisteredDELEG(_) => "DelegateeNotRegisteredDELEG",
         }
     }
@@ -3267,8 +3324,73 @@ impl ShelleyDelegPredFailure {
                 })?;
                 Ok(Self::DuplicateGenesisVRFDELEG(VrfVerKeyHash(arr)))
             }
-            // Tags with raw payloads pending typed decoders.
-            0 | 1 | 3 | 7 | 8 | 13 | 15 => {
+            // Tag 7: MIRPot + Mismatch RelLTEQ Coin (R617 typed).
+            7 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "InsufficientForInstantaneousRewardsDELEG: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let pot = MirPot::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!(
+                        "InsufficientForInstantaneousRewardsDELEG: {}",
+                        err.0
+                    ))
+                })?;
+                let mismatch =
+                    decode_mismatch_u64(&mut dec, MismatchRelation::RelLTEQ).map_err(|err| {
+                        DecoderError(format!(
+                            "InsufficientForInstantaneousRewardsDELEG: {}",
+                            err.0
+                        ))
+                    })?;
+                Ok(Self::InsufficientForInstantaneousRewardsDELEG { pot, mismatch })
+            }
+            // Tag 8: Mismatch RelLT SlotNo (R617 typed).
+            8 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "MIRCertificateTooLateinEpochDELEG: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let mismatch =
+                    decode_mismatch_u64(&mut dec, MismatchRelation::RelLT).map_err(|err| {
+                        DecoderError(format!("MIRCertificateTooLateinEpochDELEG: {}", err.0))
+                    })?;
+                Ok(Self::MIRCertificateTooLateinEpochDELEG(mismatch))
+            }
+            // Tag 13: MIRPot + Mismatch RelLTEQ Coin (R617 typed).
+            13 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "InsufficientForTransferDELEG: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let pot = MirPot::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("InsufficientForTransferDELEG: {}", err.0))
+                })?;
+                let mismatch =
+                    decode_mismatch_u64(&mut dec, MismatchRelation::RelLTEQ).map_err(|err| {
+                        DecoderError(format!("InsufficientForTransferDELEG: {}", err.0))
+                    })?;
+                Ok(Self::InsufficientForTransferDELEG { pot, mismatch })
+            }
+            // Tag 15: MIRPot + Coin (R617 typed).
+            15 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "MIRNegativeTransfer: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let pot = MirPot::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("MIRNegativeTransfer: {}", err.0)))?;
+                let amount = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("MIRNegativeTransfer: amount: {err:?}")))?;
+                Ok(Self::MIRNegativeTransfer { pot, amount })
+            }
+            // Variants whose typed Credential decoder is pending.
+            0 | 1 | 3 => {
                 let payload_offset = dec.position();
                 let raw = bytes
                     .get(payload_offset..)
@@ -3282,10 +3404,6 @@ impl ShelleyDelegPredFailure {
                     0 => Self::StakeKeyAlreadyRegisteredDELEG(raw),
                     1 => Self::StakeKeyNotRegisteredDELEG(raw),
                     3 => Self::StakeDelegationImpossibleDELEG(raw),
-                    7 => Self::InsufficientForInstantaneousRewardsDELEG(raw),
-                    8 => Self::MIRCertificateTooLateinEpochDELEG(raw),
-                    13 => Self::InsufficientForTransferDELEG(raw),
-                    15 => Self::MIRNegativeTransfer(raw),
                     _ => unreachable!("tag set above"),
                 })
             }
@@ -3305,12 +3423,33 @@ impl fmt::Display for ShelleyDelegPredFailure {
         match self {
             Self::StakeKeyAlreadyRegisteredDELEG(b)
             | Self::StakeKeyNotRegisteredDELEG(b)
-            | Self::StakeDelegationImpossibleDELEG(b)
-            | Self::InsufficientForInstantaneousRewardsDELEG(b)
-            | Self::MIRCertificateTooLateinEpochDELEG(b)
-            | Self::InsufficientForTransferDELEG(b)
-            | Self::MIRNegativeTransfer(b) => {
+            | Self::StakeDelegationImpossibleDELEG(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::InsufficientForInstantaneousRewardsDELEG { pot, mismatch } => {
+                let typed = Mismatch {
+                    relation: mismatch.relation,
+                    supplied: CoinShow(mismatch.supplied),
+                    expected: CoinShow(mismatch.expected),
+                };
+                write!(
+                    f,
+                    "InsufficientForInstantaneousRewardsDELEG {pot} ({typed})"
+                )
+            }
+            Self::MIRCertificateTooLateinEpochDELEG(mismatch) => {
+                write!(f, "MIRCertificateTooLateinEpochDELEG ({mismatch})")
+            }
+            Self::InsufficientForTransferDELEG { pot, mismatch } => {
+                let typed = Mismatch {
+                    relation: mismatch.relation,
+                    supplied: CoinShow(mismatch.supplied),
+                    expected: CoinShow(mismatch.expected),
+                };
+                write!(f, "InsufficientForTransferDELEG {pot} ({typed})")
+            }
+            Self::MIRNegativeTransfer { pot, amount } => {
+                write!(f, "MIRNegativeTransfer {pot} ({})", CoinShow(*amount))
             }
             Self::StakeKeyNonZeroAccountBalanceDELEG(coin) => {
                 write!(
@@ -4202,6 +4341,97 @@ mod tests {
             err.to_string().contains("unknown variant tag 10"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_insufficient_instantaneous_rewards_decodes_tag7() {
+        // outer [0x83, 0x07, pot=0 (Reserves), mismatch [supplied=100, expected=200]]
+        let cbor = [0x83_u8, 0x07, 0x00, 0x82, 0x18, 100, 0x18, 200];
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor)
+            .expect("InsufficientForInstantaneousRewardsDELEG");
+        if let ShelleyDelegPredFailure::InsufficientForInstantaneousRewardsDELEG { pot, mismatch } =
+            &f
+        {
+            assert_eq!(*pot, MirPot::ReservesMIR);
+            assert_eq!(mismatch.relation, MismatchRelation::RelLTEQ);
+            assert_eq!(mismatch.supplied, 100);
+            assert_eq!(mismatch.expected, 200);
+        } else {
+            panic!("expected typed tag-7, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "InsufficientForInstantaneousRewardsDELEG ReservesMIR (Mismatch (RelLTEQ) {supplied: Coin 100, expected: Coin 200})"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_mir_too_late_decodes_tag8() {
+        // outer [0x82, 0x08, mismatch [supplied=900, expected=1000]] RelLT
+        let cbor = [0x82_u8, 0x08, 0x82, 0x19, 0x03, 0x84, 0x19, 0x03, 0xE8];
+        let f =
+            ShelleyDelegPredFailure::from_cbor(&cbor).expect("MIRCertificateTooLateinEpochDELEG");
+        if let ShelleyDelegPredFailure::MIRCertificateTooLateinEpochDELEG(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelLT);
+            assert_eq!(mm.supplied, 900);
+            assert_eq!(mm.expected, 1000);
+        } else {
+            panic!("expected typed tag-8, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "MIRCertificateTooLateinEpochDELEG (Mismatch (RelLT) {supplied: 900, expected: 1000})"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_insufficient_for_transfer_decodes_tag13() {
+        // outer [0x83, 0x0D, pot=1 (Treasury), mismatch [supplied=50, expected=100]]
+        let cbor = [0x83_u8, 0x0D, 0x01, 0x82, 0x18, 50, 0x18, 100];
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("InsufficientForTransferDELEG");
+        if let ShelleyDelegPredFailure::InsufficientForTransferDELEG { pot, mismatch } = &f {
+            assert_eq!(*pot, MirPot::TreasuryMIR);
+            assert_eq!(mismatch.supplied, 50);
+            assert_eq!(mismatch.expected, 100);
+        } else {
+            panic!("expected typed tag-13, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "InsufficientForTransferDELEG TreasuryMIR (Mismatch (RelLTEQ) {supplied: Coin 50, expected: Coin 100})"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_mir_negative_transfer_decodes_tag15() {
+        // outer [0x83, 0x0F, pot=0, amount=1234]
+        let cbor = [0x83_u8, 0x0F, 0x00, 0x19, 0x04, 0xD2];
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("MIRNegativeTransfer");
+        if let ShelleyDelegPredFailure::MIRNegativeTransfer { pot, amount } = &f {
+            assert_eq!(*pot, MirPot::ReservesMIR);
+            assert_eq!(*amount, 1234);
+        } else {
+            panic!("expected typed tag-15, got {f:?}");
+        }
+        assert_eq!(f.to_string(), "MIRNegativeTransfer ReservesMIR (Coin 1234)");
+    }
+
+    #[test]
+    fn mir_pot_from_decoder_round_trips() {
+        use yggdrasil_ledger::Decoder;
+        let mut dec0 = Decoder::new(&[0x00]);
+        assert_eq!(
+            MirPot::from_decoder(&mut dec0).expect("reserves"),
+            MirPot::ReservesMIR
+        );
+        let mut dec1 = Decoder::new(&[0x01]);
+        assert_eq!(
+            MirPot::from_decoder(&mut dec1).expect("treasury"),
+            MirPot::TreasuryMIR
+        );
+        let mut dec_bad = Decoder::new(&[0x02]);
+        let err = MirPot::from_decoder(&mut dec_bad).expect_err("unknown rejects");
+        assert!(err.to_string().contains("unknown pot 2"), "got: {err}");
     }
 
     #[test]

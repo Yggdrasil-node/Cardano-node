@@ -623,10 +623,15 @@ decode-time narrowing), and 6 (`{ pool_id, vrf_key_hash }` for
 VRFKeyHashAlreadyRegistered). 5 of 6 POOL variants now carry
 typed payloads — only tag 1
 (StakePoolRetirementWrongEpochPOOL — flattened 3-EpochNo
-encoding) remains raw pending dedicated decoder. The 7 remaining
-DELEG variants (Credential/MIRPot/Mismatch SlotNo), per-TxOut
-Shelley/Babbage typed parse, and full typed `Addr` parse remain
-pending.
+encoding) remains raw pending dedicated decoder. R617
+(2026-05-21) added the `MirPot` enum (ReservesMIR=0,
+TreasuryMIR=1) plus `MismatchRelation::RelLT` and `RelGT` (full
+6-variant Relation matching upstream) and wired DELEG tags 7
+(`{pot, Mismatch RelLTEQ Coin}`), 8 (`Mismatch RelLT SlotNo`),
+13 (`{pot, Mismatch RelLTEQ Coin}`), 15 (`{pot, Coin}`) to typed
+payloads. **13 of 16 DELEG variants now carry typed payloads.**
+Only the 3 Credential-carrying tags (0/1/3), per-TxOut Shelley/
+Babbage typed parse, and full typed `Addr` parse remain pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
