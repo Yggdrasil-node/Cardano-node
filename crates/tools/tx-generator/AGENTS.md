@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R580 Conway ProposalProcedures simple-variant DumpToFile rendering).
+**Status:** `partial` (post-R581 TreasuryWithdrawals GovAction DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,18 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R581: `show_conway_gov_action` now renders the
+  `TreasuryWithdrawals` variant as upstream `TreasuryWithdrawals
+  (fromList [(AccountAddress {...}, Coin <n>),...]) <StrictMaybe
+  ScriptHash>`. Uses a new `show_account_address_from_record` typed
+  helper for the AccountAddress map keys (no byte-decoding needed
+  since the yggdrasil map is keyed by `RewardAccount`).
+  `guardrails_script_hash` renders at showsPrec 11 (constructor
+  argument position): `SNothing` or `(SJust (ScriptHash "..."))`.
+  ParameterChange + UpdateCommittee remain on TxGenError. 1
+  focused unit test covers the empty-map + no-guardrails minimal
+  form and the single-key-hash-withdrawal + script-hash-guardrails
+  full form.
 - Shipped R580: `show_conway_tx_for_dump` now renders non-empty
   `ctbrProposalProcedures` map shell + `ProposalProcedure` record +
   4 simple `GovAction` variants (`InfoAction`, `NoConfidence`,
@@ -702,11 +714,15 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `RewardAccount::from_bytes`. 3 complex GovAction variants
   (ParameterChange, TreasuryWithdrawals, UpdateCommittee) remain on
   explicit `TxGenError`.
-- Next: ParameterChange / TreasuryWithdrawals / UpdateCommittee
-  GovAction Show coverage (needs ProtocolParameterUpdate /
-  AccountAddress-map / UnitInterval Show ports), upstream
-  `bootstrapWitKeyHash` parity, and upstream-binary soak in
-  strict-mirror-sized slices.
+- Shipped: TreasuryWithdrawals GovAction rendering (R581):
+  `show_conway_gov_action` now renders the `TreasuryWithdrawals`
+  variant via a Map AccountAddress Coin Show, using the typed
+  `RewardAccount` keys directly. ParameterChange + UpdateCommittee
+  remain.
+- Next: ParameterChange (ProtocolParameterUpdate Show) +
+  UpdateCommittee (UnitInterval + member-map Show) GovAction
+  coverage, upstream `bootstrapWitKeyHash` parity, and
+  upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

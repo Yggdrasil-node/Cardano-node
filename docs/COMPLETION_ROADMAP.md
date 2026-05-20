@@ -411,11 +411,13 @@ own parser / generator / submission implementation plus upstream
   yggdrasil's 29-byte reward-account bytes through
   `RewardAccount::from_bytes`), and the 4 simple `GovAction` variants
   (`InfoAction`, `NoConfidence`, `HardForkInitiation`,
-  `NewConstitution`). The remaining tx-generator blockers are the 3
-  complex `GovAction` variants (`ParameterChange` —
-  `ProtocolParameterUpdate` Show, `TreasuryWithdrawals` —
-  `AccountAddress`-map Show, `UpdateCommittee` — `UnitInterval`
-  Show) and upstream-binary soak evidence.
+  `NewConstitution`). R581 closed `TreasuryWithdrawals` via a
+  `Map AccountAddress Coin` Show keyed by the typed
+  `RewardAccount` directly. The remaining tx-generator blockers are
+  the 2 complex `GovAction` variants (`ParameterChange` —
+  `ProtocolParameterUpdate` Show, `UpdateCommittee` —
+  `UnitInterval` Show + member-map Show) and upstream-binary soak
+  evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

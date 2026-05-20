@@ -1488,6 +1488,13 @@ fn show_account_address(reward_account_bytes: &[u8]) -> Result<String, Error> {
             "DumpToFile: Conway Show(Tx) renderer received invalid reward-account bytes",
         )
     })?;
+    show_account_address_from_record(&ra)
+}
+
+/// Render upstream `Show AccountAddress` from a typed `RewardAccount` (no
+/// byte-decoding needed). Use when the carrier already has structured data
+/// (e.g. inside `TreasuryWithdrawals` whose map is keyed by `RewardAccount`).
+fn show_account_address_from_record(ra: &yggdrasil_ledger::RewardAccount) -> Result<String, Error> {
     let network = show_network(ra.network)?;
     let inner = match ra.credential {
         yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => format!(
@@ -1542,9 +1549,28 @@ fn show_conway_gov_action(action: &yggdrasil_ledger::GovAction) -> Result<String
         GovAction::ParameterChange { .. } => Err(lift_tx_gen_error(
             "DumpToFile: Conway Show(Tx) renderer does not yet support ParameterChange GovAction (needs ProtocolParameterUpdate Show)",
         )),
-        GovAction::TreasuryWithdrawals { .. } => Err(lift_tx_gen_error(
-            "DumpToFile: Conway Show(Tx) renderer does not yet support TreasuryWithdrawals GovAction (needs AccountAddress map Show)",
-        )),
+        GovAction::TreasuryWithdrawals {
+            withdrawals,
+            guardrails_script_hash,
+        } => {
+            let entries: Result<Vec<String>, Error> = withdrawals
+                .iter()
+                .map(|(account, coin)| {
+                    let addr = show_account_address_from_record(account)?;
+                    Ok(format!("({addr},{})", show_coin(*coin)))
+                })
+                .collect();
+            let body = entries?.join(",");
+            // StrictMaybe ScriptHash at showsPrec 11: SNothing has no
+            // parens (nullary), SJust wraps to `(SJust (ScriptHash "..."))`.
+            let guardrails = match guardrails_script_hash {
+                None => "SNothing".to_string(),
+                Some(h) => format!("(SJust (ScriptHash \"{}\"))", hex::encode(h)),
+            };
+            Ok(format!(
+                "TreasuryWithdrawals (fromList [{body}]) {guardrails}"
+            ))
+        }
         GovAction::UpdateCommittee { .. } => Err(lift_tx_gen_error(
             "DumpToFile: Conway Show(Tx) renderer does not yet support UpdateCommittee GovAction (needs UnitInterval Show)",
         )),
@@ -3650,6 +3676,49 @@ mod tests {
                 .contains("NewConstitution SNothing (Constitution {constitutionAnchor = Anchor")
         );
         assert!(rendered.contains("constitutionGuardrailsScriptHash = SJust (ScriptHash \"4444"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_treasury_withdrawals() {
+        // Empty withdrawals + no guardrails: minimal form.
+        let action_empty = yggdrasil_ledger::GovAction::TreasuryWithdrawals {
+            withdrawals: BTreeMap::new(),
+            guardrails_script_hash: None,
+        };
+        assert_eq!(
+            show_conway_gov_action(&action_empty).expect("treasury empty"),
+            "TreasuryWithdrawals (fromList []) SNothing"
+        );
+
+        // Single key-hash withdrawal with non-zero amount + script-hash
+        // guardrails: full form.
+        let mut withdrawals = BTreeMap::new();
+        withdrawals.insert(
+            yggdrasil_ledger::RewardAccount {
+                network: 1,
+                credential: yggdrasil_ledger::StakeCredential::AddrKeyHash([0x77; 28]),
+            },
+            123_456_789_u64,
+        );
+        let action_full = yggdrasil_ledger::GovAction::TreasuryWithdrawals {
+            withdrawals,
+            guardrails_script_hash: Some([0x88; 28]),
+        };
+        let rendered = show_conway_gov_action(&action_full).expect("treasury full");
+        assert!(
+            rendered.starts_with(
+                "TreasuryWithdrawals (fromList [(AccountAddress {aaNetworkId = Mainnet, aaId = KeyHashObj (KeyHash {unKeyHash = \""
+            ),
+            "unexpected treasury prefix: {rendered}"
+        );
+        assert!(
+            rendered.contains("Coin 123456789)"),
+            "expected Coin entry in: {rendered}"
+        );
+        assert!(
+            rendered.contains("(SJust (ScriptHash \""),
+            "expected SJust guardrails in: {rendered}"
+        );
     }
 
     #[test]
