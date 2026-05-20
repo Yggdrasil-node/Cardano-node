@@ -64,8 +64,10 @@ pub fn run_main() -> ExitCode {
 /// `compile` emit that script. R537 adds the upstream-shaped
 /// `Script/Aeson.hs` parser for `json` scripts. R538 starts the
 /// `Script/Env.hs` and `Script/Action.hs` runtime boundary for
-/// deterministic state-only actions; protocol, query, transaction, and
-/// submission execution still lands in later strict slices.
+/// deterministic state-only actions. R540 wires the `Script/Core.hs`
+/// node-to-client current-era and protocol-parameter query path;
+/// transaction construction and submission execution still land in
+/// later strict slices.
 pub fn run(command: command::Command) -> eyre::Result<()> {
     match &command {
         Command::Json(file) => {
@@ -99,11 +101,11 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R538 Script/Env+Action slice). Help/version compatibility, typed \
+         (R540 Script/Core NtC query slice). Help/version compatibility, typed \
          subcommand parsing, json_highlevel testnet discovery, and high-level \
          NixServiceOptions parsing/compilation plus low-level script JSON \
-         decoding plus deterministic state-only action execution are wired; \
-         protocol execution and transaction generation land in later strict \
+         decoding plus deterministic state-only action execution and Script/Core \
+         NtC query helpers are wired; transaction generation and submission land in later strict \
          slices of the tx-generator port arc.",
         command.name()
     ))

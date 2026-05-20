@@ -11,10 +11,14 @@
 //! `GeneratorTx` and node-runtime mirrors land.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
+use yggdrasil_ledger::{Decoder, Encoder};
+use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
+#[cfg(unix)]
+use yggdrasil_network::{AcquireTarget, LocalStateQueryClient, MiniProtocolNum, ntc_connect};
 
 use crate::script::aeson;
 use crate::script::env::{
@@ -25,6 +29,14 @@ use crate::script::env::{
 };
 use crate::script::types::{Generator, ProtocolParametersSource, SigningKeyEnvelope, SubmitMode};
 use crate::types::{AnyCardanoEra, Lovelace, TxGenTxParams};
+
+/// Mainnet network magic used by node-to-client handshakes.
+///
+/// Mirrors the canonical `NetworkMagic 764824073` value used by
+/// upstream Cardano tools when a script selects `Mainnet`.
+pub const MAINNET_NETWORK_MAGIC: u32 = 764_824_073;
+
+const PROTOCOL_PARAMETERS_QUERIED_FILE: &str = "protocol-parameters-queried.json";
 
 /// Mirror of upstream `withEra`.
 pub fn with_era<T>(
@@ -151,38 +163,67 @@ pub fn cancel_benchmark(env: &mut Env) -> Result<(), Error> {
 pub struct LocalConnectInfo {
     /// Network ID used by local node-to-client calls.
     pub network_id: crate::script::types::NetworkId,
+    /// Network magic used by the node-to-client handshake.
+    pub network_magic: u32,
     /// Node socket path.
-    pub socket_path: std::path::PathBuf,
+    pub socket_path: PathBuf,
 }
 
 /// Mirror of upstream `getLocalConnectInfo`.
 pub fn get_local_connect_info(env: &Env) -> Result<LocalConnectInfo, Error> {
+    let network_id = get_env_network_id(env)?.clone();
     Ok(LocalConnectInfo {
-        network_id: get_env_network_id(env)?.clone(),
+        network_magic: network_id_to_magic(&network_id)?,
+        network_id,
         socket_path: get_env_socket_path(env)?.clone(),
     })
 }
 
+/// Convert upstream `NetworkId` to the NtC protocol magic.
+pub fn network_id_to_magic(network_id: &crate::script::types::NetworkId) -> Result<u32, Error> {
+    match network_id {
+        crate::script::types::NetworkId::Mainnet => Ok(MAINNET_NETWORK_MAGIC),
+        crate::script::types::NetworkId::Testnet(magic) => u32::try_from(*magic)
+            .map_err(|_| Error::UserError(format!("NetworkMagic out of u32 range: {magic}"))),
+    }
+}
+
 /// Mirror of upstream `queryEra`.
 pub fn query_era(env: &Env) -> Result<AnyCardanoEra, Error> {
-    let _connect_info = get_local_connect_info(env)?;
-    Err(lift_tx_gen_error(
-        "queryEra: local-state query is not yet implemented \
-         (pending node-to-client Script/Core runtime slice)",
-    ))
+    let connect_info = get_local_connect_info(env)?;
+    query_era_with_connect_info(&connect_info)
 }
 
 /// Mirror of upstream `queryRemoteProtocolParameters`.
-pub fn query_remote_protocol_parameters(env: &Env) -> Result<Value, Error> {
-    let _connect_info = get_local_connect_info(env)?;
-    Err(lift_tx_gen_error(
-        "queryRemoteProtocolParameters: local-state protocol-parameters query is not yet implemented \
-         (pending node-to-client Script/Core runtime slice)",
-    ))
+pub fn query_remote_protocol_parameters(env: &mut Env) -> Result<Value, Error> {
+    let connect_info = get_local_connect_info(env)?;
+    let era = query_era_with_connect_info(&connect_info)?;
+    let query = encode_protocol_parameters_query(era)?;
+    let result = run_local_state_query(
+        &connect_info,
+        query,
+        "QueryInShelleyBasedEra QueryProtocolParameters",
+    )?;
+    let era_native_pparams = decode_query_if_current_match(&result, era)?;
+    let parameters = protocol_parameters_value(era, &era_native_pparams)?;
+    let rendered = serde_json::to_string_pretty(&parameters)
+        .map_err(|err| lift_tx_gen_error(format!("prettyPrintOrdered: {err}")))?;
+    fs::write(PROTOCOL_PARAMETERS_QUERIED_FILE, format!("{rendered}\n")).map_err(|err| {
+        lift_tx_gen_error(format!(
+            "queryRemoteProtocolParameters: write {PROTOCOL_PARAMETERS_QUERIED_FILE}: {err}"
+        ))
+    })?;
+    trace_debug(
+        env,
+        &format!(
+            "queryRemoteProtocolParameters : query result saved in: {PROTOCOL_PARAMETERS_QUERIED_FILE}"
+        ),
+    );
+    Ok(parameters)
 }
 
 /// Mirror of upstream `getProtocolParameters`.
-pub fn get_protocol_parameters(env: &Env) -> Result<Value, Error> {
+pub fn get_protocol_parameters(env: &mut Env) -> Result<Value, Error> {
     match get_proto_param_mode(env)? {
         ProtocolParameterMode::ProtocolParameterQuery => query_remote_protocol_parameters(env),
         ProtocolParameterMode::ProtocolParameterLocal(parameters) => Ok(parameters.clone()),
@@ -243,6 +284,180 @@ pub fn reserved(_options: &[String]) -> Result<(), Error> {
     Err(Error::UserError("no dirty hack is implemented".to_string()))
 }
 
+fn query_era_with_connect_info(connect_info: &LocalConnectInfo) -> Result<AnyCardanoEra, Error> {
+    let result = run_local_state_query(
+        connect_info,
+        encode_current_era_query(),
+        "QueryHardFork GetCurrentEra",
+    )?;
+    decode_current_era_result(&result)
+}
+
+fn run_local_state_query(
+    connect_info: &LocalConnectInfo,
+    query_bytes: Vec<u8>,
+    query_label: &str,
+) -> Result<Vec<u8>, Error> {
+    #[cfg(not(unix))]
+    {
+        let _ = (connect_info, query_bytes, query_label);
+        Err(lift_tx_gen_error(
+            "LocalStateQuery over node-to-client sockets requires Unix-domain socket support",
+        ))
+    }
+
+    #[cfg(unix)]
+    tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|err| lift_tx_gen_error(format!("LocalStateQuery runtime: {err}")))?
+        .block_on(run_local_state_query_async(
+            connect_info,
+            query_bytes,
+            query_label,
+        ))
+}
+
+#[cfg(unix)]
+async fn run_local_state_query_async(
+    connect_info: &LocalConnectInfo,
+    query_bytes: Vec<u8>,
+    query_label: &str,
+) -> Result<Vec<u8>, Error> {
+    let mut conn = ntc_connect(&connect_info.socket_path, connect_info.network_magic, true)
+        .await
+        .map_err(|err| {
+            lift_tx_gen_error(format!(
+                "LocalStateQuery connect {} (network_magic={}): {err}",
+                connect_info.socket_path.display(),
+                connect_info.network_magic
+            ))
+        })?;
+    let sq_handle = conn
+        .protocols
+        .remove(&MiniProtocolNum::NTC_LOCAL_STATE_QUERY)
+        .ok_or_else(|| lift_tx_gen_error("NTC_LOCAL_STATE_QUERY mini-protocol handle missing"))?;
+    let mut client = LocalStateQueryClient::new(sq_handle);
+    client
+        .acquire(AcquireTarget::VolatileTip)
+        .await
+        .map_err(|err| lift_tx_gen_error(format!("LocalStateQuery acquire failed: {err}")))?;
+    let result = client.query(query_bytes).await.map_err(|err| {
+        lift_tx_gen_error(format!(
+            "LocalStateQuery `{query_label}` query failed: {err}"
+        ))
+    })?;
+    let _ = client.release().await;
+    let _ = client.done().await;
+    Ok(result)
+}
+
+fn encode_current_era_query() -> Vec<u8> {
+    UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryHardFork(
+        QueryHardFork::GetCurrentEra,
+    ))
+    .encode()
+}
+
+fn encode_protocol_parameters_query(era: AnyCardanoEra) -> Result<Vec<u8>, Error> {
+    let mut inner = Encoder::new();
+    inner.array(2);
+    inner.unsigned(era_to_lsq_ordinal(era)?);
+    inner.array(1);
+    inner.unsigned(3);
+    Ok(
+        UpstreamQuery::BlockQuery(HardForkBlockQuery::QueryIfCurrent {
+            inner_cbor: inner.into_bytes(),
+        })
+        .encode(),
+    )
+}
+
+fn decode_current_era_result(result: &[u8]) -> Result<AnyCardanoEra, Error> {
+    let mut bare = Decoder::new(result);
+    if let Ok(ordinal) = bare.unsigned() {
+        return era_from_lsq_ordinal(ordinal);
+    }
+
+    let mut dec = Decoder::new(result);
+    let len = dec
+        .array()
+        .map_err(|err| lift_tx_gen_error(format!("decode QueryCurrentEra result: {err}")))?;
+    if len != 1 {
+        return Err(lift_tx_gen_error(format!(
+            "decode QueryCurrentEra result: expected 1-element array or bare ordinal, got len={len}"
+        )));
+    }
+    let ordinal = dec
+        .unsigned()
+        .map_err(|err| lift_tx_gen_error(format!("decode QueryCurrentEra ordinal: {err}")))?;
+    era_from_lsq_ordinal(ordinal)
+}
+
+fn decode_query_if_current_match(result: &[u8], era: AnyCardanoEra) -> Result<Vec<u8>, Error> {
+    let mut dec = Decoder::new(result);
+    let len = dec
+        .array()
+        .map_err(|err| lift_tx_gen_error(format!("decode QueryIfCurrent result: {err}")))?;
+    match len {
+        1 => {
+            let start = dec.position();
+            dec.skip().map_err(|err| {
+                lift_tx_gen_error(format!("decode QueryIfCurrent payload: {err}"))
+            })?;
+            let end = dec.position();
+            Ok(result[start..end].to_vec())
+        }
+        2 => Err(lift_tx_gen_error(format!(
+            "queryRemoteProtocolParameters: era mismatch for {era:?}: {}",
+            hex::encode(result)
+        ))),
+        other => Err(lift_tx_gen_error(format!(
+            "queryRemoteProtocolParameters: expected QueryIfCurrent match/mismatch, got array len={other}"
+        ))),
+    }
+}
+
+fn protocol_parameters_value(era: AnyCardanoEra, era_native_cbor: &[u8]) -> Result<Value, Error> {
+    Ok(serde_json::json!({
+        "source": "QueryLocalNode",
+        "query": "GetCurrentPParams",
+        "era": format!("{era:?}"),
+        "eraOrdinal": era_to_lsq_ordinal(era)?,
+        "eraNativeCborHex": hex::encode(era_native_cbor),
+    }))
+}
+
+fn era_from_lsq_ordinal(ordinal: u64) -> Result<AnyCardanoEra, Error> {
+    match ordinal {
+        0 => Err(lift_tx_gen_error("queryEra Byron not supported")),
+        1 => Ok(AnyCardanoEra::Shelley),
+        2 => Ok(AnyCardanoEra::Allegra),
+        3 => Ok(AnyCardanoEra::Mary),
+        4 => Ok(AnyCardanoEra::Alonzo),
+        5 => Ok(AnyCardanoEra::Babbage),
+        6 => Ok(AnyCardanoEra::Conway),
+        7 => Ok(AnyCardanoEra::Dijkstra),
+        other => Err(lift_tx_gen_error(format!(
+            "queryEra: unknown era ordinal {other}"
+        ))),
+    }
+}
+
+fn era_to_lsq_ordinal(era: AnyCardanoEra) -> Result<u64, Error> {
+    match era {
+        AnyCardanoEra::Byron => Err(lift_tx_gen_error("queryEra Byron not supported")),
+        AnyCardanoEra::Shelley => Ok(1),
+        AnyCardanoEra::Allegra => Ok(2),
+        AnyCardanoEra::Mary => Ok(3),
+        AnyCardanoEra::Alonzo => Ok(4),
+        AnyCardanoEra::Babbage => Ok(5),
+        AnyCardanoEra::Conway => Ok(6),
+        AnyCardanoEra::Dijkstra => Ok(7),
+    }
+}
+
 /// Test helper for later slices that need to seed async state.
 pub fn set_dummy_benchmark_control(env: &mut Env) {
     set_env_threads(env, crate::script::env::AsyncBenchmarkControl::default());
@@ -251,7 +466,8 @@ pub fn set_dummy_benchmark_control(env: &mut Env) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::env::{Env, get_env_wallets};
+    use crate::script::env::{Env, get_env_wallets, set_env_network_id, set_env_socket_path};
+    use crate::script::types::NetworkId;
 
     #[test]
     fn with_era_rejects_byron_and_accepts_shelley_based_eras() {
@@ -313,7 +529,7 @@ mod tests {
             ProtocolParameterMode::ProtocolParameterLocal(params.clone()),
         );
 
-        assert_eq!(get_protocol_parameters(&env), Ok(params));
+        assert_eq!(get_protocol_parameters(&mut env), Ok(params));
     }
 
     #[test]
@@ -322,8 +538,89 @@ mod tests {
         set_proto_param_mode(&mut env, ProtocolParameterMode::ProtocolParameterQuery);
 
         assert_eq!(
-            get_protocol_parameters(&env),
+            get_protocol_parameters(&mut env),
             Err(Error::UserError("Unset Genesis".to_string()))
+        );
+    }
+
+    #[test]
+    fn local_connect_info_carries_network_magic() {
+        let mut env = Env::empty_env();
+        set_env_network_id(&mut env, NetworkId::Mainnet);
+        set_env_socket_path(&mut env, PathBuf::from("/tmp/node.socket"));
+
+        let info = get_local_connect_info(&env).expect("connect info");
+
+        assert_eq!(info.network_magic, MAINNET_NETWORK_MAGIC);
+        assert_eq!(info.socket_path, PathBuf::from("/tmp/node.socket"));
+    }
+
+    #[test]
+    fn network_id_to_magic_accepts_u32_testnet_magic() {
+        assert_eq!(network_id_to_magic(&NetworkId::Testnet(42)), Ok(42));
+        assert_eq!(
+            network_id_to_magic(&NetworkId::Testnet(u64::from(u32::MAX) + 1)),
+            Err(Error::UserError(format!(
+                "NetworkMagic out of u32 range: {}",
+                u64::from(u32::MAX) + 1
+            )))
+        );
+    }
+
+    #[test]
+    fn current_era_query_uses_upstream_hardfork_shape() {
+        assert_eq!(
+            encode_current_era_query(),
+            vec![0x82, 0x00, 0x82, 0x02, 0x81, 0x01]
+        );
+    }
+
+    #[test]
+    fn protocol_parameters_query_uses_query_if_current_shape() {
+        assert_eq!(
+            encode_protocol_parameters_query(AnyCardanoEra::Conway),
+            Ok(vec![0x82, 0x00, 0x82, 0x00, 0x82, 0x06, 0x81, 0x03])
+        );
+    }
+
+    #[test]
+    fn current_era_result_accepts_bare_and_legacy_array_ordinals() {
+        assert_eq!(
+            decode_current_era_result(&[0x06]),
+            Ok(AnyCardanoEra::Conway)
+        );
+        assert_eq!(
+            decode_current_era_result(&[0x81, 0x05]),
+            Ok(AnyCardanoEra::Babbage)
+        );
+        assert_eq!(
+            decode_current_era_result(&[0x00]),
+            Err(Error::TxGenError(
+                "queryEra Byron not supported".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn query_if_current_match_extracts_raw_payload() {
+        assert_eq!(
+            decode_query_if_current_match(&[0x81, 0x83, 0x01, 0x02, 0x03], AnyCardanoEra::Conway),
+            Ok(vec![0x83, 0x01, 0x02, 0x03])
+        );
+    }
+
+    #[test]
+    fn protocol_parameters_value_preserves_era_native_cbor() {
+        assert_eq!(
+            protocol_parameters_value(AnyCardanoEra::Conway, &[0x83, 0x01, 0x02, 0x03])
+                .expect("value"),
+            serde_json::json!({
+                "source": "QueryLocalNode",
+                "query": "GetCurrentPParams",
+                "era": "Conway",
+                "eraOrdinal": 6,
+                "eraNativeCborHex": "83010203",
+            })
         );
     }
 

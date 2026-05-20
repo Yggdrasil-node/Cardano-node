@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R539 Script/Core state-helper slice). The old
+**Status:** `partial` (post-R540 Script/Core NtC query slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -97,9 +97,16 @@ approved synthesis area from the sister-tools plan.
 - Shipped R539: `Benchmarking/Script/Action.hs` now mirrors the
   upstream split more closely: dispatch remains in `script/action.rs`,
   while Core-owned action bodies live in `script/core.rs`.
+- Shipped R540: `Benchmarking/Script/Core.hs` node-to-client query
+  surface. `queryEra` and `queryRemoteProtocolParameters` now build the
+  upstream LocalStateQuery envelopes (`QueryHardFork GetCurrentEra` and
+  `QueryIfCurrent GetCurrentPParams`), drive the NtC socket on Unix,
+  preserve era-native protocol-parameter CBOR in
+  `protocol-parameters-queried.json`, and keep non-Unix builds on an
+  explicit Unix-socket boundary.
 - Pending: concrete command execution. Dispatch returns a
-  command-specific "not yet implemented" sentinel until the Script /
-  GeneratorTx / Submission slices land.
+  command-specific "not yet implemented" sentinel until the GeneratorTx
+  construction and submission slices land.
 - Pending: end-to-end behavioral tests against the upstream binary.
 
 ## Build + Run
@@ -160,9 +167,11 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: Script/Core state helpers (R539): `Script/Core.hs`
   non-network state helpers and explicit runtime boundaries moved into
   a strict mirror file.
-- Next: port upstream `Script/Core.hs` protocol/query behavior,
-  generator transaction
-  construction, and submission client in strict-mirror-sized slices.
+- Shipped: Script/Core NtC query behavior (R540): `queryEra` /
+  `queryRemoteProtocolParameters` use upstream LocalStateQuery wire
+  shapes and write queried protocol-parameter evidence.
+- Next: port GeneratorTx transaction construction and LocalSocket /
+  Benchmark submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

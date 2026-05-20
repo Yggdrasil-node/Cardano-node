@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T05:13:35Z
-- Files described: 1393
+- Generated at: 2026-05-20T05:37:54Z
+- Files described: 1394
 
 ## Workspace
 
@@ -1732,10 +1732,10 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the R535 NixService slice plus the remaining Compiler / Script / GeneratorTx / Submission arc.
+  - Tracks the R540 NtC query slice plus the remaining GeneratorTx / Submission arc.
 - `crates/tools/tx-generator/Cargo.toml`
-  - Cargo manifest for the tools crate.
-  - Declares crate metadata, dependencies, features, and local lint behavior.
+  - Cargo manifest for the tx-generator sister-tool crate.
+  - Declares direct dependencies for Script/Core NtC query helpers plus crate metadata.
 - `crates/tools/tx-generator/src/command.rs`
   - Typed command surface for the `tx-generator` binary.
   - Mirrors upstream Command.hs commandParser for json, json_highlevel, compile, selftest, and version.
@@ -1744,7 +1744,7 @@
   - Mirrors upstream Compiler.hs by turning NixServiceOptions into generated benchmark script actions.
 - `crates/tools/tx-generator/src/lib.rs`
   - Pure-Rust port of upstream `tx-generator`.
-  - Parent module wiring top-level parsing, typed dispatch, testnet discovery, and NixService parsing.
+  - Parent module wiring top-level parsing, script execution, testnet discovery, and command dispatch.
 - `crates/tools/tx-generator/src/main.rs`
   - Binary entry point for the `tx-generator` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_tx_generator::run_m
 - `crates/tools/tx-generator/src/parser.rs`
@@ -1760,8 +1760,8 @@
   - Strict mirror of upstream tx-generator Script/Aeson JSON helpers.
   - Parses low-level script files and preserves ObjectWithSingleField round-trip behavior.
 - `crates/tools/tx-generator/src/script/core.rs`
-  - Strict mirror of upstream tx-generator Script/Core state helpers.
-  - Owns Core action bodies and explicit node-query/transaction runtime boundaries.
+  - Strict mirror of upstream tx-generator Script/Core state and NtC query helpers.
+  - Owns Core action bodies, queryEra/queryRemoteProtocolParameters, and transaction-generation boundaries.
 - `crates/tools/tx-generator/src/script/env.rs`
   - Strict mirror of upstream tx-generator Script/Env state.
   - Carries protocol parameter mode, wallets, keys, tracers, and async-control placeholders.
@@ -2178,6 +2178,9 @@
 - `docs/operational-runs/2026-05-20-round-539-tx-generator-script-core.md`
   - Operational run note for the R539 tx-generator Script/Core slice.
   - Records the Core helper split, validation, and remaining protocol/query gates.
+- `docs/operational-runs/2026-05-20-round-540-tx-generator-script-core-ntc-query.md`
+  - Operational run note for the R540 tx-generator Script/Core NtC query slice.
+  - Records the current-era/protocol-parameter query wiring and remaining GeneratorTx gates.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

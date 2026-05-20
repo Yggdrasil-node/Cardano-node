@@ -239,9 +239,11 @@ own parser / generator / submission implementation plus upstream
   R537 shipped `Script/Aeson.hs` low-level script JSON parsing, and R538
   shipped `Script/Env.hs` plus `Script/Action.hs` state-only action
   execution. R539 moved the Core-owned state helpers into a strict
-  `Script/Core.hs` mirror. The remaining tx-generator blocker is
-  Script/Core protocol/query behavior plus GeneratorTx / Submission
-  implementation and upstream comparison evidence.
+  `Script/Core.hs` mirror. R540 wired the Core node-to-client
+  current-era and protocol-parameter query path with upstream
+  LocalStateQuery envelopes. The remaining tx-generator blocker is
+  GeneratorTx / Submission implementation and upstream comparison
+  evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
