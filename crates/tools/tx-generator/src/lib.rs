@@ -10,11 +10,13 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use command::Command;
+use setup::nix_service::{mangle_node_config, mangle_tracer_config, parse_nix_service_options_str};
 use setup::testnet_discovery::discover_testnet_config;
 
 pub mod command;
 pub mod parser;
 pub mod setup;
+pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {
@@ -50,24 +52,36 @@ pub fn run_main() -> ExitCode {
 ///
 /// R533 wires the upstream-shaped [`command::Command`] parser and
 /// dispatch boundary. R534 prepares `json_highlevel --testnet-config-dir`
-/// by running the upstream-shaped testnet discovery merge. Individual
-/// command execution still lands in the later `Script`, `Compiler`, and
-/// `GeneratorTx` slices.
+/// by running the upstream-shaped testnet discovery merge. R535 parses
+/// high-level config into `NixServiceOptions` and applies CLI overrides.
+/// Individual command execution still lands in the later `Script`,
+/// `Compiler`, and `GeneratorTx` slices.
 pub fn run(command: command::Command) -> eyre::Result<()> {
-    if let Command::JsonHighLevel(cmd) = &command
-        && let Some(testnet_config) = &cmd.testnet_config
-    {
-        let raw = std::fs::read_to_string(&cmd.config_file)?;
-        let user_config = serde_json::from_str(&raw)?;
-        let _merged_config = discover_testnet_config(testnet_config, user_config)?;
+    match &command {
+        Command::JsonHighLevel(cmd) => {
+            let raw = std::fs::read_to_string(&cmd.config_file)?;
+            let opts = if let Some(testnet_config) = &cmd.testnet_config {
+                let user_config = serde_json::from_str(&raw)?;
+                discover_testnet_config(testnet_config, user_config)?
+            } else {
+                parse_nix_service_options_str(&raw)?
+            };
+            let opts = mangle_node_config(opts, cmd.node_config.clone())?;
+            let _final_opts = mangle_tracer_config(opts, cmd.cardano_tracer.clone());
+        }
+        Command::Compile(file) => {
+            let raw = std::fs::read_to_string(file)?;
+            let _opts = parse_nix_service_options_str(&raw)?;
+        }
+        Command::Json(_) | Command::Selftest(_) | Command::Version => {}
     }
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R534 setup discovery slice). Help/version compatibility, typed \
-         subcommand parsing, and json_highlevel testnet discovery are wired; \
-         concrete command implementations land in later strict slices of the \
-         tx-generator port arc.",
+         (R535 NixService setup slice). Help/version compatibility, typed \
+         subcommand parsing, json_highlevel testnet discovery, and high-level \
+         NixServiceOptions parsing are wired; concrete command implementations \
+         land in later strict slices of the tx-generator port arc.",
         command.name()
     ))
 }

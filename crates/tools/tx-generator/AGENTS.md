@@ -1,8 +1,8 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R534 TestnetDiscovery slice). The old
+**Status:** `partial` (post-R535 NixService slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
-the tx-generator Script / GeneratorTx / Submission
+the tx-generator Compiler / Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
 **LARGE**.
 
@@ -46,9 +46,18 @@ approved synthesis area from the sister-tools plan.
 - Shipped R534: `json_highlevel --testnet-config-dir DIR` now reads the
   high-level config JSON and performs testnet discovery before reaching
   the command-execution sentinel.
+- Shipped R535: `Setup/NixService.hs` high-level config surface.
+  `setup/nix_service.rs` parses `NixServiceOptions`, owns upstream
+  `NodeDescription`, projects `txGenTxParams` / `txGenConfig` /
+  `txGenPlutusParams`, and applies `nodeConfig` / cardano-tracer CLI
+  override rules.
+- Shipped R535: `json_highlevel` and `compile` now read and validate
+  high-level config JSON before reaching their command-execution
+  sentinel; `discover_testnet_config` now returns typed
+  `NixServiceOptions` like upstream.
 - Pending: concrete command execution. Dispatch returns a
-  command-specific "not yet implemented" sentinel until the Script /
-  GeneratorTx / Submission slices land.
+  command-specific "not yet implemented" sentinel until the Compiler /
+  Script / GeneratorTx / Submission slices land.
 - Pending: end-to-end behavioral tests against the upstream binary.
 
 ## Build + Run
@@ -94,9 +103,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: Testnet discovery (R534): `Setup/TestnetDiscovery.hs`
   path conventions, node discovery, JSON deep-merge, and runtime
   `json_highlevel --testnet-config-dir` preparation.
-- Next: port upstream script compile/run behavior, generator
-  transaction construction, and submission client in strict-mirror-sized
-  slices.
+- Shipped: Nix-service options (R535): `Setup/NixService.hs`
+  high-level JSON shape, target-node parsing, config/tracer override
+  helpers, and tx-generator parameter projections.
+- Next: port upstream `Compiler.hs` script generation, then script
+  run behavior, generator transaction construction, and submission
+  client in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

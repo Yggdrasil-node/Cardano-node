@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T03:41:26Z
-- Files described: 1379
+- Generated at: 2026-05-20T04:07:42Z
+- Files described: 1382
 
 ## Workspace
 
@@ -1732,7 +1732,7 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the R534 TestnetDiscovery slice plus the remaining Script / GeneratorTx / Submission arc.
+  - Tracks the R535 NixService slice plus the remaining Compiler / Script / GeneratorTx / Submission arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
@@ -1741,7 +1741,7 @@
   - Mirrors upstream Command.hs commandParser for json, json_highlevel, compile, selftest, and version.
 - `crates/tools/tx-generator/src/lib.rs`
   - Pure-Rust port of upstream `tx-generator`.
-  - Parent module wiring top-level parsing, typed command dispatch, testnet discovery, and later mirror slices.
+  - Parent module wiring top-level parsing, typed dispatch, testnet discovery, and NixService parsing.
 - `crates/tools/tx-generator/src/main.rs`
   - Binary entry point for the `tx-generator` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_tx_generator::run_m
 - `crates/tools/tx-generator/src/parser.rs`
@@ -1749,10 +1749,16 @@
   - Keeps top-level help/version fixture compatibility while delegating typed commands to command.rs.
 - `crates/tools/tx-generator/src/setup.rs`
   - Setup namespace for the `tx-generator` binary.
-  - Preserves the upstream Cardano.TxGenerator.Setup boundary for strict one-to-one leaf mirrors.
+  - Preserves the upstream Cardano.TxGenerator.Setup boundary for NixService and TestnetDiscovery mirrors.
+- `crates/tools/tx-generator/src/setup/nix_service.rs`
+  - High-level Nix-service configuration for `tx-generator`.
+  - Mirrors upstream Setup/NixService.hs option parsing, node descriptions, overrides, and projections.
 - `crates/tools/tx-generator/src/setup/testnet_discovery.rs`
   - `cardano-testnet` output directory discovery for `tx-generator`.
-  - Mirrors upstream Setup/TestnetDiscovery.hs path discovery, node ports, and JSON merge behavior.
+  - Mirrors upstream Setup/TestnetDiscovery.hs path discovery, node ports, JSON merge, and typed NixService output.
+- `crates/tools/tx-generator/src/types.rs`
+  - High-level transaction-generator configuration types.
+  - Mirrors the upstream TxGenerator.Types subset required by NixService and later Compiler slices.
 - `crates/tools/tx-generator/tests/cli_help_golden.rs`
   - Golden and CLI dispatch tests for the `tx-generator` binary.
   - Checks upstream help/version fixtures plus typed dispatch and unknown-command failure paths.
@@ -2138,6 +2144,8 @@
   - R533 tx-generator Command Parser: Date: 2026-05-20.
 - `docs/operational-runs/2026-05-20-round-534-tx-generator-testnet-discovery.md`
   - R534 tx-generator Testnet Discovery: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-535-tx-generator-nix-service.md`
+  - R535 tx-generator NixService: Date: 2026-05-20.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

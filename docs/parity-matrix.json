@@ -876,7 +876,7 @@
       "area": "sister-tools",
       "feature": "Transaction-stream load generator — pure-Rust port mirroring upstream bench/tx-generator/src/Cardano/Benchmarking/*.hs.",
       "status": "partial",
-      "next_milestone": "R535",
+      "next_milestone": "R536",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/bench/tx-generator/",
@@ -886,7 +886,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/tx-generator/",
-          "role": "Yggdrasil pure-Rust port — R327/R335 skeleton + R533 Command.hs parser mirror + R534 Setup/TestnetDiscovery.hs path and JSON-merge surface. The former cardano-cli C-arc prerequisite is closed; concrete implementation now belongs to the A4 tx-generator Script / GeneratorTx / Submission arc."
+          "role": "Yggdrasil pure-Rust port — R327/R335 skeleton + R533 Command.hs parser mirror + R534 Setup/TestnetDiscovery.hs path and JSON-merge surface + R535 Setup/NixService.hs high-level config parser/projections. The former cardano-cli C-arc prerequisite is closed; concrete implementation now belongs to the A4 tx-generator Compiler / Script / GeneratorTx / Submission arc."
         }
       ],
       "implemented_evidence": [
@@ -897,10 +897,11 @@
         "Concrete subcommand dispatch deferred to per-tool implementation rounds per the plan.",
         "R530 cleanup: cardano-cli C-arc prerequisite is closed, so tx-generator is no longer prerequisite-blocked; it remains partial until its own parser / generator / submission arc lands.",
         "R533 Command.hs parser mirror: command.rs ports the upstream Command sum type and commandParser grammar for json, json_highlevel, compile, selftest, and version; parser::Args now carries typed command::Command instead of raw passthrough. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (20 lib tests + 4 CLI/golden tests).",
-        "R534 Setup/TestnetDiscovery.hs mirror: setup/testnet_discovery.rs ports TestnetConfig, cardano-testnet path conventions, parseNodeIndex, discoverNodes, readNodeDescription, localhost NodeDescription JSON, deep mergeValues, validateFileExists, and the json_highlevel --testnet-config-dir preparation path. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (27 lib tests + 4 CLI/golden tests)."
+        "R534 Setup/TestnetDiscovery.hs mirror: setup/testnet_discovery.rs ports TestnetConfig, cardano-testnet path conventions, parseNodeIndex, discoverNodes, readNodeDescription, localhost NodeDescription JSON, deep mergeValues, validateFileExists, and the json_highlevel --testnet-config-dir preparation path. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (27 lib tests + 4 CLI/golden tests).",
+        "R535 Setup/NixService.hs mirror: setup/nix_service.rs owns NodeDescription and ports NixServiceOptions JSON parsing, defaultKeepaliveTimeout/getKeepaliveTimeout, getNodeAlias, nodeConfig override, cardano-tracer Maybe-semigroup override, txGenTxParams, txGenConfig, and txGenPlutusParams; types.rs ports the required TxGenerator.Types high-level config subset. json_highlevel and compile now read/validate high-level options before their execution sentinel, and discoverTestnetConfig now returns typed NixServiceOptions. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (39 lib tests + 4 CLI/golden tests)."
       ],
       "remaining_work": [
-        "Port upstream script compile/run surfaces, generator transaction construction, and submission client in strict-mirror-sized implementation rounds.",
+        "Port upstream Compiler.hs script generation, Script run surfaces, generator transaction construction, and submission client in strict-mirror-sized implementation rounds.",
         "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/tx-generator.",
         "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],

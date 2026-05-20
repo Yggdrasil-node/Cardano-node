@@ -5,32 +5,20 @@
 //! **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Setup/TestnetDiscovery.hs`.
 //! Ports `TestnetConfig`, `discoverTestnetConfig`, `discoverNodes`,
 //! `parseNodeIndex`, `readNodeDescription`, `mkLocalhostAddr`,
-//! `mergeValues`, and `validateFileExists`. The upstream function
-//! returns `NixServiceOptions`; this Rust slice returns the merged JSON
-//! value until the later `NixServiceOptions` mirror lands.
+//! `mergeValues`, and `validateFileExists`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+
+use crate::setup::nix_service::{NixServiceOptions, NodeDescription};
 
 /// Location of a `cardano-testnet` output directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TestnetConfig {
     /// Output directory path, mirroring upstream `tcDir`.
     pub tc_dir: PathBuf,
-}
-
-/// Mirror of upstream `NodeDescription` JSON shape.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct NodeDescription {
-    /// Node alias, for example `node1`.
-    pub name: String,
-    /// IPv4 address. `cardano-testnet` currently emits localhost nodes.
-    pub addr: String,
-    /// Node-to-node port.
-    pub port: u16,
 }
 
 /// Errors from testnet discovery.
@@ -60,13 +48,16 @@ pub enum TestnetDiscoveryError {
     /// No nodes were discovered.
     #[error("discoverNodes: no nodes found in: {0}")]
     NoNodes(PathBuf),
+    /// The merged JSON could not be decoded as `NixServiceOptions`.
+    #[error("discoverTestnetConfig: failed to decode NixServiceOptions: {0}")]
+    ConfigDecode(#[source] serde_json::Error),
 }
 
 /// Discover testnet connection settings and merge them over user JSON.
 pub fn discover_testnet_config(
     config: &TestnetConfig,
     user_config: Value,
-) -> Result<Value, TestnetDiscoveryError> {
+) -> Result<NixServiceOptions, TestnetDiscoveryError> {
     if !config.tc_dir.is_dir() {
         return Err(TestnetDiscoveryError::MissingPath {
             message: "discoverTestnetConfig: testnet directory does not exist".to_string(),
@@ -90,7 +81,8 @@ pub fn discover_testnet_config(
         "targetNodes": target_nodes,
     });
 
-    Ok(merge_values(user_config, connection_settings))
+    let merged = merge_values(user_config, connection_settings);
+    serde_json::from_value(merged).map_err(TestnetDiscoveryError::ConfigDecode)
 }
 
 /// Discover nodes by scanning for port files in the testnet directory.
@@ -294,6 +286,26 @@ mod tests {
         fs::write(root.join(default_config_file()), "Protocol: Cardano\n").expect("config");
     }
 
+    fn full_user_config() -> Value {
+        json!({
+            "debugMode": false,
+            "tx_count": 100,
+            "tps": 10.0,
+            "inputs_per_tx": 2,
+            "outputs_per_tx": 2,
+            "tx_fee": 212345,
+            "min_utxo_value": 1000000,
+            "add_tx_size": 39,
+            "init_cooldown": 50.0,
+            "era": "Conway",
+            "localNodeSocketPath": "user-socket",
+            "sigKey": "user-key",
+            "nodeConfigFile": "user-config",
+            "targetNodes": [{ "name": "remote", "addr": "10.0.0.1", "port": 1 }],
+            "plutus": null
+        })
+    }
+
     #[test]
     fn path_conventions_match_cardano_testnet_paths() {
         assert_eq!(default_node_name(2), "node2");
@@ -348,16 +360,9 @@ mod tests {
     fn discover_testnet_config_overrides_connection_settings() {
         let temp = TempDir::new("discover-config");
         setup_mock_testnet(temp.path());
-        let user_config = json!({
-            "debugMode": false,
-            "nested": { "keep": true, "override": "user" },
-            "localNodeSocketPath": "user-socket",
-            "sigKey": "user-key",
-            "nodeConfigFile": "user-config",
-            "targetNodes": [{ "name": "remote", "addr": "10.0.0.1", "port": 1 }],
-        });
+        let user_config = full_user_config();
 
-        let merged = discover_testnet_config(
+        let opts = discover_testnet_config(
             &TestnetConfig {
                 tc_dir: temp.path().to_path_buf(),
             },
@@ -365,35 +370,31 @@ mod tests {
         )
         .expect("discovers config");
 
-        assert_eq!(merged["debugMode"], json!(false));
-        assert_eq!(
-            merged["nested"],
-            json!({ "keep": true, "override": "user" })
-        );
+        let merged = serde_json::to_value(&opts).expect("options serialize");
+        assert!(!opts.nix_debug_mode);
         assert!(
-            merged["localNodeSocketPath"]
-                .as_str()
-                .expect("socket string")
+            opts.nix_local_node_socket_path
+                .to_string_lossy()
                 .ends_with("socket\\node1\\sock")
-                || merged["localNodeSocketPath"]
-                    .as_str()
-                    .expect("socket string")
+                || opts
+                    .nix_local_node_socket_path
+                    .to_string_lossy()
                     .ends_with("socket/node1/sock")
         );
         assert!(
-            merged["sigKey"]
-                .as_str()
-                .expect("sig key string")
+            opts.nix_sig_key
+                .to_string_lossy()
                 .ends_with("utxo-keys\\utxo1\\utxo.skey")
-                || merged["sigKey"]
-                    .as_str()
-                    .expect("sig key string")
+                || opts
+                    .nix_sig_key
+                    .to_string_lossy()
                     .ends_with("utxo-keys/utxo1/utxo.skey")
         );
         assert!(
-            merged["nodeConfigFile"]
-                .as_str()
-                .expect("config string")
+            opts.nix_node_config_file
+                .as_deref()
+                .expect("config file")
+                .to_string_lossy()
                 .ends_with("configuration.yaml")
         );
         assert_eq!(
