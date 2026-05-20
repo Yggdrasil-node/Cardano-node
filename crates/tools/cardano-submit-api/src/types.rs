@@ -3050,17 +3050,17 @@ impl fmt::Display for ShelleyPoolPredFailure {
 /// Mismatch (8) keep raw payloads pending typed decoders.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyDelegPredFailure {
-    /// Tag 0: stake-key credential already registered. Raw
-    /// payload pending Credential decoder.
-    StakeKeyAlreadyRegisteredDELEG(Vec<u8>),
-    /// Tag 1: stake-key credential not registered. Raw payload.
-    StakeKeyNotRegisteredDELEG(Vec<u8>),
+    /// Tag 0: stake-key credential already registered (R618
+    /// typed via [`Credential`]).
+    StakeKeyAlreadyRegisteredDELEG(Credential),
+    /// Tag 1: stake-key credential not registered (R618 typed).
+    StakeKeyNotRegisteredDELEG(Credential),
     /// Tag 2: stake-key has non-zero account balance — `Coin`
     /// (R615 typed).
     StakeKeyNonZeroAccountBalanceDELEG(u64),
-    /// Tag 3: stake-key credential not registered for delegation.
-    /// Raw payload pending Credential decoder.
-    StakeDelegationImpossibleDELEG(Vec<u8>),
+    /// Tag 3: stake-key credential not registered for delegation
+    /// (R618 typed).
+    StakeDelegationImpossibleDELEG(Credential),
     /// Tag 4: wrong cert type — no payload.
     WrongCertificateTypeDELEG,
     /// Tag 5: genesis key not in mapping — `KeyHash GenesisRole`
@@ -3163,6 +3163,64 @@ impl fmt::Display for MirPot {
             Self::ReservesMIR => "ReservesMIR",
             Self::TreasuryMIR => "TreasuryMIR",
         })
+    }
+}
+
+/// Cardano credential mirroring upstream `data Credential (kr ::
+/// KeyRole) = ScriptHashObj !ScriptHash | KeyHashObj !(KeyHash kr)`
+/// from `Cardano.Ledger.Credential`. CBOR wire format is a
+/// 2-element array `[tag, hash]` where tag 0 = KeyHashObj, tag 1
+/// = ScriptHashObj (per upstream's `EncCBOR (Credential kr)`).
+/// Display matches upstream stock-derived constructor Show wrapped
+/// in the appropriate hash newtype's record / value Show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Credential {
+    /// Tag 0: 28-byte key hash.
+    KeyHashObj(KeyHash),
+    /// Tag 1: 28-byte script hash.
+    ScriptHashObj(ScriptHash),
+}
+
+impl Credential {
+    /// Decode a Credential from a 2-element CBOR array
+    /// `[tag, bytes(28)]`.
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("Credential: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "Credential: expected 2-array, got len {len}"
+            )));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("Credential: expected Word8 tag: {err:?}")))?;
+        let hash_bytes = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("Credential: expected hash bytes: {err:?}")))?;
+        let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+            DecoderError(format!(
+                "Credential: hash must be 28 bytes, got {}",
+                hash_bytes.len()
+            ))
+        })?;
+        match tag {
+            0 => Ok(Self::KeyHashObj(KeyHash(arr))),
+            1 => Ok(Self::ScriptHashObj(ScriptHash(arr))),
+            other => Err(DecoderError(format!(
+                "Credential: unknown tag {other} (expected 0 or 1)"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for Credential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::KeyHashObj(kh) => write!(f, "KeyHashObj ({kh})"),
+            Self::ScriptHashObj(sh) => write!(f, "ScriptHashObj ({sh})"),
+        }
     }
 }
 
@@ -3389,21 +3447,14 @@ impl ShelleyDelegPredFailure {
                     .map_err(|err| DecoderError(format!("MIRNegativeTransfer: amount: {err:?}")))?;
                 Ok(Self::MIRNegativeTransfer { pot, amount })
             }
-            // Variants whose typed Credential decoder is pending.
+            // Tags 0/1/3: Credential payload (R618 typed).
             0 | 1 | 3 => {
-                let payload_offset = dec.position();
-                let raw = bytes
-                    .get(payload_offset..)
-                    .ok_or_else(|| {
-                        DecoderError(
-                            "ShelleyDelegPredFailure: payload offset out of bounds".to_string(),
-                        )
-                    })?
-                    .to_vec();
+                two_element_check(len, "Credential-bearing DELEG variant")?;
+                let cred = Credential::from_decoder(&mut dec)?;
                 Ok(match tag {
-                    0 => Self::StakeKeyAlreadyRegisteredDELEG(raw),
-                    1 => Self::StakeKeyNotRegisteredDELEG(raw),
-                    3 => Self::StakeDelegationImpossibleDELEG(raw),
+                    0 => Self::StakeKeyAlreadyRegisteredDELEG(cred),
+                    1 => Self::StakeKeyNotRegisteredDELEG(cred),
+                    3 => Self::StakeDelegationImpossibleDELEG(cred),
                     _ => unreachable!("tag set above"),
                 })
             }
@@ -3421,10 +3472,14 @@ impl fmt::Display for ShelleyDelegPredFailure {
     /// `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::StakeKeyAlreadyRegisteredDELEG(b)
-            | Self::StakeKeyNotRegisteredDELEG(b)
-            | Self::StakeDelegationImpossibleDELEG(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::StakeKeyAlreadyRegisteredDELEG(cred) => {
+                write!(f, "StakeKeyAlreadyRegisteredDELEG ({cred})")
+            }
+            Self::StakeKeyNotRegisteredDELEG(cred) => {
+                write!(f, "StakeKeyNotRegisteredDELEG ({cred})")
+            }
+            Self::StakeDelegationImpossibleDELEG(cred) => {
+                write!(f, "StakeDelegationImpossibleDELEG ({cred})")
             }
             Self::InsufficientForInstantaneousRewardsDELEG { pot, mismatch } => {
                 let typed = Mismatch {
@@ -4319,16 +4374,71 @@ mod tests {
     }
 
     #[test]
-    fn shelley_deleg_pred_failure_routes_unported_tag0_to_raw() {
-        let cbor = [0x82_u8, 0x00, 0x40];
+    fn shelley_deleg_pred_failure_stake_key_already_registered_decodes_tag0() {
+        // outer [0x82, 0x00, credential[2-array: 0, bytes(28)]] for KeyHashObj
+        let mut cbor = vec![0x82_u8, 0x00, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x88_u8; 28]);
         let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("StakeKeyAlreadyRegisteredDELEG");
-        assert_eq!(f.tag(), 0);
-        assert_eq!(f.constructor(), "StakeKeyAlreadyRegisteredDELEG");
+        if let ShelleyDelegPredFailure::StakeKeyAlreadyRegisteredDELEG(cred) = &f {
+            assert!(matches!(cred, Credential::KeyHashObj(kh) if kh.0 == [0x88_u8; 28]));
+        } else {
+            panic!("expected typed tag-0, got {f:?}");
+        }
         assert!(
-            f.to_string()
-                .starts_with("StakeKeyAlreadyRegisteredDELEG <raw-cbor"),
+            f.to_string().starts_with(
+                "StakeKeyAlreadyRegisteredDELEG (KeyHashObj (KeyHash {unKeyHash = \"8888"
+            ),
             "got: {f}"
         );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_stake_key_not_registered_decodes_tag1_scripthash() {
+        // outer [0x82, 0x01, credential[2-array: 1, bytes(28)]] for ScriptHashObj
+        let mut cbor = vec![0x82_u8, 0x01, 0x82, 0x01];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xAA_u8; 28]);
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("StakeKeyNotRegisteredDELEG");
+        if let ShelleyDelegPredFailure::StakeKeyNotRegisteredDELEG(cred) = &f {
+            assert!(matches!(cred, Credential::ScriptHashObj(sh) if sh.0 == [0xAA_u8; 28]));
+        } else {
+            panic!("expected typed tag-1, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("StakeKeyNotRegisteredDELEG (ScriptHashObj (ScriptHash \"aaaa"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn shelley_deleg_pred_failure_stake_delegation_impossible_decodes_tag3() {
+        // outer [0x82, 0x03, credential[2-array: 0, bytes(28)]]
+        let mut cbor = vec![0x82_u8, 0x03, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x55_u8; 28]);
+        let f = ShelleyDelegPredFailure::from_cbor(&cbor).expect("StakeDelegationImpossibleDELEG");
+        if let ShelleyDelegPredFailure::StakeDelegationImpossibleDELEG(cred) = &f {
+            assert!(matches!(cred, Credential::KeyHashObj(_)));
+        } else {
+            panic!("expected typed tag-3, got {f:?}");
+        }
+    }
+
+    #[test]
+    fn credential_from_decoder_rejects_unknown_tag() {
+        use yggdrasil_ledger::Decoder;
+        let mut cbor = vec![0x82_u8, 0x05];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x00_u8; 28]);
+        let mut dec = Decoder::new(&cbor);
+        let err = Credential::from_decoder(&mut dec).expect_err("unknown tag must reject");
+        assert!(err.to_string().contains("unknown tag 5"), "got: {err}");
     }
 
     #[test]

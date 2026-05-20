@@ -629,9 +629,18 @@ TreasuryMIR=1) plus `MismatchRelation::RelLT` and `RelGT` (full
 6-variant Relation matching upstream) and wired DELEG tags 7
 (`{pot, Mismatch RelLTEQ Coin}`), 8 (`Mismatch RelLT SlotNo`),
 13 (`{pot, Mismatch RelLTEQ Coin}`), 15 (`{pot, Coin}`) to typed
-payloads. **13 of 16 DELEG variants now carry typed payloads.**
-Only the 3 Credential-carrying tags (0/1/3), per-TxOut Shelley/
-Babbage typed parse, and full typed `Addr` parse remain pending.
+payloads. **13 of 16 DELEG variants now carry typed payloads.** R618
+(2026-05-21) added the `Credential` enum (KeyHashObj /
+ScriptHashObj — 2-element CBOR array `[tag, bytes(28)]` per
+upstream `EncCBOR (Credential kr)`) and wired DELEG tags 0
+(StakeKeyAlreadyRegisteredDELEG), 1 (StakeKeyNotRegisteredDELEG),
+3 (StakeDelegationImpossibleDELEG) to typed Credential payloads.
+**All 16 DELEG variants now carry typed payloads.** Combined
+with R616's POOL closure (5/6 typed, only flattened-Mismatch
+tag 1 remains), the Shelley LEDGER predicate-failure tree is
+~98% structurally typed; only POOL tag 1, per-TxOut Shelley/
+Babbage typed parse, and full typed `Addr` parse remain pending
+within Shelley.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
