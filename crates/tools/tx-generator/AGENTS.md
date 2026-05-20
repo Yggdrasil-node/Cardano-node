@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R554 RoundRobin/OneOf error-shape slice). The old
+**Status:** `partial` (post-R555 script-spend transaction assembly slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -152,9 +152,8 @@ approved synthesis area from the sister-tools plan.
   `MultiEraSubmittedTx` values with vkey witnesses over the body hash,
   metadata auxiliary-data hashes, collateral input fields, and tx-id-
   based generated-fund storage. `wallet.rs` now carries upstream
-  `createAndStore`, `mangle`, and `mangleWithChange` helpers.
-  Plutus script spends remain an explicit script-integrity/pre-exec
-  boundary; creating script outputs is already wired from R546-R547.
+  `createAndStore`, `mangle`, and `mangleWithChange` helpers. R555
+  extends this same mirror to Plutus script-spending witnesses.
 - Shipped R549: `Benchmarking.Script.Core.submitInEra` finite
   key-spend runtime wiring. `script/core.rs` now evaluates `Split`,
   `SplitN`, `NtoM`, `Sequence`, and `Take (Cycle ...)` into real
@@ -196,6 +195,13 @@ approved synthesis area from the sister-tools plan.
   `todo: implement Quickcheck style oneOf generator`; the Rust
   `Script/Core` mirror now returns those exact `TxGenError` strings
   instead of local placeholder wording.
+- Shipped R555: Plutus script-spend transaction assembly. `genTx`
+  now accepts ledger protocol parameters, includes Plutus V1/V2/V3
+  scripts, datums, redeemers, and `script_data_hash` in Alonzo-family
+  transactions, signs collateral keys, and lets finite `DiscardTX`
+  streams spend script funds with static budgets. Plutus
+  `preExecutePlutusScript` / auto-budget fitting remain separate
+  runtime gaps.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
@@ -312,10 +318,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: RoundRobin/OneOf upstream-TODO parity (R554):
   `Benchmarking.Script.Core` now preserves the exact upstream
   unimplemented error text for both constructors.
+- Shipped: script-spend transaction assembly (R555):
+  `Cardano.TxGenerator.Tx.genTx` now builds script-spend witness sets
+  and script-integrity hashes for static-budget Plutus funds.
 - Next: port Plutus `preExecutePlutusScript` /
-  `plutusAutoScaleBlockfit`, script-spend script-integrity hashing,
-  exact `DumpToFile` rendering, and Benchmark submission in
-  strict-mirror-sized slices.
+  `plutusAutoScaleBlockfit`, exact `DumpToFile` rendering, and
+  Benchmark submission in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

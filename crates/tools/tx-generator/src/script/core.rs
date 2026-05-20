@@ -11,6 +11,7 @@
 //! submission, and exact DumpToFile rendering still return explicit
 //! `TxGenError` boundaries until their downstream mirrors land.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -534,6 +535,74 @@ fn script_protocol_parameters(value: &Value) -> Result<ScriptProtocolParameters,
     })
 }
 
+fn tx_protocol_parameters(value: &Value) -> Result<Option<ProtocolParameters>, Error> {
+    if let Some(cbor_hex) = value.get("eraNativeCborHex").and_then(Value::as_str) {
+        let bytes = hex::decode(cbor_hex).map_err(|err| {
+            lift_tx_gen_error(format!("genTx: eraNativeCborHex is not valid hex: {err}"))
+        })?;
+        return ProtocolParameters::from_cbor_bytes(&bytes)
+            .map(Some)
+            .map_err(|err| {
+                lift_tx_gen_error(format!(
+                    "genTx: could not decode era-native protocol parameters: {err}"
+                ))
+            });
+    }
+
+    let Some(cost_models_value) = value
+        .get("costModels")
+        .or_else(|| value.get("costmodels"))
+        .or_else(|| value.get("cost_models"))
+    else {
+        return Ok(None);
+    };
+    let cost_model_object = cost_models_value
+        .as_object()
+        .ok_or_else(|| lift_tx_gen_error("genTx: costModels: expected object"))?;
+    let mut cost_models = BTreeMap::new();
+    for (language, model) in cost_model_object {
+        let key = cost_model_language_key(language)?;
+        let entries = model.as_array().ok_or_else(|| {
+            lift_tx_gen_error(format!("genTx: costModels.{language}: expected array"))
+        })?;
+        let mut values = Vec::with_capacity(entries.len());
+        for (index, entry) in entries.iter().enumerate() {
+            values.push(cost_model_entry_i64(entry).map_err(|err| {
+                lift_tx_gen_error(format!("genTx: costModels.{language}[{index}]: {err}"))
+            })?);
+        }
+        cost_models.insert(key, values);
+    }
+
+    let mut parameters = ProtocolParameters::alonzo_defaults();
+    parameters.cost_models = Some(cost_models);
+    Ok(Some(parameters))
+}
+
+fn cost_model_language_key(language: &str) -> Result<u8, Error> {
+    match language {
+        "PlutusV1" | "PlutusScriptV1" | "0" => Ok(0),
+        "PlutusV2" | "PlutusScriptV2" | "1" => Ok(1),
+        "PlutusV3" | "PlutusScriptV3" | "2" => Ok(2),
+        other => Err(lift_tx_gen_error(format!(
+            "genTx: unsupported cost model language `{other}`"
+        ))),
+    }
+}
+
+fn cost_model_entry_i64(value: &Value) -> Result<i64, String> {
+    let number = value
+        .as_number()
+        .ok_or_else(|| "expected integer".to_string())?;
+    if let Some(value) = number.as_i64() {
+        return Ok(value);
+    }
+    let value = number
+        .as_u64()
+        .ok_or_else(|| "expected signed 64-bit integer".to_string())?;
+    i64::try_from(value).map_err(|_| "expected signed 64-bit integer".to_string())
+}
+
 fn script_fee_from_prices(
     prices: &ExecutionUnitPrices,
     execution_units: &ExecutionUnits,
@@ -628,7 +697,8 @@ pub fn submit_in_era(
     generator: &Generator,
     tx_params: &TxGenTxParams,
 ) -> Result<(), Error> {
-    let _protocol_parameters = get_protocol_parameters(env)?;
+    let protocol_parameters = get_protocol_parameters(env)?;
+    let tx_protocol_parameters = tx_protocol_parameters(&protocol_parameters)?;
     match submit_mode {
         SubmitMode::NodeToNode(_) => Err(lift_tx_gen_error("NodeToNode deprecated: ToDo: remove")),
         SubmitMode::Benchmark(_, _, _) => Err(lift_tx_gen_error(
@@ -638,11 +708,25 @@ pub fn submit_in_era(
             "DumpToFile: upstream Show(Tx) rendering is pending Tx display parity evidence",
         )),
         SubmitMode::DiscardTx => {
-            let _txs = eval_generator(env, era, generator, tx_params, None)?;
+            let _txs = eval_generator(
+                env,
+                era,
+                generator,
+                tx_params,
+                tx_protocol_parameters.as_ref(),
+                None,
+            )?;
             Ok(())
         }
         SubmitMode::LocalSocket => {
-            let txs = eval_generator(env, era, generator, tx_params, None)?;
+            let txs = eval_generator(
+                env,
+                era,
+                generator,
+                tx_params,
+                tx_protocol_parameters.as_ref(),
+                None,
+            )?;
             submit_generated_txs_local_socket(env, &txs)
         }
     }
@@ -653,6 +737,7 @@ fn eval_generator(
     era: AnyCardanoEra,
     generator: &Generator,
     tx_params: &TxGenTxParams,
+    protocol_parameters: Option<&ProtocolParameters>,
     limit: Option<usize>,
 ) -> Result<Vec<GeneratedTx>, Error> {
     if matches!(limit, Some(0)) {
@@ -690,6 +775,7 @@ fn eval_generator(
                     fee: tx_params.tx_param_fee,
                     metadata: None,
                     input_funds: &input_funds,
+                    protocol_parameters,
                     to_utxo_list,
                     destinations,
                 },
@@ -718,6 +804,7 @@ fn eval_generator(
                     fee: tx_params.tx_param_fee,
                     metadata: None,
                     input_funds: &input_funds,
+                    protocol_parameters,
                     to_utxo_list,
                     destinations,
                 },
@@ -743,6 +830,7 @@ fn eval_generator(
                     collateral_funds: &collaterals.funds,
                     metadata: metadata.as_ref(),
                     output: &output,
+                    protocol_parameters,
                 },
             )?;
 
@@ -762,6 +850,7 @@ fn eval_generator(
                     fee: tx_params.tx_param_fee,
                     metadata: metadata.as_ref(),
                     input_funds: &input_funds,
+                    protocol_parameters,
                     to_utxo_list,
                     destinations,
                 },
@@ -775,7 +864,14 @@ fn eval_generator(
                 if matches!(remaining, Some(0)) {
                     break;
                 }
-                generated.extend(eval_generator(env, era, generator, tx_params, remaining)?);
+                generated.extend(eval_generator(
+                    env,
+                    era,
+                    generator,
+                    tx_params,
+                    protocol_parameters,
+                    remaining,
+                )?);
             }
             Ok(generated)
         }
@@ -788,7 +884,14 @@ fn eval_generator(
             let mut generated = Vec::new();
             while generated.len() < limit {
                 let remaining = limit - generated.len();
-                let batch = eval_generator(env, era, generator, tx_params, Some(remaining))?;
+                let batch = eval_generator(
+                    env,
+                    era,
+                    generator,
+                    tx_params,
+                    protocol_parameters,
+                    Some(remaining),
+                )?;
                 if batch.is_empty() {
                     return Err(lift_tx_gen_error(
                         "Cycle: inner generator produced no transactions",
@@ -800,7 +903,14 @@ fn eval_generator(
         }
         Generator::Take(count, generator) => {
             let effective_limit = limit.map_or(*count, |max| max.min(*count));
-            eval_generator(env, era, generator, tx_params, Some(effective_limit))
+            eval_generator(
+                env,
+                era,
+                generator,
+                tx_params,
+                protocol_parameters,
+                Some(effective_limit),
+            )
         }
         Generator::SecureGenesis(wallet_name, genesis_key_name, fund_key_name) => {
             let network_id = get_env_network_id(env)?.clone();
@@ -861,6 +971,7 @@ struct TxGenerationPlan<'a> {
     fee: Lovelace,
     metadata: Option<&'a TxMetadata>,
     input_funds: &'a [Fund],
+    protocol_parameters: Option<&'a ProtocolParameters>,
     to_utxo_list: ToUtxoList,
     destinations: Vec<String>,
 }
@@ -868,6 +979,7 @@ struct TxGenerationPlan<'a> {
 fn generate_and_store(env: &mut Env, plan: TxGenerationPlan<'_>) -> Result<GeneratedTx, Error> {
     let generated = gen_tx(
         plan.era,
+        plan.protocol_parameters,
         &env.env_keys,
         plan.collateral_funds,
         plan.fee,
@@ -911,6 +1023,7 @@ struct NtoMPreviewPlan<'a> {
     collateral_funds: &'a [Fund],
     metadata: Option<&'a TxMetadata>,
     output: &'a InterpretedPayMode,
+    protocol_parameters: Option<&'a ProtocolParameters>,
 }
 
 fn preview_ntom_transaction(env: &mut Env, plan: NtoMPreviewPlan<'_>) -> Result<(), Error> {
@@ -919,6 +1032,7 @@ fn preview_ntom_transaction(env: &mut Env, plan: NtoMPreviewPlan<'_>) -> Result<
         |funds, tx_outs| {
             gen_tx(
                 plan.era,
+                plan.protocol_parameters,
                 &env.env_keys,
                 plan.collateral_funds,
                 plan.fee,
@@ -1266,6 +1380,11 @@ mod tests {
         set_proto_param_mode(
             env,
             ProtocolParameterMode::ProtocolParameterLocal(serde_json::json!({
+                "costModels": {
+                    "PlutusV1": [1, 2, 3],
+                    "PlutusV2": [4, 5, 6],
+                    "PlutusV3": [7, 8, 9]
+                },
                 "executionUnitPrices": {
                     "priceMemory": 2.0,
                     "priceSteps": 0.5
@@ -1516,6 +1635,78 @@ mod tests {
         assert_eq!(dest_funds.len(), 1);
         assert_eq!(dest_funds[0].lovelace, 90);
         assert_ne!(dest_funds[0].tx_in, format!("{INPUT_TX_ID}#0"));
+    }
+
+    #[test]
+    fn discard_submit_spends_script_fund_and_updates_destination_wallet() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        init_wallet(&mut env, "collateral").expect("collateral wallet");
+        get_env_wallets_mut(&mut env, "source")
+            .expect("source wallet")
+            .insert_fund(Fund::script_fund(
+                AnyCardanoEra::Conway,
+                format!("{INPUT_TX_ID}#0"),
+                100,
+                FundWitness::ScriptWitness(ScriptWitnessForSpending {
+                    language: "PlutusV2".to_string(),
+                    script_bytes: vec![1, 2, 3],
+                    datum: PlutusData::integer(0),
+                    redeemer: PlutusData::integer(1),
+                    execution_units: ExecutionUnits {
+                        execution_steps: 1,
+                        execution_memory: 1,
+                    },
+                }),
+            ));
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Conway,
+            "collateral",
+            "100102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f#0",
+            1_000,
+            "key",
+        )
+        .expect("collateral fund");
+        let generator = Generator::NtoM(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+            1,
+            None,
+            Some("collateral".to_string()),
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("script spend submit");
+
+        assert!(
+            get_env_wallets(&env, "source")
+                .expect("source")
+                .funds()
+                .is_empty()
+        );
+        let dest_funds = get_env_wallets(&env, "dest").expect("dest").funds();
+        assert_eq!(dest_funds.len(), 1);
+        assert_eq!(dest_funds[0].lovelace, 90);
+        assert_eq!(
+            get_env_wallets(&env, "collateral")
+                .expect("collateral")
+                .funds()
+                .len(),
+            1
+        );
     }
 
     #[test]

@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T10:45:08Z
-- Files described: 1431
+- Generated at: 2026-05-20T11:06:27Z
+- Files described: 1432
 
 ## Workspace
 
@@ -2257,6 +2257,8 @@
   - Round 553 evidence record for the tx-generator selftest DiscardTX implementation and remaining output-file boundary.
 - `docs/operational-runs/2026-05-20-round-554-tx-generator-round-robin-one-of.md`
   - Round 554 evidence record for tx-generator RoundRobin/OneOf upstream-TODO error-shape parity.
+- `docs/operational-runs/2026-05-20-round-555-tx-generator-script-spend.md`
+  - Round 555 evidence record for tx-generator static-budget script-spend transaction assembly.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

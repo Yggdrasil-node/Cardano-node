@@ -294,10 +294,12 @@ own parser / generator / submission implementation plus upstream
   `selftest` command runs the upstream static DiscardTX action list
   against bundled protocol parameters. R554 closed `RoundRobin` /
   `OneOf` upstream-TODO error-shape parity by preserving the exact
-  intentional `Core.hs` crash messages. The remaining tx-generator
-  blockers are Plutus pre-execution / auto-budget fitting,
-  script-spend script-integrity hashing, exact `DumpToFile` rendering,
-  Benchmark submission, and upstream comparison evidence.
+  intentional `Core.hs` crash messages. R555 added script-spend
+  transaction assembly: `genTx` now carries Plutus scripts, datums,
+  redeemers, collateral key witnesses, and script-integrity hashes for
+  static-budget script funds. The remaining tx-generator blockers are
+  Plutus pre-execution / auto-budget fitting, exact `DumpToFile`
+  rendering, Benchmark submission, and upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

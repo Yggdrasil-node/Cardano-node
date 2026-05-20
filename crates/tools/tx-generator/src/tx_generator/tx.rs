@@ -23,6 +23,8 @@ use yggdrasil_ledger::{
     ConwayTxBody, ExUnits, MaryTxBody, MultiEraSubmittedTx, MultiEraTxOut, Redeemer,
     ShelleyCompatibleSubmittedTx, ShelleyTxBody, ShelleyTxIn, ShelleyVkeyWitness,
     ShelleyWitnessSet, TxId, compute_tx_id,
+    plutus_validation::{PlutusVersion, compute_script_data_hash},
+    protocol_params::ProtocolParameters,
 };
 
 /// Result produced by upstream `TxGenerator era`.
@@ -115,10 +117,12 @@ fn store(
 /// Mirror of upstream `genTx`.
 ///
 /// This slice constructs and signs Shelley-family transactions for key
-/// witnesses. Spending Plutus-script funds remains on an explicit boundary
-/// until the script-integrity hash and pre-execution slices land.
+/// witnesses and Plutus script-spending witnesses. Plutus pre-execution and
+/// auto-budget fitting land in the dedicated Setup/PlutusContext slices.
+#[allow(clippy::too_many_arguments)]
 pub fn gen_tx(
     era: AnyCardanoEra,
+    protocol_parameters: Option<&ProtocolParameters>,
     signing_keys: &BTreeMap<String, SigningKeyEnvelope>,
     collateral_funds: &[Fund],
     fee: Lovelace,
@@ -131,7 +135,6 @@ pub fn gen_tx(
             "genTx: unsupported ShelleyBasedEra {era:?}"
         )));
     }
-    reject_script_inputs(in_funds)?;
     reject_script_inputs(collateral_funds)?;
 
     let inputs = in_funds
@@ -146,6 +149,7 @@ pub fn gen_tx(
     let auxiliary_data_hash = auxiliary_data
         .as_ref()
         .map(|bytes| yggdrasil_crypto::hash_bytes_256(bytes).0);
+    let script_witnesses = make_script_witnesses(era, protocol_parameters, in_funds)?;
 
     match era {
         AnyCardanoEra::Shelley => {
@@ -164,6 +168,7 @@ pub fn gen_tx(
                 signing_keys,
                 in_funds,
                 collateral_funds,
+                script_witnesses,
             )?;
             let tx = ShelleyCompatibleSubmittedTx::new(body, witness_set, auxiliary_data);
             Ok(GeneratedTx::new(MultiEraSubmittedTx::Shelley(tx)))
@@ -185,6 +190,7 @@ pub fn gen_tx(
                 signing_keys,
                 in_funds,
                 collateral_funds,
+                script_witnesses,
             )?;
             let tx = ShelleyCompatibleSubmittedTx::new(body, witness_set, auxiliary_data);
             Ok(GeneratedTx::new(MultiEraSubmittedTx::Allegra(tx)))
@@ -207,11 +213,13 @@ pub fn gen_tx(
                 signing_keys,
                 in_funds,
                 collateral_funds,
+                script_witnesses,
             )?;
             let tx = ShelleyCompatibleSubmittedTx::new(body, witness_set, auxiliary_data);
             Ok(GeneratedTx::new(MultiEraSubmittedTx::Mary(tx)))
         }
         AnyCardanoEra::Alonzo => {
+            let script_data_hash = script_data_hash(protocol_parameters, &script_witnesses, false)?;
             let body = AlonzoTxBody {
                 inputs,
                 outputs: alonzo_outputs(outputs)?,
@@ -223,7 +231,7 @@ pub fn gen_tx(
                 auxiliary_data_hash,
                 validity_interval_start: None,
                 mint: None,
-                script_data_hash: None,
+                script_data_hash,
                 collateral: optional_inputs(collateral),
                 required_signers: None,
                 network_id: None,
@@ -233,11 +241,13 @@ pub fn gen_tx(
                 signing_keys,
                 in_funds,
                 collateral_funds,
+                script_witnesses,
             )?;
             let tx = AlonzoCompatibleSubmittedTx::new(body, witness_set, true, auxiliary_data);
             Ok(GeneratedTx::new(MultiEraSubmittedTx::Alonzo(tx)))
         }
         AnyCardanoEra::Babbage => {
+            let script_data_hash = script_data_hash(protocol_parameters, &script_witnesses, false)?;
             let body = BabbageTxBody {
                 inputs,
                 outputs: babbage_outputs(outputs)?,
@@ -249,7 +259,7 @@ pub fn gen_tx(
                 auxiliary_data_hash,
                 validity_interval_start: None,
                 mint: None,
-                script_data_hash: None,
+                script_data_hash,
                 collateral: optional_inputs(collateral),
                 required_signers: None,
                 network_id: None,
@@ -262,11 +272,13 @@ pub fn gen_tx(
                 signing_keys,
                 in_funds,
                 collateral_funds,
+                script_witnesses,
             )?;
             let tx = AlonzoCompatibleSubmittedTx::new(body, witness_set, true, auxiliary_data);
             Ok(GeneratedTx::new(MultiEraSubmittedTx::Babbage(tx)))
         }
         AnyCardanoEra::Conway => {
+            let script_data_hash = script_data_hash(protocol_parameters, &script_witnesses, true)?;
             let body = ConwayTxBody {
                 inputs,
                 outputs: babbage_outputs(outputs)?,
@@ -277,7 +289,7 @@ pub fn gen_tx(
                 auxiliary_data_hash,
                 validity_interval_start: None,
                 mint: None,
-                script_data_hash: None,
+                script_data_hash,
                 collateral: optional_inputs(collateral),
                 required_signers: None,
                 network_id: None,
@@ -294,6 +306,7 @@ pub fn gen_tx(
                 signing_keys,
                 in_funds,
                 collateral_funds,
+                script_witnesses,
             )?;
             let tx = AlonzoCompatibleSubmittedTx::new(body, witness_set, true, auxiliary_data);
             Ok(GeneratedTx::new(MultiEraSubmittedTx::Conway(tx)))
@@ -323,6 +336,7 @@ fn make_witness_set(
     signing_keys: &BTreeMap<String, SigningKeyEnvelope>,
     in_funds: &[Fund],
     collateral_funds: &[Fund],
+    mut script_witnesses: ShelleyWitnessSet,
 ) -> Result<ShelleyWitnessSet, TxGenError> {
     let tx_id = compute_tx_id(body_cbor);
     let mut seen = BTreeSet::new();
@@ -341,10 +355,8 @@ fn make_witness_set(
         vkey_witnesses.push(make_vkey_witness(envelope, &tx_id)?);
     }
 
-    Ok(ShelleyWitnessSet {
-        vkey_witnesses,
-        ..empty_witness_set()
-    })
+    script_witnesses.vkey_witnesses = vkey_witnesses;
+    Ok(script_witnesses)
 }
 
 pub(crate) fn make_vkey_witness(
@@ -446,7 +458,6 @@ pub(crate) fn empty_witness_set() -> ShelleyWitnessSet {
     }
 }
 
-#[allow(dead_code)]
 fn script_redeemer(index: u64, witness: &ScriptWitnessForSpending) -> Redeemer {
     Redeemer {
         tag: 0,
@@ -459,12 +470,122 @@ fn script_redeemer(index: u64, witness: &ScriptWitnessForSpending) -> Redeemer {
     }
 }
 
+fn make_script_witnesses(
+    era: AnyCardanoEra,
+    protocol_parameters: Option<&ProtocolParameters>,
+    in_funds: &[Fund],
+) -> Result<ShelleyWitnessSet, TxGenError> {
+    let mut witnesses = empty_witness_set();
+    let mut seen_scripts: BTreeSet<(u8, Vec<u8>)> = BTreeSet::new();
+    let mut seen_datums: BTreeSet<Vec<u8>> = BTreeSet::new();
+
+    for (input_index, fund) in in_funds.iter().enumerate() {
+        let FundWitness::ScriptWitness(witness) = &fund.witness else {
+            continue;
+        };
+        let version = script_witness_language(&witness.language)?;
+        ensure_script_language_supported(era, version)?;
+
+        if seen_scripts.insert((version.cost_model_key(), witness.script_bytes.clone())) {
+            match version {
+                PlutusVersion::V1 => witnesses
+                    .plutus_v1_scripts
+                    .push(witness.script_bytes.clone()),
+                PlutusVersion::V2 => witnesses
+                    .plutus_v2_scripts
+                    .push(witness.script_bytes.clone()),
+                PlutusVersion::V3 => witnesses
+                    .plutus_v3_scripts
+                    .push(witness.script_bytes.clone()),
+            }
+        }
+
+        let datum_cbor = witness.datum.to_cbor_bytes();
+        if seen_datums.insert(datum_cbor) {
+            witnesses.plutus_data.push(witness.datum.clone());
+        }
+
+        witnesses
+            .redeemers
+            .push(script_redeemer(input_index as u64, witness));
+    }
+
+    if !witnesses.redeemers.is_empty() && protocol_parameters.is_none() {
+        return Err(TxGenError::PlutusError(
+            "genTx: script witnesses require protocol parameters".to_string(),
+        ));
+    }
+
+    Ok(witnesses)
+}
+
+fn script_data_hash(
+    protocol_parameters: Option<&ProtocolParameters>,
+    witness_set: &ShelleyWitnessSet,
+    conway_redeemer_format: bool,
+) -> Result<Option<[u8; 32]>, TxGenError> {
+    if witness_set.redeemers.is_empty()
+        && witness_set.plutus_data.is_empty()
+        && witness_set.plutus_v1_scripts.is_empty()
+        && witness_set.plutus_v2_scripts.is_empty()
+        && witness_set.plutus_v3_scripts.is_empty()
+    {
+        return Ok(None);
+    }
+
+    let witness_bytes = witness_set.to_cbor_bytes();
+    compute_script_data_hash(
+        Some(&witness_bytes),
+        protocol_parameters,
+        conway_redeemer_format,
+        None,
+        None,
+        None,
+        None,
+    )
+    .map(Some)
+    .map_err(|err| TxGenError::PlutusError(format!("genTx: script_data_hash: {err}")))
+}
+
+fn script_witness_language(language: &str) -> Result<PlutusVersion, TxGenError> {
+    match language {
+        "PlutusV1" | "PlutusScriptV1" | "PlutusScriptV1_Script" => Ok(PlutusVersion::V1),
+        "PlutusV2" | "PlutusScriptV2" | "PlutusScriptV2_Script" => Ok(PlutusVersion::V2),
+        "PlutusV3" | "PlutusScriptV3" | "PlutusScriptV3_Script" => Ok(PlutusVersion::V3),
+        other => Err(TxGenError::PlutusError(format!(
+            "genTx: unsupported script witness language `{other}`"
+        ))),
+    }
+}
+
+fn ensure_script_language_supported(
+    era: AnyCardanoEra,
+    version: PlutusVersion,
+) -> Result<(), TxGenError> {
+    let supported = match version {
+        PlutusVersion::V1 => matches!(
+            era,
+            AnyCardanoEra::Alonzo | AnyCardanoEra::Babbage | AnyCardanoEra::Conway
+        ),
+        PlutusVersion::V2 => matches!(era, AnyCardanoEra::Babbage | AnyCardanoEra::Conway),
+        PlutusVersion::V3 => matches!(era, AnyCardanoEra::Conway),
+    };
+    if supported {
+        Ok(())
+    } else {
+        Err(TxGenError::PlutusError(format!(
+            "genTx: {:?} not supported in {era:?}",
+            version
+        )))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tx_generator::utxo::{make_to_utxo_list, mk_utxo_variant};
     use crate::types::PayWithChange;
-    use yggdrasil_ledger::witnesses::verify_vkey_signatures;
+    use yggdrasil_ledger::{PlutusData, witnesses::verify_vkey_signatures};
 
     const INPUT_TX_ID: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
@@ -503,6 +624,7 @@ mod tests {
             |funds, outputs| {
                 gen_tx(
                     AnyCardanoEra::Conway,
+                    None,
                     &key_map(),
                     &[],
                     10,
@@ -528,6 +650,7 @@ mod tests {
             |funds, outputs| {
                 gen_tx(
                     AnyCardanoEra::Conway,
+                    None,
                     &key_map(),
                     &[],
                     10,
@@ -562,6 +685,7 @@ mod tests {
         let outputs = conway_outputs(1_000_000);
         let generated = gen_tx(
             AnyCardanoEra::Conway,
+            None,
             &key_map(),
             &[],
             10,
@@ -583,12 +707,66 @@ mod tests {
     }
 
     #[test]
-    fn gen_tx_rejects_script_spends_until_script_integrity_slice() {
+    fn gen_tx_builds_script_spend_witness_and_integrity_hash() {
         let witness = FundWitness::ScriptWitness(ScriptWitnessForSpending {
             language: "PlutusV2".to_string(),
             script_bytes: vec![1, 2, 3],
-            datum: yggdrasil_ledger::PlutusData::integer(0),
-            redeemer: yggdrasil_ledger::PlutusData::integer(1),
+            datum: PlutusData::integer(0),
+            redeemer: PlutusData::integer(1),
+            execution_units: crate::types::ExecutionUnits {
+                execution_steps: 1,
+                execution_memory: 1,
+            },
+        });
+        let fund = Fund::script_fund(
+            AnyCardanoEra::Conway,
+            format!("{INPUT_TX_ID}#0"),
+            2_000_000,
+            witness,
+        );
+        let outputs = conway_outputs(1_000_000);
+        let collateral = Fund::key_fund(
+            AnyCardanoEra::Conway,
+            "100102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f#1".to_string(),
+            5_000_000,
+            "pay",
+        );
+        let generated = gen_tx(
+            AnyCardanoEra::Conway,
+            Some(&protocol_params_with_cost_models()),
+            &key_map(),
+            &[collateral],
+            10,
+            None,
+            &[fund],
+            &outputs.outputs,
+        )
+        .expect("script spend");
+
+        let MultiEraSubmittedTx::Conway(tx) = &generated.tx else {
+            panic!("expected Conway tx");
+        };
+        assert!(tx.body.script_data_hash.is_some());
+        assert_eq!(tx.body.collateral.as_ref().map(Vec::len), Some(1));
+        assert_eq!(tx.witness_set.vkey_witnesses.len(), 1);
+        assert_eq!(tx.witness_set.plutus_v2_scripts, vec![vec![1, 2, 3]]);
+        assert_eq!(tx.witness_set.plutus_data, vec![PlutusData::integer(0)]);
+        assert_eq!(tx.witness_set.redeemers.len(), 1);
+        assert_eq!(tx.witness_set.redeemers[0].tag, 0);
+        assert_eq!(tx.witness_set.redeemers[0].index, 0);
+        assert_eq!(
+            generated.tx.total_ex_units(),
+            Some(ExUnits { mem: 1, steps: 1 })
+        );
+    }
+
+    #[test]
+    fn gen_tx_rejects_script_spends_without_protocol_parameters() {
+        let witness = FundWitness::ScriptWitness(ScriptWitnessForSpending {
+            language: "PlutusV2".to_string(),
+            script_bytes: vec![1, 2, 3],
+            datum: PlutusData::integer(0),
+            redeemer: PlutusData::integer(1),
             execution_units: crate::types::ExecutionUnits {
                 execution_steps: 1,
                 execution_memory: 1,
@@ -603,6 +781,7 @@ mod tests {
         let outputs = conway_outputs(1_000_000);
         let err = gen_tx(
             AnyCardanoEra::Conway,
+            None,
             &key_map(),
             &[],
             10,
@@ -610,9 +789,9 @@ mod tests {
             &[fund],
             &outputs.outputs,
         )
-        .expect_err("script spend boundary");
+        .expect_err("protocol parameter boundary");
 
-        assert!(err.to_string().contains("script-integrity hash support"));
+        assert!(err.to_string().contains("require protocol parameters"));
     }
 
     #[test]
@@ -620,6 +799,7 @@ mod tests {
         let outputs = conway_outputs(1_000_000);
         let err = gen_tx(
             AnyCardanoEra::Conway,
+            None,
             &BTreeMap::new(),
             &[],
             10,
@@ -630,5 +810,15 @@ mod tests {
         .expect_err("missing key");
 
         assert!(err.to_string().contains("signing key `pay` not loaded"));
+    }
+
+    fn protocol_params_with_cost_models() -> ProtocolParameters {
+        let mut params = ProtocolParameters::alonzo_defaults();
+        params.cost_models = Some(BTreeMap::from([
+            (0, vec![1, 2, 3]),
+            (1, vec![4, 5, 6]),
+            (2, vec![7, 8, 9]),
+        ]));
+        params
     }
 }
