@@ -76,9 +76,10 @@ they are empty and untracked, including nested
 directories.
 The same guard rejects stale current-status claims that proved easy to
 reintroduce during the cleanup: node-local parameterized LocalStateQuery
-wording, old cardano-cli subcommand counts and three-command subset wording,
+wording, old cardano-cli subcommand counts, three-command subset wording,
+and active-migration wording for the closed C-arc; it also rejects
 tx-generator/cardano-testnet still being described as blocked by the closed
-cardano-cli C-arc, and the closed workspace-member gap.
+cardano-cli C-arc and the closed workspace-member gap.
 It also fails if the vendored Haskell reference snapshot contains nested
 `.git` metadata, is not ignored by Git, or would otherwise stop being a
 metadata-free corpus. A `.gitmodules` entry or Git-index submodule entry for
