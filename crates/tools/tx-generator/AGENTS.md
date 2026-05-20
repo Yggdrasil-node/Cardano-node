@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R576 Conway treasury-field DumpToFile rendering).
+**Status:** `partial` (post-R577 Conway VotingProcedures map DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,23 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R577: `show_conway_tx_for_dump` now renders non-empty
+  `ctbrVotingProcedures` map as upstream `VotingProcedures
+  {unVotingProcedures = fromList [(Voter, fromList [(GovActionId,
+  VotingProcedure)])]}`. New helpers `show_conway_vote` (VoteNo /
+  VoteYes / Abstain), `show_conway_voter` (5 variants:
+  CommitteeVoter/DRepVoter as `(KeyHashObj (KeyHash {unKeyHash = ...}))`
+  or `(ScriptHashObj (ScriptHash ...))`, StakePoolVoter as `(KeyHash
+  {unKeyHash = ...})`), `show_conway_gov_action_id` (record with
+  `TxId {unTxId = SafeHash}` and `GovActionIx {unGovActionIx}`),
+  `show_conway_voting_procedure` (record with `vProcVote` and
+  `vProcAnchor :: StrictMaybe Anchor`), `show_anchor` (record with
+  `anchorUrl :: Url` and `anchorDataHash :: SafeHash`), and `show_url`
+  (record-newtype `Url {urlToText = ...}`). 5 focused unit tests cover
+  Vote variants, all 5 Voter variants, GovActionId record shape,
+  VotingProcedure with and without anchor, and full VotingProcedures
+  map rendering (empty and non-empty cases). ProposalProcedures map
+  with its GovAction 7+ variants remains on explicit TxGenError.
 - Shipped R576: `show_conway_tx_for_dump` now accepts non-zero
   `ctbrTreasuryDonation` and `Some` `ctbrCurrentTreasuryValue`. New
   helpers `show_coin` (`Coin <n>` mirroring upstream `Show Coin` via
@@ -611,10 +628,15 @@ This crate's full implementation remains an A4 sister-tool build-out:
   new `show_coin` and `show_strict_maybe_coin` helpers.
   `VotingProcedures` and `ProposalProcedures` map rendering remain
   `TxGenError` until their dedicated rounds.
+- Shipped: Conway VotingProcedures map DumpToFile rendering (R577):
+  `show_conway_voting_procedures` renders the nested
+  `Map Voter (Map GovActionId VotingProcedure)` shape with
+  upstream-shaped Vote / Voter / GovActionId / VotingProcedure /
+  Anchor / Url helpers.
 - Next: native-script reference rendering (Timelock Show),
   native-script and bootstrap-witness rendering in the witness set,
-  Conway `VotingProcedures` / `ProposalProcedures` map rendering,
-  and upstream-binary soak in strict-mirror-sized slices.
+  Conway `ProposalProcedures` map (GovAction 7+ variants), and
+  upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

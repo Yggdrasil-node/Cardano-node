@@ -380,11 +380,17 @@ own parser / generator / submission implementation plus upstream
   script-hash byte-lex order. R576 closed the Conway treasury-field
   path: non-zero `ctbrTreasuryDonation` renders as `Coin <n>` and
   `Some` `ctbrCurrentTreasuryValue` as `SJust (Coin <n>)` via new
-  `show_coin` and `show_strict_maybe_coin` helpers. The remaining
-  tx-generator blockers are native-script reference rendering,
-  native scripts and bootstrap witnesses in the witness set, Conway
-  `VotingProcedures` / `ProposalProcedures` map rendering, and
-  upstream-binary soak evidence.
+  `show_coin` and `show_strict_maybe_coin` helpers. R577 closed the
+  Conway `VotingProcedures` map path: non-empty
+  `ctbrVotingProcedures` renders as upstream `VotingProcedures
+  {unVotingProcedures = fromList [(Voter, fromList [(GovActionId,
+  VotingProcedure)])]}` via new `show_conway_vote`,
+  `show_conway_voter` (5 variants), `show_conway_gov_action_id`,
+  `show_conway_voting_procedure`, `show_anchor`, and `show_url`
+  helpers. The remaining tx-generator blockers are native-script
+  reference rendering, native scripts and bootstrap witnesses in the
+  witness set, Conway `ProposalProcedures` map rendering (with
+  `GovAction`'s 7+ variants), and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

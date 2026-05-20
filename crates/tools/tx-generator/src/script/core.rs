@@ -1278,7 +1278,7 @@ fn show_conway_tx_for_dump(
         "Conway",
         "ctbrReferenceInputs",
     )?;
-    ensure_empty_voting_procedures(tx.body.voting_procedures.as_ref())?;
+    let voting_procedures = show_conway_voting_procedures(tx.body.voting_procedures.as_ref());
     ensure_empty_or_absent(
         tx.body.proposal_procedures.as_deref(),
         "Conway",
@@ -1295,7 +1295,7 @@ fn show_conway_tx_for_dump(
     let is_valid = show_haskell_bool(tx.is_valid);
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = SNothing, ctbrVotingProcedures = VotingProcedures {{unVotingProcedures = fromList []}}, ctbrProposalProcedures = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = SNothing, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1320,15 +1320,123 @@ fn show_strict_maybe_coin(value: Option<u64>) -> String {
     }
 }
 
-fn ensure_empty_voting_procedures(
+/// Render `ctbrVotingProcedures = VotingProcedures {unVotingProcedures =
+/// fromList [(Voter, fromList [(GovActionId, VotingProcedure)])]}` matching
+/// upstream stock-derived Show through the record-newtype `VotingProcedures
+/// { unVotingProcedures :: Map Voter (Map GovActionId (VotingProcedure era))
+/// }`.
+///
+/// Outer-map entries are ordered by `Voter` byte-lex (matching upstream
+/// `Data.Map` ordering on the derived `Ord Voter` — which follows
+/// constructor index then inner hash bytes); inner-map entries by
+/// `GovActionId` (matching upstream `Ord` over `(TxId, GovActionIx)`).
+/// `BTreeMap` iteration order in Rust matches because the yggdrasil
+/// `Voter` and `GovActionId` types `derive Ord` over the same field
+/// order.
+fn show_conway_voting_procedures(
     procedures: Option<&yggdrasil_ledger::VotingProcedures>,
-) -> Result<(), Error> {
-    if procedures.is_some_and(|p| !p.procedures.is_empty()) {
-        return Err(lift_tx_gen_error(
-            "DumpToFile: Conway Show(Tx) renderer does not yet support non-empty ctbrVotingProcedures",
-        ));
+) -> String {
+    let entries = match procedures {
+        None => String::new(),
+        Some(vp) => vp
+            .procedures
+            .iter()
+            .map(|(voter, inner)| {
+                let inner_entries = inner
+                    .iter()
+                    .map(|(gaid, vp_inner)| {
+                        format!(
+                            "({},{})",
+                            show_conway_gov_action_id(gaid),
+                            show_conway_voting_procedure(vp_inner)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("({},fromList [{inner_entries}])", show_conway_voter(voter))
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    };
+    format!("VotingProcedures {{unVotingProcedures = fromList [{entries}]}}")
+}
+
+/// Render upstream `Show Vote`: `VoteNo`, `VoteYes`, or `Abstain`.
+fn show_conway_vote(vote: yggdrasil_ledger::Vote) -> &'static str {
+    match vote {
+        yggdrasil_ledger::Vote::No => "VoteNo",
+        yggdrasil_ledger::Vote::Yes => "VoteYes",
+        yggdrasil_ledger::Vote::Abstain => "Abstain",
     }
-    Ok(())
+}
+
+/// Render upstream `Show Voter`. Upstream lifts hash bytes through
+/// `Credential HotCommitteeRole` (KeyHashObj / ScriptHashObj) for
+/// committee and DRep voters and uses a raw `KeyHash` for stake pool
+/// voters.
+fn show_conway_voter(voter: &yggdrasil_ledger::Voter) -> String {
+    use yggdrasil_ledger::Voter;
+    match voter {
+        Voter::CommitteeKeyHash(h) => format!(
+            "CommitteeVoter (KeyHashObj (KeyHash {{unKeyHash = \"{}\"}}))",
+            hex::encode(h)
+        ),
+        Voter::CommitteeScript(h) => format!(
+            "CommitteeVoter (ScriptHashObj (ScriptHash \"{}\"))",
+            hex::encode(h)
+        ),
+        Voter::DRepKeyHash(h) => format!(
+            "DRepVoter (KeyHashObj (KeyHash {{unKeyHash = \"{}\"}}))",
+            hex::encode(h)
+        ),
+        Voter::DRepScript(h) => format!(
+            "DRepVoter (ScriptHashObj (ScriptHash \"{}\"))",
+            hex::encode(h)
+        ),
+        Voter::StakePool(h) => format!(
+            "StakePoolVoter (KeyHash {{unKeyHash = \"{}\"}})",
+            hex::encode(h)
+        ),
+    }
+}
+
+/// Render upstream `Show GovActionId`: stock-derived record Show with
+/// `gaidTxId :: TxId` (newtype over `SafeHash EraIndependentTxBody`) and
+/// `gaidGovActionIx :: GovActionIx` (newtype over `Word16`).
+fn show_conway_gov_action_id(id: &yggdrasil_ledger::GovActionId) -> String {
+    format!(
+        "GovActionId {{gaidTxId = TxId {{unTxId = SafeHash \"{}\"}}, gaidGovActionIx = GovActionIx {{unGovActionIx = {}}}}}",
+        hex::encode(id.transaction_id),
+        id.gov_action_index
+    )
+}
+
+/// Render upstream `Show (VotingProcedure era)`: stock-derived record
+/// with `vProcVote :: Vote` and `vProcAnchor :: StrictMaybe Anchor`.
+fn show_conway_voting_procedure(vp: &yggdrasil_ledger::VotingProcedure) -> String {
+    let anchor = match &vp.anchor {
+        None => "SNothing".to_string(),
+        Some(a) => format!("SJust ({})", show_anchor(a)),
+    };
+    format!(
+        "VotingProcedure {{vProcVote = {}, vProcAnchor = {anchor}}}",
+        show_conway_vote(vp.vote)
+    )
+}
+
+/// Render upstream `Show Anchor`: stock-derived record `Anchor {anchorUrl
+/// = Url {urlToText = "..."}, anchorDataHash = SafeHash "<hex>"}`.
+fn show_anchor(anchor: &yggdrasil_ledger::Anchor) -> String {
+    format!(
+        "Anchor {{anchorUrl = {}, anchorDataHash = SafeHash \"{}\"}}",
+        show_url(&anchor.url),
+        hex::encode(anchor.data_hash)
+    )
+}
+
+/// Render upstream `Show Url` via record-newtype `Url {urlToText = "..."}`.
+fn show_url(url: &str) -> String {
+    format!("Url {{urlToText = {url:?}}}")
 }
 
 fn ensure_absent<T>(value: Option<&T>, era: &str, field: &str) -> Result<(), Error> {
@@ -3250,6 +3358,107 @@ mod tests {
             spend2 < spend5 && spend5 < mint0,
             "redeemer ordering wrong: {rendered}"
         );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_vote() {
+        assert_eq!(show_conway_vote(yggdrasil_ledger::Vote::No), "VoteNo");
+        assert_eq!(show_conway_vote(yggdrasil_ledger::Vote::Yes), "VoteYes");
+        assert_eq!(show_conway_vote(yggdrasil_ledger::Vote::Abstain), "Abstain");
+    }
+
+    #[test]
+    fn dumptofile_show_conway_voter_variants() {
+        use yggdrasil_ledger::Voter;
+        let h = [0x11_u8; 28];
+        let hex_h = hex::encode(h);
+        assert_eq!(
+            show_conway_voter(&Voter::CommitteeKeyHash(h)),
+            format!("CommitteeVoter (KeyHashObj (KeyHash {{unKeyHash = \"{hex_h}\"}}))")
+        );
+        assert_eq!(
+            show_conway_voter(&Voter::CommitteeScript(h)),
+            format!("CommitteeVoter (ScriptHashObj (ScriptHash \"{hex_h}\"))")
+        );
+        assert_eq!(
+            show_conway_voter(&Voter::DRepKeyHash(h)),
+            format!("DRepVoter (KeyHashObj (KeyHash {{unKeyHash = \"{hex_h}\"}}))")
+        );
+        assert_eq!(
+            show_conway_voter(&Voter::DRepScript(h)),
+            format!("DRepVoter (ScriptHashObj (ScriptHash \"{hex_h}\"))")
+        );
+        assert_eq!(
+            show_conway_voter(&Voter::StakePool(h)),
+            format!("StakePoolVoter (KeyHash {{unKeyHash = \"{hex_h}\"}})")
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_id_renders_record_form() {
+        let id = yggdrasil_ledger::GovActionId {
+            transaction_id: [0xAB; 32],
+            gov_action_index: 7,
+        };
+        let rendered = show_conway_gov_action_id(&id);
+        assert!(rendered.starts_with("GovActionId {gaidTxId = TxId {unTxId = SafeHash \""));
+        assert!(rendered.contains("gaidGovActionIx = GovActionIx {unGovActionIx = 7}"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_voting_procedure_with_and_without_anchor() {
+        let vp_no = yggdrasil_ledger::VotingProcedure {
+            vote: yggdrasil_ledger::Vote::Yes,
+            anchor: None,
+        };
+        assert_eq!(
+            show_conway_voting_procedure(&vp_no),
+            "VotingProcedure {vProcVote = VoteYes, vProcAnchor = SNothing}"
+        );
+
+        let vp_yes = yggdrasil_ledger::VotingProcedure {
+            vote: yggdrasil_ledger::Vote::No,
+            anchor: Some(yggdrasil_ledger::Anchor {
+                url: "https://example.test/m.json".to_string(),
+                data_hash: [0xCD; 32],
+            }),
+        };
+        let rendered = show_conway_voting_procedure(&vp_yes);
+        assert!(rendered.starts_with("VotingProcedure {vProcVote = VoteNo, vProcAnchor = SJust ("));
+        assert!(
+            rendered
+                .contains("Anchor {anchorUrl = Url {urlToText = \"https://example.test/m.json\"}")
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_voting_procedures_empty_and_full() {
+        // Empty (None) renders as an empty `unVotingProcedures = fromList []`.
+        let none_rendered = show_conway_voting_procedures(None);
+        assert_eq!(
+            none_rendered,
+            "VotingProcedures {unVotingProcedures = fromList []}"
+        );
+
+        // Single outer entry with a single inner entry.
+        let mut inner = BTreeMap::new();
+        inner.insert(
+            yggdrasil_ledger::GovActionId {
+                transaction_id: [0x11; 32],
+                gov_action_index: 0,
+            },
+            yggdrasil_ledger::VotingProcedure {
+                vote: yggdrasil_ledger::Vote::Yes,
+                anchor: None,
+            },
+        );
+        let mut outer = BTreeMap::new();
+        outer.insert(yggdrasil_ledger::Voter::DRepKeyHash([0x22; 28]), inner);
+        let vp = yggdrasil_ledger::VotingProcedures { procedures: outer };
+        let rendered = show_conway_voting_procedures(Some(&vp));
+        assert!(rendered.starts_with("VotingProcedures {unVotingProcedures = fromList [("));
+        assert!(rendered.contains("DRepVoter (KeyHashObj (KeyHash {unKeyHash = \""));
+        assert!(rendered.contains("vProcVote = VoteYes"));
     }
 
     #[test]
