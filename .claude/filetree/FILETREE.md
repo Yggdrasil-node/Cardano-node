@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T16:42:03Z
-- Files described: 1449
+- Generated at: 2026-05-20T17:10:23Z
+- Files described: 1450
 
 ## Workspace
 
@@ -1732,7 +1732,7 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the post-R566 Benchmark env-control, DumpToFile, and soak-evidence arc.
+  - Tracks the post-R567 DumpToFile, Alonzo-family renderer, and soak-evidence arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
@@ -2297,6 +2297,9 @@
 - `docs/operational-runs/2026-05-20-round-566-tx-generator-script-benchmark-control.md`
   - Operational evidence for R566 tx-generator Script/Core Benchmark env-control wiring.
   - Lists the scope, upstream mirror changes, validation commands, and remaining DumpToFile/soak gaps.
+- `docs/operational-runs/2026-05-20-round-567-tx-generator-dumptofile-shelley-mary.md`
+  - Operational evidence for R567 tx-generator DumpToFile Shelley/Mary rendering.
+  - Lists the scope, upstream-shaped renderer changes, validation commands, and remaining Alonzo-family/soak gaps.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

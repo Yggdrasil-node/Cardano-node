@@ -7,8 +7,8 @@
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
 //! deterministic state-only operations, Plutus context construction,
 //! finite transaction-stream evaluation, LocalSocket submission,
-//! Benchmark submission control, Allegra self-test `DumpToFile`
-//! rendering, and budget-summary projection. The remaining
+//! Benchmark submission control, Shelley/Mary-family `DumpToFile`
+//! rendering, and budget-summary projection. The remaining Alonzo-family
 //! `DumpToFile` era/witness shapes still return explicit `TxGenError`
 //! boundaries until their downstream mirrors land.
 
@@ -21,9 +21,10 @@ use num_bigint::BigInt;
 use serde_json::Value;
 use yggdrasil_crypto::{hash_bytes_224, hash_bytes_256};
 use yggdrasil_ledger::{
-    Address, AllegraTxBody, CborDecode, CborEncode, Decoder, Encoder, PlutusData,
-    ProtocolParameters, ShelleyCompatibleSubmittedTx, ShelleyTxIn, ShelleyTxOut,
-    ShelleyVkeyWitness, ShelleyWitnessSet, StakeCredential, eras::alonzo::ExUnits, total_min_fee,
+    Address, AllegraTxBody, CborDecode, CborEncode, Decoder, Encoder, MaryTxBody, MaryTxOut,
+    PlutusData, ProtocolParameters, ShelleyCompatibleSubmittedTx, ShelleyTxBody, ShelleyTxIn,
+    ShelleyTxOut, ShelleyVkeyWitness, ShelleyWitnessSet, StakeCredential, eras::alonzo::ExUnits,
+    total_min_fee,
 };
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
@@ -1049,27 +1050,57 @@ fn dump_txs_to_file(file_path: &Path, txs: &[GeneratedTx]) -> Result<(), Error> 
 
 fn show_tx_for_dump(generated: &GeneratedTx) -> Result<String, Error> {
     match &generated.tx {
+        yggdrasil_ledger::MultiEraSubmittedTx::Shelley(tx) => show_shelley_tx_for_dump(tx),
         yggdrasil_ledger::MultiEraSubmittedTx::Allegra(tx) => show_allegra_tx_for_dump(tx),
+        yggdrasil_ledger::MultiEraSubmittedTx::Mary(tx) => show_mary_tx_for_dump(tx),
         tx => Err(lift_tx_gen_error(format!(
-            "DumpToFile: upstream Show(Tx) renderer is implemented for Allegra self-test transactions only; got {:?}",
+            "DumpToFile: upstream Show(Tx) renderer is implemented for Shelley/Mary-family key-witnessed transactions only; got {:?}",
             tx.era()
         ))),
     }
 }
 
+fn show_shelley_tx_for_dump(
+    tx: &ShelleyCompatibleSubmittedTx<ShelleyTxBody>,
+) -> Result<String, Error> {
+    ensure_empty_or_absent(tx.body.certificates.as_deref(), "Shelley", "stbrCerts")?;
+    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Shelley", "stbrWithdrawals")?;
+    ensure_absent(tx.body.update.as_ref(), "Shelley", "stbrUpdate")?;
+    ensure_absent(
+        tx.body.auxiliary_data_hash.as_ref(),
+        "Shelley",
+        "stbrAuxDataHash",
+    )?;
+    ensure_absent(tx.auxiliary_data.as_ref(), "Shelley", "stAuxData")?;
+
+    let inputs = show_tx_in_list(&tx.body.inputs);
+    let outputs = show_shelley_tx_out_list(&tx.body.outputs, "Shelley")?;
+    let body_hash = hex::encode(hash_bytes_256(tx.raw_body()).0);
+    let witnesses = show_shelley_witness_set(&tx.witness_set, "Shelley")?;
+
+    Ok(format!(
+        "\nShelleyTx ShelleyBasedEraShelley (ShelleyTx {{stBody = MkShelleyTxBody ShelleyTxBodyRaw {{stbrInputs = fromList [{inputs}], stbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, stbrCerts = StrictSeq {{fromStrict = fromList []}}, stbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, stbrFee = Coin {}, stbrTtl = SlotNo {}, stbrUpdate = SNothing, stbrAuxDataHash = SNothing}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
+        tx.body.fee, tx.body.ttl,
+    ))
+}
+
 fn show_allegra_tx_for_dump(
     tx: &ShelleyCompatibleSubmittedTx<AllegraTxBody>,
 ) -> Result<String, Error> {
-    ensure_empty_or_absent(tx.body.certificates.as_deref(), "atbrCerts")?;
-    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "atbrWithdrawals")?;
-    ensure_absent(tx.body.update.as_ref(), "atbrUpdate")?;
-    ensure_absent(tx.body.auxiliary_data_hash.as_ref(), "atbrAuxDataHash")?;
-    ensure_absent(tx.auxiliary_data.as_ref(), "stAuxData")?;
+    ensure_empty_or_absent(tx.body.certificates.as_deref(), "Allegra", "atbrCerts")?;
+    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Allegra", "atbrWithdrawals")?;
+    ensure_absent(tx.body.update.as_ref(), "Allegra", "atbrUpdate")?;
+    ensure_absent(
+        tx.body.auxiliary_data_hash.as_ref(),
+        "Allegra",
+        "atbrAuxDataHash",
+    )?;
+    ensure_absent(tx.auxiliary_data.as_ref(), "Allegra", "stAuxData")?;
 
     let inputs = show_tx_in_list(&tx.body.inputs);
-    let outputs = show_shelley_tx_out_list(&tx.body.outputs)?;
+    let outputs = show_shelley_tx_out_list(&tx.body.outputs, "Allegra")?;
     let body_hash = hex::encode(hash_bytes_256(tx.raw_body()).0);
-    let witnesses = show_shelley_witness_set(&tx.witness_set)?;
+    let witnesses = show_shelley_witness_set(&tx.witness_set, "Allegra")?;
 
     Ok(format!(
         "\nShelleyTx ShelleyBasedEraAllegra (ShelleyTx {{stBody = MkAllegraTxBody AllegraTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrAuxDataHash = SNothing, atbrMint = ()}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
@@ -1079,19 +1110,44 @@ fn show_allegra_tx_for_dump(
     ))
 }
 
-fn ensure_absent<T>(value: Option<&T>, field: &str) -> Result<(), Error> {
+fn show_mary_tx_for_dump(tx: &ShelleyCompatibleSubmittedTx<MaryTxBody>) -> Result<String, Error> {
+    ensure_empty_or_absent(tx.body.certificates.as_deref(), "Mary", "atbrCerts")?;
+    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Mary", "atbrWithdrawals")?;
+    ensure_absent(tx.body.update.as_ref(), "Mary", "atbrUpdate")?;
+    ensure_absent(
+        tx.body.auxiliary_data_hash.as_ref(),
+        "Mary",
+        "atbrAuxDataHash",
+    )?;
+    ensure_empty_mint(tx.body.mint.as_ref(), "Mary", "atbrMint")?;
+    ensure_absent(tx.auxiliary_data.as_ref(), "Mary", "stAuxData")?;
+
+    let inputs = show_tx_in_list(&tx.body.inputs);
+    let outputs = show_mary_tx_out_list(&tx.body.outputs)?;
+    let body_hash = hex::encode(hash_bytes_256(tx.raw_body()).0);
+    let witnesses = show_shelley_witness_set(&tx.witness_set, "Mary")?;
+
+    Ok(format!(
+        "\nShelleyTx ShelleyBasedEraMary (ShelleyTx {{stBody = MkMaryTxBody AllegraTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrAuxDataHash = SNothing, atbrMint = MultiAsset (fromList [])}} (blake2b_256: SafeHash \"{body_hash}\"), stWits = {witnesses}, stAuxData = SNothing}})",
+        tx.body.fee,
+        show_strict_maybe_slot(tx.body.validity_interval_start),
+        show_strict_maybe_slot(tx.body.ttl),
+    ))
+}
+
+fn ensure_absent<T>(value: Option<&T>, era: &str, field: &str) -> Result<(), Error> {
     if value.is_some() {
         return Err(lift_tx_gen_error(format!(
-            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-empty {field}"
+            "DumpToFile: {era} Show(Tx) renderer does not yet support non-empty {field}"
         )));
     }
     Ok(())
 }
 
-fn ensure_empty_or_absent<T>(value: Option<&[T]>, field: &str) -> Result<(), Error> {
+fn ensure_empty_or_absent<T>(value: Option<&[T]>, era: &str, field: &str) -> Result<(), Error> {
     if value.is_some_and(|items| !items.is_empty()) {
         return Err(lift_tx_gen_error(format!(
-            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-empty {field}"
+            "DumpToFile: {era} Show(Tx) renderer does not yet support non-empty {field}"
         )));
     }
     Ok(())
@@ -1099,11 +1155,25 @@ fn ensure_empty_or_absent<T>(value: Option<&[T]>, field: &str) -> Result<(), Err
 
 fn ensure_empty_or_absent_btree<K, V>(
     value: Option<&BTreeMap<K, V>>,
+    era: &str,
     field: &str,
 ) -> Result<(), Error> {
     if value.is_some_and(|items| !items.is_empty()) {
         return Err(lift_tx_gen_error(format!(
-            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-empty {field}"
+            "DumpToFile: {era} Show(Tx) renderer does not yet support non-empty {field}"
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_empty_mint(
+    value: Option<&yggdrasil_ledger::MintAsset>,
+    era: &str,
+    field: &str,
+) -> Result<(), Error> {
+    if value.is_some_and(|items| !items.is_empty()) {
+        return Err(lift_tx_gen_error(format!(
+            "DumpToFile: {era} Show(Tx) renderer does not yet support non-empty {field}"
         )));
     }
     Ok(())
@@ -1130,26 +1200,61 @@ fn show_tx_in(input: &ShelleyTxIn) -> String {
     )
 }
 
-fn show_shelley_tx_out_list(outputs: &[ShelleyTxOut]) -> Result<String, Error> {
+fn show_shelley_tx_out_list(outputs: &[ShelleyTxOut], era: &str) -> Result<String, Error> {
     outputs
         .iter()
-        .map(show_shelley_tx_out)
+        .map(|output| show_shelley_tx_out(output, era))
         .collect::<Result<Vec<_>, _>>()
         .map(|items| items.join(","))
 }
 
-fn show_shelley_tx_out(output: &ShelleyTxOut) -> Result<String, Error> {
+fn show_shelley_tx_out(output: &ShelleyTxOut, era: &str) -> Result<String, Error> {
     let address = Address::from_bytes(&output.address).ok_or_else(|| {
-        lift_tx_gen_error("DumpToFile: Allegra Show(Tx) renderer received invalid address bytes")
+        lift_tx_gen_error(format!(
+            "DumpToFile: {era} Show(Tx) renderer received invalid address bytes"
+        ))
     })?;
     Ok(format!(
         "({},Coin {})",
-        show_shelley_address(&address)?,
+        show_shelley_address(&address, era)?,
         output.amount
     ))
 }
 
-fn show_shelley_address(address: &Address) -> Result<String, Error> {
+fn show_mary_tx_out_list(outputs: &[MaryTxOut]) -> Result<String, Error> {
+    outputs
+        .iter()
+        .map(show_mary_tx_out)
+        .collect::<Result<Vec<_>, _>>()
+        .map(|items| items.join(","))
+}
+
+fn show_mary_tx_out(output: &MaryTxOut) -> Result<String, Error> {
+    let address = Address::from_bytes(&output.address).ok_or_else(|| {
+        lift_tx_gen_error("DumpToFile: Mary Show(Tx) renderer received invalid address bytes")
+    })?;
+    Ok(format!(
+        "({},{})",
+        show_shelley_address(&address, "Mary")?,
+        show_mary_value(&output.amount)?
+    ))
+}
+
+fn show_mary_value(value: &yggdrasil_ledger::Value) -> Result<String, Error> {
+    match value {
+        yggdrasil_ledger::Value::Coin(coin) => Ok(format!(
+            "MaryValue (Coin {coin}) (MultiAsset (fromList []))"
+        )),
+        yggdrasil_ledger::Value::CoinAndAssets(coin, assets) if assets.is_empty() => Ok(format!(
+            "MaryValue (Coin {coin}) (MultiAsset (fromList []))"
+        )),
+        yggdrasil_ledger::Value::CoinAndAssets(_, _) => Err(lift_tx_gen_error(
+            "DumpToFile: Mary Show(Tx) renderer does not yet support multi-asset values",
+        )),
+    }
+}
+
+fn show_shelley_address(address: &Address, era: &str) -> Result<String, Error> {
     match address {
         Address::Enterprise(enterprise) => Ok(format!(
             "Addr {} {} StakeRefNull",
@@ -1157,7 +1262,7 @@ fn show_shelley_address(address: &Address) -> Result<String, Error> {
             show_payment_credential(&enterprise.payment)
         )),
         _ => Err(lift_tx_gen_error(format!(
-            "DumpToFile: Allegra Show(Tx) renderer does not yet support address shape {address:?}"
+            "DumpToFile: {era} Show(Tx) renderer does not yet support address shape {address:?}"
         ))),
     }
 }
@@ -1186,7 +1291,7 @@ fn show_payment_credential(credential: &StakeCredential) -> String {
     }
 }
 
-fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Error> {
+fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet, era: &str) -> Result<String, Error> {
     if !witness_set.native_scripts.is_empty()
         || !witness_set.bootstrap_witnesses.is_empty()
         || !witness_set.plutus_v1_scripts.is_empty()
@@ -1195,9 +1300,9 @@ fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, E
         || !witness_set.plutus_v2_scripts.is_empty()
         || !witness_set.plutus_v3_scripts.is_empty()
     {
-        return Err(lift_tx_gen_error(
-            "DumpToFile: Allegra Show(Tx) renderer does not yet support non-vkey witnesses",
-        ));
+        return Err(lift_tx_gen_error(format!(
+            "DumpToFile: {era} Show(Tx) renderer does not yet support non-vkey witnesses"
+        )));
     }
 
     let mut witnesses = witness_set.vkey_witnesses.clone();
@@ -2261,6 +2366,113 @@ mod tests {
         assert_eq!(dest_funds.len(), 1);
         assert_eq!(dest_funds[0].lovelace, 90);
         assert_ne!(dest_funds[0].tx_in, format!("{INPUT_TX_ID}#0"));
+    }
+
+    #[test]
+    fn dumptofile_submit_generates_mary_haskell_show_transaction() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Mary,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            100,
+            "key",
+        )
+        .expect("source fund");
+        let output_path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-mary-dump-{}.out",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&output_path);
+        let generator = Generator::SplitN(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Mary,
+            &SubmitMode::DumpToFile(output_path.clone()),
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("mary dump submit");
+
+        let rendered = fs::read_to_string(&output_path).expect("mary dump output");
+        let _ = fs::remove_file(&output_path);
+        assert!(rendered.starts_with(
+            "\nShelleyTx ShelleyBasedEraMary (ShelleyTx {stBody = MkMaryTxBody AllegraTxBodyRaw"
+        ));
+        assert!(rendered.contains("MaryValue (Coin 90) (MultiAsset (fromList []))"));
+        assert!(rendered.contains("atbrMint = MultiAsset (fromList [])"));
+        assert!(rendered.contains("stWits = ShelleyTxWitsRaw"));
+        assert_eq!(rendered.lines().filter(|line| !line.is_empty()).count(), 1);
+    }
+
+    #[test]
+    fn dumptofile_mary_value_accepts_empty_multi_asset() {
+        let rendered =
+            show_mary_value(&yggdrasil_ledger::Value::CoinAndAssets(90, BTreeMap::new()))
+                .expect("empty multi-asset value");
+
+        assert_eq!(rendered, "MaryValue (Coin 90) (MultiAsset (fromList []))");
+    }
+
+    #[test]
+    fn dumptofile_submit_generates_shelley_haskell_show_transaction() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Shelley,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            100,
+            "key",
+        )
+        .expect("source fund");
+        let output_path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-shelley-dump-{}.out",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&output_path);
+        let generator = Generator::SplitN(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Shelley,
+            &SubmitMode::DumpToFile(output_path.clone()),
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("shelley dump submit");
+
+        let rendered = fs::read_to_string(&output_path).expect("shelley dump output");
+        let _ = fs::remove_file(&output_path);
+        assert!(rendered.starts_with(
+            "\nShelleyTx ShelleyBasedEraShelley (ShelleyTx {stBody = MkShelleyTxBody ShelleyTxBodyRaw"
+        ));
+        assert!(rendered.contains("stbrFee = Coin 10"));
+        assert!(rendered.contains("stbrTtl = SlotNo 18446744073709551615"));
+        assert!(rendered.contains("stWits = ShelleyTxWitsRaw"));
+        assert_eq!(rendered.lines().filter(|line| !line.is_empty()).count(), 1);
     }
 
     #[test]

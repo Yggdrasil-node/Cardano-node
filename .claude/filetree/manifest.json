@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-20T16:18:45Z",
+  "generated_at_utc": "2026-05-20T17:10:19Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -10508,11 +10508,11 @@
       "path": "crates/tools/tx-generator/AGENTS.md",
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `tx-generator`.",
-        "Tracks the post-R566 Benchmark env-control, DumpToFile, and soak-evidence arc."
+        "Tracks the post-R567 DumpToFile, Alonzo-family renderer, and soak-evidence arc."
       ],
-      "content_sha256": "1afe15ed0642b2532c2531047f550c93124397bce134d973387114e0b1dabd1f",
-      "git_blob": "9ced59f5503eebd2ef886cade6b7707b9112cfe3",
-      "source_mtime_ns": 1779294709242562500,
+      "content_sha256": "45eb8beea607ef199165be3b5a658170ba1b5bd93b86697c034edd5b001c22a6",
+      "git_blob": "a660f662d7dbc8ea3b545f9f91d86511b78d9e6c",
+      "source_mtime_ns": 1779296220914974300,
       "described_at_utc": "2026-05-20T16:35:27Z",
       "generated_self_exempt": false
     },
@@ -10522,9 +10522,9 @@
         "Cargo manifest for the tx-generator sister-tool crate.",
         "Declares direct dependencies for tx-generator runtime helpers plus crate metadata."
       ],
-      "content_sha256": "3c6c0a0680e18efafa5acb8d36291f4802080a80abf89b39595f2d8ff8310a4b",
-      "git_blob": "c57d2684149f6d9330b0195ea07ef72f8f4066a6",
-      "source_mtime_ns": 1779294722826014200,
+      "content_sha256": "6d556937b3c3a87afb4970d97a4c224eee4b2cbc0397cbd676d2c2593e6bdd85",
+      "git_blob": "90cdcf3870c8e178f49b343cf53032eb1d7a4eda",
+      "source_mtime_ns": 1779296209054995700,
       "described_at_utc": "2026-05-20T16:35:27Z",
       "generated_self_exempt": false
     },
@@ -10805,10 +10805,10 @@
         "Strict mirror of upstream tx-generator Script/Core state, NtC query, and submit helpers.",
         "Owns Core action bodies, transaction generation, Benchmark control launch, DumpToFile rendering, and budget projection."
       ],
-      "content_sha256": "49faf347560b44569c3651dfb45d0a1d147be48deaac62ab984e985600339090",
-      "git_blob": "29e26e355381d88e188d712ec19c8b3401f3ffd3",
-      "source_mtime_ns": 1779294576844127400,
-      "described_at_utc": "2026-05-20T16:35:27Z",
+      "content_sha256": "d3fc50563d5e765268d45984471b0f5bcea25ac4ea77d1c7f1de6ea3f7df8a2b",
+      "git_blob": "b45c7e8a26fc7a70a9bb3ba9dd6f254e29399785",
+      "source_mtime_ns": 1779297508896376000,
+      "described_at_utc": "2026-05-20T17:24:23Z",
       "generated_self_exempt": false
     },
     {
@@ -11131,9 +11131,9 @@
       "description_lines": [
         "Completion Roadmap: ---."
       ],
-      "content_sha256": "bd552d57a924ea99f062751910cc6b605664c395313c1a45b37f5821fe2e5024",
-      "git_blob": "557d473c5358abada6e77c9b7dc4400beaf6ab1a",
-      "source_mtime_ns": 1779294737090826300,
+      "content_sha256": "2f36af20fcd14669913ef840782e6044e2e0af5cff0c8925e0c9213bfa81f0b7",
+      "git_blob": "b2e25ceba8cb350c2b0dec1981c21d5c37516547",
+      "source_mtime_ns": 1779296228127268900,
       "described_at_utc": "2026-05-20T16:35:27Z",
       "generated_self_exempt": false
     },
@@ -11197,9 +11197,9 @@
       "description_lines": [
         "PARITY & FUNCTION SUMMARY FOR MANAGEMENT: ---."
       ],
-      "content_sha256": "5a4c5072d55da01e7251a32fc8bb90677ef378cd50074562872594c93c435e9b",
-      "git_blob": "2defa9c7dc16f25401b341ec18dae7cc553afd33",
-      "source_mtime_ns": 1779294796384743400,
+      "content_sha256": "a71ef49b0f411c3697a0dff6248038faada722faae0a756df5b64782009b1eec",
+      "git_blob": "98b8e58fcfa72e1ba1669296bef33ce46ee23466",
+      "source_mtime_ns": 1779296278425585700,
       "described_at_utc": "2026-05-20T16:35:27Z",
       "generated_self_exempt": false
     },
@@ -13503,6 +13503,18 @@
       "generated_self_exempt": false
     },
     {
+      "path": "docs/operational-runs/2026-05-20-round-567-tx-generator-dumptofile-shelley-mary.md",
+      "description_lines": [
+        "Operational evidence for R567 tx-generator DumpToFile Shelley/Mary rendering.",
+        "Lists the scope, upstream-shaped renderer changes, validation commands, and remaining Alonzo-family/soak gaps."
+      ],
+      "content_sha256": "c658865624b696ac7f1f1631181b198cc3216588916070986bffeeb71fdae951",
+      "git_blob": "605d2297aaa7260d75ddeac486aec99b820097c2",
+      "source_mtime_ns": 1779296990402386000,
+      "described_at_utc": "2026-05-20T17:10:19Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md",
       "description_lines": [
         "Round 151 \u2014 ChainSync worker pool runtime wiring + observability: Date: 2026-04-27."
@@ -15291,9 +15303,9 @@
         "Machine-readable parity-status inventory for Rust \u2194 IntersectMBO/cardano-node features.",
         "Validated by scripts/check-parity-matrix.py; the reference.tag tracks the latest upstream release (currently 11.0.1)."
       ],
-      "content_sha256": "dfa1c09ffc4adc65a493ffdc1299816f4dadad39fa01abf22f6f9bc7e9361d24",
-      "git_blob": "bd37f5dfdc533214cdd820ba01ec4acc88ca77c4",
-      "source_mtime_ns": 1779294814813089900,
+      "content_sha256": "cab2e897466f8b323f83fe1f05c1f38cf22a981942bd07a3c0679dd1d73731cb",
+      "git_blob": "0dc167d735c4ff7cf8d3a1a9917be98a7450ace4",
+      "source_mtime_ns": 1779297003010029600,
       "described_at_utc": "2026-05-20T16:35:27Z",
       "generated_self_exempt": false
     },

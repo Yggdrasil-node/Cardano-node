@@ -323,9 +323,11 @@ own parser / generator / submission implementation plus upstream
   R566 wired `Script/Core.hs` `SubmitMode::Benchmark` into that
   control, stores real `AsyncBenchmarkControl` runtime state in
   `Script/Env.hs`, and covers the path with a script-core loopback
-  submission/summary test. The remaining tx-generator blockers are
-  broader `DumpToFile` rendering beyond the Allegra key-witnessed
-  selftest shape and upstream-binary soak evidence.
+  submission/summary test. R567 extended `SubmitMode::DumpToFile`
+  beyond the Allegra fixture to Shelley and Mary key-witnessed streams
+  with upstream-shaped body/witness hashes and explicit unsupported-
+  field boundaries. The remaining tx-generator blockers are Alonzo-
+  family `DumpToFile` rendering and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
