@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R577 Conway VotingProcedures map DumpToFile rendering).
+**Status:** `partial` (post-R578 native-script Timelock DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,24 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R578: native-script Timelock Show rendering for both
+  reference-script and witness-set paths. `show_babbage_script_ref`
+  now renders `Script::Native(NativeScript)` as `SJust NativeScript
+  MkTimelock <raw> (blake2b_256: SafeHash "<hex>")`, and
+  `show_alonzo_script_witnesses` now emits map entries for native
+  scripts inside `atwrScriptTxWits`. New `show_native_script` /
+  `show_timelock_raw` helpers cover all 6 upstream `TimelockRaw`
+  variants: `TimelockSignature (KeyHash ...)`, `TimelockAllOf`,
+  `TimelockAnyOf`, `TimelockMOf <n>`, `TimelockTimeStart (SlotNo n)`,
+  `TimelockTimeExpire (SlotNo n)` with nested `StrictSeq {fromStrict
+  = fromList [...]}` items for combinators. The outer MemoBytes hash
+  is `Blake2b-256` over the canonical NativeScript CBOR, matching
+  upstream `MkTimelock (MemoBytes (TimelockRaw era))` derivation.
+  Reuses existing `yggdrasil_ledger::native_script_hash` for the
+  witness-set map key (`Blake2b-224` over `[0x00, ...cbor]`).
+  Bootstrap witnesses remain the last `TxGenError` boundary inside
+  the witness set. 2 focused unit tests cover all 6 Timelock
+  variants and the witness-set native-script entry shape.
 - Shipped R577: `show_conway_tx_for_dump` now renders non-empty
   `ctbrVotingProcedures` map as upstream `VotingProcedures
   {unVotingProcedures = fromList [(Voter, fromList [(GovActionId,
@@ -633,9 +651,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `Map Voter (Map GovActionId VotingProcedure)` shape with
   upstream-shaped Vote / Voter / GovActionId / VotingProcedure /
   Anchor / Url helpers.
-- Next: native-script reference rendering (Timelock Show),
-  native-script and bootstrap-witness rendering in the witness set,
-  Conway `ProposalProcedures` map (GovAction 7+ variants), and
+- Shipped: native-script Timelock DumpToFile rendering (R578):
+  both reference-script and witness-set paths now accept native
+  scripts via `show_native_script` (all 6 TimelockRaw variants:
+  signature / allOf / anyOf / mOf / timeStart / timeExpire).
+- Next: bootstrap-witness rendering in the witness set, Conway
+  `ProposalProcedures` map (GovAction 7+ variants), AccountAddress
+  decoding for withdrawals/treasury return addresses, and
   upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

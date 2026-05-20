@@ -387,10 +387,18 @@ own parser / generator / submission implementation plus upstream
   VotingProcedure)])]}` via new `show_conway_vote`,
   `show_conway_voter` (5 variants), `show_conway_gov_action_id`,
   `show_conway_voting_procedure`, `show_anchor`, and `show_url`
-  helpers. The remaining tx-generator blockers are native-script
-  reference rendering, native scripts and bootstrap witnesses in the
-  witness set, Conway `ProposalProcedures` map rendering (with
-  `GovAction`'s 7+ variants), and upstream-binary soak evidence.
+  helpers. R578 closed the native-script rendering path: both
+  `show_babbage_script_ref` (reference scripts) and
+  `show_alonzo_script_witnesses` (witness-set scripts) now accept
+  `NativeScript` values via new `show_native_script` /
+  `show_timelock_raw` helpers covering all 6 upstream `TimelockRaw`
+  variants (`TimelockSignature`, `TimelockAllOf`, `TimelockAnyOf`,
+  `TimelockMOf`, `TimelockTimeStart`, `TimelockTimeExpire`), with
+  the outer MemoBytes hash computed as `Blake2b-256` over the
+  canonical native-script CBOR. The remaining tx-generator blockers
+  are bootstrap-witness rendering, Conway `ProposalProcedures` map
+  rendering (with `GovAction`'s 7+ variants and AccountAddress
+  decoding), and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

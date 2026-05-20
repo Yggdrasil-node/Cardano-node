@@ -1648,10 +1648,8 @@ fn show_babbage_script_ref(script_ref: Option<&ScriptRef>) -> Result<String, Err
                     "PlutusScript PlutusV3 ScriptHash \"{}\"",
                     hex::encode(plutus_script_hash(3, bytes))
                 ),
-                yggdrasil_ledger::Script::Native(_) => {
-                    return Err(lift_tx_gen_error(
-                        "DumpToFile: Babbage Show(Tx) renderer does not yet support native reference scripts",
-                    ));
+                yggdrasil_ledger::Script::Native(ns) => {
+                    format!("NativeScript {}", show_native_script(ns))
                 }
             };
             Ok(format!("SJust {inner}"))
@@ -1669,6 +1667,66 @@ fn plutus_script_hash(language_tag: u8, script_bytes: &[u8]) -> [u8; 28] {
     buf.push(language_tag);
     buf.extend_from_slice(script_bytes);
     yggdrasil_crypto::hash_bytes_224(&buf).0
+}
+
+/// Render upstream `Show (Timelock era)` for a yggdrasil native script.
+///
+/// The Timelock newtype wraps `MemoBytes (TimelockRaw era)`; upstream
+/// stock-derived Show emits `MkTimelock <raw-show> (blake2b_256: SafeHash
+/// "<hex>")` where the outer hash is the BLAKE2b-256 of the canonical
+/// CBOR encoding of the raw timelock. Yggdrasil's
+/// `NativeScript::encode_cbor` produces the identical CBOR shape, so
+/// hashing its byte output is byte-equivalent to upstream's MemoBytes
+/// hash.
+fn show_native_script(script: &yggdrasil_ledger::NativeScript) -> String {
+    let raw = show_timelock_raw(script);
+    let cbor = script.to_cbor_bytes();
+    let hash = hex::encode(hash_bytes_256(&cbor).0);
+    format!("MkTimelock {raw} (blake2b_256: SafeHash \"{hash}\")")
+}
+
+/// Render the inner `TimelockRaw` constructor: matches upstream
+/// stock-derived `Show (TimelockRaw era)` over the 6-variant ADT:
+///   TimelockSignature (KeyHash {unKeyHash = "..."})
+///   TimelockAllOf (StrictSeq {fromStrict = fromList [<Timelock>,...]})
+///   TimelockAnyOf (StrictSeq {fromStrict = fromList [<Timelock>,...]})
+///   TimelockMOf <n> (StrictSeq {fromStrict = fromList [<Timelock>,...]})
+///   TimelockTimeStart (SlotNo <n>)
+///   TimelockTimeExpire (SlotNo <n>)
+fn show_timelock_raw(script: &yggdrasil_ledger::NativeScript) -> String {
+    use yggdrasil_ledger::NativeScript;
+    match script {
+        NativeScript::ScriptPubkey(kh) => format!(
+            "TimelockSignature (KeyHash {{unKeyHash = \"{}\"}})",
+            hex::encode(kh)
+        ),
+        NativeScript::ScriptAll(scripts) => format!(
+            "TimelockAllOf (StrictSeq {{fromStrict = fromList [{}]}})",
+            scripts
+                .iter()
+                .map(show_native_script)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        NativeScript::ScriptAny(scripts) => format!(
+            "TimelockAnyOf (StrictSeq {{fromStrict = fromList [{}]}})",
+            scripts
+                .iter()
+                .map(show_native_script)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        NativeScript::ScriptNOfK(n, scripts) => format!(
+            "TimelockMOf {n} (StrictSeq {{fromStrict = fromList [{}]}})",
+            scripts
+                .iter()
+                .map(show_native_script)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        NativeScript::InvalidBefore(slot) => format!("TimelockTimeStart (SlotNo {slot})"),
+        NativeScript::InvalidHereafter(slot) => format!("TimelockTimeExpire (SlotNo {slot})"),
+    }
 }
 
 fn show_mary_value(value: &yggdrasil_ledger::Value) -> Result<String, Error> {
@@ -1777,9 +1835,9 @@ fn show_shelley_witness_set(witness_set: &ShelleyWitnessSet, era: &str) -> Resul
 }
 
 fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Error> {
-    if !witness_set.native_scripts.is_empty() || !witness_set.bootstrap_witnesses.is_empty() {
+    if !witness_set.bootstrap_witnesses.is_empty() {
         return Err(lift_tx_gen_error(
-            "DumpToFile: Alonzo Show(Tx) renderer does not yet support native scripts or bootstrap witnesses",
+            "DumpToFile: Alonzo Show(Tx) renderer does not yet support bootstrap witnesses",
         ));
     }
 
@@ -1802,31 +1860,49 @@ fn show_alonzo_witness_set(witness_set: &ShelleyWitnessSet) -> Result<String, Er
 /// Render `atwrScriptTxWits = fromList [...]` matching upstream
 /// `Show (Map ScriptHash (AlonzoScript era))`.
 ///
-/// Each Plutus script in the witness set becomes one entry keyed by its
-/// `ScriptHash` (Blake2b-224 over `language-tag ++ script_bytes`), with the
-/// value rendered through `Show (AlonzoScript era)` — the same custom Show
-/// shape used in R574's `show_babbage_script_ref`. Entries are sorted by
-/// script-hash byte-lex order matching upstream `Data.Map toAscList`.
+/// Each script in the witness set becomes one entry keyed by its
+/// `ScriptHash`:
+/// - Plutus scripts: Blake2b-224 over `language-tag ++ script_bytes`
+///   (tags 0x01/0x02/0x03 for V1/V2/V3), value rendered as `PlutusScript
+///   PlutusV{N} ScriptHash "<hex>"`.
+/// - Native scripts: Blake2b-224 over `0x00 ++ canonical CBOR`, value
+///   rendered as `NativeScript MkTimelock <raw> (blake2b_256: SafeHash
+///   "<hex>")`.
+///
+/// Entries sort by script-hash byte-lex order matching upstream
+/// `Data.Map toAscList`.
 fn show_alonzo_script_witnesses(witness_set: &ShelleyWitnessSet) -> String {
-    let mut entries: Vec<([u8; 28], &str, &[u8])> = Vec::new();
+    enum Entry<'a> {
+        Plutus(&'a str),
+        Native(&'a yggdrasil_ledger::NativeScript),
+    }
+    let mut entries: Vec<([u8; 28], Entry<'_>)> = Vec::new();
     for bytes in &witness_set.plutus_v1_scripts {
-        let hash = plutus_script_hash(1, bytes);
-        entries.push((hash, "PlutusV1", bytes));
+        entries.push((plutus_script_hash(1, bytes), Entry::Plutus("PlutusV1")));
     }
     for bytes in &witness_set.plutus_v2_scripts {
-        let hash = plutus_script_hash(2, bytes);
-        entries.push((hash, "PlutusV2", bytes));
+        entries.push((plutus_script_hash(2, bytes), Entry::Plutus("PlutusV2")));
     }
     for bytes in &witness_set.plutus_v3_scripts {
-        let hash = plutus_script_hash(3, bytes);
-        entries.push((hash, "PlutusV3", bytes));
+        entries.push((plutus_script_hash(3, bytes), Entry::Plutus("PlutusV3")));
     }
-    entries.sort_by_key(|(hash, _, _)| *hash);
+    for ns in &witness_set.native_scripts {
+        entries.push((yggdrasil_ledger::native_script_hash(ns), Entry::Native(ns)));
+    }
+    entries.sort_by_key(|(hash, _)| *hash);
     let body = entries
         .iter()
-        .map(|(hash, lang, _)| {
+        .map(|(hash, entry)| {
             let hex_hash = hex::encode(hash);
-            format!("(ScriptHash \"{hex_hash}\",PlutusScript {lang} ScriptHash \"{hex_hash}\")")
+            match entry {
+                Entry::Plutus(lang) => format!(
+                    "(ScriptHash \"{hex_hash}\",PlutusScript {lang} ScriptHash \"{hex_hash}\")"
+                ),
+                Entry::Native(ns) => format!(
+                    "(ScriptHash \"{hex_hash}\",NativeScript {})",
+                    show_native_script(ns)
+                ),
+            }
         })
         .collect::<Vec<_>>()
         .join(",");
@@ -3554,10 +3630,12 @@ mod tests {
     }
 
     #[test]
-    fn dumptofile_alonzo_witness_set_rejects_native_scripts() {
+    fn dumptofile_alonzo_witness_set_renders_native_script_entry() {
+        let ns = yggdrasil_ledger::NativeScript::ScriptPubkey([0x11; 28]);
+        let expected_hash = hex::encode(yggdrasil_ledger::native_script_hash(&ns));
         let ws = ShelleyWitnessSet {
             vkey_witnesses: vec![],
-            native_scripts: vec![yggdrasil_ledger::NativeScript::ScriptPubkey([0x11; 28])],
+            native_scripts: vec![ns.clone()],
             bootstrap_witnesses: vec![],
             plutus_v1_scripts: vec![],
             plutus_data: vec![],
@@ -3565,11 +3643,16 @@ mod tests {
             plutus_v2_scripts: vec![],
             plutus_v3_scripts: vec![],
         };
-        let err = show_alonzo_witness_set(&ws).expect_err("native should reject");
-        let msg = format!("{err}");
+        let rendered = show_alonzo_witness_set(&ws).expect("native witness set");
         assert!(
-            msg.contains("native scripts or bootstrap witnesses"),
-            "expected native-script reject: {msg}"
+            rendered.contains(&format!(
+                "(ScriptHash \"{expected_hash}\",NativeScript MkTimelock"
+            )),
+            "expected native-script witness entry in {rendered}"
+        );
+        assert!(
+            rendered.contains("TimelockSignature (KeyHash {unKeyHash = \""),
+            "expected TimelockSignature inner in {rendered}"
         );
     }
 
@@ -3631,16 +3714,54 @@ mod tests {
     }
 
     #[test]
-    fn dumptofile_babbage_script_ref_rejects_native_script() {
+    fn dumptofile_babbage_script_ref_renders_native_script() {
         use yggdrasil_ledger::{NativeScript, Script};
 
-        let sr = ScriptRef(Script::Native(NativeScript::ScriptPubkey([0xAB; 28])));
-        let err = show_babbage_script_ref(Some(&sr)).expect_err("native should reject");
-        let msg = format!("{err}");
+        let ns = NativeScript::ScriptPubkey([0xAB; 28]);
+        let sr = ScriptRef(Script::Native(ns.clone()));
+        let rendered = show_babbage_script_ref(Some(&sr)).expect("native reference script");
         assert!(
-            msg.contains("native reference scripts"),
-            "expected native-reject error: {msg}"
+            rendered.starts_with("SJust NativeScript MkTimelock TimelockSignature (KeyHash {"),
+            "unexpected native ref script rendering: {rendered}"
         );
+        assert!(
+            rendered.contains("(blake2b_256: SafeHash \""),
+            "expected blake2b_256 SafeHash inside MemoBytes show: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_native_script_variants() {
+        use yggdrasil_ledger::NativeScript;
+
+        let sig = NativeScript::ScriptPubkey([0xCC; 28]);
+        let sig_rendered = show_native_script(&sig);
+        assert!(sig_rendered.starts_with("MkTimelock TimelockSignature (KeyHash {unKeyHash = \""));
+        assert!(sig_rendered.ends_with("\")"));
+
+        let all = NativeScript::ScriptAll(vec![sig.clone(), sig.clone()]);
+        let all_rendered = show_native_script(&all);
+        assert!(all_rendered.starts_with(
+            "MkTimelock TimelockAllOf (StrictSeq {fromStrict = fromList [MkTimelock TimelockSignature"
+        ));
+
+        let any = NativeScript::ScriptAny(vec![sig.clone()]);
+        let any_rendered = show_native_script(&any);
+        assert!(
+            any_rendered.contains("TimelockAnyOf (StrictSeq {fromStrict = fromList [MkTimelock")
+        );
+
+        let nofk = NativeScript::ScriptNOfK(2, vec![sig.clone(), sig.clone(), sig]);
+        let nofk_rendered = show_native_script(&nofk);
+        assert!(
+            nofk_rendered.contains("TimelockMOf 2 (StrictSeq {fromStrict = fromList [MkTimelock")
+        );
+
+        let before = NativeScript::InvalidBefore(123);
+        assert!(show_native_script(&before).contains("TimelockTimeStart (SlotNo 123)"));
+
+        let after = NativeScript::InvalidHereafter(456);
+        assert!(show_native_script(&after).contains("TimelockTimeExpire (SlotNo 456)"));
     }
 
     #[test]
