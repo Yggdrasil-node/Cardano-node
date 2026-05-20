@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R581 TreasuryWithdrawals GovAction DumpToFile rendering).
+**Status:** `partial` (post-R582 UpdateCommittee GovAction DumpToFile rendering — only ParameterChange remains).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,19 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R582: `show_conway_gov_action` now renders the
+  `UpdateCommittee` variant as upstream `UpdateCommittee
+  <StrictMaybe GovPurposeId> (fromList [<remove-creds>]) (fromList
+  [(<add-cred>,EpochNo <epoch>),...]) (<num> % <den>)`. New
+  helpers: `show_stake_credential` (KeyHashObj / ScriptHashObj),
+  `show_unit_interval` (always wraps `(num % den)` for constructor-
+  argument position; UnitInterval newtype chain delegates through
+  BoundedRatio to Ratio Word64 Show). Removal-set entries sort by
+  upstream Ord; addition-map entries follow BTreeMap iteration.
+  Only ParameterChange remains on TxGenError pending
+  ProtocolParameterUpdate Show. 3 focused unit tests cover
+  show_unit_interval, show_stake_credential KeyHash + Script
+  variants, and UpdateCommittee minimal/full forms.
 - Shipped R581: `show_conway_gov_action` now renders the
   `TreasuryWithdrawals` variant as upstream `TreasuryWithdrawals
   (fromList [(AccountAddress {...}, Coin <n>),...]) <StrictMaybe
@@ -719,9 +732,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
   variant via a Map AccountAddress Coin Show, using the typed
   `RewardAccount` keys directly. ParameterChange + UpdateCommittee
   remain.
-- Next: ParameterChange (ProtocolParameterUpdate Show) +
-  UpdateCommittee (UnitInterval + member-map Show) GovAction
-  coverage, upstream `bootstrapWitKeyHash` parity, and
+- Shipped: UpdateCommittee GovAction rendering (R582):
+  `show_conway_gov_action` now renders the `UpdateCommittee`
+  variant via `show_stake_credential` + `show_unit_interval` +
+  member-map iteration. Only ParameterChange remains.
+- Next: ParameterChange GovAction (ProtocolParameterUpdate Show
+  with ~30 optional PParamUpdate fields), upstream
+  `bootstrapWitKeyHash` parity for multi-witness sets, and
   upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

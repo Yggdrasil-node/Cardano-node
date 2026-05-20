@@ -1571,10 +1571,67 @@ fn show_conway_gov_action(action: &yggdrasil_ledger::GovAction) -> Result<String
                 "TreasuryWithdrawals (fromList [{body}]) {guardrails}"
             ))
         }
-        GovAction::UpdateCommittee { .. } => Err(lift_tx_gen_error(
-            "DumpToFile: Conway Show(Tx) renderer does not yet support UpdateCommittee GovAction (needs UnitInterval Show)",
-        )),
+        GovAction::UpdateCommittee {
+            prev_action_id,
+            members_to_remove,
+            members_to_add,
+            quorum,
+        } => {
+            let mut remove_sorted: Vec<&yggdrasil_ledger::StakeCredential> =
+                members_to_remove.iter().collect();
+            remove_sorted.sort();
+            let remove_body = remove_sorted
+                .iter()
+                .map(|c| show_stake_credential(c))
+                .collect::<Vec<_>>()
+                .join(",");
+            let add_body = members_to_add
+                .iter()
+                .map(|(c, epoch)| format!("({},EpochNo {epoch})", show_stake_credential(c)))
+                .collect::<Vec<_>>()
+                .join(",");
+            Ok(format!(
+                "UpdateCommittee {} (fromList [{remove_body}]) (fromList [{add_body}]) {}",
+                show_strict_maybe_gov_purpose_id(prev_action_id.as_ref()),
+                show_unit_interval(*quorum),
+            ))
+        }
     }
+}
+
+/// Render upstream `Show (Credential r)`:
+///   `KeyHashObj (KeyHash {unKeyHash = "<hex>"})`
+///   `ScriptHashObj (ScriptHash "<hex>")`
+///
+/// Used for Conway committee credentials. Yggdrasil's StakeCredential
+/// matches upstream's Credential for these roles structurally (the
+/// phantom role tag does not affect Show output).
+fn show_stake_credential(credential: &yggdrasil_ledger::StakeCredential) -> String {
+    match credential {
+        yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => format!(
+            "KeyHashObj (KeyHash {{unKeyHash = \"{}\"}})",
+            hex::encode(h)
+        ),
+        yggdrasil_ledger::StakeCredential::ScriptHash(h) => {
+            format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
+        }
+    }
+}
+
+/// Render upstream `Show UnitInterval`: `<num> % <den>` at p=0 (no parens
+/// when shown at top-level inside a record field), but wrapped with parens
+/// at showsPrec > 7 (constructor argument position).
+///
+/// `UnitInterval` is `newtype UnitInterval (BoundedRatio UnitInterval
+/// Word64)` with `deriving newtype Show`, and `BoundedRatio b a = BoundedRatio
+/// (Ratio a)` likewise. Both newtypes delegate to `Show (Ratio Word64)`
+/// which produces `<num> % <den>`, wrapping with parens at ratioPrec > 7.
+///
+/// We always wrap so it can be used safely in constructor-argument
+/// position. Callers who need an unwrapped form (e.g. inside a record
+/// field) should strip the outer parens.
+fn show_unit_interval(ui: yggdrasil_ledger::UnitInterval) -> String {
+    format!("({} % {})", ui.numerator, ui.denominator)
 }
 
 /// Render `StrictMaybe (GovPurposeId p)`. `GovPurposeId` is a phantom-tagged
@@ -3718,6 +3775,79 @@ mod tests {
         assert!(
             rendered.contains("(SJust (ScriptHash \""),
             "expected SJust guardrails in: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_unit_interval_wraps_with_parens() {
+        let ui = yggdrasil_ledger::UnitInterval {
+            numerator: 1,
+            denominator: 2,
+        };
+        assert_eq!(show_unit_interval(ui), "(1 % 2)");
+    }
+
+    #[test]
+    fn dumptofile_show_stake_credential_variants() {
+        assert_eq!(
+            show_stake_credential(&yggdrasil_ledger::StakeCredential::AddrKeyHash([0x11; 28])),
+            "KeyHashObj (KeyHash {unKeyHash = \"11111111111111111111111111111111111111111111111111111111\"})"
+        );
+        assert_eq!(
+            show_stake_credential(&yggdrasil_ledger::StakeCredential::ScriptHash([0x22; 28])),
+            "ScriptHashObj (ScriptHash \"22222222222222222222222222222222222222222222222222222222\")"
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_update_committee() {
+        // Minimal empty form: no prev, no remove, no add, quorum 1/3.
+        let empty = yggdrasil_ledger::GovAction::UpdateCommittee {
+            prev_action_id: None,
+            members_to_remove: Vec::new(),
+            members_to_add: BTreeMap::new(),
+            quorum: yggdrasil_ledger::UnitInterval {
+                numerator: 1,
+                denominator: 3,
+            },
+        };
+        let rendered = show_conway_gov_action(&empty).expect("empty update committee");
+        assert_eq!(
+            rendered,
+            "UpdateCommittee SNothing (fromList []) (fromList []) (1 % 3)"
+        );
+
+        // Full form with one removal, one addition, and SJust prev.
+        let mut members_to_add = BTreeMap::new();
+        members_to_add.insert(
+            yggdrasil_ledger::StakeCredential::AddrKeyHash([0xCC; 28]),
+            500_u64,
+        );
+        let full = yggdrasil_ledger::GovAction::UpdateCommittee {
+            prev_action_id: Some(yggdrasil_ledger::GovActionId {
+                transaction_id: [0xAA; 32],
+                gov_action_index: 9,
+            }),
+            members_to_remove: vec![yggdrasil_ledger::StakeCredential::AddrKeyHash([0xBB; 28])],
+            members_to_add,
+            quorum: yggdrasil_ledger::UnitInterval {
+                numerator: 2,
+                denominator: 3,
+            },
+        };
+        let rendered = show_conway_gov_action(&full).expect("full update committee");
+        assert!(rendered.starts_with("UpdateCommittee (SJust GovActionId {"));
+        assert!(
+            rendered.contains("(fromList [KeyHashObj (KeyHash {unKeyHash = \"bbbb"),
+            "expected sorted removal set: {rendered}"
+        );
+        assert!(
+            rendered.contains(",EpochNo 500)"),
+            "expected EpochNo entry: {rendered}"
+        );
+        assert!(
+            rendered.ends_with(" (2 % 3)"),
+            "expected quorum: {rendered}"
         );
     }
 

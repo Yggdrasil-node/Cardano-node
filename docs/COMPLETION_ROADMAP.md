@@ -413,11 +413,12 @@ own parser / generator / submission implementation plus upstream
   (`InfoAction`, `NoConfidence`, `HardForkInitiation`,
   `NewConstitution`). R581 closed `TreasuryWithdrawals` via a
   `Map AccountAddress Coin` Show keyed by the typed
-  `RewardAccount` directly. The remaining tx-generator blockers are
-  the 2 complex `GovAction` variants (`ParameterChange` —
-  `ProtocolParameterUpdate` Show, `UpdateCommittee` —
-  `UnitInterval` Show + member-map Show) and upstream-binary soak
-  evidence.
+  `RewardAccount` directly. R582 closed `UpdateCommittee` via new
+  `show_stake_credential` + `show_unit_interval` helpers and
+  member-map iteration. The remaining tx-generator blocker is the
+  last complex `GovAction` variant `ParameterChange` —
+  `ProtocolParameterUpdate` Show (~30 optional `PParamUpdate`
+  fields) — and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
