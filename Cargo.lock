@@ -3781,11 +3781,13 @@ dependencies = [
  "num-bigint",
  "serde",
  "serde_json",
+ "serde_norway",
  "thiserror 2.0.18",
  "tokio",
  "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-network",
+ "yggdrasil-node-config",
  "yggdrasil-telemetry",
 ]
 

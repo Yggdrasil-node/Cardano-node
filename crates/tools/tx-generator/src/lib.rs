@@ -76,7 +76,9 @@ pub fn run_main() -> ExitCode {
 /// preflight; R544-R547 add UTxO output builders and static Plutus
 /// context loading. R548/R549 add key-spend transaction construction
 /// and finite submitInEra execution. R550 wires `json_highlevel`
-/// command execution through the compiled script runner.
+/// command execution through the compiled script runner. R551 wires
+/// `StartProtocol` config-derived env state so high-level execution
+/// advances beyond the protocol/bootstrap action.
 pub fn run(command: command::Command) -> eyre::Result<()> {
     match &command {
         Command::Json(file) => {
@@ -120,7 +122,7 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R550 json_highlevel execution slice). Help/version compatibility, typed \
+         (R551 StartProtocol env-wiring slice). Help/version compatibility, typed \
          subcommand parsing, json_highlevel testnet discovery, and high-level \
          NixServiceOptions parsing/compilation/execution plus low-level script JSON \
          decoding plus deterministic state-only action execution and Script/Core \
@@ -177,7 +179,17 @@ mod tests {
         std::fs::write(path, content).expect("write temp file");
     }
 
-    fn high_level_config(config_path: &Path, node_config_path: &Path) {
+    fn write_node_config(path: &Path) {
+        let mut config = yggdrasil_node_config::default_config();
+        config.network_magic = 42;
+        config.protocol = Some("Cardano".to_string());
+        write(
+            path,
+            &serde_json::to_string(&config).expect("render node config"),
+        );
+    }
+
+    fn high_level_config(config_path: &Path, node_config_path: &Path, sig_key_path: &Path) {
         write(
             config_path,
             &serde_json::to_string(&json!({
@@ -194,7 +206,7 @@ mod tests {
                 "keepalive": 45,
                 "localNodeSocketPath": "node.socket",
                 "nodeConfigFile": node_config_path,
-                "sigKey": "genesis-utxo.skey",
+                "sigKey": sig_key_path,
                 "targetNodes": [
                     {"addr": "127.0.0.1", "port": 30000, "name": "node0"}
                 ],
@@ -208,8 +220,9 @@ mod tests {
     fn json_highlevel_runs_compiled_script_until_runtime_boundary() {
         let config_path = unique_temp_path("highlevel-config.json");
         let node_config_path = unique_temp_path("node-config.json");
-        high_level_config(&config_path, &node_config_path);
-        write(&node_config_path, "{}");
+        let missing_sig_key_path = unique_temp_path("missing-genesis-utxo.skey");
+        high_level_config(&config_path, &node_config_path, &missing_sig_key_path);
+        write_node_config(&node_config_path);
 
         let err = run(Command::JsonHighLevel(JsonHighLevelCommand {
             config_file: config_path.clone(),
@@ -217,10 +230,11 @@ mod tests {
             node_config: None,
             cardano_tracer: None,
         }))
-        .expect_err("StartProtocol boundary is reached");
+        .expect_err("missing genesis signing key is reached after StartProtocol");
 
-        assert!(err.to_string().contains("action #7 failed"));
-        assert!(err.to_string().contains("startProtocol"));
+        assert!(err.to_string().contains("action #10 failed"));
+        assert!(err.to_string().contains("readSigningKeyFile"));
+        assert!(!err.to_string().contains("startProtocol"));
 
         let _ = std::fs::remove_file(config_path);
         let _ = std::fs::remove_file(node_config_path);

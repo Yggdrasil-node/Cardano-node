@@ -282,7 +282,11 @@ own parser / generator / submission implementation plus upstream
   high-level execution: `json_highlevel` now performs config
   discovery/mangling, initial/final option reporting, Plutus
   datum/redeemer preflight, `compileOptions`, and `run_script`; the
-  `version` subcommand is concrete. The remaining tx-generator blockers are Plutus
+  `version` subcommand is concrete. R551 wired
+  `Benchmarking.Script.Action.startProtocol` so it now loads node
+  config, sets protocol/genesis/network/tracer env state, and lets
+  high-level runs advance beyond the old `mkConsensusProtocol`
+  sentinel. The remaining tx-generator blockers are Plutus
   pre-execution / auto-budget fitting, script-spend script-integrity
   hashing, exact `DumpToFile` rendering, Benchmark submission,
   `selftest`, `SecureGenesis`, `RoundRobin` / `OneOf`, and upstream

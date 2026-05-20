@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R550 json_highlevel execution slice). The old
+**Status:** `partial` (post-R551 StartProtocol env-wiring slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -171,6 +171,12 @@ approved synthesis area from the sister-tools plan.
   compiles with `compileOptions`, and passes the generated script to
   `run_script`. The explicit `version` subcommand now emits the same
   version fixture as top-level `--version`.
+- Shipped R551: `Benchmarking.Script.Action.startProtocol` now reads
+  the node config with JSON/YAML fallback via `yggdrasil-node-config`,
+  rejects non-Cardano protocol configs, sets protocol/genesis carriers,
+  derives upstream-shaped `Testnet NetworkMagic` state, and initializes
+  benchmark tracers instead of stopping at the old
+  `mkConsensusProtocol` sentinel.
 - Pending: `selftest` command execution. Low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
@@ -273,6 +279,10 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `Benchmarking.Command.runCommand` now drives `json_highlevel` through
   config discovery/mangling, Plutus data preflight, `compileOptions`,
   and `run_script`; `version` subcommand is concrete.
+- Shipped: StartProtocol env wiring (R551):
+  `Benchmarking.Script.Action.startProtocol` now loads node config,
+  sets protocol/genesis/network/tracer state, and lets high-level runs
+  advance to the next concrete script/runtime boundary.
 - Next: port Plutus `preExecutePlutusScript` /
   `plutusAutoScaleBlockfit`, script-spend script-integrity hashing,
   exact `DumpToFile` rendering, Benchmark submission, `selftest`, and

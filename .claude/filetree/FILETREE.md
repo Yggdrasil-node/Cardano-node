@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T09:22:39Z
-- Files described: 1424
+- Generated at: 2026-05-20T09:49:43Z
+- Files described: 1425
 
 ## Workspace
 
@@ -1732,7 +1732,7 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the R550 json_highlevel execution slice plus the remaining GeneratorTx / Submission arc.
+  - Tracks the R551 StartProtocol env-wiring slice plus the remaining GeneratorTx / Submission arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
@@ -2243,6 +2243,8 @@
 - `docs/operational-runs/2026-05-20-round-550-tx-generator-json-highlevel.md`
   - Operational run note for the R550 tx-generator json_highlevel execution slice.
   - Documents config mangling, Plutus data preflight, generated-script execution, remaining boundaries, and focused validation.
+- `docs/operational-runs/2026-05-20-round-551-tx-generator-start-protocol.md`
+  - Round 551 - tx-generator StartProtocol env wiring: Date: 2026-05-20.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

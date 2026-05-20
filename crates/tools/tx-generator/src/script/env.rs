@@ -5,11 +5,10 @@
 //! **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/Script/Env.hs`.
 //! Ports the `Env` state shape, `ProtocolParameterMode`, `Error`
 //! constructors, and accessor semantics needed by
-//! `Cardano.Benchmarking.Script.Action.action`. Consensus protocol,
-//! genesis, wallet queue internals, tracers, and async benchmark
-//! handles are represented by Rust-side typed carriers until the later
-//! `Script/Core` and `GeneratorTx` runtime slices wire the real node
-//! machinery.
+//! `Cardano.Benchmarking.Script.Action.action`. Consensus protocol and
+//! genesis state are represented by config-derived Rust carriers;
+//! wallet queues and tracers use typed local structures, while async
+//! benchmark handles wait for the later `GeneratorTx` runtime slices.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -36,6 +35,10 @@ pub struct ProtocolHandle {
     pub config_file: PathBuf,
     /// Optional cardano-tracer socket path.
     pub tracer_socket: Option<PathBuf>,
+    /// Protocol name parsed from the node configuration.
+    pub protocol: String,
+    /// Network magic exposed by the consensus protocol config.
+    pub network_magic: u32,
 }
 
 /// Placeholder for upstream `ShelleyGenesis`.
@@ -43,6 +46,12 @@ pub struct ProtocolHandle {
 pub struct GenesisHandle {
     /// Node configuration file that led to the genesis.
     pub config_file: PathBuf,
+    /// Shelley genesis file path from the node configuration when present.
+    pub shelley_genesis_file: Option<PathBuf>,
+    /// Shelley genesis hash from the node configuration when present.
+    pub shelley_genesis_hash: Option<String>,
+    /// Network magic carried by the Shelley genesis/protocol config.
+    pub network_magic: u32,
 }
 
 /// Placeholder for upstream `BenchTracers`.
