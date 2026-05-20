@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T06:02:32Z
-- Files described: 1397
+- Generated at: 2026-05-20T06:16:11Z
+- Files described: 1404
 
 ## Workspace
 
@@ -1781,9 +1781,21 @@
 - `crates/tools/tx-generator/src/setup/testnet_discovery.rs`
   - `cardano-testnet` output directory discovery for `tx-generator`.
   - Mirrors upstream Setup/TestnetDiscovery.hs path discovery, node ports, JSON merge, and typed NixService output.
+- `crates/tools/tx-generator/src/tx_generator.rs`
+  - Transaction-generator support namespace. ## Naming parity **Strict mirror:** none. Parent shell for upstream `Cardano.TxGenerator.*` support modules. Concrete leaf files mirror.
+- `crates/tools/tx-generator/src/tx_generator/fund.rs`
+  - Funds available for transaction construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Fund.hs`.
+- `crates/tools/tx-generator/src/tx_generator/fund_queue.rs`
+  - Fund-specialized FIFO queue. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/FundQueue.hs`.
+- `crates/tools/tx-generator/src/tx_generator/internal.rs`
+  - Internal transaction-generator support namespace. ## Naming parity **Strict mirror:** none. Parent shell for upstream `Cardano.TxGenerator.Internal.*` modules. Concrete leaf files
+- `crates/tools/tx-generator/src/tx_generator/internal/fifo.rs`
+  - FIFO queue used by the transaction generator. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Internal/Fifo.hs`.
 - `crates/tools/tx-generator/src/types.rs`
   - High-level transaction-generator configuration types.
   - Mirrors the upstream TxGenerator.Types subset required by NixService and later Compiler slices.
+- `crates/tools/tx-generator/src/wallet.rs`
+  - Wallet queue operations used by the benchmark script runtime. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/Walle
 - `crates/tools/tx-generator/tests/cli_help_golden.rs`
   - Golden and CLI dispatch tests for the `tx-generator` binary.
   - Checks upstream help/version fixtures plus typed dispatch and unknown-command failure paths.
@@ -2187,6 +2199,8 @@
   - Records the current-era/protocol-parameter query wiring and remaining GeneratorTx gates.
 - `docs/operational-runs/2026-05-20-round-541-tx-generator-sized-metadata.md`
   - Round R541 - tx-generator GeneratorTx/SizedMetadata mirror: Ported the upstream.
+- `docs/operational-runs/2026-05-20-round-542-tx-generator-fund-wallet.md`
+  - Round R542 - tx-generator Fund/FundQueue/Wallet mirror: Ported the upstream wallet/fund queue support used by.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

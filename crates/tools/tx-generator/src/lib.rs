@@ -23,7 +23,9 @@ pub mod generator_tx;
 pub mod parser;
 pub mod script;
 pub mod setup;
+pub mod tx_generator;
 pub mod types;
+pub mod wallet;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
 pub fn run_main() -> ExitCode {

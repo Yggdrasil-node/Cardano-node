@@ -244,8 +244,12 @@ own parser / generator / submission implementation plus upstream
   LocalStateQuery envelopes. R541 added the strict
   `GeneratorTx/SizedMetadata.hs` mirror (`mkMetadata` chunking, metadata
   cost assumptions, and `Script/Core.toMetadata` preflight for `NtoM`).
-  The remaining tx-generator blocker is the rest of GeneratorTx /
-  Submission implementation and upstream comparison evidence.
+  R542 added the upstream FIFO-backed fund/wallet queue surface
+  (`Internal/Fifo.hs`, `Fund.hs`, `FundQueue.hs`, and
+  `Benchmarking/Wallet.hs`) and moved `Script/Env` wallet state off the
+  ad hoc Vec carrier. The remaining tx-generator blocker is UTxO/value
+  splitting, transaction assembly, GeneratorTx / Submission
+  implementation, and upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

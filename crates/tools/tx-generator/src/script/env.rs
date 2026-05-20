@@ -17,7 +17,8 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use crate::script::types::{NetworkId, SigningKeyEnvelope};
-use crate::types::{AnyCardanoEra, Lovelace};
+pub use crate::tx_generator::fund::Fund;
+pub use crate::wallet::WalletRef;
 
 /// Mirror of upstream `ProtocolParameterMode`.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,37 +27,6 @@ pub enum ProtocolParameterMode {
     ProtocolParameterQuery,
     /// `ProtocolParameterLocal`.
     ProtocolParameterLocal(Value),
-}
-
-/// Minimal fund carrier stored by a `WalletRef`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Fund {
-    /// Era associated with the input.
-    pub era: AnyCardanoEra,
-    /// Transaction input rendered in upstream `TxIn` text form.
-    pub tx_in: String,
-    /// Lovelace amount carried by the fund.
-    pub lovelace: Lovelace,
-    /// Signing key name that can spend this fund.
-    pub key_name: String,
-}
-
-/// Rust-side analogue of upstream `WalletRef`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct WalletRef {
-    funds: Vec<Fund>,
-}
-
-impl WalletRef {
-    /// Insert a new fund into the wallet queue.
-    pub fn insert_fund(&mut self, fund: Fund) {
-        self.funds.push(fund);
-    }
-
-    /// Return the queued funds in insertion order.
-    pub fn funds(&self) -> &[Fund] {
-        &self.funds
-    }
 }
 
 /// Placeholder for upstream `SomeConsensusProtocol`.
@@ -294,6 +264,7 @@ fn get_env_map<'a, T>(map: &'a BTreeMap<String, T>, key: &str) -> Result<&'a T, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::AnyCardanoEra;
 
     #[test]
     fn empty_env_matches_upstream_maybe_and_map_defaults() {
@@ -334,8 +305,9 @@ mod tests {
             key_name: "key-b".to_string(),
         });
 
-        assert_eq!(wallet.funds()[0].tx_in, "a#0");
-        assert_eq!(wallet.funds()[1].tx_in, "b#1");
+        let funds = wallet.funds();
+        assert_eq!(funds[0].tx_in, "a#0");
+        assert_eq!(funds[1].tx_in, "b#1");
     }
 
     #[test]

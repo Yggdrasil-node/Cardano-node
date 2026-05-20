@@ -876,7 +876,7 @@
       "area": "sister-tools",
       "feature": "Transaction-stream load generator — pure-Rust port mirroring upstream bench/tx-generator/src/Cardano/Benchmarking/*.hs.",
       "status": "partial",
-      "next_milestone": "R542",
+      "next_milestone": "R543",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/bench/tx-generator/",
@@ -886,7 +886,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/tx-generator/",
-          "role": "Yggdrasil pure-Rust port — R327/R335 skeleton + R533 Command.hs parser mirror + R534 Setup/TestnetDiscovery.hs path and JSON-merge surface + R535 Setup/NixService.hs high-level config parser/projections + R536 Compiler.hs script generation and Script/Types.hs IR + R537 Script/Aeson.hs low-level script JSON parser + R538 Script.hs run boundary and Script/Env.hs + Script/Action.hs state-only action execution + R539 Script/Core.hs state helpers + R540 Script/Core.hs node-to-client current-era/protocol-parameter query helpers + R541 GeneratorTx/SizedMetadata.hs mkMetadata and metadata cost model helper. The former cardano-cli C-arc prerequisite is closed; concrete implementation now belongs to the A4 tx-generator GeneratorTx / Submission arc."
+          "role": "Yggdrasil pure-Rust port — R327/R335 skeleton + R533 Command.hs parser mirror + R534 Setup/TestnetDiscovery.hs path and JSON-merge surface + R535 Setup/NixService.hs high-level config parser/projections + R536 Compiler.hs script generation and Script/Types.hs IR + R537 Script/Aeson.hs low-level script JSON parser + R538 Script.hs run boundary and Script/Env.hs + Script/Action.hs state-only action execution + R539 Script/Core.hs state helpers + R540 Script/Core.hs node-to-client current-era/protocol-parameter query helpers + R541 GeneratorTx/SizedMetadata.hs mkMetadata and metadata cost model helper + R542 TxGenerator Fund/FundQueue/Internal.Fifo and Benchmarking.Wallet fund-source helpers. The former cardano-cli C-arc prerequisite is closed; concrete implementation now belongs to the A4 tx-generator GeneratorTx / Submission arc."
         }
       ],
       "implemented_evidence": [
@@ -904,10 +904,11 @@
         "R538 Script.hs + Script/Env.hs + Script/Action.hs mirror: script.rs ports the runScript dispatch boundary, env.rs ports Env/ProtocolParameterMode/Error/accessor semantics with typed placeholders for protocol/genesis/tracers/async control, and action.rs executes deterministic state-only actions while returning explicit TxGenError boundaries for startProtocol, waitForEra, Submit, and unseeded benchmark controls. The json subcommand now runs supported script prefixes instead of stopping after parse. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (61 lib tests + 5 CLI/golden tests).",
         "R539 Script/Core.hs mirror: script/core.rs now owns upstream Core state helpers and runtime boundaries: withEra, setProtocolParameters, readSigningKey, defineSigningKey, addFund/addFundToWallet, delay, waitBenchmarkCore/waitBenchmark, cancelBenchmark, getLocalConnectInfo, queryEra/queryRemoteProtocolParameters/getProtocolParameters, waitForEra, submitAction/submitInEra, initWallet, traceTxGeneratorVersion, and reserved. script/action.rs now mirrors upstream Action.hs more closely by dispatching to Core-owned bodies. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (67 lib tests + 5 CLI/golden tests).",
         "R540 Script/Core.hs NtC query mirror: queryEra and queryRemoteProtocolParameters now convert NetworkId to NtC network magic, encode upstream LocalStateQuery payloads for `QueryHardFork GetCurrentEra` and `QueryIfCurrent GetCurrentPParams`, decode active-era / QueryIfCurrent responses, preserve era-native protocol-parameter CBOR in `protocol-parameters-queried.json`, and keep non-Unix builds on an explicit Unix-socket boundary. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (74 lib tests + 5 CLI/golden tests).",
-        "R541 GeneratorTx/SizedMetadata.hs mirror: generator_tx/sized_metadata.rs ports maxMapSize/maxBSSize, assume_cbor_properties, map/bytes metadata cost-step assumptions, listMetadata/replicateEmptyBS/bsMetadata-style constructors, and mkMetadata's min-size/full-chunk algorithm; Script/Core.toMetadata now preflights NtoM metadata payload sizes before the remaining transaction-build sentinel. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (85 lib tests + 5 CLI/golden tests)."
+        "R541 GeneratorTx/SizedMetadata.hs mirror: generator_tx/sized_metadata.rs ports maxMapSize/maxBSSize, assume_cbor_properties, map/bytes metadata cost-step assumptions, listMetadata/replicateEmptyBS/bsMetadata-style constructors, and mkMetadata's min-size/full-chunk algorithm; Script/Core.toMetadata now preflights NtoM metadata payload sizes before the remaining transaction-build sentinel. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (85 lib tests + 5 CLI/golden tests).",
+        "R542 Fund/FundQueue/Wallet mirror: tx_generator/internal/fifo.rs ports the paired-list FIFO queue; tx_generator/fund.rs ports Fund/FundInEra accessors and TxIn-keyed equality/order; tx_generator/fund_queue.rs ports the FundQueue wrappers; wallet.rs ports WalletRef insert/source/preview semantics over FundQueue. Script/Env now reuses this upstream-shaped wallet carrier instead of its ad hoc Vec. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (94 lib tests + 5 CLI/golden tests)."
       ],
       "remaining_work": [
-        "Port the remaining upstream GeneratorTx transaction construction and LocalSocket / Benchmark submission client behavior in strict-mirror-sized implementation rounds.",
+        "Port UTxO/value splitting, the remaining upstream GeneratorTx transaction construction, and LocalSocket / Benchmark submission client behavior in strict-mirror-sized implementation rounds.",
         "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/tx-generator.",
         "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],
