@@ -5,14 +5,12 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
-description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface is a byte-equivalent help/version skeleton; the cardano-cli C-arc prerequisite is closed, so the next work is tx-generator parsing, submission, and soak evidence."
+description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface has byte-equivalent top-level help/version and an upstream-shaped Command.hs parser; next work is setup, generation, submission, and soak evidence."
 
-# R327 skeleton — bootstrap of the tx-generator sister-tool crate per the
-# R326–R459 sister-tools port arc plan. The crate currently ships only
-# the lib.rs / main.rs / parser.rs / golden-test surface. The former
+# R327/R335 skeleton plus R533 Command.hs parser mirror. The former
 # cardano-cli CLI-MVS prerequisite is closed; tx-generator now needs its
-# own Command / Setup / Submission implementation arc plus upstream
-# comparison evidence.
+# own Setup / Script / GeneratorTx / Submission implementation arc plus
+# upstream comparison evidence.
 # Three Calibrate sub-trees (Compiler.hs + Benchmarking/Script/* +
 # TxGenerator/PureExample.hs) are pre-approved synthesis carve-outs per
 # the same plan.

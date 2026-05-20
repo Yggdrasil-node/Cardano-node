@@ -1,9 +1,10 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R335-pattern skeleton). The old
+**Status:** `partial` (post-R533 Command parser slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
-the tx-generator parser/Command/Submission implementation arc plus
-upstream comparison evidence. Scope band: **LARGE**.
+the tx-generator Setup / Script / GeneratorTx / Submission
+implementation arc plus upstream comparison evidence. Scope band:
+**LARGE**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -16,31 +17,34 @@ file(s) the helper surfaces. CI gate:
 
 ## Upstream source
 
-Vendored at: `.reference-haskell-cardano-node/bench/tx-generator/` (46 `.hs` files).
+Vendored at: `.reference-haskell-cardano-node/bench/tx-generator/`
+(46 `.hs` files).
 
 ## Mini-arc scope
 
-Transaction-stream load generator for benchmarking. The next arc should
-start from the vendored `Command.hs`, `Setup/*`, and
-`GeneratorTx/Submission.hs` surfaces, then finish with an end-to-end
+Transaction-stream load generator for benchmarking. The active arc
+starts from the vendored `Command.hs`, `Setup/*`, and
+`GeneratorTx/Submission.hs` surfaces, then finishes with an end-to-end
 soak against a yggdrasil node on preview. The Calibrate sub-tree
 carve-out (Compiler.hs, Benchmarking/Script/*, PureExample) remains an
 approved synthesis area from the sister-tools plan.
 
-## Current functional surface (R335-pattern skeleton)
+## Current Functional Surface
 
-- ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
-  in `tests/cli_help_golden.rs`).
-- ✅ `<binary> --version` byte-equivalent to upstream.
-- ✅ Arg passthrough captured into `parser::Args.passthrough` for
-  later-round typed dispatch.
-- ❌ Concrete subcommand dispatch — returns "not yet implemented"
-  sentinel. The cardano-cli prerequisite is closed; this is now
-  tx-generator implementation debt.
-- ❌ End-to-end behavioral tests against upstream binary — pending
-  concrete dispatch.
+- Shipped: `<binary> --help` byte-equivalent to upstream (golden test
+  pinned in `tests/cli_help_golden.rs`).
+- Shipped: `<binary> --version` byte-equivalent to upstream.
+- Shipped R533: `Command.hs` parser surface. `command.rs` mirrors the
+  upstream `Command` sum type and `commandParser` grammar for `json`,
+  `json_highlevel`, `compile`, `selftest`, and `version`.
+- Shipped R533: `parser::Args` now carries typed `command::Command`
+  instead of raw passthrough.
+- Pending: concrete command execution. Dispatch returns a
+  command-specific "not yet implemented" sentinel until the Setup /
+  Script / GeneratorTx / Submission slices land.
+- Pending: end-to-end behavioral tests against the upstream binary.
 
-## Build + run
+## Build + Run
 
 ```bash
 # Build (release).
@@ -54,39 +58,39 @@ scripts/run-tools.sh tx-generator --version
 target/release/tx-generator --help
 ```
 
-The binary is named `tx-generator` (matching upstream exactly) — operators
-can swap upstream's binary for the yggdrasil one in their automation
-once concrete dispatch and upstream comparison evidence land.
+The binary is named `tx-generator` (matching upstream exactly).
+Operators can swap upstream's binary for the yggdrasil one in their
+automation once concrete dispatch and upstream comparison evidence land.
 
-##  Rules *Non-Negotiable*
+## Rules
 
 - Every new sub-module file MUST mirror an upstream `.hs` file by
   snake_case basename or carry a `## Naming parity` block.
 - Wire-format byte-equivalence with upstream `tx-generator` is the
   acceptance gate for any concrete implementation.
-- No FFI; no Haskell wrapping. Pure-Rust ecosystem dependencies
-  from crates.io are allowed if license-compatible (see
+- No FFI; no Haskell wrapping. Pure-Rust ecosystem dependencies from
+  crates.io are allowed if license-compatible (see
   `docs/DEPENDENCIES.md`).
 - Help-text fixtures (`tests/fixtures/upstream-{help,version}.txt`)
-  are the source of truth for `--help`/`--version`. If upstream
-  ships a new release with different help output, refresh the
-  fixtures + bump the relevant SHA pin in
-  `crates/node/config/src/upstream_pins.rs` as a coordinated round.
+  are the source of truth for `--help`/`--version`. If upstream ships a
+  new release with different help output, refresh the fixtures + bump
+  the relevant SHA pin in `crates/node/config/src/upstream_pins.rs` as
+  a coordinated round.
 
-## Round roadmap
+## Round Roadmap
 
 This crate's full implementation remains an A4 sister-tool build-out:
 
-- ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- 🟡 Next: port the upstream command parser, setup discovery, generator
-  transaction construction, and submission client in strict-mirror-sized
-  slices.
-- 🟡 Closeout — when all subcommands are functional, parity-matrix
-  entry advances `partial → verified_11_0_1`. Operators can then
-  swap upstream binary for the yggdrasil binary without script
-  changes.
+- Shipped: skeleton (R327 + R335-pattern bulk skeleton at R335-R336).
+- Shipped: Command parser (R533): `Command.hs` `Command`,
+  `TestnetConfig`, and command-parser grammar.
+- Next: port upstream setup discovery, generator transaction
+  construction, and submission client in strict-mirror-sized slices.
+- Closeout: when all subcommands are functional, parity-matrix entry
+  advances `partial -> verified_11_0_1`. Operators can then swap
+  upstream binary for the yggdrasil binary without script changes.
 
-## Comparison-with-upstream procedure
+## Comparison With Upstream
 
 To verify the yggdrasil binary still tracks upstream byte-for-byte:
 
@@ -102,16 +106,14 @@ diff <(.reference-haskell-cardano-node/install/bin/tx-generator --help) \
      <(target/debug/tx-generator --help)
 diff <(.reference-haskell-cardano-node/install/bin/tx-generator --version) \
      <(target/debug/tx-generator --version)
-# (empty diffs expected — byte-equivalent)
+# (empty diffs expected; byte-equivalent)
 ```
 
 ## Maintenance Guidance
 
-- Update this AGENTS.md when concrete subcommand implementations
-  land (replace `❌ not yet implemented` rows with `✅ shipped` +
-  round number).
+- Update this AGENTS.md when concrete command implementations land.
 - Keep the per-tool migration status in sync with
   `docs/COMPLETION_ROADMAP.md` and `docs/parity-matrix.json`.
-- If upstream ships a new release: refresh the help/version
-  fixtures, advance the relevant SHA pin in `upstream_pins.rs`,
-  re-run the full cargo gate.
+- If upstream ships a new release: refresh the help/version fixtures,
+  advance the relevant SHA pin in `upstream_pins.rs`, and re-run the
+  full cargo gate.

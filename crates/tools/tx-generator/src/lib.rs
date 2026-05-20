@@ -2,14 +2,14 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern
-//! file-mirror + CLI-parser skeleton for the `tx-generator` sister-tool crate.
-//! Per-leaf module mirrors land in subsequent rounds per the
-//! Sister-Tools Pure-Rust Port plan.
+//! **Strict mirror:** none. Yggdrasil-side parent shell for the
+//! `tx-generator` sister-tool crate. Per-leaf modules carry upstream
+//! mirrors for the command parser and later strict slices.
 
 use std::io::Write;
 use std::process::ExitCode;
 
+pub mod command;
 pub mod parser;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
@@ -20,7 +20,7 @@ pub fn run_main() -> ExitCode {
     let _ = yggdrasil_telemetry::init_subscriber(&yggdrasil_telemetry::TracingConfig::default());
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match parser::parse_args(&argv) {
-        Ok(_args) => match run() {
+        Ok(args) => match run(args.command) {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
                 let _ = writeln!(std::io::stderr(), "Error: {err}");
@@ -35,15 +35,24 @@ pub fn run_main() -> ExitCode {
             let _ = std::io::stdout().write_all(parser::VERSION_TEXT.as_bytes());
             ExitCode::SUCCESS
         }
+        Err(parser::ParseError::Invalid(err)) => {
+            let _ = writeln!(std::io::stderr(), "{err}");
+            ExitCode::FAILURE
+        }
     }
 }
 
-/// Concrete run-loop entry. R335-pattern skeleton: returns the
-/// "not-yet-implemented" sentinel pending later round implementation.
-/// The CLI parser surface (--help / --version) IS functional and
-/// byte-equivalent to upstream.
-pub fn run() -> eyre::Result<()> {
+/// Concrete run-loop entry.
+///
+/// R533 wires the upstream-shaped [`command::Command`] parser and
+/// dispatch boundary. Individual command execution still lands in the
+/// later `Script`, `Compiler`, `Setup`, and `GeneratorTx` slices.
+pub fn run(command: command::Command) -> eyre::Result<()> {
     Err(eyre::eyre!(
-        "yggdrasil-tx-generator: subcommand dispatch not yet implemented          (R335-pattern skeleton). Help/version output IS byte-equivalent          to upstream; concrete subcommand implementations land in          later rounds of the sister-tools port arc."
+        "yggdrasil-tx-generator: `{}` command execution not yet implemented \
+         (R533 command parser slice). Help/version compatibility and typed \
+         subcommand parsing are wired; concrete command implementations land \
+         in later strict slices of the tx-generator port arc.",
+        command.name()
     ))
 }

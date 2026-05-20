@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T02:56:16Z
-- Files described: 1374
+- Generated at: 2026-05-20T03:28:37Z
+- Files described: 1376
 
 ## Workspace
 
@@ -1731,18 +1731,25 @@
 - `crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt`
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
-  - Guidance for the pure-Rust port of upstream `tx-generator`.: **Status:** `partial` (post-R335-pattern skeleton). Concrete.
+  - Guidance for the pure-Rust port of upstream `tx-generator`.
+  - Tracks the R533 Command parser slice plus the remaining Setup / GeneratorTx / Submission arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
+- `crates/tools/tx-generator/src/command.rs`
+  - Typed command surface for the `tx-generator` binary.
+  - Mirrors upstream Command.hs commandParser for json, json_highlevel, compile, selftest, and version.
 - `crates/tools/tx-generator/src/lib.rs`
-  - Pure-Rust port of upstream `tx-generator`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `tx-genera
+  - Pure-Rust port of upstream `tx-generator`.
+  - Parent module wiring top-level parsing, typed command dispatch, and later strict mirror slices.
 - `crates/tools/tx-generator/src/main.rs`
   - Binary entry point for the `tx-generator` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_tx_generator::run_m
 - `crates/tools/tx-generator/src/parser.rs`
-  - CLI argument parser shell for the `tx-generator` binary. ## Naming parity **Strict mirror:** none. Yggdrasil-side parser shell with byte- equivalent `--help` / `--version` output c
+  - CLI argument parser shell for the `tx-generator` binary.
+  - Keeps top-level help/version fixture compatibility while delegating typed commands to command.rs.
 - `crates/tools/tx-generator/tests/cli_help_golden.rs`
-  - Golden test: yggdrasil-tx-generator `--help` / `--version` outputs are byte-equivalent to the upstream `tx-generator` binary.
+  - Golden and CLI dispatch tests for the `tx-generator` binary.
+  - Checks upstream help/version fixtures plus typed dispatch and unknown-command failure paths.
 - `crates/tools/tx-generator/tests/fixtures/upstream-help.txt`
   - Project file at crates/tools/tx-generator/tests/fixtures/upstream-help.txt.
 - `crates/tools/tx-generator/tests/fixtures/upstream-version.txt`
@@ -2121,6 +2128,8 @@
   - R531 db-synthesizer Praos Forge: Date: 2026-05-20.
 - `docs/operational-runs/2026-05-20-round-532-db-synthesizer-stake-sigma.md`
   - R532 db-synthesizer Stake Sigma: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-533-tx-generator-command-parser.md`
+  - R533 tx-generator Command Parser: Date: 2026-05-20.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

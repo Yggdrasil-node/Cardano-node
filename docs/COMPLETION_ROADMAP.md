@@ -224,15 +224,18 @@ Praos forging needs. Verified decomposition:
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**
 synthesizer produces a Praos-valid on-disk ChainDB that `db-analyser` validates.
 
-### A4 — Skeleton sister-tool build-out
-Six tools are skeleton-only — each its own multi-round arc:
+### A4 — Sister-tool build-out
+Six tools remain implementation arcs:
 `kes-agent`, `kes-agent-control`, `snapshot-converter`, `tx-generator`,
 `dmq-node`, `cardano-testnet`. One is still pre-gated: `kes-agent` on a
 socket-protocol byte-equivalence fixture capture (highest-stakes — key
 custody). `tx-generator` is no longer blocked on the cardano-cli C-arc;
 that prerequisite closed at R515/R529, so its remaining blocker is its
 own parser / generator / submission implementation plus upstream
-comparison evidence. **Scope:** ~5–8 rounds per tool. **Exit:** each
+comparison evidence. R533 shipped its upstream `Command.hs` parser
+mirror, so the remaining tx-generator blocker is Setup / Script /
+GeneratorTx / Submission implementation plus upstream comparison
+evidence. **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
 ### A5 — cardano-submit-api structured rejection enum  (`TECH-DEBT.md` §"validation error")
