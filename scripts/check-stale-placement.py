@@ -19,7 +19,8 @@ they appear in current-facing files. Operator artifacts are rejected under any
 another. A small set of stale current-status claims is guarded here too:
 obsolete node-local LSQ wording, old cardano-cli counts and gate wording, old
 three-command node-wrapper cardano-cli subset wording, stale active-migration
-wording for the closed cardano-cli C-arc, and the closed workspace-member gap.
+wording for the closed cardano-cli C-arc, obsolete parity-summary baselines,
+and the closed workspace-member gap.
 
 The vendored Haskell reference snapshot is allowed to contain source files and
 reference artifacts, but it must not retain nested Git metadata. It is a
@@ -374,6 +375,11 @@ STALE_PATTERNS = {
         r"plus the `cardano-cli` subcommand migration|"
         r"33 `Command` variants wired"
     ),
+    "stale parity summary baseline wording": re.compile(
+        r"394\+ parity rounds completed|"
+        r"Workspace tests: \*\*5,638 passing|"
+        r"post-R394"
+    ),
     "stale tx-generator cardano-cli prerequisite gate": re.compile(
         r"cardano-cli C-arc CLI-MVS|"
         r"tx-generator.*cardano-cli CLI-MVS|"
@@ -444,6 +450,12 @@ SELF_TEST_STALE_CASES = (
         "stale active cardano-cli migration wording",
     ),
     ("33 `Command` variants wired", "stale active cardano-cli migration wording"),
+    ("394+ parity rounds completed", "stale parity summary baseline wording"),
+    (
+        "Workspace tests: **5,638 passing, 0 failing**",
+        "stale parity summary baseline wording",
+    ),
+    ("post-R394", "stale parity summary baseline wording"),
     (
         "tx-generator on the cardano-cli CLI-MVS (A2)",
         "stale tx-generator cardano-cli prerequisite gate",

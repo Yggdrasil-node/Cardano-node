@@ -3729,7 +3729,8 @@ basename-heuristic reliance.
   the [`docs/PARITY_SUMMARY.md`](docs/PARITY_SUMMARY.md) banner +
   current-implementation-status preamble to reflect the 17-round
   cardano-tracer subsystem build-out shipped since the R377 banner.
-  Banner reads "**394+ parity rounds completed**" (was "376+") with
+  Banner was refreshed from the R376-era wording to the then-current
+  R394 closure wording, with
   workspace-test count refreshed from 5,443 → 5,638 (+195 across
   17 rounds: R378 +13, R379 +4, R380 +19, R381 +6, R382 +4, R383
   +16, R384 +13, R385 +7, R386 +11, R387 +6, R388 +11, R389 +15,
