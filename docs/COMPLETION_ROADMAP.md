@@ -304,12 +304,12 @@ own parser / generator / submission implementation plus upstream
   wired successful `NtoM` previews to update the Plutus budget summary's
   projected transaction size and fee before dumping. R559 added the
   Allegra selftest `DumpToFile` renderer for newline-prefixed Haskell
-  `Show (Tx)` output and captured upstream binary comparison evidence:
-  the renderer is functional, but the generated selftest stream still
-  drifts at the transaction body/signature bytes (`3986ae75...`
-  upstream input tx id vs `3f1ccb88...` Rust on the first final-stream
-  transaction). The remaining tx-generator blockers are that selftest
-  byte-drift fix, broader `DumpToFile` rendering beyond the Allegra
+  `Show (Tx)` output. R560 closed the generated selftest byte drift by
+  matching upstream `StrictSeq` variable-length CBOR for Shelley-family
+  transaction body output/certificate sequences; the selftest setup
+  stages and final 4,000-record stream now compare byte-for-byte
+  against the vendored upstream binary. The remaining tx-generator
+  blockers are broader `DumpToFile` rendering beyond the Allegra
   key-witnessed selftest shape, Benchmark submission, and soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.

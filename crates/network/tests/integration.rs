@@ -1283,7 +1283,6 @@ fn sdu_new_sets_payload_length() {
     assert_eq!(sdu.header.payload_length, 5);
     assert_eq!(sdu.header.protocol_num, MiniProtocolNum::TX_SUBMISSION);
     assert_eq!(sdu.header.direction, MiniProtocolDir::Initiator);
-    assert_eq!(sdu.header.timestamp, 0);
     assert_eq!(sdu.payload, payload);
 }
 

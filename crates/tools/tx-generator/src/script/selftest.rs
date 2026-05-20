@@ -242,6 +242,16 @@ mod tests {
             rendered.lines().filter(|line| !line.is_empty()).count(),
             4_000
         );
+        let first_tx = rendered
+            .lines()
+            .find(|line| !line.is_empty())
+            .expect("first transaction");
+        assert!(
+            first_tx.contains("3986ae75caaf853a53e6963288c680baf8a7be1239eceec7705d7ef6f045700a")
+        );
+        assert!(
+            first_tx.contains("05736377bfed5ad124e25c1f57b9c3e01d08f701b6ebed409bb4b040f467a8e9")
+        );
         assert!(rendered.contains("stWits = ShelleyTxWitsRaw"));
         assert!(rendered.ends_with("stAuxData = SNothing})"));
     }

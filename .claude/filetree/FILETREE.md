@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T13:01:53Z
-- Files described: 1436
+- Generated at: 2026-05-20T14:12:59Z
+- Files described: 1437
 
 ## Workspace
 
@@ -2268,6 +2268,9 @@
 - `docs/operational-runs/2026-05-20-round-559-tx-generator-dumptofile.md`
   - Round 559 tx-generator DumpToFile evidence record.
   - Documents Allegra selftest Show(Tx) rendering and the remaining upstream byte-drift finding.
+- `docs/operational-runs/2026-05-20-round-560-tx-generator-strictseq-selftest-parity.md`
+  - Round 560 tx-generator StrictSeq selftest parity evidence record.
+  - Documents the upstream/Rust DumpToFile byte match after variable-length StrictSeq CBOR encoding.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

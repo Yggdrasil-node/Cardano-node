@@ -23,7 +23,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder};
+use crate::cbor::{CborDecode, CborEncode, Decoder, Encoder, encode_variable_len_array};
 use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::{PraosHeader, ShelleyTxIn, ShelleyUpdate, ShelleyWitnessSet};
 use crate::error::LedgerError;
@@ -489,10 +489,8 @@ impl CborEncode for BabbageTxBody {
         }
 
         // Key 1: outputs.
-        enc.unsigned(1).array(self.outputs.len() as u64);
-        for output in &self.outputs {
-            output.encode_cbor(enc);
-        }
+        enc.unsigned(1);
+        encode_variable_len_array(enc, &self.outputs, |output, enc| output.encode_cbor(enc));
 
         // Key 2: fee.
         enc.unsigned(2).unsigned(self.fee);
@@ -504,10 +502,8 @@ impl CborEncode for BabbageTxBody {
 
         // Key 4: certificates.
         if let Some(certs) = &self.certificates {
-            enc.unsigned(4).array(certs.len() as u64);
-            for cert in certs {
-                cert.encode_cbor(enc);
-            }
+            enc.unsigned(4);
+            encode_variable_len_array(enc, certs, |cert, enc| cert.encode_cbor(enc));
         }
 
         // Key 5: withdrawals.

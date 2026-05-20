@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R559 Allegra selftest DumpToFile slice). The old
+**Status:** `partial` (post-R560 Allegra selftest byte-equivalent DumpToFile slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -225,17 +225,19 @@ approved synthesis area from the sister-tools plan.
   `DumpToFile` selftest rendering. `SubmitMode::DumpToFile` now
   evaluates finite streams and writes newline-prefixed Haskell
   `ShelleyTx ShelleyBasedEraAllegra` records for the deterministic
-  selftest path. Upstream comparison evidence is now executable and
-  currently exposes transaction body/signature drift in the generated
-  selftest stream (`3986ae75...` upstream input tx id vs
-  `3f1ccb88...` Rust), so byte-equivalence is not yet claimed.
+  selftest path.
+- Shipped R560: Shelley-family transaction body `StrictSeq` fields now
+  follow upstream `cardano-ledger-binary` variable-length encoding
+  (definite through 23 elements, indefinite above). This closes the
+  R559 generated-transaction drift: the upstream-captured selftest
+  setup stages and final 4,000-record `DumpToFile` stream now match
+  Rust byte-for-byte.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
-- Pending: fix the R559 selftest generated-transaction byte drift,
-  extend `DumpToFile` Show rendering beyond the Allegra key-witnessed
-  selftest shape, and implement Benchmark submission.
+- Pending: extend `DumpToFile` Show rendering beyond the Allegra
+  key-witnessed selftest shape and implement Benchmark submission.
 
 ## Build + Run
 
@@ -365,10 +367,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: Allegra selftest DumpToFile rendering (R559):
   `Benchmarking.Script.Core.submitInEra` now writes upstream-shaped
   newline-prefixed `ShelleyTx ShelleyBasedEraAllegra` records for
-  `selftest FILEPATH`; the first upstream comparison run surfaces
-  generated-transaction byte drift that must close before verification.
-- Next: selftest transaction body/signature byte drift, broader
-  `DumpToFile` Show coverage, and Benchmark submission in
+  `selftest FILEPATH`.
+- Shipped: StrictSeq selftest byte-equivalence (R560):
+  Shelley-family transaction body output/certificate sequences now use
+  upstream variable-length CBOR, closing the R559 30-output split drift;
+  all selftest setup stages and the final 4,000-record stream compare
+  byte-for-byte against the vendored upstream binary.
+- Next: broader `DumpToFile` Show coverage and Benchmark submission in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

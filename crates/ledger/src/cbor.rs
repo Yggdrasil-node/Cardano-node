@@ -222,6 +222,29 @@ impl Encoder {
     }
 }
 
+/// Encode a sequence with the same variable-length policy used by upstream
+/// `cardano-ledger-binary` for `StrictSeq`: definite length through 23
+/// elements, indefinite length above that threshold.
+pub(crate) fn encode_variable_len_array<T>(
+    enc: &mut Encoder,
+    items: &[T],
+    mut encode_item: impl FnMut(&T, &mut Encoder),
+) {
+    if items.len() <= 23 {
+        enc.array(items.len() as u64);
+    } else {
+        enc.array_indef();
+    }
+
+    for item in items {
+        encode_item(item, enc);
+    }
+
+    if items.len() > 23 {
+        enc.break_stop();
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Bounded-allocation helpers (defensive against attacker-controlled counts)
 // ───────────────────────────────────────────────────────────────────────────
@@ -951,6 +974,31 @@ impl<'a> Decoder<'a> {
         let start = self.pos;
         self.skip()?;
         self.slice(start, self.pos)
+    }
+}
+
+/// Decode a definite- or indefinite-length sequence into a vector.
+pub(crate) fn decode_variable_len_array<T>(
+    dec: &mut Decoder<'_>,
+    safe_max: usize,
+    mut decode_item: impl FnMut(&mut Decoder<'_>) -> Result<T, LedgerError>,
+) -> Result<Vec<T>, LedgerError> {
+    match dec.array_begin()? {
+        Some(count) => {
+            let mut items = vec_with_safe_capacity(count, safe_max);
+            for _ in 0..count {
+                items.push(decode_item(dec)?);
+            }
+            Ok(items)
+        }
+        None => {
+            let mut items = Vec::new();
+            while !dec.is_break() {
+                items.push(decode_item(dec)?);
+            }
+            dec.consume_break()?;
+            Ok(items)
+        }
     }
 }
 

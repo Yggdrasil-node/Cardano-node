@@ -26,8 +26,8 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 use crate::cbor::{
-    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, hashmap_with_safe_capacity,
-    vec_with_safe_capacity,
+    BLOCK_BODY_ELEMENTS_MAX, CborDecode, CborEncode, Decoder, Encoder, decode_variable_len_array,
+    encode_variable_len_array, hashmap_with_safe_capacity, vec_with_safe_capacity,
 };
 use crate::eras::mary::{MintAsset, Value, decode_mint_asset, encode_mint_asset};
 use crate::eras::shelley::ShelleyUpdate;
@@ -301,10 +301,8 @@ impl CborEncode for AlonzoTxBody {
         }
 
         // Key 1: outputs.
-        enc.unsigned(1).array(self.outputs.len() as u64);
-        for output in &self.outputs {
-            output.encode_cbor(enc);
-        }
+        enc.unsigned(1);
+        encode_variable_len_array(enc, &self.outputs, |output, enc| output.encode_cbor(enc));
 
         // Key 2: fee.
         enc.unsigned(2).unsigned(self.fee);
@@ -316,10 +314,8 @@ impl CborEncode for AlonzoTxBody {
 
         // Key 4: certificates.
         if let Some(certs) = &self.certificates {
-            enc.unsigned(4).array(certs.len() as u64);
-            for cert in certs {
-                cert.encode_cbor(enc);
-            }
+            enc.unsigned(4);
+            encode_variable_len_array(enc, certs, |cert, enc| cert.encode_cbor(enc));
         }
 
         // Key 5: withdrawals.
@@ -412,12 +408,11 @@ impl CborDecode for AlonzoTxBody {
                     inputs = Some(ins);
                 }
                 1 => {
-                    let count = dec.array()?;
-                    let mut outs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
-                    for _ in 0..count {
-                        outs.push(AlonzoTxOut::decode_cbor(dec)?);
-                    }
-                    outputs = Some(outs);
+                    outputs = Some(decode_variable_len_array(
+                        dec,
+                        BLOCK_BODY_ELEMENTS_MAX,
+                        AlonzoTxOut::decode_cbor,
+                    )?);
                 }
                 2 => {
                     fee = Some(dec.unsigned()?);
@@ -426,12 +421,11 @@ impl CborDecode for AlonzoTxBody {
                     ttl = Some(dec.unsigned()?);
                 }
                 4 => {
-                    let count = dec.array_or_set()?;
-                    let mut certs = vec_with_safe_capacity(count, BLOCK_BODY_ELEMENTS_MAX);
-                    for _ in 0..count {
-                        certs.push(DCert::decode_cbor(dec)?);
-                    }
-                    certificates = Some(certs);
+                    certificates = Some(decode_variable_len_array(
+                        dec,
+                        BLOCK_BODY_ELEMENTS_MAX,
+                        DCert::decode_cbor,
+                    )?);
                 }
                 5 => {
                     let count = dec.map()?;
