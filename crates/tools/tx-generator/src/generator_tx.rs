@@ -99,20 +99,27 @@ pub enum WalletBenchmarkError {
 
 /// Runtime control returned by upstream `walletBenchmark`.
 pub struct WalletBenchmarkControl {
-    feeder: JoinHandle<()>,
+    feeder: Option<JoinHandle<()>>,
     workers: Vec<JoinHandle<Result<(), WalletBenchmarkError>>>,
     report_refs: Vec<ReportRef>,
     start_time: SystemTime,
     tps_throttle: TpsThrottle,
+    summary: Option<SubmissionSummary>,
 }
 
 impl WalletBenchmarkControl {
     /// Upstream `abcSummary` after `waitBenchmark` has waited for all
     /// feeder/worker threads.
-    pub async fn wait_summary(mut self) -> Result<SubmissionSummary, WalletBenchmarkError> {
-        self.feeder
-            .await
-            .map_err(|err| WalletBenchmarkError::Join(err.to_string()))?;
+    pub async fn wait_summary(&mut self) -> Result<SubmissionSummary, WalletBenchmarkError> {
+        if let Some(summary) = &self.summary {
+            return Ok(summary.clone());
+        }
+
+        if let Some(feeder) = self.feeder.take() {
+            feeder
+                .await
+                .map_err(|err| WalletBenchmarkError::Join(err.to_string()))?;
+        }
         for worker in self.workers.drain(..) {
             let _ = worker
                 .await
@@ -121,9 +128,12 @@ impl WalletBenchmarkControl {
 
         let start_time = self.start_time;
         let report_refs = self.report_refs.clone();
-        tokio::task::spawn_blocking(move || mk_submission_summary(start_time, &report_refs))
-            .await
-            .map_err(|err| WalletBenchmarkError::Join(err.to_string()))
+        let summary =
+            tokio::task::spawn_blocking(move || mk_submission_summary(start_time, &report_refs))
+                .await
+                .map_err(|err| WalletBenchmarkError::Join(err.to_string()))?;
+        self.summary = Some(summary.clone());
+        Ok(summary)
     }
 
     /// Upstream `abcShutdown`: stop the TPS feeder.
@@ -225,11 +235,12 @@ pub async fn wallet_benchmark(
     });
 
     Ok(WalletBenchmarkControl {
-        feeder,
+        feeder: Some(feeder),
         workers,
         report_refs,
         start_time,
         tps_throttle,
+        summary: None,
     })
 }
 
@@ -420,7 +431,7 @@ mod tests {
                 name: "loopback".to_string(),
             };
 
-            let control = wallet_benchmark(
+            let mut control = wallet_benchmark(
                 vec![target],
                 100_000.0,
                 SubmissionErrorPolicy::LogErrors,

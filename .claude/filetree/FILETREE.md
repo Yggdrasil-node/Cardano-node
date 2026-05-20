@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T16:21:38Z
-- Files described: 1448
+- Generated at: 2026-05-20T16:42:03Z
+- Files described: 1449
 
 ## Workspace
 
@@ -1732,7 +1732,7 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the post-R565 walletBenchmark control, Script/Core Benchmark wiring, DumpToFile, and soak-evidence arc.
+  - Tracks the post-R566 Benchmark env-control, DumpToFile, and soak-evidence arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
@@ -1767,7 +1767,7 @@
   - High-level option compiler for `tx-generator`.
   - Mirrors upstream Compiler.hs by turning NixServiceOptions into generated benchmark script actions.
 - `crates/tools/tx-generator/src/generator_tx.rs`
-  - Strict mirror of upstream `GeneratorTx.hs`, wiring walletBenchmark target resolution, NtN V14 connect, worker/feeder control, and summary collection.
+  - Strict mirror of upstream `GeneratorTx.hs`, wiring walletBenchmark target resolution, NtN V14 connect, worker/feeder control, and cached summary collection.
 - `crates/tools/tx-generator/src/generator_tx/sized_metadata.rs`
   - Sized transaction-metadata construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx/SizedMetadata.
 - `crates/tools/tx-generator/src/generator_tx/submission.rs`
@@ -1792,11 +1792,11 @@
   - Strict mirror of upstream tx-generator Script/Aeson JSON helpers.
   - Parses low-level script files and preserves ObjectWithSingleField round-trip behavior.
 - `crates/tools/tx-generator/src/script/core.rs`
-  - Strict mirror of upstream tx-generator Script/Core state and NtC query helpers.
-  - Owns Core action bodies, queryEra/queryRemoteProtocolParameters, transaction generation, DumpToFile rendering, and budget projection.
+  - Strict mirror of upstream tx-generator Script/Core state, NtC query, and submit helpers.
+  - Owns Core action bodies, transaction generation, Benchmark control launch, DumpToFile rendering, and budget projection.
 - `crates/tools/tx-generator/src/script/env.rs`
   - Strict mirror of upstream tx-generator Script/Env state.
-  - Carries protocol parameter mode, wallets, keys, tracers, and async-control placeholders.
+  - Carries protocol parameters, wallets, keys, tracers, and concrete AsyncBenchmarkControl runtime state.
 - `crates/tools/tx-generator/src/script/selftest.rs`
   - Strict mirror of upstream `Cardano.Benchmarking.Script.Selftest`: builds and runs the static selftest action list, including output-file mode.
 - `crates/tools/tx-generator/src/script/types.rs`
@@ -2294,6 +2294,9 @@
 - `docs/operational-runs/2026-05-20-round-565-tx-generator-wallet-benchmark-control.md`
   - Operational evidence for R565 tx-generator walletBenchmark NtN control/connect work.
   - Lists the scope, upstream mirror changes, validation commands, and remaining Benchmark wiring gap.
+- `docs/operational-runs/2026-05-20-round-566-tx-generator-script-benchmark-control.md`
+  - Operational evidence for R566 tx-generator Script/Core Benchmark env-control wiring.
+  - Lists the scope, upstream mirror changes, validation commands, and remaining DumpToFile/soak gaps.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

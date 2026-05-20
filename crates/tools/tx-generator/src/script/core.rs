@@ -7,10 +7,10 @@
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
 //! deterministic state-only operations, Plutus context construction,
 //! finite transaction-stream evaluation, LocalSocket submission,
-//! Allegra self-test `DumpToFile` rendering, and budget-summary
-//! projection. Benchmark submission and the remaining `DumpToFile`
-//! era/witness shapes still return explicit `TxGenError` boundaries
-//! until their downstream mirrors land.
+//! Benchmark submission control, Allegra self-test `DumpToFile`
+//! rendering, and budget-summary projection. The remaining
+//! `DumpToFile` era/witness shapes still return explicit `TxGenError`
+//! boundaries until their downstream mirrors land.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -31,18 +31,22 @@ use yggdrasil_network::{
     AcquireTarget, LocalStateQueryClient, LocalTxSubmissionClient, MiniProtocolNum, ntc_connect,
 };
 
+use crate::benchmarking::types::SubmissionErrorPolicy;
 use crate::generator_tx::sized_metadata::{TxMetadata, mk_metadata};
+use crate::generator_tx::{WalletBenchmarkError, wallet_benchmark};
 use crate::script::aeson;
 use crate::script::env::{
-    Env, Error, Fund, ProtocolParameterMode, WalletRef, get_env_genesis, get_env_keys,
-    get_env_network_id, get_env_socket_path, get_env_summary, get_env_threads, get_env_threads_mut,
-    get_env_wallets, get_env_wallets_mut, get_proto_param_mode, lift_tx_gen_error, set_env_keys,
-    set_env_summary, set_env_threads, set_env_wallets, set_proto_param_mode, trace_debug,
+    AsyncBenchmarkControl, Env, Error, Fund, ProtocolParameterMode, WalletRef, get_env_genesis,
+    get_env_keys, get_env_network_id, get_env_socket_path, get_env_summary, get_env_threads,
+    get_env_threads_mut, get_env_wallets, get_env_wallets_mut, get_proto_param_mode,
+    lift_tx_gen_error, set_env_keys, set_env_summary, set_env_threads, set_env_wallets,
+    set_proto_param_mode, trace_bench_tx_submit, trace_debug,
 };
 use crate::script::types::{
     Generator, PayMode, ProtocolParametersSource, ScriptBudget, ScriptSpec, SigningKeyEnvelope,
     SubmitMode,
 };
+use crate::setup::nix_service::NodeDescription;
 use crate::setup::plutus::{pre_execute_plutus_script, read_plutus_script};
 use crate::tx_generator::fund::{
     FundWitness, ScriptWitnessForSpending, get_fund_coin, get_fund_tx_in,
@@ -59,7 +63,8 @@ use crate::tx_generator::utxo::{
     script_address,
 };
 use crate::types::{
-    AnyCardanoEra, ExecutionUnits, Lovelace, PayWithChange, TxGenPlutusType, TxGenTxParams,
+    AnyCardanoEra, ExecutionUnits, Lovelace, NumberOfTxs, PayWithChange, TpsRate, TxGenPlutusType,
+    TxGenTxParams,
 };
 use crate::wallet::{mangle_repeat, mangle_with_change, wallet_preview, wallet_source};
 
@@ -161,12 +166,22 @@ pub fn delay(seconds: f64) -> Result<(), Error> {
 }
 
 /// Mirror of upstream `waitBenchmarkCore`.
-pub fn wait_benchmark_core(_env: &Env) -> Result<(), Error> {
+pub fn wait_benchmark_core(env: &mut Env) -> Result<(), Error> {
+    let summary = {
+        let control = get_env_threads_mut(env)
+            .ok_or_else(|| lift_tx_gen_error("waitBenchmark: missing AsyncBenchmarkControl"))?;
+        control.wait_summary().map_err(wallet_benchmark_error)?
+    };
+    if let Some(summary) = summary {
+        let rendered = serde_json::to_string(&summary)
+            .map_err(|err| lift_tx_gen_error(format!("TraceBenchTxSubSummary: {err}")))?;
+        trace_bench_tx_submit(env, format!("TraceBenchTxSubSummary {rendered}"));
+    }
     Ok(())
 }
 
 /// Mirror of upstream `waitBenchmark`.
-pub fn wait_benchmark(env: &Env) -> Result<(), Error> {
+pub fn wait_benchmark(env: &mut Env) -> Result<(), Error> {
     if get_env_threads(env).is_some() {
         wait_benchmark_core(env)
     } else {
@@ -183,8 +198,8 @@ pub fn cancel_benchmark(env: &mut Env) -> Result<(), Error> {
             "cancelBenchmark: missing AsyncBenchmarkControl",
         ));
     };
-    control.shutdown_requested = true;
-    wait_benchmark(env)
+    control.shutdown();
+    wait_benchmark_core(env)
 }
 
 /// Rust carrier for upstream `LocalNodeConnectInfo`.
@@ -925,9 +940,17 @@ pub fn submit_in_era(
     let tx_protocol_parameters = tx_protocol_parameters(&protocol_parameters)?;
     match submit_mode {
         SubmitMode::NodeToNode(_) => Err(lift_tx_gen_error("NodeToNode deprecated: ToDo: remove")),
-        SubmitMode::Benchmark(_, _, _) => Err(lift_tx_gen_error(
-            "benchmarkTxStream: Benchmark submission is pending GeneratorTx/Submission wiring",
-        )),
+        SubmitMode::Benchmark(nodes, tps_rate, tx_count) => {
+            let txs = eval_generator(
+                env,
+                era,
+                generator,
+                tx_params,
+                tx_protocol_parameters.as_ref(),
+                None,
+            )?;
+            benchmark_tx_stream(env, nodes.clone(), *tps_rate, *tx_count, txs)
+        }
         SubmitMode::DumpToFile(file_path) => {
             let txs = eval_generator(
                 env,
@@ -962,6 +985,53 @@ pub fn submit_in_era(
             submit_generated_txs_local_socket(env, &txs)
         }
     }
+}
+
+fn benchmark_tx_stream(
+    env: &mut Env,
+    target_nodes: Vec<NodeDescription>,
+    tps_rate: TpsRate,
+    tx_count: NumberOfTxs,
+    txs: Vec<GeneratedTx>,
+) -> Result<(), Error> {
+    trace_debug(
+        env,
+        "******* Tx generator, phase 2: pay to recipients *******",
+    );
+    trace_debug(
+        env,
+        &format!(
+            "******* Tx generator, launching Tx peers:  {} of them",
+            target_nodes.len()
+        ),
+    );
+    let network_magic = network_id_to_magic(get_env_network_id(env)?)?;
+    let worker_threads = std::cmp::max(2, target_nodes.len() + 1);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|err| lift_tx_gen_error(format!("walletBenchmark runtime: {err}")))?;
+    let control = runtime
+        .block_on(wallet_benchmark(
+            target_nodes,
+            tps_rate,
+            SubmissionErrorPolicy::LogErrors,
+            network_magic,
+            tx_count,
+            txs,
+        ))
+        .map_err(wallet_benchmark_error)?;
+    set_env_threads(
+        env,
+        AsyncBenchmarkControl::from_wallet_benchmark(runtime, control),
+    );
+    Ok(())
+}
+
+fn wallet_benchmark_error(err: WalletBenchmarkError) -> Error {
+    lift_tx_gen_error(err.to_string())
 }
 
 fn dump_txs_to_file(file_path: &Path, txs: &[GeneratedTx]) -> Result<(), Error> {
@@ -1800,10 +1870,16 @@ mod tests {
         set_env_network_id, set_env_socket_path,
     };
     use crate::script::types::{NetworkId, PayMode, ScriptBudget, ScriptSpec};
+    use crate::setup::nix_service::NodeDescription;
     use crate::tx_generator::fund::get_fund_witness;
     use crate::tx_generator::utxo::script_data_hash;
     use crate::types::{PlutusScriptRef, TxGenPlutusType};
     use std::path::PathBuf;
+    use tokio::net::TcpListener;
+    use yggdrasil_network::{
+        HandshakeVersion, MiniProtocolNum, TxIdsReply as ServerTxIdsReply, TxSubmissionServer,
+        peer_accept,
+    };
 
     const INPUT_TX_ID: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
     const THREE_ARG_UNIT_FLAT: &[u8] = &[0x01, 0x00, 0x00, 0x22, 0x24, 0x98, 0x00];
@@ -2395,6 +2471,115 @@ mod tests {
     }
 
     #[test]
+    fn benchmark_submit_stores_async_control_and_waits_for_summary() {
+        let network_magic = 42;
+        let std_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        std_listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let addr = std_listener.local_addr().expect("local addr");
+        let server = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_io()
+                .enable_time()
+                .build()
+                .expect("server runtime");
+            runtime.block_on(async move {
+                let listener = TcpListener::from_std(std_listener).expect("tokio listener");
+                let (stream, _) = listener.accept().await.expect("accept");
+                let mut connection = peer_accept(stream, network_magic, &[HandshakeVersion::V14])
+                    .await
+                    .expect("peer accept");
+                let handle = connection
+                    .protocols
+                    .remove(&MiniProtocolNum::TX_SUBMISSION)
+                    .expect("tx submission handle");
+                let mut server = TxSubmissionServer::new(handle);
+                server.recv_init().await.expect("init");
+                let txids = match server
+                    .request_tx_ids(true, 0, 1)
+                    .await
+                    .expect("request ids")
+                {
+                    ServerTxIdsReply::TxIds(txids) => txids,
+                    ServerTxIdsReply::Done => panic!("first request should advertise txids"),
+                };
+                assert_eq!(txids.len(), 1);
+                let submitted = server
+                    .request_txs(txids.iter().map(|tx| tx.txid).collect())
+                    .await
+                    .expect("request txs");
+                match server
+                    .request_tx_ids(true, 1, 1)
+                    .await
+                    .expect("request done")
+                {
+                    ServerTxIdsReply::Done => {}
+                    ServerTxIdsReply::TxIds(txids) => {
+                        panic!("final blocking request should end protocol, got {txids:?}")
+                    }
+                }
+                submitted
+            })
+        });
+
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Conway,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            100,
+            "key",
+        )
+        .expect("source fund");
+        let generator = Generator::SplitN(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+        );
+        let target = NodeDescription {
+            addr: "127.0.0.1".to_string(),
+            port: addr.port(),
+            name: "loopback".to_string(),
+        };
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::Benchmark(vec![target], 100_000.0, 1),
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("benchmark submit");
+        assert!(crate::script::env::get_env_threads(&env).is_some());
+
+        wait_benchmark(&mut env).expect("wait benchmark");
+
+        let submitted = server.join().expect("server thread");
+        assert_eq!(submitted.len(), 1);
+        let control = crate::script::env::get_env_threads(&env).expect("control");
+        let summary = control.summary().expect("summary");
+        assert_eq!(summary.ss_tx_sent.get(), 1);
+        assert_eq!(summary.ss_tx_unavailable.get(), 0);
+        assert!(summary.ss_failures.is_empty());
+        assert!(
+            env.bench_tracers
+                .as_ref()
+                .expect("tracers")
+                .messages()
+                .iter()
+                .any(|message| message.starts_with("TraceBenchTxSubSummary "))
+        );
+    }
+
+    #[test]
     fn round_robin_matches_upstream_unimplemented_error() {
         let mut env = Env::empty_env();
         seed_static_plutus_protocol_parameters(&mut env);
@@ -2653,7 +2838,7 @@ mod tests {
         let mut env = Env::empty_env();
 
         assert_eq!(
-            wait_benchmark(&env),
+            wait_benchmark(&mut env),
             Err(Error::TxGenError(
                 "waitBenchmark: missing AsyncBenchmarkControl".to_string()
             ))

@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R565 walletBenchmark NtN control/connect slice). The old
+**Status:** `partial` (post-R566 Script/Core Benchmark env-control slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -261,14 +261,19 @@ approved synthesis area from the sister-tools plan.
   target, spawns the TPS feeder, exposes shutdown/summary control, and
   has a peer-accept/peer-connect loopback test that submits generated
   transactions through the negotiated TxSubmission2 mini-protocol.
+- Shipped R566: `Benchmarking.Script.Core.submitInEra` now wires
+  `SubmitMode::Benchmark` into the R565 `wallet_benchmark` control,
+  stores a real `AsyncBenchmarkControl` in `Script/Env.hs`, keeps the
+  Tokio runtime alive across `Submit` and `WaitBenchmark`, and has a
+  script-core loopback test covering generated transaction submission
+  plus summary tracing.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
-- Pending: wire `SubmitMode::Benchmark` in `Script/Core.hs` into the
-  new `walletBenchmark` control, carry real `AsyncBenchmarkControl`
-  through `Script/Env.hs`, then extend `DumpToFile` Show rendering
-  beyond the Allegra key-witnessed selftest shape.
+- Pending: extend `DumpToFile` Show rendering beyond the Allegra
+  key-witnessed selftest shape and capture upstream-binary soak
+  evidence for Benchmark scripts.
 
 ## Build + Run
 
@@ -426,8 +431,11 @@ This crate's full implementation remains an A4 sister-tool build-out:
   resolution, V14 NtN proposal construction, worker/feeder spawning,
   shutdown, and summary collection with real peer-connect loopback
   coverage.
-- Next: `Script/Core.hs` `SubmitMode::Benchmark` wiring plus broader
-  `DumpToFile` Show coverage in
+- Shipped: Script/Core Benchmark env-control wiring (R566):
+  `SubmitMode::Benchmark` now evaluates generated transactions,
+  launches `wallet_benchmark`, stores a real `AsyncBenchmarkControl`
+  with its runtime in `Env`, and `WaitBenchmark` traces the summary.
+- Next: broader `DumpToFile` Show coverage and upstream-binary soak in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

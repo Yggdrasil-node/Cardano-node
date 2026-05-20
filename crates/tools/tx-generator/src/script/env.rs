@@ -11,10 +11,13 @@
 //! benchmark handles wait for the later `GeneratorTx` runtime slices.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::benchmarking::log_types::SubmissionSummary;
+use crate::generator_tx::{WalletBenchmarkControl, WalletBenchmarkError};
 use crate::script::types::{NetworkId, SigningKeyEnvelope};
 pub use crate::tx_generator::fund::Fund;
 use crate::types::Lovelace;
@@ -86,15 +89,84 @@ impl BenchTracers {
     }
 }
 
-/// Placeholder for upstream `AsyncBenchmarkControl`.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// Rust carrier for upstream `AsyncBenchmarkControl`.
+#[derive(Default)]
 pub struct AsyncBenchmarkControl {
     /// Whether shutdown has been requested.
     pub shutdown_requested: bool,
+    runtime: Option<tokio::runtime::Runtime>,
+    wallet_control: Option<WalletBenchmarkControl>,
+    summary: Option<SubmissionSummary>,
+}
+
+impl AsyncBenchmarkControl {
+    /// Construct from the concrete `GeneratorTx.walletBenchmark` runtime
+    /// control.
+    pub fn from_wallet_benchmark(
+        runtime: tokio::runtime::Runtime,
+        wallet_control: WalletBenchmarkControl,
+    ) -> Self {
+        Self {
+            shutdown_requested: false,
+            runtime: Some(runtime),
+            wallet_control: Some(wallet_control),
+            summary: None,
+        }
+    }
+
+    /// Upstream `abcShutdown`.
+    pub fn shutdown(&mut self) {
+        self.shutdown_requested = true;
+        if let Some(control) = &self.wallet_control {
+            control.shutdown();
+        }
+    }
+
+    /// Upstream `abcSummary`, after worker/feeder completion.
+    pub fn wait_summary(&mut self) -> Result<Option<SubmissionSummary>, WalletBenchmarkError> {
+        if let Some(summary) = &self.summary {
+            return Ok(Some(summary.clone()));
+        }
+
+        let Some(runtime) = &self.runtime else {
+            return Ok(None);
+        };
+        let Some(control) = &mut self.wallet_control else {
+            return Ok(None);
+        };
+        let summary = runtime.block_on(control.wait_summary())?;
+        self.summary = Some(summary.clone());
+        Ok(Some(summary))
+    }
+
+    /// Return the cached submission summary, when `wait_summary` has run.
+    pub fn summary(&self) -> Option<&SubmissionSummary> {
+        self.summary.as_ref()
+    }
+}
+
+impl fmt::Debug for AsyncBenchmarkControl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AsyncBenchmarkControl")
+            .field("shutdown_requested", &self.shutdown_requested)
+            .field("has_runtime", &self.runtime.is_some())
+            .field("has_wallet_control", &self.wallet_control.is_some())
+            .field("summary", &self.summary)
+            .finish()
+    }
+}
+
+impl PartialEq for AsyncBenchmarkControl {
+    fn eq(&self, other: &Self) -> bool {
+        self.shutdown_requested == other.shutdown_requested
+            && self.runtime.is_some() == other.runtime.is_some()
+            && self.wallet_control.is_some() == other.wallet_control.is_some()
+            && self.summary == other.summary
+    }
 }
 
 /// Mirror of upstream `Env`.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Env {
     /// Upstream `protoParams`.
     pub proto_params: Option<ProtocolParameterMode>,
