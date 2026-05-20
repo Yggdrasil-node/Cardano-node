@@ -1654,18 +1654,6 @@ fn show_conway_pparams_update(
     // `protocol_version` that Conway dropped); those Shelley-era-only
     // fields cannot be rendered against Conway PParamsUpdate at all.
     let mut set_fields: Vec<&'static str> = Vec::new();
-    if ppu.e_max.is_some() {
-        set_fields.push("cppEMax");
-    }
-    if ppu.a0.is_some() {
-        set_fields.push("cppA0");
-    }
-    if ppu.rho.is_some() {
-        set_fields.push("cppRho");
-    }
-    if ppu.tau.is_some() {
-        set_fields.push("cppTau");
-    }
     if ppu.d.is_some() {
         set_fields.push("d (Shelley-era only — no Conway field)");
     }
@@ -1696,18 +1684,6 @@ fn show_conway_pparams_update(
     if ppu.drep_voting_thresholds.is_some() {
         set_fields.push("cppDRepVotingThresholds");
     }
-    if ppu.committee_term_limit.is_some() {
-        set_fields.push("cppCommitteeMaxTermLength");
-    }
-    if ppu.gov_action_lifetime.is_some() {
-        set_fields.push("cppGovActionLifetime");
-    }
-    if ppu.drep_activity.is_some() {
-        set_fields.push("cppDRepActivity");
-    }
-    if ppu.min_fee_ref_script_cost_per_byte.is_some() {
-        set_fields.push("cppMinFeeRefScriptCostPerByte");
-    }
     if !set_fields.is_empty() {
         return Err(lift_tx_gen_error(format!(
             "DumpToFile: Conway Show(Tx) renderer does not yet support non-empty ParameterChange fields: {}",
@@ -1724,7 +1700,7 @@ fn show_conway_pparams_update(
     // primitive Show. Committee size, gov action deposit, etc match
     // similarly.
     Ok(format!(
-        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = SNothing, cppNOpt = {}, cppA0 = SNothing, cppRho = SNothing, cppTau = SNothing, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = SNothing, cppMaxTxExUnits = SNothing, cppMaxBlockExUnits = SNothing, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = SNothing, cppDRepVotingThresholds = SNothing, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = SNothing, cppGovActionLifetime = SNothing, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = SNothing, cppMinFeeRefScriptCostPerByte = SNothing}})",
+        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = {}, cppNOpt = {}, cppA0 = {}, cppRho = {}, cppTau = {}, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = SNothing, cppMaxTxExUnits = SNothing, cppMaxBlockExUnits = SNothing, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = SNothing, cppDRepVotingThresholds = SNothing, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = {}, cppGovActionLifetime = {}, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = {}, cppMinFeeRefScriptCostPerByte = {}}})",
         show_pparam_compact_coin(ppu.min_fee_a),
         show_pparam_compact_coin(ppu.min_fee_b),
         show_pparam_word(ppu.max_block_body_size),
@@ -1732,16 +1708,50 @@ fn show_conway_pparams_update(
         show_pparam_word(ppu.max_block_header_size),
         show_pparam_compact_coin(ppu.key_deposit),
         show_pparam_compact_coin(ppu.pool_deposit),
+        show_pparam_epoch_interval(ppu.e_max),
         show_pparam_word(ppu.n_opt),
+        show_pparam_ratio_interval(ppu.a0),
+        show_pparam_ratio_interval(ppu.rho),
+        show_pparam_ratio_interval(ppu.tau),
         show_pparam_compact_coin(ppu.min_pool_cost),
         show_pparam_compact_coin(ppu.coins_per_utxo_byte),
         show_pparam_word(ppu.max_val_size),
         show_pparam_word(ppu.collateral_percentage),
         show_pparam_word(ppu.max_collateral_inputs),
         show_pparam_word(ppu.min_committee_size),
+        show_pparam_epoch_interval(ppu.committee_term_limit),
+        show_pparam_epoch_interval(ppu.gov_action_lifetime),
         show_pparam_compact_coin(ppu.gov_action_deposit),
         show_pparam_compact_coin(ppu.drep_deposit),
+        show_pparam_epoch_interval(ppu.drep_activity),
+        show_pparam_ratio_interval(ppu.min_fee_ref_script_cost_per_byte),
     ))
+}
+
+/// Render a `StrictMaybe EpochInterval` PParamsUpdate field at showsPrec 0.
+/// EpochInterval is `newtype EpochInterval = EpochInterval { unEpochInterval
+/// :: Word32 }` with `deriving (Show) via Quiet EpochInterval` — Quiet
+/// suppresses the record syntax but keeps the constructor name. Empty
+/// renders as `SNothing`; set renders as `SJust (EpochInterval <n>)` (parens
+/// because SJust wraps single-arg constructor at p=11).
+fn show_pparam_epoch_interval<N: Into<u64> + Copy>(value: Option<N>) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(n) => format!("SJust (EpochInterval {})", n.into()),
+    }
+}
+
+/// Render a `StrictMaybe` over an interval newtype (`UnitInterval`,
+/// `NonNegativeInterval`) that delegates Show through `BoundedRatio`
+/// to `Show (Ratio Word64)` — output is `<num> % <den>` (no constructor
+/// prefix because of `deriving newtype Show`). Empty renders as
+/// `SNothing`; set renders as `SJust (<num> % <den>)` (parens because
+/// Ratio Show wraps at p > 7, inside SJust at p=11).
+fn show_pparam_ratio_interval(value: Option<yggdrasil_ledger::UnitInterval>) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(ui) => format!("SJust {}", show_unit_interval(ui)),
+    }
 }
 
 /// Render a Coin-family `StrictMaybe (CompactForm Coin)` PParamsUpdate
@@ -4063,15 +4073,56 @@ mod tests {
     }
 
     #[test]
-    fn dumptofile_show_conway_gov_action_parameter_change_with_pending_field_rejects() {
-        // Non-empty PParamsUpdate with a field whose per-type Show is
-        // still pending (cppA0 -> NonNegativeInterval) rejects with a
-        // clear message naming the field.
+    fn dumptofile_show_conway_gov_action_parameter_change_with_interval_fields() {
+        // 8 interval fields: 4 EpochInterval as `SJust (EpochInterval N)`
+        // and 4 NonNegativeInterval/UnitInterval as `SJust (num % den)`.
         let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            e_max: Some(18),
+            committee_term_limit: Some(146),
+            gov_action_lifetime: Some(6),
+            drep_activity: Some(20),
             a0: Some(yggdrasil_ledger::UnitInterval {
                 numerator: 3,
                 denominator: 10,
             }),
+            rho: Some(yggdrasil_ledger::UnitInterval {
+                numerator: 3,
+                denominator: 1000,
+            }),
+            tau: Some(yggdrasil_ledger::UnitInterval {
+                numerator: 2,
+                denominator: 10,
+            }),
+            min_fee_ref_script_cost_per_byte: Some(yggdrasil_ledger::UnitInterval {
+                numerator: 44,
+                denominator: 1,
+            }),
+            ..Default::default()
+        };
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: update,
+            guardrails_script_hash: None,
+        };
+        let rendered = show_conway_gov_action(&parameter_change)
+            .expect("parameter change with interval fields");
+        assert!(rendered.contains("cppEMax = SJust (EpochInterval 18)"));
+        assert!(rendered.contains("cppCommitteeMaxTermLength = SJust (EpochInterval 146)"));
+        assert!(rendered.contains("cppGovActionLifetime = SJust (EpochInterval 6)"));
+        assert!(rendered.contains("cppDRepActivity = SJust (EpochInterval 20)"));
+        assert!(rendered.contains("cppA0 = SJust (3 % 10)"));
+        assert!(rendered.contains("cppRho = SJust (3 % 1000)"));
+        assert!(rendered.contains("cppTau = SJust (2 % 10)"));
+        assert!(rendered.contains("cppMinFeeRefScriptCostPerByte = SJust (44 % 1)"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_parameter_change_with_pending_field_rejects() {
+        // Non-empty PParamsUpdate with a field whose per-type Show is
+        // still pending (cppCostModels -> CostModels record) rejects
+        // with a clear message naming the field.
+        let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            cost_models: Some(std::collections::BTreeMap::new()),
             ..Default::default()
         };
         let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
@@ -4082,7 +4133,10 @@ mod tests {
         let err = show_conway_gov_action(&parameter_change)
             .expect_err("pending parameter change should reject");
         let msg = format!("{err}");
-        assert!(msg.contains("cppA0"), "expected field-name in error: {msg}");
+        assert!(
+            msg.contains("cppCostModels"),
+            "expected field-name in error: {msg}"
+        );
     }
 
     #[test]

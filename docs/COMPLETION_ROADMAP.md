@@ -427,11 +427,15 @@ own parser / generator / submission implementation plus upstream
   through `show_pparam_compact_coin` (8 Coin-family fields render
   as `SJust (CompactCoin {unCompactCoin = N})`) and
   `show_pparam_word` (8 plain Word fields render as `SJust N`).
-  The remaining tx-generator blockers are per-type Shows for the
-  14 interval/composite PParamsUpdate fields
-  (`EpochInterval`, `NonNegativeInterval`/`UnitInterval`, `Prices`,
-  `OrdExUnits`, `PoolVotingThresholds`, `DRepVotingThresholds`,
-  `CostModels`) and upstream-binary soak evidence.
+  R585 wired 8 interval PParamsUpdate fields through
+  `show_pparam_epoch_interval` (4 EpochInterval as `SJust
+  (EpochInterval N)`) and `show_pparam_ratio_interval` (4
+  UnitInterval/NonNegativeInterval as `SJust (num % den)`). 24/30
+  Conway PParamsUpdate fields now render. The remaining
+  tx-generator blockers are per-type Shows for 6 composite fields
+  (`Prices`, `OrdExUnits` x2, `CostModels`,
+  `PoolVotingThresholds`, `DRepVotingThresholds`) and
+  upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

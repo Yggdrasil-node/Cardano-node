@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R584 PParamsUpdate Coin-family + Word field rendering — all 7 GovAction variants + 16 PParamsUpdate scalar fields render).
+**Status:** `partial` (post-R585 PParamsUpdate interval-field rendering — 24/30 PParamsUpdate fields render).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,22 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R585: `show_conway_pparams_update` now renders 8 more
+  PParamsUpdate fields:
+  - 4 EpochInterval fields (`cppEMax`,
+    `cppCommitteeMaxTermLength`, `cppGovActionLifetime`,
+    `cppDRepActivity`) as `SJust (EpochInterval N)` (Quiet-Show
+    constructor + Word32).
+  - 4 interval fields (`cppA0`, `cppRho`, `cppTau`,
+    `cppMinFeeRefScriptCostPerByte`) as `SJust (num % den)` —
+    UnitInterval and NonNegativeInterval both newtype-delegate
+    Show through BoundedRatio to `Show (Ratio Word64)`.
+  New `show_pparam_epoch_interval` and `show_pparam_ratio_interval`
+  helpers. 24 of 30 Conway PParamsUpdate fields now render; 6
+  composite/Shelley-only fields (`cppPrices`, `cppMaxTxExUnits`,
+  `cppMaxBlockExUnits`, `cppCostModels`, `cppPoolVotingThresholds`,
+  `cppDRepVotingThresholds`) remain on field-name-bearing
+  TxGenError. 1 focused unit test sets all 8 interval fields.
 - Shipped R584: `show_conway_pparams_update` now renders 16 set
   PParamsUpdate scalar fields. Coin-family fields (CompactForm Coin
   / CoinPerByte) render as `SJust (CompactCoin {unCompactCoin =
@@ -777,10 +793,14 @@ This crate's full implementation remains an A4 sister-tool build-out:
   fields (8 Coin-family as `SJust (CompactCoin {unCompactCoin =
   N})`, 8 plain Word as `SJust N`). 14 complex/interval fields
   remain on field-name-bearing TxGenError.
-- Next: per-type Shows for the remaining 14 PParamsUpdate fields
-  (`EpochInterval`, `NonNegativeInterval` / `UnitInterval`,
-  `Prices`, `OrdExUnits`, `PoolVotingThresholds`,
-  `DRepVotingThresholds`, `CostModels`), upstream
+- Shipped: PParamsUpdate interval fields (R585):
+  `show_conway_pparams_update` now renders 4 EpochInterval fields
+  (`SJust (EpochInterval N)`) and 4 ratio interval fields
+  (UnitInterval/NonNegativeInterval as `SJust (num % den)`). 24/30
+  Conway PParamsUpdate fields now render.
+- Next: per-type Shows for the remaining 6 composite PParamsUpdate
+  fields (`Prices`, `OrdExUnits` x2, `CostModels`,
+  `PoolVotingThresholds`, `DRepVotingThresholds`), upstream
   `bootstrapWitKeyHash` parity, and upstream-binary soak in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
