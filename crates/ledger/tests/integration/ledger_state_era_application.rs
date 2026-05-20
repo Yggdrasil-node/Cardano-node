@@ -239,6 +239,23 @@ fn pending_shelley_genesis_stake_activates_on_first_shelley_block() {
     let mut state = LedgerState::new(Era::Byron);
     let credential = yggdrasil_ledger::StakeCredential::AddrKeyHash([0x44; 28]);
     let pool = [0x55; 28];
+    state.configure_pending_shelley_genesis_pools(vec![PoolParams {
+        operator: pool,
+        vrf_keyhash: [0x66; 32],
+        pledge: 0,
+        cost: 0,
+        margin: UnitInterval {
+            numerator: 0,
+            denominator: 1,
+        },
+        reward_account: RewardAccount {
+            network: 0,
+            credential,
+        },
+        pool_owners: vec![[0x44; 28]],
+        relays: Vec::new(),
+        pool_metadata: None,
+    }]);
     state.configure_pending_shelley_genesis_stake(vec![(credential, pool)]);
 
     let byron_block = Block {
@@ -278,6 +295,7 @@ fn pending_shelley_genesis_stake_activates_on_first_shelley_block() {
         .stake_credential_state(&credential)
         .expect("genesis stake credential should activate");
     assert_eq!(registered.delegated_pool(), Some(pool));
+    assert!(state.pool_state().is_registered(&pool));
 }
 
 // ---------------------------------------------------------------------------

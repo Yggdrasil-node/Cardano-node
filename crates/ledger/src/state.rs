@@ -17,7 +17,8 @@ use crate::eras::shelley::{ShelleyTxIn, ShelleyUtxo};
 use crate::protocol_params::DRepVotingThresholds;
 use crate::types::{
     Address, Anchor, BlockNo, DCert, DRep, EpochNo, GenesisDelegateHash, GenesisHash, MirPot,
-    MirTarget, Point, PoolKeyHash, RewardAccount, StakeCredential, UnitInterval, VrfKeyHash,
+    MirTarget, Point, PoolKeyHash, PoolParams, RewardAccount, StakeCredential, UnitInterval,
+    VrfKeyHash,
 };
 use crate::utxo::{MultiEraTxOut, MultiEraUtxo};
 use crate::{CborDecode, CborEncode, Decoder, Encoder, Era, LedgerError};
@@ -376,6 +377,9 @@ pub struct LedgerState {
     /// Shelley genesis stake delegations to activate when replay first
     /// reaches a Shelley-family block.
     pending_shelley_genesis_stake: Option<Vec<(StakeCredential, PoolKeyHash)>>,
+    /// Shelley genesis stake-pool registrations to activate when replay first
+    /// reaches a Shelley-family block.
+    pending_shelley_genesis_pools: Option<Vec<PoolParams>>,
     /// Genesis delegation entries awaiting activation on the first
     /// Shelley-family block.
     pending_shelley_genesis_delegs: Option<BTreeMap<GenesisHash, GenesisDelegationState>>,
@@ -543,6 +547,7 @@ impl LedgerState {
             enact_state: EnactState::default(),
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
+            pending_shelley_genesis_pools: None,
             pending_shelley_genesis_delegs: None,
             gen_delegs: BTreeMap::new(),
             future_gen_delegs: BTreeMap::new(),
@@ -638,6 +643,16 @@ impl LedgerState {
         entries: Vec<(StakeCredential, PoolKeyHash)>,
     ) {
         self.pending_shelley_genesis_stake = if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        };
+    }
+
+    /// Configures Shelley genesis stake pools that should become visible
+    /// only when replay first reaches a Shelley-family block.
+    pub fn configure_pending_shelley_genesis_pools(&mut self, entries: Vec<PoolParams>) {
+        self.pending_shelley_genesis_pools = if entries.is_empty() {
             None
         } else {
             Some(entries)
@@ -1313,6 +1328,7 @@ impl LedgerState {
         if self.current_era == Era::Byron {
             self.pending_shelley_genesis_utxo = base_state.pending_shelley_genesis_utxo.clone();
             self.pending_shelley_genesis_stake = base_state.pending_shelley_genesis_stake.clone();
+            self.pending_shelley_genesis_pools = base_state.pending_shelley_genesis_pools.clone();
             self.pending_shelley_genesis_delegs = base_state.pending_shelley_genesis_delegs.clone();
         }
     }
@@ -3701,8 +3717,13 @@ impl LedgerState {
 
         let utxo_entries = self.pending_shelley_genesis_utxo.take();
         let stake_entries = self.pending_shelley_genesis_stake.take();
+        let pool_entries = self.pending_shelley_genesis_pools.take();
         let deleg_entries = self.pending_shelley_genesis_delegs.take();
-        if utxo_entries.is_none() && stake_entries.is_none() && deleg_entries.is_none() {
+        if utxo_entries.is_none()
+            && stake_entries.is_none()
+            && pool_entries.is_none()
+            && deleg_entries.is_none()
+        {
             return;
         }
 
@@ -3710,6 +3731,12 @@ impl LedgerState {
             for (txin, txout) in entries {
                 self.shelley_utxo.insert(txin.clone(), txout.clone());
                 self.multi_era_utxo.insert_shelley(txin, txout);
+            }
+        }
+
+        if let Some(entries) = pool_entries {
+            for params in entries {
+                self.pool_state.register(params);
             }
         }
 

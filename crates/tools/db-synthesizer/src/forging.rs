@@ -16,15 +16,13 @@
 //! 4. Stops when [`ForgeLimit`] is reached
 //!    (`ForgeLimitSlot`/`ForgeLimitBlock`/`ForgeLimitEpoch`).
 //!
-//! ## Carve-outs (Phase 4 R3c-5 slice boundary)
+//! ## Slice boundary (post Phase 4 R3c-5)
 //!
 //! R3c-4 consumes the typed [`BlockProducerCredentials`] set and uses
 //! the shared node block-producer's Praos leader check + KES-signed
-//! `forgeBlock` surface. The remaining production gap is epoch-boundary
-//! stake-distribution rebuild (R3c-5): the leader-check stake fraction
-//! is supplied through [`ForgeRuntimeConfig`] until the synthesizer owns
-//! the same per-epoch ledger-view forecast that upstream gets from
-//! ChainDB.
+//! `forgeBlock` surface. R3c-5 wires the leader-check stake fraction
+//! to the same rotating ledger snapshots (`mark`/`set`/`go`) used by
+//! the node's forecast ledger view.
 //!
 //! What this slice DOES port: the `runForge` *control loop* shape,
 //! the `ForgeState` accumulator, the `ForgeLimit`-driven
@@ -40,8 +38,10 @@
 use yggdrasil_consensus::{
     ActiveSlotCoeff, EpochSize, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState,
 };
+use yggdrasil_crypto::blake2b::hash_bytes_224;
 use yggdrasil_ledger::{
-    Block, BlockHeader, BlockNo, Era, HeaderHash, LedgerState, Nonce, SlotNo, Tx,
+    Block, BlockHeader, BlockNo, EpochNo, Era, HeaderHash, LedgerState, Nonce, PoolKeyHash, SlotNo,
+    StakeSnapshots, Tx, apply_epoch_boundary, compute_stake_snapshot,
 };
 use yggdrasil_ledger::{CborDecode, ConwayBlock, Decoder};
 use yggdrasil_node_block_producer::{
@@ -50,6 +50,8 @@ use yggdrasil_node_block_producer::{
     make_block_context,
 };
 use yggdrasil_storage::{ImmutableStore, StorageError};
+
+use std::collections::BTreeMap;
 
 use crate::types::{ForgeLimit, ForgeResult};
 
@@ -71,6 +73,8 @@ pub struct ForgeState {
     pub ledger_state: LedgerState,
     /// Praos nonce-evolution state at the current forge tip.
     pub nonce_evolution: NonceEvolutionState,
+    /// Rotating active stake snapshots used by Praos leader election.
+    pub stake_snapshots: StakeSnapshots,
 }
 
 impl ForgeState {
@@ -78,6 +82,19 @@ impl ForgeState {
     /// extended with the genesis-seeded ledger and nonce state that
     /// Haskell supplies through `pInfoInitLedger` / `ChainDepState`.
     pub fn initial(ledger_state: LedgerState, nonce_evolution: NonceEvolutionState) -> Self {
+        let stake_snapshots = stake_snapshots_from_ledger_state(&ledger_state);
+        Self::initial_with_stake_snapshots(ledger_state, nonce_evolution, stake_snapshots)
+    }
+
+    /// Builds the initial forge state with an explicit ledger-view stake
+    /// snapshot. The db-synthesizer production path uses this for the
+    /// Shelley-genesis forecast snapshot before the first synthetic block
+    /// has activated the pending genesis stake inside [`LedgerState`].
+    pub fn initial_with_stake_snapshots(
+        ledger_state: LedgerState,
+        nonce_evolution: NonceEvolutionState,
+        stake_snapshots: StakeSnapshots,
+    ) -> Self {
         ForgeState {
             current_slot: SlotNo(0),
             forged: 0,
@@ -85,7 +102,24 @@ impl ForgeState {
             processed: SlotNo(0),
             ledger_state,
             nonce_evolution,
+            stake_snapshots,
         }
+    }
+}
+
+fn stake_snapshots_from_ledger_state(ledger_state: &LedgerState) -> StakeSnapshots {
+    let current = compute_stake_snapshot(
+        ledger_state.multi_era_utxo(),
+        ledger_state.stake_credentials(),
+        ledger_state.reward_accounts(),
+        ledger_state.pool_state(),
+    );
+    StakeSnapshots {
+        mark: current.clone(),
+        set: current.clone(),
+        go: current,
+        fee_pot: 0,
+        previous_fee_pot: 0,
     }
 }
 
@@ -156,6 +190,21 @@ fn replay_existing_chain<S: ImmutableStore>(
     Ok(())
 }
 
+fn replay_existing_chain_with_epoch_boundaries<S: ImmutableStore>(
+    store: &S,
+    epoch_size: u64,
+    state: &mut ForgeState,
+    nonce_config: &NonceEvolutionConfig,
+    nonce_derivation: NonceDerivation,
+) -> Result<(), ForgeError> {
+    for block in store.suffix_after(&yggdrasil_ledger::Point::Origin)? {
+        apply_epoch_boundaries_through_slot(epoch_size, state, block.header.slot_no)?;
+        let nonce_input = nonce_input_for_replayed_block(&block)?;
+        apply_block_to_state(state, &block, &nonce_input, nonce_config, nonce_derivation)?;
+    }
+    Ok(())
+}
+
 /// Errors from the forge loop.
 #[derive(Debug, thiserror::Error)]
 pub enum ForgeError {
@@ -204,6 +253,37 @@ fn next_forge_state(epoch_size: u64, state: &mut ForgeState, did_forge: bool) {
     state.forged += u64::from(did_forge);
     state.current_epoch = current_epoch;
     state.processed = processed;
+}
+
+fn apply_epoch_boundaries_through_slot(
+    epoch_size: u64,
+    state: &mut ForgeState,
+    slot: SlotNo,
+) -> Result<(), ForgeError> {
+    if epoch_size == 0 {
+        return Ok(());
+    }
+
+    let target_epoch = slot.0 / epoch_size;
+    while state.ledger_state.current_epoch().0 < target_epoch {
+        let new_epoch = EpochNo(state.ledger_state.current_epoch().0 + 1);
+        apply_epoch_boundary(
+            &mut state.ledger_state,
+            new_epoch,
+            &mut state.stake_snapshots,
+            &BTreeMap::new(),
+        )?;
+    }
+    Ok(())
+}
+
+fn advance_praos_forge_state(
+    epoch_size: u64,
+    state: &mut ForgeState,
+    did_forge: bool,
+) -> Result<(), ForgeError> {
+    next_forge_state(epoch_size, state, did_forge);
+    apply_epoch_boundaries_through_slot(epoch_size, state, state.current_slot)
 }
 
 /// Context for the block about to be forged — mirror of upstream
@@ -318,10 +398,6 @@ pub struct ForgeRuntimeConfig {
     pub nonce_derivation: NonceDerivation,
     /// Active slot coefficient `f` used by Praos leader election.
     pub active_slot_coeff: ActiveSlotCoeff,
-    /// Numerator of the producer's relative stake fraction.
-    pub sigma_num: u64,
-    /// Denominator of the producer's relative stake fraction.
-    pub sigma_den: u64,
     /// Maximum block body size for mempool prefix selection.
     pub max_block_body_size: u32,
     /// Protocol version embedded into forged Praos headers.
@@ -368,8 +444,6 @@ pub fn run_structural_forge<S: ImmutableStore>(
             nonce_config,
             nonce_derivation: NonceDerivation::TPraos,
             active_slot_coeff,
-            sigma_num: 1,
-            sigma_den: 1,
             max_block_body_size: u32::MAX,
             protocol_version: (0, 0),
         },
@@ -406,8 +480,8 @@ pub fn run_structural_forge_with_state<S: ImmutableStore>(
     while !forging_done(limit, &state) {
         // This slice always "forges" — there is no leader check, so
         // every processed slot produces exactly one block. Upstream's
-        // `goSlot` may return `NoLeader` and skip; that branch is part
-        // of the deferred Praos path.
+        // `goSlot` may return `NoLeader` and skip; that branch lives in
+        // the production Praos forge path below.
         let ctx = current_block_context(store)?;
         let block = synth_structural_block(era, ctx, state.current_slot);
         let nonce_input = structural_nonce_input(&block);
@@ -437,15 +511,17 @@ fn check_forgers_for_slot(
     forgers: &mut [BlockProducerCredentials],
     slot: SlotNo,
     epoch_nonce: Nonce,
+    stake_snapshots: &StakeSnapshots,
     runtime_config: &ForgeRuntimeConfig,
 ) -> Option<(usize, yggdrasil_node_block_producer::LeaderElectionResult)> {
     for (index, forger) in forgers.iter_mut().enumerate() {
+        let (sigma_num, sigma_den) = relative_stake_for_forger(stake_snapshots, forger);
         match check_should_forge(
             forger,
             slot,
             epoch_nonce,
-            runtime_config.sigma_num,
-            runtime_config.sigma_den,
+            sigma_num,
+            sigma_den,
             &runtime_config.active_slot_coeff,
         ) {
             ShouldForge::ShouldForge(election) => return Some((index, election)),
@@ -455,6 +531,21 @@ fn check_forgers_for_slot(
         }
     }
     None
+}
+
+fn pool_key_hash_for_forger(forger: &BlockProducerCredentials) -> PoolKeyHash {
+    hash_bytes_224(&forger.issuer_vkey.to_bytes()).0
+}
+
+fn relative_stake_for_forger(
+    stake_snapshots: &StakeSnapshots,
+    forger: &BlockProducerCredentials,
+) -> (u64, u64) {
+    let pool = pool_key_hash_for_forger(forger);
+    stake_snapshots
+        .set
+        .pool_stake_distribution()
+        .relative_stake(&pool)
 }
 
 /// Drive the upstream-shaped Praos forge loop with caller-supplied
@@ -485,8 +576,9 @@ pub fn run_forge<S: ImmutableStore>(
         });
     }
 
-    replay_existing_chain(
+    replay_existing_chain_with_epoch_boundaries(
         store,
+        epoch_size,
         &mut state,
         &runtime_config.nonce_config,
         runtime_config.nonce_derivation,
@@ -499,13 +591,17 @@ pub fn run_forge<S: ImmutableStore>(
     while !forging_done(limit, &state) {
         let epoch_nonce = state.nonce_evolution.epoch_nonce;
         let Some(context) = current_producer_block_context(store, state.current_slot)? else {
-            next_forge_state(epoch_size, &mut state, false);
+            advance_praos_forge_state(epoch_size, &mut state, false)?;
             continue;
         };
-        let Some((forger_index, election)) =
-            check_forgers_for_slot(forgers, state.current_slot, epoch_nonce, &runtime_config)
-        else {
-            next_forge_state(epoch_size, &mut state, false);
+        let Some((forger_index, election)) = check_forgers_for_slot(
+            forgers,
+            state.current_slot,
+            epoch_nonce,
+            &state.stake_snapshots,
+            &runtime_config,
+        ) else {
+            advance_praos_forge_state(epoch_size, &mut state, false)?;
             continue;
         };
 
@@ -534,7 +630,7 @@ pub fn run_forge<S: ImmutableStore>(
         store.append_block(block)?;
         state.ledger_state = next_state.ledger_state;
         state.nonce_evolution = next_state.nonce_evolution;
-        next_forge_state(epoch_size, &mut state, true);
+        advance_praos_forge_state(epoch_size, &mut state, true)?;
     }
 
     Ok(ForgeRunOutcome {
@@ -549,9 +645,14 @@ pub fn run_forge<S: ImmutableStore>(
 mod tests {
     use super::*;
     use yggdrasil_consensus::OpCert;
+    use yggdrasil_crypto::blake2b::hash_bytes_256;
     use yggdrasil_crypto::ed25519::SigningKey;
     use yggdrasil_crypto::sum_kes::{derive_sum_kes_vk, gen_sum_kes_signing_key};
     use yggdrasil_crypto::vrf::VrfSecretKey;
+    use yggdrasil_ledger::{
+        Delegations, IndividualStake, PoolParams, RewardAccount, StakeCredential, StakeSnapshot,
+        UnitInterval,
+    };
     use yggdrasil_storage::InMemoryImmutable;
 
     fn test_forge_state() -> ForgeState {
@@ -571,8 +672,6 @@ mod tests {
             },
             nonce_derivation: NonceDerivation::TPraos,
             active_slot_coeff: ActiveSlotCoeff::new(1.0).unwrap(),
-            sigma_num: 1,
-            sigma_den: 1,
             max_block_body_size: 65_536,
             protocol_version: (9, 0),
         }
@@ -583,6 +682,62 @@ mod tests {
             nonce_derivation: NonceDerivation::Praos,
             ..test_runtime_config(epoch_size)
         }
+    }
+
+    fn test_pool_params(forger: &BlockProducerCredentials) -> PoolParams {
+        let pool = pool_key_hash_for_forger(forger);
+        PoolParams {
+            operator: pool,
+            vrf_keyhash: hash_bytes_256(&forger.vrf_verification_key.to_bytes()).0,
+            pledge: 0,
+            cost: 0,
+            margin: UnitInterval {
+                numerator: 0,
+                denominator: 1,
+            },
+            reward_account: RewardAccount {
+                network: 0,
+                credential: StakeCredential::AddrKeyHash(pool),
+            },
+            pool_owners: vec![pool],
+            relays: Vec::new(),
+            pool_metadata: None,
+        }
+    }
+
+    fn stake_snapshots_for(entries: &[(&BlockProducerCredentials, u64)]) -> StakeSnapshots {
+        let mut stake = IndividualStake::new();
+        let mut delegations = Delegations::new();
+        let mut pool_params = BTreeMap::new();
+
+        for (forger, amount) in entries {
+            let pool = pool_key_hash_for_forger(forger);
+            let credential = StakeCredential::AddrKeyHash(pool);
+            stake.add(credential, *amount);
+            delegations.insert(credential, pool);
+            pool_params.insert(pool, test_pool_params(forger));
+        }
+
+        let snapshot = StakeSnapshot {
+            stake,
+            delegations,
+            pool_params,
+        };
+        StakeSnapshots {
+            mark: snapshot.clone(),
+            set: snapshot.clone(),
+            go: snapshot,
+            fee_pot: 0,
+            previous_fee_pot: 0,
+        }
+    }
+
+    fn test_forge_state_with_stake(forgers: &[(&BlockProducerCredentials, u64)]) -> ForgeState {
+        ForgeState::initial_with_stake_snapshots(
+            LedgerState::new(Era::Byron),
+            NonceEvolutionState::new(Nonce::Neutral),
+            stake_snapshots_for(forgers),
+        )
     }
 
     fn test_praos_credentials(seed: u8) -> BlockProducerCredentials {
@@ -901,7 +1056,7 @@ mod tests {
             SlotNo(0),
             ForgeLimit::Block(2),
             &mut store,
-            test_forge_state(),
+            test_forge_state_with_stake(&[(&forgers[0], 1)]),
             test_praos_runtime_config(100),
             &mut forgers,
         )
@@ -926,8 +1081,6 @@ mod tests {
     fn run_forge_praos_not_leader_advances_processed_without_appending() {
         let mut store = InMemoryImmutable::default();
         let mut forgers = vec![test_praos_credentials(0x41)];
-        let mut runtime_config = test_praos_runtime_config(10);
-        runtime_config.sigma_num = 0;
 
         let outcome = run_forge(
             10,
@@ -935,7 +1088,7 @@ mod tests {
             ForgeLimit::Slot(SlotNo(3)),
             &mut store,
             test_forge_state(),
-            runtime_config,
+            test_praos_runtime_config(10),
             &mut forgers,
         )
         .unwrap();
@@ -955,7 +1108,7 @@ mod tests {
             SlotNo(0),
             ForgeLimit::Block(3),
             &mut one_shot,
-            test_forge_state(),
+            test_forge_state_with_stake(&[(&one_shot_forgers[0], 1)]),
             test_praos_runtime_config(100),
             &mut one_shot_forgers,
         )
@@ -968,7 +1121,7 @@ mod tests {
             SlotNo(0),
             ForgeLimit::Block(2),
             &mut appended,
-            test_forge_state(),
+            test_forge_state_with_stake(&[(&first_forgers[0], 1)]),
             test_praos_runtime_config(100),
             &mut first_forgers,
         )
@@ -979,7 +1132,7 @@ mod tests {
             SlotNo(2),
             ForgeLimit::Block(1),
             &mut appended,
-            test_forge_state(),
+            test_forge_state_with_stake(&[(&second_forgers[0], 1)]),
             test_praos_runtime_config(100),
             &mut second_forgers,
         )

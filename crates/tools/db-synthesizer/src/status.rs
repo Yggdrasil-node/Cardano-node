@@ -3,9 +3,9 @@
 //! The forge-loop control path, `preOpenChainDB` supervisor, genesis
 //! loading, consensus-protocol construction, leader credentials, evolving
 //! ledger / nonce state, and Praos leader-check + KES-signed block forge
-//! are now wired through the production path. The remaining known
-//! production gap is the epoch-boundary stake-distribution rebuild that
-//! upstream derives from the ledger view before calling `checkShouldForge`.
+//! are now wired through the production path. The leader-check stake
+//! fraction is derived from the rotating ledger-view stake snapshots
+//! before calling `checkShouldForge`.
 //!
 //! Mirrors the precedent set by cardano-tracer's R424-R429
 //! carve-out inventory + snapshot-converter + kes-agent-control.
@@ -13,13 +13,13 @@
 //! ## Naming parity
 //!
 //! **Strict mirror:** none. Yggdrasil-side documentation
-//! infrastructure for the db-synthesizer deferred carve-outs.
+//! infrastructure for the db-synthesizer parity status surface.
 
-/// Status descriptor for the partially-deferred forge surface.
+/// Status descriptor for the forge surface.
 ///
-/// Praos leader checking and KES-signed block forging are live. This
-/// descriptor tracks the remaining epoch-boundary stake-distribution
-/// rebuild plus the later ChainDB byte-equivalence soak.
+/// Praos leader checking, stake-based sigma, and KES-signed block forging
+/// are live. This descriptor tracks the remaining ChainDB byte-equivalence
+/// soak.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ForgeLoopStatus {
     /// One-line summary of what is implemented vs. deferred.
@@ -35,17 +35,16 @@ pub struct ForgeLoopStatus {
 /// Get the status descriptor for the db-synthesizer forge surface.
 ///
 /// R3c-4 wires the production path to the shared block-producer
-/// `checkShouldForge` / `forgeBlock` equivalents. R3c-5 remains: rebuild
-/// the epoch stake distribution from the forecast ledger view instead of
-/// using the current full-stake synthesizer placeholder.
+/// `checkShouldForge` / `forgeBlock` equivalents. R3c-5 derives the
+/// epoch stake distribution from the ledger-view snapshots.
 pub fn forge_loop_status() -> ForgeLoopStatus {
     ForgeLoopStatus {
-        status: "partial - forge control loop + ChainDB supervisor + genesis loading \
-                 + consensus protocol + leader credentials + Praos leader-check/KES forge live; \
-                 epoch stake-distribution rebuild deferred",
-        depends_on: "R3c-5 stake-distribution rebuild from the forecast ledger view, \
-                     then the integration byte-equivalence soak against upstream db-synthesizer.",
-        deferred_round: "R3c-5 of the Phase 4 db-synthesizer sister-tool arc",
+        status: "functional - forge control loop + ChainDB supervisor + genesis loading \
+                 + consensus protocol + leader credentials + stake-based Praos \
+                 leader-check/KES forge live; ChainDB byte-equivalence soak remains",
+        depends_on: "integration byte-equivalence soak against upstream db-synthesizer \
+                     ChainDB output.",
+        deferred_round: "Phase 4 db-synthesizer closeout soak",
         upstream_reference: ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/{Forging,Run}.hs",
     }
 }
@@ -55,14 +54,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn forge_loop_status_describes_partial_state() {
+    fn forge_loop_status_describes_functional_state() {
         let s = forge_loop_status();
-        assert!(s.status.contains("partial"));
+        assert!(s.status.contains("functional"));
         assert!(s.status.contains("Praos leader-check"));
         assert!(s.status.contains("KES forge"));
-        assert!(s.depends_on.contains("stake-distribution"));
         assert!(s.depends_on.contains("byte-equivalence"));
-        assert!(s.deferred_round.contains("R3c-5"));
+        assert!(s.deferred_round.contains("closeout"));
         assert!(s.upstream_reference.contains("Forging"));
         // The reference uses brace-expansion for the Forging+Run pair.
         assert!(s.upstream_reference.contains("Run"));

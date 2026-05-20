@@ -21,7 +21,7 @@
 //!   the consensus protocol, build the initial ledger / nonce forge
 //!   state, read leader credentials, then drive the Praos forge loop.
 //!
-//! ## Carve-out (Phase 4 R3 slice boundary)
+//! ## Slice boundary (post Phase 4 R3c-5)
 //!
 //! - **`initialize` — protocol-building half.** Upstream's
 //!   `initProtocol` builds `CardanoProtocolParams` via
@@ -31,9 +31,9 @@
 //!   [`load_consensus_protocol`] / [`mk_consensus_protocol_cardano`]
 //!   the [`CardanoProtocolParams`] aggregate. R3c-4 consumes it for
 //!   Praos leader checking and KES-signed block forging.
-//! - **Epoch-boundary stake rebuild** — this slice uses the supplied
-//!   block-producer credentials with a full-stake synthesizer lottery
-//!   until R3c-5 ports the upstream stake-distribution rebuild.
+//! - **Epoch-boundary stake rebuild** — R3c-5 derives the Praos leader
+//!   sigma from the rotating ledger-view stake snapshots, including
+//!   Shelley genesis staking pools and delegations.
 //!
 //! What this slice DOES port faithfully: the `preOpenChainDB` mode
 //! semantics (directory creation, the `OpenCreate`-refuses-non-empty
@@ -47,6 +47,9 @@ use std::path::Path;
 use yggdrasil_consensus::{
     ActiveSlotCoeff, EpochSize, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState,
 };
+use yggdrasil_ledger::{
+    Address, Delegations, IndividualStake, StakeCredential, StakeSnapshot, StakeSnapshots,
+};
 use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, SlotNo};
 use yggdrasil_node_block_producer::{
     BlockProducerCredentials, BlockProducerError, load_block_producer_credentials,
@@ -55,9 +58,9 @@ use yggdrasil_node_block_producer::{
 use yggdrasil_node_config::MAINNET_NETWORK_MAGIC;
 use yggdrasil_node_genesis::{
     AlonzoGenesis, BaseLedgerStateInputs, ByronGenesisUtxoEntry, ConwayGenesis, ShelleyGenesis,
-    build_genesis_enact_state, build_protocol_parameters, build_shelley_genesis_bootstrap,
-    compute_genesis_file_hash, genesis_extra_entropy_to_nonce, load_alonzo_genesis,
-    load_byron_genesis_utxo, load_conway_genesis, load_shelley_genesis,
+    ShelleyGenesisBootstrap, build_genesis_enact_state, build_protocol_parameters,
+    build_shelley_genesis_bootstrap, compute_genesis_file_hash, genesis_extra_entropy_to_nonce,
+    load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis, load_shelley_genesis,
     shelley_genesis_hash_to_praos_nonce,
 };
 use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
@@ -307,8 +310,11 @@ fn synthesize_with_forge_state(
     runtime_config: ForgeRuntimeConfig,
     forgers: &mut [BlockProducerCredentials],
 ) -> Result<SynthesizeOutcome, RunError> {
-    let forge_state =
-        ForgeState::initial(initial_state.ledger_state, initial_state.nonce_evolution);
+    let forge_state = ForgeState::initial_with_stake_snapshots(
+        initial_state.ledger_state,
+        initial_state.nonce_evolution,
+        initial_state.stake_snapshots,
+    );
 
     if forgers.is_empty() {
         return Ok(SynthesizeOutcome {
@@ -657,6 +663,43 @@ pub struct InitialForgeState {
     pub ledger_state: LedgerState,
     /// Initial Praos nonce-evolution state.
     pub nonce_evolution: NonceEvolutionState,
+    /// Initial forecast stake snapshots used for leader election before
+    /// the first synthetic block activates pending Shelley genesis stake.
+    pub stake_snapshots: StakeSnapshots,
+}
+
+fn stake_snapshots_from_shelley_bootstrap(bootstrap: &ShelleyGenesisBootstrap) -> StakeSnapshots {
+    let mut stake = IndividualStake::new();
+    let mut delegations = Delegations::new();
+
+    for (stake_hash, pool_hash) in &bootstrap.staking {
+        delegations.insert(StakeCredential::AddrKeyHash(*stake_hash), *pool_hash);
+    }
+
+    for (_, txout) in &bootstrap.initial_funds {
+        let Some(Address::Base(base)) = Address::from_bytes(&txout.address) else {
+            continue;
+        };
+        let StakeCredential::AddrKeyHash(stake_hash) = base.staking else {
+            continue;
+        };
+        if bootstrap.staking.contains_key(&stake_hash) {
+            stake.add(base.staking, txout.amount);
+        }
+    }
+
+    let snapshot = StakeSnapshot {
+        stake,
+        delegations,
+        pool_params: bootstrap.staking_pools.clone(),
+    };
+    StakeSnapshots {
+        mark: snapshot.clone(),
+        set: snapshot.clone(),
+        go: snapshot,
+        fee_pot: 0,
+        previous_fee_pot: 0,
+    }
 }
 
 /// Build the synthesizer's [`InitialForgeState`] from a loaded genesis
@@ -668,6 +711,8 @@ pub struct InitialForgeState {
 /// db-synthesizer and the node seed a byte-identical initial ledger
 /// state, and seeds `NonceEvolutionState` from the genesis Praos nonce.
 fn build_initial_forge_state(bundle: &GenesisBundle) -> Result<InitialForgeState, RunError> {
+    let shelley_bootstrap = build_shelley_genesis_bootstrap(&bundle.shelley)?;
+    let stake_snapshots = stake_snapshots_from_shelley_bootstrap(&shelley_bootstrap);
     let inputs = BaseLedgerStateInputs {
         // The node derives the network id from the mandatory
         // `NodeConfigFile::network_magic`; the synthesizer falls back
@@ -679,7 +724,7 @@ fn build_initial_forge_state(bundle: &GenesisBundle) -> Result<InitialForgeState
             .map(|m| u8::from(m == MAINNET_NETWORK_MAGIC))
             .unwrap_or(0),
         byron_entries: bundle.byron.clone(),
-        shelley_bootstrap: Some(build_shelley_genesis_bootstrap(&bundle.shelley)?),
+        shelley_bootstrap: Some(shelley_bootstrap),
         protocol_params: Some(build_protocol_parameters(
             &bundle.shelley,
             &bundle.alonzo,
@@ -700,6 +745,7 @@ fn build_initial_forge_state(bundle: &GenesisBundle) -> Result<InitialForgeState
     Ok(InitialForgeState {
         ledger_state: yggdrasil_node_genesis::build_base_ledger_state(inputs),
         nonce_evolution: NonceEvolutionState::new(bundle.praos_nonce),
+        stake_snapshots,
     })
 }
 
@@ -724,11 +770,6 @@ fn build_forge_runtime_config(
         },
         nonce_derivation: NonceDerivation::Praos,
         active_slot_coeff,
-        // R3c-4 consumes the real Praos leader-check path. R3c-5 will
-        // replace this synthesizer-wide stake placeholder with the
-        // upstream epoch-boundary stake-distribution rebuild.
-        sigma_num: 1,
-        sigma_den: 1,
         max_block_body_size: bundle.shelley.protocol_params.max_block_body_size,
         protocol_version,
     })

@@ -337,6 +337,7 @@ impl CborDecode for LedgerState {
             blocks_made_prev,
             pending_shelley_genesis_utxo: None,
             pending_shelley_genesis_stake: None,
+            pending_shelley_genesis_pools: None,
             pending_shelley_genesis_delegs: None,
             // Runtime-only fields — not serialized, re-set from genesis.
             max_lovelace_supply: 0,

@@ -5,6 +5,16 @@
 use super::*;
 use yggdrasil_plutus::{DefaultFun, cost_model::CostExpr};
 
+fn hex_of(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut acc, byte| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{byte:02x}");
+            acc
+        })
+}
+
 fn sample_shelley() -> ShelleyGenesis {
     ShelleyGenesis {
         system_start: Some("2022-04-01T00:00:00Z".to_owned()),
@@ -352,6 +362,67 @@ fn build_shelley_genesis_bootstrap_parses_stake_delegations() {
     let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
     assert_eq!(bootstrap.staking.len(), 1);
     assert_eq!(bootstrap.staking.get(&[0x11; 28]), Some(&[0x22; 28]));
+}
+
+#[test]
+fn build_shelley_genesis_bootstrap_parses_stake_pools() {
+    let mut shelley = sample_shelley();
+    let pool = [0x22; 28];
+    let vrf = [0x33; 32];
+    let owner = [0x44; 28];
+    let pool_hex = hex_of(&pool);
+    let owner_hex = hex_of(&owner);
+
+    shelley.staking.pools.insert(
+        pool_hex.clone(),
+        ShelleyGenesisPoolParams {
+            pool_id: Some(pool_hex.clone()),
+            vrf: hex_of(&vrf),
+            pledge: 123,
+            cost: 456,
+            margin: GenesisRational {
+                numerator: 1,
+                denominator: 10,
+            },
+            account_address: serde_json::json!({
+                "network": "Testnet",
+                "credential": { "keyHash": owner_hex }
+            }),
+            owners: vec![hex_of(&owner)],
+            relays: vec![serde_json::json!({
+                "single host name": { "port": 3001, "dnsName": "relay.example" }
+            })],
+            metadata: Some(ShelleyGenesisPoolMetadata {
+                url: "https://example.test/pool.json".to_owned(),
+                hash: hex_of(&[0x55; 32]),
+            }),
+        },
+    );
+
+    let bootstrap = build_shelley_genesis_bootstrap(&shelley).expect("build bootstrap");
+    let params = bootstrap
+        .staking_pools
+        .get(&pool)
+        .expect("pool parsed from genesis staking");
+    assert_eq!(params.operator, pool);
+    assert_eq!(params.vrf_keyhash, vrf);
+    assert_eq!(params.pledge, 123);
+    assert_eq!(params.cost, 456);
+    assert_eq!(params.pool_owners, vec![owner]);
+    assert_eq!(
+        params.relays,
+        vec![Relay::SingleHostName(
+            Some(3001),
+            "relay.example".to_owned()
+        )]
+    );
+    assert_eq!(
+        params
+            .pool_metadata
+            .as_ref()
+            .map(|metadata| metadata.url.as_str()),
+        Some("https://example.test/pool.json")
+    );
 }
 
 #[test]

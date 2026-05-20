@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "reviewed_at_utc": "2026-05-16T00:00:00Z",
+  "reviewed_at_utc": "2026-05-20T00:00:00Z",
   "reference": {
     "repo": "IntersectMBO/cardano-node",
     "tag": "11.0.1",
@@ -796,8 +796,8 @@
       "id": "sister-tool.db-synthesizer",
       "area": "sister-tools",
       "feature": "Synthetic chain generator — pure-Rust port mirroring upstream Cardano.Tools.DBSynthesizer.* + app/db-synthesizer.hs.",
-      "status": "partial",
-      "next_milestone": "R442",
+      "status": "implemented_needs_11_0_1_evidence",
+      "next_milestone": "R533",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/",
@@ -807,7 +807,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/db-synthesizer/",
-          "role": "Yggdrasil pure-Rust port — R335 skeleton + R354 typed-config surface + R364 typed-parser sweep + R378 Orphans (JSON deserialization + AdjustFilePaths trait) + Phase 4 R1 forge-loop slice (forging.rs ports Forging.hs runForge; run.rs ports Run.hs preOpenChainDB + synthesize). Genesis loading (R2) + the Praos VRF/KES/OpCert forge path (R3) remain."
+          "role": "Yggdrasil pure-Rust port — R335 skeleton + R354 typed-config surface + R364 typed-parser sweep + R378 Orphans (JSON deserialization + AdjustFilePaths trait) + Phase 4 R1/R2/R3b/R3c forge path through R532. Remaining: upstream Haskell ChainDB byte-equivalence soak before verified_11_0_1 promotion."
         }
       ],
       "implemented_evidence": [
@@ -815,11 +815,10 @@
         "Byte-equivalent --help and --version captured from upstream db-synthesizer binary as `tests/fixtures/upstream-{help,version}.txt` and embedded via include_str!.",
         "R354 typed-config surface: types.rs ports the full upstream Types.hs surface — NodeConfigStub (6-field record with serde_json::Value for the untyped node-config JSON, optional Dijkstra-genesis-file), NodeFilePaths (config + chain_db), NodeCredentials (cert/VRF/KES/bulk Option<PathBuf> 4-tuple), ForgeLimit (Block u64 | Slot SlotNo | Epoch u64), ForgeResult newtype (forged: i64), DBSynthesizerOpenMode (OpenCreate [default] | OpenCreateForce | OpenAppend), DBSynthesizerOptions (limit + open_mode), DBSynthesizerConfig (5-field record). Carve-outs documented: Aeson.Value → serde_json::Value; ProtocolFilepaths collapsed to NodeCredentials struct of paths; ShelleyGenesis kept as serde_json::Value at the surface layer (typed parsing happens in yggdrasil-ledger when actually loaded). 16 db-synthesizer tests at R354 (was 8 at R335 + 8 types unit + 0 changes to parser tests).",
         "R378 Orphans.hs port: orphans.rs ports the JSON-deserialization + file-path-adjustment surface used by db-synthesizer's typed config types — AdjustFilePaths trait + impls for NodeConfigStub (5 paths adjusted, including Option<Dijkstra>) and NodeCredentials (4 Option<PathBuf> paths adjusted), plus a custom serde::Deserialize impl on NodeConfigStub enforcing the upstream `Protocol = Cardano` assertion (with byte-equivalent error messages) + parse_node_config_stub() public entry-point + NodeConfigStubParseError enum (5 variants). Carve-outs: NodeHardForkProtocolConfiguration + NodeByronProtocolConfiguration FromJSON instances NOT ported (upstream's own DUPLICATE comment marks them as re-implementations to avoid an import cycle on Cardano.Node.Configuration.POM; Yggdrasil-side parallels live in crates/node/config/src/lib.rs). 13 orphans.rs unit tests covering complete-stub round-trip + missing-Dijkstra + explicit-null-Dijkstra + non-object rejection + wrong-Protocol rejection (with upstream-exact error wording) + missing-Protocol + missing-required-genesis + non-string-genesis-path + node_config preservation + adjust_file_paths for NodeConfigStub all-paths + NodeConfigStub None-Dijkstra pass-through + adjust_file_paths for NodeCredentials all-present-paths + NodeCredentials all-None pass-through. Adds serde workspace dependency (was serde_json-only).",
-        "Phase 4 R1 forge-loop slice: forging.rs ports Cardano.Tools.DBSynthesizer.Forging — the runForge control loop (ForgeState accumulator, forgingDone / nextForgeState slot+epoch arithmetic, BlockContext prev-hash derivation) + synth_structural_block, a deterministic non-Praos structurally-valid Block (empty tx list; Blake2b-256 header hash over prev_hash||slot||block_no; genuinely prev-hash-threaded). run.rs ports Cardano.Tools.DBSynthesizer.Run — preOpenChainDB mode semantics (OpenCreate / OpenCreateForce / OpenAppend; the checkIsDB sub-directory heuristic) + synthesize (open ChainDB via FileImmutable, tip-driven resume slot, drive run_forge). lib.rs::run dispatches through synthesize_default; the ForgeLoopDeferred stub is retired. ~30 unit tests + 7 tests/integration.rs end-to-end tests (argv → run → on-disk ChainDB reopened by FileImmutable; block count, prev-hash threading, create/append/force semantics, determinism). Carve-outs explicit in the module docstrings: genesis loading is the R2 slice; the Praos VRF/KES/OpCert forge path is the R3 slice."
+        "Phase 4 R1 forge-loop slice: forging.rs ports Cardano.Tools.DBSynthesizer.Forging — the runForge control loop (ForgeState accumulator, forgingDone / nextForgeState slot+epoch arithmetic, BlockContext prev-hash derivation) + synth_structural_block, a deterministic non-Praos structurally-valid Block (empty tx list; Blake2b-256 header hash over prev_hash||slot||block_no; genuinely prev-hash-threaded). run.rs ports Cardano.Tools.DBSynthesizer.Run — preOpenChainDB mode semantics (OpenCreate / OpenCreateForce / OpenAppend; the checkIsDB sub-directory heuristic) + synthesize (open ChainDB via FileImmutable, tip-driven resume slot, drive run_forge). lib.rs::run dispatches through synthesize_default; the ForgeLoopDeferred stub is retired. ~30 unit tests + 7 tests/integration.rs end-to-end tests (argv → run → on-disk ChainDB reopened by FileImmutable; block count, prev-hash threading, create/append/force semantics, determinism).",
+        "R504-R532 db-synthesizer forge path: R2 loads real node/Shelley genesis inputs; R3b threads multi-era protocol parameters; R3c wires genesis-seeded ledger state, bulk credentials, Praos VRF/KES/OpCert forging, epoch-boundary ledger replay, and R532 leader sigma from rotating ledger-view stake snapshots instead of the former full-stake placeholder. Local focused validation: `cargo check -p yggdrasil-db-synthesizer` and `cargo test -p yggdrasil-db-synthesizer` green."
       ],
       "remaining_work": [
-        "Phase 4 R2 — genesis loading: port Run.hs `initialize` (parse config.json's NodeConfigStub, load + validate ShelleyGenesis, build CardanoProtocolParams) so the epoch length + era come from real genesis instead of the STUB_EPOCH_SIZE / SYNTH_ERA placeholders.",
-        "Phase 4 R3 — Praos forge path: replace synth_structural_block's deterministic non-Praos structural blocks with the real per-slot leader check (checkShouldForge — VRF/KES/OpCert) + KES-signed forgeBlock, leveraging crates/node/block-producer.",
         "Integration: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/db-synthesizer.",
         "Closeout: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],

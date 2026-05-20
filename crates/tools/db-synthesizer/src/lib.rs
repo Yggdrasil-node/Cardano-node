@@ -3,12 +3,12 @@
 //!
 //! ## Naming parity
 //!
-//! **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern
-//! file-mirror + CLI-parser skeleton for the `db-synthesizer` sister-tool crate.
-//! Per-leaf module mirrors land in subsequent rounds per the
-//! Sister-Tools Pure-Rust Port plan.
+//! **Strict mirror:** none. Yggdrasil-side parent shell for the
+//! `db-synthesizer` sister-tool crate. The leaf modules below carry the
+//! upstream file mirrors for the typed config, parser, forge, run, and
+//! orphan-instance surfaces.
 //!
-//! Layout mapping (Phase 4 R1 ships forging.rs + run.rs):
+//! Layout mapping:
 //!
 //! | Upstream `.hs`                                | Yggdrasil `.rs`              |
 //! |-----------------------------------------------|------------------------------|
@@ -77,10 +77,9 @@ pub fn run_main() -> ExitCode {
 /// Mirror of upstream `app/db-synthesizer.hs`'s `main`:
 /// `initialize paths creds forgeOpts >>= either die (synthesize ...)`.
 ///
-/// **Remaining gap:** R3c-5 still has to rebuild the per-epoch stake
-/// distribution from the forecast ledger view. Until that lands, the
-/// synthesizer uses its temporary full-stake lottery placeholder while
-/// still producing Praos-forged blocks through `crates/node/block-producer`.
+/// **Remaining gate:** the production forge path now derives per-forger
+/// stake from the rotating ledger-view snapshots. Final operator swap-in
+/// remains gated on the upstream ChainDB byte-equivalence soak.
 pub fn run(args: &parser::Args) -> eyre::Result<()> {
     let outcome = run::synthesize_from_config(
         args.options,

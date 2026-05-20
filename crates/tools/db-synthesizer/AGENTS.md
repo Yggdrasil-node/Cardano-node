@@ -1,8 +1,8 @@
 # Guidance for the pure-Rust port of upstream `db-synthesizer`.
 
-**Status:** `partial` (Phase 4 R1/R2/R3b/R3c-1..R3c-4 shipped —
-see below). The Praos VRF/KES/OpCert forge path is live; the remaining
-R3c gap is epoch-boundary stake-distribution rebuild, followed by the
+**Status:** `functional` (Phase 4 R1/R2/R3b/R3c-1..R3c-5 shipped —
+see below). The Praos VRF/KES/OpCert forge path is live and leader
+sigma is derived from ledger-view stake snapshots. Remaining gate:
 upstream ChainDB byte-equivalence soak. Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
@@ -22,7 +22,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `crates/node/block-producer/src/lib.rs` forging logic.
 
-## Current functional surface (post Phase 4 R3c-4)
+## Current functional surface (post Phase 4 R3c-5)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -80,24 +80,27 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
   `forgeBlock` equivalents: VRF/KES/OpCert leader checking, KES-signed
   headers, raw Conway block CBOR persistence, and no-forgers early
   return.
-- 🟡 Stake-distribution rebuild (Phase 4 R3c-5) — the R3c-4 path uses
-  the temporary full-stake synthesizer lottery until the upstream
-  forecast-ledger-view stake snapshot is ported.
+- ✅ Stake-distribution rebuild (Phase 4 R3c-5) — the production
+  forge path derives per-forger Praos sigma from `StakeSnapshots.set`,
+  seeds the initial forecast snapshot from Shelley genesis
+  `staking.pools` / `staking.stake` / `initialFunds`, activates
+  genesis pools on the first Shelley-family block, and runs epoch
+  boundaries through the shared ledger `apply_epoch_boundary` path.
 - ❌ Byte-equivalence soak vs the upstream binary's ChainDB chunk
   format — deferred to the integration round.
 
-## Carve-out inventory (Phase 4 R3 deferral surface)
+## Closeout inventory (post Phase 4 R3c-5)
 
 The Phase 4 R1 forge-loop slice (`forging.rs` + `run.rs`), the R2
 genesis-loading slice (`run::synthesize_from_config`), the R3b
-consensus-protocol slice, and R3c-1..R3c-4 state / credential /
-Praos-forge slices are shipped.
+consensus-protocol slice, and R3c-1..R3c-5 state / credential /
+Praos-forge / stake-distribution slices are shipped.
 `crates/tools/db-synthesizer/src/status.rs` ships `forge_loop_status()`
-returning a `ForgeLoopStatus` descriptor of the one surviving carve-out:
+returning a `ForgeLoopStatus` descriptor of the remaining closeout gate:
 
 | Carve-out         | Slice | Deferral rationale (one-liner)                                            |
 |-------------------|-------|---------------------------------------------------------------------------|
-| Stake-distribution rebuild | R3c-5 | Replace the temporary full-stake synthesizer lottery with upstream's forecast-ledger-view stake distribution before final byte-equivalence soak. |
+| ChainDB byte-equivalence soak | closeout | Compare yggdrasil output against upstream `db-synthesizer` chunk output with matching staked genesis + credentials before operator swap-in. |
 
 ## Build + run
 
@@ -114,8 +117,8 @@ target/release/db-synthesizer --help
 ```
 
 The binary is named `db-synthesizer` (matching upstream exactly).
-Operator swap-in remains gated on the R3c-5 stake-distribution rebuild
-and the upstream ChainDB byte-equivalence soak.
+Operator swap-in remains gated on the upstream ChainDB
+byte-equivalence soak.
 
 ##  Rules *Non-Negotiable*
 
@@ -138,10 +141,8 @@ Per the R326-R459 plan plus the R3c closeout slices, this crate's full
 implementation lands across the named mini-arc rounds:
 
 - ✅ Skeleton shipped (R327 + R335-pattern bulk skeleton at R335-R336).
-- ✅ R1/R2/R3b/R3c-1..R3c-4 shipped through the Praos forge path.
-- 🟡 Next: **R3c-5** — rebuild epoch stake distribution from the
-  forecast ledger view instead of the temporary full-stake synthesizer
-  lottery.
+- ✅ R1/R2/R3b/R3c-1..R3c-5 shipped through the stake-based Praos
+  forge path.
 - 🟡 Closeout — when all subcommands are functional, parity-matrix
   entry advances `partial → verified_11_0_1`. Operators can then
   swap upstream binary for the yggdrasil binary without script

@@ -53,8 +53,8 @@ use yggdrasil_ledger::protocol_params::{CostModels, DRepVotingThresholds, PoolVo
 use yggdrasil_ledger::types::UnitInterval;
 use yggdrasil_ledger::{
     AddrKeyHash, Address, Anchor, EnactState, Era, GenesisDelegateHash, GenesisDelegationState,
-    GenesisHash, LedgerState, Nonce, PoolKeyHash, ProtocolParameters, ShelleyTxIn, ShelleyTxOut,
-    StakeCredential, VrfKeyHash,
+    GenesisHash, LedgerState, Nonce, PoolKeyHash, PoolMetadata, PoolParams, ProtocolParameters,
+    Relay, RewardAccount, ShelleyTxIn, ShelleyTxOut, StakeCredential, VrfKeyHash,
 };
 use yggdrasil_plutus::{BuiltinSemanticsVariant, CostModel, CostModelError};
 
@@ -270,9 +270,43 @@ pub struct ShelleyGenesisDelegation {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ShelleyGenesisStaking {
     #[serde(default)]
-    pub pools: BTreeMap<String, serde_json::Value>,
+    pub pools: BTreeMap<String, ShelleyGenesisPoolParams>,
     #[serde(default)]
     pub stake: BTreeMap<String, String>,
+}
+
+/// Stake-pool parameters inside Shelley genesis `staking.pools`.
+///
+/// Reference: upstream `StakePoolParams` JSON (`poolId`, `vrf`,
+/// `pledge`, `cost`, `margin`, `accountAddress`, `owners`, `relays`,
+/// `metadata`) in `Cardano.Ledger.State.StakePool`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShelleyGenesisPoolParams {
+    #[serde(default, rename = "poolId", alias = "publicKey")]
+    pub pool_id: Option<String>,
+    pub vrf: String,
+    #[serde(default)]
+    pub pledge: u64,
+    #[serde(default)]
+    pub cost: u64,
+    #[serde(default)]
+    pub margin: GenesisRational,
+    #[serde(rename = "accountAddress", alias = "rewardAccount")]
+    pub account_address: serde_json::Value,
+    #[serde(default)]
+    pub owners: Vec<String>,
+    #[serde(default)]
+    pub relays: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub metadata: Option<ShelleyGenesisPoolMetadata>,
+}
+
+/// Pool metadata object inside Shelley genesis pool parameters.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ShelleyGenesisPoolMetadata {
+    pub url: String,
+    pub hash: String,
 }
 
 /// Parsed bootstrap data required to activate Shelley genesis state during
@@ -281,6 +315,8 @@ pub struct ShelleyGenesisStaking {
 pub struct ShelleyGenesisBootstrap {
     pub initial_funds: Vec<(ShelleyTxIn, ShelleyTxOut)>,
     pub gen_delegs: BTreeMap<GenesisHash, ParsedShelleyGenesisDelegation>,
+    /// Static genesis stake-pool registrations keyed by operator key hash.
+    pub staking_pools: BTreeMap<PoolKeyHash, PoolParams>,
     /// Static genesis stake delegations keyed by stake credential hash.
     pub staking: BTreeMap<AddrKeyHash, PoolKeyHash>,
     /// Number of genesis key signatures required for MIR certs or update proposals.
@@ -365,7 +401,7 @@ pub struct ShelleyGenesisProtocolParams {
 /// Shelley genesis represents rationals as literal floats; Alonzo genesis
 /// uses explicit `{"numerator": n, "denominator": d}` objects.
 /// This type attempts to deserialise both forms.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GenesisRational {
     pub numerator: u64,
     pub denominator: u64,
@@ -972,6 +1008,312 @@ pub fn build_genesis_enact_state(
     Ok(Some(enact))
 }
 
+fn invalid_field(
+    field: &'static str,
+    value: impl ToString,
+    message: impl ToString,
+) -> GenesisLoadError {
+    GenesisLoadError::InvalidField {
+        field,
+        value: value.to_string(),
+        message: message.to_string(),
+    }
+}
+
+fn parse_network_value(value: &serde_json::Value) -> Result<u8, GenesisLoadError> {
+    match value {
+        serde_json::Value::String(s) if s == "Testnet" => Ok(0),
+        serde_json::Value::String(s) if s == "Mainnet" => Ok(1),
+        serde_json::Value::String(s) if s == "0" => Ok(0),
+        serde_json::Value::String(s) if s == "1" => Ok(1),
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .and_then(|id| u8::try_from(id).ok())
+            .filter(|id| matches!(*id, 0 | 1))
+            .ok_or_else(|| {
+                invalid_field(
+                    "staking.pools.accountAddress.network",
+                    value,
+                    "expected Testnet/Mainnet or 0/1",
+                )
+            }),
+        _ => Err(invalid_field(
+            "staking.pools.accountAddress.network",
+            value,
+            "expected Testnet/Mainnet or 0/1",
+        )),
+    }
+}
+
+fn parse_stake_credential_value(
+    value: &serde_json::Value,
+    field: &'static str,
+) -> Result<StakeCredential, GenesisLoadError> {
+    match value {
+        serde_json::Value::String(hash) => Ok(StakeCredential::AddrKeyHash(
+            decode_fixed_hash::<28>(hash, field)?,
+        )),
+        serde_json::Value::Object(obj) => {
+            if let Some(hash) = obj
+                .get("keyHash")
+                .or_else(|| obj.get("key hash"))
+                .and_then(serde_json::Value::as_str)
+            {
+                return Ok(StakeCredential::AddrKeyHash(decode_fixed_hash::<28>(
+                    hash, field,
+                )?));
+            }
+            if let Some(hash) = obj
+                .get("scriptHash")
+                .or_else(|| obj.get("script hash"))
+                .and_then(serde_json::Value::as_str)
+            {
+                return Ok(StakeCredential::ScriptHash(decode_fixed_hash::<28>(
+                    hash, field,
+                )?));
+            }
+            Err(invalid_field(
+                field,
+                value,
+                "expected keyHash or scriptHash credential object",
+            ))
+        }
+        _ => Err(invalid_field(
+            field,
+            value,
+            "expected credential hex string or object",
+        )),
+    }
+}
+
+fn parse_account_address(value: &serde_json::Value) -> Result<RewardAccount, GenesisLoadError> {
+    match value {
+        serde_json::Value::String(raw) => {
+            let bytes = decode_hex_bytes(raw, "staking.pools.accountAddress")?;
+            RewardAccount::from_bytes(&bytes).ok_or_else(|| {
+                invalid_field(
+                    "staking.pools.accountAddress",
+                    raw,
+                    "expected a 29-byte reward account hex string",
+                )
+            })
+        }
+        serde_json::Value::Object(obj) => {
+            let network = obj
+                .get("network")
+                .ok_or_else(|| {
+                    invalid_field(
+                        "staking.pools.accountAddress.network",
+                        value,
+                        "missing network",
+                    )
+                })
+                .and_then(parse_network_value)?;
+            let credential = obj
+                .get("credential")
+                .ok_or_else(|| {
+                    invalid_field(
+                        "staking.pools.accountAddress.credential",
+                        value,
+                        "missing credential",
+                    )
+                })
+                .and_then(|credential| {
+                    parse_stake_credential_value(
+                        credential,
+                        "staking.pools.accountAddress.credential",
+                    )
+                })?;
+            Ok(RewardAccount {
+                network,
+                credential,
+            })
+        }
+        _ => Err(invalid_field(
+            "staking.pools.accountAddress",
+            value,
+            "expected reward account hex string or object",
+        )),
+    }
+}
+
+fn parse_optional_u16(value: Option<&serde_json::Value>) -> Result<Option<u16>, GenesisLoadError> {
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .and_then(|port| u16::try_from(port).ok())
+            .map(Some)
+            .ok_or_else(|| invalid_field("staking.pools.relays.port", n, "expected u16 port")),
+        Some(other) => Err(invalid_field(
+            "staking.pools.relays.port",
+            other,
+            "expected integer port or null",
+        )),
+    }
+}
+
+fn parse_optional_ip<const N: usize>(
+    value: Option<&serde_json::Value>,
+    field: &'static str,
+) -> Result<Option<[u8; N]>, GenesisLoadError> {
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => {
+            let parsed = if N == 4 {
+                s.parse::<std::net::Ipv4Addr>()
+                    .map(|addr| addr.octets().to_vec())
+                    .map_err(|e| invalid_field(field, s, e.to_string()))?
+            } else {
+                s.parse::<std::net::Ipv6Addr>()
+                    .map(|addr| addr.octets().to_vec())
+                    .map_err(|e| invalid_field(field, s, e.to_string()))?
+            };
+            let bytes: [u8; N] = parsed
+                .try_into()
+                .map_err(|_| invalid_field(field, s, format!("expected {N} address bytes")))?;
+            Ok(Some(bytes))
+        }
+        Some(other) => Err(invalid_field(field, other, "expected IP string or null")),
+    }
+}
+
+fn parse_relay(value: &serde_json::Value) -> Result<Relay, GenesisLoadError> {
+    let obj = value
+        .as_object()
+        .ok_or_else(|| invalid_field("staking.pools.relays", value, "expected relay object"))?;
+
+    if let Some(relay) = obj.get("single host address") {
+        let relay_obj = relay.as_object().ok_or_else(|| {
+            invalid_field(
+                "staking.pools.relays.single host address",
+                relay,
+                "expected object",
+            )
+        })?;
+        return Ok(Relay::SingleHostAddr(
+            parse_optional_u16(relay_obj.get("port"))?,
+            parse_optional_ip::<4>(relay_obj.get("IPv4"), "staking.pools.relays.IPv4")?,
+            parse_optional_ip::<16>(relay_obj.get("IPv6"), "staking.pools.relays.IPv6")?,
+        ));
+    }
+
+    if let Some(relay) = obj.get("single host name") {
+        let relay_obj = relay.as_object().ok_or_else(|| {
+            invalid_field(
+                "staking.pools.relays.single host name",
+                relay,
+                "expected object",
+            )
+        })?;
+        let dns = relay_obj
+            .get("dnsName")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                invalid_field(
+                    "staking.pools.relays.single host name.dnsName",
+                    relay,
+                    "missing DNS name",
+                )
+            })?;
+        return Ok(Relay::SingleHostName(
+            parse_optional_u16(relay_obj.get("port"))?,
+            dns.to_owned(),
+        ));
+    }
+
+    if let Some(relay) = obj.get("multi host name") {
+        let relay_obj = relay.as_object().ok_or_else(|| {
+            invalid_field(
+                "staking.pools.relays.multi host name",
+                relay,
+                "expected object",
+            )
+        })?;
+        let dns = relay_obj
+            .get("dnsName")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                invalid_field(
+                    "staking.pools.relays.multi host name.dnsName",
+                    relay,
+                    "missing DNS name",
+                )
+            })?;
+        return Ok(Relay::MultiHostName(dns.to_owned()));
+    }
+
+    Err(invalid_field(
+        "staking.pools.relays",
+        value,
+        "expected single host address/name or multi host name",
+    ))
+}
+
+fn parse_pool_metadata(
+    metadata: &Option<ShelleyGenesisPoolMetadata>,
+) -> Result<Option<PoolMetadata>, GenesisLoadError> {
+    metadata
+        .as_ref()
+        .map(|metadata| {
+            Ok(PoolMetadata {
+                url: metadata.url.clone(),
+                metadata_hash: decode_fixed_hash::<32>(
+                    &metadata.hash,
+                    "staking.pools.metadata.hash",
+                )?,
+            })
+        })
+        .transpose()
+}
+
+fn build_shelley_genesis_pool_params(
+    key: &str,
+    params: &ShelleyGenesisPoolParams,
+) -> Result<PoolParams, GenesisLoadError> {
+    let operator = decode_fixed_hash::<28>(
+        params.pool_id.as_deref().unwrap_or(key),
+        "staking.pools.poolId",
+    )?;
+    let key_operator = decode_fixed_hash::<28>(key, "staking.pools")?;
+    if operator != key_operator {
+        return Err(invalid_field(
+            "staking.pools.poolId",
+            params.pool_id.as_deref().unwrap_or(key),
+            "poolId must match the staking.pools map key",
+        ));
+    }
+
+    let reward_account = parse_account_address(&params.account_address)?;
+    reward_account.validate().map_err(|error| {
+        invalid_field(
+            "staking.pools.accountAddress",
+            &params.account_address,
+            error.to_string(),
+        )
+    })?;
+
+    Ok(PoolParams {
+        operator,
+        vrf_keyhash: decode_fixed_hash::<32>(&params.vrf, "staking.pools.vrf")?,
+        pledge: params.pledge,
+        cost: params.cost,
+        margin: params.margin.to_unit_interval(),
+        reward_account,
+        pool_owners: params
+            .owners
+            .iter()
+            .map(|owner| decode_fixed_hash::<28>(owner, "staking.pools.owners"))
+            .collect::<Result<Vec<_>, _>>()?,
+        relays: params
+            .relays
+            .iter()
+            .map(parse_relay)
+            .collect::<Result<Vec<_>, _>>()?,
+        pool_metadata: parse_pool_metadata(&params.metadata)?,
+    })
+}
+
 /// Build the Shelley bootstrap bundle used to activate genesis initial funds
 /// when replay first reaches a Shelley-family block.
 pub fn build_shelley_genesis_bootstrap(
@@ -1006,6 +1348,12 @@ pub fn build_shelley_genesis_bootstrap(
         );
     }
 
+    let mut staking_pools = BTreeMap::new();
+    for (pool_hash, params) in &shelley.staking.pools {
+        let params = build_shelley_genesis_pool_params(pool_hash, params)?;
+        staking_pools.insert(params.operator, params);
+    }
+
     let mut staking = BTreeMap::new();
     for (stake_hash, pool_hash) in &shelley.staking.stake {
         staking.insert(
@@ -1017,6 +1365,7 @@ pub fn build_shelley_genesis_bootstrap(
     Ok(ShelleyGenesisBootstrap {
         initial_funds,
         gen_delegs,
+        staking_pools,
         staking,
         update_quorum: shelley.update_quorum,
         max_lovelace_supply: shelley.max_lovelace_supply,
@@ -2686,6 +3035,9 @@ pub fn build_base_ledger_state(inputs: BaseLedgerStateInputs) -> LedgerState {
             .fold(0u64, |sum, (_, txout)| sum.saturating_add(txout.amount));
         let initial_circulation = byron_initial_lovelace.saturating_add(shelley_initial_lovelace);
         state.configure_pending_shelley_genesis_utxo(bootstrap.initial_funds);
+        state.configure_pending_shelley_genesis_pools(
+            bootstrap.staking_pools.into_values().collect(),
+        );
         state.configure_pending_shelley_genesis_stake(
             bootstrap
                 .staking

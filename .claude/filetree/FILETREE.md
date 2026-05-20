@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T02:23:44Z
-- Files described: 1373
+- Generated at: 2026-05-20T02:56:16Z
+- Files described: 1374
 
 ## Workspace
 
@@ -1591,14 +1591,17 @@
 - `crates/tools/db-analyser/tests/fixtures/upstream-version.txt`
   - Project file at crates/tools/db-analyser/tests/fixtures/upstream-version.txt.
 - `crates/tools/db-synthesizer/AGENTS.md`
-  - Guidance for the pure-Rust port of upstream `db-synthesizer`.: **Status:** `partial` (Phase 4 R1 forge-loop slice shipped — see.
+  - Guidance for the pure-Rust port of upstream `db-synthesizer`.
+  - Tracks the functional R3c-5 forge surface and the remaining upstream ChainDB byte-equivalence soak.
 - `crates/tools/db-synthesizer/Cargo.toml`
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/db-synthesizer/src/forging.rs`
-  - Per-block forge loop for the `db-synthesizer` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/To
+  - Per-block forge loop for the `db-synthesizer` binary.
+  - Ports runForge with Praos leader checks, KES-signed blocks, nonce evolution, and stake-snapshot sigma.
 - `crates/tools/db-synthesizer/src/lib.rs`
-  - Pure-Rust port of upstream `db-synthesizer`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `db-synt
+  - Pure-Rust port of upstream `db-synthesizer`.
+  - Parent module for the typed config, parser, forge, run, status, and orphan-instance surfaces.
 - `crates/tools/db-synthesizer/src/main.rs`
   - Binary entry point for the `db-synthesizer` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_db_synthesizer::r
 - `crates/tools/db-synthesizer/src/orphans.rs`
@@ -1606,9 +1609,11 @@
 - `crates/tools/db-synthesizer/src/parser.rs`
   - CLI argument parser for the `db-synthesizer` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/app/DBSynthesizer/Parsers.hs.
 - `crates/tools/db-synthesizer/src/run.rs`
-  - ChainDB-open + synthesize supervisor for the `db-synthesizer` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-
+  - ChainDB-open + synthesize supervisor for the `db-synthesizer` binary.
+  - Loads genesis/protocol inputs, builds initial forge state, reads credentials, and drives the Praos forge loop.
 - `crates/tools/db-synthesizer/src/status.rs`
-  - Programmatic-introspection helpers for the db-synthesizer partially-deferred forge surface. The forge-loop *control path* and the `preOpenChainDB` supervisor.
+  - Programmatic-introspection helpers for the db-synthesizer forge surface.
+  - Reports the functional stake-based Praos forge path and the remaining ChainDB byte-equivalence soak.
 - `crates/tools/db-synthesizer/src/types.rs`
   - Typed configuration surface for the `db-synthesizer` binary. ## Naming parity **Strict mirror:** deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Car
 - `crates/tools/db-synthesizer/tests/cli_help_golden.rs`
@@ -1618,7 +1623,8 @@
 - `crates/tools/db-synthesizer/tests/fixtures/upstream-version.txt`
   - Project file at crates/tools/db-synthesizer/tests/fixtures/upstream-version.txt.
 - `crates/tools/db-synthesizer/tests/integration.rs`
-  - End-to-end integration tests for the db-synthesizer Phase 4 R1 forge-loop slice. These exercise the full argv → `parser::Args` → `lib::run` →.
+  - End-to-end integration tests for db-synthesizer forge, genesis-loading, and Praos block-production slices.
+  - Exercises argv parsing through ChainDB output with staked Shelley genesis and bulk credentials.
 - `crates/tools/db-truncater/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `db-truncater`.: **Status:** `partial` (functionally complete; awaiting operator.
 - `crates/tools/db-truncater/Cargo.toml`
@@ -2113,6 +2119,8 @@
   - R530 db-synthesizer State Threading: Date: 2026-05-20.
 - `docs/operational-runs/2026-05-20-round-531-db-synthesizer-praos-forge.md`
   - R531 db-synthesizer Praos Forge: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-532-db-synthesizer-stake-sigma.md`
+  - R532 db-synthesizer Stake Sigma: Date: 2026-05-20.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

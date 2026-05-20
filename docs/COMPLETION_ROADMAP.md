@@ -29,21 +29,21 @@ running upstream Haskell `cardano-node` for byte-level wire comparison. They
 are listed so the full path is visible — not because they are executable in
 one session.
 
-## Status snapshot (verified 2026-05-17)
+## Status snapshot
 
-- **Build health:** all four cargo gates green on Rust 1.95.0 — `cargo fmt`,
+- **Build health baseline (verified 2026-05-17):** all four cargo gates green on Rust 1.95.0 — `cargo fmt`,
   `cargo check-all`, `cargo lint`, `cargo test-all` (**6,519 tests passing,
   0 failing, 3 ignored**). `check-strict-mirror.py` + `check-fixture-manifest.py`
   clean.
 - **Core node:** crypto, ledger, storage, consensus, mempool, network, plutus,
   and the `crates/node/*` runtime crates are feature-complete for syncing and
   validating the official networks (code-level parity closure, v0.2.0).
-- **Parity matrix:** 22 tracked entries — 2 `verified_11_0_1`,
-  11 `implemented_needs_11_0_1_evidence`, 9 `partial`.
-- **Sister tools (13):** 1 verified (`bech32`); 3 functional-pending-soak
+- **Parity matrix (updated through R532):** 22 tracked entries — 2 `verified_11_0_1`,
+  12 `implemented_needs_11_0_1_evidence`, 8 `partial`.
+- **Sister tools (13):** 1 verified (`bech32`); 4 functional-pending-soak
   (`cardano-cli` with 40 operational subcommands, `cardano-submit-api`,
-  `db-truncater`); 3 functional-partial (`cardano-tracer`, `db-analyser`,
-  `db-synthesizer`); 6 skeleton (`kes-agent`, `kes-agent-control`,
+  `db-truncater`, `db-synthesizer`); 2 functional-partial (`cardano-tracer`,
+  `db-analyser`); 6 skeleton (`kes-agent`, `kes-agent-control`,
   `snapshot-converter`, `tx-generator`, `dmq-node`, `cardano-testnet`).
 - **Reference parity tag:** `11.0.1`.
 
@@ -210,10 +210,13 @@ Praos forging needs. Verified decomposition:
     `forged_block_to_storage_block`, replays raw-CBOR VRF nonce inputs in
     append mode, and returns before ChainDB open when no forgers are
     supplied, matching upstream `Run.hs`.
-  - 🟡 **R3c-5 — epoch-boundary stake rebuild.** Recompute the leader-check
-    `sigma` per epoch via `compute_stake_snapshot` / `apply_epoch_boundary`;
-    R3c-4 uses a documented temporary full-stake synthesizer lottery until
-    this lands.
+  - ✅ **R3c-5 — epoch-boundary stake rebuild** (round 532). The
+    production path now computes each forger's leader-check `sigma`
+    from `StakeSnapshots.set`, seeds the initial forecast snapshot from
+    Shelley genesis `staking.pools` / `staking.stake` / `initialFunds`,
+    activates genesis pools on the first Shelley-family block, and uses
+    `apply_epoch_boundary` to rotate snapshots as the synthetic chain
+    advances across epochs.
   - 🟡 **R3c-6 — `FileImmutable` → `ChainDb` migration.** Persist a
     `LedgerStore` snapshot so `db-analyser` can validate the synthesized chain.
 

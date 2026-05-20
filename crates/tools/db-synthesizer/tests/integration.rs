@@ -20,9 +20,12 @@
 
 #![allow(clippy::unwrap_used)]
 
+use yggdrasil_crypto::blake2b::{hash_bytes_224, hash_bytes_256};
 use yggdrasil_crypto::vrf::VrfSecretKey;
 use yggdrasil_db_synthesizer::{parser, run};
-use yggdrasil_ledger::{BlockNo, HeaderHash, Point, SlotNo};
+use yggdrasil_ledger::{
+    Address, BaseAddress, BlockNo, HeaderHash, Point, RewardAccount, SlotNo, StakeCredential,
+};
 use yggdrasil_storage::{FileImmutable, ImmutableStore};
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -87,9 +90,55 @@ fn write_bulk_credentials(dir: &std::path::Path) -> std::path::PathBuf {
 /// path needs a genuine config file with every era's genesis present
 /// (R1 ignored the config entirely).
 fn args_for(tmp: &std::path::Path, db: &std::path::Path, n: u64, mode: &str) -> parser::Args {
+    let cold_vkey = [0x33; 32];
+    let pool_hash = hash_bytes_224(&cold_vkey).0;
+    let vrf_vkey = VrfSecretKey::from_seed([0x44; 32])
+        .verification_key()
+        .to_bytes();
+    let vrf_hash = hash_bytes_256(&vrf_vkey).0;
+    let payment_hash = [0x66; 28];
+    let stake_hash = [0x77; 28];
+    let stake_credential = StakeCredential::AddrKeyHash(stake_hash);
+    let funded_address = Address::Base(BaseAddress {
+        network: 0,
+        payment: StakeCredential::AddrKeyHash(payment_hash),
+        staking: stake_credential,
+    })
+    .to_bytes();
+    let reward_account = RewardAccount {
+        network: 0,
+        credential: stake_credential,
+    };
+    let pool_hash_hex = hex_encode(&pool_hash);
+    let stake_hash_hex = hex_encode(&stake_hash);
     std::fs::write(
         tmp.join("shelley-genesis.json"),
-        r#"{"activeSlotsCoeff":1.0,"epochLength":432000}"#,
+        format!(
+            r#"{{
+                "activeSlotsCoeff":1.0,
+                "epochLength":432000,
+                "initialFunds":{{"{funded_address}":45000000000000}},
+                "staking":{{
+                    "pools":{{
+                        "{pool_hash_hex}":{{
+                            "poolId":"{pool_hash_hex}",
+                            "vrf":"{vrf_hash}",
+                            "pledge":0,
+                            "cost":0,
+                            "margin":{{"numerator":0,"denominator":1}},
+                            "accountAddress":"{reward_account}",
+                            "owners":["{stake_hash_hex}"],
+                            "relays":[],
+                            "metadata":null
+                        }}
+                    }},
+                    "stake":{{"{stake_hash_hex}":"{pool_hash_hex}"}}
+                }}
+            }}"#,
+            funded_address = hex_encode(&funded_address),
+            vrf_hash = hex_encode(&vrf_hash),
+            reward_account = hex_encode(&reward_account.to_bytes()),
+        ),
     )
     .unwrap();
     // R3b-1: `run` loads every era's genesis via `load_genesis_bundle`.
