@@ -876,7 +876,7 @@
       "area": "sister-tools",
       "feature": "Transaction-stream load generator — pure-Rust port mirroring upstream bench/tx-generator/src/Cardano/Benchmarking/*.hs.",
       "status": "partial",
-      "next_milestone": "R539",
+      "next_milestone": "R540",
       "haskell_reference": [
         {
           "path": ".reference-haskell-cardano-node/bench/tx-generator/",
@@ -886,7 +886,7 @@
       "rust_surface": [
         {
           "path": "crates/tools/tx-generator/",
-          "role": "Yggdrasil pure-Rust port — R327/R335 skeleton + R533 Command.hs parser mirror + R534 Setup/TestnetDiscovery.hs path and JSON-merge surface + R535 Setup/NixService.hs high-level config parser/projections + R536 Compiler.hs script generation and Script/Types.hs IR + R537 Script/Aeson.hs low-level script JSON parser + R538 Script.hs run boundary and Script/Env.hs + Script/Action.hs state-only action execution. The former cardano-cli C-arc prerequisite is closed; concrete implementation now belongs to the A4 tx-generator Script/Core / GeneratorTx / Submission arc."
+          "role": "Yggdrasil pure-Rust port — R327/R335 skeleton + R533 Command.hs parser mirror + R534 Setup/TestnetDiscovery.hs path and JSON-merge surface + R535 Setup/NixService.hs high-level config parser/projections + R536 Compiler.hs script generation and Script/Types.hs IR + R537 Script/Aeson.hs low-level script JSON parser + R538 Script.hs run boundary and Script/Env.hs + Script/Action.hs state-only action execution + R539 Script/Core.hs state helpers. The former cardano-cli C-arc prerequisite is closed; concrete implementation now belongs to the A4 tx-generator Script/Core protocol/query / GeneratorTx / Submission arc."
         }
       ],
       "implemented_evidence": [
@@ -901,10 +901,11 @@
         "R535 Setup/NixService.hs mirror: setup/nix_service.rs owns NodeDescription and ports NixServiceOptions JSON parsing, defaultKeepaliveTimeout/getKeepaliveTimeout, getNodeAlias, nodeConfig override, cardano-tracer Maybe-semigroup override, txGenTxParams, txGenConfig, and txGenPlutusParams; types.rs ports the required TxGenerator.Types high-level config subset. json_highlevel and compile now read/validate high-level options before their execution sentinel, and discoverTestnetConfig now returns typed NixServiceOptions. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (39 lib tests + 4 CLI/golden tests).",
         "R536 Compiler.hs + Script/Types.hs mirror: compiler.rs ports compileOptions/compileToScript, fixed signing-key names/envelopes, initConstants, genesis import, collateral creation, split planning (including the exact outputs < maxOutputsPerTx recursion boundary), evilFeeMagic arithmetic, benchmarking-phase submit mode selection, and Plutus script-budget checks; script/types.rs ports the generated Action/Generator/SubmitMode/PayMode/ScriptBudget IR with ObjectWithSingleField-style JSON wrappers. The compile subcommand now emits generated script JSON; json_highlevel compiles final options before the runtime sentinel. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (49 lib tests + 5 CLI/golden tests).",
         "R537 Script/Aeson.hs mirror: script/aeson.rs ports testJSONRoundTrip, deterministic pretty printing, scanScriptFile, parseJSONFile, and parseScriptFileAeson; script/types.rs now decodes ObjectWithSingleField-style Action/Generator/ProtocolParametersSource/SubmitMode/PayMode/ScriptBudget wrappers and adds upstream NetworkId JSON plus Dijkstra-era script parsing. The json subcommand now reads and validates low-level script files before the runtime sentinel. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (52 lib tests + 5 CLI/golden tests).",
-        "R538 Script.hs + Script/Env.hs + Script/Action.hs mirror: script.rs ports the runScript dispatch boundary, env.rs ports Env/ProtocolParameterMode/Error/accessor semantics with typed placeholders for protocol/genesis/tracers/async control, and action.rs executes deterministic state-only actions while returning explicit TxGenError boundaries for startProtocol, waitForEra, Submit, and unseeded benchmark controls. The json subcommand now runs supported script prefixes instead of stopping after parse. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (61 lib tests + 5 CLI/golden tests)."
+        "R538 Script.hs + Script/Env.hs + Script/Action.hs mirror: script.rs ports the runScript dispatch boundary, env.rs ports Env/ProtocolParameterMode/Error/accessor semantics with typed placeholders for protocol/genesis/tracers/async control, and action.rs executes deterministic state-only actions while returning explicit TxGenError boundaries for startProtocol, waitForEra, Submit, and unseeded benchmark controls. The json subcommand now runs supported script prefixes instead of stopping after parse. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (61 lib tests + 5 CLI/golden tests).",
+        "R539 Script/Core.hs mirror: script/core.rs now owns upstream Core state helpers and runtime boundaries: withEra, setProtocolParameters, readSigningKey, defineSigningKey, addFund/addFundToWallet, delay, waitBenchmarkCore/waitBenchmark, cancelBenchmark, getLocalConnectInfo, queryEra/queryRemoteProtocolParameters/getProtocolParameters, waitForEra, submitAction/submitInEra, initWallet, traceTxGeneratorVersion, and reserved. script/action.rs now mirrors upstream Action.hs more closely by dispatching to Core-owned bodies. Local focused validation: `cargo test -p yggdrasil-tx-generator` green (67 lib tests + 5 CLI/golden tests)."
       ],
       "remaining_work": [
-        "Port upstream Script/Core.hs protocol/query behavior, generator transaction construction, and submission client in strict-mirror-sized implementation rounds.",
+        "Port upstream Script/Core.hs node-to-client protocol/query behavior, generator transaction construction, and submission client in strict-mirror-sized implementation rounds.",
         "Integration round: end-to-end soak vs upstream binary at .reference-haskell-cardano-node/install/bin/tx-generator.",
         "Closeout round: AGENTS.md operational guide + parity-matrix promotion to verified_11_0_1."
       ],

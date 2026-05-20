@@ -265,6 +265,23 @@ pub fn get_env_threads_mut(env: &mut Env) -> Option<&mut AsyncBenchmarkControl> 
     env.env_threads.as_mut()
 }
 
+/// Mirror of upstream `traceBenchTxSubmit` for debug/error text.
+pub fn trace_bench_tx_submit(env: &mut Env, message: impl Into<String>) {
+    let mut tracers = env.bench_tracers.take().unwrap_or_default();
+    tracers.push(message);
+    set_bench_tracers(env, tracers);
+}
+
+/// Mirror of upstream `traceError`.
+pub fn trace_error(env: &mut Env, message: &str) {
+    trace_bench_tx_submit(env, format!("ERROR: {message}"));
+}
+
+/// Mirror of upstream `traceDebug`.
+pub fn trace_debug(env: &mut Env, message: &str) {
+    trace_bench_tx_submit(env, message.to_string());
+}
+
 fn get_env_val<'a, T>(value: Option<&'a T>, name: &str) -> Result<&'a T, Error> {
     value.ok_or_else(|| Error::UserError(format!("Unset {name}")))
 }
@@ -319,5 +336,18 @@ mod tests {
 
         assert_eq!(wallet.funds()[0].tx_in, "a#0");
         assert_eq!(wallet.funds()[1].tx_in, "b#1");
+    }
+
+    #[test]
+    fn trace_helpers_initialize_and_append_messages() {
+        let mut env = Env::empty_env();
+
+        trace_debug(&mut env, "debug");
+        trace_error(&mut env, "bad");
+
+        assert_eq!(
+            env.bench_tracers.expect("tracers").messages(),
+            ["debug", "ERROR: bad"]
+        );
     }
 }

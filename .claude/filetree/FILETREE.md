@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T04:53:02Z
-- Files described: 1391
+- Generated at: 2026-05-20T05:13:35Z
+- Files described: 1393
 
 ## Workspace
 
@@ -1759,6 +1759,9 @@
 - `crates/tools/tx-generator/src/script/aeson.rs`
   - Strict mirror of upstream tx-generator Script/Aeson JSON helpers.
   - Parses low-level script files and preserves ObjectWithSingleField round-trip behavior.
+- `crates/tools/tx-generator/src/script/core.rs`
+  - Strict mirror of upstream tx-generator Script/Core state helpers.
+  - Owns Core action bodies and explicit node-query/transaction runtime boundaries.
 - `crates/tools/tx-generator/src/script/env.rs`
   - Strict mirror of upstream tx-generator Script/Env state.
   - Carries protocol parameter mode, wallets, keys, tracers, and async-control placeholders.
@@ -2172,6 +2175,9 @@
 - `docs/operational-runs/2026-05-20-round-538-tx-generator-script-env-action.md`
   - Operational run note for the R538 tx-generator Script/Env and Script/Action slice.
   - Records state/action execution scope, validation, and remaining Script/Core gates.
+- `docs/operational-runs/2026-05-20-round-539-tx-generator-script-core.md`
+  - Operational run note for the R539 tx-generator Script/Core slice.
+  - Records the Core helper split, validation, and remaining protocol/query gates.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

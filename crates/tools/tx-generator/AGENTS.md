@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R538 Script/Env+Action slice). The old
+**Status:** `partial` (post-R539 Script/Core state-helper slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -88,6 +88,15 @@ approved synthesis area from the sister-tools plan.
 - Shipped R538: `json FILEPATH` now calls `run_script`, so low-level
   scripts execute their supported state prefix before failing at the
   first missing async/runtime boundary.
+- Shipped R539: `Benchmarking/Script/Core.hs` state-helper surface.
+  `script/core.rs` now owns upstream-shaped `withEra`,
+  `setProtocolParameters`, signing-key loading/definition,
+  fund insertion, delay, benchmark-control checks, local-connect-info
+  carrier, protocol-parameter mode resolution, `submitAction`
+  boundary, `initWallet`, version tracing, and `reserved`.
+- Shipped R539: `Benchmarking/Script/Action.hs` now mirrors the
+  upstream split more closely: dispatch remains in `script/action.rs`,
+  while Core-owned action bodies live in `script/core.rs`.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the Script /
   GeneratorTx / Submission slices land.
@@ -148,6 +157,9 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: Script state/action execution (R538): `Script.hs`
   `runScript` boundary plus `Script/Env.hs` state/accessors and
   `Script/Action.hs` deterministic state-only action dispatch.
+- Shipped: Script/Core state helpers (R539): `Script/Core.hs`
+  non-network state helpers and explicit runtime boundaries moved into
+  a strict mirror file.
 - Next: port upstream `Script/Core.hs` protocol/query behavior,
   generator transaction
   construction, and submission client in strict-mirror-sized slices.

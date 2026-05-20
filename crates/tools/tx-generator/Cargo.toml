@@ -5,9 +5,9 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
-description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface has byte-equivalent top-level help/version, Command.hs parsing, TestnetDiscovery, NixService high-level config parsing, Compiler.hs script generation, Script/Aeson JSON parsing, and Script/Env+Action state execution; next work is protocol/query execution, transaction generation, submission, and soak evidence."
+description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface has byte-equivalent top-level help/version, Command.hs parsing, TestnetDiscovery, NixService high-level config parsing, Compiler.hs script generation, Script/Aeson JSON parsing, Script/Env+Action state execution, and Script/Core state helpers; next work is protocol/query execution, transaction generation, submission, and soak evidence."
 
-# R327/R335 skeleton plus R533-R538 command/setup/compiler/script
+# R327/R335 skeleton plus R533-R539 command/setup/compiler/script
 # mirrors. The former cardano-cli CLI-MVS prerequisite is closed;
 # tx-generator now needs its own Script/Core / GeneratorTx / Submission
 # implementation arc plus upstream comparison evidence.
