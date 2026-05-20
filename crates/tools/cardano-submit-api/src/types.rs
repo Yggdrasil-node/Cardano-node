@@ -434,6 +434,94 @@ impl fmt::Display for TxValidationErrorInCardanoMode {
     }
 }
 
+/// Top-level Shelley LEDGER predicate-failure variants.
+///
+/// Mirrors upstream `data ShelleyLedgerPredFailure era` from
+/// `Cardano.Ledger.Shelley.Rules.Ledger`:
+///
+/// ```text
+/// data ShelleyLedgerPredFailure era
+///   = UtxowFailure (PredicateFailure (EraRule "UTXOW" era))
+///   | DelegsFailure (PredicateFailure (EraRule "DELEGS" era))
+///   | ShelleyWithdrawalsMissingAccounts Withdrawals
+///   | ShelleyIncompleteWithdrawals (NonEmptyMap AccountAddress (Mismatch RelEQ Coin))
+/// ```
+///
+/// Each variant currently carries raw CBOR bytes; per-rule typed
+/// payloads (UTXOW + DELEGS sub-trees, Withdrawals map decoding,
+/// NonEmptyMap of Mismatch values) land in follow-on rounds.
+///
+/// The variant discriminator matches upstream's CBOR encoding tag
+/// (Word8 0/1/2/3) at index 0 of the outer 2-element array.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShelleyLedgerPredFailure {
+    /// UTXOW sub-rule failure (CBOR tag 0). Payload is a
+    /// `ShelleyUtxowPredFailure era` (one of ~10 variants including
+    /// `InvalidWitnessesUTXOW`, `MissingVKeyWitnessesUTXOW`, etc.).
+    UtxowFailure(Vec<u8>),
+    /// DELEGS sub-rule failure (CBOR tag 1). Payload is a
+    /// `ShelleyDelegsPredFailure era` (one of ~3 variants delegating
+    /// further into DELPL/POOL/DELEG sub-rules).
+    DelegsFailure(Vec<u8>),
+    /// Withdrawals refer to accounts that are not in the reward map
+    /// (CBOR tag 2). Payload is `Withdrawals = Map AccountAddress
+    /// Coin`.
+    ShelleyWithdrawalsMissingAccounts(Vec<u8>),
+    /// Withdrawals do not fully exhaust the named accounts' reward
+    /// balances (CBOR tag 3). Payload is `NonEmptyMap AccountAddress
+    /// (Mismatch RelEQ Coin)`.
+    ShelleyIncompleteWithdrawals(Vec<u8>),
+}
+
+impl ShelleyLedgerPredFailure {
+    /// Return the upstream CBOR-encoding tag for this variant
+    /// (matches `Cardano.Ledger.Shelley.Rules.Ledger.encCBOR`).
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::UtxowFailure(_) => 0,
+            Self::DelegsFailure(_) => 1,
+            Self::ShelleyWithdrawalsMissingAccounts(_) => 2,
+            Self::ShelleyIncompleteWithdrawals(_) => 3,
+        }
+    }
+
+    /// Return the upstream constructor name for stock-derived Show.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::UtxowFailure(_) => "UtxowFailure",
+            Self::DelegsFailure(_) => "DelegsFailure",
+            Self::ShelleyWithdrawalsMissingAccounts(_) => "ShelleyWithdrawalsMissingAccounts",
+            Self::ShelleyIncompleteWithdrawals(_) => "ShelleyIncompleteWithdrawals",
+        }
+    }
+
+    /// Return the raw inner CBOR payload for this variant.
+    pub fn raw_inner(&self) -> &[u8] {
+        match self {
+            Self::UtxowFailure(b)
+            | Self::DelegsFailure(b)
+            | Self::ShelleyWithdrawalsMissingAccounts(b)
+            | Self::ShelleyIncompleteWithdrawals(b) => b,
+        }
+    }
+}
+
+impl fmt::Display for ShelleyLedgerPredFailure {
+    /// Render upstream stock-derived `Show (ShelleyLedgerPredFailure
+    /// era)`: `<Constructor> <payload>`. Until per-variant typed
+    /// payloads ship, the payload is a hex-encoded preview of the raw
+    /// CBOR (clearly marked so operators don't mistake it for an
+    /// upstream-shape rendering).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} <raw-cbor {} bytes>",
+            self.constructor(),
+            self.raw_inner().len()
+        )
+    }
+}
+
 /// Custom `Serialize` that emits ONLY the rendered string so the
 /// upstream JSON `{"contents":"<rendered>"}` wire shape stays
 /// byte-equivalent. The raw CBOR bytes are deliberately not
@@ -791,6 +879,53 @@ mod tests {
             err.to_string(),
             "BabbageApplyTxError (FeeTooSmall {expected = 200000, actual = 99000})"
         );
+    }
+
+    #[test]
+    fn shelley_ledger_pred_failure_tag_dispatch() {
+        assert_eq!(ShelleyLedgerPredFailure::UtxowFailure(vec![]).tag(), 0);
+        assert_eq!(ShelleyLedgerPredFailure::DelegsFailure(vec![]).tag(), 1);
+        assert_eq!(
+            ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(vec![]).tag(),
+            2
+        );
+        assert_eq!(
+            ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals(vec![]).tag(),
+            3
+        );
+    }
+
+    #[test]
+    fn shelley_ledger_pred_failure_constructor_names() {
+        assert_eq!(
+            ShelleyLedgerPredFailure::UtxowFailure(vec![]).constructor(),
+            "UtxowFailure"
+        );
+        assert_eq!(
+            ShelleyLedgerPredFailure::DelegsFailure(vec![]).constructor(),
+            "DelegsFailure"
+        );
+        assert_eq!(
+            ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(vec![]).constructor(),
+            "ShelleyWithdrawalsMissingAccounts"
+        );
+        assert_eq!(
+            ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals(vec![]).constructor(),
+            "ShelleyIncompleteWithdrawals"
+        );
+    }
+
+    #[test]
+    fn shelley_ledger_pred_failure_display_marks_raw_cbor() {
+        let f = ShelleyLedgerPredFailure::UtxowFailure(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(f.to_string(), "UtxowFailure <raw-cbor 4 bytes>");
+    }
+
+    #[test]
+    fn shelley_ledger_pred_failure_raw_inner_round_trip() {
+        let payload = vec![0xCA, 0xFE, 0xBA, 0xBE];
+        let f = ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(payload.clone());
+        assert_eq!(f.raw_inner(), &payload[..]);
     }
 
     #[test]

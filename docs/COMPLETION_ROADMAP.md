@@ -469,18 +469,20 @@ own parser / generator / submission implementation plus upstream
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
 ### A5 — cardano-submit-api structured rejection enum  (`TECH-DEBT.md` §"validation error")
-Phase 1 (raw-bytes carrier) landed pre-R594. R594 (2026-05-20)
-shipped the Phase-2 type-level scaffold: `TxValidationErrorInCardanoMode`
-era-tagged enum (Shelley/Allegra/Mary/Alonzo/Babbage/Conway variants),
-`TxValidationEra` discriminator with upstream constructor-name lookup,
-and `EraApplyTxError` payload carrying raw CBOR + rendered text.
-`TxSubmitValidationError::into_typed(era)` produces the typed view;
-`TxValidationErrorInCardanoMode::Display` emits upstream's
-`<Era>ApplyTxError (<payload>)` Show shape. Per-variant CBOR decoders
-that expand `EraApplyTxError` into a typed sum over the upstream
-`<Era>LedgerPredFailure <era>` variants are the remaining Phase-2.5+
-work (~300 lines per era — ShelleyApplyTxError alone has 40+
-predicate-failure variants). **Exit:** operators can pattern-match
+Phase 1 (raw-bytes carrier) landed pre-R594. R594 shipped the
+Phase-2 type-level scaffold: `TxValidationErrorInCardanoMode`
+era-tagged enum + `TxValidationEra` discriminator + `EraApplyTxError`
+payload. R595 (2026-05-20) added the Phase-2.5 scaffold for the
+Shelley LEDGER predicate-failure variant set: `ShelleyLedgerPredFailure`
+4-variant enum (UtxowFailure / DelegsFailure /
+ShelleyWithdrawalsMissingAccounts / ShelleyIncompleteWithdrawals)
+with `tag()` (matches upstream CBOR Word8 0/1/2/3), `constructor()`
+(upstream stock-derived Show name), `raw_inner()` (raw payload
+bytes), and Display impl marking the rendering as raw-cbor pending
+per-variant payload decoders. Phase-2.5+ remaining work: per-rule
+sub-decoders for UTXOW + DELEGS (each ~10 sub-variants), typed
+`Withdrawals` decoder for tag 2, typed `NonEmptyMap (Mismatch RelEQ
+Coin)` decoder for tag 3. **Exit:** operators can pattern-match
 typed rejection variants without a CBOR re-walk.
 
 ### A6 — Workspace + documentation hygiene
