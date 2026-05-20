@@ -502,12 +502,23 @@ and tag 9 (`InvalidMetadata` with no payload). Tags 0/1/2/3/4/5/10
 (NonEmptySet/NonEmpty/sub-rule payloads) carry raw inner CBOR
 pending their per-variant decoders. New `TxAuxDataHash` newtype
 mirrors upstream's 32-byte metadata-hash SafeHash shape.
-Phase-2.5+ remaining work: NonEmptySet decoder for the
-ScriptHash/KeyHash variants, `ShelleyUtxoPredFailure` (tag-4
-nested sub-rule), `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
-tree), wiring the typed decoder into `ShelleyLedgerPredFailure`,
-then mirroring the predicate-failure tree for Allegra/Mary/Alonzo/
-Babbage/Conway eras (Conway adds 4+ governance-specific variants).
+R599 (2026-05-21) shipped the `NonEmptySet ScriptHash` decoder
+plus typed payloads for `ShelleyUtxowPredFailure` tags 2
+(`MissingScriptWitnessesUTXOW`), 3
+(`ScriptWitnessNotValidatingUTXOW`), and 10
+(`ExtraneousScriptWitnessesUTXOW`). New `ScriptHash` 28-byte
+newtype + `NonEmptySetScriptHash` carrier (BTreeSet) + Display
+matching upstream stock-derived `Show`. Decoder is tag-258 tolerant
+(accepts both bare-list and tag-prefixed wire forms per upstream's
+protocol-version ≥ 9 set semantics) and enforces the NonEmpty
+invariant at decode time. Phase-2.5+ remaining work:
+`NonEmpty (VKey Witness)` for tag 0, `NonEmptySet (KeyHash
+Witness)` for tag 1, `Set (KeyHash Witness)` for tag 5,
+`ShelleyUtxoPredFailure` (tag-4 nested sub-rule),
+`ShelleyDelegsPredFailure` (tag-1 of the LEDGER tree), wiring the
+typed decoder into `ShelleyLedgerPredFailure`, then mirroring the
+predicate-failure tree for Allegra/Mary/Alonzo/Babbage/Conway eras
+(Conway adds 4+ governance-specific variants).
 **Exit:** operators can pattern-match typed rejection variants
 without a CBOR re-walk.
 

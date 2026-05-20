@@ -726,6 +726,108 @@ impl fmt::Display for TxAuxDataHash {
     }
 }
 
+/// 28-byte script-hash newtype mirroring upstream
+/// `newtype ScriptHash = ScriptHash (Hash ADDRHASH (Script era))`.
+/// Display matches upstream's stock-derived Show
+/// `ScriptHash "<hex>"`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct ScriptHash(pub [u8; 28]);
+
+impl fmt::Display for ScriptHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ScriptHash \"{}\"", hex::encode(self.0))
+    }
+}
+
+/// Non-empty set of script hashes mirroring upstream
+/// `NonEmptySet ScriptHash` from `Data.Set.NonEmpty` over the
+/// canonical `Set ScriptHash` wire format.
+///
+/// CBOR shape: optional CBOR tag 258 followed by an array of
+/// 28-byte byte-strings. The decoder is tag-tolerant (matches
+/// upstream `decodeSet` semantics for protocol versions ≥ 9, which
+/// permits but does not enforce the 258 prefix). Empty sets are
+/// rejected at decode time to honour the NonEmpty invariant.
+///
+/// Stored as `BTreeSet<ScriptHash>` so iteration follows upstream
+/// `Data.Set.toAscList` byte-lex order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptySetScriptHash {
+    /// Decoded set entries. Guaranteed non-empty by `from_cbor`.
+    pub entries: std::collections::BTreeSet<ScriptHash>,
+}
+
+impl NonEmptySetScriptHash {
+    /// Decode a `NonEmptySet ScriptHash` from canonical CBOR bytes.
+    /// Accepts either the bare list encoding or the tag-258
+    /// wrapped form (`d9 01 02 ...`) per upstream's protocol-version
+    /// ≥ 9 set decoder.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("NonEmptySetScriptHash: peek: {err:?}")))?;
+        if major == 6 {
+            let tag = dec
+                .tag()
+                .map_err(|err| DecoderError(format!("NonEmptySetScriptHash: tag: {err:?}")))?;
+            if tag != 258 {
+                return Err(DecoderError(format!(
+                    "NonEmptySetScriptHash: expected tag 258, got {tag}"
+                )));
+            }
+        }
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptySetScriptHash: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptySetScriptHash: NonEmptySet requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = std::collections::BTreeSet::new();
+        for _ in 0..count {
+            let hash_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptySetScriptHash: expected ScriptHash bytes: {err:?}"
+                ))
+            })?;
+            let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                DecoderError(format!(
+                    "NonEmptySetScriptHash: ScriptHash must be 28 bytes, got {}",
+                    hash_bytes.len()
+                ))
+            })?;
+            entries.insert(ScriptHash(arr));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptySetScriptHash {
+    /// Render upstream stock-derived `Show (NonEmptySet ScriptHash)`:
+    /// `NonEmptySet (fromList [ScriptHash "<hex>", ...])`. The
+    /// `NonEmptySet` constructor wraps `Show (Set a)`'s
+    /// `fromList [...]` envelope, since upstream uses `deriving
+    /// stock (Show)` on `newtype NonEmptySet a = NonEmptySet (Set a)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptySet (fromList [")?;
+        let mut first = true;
+        for hash in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{hash}")?;
+        }
+        f.write_str("])")?;
+        Ok(())
+    }
+}
+
 /// `ShelleyUtxowPredFailure` mirror.
 ///
 /// Upstream: `data ShelleyUtxowPredFailure era` from
@@ -747,11 +849,11 @@ pub enum ShelleyUtxowPredFailure {
     /// `NonEmptySet (KeyHash Witness)`. Raw payload pending decoder.
     MissingVKeyWitnessesUTXOW(Vec<u8>),
     /// Tag 2: required scripts not supplied —
-    /// `NonEmptySet ScriptHash`. Raw payload pending decoder.
-    MissingScriptWitnessesUTXOW(Vec<u8>),
+    /// `NonEmptySet ScriptHash` (R599 typed decoder).
+    MissingScriptWitnessesUTXOW(NonEmptySetScriptHash),
     /// Tag 3: scripts that failed validation —
-    /// `NonEmptySet ScriptHash`. Raw payload pending decoder.
-    ScriptWitnessNotValidatingUTXOW(Vec<u8>),
+    /// `NonEmptySet ScriptHash` (R599 typed decoder).
+    ScriptWitnessNotValidatingUTXOW(NonEmptySetScriptHash),
     /// Tag 4: nested UTXO sub-rule failure — raw payload pending
     /// `ShelleyUtxoPredFailure` decoder.
     UtxoFailure(Vec<u8>),
@@ -772,9 +874,8 @@ pub enum ShelleyUtxowPredFailure {
     /// Tag 9: metadata strings out of range — no payload.
     InvalidMetadata,
     /// Tag 10: extraneous scripts supplied beyond what the tx
-    /// required — `NonEmptySet ScriptHash`. Raw payload pending
-    /// decoder.
-    ExtraneousScriptWitnessesUTXOW(Vec<u8>),
+    /// required — `NonEmptySet ScriptHash` (R599 typed decoder).
+    ExtraneousScriptWitnessesUTXOW(NonEmptySetScriptHash),
 }
 
 impl ShelleyUtxowPredFailure {
@@ -823,12 +924,18 @@ impl fmt::Display for ShelleyUtxowPredFailure {
         match self {
             Self::InvalidWitnessesUTXOW(b)
             | Self::MissingVKeyWitnessesUTXOW(b)
-            | Self::MissingScriptWitnessesUTXOW(b)
-            | Self::ScriptWitnessNotValidatingUTXOW(b)
             | Self::UtxoFailure(b)
-            | Self::MIRInsufficientGenesisSigsUTXOW(b)
-            | Self::ExtraneousScriptWitnessesUTXOW(b) => {
+            | Self::MIRInsufficientGenesisSigsUTXOW(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::MissingScriptWitnessesUTXOW(set) => {
+                write!(f, "MissingScriptWitnessesUTXOW ({set})")
+            }
+            Self::ScriptWitnessNotValidatingUTXOW(set) => {
+                write!(f, "ScriptWitnessNotValidatingUTXOW ({set})")
+            }
+            Self::ExtraneousScriptWitnessesUTXOW(set) => {
+                write!(f, "ExtraneousScriptWitnessesUTXOW ({set})")
             }
             Self::MissingTxBodyMetadataHash(h) => {
                 write!(f, "MissingTxBodyMetadataHash ({h})")
@@ -953,10 +1060,26 @@ impl ShelleyUtxowPredFailure {
                     expected: TxAuxDataHash(expected),
                 }))
             }
+            // Tags 2/3/10 share a `NonEmptySet ScriptHash` payload
+            // (R599 typed decoder).
+            2 | 3 | 10 => {
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ShelleyUtxowPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let set = NonEmptySetScriptHash::from_cbor(payload_bytes)?;
+                Ok(match tag {
+                    2 => Self::MissingScriptWitnessesUTXOW(set),
+                    3 => Self::ScriptWitnessNotValidatingUTXOW(set),
+                    10 => Self::ExtraneousScriptWitnessesUTXOW(set),
+                    _ => unreachable!("tag range checked above"),
+                })
+            }
             // Variants whose typed payload decoder is not yet
             // ported: capture the remaining bytes verbatim and
             // route them through the raw-payload variant.
-            0..=5 | 10 => {
+            0 | 1 | 4 | 5 => {
                 let raw = bytes
                     .get(payload_offset..)
                     .ok_or_else(|| {
@@ -968,11 +1091,8 @@ impl ShelleyUtxowPredFailure {
                 Ok(match tag {
                     0 => Self::InvalidWitnessesUTXOW(raw),
                     1 => Self::MissingVKeyWitnessesUTXOW(raw),
-                    2 => Self::MissingScriptWitnessesUTXOW(raw),
-                    3 => Self::ScriptWitnessNotValidatingUTXOW(raw),
                     4 => Self::UtxoFailure(raw),
                     5 => Self::MIRInsufficientGenesisSigsUTXOW(raw),
-                    10 => Self::ExtraneousScriptWitnessesUTXOW(raw),
                     _ => unreachable!("tag range checked above"),
                 })
             }
@@ -1637,6 +1757,85 @@ mod tests {
         assert!(s.contains("Mismatch (RelEQ)"));
         assert!(s.contains("supplied: TxAuxDataHash {unTxAuxDataHash = SafeHash \"11"));
         assert!(s.contains("expected: TxAuxDataHash {unTxAuxDataHash = SafeHash \"22"));
+    }
+
+    #[test]
+    fn non_empty_set_script_hash_decodes_tag258_form() {
+        // tag 258 (0xD9 01 02) + array(2) + bytes(28) + bytes(28)
+        let mut cbor = vec![0xD9, 0x01, 0x02];
+        cbor.push(0x82); // array(2)
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x11_u8; 28]);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x22_u8; 28]);
+        let set = NonEmptySetScriptHash::from_cbor(&cbor).expect("tag258 set");
+        assert_eq!(set.entries.len(), 2);
+        let s = set.to_string();
+        assert!(
+            s.starts_with("NonEmptySet (fromList [ScriptHash \"11"),
+            "got {s}"
+        );
+        assert!(s.contains("ScriptHash \"22"));
+    }
+
+    #[test]
+    fn non_empty_set_script_hash_decodes_bare_list() {
+        // bare array(1) + bytes(28), no tag prefix
+        let mut cbor = vec![0x81_u8];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x33_u8; 28]);
+        let set = NonEmptySetScriptHash::from_cbor(&cbor).expect("bare list");
+        assert_eq!(set.entries.len(), 1);
+    }
+
+    #[test]
+    fn non_empty_set_script_hash_rejects_empty_set() {
+        let cbor = vec![0xD9, 0x01, 0x02, 0x80]; // tag 258 + array(0)
+        let err = NonEmptySetScriptHash::from_cbor(&cbor).expect_err("empty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmptySet requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn non_empty_set_script_hash_rejects_wrong_hash_length() {
+        // tag 258 + array(1) + bytes(27)
+        let mut cbor = vec![0xD9, 0x01, 0x02, 0x81];
+        cbor.push(0x58);
+        cbor.push(27);
+        cbor.extend_from_slice(&[0x44_u8; 27]);
+        let err = NonEmptySetScriptHash::from_cbor(&cbor).expect_err("wrong length must reject");
+        assert!(
+            err.to_string().contains("ScriptHash must be 28 bytes"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_missing_script_witnesses_decodes_tag2() {
+        // outer [0x82, 0x02, tag 258 + array(1) + bytes(28)]
+        let mut cbor = vec![0x82_u8, 0x02];
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02]);
+        cbor.push(0x81);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x77_u8; 28]);
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("typed tag-2");
+        if let ShelleyUtxowPredFailure::MissingScriptWitnessesUTXOW(set) = &f {
+            assert_eq!(set.entries.len(), 1);
+        } else {
+            panic!("expected MissingScriptWitnessesUTXOW, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("MissingScriptWitnessesUTXOW (NonEmptySet (fromList [ScriptHash \"77"),
+            "got: {s}"
+        );
     }
 
     #[test]
