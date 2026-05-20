@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R572 Plutus-bearing TxDats + Redeemers DumpToFile rendering).
+**Status:** `partial` (post-R573 inline-datum Babbage/Conway DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,14 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R573: `show_babbage_datum` now renders inline datums
+  (`DatumOption::Inline(PlutusData)`) as upstream `Datum (BinaryData
+  "<latin1-escaped-cbor>")`, using `show_haskell_bytestring` over the
+  PlutusData's canonical CBOR. Inline datums no longer block the
+  Babbage/Conway `DumpToFile` path; reference scripts and Plutus
+  script-witness bytes remain `TxGenError` boundaries. 3 focused unit
+  tests cover `NoDatum`, `DatumHash`, simple-integer inline datum,
+  and nested-Constr inline datum.
 - Shipped R572: `show_alonzo_witness_set` now renders non-empty
   `plutus_data` and `redeemers` instead of returning `TxGenError`. New
   helpers `show_plutus_data` (matching upstream stock-derived `Show
@@ -552,8 +560,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
   index)`-sorted redeemer ordering matching upstream `Map PlutusPurpose
   AsIx era` traversal. Native scripts, bootstrap witnesses, and Plutus
   V1/V2/V3 script witnesses still return `TxGenError`.
+- Shipped: Inline-datum DumpToFile rendering (R573):
+  `show_babbage_datum` now renders `DatumOption::Inline(PlutusData)`
+  as upstream `Datum (BinaryData "<latin1-escaped-cbor>")` using
+  `show_haskell_bytestring` over the PlutusData's canonical CBOR.
 - Next: Plutus V1/V2/V3 script-witness rendering, native-script
-  rendering, and upstream-binary soak in strict-mirror-sized slices.
+  rendering, reference-script rendering on `BabbageTxOut`, and
+  upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

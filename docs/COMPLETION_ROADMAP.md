@@ -365,9 +365,13 @@ own parser / generator / submission implementation plus upstream
   for the `ExUnits {exUnitsMem, exUnitsSteps}` record). Native scripts,
   bootstrap witnesses, and Plutus V1/V2/V3 script-witness bytes are
   the remaining `TxGenError` boundaries inside the witness set, plus
-  the inline datum / reference script paths on `BabbageTxOut`. The
-  remaining tx-generator blockers are those Plutus-script-witness
-  renderings, inline datums / reference scripts, governance
+  the inline datum / reference script paths on `BabbageTxOut`. R573
+  closed the inline-datum path: `show_babbage_datum` now renders
+  `DatumOption::Inline(PlutusData)` as upstream `Datum (BinaryData
+  "<latin1-escaped-cbor>")` using R572's `show_haskell_bytestring`
+  over the PlutusData's canonical CBOR. The remaining tx-generator
+  blockers are Plutus-script-witness renderings, reference scripts
+  on outputs, native scripts, bootstrap witnesses, Conway governance
   procedures, and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.

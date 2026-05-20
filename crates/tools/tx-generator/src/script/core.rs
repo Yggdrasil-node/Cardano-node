@@ -1482,9 +1482,20 @@ fn show_babbage_datum(datum: Option<&DatumOption>) -> Result<String, Error> {
         Some(DatumOption::Hash(hash)) => {
             Ok(format!("DatumHash (SafeHash \"{}\")", hex::encode(hash)))
         }
-        Some(DatumOption::Inline(_)) => Err(lift_tx_gen_error(
-            "DumpToFile: Babbage Show(Tx) renderer does not yet support inline datums",
-        )),
+        Some(DatumOption::Inline(pd)) => {
+            // Upstream Show for `Datum era`:
+            //   `Datum (BinaryData "<latin1-escaped-bytes>")`
+            //
+            // `Datum era` is stock-derived Show on
+            // `data Datum era = NoDatum | DatumHash DataHash | Datum (BinaryData era)`.
+            // The single-arg `Datum` constructor wraps the `BinaryData` at
+            // showsPrec 11; `BinaryData era = BinaryData ShortByteString
+            // deriving newtype Show` so the value renders as `(BinaryData
+            // "<bytestring-show>")`. The underlying SBS is the canonical
+            // CBOR of the plutus data (yggdrasil PlutusData::to_cbor_bytes()).
+            let bs_show = show_haskell_bytestring(&pd.to_cbor_bytes());
+            Ok(format!("Datum (BinaryData {bs_show})"))
+        }
     }
 }
 
@@ -3154,6 +3165,44 @@ mod tests {
             spend2 < spend5 && spend5 < mint0,
             "redeemer ordering wrong: {rendered}"
         );
+    }
+
+    #[test]
+    fn dumptofile_babbage_datum_renders_no_datum_and_hash() {
+        assert_eq!(show_babbage_datum(None).expect("no datum"), "NoDatum");
+        let hash = [0x11_u8; 32];
+        let rendered = show_babbage_datum(Some(&DatumOption::Hash(hash))).expect("datum hash");
+        assert_eq!(
+            rendered,
+            "DatumHash (SafeHash \"1111111111111111111111111111111111111111111111111111111111111111\")"
+        );
+    }
+
+    #[test]
+    fn dumptofile_babbage_datum_renders_inline_simple_integer() {
+        // PlutusData::Integer(42) encodes to a single CBOR unsigned-int byte
+        // 0x18 0x2a → bytestring shows as `\24*` (0x18 = decimal 24 → `\24`;
+        // 0x2a = ASCII `*`). The `\&` separator is not needed because `*`
+        // is not a digit.
+        let pd = PlutusData::integer(42);
+        let rendered =
+            show_babbage_datum(Some(&DatumOption::Inline(pd.clone()))).expect("inline datum");
+        let expected_inner = show_haskell_bytestring(&pd.to_cbor_bytes());
+        assert_eq!(rendered, format!("Datum (BinaryData {expected_inner})"));
+        // Sanity: must start with `Datum (BinaryData "` and end with `")`.
+        assert!(rendered.starts_with("Datum (BinaryData \""));
+        assert!(rendered.ends_with("\")"));
+    }
+
+    #[test]
+    fn dumptofile_babbage_datum_renders_inline_constr_with_bytes() {
+        // Nested PlutusData inside an inline datum: Constr 0 [B "abc"]
+        let inner = PlutusData::Bytes(b"abc".to_vec());
+        let pd = PlutusData::Constr(0, vec![inner]);
+        let rendered = show_babbage_datum(Some(&DatumOption::Inline(pd.clone())))
+            .expect("inline constr datum");
+        let expected_inner = show_haskell_bytestring(&pd.to_cbor_bytes());
+        assert_eq!(rendered, format!("Datum (BinaryData {expected_inner})"));
     }
 
     #[test]
