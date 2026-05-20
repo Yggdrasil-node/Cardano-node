@@ -126,6 +126,12 @@ approved synthesis area from the sister-tools plan.
   `makeToUTxOList`, key-address derivation, and the key-witness
   `mkUTxOVariant` path across Shelley-family output encodings. Script
   outputs stay with the Plutus witness-builder slice.
+- Shipped R545: `Benchmarking/Script/Core.hs` pay-mode and collateral
+  preflight. `script/core.rs` now ports `selectCollateralFunds` and the
+  key-output half of `interpretPayMode`, traces upstream-shaped
+  `Split`, `SplitN`, and `NtoM` output-address messages before value
+  splitting, and keeps `PayToScript` on an explicit
+  `makePlutusContext` / `mkUTxOScript` boundary.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the GeneratorTx
   construction and submission slices land.
@@ -204,6 +210,10 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: TxGenerator UTxO output builders (R544):
   `ToUTxO`, `ToUTxOList`, `makeToUTxOList`, key-address derivation,
   and key-witnessed `mkUTxOVariant` output/fund construction.
+- Shipped: Script/Core pay-mode/collateral preflight (R545):
+  `selectCollateralFunds`, key-output `interpretPayMode`, and
+  upstream-shaped address trace points for `Split`, `SplitN`, and
+  `NtoM` before the transaction-build sentinel.
 - Next: port the remaining GeneratorTx transaction construction,
   script-output/witness plumbing, and LocalSocket / Benchmark
   submission in strict-mirror-sized slices.

@@ -254,7 +254,11 @@ own parser / generator / submission implementation plus upstream
   assembly. R544 added the `Cardano.TxGenerator.UTxO` key-output
   builder surface (`ToUTxO`, `ToUTxOList`, `makeToUTxOList`, and
   key-witnessed `mkUTxOVariant`) using ledger-native Shelley-family
-  outputs and pure-Rust signing-key derivation. The remaining
+  outputs and pure-Rust signing-key derivation. R545 wired the
+  `Script/Core.hs` pay-mode and collateral preflight boundary by
+  porting `selectCollateralFunds`, the key-output half of
+  `interpretPayMode`, and the `Split` / `SplitN` / `NtoM`
+  output-address trace points before value splitting. The remaining
   tx-generator blocker is transaction assembly, script-output/witness
   plumbing, GeneratorTx / Submission implementation, and upstream
   comparison evidence.

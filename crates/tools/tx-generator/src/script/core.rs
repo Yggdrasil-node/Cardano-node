@@ -28,9 +28,12 @@ use crate::script::env::{
     get_env_wallets_mut, get_proto_param_mode, lift_tx_gen_error, set_env_keys, set_env_threads,
     set_env_wallets, set_proto_param_mode, trace_debug,
 };
-use crate::script::types::{Generator, ProtocolParametersSource, SigningKeyEnvelope, SubmitMode};
-use crate::tx_generator::fund::get_fund_coin;
+use crate::script::types::{
+    Generator, PayMode, ProtocolParametersSource, SigningKeyEnvelope, SubmitMode,
+};
+use crate::tx_generator::fund::{get_fund_coin, get_fund_tx_in};
 use crate::tx_generator::utils::{include_change, inputs_to_outputs_with_fee};
+use crate::tx_generator::utxo::{ToUtxo, key_address, mk_utxo_variant};
 use crate::types::{AnyCardanoEra, Lovelace, TxGenTxParams};
 use crate::wallet::wallet_preview;
 
@@ -260,6 +263,91 @@ pub fn to_metadata(
     }
 }
 
+/// Rust carrier for upstream `TxInsCollateral era, [Fund]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedCollateral {
+    /// Collateral transaction inputs in upstream `getFundTxIn` order.
+    pub tx_ins: Vec<String>,
+    /// Funds retained beside the generated transaction stream.
+    pub funds: Vec<Fund>,
+}
+
+/// Mirror of upstream `selectCollateralFunds`.
+pub fn select_collateral_funds(
+    env: &Env,
+    era: AnyCardanoEra,
+    collateral_wallet: Option<&str>,
+) -> Result<SelectedCollateral, Error> {
+    let Some(wallet_name) = collateral_wallet else {
+        return Ok(SelectedCollateral {
+            tx_ins: Vec::new(),
+            funds: Vec::new(),
+        });
+    };
+
+    let collateral_funds = get_env_wallets(env, wallet_name)?.funds();
+    if collateral_funds.is_empty() {
+        return Err(Error::WalletError(
+            "selectCollateralFunds: emptylist".to_string(),
+        ));
+    }
+    if !collateral_supported_in_era(era) {
+        return Err(Error::WalletError(format!(
+            "selectCollateralFunds: collateral: era not supported :{era:?}"
+        )));
+    }
+
+    Ok(SelectedCollateral {
+        tx_ins: collateral_funds
+            .iter()
+            .map(|fund| get_fund_tx_in(fund).to_string())
+            .collect(),
+        funds: collateral_funds,
+    })
+}
+
+/// Result returned by upstream `interpretPayMode`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InterpretedPayMode {
+    /// Destination output/fund builder for the selected pay mode.
+    pub to_utxo: ToUtxo,
+    /// Destination wallet that receives generated funds.
+    pub destination_wallet: String,
+    /// Raw address bytes rendered as hex until the Bech32 surface lands.
+    pub address_hex: String,
+}
+
+/// Mirror of upstream `interpretPayMode`.
+pub fn interpret_pay_mode(
+    env: &Env,
+    era: AnyCardanoEra,
+    pay_mode: &PayMode,
+) -> Result<InterpretedPayMode, Error> {
+    let network_id = get_env_network_id(env)?.clone();
+    match pay_mode {
+        PayMode::PayToAddr(key_name, dest_wallet) => {
+            let fund_key = get_env_keys(env, key_name)?.clone();
+            let _wallet_ref = get_env_wallets(env, dest_wallet)?;
+            let to_utxo =
+                mk_utxo_variant(era, network_id.clone(), key_name.clone(), fund_key.clone())
+                    .map_err(lift_tx_gen_error)?;
+            let address_hex =
+                hex::encode(key_address(&network_id, &fund_key).map_err(lift_tx_gen_error)?);
+            Ok(InterpretedPayMode {
+                to_utxo,
+                destination_wallet: dest_wallet.clone(),
+                address_hex,
+            })
+        }
+        PayMode::PayToScript(_script_spec, dest_wallet) => {
+            let _wallet_ref = get_env_wallets(env, dest_wallet)?;
+            Err(lift_tx_gen_error(
+                "interpretPayMode: PayToScript is pending makePlutusContext/mkUTxOScript",
+            ))
+        }
+    }
+}
+
 /// Mirror of upstream `submitAction`.
 pub fn submit_action(
     env: &mut Env,
@@ -289,27 +377,48 @@ pub fn submit_in_era(
 }
 
 fn preflight_generator(
-    env: &Env,
+    env: &mut Env,
     era: AnyCardanoEra,
     generator: &Generator,
     fee: Lovelace,
 ) -> Result<(), Error> {
     match generator {
-        Generator::Split(wallet_name, _, _, coins) => {
+        Generator::Split(wallet_name, pay_mode, pay_mode_change, coins) => {
             let funds = wallet_preview(get_env_wallets(env, wallet_name)?, 1);
+            let output = interpret_pay_mode(env, era, pay_mode)?;
+            trace_debug(
+                env,
+                &format!("split output address : {}", output.address_hex),
+            );
+            let change = interpret_pay_mode(env, era, pay_mode_change)?;
+            trace_debug(
+                env,
+                &format!("split change address : {}", change.address_hex),
+            );
             let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
             include_change(fee, coins, &have).map_err(lift_tx_gen_error)?;
             Ok(())
         }
-        Generator::SplitN(wallet_name, _, count) => {
+        Generator::SplitN(wallet_name, pay_mode, count) => {
             let funds = wallet_preview(get_env_wallets(env, wallet_name)?, 1);
+            let output = interpret_pay_mode(env, era, pay_mode)?;
+            trace_debug(
+                env,
+                &format!("SplitN output address : {}", output.address_hex),
+            );
             let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
             inputs_to_outputs_with_fee(fee, *count, &have).map_err(lift_tx_gen_error)?;
             Ok(())
         }
-        Generator::NtoM(wallet_name, _, inputs, outputs, metadata_size, _) => {
-            let _ = to_metadata(era, *metadata_size)?;
+        Generator::NtoM(wallet_name, pay_mode, inputs, outputs, metadata_size, collateral) => {
             let funds = wallet_preview(get_env_wallets(env, wallet_name)?, *inputs);
+            let _collaterals = select_collateral_funds(env, era, collateral.as_deref())?;
+            let output = interpret_pay_mode(env, era, pay_mode)?;
+            trace_debug(
+                env,
+                &format!("NtoM output address : {}", output.address_hex),
+            );
+            let _ = to_metadata(era, *metadata_size)?;
             let have = funds.iter().map(get_fund_coin).collect::<Vec<_>>();
             inputs_to_outputs_with_fee(fee, *outputs, &have).map_err(lift_tx_gen_error)?;
             Ok(())
@@ -331,6 +440,16 @@ fn preflight_generator(
         }
         Generator::SecureGenesis(_, _, _) => Ok(()),
     }
+}
+
+fn collateral_supported_in_era(era: AnyCardanoEra) -> bool {
+    matches!(
+        era,
+        AnyCardanoEra::Alonzo
+            | AnyCardanoEra::Babbage
+            | AnyCardanoEra::Conway
+            | AnyCardanoEra::Dijkstra
+    )
 }
 
 /// Mirror of upstream `initWallet`.
@@ -534,6 +653,17 @@ mod tests {
     use crate::script::env::{Env, get_env_wallets, set_env_network_id, set_env_socket_path};
     use crate::script::types::{NetworkId, PayMode};
 
+    fn signing_key(byte: u8) -> SigningKeyEnvelope {
+        SigningKeyEnvelope::payment_signing_key_shelley(format!("5820{}", hex::encode([byte; 32])))
+    }
+
+    fn seed_pay_to_addr_env(env: &mut Env) {
+        set_env_network_id(env, NetworkId::Testnet(42));
+        init_wallet(env, "source").expect("source wallet");
+        init_wallet(env, "dest").expect("dest wallet");
+        define_signing_key(env, "key", signing_key(7));
+    }
+
     #[test]
     fn with_era_rejects_byron_and_accepts_shelley_based_eras() {
         assert_eq!(
@@ -656,9 +786,19 @@ mod tests {
     #[test]
     fn submit_in_era_preflights_ntom_metadata_size() {
         let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Conway,
+            "source",
+            "abc#0",
+            100,
+            "key",
+        )
+        .expect("source fund");
         let generator = Generator::NtoM(
-            "wallet".to_string(),
-            PayMode::PayToAddr("key".to_string(), "wallet".to_string()),
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
             1,
             1,
             Some(38),
@@ -688,16 +828,11 @@ mod tests {
     #[test]
     fn submit_in_era_preflights_splitn_value_split() {
         let mut env = Env::empty_env();
-        init_wallet(&mut env, "wallet").expect("wallet");
-        define_signing_key(
-            &mut env,
-            "key",
-            SigningKeyEnvelope::payment_signing_key_shelley("5820abcd"),
-        );
-        add_fund(&mut env, AnyCardanoEra::Conway, "wallet", "abc#0", 9, "key").expect("fund");
+        seed_pay_to_addr_env(&mut env);
+        add_fund(&mut env, AnyCardanoEra::Conway, "source", "abc#0", 9, "key").expect("fund");
         let generator = Generator::SplitN(
-            "wallet".to_string(),
-            PayMode::PayToAddr("key".to_string(), "wallet".to_string()),
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
             2,
         );
 
@@ -719,6 +854,78 @@ mod tests {
             Error::TxGenError(
                 "inputsToOutputsWithFee: insufficient funds, inputs=[9], fee=10".to_string()
             )
+        );
+    }
+
+    #[test]
+    fn interpret_pay_mode_builds_key_output_builder_and_address_trace_value() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        let pay_mode = PayMode::PayToAddr("key".to_string(), "dest".to_string());
+
+        let interpreted =
+            interpret_pay_mode(&env, AnyCardanoEra::Conway, &pay_mode).expect("pay mode");
+
+        assert_eq!(interpreted.to_utxo.era(), AnyCardanoEra::Conway);
+        assert_eq!(interpreted.to_utxo.key_name(), "key");
+        assert_eq!(interpreted.destination_wallet, "dest");
+        assert_eq!(interpreted.address_hex.len(), 58);
+        assert!(interpreted.address_hex.starts_with("60"));
+    }
+
+    #[test]
+    fn interpret_pay_mode_requires_network_before_key_output_builder() {
+        let mut env = Env::empty_env();
+        init_wallet(&mut env, "dest").expect("dest wallet");
+        define_signing_key(&mut env, "key", signing_key(7));
+        let pay_mode = PayMode::PayToAddr("key".to_string(), "dest".to_string());
+
+        assert_eq!(
+            interpret_pay_mode(&env, AnyCardanoEra::Conway, &pay_mode),
+            Err(Error::UserError("Unset Genesis".to_string()))
+        );
+    }
+
+    #[test]
+    fn select_collateral_funds_matches_empty_and_era_boundaries() {
+        let mut env = Env::empty_env();
+        init_wallet(&mut env, "collateral").expect("collateral wallet");
+
+        assert_eq!(
+            select_collateral_funds(&env, AnyCardanoEra::Conway, Some("collateral")),
+            Err(Error::WalletError(
+                "selectCollateralFunds: emptylist".to_string()
+            ))
+        );
+
+        define_signing_key(&mut env, "key", signing_key(3));
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Shelley,
+            "collateral",
+            "abc#0",
+            5,
+            "key",
+        )
+        .expect("collateral fund");
+
+        assert_eq!(
+            select_collateral_funds(&env, AnyCardanoEra::Shelley, Some("collateral")),
+            Err(Error::WalletError(
+                "selectCollateralFunds: collateral: era not supported :Shelley".to_string()
+            ))
+        );
+
+        let selected = select_collateral_funds(&env, AnyCardanoEra::Alonzo, Some("collateral"))
+            .expect("collateral");
+        assert_eq!(selected.tx_ins, vec!["abc#0".to_string()]);
+        assert_eq!(selected.funds.len(), 1);
+        assert_eq!(
+            select_collateral_funds(&env, AnyCardanoEra::Conway, None).expect("none"),
+            SelectedCollateral {
+                tx_ins: Vec::new(),
+                funds: Vec::new()
+            }
         );
     }
 

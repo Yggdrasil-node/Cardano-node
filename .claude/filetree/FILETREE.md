@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T06:50:30Z
-- Files described: 1408
+- Generated at: 2026-05-20T07:18:31Z
+- Files described: 1409
 
 ## Workspace
 
@@ -2209,6 +2209,8 @@
   - Round R543 - tx-generator Utils value-splitting mirror: Ported the pure value-splitting helpers used by.
 - `docs/operational-runs/2026-05-20-round-544-tx-generator-utxo.md`
   - Round R544 - tx-generator UTxO output-builder mirror: Ported the key-output builder surface from:.
+- `docs/operational-runs/2026-05-20-round-545-tx-generator-core-paymode.md`
+  - Round R545 - tx-generator Script/Core pay-mode preflight: Ported the transaction-stream preflight boundary from:.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`
