@@ -197,9 +197,12 @@ Praos forging needs. Verified decomposition:
     `run::read_leader_credentials` returns the singleton ∪ bulk
     `Vec<BlockProducerCredentials>` forger set. The per-slot loop picking
     the first leader is R3c-4.
-  - 🟡 **R3c-3 — thread evolving state.** Extend `run_forge`'s `ForgeState`
-    to carry `LedgerState` + `NonceEvolutionState`, applying both per block.
-    Blocks stay structural here — a four-gates-green intermediate.
+  - ✅ **R3c-3 — thread evolving state** (round 530). `run_forge` now threads
+    `LedgerState` + `NonceEvolutionState` through `ForgeState`; append-mode
+    runs replay the existing ChainDB prefix into the genesis-seeded state
+    before forging more blocks; each new structural block applies to cloned
+    ledger/nonce state before append. Blocks stay structural here — a
+    four-gates-green intermediate.
   - 🟡 **R3c-4 — real Praos forge.** Replace `synth_structural_block` with
     `check_should_forge` (skip on `NotLeader`) + `forge_block` +
     `forged_block_to_storage_block`. High reuse of `crates/node/block-producer`.

@@ -16,7 +16,7 @@
 //! 4. Stops when [`ForgeLimit`] is reached
 //!    (`ForgeLimitSlot`/`ForgeLimitBlock`/`ForgeLimitEpoch`).
 //!
-//! ## Carve-outs (NOT ported this round — Phase 4 R2 slice boundary)
+//! ## Carve-outs (NOT ported this round - Phase 4 R3c-3 slice boundary)
 //!
 //! Upstream's per-slot leader check (`checkShouldForge`) is the Praos
 //! VRF/KES/OpCert path: it needs a typed `BlockForging` credential
@@ -27,20 +27,27 @@
 //! R3+) and the genesis-loading round (db-synthesizer R2). It is
 //! intentionally NOT in this slice.
 //!
-//! What this slice DOES port: the `runForge` *control loop* shape —
-//! the `ForgeState` accumulator, the `ForgeLimit`-driven `forgingDone`
-//! predicate, the `nextForgeState` slot/epoch advance arithmetic, and
-//! the prev-hash-threaded block-context derivation. Block bodies are
-//! produced by [`synth_structural_block`]: a deterministic,
-//! **non-Praos** structurally-valid [`Block`] with an empty
-//! transaction list, a placeholder issuer key, and a header hash
-//! derived by Blake2b-256 over `(prev_hash || slot || block_no)`.
-//! Every synthesized block is genuinely chained (its `prev_hash`
-//! points at the real predecessor), so the result is a structurally
-//! valid ChainDB that yggdrasil's own `FileImmutable`/`db-analyser`
-//! can open and walk — it is simply not a Praos-valid chain.
+//! What this slice DOES port: the `runForge` *control loop* shape,
+//! the `ForgeState` accumulator, the `ForgeLimit`-driven
+//! `forgingDone` predicate, the `nextForgeState` slot/epoch advance
+//! arithmetic, the prev-hash-threaded block-context derivation, and
+//! R3c-3's state threading: a genesis-seeded [`LedgerState`] plus
+//! [`NonceEvolutionState`] are replayed through any existing ChainDB
+//! prefix and advanced for each newly adopted block. Block bodies are
+//! still produced by [`synth_structural_block`]: a deterministic,
+//! **non-Praos** structurally-valid [`Block`] with an empty transaction
+//! list, a placeholder issuer key, and a header hash derived by
+//! Blake2b-256 over `(prev_hash || slot || block_no)`. Every
+//! synthesized block is genuinely chained and applied to the ledger
+//! state before append, so the result is a structurally valid ChainDB
+//! that yggdrasil's own `FileImmutable`/`db-analyser` can open and
+//! walk - it is simply not a Praos-valid chain until R3c-4 replaces
+//! the structural block with `checkShouldForge` + `forgeBlock`.
 
-use yggdrasil_ledger::{Block, BlockHeader, BlockNo, Era, HeaderHash, SlotNo, Tx};
+use yggdrasil_consensus::{EpochSize, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState};
+use yggdrasil_ledger::{
+    Block, BlockHeader, BlockNo, Era, HeaderHash, LedgerState, Nonce, SlotNo, Tx,
+};
 use yggdrasil_storage::{ImmutableStore, StorageError};
 
 use crate::types::{ForgeLimit, ForgeResult};
@@ -49,7 +56,7 @@ use crate::types::{ForgeLimit, ForgeResult};
 ///
 /// Mirror of upstream `data ForgeState = ForgeState { currentSlot,
 /// forged, currentEpoch, processed }`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForgeState {
     /// Slot the loop is currently considering.
     pub current_slot: SlotNo,
@@ -59,18 +66,78 @@ pub struct ForgeState {
     pub current_epoch: u64,
     /// Number of slots processed so far.
     pub processed: SlotNo,
+    /// Ledger state at the current forge tip.
+    pub ledger_state: LedgerState,
+    /// Praos nonce-evolution state at the current forge tip.
+    pub nonce_evolution: NonceEvolutionState,
 }
 
 impl ForgeState {
-    /// Mirror of upstream `initialForgeState = ForgeState 0 0 0 0`.
-    pub fn initial() -> Self {
+    /// Mirror of upstream `initialForgeState = ForgeState 0 0 0 0`,
+    /// extended with the genesis-seeded ledger and nonce state that
+    /// Haskell supplies through `pInfoInitLedger` / `ChainDepState`.
+    pub fn initial(ledger_state: LedgerState, nonce_evolution: NonceEvolutionState) -> Self {
         ForgeState {
             current_slot: SlotNo(0),
             forged: 0,
             current_epoch: 0,
             processed: SlotNo(0),
+            ledger_state,
+            nonce_evolution,
         }
     }
+}
+
+fn structural_nonce_input(block: &Block) -> [u8; 32] {
+    block.header.hash.0
+}
+
+fn predecessor_nonce_hash(block: &Block) -> Option<HeaderHash> {
+    if block.header.block_no == BlockNo(0) {
+        None
+    } else {
+        Some(block.header.prev_hash)
+    }
+}
+
+fn apply_block_to_state(
+    state: &mut ForgeState,
+    block: &Block,
+    nonce_config: &NonceEvolutionConfig,
+    nonce_derivation: NonceDerivation,
+) -> Result<(), ForgeError> {
+    state.ledger_state.apply_block(block)?;
+    state.nonce_evolution.apply_block(
+        block.header.slot_no,
+        &structural_nonce_input(block),
+        predecessor_nonce_hash(block),
+        nonce_config,
+        nonce_derivation,
+    );
+    Ok(())
+}
+
+fn replay_existing_chain<S: ImmutableStore>(
+    store: &S,
+    state: &mut ForgeState,
+    nonce_config: &NonceEvolutionConfig,
+    nonce_derivation: NonceDerivation,
+) -> Result<(), ForgeError> {
+    for block in store.suffix_after(&yggdrasil_ledger::Point::Origin)? {
+        apply_block_to_state(state, &block, nonce_config, nonce_derivation)?;
+    }
+    Ok(())
+}
+
+/// Errors from the forge loop.
+#[derive(Debug, thiserror::Error)]
+pub enum ForgeError {
+    /// Underlying immutable-store failure.
+    #[error("storage error: {0}")]
+    Storage(#[from] StorageError),
+    /// Ledger rejected a replayed or newly forged structural block.
+    #[error("ledger error: {0}")]
+    Ledger(#[from] yggdrasil_ledger::LedgerError),
 }
 
 /// Stop predicate — mirror of upstream `forgingDone`.
@@ -96,19 +163,17 @@ fn forging_done(limit: ForgeLimit, state: &ForgeState) -> bool {
 /// processed' = processed + 1
 /// epoch'     = currentEpoch + if unSlotNo processed' `rem` epochSize == 0 then 1 else 0
 /// ```
-fn next_forge_state(epoch_size: u64, state: ForgeState, did_forge: bool) -> ForgeState {
+fn next_forge_state(epoch_size: u64, state: &mut ForgeState, did_forge: bool) {
     let processed = SlotNo(state.processed.0 + 1);
     let current_epoch = if epoch_size != 0 && processed.0.is_multiple_of(epoch_size) {
         state.current_epoch + 1
     } else {
         state.current_epoch
     };
-    ForgeState {
-        current_slot: SlotNo(state.current_slot.0 + 1),
-        forged: state.forged + u64::from(did_forge),
-        current_epoch,
-        processed,
-    }
+    state.current_slot = SlotNo(state.current_slot.0 + 1);
+    state.forged += u64::from(did_forge);
+    state.current_epoch = current_epoch;
+    state.processed = processed;
 }
 
 /// Context for the block about to be forged — mirror of upstream
@@ -187,12 +252,21 @@ pub fn synth_structural_block(era: Era, ctx: BlockContext, slot: SlotNo) -> Bloc
 
 /// Outcome of [`run_forge`] — the [`ForgeResult`] plus the final
 /// [`ForgeState`] so callers can report the slot/epoch reached.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForgeRunOutcome {
     /// Upstream `ForgeResult` — number of blocks forged + adopted.
     pub result: ForgeResult,
     /// Terminal forge-loop accumulator.
     pub final_state: ForgeState,
+}
+
+/// Runtime parameters needed to advance the forge state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ForgeRuntimeConfig {
+    /// Network / era nonce-evolution parameters.
+    pub nonce_config: NonceEvolutionConfig,
+    /// TPraos vs Praos nonce derivation for the current structural era.
+    pub nonce_derivation: NonceDerivation,
 }
 
 /// Drive the forge loop against an [`ImmutableStore`].
@@ -211,11 +285,57 @@ pub fn run_forge<S: ImmutableStore>(
     next_slot: SlotNo,
     limit: ForgeLimit,
     store: &mut S,
-) -> Result<ForgeRunOutcome, StorageError> {
-    let mut state = ForgeState {
-        current_slot: next_slot,
-        ..ForgeState::initial()
+) -> Result<ForgeRunOutcome, ForgeError> {
+    let initial_state = ForgeState::initial(
+        LedgerState::new(Era::Byron),
+        NonceEvolutionState::new(Nonce::Neutral),
+    );
+    let nonce_config = NonceEvolutionConfig {
+        epoch_size: EpochSize(epoch_size),
+        stability_window: 0,
+        extra_entropy: Nonce::Neutral,
+        byron_shelley_transition: None,
     };
+    run_forge_with_state(
+        era,
+        epoch_size,
+        next_slot,
+        limit,
+        store,
+        initial_state,
+        ForgeRuntimeConfig {
+            nonce_config,
+            nonce_derivation: NonceDerivation::TPraos,
+        },
+    )
+}
+
+/// Drive the forge loop with a caller-supplied ledger / nonce state.
+///
+/// Existing blocks in `store` are replayed first so append-mode runs
+/// start from the same ledger and nonce cursor as their ChainDB tip.
+/// The new-block path applies each candidate block to cloned state
+/// before appending, committing the state transition only after the
+/// store accepts the block.
+pub fn run_forge_with_state<S: ImmutableStore>(
+    era: Era,
+    epoch_size: u64,
+    next_slot: SlotNo,
+    limit: ForgeLimit,
+    store: &mut S,
+    mut state: ForgeState,
+    runtime_config: ForgeRuntimeConfig,
+) -> Result<ForgeRunOutcome, ForgeError> {
+    replay_existing_chain(
+        store,
+        &mut state,
+        &runtime_config.nonce_config,
+        runtime_config.nonce_derivation,
+    )?;
+    state.current_slot = next_slot;
+    state.forged = 0;
+    state.current_epoch = 0;
+    state.processed = SlotNo(0);
 
     while !forging_done(limit, &state) {
         // This slice always "forges" — there is no leader check, so
@@ -224,8 +344,17 @@ pub fn run_forge<S: ImmutableStore>(
         // of the deferred Praos path.
         let ctx = current_block_context(store);
         let block = synth_structural_block(era, ctx, state.current_slot);
+        let mut next_state = state.clone();
+        apply_block_to_state(
+            &mut next_state,
+            &block,
+            &runtime_config.nonce_config,
+            runtime_config.nonce_derivation,
+        )?;
         store.append_block(block)?;
-        state = next_forge_state(epoch_size, state, true);
+        state.ledger_state = next_state.ledger_state;
+        state.nonce_evolution = next_state.nonce_evolution;
+        next_forge_state(epoch_size, &mut state, true);
     }
 
     Ok(ForgeRunOutcome {
@@ -241,10 +370,29 @@ mod tests {
     use super::*;
     use yggdrasil_storage::InMemoryImmutable;
 
+    fn test_forge_state() -> ForgeState {
+        ForgeState::initial(
+            LedgerState::new(Era::Byron),
+            NonceEvolutionState::new(Nonce::Neutral),
+        )
+    }
+
+    fn test_runtime_config(epoch_size: u64) -> ForgeRuntimeConfig {
+        ForgeRuntimeConfig {
+            nonce_config: NonceEvolutionConfig {
+                epoch_size: EpochSize(epoch_size),
+                stability_window: 0,
+                extra_entropy: Nonce::Neutral,
+                byron_shelley_transition: None,
+            },
+            nonce_derivation: NonceDerivation::TPraos,
+        }
+    }
+
     #[test]
     fn forging_done_slot_limit() {
         let limit = ForgeLimit::Slot(SlotNo(10));
-        let mut s = ForgeState::initial();
+        let mut s = test_forge_state();
         assert!(!forging_done(limit, &s));
         s.processed = SlotNo(10);
         assert!(forging_done(limit, &s));
@@ -253,7 +401,7 @@ mod tests {
     #[test]
     fn forging_done_block_limit() {
         let limit = ForgeLimit::Block(5);
-        let mut s = ForgeState::initial();
+        let mut s = test_forge_state();
         assert!(!forging_done(limit, &s));
         s.forged = 5;
         assert!(forging_done(limit, &s));
@@ -262,7 +410,7 @@ mod tests {
     #[test]
     fn forging_done_epoch_limit() {
         let limit = ForgeLimit::Epoch(2);
-        let mut s = ForgeState::initial();
+        let mut s = test_forge_state();
         assert!(!forging_done(limit, &s));
         s.current_epoch = 2;
         assert!(forging_done(limit, &s));
@@ -270,7 +418,8 @@ mod tests {
 
     #[test]
     fn next_forge_state_advances_slot_and_processed() {
-        let s = next_forge_state(100, ForgeState::initial(), true);
+        let mut s = test_forge_state();
+        next_forge_state(100, &mut s, true);
         assert_eq!(s.current_slot, SlotNo(1));
         assert_eq!(s.processed, SlotNo(1));
         assert_eq!(s.forged, 1);
@@ -279,7 +428,8 @@ mod tests {
 
     #[test]
     fn next_forge_state_no_forge_keeps_forged_count() {
-        let s = next_forge_state(100, ForgeState::initial(), false);
+        let mut s = test_forge_state();
+        next_forge_state(100, &mut s, false);
         assert_eq!(s.forged, 0);
         assert_eq!(s.processed, SlotNo(1));
     }
@@ -287,12 +437,12 @@ mod tests {
     #[test]
     fn next_forge_state_rolls_epoch_on_boundary() {
         // epoch_size = 4 → processed reaching 4 bumps the epoch.
-        let mut s = ForgeState::initial();
+        let mut s = test_forge_state();
         for _ in 0..3 {
-            s = next_forge_state(4, s, true);
+            next_forge_state(4, &mut s, true);
             assert_eq!(s.current_epoch, 0);
         }
-        s = next_forge_state(4, s, true);
+        next_forge_state(4, &mut s, true);
         assert_eq!(s.processed, SlotNo(4));
         assert_eq!(s.current_epoch, 1);
     }
@@ -424,5 +574,89 @@ mod tests {
             .unwrap();
         assert_eq!(blocks[4].header.slot_no, SlotNo(4));
         assert_eq!(blocks[4].header.block_no, BlockNo(4));
+    }
+
+    #[test]
+    fn run_forge_with_state_advances_ledger_tip_and_nonce() {
+        let mut store = InMemoryImmutable::default();
+        let initial_nonce = Nonce::Hash([1u8; 32]);
+        let initial_state = ForgeState::initial(
+            LedgerState::new(Era::Byron),
+            NonceEvolutionState::new(initial_nonce),
+        );
+        let outcome = run_forge_with_state(
+            Era::Shelley,
+            100,
+            SlotNo(0),
+            ForgeLimit::Block(3),
+            &mut store,
+            initial_state,
+            test_runtime_config(100),
+        )
+        .unwrap();
+
+        let blocks = store
+            .suffix_after(&yggdrasil_ledger::Point::Origin)
+            .unwrap();
+        let tip = blocks.last().unwrap();
+        assert_eq!(
+            outcome.final_state.ledger_state.tip,
+            yggdrasil_ledger::Point::BlockPoint(tip.header.slot_no, tip.header.hash),
+        );
+        assert_eq!(
+            outcome.final_state.ledger_state.tip_block_no,
+            Some(tip.header.block_no),
+        );
+        assert_ne!(
+            outcome.final_state.nonce_evolution.evolving_nonce, initial_nonce,
+            "structural block adoption must advance the nonce cursor",
+        );
+    }
+
+    #[test]
+    fn run_forge_with_state_replays_existing_chain_before_append() {
+        let mut one_shot = InMemoryImmutable::default();
+        let one_shot_outcome = run_forge_with_state(
+            Era::Shelley,
+            100,
+            SlotNo(0),
+            ForgeLimit::Block(5),
+            &mut one_shot,
+            test_forge_state(),
+            test_runtime_config(100),
+        )
+        .unwrap();
+
+        let mut appended = InMemoryImmutable::default();
+        run_forge_with_state(
+            Era::Shelley,
+            100,
+            SlotNo(0),
+            ForgeLimit::Block(3),
+            &mut appended,
+            test_forge_state(),
+            test_runtime_config(100),
+        )
+        .unwrap();
+        let append_outcome = run_forge_with_state(
+            Era::Shelley,
+            100,
+            SlotNo(3),
+            ForgeLimit::Block(2),
+            &mut appended,
+            test_forge_state(),
+            test_runtime_config(100),
+        )
+        .unwrap();
+
+        assert_eq!(appended.len(), 5);
+        assert_eq!(
+            append_outcome.final_state.ledger_state.tip,
+            one_shot_outcome.final_state.ledger_state.tip,
+        );
+        assert_eq!(
+            append_outcome.final_state.nonce_evolution,
+            one_shot_outcome.final_state.nonce_evolution,
+        );
     }
 }

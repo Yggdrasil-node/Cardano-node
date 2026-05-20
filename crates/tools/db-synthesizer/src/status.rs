@@ -4,10 +4,11 @@
 //! The forge-loop *control path* and the `preOpenChainDB` supervisor
 //! are implemented as of the Phase 4 R1 slice ([`crate::forging`] +
 //! [`crate::run`]); genesis loading landed in R2
-//! ([`crate::run::synthesize_from_config`]). What remains deferred is
-//! the **Praos-forging** axis — the per-slot VRF/KES/OpCert leader
-//! check. This helper surfaces that surviving carve-out as a
-//! structured descriptor.
+//! ([`crate::run::synthesize_from_config`]); R3c-3 now threads the
+//! genesis-seeded ledger and nonce state through the structural forge
+//! loop. What remains deferred is the **Praos-forging** axis — the
+//! per-slot VRF/KES/OpCert leader check. This helper surfaces that
+//! surviving carve-out as a structured descriptor.
 //!
 //! Mirrors the precedent set by cardano-tracer's R424-R429
 //! carve-out inventory + snapshot-converter + kes-agent-control.
@@ -20,7 +21,7 @@
 /// Status descriptor for the partially-deferred forge surface.
 ///
 /// The deterministic non-Praos structural forge loop + genesis
-/// loading are live; this descriptor tracks the *remaining*
+/// loading + ledger/nonce state threading are live; this descriptor tracks the *remaining*
 /// Praos-forging work that upstream's
 /// `Cardano.Tools.DBSynthesizer.Forging` performs (the per-slot
 /// VRF/KES/OpCert leader check + KES-signed header).
@@ -40,20 +41,21 @@ pub struct ForgeLoopStatus {
 
 /// Get the status descriptor for the db-synthesizer forge surface.
 ///
-/// As of Phase 4 R1+R2 the forge *control loop*, ChainDB supervisor,
-/// and genesis loading are live (`forging.rs` / `run.rs`); the
-/// Praos-forging path (VRF/KES/OpCert leader check) is the surviving
-/// carve-out reported here.
+/// As of Phase 4 R1+R2+R3c-3 the forge *control loop*, ChainDB
+/// supervisor, genesis loading, and evolving ledger/nonce state
+/// threading are live (`forging.rs` / `run.rs`); the Praos-forging
+/// path (VRF/KES/OpCert leader check) is the surviving carve-out
+/// reported here.
 pub fn forge_loop_status() -> ForgeLoopStatus {
     ForgeLoopStatus {
         status: "partial — forge control loop + preOpenChainDB supervisor (Phase 4 R1) \
-                 + genesis loading (R2) live; Praos-forging path deferred",
+                 + genesis loading (R2) + ledger/nonce state threading (R3c-3) live; \
+                 Praos-forging path deferred",
         depends_on: "The Praos-forging path (db-synthesizer R3: leverage \
                      crates/node/block-producer for the per-slot VRF/KES/OpCert leader \
-                     check + KES-signed header). Genesis loading landed in R2 — \
-                     run::synthesize_from_config resolves the real ShelleyGenesis epoch \
-                     length from the node config; the R1/R2 slices forge deterministic \
-                     non-Praos structural blocks.",
+                     check + KES-signed header). Genesis loading landed in R2 and R3c-3 \
+                     threads LedgerState + NonceEvolutionState through the loop; the \
+                     remaining structural block is still deterministic and non-Praos.",
         deferred_round: "R3 of the Phase 4 db-synthesizer sister-tool arc",
         upstream_reference: ".reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros-consensus-cardano/src/unstable-cardano-tools/Cardano/Tools/DBSynthesizer/{Forging,Run}.hs",
     }

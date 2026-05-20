@@ -21,7 +21,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/ouroboros-consensus/ouroboros
 
 Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 rounds, MEDIUM). R411 leverages `crates/node/block-producer/src/lib.rs` forging logic.
 
-## Current functional surface (post Phase 4 R3b)
+## Current functional surface (post Phase 4 R3c-3)
 
 - ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
   in `tests/cli_help_golden.rs`).
@@ -68,8 +68,14 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
   (`load_block_producer_credentials`) and the inline-triple bulk file
   (`load_bulk_block_producer_credentials` — a new
   `yggdrasil-node-block-producer` port of `readLeaderCredentialsBulk`).
-  Threading the initial state + forger set through a Praos forge loop is
-  the remaining R3c-3…R3c-6 work.
+  The forger set is consumed by the R3c-4 leader-check slice.
+- ✅ Evolving forge state (Phase 4 R3c-3) — `forging::ForgeState`
+  now carries `LedgerState` + `NonceEvolutionState`;
+  `run::synthesize_from_config` passes the genesis-seeded
+  `InitialForgeState` into `run_forge_with_state`; append-mode runs
+  replay the existing ChainDB prefix into the supplied initial state
+  before forging more blocks. Blocks remain deterministic non-Praos
+  structural blocks until R3c-4.
 - 🟡 Praos forge path (Phase 4 R3) — the synthesized chain is
   structurally valid but not Praos-valid until the VRF/KES/OpCert
   leader check + KES-signed `forgeBlock` land.
@@ -78,8 +84,9 @@ Synthetic chain generator for stress tests. Phase C.1 mini-arc R408-R415 (8 roun
 
 ## Carve-out inventory (Phase 4 R3 deferral surface)
 
-The Phase 4 R1 forge-loop slice (`forging.rs` + `run.rs`) and the R2
-genesis-loading slice (`run::synthesize_from_config`) are shipped.
+The Phase 4 R1 forge-loop slice (`forging.rs` + `run.rs`), the R2
+genesis-loading slice (`run::synthesize_from_config`), and the R3c-3
+state-threading slice are shipped.
 `crates/tools/db-synthesizer/src/status.rs` ships `forge_loop_status()`
 returning a `ForgeLoopStatus` descriptor of the one surviving carve-out:
 

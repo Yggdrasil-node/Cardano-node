@@ -18,7 +18,8 @@
 //!   half of upstream `initialize`/`initConf`: `config.json` →
 //!   `NodeConfigStub` → Shelley genesis → real `epochLength` (R2).
 //! - [`synthesize_from_config`] — the production entry point: resolve
-//!   the genesis epoch length, then [`synthesize`].
+//!   the genesis epoch length, build the initial ledger / nonce forge
+//!   state, then drive the state-threaded forge loop.
 //!
 //! ## Carve-out (Phase 4 R3 slice boundary)
 //!
@@ -29,8 +30,9 @@
 //!   R3b-2 the per-era protocol-config types, and R3b-3
 //!   [`load_consensus_protocol`] / [`mk_consensus_protocol_cardano`]
 //!   the [`CardanoProtocolParams`] aggregate. Until the Praos forge
-//!   loop (R3c) consumes it, synthesized blocks keep the [`SYNTH_ERA`]
-//!   structural stamp.
+//!   loop (R3c-4) consumes it, synthesized blocks keep the
+//!   [`SYNTH_ERA`] structural stamp. R3c-3 does consume the
+//!   genesis-seeded ledger and nonce state.
 //! - **The Praos forge path** (`BlockForging`, `checkShouldForge`,
 //!   `forgeBlock`) — the per-slot VRF/KES/OpCert leader check. See
 //!   [`crate::forging`]'s module note. This slice forges deterministic
@@ -45,7 +47,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use yggdrasil_consensus::NonceEvolutionState;
+use yggdrasil_consensus::{EpochSize, NonceDerivation, NonceEvolutionConfig, NonceEvolutionState};
 use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, SlotNo};
 use yggdrasil_node_block_producer::{
     BlockProducerCredentials, BlockProducerError, load_block_producer_credentials,
@@ -55,12 +57,15 @@ use yggdrasil_node_config::MAINNET_NETWORK_MAGIC;
 use yggdrasil_node_genesis::{
     AlonzoGenesis, BaseLedgerStateInputs, ByronGenesisUtxoEntry, ConwayGenesis, ShelleyGenesis,
     build_genesis_enact_state, build_protocol_parameters, build_shelley_genesis_bootstrap,
-    compute_genesis_file_hash, load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis,
-    load_shelley_genesis, shelley_genesis_hash_to_praos_nonce,
+    compute_genesis_file_hash, genesis_extra_entropy_to_nonce, load_alonzo_genesis,
+    load_byron_genesis_utxo, load_conway_genesis, load_shelley_genesis,
+    shelley_genesis_hash_to_praos_nonce,
 };
 use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
 
-use crate::forging::{ForgeRunOutcome, run_forge};
+use crate::forging::{
+    ForgeRunOutcome, ForgeRuntimeConfig, ForgeState, run_forge, run_forge_with_state,
+};
 use crate::orphans::{AdjustFilePaths, parse_node_config_stub};
 use crate::types::{
     DBSynthesizerOpenMode, DBSynthesizerOptions, ForgeLimit, NodeByronProtocolConfiguration,
@@ -95,6 +100,9 @@ pub enum RunError {
     /// Underlying storage failure (ChainDB open / append).
     #[error("storage error: {0}")]
     Storage(#[from] StorageError),
+    /// Forge-loop failure after ChainDB open.
+    #[error("forge error: {0}")]
+    Forge(#[from] crate::forging::ForgeError),
     /// `OpenCreate` was requested but the target directory already
     /// exists. Mirror of upstream's
     /// `"<loc> already exists. Use -f to overwrite or -a to append."`.
@@ -236,7 +244,7 @@ pub fn pre_open_chain_db(mode: DBSynthesizerOpenMode, db: &Path) -> Result<(), R
 }
 
 /// Outcome of a [`synthesize`] run.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SynthesizeOutcome {
     /// The forge-loop outcome (block count + final accumulator).
     pub forge: ForgeRunOutcome,
@@ -272,6 +280,39 @@ pub fn synthesize(
     };
 
     let forge = run_forge(era, epoch_size, resumed_from, options.limit, &mut store)?;
+    Ok(SynthesizeOutcome {
+        forge,
+        resumed_from,
+    })
+}
+
+fn synthesize_with_forge_state(
+    options: DBSynthesizerOptions,
+    db_dir: &Path,
+    epoch_size: u64,
+    era: Era,
+    initial_state: InitialForgeState,
+    runtime_config: ForgeRuntimeConfig,
+) -> Result<SynthesizeOutcome, RunError> {
+    pre_open_chain_db(options.open_mode, db_dir)?;
+
+    let mut store = FileImmutable::open(db_dir)?;
+    let resumed_from = match store.get_tip() {
+        Point::Origin => SlotNo(0),
+        Point::BlockPoint(slot, _) => SlotNo(slot.0 + 1),
+    };
+
+    let forge_state =
+        ForgeState::initial(initial_state.ledger_state, initial_state.nonce_evolution);
+    let forge = run_forge_with_state(
+        era,
+        epoch_size,
+        resumed_from,
+        options.limit,
+        &mut store,
+        forge_state,
+        runtime_config,
+    )?;
     Ok(SynthesizeOutcome {
         forge,
         resumed_from,
@@ -636,6 +677,27 @@ fn build_initial_forge_state(bundle: &GenesisBundle) -> Result<InitialForgeState
     })
 }
 
+fn build_forge_runtime_config(bundle: &GenesisBundle) -> Result<ForgeRuntimeConfig, RunError> {
+    let stability_window = if bundle.shelley.active_slots_coeff > 0.0 {
+        (3.0 * bundle.shelley.security_param as f64 / bundle.shelley.active_slots_coeff) as u64
+    } else {
+        0
+    };
+    Ok(ForgeRuntimeConfig {
+        nonce_config: NonceEvolutionConfig {
+            epoch_size: EpochSize(bundle.shelley.epoch_length),
+            stability_window,
+            extra_entropy: genesis_extra_entropy_to_nonce(
+                bundle.shelley.protocol_params.extra_entropy.as_ref(),
+            )?,
+            byron_shelley_transition: None,
+        },
+        // The structural chain is Shelley-stamped until R3c-4 replaces
+        // `synth_structural_block` with real Praos forging.
+        nonce_derivation: NonceDerivation::TPraos,
+    })
+}
+
 /// Load the synthesizer's [`InitialForgeState`] from the operator's node
 /// `config.json`.
 ///
@@ -736,7 +798,17 @@ pub fn synthesize_from_config(
     db_dir: &Path,
 ) -> Result<SynthesizeOutcome, RunError> {
     let bundle = load_genesis_bundle(config_path)?;
-    synthesize(options, db_dir, bundle.shelley.epoch_length, SYNTH_ERA)
+    let epoch_size = bundle.shelley.epoch_length;
+    let initial_state = build_initial_forge_state(&bundle)?;
+    let runtime_config = build_forge_runtime_config(&bundle)?;
+    synthesize_with_forge_state(
+        options,
+        db_dir,
+        epoch_size,
+        SYNTH_ERA,
+        initial_state,
+        runtime_config,
+    )
 }
 
 /// Whether the supplied [`ForgeLimit`] would forge zero blocks.
