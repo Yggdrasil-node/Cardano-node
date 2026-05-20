@@ -580,9 +580,16 @@ typed payloads.** R610 (2026-05-21) bubbled the typed UTXO
 payload up into UTXOW tag 4: `ShelleyUtxowPredFailure::UtxoFailure(Vec<u8>)`
 → `UtxoFailure(ShelleyUtxoPredFailure)`. **All 11 UTXOW variants
 now carry typed payloads** — the UTXOW→UTXO bubble-up is
-complete. Inner per-TxOut Shelley/Babbage typed Show parse and
-full typed `Addr` parse (Shelley vs Bootstrap split) remain
-pending.
+complete. R611 (2026-05-21) bubbled the typed UTXOW payload up
+into LEDGER tag 0: `ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`
+→ `UtxowFailure(ShelleyUtxowPredFailure)`. **3 of 4
+`ShelleyLedgerPredFailure` variants now carry typed payloads**
+(UtxowFailure / ShelleyWithdrawalsMissingAccounts /
+ShelleyIncompleteWithdrawals); only LEDGER tag 1
+`DelegsFailure(Vec<u8>)` remains raw, awaiting a
+`ShelleyDelegsPredFailure` sub-rule decoder. Inner per-TxOut
+Shelley/Babbage typed Show parse and full typed `Addr` parse
+(Shelley vs Bootstrap split) remain pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

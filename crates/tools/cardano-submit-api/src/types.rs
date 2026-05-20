@@ -456,10 +456,10 @@ impl fmt::Display for TxValidationErrorInCardanoMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyLedgerPredFailure {
     /// UTXOW sub-rule failure (CBOR tag 0). Payload is a
-    /// `ShelleyUtxowPredFailure era` (one of ~10 variants including
-    /// `InvalidWitnessesUTXOW`, `MissingVKeyWitnessesUTXOW`, etc.).
-    /// Typed sub-decoder pending — payload is the raw inner CBOR.
-    UtxowFailure(Vec<u8>),
+    /// `ShelleyUtxowPredFailure era` (one of 11 variants including
+    /// `InvalidWitnessesUTXOW`, `MissingVKeyWitnessesUTXOW`, etc.)
+    /// — R611 wired to the typed enum.
+    UtxowFailure(ShelleyUtxowPredFailure),
     /// DELEGS sub-rule failure (CBOR tag 1). Payload is a
     /// `ShelleyDelegsPredFailure era` (one of ~3 variants delegating
     /// further into DELPL/POOL/DELEG sub-rules). Typed sub-decoder
@@ -507,8 +507,9 @@ impl fmt::Display for ShelleyLedgerPredFailure {
     /// typed Display.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UtxowFailure(b) | Self::DelegsFailure(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::UtxowFailure(utxow) => write!(f, "UtxowFailure ({utxow})"),
+            Self::DelegsFailure(b) => {
+                write!(f, "DelegsFailure <raw-cbor {} bytes>", b.len())
             }
             Self::ShelleyWithdrawalsMissingAccounts(w) => {
                 write!(f, "ShelleyWithdrawalsMissingAccounts ({w})")
@@ -2989,7 +2990,10 @@ mod tests {
 
     #[test]
     fn shelley_ledger_pred_failure_tag_dispatch() {
-        assert_eq!(ShelleyLedgerPredFailure::UtxowFailure(vec![]).tag(), 0);
+        assert_eq!(
+            ShelleyLedgerPredFailure::UtxowFailure(ShelleyUtxowPredFailure::InvalidMetadata).tag(),
+            0
+        );
         assert_eq!(ShelleyLedgerPredFailure::DelegsFailure(vec![]).tag(), 1);
         assert_eq!(
             ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(empty_withdrawals_payload())
@@ -3008,7 +3012,8 @@ mod tests {
     #[test]
     fn shelley_ledger_pred_failure_constructor_names() {
         assert_eq!(
-            ShelleyLedgerPredFailure::UtxowFailure(vec![]).constructor(),
+            ShelleyLedgerPredFailure::UtxowFailure(ShelleyUtxowPredFailure::InvalidMetadata)
+                .constructor(),
             "UtxowFailure"
         );
         assert_eq!(
@@ -3030,9 +3035,20 @@ mod tests {
     }
 
     #[test]
-    fn shelley_ledger_pred_failure_display_marks_raw_cbor() {
-        let f = ShelleyLedgerPredFailure::UtxowFailure(vec![0xDE, 0xAD, 0xBE, 0xEF]);
-        assert_eq!(f.to_string(), "UtxowFailure <raw-cbor 4 bytes>");
+    fn shelley_ledger_pred_failure_display_routes_typed_utxow() {
+        // R611 wired UtxowFailure to the typed
+        // ShelleyUtxowPredFailure enum; Display now nests the
+        // inner UTXOW Show envelope.
+        let f = ShelleyLedgerPredFailure::UtxowFailure(ShelleyUtxowPredFailure::InvalidMetadata);
+        assert_eq!(f.to_string(), "UtxowFailure (InvalidMetadata)");
+    }
+
+    #[test]
+    fn shelley_ledger_pred_failure_display_marks_delegs_raw_cbor() {
+        // DelegsFailure (LEDGER tag 1) is the last remaining raw
+        // payload pending a `ShelleyDelegsPredFailure` decoder.
+        let f = ShelleyLedgerPredFailure::DelegsFailure(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(f.to_string(), "DelegsFailure <raw-cbor 4 bytes>");
     }
 
     #[test]
