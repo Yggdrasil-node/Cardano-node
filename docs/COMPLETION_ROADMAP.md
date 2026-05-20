@@ -482,14 +482,21 @@ decoders. R596 (2026-05-21) shipped the first typed payload
 decoder: `Withdrawals::from_cbor` decodes the tag-2 payload
 (`Map AccountAddress Coin`) into `BTreeMap<RewardAccount, u64>`
 via the existing `yggdrasil-ledger` `Decoder` + `RewardAccount`
-codec. New `yggdrasil-ledger.workspace = true` dep on
-`cardano-submit-api/Cargo.toml`. Display impl emits upstream
-`Withdrawals {unWithdrawals = fromList [...]}` shape with
-mainnet/testnet network discrimination and KeyHashObj/ScriptHashObj
-credential rendering. Phase-2.5+ remaining work: per-rule
-sub-decoders for UTXOW + DELEGS (each ~10 sub-variants), typed
-`NonEmptyMap (Mismatch RelEQ Coin)` decoder for tag 3, wiring the
-typed `Withdrawals` decoder into the variant payload itself.
+codec. R597 (2026-05-21) wired the typed payload into the variant
+itself (`ShelleyWithdrawalsMissingAccounts(Withdrawals)`) and
+shipped the second typed decoder: `IncompleteWithdrawals::from_cbor`
+for tag-3 `NonEmptyMap AccountAddress (Mismatch RelEQ Coin)`. New
+generic `Mismatch<T>` struct + `MismatchRelation` enum + `CoinShow`
+helper render upstream's custom `Show (Mismatch r a)` as
+`Mismatch (RelEQ) {supplied: Coin <n>, expected: Coin <n>}`.
+`IncompleteWithdrawals` enforces the NonEmpty invariant at decode
+time. `ShelleyLedgerPredFailure::Display` now emits typed shapes
+for tags 2 and 3, and continues marking tags 0/1 as raw-cbor
+pending the UTXOW/DELEGS sub-rule decoders. Phase-2.5+ remaining
+work: per-rule sub-decoders for UTXOW (10+ variants) + DELEGS
+(3 variants delegating into DELPL/POOL/DELEG sub-rules), then
+mirror the predicate-failure tree for Allegra/Mary/Alonzo/Babbage/
+Conway eras (Conway adds 4+ governance-specific variants).
 **Exit:** operators can pattern-match typed rejection variants
 without a CBOR re-walk.
 

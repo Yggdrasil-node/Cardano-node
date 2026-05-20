@@ -458,19 +458,22 @@ pub enum ShelleyLedgerPredFailure {
     /// UTXOW sub-rule failure (CBOR tag 0). Payload is a
     /// `ShelleyUtxowPredFailure era` (one of ~10 variants including
     /// `InvalidWitnessesUTXOW`, `MissingVKeyWitnessesUTXOW`, etc.).
+    /// Typed sub-decoder pending — payload is the raw inner CBOR.
     UtxowFailure(Vec<u8>),
     /// DELEGS sub-rule failure (CBOR tag 1). Payload is a
     /// `ShelleyDelegsPredFailure era` (one of ~3 variants delegating
-    /// further into DELPL/POOL/DELEG sub-rules).
+    /// further into DELPL/POOL/DELEG sub-rules). Typed sub-decoder
+    /// pending — payload is the raw inner CBOR.
     DelegsFailure(Vec<u8>),
     /// Withdrawals refer to accounts that are not in the reward map
     /// (CBOR tag 2). Payload is `Withdrawals = Map AccountAddress
-    /// Coin`.
-    ShelleyWithdrawalsMissingAccounts(Vec<u8>),
+    /// Coin` (R596 typed decoder).
+    ShelleyWithdrawalsMissingAccounts(Withdrawals),
     /// Withdrawals do not fully exhaust the named accounts' reward
     /// balances (CBOR tag 3). Payload is `NonEmptyMap AccountAddress
-    /// (Mismatch RelEQ Coin)`.
-    ShelleyIncompleteWithdrawals(Vec<u8>),
+    /// (Mismatch RelEQ Coin)` (R597 typed decoder via
+    /// [`IncompleteWithdrawals`]).
+    ShelleyIncompleteWithdrawals(IncompleteWithdrawals),
 }
 
 impl ShelleyLedgerPredFailure {
@@ -494,31 +497,214 @@ impl ShelleyLedgerPredFailure {
             Self::ShelleyIncompleteWithdrawals(_) => "ShelleyIncompleteWithdrawals",
         }
     }
-
-    /// Return the raw inner CBOR payload for this variant.
-    pub fn raw_inner(&self) -> &[u8] {
-        match self {
-            Self::UtxowFailure(b)
-            | Self::DelegsFailure(b)
-            | Self::ShelleyWithdrawalsMissingAccounts(b)
-            | Self::ShelleyIncompleteWithdrawals(b) => b,
-        }
-    }
 }
 
 impl fmt::Display for ShelleyLedgerPredFailure {
     /// Render upstream stock-derived `Show (ShelleyLedgerPredFailure
-    /// era)`: `<Constructor> <payload>`. Until per-variant typed
-    /// payloads ship, the payload is a hex-encoded preview of the raw
-    /// CBOR (clearly marked so operators don't mistake it for an
-    /// upstream-shape rendering).
+    /// era)`: `<Constructor> <payload>`. UTXOW + DELEGS sub-rule
+    /// payloads remain raw-cbor until per-rule decoders ship; the
+    /// withdrawal-related payloads (R596 + R597) render through their
+    /// typed Display.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UtxowFailure(b) | Self::DelegsFailure(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ShelleyWithdrawalsMissingAccounts(w) => {
+                write!(f, "ShelleyWithdrawalsMissingAccounts ({w})")
+            }
+            Self::ShelleyIncompleteWithdrawals(iw) => {
+                write!(f, "ShelleyIncompleteWithdrawals (fromList [{iw}])")
+            }
+        }
+    }
+}
+
+/// Mismatch between a supplied and expected value, parametric on the
+/// relation tag (`RelEQ`, `RelLTEQ`, `RelGTEQ`, `RelSubset`).
+///
+/// Mirrors upstream `data Mismatch (r :: Relation) a = Mismatch
+/// {mismatchSupplied :: !a, mismatchExpected :: !a}` from
+/// `Cardano.Ledger.BaseTypes`. CBOR encoding is a 2-element record
+/// `[supplied, expected]`. The Show is custom and produces:
+/// `Mismatch (<RelationTag>) {supplied: <a>, expected: <a>}`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Mismatch<T> {
+    /// Relation tag (RelEQ / RelLTEQ / RelGTEQ / RelSubset) — used as
+    /// the typeRep label in upstream's custom Show.
+    pub relation: MismatchRelation,
+    /// Operator-supplied value.
+    pub supplied: T,
+    /// Ledger-expected value.
+    pub expected: T,
+}
+
+/// Upstream `Relation` kind for `Mismatch`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum MismatchRelation {
+    /// Supplied is required to equal expected.
+    RelEQ,
+    /// Supplied is required to be ≤ expected.
+    RelLTEQ,
+    /// Supplied is required to be ≥ expected.
+    RelGTEQ,
+    /// Supplied is required to be a subset of expected.
+    RelSubset,
+}
+
+impl MismatchRelation {
+    /// Upstream `typeRep`-derived name used in the custom
+    /// `Show (Mismatch r a)` header line.
+    pub fn type_rep(self) -> &'static str {
+        match self {
+            Self::RelEQ => "RelEQ",
+            Self::RelLTEQ => "RelLTEQ",
+            Self::RelGTEQ => "RelGTEQ",
+            Self::RelSubset => "RelSubset",
+        }
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for Mismatch<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} <raw-cbor {} bytes>",
-            self.constructor(),
-            self.raw_inner().len()
+            "Mismatch ({}) {{supplied: {}, expected: {}}}",
+            self.relation.type_rep(),
+            self.supplied,
+            self.expected
         )
+    }
+}
+
+/// Coin amount renderer matching upstream `Show Coin`: `Coin <n>`
+/// (Quiet-derived: keeps the constructor name, suppresses the field
+/// record syntax).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct CoinShow(pub u64);
+
+impl fmt::Display for CoinShow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Coin {}", self.0)
+    }
+}
+
+/// Typed payload for
+/// `ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals`.
+///
+/// Mirrors upstream `NonEmptyMap AccountAddress (Mismatch RelEQ
+/// Coin)` — a map (with at least one entry) from reward account to a
+/// supplied-vs-expected coin mismatch. Yggdrasil stores it as a
+/// `BTreeMap<RewardAccount, Mismatch<u64>>` and rejects empty maps at
+/// decode time to honour the NonEmpty invariant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IncompleteWithdrawals {
+    /// Map of reward-account → coin-mismatch pair. Guaranteed
+    /// non-empty by `from_cbor`.
+    pub entries: std::collections::BTreeMap<yggdrasil_ledger::RewardAccount, Mismatch<u64>>,
+}
+
+impl IncompleteWithdrawals {
+    /// Decode `NonEmptyMap AccountAddress (Mismatch RelEQ Coin)` from
+    /// the canonical CBOR shape. The inner Mismatch is encoded as a
+    /// 2-element array `[supplied, expected]` per upstream
+    /// `EncCBORGroup (Mismatch r a)`.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.map().map_err(|err| {
+            DecoderError(format!("IncompleteWithdrawals: expected CBOR map: {err:?}"))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "IncompleteWithdrawals: NonEmptyMap requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = std::collections::BTreeMap::new();
+        for _ in 0..count {
+            let key_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!(
+                    "IncompleteWithdrawals: expected map key bytes: {err:?}"
+                ))
+            })?;
+            let account =
+                yggdrasil_ledger::RewardAccount::from_bytes(key_bytes).ok_or_else(|| {
+                    DecoderError(format!(
+                        "IncompleteWithdrawals: invalid reward-account key ({} bytes)",
+                        key_bytes.len()
+                    ))
+                })?;
+            let len = dec.array().map_err(|err| {
+                DecoderError(format!(
+                    "IncompleteWithdrawals: expected Mismatch 2-array: {err:?}"
+                ))
+            })?;
+            if len != 2 {
+                return Err(DecoderError(format!(
+                    "IncompleteWithdrawals: expected Mismatch 2-array, got len {len}"
+                )));
+            }
+            let supplied = dec.unsigned().map_err(|err| {
+                DecoderError(format!(
+                    "IncompleteWithdrawals: expected supplied coin: {err:?}"
+                ))
+            })?;
+            let expected = dec.unsigned().map_err(|err| {
+                DecoderError(format!(
+                    "IncompleteWithdrawals: expected expected coin: {err:?}"
+                ))
+            })?;
+            entries.insert(
+                account,
+                Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied,
+                    expected,
+                },
+            );
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for IncompleteWithdrawals {
+    /// Render the inner `fromList [(<k>, <v>), ...]` list — the outer
+    /// `ShelleyIncompleteWithdrawals (fromList [...])` envelope is
+    /// added by `ShelleyLedgerPredFailure::Display`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for (account, mismatch) in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            let network = match account.network {
+                0 => "Testnet",
+                1 => "Mainnet",
+                _ => "Unknown",
+            };
+            let inner = match account.credential {
+                yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => {
+                    format!(
+                        "KeyHashObj (KeyHash {{unKeyHash = \"{}\"}})",
+                        hex::encode(h)
+                    )
+                }
+                yggdrasil_ledger::StakeCredential::ScriptHash(h) => {
+                    format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
+                }
+            };
+            let typed_mismatch = Mismatch {
+                relation: mismatch.relation,
+                supplied: CoinShow(mismatch.supplied),
+                expected: CoinShow(mismatch.expected),
+            };
+            write!(
+                f,
+                "(AccountAddress {{aaNetworkId = {network}, aaId = {inner}}},{typed_mismatch})"
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -967,16 +1153,39 @@ mod tests {
         );
     }
 
+    fn empty_withdrawals_payload() -> Withdrawals {
+        Withdrawals::from_cbor(&[0xa0]).expect("empty withdrawals")
+    }
+
+    fn one_entry_incomplete_withdrawals_payload() -> IncompleteWithdrawals {
+        // 1-entry map; 29-byte mainnet key-hash account; mismatch
+        // [supplied=100, expected=200].
+        let mut cbor = vec![0xa1_u8];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x22_u8; 28]);
+        // 2-array mismatch
+        cbor.push(0x82);
+        cbor.extend_from_slice(&[0x18, 0x64]); // 100
+        cbor.extend_from_slice(&[0x18, 0xC8]); // 200
+        IncompleteWithdrawals::from_cbor(&cbor).expect("one-entry mismatch")
+    }
+
     #[test]
     fn shelley_ledger_pred_failure_tag_dispatch() {
         assert_eq!(ShelleyLedgerPredFailure::UtxowFailure(vec![]).tag(), 0);
         assert_eq!(ShelleyLedgerPredFailure::DelegsFailure(vec![]).tag(), 1);
         assert_eq!(
-            ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(vec![]).tag(),
+            ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(empty_withdrawals_payload())
+                .tag(),
             2
         );
         assert_eq!(
-            ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals(vec![]).tag(),
+            ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals(
+                one_entry_incomplete_withdrawals_payload()
+            )
+            .tag(),
             3
         );
     }
@@ -992,11 +1201,15 @@ mod tests {
             "DelegsFailure"
         );
         assert_eq!(
-            ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(vec![]).constructor(),
+            ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(empty_withdrawals_payload())
+                .constructor(),
             "ShelleyWithdrawalsMissingAccounts"
         );
         assert_eq!(
-            ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals(vec![]).constructor(),
+            ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals(
+                one_entry_incomplete_withdrawals_payload()
+            )
+            .constructor(),
             "ShelleyIncompleteWithdrawals"
         );
     }
@@ -1005,6 +1218,34 @@ mod tests {
     fn shelley_ledger_pred_failure_display_marks_raw_cbor() {
         let f = ShelleyLedgerPredFailure::UtxowFailure(vec![0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(f.to_string(), "UtxowFailure <raw-cbor 4 bytes>");
+    }
+
+    #[test]
+    fn shelley_ledger_pred_failure_display_renders_typed_withdrawals() {
+        let f = ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(
+            empty_withdrawals_payload(),
+        );
+        assert_eq!(
+            f.to_string(),
+            "ShelleyWithdrawalsMissingAccounts (Withdrawals {unWithdrawals = fromList []})"
+        );
+    }
+
+    #[test]
+    fn shelley_ledger_pred_failure_display_renders_typed_incomplete_withdrawals() {
+        let f = ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals(
+            one_entry_incomplete_withdrawals_payload(),
+        );
+        let s = f.to_string();
+        assert!(
+            s.starts_with("ShelleyIncompleteWithdrawals (fromList [(AccountAddress {aaNetworkId = Mainnet, aaId = KeyHashObj"),
+            "got: {s}"
+        );
+        assert!(
+            s.contains("Mismatch (RelEQ) {supplied: Coin 100, expected: Coin 200}"),
+            "got: {s}"
+        );
+        assert!(s.ends_with(")])"), "got: {s}");
     }
 
     #[test]
@@ -1062,10 +1303,51 @@ mod tests {
     }
 
     #[test]
-    fn shelley_ledger_pred_failure_raw_inner_round_trip() {
-        let payload = vec![0xCA, 0xFE, 0xBA, 0xBE];
-        let f = ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(payload.clone());
-        assert_eq!(f.raw_inner(), &payload[..]);
+    fn incomplete_withdrawals_rejects_empty_map() {
+        let err =
+            IncompleteWithdrawals::from_cbor(&[0xa0]).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmptyMap requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn incomplete_withdrawals_from_cbor_round_trips_supplied_expected() {
+        // 2-entry map: two mainnet key-hash accounts (lex sort), each
+        // with a [supplied, expected] mismatch pair.
+        let mut cbor = vec![0xa2_u8];
+        // entry A: account with 0x11 fill, mismatch [50, 60]
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x11_u8; 28]);
+        cbor.push(0x82); // mismatch 2-array
+        cbor.push(0x18);
+        cbor.push(0x32); // 50
+        cbor.push(0x18);
+        cbor.push(0x3C); // 60
+        // entry B: account with 0x22 fill, mismatch [100, 200]
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x22_u8; 28]);
+        cbor.push(0x82);
+        cbor.push(0x18);
+        cbor.push(0x64); // 100
+        cbor.push(0x18);
+        cbor.push(0xC8); // 200
+        let iw = IncompleteWithdrawals::from_cbor(&cbor).expect("two-entry mismatch");
+        assert_eq!(iw.entries.len(), 2);
+        let mut iter = iw.entries.iter();
+        let (_, m_a) = iter.next().expect("entry A");
+        assert_eq!(m_a.relation, MismatchRelation::RelEQ);
+        assert_eq!(m_a.supplied, 50);
+        assert_eq!(m_a.expected, 60);
+        let (_, m_b) = iter.next().expect("entry B");
+        assert_eq!(m_b.supplied, 100);
+        assert_eq!(m_b.expected, 200);
     }
 
     #[test]
