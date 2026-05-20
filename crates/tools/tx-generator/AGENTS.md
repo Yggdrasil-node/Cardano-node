@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R568 Alonzo key-witnessed DumpToFile slice). The old
+**Status:** `partial` (post-R569 Babbage key-witnessed DumpToFile slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -273,13 +273,23 @@ approved synthesis area from the sister-tools plan.
   optional fields, multi-asset Mary/Alonzo values, Plutus-bearing Alonzo
   witnesses, and non-vkey witnesses remain explicit `TxGenError`
   boundaries instead of approximate `Show` output.
+- Shipped R569: `SubmitMode::DumpToFile` now renders Babbage
+  key-witnessed streams via `show_babbage_tx_for_dump`. The body emits
+  the upstream 16-field `BabbageTxBodyRaw` record (including
+  `btbrCollateralInputs`, `btbrReferenceInputs`, `btbrCollateralReturn`,
+  `btbrTotalCollateral`), wraps outputs as `Sized {sizedValue = (addr,
+  val, datum, refScript), sizedSize = N}` 4-tuples with `NoDatum` /
+  `DatumHash (SafeHash ...)` and `SNothing` constructors, and reuses
+  `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
+  scripts, and the remaining Plutus-bearing Babbage shapes stay on
+  explicit `TxGenError` boundaries.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
 - Pending: extend `DumpToFile` Show rendering into Plutus-bearing
-  Alonzo-family transactions and capture upstream-binary soak evidence
-  for Benchmark scripts.
+  Babbage / Conway transactions and capture upstream-binary soak
+  evidence for Benchmark scripts.
 
 ## Build + Run
 
@@ -446,7 +456,13 @@ This crate's full implementation remains an A4 sister-tool build-out:
   Alonzo key-witnessed streams, preserving upstream constructor names
   and body/witness hashes while rejecting unsupported optional fields
   explicitly.
-- Next: Plutus-bearing Alonzo-family `DumpToFile` Show coverage and
+- Shipped: Babbage key-witnessed DumpToFile rendering (R569):
+  `SubmitMode::DumpToFile` accepts Babbage key-witnessed streams with
+  the 16-field `BabbageTxBodyRaw` record, `Sized` output wrappers,
+  `NoDatum` / `DatumHash` datum shape, and upstream `ShelleyTx
+  ShelleyBasedEraBabbage (AlonzoTx ...)` envelope. Reference scripts
+  and inline datums stay on explicit `TxGenError` boundaries.
+- Next: Plutus-bearing Babbage/Conway `DumpToFile` Show coverage and
   upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

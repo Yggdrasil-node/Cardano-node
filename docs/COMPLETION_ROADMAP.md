@@ -328,8 +328,15 @@ own parser / generator / submission implementation plus upstream
   with upstream-shaped body/witness hashes and explicit unsupported-
   field boundaries. R568 added the matching Alonzo key-witnessed
   renderer with `AlonzoTxBodyRaw`, `AlonzoTxWitsRaw`, empty `TxDats`
-  / `Redeemers`, and `IsValid` fields. The remaining tx-generator
-  blockers are Plutus-bearing Alonzo-family `DumpToFile` rendering and
+  / `Redeemers`, and `IsValid` fields. R569 extended the renderer into
+  Babbage key-witnessed streams: the 16-field `BabbageTxBodyRaw`
+  record (including `btbrCollateralInputs`, `btbrReferenceInputs`,
+  `btbrCollateralReturn`, `btbrTotalCollateral`), `Sized {sizedValue =
+  (addr, val, datum, refScript), sizedSize = N}` output wrappers, the
+  `NoDatum` / `DatumHash (SafeHash ...)` Babbage datum shape, and the
+  `ShelleyTx ShelleyBasedEraBabbage (AlonzoTx ...)` envelope, reusing
+  `AlonzoTxWitsRaw` for the witness set. The remaining tx-generator
+  blockers are Plutus-bearing Babbage/Conway `DumpToFile` rendering and
   upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.

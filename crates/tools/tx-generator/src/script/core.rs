@@ -7,7 +7,7 @@
 //! `Cardano.Benchmarking.Script.Action.action`. This slice owns the
 //! deterministic state-only operations, Plutus context construction,
 //! finite transaction-stream evaluation, LocalSocket submission,
-//! Benchmark submission control, Shelley-through-Alonzo key-witnessed
+//! Benchmark submission control, Shelley-through-Babbage key-witnessed
 //! `DumpToFile` rendering, and budget-summary projection. The remaining
 //! Plutus-bearing Alonzo-family `DumpToFile` witness shapes still return
 //! explicit `TxGenError` boundaries until their downstream mirrors land.
@@ -21,10 +21,11 @@ use num_bigint::BigInt;
 use serde_json::Value;
 use yggdrasil_crypto::{hash_bytes_224, hash_bytes_256};
 use yggdrasil_ledger::{
-    Address, AllegraTxBody, AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, CborDecode,
-    CborEncode, Decoder, Encoder, MaryTxBody, MaryTxOut, PlutusData, ProtocolParameters,
-    ShelleyCompatibleSubmittedTx, ShelleyTxBody, ShelleyTxIn, ShelleyTxOut, ShelleyVkeyWitness,
-    ShelleyWitnessSet, StakeCredential, eras::alonzo::ExUnits, total_min_fee,
+    Address, AllegraTxBody, AlonzoCompatibleSubmittedTx, AlonzoTxBody, AlonzoTxOut, BabbageTxBody,
+    BabbageTxOut, CborDecode, CborEncode, DatumOption, Decoder, Encoder, MaryTxBody, MaryTxOut,
+    PlutusData, ProtocolParameters, ScriptRef, ShelleyCompatibleSubmittedTx, ShelleyTxBody,
+    ShelleyTxIn, ShelleyTxOut, ShelleyVkeyWitness, ShelleyWitnessSet, StakeCredential,
+    eras::alonzo::ExUnits, total_min_fee,
 };
 use yggdrasil_network::protocols::{HardForkBlockQuery, QueryHardFork, UpstreamQuery};
 #[cfg(unix)]
@@ -1054,8 +1055,9 @@ fn show_tx_for_dump(generated: &GeneratedTx) -> Result<String, Error> {
         yggdrasil_ledger::MultiEraSubmittedTx::Allegra(tx) => show_allegra_tx_for_dump(tx),
         yggdrasil_ledger::MultiEraSubmittedTx::Mary(tx) => show_mary_tx_for_dump(tx),
         yggdrasil_ledger::MultiEraSubmittedTx::Alonzo(tx) => show_alonzo_tx_for_dump(tx),
+        yggdrasil_ledger::MultiEraSubmittedTx::Babbage(tx) => show_babbage_tx_for_dump(tx),
         tx => Err(lift_tx_gen_error(format!(
-            "DumpToFile: upstream Show(Tx) renderer is implemented for Shelley-through-Alonzo key-witnessed transactions only; got {:?}",
+            "DumpToFile: upstream Show(Tx) renderer is implemented for Shelley-through-Babbage key-witnessed transactions only; got {:?}",
             tx.era()
         ))),
     }
@@ -1170,6 +1172,65 @@ fn show_alonzo_tx_for_dump(
 
     Ok(format!(
         "\nShelleyTx ShelleyBasedEraAlonzo (AlonzoTx {{atBody = MkAlonzoTxBody AlonzoTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrCollateral = fromList [], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, atbrTxFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrReqSignerHashes = fromList [], atbrMint = MultiAsset (fromList []), atbrScriptIntegrityHash = SNothing, atbrAuxDataHash = SNothing, atbrTxNetworkId = SNothing}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        tx.body.fee,
+        show_strict_maybe_slot(tx.body.validity_interval_start),
+        show_strict_maybe_slot(tx.body.ttl),
+    ))
+}
+
+fn show_babbage_tx_for_dump(
+    tx: &AlonzoCompatibleSubmittedTx<BabbageTxBody>,
+) -> Result<String, Error> {
+    ensure_empty_or_absent(tx.body.certificates.as_deref(), "Babbage", "btbrCerts")?;
+    ensure_empty_or_absent_btree(tx.body.withdrawals.as_ref(), "Babbage", "btbrWithdrawals")?;
+    ensure_absent(tx.body.update.as_ref(), "Babbage", "btbrUpdate")?;
+    ensure_absent(
+        tx.body.auxiliary_data_hash.as_ref(),
+        "Babbage",
+        "btbrAuxDataHash",
+    )?;
+    ensure_empty_mint(tx.body.mint.as_ref(), "Babbage", "btbrMint")?;
+    ensure_absent(
+        tx.body.script_data_hash.as_ref(),
+        "Babbage",
+        "btbrScriptIntegrityHash",
+    )?;
+    ensure_empty_or_absent(
+        tx.body.collateral.as_deref(),
+        "Babbage",
+        "btbrCollateralInputs",
+    )?;
+    ensure_empty_or_absent(
+        tx.body.required_signers.as_deref(),
+        "Babbage",
+        "btbrReqSignerHashes",
+    )?;
+    ensure_absent(tx.body.network_id.as_ref(), "Babbage", "btbrNetworkId")?;
+    ensure_absent(
+        tx.body.collateral_return.as_ref(),
+        "Babbage",
+        "btbrCollateralReturn",
+    )?;
+    ensure_absent(
+        tx.body.total_collateral.as_ref(),
+        "Babbage",
+        "btbrTotalCollateral",
+    )?;
+    ensure_empty_or_absent(
+        tx.body.reference_inputs.as_deref(),
+        "Babbage",
+        "btbrReferenceInputs",
+    )?;
+    ensure_absent(tx.auxiliary_data.as_ref(), "Babbage", "atAuxData")?;
+
+    let inputs = show_tx_in_list(&tx.body.inputs);
+    let outputs = show_babbage_tx_out_list(&tx.body.outputs)?;
+    let body_hash = hex::encode(hash_bytes_256(tx.raw_body()).0);
+    let witnesses = show_alonzo_witness_set(&tx.witness_set)?;
+    let is_valid = show_haskell_bool(tx.is_valid);
+
+    Ok(format!(
+        "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {{atBody = MkBabbageTxBody BabbageTxBodyRaw {{btbrInputs = fromList [{inputs}], btbrCollateralInputs = fromList [], btbrReferenceInputs = fromList [], btbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, btbrCollateralReturn = SNothing, btbrTotalCollateral = SNothing, btbrCerts = StrictSeq {{fromStrict = fromList []}}, btbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, btbrFee = Coin {}, btbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, btbrUpdate = SNothing, btbrReqSignerHashes = fromList [], btbrMint = MultiAsset (fromList []), btbrScriptIntegrityHash = SNothing, btbrAuxDataHash = SNothing, btbrNetworkId = SNothing}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1307,6 +1368,49 @@ fn show_alonzo_tx_out(output: &AlonzoTxOut) -> Result<String, Error> {
         show_shelley_address(&address, "Alonzo")?,
         show_mary_value(&output.amount)?
     ))
+}
+
+fn show_babbage_tx_out_list(outputs: &[BabbageTxOut]) -> Result<String, Error> {
+    outputs
+        .iter()
+        .map(show_babbage_tx_out)
+        .collect::<Result<Vec<_>, _>>()
+        .map(|items| items.join(","))
+}
+
+fn show_babbage_tx_out(output: &BabbageTxOut) -> Result<String, Error> {
+    let address = Address::from_bytes(&output.address).ok_or_else(|| {
+        lift_tx_gen_error("DumpToFile: Babbage Show(Tx) renderer received invalid address bytes")
+    })?;
+    let datum = show_babbage_datum(output.datum_option.as_ref())?;
+    let script_ref = show_babbage_script_ref(output.script_ref.as_ref())?;
+    let value = show_mary_value(&output.amount)?;
+    let size = output.to_cbor_bytes().len();
+    Ok(format!(
+        "Sized {{sizedValue = ({addr},{value},{datum},{script_ref}), sizedSize = {size}}}",
+        addr = show_shelley_address(&address, "Babbage")?,
+    ))
+}
+
+fn show_babbage_datum(datum: Option<&DatumOption>) -> Result<String, Error> {
+    match datum {
+        None => Ok("NoDatum".to_string()),
+        Some(DatumOption::Hash(hash)) => {
+            Ok(format!("DatumHash (SafeHash \"{}\")", hex::encode(hash)))
+        }
+        Some(DatumOption::Inline(_)) => Err(lift_tx_gen_error(
+            "DumpToFile: Babbage Show(Tx) renderer does not yet support inline datums",
+        )),
+    }
+}
+
+fn show_babbage_script_ref(script_ref: Option<&ScriptRef>) -> Result<String, Error> {
+    match script_ref {
+        None => Ok("SNothing".to_string()),
+        Some(_) => Err(lift_tx_gen_error(
+            "DumpToFile: Babbage Show(Tx) renderer does not yet support reference scripts",
+        )),
+    }
 }
 
 fn show_mary_value(value: &yggdrasil_ledger::Value) -> Result<String, Error> {
@@ -2581,6 +2685,65 @@ mod tests {
         ));
         assert!(rendered.contains("atbrCollateral = fromList []"));
         assert!(rendered.contains("atbrScriptIntegrityHash = SNothing"));
+        assert!(rendered.contains("atWits = AlonzoTxWitsRaw"));
+        assert!(rendered.contains("atwrDatsTxWits = MkTxDats"));
+        assert!(rendered.contains("atwrRdmrsTxWits = MkRedeemers"));
+        assert!(rendered.contains("atIsValid = IsValid True"));
+        assert_eq!(rendered.lines().filter(|line| !line.is_empty()).count(), 1);
+    }
+
+    #[test]
+    fn dumptofile_submit_generates_babbage_haskell_show_transaction() {
+        let mut env = Env::empty_env();
+        seed_pay_to_addr_env(&mut env);
+        seed_static_plutus_protocol_parameters(&mut env);
+        add_fund(
+            &mut env,
+            AnyCardanoEra::Babbage,
+            "source",
+            &format!("{INPUT_TX_ID}#0"),
+            100,
+            "key",
+        )
+        .expect("source fund");
+        let output_path = std::env::temp_dir().join(format!(
+            "yggdrasil-tx-generator-babbage-dump-{}.out",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&output_path);
+        let generator = Generator::SplitN(
+            "source".to_string(),
+            PayMode::PayToAddr("key".to_string(), "dest".to_string()),
+            1,
+        );
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Babbage,
+            &SubmitMode::DumpToFile(output_path.clone()),
+            &generator,
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 1,
+            },
+        )
+        .expect("babbage dump submit");
+
+        let rendered = fs::read_to_string(&output_path).expect("babbage dump output");
+        let _ = fs::remove_file(&output_path);
+        assert!(rendered.starts_with(
+            "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {atBody = MkBabbageTxBody BabbageTxBodyRaw"
+        ));
+        assert!(rendered.contains("btbrCollateralInputs = fromList []"));
+        assert!(rendered.contains("btbrReferenceInputs = fromList []"));
+        assert!(rendered.contains("btbrCollateralReturn = SNothing"));
+        assert!(rendered.contains("btbrTotalCollateral = SNothing"));
+        assert!(rendered.contains("btbrScriptIntegrityHash = SNothing"));
+        assert!(rendered.contains("btbrNetworkId = SNothing"));
+        assert!(rendered.contains("btbrMint = MultiAsset (fromList [])"));
+        assert!(rendered.contains("Sized {sizedValue = ("));
+        assert!(rendered.contains(",NoDatum,SNothing), sizedSize = "));
         assert!(rendered.contains("atWits = AlonzoTxWitsRaw"));
         assert!(rendered.contains("atwrDatsTxWits = MkTxDats"));
         assert!(rendered.contains("atwrRdmrsTxWits = MkRedeemers"));
