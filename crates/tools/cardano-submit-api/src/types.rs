@@ -2626,9 +2626,9 @@ impl fmt::Display for ShelleyDelegsPredFailure {
 /// rounds.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ShelleyDelplPredFailure {
-    /// Tag 0: nested POOL sub-rule failure. Raw payload pending
-    /// `ShelleyPoolPredFailure` decoder.
-    PoolFailure(Vec<u8>),
+    /// Tag 0: nested POOL sub-rule failure (R614 wired to typed
+    /// `ShelleyPoolPredFailure`).
+    PoolFailure(ShelleyPoolPredFailure),
     /// Tag 1: nested DELEG sub-rule failure. Raw payload pending
     /// `ShelleyDelegPredFailure` decoder.
     DelegFailure(Vec<u8>),
@@ -2673,15 +2673,17 @@ impl ShelleyDelplPredFailure {
             ))
         })?;
         let payload_offset = dec.position();
-        let raw = bytes
-            .get(payload_offset..)
-            .ok_or_else(|| {
-                DecoderError("ShelleyDelplPredFailure: payload offset out of bounds".to_string())
-            })?
-            .to_vec();
+        let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+            DecoderError("ShelleyDelplPredFailure: payload offset out of bounds".to_string())
+        })?;
         match tag {
-            0 => Ok(Self::PoolFailure(raw)),
-            1 => Ok(Self::DelegFailure(raw)),
+            // Tag 0: typed POOL sub-rule (R614).
+            0 => {
+                let pool = ShelleyPoolPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::PoolFailure(pool))
+            }
+            // Tag 1: DELEG sub-rule raw pending its decoder.
+            1 => Ok(Self::DelegFailure(payload_bytes.to_vec())),
             other => Err(DecoderError(format!(
                 "ShelleyDelplPredFailure: unknown variant tag {other}"
             ))),
@@ -2691,18 +2693,175 @@ impl ShelleyDelplPredFailure {
 
 impl fmt::Display for ShelleyDelplPredFailure {
     /// Render upstream stock-derived `Show
-    /// (ShelleyDelplPredFailure era)`: `<Constructor> <raw-cbor N
-    /// bytes>`. Typed nested payloads land in follow-on rounds.
+    /// (ShelleyDelplPredFailure era)`: `<Constructor> <payload>`.
+    /// PoolFailure routes through the typed POOL Display (R614);
+    /// DelegFailure emits a raw-cbor marker pending its decoder.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let payload = match self {
-            Self::PoolFailure(b) | Self::DelegFailure(b) => b,
-        };
-        write!(
-            f,
-            "{} <raw-cbor {} bytes>",
-            self.constructor(),
-            payload.len()
-        )
+        match self {
+            Self::PoolFailure(pool) => write!(f, "PoolFailure ({pool})"),
+            Self::DelegFailure(b) => {
+                write!(f, "DelegFailure <raw-cbor {} bytes>", b.len())
+            }
+        }
+    }
+}
+
+/// `ShelleyPoolPredFailure` mirror — nested sub-rule under
+/// `ShelleyDelplPredFailure::PoolFailure`.
+///
+/// Upstream: `data ShelleyPoolPredFailure era` from
+/// `Cardano.Ledger.Shelley.Rules.Pool` with 6 variants encoded
+/// via CBOR `Sum` tags 0/1/3/4/5/6 (tag 2 is skipped — upstream
+/// reserved for a retired variant). R614 ships the enum + outer
+/// envelope decoder; only the simplest tag-0
+/// `StakePoolNotRegisteredOnKeyPOOL` carries a typed payload
+/// (`KeyHash`). Tags 1/3/4/5/6 carry raw inner CBOR pending the
+/// Mismatch-RelGT/Mismatch-RelGTEQ/Mismatch-RelEQ + KeyHash-Int
+/// per-variant payload ports.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShelleyPoolPredFailure {
+    /// Tag 0: pool-key-hash not registered (R614 typed payload).
+    StakePoolNotRegisteredOnKeyPOOL(KeyHash),
+    /// Tag 1: pool retirement targets wrong epoch — payload is
+    /// `(Mismatch RelGT EpochNo, Mismatch RelLTEQ EpochNo)`
+    /// encoded as 4-element `[1, gtExpected, ltSupplied,
+    /// ltExpected]`. Raw payload pending decoder.
+    StakePoolRetirementWrongEpochPOOL(Vec<u8>),
+    /// Tag 3: pool cost below minimum — payload is
+    /// `Mismatch RelGTEQ Coin` encoded as 3-element
+    /// `[3, supplied, expected]`. Raw pending decoder.
+    StakePoolCostTooLowPOOL(Vec<u8>),
+    /// Tag 4: pool registered on wrong network — payload is
+    /// `Mismatch RelEQ Network` + `KeyHash StakePool` encoded as
+    /// 4-element `[4, expected, supplied, kh]`. Raw pending
+    /// decoder.
+    WrongNetworkPOOL(Vec<u8>),
+    /// Tag 5: pool metadata hash too big — payload is
+    /// `KeyHash + Int` encoded as 3-element `[5, kh, size]`.
+    /// Raw pending decoder.
+    PoolMedataHashTooBig(Vec<u8>),
+    /// Tag 6: VRF key hash already registered — payload is
+    /// `KeyHash StakePool` + `VRFVerKeyHash StakePoolVRF`
+    /// encoded as 3-element `[6, kh, vrfkh]`. Raw pending
+    /// decoder.
+    VRFKeyHashAlreadyRegistered(Vec<u8>),
+}
+
+impl ShelleyPoolPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::StakePoolNotRegisteredOnKeyPOOL(_) => 0,
+            Self::StakePoolRetirementWrongEpochPOOL(_) => 1,
+            Self::StakePoolCostTooLowPOOL(_) => 3,
+            Self::WrongNetworkPOOL(_) => 4,
+            Self::PoolMedataHashTooBig(_) => 5,
+            Self::VRFKeyHashAlreadyRegistered(_) => 6,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::StakePoolNotRegisteredOnKeyPOOL(_) => "StakePoolNotRegisteredOnKeyPOOL",
+            Self::StakePoolRetirementWrongEpochPOOL(_) => "StakePoolRetirementWrongEpochPOOL",
+            Self::StakePoolCostTooLowPOOL(_) => "StakePoolCostTooLowPOOL",
+            Self::WrongNetworkPOOL(_) => "WrongNetworkPOOL",
+            Self::PoolMedataHashTooBig(_) => "PoolMedataHashTooBig",
+            Self::VRFKeyHashAlreadyRegistered(_) => "VRFKeyHashAlreadyRegistered",
+        }
+    }
+
+    /// Decode the full `ShelleyPoolPredFailure` outer envelope
+    /// from CBOR bytes. Upstream encoding wraps each variant in a
+    /// CBOR list whose first element is the Word8 tag and
+    /// remaining elements are payload parts (envelope length
+    /// varies per variant: 2, 4, 3, 4, 3, 3 for tags 0/1/3/4/5/6).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyPoolPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(2..=4).contains(&len) {
+            return Err(DecoderError(format!(
+                "ShelleyPoolPredFailure: expected 2- to 4-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyPoolPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        match tag {
+            // Tag 0: typed KeyHash payload.
+            0 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "StakePoolNotRegisteredOnKeyPOOL: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let hash_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "StakePoolNotRegisteredOnKeyPOOL: expected KeyHash bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                    DecoderError(format!(
+                        "StakePoolNotRegisteredOnKeyPOOL: KeyHash must be 28 bytes, got {}",
+                        hash_bytes.len()
+                    ))
+                })?;
+                Ok(Self::StakePoolNotRegisteredOnKeyPOOL(KeyHash(arr)))
+            }
+            // Tags 1/3/4/5/6: raw inner CBOR (typed decoders
+            // pending the Mismatch-relation + KeyHash-Int ports).
+            1 | 3 | 4 | 5 | 6 => {
+                let payload_offset = dec.position();
+                let raw = bytes
+                    .get(payload_offset..)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ShelleyPoolPredFailure: payload offset out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(match tag {
+                    1 => Self::StakePoolRetirementWrongEpochPOOL(raw),
+                    3 => Self::StakePoolCostTooLowPOOL(raw),
+                    4 => Self::WrongNetworkPOOL(raw),
+                    5 => Self::PoolMedataHashTooBig(raw),
+                    6 => Self::VRFKeyHashAlreadyRegistered(raw),
+                    _ => unreachable!("tag range checked above"),
+                })
+            }
+            other => Err(DecoderError(format!(
+                "ShelleyPoolPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ShelleyPoolPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ShelleyPoolPredFailure era)`: `<Constructor> <payload>`.
+    /// Tag 0 routes through typed `KeyHash` Display; other
+    /// variants emit a raw-cbor marker.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::StakePoolNotRegisteredOnKeyPOOL(kh) => {
+                write!(f, "StakePoolNotRegisteredOnKeyPOOL ({kh})")
+            }
+            Self::StakePoolRetirementWrongEpochPOOL(b)
+            | Self::StakePoolCostTooLowPOOL(b)
+            | Self::WrongNetworkPOOL(b)
+            | Self::PoolMedataHashTooBig(b)
+            | Self::VRFKeyHashAlreadyRegistered(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+        }
     }
 }
 
@@ -3178,7 +3337,9 @@ mod tests {
         );
         assert_eq!(
             ShelleyLedgerPredFailure::DelegsFailure(ShelleyDelegsPredFailure::DelplFailure(
-                ShelleyDelplPredFailure::PoolFailure(vec![])
+                ShelleyDelplPredFailure::PoolFailure(
+                    ShelleyPoolPredFailure::StakePoolNotRegisteredOnKeyPOOL(KeyHash([0_u8; 28]))
+                )
             ))
             .tag(),
             1
@@ -3206,7 +3367,9 @@ mod tests {
         );
         assert_eq!(
             ShelleyLedgerPredFailure::DelegsFailure(ShelleyDelegsPredFailure::DelplFailure(
-                ShelleyDelplPredFailure::PoolFailure(vec![])
+                ShelleyDelplPredFailure::PoolFailure(
+                    ShelleyPoolPredFailure::StakePoolNotRegisteredOnKeyPOOL(KeyHash([0_u8; 28]))
+                )
             ))
             .constructor(),
             "DelegsFailure"
@@ -3237,47 +3400,115 @@ mod tests {
     #[test]
     fn shelley_ledger_pred_failure_display_routes_typed_delegs() {
         // R612 wired DelegsFailure to typed ShelleyDelegsPredFailure;
-        // R613 wired the inner DELPL payload too. The full LEDGER →
-        // DELEGS → DELPL Display chain renders typed end-to-end
-        // (POOL/DELEG payload remains raw at the deepest layer).
+        // R613 wired the inner DELPL payload; R614 wired the deeper
+        // POOL sub-rule. The LEDGER → DELEGS → DELPL → POOL Display
+        // chain renders typed end-to-end now.
         let f = ShelleyLedgerPredFailure::DelegsFailure(ShelleyDelegsPredFailure::DelplFailure(
-            ShelleyDelplPredFailure::PoolFailure(vec![0xDE, 0xAD, 0xBE, 0xEF]),
+            ShelleyDelplPredFailure::PoolFailure(
+                ShelleyPoolPredFailure::StakePoolNotRegisteredOnKeyPOOL(KeyHash([0x77_u8; 28])),
+            ),
         ));
-        assert_eq!(
-            f.to_string(),
-            "DelegsFailure (DelplFailure (PoolFailure <raw-cbor 4 bytes>))"
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "DelegsFailure (DelplFailure (PoolFailure (StakePoolNotRegisteredOnKeyPOOL (KeyHash {unKeyHash = \"7777"
+            ),
+            "got: {s}"
         );
     }
 
     #[test]
     fn shelley_delegs_pred_failure_from_cbor_decodes_tag1() {
         // outer DELEGS [0x82, 0x01, inner-DELPL]; inner-DELPL
-        // [0x82, 0x00, raw-POOL-bytes]
-        let cbor = [0x82_u8, 0x01, 0x82, 0x00, 0x9F, 0xFF];
+        // [0x82, 0x00, inner-POOL]; inner-POOL
+        // [0x82, 0x00, bytes(28)] for tag-0 StakePoolNotRegisteredOnKeyPOOL.
+        let mut cbor = vec![0x82_u8, 0x01, 0x82, 0x00, 0x82, 0x00];
+        cbor.push(0x58); // bytes header
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x42_u8; 28]);
         let f = ShelleyDelegsPredFailure::from_cbor(&cbor).expect("DelplFailure");
         let ShelleyDelegsPredFailure::DelplFailure(delpl) = &f;
         assert_eq!(delpl.tag(), 0);
         assert_eq!(delpl.constructor(), "PoolFailure");
+        if let ShelleyDelplPredFailure::PoolFailure(pool) = delpl {
+            assert_eq!(pool.tag(), 0);
+            assert!(matches!(
+                pool,
+                ShelleyPoolPredFailure::StakePoolNotRegisteredOnKeyPOOL(_)
+            ));
+        } else {
+            panic!("expected typed PoolFailure inside DELPL");
+        }
         assert_eq!(f.tag(), 1);
-        assert_eq!(f.constructor(), "DelplFailure");
-        assert_eq!(
-            f.to_string(),
-            "DelplFailure (PoolFailure <raw-cbor 2 bytes>)"
+        let s = f.to_string();
+        assert!(
+            s.contains(
+                "DelplFailure (PoolFailure (StakePoolNotRegisteredOnKeyPOOL (KeyHash {unKeyHash = \"4242"
+            ),
+            "got: {s}"
         );
     }
 
     #[test]
     fn shelley_delpl_pred_failure_pool_failure_decodes_tag0() {
-        let cbor = [0x82_u8, 0x00, 0x9F, 0xFF];
+        // Inner POOL envelope [0x82, 0x00, bytes(28)]
+        let mut cbor = vec![0x82_u8, 0x00, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x33_u8; 28]);
         let f = ShelleyDelplPredFailure::from_cbor(&cbor).expect("PoolFailure");
-        if let ShelleyDelplPredFailure::PoolFailure(payload) = &f {
-            assert_eq!(payload, &[0x9F_u8, 0xFF]);
+        if let ShelleyDelplPredFailure::PoolFailure(pool) = &f {
+            assert_eq!(pool.tag(), 0);
         } else {
-            panic!("expected PoolFailure, got {f:?}");
+            panic!("expected typed PoolFailure, got {f:?}");
         }
         assert_eq!(f.tag(), 0);
         assert_eq!(f.constructor(), "PoolFailure");
-        assert_eq!(f.to_string(), "PoolFailure <raw-cbor 2 bytes>");
+    }
+
+    #[test]
+    fn shelley_pool_pred_failure_stake_pool_not_registered_decodes_tag0() {
+        // outer [0x82, 0x00, bytes(28)]
+        let mut cbor = vec![0x82_u8, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xAB_u8; 28]);
+        let f = ShelleyPoolPredFailure::from_cbor(&cbor).expect("StakePoolNotRegisteredOnKeyPOOL");
+        if let ShelleyPoolPredFailure::StakePoolNotRegisteredOnKeyPOOL(kh) = &f {
+            assert_eq!(kh.0, [0xAB_u8; 28]);
+        } else {
+            panic!("expected StakePoolNotRegisteredOnKeyPOOL, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("StakePoolNotRegisteredOnKeyPOOL (KeyHash {unKeyHash = \"abab"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn shelley_pool_pred_failure_routes_unported_tags_to_raw() {
+        // tag 3 (StakePoolCostTooLowPOOL) — Mismatch payload
+        // pending. Captured raw.
+        let cbor = [0x83_u8, 0x03, 0x18, 0x64, 0x18, 0xC8];
+        let f = ShelleyPoolPredFailure::from_cbor(&cbor).expect("StakePoolCostTooLowPOOL");
+        assert_eq!(f.tag(), 3);
+        assert_eq!(f.constructor(), "StakePoolCostTooLowPOOL");
+        assert!(
+            f.to_string()
+                .starts_with("StakePoolCostTooLowPOOL <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn shelley_pool_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 77, 0x40];
+        let err = ShelleyPoolPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 77"),
+            "got: {err}"
+        );
     }
 
     #[test]

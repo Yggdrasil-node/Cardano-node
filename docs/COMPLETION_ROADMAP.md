@@ -594,11 +594,22 @@ wired. R613 (2026-05-21) added the next nested sub-rule:
 `ShelleyDelplPredFailure` 2-variant scaffold (PoolFailure tag 0,
 DelegFailure tag 1) and wired
 `ShelleyDelegsPredFailure::DelplFailure(Vec<u8>)` →
-`DelplFailure(ShelleyDelplPredFailure)`. The full LEDGER →
-DELEGS → DELPL chain now renders typed end-to-end through nested
-Display. Only the POOL/DELEG sub-rule decoders (deepest layer
-under DELPL), per-TxOut Shelley/Babbage typed parse, and full
-typed `Addr` parse (Shelley vs Bootstrap split) remain pending.
+`DelplFailure(ShelleyDelplPredFailure)`. R614 (2026-05-21) added
+`ShelleyPoolPredFailure` 6-variant scaffold (tags 0/1/3/4/5/6
+mirroring upstream's `Cardano.Ledger.Shelley.Rules.Pool` with
+tag 2 deliberately skipped per upstream) and wired
+`ShelleyDelplPredFailure::PoolFailure(Vec<u8>)` →
+`PoolFailure(ShelleyPoolPredFailure)`. The simplest variant
+`StakePoolNotRegisteredOnKeyPOOL` (tag 0, single 28-byte
+KeyHash) carries a fully typed payload; tags 1/3/4/5/6 (Mismatch
++ KeyHash-Int variants) keep raw payloads pending the
+Mismatch-RelGT / Mismatch-RelGTEQ / Mismatch-RelEQ + KeyHash-Int
+ports. The LEDGER → DELEGS → DELPL → POOL chain now renders
+typed end-to-end through nested Display. Only the
+`ShelleyDelegPredFailure` decoder (DELPL tag 1, the sibling
+sub-rule), the 5 remaining POOL variant payloads, per-TxOut
+Shelley/Babbage typed parse, and full typed `Addr` parse remain
+pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
