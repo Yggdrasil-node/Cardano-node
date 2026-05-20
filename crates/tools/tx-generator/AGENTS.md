@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R560 Allegra selftest byte-equivalent DumpToFile slice). The old
+**Status:** `partial` (post-R561 Benchmarking.Types/TpsThrottle foundation slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -232,12 +232,19 @@ approved synthesis area from the sister-tools plan.
   R559 generated-transaction drift: the upstream-captured selftest
   setup stages and final 4,000-record `DumpToFile` stream now match
   Rust byte-for-byte.
+- Shipped R561: `Cardano.Benchmarking.Types` and
+  `Cardano.Benchmarking.TpsThrottle` mirrors now provide the upstream
+  request/ack/sent/unavailable counters, submission error policy, and
+  TMVar-style TPS watermark semantics that `GeneratorTx.Submission`
+  and `walletBenchmark` consume.
 - Pending: low-level `json FILE` and
   high-level `json_highlevel FILE` now run supported script actions,
   including finite key-spend Submit actions, and stop only at the next
   explicit runtime parity boundary.
-- Pending: extend `DumpToFile` Show rendering beyond the Allegra
-  key-witnessed selftest shape and implement Benchmark submission.
+- Pending: wire `GeneratorTx.SubmissionClient` /
+  `GeneratorTx.Submission` / `walletBenchmark` around the new throttle
+  primitives, then extend `DumpToFile` Show rendering beyond the
+  Allegra key-witnessed selftest shape.
 
 ## Build + Run
 
@@ -373,7 +380,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
   upstream variable-length CBOR, closing the R559 30-output split drift;
   all selftest setup stages and the final 4,000-record stream compare
   byte-for-byte against the vendored upstream binary.
-- Next: broader `DumpToFile` Show coverage and Benchmark submission in
+- Shipped: Benchmarking.Types/TpsThrottle foundation (R561):
+  `benchmarking/types.rs` and `benchmarking/tps_throttle.rs` port the
+  upstream benchmark counter wrappers, submission error policy, and
+  TPS watermark gate used by `GeneratorTx.Submission`.
+- Next: Benchmark submission client/scheduler wiring and broader
+  `DumpToFile` Show coverage in
   strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

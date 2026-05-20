@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-20T14:10:32Z",
+  "generated_at_utc": "2026-05-20T14:42:04Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -10510,10 +10510,10 @@
         "Guidance for the pure-Rust port of upstream `tx-generator`.",
         "Tracks the post-R559 Script/Core, GeneratorTx, DumpToFile, and Submission implementation arc."
       ],
-      "content_sha256": "c1cb39f4b1c880f0c8db2c482735ae99fe7eb0bf213b4d2645ee742c1671179b",
-      "git_blob": "a40bac3f3713ab743accc09643e11a3bba3a34fd",
-      "source_mtime_ns": 1779284804938959500,
-      "described_at_utc": "2026-05-20T14:10:15Z",
+      "content_sha256": "713b49c650b561650afeac9ee5c140b2e82f3c97dc44ec139feb677a59e56c16",
+      "git_blob": "6c7524575b3df53c8d35970ca6c8b72515b8b89f",
+      "source_mtime_ns": 1779287087389878200,
+      "described_at_utc": "2026-05-20T14:31:54Z",
       "generated_self_exempt": false
     },
     {
@@ -10522,10 +10522,10 @@
         "Cargo manifest for the tx-generator sister-tool crate.",
         "Declares direct dependencies for tx-generator runtime helpers plus crate metadata."
       ],
-      "content_sha256": "99d3c235977dd85d876ba45a37cd18bb839989aceb30afeef4b861af17ec32c1",
-      "git_blob": "54e7221f7ce9982ea2a7ea6784349c9c76335cb7",
-      "source_mtime_ns": 1779281704988897700,
-      "described_at_utc": "2026-05-20T12:57:43Z",
+      "content_sha256": "593435aad7e61f854313be5cf794b93fa8f8bfcb269fc1d6a3d33dda2bec3c09",
+      "git_blob": "d454d684a73c7caae85193e0f9ae2ac3680929d6",
+      "source_mtime_ns": 1779287087389878200,
+      "described_at_utc": "2026-05-20T14:31:54Z",
       "generated_self_exempt": false
     },
     {
@@ -10617,6 +10617,39 @@
       "generated_self_exempt": false
     },
     {
+      "path": "crates/tools/tx-generator/src/benchmarking.rs",
+      "description_lines": [
+        "Namespace shell for tx-generator `Cardano.Benchmarking.*` support modules, grouping strict-mirror benchmark leaves without colliding with existing TxGenerator mirrors."
+      ],
+      "content_sha256": "6fffd192e83113b40b3372d9eb9294489d7e664312f4cc5ee5b02c79a112f89f",
+      "git_blob": "0f018683d12f4c9868df2269e9521096a3f638c7",
+      "source_mtime_ns": 1779286791110592300,
+      "described_at_utc": "2026-05-20T14:31:54Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/tx-generator/src/benchmarking/tps_throttle.rs",
+      "description_lines": [
+        "Strict mirror of upstream `Cardano.Benchmarking.TpsThrottle`, porting the Benchmark submission watermark throttle with blocking/non-blocking consumers and stop signaling."
+      ],
+      "content_sha256": "24223ad6acbd7fc784faf382922042ec95633a67fe104caba521334af0c02c3e",
+      "git_blob": "b71a470e087926d8a4f332532387fdd0f995531c",
+      "source_mtime_ns": 1779287186665872300,
+      "described_at_utc": "2026-05-20T14:31:54Z",
+      "generated_self_exempt": false
+    },
+    {
+      "path": "crates/tools/tx-generator/src/benchmarking/types.rs",
+      "description_lines": [
+        "Strict mirror of upstream `Cardano.Benchmarking.Types`, carrying benchmark submission wrappers such as Ack, Req, Sent, Unav, ToAnnce, UnAcked, and SubmissionErrorPolicy."
+      ],
+      "content_sha256": "6223abef709cda6118990cae09957c9e1c805804219312f4b621f9c9877d457e",
+      "git_blob": "b7b7b97d157f7ffbae3356e198c51f11278f5dee",
+      "source_mtime_ns": 1779286940288709400,
+      "described_at_utc": "2026-05-20T14:31:54Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "crates/tools/tx-generator/src/command.rs",
       "description_lines": [
         "Typed command surface for the `tx-generator` binary.",
@@ -10645,10 +10678,10 @@
       "description_lines": [
         "Transaction-stream generator runtime surface. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx.hs`."
       ],
-      "content_sha256": "2636ab98fa14b20be6cda8a4b7834c0f37808f3e35bf86c80d09260c74b4594c",
-      "git_blob": "45b3e355a9ff4e8bcbdce11fd8132972f3e1b2e6",
-      "source_mtime_ns": 1779256150655549200,
-      "described_at_utc": "2026-05-20T11:41:22Z",
+      "content_sha256": "c7f70fce2b3bbdbd4e1de4920aa304091b8363cec7a3139ca996424d0937086e",
+      "git_blob": "99d686e60e6650eb875d39293b39f4dbb609764f",
+      "source_mtime_ns": 1779286791110592300,
+      "described_at_utc": "2026-05-20T14:31:54Z",
       "generated_self_exempt": false
     },
     {
@@ -10668,10 +10701,10 @@
         "Pure-Rust port of upstream `tx-generator`.",
         "Parent module wiring top-level parsing, json/json_highlevel execution, compile, version, and command dispatch."
       ],
-      "content_sha256": "130606a3a295c682ae19c16073bdf66f2f56442135155c91ff219c359fb0f484",
-      "git_blob": "df00b7cbffb2238937edfd5ab7753cc54836472f",
-      "source_mtime_ns": 1779281488324686000,
-      "described_at_utc": "2026-05-20T12:57:44Z",
+      "content_sha256": "873c31d379a8d1d5e0bb370b153b02fafcc8181ec74def1be63fad8dd7b1e608",
+      "git_blob": "29916fc0756d22412d9451967f880167ea658d06",
+      "source_mtime_ns": 1779286808436629400,
+      "described_at_utc": "2026-05-20T14:31:55Z",
       "generated_self_exempt": false
     },
     {
@@ -11065,10 +11098,10 @@
       "description_lines": [
         "Completion Roadmap: ---."
       ],
-      "content_sha256": "d911524e1db6d963faf5c636bc887c459fe0bf424984cda873a3abe5d3bed9a1",
-      "git_blob": "eeea9dea33741a0997e4453d9aee3dc9c6cf9dc5",
-      "source_mtime_ns": 1779284816313630000,
-      "described_at_utc": "2026-05-20T14:10:17Z",
+      "content_sha256": "7e98fb36eeeac10a500830cc2b2be85de82a1c8c851dc59ec78fe182f65d4bca",
+      "git_blob": "606fd5e7e2aaf1f34a59bf638157285ab91c31a0",
+      "source_mtime_ns": 1779287087389878200,
+      "described_at_utc": "2026-05-20T14:31:56Z",
       "generated_self_exempt": false
     },
     {
@@ -11131,10 +11164,10 @@
       "description_lines": [
         "PARITY & FUNCTION SUMMARY FOR MANAGEMENT: ---."
       ],
-      "content_sha256": "c2f79b7c55406cf22db5c002a39b44a02e6c705e22eff561369c4ee2dda5257a",
-      "git_blob": "23b9dde24e52b3f0c97f08d7103569219b387ff2",
-      "source_mtime_ns": 1779279761373188500,
-      "described_at_utc": "2026-05-20T12:27:33Z",
+      "content_sha256": "c3d67091ea442a92ea69a30f75b7540e7adc57b6adb241f6bfffa8e4a4b3b60e",
+      "git_blob": "7af9cd47aff2922e2550f855788a5999de24ae52",
+      "source_mtime_ns": 1779287087389878200,
+      "described_at_utc": "2026-05-20T14:31:56Z",
       "generated_self_exempt": false
     },
     {
@@ -13369,6 +13402,17 @@
       "generated_self_exempt": false
     },
     {
+      "path": "docs/operational-runs/2026-05-20-round-561-tx-generator-tps-throttle.md",
+      "description_lines": [
+        "Operational run note for R561 tx-generator Benchmarking.Types and TpsThrottle parity work, including upstream references, validation, and remaining Benchmark submission gaps."
+      ],
+      "content_sha256": "52bc7e1de7136d367f6f9d52bbeb7444d16389f3e8cd1b0cecb7c0110ec06505",
+      "git_blob": "a8654d8d37e0a504d2de5b1791de3dc8d1360ff0",
+      "source_mtime_ns": 1779288051125271000,
+      "described_at_utc": "2026-05-20T14:42:04Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md",
       "description_lines": [
         "Round 151 \u2014 ChainSync worker pool runtime wiring + observability: Date: 2026-04-27."
@@ -15157,10 +15201,10 @@
         "Machine-readable parity-status inventory for Rust \u2194 IntersectMBO/cardano-node features.",
         "Validated by scripts/check-parity-matrix.py; the reference.tag tracks the latest upstream release (currently 11.0.1)."
       ],
-      "content_sha256": "746954d4a2d88d13f3360a6560675e05f763221cbeb76181d594d4f17edbbc84",
-      "git_blob": "468d55fd2180983274632bf2df4b43f591e15439",
-      "source_mtime_ns": 1779277186403323200,
-      "described_at_utc": "2026-05-20T11:41:37Z",
+      "content_sha256": "f38647c1defa7aa28627db7c054a55bd72102b3c02eb12c482c3d64ffb2d64a1",
+      "git_blob": "db119e63c7b5f8be8ccb204d808d6aabf769f476",
+      "source_mtime_ns": 1779287260954511800,
+      "described_at_utc": "2026-05-20T14:32:10Z",
       "generated_self_exempt": false
     },
     {
@@ -15302,10 +15346,10 @@
         "Stdlib-only validator for docs/parity-matrix.json schema, status, and on-disk paths.",
         "Bumps tag policy via REFERENCE_TAG; current target is 11.0.1."
       ],
-      "content_sha256": "32b61e38780ab0947c85011973eb170d6aef7fcffe265300ac8d63f775b03ffb",
-      "git_blob": "ab79cdce545d90426b3b29d4b8ccb86e3fad8213",
-      "source_mtime_ns": 1779253555242654400,
-      "described_at_utc": "2026-05-20T11:41:37Z",
+      "content_sha256": "3e0a87cd711561856b71f3c82f10b48adc727083fe5b8f275c64d138247e81a0",
+      "git_blob": "ad1ebc29f6854da8f92930eb93fbd5770c664568",
+      "source_mtime_ns": 1779287356081036500,
+      "described_at_utc": "2026-05-20T14:32:10Z",
       "generated_self_exempt": false
     },
     {

@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T14:12:59Z
-- Files described: 1437
+- Generated at: 2026-05-20T14:42:04Z
+- Files described: 1441
 
 ## Workspace
 
@@ -1752,6 +1752,12 @@
   - Project file at crates/tools/tx-generator/scripts-fallback/Ripemd160.plutus.
 - `crates/tools/tx-generator/scripts-fallback/SchnorrSecp256k1Loop.plutus`
   - Project file at crates/tools/tx-generator/scripts-fallback/SchnorrSecp256k1Loop.plutus.
+- `crates/tools/tx-generator/src/benchmarking.rs`
+  - Namespace shell for tx-generator `Cardano.Benchmarking.*` support modules, grouping strict-mirror benchmark leaves without colliding with existing TxGenerator mirrors.
+- `crates/tools/tx-generator/src/benchmarking/tps_throttle.rs`
+  - Strict mirror of upstream `Cardano.Benchmarking.TpsThrottle`, porting the Benchmark submission watermark throttle with blocking/non-blocking consumers and stop signaling.
+- `crates/tools/tx-generator/src/benchmarking/types.rs`
+  - Strict mirror of upstream `Cardano.Benchmarking.Types`, carrying benchmark submission wrappers such as Ack, Req, Sent, Unav, ToAnnce, UnAcked, and SubmissionErrorPolicy.
 - `crates/tools/tx-generator/src/command.rs`
   - Typed command surface for the `tx-generator` binary.
   - Mirrors upstream Command.hs commandParser for json, json_highlevel, compile, selftest, and version.
@@ -2271,6 +2277,8 @@
 - `docs/operational-runs/2026-05-20-round-560-tx-generator-strictseq-selftest-parity.md`
   - Round 560 tx-generator StrictSeq selftest parity evidence record.
   - Documents the upstream/Rust DumpToFile byte match after variable-length StrictSeq CBOR encoding.
+- `docs/operational-runs/2026-05-20-round-561-tx-generator-tps-throttle.md`
+  - Operational run note for R561 tx-generator Benchmarking.Types and TpsThrottle parity work, including upstream references, validation, and remaining Benchmark submission gaps.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

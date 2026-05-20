@@ -19,6 +19,7 @@ use setup::testnet_discovery::discover_testnet_config;
 use tx_generator::plutus_context::read_script_data;
 use types::TxGenPlutusParams;
 
+pub mod benchmarking;
 pub mod command;
 pub mod compiler;
 pub mod generator_tx;
