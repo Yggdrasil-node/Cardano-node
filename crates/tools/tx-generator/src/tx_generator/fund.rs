@@ -43,6 +43,10 @@ pub struct Fund {
     pub lovelace: Lovelace,
     /// Signing key name that can spend this fund.
     pub key_name: String,
+    /// Witness required to spend this fund.
+    pub witness: FundWitness,
+    /// Signing key name, absent for script-witnessed funds.
+    pub signing_key: Option<String>,
 }
 
 impl Fund {
@@ -58,6 +62,29 @@ impl Fund {
             tx_in: tx_in.into(),
             lovelace,
             key_name: key_name.into(),
+            witness: FundWitness::KeyWitnessForSpending,
+            signing_key: None,
+        }
+        .with_key_name_as_signing_key()
+    }
+
+    /// Construct a script-witnessed fund, matching `mkUTxOScript`.
+    pub fn script_fund(
+        era: AnyCardanoEra,
+        tx_in: impl Into<String>,
+        lovelace: Lovelace,
+        witness: FundWitness,
+    ) -> Self {
+        Self {
+            era,
+            tx_in: tx_in.into(),
+            lovelace,
+            key_name: match &witness {
+                FundWitness::KeyWitnessForSpending => String::new(),
+                FundWitness::ScriptWitness(script) => script.clone(),
+            },
+            witness,
+            signing_key: None,
         }
     }
 
@@ -65,10 +92,15 @@ impl Fund {
     pub fn fund_in_era(&self) -> FundInEra {
         FundInEra {
             fund_tx_in: self.tx_in.clone(),
-            fund_witness: FundWitness::KeyWitnessForSpending,
+            fund_witness: self.witness.clone(),
             fund_val: self.lovelace,
-            fund_signing_key: Some(self.key_name.clone()),
+            fund_signing_key: self.signing_key.clone(),
         }
+    }
+
+    fn with_key_name_as_signing_key(mut self) -> Self {
+        self.signing_key = Some(self.key_name.clone());
+        self
     }
 }
 
@@ -97,7 +129,7 @@ pub fn get_fund_tx_in(fund: &Fund) -> &str {
 
 /// Mirror of upstream `getFundKey`.
 pub fn get_fund_key(fund: &Fund) -> Option<&str> {
-    Some(&fund.key_name)
+    fund.signing_key.as_deref()
 }
 
 /// Mirror of upstream `getFundCoin`.
@@ -108,7 +140,7 @@ pub fn get_fund_coin(fund: &Fund) -> Lovelace {
 /// Mirror of upstream `getFundWitness`.
 pub fn get_fund_witness(era: AnyCardanoEra, fund: &Fund) -> Result<FundWitness, String> {
     if era == fund.era {
-        Ok(FundWitness::KeyWitnessForSpending)
+        Ok(fund.witness.clone())
     } else {
         Err("getFundWitness: era mismatch".to_string())
     }
@@ -143,5 +175,23 @@ mod tests {
             get_fund_witness(AnyCardanoEra::Babbage, &fund),
             Err("getFundWitness: era mismatch".to_string())
         );
+        assert_eq!(fund.fund_in_era().fund_signing_key, Some("key".to_string()));
+    }
+
+    #[test]
+    fn script_fund_has_witness_and_no_signing_key() {
+        let fund = Fund::script_fund(
+            AnyCardanoEra::Conway,
+            "abc#0",
+            12,
+            FundWitness::ScriptWitness("validator".to_string()),
+        );
+
+        assert_eq!(get_fund_key(&fund), None);
+        assert_eq!(
+            get_fund_witness(AnyCardanoEra::Conway, &fund),
+            Ok(FundWitness::ScriptWitness("validator".to_string()))
+        );
+        assert_eq!(fund.fund_in_era().fund_signing_key, None);
     }
 }

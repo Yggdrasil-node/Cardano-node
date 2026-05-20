@@ -292,18 +292,8 @@ mod tests {
     #[test]
     fn wallet_ref_preserves_insert_order() {
         let mut wallet = WalletRef::default();
-        wallet.insert_fund(Fund {
-            era: AnyCardanoEra::Conway,
-            tx_in: "a#0".to_string(),
-            lovelace: 1,
-            key_name: "key-a".to_string(),
-        });
-        wallet.insert_fund(Fund {
-            era: AnyCardanoEra::Conway,
-            tx_in: "b#1".to_string(),
-            lovelace: 2,
-            key_name: "key-b".to_string(),
-        });
+        wallet.insert_fund(Fund::key_fund(AnyCardanoEra::Conway, "a#0", 1, "key-a"));
+        wallet.insert_fund(Fund::key_fund(AnyCardanoEra::Conway, "b#1", 2, "key-b"));
 
         let funds = wallet.funds();
         assert_eq!(funds[0].tx_in, "a#0");

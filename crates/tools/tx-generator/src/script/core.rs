@@ -118,12 +118,7 @@ pub fn add_fund_to_wallet(
     key_name: &str,
 ) -> Result<(), Error> {
     let wallet_ref = get_env_wallets_mut(env, wallet)?;
-    wallet_ref.insert_fund(Fund {
-        era,
-        tx_in: tx_in.to_string(),
-        lovelace,
-        key_name: key_name.to_string(),
-    });
+    wallet_ref.insert_fund(Fund::key_fund(era, tx_in, lovelace, key_name));
     Ok(())
 }
 
@@ -342,7 +337,7 @@ pub fn interpret_pay_mode(
         PayMode::PayToScript(_script_spec, dest_wallet) => {
             let _wallet_ref = get_env_wallets(env, dest_wallet)?;
             Err(lift_tx_gen_error(
-                "interpretPayMode: PayToScript is pending makePlutusContext/mkUTxOScript",
+                "interpretPayMode: PayToScript is pending makePlutusContext",
             ))
         }
     }
@@ -867,7 +862,7 @@ mod tests {
             interpret_pay_mode(&env, AnyCardanoEra::Conway, &pay_mode).expect("pay mode");
 
         assert_eq!(interpreted.to_utxo.era(), AnyCardanoEra::Conway);
-        assert_eq!(interpreted.to_utxo.key_name(), "key");
+        assert_eq!(interpreted.to_utxo.key_name(), Some("key"));
         assert_eq!(interpreted.destination_wallet, "dest");
         assert_eq!(interpreted.address_hex.len(), 58);
         assert!(interpreted.address_hex.starts_with("60"));

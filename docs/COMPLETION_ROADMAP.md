@@ -258,10 +258,14 @@ own parser / generator / submission implementation plus upstream
   `Script/Core.hs` pay-mode and collateral preflight boundary by
   porting `selectCollateralFunds`, the key-output half of
   `interpretPayMode`, and the `Split` / `SplitN` / `NtoM`
-  output-address trace points before value splitting. The remaining
-  tx-generator blocker is transaction assembly, script-output/witness
-  plumbing, GeneratorTx / Submission implementation, and upstream
-  comparison evidence.
+  output-address trace points before value splitting. R546 added the
+  `Cardano.TxGenerator.UTxO.mkUTxOScript` output/fund builder surface:
+  Plutus script enterprise addresses, datum-hash outputs for
+  Alonzo/Babbage-family eras, script-language support checks, and
+  script-witnessed generated funds without signing keys. The remaining
+  tx-generator blocker is `makePlutusContext`, transaction assembly,
+  GeneratorTx / Submission implementation, and upstream comparison
+  evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

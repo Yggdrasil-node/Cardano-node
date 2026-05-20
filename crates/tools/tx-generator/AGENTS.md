@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R544 UTxO output-builder slice). The old
+**Status:** `partial` (post-R546 script UTxO output-builder slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -132,6 +132,11 @@ approved synthesis area from the sister-tools plan.
   `Split`, `SplitN`, and `NtoM` output-address messages before value
   splitting, and keeps `PayToScript` on an explicit
   `makePlutusContext` / `mkUTxOScript` boundary.
+- Shipped R546: `Cardano.TxGenerator.UTxO.mkUTxOScript` output and
+  fund construction. `tx_generator/utxo.rs` now builds Plutus script
+  enterprise addresses, datum-hash outputs for Alonzo and Babbage-family
+  eras, era/language support errors, and script-witnessed funds with no
+  signing key; `PayToScript` now waits only on `makePlutusContext`.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the GeneratorTx
   construction and submission slices land.
@@ -214,9 +219,12 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `selectCollateralFunds`, key-output `interpretPayMode`, and
   upstream-shaped address trace points for `Split`, `SplitN`, and
   `NtoM` before the transaction-build sentinel.
-- Next: port the remaining GeneratorTx transaction construction,
-  script-output/witness plumbing, and LocalSocket / Benchmark
-  submission in strict-mirror-sized slices.
+- Shipped: TxGenerator script UTxO output builders (R546):
+  `mkUTxOScript`, Plutus script address hashing, datum hashes, and
+  script-witnessed generated funds without signing keys.
+- Next: port Plutus `makePlutusContext`, the remaining GeneratorTx
+  transaction construction, and LocalSocket / Benchmark submission in
+  strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
