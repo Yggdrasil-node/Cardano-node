@@ -1502,10 +1502,55 @@ fn show_babbage_datum(datum: Option<&DatumOption>) -> Result<String, Error> {
 fn show_babbage_script_ref(script_ref: Option<&ScriptRef>) -> Result<String, Error> {
     match script_ref {
         None => Ok("SNothing".to_string()),
-        Some(_) => Err(lift_tx_gen_error(
-            "DumpToFile: Babbage Show(Tx) renderer does not yet support reference scripts",
-        )),
+        Some(sr) => {
+            // Upstream `Show (AlonzoScript era)` (Cardano.Ledger.Alonzo.Scripts):
+            //     show (NativeScript x)        = "NativeScript " ++ show x
+            //     show s@(PlutusScript plutus) = "PlutusScript " ++ show language
+            //                                  ++ " " ++ show (hashScript @era s)
+            //
+            // `Show ScriptHash` at p=0 (default showsPrec ignores precedence for
+            // instances defining only `show`) emits `ScriptHash "<hex>"`. Wrapped
+            // in `SJust` at p=0 (tuple position), upstream produces
+            // `SJust PlutusScript PlutusV{N} ScriptHash "<hex>"` without parens
+            // — the AlonzoScript Show defines only `show`, so showsPrec 11
+            // delegates to `show x` without adding parens.
+            //
+            // Script hash domain: Blake2b-224 over `prefix-tag ++ script_bytes`.
+            // PlutusV1 = 0x01, PlutusV2 = 0x02, PlutusV3 = 0x03.
+            let inner = match &sr.0 {
+                yggdrasil_ledger::Script::PlutusV1(bytes) => format!(
+                    "PlutusScript PlutusV1 ScriptHash \"{}\"",
+                    hex::encode(plutus_script_hash(1, bytes))
+                ),
+                yggdrasil_ledger::Script::PlutusV2(bytes) => format!(
+                    "PlutusScript PlutusV2 ScriptHash \"{}\"",
+                    hex::encode(plutus_script_hash(2, bytes))
+                ),
+                yggdrasil_ledger::Script::PlutusV3(bytes) => format!(
+                    "PlutusScript PlutusV3 ScriptHash \"{}\"",
+                    hex::encode(plutus_script_hash(3, bytes))
+                ),
+                yggdrasil_ledger::Script::Native(_) => {
+                    return Err(lift_tx_gen_error(
+                        "DumpToFile: Babbage Show(Tx) renderer does not yet support native reference scripts",
+                    ));
+                }
+            };
+            Ok(format!("SJust {inner}"))
+        }
     }
+}
+
+/// Compute the Plutus script hash for a given language tag and script bytes.
+///
+/// Matches upstream `hashScript` for Plutus scripts: `Blake2b_224 (lang_tag
+/// ++ script_bytes)`. The language tag is 0x01 for PlutusV1, 0x02 for
+/// PlutusV2, 0x03 for PlutusV3.
+fn plutus_script_hash(language_tag: u8, script_bytes: &[u8]) -> [u8; 28] {
+    let mut buf = Vec::with_capacity(1 + script_bytes.len());
+    buf.push(language_tag);
+    buf.extend_from_slice(script_bytes);
+    yggdrasil_crypto::hash_bytes_224(&buf).0
 }
 
 fn show_mary_value(value: &yggdrasil_ledger::Value) -> Result<String, Error> {
@@ -3164,6 +3209,90 @@ mod tests {
         assert!(
             spend2 < spend5 && spend5 < mint0,
             "redeemer ordering wrong: {rendered}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_babbage_script_ref_renders_snothing_and_plutus_versions() {
+        use yggdrasil_ledger::Script;
+
+        assert_eq!(
+            show_babbage_script_ref(None).expect("no script ref"),
+            "SNothing"
+        );
+
+        // PlutusV1: hash domain is Blake2b-224 over [0x01, <script bytes>].
+        let v1 = ScriptRef(Script::PlutusV1(vec![0xAA, 0xBB]));
+        let v1_rendered = show_babbage_script_ref(Some(&v1)).expect("v1 script ref");
+        assert!(
+            v1_rendered.starts_with("SJust PlutusScript PlutusV1 ScriptHash \""),
+            "v1 rendering unexpected: {v1_rendered}"
+        );
+        assert!(
+            v1_rendered.ends_with("\""),
+            "v1 trailing quote: {v1_rendered}"
+        );
+
+        let v2 = ScriptRef(Script::PlutusV2(vec![0xCA, 0xFE, 0xBA, 0xBE]));
+        let v2_rendered = show_babbage_script_ref(Some(&v2)).expect("v2 script ref");
+        assert!(
+            v2_rendered.starts_with("SJust PlutusScript PlutusV2 ScriptHash \""),
+            "v2 rendering unexpected: {v2_rendered}"
+        );
+
+        let v3 = ScriptRef(Script::PlutusV3(vec![0x12, 0x34]));
+        let v3_rendered = show_babbage_script_ref(Some(&v3)).expect("v3 script ref");
+        assert!(
+            v3_rendered.starts_with("SJust PlutusScript PlutusV3 ScriptHash \""),
+            "v3 rendering unexpected: {v3_rendered}"
+        );
+
+        // Same script bytes under different language tags must hash to
+        // different values (because the prefix differs).
+        let same_v1 = ScriptRef(Script::PlutusV1(vec![0x12, 0x34]));
+        let same_v3 = ScriptRef(Script::PlutusV3(vec![0x12, 0x34]));
+        let r1 = show_babbage_script_ref(Some(&same_v1)).expect("same v1");
+        let r3 = show_babbage_script_ref(Some(&same_v3)).expect("same v3");
+        let h1 = r1
+            .split("ScriptHash \"")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .expect("v1 hash");
+        let h3 = r3
+            .split("ScriptHash \"")
+            .nth(1)
+            .and_then(|s| s.split('"').next())
+            .expect("v3 hash");
+        assert_ne!(
+            h1, h3,
+            "PlutusV1 and PlutusV3 with identical bytes must hash differently"
+        );
+    }
+
+    #[test]
+    fn dumptofile_babbage_script_ref_rejects_native_script() {
+        use yggdrasil_ledger::{NativeScript, Script};
+
+        let sr = ScriptRef(Script::Native(NativeScript::ScriptPubkey([0xAB; 28])));
+        let err = show_babbage_script_ref(Some(&sr)).expect_err("native should reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("native reference scripts"),
+            "expected native-reject error: {msg}"
+        );
+    }
+
+    #[test]
+    fn dumptofile_plutus_script_hash_matches_language_prefix_domain() {
+        let bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let h1 = plutus_script_hash(1, &bytes);
+        // Verify hash domain: prepend tag, hash 28-byte Blake2b.
+        let mut expected_input = vec![0x01_u8];
+        expected_input.extend_from_slice(&bytes);
+        assert_eq!(
+            h1,
+            yggdrasil_crypto::hash_bytes_224(&expected_input).0,
+            "plutus_script_hash must Blake2b-224 over [lang_tag, ...script_bytes]"
         );
     }
 

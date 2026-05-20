@@ -369,9 +369,14 @@ own parser / generator / submission implementation plus upstream
   closed the inline-datum path: `show_babbage_datum` now renders
   `DatumOption::Inline(PlutusData)` as upstream `Datum (BinaryData
   "<latin1-escaped-cbor>")` using R572's `show_haskell_bytestring`
-  over the PlutusData's canonical CBOR. The remaining tx-generator
-  blockers are Plutus-script-witness renderings, reference scripts
-  on outputs, native scripts, bootstrap witnesses, Conway governance
+  over the PlutusData's canonical CBOR. R574 closed the Plutus
+  reference-script path: `show_babbage_script_ref` renders Plutus
+  V1/V2/V3 reference scripts as upstream `SJust PlutusScript
+  PlutusV{1,2,3} ScriptHash "<hex>"` with Blake2b-224 over
+  (language-tag byte ++ script bytes). The remaining tx-generator
+  blockers are native-script reference rendering, Plutus-script-
+  witness bytes inside `show_alonzo_witness_set`, native scripts and
+  bootstrap witnesses in the witness set, Conway governance
   procedures, and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.

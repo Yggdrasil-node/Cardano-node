@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R573 inline-datum Babbage/Conway DumpToFile rendering).
+**Status:** `partial` (post-R574 Plutus reference-script DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,17 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R574: `show_babbage_script_ref` now renders Plutus
+  reference scripts as upstream `SJust PlutusScript PlutusV{1,2,3}
+  ScriptHash "<hex>"`, matching upstream `Show (AlonzoScript era)`
+  (custom Show that emits `"PlutusScript " ++ show language ++ " " ++
+  show (hashScript @era s)`). Script hash domain: `Blake2b-224 over
+  (language-tag-byte ++ script_bytes)`, tags 0x01/0x02/0x03 for
+  PlutusV1/V2/V3. New `plutus_script_hash` helper. Native reference
+  scripts (`Script::Native`) remain `TxGenError` until the Timelock
+  Show is ported. 3 focused unit tests cover SNothing/V1/V2/V3
+  rendering with cross-language hash distinctness, native-script
+  rejection, and the hash-domain invariant.
 - Shipped R573: `show_babbage_datum` now renders inline datums
   (`DatumOption::Inline(PlutusData)`) as upstream `Datum (BinaryData
   "<latin1-escaped-cbor>")`, using `show_haskell_bytestring` over the
@@ -564,9 +575,15 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `show_babbage_datum` now renders `DatumOption::Inline(PlutusData)`
   as upstream `Datum (BinaryData "<latin1-escaped-cbor>")` using
   `show_haskell_bytestring` over the PlutusData's canonical CBOR.
-- Next: Plutus V1/V2/V3 script-witness rendering, native-script
-  rendering, reference-script rendering on `BabbageTxOut`, and
-  upstream-binary soak in strict-mirror-sized slices.
+- Shipped: Plutus reference-script DumpToFile rendering (R574):
+  `show_babbage_script_ref` now renders Plutus V1/V2/V3 reference
+  scripts as upstream `SJust PlutusScript PlutusV{1,2,3} ScriptHash
+  "<hex>"` with Blake2b-224 over (language tag ++ script bytes).
+  Native reference scripts remain on `TxGenError`.
+- Next: native-script reference rendering (Timelock Show), Plutus
+  V1/V2/V3 script-witness bytes inside `show_alonzo_witness_set`,
+  Conway governance procedures, and upstream-binary soak in
+  strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
