@@ -576,9 +576,13 @@ typed struct variant. R608 (2026-05-21) wired
 datum-walker, and wired `OutputTooSmallUTxO` (tag 6) +
 `OutputBootAddrAttrsTooBig` (tag 10) to typed `NonEmptyTxOut`
 payloads. **All 11 `ShelleyUtxoPredFailure` variants now carry
-typed payloads.** Inner per-TxOut Shelley/Babbage typed Show
-parse and full typed `Addr` parse (Shelley vs Bootstrap split)
-remain pending.
+typed payloads.** R610 (2026-05-21) bubbled the typed UTXO
+payload up into UTXOW tag 4: `ShelleyUtxowPredFailure::UtxoFailure(Vec<u8>)`
+→ `UtxoFailure(ShelleyUtxoPredFailure)`. **All 11 UTXOW variants
+now carry typed payloads** — the UTXOW→UTXO bubble-up is
+complete. Inner per-TxOut Shelley/Babbage typed Show parse and
+full typed `Addr` parse (Shelley vs Bootstrap split) remain
+pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

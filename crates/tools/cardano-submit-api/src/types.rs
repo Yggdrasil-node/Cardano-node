@@ -1102,9 +1102,9 @@ pub enum ShelleyUtxowPredFailure {
     /// Tag 3: scripts that failed validation —
     /// `NonEmptySet ScriptHash` (R599 typed decoder).
     ScriptWitnessNotValidatingUTXOW(NonEmptySetScriptHash),
-    /// Tag 4: nested UTXO sub-rule failure — raw payload pending
-    /// `ShelleyUtxoPredFailure` decoder.
-    UtxoFailure(Vec<u8>),
+    /// Tag 4: nested UTXO sub-rule failure (R610 wired to typed
+    /// `ShelleyUtxoPredFailure`).
+    UtxoFailure(ShelleyUtxoPredFailure),
     /// Tag 5: insufficient genesis signatures for an MIR
     /// certificate — `Set (KeyHash Witness)` (R600 typed decoder).
     MIRInsufficientGenesisSigsUTXOW(SetKeyHash),
@@ -1169,9 +1169,7 @@ impl fmt::Display for ShelleyUtxowPredFailure {
     /// `<raw-cbor N bytes>` marker pending typed decoders.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UtxoFailure(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
-            }
+            Self::UtxoFailure(utxo) => write!(f, "UtxoFailure ({utxo})"),
             Self::InvalidWitnessesUTXOW(keys) => {
                 write!(f, "InvalidWitnessesUTXOW ({keys})")
             }
@@ -1361,18 +1359,16 @@ impl ShelleyUtxowPredFailure {
                 let keys = NonEmptyVKey::from_cbor(payload_bytes)?;
                 Ok(Self::InvalidWitnessesUTXOW(keys))
             }
-            // Tag 4: nested sub-rule — decoder pending. Capture
-            // the remaining bytes verbatim.
+            // Tag 4: nested UTXO sub-rule (R610 typed via
+            // `ShelleyUtxoPredFailure::from_cbor`).
             4 => {
-                let raw = bytes
-                    .get(payload_offset..)
-                    .ok_or_else(|| {
-                        DecoderError(
-                            "ShelleyUtxowPredFailure: payload offset out of bounds".to_string(),
-                        )
-                    })?
-                    .to_vec();
-                Ok(Self::UtxoFailure(raw))
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ShelleyUtxowPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let utxo = ShelleyUtxoPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::UtxoFailure(utxo))
             }
             other => Err(DecoderError(format!(
                 "ShelleyUtxowPredFailure: unknown variant tag {other}"
@@ -3263,19 +3259,32 @@ mod tests {
     }
 
     #[test]
-    fn shelley_utxow_pred_failure_routes_tag4_to_raw_variant() {
-        // Tag 4 (UtxoFailure) — nested sub-rule decoder
-        // (ShelleyUtxoPredFailure) not yet ported, payload
-        // captured raw.
-        let mut cbor = vec![0x82_u8, 0x04];
-        cbor.extend_from_slice(&[0x9F, 0xFF]); // dummy indefinite array (empty)
+    fn shelley_utxow_pred_failure_utxo_failure_routes_to_typed_utxo() {
+        // UTXOW tag 4 with inner UTXO tag 3 (InputSetEmptyUTxO,
+        // no payload). Outer envelope: [0x82, 0x04, [0x81, 0x03]].
+        let cbor = [0x82_u8, 0x04, 0x81, 0x03];
         let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("UtxoFailure");
-        if let ShelleyUtxowPredFailure::UtxoFailure(payload) = &f {
-            assert_eq!(payload, &[0x9F_u8, 0xFF]);
+        if let ShelleyUtxowPredFailure::UtxoFailure(utxo) = &f {
+            assert_eq!(utxo.tag(), 3);
+            assert!(matches!(utxo, ShelleyUtxoPredFailure::InputSetEmptyUTxO));
         } else {
-            panic!("expected UtxoFailure raw, got {f:?}");
+            panic!("expected typed UtxoFailure, got {f:?}");
         }
-        assert_eq!(f.to_string(), "UtxoFailure <raw-cbor 2 bytes>");
+        assert_eq!(f.to_string(), "UtxoFailure (InputSetEmptyUTxO)");
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_utxo_failure_nests_full_utxo_predicate() {
+        // UTXOW tag 4 wrapping a UTXO tag 4 (FeeTooSmallUTxO) —
+        // full nested Display chain `UtxoFailure (FeeTooSmallUTxO
+        // (Mismatch (RelGTEQ) {supplied: Coin N, expected: Coin
+        // M}))`.
+        let cbor = [0x82_u8, 0x04, 0x82, 0x04, 0x82, 0x18, 100, 0x18, 200];
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("nested utxo");
+        assert_eq!(
+            f.to_string(),
+            "UtxoFailure (FeeTooSmallUTxO (Mismatch (RelGTEQ) {supplied: Coin 100, expected: Coin 200}))"
+        );
     }
 
     #[test]
