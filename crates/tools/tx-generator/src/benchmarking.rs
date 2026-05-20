@@ -7,5 +7,6 @@
 //! `Cardano.Benchmarking.*` leaves whose basenames would otherwise
 //! collide with existing `Cardano.TxGenerator.*` mirrors.
 
+pub mod log_types;
 pub mod tps_throttle;
 pub mod types;

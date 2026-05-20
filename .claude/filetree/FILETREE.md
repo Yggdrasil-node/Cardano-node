@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T14:42:04Z
-- Files described: 1441
+- Generated at: 2026-05-20T15:04:35Z
+- Files described: 1444
 
 ## Workspace
 
@@ -1754,6 +1754,8 @@
   - Project file at crates/tools/tx-generator/scripts-fallback/SchnorrSecp256k1Loop.plutus.
 - `crates/tools/tx-generator/src/benchmarking.rs`
   - Namespace shell for tx-generator `Cardano.Benchmarking.*` support modules, grouping strict-mirror benchmark leaves without colliding with existing TxGenerator mirrors.
+- `crates/tools/tx-generator/src/benchmarking/log_types.rs`
+  - Strict mirror of upstream `Cardano.Benchmarking.LogTypes`, carrying Benchmark submission trace events, NodeToNode submission traces, and submission summaries.
 - `crates/tools/tx-generator/src/benchmarking/tps_throttle.rs`
   - Strict mirror of upstream `Cardano.Benchmarking.TpsThrottle`, porting the Benchmark submission watermark throttle with blocking/non-blocking consumers and stop signaling.
 - `crates/tools/tx-generator/src/benchmarking/types.rs`
@@ -1768,6 +1770,8 @@
   - Transaction-stream generator runtime surface. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx.hs`.
 - `crates/tools/tx-generator/src/generator_tx/sized_metadata.rs`
   - Sized transaction-metadata construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/Benchmarking/GeneratorTx/SizedMetadata.
+- `crates/tools/tx-generator/src/generator_tx/submission_client.rs`
+  - Strict mirror of upstream `GeneratorTx.SubmissionClient`, porting tx-id request handling, unacked-window accounting, tx lookup, and thread stats.
 - `crates/tools/tx-generator/src/lib.rs`
   - Pure-Rust port of upstream `tx-generator`.
   - Parent module wiring top-level parsing, json/json_highlevel execution, compile, version, and command dispatch.
@@ -2279,6 +2283,8 @@
   - Documents the upstream/Rust DumpToFile byte match after variable-length StrictSeq CBOR encoding.
 - `docs/operational-runs/2026-05-20-round-561-tx-generator-tps-throttle.md`
   - Operational run note for R561 tx-generator Benchmarking.Types and TpsThrottle parity work, including upstream references, validation, and remaining Benchmark submission gaps.
+- `docs/operational-runs/2026-05-20-round-562-tx-generator-submission-client.md`
+  - Operational run note for R562 tx-generator LogTypes and SubmissionClient parity work, including upstream references, validation, and remaining Benchmark wiring gaps.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`
