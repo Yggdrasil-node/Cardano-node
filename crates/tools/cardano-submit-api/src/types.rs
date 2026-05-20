@@ -1411,9 +1411,11 @@ pub enum ShelleyUtxoPredFailure {
     /// supplied is the tx fee and expected is the min fee.
     FeeTooSmallUTxO(Mismatch<u64>),
     /// Tag 5: value not conserved — `Mismatch RelEQ (Value era)`.
-    /// Raw payload pending era-specific Value decoder (Shelley=Coin,
-    /// Mary+=MultiAsset).
-    ValueNotConservedUTxO(Vec<u8>),
+    /// For Shelley-era (this enum's scope) Value = Coin = Word64,
+    /// so the payload is a `Mismatch<u64>` with `RelEQ` relation
+    /// (R608 typed decoder). Mary+ multi-asset Value lives under
+    /// its own era-specific predicate-failure type.
+    ValueNotConservedUTxO(Mismatch<u64>),
     /// Tag 6: outputs too small — `NonEmpty (TxOut era)`. Raw
     /// payload pending era-specific TxOut decoder.
     OutputTooSmallUTxO(Vec<u8>),
@@ -1487,10 +1489,16 @@ impl fmt::Display for ShelleyUtxoPredFailure {
     /// no payload; raw payloads emit a `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ValueNotConservedUTxO(b)
-            | Self::OutputTooSmallUTxO(b)
-            | Self::OutputBootAddrAttrsTooBig(b) => {
+            Self::OutputTooSmallUTxO(b) | Self::OutputBootAddrAttrsTooBig(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ValueNotConservedUTxO(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "ValueNotConservedUTxO ({typed})")
             }
             Self::UpdateFailure(ppup) => write!(f, "UpdateFailure ({ppup})"),
             Self::WrongNetwork { expected, wrongs } => {
@@ -1639,9 +1647,16 @@ impl ShelleyUtxoPredFailure {
                     .map_err(|err| DecoderError(format!("WrongNetwork: {}", err.0)))?;
                 Ok(Self::WrongNetwork { expected, wrongs })
             }
+            // Tag 5: Shelley-era `Mismatch RelEQ Coin` (R608 typed
+            // decoder).
+            5 => {
+                let mm = decode_mismatch_u64(&mut dec, MismatchRelation::RelEQ)
+                    .map_err(|err| DecoderError(format!("ValueNotConservedUTxO: {}", err.0)))?;
+                Ok(Self::ValueNotConservedUTxO(mm))
+            }
             // Variants whose typed payload decoder is not yet
             // ported: capture the remaining bytes verbatim.
-            5 | 6 | 10 => {
+            6 | 10 => {
                 let raw = bytes
                     .get(payload_offset..)
                     .ok_or_else(|| {
@@ -1651,7 +1666,6 @@ impl ShelleyUtxoPredFailure {
                     })?
                     .to_vec();
                 Ok(match tag {
-                    5 => Self::ValueNotConservedUTxO(raw),
                     6 => Self::OutputTooSmallUTxO(raw),
                     10 => Self::OutputBootAddrAttrsTooBig(raw),
                     _ => unreachable!("tag range checked above"),
@@ -3210,18 +3224,36 @@ mod tests {
     }
 
     #[test]
-    fn shelley_utxo_pred_failure_routes_tag5_to_raw_variant() {
-        // Tag 5 (ValueNotConservedUTxO) — era-specific Value
-        // decoder not yet ported. Payload captured raw.
-        let mut cbor = vec![0x82_u8, 0x05];
+    fn shelley_utxo_pred_failure_routes_tag6_to_raw_variant() {
+        // Tag 6 (OutputTooSmallUTxO) — NonEmpty TxOut decoder not
+        // yet ported. Payload captured raw.
+        let mut cbor = vec![0x82_u8, 0x06];
         cbor.extend_from_slice(&[0x9F, 0xFF]);
-        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("ValueNotConservedUTxO");
-        if let ShelleyUtxoPredFailure::ValueNotConservedUTxO(payload) = &f {
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("OutputTooSmallUTxO");
+        if let ShelleyUtxoPredFailure::OutputTooSmallUTxO(payload) = &f {
             assert_eq!(payload, &[0x9F_u8, 0xFF]);
         } else {
-            panic!("expected ValueNotConservedUTxO raw, got {f:?}");
+            panic!("expected OutputTooSmallUTxO raw, got {f:?}");
         }
-        assert_eq!(f.to_string(), "ValueNotConservedUTxO <raw-cbor 2 bytes>");
+        assert_eq!(f.to_string(), "OutputTooSmallUTxO <raw-cbor 2 bytes>");
+    }
+
+    #[test]
+    fn shelley_utxo_pred_failure_value_not_conserved_decodes_tag5() {
+        // outer [0x82, 0x05, mismatch [supplied=10, expected=20]]
+        let cbor = [0x82_u8, 0x05, 0x82, 0x0A, 0x14];
+        let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("ValueNotConservedUTxO");
+        if let ShelleyUtxoPredFailure::ValueNotConservedUTxO(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelEQ);
+            assert_eq!(mm.supplied, 10);
+            assert_eq!(mm.expected, 20);
+        } else {
+            panic!("expected ValueNotConservedUTxO typed, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ValueNotConservedUTxO (Mismatch (RelEQ) {supplied: Coin 10, expected: Coin 20})"
+        );
     }
 
     #[test]

@@ -566,9 +566,14 @@ payloads.** R607 (2026-05-21) added the `Addr` wrapper (raw-bytes
 + hex Display) and `NonEmptySetAddr` carrier (BTreeSet, tag-258
 tolerant), wiring `ShelleyUtxoPredFailure::WrongNetwork` (tag 8,
 3-element envelope `[8, expected-network, NonEmptySet Addr]`) to
-typed struct variant. 8/11 UTXO variants typed; 3 raw remain
-(Value, TxOut x2). Full typed `Addr` Show parse (Shelley vs
-Bootstrap address split) deferred to a follow-on round.
+typed struct variant. R608 (2026-05-21) wired
+`ShelleyUtxoPredFailure::ValueNotConservedUTxO` (tag 5) to typed
+`Mismatch<u64>` with `RelEQ` relation (Shelley-era Value = Coin
+= Word64; reuses `decode_mismatch_u64` helper from R602 and
+`CoinShow` for Quiet-Show output). 9/11 UTXO variants typed; 2
+raw remain (TxOut x2 — tags 6/10). Full typed `Addr` Show parse
+(Shelley vs Bootstrap address split) deferred to a follow-on
+round.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
