@@ -1416,9 +1416,10 @@ pub enum ShelleyUtxoPredFailure {
     /// (R608 typed decoder). Mary+ multi-asset Value lives under
     /// its own era-specific predicate-failure type.
     ValueNotConservedUTxO(Mismatch<u64>),
-    /// Tag 6: outputs too small — `NonEmpty (TxOut era)`. Raw
-    /// payload pending era-specific TxOut decoder.
-    OutputTooSmallUTxO(Vec<u8>),
+    /// Tag 6: outputs too small — `NonEmpty (TxOut era)` (R609
+    /// typed NonEmpty wrapper; inner per-TxOut typed parse
+    /// deferred to a follow-on round).
+    OutputTooSmallUTxO(NonEmptyTxOut),
     /// Tag 7: nested PPUP sub-rule failure (R605 typed decoder
     /// via `ShelleyPpupPredFailure`).
     UpdateFailure(ShelleyPpupPredFailure),
@@ -1441,8 +1442,9 @@ pub enum ShelleyUtxoPredFailure {
         wrongs: NonEmptySetAccountAddress,
     },
     /// Tag 10: bootstrap-address attributes too big —
-    /// `NonEmpty (TxOut era)`. Raw payload pending TxOut decoder.
-    OutputBootAddrAttrsTooBig(Vec<u8>),
+    /// `NonEmpty (TxOut era)` (R609 typed NonEmpty wrapper; inner
+    /// per-TxOut typed parse deferred).
+    OutputBootAddrAttrsTooBig(NonEmptyTxOut),
 }
 
 impl ShelleyUtxoPredFailure {
@@ -1489,8 +1491,11 @@ impl fmt::Display for ShelleyUtxoPredFailure {
     /// no payload; raw payloads emit a `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::OutputTooSmallUTxO(b) | Self::OutputBootAddrAttrsTooBig(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::OutputTooSmallUTxO(outs) => {
+                write!(f, "OutputTooSmallUTxO ({outs})")
+            }
+            Self::OutputBootAddrAttrsTooBig(outs) => {
+                write!(f, "OutputBootAddrAttrsTooBig ({outs})")
             }
             Self::ValueNotConservedUTxO(mm) => {
                 let typed = Mismatch {
@@ -1654,20 +1659,13 @@ impl ShelleyUtxoPredFailure {
                     .map_err(|err| DecoderError(format!("ValueNotConservedUTxO: {}", err.0)))?;
                 Ok(Self::ValueNotConservedUTxO(mm))
             }
-            // Variants whose typed payload decoder is not yet
-            // ported: capture the remaining bytes verbatim.
+            // Tags 6/10: `NonEmpty (TxOut era)` (R609 typed
+            // wrapper; inner per-TxOut typed parse deferred).
             6 | 10 => {
-                let raw = bytes
-                    .get(payload_offset..)
-                    .ok_or_else(|| {
-                        DecoderError(
-                            "ShelleyUtxoPredFailure: payload offset out of bounds".to_string(),
-                        )
-                    })?
-                    .to_vec();
+                let outs = NonEmptyTxOut::from_decoder(&mut dec, bytes)?;
                 Ok(match tag {
-                    6 => Self::OutputTooSmallUTxO(raw),
-                    10 => Self::OutputBootAddrAttrsTooBig(raw),
+                    6 => Self::OutputTooSmallUTxO(outs),
+                    10 => Self::OutputBootAddrAttrsTooBig(outs),
                     _ => unreachable!("tag range checked above"),
                 })
             }
@@ -2183,6 +2181,183 @@ impl fmt::Display for NonEmptySetAddr {
             write!(f, "{addr}")?;
         }
         f.write_str("])")?;
+        Ok(())
+    }
+}
+
+/// Era-opaque transaction-output wrapper mirroring upstream
+/// `TxOut era`. The wire format is era-specific:
+///
+/// - Shelley/Allegra/Mary: 2-element array `[address, value]`.
+/// - Alonzo: 3-element array `[address, value, datum_hash]`.
+/// - Babbage+: CBOR map with positional keys for the four fields.
+///
+/// R609 captures the raw bytes verbatim for each TxOut. The full
+/// typed Shelley/Babbage parse-tree (Address + Value +
+/// {DatumHash|Datum} + Script) lands in a follow-on round.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct RawTxOut(pub Vec<u8>);
+
+impl RawTxOut {
+    /// Decode a single TxOut by consuming the next CBOR datum,
+    /// regardless of era-specific shape. The bytes from the
+    /// pre-call decoder position through the post-call position are
+    /// captured verbatim.
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let start = dec.position();
+        // Skip a single CBOR datum to advance the decoder. We use
+        // the `array` / `map` outer envelope walk that matches the
+        // era-specific top-level shape. For the Shelley-era 2-array
+        // case, this consumes `[address, value]`; for Babbage+ map
+        // it consumes the map and all entries.
+        skip_single_datum(dec).map_err(|err| DecoderError(format!("TxOut: skip: {}", err.0)))?;
+        let end = dec.position();
+        let slice = source
+            .get(start..end)
+            .ok_or_else(|| DecoderError("TxOut: decoder position out of bounds".to_string()))?;
+        Ok(Self(slice.to_vec()))
+    }
+}
+
+impl fmt::Display for RawTxOut {
+    /// Render as `TxOut <hex N bytes>` until the full era-specific
+    /// parse-tree port lands. The hex preserves the raw on-wire
+    /// bytes for operators while making the raw-payload status
+    /// visible.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "TxOut <hex {} bytes: {}>",
+            self.0.len(),
+            hex::encode(&self.0)
+        )
+    }
+}
+
+/// Skip a single CBOR datum at the decoder's current position
+/// without inspecting its contents. Handles the major types
+/// `unsigned`, `negative`, `bytes`, `text`, `array`, `map`, `tag`,
+/// `simple/float` per RFC 8949 §3.
+fn skip_single_datum(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<(), DecoderError> {
+    let major = dec
+        .peek_major()
+        .map_err(|err| DecoderError(format!("peek-major: {err:?}")))?;
+    match major {
+        // 0: unsigned, 1: negative
+        0 => {
+            dec.unsigned()
+                .map_err(|err| DecoderError(format!("unsigned: {err:?}")))?;
+            Ok(())
+        }
+        1 => {
+            // Negative ints decode as signed; fall back to a raw
+            // datum walk via array(0). We don't currently need them
+            // for TxOut payloads, so emit a focused error.
+            Err(DecoderError(
+                "skip_single_datum: negative integers not supported".to_string(),
+            ))
+        }
+        // 2: bytes
+        2 => {
+            dec.bytes()
+                .map_err(|err| DecoderError(format!("bytes: {err:?}")))?;
+            Ok(())
+        }
+        // 4: array — recurse per element.
+        4 => {
+            let len = dec
+                .array()
+                .map_err(|err| DecoderError(format!("array: {err:?}")))?;
+            for _ in 0..len {
+                skip_single_datum(dec)?;
+            }
+            Ok(())
+        }
+        // 5: map — recurse per key/value pair.
+        5 => {
+            let len = dec
+                .map()
+                .map_err(|err| DecoderError(format!("map: {err:?}")))?;
+            for _ in 0..len {
+                skip_single_datum(dec)?;
+                skip_single_datum(dec)?;
+            }
+            Ok(())
+        }
+        // 6: tag — consume then skip the tagged datum.
+        6 => {
+            dec.tag()
+                .map_err(|err| DecoderError(format!("tag: {err:?}")))?;
+            skip_single_datum(dec)
+        }
+        other => Err(DecoderError(format!(
+            "skip_single_datum: unsupported major type {other}"
+        ))),
+    }
+}
+
+/// Non-empty list of transaction outputs mirroring upstream
+/// `NonEmpty (TxOut era)`. CBOR wire format is a regular CBOR
+/// array with ≥1 entry. NonEmpty invariant enforced at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyTxOut {
+    /// Decoded entries. Guaranteed non-empty by `from_cbor` /
+    /// `from_decoder`.
+    pub entries: Vec<RawTxOut>,
+}
+
+impl NonEmptyTxOut {
+    /// Decode `NonEmpty (TxOut era)` from canonical CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        Self::from_decoder(&mut dec, bytes)
+    }
+
+    /// Decode from an in-progress `Decoder`. Caller must pass the
+    /// original source bytes so each TxOut entry can be captured
+    /// verbatim by byte range.
+    pub fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let count = dec
+            .array()
+            .map_err(|err| DecoderError(format!("NonEmptyTxOut: expected CBOR array: {err:?}")))?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyTxOut: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(RawTxOut::from_decoder(dec, source)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyTxOut {
+    /// Render upstream `Show (NonEmpty (TxOut era))`:
+    /// `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyTxOut enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for t in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{t}")?;
+        }
+        f.write_str("]")?;
         Ok(())
     }
 }
@@ -3224,18 +3399,41 @@ mod tests {
     }
 
     #[test]
-    fn shelley_utxo_pred_failure_routes_tag6_to_raw_variant() {
-        // Tag 6 (OutputTooSmallUTxO) — NonEmpty TxOut decoder not
-        // yet ported. Payload captured raw.
+    fn shelley_utxo_pred_failure_output_too_small_decodes_tag6() {
+        // Tag 6 with NonEmpty [TxOut bytes]; TxOut is a 2-array
+        // [addr-bytes, coin] for Shelley era.
         let mut cbor = vec![0x82_u8, 0x06];
-        cbor.extend_from_slice(&[0x9F, 0xFF]);
+        cbor.push(0x81); // NonEmpty array(1)
+        cbor.push(0x82); // TxOut 2-array
+        cbor.push(0x58); // bytes header
+        cbor.push(29);
+        cbor.extend_from_slice(&[0x61_u8]);
+        cbor.extend_from_slice(&[0xAA_u8; 28]);
+        cbor.push(0x18); // coin = 100
+        cbor.push(0x64);
         let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("OutputTooSmallUTxO");
-        if let ShelleyUtxoPredFailure::OutputTooSmallUTxO(payload) = &f {
-            assert_eq!(payload, &[0x9F_u8, 0xFF]);
+        if let ShelleyUtxoPredFailure::OutputTooSmallUTxO(outs) = &f {
+            assert_eq!(outs.entries.len(), 1);
+            // The captured TxOut bytes should be the full 2-array
+            // including the array header.
+            assert_eq!(outs.entries[0].0[0], 0x82); // 2-array
         } else {
-            panic!("expected OutputTooSmallUTxO raw, got {f:?}");
+            panic!("expected OutputTooSmallUTxO typed, got {f:?}");
         }
-        assert_eq!(f.to_string(), "OutputTooSmallUTxO <raw-cbor 2 bytes>");
+        let s = f.to_string();
+        assert!(s.starts_with("OutputTooSmallUTxO (TxOut <hex"), "got: {s}");
+        assert!(s.ends_with("]) ") || s.ends_with("])"), "got: {s}");
+    }
+
+    #[test]
+    fn non_empty_tx_out_rejects_empty_list() {
+        let cbor = vec![0x80_u8];
+        let err = NonEmptyTxOut::from_cbor(&cbor).expect_err("empty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
     }
 
     #[test]

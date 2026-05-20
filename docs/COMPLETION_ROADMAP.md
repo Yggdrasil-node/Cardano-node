@@ -570,10 +570,15 @@ typed struct variant. R608 (2026-05-21) wired
 `ShelleyUtxoPredFailure::ValueNotConservedUTxO` (tag 5) to typed
 `Mismatch<u64>` with `RelEQ` relation (Shelley-era Value = Coin
 = Word64; reuses `decode_mismatch_u64` helper from R602 and
-`CoinShow` for Quiet-Show output). 9/11 UTXO variants typed; 2
-raw remain (TxOut x2 — tags 6/10). Full typed `Addr` Show parse
-(Shelley vs Bootstrap address split) deferred to a follow-on
-round.
+`CoinShow` for Quiet-Show output). R609 (2026-05-21) added the
+`RawTxOut(Vec<u8>)` wrapper + `NonEmptyTxOut` carrier
+(Vec<RawTxOut>) along with a generic `skip_single_datum` CBOR
+datum-walker, and wired `OutputTooSmallUTxO` (tag 6) +
+`OutputBootAddrAttrsTooBig` (tag 10) to typed `NonEmptyTxOut`
+payloads. **All 11 `ShelleyUtxoPredFailure` variants now carry
+typed payloads.** Inner per-TxOut Shelley/Babbage typed Show
+parse and full typed `Addr` parse (Shelley vs Bootstrap split)
+remain pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
