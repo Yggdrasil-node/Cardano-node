@@ -590,8 +590,14 @@ added the `ShelleyDelegsPredFailure` newtype scaffold (single
 `ShelleyLedgerPredFailure::DelegsFailure(Vec<u8>)` →
 `DelegsFailure(ShelleyDelegsPredFailure)`. **All 4 LEDGER
 variants now carry typed payloads** — the LEDGER root is fully
-wired; only the inner DELPL sub-rule decoder (POOL/DELEG
-dispatch), per-TxOut Shelley/Babbage typed parse, and full
+wired. R613 (2026-05-21) added the next nested sub-rule:
+`ShelleyDelplPredFailure` 2-variant scaffold (PoolFailure tag 0,
+DelegFailure tag 1) and wired
+`ShelleyDelegsPredFailure::DelplFailure(Vec<u8>)` →
+`DelplFailure(ShelleyDelplPredFailure)`. The full LEDGER →
+DELEGS → DELPL chain now renders typed end-to-end through nested
+Display. Only the POOL/DELEG sub-rule decoders (deepest layer
+under DELPL), per-TxOut Shelley/Babbage typed parse, and full
 typed `Addr` parse (Shelley vs Bootstrap split) remain pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
