@@ -1546,9 +1546,21 @@ fn show_conway_gov_action(action: &yggdrasil_ledger::GovAction) -> Result<String
                 show_anchor(&constitution.anchor),
             ))
         }
-        GovAction::ParameterChange { .. } => Err(lift_tx_gen_error(
-            "DumpToFile: Conway Show(Tx) renderer does not yet support ParameterChange GovAction (needs ProtocolParameterUpdate Show)",
-        )),
+        GovAction::ParameterChange {
+            prev_action_id,
+            protocol_param_update,
+            guardrails_script_hash,
+        } => {
+            let ppu = show_conway_pparams_update(protocol_param_update)?;
+            let guardrails = match guardrails_script_hash {
+                None => "SNothing".to_string(),
+                Some(h) => format!("(SJust (ScriptHash \"{}\"))", hex::encode(h)),
+            };
+            Ok(format!(
+                "ParameterChange {} {ppu} {guardrails}",
+                show_strict_maybe_gov_purpose_id(prev_action_id.as_ref()),
+            ))
+        }
         GovAction::TreasuryWithdrawals {
             withdrawals,
             guardrails_script_hash,
@@ -1616,6 +1628,180 @@ fn show_stake_credential(credential: &yggdrasil_ledger::StakeCredential) -> Stri
             format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
         }
     }
+}
+
+/// Render upstream `Show (PParamsUpdate ConwayEra)` as the
+/// 30-field `ConwayPParams` record with all-SNothing field values for
+/// the empty-update path. Non-empty updates return a typed `TxGenError`
+/// naming the first set field whose per-type Show is not yet ported —
+/// these wrap rich domain types (`CoinPerByte`, `CompactForm Coin`,
+/// `EpochInterval`, `NonNegativeInterval`, `Prices`, `OrdExUnits`,
+/// `PoolVotingThresholds`, `DRepVotingThresholds`, `CostModels`) that
+/// each need dedicated Show ports.
+///
+/// Field order matches upstream `Cardano.Ledger.Conway.PParams.ConwayPParams`
+/// — 30 fields starting at `cppTxFeePerByte` and ending at
+/// `cppMinFeeRefScriptCostPerByte`. THKD wrapper is transparent
+/// (`instance Show (HKD f a) => Show (THKD t f a) where show = show . unTHKD`),
+/// so each field renders as the underlying `StrictMaybe value` directly.
+fn show_conway_pparams_update(
+    ppu: &yggdrasil_ledger::ProtocolParameterUpdate,
+) -> Result<String, Error> {
+    // Detect set fields and surface them in the rejection message. The
+    // yggdrasil ProtocolParameterUpdate carries a superset of Conway's
+    // PParams (it preserves Shelley-era fields like `d`, `extra_entropy`,
+    // `min_utxo_value`, `protocol_version` that Conway dropped); any
+    // value in those Shelley-era-only fields cannot be rendered against
+    // Conway PParamsUpdate at all.
+    let mut set_fields: Vec<&'static str> = Vec::new();
+    if ppu.min_fee_a.is_some() {
+        set_fields.push("cppTxFeePerByte (was min_fee_a)");
+    }
+    if ppu.min_fee_b.is_some() {
+        set_fields.push("cppTxFeeFixed (was min_fee_b)");
+    }
+    if ppu.max_block_body_size.is_some() {
+        set_fields.push("cppMaxBBSize");
+    }
+    if ppu.max_tx_size.is_some() {
+        set_fields.push("cppMaxTxSize");
+    }
+    if ppu.max_block_header_size.is_some() {
+        set_fields.push("cppMaxBHSize");
+    }
+    if ppu.key_deposit.is_some() {
+        set_fields.push("cppKeyDeposit");
+    }
+    if ppu.pool_deposit.is_some() {
+        set_fields.push("cppPoolDeposit");
+    }
+    if ppu.e_max.is_some() {
+        set_fields.push("cppEMax");
+    }
+    if ppu.n_opt.is_some() {
+        set_fields.push("cppNOpt");
+    }
+    if ppu.a0.is_some() {
+        set_fields.push("cppA0");
+    }
+    if ppu.rho.is_some() {
+        set_fields.push("cppRho");
+    }
+    if ppu.tau.is_some() {
+        set_fields.push("cppTau");
+    }
+    if ppu.d.is_some() {
+        set_fields.push("d (Shelley-era only — no Conway field)");
+    }
+    if ppu.extra_entropy.is_some() {
+        set_fields.push("extra_entropy (Shelley-era only — no Conway field)");
+    }
+    if ppu.protocol_version.is_some() {
+        set_fields.push("protocol_version (HKDNoUpdate — not in PParamsUpdate)");
+    }
+    if ppu.min_utxo_value.is_some() {
+        set_fields.push("min_utxo_value (Shelley-era only — no Conway field)");
+    }
+    if ppu.min_pool_cost.is_some() {
+        set_fields.push("cppMinPoolCost");
+    }
+    if ppu.coins_per_utxo_byte.is_some() {
+        set_fields.push("cppCoinsPerUTxOByte");
+    }
+    if ppu.cost_models.is_some() {
+        set_fields.push("cppCostModels");
+    }
+    if ppu.price_mem.is_some() || ppu.price_step.is_some() {
+        set_fields.push("cppPrices");
+    }
+    if ppu.max_tx_ex_units.is_some() {
+        set_fields.push("cppMaxTxExUnits");
+    }
+    if ppu.max_block_ex_units.is_some() {
+        set_fields.push("cppMaxBlockExUnits");
+    }
+    if ppu.max_val_size.is_some() {
+        set_fields.push("cppMaxValSize");
+    }
+    if ppu.collateral_percentage.is_some() {
+        set_fields.push("cppCollateralPercentage");
+    }
+    if ppu.max_collateral_inputs.is_some() {
+        set_fields.push("cppMaxCollateralInputs");
+    }
+    if ppu.pool_voting_thresholds.is_some() {
+        set_fields.push("cppPoolVotingThresholds");
+    }
+    if ppu.drep_voting_thresholds.is_some() {
+        set_fields.push("cppDRepVotingThresholds");
+    }
+    if ppu.min_committee_size.is_some() {
+        set_fields.push("cppCommitteeMinSize");
+    }
+    if ppu.committee_term_limit.is_some() {
+        set_fields.push("cppCommitteeMaxTermLength");
+    }
+    if ppu.gov_action_lifetime.is_some() {
+        set_fields.push("cppGovActionLifetime");
+    }
+    if ppu.gov_action_deposit.is_some() {
+        set_fields.push("cppGovActionDeposit");
+    }
+    if ppu.drep_deposit.is_some() {
+        set_fields.push("cppDRepDeposit");
+    }
+    if ppu.drep_activity.is_some() {
+        set_fields.push("cppDRepActivity");
+    }
+    if ppu.min_fee_ref_script_cost_per_byte.is_some() {
+        set_fields.push("cppMinFeeRefScriptCostPerByte");
+    }
+    if !set_fields.is_empty() {
+        return Err(lift_tx_gen_error(format!(
+            "DumpToFile: Conway Show(Tx) renderer does not yet support non-empty ParameterChange fields: {}",
+            set_fields.join(", ")
+        )));
+    }
+
+    // Empty update: render the full 30-field ConwayPParams record with
+    // all SNothing values. Field order matches upstream
+    // Cardano.Ledger.Conway.PParams.ConwayPParams.
+    Ok(concat!(
+        "(ConwayPParams {",
+        "cppTxFeePerByte = SNothing",
+        ", cppTxFeeFixed = SNothing",
+        ", cppMaxBBSize = SNothing",
+        ", cppMaxTxSize = SNothing",
+        ", cppMaxBHSize = SNothing",
+        ", cppKeyDeposit = SNothing",
+        ", cppPoolDeposit = SNothing",
+        ", cppEMax = SNothing",
+        ", cppNOpt = SNothing",
+        ", cppA0 = SNothing",
+        ", cppRho = SNothing",
+        ", cppTau = SNothing",
+        ", cppProtocolVersion = NoUpdate",
+        ", cppMinPoolCost = SNothing",
+        ", cppCoinsPerUTxOByte = SNothing",
+        ", cppCostModels = SNothing",
+        ", cppPrices = SNothing",
+        ", cppMaxTxExUnits = SNothing",
+        ", cppMaxBlockExUnits = SNothing",
+        ", cppMaxValSize = SNothing",
+        ", cppCollateralPercentage = SNothing",
+        ", cppMaxCollateralInputs = SNothing",
+        ", cppPoolVotingThresholds = SNothing",
+        ", cppDRepVotingThresholds = SNothing",
+        ", cppCommitteeMinSize = SNothing",
+        ", cppCommitteeMaxTermLength = SNothing",
+        ", cppGovActionLifetime = SNothing",
+        ", cppGovActionDeposit = SNothing",
+        ", cppDRepDeposit = SNothing",
+        ", cppDRepActivity = SNothing",
+        ", cppMinFeeRefScriptCostPerByte = SNothing",
+        "})",
+    )
+    .to_string())
 }
 
 /// Render upstream `Show UnitInterval`: `<num> % <den>` at p=0 (no parens
@@ -3852,15 +4038,43 @@ mod tests {
     }
 
     #[test]
-    fn dumptofile_show_conway_gov_action_rejects_complex_variants() {
+    fn dumptofile_show_conway_gov_action_parameter_change_empty() {
+        // Empty PParamsUpdate renders the full Conway 30-field ConwayPParams
+        // record with all SNothing values (and cppProtocolVersion = NoUpdate).
         let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
             prev_action_id: None,
             protocol_param_update: Default::default(),
             guardrails_script_hash: None,
         };
-        let err =
-            show_conway_gov_action(&parameter_change).expect_err("parameter change should reject");
-        assert!(format!("{err}").contains("ParameterChange"));
+        let rendered = show_conway_gov_action(&parameter_change).expect("empty parameter change");
+        assert!(
+            rendered
+                .starts_with("ParameterChange SNothing (ConwayPParams {cppTxFeePerByte = SNothing")
+        );
+        assert!(rendered.contains("cppMinFeeRefScriptCostPerByte = SNothing}) SNothing"));
+        assert!(rendered.contains("cppProtocolVersion = NoUpdate"));
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_parameter_change_with_set_field_rejects() {
+        // Non-empty PParamsUpdate (cppKeyDeposit set) rejects with a clear
+        // message naming the field whose per-type Show is not yet ported.
+        let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            key_deposit: Some(2_000_000),
+            ..Default::default()
+        };
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: update,
+            guardrails_script_hash: None,
+        };
+        let err = show_conway_gov_action(&parameter_change)
+            .expect_err("non-empty parameter change should reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("cppKeyDeposit"),
+            "expected field-name in error: {msg}"
+        );
     }
 
     #[test]

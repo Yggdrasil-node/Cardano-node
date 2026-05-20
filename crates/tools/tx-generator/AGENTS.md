@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R582 UpdateCommittee GovAction DumpToFile rendering — only ParameterChange remains).
+**Status:** `partial` (post-R583 ParameterChange GovAction DumpToFile rendering — all 7 GovAction variants render for the empty PParamsUpdate path).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,22 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R583: `show_conway_gov_action` now renders the
+  `ParameterChange` variant for the empty PParamsUpdate path. The
+  full 30-field `ConwayPParams` record renders with all SNothing
+  values (and `cppProtocolVersion = NoUpdate` for the HKDNoUpdate
+  field) when the protocol_param_update is empty. Non-empty updates
+  return a typed `TxGenError` naming the set fields whose per-type
+  Shows are not yet ported (each wraps rich domain types:
+  `CoinPerByte`, `CompactForm Coin`, `EpochInterval`,
+  `NonNegativeInterval`, `Prices`, `OrdExUnits`,
+  `PoolVotingThresholds`, `DRepVotingThresholds`, `CostModels`).
+  Shelley-era-only yggdrasil fields (`d`, `extra_entropy`,
+  `min_utxo_value`, `protocol_version`) that Conway dropped also
+  report explicit boundary errors. New `show_conway_pparams_update`
+  helper. All 7 GovAction variants now render for the empty-update
+  path. 2 focused unit tests cover the empty rendering envelope and
+  the field-name-bearing rejection for a set field.
 - Shipped R582: `show_conway_gov_action` now renders the
   `UpdateCommittee` variant as upstream `UpdateCommittee
   <StrictMaybe GovPurposeId> (fromList [<remove-creds>]) (fromList
@@ -736,10 +752,19 @@ This crate's full implementation remains an A4 sister-tool build-out:
   `show_conway_gov_action` now renders the `UpdateCommittee`
   variant via `show_stake_credential` + `show_unit_interval` +
   member-map iteration. Only ParameterChange remains.
-- Next: ParameterChange GovAction (ProtocolParameterUpdate Show
-  with ~30 optional PParamUpdate fields), upstream
-  `bootstrapWitKeyHash` parity for multi-witness sets, and
-  upstream-binary soak in strict-mirror-sized slices.
+- Shipped: ParameterChange GovAction rendering (R583):
+  `show_conway_gov_action` now renders the `ParameterChange`
+  variant for empty PParamsUpdate (full 30-field ConwayPParams
+  record with all SNothing). All 7 GovAction variants now render
+  for the empty-update path. Non-empty PParamsUpdate variants
+  rejected with field-name-bearing TxGenError pending per-type
+  Show ports (CoinPerByte, EpochInterval, etc).
+- Next: per-type Shows for the rich PParamsUpdate fields (
+  `CoinPerByte`, `EpochInterval`, `NonNegativeInterval`, `Prices`,
+  `OrdExUnits`, `PoolVotingThresholds`, `DRepVotingThresholds`,
+  `CostModels`), upstream `bootstrapWitKeyHash` parity for
+  multi-witness sets, and upstream-binary soak in strict-mirror-
+  sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.

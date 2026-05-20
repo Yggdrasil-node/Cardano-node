@@ -415,10 +415,17 @@ own parser / generator / submission implementation plus upstream
   `Map AccountAddress Coin` Show keyed by the typed
   `RewardAccount` directly. R582 closed `UpdateCommittee` via new
   `show_stake_credential` + `show_unit_interval` helpers and
-  member-map iteration. The remaining tx-generator blocker is the
-  last complex `GovAction` variant `ParameterChange` —
-  `ProtocolParameterUpdate` Show (~30 optional `PParamUpdate`
-  fields) — and upstream-binary soak evidence.
+  member-map iteration. R583 closed `ParameterChange` for the empty
+  PParamsUpdate path: `show_conway_pparams_update` renders the full
+  30-field `ConwayPParams` record with all SNothing values (and
+  `cppProtocolVersion = NoUpdate`). Non-empty updates report
+  field-name-bearing TxGenError pending per-type Show ports
+  (`CoinPerByte`, `EpochInterval`, `NonNegativeInterval`, `Prices`,
+  `OrdExUnits`, `PoolVotingThresholds`, `DRepVotingThresholds`,
+  `CostModels`). All 7 GovAction variants now render for the
+  empty-update path. The remaining tx-generator blockers are those
+  per-type PParamsUpdate field Shows and upstream-binary soak
+  evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
