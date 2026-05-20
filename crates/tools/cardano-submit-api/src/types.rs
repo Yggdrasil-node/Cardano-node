@@ -828,6 +828,165 @@ impl fmt::Display for NonEmptySetScriptHash {
     }
 }
 
+/// 28-byte key-hash newtype mirroring upstream
+/// `newtype KeyHash (r :: KeyRole) = KeyHash {unKeyHash :: Hash
+/// ADDRHASH (VerKeyDSIGN DSIGN)}` from `Cardano.Ledger.Hashes`.
+/// The phantom `r :: KeyRole` (Witness, Stake, Pool, Genesis,
+/// GenesisDelegate, ...) does not affect the wire format or Show.
+/// Display matches the stock-derived record Show:
+/// `KeyHash {unKeyHash = "<hex>"}`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct KeyHash(pub [u8; 28]);
+
+impl fmt::Display for KeyHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "KeyHash {{unKeyHash = \"{}\"}}", hex::encode(self.0))
+    }
+}
+
+/// Non-empty set of key hashes mirroring upstream
+/// `NonEmptySet (KeyHash Witness)`. Wire-format and decoder
+/// semantics mirror `NonEmptySetScriptHash` (R599) — tag-258
+/// tolerant, non-empty invariant enforced at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptySetKeyHash {
+    /// Decoded set entries. Guaranteed non-empty by `from_cbor`.
+    pub entries: std::collections::BTreeSet<KeyHash>,
+}
+
+impl NonEmptySetKeyHash {
+    /// Decode `NonEmptySet (KeyHash Witness)` from canonical CBOR
+    /// bytes. Accepts the bare-list or tag-258 wrapped form per
+    /// upstream protocol-version ≥ 9 semantics.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("NonEmptySetKeyHash: peek: {err:?}")))?;
+        if major == 6 {
+            let tag = dec
+                .tag()
+                .map_err(|err| DecoderError(format!("NonEmptySetKeyHash: tag: {err:?}")))?;
+            if tag != 258 {
+                return Err(DecoderError(format!(
+                    "NonEmptySetKeyHash: expected tag 258, got {tag}"
+                )));
+            }
+        }
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!("NonEmptySetKeyHash: expected CBOR array: {err:?}"))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptySetKeyHash: NonEmptySet requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = std::collections::BTreeSet::new();
+        for _ in 0..count {
+            let hash_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptySetKeyHash: expected KeyHash bytes: {err:?}"
+                ))
+            })?;
+            let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                DecoderError(format!(
+                    "NonEmptySetKeyHash: KeyHash must be 28 bytes, got {}",
+                    hash_bytes.len()
+                ))
+            })?;
+            entries.insert(KeyHash(arr));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptySetKeyHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptySet (fromList [")?;
+        let mut first = true;
+        for hash in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{hash}")?;
+        }
+        f.write_str("])")?;
+        Ok(())
+    }
+}
+
+/// Possibly-empty `Set (KeyHash Witness)` mirroring upstream
+/// `Set (KeyHash Witness)`. Wire-format is identical to
+/// `NonEmptySetKeyHash` minus the non-empty invariant — used by
+/// `MIRInsufficientGenesisSigsUTXOW` where an empty signature set
+/// is a legitimate (if extreme) reject payload.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SetKeyHash {
+    /// Decoded set entries; may be empty.
+    pub entries: std::collections::BTreeSet<KeyHash>,
+}
+
+impl SetKeyHash {
+    /// Decode `Set (KeyHash Witness)` from canonical CBOR bytes.
+    /// Accepts the bare-list or tag-258 wrapped form. Empty sets
+    /// are permitted.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("SetKeyHash: peek: {err:?}")))?;
+        if major == 6 {
+            let tag = dec
+                .tag()
+                .map_err(|err| DecoderError(format!("SetKeyHash: tag: {err:?}")))?;
+            if tag != 258 {
+                return Err(DecoderError(format!(
+                    "SetKeyHash: expected tag 258, got {tag}"
+                )));
+            }
+        }
+        let count = dec
+            .array()
+            .map_err(|err| DecoderError(format!("SetKeyHash: expected CBOR array: {err:?}")))?;
+        let mut entries = std::collections::BTreeSet::new();
+        for _ in 0..count {
+            let hash_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!("SetKeyHash: expected KeyHash bytes: {err:?}"))
+            })?;
+            let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                DecoderError(format!(
+                    "SetKeyHash: KeyHash must be 28 bytes, got {}",
+                    hash_bytes.len()
+                ))
+            })?;
+            entries.insert(KeyHash(arr));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for SetKeyHash {
+    /// Render upstream `Show (Set (KeyHash r))`:
+    /// `fromList [KeyHash {unKeyHash = "<hex>"}, ...]` (no
+    /// NonEmptySet wrapper since upstream's `Set` is the raw type).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("fromList [")?;
+        let mut first = true;
+        for hash in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{hash}")?;
+        }
+        f.write_str("]")?;
+        Ok(())
+    }
+}
+
 /// `ShelleyUtxowPredFailure` mirror.
 ///
 /// Upstream: `data ShelleyUtxowPredFailure era` from
@@ -846,8 +1005,8 @@ pub enum ShelleyUtxowPredFailure {
     /// `NonEmpty (VKey Witness)`. Raw payload pending decoder.
     InvalidWitnessesUTXOW(Vec<u8>),
     /// Tag 1: required vkey witnesses not supplied —
-    /// `NonEmptySet (KeyHash Witness)`. Raw payload pending decoder.
-    MissingVKeyWitnessesUTXOW(Vec<u8>),
+    /// `NonEmptySet (KeyHash Witness)` (R600 typed decoder).
+    MissingVKeyWitnessesUTXOW(NonEmptySetKeyHash),
     /// Tag 2: required scripts not supplied —
     /// `NonEmptySet ScriptHash` (R599 typed decoder).
     MissingScriptWitnessesUTXOW(NonEmptySetScriptHash),
@@ -858,9 +1017,8 @@ pub enum ShelleyUtxowPredFailure {
     /// `ShelleyUtxoPredFailure` decoder.
     UtxoFailure(Vec<u8>),
     /// Tag 5: insufficient genesis signatures for an MIR
-    /// certificate — `Set (KeyHash Witness)`. Raw payload pending
-    /// decoder.
-    MIRInsufficientGenesisSigsUTXOW(Vec<u8>),
+    /// certificate — `Set (KeyHash Witness)` (R600 typed decoder).
+    MIRInsufficientGenesisSigsUTXOW(SetKeyHash),
     /// Tag 6: tx body claims metadata but its hash field is
     /// missing — the 32-byte hash that should have been present
     /// (typed).
@@ -922,11 +1080,14 @@ impl fmt::Display for ShelleyUtxowPredFailure {
     /// `<raw-cbor N bytes>` marker pending typed decoders.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidWitnessesUTXOW(b)
-            | Self::MissingVKeyWitnessesUTXOW(b)
-            | Self::UtxoFailure(b)
-            | Self::MIRInsufficientGenesisSigsUTXOW(b) => {
+            Self::InvalidWitnessesUTXOW(b) | Self::UtxoFailure(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::MissingVKeyWitnessesUTXOW(set) => {
+                write!(f, "MissingVKeyWitnessesUTXOW ({set})")
+            }
+            Self::MIRInsufficientGenesisSigsUTXOW(set) => {
+                write!(f, "MIRInsufficientGenesisSigsUTXOW ({set})")
             }
             Self::MissingScriptWitnessesUTXOW(set) => {
                 write!(f, "MissingScriptWitnessesUTXOW ({set})")
@@ -1076,10 +1237,32 @@ impl ShelleyUtxowPredFailure {
                     _ => unreachable!("tag range checked above"),
                 })
             }
+            // Tag 1: NonEmptySet (KeyHash Witness) (R600 typed
+            // decoder).
+            1 => {
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ShelleyUtxowPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let set = NonEmptySetKeyHash::from_cbor(payload_bytes)?;
+                Ok(Self::MissingVKeyWitnessesUTXOW(set))
+            }
+            // Tag 5: Set (KeyHash Witness) (R600 typed decoder;
+            // permits empty set, unlike tag 1).
+            5 => {
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ShelleyUtxowPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let set = SetKeyHash::from_cbor(payload_bytes)?;
+                Ok(Self::MIRInsufficientGenesisSigsUTXOW(set))
+            }
             // Variants whose typed payload decoder is not yet
             // ported: capture the remaining bytes verbatim and
             // route them through the raw-payload variant.
-            0 | 1 | 4 | 5 => {
+            0 | 4 => {
                 let raw = bytes
                     .get(payload_offset..)
                     .ok_or_else(|| {
@@ -1090,9 +1273,7 @@ impl ShelleyUtxowPredFailure {
                     .to_vec();
                 Ok(match tag {
                     0 => Self::InvalidWitnessesUTXOW(raw),
-                    1 => Self::MissingVKeyWitnessesUTXOW(raw),
                     4 => Self::UtxoFailure(raw),
-                    5 => Self::MIRInsufficientGenesisSigsUTXOW(raw),
                     _ => unreachable!("tag range checked above"),
                 })
             }
@@ -1839,21 +2020,85 @@ mod tests {
     }
 
     #[test]
-    fn shelley_utxow_pred_failure_routes_unported_tag_to_raw_variant() {
-        // Tag 1 (MissingVKeyWitnessesUTXOW) — payload decoder not
-        // yet ported, captured raw.
-        let mut cbor = vec![0x82_u8, 0x01];
+    fn shelley_utxow_pred_failure_routes_tag0_to_raw_variant() {
+        // Tag 0 (InvalidWitnessesUTXOW) — typed decoder for
+        // `NonEmpty (VKey Witness)` not yet ported, payload
+        // captured raw.
+        let mut cbor = vec![0x82_u8, 0x00];
         cbor.extend_from_slice(&[0x9F, 0xFF]); // dummy indefinite array (empty)
-        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("MissingVKeyWitnessesUTXOW");
-        if let ShelleyUtxowPredFailure::MissingVKeyWitnessesUTXOW(payload) = &f {
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("InvalidWitnessesUTXOW");
+        if let ShelleyUtxowPredFailure::InvalidWitnessesUTXOW(payload) = &f {
             assert_eq!(payload, &[0x9F_u8, 0xFF]);
         } else {
-            panic!("expected MissingVKeyWitnessesUTXOW raw, got {f:?}");
+            panic!("expected InvalidWitnessesUTXOW raw, got {f:?}");
+        }
+        assert_eq!(f.to_string(), "InvalidWitnessesUTXOW <raw-cbor 2 bytes>");
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_missing_vkey_witnesses_decodes_tag1() {
+        // outer [0x82, 0x01, tag 258 + array(1) + bytes(28)]
+        let mut cbor = vec![0x82_u8, 0x01];
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02]); // tag 258
+        cbor.push(0x81); // array(1)
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xAB_u8; 28]);
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("typed tag-1");
+        if let ShelleyUtxowPredFailure::MissingVKeyWitnessesUTXOW(set) = &f {
+            assert_eq!(set.entries.len(), 1);
+        } else {
+            panic!("expected MissingVKeyWitnessesUTXOW typed, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "MissingVKeyWitnessesUTXOW (NonEmptySet (fromList [KeyHash {unKeyHash = \"abab"
+            ),
+            "got: {s}"
+        );
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_mir_insufficient_genesis_sigs_decodes_tag5_empty_set() {
+        // outer [0x82, 0x05, tag 258 + array(0)]
+        let cbor = vec![0x82_u8, 0x05, 0xD9, 0x01, 0x02, 0x80];
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("typed tag-5 empty");
+        if let ShelleyUtxowPredFailure::MIRInsufficientGenesisSigsUTXOW(set) = &f {
+            assert!(set.entries.is_empty());
+        } else {
+            panic!("expected MIRInsufficientGenesisSigsUTXOW empty, got {f:?}");
         }
         assert_eq!(
             f.to_string(),
-            "MissingVKeyWitnessesUTXOW <raw-cbor 2 bytes>"
+            "MIRInsufficientGenesisSigsUTXOW (fromList [])"
         );
+    }
+
+    #[test]
+    fn shelley_utxow_pred_failure_mir_insufficient_genesis_sigs_decodes_tag5_with_keys() {
+        // outer [0x82, 0x05, tag 258 + array(2) + 2x bytes(28)]
+        let mut cbor = vec![0x82_u8, 0x05];
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02]);
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x55_u8; 28]);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x66_u8; 28]);
+        let f = ShelleyUtxowPredFailure::from_cbor(&cbor).expect("typed tag-5 with keys");
+        if let ShelleyUtxowPredFailure::MIRInsufficientGenesisSigsUTXOW(set) = &f {
+            assert_eq!(set.entries.len(), 2);
+        } else {
+            panic!("expected MIRInsufficientGenesisSigsUTXOW with keys, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("MIRInsufficientGenesisSigsUTXOW (fromList [KeyHash {unKeyHash = \"5555"),
+            "got: {s}"
+        );
+        assert!(s.contains("KeyHash {unKeyHash = \"6666"));
     }
 
     #[test]

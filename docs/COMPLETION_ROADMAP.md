@@ -511,10 +511,17 @@ newtype + `NonEmptySetScriptHash` carrier (BTreeSet) + Display
 matching upstream stock-derived `Show`. Decoder is tag-258 tolerant
 (accepts both bare-list and tag-prefixed wire forms per upstream's
 protocol-version ≥ 9 set semantics) and enforces the NonEmpty
-invariant at decode time. Phase-2.5+ remaining work:
-`NonEmpty (VKey Witness)` for tag 0, `NonEmptySet (KeyHash
-Witness)` for tag 1, `Set (KeyHash Witness)` for tag 5,
-`ShelleyUtxoPredFailure` (tag-4 nested sub-rule),
+invariant at decode time. R600 (2026-05-21) shipped the `NonEmptySet (KeyHash Witness)` and
+`Set (KeyHash Witness)` decoders. New `KeyHash` 28-byte newtype
+mirroring upstream `KeyHash (r :: KeyRole)` record Show
+(`KeyHash {unKeyHash = "<hex>"}`), `NonEmptySetKeyHash` (BTreeSet
++ NonEmpty invariant), and `SetKeyHash` (BTreeSet, permits empty).
+Wired tag 1 (`MissingVKeyWitnessesUTXOW`) to `NonEmptySetKeyHash`
+and tag 5 (`MIRInsufficientGenesisSigsUTXOW`) to `SetKeyHash` —
+the latter renders as `fromList [...]` without a `NonEmptySet`
+wrapper because upstream uses the raw `Set` type for the MIR
+variant. Phase-2.5+ remaining work: `NonEmpty (VKey Witness)`
+for tag 0, `ShelleyUtxoPredFailure` (tag-4 nested sub-rule),
 `ShelleyDelegsPredFailure` (tag-1 of the LEDGER tree), wiring the
 typed decoder into `ShelleyLedgerPredFailure`, then mirroring the
 predicate-failure tree for Allegra/Mary/Alonzo/Babbage/Conway eras
