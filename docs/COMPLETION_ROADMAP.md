@@ -233,9 +233,10 @@ custody). `tx-generator` is no longer blocked on the cardano-cli C-arc;
 that prerequisite closed at R515/R529, so its remaining blocker is its
 own parser / generator / submission implementation plus upstream
 comparison evidence. R533 shipped its upstream `Command.hs` parser
-mirror, R534 shipped `Setup/TestnetDiscovery.hs`, and R535 shipped
-`Setup/NixService.hs` high-level option parsing/projections, so the
-remaining tx-generator blocker is Compiler / Script / GeneratorTx /
+mirror, R534 shipped `Setup/TestnetDiscovery.hs`, R535 shipped
+`Setup/NixService.hs` high-level option parsing/projections, and R536
+shipped `Compiler.hs` script generation plus the `Script/Types.hs` IR,
+so the remaining tx-generator blocker is Script / GeneratorTx /
 Submission implementation plus upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.

@@ -10,11 +10,15 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use command::Command;
+use compiler::compile_options;
+use script::types::pretty_print;
 use setup::nix_service::{mangle_node_config, mangle_tracer_config, parse_nix_service_options_str};
 use setup::testnet_discovery::discover_testnet_config;
 
 pub mod command;
+pub mod compiler;
 pub mod parser;
+pub mod script;
 pub mod setup;
 pub mod types;
 
@@ -54,8 +58,9 @@ pub fn run_main() -> ExitCode {
 /// dispatch boundary. R534 prepares `json_highlevel --testnet-config-dir`
 /// by running the upstream-shaped testnet discovery merge. R535 parses
 /// high-level config into `NixServiceOptions` and applies CLI overrides.
-/// Individual command execution still lands in the later `Script`,
-/// `Compiler`, and `GeneratorTx` slices.
+/// R536 compiles high-level options to script actions and makes
+/// `compile` emit that script. Script execution still lands in the
+/// later `Script` and `GeneratorTx` slices.
 pub fn run(command: command::Command) -> eyre::Result<()> {
     match &command {
         Command::JsonHighLevel(cmd) => {
@@ -68,20 +73,26 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
             };
             let opts = mangle_node_config(opts, cmd.node_config.clone())?;
             let _final_opts = mangle_tracer_config(opts, cmd.cardano_tracer.clone());
+            let _script = compile_options(&_final_opts)?;
         }
         Command::Compile(file) => {
             let raw = std::fs::read_to_string(file)?;
-            let _opts = parse_nix_service_options_str(&raw)?;
+            let opts = parse_nix_service_options_str(&raw)?;
+            let script = compile_options(&opts)?;
+            let rendered = pretty_print(&script)?;
+            std::io::stdout().write_all(rendered.as_bytes())?;
+            return Ok(());
         }
         Command::Json(_) | Command::Selftest(_) | Command::Version => {}
     }
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R535 NixService setup slice). Help/version compatibility, typed \
+         (R536 compiler slice). Help/version compatibility, typed \
          subcommand parsing, json_highlevel testnet discovery, and high-level \
-         NixServiceOptions parsing are wired; concrete command implementations \
-         land in later strict slices of the tx-generator port arc.",
+         NixServiceOptions parsing/compilation are wired; script execution and \
+         transaction generation land in later strict slices of the tx-generator \
+         port arc.",
         command.name()
     ))
 }

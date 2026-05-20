@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T04:07:42Z
-- Files described: 1382
+- Generated at: 2026-05-20T04:26:22Z
+- Files described: 1386
 
 ## Workspace
 
@@ -1739,6 +1739,9 @@
 - `crates/tools/tx-generator/src/command.rs`
   - Typed command surface for the `tx-generator` binary.
   - Mirrors upstream Command.hs commandParser for json, json_highlevel, compile, selftest, and version.
+- `crates/tools/tx-generator/src/compiler.rs`
+  - High-level option compiler for `tx-generator`.
+  - Mirrors upstream Compiler.hs by turning NixServiceOptions into generated benchmark script actions.
 - `crates/tools/tx-generator/src/lib.rs`
   - Pure-Rust port of upstream `tx-generator`.
   - Parent module wiring top-level parsing, typed dispatch, testnet discovery, and NixService parsing.
@@ -1747,6 +1750,12 @@
 - `crates/tools/tx-generator/src/parser.rs`
   - CLI argument parser shell for the `tx-generator` binary.
   - Keeps top-level help/version fixture compatibility while delegating typed commands to command.rs.
+- `crates/tools/tx-generator/src/script.rs`
+  - Benchmarking script namespace for `tx-generator`.
+  - Preserves the upstream Cardano.Benchmarking.Script boundary for strict one-to-one leaf mirrors.
+- `crates/tools/tx-generator/src/script/types.rs`
+  - Generated script action and generator IR for `tx-generator`.
+  - Mirrors upstream Script/Types.hs constructors and ObjectWithSingleField-style JSON wrappers.
 - `crates/tools/tx-generator/src/setup.rs`
   - Setup namespace for the `tx-generator` binary.
   - Preserves the upstream Cardano.TxGenerator.Setup boundary for NixService and TestnetDiscovery mirrors.
@@ -2146,6 +2155,8 @@
   - R534 tx-generator Testnet Discovery: Date: 2026-05-20.
 - `docs/operational-runs/2026-05-20-round-535-tx-generator-nix-service.md`
   - R535 tx-generator NixService: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-536-tx-generator-compiler.md`
+  - R536 tx-generator Compiler: Date: 2026-05-20.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

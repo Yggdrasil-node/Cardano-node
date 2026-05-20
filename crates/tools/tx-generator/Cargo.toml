@@ -5,11 +5,11 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
-description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface has byte-equivalent top-level help/version, Command.hs parsing, TestnetDiscovery, and NixService high-level config parsing; next work is script compilation, generation, submission, and soak evidence."
+description = "Pure-Rust port of the upstream tx-generator transaction-stream load generator. Current surface has byte-equivalent top-level help/version, Command.hs parsing, TestnetDiscovery, NixService high-level config parsing, and Compiler.hs script generation; next work is script execution, transaction generation, submission, and soak evidence."
 
-# R327/R335 skeleton plus R533-R535 command/setup mirrors. The former
+# R327/R335 skeleton plus R533-R536 command/setup/compiler mirrors. The former
 # cardano-cli CLI-MVS prerequisite is closed; tx-generator now needs its
-# own Compiler / Script / GeneratorTx / Submission implementation arc plus
+# own Script / GeneratorTx / Submission implementation arc plus
 # upstream comparison evidence.
 # Three Calibrate sub-trees (Compiler.hs + Benchmarking/Script/* +
 # TxGenerator/PureExample.hs) are pre-approved synthesis carve-outs per
