@@ -16,11 +16,15 @@ use crate::script::core::{
     set_protocol_parameters, submit_action, wait_benchmark, wait_for_era,
 };
 use crate::script::env::{
-    BenchTracers, Env, Error, GenesisHandle, ProtocolHandle, lift_tx_gen_error, set_bench_tracers,
-    set_env_genesis, set_env_network_id, set_env_protocol, set_env_socket_path, trace_debug,
+    BenchTracers, Env, Error, GenesisHandle, GenesisInitialFund, ProtocolHandle, lift_tx_gen_error,
+    set_bench_tracers, set_env_genesis, set_env_network_id, set_env_protocol, set_env_socket_path,
+    trace_debug,
 };
 use crate::script::types::{Action, NetworkId};
 use yggdrasil_node_config::NodeConfigFile;
+use yggdrasil_node_genesis::{
+    build_shelley_genesis_bootstrap, load_shelley_genesis, verify_genesis_file_hash,
+};
 
 /// Mirror of upstream `action`.
 pub fn action(env: &mut Env, script_action: &Action) -> Result<(), Error> {
@@ -86,6 +90,15 @@ pub fn start_protocol(
     }
     let network_magic = node_config.network_magic;
     let config_dir = config_file.parent();
+    let shelley_genesis_file = node_config
+        .shelley_genesis_file
+        .as_deref()
+        .map(Path::new)
+        .map(|path| resolve_config_relative(config_dir, path));
+    let initial_funds = load_configured_shelley_initial_funds(
+        shelley_genesis_file.as_deref(),
+        node_config.shelley_genesis_hash.as_deref(),
+    )?;
     let protocol = ProtocolHandle {
         config_file: PathBuf::from(config_file),
         tracer_socket: tracer_socket.map(PathBuf::from),
@@ -94,13 +107,10 @@ pub fn start_protocol(
     };
     let genesis = GenesisHandle {
         config_file: PathBuf::from(config_file),
-        shelley_genesis_file: node_config
-            .shelley_genesis_file
-            .as_deref()
-            .map(Path::new)
-            .map(|path| resolve_config_relative(config_dir, path)),
+        shelley_genesis_file,
         shelley_genesis_hash: node_config.shelley_genesis_hash,
         network_magic,
+        initial_funds,
     };
     set_env_protocol(env, protocol);
     set_env_genesis(env, genesis);
@@ -137,6 +147,53 @@ fn resolve_config_relative(config_dir: Option<&Path>, path: &Path) -> PathBuf {
     }
 }
 
+fn load_configured_shelley_initial_funds(
+    shelley_genesis_file: Option<&Path>,
+    shelley_genesis_hash: Option<&str>,
+) -> Result<Vec<GenesisInitialFund>, Error> {
+    let Some(path) = shelley_genesis_file else {
+        if shelley_genesis_hash.is_some() {
+            return Err(lift_tx_gen_error(
+                "mkConsensusProtocol: ShelleyGenesisHash configured without ShelleyGenesisFile",
+            ));
+        }
+        return Ok(Vec::new());
+    };
+    let Some(expected_hash) = shelley_genesis_hash else {
+        return Err(lift_tx_gen_error(
+            "mkConsensusProtocol: ShelleyGenesisFile configured without ShelleyGenesisHash",
+        ));
+    };
+
+    verify_genesis_file_hash(path, expected_hash, "ShelleyGenesisHash").map_err(|err| {
+        lift_tx_gen_error(format!(
+            "mkConsensusProtocol: Shelley genesis hash verification failed: {err}"
+        ))
+    })?;
+    let shelley = load_shelley_genesis(path).map_err(|err| {
+        lift_tx_gen_error(format!(
+            "getGenesis: failed to load Shelley genesis {}: {err}",
+            path.display()
+        ))
+    })?;
+    let bootstrap = build_shelley_genesis_bootstrap(&shelley).map_err(|err| {
+        lift_tx_gen_error(format!(
+            "getGenesis: failed to prepare Shelley genesis initial funds {}: {err}",
+            path.display()
+        ))
+    })?;
+
+    Ok(bootstrap
+        .initial_funds
+        .into_iter()
+        .map(|(tx_in, tx_out)| GenesisInitialFund {
+            address: tx_out.address,
+            tx_in: format!("{}#{}", hex::encode(tx_in.transaction_id), tx_in.index),
+            lovelace: tx_out.amount,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,6 +221,8 @@ mod tests {
         let mut config = default_config();
         config.network_magic = network_magic;
         config.protocol = Some("Cardano".to_string());
+        config.shelley_genesis_file = None;
+        config.shelley_genesis_hash = None;
         fs::write(
             path,
             serde_json::to_string(&config).expect("serialize node config"),
@@ -232,17 +291,59 @@ mod tests {
         assert_eq!(protocol.network_magic, 42);
         let genesis = get_env_genesis(&env).expect("genesis");
         assert_eq!(genesis.network_magic, 42);
-        assert_eq!(
-            genesis
-                .shelley_genesis_file
-                .as_deref()
-                .and_then(Path::file_name)
-                .and_then(|name| name.to_str()),
-            Some("shelley-genesis.json")
-        );
+        assert!(genesis.shelley_genesis_file.is_none());
+        assert!(genesis.initial_funds.is_empty());
         assert!(get_bench_tracers(&env).is_ok());
 
         let _ = fs::remove_file(config_file);
+    }
+
+    #[test]
+    fn start_protocol_loads_shelley_initial_funds_for_secure_genesis() {
+        let dir = unique_temp_path("with-genesis");
+        fs::create_dir_all(&dir).expect("temp dir");
+        let config_file = dir.join("node-config.json");
+        let genesis_file = dir.join("shelley-genesis.json");
+        let key = SigningKeyEnvelope::payment_signing_key_shelley(format!(
+            "5820{}",
+            hex::encode([7; 32])
+        ));
+        let address =
+            crate::tx_generator::utxo::key_address(&NetworkId::Testnet(42), &key).expect("address");
+        let genesis_json = serde_json::json!({
+            "initialFunds": {
+                hex::encode(&address): 1_234_567u64
+            }
+        });
+        fs::write(
+            &genesis_file,
+            serde_json::to_string(&genesis_json).expect("genesis json"),
+        )
+        .expect("write genesis");
+        let expected_hash = hex::encode(
+            yggdrasil_node_genesis::compute_genesis_file_hash(&genesis_file).expect("genesis hash"),
+        );
+        let mut config = default_config();
+        config.network_magic = 42;
+        config.protocol = Some("Cardano".to_string());
+        config.shelley_genesis_file = Some("shelley-genesis.json".to_string());
+        config.shelley_genesis_hash = Some(expected_hash);
+        fs::write(
+            &config_file,
+            serde_json::to_string(&config).expect("config json"),
+        )
+        .expect("write config");
+        let mut env = Env::empty_env();
+
+        start_protocol(&mut env, &config_file, None).expect("start protocol");
+
+        let genesis = get_env_genesis(&env).expect("genesis");
+        assert_eq!(genesis.initial_funds.len(), 1);
+        assert_eq!(genesis.initial_funds[0].address, address);
+        assert_eq!(genesis.initial_funds[0].lovelace, 1_234_567);
+        assert!(genesis.initial_funds[0].tx_in.ends_with("#0"));
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

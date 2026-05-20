@@ -26,8 +26,8 @@ use yggdrasil_network::{
 use crate::generator_tx::sized_metadata::{TxMetadata, mk_metadata};
 use crate::script::aeson;
 use crate::script::env::{
-    Env, Error, Fund, ProtocolParameterMode, WalletRef, get_env_keys, get_env_network_id,
-    get_env_socket_path, get_env_threads, get_env_threads_mut, get_env_wallets,
+    Env, Error, Fund, ProtocolParameterMode, WalletRef, get_env_genesis, get_env_keys,
+    get_env_network_id, get_env_socket_path, get_env_threads, get_env_threads_mut, get_env_wallets,
     get_env_wallets_mut, get_proto_param_mode, lift_tx_gen_error, set_env_keys, set_env_threads,
     set_env_wallets, set_proto_param_mode, trace_debug,
 };
@@ -39,6 +39,7 @@ use crate::setup::plutus::read_plutus_script;
 use crate::tx_generator::fund::{
     FundWitness, ScriptWitnessForSpending, get_fund_coin, get_fund_tx_in,
 };
+use crate::tx_generator::genesis::genesis_secure_initial_fund;
 use crate::tx_generator::plutus_context::read_script_data;
 use crate::tx_generator::tx::{GeneratedTx, gen_tx, source_transaction_preview, tx_size_in_bytes};
 use crate::tx_generator::utils::{include_change, inputs_to_outputs_with_fee};
@@ -801,14 +802,29 @@ fn eval_generator(
             let effective_limit = limit.map_or(*count, |max| max.min(*count));
             eval_generator(env, era, generator, tx_params, Some(effective_limit))
         }
+        Generator::SecureGenesis(wallet_name, genesis_key_name, fund_key_name) => {
+            let network_id = get_env_network_id(env)?.clone();
+            let genesis = get_env_genesis(env)?.initial_funds.clone();
+            let src_key = get_env_keys(env, genesis_key_name)?.clone();
+            let dest_key = get_env_keys(env, fund_key_name)?.clone();
+            let (generated, fund) = genesis_secure_initial_fund(
+                era,
+                &network_id,
+                &genesis,
+                &src_key,
+                fund_key_name,
+                &dest_key,
+                tx_params,
+            )
+            .map_err(|err| lift_tx_gen_error(err.to_string()))?;
+            get_env_wallets_mut(env, wallet_name)?.insert_fund(fund);
+            Ok(vec![generated])
+        }
         Generator::RoundRobin(_) => Err(lift_tx_gen_error(
             "RoundRobin: interleaved transaction streams are pending GeneratorTx scheduling",
         )),
         Generator::OneOf(_) => Err(lift_tx_gen_error(
             "OneOf: weighted transaction streams are pending QuickCheck-style generator wiring",
-        )),
-        Generator::SecureGenesis(_, _, _) => Err(lift_tx_gen_error(
-            "SecureGenesis: genesisSecureInitialFund is pending Genesis transaction wiring",
         )),
     }
 }
@@ -1205,7 +1221,10 @@ pub fn set_dummy_benchmark_control(env: &mut Env) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::script::env::{Env, get_env_wallets, set_env_network_id, set_env_socket_path};
+    use crate::script::env::{
+        Env, GenesisHandle, GenesisInitialFund, get_env_wallets, set_env_genesis,
+        set_env_network_id, set_env_socket_path,
+    };
     use crate::script::types::{NetworkId, PayMode, ScriptBudget, ScriptSpec};
     use crate::tx_generator::fund::get_fund_witness;
     use crate::tx_generator::utxo::script_data_hash;
@@ -1216,6 +1235,24 @@ mod tests {
 
     fn signing_key(byte: u8) -> SigningKeyEnvelope {
         SigningKeyEnvelope::payment_signing_key_shelley(format!("5820{}", hex::encode([byte; 32])))
+    }
+
+    fn genesis_signing_key(byte: u8) -> SigningKeyEnvelope {
+        SigningKeyEnvelope::genesis_utxo_signing_key(format!("5820{}", hex::encode([byte; 32])))
+    }
+
+    fn genesis_initial_fund(
+        network_id: &NetworkId,
+        key: &SigningKeyEnvelope,
+        lovelace: Lovelace,
+    ) -> GenesisInitialFund {
+        let address = crate::tx_generator::utxo::key_address(network_id, key).expect("address");
+        let tx_in = yggdrasil_node_genesis::initial_funds_pseudo_txin(&address);
+        GenesisInitialFund {
+            address,
+            tx_in: format!("{}#{}", hex::encode(tx_in.transaction_id), tx_in.index),
+            lovelace,
+        }
     }
 
     fn seed_pay_to_addr_env(env: &mut Env) {
@@ -1479,6 +1516,51 @@ mod tests {
         assert_eq!(dest_funds.len(), 1);
         assert_eq!(dest_funds[0].lovelace, 90);
         assert_ne!(dest_funds[0].tx_in, format!("{INPUT_TX_ID}#0"));
+    }
+
+    #[test]
+    fn secure_genesis_submit_generates_initial_fund_and_updates_wallet() {
+        let mut env = Env::empty_env();
+        let network_id = NetworkId::Testnet(42);
+        let genesis_key = genesis_signing_key(7);
+        let pay_key = signing_key(9);
+        set_env_network_id(&mut env, network_id.clone());
+        set_env_genesis(
+            &mut env,
+            GenesisHandle {
+                config_file: PathBuf::from("node-config.json"),
+                shelley_genesis_file: Some(PathBuf::from("shelley-genesis.json")),
+                shelley_genesis_hash: Some("00".repeat(32)),
+                network_magic: 42,
+                initial_funds: vec![genesis_initial_fund(&network_id, &genesis_key, 2_000_000)],
+            },
+        );
+        init_wallet(&mut env, "dest").expect("dest wallet");
+        define_signing_key(&mut env, "GenesisInputFund", genesis_key);
+        define_signing_key(&mut env, "TxGenFunds", pay_key);
+        seed_static_plutus_protocol_parameters(&mut env);
+
+        submit_in_era(
+            &mut env,
+            AnyCardanoEra::Conway,
+            &SubmitMode::DiscardTx,
+            &Generator::SecureGenesis(
+                "dest".to_string(),
+                "GenesisInputFund".to_string(),
+                "TxGenFunds".to_string(),
+            ),
+            &TxGenTxParams {
+                tx_param_fee: 10,
+                tx_param_add_tx_size: 0,
+                tx_param_ttl: 77,
+            },
+        )
+        .expect("secure genesis submit");
+
+        let dest_funds = get_env_wallets(&env, "dest").expect("dest").funds();
+        assert_eq!(dest_funds.len(), 1);
+        assert_eq!(dest_funds[0].lovelace, 1_999_990);
+        assert_eq!(dest_funds[0].key_name, "TxGenFunds");
     }
 
     #[test]

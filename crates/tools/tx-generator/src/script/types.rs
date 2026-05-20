@@ -46,6 +46,46 @@ impl SigningKeyEnvelope {
             cbor_hex: cbor_hex.into(),
         }
     }
+
+    /// Construct an upstream-shaped Shelley genesis UTxO signing-key envelope.
+    pub fn genesis_utxo_signing_key(cbor_hex: impl Into<String>) -> Self {
+        Self {
+            envelope_type: "GenesisUTxOSigningKey_ed25519".to_string(),
+            description: "Genesis UTxO Signing Key".to_string(),
+            cbor_hex: cbor_hex.into(),
+        }
+    }
+
+    /// Decode the raw 32-byte Ed25519 signing-key seed used by Shelley-family
+    /// payment and genesis UTxO text envelopes.
+    pub(crate) fn raw_ed25519_signing_key_seed(&self, context: &str) -> Result<[u8; 32], String> {
+        if !self
+            .envelope_type
+            .contains("PaymentSigningKeyShelley_ed25519")
+            && !self.envelope_type.contains("GenesisUTxOSigningKey_ed25519")
+        {
+            return Err(format!(
+                "{context}: expected PaymentSigningKeyShelley_ed25519 or GenesisUTxOSigningKey_ed25519 envelope, got {}",
+                self.envelope_type
+            ));
+        }
+
+        let bytes = hex::decode(self.cbor_hex.trim())
+            .map_err(|err| format!("{context}: cborHex is not valid hex: {err}"))?;
+        if bytes.len() != 34 {
+            return Err(format!(
+                "{context}: expected 34 bytes of cborHex (2-byte CBOR prefix + 32-byte key), got {}",
+                bytes.len()
+            ));
+        }
+        if bytes[0] != 0x58 || bytes[1] != 0x20 {
+            return Err(format!("{context}: expected CBOR bytes-32 prefix 0x5820"));
+        }
+
+        bytes[2..]
+            .try_into()
+            .map_err(|_| format!("{context}: expected 32-byte signing key payload"))
+    }
 }
 
 /// Mirror of upstream `NetworkId` JSON used by tx-generator scripts.
@@ -642,6 +682,24 @@ mod tests {
                 "description": "Payment Signing Key",
                 "cborHex": "5820abcd"
             })
+        );
+    }
+
+    #[test]
+    fn signing_key_seed_accepts_payment_and_genesis_utxo_envelopes() {
+        let cbor_hex = format!("5820{}", hex::encode([7; 32]));
+
+        assert_eq!(
+            SigningKeyEnvelope::payment_signing_key_shelley(&cbor_hex)
+                .raw_ed25519_signing_key_seed("test")
+                .expect("payment seed"),
+            [7; 32]
+        );
+        assert_eq!(
+            SigningKeyEnvelope::genesis_utxo_signing_key(cbor_hex)
+                .raw_ed25519_signing_key_seed("test")
+                .expect("genesis seed"),
+            [7; 32]
         );
     }
 

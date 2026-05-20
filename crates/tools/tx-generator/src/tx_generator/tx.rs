@@ -35,7 +35,7 @@ pub struct GeneratedTx {
 }
 
 impl GeneratedTx {
-    fn new(tx: MultiEraSubmittedTx) -> Self {
+    pub(crate) fn new(tx: MultiEraSubmittedTx) -> Self {
         let tx_id = tx.tx_id();
         Self { tx, tx_id }
     }
@@ -347,7 +347,7 @@ fn make_witness_set(
     })
 }
 
-fn make_vkey_witness(
+pub(crate) fn make_vkey_witness(
     signing_key: &SigningKeyEnvelope,
     tx_id: &TxId,
 ) -> Result<ShelleyVkeyWitness, TxGenError> {
@@ -365,37 +365,13 @@ fn make_vkey_witness(
     })
 }
 
-fn signing_key_seed(signing_key: &SigningKeyEnvelope) -> Result<[u8; 32], TxGenError> {
-    if !signing_key
-        .envelope_type
-        .contains("PaymentSigningKeyShelley_ed25519")
-    {
-        return Err(TxGenError::ApiError(format!(
-            "genTx: expected PaymentSigningKeyShelley_ed25519 envelope, got {}",
-            signing_key.envelope_type
-        )));
-    }
-
-    let bytes = hex::decode(signing_key.cbor_hex.trim())
-        .map_err(|err| TxGenError::ApiError(format!("genTx: cborHex is not valid hex: {err}")))?;
-    if bytes.len() != 34 {
-        return Err(TxGenError::ApiError(format!(
-            "genTx: expected 34 bytes of cborHex (2-byte CBOR prefix + 32-byte key), got {}",
-            bytes.len()
-        )));
-    }
-    if bytes[0] != 0x58 || bytes[1] != 0x20 {
-        return Err(TxGenError::ApiError(
-            "genTx: expected CBOR bytes-32 prefix 0x5820".to_string(),
-        ));
-    }
-
-    bytes[2..].try_into().map_err(|_| {
-        TxGenError::ApiError("genTx: expected 32-byte signing key payload".to_string())
-    })
+pub(crate) fn signing_key_seed(signing_key: &SigningKeyEnvelope) -> Result<[u8; 32], TxGenError> {
+    signing_key
+        .raw_ed25519_signing_key_seed("genTx")
+        .map_err(TxGenError::ApiError)
 }
 
-fn shelley_outputs(
+pub(crate) fn shelley_outputs(
     outputs: &[MultiEraTxOut],
 ) -> Result<Vec<yggdrasil_ledger::ShelleyTxOut>, TxGenError> {
     outputs
@@ -407,7 +383,9 @@ fn shelley_outputs(
         .collect()
 }
 
-fn mary_outputs(outputs: &[MultiEraTxOut]) -> Result<Vec<yggdrasil_ledger::MaryTxOut>, TxGenError> {
+pub(crate) fn mary_outputs(
+    outputs: &[MultiEraTxOut],
+) -> Result<Vec<yggdrasil_ledger::MaryTxOut>, TxGenError> {
     outputs
         .iter()
         .map(|output| match output {
@@ -417,7 +395,7 @@ fn mary_outputs(outputs: &[MultiEraTxOut]) -> Result<Vec<yggdrasil_ledger::MaryT
         .collect()
 }
 
-fn alonzo_outputs(
+pub(crate) fn alonzo_outputs(
     outputs: &[MultiEraTxOut],
 ) -> Result<Vec<yggdrasil_ledger::AlonzoTxOut>, TxGenError> {
     outputs
@@ -429,7 +407,7 @@ fn alonzo_outputs(
         .collect()
 }
 
-fn babbage_outputs(
+pub(crate) fn babbage_outputs(
     outputs: &[MultiEraTxOut],
 ) -> Result<Vec<yggdrasil_ledger::BabbageTxOut>, TxGenError> {
     outputs
@@ -447,7 +425,7 @@ fn output_era_error(expected: &str, actual: &MultiEraTxOut) -> TxGenError {
     ))
 }
 
-fn optional_inputs(inputs: Vec<ShelleyTxIn>) -> Option<Vec<ShelleyTxIn>> {
+pub(crate) fn optional_inputs(inputs: Vec<ShelleyTxIn>) -> Option<Vec<ShelleyTxIn>> {
     if inputs.is_empty() {
         None
     } else {
@@ -455,7 +433,7 @@ fn optional_inputs(inputs: Vec<ShelleyTxIn>) -> Option<Vec<ShelleyTxIn>> {
     }
 }
 
-fn empty_witness_set() -> ShelleyWitnessSet {
+pub(crate) fn empty_witness_set() -> ShelleyWitnessSet {
     ShelleyWitnessSet {
         vkey_witnesses: Vec::new(),
         native_scripts: Vec::new(),

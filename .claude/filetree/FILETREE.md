@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T09:49:43Z
-- Files described: 1425
+- Generated at: 2026-05-20T10:16:14Z
+- Files described: 1427
 
 ## Workspace
 
@@ -1803,6 +1803,8 @@
   - Funds available for transaction construction. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/Fund.hs`.
 - `crates/tools/tx-generator/src/tx_generator/fund_queue.rs`
   - Fund-specialized FIFO queue. ## Naming parity **Strict mirror:** `.reference-haskell-cardano-node/bench/tx-generator/src/Cardano/TxGenerator/FundQueue.hs`.
+- `crates/tools/tx-generator/src/tx_generator/genesis.rs`
+  - Strict mirror of upstream `Cardano.TxGenerator.Genesis`: SecureGenesis initial-fund lookup, genesis pseudo-input spending, transaction construction, and wallet fund production.
 - `crates/tools/tx-generator/src/tx_generator/internal.rs`
   - Internal transaction-generator support namespace. ## Naming parity **Strict mirror:** none. Parent shell for upstream `Cardano.TxGenerator.Internal.*` modules. Concrete leaf files
 - `crates/tools/tx-generator/src/tx_generator/internal/fifo.rs`
@@ -2245,6 +2247,8 @@
   - Documents config mangling, Plutus data preflight, generated-script execution, remaining boundaries, and focused validation.
 - `docs/operational-runs/2026-05-20-round-551-tx-generator-start-protocol.md`
   - Round 551 - tx-generator StartProtocol env wiring: Date: 2026-05-20.
+- `docs/operational-runs/2026-05-20-round-552-tx-generator-secure-genesis.md`
+  - Round 552 evidence record for the tx-generator SecureGenesis implementation, including upstream references, code changes, focused validation, and remaining gaps.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

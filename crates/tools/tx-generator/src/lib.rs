@@ -183,6 +183,8 @@ mod tests {
         let mut config = yggdrasil_node_config::default_config();
         config.network_magic = 42;
         config.protocol = Some("Cardano".to_string());
+        config.shelley_genesis_file = None;
+        config.shelley_genesis_hash = None;
         write(
             path,
             &serde_json::to_string(&config).expect("render node config"),

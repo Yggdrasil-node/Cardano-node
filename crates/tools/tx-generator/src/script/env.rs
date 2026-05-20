@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use crate::script::types::{NetworkId, SigningKeyEnvelope};
 pub use crate::tx_generator::fund::Fund;
+use crate::types::Lovelace;
 pub use crate::wallet::WalletRef;
 
 /// Mirror of upstream `ProtocolParameterMode`.
@@ -41,6 +42,17 @@ pub struct ProtocolHandle {
     pub network_magic: u32,
 }
 
+/// Shelley genesis initial fund used by upstream `genesisInitialFunds`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GenesisInitialFund {
+    /// Raw Shelley address bytes from `sgInitialFunds`.
+    pub address: Vec<u8>,
+    /// Genesis pseudo transaction input rendered as `TxId#TxIx`.
+    pub tx_in: String,
+    /// Lovelace amount carried by the genesis output.
+    pub lovelace: Lovelace,
+}
+
 /// Placeholder for upstream `ShelleyGenesis`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GenesisHandle {
@@ -52,6 +64,8 @@ pub struct GenesisHandle {
     pub shelley_genesis_hash: Option<String>,
     /// Network magic carried by the Shelley genesis/protocol config.
     pub network_magic: u32,
+    /// Shelley genesis initial funds prepared for `SecureGenesis`.
+    pub initial_funds: Vec<GenesisInitialFund>,
 }
 
 /// Placeholder for upstream `BenchTracers`.

@@ -286,11 +286,14 @@ own parser / generator / submission implementation plus upstream
   `Benchmarking.Script.Action.startProtocol` so it now loads node
   config, sets protocol/genesis/network/tracer env state, and lets
   high-level runs advance beyond the old `mkConsensusProtocol`
-  sentinel. The remaining tx-generator blockers are Plutus
-  pre-execution / auto-budget fitting, script-spend script-integrity
-  hashing, exact `DumpToFile` rendering, Benchmark submission,
-  `selftest`, `SecureGenesis`, `RoundRobin` / `OneOf`, and upstream
-  comparison evidence.
+  sentinel. R552 added `Cardano.TxGenerator.Genesis` and
+  `SecureGenesis`: `startProtocol` now hash-verifies and loads Shelley
+  initial funds, and `Submit ... SecureGenesis` spends the matching
+  genesis pseudo-input into a wallet-managed payment fund. The remaining
+  tx-generator blockers are Plutus pre-execution / auto-budget fitting,
+  script-spend script-integrity hashing, exact `DumpToFile` rendering,
+  Benchmark submission, `selftest`, `RoundRobin` / `OneOf`, and
+  upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

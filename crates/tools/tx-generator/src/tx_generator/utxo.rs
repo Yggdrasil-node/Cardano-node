@@ -391,31 +391,7 @@ fn address_network_id(network_id: &NetworkId) -> u8 {
 }
 
 fn signing_key_seed(signing_key: &SigningKeyEnvelope) -> Result<[u8; 32], String> {
-    if !signing_key
-        .envelope_type
-        .contains("PaymentSigningKeyShelley_ed25519")
-    {
-        return Err(format!(
-            "keyAddress: expected PaymentSigningKeyShelley_ed25519 envelope, got {}",
-            signing_key.envelope_type
-        ));
-    }
-
-    let bytes = hex::decode(signing_key.cbor_hex.trim())
-        .map_err(|err| format!("keyAddress: cborHex is not valid hex: {err}"))?;
-    if bytes.len() != 34 {
-        return Err(format!(
-            "keyAddress: expected 34 bytes of cborHex (2-byte CBOR prefix + 32-byte key), got {}",
-            bytes.len()
-        ));
-    }
-    if bytes[0] != 0x58 || bytes[1] != 0x20 {
-        return Err("keyAddress: expected CBOR bytes-32 prefix 0x5820".to_string());
-    }
-
-    bytes[2..]
-        .try_into()
-        .map_err(|_| "keyAddress: expected 32-byte signing key payload".to_string())
+    signing_key.raw_ed25519_signing_key_seed("keyAddress")
 }
 
 #[cfg(test)]
@@ -473,6 +449,16 @@ mod tests {
 
         assert_eq!(address.len(), 29);
         assert_eq!(address[0], 0x61);
+    }
+
+    #[test]
+    fn key_address_accepts_genesis_utxo_signing_key_envelope() {
+        let key =
+            SigningKeyEnvelope::genesis_utxo_signing_key(format!("5820{}", hex::encode([9; 32])));
+        let address = key_address(&NetworkId::Testnet(42), &key).expect("address");
+
+        assert_eq!(address.len(), 29);
+        assert_eq!(address[0], 0x60);
     }
 
     #[test]
