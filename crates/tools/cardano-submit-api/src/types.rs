@@ -461,10 +461,10 @@ pub enum ShelleyLedgerPredFailure {
     /// — R611 wired to the typed enum.
     UtxowFailure(ShelleyUtxowPredFailure),
     /// DELEGS sub-rule failure (CBOR tag 1). Payload is a
-    /// `ShelleyDelegsPredFailure era` (one of ~3 variants delegating
-    /// further into DELPL/POOL/DELEG sub-rules). Typed sub-decoder
-    /// pending — payload is the raw inner CBOR.
-    DelegsFailure(Vec<u8>),
+    /// `ShelleyDelegsPredFailure era` newtype wrapping a DELPL
+    /// failure (R612 wired to the typed scaffold; inner DELPL
+    /// decoder still pending).
+    DelegsFailure(ShelleyDelegsPredFailure),
     /// Withdrawals refer to accounts that are not in the reward map
     /// (CBOR tag 2). Payload is `Withdrawals = Map AccountAddress
     /// Coin` (R596 typed decoder).
@@ -508,9 +508,7 @@ impl fmt::Display for ShelleyLedgerPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UtxowFailure(utxow) => write!(f, "UtxowFailure ({utxow})"),
-            Self::DelegsFailure(b) => {
-                write!(f, "DelegsFailure <raw-cbor {} bytes>", b.len())
-            }
+            Self::DelegsFailure(delegs) => write!(f, "DelegsFailure ({delegs})"),
             Self::ShelleyWithdrawalsMissingAccounts(w) => {
                 write!(f, "ShelleyWithdrawalsMissingAccounts ({w})")
             }
@@ -2524,6 +2522,99 @@ impl fmt::Display for ShelleyPpupPredFailure {
     }
 }
 
+/// `ShelleyDelegsPredFailure` mirror — DELEGS sub-rule under
+/// `ShelleyLedgerPredFailure::DelegsFailure` (LEDGER tag 1).
+///
+/// Upstream: `newtype ShelleyDelegsPredFailure era = DelplFailure
+/// (PredicateFailure (EraRule "DELPL" era))` from
+/// `Cardano.Ledger.Shelley.Rules.Delegs`. CBOR wire format wraps the
+/// single variant in a 2-element array `[1, DELPL-failure]`.
+///
+/// R612 ships the scaffold with the single variant carrying raw
+/// inner CBOR. The nested DELPL sub-rule decoder
+/// (`ShelleyDelplPredFailure` — itself dispatching into
+/// POOL/DELEG) lands in a follow-on round.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ShelleyDelegsPredFailure {
+    /// Tag 1: nested DELPL sub-rule failure. Raw payload pending
+    /// `ShelleyDelplPredFailure` decoder.
+    DelplFailure(Vec<u8>),
+}
+
+impl ShelleyDelegsPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::DelplFailure(_) => 1,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::DelplFailure(_) => "DelplFailure",
+        }
+    }
+
+    /// Decode the full `ShelleyDelegsPredFailure` outer envelope
+    /// from CBOR bytes. Upstream encoding wraps the single
+    /// `DelplFailure` variant in a CBOR list `[1, DELPL-failure]`.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyDelegsPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ShelleyDelegsPredFailure: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyDelegsPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload_offset = dec.position();
+        match tag {
+            1 => {
+                let raw = bytes
+                    .get(payload_offset..)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ShelleyDelegsPredFailure: payload offset out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(Self::DelplFailure(raw))
+            }
+            other => Err(DecoderError(format!(
+                "ShelleyDelegsPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ShelleyDelegsPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ShelleyDelegsPredFailure era)`: `<Constructor> <raw-cbor N
+    /// bytes>`. Typed nested DELPL payload lands in a follow-on
+    /// round.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let payload = match self {
+            Self::DelplFailure(b) => b,
+        };
+        write!(
+            f,
+            "{} <raw-cbor {} bytes>",
+            self.constructor(),
+            payload.len()
+        )
+    }
+}
+
 /// Typed payload for `ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts`.
 ///
 /// Mirrors upstream `Withdrawals = Map AccountAddress Coin` from
@@ -2994,7 +3085,11 @@ mod tests {
             ShelleyLedgerPredFailure::UtxowFailure(ShelleyUtxowPredFailure::InvalidMetadata).tag(),
             0
         );
-        assert_eq!(ShelleyLedgerPredFailure::DelegsFailure(vec![]).tag(), 1);
+        assert_eq!(
+            ShelleyLedgerPredFailure::DelegsFailure(ShelleyDelegsPredFailure::DelplFailure(vec![]))
+                .tag(),
+            1
+        );
         assert_eq!(
             ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(empty_withdrawals_payload())
                 .tag(),
@@ -3017,7 +3112,8 @@ mod tests {
             "UtxowFailure"
         );
         assert_eq!(
-            ShelleyLedgerPredFailure::DelegsFailure(vec![]).constructor(),
+            ShelleyLedgerPredFailure::DelegsFailure(ShelleyDelegsPredFailure::DelplFailure(vec![]))
+                .constructor(),
             "DelegsFailure"
         );
         assert_eq!(
@@ -3044,11 +3140,41 @@ mod tests {
     }
 
     #[test]
-    fn shelley_ledger_pred_failure_display_marks_delegs_raw_cbor() {
-        // DelegsFailure (LEDGER tag 1) is the last remaining raw
-        // payload pending a `ShelleyDelegsPredFailure` decoder.
-        let f = ShelleyLedgerPredFailure::DelegsFailure(vec![0xDE, 0xAD, 0xBE, 0xEF]);
-        assert_eq!(f.to_string(), "DelegsFailure <raw-cbor 4 bytes>");
+    fn shelley_ledger_pred_failure_display_routes_typed_delegs() {
+        // R612 wired DelegsFailure to the typed
+        // ShelleyDelegsPredFailure scaffold; Display nests the
+        // inner DELEGS Show envelope (DELPL payload remains raw
+        // pending its sub-rule decoder).
+        let f =
+            ShelleyLedgerPredFailure::DelegsFailure(ShelleyDelegsPredFailure::DelplFailure(vec![
+                0xDE, 0xAD, 0xBE, 0xEF,
+            ]));
+        assert_eq!(
+            f.to_string(),
+            "DelegsFailure (DelplFailure <raw-cbor 4 bytes>)"
+        );
+    }
+
+    #[test]
+    fn shelley_delegs_pred_failure_from_cbor_decodes_tag1() {
+        // outer [0x82, 0x01, raw-DELPL-bytes]
+        let cbor = [0x82_u8, 0x01, 0x9F, 0xFF];
+        let f = ShelleyDelegsPredFailure::from_cbor(&cbor).expect("DelplFailure");
+        let ShelleyDelegsPredFailure::DelplFailure(payload) = &f;
+        assert_eq!(payload, &[0x9F_u8, 0xFF]);
+        assert_eq!(f.tag(), 1);
+        assert_eq!(f.constructor(), "DelplFailure");
+        assert_eq!(f.to_string(), "DelplFailure <raw-cbor 2 bytes>");
+    }
+
+    #[test]
+    fn shelley_delegs_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ShelleyDelegsPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
+        );
     }
 
     #[test]

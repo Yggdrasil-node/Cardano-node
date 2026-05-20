@@ -582,14 +582,17 @@ payload up into UTXOW tag 4: `ShelleyUtxowPredFailure::UtxoFailure(Vec<u8>)`
 now carry typed payloads** — the UTXOW→UTXO bubble-up is
 complete. R611 (2026-05-21) bubbled the typed UTXOW payload up
 into LEDGER tag 0: `ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`
-→ `UtxowFailure(ShelleyUtxowPredFailure)`. **3 of 4
-`ShelleyLedgerPredFailure` variants now carry typed payloads**
-(UtxowFailure / ShelleyWithdrawalsMissingAccounts /
-ShelleyIncompleteWithdrawals); only LEDGER tag 1
-`DelegsFailure(Vec<u8>)` remains raw, awaiting a
-`ShelleyDelegsPredFailure` sub-rule decoder. Inner per-TxOut
-Shelley/Babbage typed Show parse and full typed `Addr` parse
-(Shelley vs Bootstrap split) remain pending.
+→ `UtxowFailure(ShelleyUtxowPredFailure)`. R612 (2026-05-21)
+added the `ShelleyDelegsPredFailure` newtype scaffold (single
+`DelplFailure(Vec<u8>)` variant matching upstream's
+`newtype ShelleyDelegsPredFailure era = DelplFailure
+(PredicateFailure (EraRule "DELPL" era))`) and wired
+`ShelleyLedgerPredFailure::DelegsFailure(Vec<u8>)` →
+`DelegsFailure(ShelleyDelegsPredFailure)`. **All 4 LEDGER
+variants now carry typed payloads** — the LEDGER root is fully
+wired; only the inner DELPL sub-rule decoder (POOL/DELEG
+dispatch), per-TxOut Shelley/Babbage typed parse, and full
+typed `Addr` parse (Shelley vs Bootstrap split) remain pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
