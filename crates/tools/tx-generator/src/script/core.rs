@@ -1647,39 +1647,15 @@ fn show_stake_credential(credential: &yggdrasil_ledger::StakeCredential) -> Stri
 fn show_conway_pparams_update(
     ppu: &yggdrasil_ledger::ProtocolParameterUpdate,
 ) -> Result<String, Error> {
-    // Detect set fields and surface them in the rejection message. The
-    // yggdrasil ProtocolParameterUpdate carries a superset of Conway's
-    // PParams (it preserves Shelley-era fields like `d`, `extra_entropy`,
-    // `min_utxo_value`, `protocol_version` that Conway dropped); any
-    // value in those Shelley-era-only fields cannot be rendered against
-    // Conway PParamsUpdate at all.
+    // Detect set fields whose per-type Show is not yet ported and surface
+    // them in the rejection message. The yggdrasil ProtocolParameterUpdate
+    // carries a superset of Conway's PParams (it preserves Shelley-era
+    // fields like `d`, `extra_entropy`, `min_utxo_value`,
+    // `protocol_version` that Conway dropped); those Shelley-era-only
+    // fields cannot be rendered against Conway PParamsUpdate at all.
     let mut set_fields: Vec<&'static str> = Vec::new();
-    if ppu.min_fee_a.is_some() {
-        set_fields.push("cppTxFeePerByte (was min_fee_a)");
-    }
-    if ppu.min_fee_b.is_some() {
-        set_fields.push("cppTxFeeFixed (was min_fee_b)");
-    }
-    if ppu.max_block_body_size.is_some() {
-        set_fields.push("cppMaxBBSize");
-    }
-    if ppu.max_tx_size.is_some() {
-        set_fields.push("cppMaxTxSize");
-    }
-    if ppu.max_block_header_size.is_some() {
-        set_fields.push("cppMaxBHSize");
-    }
-    if ppu.key_deposit.is_some() {
-        set_fields.push("cppKeyDeposit");
-    }
-    if ppu.pool_deposit.is_some() {
-        set_fields.push("cppPoolDeposit");
-    }
     if ppu.e_max.is_some() {
         set_fields.push("cppEMax");
-    }
-    if ppu.n_opt.is_some() {
-        set_fields.push("cppNOpt");
     }
     if ppu.a0.is_some() {
         set_fields.push("cppA0");
@@ -1702,12 +1678,6 @@ fn show_conway_pparams_update(
     if ppu.min_utxo_value.is_some() {
         set_fields.push("min_utxo_value (Shelley-era only — no Conway field)");
     }
-    if ppu.min_pool_cost.is_some() {
-        set_fields.push("cppMinPoolCost");
-    }
-    if ppu.coins_per_utxo_byte.is_some() {
-        set_fields.push("cppCoinsPerUTxOByte");
-    }
     if ppu.cost_models.is_some() {
         set_fields.push("cppCostModels");
     }
@@ -1720,35 +1690,17 @@ fn show_conway_pparams_update(
     if ppu.max_block_ex_units.is_some() {
         set_fields.push("cppMaxBlockExUnits");
     }
-    if ppu.max_val_size.is_some() {
-        set_fields.push("cppMaxValSize");
-    }
-    if ppu.collateral_percentage.is_some() {
-        set_fields.push("cppCollateralPercentage");
-    }
-    if ppu.max_collateral_inputs.is_some() {
-        set_fields.push("cppMaxCollateralInputs");
-    }
     if ppu.pool_voting_thresholds.is_some() {
         set_fields.push("cppPoolVotingThresholds");
     }
     if ppu.drep_voting_thresholds.is_some() {
         set_fields.push("cppDRepVotingThresholds");
     }
-    if ppu.min_committee_size.is_some() {
-        set_fields.push("cppCommitteeMinSize");
-    }
     if ppu.committee_term_limit.is_some() {
         set_fields.push("cppCommitteeMaxTermLength");
     }
     if ppu.gov_action_lifetime.is_some() {
         set_fields.push("cppGovActionLifetime");
-    }
-    if ppu.gov_action_deposit.is_some() {
-        set_fields.push("cppGovActionDeposit");
-    }
-    if ppu.drep_deposit.is_some() {
-        set_fields.push("cppDRepDeposit");
     }
     if ppu.drep_activity.is_some() {
         set_fields.push("cppDRepActivity");
@@ -1763,45 +1715,57 @@ fn show_conway_pparams_update(
         )));
     }
 
-    // Empty update: render the full 30-field ConwayPParams record with
-    // all SNothing values. Field order matches upstream
-    // Cardano.Ledger.Conway.PParams.ConwayPParams.
-    Ok(concat!(
-        "(ConwayPParams {",
-        "cppTxFeePerByte = SNothing",
-        ", cppTxFeeFixed = SNothing",
-        ", cppMaxBBSize = SNothing",
-        ", cppMaxTxSize = SNothing",
-        ", cppMaxBHSize = SNothing",
-        ", cppKeyDeposit = SNothing",
-        ", cppPoolDeposit = SNothing",
-        ", cppEMax = SNothing",
-        ", cppNOpt = SNothing",
-        ", cppA0 = SNothing",
-        ", cppRho = SNothing",
-        ", cppTau = SNothing",
-        ", cppProtocolVersion = NoUpdate",
-        ", cppMinPoolCost = SNothing",
-        ", cppCoinsPerUTxOByte = SNothing",
-        ", cppCostModels = SNothing",
-        ", cppPrices = SNothing",
-        ", cppMaxTxExUnits = SNothing",
-        ", cppMaxBlockExUnits = SNothing",
-        ", cppMaxValSize = SNothing",
-        ", cppCollateralPercentage = SNothing",
-        ", cppMaxCollateralInputs = SNothing",
-        ", cppPoolVotingThresholds = SNothing",
-        ", cppDRepVotingThresholds = SNothing",
-        ", cppCommitteeMinSize = SNothing",
-        ", cppCommitteeMaxTermLength = SNothing",
-        ", cppGovActionLifetime = SNothing",
-        ", cppGovActionDeposit = SNothing",
-        ", cppDRepDeposit = SNothing",
-        ", cppDRepActivity = SNothing",
-        ", cppMinFeeRefScriptCostPerByte = SNothing",
-        "})",
-    )
-    .to_string())
+    // Render each field at p=0 inside the record. Coin-family fields
+    // (CompactForm Coin / CoinPerByte) render as `SJust (CompactCoin
+    // {unCompactCoin = <n>})` matching upstream stock-derived
+    // `Show (CompactForm Coin)` and `Show (CoinPerByte)` (newtype-
+    // delegated). Plain Word16/Word32/Word64 fields render as `SJust
+    // <n>` because their newtypes (Word16/Word32/Word64) use stock
+    // primitive Show. Committee size, gov action deposit, etc match
+    // similarly.
+    Ok(format!(
+        "(ConwayPParams {{cppTxFeePerByte = {}, cppTxFeeFixed = {}, cppMaxBBSize = {}, cppMaxTxSize = {}, cppMaxBHSize = {}, cppKeyDeposit = {}, cppPoolDeposit = {}, cppEMax = SNothing, cppNOpt = {}, cppA0 = SNothing, cppRho = SNothing, cppTau = SNothing, cppProtocolVersion = NoUpdate, cppMinPoolCost = {}, cppCoinsPerUTxOByte = {}, cppCostModels = SNothing, cppPrices = SNothing, cppMaxTxExUnits = SNothing, cppMaxBlockExUnits = SNothing, cppMaxValSize = {}, cppCollateralPercentage = {}, cppMaxCollateralInputs = {}, cppPoolVotingThresholds = SNothing, cppDRepVotingThresholds = SNothing, cppCommitteeMinSize = {}, cppCommitteeMaxTermLength = SNothing, cppGovActionLifetime = SNothing, cppGovActionDeposit = {}, cppDRepDeposit = {}, cppDRepActivity = SNothing, cppMinFeeRefScriptCostPerByte = SNothing}})",
+        show_pparam_compact_coin(ppu.min_fee_a),
+        show_pparam_compact_coin(ppu.min_fee_b),
+        show_pparam_word(ppu.max_block_body_size),
+        show_pparam_word(ppu.max_tx_size),
+        show_pparam_word(ppu.max_block_header_size),
+        show_pparam_compact_coin(ppu.key_deposit),
+        show_pparam_compact_coin(ppu.pool_deposit),
+        show_pparam_word(ppu.n_opt),
+        show_pparam_compact_coin(ppu.min_pool_cost),
+        show_pparam_compact_coin(ppu.coins_per_utxo_byte),
+        show_pparam_word(ppu.max_val_size),
+        show_pparam_word(ppu.collateral_percentage),
+        show_pparam_word(ppu.max_collateral_inputs),
+        show_pparam_word(ppu.min_committee_size),
+        show_pparam_compact_coin(ppu.gov_action_deposit),
+        show_pparam_compact_coin(ppu.drep_deposit),
+    ))
+}
+
+/// Render a Coin-family `StrictMaybe (CompactForm Coin)` PParamsUpdate
+/// field at showsPrec 0. CoinPerByte fields share this shape because
+/// `CoinPerByte` newtype-delegates Show to `CompactForm Coin`. Empty
+/// renders as `SNothing`; set renders as `SJust (CompactCoin
+/// {unCompactCoin = <n>})` (the inner `CompactCoin` record is wrapped
+/// in parens because `SJust` at showsPrec 0 wraps its arg at p=11).
+fn show_pparam_compact_coin<N: Into<u64> + Copy>(value: Option<N>) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(n) => format!("SJust (CompactCoin {{unCompactCoin = {}}})", n.into()),
+    }
+}
+
+/// Render a plain numeric `StrictMaybe Word{16,32,64}` PParamsUpdate
+/// field at showsPrec 0. Empty renders as `SNothing`; set renders as
+/// `SJust <n>` because primitive Words have stock numeric Show without
+/// constructor wrapping at p=0.
+fn show_pparam_word<N: std::fmt::Display + Copy>(value: Option<N>) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(n) => format!("SJust {n}"),
+    }
 }
 
 /// Render upstream `Show UnitInterval`: `<num> % <den>` at p=0 (no parens
@@ -4056,11 +4020,58 @@ mod tests {
     }
 
     #[test]
-    fn dumptofile_show_conway_gov_action_parameter_change_with_set_field_rejects() {
-        // Non-empty PParamsUpdate (cppKeyDeposit set) rejects with a clear
-        // message naming the field whose per-type Show is not yet ported.
+    fn dumptofile_show_conway_gov_action_parameter_change_with_coin_fields() {
+        // 8 Coin-family fields set: each renders as SJust (CompactCoin
+        // {unCompactCoin = N}) at p=0 inside the record. min_committee_size
+        // and the Word{16,32} fields render as SJust <n>.
         let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            min_fee_a: Some(44),
+            min_fee_b: Some(155381),
+            max_block_body_size: Some(90112),
+            max_tx_size: Some(16384),
+            max_block_header_size: Some(1100),
             key_deposit: Some(2_000_000),
+            pool_deposit: Some(500_000_000),
+            n_opt: Some(500),
+            min_pool_cost: Some(170_000_000),
+            coins_per_utxo_byte: Some(4310),
+            max_val_size: Some(5000),
+            collateral_percentage: Some(150),
+            max_collateral_inputs: Some(3),
+            min_committee_size: Some(7),
+            gov_action_deposit: Some(100_000_000_000),
+            drep_deposit: Some(500_000_000),
+            ..Default::default()
+        };
+        let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
+            prev_action_id: None,
+            protocol_param_update: update,
+            guardrails_script_hash: None,
+        };
+        let rendered =
+            show_conway_gov_action(&parameter_change).expect("parameter change with coin fields");
+        assert!(rendered.contains("cppTxFeePerByte = SJust (CompactCoin {unCompactCoin = 44})"));
+        assert!(rendered.contains("cppKeyDeposit = SJust (CompactCoin {unCompactCoin = 2000000})"));
+        assert!(rendered.contains("cppMaxBBSize = SJust 90112"));
+        assert!(rendered.contains("cppNOpt = SJust 500"));
+        assert!(rendered.contains("cppCommitteeMinSize = SJust 7"));
+        assert!(
+            rendered.contains(
+                "cppGovActionDeposit = SJust (CompactCoin {unCompactCoin = 100000000000})"
+            )
+        );
+    }
+
+    #[test]
+    fn dumptofile_show_conway_gov_action_parameter_change_with_pending_field_rejects() {
+        // Non-empty PParamsUpdate with a field whose per-type Show is
+        // still pending (cppA0 -> NonNegativeInterval) rejects with a
+        // clear message naming the field.
+        let update = yggdrasil_ledger::ProtocolParameterUpdate {
+            a0: Some(yggdrasil_ledger::UnitInterval {
+                numerator: 3,
+                denominator: 10,
+            }),
             ..Default::default()
         };
         let parameter_change = yggdrasil_ledger::GovAction::ParameterChange {
@@ -4069,12 +4080,9 @@ mod tests {
             guardrails_script_hash: None,
         };
         let err = show_conway_gov_action(&parameter_change)
-            .expect_err("non-empty parameter change should reject");
+            .expect_err("pending parameter change should reject");
         let msg = format!("{err}");
-        assert!(
-            msg.contains("cppKeyDeposit"),
-            "expected field-name in error: {msg}"
-        );
+        assert!(msg.contains("cppA0"), "expected field-name in error: {msg}");
     }
 
     #[test]

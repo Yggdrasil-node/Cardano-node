@@ -423,9 +423,15 @@ own parser / generator / submission implementation plus upstream
   (`CoinPerByte`, `EpochInterval`, `NonNegativeInterval`, `Prices`,
   `OrdExUnits`, `PoolVotingThresholds`, `DRepVotingThresholds`,
   `CostModels`). All 7 GovAction variants now render for the
-  empty-update path. The remaining tx-generator blockers are those
-  per-type PParamsUpdate field Shows and upstream-binary soak
-  evidence.
+  empty-update path. R584 wired 16 scalar PParamsUpdate fields
+  through `show_pparam_compact_coin` (8 Coin-family fields render
+  as `SJust (CompactCoin {unCompactCoin = N})`) and
+  `show_pparam_word` (8 plain Word fields render as `SJust N`).
+  The remaining tx-generator blockers are per-type Shows for the
+  14 interval/composite PParamsUpdate fields
+  (`EpochInterval`, `NonNegativeInterval`/`UnitInterval`, `Prices`,
+  `OrdExUnits`, `PoolVotingThresholds`, `DRepVotingThresholds`,
+  `CostModels`) and upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

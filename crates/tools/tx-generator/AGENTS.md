@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R583 ParameterChange GovAction DumpToFile rendering — all 7 GovAction variants render for the empty PParamsUpdate path).
+**Status:** `partial` (post-R584 PParamsUpdate Coin-family + Word field rendering — all 7 GovAction variants + 16 PParamsUpdate scalar fields render).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,19 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R584: `show_conway_pparams_update` now renders 16 set
+  PParamsUpdate scalar fields. Coin-family fields (CompactForm Coin
+  / CoinPerByte) render as `SJust (CompactCoin {unCompactCoin =
+  <n>})`: `cppTxFeePerByte`, `cppTxFeeFixed`, `cppKeyDeposit`,
+  `cppPoolDeposit`, `cppMinPoolCost`, `cppCoinsPerUTxOByte`,
+  `cppGovActionDeposit`, `cppDRepDeposit`. Plain Word fields render
+  as `SJust <n>`: `cppMaxBBSize`, `cppMaxTxSize`, `cppMaxBHSize`,
+  `cppNOpt`, `cppMaxValSize`, `cppCollateralPercentage`,
+  `cppMaxCollateralInputs`, `cppCommitteeMinSize`. New
+  `show_pparam_compact_coin` and `show_pparam_word` generic helpers.
+  The remaining 14 fields (interval-family + complex records) stay
+  on field-name-bearing TxGenError. 1 focused unit test sets all
+  16 supported fields and verifies their rendered shape.
 - Shipped R583: `show_conway_gov_action` now renders the
   `ParameterChange` variant for the empty PParamsUpdate path. The
   full 30-field `ConwayPParams` record renders with all SNothing
@@ -759,12 +772,17 @@ This crate's full implementation remains an A4 sister-tool build-out:
   for the empty-update path. Non-empty PParamsUpdate variants
   rejected with field-name-bearing TxGenError pending per-type
   Show ports (CoinPerByte, EpochInterval, etc).
-- Next: per-type Shows for the rich PParamsUpdate fields (
-  `CoinPerByte`, `EpochInterval`, `NonNegativeInterval`, `Prices`,
-  `OrdExUnits`, `PoolVotingThresholds`, `DRepVotingThresholds`,
-  `CostModels`), upstream `bootstrapWitKeyHash` parity for
-  multi-witness sets, and upstream-binary soak in strict-mirror-
-  sized slices.
+- Shipped: PParamsUpdate Coin-family + Word fields (R584):
+  `show_conway_pparams_update` now renders 16 scalar PParamsUpdate
+  fields (8 Coin-family as `SJust (CompactCoin {unCompactCoin =
+  N})`, 8 plain Word as `SJust N`). 14 complex/interval fields
+  remain on field-name-bearing TxGenError.
+- Next: per-type Shows for the remaining 14 PParamsUpdate fields
+  (`EpochInterval`, `NonNegativeInterval` / `UnitInterval`,
+  `Prices`, `OrdExUnits`, `PoolVotingThresholds`,
+  `DRepVotingThresholds`, `CostModels`), upstream
+  `bootstrapWitKeyHash` parity, and upstream-binary soak in
+  strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
