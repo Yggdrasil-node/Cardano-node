@@ -469,9 +469,18 @@ own parser / generator / submission implementation plus upstream
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
 ### A5 — cardano-submit-api structured rejection enum  (`TECH-DEBT.md` §"validation error")
-Phase 1 (raw-bytes carrier) landed; Phase 2 — the structured per-era
-`ApplyTxError` enum + per-era CBOR decoders + `Display` impl — is not built
-(~400 lines). **Scope:** 1 focused arc. **Exit:** operators can pattern-match
+Phase 1 (raw-bytes carrier) landed pre-R594. R594 (2026-05-20)
+shipped the Phase-2 type-level scaffold: `TxValidationErrorInCardanoMode`
+era-tagged enum (Shelley/Allegra/Mary/Alonzo/Babbage/Conway variants),
+`TxValidationEra` discriminator with upstream constructor-name lookup,
+and `EraApplyTxError` payload carrying raw CBOR + rendered text.
+`TxSubmitValidationError::into_typed(era)` produces the typed view;
+`TxValidationErrorInCardanoMode::Display` emits upstream's
+`<Era>ApplyTxError (<payload>)` Show shape. Per-variant CBOR decoders
+that expand `EraApplyTxError` into a typed sum over the upstream
+`<Era>LedgerPredFailure <era>` variants are the remaining Phase-2.5+
+work (~300 lines per era — ShelleyApplyTxError alone has 40+
+predicate-failure variants). **Exit:** operators can pattern-match
 typed rejection variants without a CBOR re-walk.
 
 ### A6 — Workspace + documentation hygiene

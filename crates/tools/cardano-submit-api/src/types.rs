@@ -260,6 +260,180 @@ impl fmt::Display for TxSubmitValidationError {
     }
 }
 
+impl TxSubmitValidationError {
+    /// Produce the upstream era-tagged `TxValidationErrorInCardanoMode`
+    /// view of this rejection. The era is supplied by the caller (today
+    /// the LocalTxSubmission client knows which era it was submitted
+    /// against); the typed view shares the same raw CBOR and rendered
+    /// string. Per-variant CBOR decoders are layered on top in follow-on
+    /// rounds (Phase 2.5+ of the A5 plan).
+    pub fn into_typed(self, era: TxValidationEra) -> TxValidationErrorInCardanoMode {
+        let payload = EraApplyTxError {
+            raw_cbor: self.raw_cbor,
+            rendered: self.rendered,
+        };
+        TxValidationErrorInCardanoMode::from_raw(era, payload)
+    }
+}
+
+/// Era discriminator for a `TxValidationErrorInCardanoMode` rejection.
+///
+/// Mirrors upstream `Cardano.Api.Eon.ShelleyBasedEra` — the era tag
+/// that selects the appropriate `ApplyTxError <era>` newtype.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum TxValidationEra {
+    /// Shelley-era tx rejection: `ShelleyApplyTxError (NonEmpty (ShelleyLedgerPredFailure ShelleyEra))`.
+    Shelley,
+    /// Allegra-era tx rejection.
+    Allegra,
+    /// Mary-era tx rejection.
+    Mary,
+    /// Alonzo-era tx rejection: `AlonzoApplyTxError (NonEmpty (ShelleyLedgerPredFailure AlonzoEra))`.
+    Alonzo,
+    /// Babbage-era tx rejection: `BabbageApplyTxError (NonEmpty (ShelleyLedgerPredFailure BabbageEra))`.
+    Babbage,
+    /// Conway-era tx rejection: `ConwayApplyTxError (NonEmpty (ConwayLedgerPredFailure ConwayEra))`.
+    Conway,
+}
+
+impl TxValidationEra {
+    /// Upstream constructor name (`<Era>ApplyTxError`) used in the
+    /// stock-derived `Show (ApplyTxError <era>)` rendering. Useful for
+    /// constructing typed rejection strings.
+    pub fn apply_tx_error_constructor(self) -> &'static str {
+        match self {
+            Self::Shelley => "ShelleyApplyTxError",
+            Self::Allegra => "AllegraApplyTxError",
+            Self::Mary => "MaryApplyTxError",
+            Self::Alonzo => "AlonzoApplyTxError",
+            Self::Babbage => "BabbageApplyTxError",
+            Self::Conway => "ConwayApplyTxError",
+        }
+    }
+}
+
+/// Era-specific `ApplyTxError` payload — currently raw CBOR + rendered
+/// text, with per-variant CBOR decoders layered in follow-on rounds.
+///
+/// Mirrors upstream `newtype ApplyTxError <era> = <Era>ApplyTxError
+/// (NonEmpty (<Era>LedgerPredFailure <era>))` — yggdrasil collapses the
+/// `NonEmpty (PredicateFailure)` into raw CBOR bytes for now, with the
+/// rendered string preserving the upstream operator-facing output.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EraApplyTxError {
+    raw_cbor: Vec<u8>,
+    rendered: String,
+}
+
+impl EraApplyTxError {
+    /// Construct from raw CBOR + a pre-rendered string. The rendered
+    /// form is what gets surfaced through `Display` until per-variant
+    /// decoders ship.
+    pub fn new(raw_cbor: Vec<u8>, rendered: impl Into<String>) -> Self {
+        Self {
+            raw_cbor,
+            rendered: rendered.into(),
+        }
+    }
+
+    /// Raw CBOR-encoded era-specific `ApplyTxError` bytes.
+    pub fn raw_cbor(&self) -> &[u8] {
+        &self.raw_cbor
+    }
+
+    /// Human-readable rendering — pre-rendered upstream until per-variant
+    /// decoders ship.
+    pub fn rendered(&self) -> &str {
+        &self.rendered
+    }
+}
+
+impl fmt::Display for EraApplyTxError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.rendered)
+    }
+}
+
+/// Era-tagged transaction-validation rejection mirroring upstream
+/// `Cardano.Api.TxValidationErrorInCardanoMode`.
+///
+/// Each variant carries the era-specific `ApplyTxError <era>` payload
+/// (`EraApplyTxError`) — currently raw CBOR + rendered text. Follow-on
+/// rounds (A5 Phase 2.5+) will replace `EraApplyTxError`'s flat
+/// raw-bytes carrier with the full per-era predicate-failure sum types.
+///
+/// Operators that need the typed era discriminant reach for
+/// `TxSubmitValidationError::into_typed(era)`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TxValidationErrorInCardanoMode {
+    /// Shelley-era validation error.
+    Shelley(EraApplyTxError),
+    /// Allegra-era validation error.
+    Allegra(EraApplyTxError),
+    /// Mary-era validation error.
+    Mary(EraApplyTxError),
+    /// Alonzo-era validation error.
+    Alonzo(EraApplyTxError),
+    /// Babbage-era validation error.
+    Babbage(EraApplyTxError),
+    /// Conway-era validation error.
+    Conway(EraApplyTxError),
+}
+
+impl TxValidationErrorInCardanoMode {
+    /// Wrap an `EraApplyTxError` payload under the appropriate era
+    /// variant. Used by `TxSubmitValidationError::into_typed`.
+    pub fn from_raw(era: TxValidationEra, payload: EraApplyTxError) -> Self {
+        match era {
+            TxValidationEra::Shelley => Self::Shelley(payload),
+            TxValidationEra::Allegra => Self::Allegra(payload),
+            TxValidationEra::Mary => Self::Mary(payload),
+            TxValidationEra::Alonzo => Self::Alonzo(payload),
+            TxValidationEra::Babbage => Self::Babbage(payload),
+            TxValidationEra::Conway => Self::Conway(payload),
+        }
+    }
+
+    /// Return the era discriminator.
+    pub fn era(&self) -> TxValidationEra {
+        match self {
+            Self::Shelley(_) => TxValidationEra::Shelley,
+            Self::Allegra(_) => TxValidationEra::Allegra,
+            Self::Mary(_) => TxValidationEra::Mary,
+            Self::Alonzo(_) => TxValidationEra::Alonzo,
+            Self::Babbage(_) => TxValidationEra::Babbage,
+            Self::Conway(_) => TxValidationEra::Conway,
+        }
+    }
+
+    /// Return the era-specific payload.
+    pub fn payload(&self) -> &EraApplyTxError {
+        match self {
+            Self::Shelley(p)
+            | Self::Allegra(p)
+            | Self::Mary(p)
+            | Self::Alonzo(p)
+            | Self::Babbage(p)
+            | Self::Conway(p) => p,
+        }
+    }
+}
+
+impl fmt::Display for TxValidationErrorInCardanoMode {
+    /// Render upstream `Show (TxValidationErrorInCardanoMode)`:
+    /// `<Era>ApplyTxError (<rendered>)` — matching upstream's
+    /// stock-derived Show that wraps each per-era payload in its
+    /// `<Era>ApplyTxError` constructor.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} ({})",
+            self.era().apply_tx_error_constructor(),
+            self.payload().rendered()
+        )
+    }
+}
+
 /// Custom `Serialize` that emits ONLY the rendered string so the
 /// upstream JSON `{"contents":"<rendered>"}` wire shape stays
 /// byte-equivalent. The raw CBOR bytes are deliberately not
@@ -569,5 +743,63 @@ mod tests {
         fn assert_error<E: std::error::Error>(_: &E) {}
         let err = TxSubmitWebApiError::TxSubmitEmpty;
         assert_error(&err);
+    }
+
+    #[test]
+    fn tx_validation_era_constructor_names() {
+        assert_eq!(
+            TxValidationEra::Shelley.apply_tx_error_constructor(),
+            "ShelleyApplyTxError"
+        );
+        assert_eq!(
+            TxValidationEra::Allegra.apply_tx_error_constructor(),
+            "AllegraApplyTxError"
+        );
+        assert_eq!(
+            TxValidationEra::Mary.apply_tx_error_constructor(),
+            "MaryApplyTxError"
+        );
+        assert_eq!(
+            TxValidationEra::Alonzo.apply_tx_error_constructor(),
+            "AlonzoApplyTxError"
+        );
+        assert_eq!(
+            TxValidationEra::Babbage.apply_tx_error_constructor(),
+            "BabbageApplyTxError"
+        );
+        assert_eq!(
+            TxValidationEra::Conway.apply_tx_error_constructor(),
+            "ConwayApplyTxError"
+        );
+    }
+
+    #[test]
+    fn tx_validation_error_in_cardano_mode_from_raw_preserves_era_and_payload() {
+        let payload = EraApplyTxError::new(vec![0xDE, 0xAD], "fee too small");
+        let err =
+            TxValidationErrorInCardanoMode::from_raw(TxValidationEra::Conway, payload.clone());
+        assert_eq!(err.era(), TxValidationEra::Conway);
+        assert_eq!(err.payload(), &payload);
+    }
+
+    #[test]
+    fn tx_validation_error_in_cardano_mode_display_wraps_in_constructor() {
+        let payload =
+            EraApplyTxError::new(vec![], "FeeTooSmall {expected = 200000, actual = 99000}");
+        let err = TxValidationErrorInCardanoMode::from_raw(TxValidationEra::Babbage, payload);
+        assert_eq!(
+            err.to_string(),
+            "BabbageApplyTxError (FeeTooSmall {expected = 200000, actual = 99000})"
+        );
+    }
+
+    #[test]
+    fn tx_submit_validation_error_into_typed_round_trips() {
+        let raw = TxSubmitValidationError::new(vec![0xCA, 0xFE], "rejected");
+        let typed = raw.into_typed(TxValidationEra::Conway);
+        assert_eq!(typed.era(), TxValidationEra::Conway);
+        assert_eq!(typed.payload().raw_cbor(), &[0xCA, 0xFE]);
+        assert_eq!(typed.payload().rendered(), "rejected");
+        assert_eq!(typed.to_string(), "ConwayApplyTxError (rejected)");
     }
 }
