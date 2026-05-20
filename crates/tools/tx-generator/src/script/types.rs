@@ -10,8 +10,10 @@
 
 use std::path::PathBuf;
 
+use serde::de::{DeserializeOwned, Error as DeError};
 use serde::ser::SerializeMap;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
 use crate::setup::nix_service::NodeDescription;
 use crate::types::{
@@ -46,11 +48,62 @@ impl SigningKeyEnvelope {
     }
 }
 
+/// Mirror of upstream `NetworkId` JSON used by tx-generator scripts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NetworkId {
+    /// Upstream `Mainnet`.
+    Mainnet,
+    /// Upstream `Testnet (NetworkMagic n)`.
+    Testnet(u64),
+}
+
+impl Serialize for NetworkId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Mainnet => serializer.serialize_str("Mainnet"),
+            Self::Testnet(magic) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("Testnet", magic)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for NetworkId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match value {
+            Value::String(value) if value == "Mainnet" => Ok(Self::Mainnet),
+            Value::Object(mut fields) if fields.len() == 1 => {
+                if let Some(magic) = fields.remove("Testnet") {
+                    return u64::deserialize(magic)
+                        .map(Self::Testnet)
+                        .map_err(D::Error::custom);
+                }
+                Err(D::Error::custom(format!(
+                    "could not parse NetworkId: {}",
+                    Value::Object(fields)
+                )))
+            }
+            other => Err(D::Error::custom(format!(
+                "could not parse NetworkId: {other}"
+            ))),
+        }
+    }
+}
+
 /// Mirror of upstream `Action`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     /// `SetNetworkId`.
-    SetNetworkId(String),
+    SetNetworkId(NetworkId),
     /// `SetSocketPath`.
     SetSocketPath(PathBuf),
     /// `InitWallet`.
@@ -126,6 +179,57 @@ impl Serialize for Action {
     }
 }
 
+impl<'de> Deserialize<'de> for Action {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let (tag, payload) = object_with_single_field::<D::Error>(value, "Action")?;
+        match tag.as_str() {
+            "SetNetworkId" => Ok(Self::SetNetworkId(parse_payload(payload, &tag)?)),
+            "SetSocketPath" => Ok(Self::SetSocketPath(parse_payload(payload, &tag)?)),
+            "InitWallet" => Ok(Self::InitWallet(parse_payload(payload, &tag)?)),
+            "StartProtocol" => {
+                let (config, tracer) = parse_payload(payload, &tag)?;
+                Ok(Self::StartProtocol(config, tracer))
+            }
+            "Delay" => Ok(Self::Delay(parse_payload(payload, &tag)?)),
+            "ReadSigningKey" => {
+                let (name, file) = parse_payload(payload, &tag)?;
+                Ok(Self::ReadSigningKey(name, file))
+            }
+            "DefineSigningKey" => {
+                let (name, key) = parse_payload(payload, &tag)?;
+                Ok(Self::DefineSigningKey(name, key))
+            }
+            "AddFund" => {
+                let (era, wallet, tx_in, lovelace, key_name) = parse_payload(payload, &tag)?;
+                Ok(Self::AddFund(era, wallet, tx_in, lovelace, key_name))
+            }
+            "WaitBenchmark" => {
+                expect_unit_payload(payload, &tag)?;
+                Ok(Self::WaitBenchmark)
+            }
+            "Submit" => {
+                let (era, submit_mode, tx_params, generator) = parse_payload(payload, &tag)?;
+                Ok(Self::Submit(era, submit_mode, tx_params, generator))
+            }
+            "CancelBenchmark" => {
+                expect_unit_payload(payload, &tag)?;
+                Ok(Self::CancelBenchmark)
+            }
+            "Reserved" => Ok(Self::Reserved(parse_payload(payload, &tag)?)),
+            "WaitForEra" => Ok(Self::WaitForEra(parse_payload(payload, &tag)?)),
+            "SetProtocolParameters" => {
+                Ok(Self::SetProtocolParameters(parse_payload(payload, &tag)?))
+            }
+            "LogMsg" => Ok(Self::LogMsg(parse_payload(payload, &tag)?)),
+            other => Err(D::Error::custom(format!("unknown Action tag `{other}`"))),
+        }
+    }
+}
+
 /// Mirror of upstream `Generator`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Generator {
@@ -193,6 +297,46 @@ impl Serialize for Generator {
     }
 }
 
+impl<'de> Deserialize<'de> for Generator {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let (tag, payload) = object_with_single_field::<D::Error>(value, "Generator")?;
+        match tag.as_str() {
+            "SecureGenesis" => {
+                let (wallet, genesis_key, fund_key) = parse_payload(payload, &tag)?;
+                Ok(Self::SecureGenesis(wallet, genesis_key, fund_key))
+            }
+            "Split" => {
+                let (source, pay_mode, change_mode, lovelaces) = parse_payload(payload, &tag)?;
+                Ok(Self::Split(source, pay_mode, change_mode, lovelaces))
+            }
+            "SplitN" => {
+                let (source, pay_mode, count) = parse_payload(payload, &tag)?;
+                Ok(Self::SplitN(source, pay_mode, count))
+            }
+            "NtoM" => {
+                let (source, pay_mode, inputs, outputs, add_size, collateral) =
+                    parse_payload(payload, &tag)?;
+                Ok(Self::NtoM(
+                    source, pay_mode, inputs, outputs, add_size, collateral,
+                ))
+            }
+            "Sequence" => Ok(Self::Sequence(parse_payload(payload, &tag)?)),
+            "Cycle" => Ok(Self::Cycle(Box::new(parse_payload(payload, &tag)?))),
+            "Take" => {
+                let (count, generator) = parse_payload(payload, &tag)?;
+                Ok(Self::Take(count, Box::new(generator)))
+            }
+            "RoundRobin" => Ok(Self::RoundRobin(parse_payload(payload, &tag)?)),
+            "OneOf" => Ok(Self::OneOf(parse_payload(payload, &tag)?)),
+            other => Err(D::Error::custom(format!("unknown Generator tag `{other}`"))),
+        }
+    }
+}
+
 /// Mirror of upstream `ProtocolParametersSource`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProtocolParametersSource {
@@ -212,6 +356,27 @@ impl Serialize for ProtocolParametersSource {
             Self::UseLocalProtocolFile(path) => {
                 serialize_single(serializer, "UseLocalProtocolFile", path)
             }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ProtocolParametersSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let (tag, payload) =
+            object_with_single_field::<D::Error>(value, "ProtocolParametersSource")?;
+        match tag.as_str() {
+            "QueryLocalNode" => {
+                expect_unit_payload(payload, &tag)?;
+                Ok(Self::QueryLocalNode)
+            }
+            "UseLocalProtocolFile" => Ok(Self::UseLocalProtocolFile(parse_payload(payload, &tag)?)),
+            other => Err(D::Error::custom(format!(
+                "unknown ProtocolParametersSource tag `{other}`"
+            ))),
         }
     }
 }
@@ -248,6 +413,45 @@ impl Serialize for SubmitMode {
     }
 }
 
+impl<'de> Deserialize<'de> for SubmitMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let (tag, payload) = object_with_single_field::<D::Error>(value, "SubmitMode")?;
+        match tag.as_str() {
+            "LocalSocket" => {
+                expect_unit_payload(payload, &tag)?;
+                Ok(Self::LocalSocket)
+            }
+            "Benchmark" => {
+                let (nodes, tps, tx_count): (Vec<NodeDescription>, TpsRate, NumberOfTxs) =
+                    parse_payload(payload, &tag)?;
+                if nodes.is_empty() {
+                    return Err(D::Error::custom("Benchmark target node list is empty"));
+                }
+                Ok(Self::Benchmark(nodes, tps, tx_count))
+            }
+            "DumpToFile" => Ok(Self::DumpToFile(parse_payload(payload, &tag)?)),
+            "DiscardTX" => {
+                expect_unit_payload(payload, &tag)?;
+                Ok(Self::DiscardTx)
+            }
+            "NodeToNode" => {
+                let addresses: Vec<String> = parse_payload(payload, &tag)?;
+                if addresses.is_empty() {
+                    return Err(D::Error::custom("NodeToNode address list is empty"));
+                }
+                Ok(Self::NodeToNode(addresses))
+            }
+            other => Err(D::Error::custom(format!(
+                "unknown SubmitMode tag `{other}`"
+            ))),
+        }
+    }
+}
+
 /// Mirror of upstream `PayMode`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PayMode {
@@ -269,6 +473,27 @@ impl Serialize for PayMode {
             Self::PayToScript(spec, wallet) => {
                 serialize_single(serializer, "PayToScript", &(spec, wallet))
             }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PayMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let (tag, payload) = object_with_single_field::<D::Error>(value, "PayMode")?;
+        match tag.as_str() {
+            "PayToAddr" => {
+                let (key, wallet) = parse_payload(payload, &tag)?;
+                Ok(Self::PayToAddr(key, wallet))
+            }
+            "PayToScript" => {
+                let (spec, wallet) = parse_payload(payload, &tag)?;
+                Ok(Self::PayToScript(spec, wallet))
+            }
+            other => Err(D::Error::custom(format!("unknown PayMode tag `{other}`"))),
         }
     }
 }
@@ -300,8 +525,31 @@ impl Serialize for ScriptBudget {
     }
 }
 
+impl<'de> Deserialize<'de> for ScriptBudget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let (tag, payload) = object_with_single_field::<D::Error>(value, "ScriptBudget")?;
+        match tag.as_str() {
+            "StaticScriptBudget" => {
+                let (datum, redeemer, units, debug) = parse_payload(payload, &tag)?;
+                Ok(Self::StaticScriptBudget(datum, redeemer, units, debug))
+            }
+            "AutoScript" => {
+                let (redeemer, inputs) = parse_payload(payload, &tag)?;
+                Ok(Self::AutoScript(redeemer, inputs))
+            }
+            other => Err(D::Error::custom(format!(
+                "unknown ScriptBudget tag `{other}`"
+            ))),
+        }
+    }
+}
+
 /// Mirror of upstream `ScriptSpec`.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ScriptSpec {
     /// Upstream `scriptSpecFile`.
     #[serde(rename = "scriptSpecFile")]
@@ -337,6 +585,45 @@ where
 {
     let empty: [(); 0] = [];
     serialize_single(serializer, tag, &empty)
+}
+
+fn object_with_single_field<E>(value: Value, type_name: &str) -> Result<(String, Value), E>
+where
+    E: DeError,
+{
+    match value {
+        Value::Object(fields) if fields.len() == 1 => {
+            let (tag, payload) = fields.into_iter().next().expect("one field");
+            Ok((tag, payload))
+        }
+        Value::Object(fields) => Err(E::custom(format!(
+            "{type_name} must be an ObjectWithSingleField, got {} fields",
+            fields.len()
+        ))),
+        other => Err(E::custom(format!(
+            "{type_name} must be an ObjectWithSingleField object, got {other}"
+        ))),
+    }
+}
+
+fn parse_payload<T, E>(payload: Value, tag: &str) -> Result<T, E>
+where
+    T: DeserializeOwned,
+    E: DeError,
+{
+    serde_json::from_value(payload).map_err(|err| E::custom(format!("{tag}: {err}")))
+}
+
+fn expect_unit_payload<E>(payload: Value, tag: &str) -> Result<(), E>
+where
+    E: DeError,
+{
+    match payload {
+        Value::Array(items) if items.is_empty() => Ok(()),
+        other => Err(E::custom(format!(
+            "{tag}: expected empty array for nullary constructor, got {other}"
+        ))),
+    }
 }
 
 #[cfg(test)]

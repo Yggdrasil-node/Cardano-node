@@ -66,13 +66,27 @@ fn version_long_flag_matches_upstream() {
 
 #[test]
 fn json_command_reaches_typed_dispatch_sentinel() {
+    let temp = TempDir::new("json");
+    let script = temp.path().join("script.json");
+    fs::write(
+        &script,
+        r#"[
+  { "InitWallet": "wallet" },
+  { "CancelBenchmark": [] }
+]
+"#,
+    )
+    .expect("write script");
+
     let output = Command::new(cargo_bin())
-        .args(["json", "script.json"])
+        .arg("json")
+        .arg(&script)
         .output()
         .expect("spawn");
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("utf-8");
-    assert!(stderr.contains("`json` command execution not yet implemented"));
+    assert!(stderr.contains("`json` parsed 2 script actions"));
+    assert!(stderr.contains("command execution is not yet implemented"));
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R536 Compiler slice). The old
+**Status:** `partial` (post-R537 Script/Aeson slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -67,6 +67,13 @@ approved synthesis area from the sister-tools plan.
 - Shipped R536: `compile FILEPATH` is functional and writes the
   generated script JSON to stdout; `json_highlevel` compiles its final
   options before reaching the runtime-execution sentinel.
+- Shipped R537: `Benchmarking/Script/Aeson.hs` script JSON surface.
+  `script/aeson.rs` parses low-level script files and
+  `script/types.rs` now decodes upstream ObjectWithSingleField-style
+  `Action`, `Generator`, submit-mode, pay-mode, protocol-parameter,
+  and script-budget wrappers.
+- Shipped R537: `json FILEPATH` now reads and validates low-level
+  script JSON before reaching the runtime-execution sentinel.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the Script /
   GeneratorTx / Submission slices land.
@@ -121,6 +128,9 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: Compiler/script generation (R536): `Compiler.hs`
   `compileOptions` plus the `Script/Types.hs` IR needed for generated
   scripts; `compile` now emits generated action JSON.
+- Shipped: Script JSON parsing (R537): `Script/Aeson.hs`
+  `parseScriptFileAeson`, `scanScriptFile`, JSON round-trip checking,
+  and low-level `json FILEPATH` script validation.
 - Next: port upstream script run behavior, generator transaction
   construction, and submission client in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry

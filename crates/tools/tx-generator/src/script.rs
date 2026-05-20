@@ -6,4 +6,5 @@
 //! `Cardano.Benchmarking.Script.*` namespace boundary so leaf modules
 //! can mirror their canonical upstream files one-to-one.
 
+pub mod aeson;
 pub mod types;

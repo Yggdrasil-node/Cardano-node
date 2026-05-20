@@ -50,6 +50,8 @@ pub enum AnyCardanoEra {
     Babbage,
     /// Conway era.
     Conway,
+    /// Dijkstra era.
+    Dijkstra,
 }
 
 /// Mirror of upstream `TxGenTxParams`.
