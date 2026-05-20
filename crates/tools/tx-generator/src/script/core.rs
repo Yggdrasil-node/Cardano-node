@@ -1284,16 +1284,8 @@ fn show_conway_tx_for_dump(
         "Conway",
         "ctbrProposalProcedures",
     )?;
-    ensure_absent(
-        tx.body.current_treasury_value.as_ref(),
-        "Conway",
-        "ctbrCurrentTreasuryValue",
-    )?;
-    if matches!(tx.body.treasury_donation, Some(donation) if donation != 0) {
-        return Err(lift_tx_gen_error(
-            "DumpToFile: Conway Show(Tx) renderer does not yet support non-zero ctbrTreasuryDonation",
-        ));
-    }
+    let current_treasury_value = show_strict_maybe_coin(tx.body.current_treasury_value);
+    let treasury_donation = show_coin(tx.body.treasury_donation.unwrap_or(0));
     ensure_absent(tx.auxiliary_data.as_ref(), "Conway", "atAuxData")?;
 
     let inputs = show_tx_in_list(&tx.body.inputs);
@@ -1303,11 +1295,29 @@ fn show_conway_tx_for_dump(
     let is_valid = show_haskell_bool(tx.is_valid);
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = SNothing, ctbrVotingProcedures = VotingProcedures {{unVotingProcedures = fromList []}}, ctbrProposalProcedures = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrCurrentTreasuryValue = SNothing, ctbrTreasuryDonation = Coin 0}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = Withdrawals {{unWithdrawals = fromList []}}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = fromList [], ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = SNothing, ctbrAuxDataHash = SNothing, ctbrNetworkId = SNothing, ctbrVotingProcedures = VotingProcedures {{unVotingProcedures = fromList []}}, ctbrProposalProcedures = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
     ))
+}
+
+/// Render `Coin <n>` matching upstream `Show Coin` (via `Quiet Coin` —
+/// suppresses the record syntax around the unCoin field but keeps the
+/// `Coin` constructor name).
+fn show_coin(coin: u64) -> String {
+    format!("Coin {coin}")
+}
+
+/// Render `StrictMaybe Coin` matching upstream stock-derived
+/// `Show (StrictMaybe Coin)`: `SNothing` or `SJust (Coin <n>)`. The
+/// inner `Coin` is wrapped in parens because `SJust` shows its argument
+/// at precedence 11.
+fn show_strict_maybe_coin(value: Option<u64>) -> String {
+    match value {
+        None => "SNothing".to_string(),
+        Some(coin) => format!("SJust ({})", show_coin(coin)),
+    }
 }
 
 fn ensure_empty_voting_procedures(
@@ -3240,6 +3250,15 @@ mod tests {
             spend2 < spend5 && spend5 < mint0,
             "redeemer ordering wrong: {rendered}"
         );
+    }
+
+    #[test]
+    fn dumptofile_show_coin_helpers() {
+        assert_eq!(show_coin(0), "Coin 0");
+        assert_eq!(show_coin(123_456_789), "Coin 123456789");
+        assert_eq!(show_strict_maybe_coin(None), "SNothing");
+        assert_eq!(show_strict_maybe_coin(Some(0)), "SJust (Coin 0)");
+        assert_eq!(show_strict_maybe_coin(Some(42)), "SJust (Coin 42)");
     }
 
     #[test]

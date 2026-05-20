@@ -377,10 +377,14 @@ own parser / generator / submission implementation plus upstream
   witness-set script path: `show_alonzo_witness_set` renders the
   `atwrScriptTxWits` map as `fromList [(ScriptHash "<hex>",
   PlutusScript PlutusV{N} ScriptHash "<hex>"),...]` sorted by
-  script-hash byte-lex order. The remaining tx-generator blockers
-  are native-script reference rendering, native scripts and
-  bootstrap witnesses in the witness set, Conway governance
-  procedures, and upstream-binary soak evidence.
+  script-hash byte-lex order. R576 closed the Conway treasury-field
+  path: non-zero `ctbrTreasuryDonation` renders as `Coin <n>` and
+  `Some` `ctbrCurrentTreasuryValue` as `SJust (Coin <n>)` via new
+  `show_coin` and `show_strict_maybe_coin` helpers. The remaining
+  tx-generator blockers are native-script reference rendering,
+  native scripts and bootstrap witnesses in the witness set, Conway
+  `VotingProcedures` / `ProposalProcedures` map rendering, and
+  upstream-binary soak evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

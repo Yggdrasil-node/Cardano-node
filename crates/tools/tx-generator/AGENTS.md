@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R575 Plutus witness-set script DumpToFile rendering).
+**Status:** `partial` (post-R576 Conway treasury-field DumpToFile rendering).
 The old cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission implementation arc
 plus upstream comparison evidence. Scope band: **LARGE**.
@@ -283,6 +283,15 @@ approved synthesis area from the sister-tools plan.
   `AlonzoTxWitsRaw` for the witness set. Inline datums, reference
   scripts, and the remaining Plutus-bearing Babbage shapes stay on
   explicit `TxGenError` boundaries.
+- Shipped R576: `show_conway_tx_for_dump` now accepts non-zero
+  `ctbrTreasuryDonation` and `Some` `ctbrCurrentTreasuryValue`. New
+  helpers `show_coin` (`Coin <n>` mirroring upstream `Show Coin` via
+  `Quiet Coin`) and `show_strict_maybe_coin` (`SNothing` or `SJust
+  (Coin <n>)` with the `Coin` wrapped in parens for showsPrec 11
+  inside `SJust`). `VotingProcedures` and `ProposalProcedures` map
+  rendering are deferred to dedicated rounds (rich nested types:
+  `Voter`, `GovActionId`, `VotingProcedure`, `Vote`, `Anchor`,
+  `ProposalProcedure`, `GovAction` with 7+ variants).
 - Shipped R575: `show_alonzo_witness_set` now renders non-empty
   Plutus V1/V2/V3 script-witness bytes as upstream `atwrScriptTxWits =
   fromList [(ScriptHash "<hex>", PlutusScript PlutusV{N} ScriptHash
@@ -596,10 +605,16 @@ This crate's full implementation remains an A4 sister-tool build-out:
   script-witness bytes as `atwrScriptTxWits = fromList [(ScriptHash
   "<hex>",PlutusScript PlutusV{N} ScriptHash "<hex>"),...]`. Entries
   sort by script-hash byte-lex order.
+- Shipped: Conway treasury-field DumpToFile rendering (R576):
+  `show_conway_tx_for_dump` now accepts non-zero
+  `ctbrTreasuryDonation` and `Some` `ctbrCurrentTreasuryValue` via
+  new `show_coin` and `show_strict_maybe_coin` helpers.
+  `VotingProcedures` and `ProposalProcedures` map rendering remain
+  `TxGenError` until their dedicated rounds.
 - Next: native-script reference rendering (Timelock Show),
   native-script and bootstrap-witness rendering in the witness set,
-  Conway governance procedures, and upstream-binary soak in
-  strict-mirror-sized slices.
+  Conway `VotingProcedures` / `ProposalProcedures` map rendering,
+  and upstream-binary soak in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap
   upstream binary for the yggdrasil binary without script changes.
