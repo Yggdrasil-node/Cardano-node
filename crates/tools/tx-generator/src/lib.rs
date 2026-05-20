@@ -12,6 +12,8 @@ use std::process::ExitCode;
 use command::Command;
 use compiler::compile_options;
 use script::aeson::{parse_script_file_aeson, pretty_print};
+use script::env::Env;
+use script::run_script;
 use setup::nix_service::{mangle_node_config, mangle_tracer_config, parse_nix_service_options_str};
 use setup::testnet_discovery::discover_testnet_config;
 
@@ -60,23 +62,17 @@ pub fn run_main() -> ExitCode {
 /// high-level config into `NixServiceOptions` and applies CLI overrides.
 /// R536 compiles high-level options to script actions and makes
 /// `compile` emit that script. R537 adds the upstream-shaped
-/// `Script/Aeson.hs` parser for `json` scripts. Script execution still
-/// lands in the later `Script/Core`, `Action`, and `GeneratorTx`
-/// slices.
+/// `Script/Aeson.hs` parser for `json` scripts. R538 starts the
+/// `Script/Env.hs` and `Script/Action.hs` runtime boundary for
+/// deterministic state-only actions; protocol, query, transaction, and
+/// submission execution still lands in later strict slices.
 pub fn run(command: command::Command) -> eyre::Result<()> {
     match &command {
         Command::Json(file) => {
             let script = parse_script_file_aeson(file)?;
-            return Err(eyre::eyre!(
-                "yggdrasil-tx-generator: `json` parsed {} script actions, \
-                 but command execution is not yet implemented (R537 \
-                 Script/Aeson slice). Help/version compatibility, typed \
-                 command parsing, high-level option compilation, and low-level \
-                 script JSON decoding are wired; action execution and \
-                 transaction generation land in later strict slices of the \
-                 tx-generator port arc.",
-                script.len()
-            ));
+            let mut env = Env::empty_env();
+            run_script(&mut env, &script)?;
+            return Ok(());
         }
         Command::JsonHighLevel(cmd) => {
             let raw = std::fs::read_to_string(&cmd.config_file)?;
@@ -103,11 +99,12 @@ pub fn run(command: command::Command) -> eyre::Result<()> {
 
     Err(eyre::eyre!(
         "yggdrasil-tx-generator: `{}` command execution not yet implemented \
-         (R537 Script/Aeson slice). Help/version compatibility, typed \
+         (R538 Script/Env+Action slice). Help/version compatibility, typed \
          subcommand parsing, json_highlevel testnet discovery, and high-level \
          NixServiceOptions parsing/compilation plus low-level script JSON \
-         decoding are wired; action execution and transaction generation land \
-         in later strict slices of the tx-generator port arc.",
+         decoding plus deterministic state-only action execution are wired; \
+         protocol execution and transaction generation land in later strict \
+         slices of the tx-generator port arc.",
         command.name()
     ))
 }

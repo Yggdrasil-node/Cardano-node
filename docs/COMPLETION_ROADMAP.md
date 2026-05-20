@@ -236,9 +236,11 @@ own parser / generator / submission implementation plus upstream
   mirror, R534 shipped `Setup/TestnetDiscovery.hs`, R535 shipped
   `Setup/NixService.hs` high-level option parsing/projections, R536
   shipped `Compiler.hs` script generation plus the `Script/Types.hs` IR,
-  and R537 shipped `Script/Aeson.hs` low-level script JSON parsing, so
-  the remaining tx-generator blocker is Script/Core / Action / GeneratorTx /
-  Submission implementation plus upstream comparison evidence.
+  R537 shipped `Script/Aeson.hs` low-level script JSON parsing, and R538
+  shipped `Script/Env.hs` plus `Script/Action.hs` state-only action
+  execution. The remaining tx-generator blocker is Script/Core protocol
+  and query behavior plus GeneratorTx / Submission implementation and
+  upstream comparison evidence.
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 

@@ -1,6 +1,6 @@
 # Guidance for the pure-Rust port of upstream `tx-generator`.
 
-**Status:** `partial` (post-R537 Script/Aeson slice). The old
+**Status:** `partial` (post-R538 Script/Env+Action slice). The old
 cardano-cli CLI-MVS prerequisite is closed; concrete work here is now
 the tx-generator Script / GeneratorTx / Submission
 implementation arc plus upstream comparison evidence. Scope band:
@@ -74,6 +74,20 @@ approved synthesis area from the sister-tools plan.
   and script-budget wrappers.
 - Shipped R537: `json FILEPATH` now reads and validates low-level
   script JSON before reaching the runtime-execution sentinel.
+- Shipped R538: `Benchmarking/Script/Env.hs` state surface.
+  `script/env.rs` owns the upstream `Env`, `ProtocolParameterMode`,
+  `Error`, wallet/key/protocol placeholders, and accessor semantics
+  used by action execution.
+- Shipped R538: `Benchmarking/Script/Action.hs` dispatch surface.
+  `script/action.rs` executes deterministic state-only actions
+  (`SetNetworkId`, `SetSocketPath`, `InitWallet`,
+  `SetProtocolParameters`, `ReadSigningKey`, `DefineSigningKey`,
+  `AddFund`, `Delay`, `LogMsg`, `Reserved`, and benchmark-control
+  checks) and returns explicit runtime-pending errors for protocol,
+  query, transaction-generation, and submission actions.
+- Shipped R538: `json FILEPATH` now calls `run_script`, so low-level
+  scripts execute their supported state prefix before failing at the
+  first missing async/runtime boundary.
 - Pending: concrete command execution. Dispatch returns a
   command-specific "not yet implemented" sentinel until the Script /
   GeneratorTx / Submission slices land.
@@ -131,7 +145,11 @@ This crate's full implementation remains an A4 sister-tool build-out:
 - Shipped: Script JSON parsing (R537): `Script/Aeson.hs`
   `parseScriptFileAeson`, `scanScriptFile`, JSON round-trip checking,
   and low-level `json FILEPATH` script validation.
-- Next: port upstream script run behavior, generator transaction
+- Shipped: Script state/action execution (R538): `Script.hs`
+  `runScript` boundary plus `Script/Env.hs` state/accessors and
+  `Script/Action.hs` deterministic state-only action dispatch.
+- Next: port upstream `Script/Core.hs` protocol/query behavior,
+  generator transaction
   construction, and submission client in strict-mirror-sized slices.
 - Closeout: when all subcommands are functional, parity-matrix entry
   advances `partial -> verified_11_0_1`. Operators can then swap

@@ -85,8 +85,8 @@ fn json_command_reaches_typed_dispatch_sentinel() {
         .expect("spawn");
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("utf-8");
-    assert!(stderr.contains("`json` parsed 2 script actions"));
-    assert!(stderr.contains("command execution is not yet implemented"));
+    assert!(stderr.contains("action #2 failed"));
+    assert!(stderr.contains("cancelBenchmark: missing AsyncBenchmarkControl"));
 }
 
 #[test]

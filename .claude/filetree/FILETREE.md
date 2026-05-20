@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T04:40:18Z
-- Files described: 1388
+- Generated at: 2026-05-20T04:53:02Z
+- Files described: 1391
 
 ## Workspace
 
@@ -1753,9 +1753,15 @@
 - `crates/tools/tx-generator/src/script.rs`
   - Benchmarking script namespace for `tx-generator`.
   - Preserves the upstream Cardano.Benchmarking.Script boundary for strict one-to-one leaf mirrors.
+- `crates/tools/tx-generator/src/script/action.rs`
+  - Strict mirror of upstream tx-generator Script/Action dispatch.
+  - Executes deterministic state-only actions and marks protocol/submission runtime boundaries.
 - `crates/tools/tx-generator/src/script/aeson.rs`
   - Strict mirror of upstream tx-generator Script/Aeson JSON helpers.
   - Parses low-level script files and preserves ObjectWithSingleField round-trip behavior.
+- `crates/tools/tx-generator/src/script/env.rs`
+  - Strict mirror of upstream tx-generator Script/Env state.
+  - Carries protocol parameter mode, wallets, keys, tracers, and async-control placeholders.
 - `crates/tools/tx-generator/src/script/types.rs`
   - Generated script action and generator IR for `tx-generator`.
   - Mirrors upstream Script/Types.hs constructors and ObjectWithSingleField-style JSON wrappers.
@@ -2163,6 +2169,9 @@
 - `docs/operational-runs/2026-05-20-round-537-tx-generator-script-aeson.md`
   - Operational run note for the R537 tx-generator Script/Aeson slice.
   - Records JSON parser scope, validation, and remaining script execution gates.
+- `docs/operational-runs/2026-05-20-round-538-tx-generator-script-env-action.md`
+  - Operational run note for the R538 tx-generator Script/Env and Script/Action slice.
+  - Records state/action execution scope, validation, and remaining Script/Core gates.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`
