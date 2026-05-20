@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-05-20T15:04:35Z",
+  "generated_at_utc": "2026-05-20T15:42:07Z",
   "description_policy": "Each entry has one or two concise human-maintained description lines. Run accept-current after reviewing stale entries.",
   "files": [
     {
@@ -10508,12 +10508,12 @@
       "path": "crates/tools/tx-generator/AGENTS.md",
       "description_lines": [
         "Guidance for the pure-Rust port of upstream `tx-generator`.",
-        "Tracks the post-R559 Script/Core, GeneratorTx, DumpToFile, and Submission implementation arc."
+        "Tracks the post-R564 GeneratorTx.SubmissionClient wire-driver, DumpToFile, and walletBenchmark implementation arc."
       ],
-      "content_sha256": "3638527389156498e2c7f0f6fb890b2474f58be28a730ffa1f110ac331375d00",
-      "git_blob": "5608f1df535aad7afbf53a4ca739960370a4eeb6",
-      "source_mtime_ns": 1779290033544593800,
-      "described_at_utc": "2026-05-20T15:24:33Z",
+      "content_sha256": "f45572bde747ad7885e32d3aac9fad44e4a34fb9e0c106c3a7c9a2fe123ad29f",
+      "git_blob": "f30b4735fd0742f7b8b1032325f098cc55badcaf",
+      "source_mtime_ns": 1779291440314587000,
+      "described_at_utc": "2026-05-20T15:41:50Z",
       "generated_self_exempt": false
     },
     {
@@ -10522,10 +10522,10 @@
         "Cargo manifest for the tx-generator sister-tool crate.",
         "Declares direct dependencies for tx-generator runtime helpers plus crate metadata."
       ],
-      "content_sha256": "1a025df18131c2a13bfaa241f0cd3a34d5bc9557829d998c2dd206791f99408a",
-      "git_blob": "b2bf49f69dfc33f617b42972a12cc4fd13efcab9",
-      "source_mtime_ns": 1779290045444976800,
-      "described_at_utc": "2026-05-20T15:24:33Z",
+      "content_sha256": "3166042e17426633b4e02551c83f38ec601ff9cbef97bad911529d1566e207b2",
+      "git_blob": "3a05709adeeedd023069ccc41122d1333c631d1f",
+      "source_mtime_ns": 1779291460087117500,
+      "described_at_utc": "2026-05-20T15:41:50Z",
       "generated_self_exempt": false
     },
     {
@@ -10720,12 +10720,12 @@
     {
       "path": "crates/tools/tx-generator/src/generator_tx/submission_client.rs",
       "description_lines": [
-        "Strict mirror of upstream `GeneratorTx.SubmissionClient`, porting tx-id request handling, unacked-window accounting, tx lookup, and thread stats."
+        "Strict mirror of upstream `GeneratorTx.SubmissionClient`, porting request handling, tx lookup, thread stats, and the TxSubmission2 wire-driver adapter."
       ],
-      "content_sha256": "46fdee0f7cf8f99e1d3acabfd814721507318808db092bf6bfdbf20d12a2d584",
-      "git_blob": "53a17ebb553014dc899911100054e667b7861c52",
-      "source_mtime_ns": 1779289321355892500,
-      "described_at_utc": "2026-05-20T15:04:35Z",
+      "content_sha256": "8f1bb28160bb9ec404c324fda11299424356fb7e3b212c1c77d1130d41881412",
+      "git_blob": "ec889ff00a14fb44164461a495b4b17d3e72998d",
+      "source_mtime_ns": 1779291297068050900,
+      "described_at_utc": "2026-05-20T15:41:51Z",
       "generated_self_exempt": false
     },
     {
@@ -11131,10 +11131,10 @@
       "description_lines": [
         "Completion Roadmap: ---."
       ],
-      "content_sha256": "0dfd0503f012dfab60ee4eadf230a777ba2b1624d8b084c18d52def56d8b9bc3",
-      "git_blob": "062a3967af989eac57865fc22330183d09c895e7",
-      "source_mtime_ns": 1779290054559738900,
-      "described_at_utc": "2026-05-20T15:24:35Z",
+      "content_sha256": "3e6f1744242eb718511f8cbb221907556bea88f0fab50ced00adfd8dcd89645f",
+      "git_blob": "7d047d9eea270af603982096c0f6e4455d8d55ef",
+      "source_mtime_ns": 1779291469427118400,
+      "described_at_utc": "2026-05-20T15:41:52Z",
       "generated_self_exempt": false
     },
     {
@@ -11197,10 +11197,10 @@
       "description_lines": [
         "PARITY & FUNCTION SUMMARY FOR MANAGEMENT: ---."
       ],
-      "content_sha256": "8f54a1d8897be6091e2a22cd3a014e5a15a26e05f678447a9e04b3c23c81bdab",
-      "git_blob": "16b165df9f34e126d3d699f8558a76039af1fc92",
-      "source_mtime_ns": 1779290098758420600,
-      "described_at_utc": "2026-05-20T15:24:35Z",
+      "content_sha256": "3e2cb1b5feb804b9573b146c5597ee0c7fd13a74d83fd05c27aa5df793f3e97e",
+      "git_blob": "89cf135155fb869be5790416a53168dffa00852b",
+      "source_mtime_ns": 1779291515112050500,
+      "described_at_utc": "2026-05-20T15:41:52Z",
       "generated_self_exempt": false
     },
     {
@@ -13468,6 +13468,17 @@
       "generated_self_exempt": false
     },
     {
+      "path": "docs/operational-runs/2026-05-20-round-564-tx-generator-submission-client-wire.md",
+      "description_lines": [
+        "Round 564 operational evidence for the tx-generator SubmissionClient TxSubmission2 wire-driver slice."
+      ],
+      "content_sha256": "e8bc0953eccb4d5eb09159eac395b50db7f95ecc750ab6ca6591500fa91081e2",
+      "git_blob": "12cf17d7144c04ba6f4e64685047b906c349066b",
+      "source_mtime_ns": 1779292313225197200,
+      "described_at_utc": "2026-05-20T15:52:19Z",
+      "generated_self_exempt": false
+    },
+    {
       "path": "docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md",
       "description_lines": [
         "Round 151 \u2014 ChainSync worker pool runtime wiring + observability: Date: 2026-04-27."
@@ -15256,10 +15267,10 @@
         "Machine-readable parity-status inventory for Rust \u2194 IntersectMBO/cardano-node features.",
         "Validated by scripts/check-parity-matrix.py; the reference.tag tracks the latest upstream release (currently 11.0.1)."
       ],
-      "content_sha256": "1223229a5f449ba78384fce380e3a8550519cc343cba25cb79fd5c6334f89837",
-      "git_blob": "7cd0cb455de212de539a8d0880b165212d7eaed9",
-      "source_mtime_ns": 1779290168791368200,
-      "described_at_utc": "2026-05-20T15:24:47Z",
+      "content_sha256": "1b5d181d2cce7e1d85ca6b995b98a0204a1e44699e1aad0a50ed41e15c8fb527",
+      "git_blob": "d06de0153c7e9ba8b33b7e5fde69da76af611284",
+      "source_mtime_ns": 1779291589390225200,
+      "described_at_utc": "2026-05-20T15:42:05Z",
       "generated_self_exempt": false
     },
     {

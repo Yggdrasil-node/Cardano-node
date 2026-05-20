@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T15:27:18Z
-- Files described: 1446
+- Generated at: 2026-05-20T15:46:34Z
+- Files described: 1447
 
 ## Workspace
 
@@ -1732,7 +1732,7 @@
   - Project file at crates/tools/snapshot-converter/tests/fixtures/upstream-version.txt.
 - `crates/tools/tx-generator/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `tx-generator`.
-  - Tracks the post-R559 Script/Core, GeneratorTx, DumpToFile, and Submission implementation arc.
+  - Tracks the post-R564 GeneratorTx.SubmissionClient wire-driver, DumpToFile, and walletBenchmark implementation arc.
 - `crates/tools/tx-generator/Cargo.toml`
   - Cargo manifest for the tx-generator sister-tool crate.
   - Declares direct dependencies for tx-generator runtime helpers plus crate metadata.
@@ -1773,7 +1773,7 @@
 - `crates/tools/tx-generator/src/generator_tx/submission.rs`
   - Strict mirror of upstream `GeneratorTx.Submission`, porting report refs, submission summaries, stream state, and the throttled transaction stream source.
 - `crates/tools/tx-generator/src/generator_tx/submission_client.rs`
-  - Strict mirror of upstream `GeneratorTx.SubmissionClient`, porting tx-id request handling, unacked-window accounting, tx lookup, and thread stats.
+  - Strict mirror of upstream `GeneratorTx.SubmissionClient`, porting request handling, tx lookup, thread stats, and the TxSubmission2 wire-driver adapter.
 - `crates/tools/tx-generator/src/lib.rs`
   - Pure-Rust port of upstream `tx-generator`.
   - Parent module wiring top-level parsing, json/json_highlevel execution, compile, version, and command dispatch.
@@ -2289,6 +2289,8 @@
   - Operational run note for R562 tx-generator LogTypes and SubmissionClient parity work, including upstream references, validation, and remaining Benchmark wiring gaps.
 - `docs/operational-runs/2026-05-20-round-563-tx-generator-submission.md`
   - Operational run note for R563 tx-generator GeneratorTx.Submission report refs, summaries, stream state, validation, and remaining walletBenchmark gaps.
+- `docs/operational-runs/2026-05-20-round-564-tx-generator-submission-client-wire.md`
+  - Round 564 operational evidence for the tx-generator SubmissionClient TxSubmission2 wire-driver slice.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

@@ -11,7 +11,9 @@ use std::collections::{BTreeSet, VecDeque};
 
 use thiserror::Error;
 use yggdrasil_ledger::{MultiEraSubmittedTx, TxId};
-use yggdrasil_network::TxIdAndSize;
+use yggdrasil_network::{
+    TxIdAndSize, TxServerRequest, TxSubmissionClient as NetworkTxSubmissionClient,
+};
 
 use crate::benchmarking::log_types::{NodeToNodeSubmissionTrace, TraceBenchTxSubmit};
 use crate::benchmarking::types::{Ack, Req, Sent, ToAnnce, UnAcked, Unav};
@@ -283,6 +285,63 @@ pub enum SubmissionClientError {
     /// Transaction size does not fit the wire `SizeInBytes` representation.
     #[error("txSubmissionClient: transaction size {size} exceeds u32")]
     TxSizeOverflow { size: usize },
+    /// Typed network TxSubmission2 driver failed.
+    #[error("txSubmissionClient network driver: {0}")]
+    Network(String),
+}
+
+/// Drive the upstream-shaped local submission state through the typed
+/// node-to-node TxSubmission2 wire client.
+///
+/// This is the Rust equivalent of handing upstream `txSubmissionClient`
+/// to the node-to-node mini-protocol runner: the network driver owns the
+/// CBOR/mux protocol transitions, while [`SubmissionClientState`] owns
+/// the Benchmark-specific request bookkeeping and stats.
+pub async fn run_tx_submission_client<S: TxSource>(
+    wire_client: &mut NetworkTxSubmissionClient,
+    local_state: &mut SubmissionClientState<S>,
+) -> Result<SubmissionThreadStats, SubmissionClientError> {
+    wire_client.init().await.map_err(network_error)?;
+
+    loop {
+        match wire_client.recv_request().await.map_err(network_error)? {
+            TxServerRequest::RequestTxIds { blocking, ack, req } => {
+                let blocking = if blocking {
+                    BlockingStyle::Blocking
+                } else {
+                    BlockingStyle::NonBlocking
+                };
+                let step = local_state.request_tx_ids(
+                    blocking,
+                    Ack(usize::from(ack)),
+                    Req(usize::from(req)),
+                )?;
+                match step.reply {
+                    TxIdsReply::Done(stats) => {
+                        wire_client.send_done().await.map_err(network_error)?;
+                        return Ok(stats);
+                    }
+                    TxIdsReply::Reply(txids) => {
+                        wire_client
+                            .reply_tx_ids(txids)
+                            .await
+                            .map_err(network_error)?;
+                    }
+                }
+            }
+            TxServerRequest::RequestTxs { txids } => {
+                let step = local_state.request_txs(&txids);
+                wire_client
+                    .reply_txs_multi_era(step.txs)
+                    .await
+                    .map_err(network_error)?;
+            }
+        }
+    }
+}
+
+fn network_error(error: yggdrasil_network::TxSubmissionClientError) -> SubmissionClientError {
+    SubmissionClientError::Network(error.to_string())
 }
 
 fn tx_to_id_sizes(txs: &[GeneratedTx]) -> Result<Vec<TxIdAndSize>, SubmissionClientError> {
@@ -519,5 +578,92 @@ mod tests {
                 NodeToNodeSubmissionTrace::IdsListNonBlocking(0),
             ]
         );
+    }
+
+    #[test]
+    fn network_driver_serves_tx_submission_protocol_until_done() {
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            use tokio::net::{TcpListener, TcpStream};
+            use yggdrasil_network::{
+                MiniProtocolDir, MiniProtocolNum, TxIdsReply as ServerTxIdsReply,
+                TxSubmissionServer, start_mux,
+            };
+
+            let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+            let addr = listener.local_addr().expect("local addr");
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let (mut handles, _mux) = start_mux(
+                    stream,
+                    MiniProtocolDir::Responder,
+                    &[MiniProtocolNum::TX_SUBMISSION],
+                    4,
+                );
+                let handle = handles
+                    .remove(&MiniProtocolNum::TX_SUBMISSION)
+                    .expect("tx submission handle");
+                let mut server = TxSubmissionServer::new(handle);
+                server.recv_init().await.expect("init");
+                let txids = match server
+                    .request_tx_ids(true, 0, 2)
+                    .await
+                    .expect("request ids")
+                {
+                    ServerTxIdsReply::TxIds(txids) => txids,
+                    ServerTxIdsReply::Done => {
+                        panic!("first blocking request should advertise txids")
+                    }
+                };
+                assert_eq!(txids.len(), 2);
+                let txs = server
+                    .request_txs(vec![txids[0].txid])
+                    .await
+                    .expect("request tx");
+                assert_eq!(txs.len(), 1);
+                match server
+                    .request_tx_ids(true, 2, 2)
+                    .await
+                    .expect("request done")
+                {
+                    ServerTxIdsReply::Done => {}
+                    ServerTxIdsReply::TxIds(txids) => {
+                        panic!("second blocking request should end protocol, got {txids:?}")
+                    }
+                }
+                txs.into_iter().next().expect("tx body")
+            });
+
+            let stream = TcpStream::connect(addr).await.expect("connect");
+            let (mut handles, _mux) = start_mux(
+                stream,
+                MiniProtocolDir::Initiator,
+                &[MiniProtocolNum::TX_SUBMISSION],
+                4,
+            );
+            let handle = handles
+                .remove(&MiniProtocolNum::TX_SUBMISSION)
+                .expect("tx submission handle");
+            let mut wire_client = NetworkTxSubmissionClient::new(handle);
+            let tx1 = tx(1);
+            let tx2 = tx(2);
+            let expected_body = tx1.tx.raw_cbor();
+            let mut local_client = tx_submission_client(VecTxSource::new([tx1, tx2]));
+
+            let stats = run_tx_submission_client(&mut wire_client, &mut local_client)
+                .await
+                .expect("submission client");
+            let submitted_body = server.await.expect("server task");
+
+            assert_eq!(submitted_body, expected_body);
+            assert_eq!(
+                stats,
+                SubmissionThreadStats {
+                    sts_acked: Ack(2),
+                    sts_sent: Sent(1),
+                    sts_unavailable: Unav(0),
+                }
+            );
+        });
     }
 }
