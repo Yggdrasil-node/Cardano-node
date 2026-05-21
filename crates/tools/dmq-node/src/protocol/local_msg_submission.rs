@@ -18,6 +18,7 @@
 use crate::protocol::sig_submission::{Sig, SigValidationError, decode_sig, encode_sig};
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_network::{MessageChannel, MuxError, ProtocolHandle};
 
 /// States of the `LocalMsgSubmission` mini-protocol.
 ///
@@ -232,6 +233,115 @@ impl LocalMsgSubmissionState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Client driver (upstream `Protocol/LocalMsgSubmission/Client.hs`)
+// ---------------------------------------------------------------------------
+
+/// The outcome of a [`LocalMsgSubmissionClient::submit`] call.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SubmitResult {
+    /// The server accepted the signature (`MsgAcceptTx`).
+    Accepted,
+    /// The server rejected the signature (`MsgRejectTx`), with reason.
+    Rejected(SigValidationError),
+}
+
+/// Errors from the [`LocalMsgSubmissionClient`] driver.
+#[derive(Debug, thiserror::Error)]
+pub enum LocalMsgSubmissionClientError {
+    /// Multiplexer transport error.
+    #[error("mux error: {0}")]
+    Mux(#[from] MuxError),
+    /// The connection was closed by the remote peer.
+    #[error("connection closed")]
+    ConnectionClosed,
+    /// An illegal protocol-state transition.
+    #[error("protocol error: {0}")]
+    Protocol(#[from] LocalMsgSubmissionTransitionError),
+    /// A CBOR decode failure on an inbound message.
+    #[error("CBOR decode error: {0}")]
+    Decode(String),
+    /// An unexpected message from the server.
+    #[error("unexpected message: {0}")]
+    UnexpectedMessage(String),
+}
+
+/// A `LocalMsgSubmission` client driver maintaining the protocol
+/// state machine.
+///
+/// Mirror of upstream `Protocol/LocalMsgSubmission/Client.hs`,
+/// following the `crates/network` driver pattern
+/// (`keepalive_client.rs`). The client submits DMQ signatures and
+/// receives the server's accept / reject verdict.
+pub struct LocalMsgSubmissionClient {
+    channel: MessageChannel,
+    state: LocalMsgSubmissionState,
+}
+
+impl LocalMsgSubmissionClient {
+    /// Create a client driver from a `LocalMsgSubmission`
+    /// `ProtocolHandle`. The protocol starts in `StIdle` — client
+    /// agency.
+    pub fn new(handle: ProtocolHandle) -> Self {
+        Self {
+            channel: MessageChannel::new(handle),
+            state: LocalMsgSubmissionState::StIdle,
+        }
+    }
+
+    /// The current protocol state.
+    pub fn state(&self) -> LocalMsgSubmissionState {
+        self.state
+    }
+
+    async fn send_msg(
+        &mut self,
+        msg: &LocalMsgSubmissionMessage,
+    ) -> Result<(), LocalMsgSubmissionClientError> {
+        self.state = self.state.transition(msg)?;
+        self.channel
+            .send(msg.to_cbor())
+            .await
+            .map_err(LocalMsgSubmissionClientError::Mux)
+    }
+
+    async fn recv_msg(
+        &mut self,
+    ) -> Result<LocalMsgSubmissionMessage, LocalMsgSubmissionClientError> {
+        let raw = self
+            .channel
+            .recv()
+            .await
+            .ok_or(LocalMsgSubmissionClientError::ConnectionClosed)?;
+        let msg = LocalMsgSubmissionMessage::from_cbor(&raw)
+            .map_err(|err| LocalMsgSubmissionClientError::Decode(err.to_string()))?;
+        self.state = self.state.transition(&msg)?;
+        Ok(msg)
+    }
+
+    /// Submit a DMQ signature and await the server's verdict — send
+    /// `MsgSubmitTx` and receive `MsgAcceptTx` or `MsgRejectTx`.
+    pub async fn submit(
+        &mut self,
+        sig: Sig,
+    ) -> Result<SubmitResult, LocalMsgSubmissionClientError> {
+        self.send_msg(&LocalMsgSubmissionMessage::MsgSubmitTx { sig })
+            .await?;
+        match self.recv_msg().await? {
+            LocalMsgSubmissionMessage::MsgAcceptTx => Ok(SubmitResult::Accepted),
+            LocalMsgSubmissionMessage::MsgRejectTx { reason } => Ok(SubmitResult::Rejected(reason)),
+            other => Err(LocalMsgSubmissionClientError::UnexpectedMessage(format!(
+                "{other:?}"
+            ))),
+        }
+    }
+
+    /// Terminate the protocol cleanly with `MsgDone`.
+    pub async fn done(mut self) -> Result<(), LocalMsgSubmissionClientError> {
+        self.send_msg(&LocalMsgSubmissionMessage::MsgDone).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,6 +450,31 @@ mod tests {
             let decoded = LocalMsgSubmissionMessage::from_cbor(&encoded).expect("decodes");
             assert_eq!(decoded, msg);
         }
+    }
+
+    #[test]
+    fn submit_result_distinguishes_accept_and_reject() {
+        assert_ne!(
+            SubmitResult::Accepted,
+            SubmitResult::Rejected(SigValidationError::SigExpired)
+        );
+        assert_eq!(
+            SubmitResult::Rejected(SigValidationError::SigDuplicate),
+            SubmitResult::Rejected(SigValidationError::SigDuplicate)
+        );
+    }
+
+    #[test]
+    fn client_error_variants_display() {
+        let closed = format!("{}", LocalMsgSubmissionClientError::ConnectionClosed);
+        assert!(closed.to_lowercase().contains("connection closed"));
+        let decode = LocalMsgSubmissionClientError::Decode("bad MsgAcceptTx".into());
+        assert!(format!("{decode}").contains("bad MsgAcceptTx"));
+        let unexpected =
+            LocalMsgSubmissionClientError::UnexpectedMessage("MsgSubmitTx in StBusy".into());
+        let s = format!("{unexpected}");
+        assert!(s.contains("unexpected message"), "got: {s}");
+        assert!(s.contains("MsgSubmitTx in StBusy"), "got: {s}");
     }
 
     #[test]
