@@ -3057,22 +3057,45 @@ impl fmt::Display for StrictMaybeGovPurposeId {
     }
 }
 
+/// A decoded protocol-parameter value within a `PParamsUpdate`.
+/// The integer-valued parameters (Coin / Word16 / Word32 /
+/// EpochInterval — minFeeA, keyDeposit, maxTxSize, …) decode to
+/// a typed `Word`; the rational and structured parameters
+/// (`a0`, `rho`, cost models, ExUnits, voting thresholds) keep
+/// raw inner CBOR pending their typed decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PParamValue {
+    /// An unsigned integer parameter value.
+    Word(u64),
+    /// A not-yet-typed structured parameter value.
+    Raw(Vec<u8>),
+}
+
+impl fmt::Display for PParamValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Word(n) => write!(f, "{n}"),
+            Self::Raw(b) => write!(f, "<raw-cbor {} bytes>", b.len()),
+        }
+    }
+}
+
 /// Protocol-parameter update set mirroring upstream
 /// `PParamsUpdate` — a CBOR map keyed by small-integer
 /// parameter ids, each value the proposed new parameter value.
 ///
-/// R673 ships the scaffold: the decoder surfaces the set of
-/// updated parameter ids and the count, keeping each parameter
-/// value raw pending the ~30 per-parameter typed decoders.
+/// The integer-valued parameters decode to a typed
+/// [`PParamValue::Word`]; the rational / structured parameters
+/// keep raw inner CBOR pending their typed decoders.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PParamsUpdate {
-    /// The `(parameter-id, raw-value)` update entries in wire
-    /// order.
-    pub updates: Vec<(u64, Vec<u8>)>,
+    /// The `(parameter-id, value)` update entries in wire order.
+    pub updates: Vec<(u64, PParamValue)>,
 }
 
 impl PParamsUpdate {
-    /// Decode a `PParamsUpdate` from a CBOR map; each value is
+    /// Decode a `PParamsUpdate` from a CBOR map. Integer-valued
+    /// parameters decode to a typed `Word`; every other value is
     /// captured raw by byte range.
     fn from_decoder(
         dec: &mut yggdrasil_ledger::Decoder<'_>,
@@ -3086,17 +3109,28 @@ impl PParamsUpdate {
             let key = dec.unsigned().map_err(|err| {
                 DecoderError(format!("PParamsUpdate: expected parameter id: {err:?}"))
             })?;
-            let value_start = dec.position();
-            dec.skip()
-                .map_err(|err| DecoderError(format!("PParamsUpdate: value skip: {err:?}")))?;
-            let value_end = dec.position();
-            let raw = source
-                .get(value_start..value_end)
-                .ok_or_else(|| {
-                    DecoderError("PParamsUpdate: value byte range out of bounds".to_string())
-                })?
-                .to_vec();
-            updates.push((key, raw));
+            let major = dec
+                .peek_major()
+                .map_err(|err| DecoderError(format!("PParamsUpdate: value peek: {err:?}")))?;
+            let value = if major == 0 {
+                let n = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("PParamsUpdate: value Word: {err:?}")))?;
+                PParamValue::Word(n)
+            } else {
+                let value_start = dec.position();
+                dec.skip()
+                    .map_err(|err| DecoderError(format!("PParamsUpdate: value skip: {err:?}")))?;
+                let value_end = dec.position();
+                let raw = source
+                    .get(value_start..value_end)
+                    .ok_or_else(|| {
+                        DecoderError("PParamsUpdate: value byte range out of bounds".to_string())
+                    })?
+                    .to_vec();
+                PParamValue::Raw(raw)
+            };
+            updates.push((key, value));
         }
         Ok(Self { updates })
     }
@@ -3144,23 +3178,19 @@ impl PParamsUpdate {
 
 impl fmt::Display for PParamsUpdate {
     /// Render the updated parameters by their upstream Conway
-    /// name; the per-parameter values keep a `<raw-cbor N
-    /// bytes>` marker pending their typed decoders.
+    /// name and value — integer parameters show the typed value,
+    /// structured parameters keep a `<raw-cbor>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("PParamsUpdate (fromList [")?;
         let mut first = true;
-        for (key, raw) in &self.updates {
+        for (key, value) in &self.updates {
             if !first {
                 f.write_str(",")?;
             }
             first = false;
             match Self::param_name(*key) {
-                Some(name) => {
-                    write!(f, "({name},<raw-cbor {} bytes>)", raw.len())?;
-                }
-                None => {
-                    write!(f, "(param-{key},<raw-cbor {} bytes>)", raw.len())?;
-                }
+                Some(name) => write!(f, "({name},{value})")?,
+                None => write!(f, "(param-{key},{value})")?,
             }
         }
         f.write_str("])")
@@ -12163,11 +12193,9 @@ mod tests {
         cbor.push(0xF6); // guardrail = null
         let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
         let s = f.to_string();
-        assert!(
-            s.contains("(minFeeRefScriptCostPerByte,<raw-cbor 1 bytes>)"),
-            "got: {s}"
-        );
-        assert!(s.contains("(param-99,<raw-cbor 1 bytes>)"), "got: {s}");
+        // Integer-valued parameters decode to a typed Word.
+        assert!(s.contains("(minFeeRefScriptCostPerByte,5)"), "got: {s}");
+        assert!(s.contains("(param-99,6)"), "got: {s}");
         assert_eq!(PParamsUpdate::param_name(17), Some("coinsPerUTxOByte"));
         assert_eq!(PParamsUpdate::param_name(99), None);
     }
