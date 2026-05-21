@@ -31,10 +31,16 @@
 //!   documented in [`crate::csv`].
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use yggdrasil_ledger::Nonce;
 use yggdrasil_node_config::RequiresNetworkMagic;
+use yggdrasil_node_genesis::{
+    AlonzoGenesis, ByronGenesisUtxoEntry, ConwayGenesis, GenesisLoadError, ShelleyGenesis,
+    compute_genesis_file_hash, load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis,
+    load_shelley_genesis, shelley_genesis_hash_to_praos_nonce,
+};
 
 /// Block-byte-count alias, used by [`HasAnalysis::block_tx_sizes`].
 ///
@@ -495,6 +501,141 @@ fn describe_json_value_kind(value: &serde_json::Value) -> &'static str {
         serde_json::Value::String(_) => "string",
         serde_json::Value::Array(_) => "array",
         serde_json::Value::Object(_) => "object",
+    }
+}
+
+/// The per-era genesis loaded from a node `config.json`, plus the
+/// initial Praos nonce.
+///
+/// db-analyser's [`HasProtocolInfo::ProtocolInfo`] for the unified
+/// [`yggdrasil_ledger::Block`]. Upstream `Block/Cardano.hs::mkProtocolInfo`
+/// reads the per-era genesis files inline while building
+/// `ProtocolInfo (CardanoBlock c)`; there is no upstream `GenesisBundle`
+/// type. This aggregate collects that genesis-reading step as a typed
+/// value the genesis-bootstrap arc slice 4 folds into a genesis-seeded
+/// `LedgerState`. Dijkstra is omitted — that era is not yet activated in
+/// yggdrasil (no `load_dijkstra_genesis`), matching db-synthesizer's
+/// `GenesisBundle`.
+///
+/// ## Naming parity
+///
+/// **Strict mirror:** none. db-analyser-scoped intermediate of upstream
+/// `mkProtocolInfo`'s inline genesis reads.
+#[derive(Clone, Debug)]
+pub struct CardanoGenesisBundle {
+    /// Byron genesis UTxO entries (`nonAvvmBalances` + `avvmDistr`).
+    pub byron: Vec<ByronGenesisUtxoEntry>,
+    /// Parsed Shelley genesis.
+    pub shelley: ShelleyGenesis,
+    /// Parsed Alonzo genesis.
+    pub alonzo: AlonzoGenesis,
+    /// Parsed Conway genesis.
+    pub conway: ConwayGenesis,
+    /// Initial Praos nonce — the configured `ShelleyGenesisHash`, or the
+    /// Blake2b-256 hash of the Shelley genesis file when it is absent
+    /// (upstream `mkProtocolInfo`'s `initialNonce` case split).
+    pub praos_nonce: Nonce,
+}
+
+/// Errors from [`HasProtocolInfo::make_protocol_info`] for the unified
+/// [`yggdrasil_ledger::Block`].
+#[derive(Debug, thiserror::Error)]
+pub enum MakeProtocolInfoError {
+    /// The node `config.json` could not be read.
+    #[error("cannot read config '{path}': {source}")]
+    ConfigRead {
+        /// Config-file path.
+        path: String,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The node `config.json` is not valid JSON.
+    #[error("config '{path}' is not valid JSON: {source}")]
+    ConfigJson {
+        /// Config-file path.
+        path: String,
+        /// Underlying JSON error.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The node `config.json` is not a well-formed [`CardanoConfig`].
+    #[error("config: {0}")]
+    ConfigParse(#[from] CardanoConfigParseError),
+    /// A genesis file referenced by the config could not be loaded.
+    #[error("cannot load genesis: {0}")]
+    GenesisLoad(#[from] GenesisLoadError),
+}
+
+/// Resolve a node `config.json` into the per-era [`CardanoGenesisBundle`].
+///
+/// Mirror of the genesis-reading half of upstream
+/// `Block/Cardano.hs::mkProtocolInfo`: resolve `relativeToConfig`
+/// (genesis paths are config-dir-relative), decode the [`CardanoConfig`],
+/// `adjust_file_paths`, load the Byron / Shelley / Alonzo / Conway
+/// genesis, and derive the initial Praos nonce — preferring the
+/// configured `ShelleyGenesisHash`, else the Shelley genesis file hash.
+///
+/// The threshold half of upstream `mkProtocolInfo`
+/// ([`CardanoBlockArgs::threshold`] → `mkCardanoProtocolInfo`) and the
+/// `mkLatestTransitionConfig` fold are the genesis-bootstrap arc's
+/// later slices.
+impl HasProtocolInfo for yggdrasil_ledger::Block {
+    type Args = CardanoBlockArgs;
+    type ProtocolInfo = CardanoGenesisBundle;
+    type Error = MakeProtocolInfoError;
+
+    fn make_protocol_info(args: Self::Args) -> Result<Self::ProtocolInfo, Self::Error> {
+        let config_path = args.config_file.as_path();
+        let raw = std::fs::read_to_string(config_path).map_err(|source| {
+            MakeProtocolInfoError::ConfigRead {
+                path: config_path.display().to_string(),
+                source,
+            }
+        })?;
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|source| MakeProtocolInfoError::ConfigJson {
+                path: config_path.display().to_string(),
+                source,
+            })?;
+        let cardano_config = parse_cardano_config(value)?;
+
+        // `relativeToConfig` — genesis paths resolve against the config
+        // file's own absolute directory (upstream
+        // `(</>) . takeDirectory <$> makeAbsolute configFile`).
+        let abs_config = std::path::absolute(config_path).map_err(|source| {
+            MakeProtocolInfoError::ConfigRead {
+                path: config_path.display().to_string(),
+                source,
+            }
+        })?;
+        let config_dir = abs_config
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let cardano_config = cardano_config.adjust_file_paths(|p| config_dir.join(p));
+
+        let byron = load_byron_genesis_utxo(&cardano_config.byron_genesis_path)?;
+        let shelley = load_shelley_genesis(&cardano_config.shelley_genesis_path)?;
+        let alonzo = load_alonzo_genesis(&cardano_config.alonzo_genesis_path)?;
+        let conway = load_conway_genesis(&cardano_config.conway_genesis_path)?;
+
+        let praos_nonce = match &cardano_config.shelley_genesis_hash {
+            Some(hex) => shelley_genesis_hash_to_praos_nonce(hex)?,
+            None => {
+                let hash = compute_genesis_file_hash(&cardano_config.shelley_genesis_path)?;
+                let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+                shelley_genesis_hash_to_praos_nonce(&hex)?
+            }
+        };
+
+        Ok(CardanoGenesisBundle {
+            byron,
+            shelley,
+            alonzo,
+            conway,
+            praos_nonce,
+        })
     }
 }
 
@@ -1054,6 +1195,138 @@ mod tests {
         assert_eq!(cc.hard_fork_triggers.shelley, Some(0));
         assert_eq!(cc.hard_fork_triggers.alonzo, Some(0));
         assert_eq!(cc.hard_fork_triggers.babbage, None);
+    }
+
+    // ── make_protocol_info (genesis-bootstrap arc, slice 3b) ───────────
+
+    /// Minimal `AlonzoGenesis`-parseable JSON — `executionPrices` /
+    /// `maxTxExUnits` / `maxBlockExUnits` have no serde defaults.
+    const MINIMAL_ALONZO_GENESIS: &str = r#"{"executionPrices":{"prMem":{"numerator":1,"denominator":1},"prSteps":{"numerator":1,"denominator":1}},"maxTxExUnits":{"exUnitsMem":1,"exUnitsSteps":1},"maxBlockExUnits":{"exUnitsMem":1,"exUnitsSteps":1}}"#;
+
+    /// Write a `config.json` plus every era's genesis into `dir`.
+    /// `shelley_rel` is the (possibly nested) Shelley-genesis path
+    /// recorded in the config; `shelley_hash` is the optional
+    /// `ShelleyGenesisHash`. Returns the config-file path.
+    fn write_cardano_config(dir: &Path, shelley_rel: &str, shelley_hash: Option<&str>) -> PathBuf {
+        let shelley = dir.join(shelley_rel);
+        if let Some(parent) = shelley.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&shelley, r#"{"epochLength":86400}"#).unwrap();
+        std::fs::write(dir.join("byron.json"), "{}").unwrap();
+        std::fs::write(dir.join("alonzo.json"), MINIMAL_ALONZO_GENESIS).unwrap();
+        std::fs::write(dir.join("conway.json"), "{}").unwrap();
+        let hash_field = match shelley_hash {
+            Some(h) => format!(r#","ShelleyGenesisHash":"{h}""#),
+            None => String::new(),
+        };
+        let config = dir.join("config.json");
+        std::fs::write(
+            &config,
+            format!(
+                r#"{{"RequiresNetworkMagic":"RequiresMagic","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"{shelley_rel}","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"{hash_field}}}"#
+            ),
+        )
+        .unwrap();
+        config
+    }
+
+    #[test]
+    fn make_protocol_info_loads_genesis_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = write_cardano_config(tmp.path(), "shelley-genesis.json", None);
+        let args = CardanoBlockArgs {
+            config_file: config,
+            threshold: None,
+        };
+        let bundle = <Block as HasProtocolInfo>::make_protocol_info(args).expect("loads bundle");
+        assert_eq!(bundle.shelley.epoch_length, 86_400);
+        assert!(bundle.byron.is_empty());
+        // No ShelleyGenesisHash in the config → the nonce is derived
+        // from the Shelley genesis file hash; a concrete hash, never
+        // the neutral nonce.
+        assert!(matches!(bundle.praos_nonce, Nonce::Hash(_)));
+    }
+
+    #[test]
+    fn make_protocol_info_resolves_genesis_relative_to_config_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Shelley genesis sits in a sub-directory of the config dir;
+        // `make_protocol_info` resolves it there (`relativeToConfig`).
+        let config = write_cardano_config(tmp.path(), "genesis/shelley.json", None);
+        let args = CardanoBlockArgs {
+            config_file: config,
+            threshold: None,
+        };
+        let bundle = <Block as HasProtocolInfo>::make_protocol_info(args).expect("loads bundle");
+        assert_eq!(bundle.shelley.epoch_length, 86_400);
+    }
+
+    #[test]
+    fn make_protocol_info_prefers_configured_shelley_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hash = "363498d1024f84bb39d3fa9593ce391483cb40d479b87233f868d6e57c3a400d";
+        let config = write_cardano_config(tmp.path(), "shelley-genesis.json", Some(hash));
+        let args = CardanoBlockArgs {
+            config_file: config,
+            threshold: None,
+        };
+        let bundle = <Block as HasProtocolInfo>::make_protocol_info(args).expect("loads bundle");
+        // The configured ShelleyGenesisHash wins over the file hash.
+        assert_eq!(
+            bundle.praos_nonce,
+            shelley_genesis_hash_to_praos_nonce(hash).unwrap()
+        );
+    }
+
+    #[test]
+    fn make_protocol_info_errors_on_missing_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let args = CardanoBlockArgs {
+            config_file: tmp.path().join("does-not-exist.json"),
+            threshold: None,
+        };
+        let err = <Block as HasProtocolInfo>::make_protocol_info(args).expect_err("rejects");
+        assert!(matches!(err, MakeProtocolInfoError::ConfigRead { .. }));
+    }
+
+    #[test]
+    fn make_protocol_info_errors_on_missing_genesis_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A config that names an Alonzo genesis file that is not written.
+        let config = tmp.path().join("config.json");
+        std::fs::write(tmp.path().join("byron.json"), "{}").unwrap();
+        std::fs::write(tmp.path().join("shelley.json"), r#"{"epochLength":86400}"#).unwrap();
+        std::fs::write(tmp.path().join("conway.json"), "{}").unwrap();
+        std::fs::write(
+            &config,
+            r#"{"RequiresNetworkMagic":"RequiresMagic","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"shelley.json","AlonzoGenesisFile":"absent-alonzo.json","ConwayGenesisFile":"conway.json"}"#,
+        )
+        .unwrap();
+        let args = CardanoBlockArgs {
+            config_file: config,
+            threshold: None,
+        };
+        let err = <Block as HasProtocolInfo>::make_protocol_info(args).expect_err("rejects");
+        assert!(matches!(err, MakeProtocolInfoError::GenesisLoad(_)));
+    }
+
+    #[test]
+    fn make_protocol_info_against_vendored_preview_config() {
+        // End-to-end evidence for the arc's validation gate: load every
+        // era's genesis from the real vendored preview operator bundle.
+        let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../configuration/preview/config.json");
+        let args = CardanoBlockArgs {
+            config_file: config,
+            threshold: None,
+        };
+        let bundle =
+            <Block as HasProtocolInfo>::make_protocol_info(args).expect("loads preview bundle");
+        // Preview's ShelleyGenesisHash is configured → nonce is a hash.
+        assert!(matches!(bundle.praos_nonce, Nonce::Hash(_)));
+        // Preview Shelley genesis epoch length is 86_400.
+        assert_eq!(bundle.shelley.epoch_length, 86_400);
     }
 
     // ── HasAnalysis for yggdrasil_ledger::Block (R476) ─────────────────

@@ -3411,6 +3411,7 @@ dependencies = [
  "yggdrasil-crypto",
  "yggdrasil-ledger",
  "yggdrasil-node-config",
+ "yggdrasil-node-genesis",
  "yggdrasil-storage",
  "yggdrasil-telemetry",
 ]

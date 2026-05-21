@@ -321,14 +321,19 @@ one extraction):
     workspace-internal dep `yggdrasil-node-config` (for
     `RequiresNetworkMagic`). The `Test*HardForkAtEpoch` monotonicity
     check is ported.
-  - **Slice 3b — `HasProtocolInfo for yggdrasil_ledger::Block`.**
-    `make_protocol_info` resolves the config-relative genesis paths
-    and loads the genesis bundle — db-analyser's own copy, mirror of
-    `Block/Cardano.hs::mkProtocolInfo` (new dep
-    `yggdrasil-node-genesis`).
+  - ✅ **Slice 3b** (round 713) — `HasProtocolInfo for
+    yggdrasil_ledger::Block`. `make_protocol_info` reads the config,
+    resolves config-relative genesis paths, loads the Byron /
+    Shelley / Alonzo / Conway genesis and derives the initial Praos
+    nonce into a `CardanoGenesisBundle` — mirror of the
+    genesis-reading half of `Block/Cardano.hs::mkProtocolInfo`. New
+    workspace-internal dep `yggdrasil-node-genesis`. A test loads the
+    real vendored `configuration/preview/` genesis bundle.
   - **Slice 4 — load the genesis-seeded `LedgerState` in `run`.**
-    When `--config` is supplied, build the initial `LedgerState`
-    via the slice-3 loader.
+    When `--config` is supplied, fold the `CardanoGenesisBundle`
+    through `yggdrasil_node_genesis::build_base_ledger_state` into
+    the initial `LedgerState` (the db-synthesizer
+    `build_initial_forge_state` wiring).
   - **Slice 5 — thread it into the analysis runner.** The 6
     ledger-applying analyses bootstrap from the genesis-seeded
     `LedgerState` instead of `LedgerState::new()`.
