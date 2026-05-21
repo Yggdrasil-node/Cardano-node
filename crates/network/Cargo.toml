@@ -18,26 +18,15 @@ yggdrasil-ledger.workspace = true
 hex.workspace = true
 tempfile = "3"
 
-# ──────────────────────────────────────────────────────────────────────
-# Feature-flag declarations.
-#
-# `ntn` was removed in R591 — every yggdrasil consumer (relays,
-# producers, sister tools) needs node-to-node mini-protocols, so
-# gating them behind a flag had no operational benefit. The flag
-# was decorative (0 `#[cfg(feature = "ntn")]` sites and 0 downstream
-# opt-ins/opt-outs).
-#
-#   * `ntc`           — Node-to-Client mini-protocols (default).
-#                       Required by every sister tool that talks to
-#                       a running yggdrasil-node. Currently
-#                       decorative (no `#[cfg(feature = "ntc")]`
-#                       gates); wiring it means gating the whole
-#                       NtC mini-protocol module tree — mechanically
-#                       tractable, deferred to a follow-on round.
-# ──────────────────────────────────────────────────────────────────────
-[features]
-default = ["ntc"]
-ntc = []
+# No feature flags. The decorative `ntn` (removed R591) and `ntc`
+# (removed R770) flags were both inert — 0 `#[cfg]` sites — and every
+# yggdrasil consumer (relays, producers, sister tools) needs both the
+# node-to-node and node-to-client mini-protocol surfaces, so gating
+# them behind a flag carried no operational benefit. Wiring `ntc`
+# would have scattered `#[cfg(feature = "ntc")]` across `yggdrasil-
+# network`, `yggdrasil-node`, and `cardano-cli`'s LocalStateQuery
+# surface for a niche relay-only build; removal matches the R591/R592
+# inert-flag precedent.
 
 [lints]
 workspace = true

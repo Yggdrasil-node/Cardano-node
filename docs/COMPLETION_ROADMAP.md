@@ -57,7 +57,7 @@ green, one `docs/operational-runs/` doc, one commit. Use the
 `continuous-agent-loop` + `round-extraction` skills; author a `parity-plan`
 first for any slice touching protocol/CBOR/crypto behavior.
 
-### A1 — Feature-flag gating  (`TECH-DEBT.md` §"Wave 3 / Wave 5 feature flags")
+### A1 — Feature-flag gating — ✅ COMPLETE (verified 2026-05-22, R770)  (`TECH-DEBT.md` §"Wave 3 / Wave 5 feature flags")
 Status verified 2026-05-20 (R591+R592 update): `forge` and
 `yggdrasil-plutus/{secp256k1, bls12-381}` are wired (real `#[cfg]`
 sites; `--no-default-features` builds and `cargo lint-no-default`
@@ -69,13 +69,20 @@ validation logic without slimming the dependency graph (this crate
 never depended on `crates/plutus`; the heavy CEK-machine code lives
 behind the inverted `PlutusEvaluator` trait wired by
 `crates/node/plutus-eval`).
-The remaining inert flag is `yggdrasil-network/ntc` (0 `#[cfg]`
-sites). `ntc` is cleanly wireable — a relay/producer with the
-node-to-client local socket excluded is still a valid node — but it
-is a multi-crate round (`yggdrasil-network` NtC modules + the
-`yggdrasil-node-ntc-server` crate + the binary's `query`/`submit-tx`
-subcommands). **Exit:** the remaining `ntc` flag conditionally
-compiles the code it names; `cargo lint-no-default` stays green.
+**R770 closed A1 by removing the last inert flag.**
+`yggdrasil-network/ntc` (0 `#[cfg]` sites, `default`-on) was
+decorative. Wiring it would have scattered `#[cfg(feature = "ntc")]`
+across the `yggdrasil-network` NtC module tree, the
+`yggdrasil-node-ntc-server` crate, and `cardano-cli`'s
+LocalStateQuery surface — `cargo lint-no-default` builds the whole
+workspace with `--no-default-features`, so any partial gating breaks
+it. For a niche relay-only build that omits the local socket, that
+cost is not justified; removal matches the R591/R592 inert-flag
+precedent and the "no decorative feature flags" rule. R770 also
+fixed a pre-existing `--no-default-features` regression
+(`commands/validate_config.rs` imported two `forge`-only symbols
+unconditionally). **Exit met:** no inert feature flags remain in the
+workspace; `cargo lint-no-default` is green.
 
 ### A2 — cardano-cli subcommand migration — ✅ COMPLETE (verified 2026-05-20)
 The cardano-cli C-arc closed at R515 and the R527-R529 stale-placement

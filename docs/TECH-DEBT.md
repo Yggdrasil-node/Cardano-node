@@ -162,20 +162,20 @@ soak is operator-driven work.
   `cargo lint-no-default` both pass under `--no-default-features`. This
   entry previously listed them as pending; that was stale.
 
-- ⏳ Genuinely-inert flags (0 `#[cfg]` sites today): `yggdrasil-ledger/plutus`
-  and `yggdrasil-network/{ntn, ntc}`. `plutus` is the biggest scope (gating
-  the Alonzo+ phase-2 witness paths across ~8 per-era ledger apply-rule
-  files) and needs an explicit slim-build soundness decision — a node built
-  without it skips phase-2 script validation and is no longer a full
-  consensus participant. `ntc` (the node-to-client local-socket surface) is
-  the cleanly wireable one: a relay / producer with `ntc` off is still a
-  valid node; wiring it is a multi-crate round (`yggdrasil-network` NtC
-  modules + the `yggdrasil-node-ntc-server` crate + the binary's `query` /
-  `submit-tx` subcommands). `ntn` (node-to-node) is required by every node,
-  so it is a candidate for *removal* rather than wiring — same disposition
-  as the 4 drifted flags above. The binary declares only `forge` /
-  `relay-only`; the earlier mention of `yggdrasil-node/{plutus, ntc-socket,
-  tracer-forwarder}` flags here was aspirational — they do not exist.
+- ✅ Genuinely-inert flags — all removed. `yggdrasil-network/ntn` (R591),
+  `yggdrasil-ledger/plutus` (R592), and `yggdrasil-network/ntc` (R770)
+  each carried 0 `#[cfg]` sites. Wiring `ntc` would have scattered
+  `#[cfg(feature = "ntc")]` across the `yggdrasil-network` NtC module
+  tree, the `yggdrasil-node-ntc-server` crate, and `cardano-cli`'s
+  LocalStateQuery surface — `cargo lint-no-default` builds the whole
+  workspace with `--no-default-features`, so a partial gating breaks
+  it — and the payoff is only a niche relay-only build that omits the
+  local socket. Removal matched the R591/R592 inert-flag precedent and
+  the "no decorative feature flags" rule. No inert feature flags
+  remain in the workspace. The binary declares only `forge` /
+  `relay-only`; the earlier mention of `yggdrasil-node/{plutus,
+  ntc-socket, tracer-forwarder}` flags here was aspirational — they do
+  not exist.
 
 **Desired end state.** Each flag actually conditionally compiles
 the code paths it names. Per-flag follow-on PRs land
@@ -184,11 +184,9 @@ that needs `--no-default-features --features=slim` to drop
 Plutus would drive the `plutus` flag work).
 
 **Scope.** Per-flag PRs. `forge`, `secp256k1`, and `bls12-381` are
-closed (wired) and the 4 drifted flags are closed by removal; per
-remaining flag (`plutus` / `ntn` / `ntc`): ~1-3 days each depending
-on the cross-crate coupling. `plutus` is multi-day because Plutus
-types are referenced from ~8 ledger files including era-specific
-apply rules.
+closed (wired); the 4 drifted flags and the 3 genuinely-inert flags
+(`ntn` R591, `yggdrasil-ledger/plutus` R592, `ntc` R770) are closed by
+removal. No feature-flag debt remains.
 
 ## cardano-submit-api validation error: structured mapping (Phase 1 — raw-bytes carrier landed)
 

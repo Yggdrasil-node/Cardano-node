@@ -37,9 +37,13 @@ use crate::commands::configuration::{
 use yggdrasil_ledger::Point;
 use yggdrasil_network::{LedgerPeerSnapshot, LedgerStateJudgement};
 use yggdrasil_node::recover_ledger_state_chaindb_epoch_boundary;
+#[cfg(feature = "forge")]
 use yggdrasil_node_config::{
-    BlockProducerCredentialStatus, NetworkPreset, NodeConfigFile, NodeRoleValidationReport,
-    ensure_block_producer_credential_policy, load_peer_snapshot_file, node_config_preflight_report,
+    BlockProducerCredentialStatus, ensure_block_producer_credential_policy,
+};
+use yggdrasil_node_config::{
+    NetworkPreset, NodeConfigFile, NodeRoleValidationReport, load_peer_snapshot_file,
+    node_config_preflight_report,
 };
 use yggdrasil_node_tracer::NodeTracer;
 use yggdrasil_storage::{ChainDb, FileImmutable, FileLedgerStore, FileVolatile};
