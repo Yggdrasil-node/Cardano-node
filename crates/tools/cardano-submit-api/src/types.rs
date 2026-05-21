@@ -3057,20 +3057,88 @@ impl fmt::Display for StrictMaybeGovPurposeId {
     }
 }
 
+/// Protocol-parameter update set mirroring upstream
+/// `PParamsUpdate` — a CBOR map keyed by small-integer
+/// parameter ids, each value the proposed new parameter value.
+///
+/// R673 ships the scaffold: the decoder surfaces the set of
+/// updated parameter ids and the count, keeping each parameter
+/// value raw pending the ~30 per-parameter typed decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PParamsUpdate {
+    /// The `(parameter-id, raw-value)` update entries in wire
+    /// order.
+    pub updates: Vec<(u64, Vec<u8>)>,
+}
+
+impl PParamsUpdate {
+    /// Decode a `PParamsUpdate` from a CBOR map; each value is
+    /// captured raw by byte range.
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let count = dec
+            .map()
+            .map_err(|err| DecoderError(format!("PParamsUpdate: expected CBOR map: {err:?}")))?;
+        let mut updates = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let key = dec.unsigned().map_err(|err| {
+                DecoderError(format!("PParamsUpdate: expected parameter id: {err:?}"))
+            })?;
+            let value_start = dec.position();
+            dec.skip()
+                .map_err(|err| DecoderError(format!("PParamsUpdate: value skip: {err:?}")))?;
+            let value_end = dec.position();
+            let raw = source
+                .get(value_start..value_end)
+                .ok_or_else(|| {
+                    DecoderError("PParamsUpdate: value byte range out of bounds".to_string())
+                })?
+                .to_vec();
+            updates.push((key, raw));
+        }
+        Ok(Self { updates })
+    }
+}
+
+impl fmt::Display for PParamsUpdate {
+    /// Render the set of updated parameter ids; the per-parameter
+    /// values keep a `<raw-cbor N bytes>` marker pending their
+    /// typed decoders.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("PParamsUpdate (fromList [")?;
+        let mut first = true;
+        for (key, raw) in &self.updates {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "({key},<raw-cbor {} bytes>)", raw.len())?;
+        }
+        f.write_str("])")
+    }
+}
+
 /// `GovAction` mirror — Conway-era governance action from
 /// `Cardano.Ledger.Conway.Governance.Procedures`. 7-variant sum
-/// encoded via CBOR `Sum` tags 0-6.
-///
-/// R652 ships the scaffold: the variant tag + constructor name
-/// are typed, but the per-variant payloads (PParamsUpdate,
-/// Constitution, UnitInterval, treasury-withdrawal maps, nested
-/// `decodeNullStrictMaybe` GovPurposeIds) keep raw inner CBOR
-/// pending their typed decoder ports. `InfoAction` (tag 6) is
-/// fully typed — it has no payload.
+/// encoded via CBOR `Sum` tags 0-6. R652-R673 typed every
+/// variant; the per-parameter `PParamsUpdate` values are the
+/// only remaining raw leaf.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GovAction {
-    /// Tag 0: protocol-parameter change proposal. Raw payload.
-    ParameterChange(Vec<u8>),
+    /// Tag 0: protocol-parameter change proposal (R673 typed) —
+    /// `StrictMaybe GovPurposeId` + `PParamsUpdate` + a
+    /// `StrictMaybe ScriptHash` guardrail.
+    ParameterChange {
+        /// The previous parameter-change governance action, if
+        /// any.
+        prev: Option<GovActionId>,
+        /// The proposed protocol-parameter updates.
+        pparams_update: PParamsUpdate,
+        /// The optional guardrails-script hash.
+        guardrail: Option<[u8; 28]>,
+    },
     /// Tag 1: hard-fork initiation proposal (R668 typed) —
     /// `StrictMaybe (GovPurposeId 'HardForkPurpose)` + the
     /// proposed `ProtVer`.
@@ -3126,7 +3194,7 @@ impl GovAction {
     /// Upstream CBOR `Sum` tag for this variant.
     pub fn tag(&self) -> u8 {
         match self {
-            Self::ParameterChange(_) => 0,
+            Self::ParameterChange { .. } => 0,
             Self::HardForkInitiation { .. } => 1,
             Self::TreasuryWithdrawals { .. } => 2,
             Self::NoConfidence { .. } => 3,
@@ -3139,7 +3207,7 @@ impl GovAction {
     /// Upstream stock-derived `Show` constructor name.
     pub fn constructor(&self) -> &'static str {
         match self {
-            Self::ParameterChange(_) => "ParameterChange",
+            Self::ParameterChange { .. } => "ParameterChange",
             Self::HardForkInitiation { .. } => "HardForkInitiation",
             Self::TreasuryWithdrawals { .. } => "TreasuryWithdrawals",
             Self::NoConfidence { .. } => "NoConfidence",
@@ -3318,24 +3386,37 @@ impl GovAction {
                 threshold,
             });
         }
-        // Skip the remaining payload elements to advance the
-        // decoder, then capture them raw by byte range.
-        let payload_start = dec.position();
-        for _ in 1..len {
-            dec.skip()
-                .map_err(|err| DecoderError(format!("GovAction: payload skip: {err:?}")))?;
+        if tag == 0 {
+            // ParameterChange — `[0, decodeNullStrictMaybe
+            // GovPurposeId, PParamsUpdate, decodeNullStrictMaybe
+            // ScriptHash]`.
+            if len != 4 {
+                return Err(DecoderError(format!(
+                    "ParameterChange: expected 4-element envelope, got len {len}"
+                )));
+            }
+            let prev =
+                decode_null_strict_maybe(dec, "ParameterChange prev", GovActionId::from_decoder)?;
+            let pparams_update = PParamsUpdate::from_decoder(dec, source)?;
+            let guardrail = decode_null_strict_maybe(dec, "ParameterChange guardrail", |dec| {
+                let bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "ParameterChange: expected ScriptHash bytes: {err:?}"
+                    ))
+                })?;
+                bytes.try_into().map_err(|_| {
+                    DecoderError("ParameterChange: ScriptHash must be 28 bytes".to_string())
+                })
+            })?;
+            return Ok(Self::ParameterChange {
+                prev,
+                pparams_update,
+                guardrail,
+            });
         }
-        let payload_end = dec.position();
-        let raw = source
-            .get(payload_start..payload_end)
-            .ok_or_else(|| DecoderError("GovAction: payload byte range out of bounds".to_string()))?
-            .to_vec();
-        match tag {
-            0 => Ok(Self::ParameterChange(raw)),
-            other => Err(DecoderError(format!(
-                "GovAction: unknown variant tag {other}"
-            ))),
-        }
+        Err(DecoderError(format!(
+            "GovAction: unknown variant tag {tag}"
+        )))
     }
 }
 
@@ -3429,8 +3510,25 @@ impl fmt::Display for GovAction {
                 }
                 write!(f, "]) ({threshold})")
             }
-            Self::ParameterChange(b) => {
-                write!(f, "ParameterChange <raw-cbor {} bytes>", b.len())
+            Self::ParameterChange {
+                prev,
+                pparams_update,
+                guardrail,
+            } => {
+                let prev_render = match prev {
+                    None => "SNothing".to_string(),
+                    Some(gaid) => {
+                        format!("SJust (GovPurposeId {{unGovPurposeId = {gaid}}})")
+                    }
+                };
+                let guardrail_render = match guardrail {
+                    None => "SNothing".to_string(),
+                    Some(hash) => format!("SJust (ScriptHash \"{}\")", hex::encode(hash)),
+                };
+                write!(
+                    f,
+                    "ParameterChange ({prev_render}) ({pparams_update}) ({guardrail_render})"
+                )
             }
         }
     }
@@ -12000,6 +12098,43 @@ mod tests {
             f.to_string(),
             "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
         );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_malformed_proposal_parameter_change() {
+        // MalformedProposal carrying a GovAction ParameterChange
+        // — `[0, SNothing, PParamsUpdate{2 params}, SNothing]`.
+        let mut cbor = vec![0x82_u8, 0x01, 0x84, 0x00, 0xF6];
+        // PParamsUpdate map(2): {0: 100, 1: 200}
+        cbor.push(0xA2);
+        cbor.push(0x00); // param id 0
+        cbor.extend_from_slice(&[0x18, 0x64]); // value 100
+        cbor.push(0x01); // param id 1
+        cbor.extend_from_slice(&[0x18, 0xC8]); // value 200
+        cbor.push(0xF6); // guardrail = null → SNothing
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::ParameterChange {
+            prev,
+            pparams_update,
+            guardrail,
+        }) = &f
+        {
+            assert!(prev.is_none());
+            assert_eq!(pparams_update.updates.len(), 2);
+            assert_eq!(pparams_update.updates[0].0, 0);
+            assert_eq!(pparams_update.updates[1].0, 1);
+            assert!(guardrail.is_none());
+        } else {
+            panic!("expected MalformedProposal ParameterChange, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "MalformedProposal (ParameterChange (SNothing) (PParamsUpdate (fromList [(0,"
+            ),
+            "got: {s}"
+        );
+        assert!(s.ends_with("])) (SNothing))"), "got: {s}");
     }
 
     #[test]
