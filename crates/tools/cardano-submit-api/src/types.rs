@@ -3615,6 +3615,61 @@ impl fmt::Display for NonEmptySetCredential {
     }
 }
 
+/// Non-empty list of credentials mirroring upstream `NonEmpty
+/// (Credential r)` (`Data.List.NonEmpty`). Unlike
+/// [`NonEmptySetCredential`], this preserves wire order and
+/// permits duplicates — the CBOR wire format is a plain CBOR
+/// array (no tag-258 prefix). Empty arrays reject at decode
+/// time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyCredential {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<Credential>,
+}
+
+impl NonEmptyCredential {
+    /// Decode a `NonEmpty (Credential r)` from canonical CBOR
+    /// bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!("NonEmptyCredential: expected CBOR array: {err:?}"))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyCredential: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(Credential::from_decoder(&mut dec)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyCredential {
+    /// Render upstream `Show (NonEmpty a)`: `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyCredential enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for c in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{c}")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Non-empty list of transaction outputs mirroring upstream
 /// `NonEmpty (TxOut era)`. CBOR wire format is a regular CBOR
 /// array with ≥1 entry. NonEmpty invariant enforced at decode time.
@@ -7397,8 +7452,8 @@ pub enum ConwayGovPredFailure {
     /// — `NonEmpty AccountAddress` (R644 typed).
     TreasuryWithdrawalReturnAccountsDoNotExist(NonEmptyAccountAddress),
     /// Tag 18: votes by unelected committee members —
-    /// `NonEmpty (Credential HotCommitteeRole)`. Raw.
-    UnelectedCommitteeVoters(Vec<u8>),
+    /// `NonEmpty (Credential HotCommitteeRole)` (R649 typed).
+    UnelectedCommitteeVoters(NonEmptyCredential),
 }
 
 impl ConwayGovPredFailure {
@@ -7674,10 +7729,19 @@ impl ConwayGovPredFailure {
                     NonEmptyAccountAddress::from_cbor(payload_bytes)?,
                 ))
             }
-            18 => Ok(Self::UnelectedCommitteeVoters(capture_raw(
-                "UnelectedCommitteeVoters",
-                2,
-            )?)),
+            18 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "UnelectedCommitteeVoters: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::UnelectedCommitteeVoters(
+                    NonEmptyCredential::from_cbor(payload_bytes)?,
+                ))
+            }
             other => Err(DecoderError(format!(
                 "ConwayGovPredFailure: unknown variant tag {other}"
             ))),
@@ -7710,9 +7774,11 @@ impl fmt::Display for ConwayGovPredFailure {
             | Self::InvalidPrevGovActionId(b)
             | Self::ProposalCantFollow(b)
             | Self::DisallowedProposalDuringBootstrap(b)
-            | Self::ZeroTreasuryWithdrawals(b)
-            | Self::UnelectedCommitteeVoters(b) => {
+            | Self::ZeroTreasuryWithdrawals(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::UnelectedCommitteeVoters(creds) => {
+                write!(f, "UnelectedCommitteeVoters ({creds})")
             }
             Self::DisallowedVoters(pairs) => {
                 write!(f, "DisallowedVoters ({pairs})")
@@ -9133,6 +9199,40 @@ mod tests {
     #[test]
     fn conway_gov_pred_failure_voters_do_not_exist_rejects_empty() {
         let cbor = [0x82_u8, 0x0E, 0x80];
+        let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_unelected_committee_voters_tag18() {
+        // outer [0x82, 0x12, NonEmpty [Credential]]. NonEmpty
+        // array(1) of Credential [0, bytes(28)] (KeyHashObj).
+        let mut cbor = vec![0x82_u8, 0x12, 0x81, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x8C_u8; 28]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("UnelectedCommitteeVoters");
+        if let ConwayGovPredFailure::UnelectedCommitteeVoters(creds) = &f {
+            assert_eq!(creds.entries.len(), 1);
+            assert!(matches!(creds.entries[0], Credential::KeyHashObj(_)));
+        } else {
+            panic!("expected UnelectedCommitteeVoters, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("UnelectedCommitteeVoters (KeyHashObj (KeyHash {unKeyHash = \"8c8c"),
+            "got: {f}"
+        );
+        assert!(f.to_string().ends_with(":| [])"), "got: {f}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_unelected_committee_voters_rejects_empty() {
+        let cbor = [0x82_u8, 0x12, 0x80];
         let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
         assert!(
             err.to_string()
