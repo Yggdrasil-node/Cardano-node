@@ -26,6 +26,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 pub mod configuration;
+pub mod diffusion;
 pub mod node_to_client;
 pub mod node_to_node;
 pub mod parser;
