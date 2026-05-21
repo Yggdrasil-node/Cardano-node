@@ -302,9 +302,15 @@ one extraction):
     threshold }` added to `has_analysis.rs`, mirroring upstream
     `Block/Cardano.hs::Args (CardanoBlock StandardCrypto)`. The real
     config-args type the parser flag (slice 2) populates.
-  - **Slice 2 — `db-analyser --config PATH` parser flag.** Add the
-    flag + `DBAnalyserConfig` field, populating `CardanoBlockArgs`,
-    mirroring upstream `app/DBAnalyser/Parsers.hs::parseConfigFile`.
+  - ✅ **Slice 2** (round 711) — `--config PATH` + `--threshold FLOAT`
+    parser flags. `parser::parse_cmd_line` mirrors upstream
+    `parseCmdLine :: Parser (DBAnalyserConfig, CardanoBlockArgs)`,
+    producing an `Option<CardanoBlockArgs>`. `--config` is kept
+    optional (yggdrasil divergence — upstream's `parseConfigFile`
+    is a required `strOption`; yggdrasil's unified-`Block`
+    block-iteration analyses decode without protocol info, the
+    R475-R481 carve-out). `--threshold` without `--config` is a
+    `ParseError::ThresholdWithoutConfig`.
   - **Slice 3 — `CardanoConfig` mirror + config→genesis-bundle
     loading.** Port `Cardano.Node.Types::CardanoConfig` (per-era
     genesis paths + `AdjustFilePaths`) — R710 verified no such

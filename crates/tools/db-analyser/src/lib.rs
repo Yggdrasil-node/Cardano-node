@@ -46,8 +46,11 @@ pub fn run_main() -> ExitCode {
     // yggdrasil-node. Idempotent: a second call is a no-op.
     let _ = yggdrasil_telemetry::init_subscriber(&yggdrasil_telemetry::TracingConfig::default());
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let config = match parser::parse_args(&argv) {
-        Ok(config) => config,
+    // `_cardano_args` carries the parsed `--config` / `--threshold`
+    // surface; the genesis-seeded ledger bootstrap that consumes it is
+    // genesis-bootstrap arc slices 3-4.
+    let (config, _cardano_args) = match parser::parse_cmd_line(&argv) {
+        Ok(parsed) => parsed,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
             return ExitCode::SUCCESS;

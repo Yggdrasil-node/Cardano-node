@@ -21,6 +21,9 @@
 //! - `--db-validation {validate-all-blocks,minimum-block-validation}`.
 //! - `--num-blocks-to-process INT` — cap on processed blocks. Default
 //!   [`Limit::Unlimited`].
+//! - `--config PATH` — node `config.json`, populating [`CardanoBlockArgs`].
+//! - `--threshold FLOAT` — Byron PBFT signature threshold (only valid
+//!   together with `--config`).
 //!
 //! LedgerDB backend (mutually exclusive; one required):
 //!
@@ -45,15 +48,16 @@
 //! - `--get-block-application-metrics N [--out-file PATH]`
 //!   → GetBlockApplicationMetrics
 //!
-//! Carve-outs (NOT ported, by design):
-//!
-//! - **`parseCardanoArgs` / `CardanoBlockArgs`** — upstream's
-//!   era-aware Byron/Shelley/Cardano block-construction args; the
-//!   Rust port defers these until yggdrasil-ledger's era surface is
-//!   exposed at crate boundaries (per the R351 typed-config carve-
-//!   out). The current parser ignores any era-specific flags from
-//!   upstream's `parseCardanoArgs`; the deeper round wires them in
-//!   alongside the per-era HasAnalysis dispatch.
+//! `parseCardanoArgs` / `CardanoBlockArgs` (genesis-bootstrap arc,
+//! slice 2): [`parse_cmd_line`] mirrors upstream
+//! `parseCmdLine :: Parser (DBAnalyserConfig, CardanoBlockArgs)` — the
+//! `--config` / `--threshold` flags populate a [`CardanoBlockArgs`].
+//! Upstream makes `--config` a required `strOption`; yggdrasil keeps it
+//! **optional** because `db-analyser` operates on the unified
+//! [`yggdrasil_ledger::Block`], whose block-iteration analyses decode
+//! without protocol info (the R475-R481 carve-out). The genesis-seeded
+//! ledger bootstrap that *does* need it (the 6 ledger-applying analyses)
+//! lands in genesis-bootstrap arc slices 3-4.
 //!
 //! `--help` / `--version` text is byte-equivalent to the upstream
 //! `db-analyser` binary; fixtures captured at R335 live at
@@ -63,6 +67,7 @@ use std::path::PathBuf;
 
 use yggdrasil_ledger::SlotNo;
 
+use crate::has_analysis::CardanoBlockArgs;
 use crate::types::{
     AnalysisName, DBAnalyserConfig, LedgerApplicationMode, LedgerDBBackend, Limit, NumberOfBlocks,
     SelectDB, ValidateBlocks, WithOrigin,
@@ -74,9 +79,13 @@ pub const HELP_TEXT: &str = include_str!("../tests/fixtures/upstream-help.txt");
 /// Byte-for-byte mirror of upstream `db-analyser --version` (captured at R335).
 pub const VERSION_TEXT: &str = include_str!("../tests/fixtures/upstream-version.txt");
 
-/// Parsed command-line arguments — mirror of upstream's
-/// `(DBAnalyserConfig, CardanoBlockArgs)` pair, with the
-/// `CardanoBlockArgs` half carved out (see strict-mirror docstring).
+/// Parsed [`DBAnalyserConfig`] half of the command line.
+///
+/// The full upstream `parseCmdLine` result is the
+/// `(DBAnalyserConfig, CardanoBlockArgs)` pair — see [`parse_cmd_line`].
+/// This alias is the return of the [`parse_args`] convenience that drops
+/// the `CardanoBlockArgs` half (every analysis that does not need a
+/// genesis-seeded ledger state).
 pub type Args = DBAnalyserConfig;
 
 /// Errors from CLI argument parsing.
@@ -114,6 +123,11 @@ pub enum ParseError {
     /// A flag's value failed to parse.
     #[error("flag `{0}' has invalid value: {1}")]
     InvalidValue(String, String),
+    /// `--threshold` was supplied without `--config`. The PBFT signature
+    /// threshold is only meaningful as part of a [`CardanoBlockArgs`],
+    /// which exists only when `--config` is given.
+    #[error("flag `--threshold' requires `--config'")]
+    ThresholdWithoutConfig,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -127,6 +141,9 @@ struct RawArgs {
     backend_lsm: bool,
     out_file: Option<PathBuf>,
     full_ledger_validation: bool,
+    // Cardano-block args (upstream `parseCardanoArgs`)
+    config: Option<PathBuf>,
+    threshold: Option<f64>,
     // Analysis-name flags (mutually exclusive)
     show_slot_block_no: bool,
     count_tx_outputs: bool,
@@ -142,9 +159,17 @@ struct RawArgs {
     get_block_application_metrics: Option<u64>,
 }
 
-/// Parse a slice of command-line arguments into [`DBAnalyserConfig`].
-/// Mirror of upstream `parseDBAnalyserConfig`.
-pub fn parse_args<I, S>(args: I) -> Result<Args, ParseError>
+/// Parse a slice of command-line arguments into the
+/// `(DBAnalyserConfig, CardanoBlockArgs)` pair.
+///
+/// Mirror of upstream
+/// `parseCmdLine = (,) <$> parseDBAnalyserConfig <*> parseCardanoArgs`.
+/// The [`CardanoBlockArgs`] half is `Some` iff `--config` was supplied
+/// (see the module docstring for why yggdrasil keeps `--config`
+/// optional where upstream requires it).
+pub fn parse_cmd_line<I, S>(
+    args: I,
+) -> Result<(DBAnalyserConfig, Option<CardanoBlockArgs>), ParseError>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -185,6 +210,14 @@ where
                 raw.out_file = Some(PathBuf::from(v));
             }
             "--full-ledger-validation" => raw.full_ledger_validation = true,
+            "--config" => {
+                let v = take_value(&mut iter, &arg)?;
+                raw.config = Some(PathBuf::from(v));
+            }
+            "--threshold" => {
+                let v = take_value(&mut iter, &arg)?;
+                raw.threshold = Some(parse_f64(&arg, &v)?);
+            }
             "--show-slot-block-no" => raw.show_slot_block_no = true,
             "--count-tx-outputs" => raw.count_tx_outputs = true,
             "--show-block-header-size" => raw.show_block_header_size = true,
@@ -213,7 +246,40 @@ where
         }
     }
 
-    promote(raw)
+    let cardano = promote_cardano(&raw)?;
+    let config = promote(raw)?;
+    Ok((config, cardano))
+}
+
+/// Parse a slice of command-line arguments into [`DBAnalyserConfig`],
+/// dropping the [`CardanoBlockArgs`] half.
+///
+/// Mirror of upstream `parseDBAnalyserConfig`; a convenience over
+/// [`parse_cmd_line`] for the analyses that do not need a genesis-seeded
+/// ledger state.
+pub fn parse_args<I, S>(args: I) -> Result<Args, ParseError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    parse_cmd_line(args).map(|(config, _cardano)| config)
+}
+
+/// Build the [`CardanoBlockArgs`] half from the raw flags.
+///
+/// Mirror of upstream `parseCardanoArgs = CardanoBlockArgs <$>
+/// parseConfigFile <*> parsePBftSignatureThreshold`. `--threshold`
+/// without `--config` is rejected — the threshold has no
+/// [`CardanoBlockArgs`] to belong to.
+fn promote_cardano(raw: &RawArgs) -> Result<Option<CardanoBlockArgs>, ParseError> {
+    match (&raw.config, raw.threshold) {
+        (Some(config_file), threshold) => Ok(Some(CardanoBlockArgs {
+            config_file: config_file.clone(),
+            threshold,
+        })),
+        (None, Some(_)) => Err(ParseError::ThresholdWithoutConfig),
+        (None, None) => Ok(None),
+    }
 }
 
 fn promote(mut raw: RawArgs) -> Result<Args, ParseError> {
@@ -334,6 +400,12 @@ fn parse_u64(flag: &str, value: &str) -> Result<u64, ParseError> {
 
 fn parse_i64(flag: &str, value: &str) -> Result<i64, ParseError> {
     value.parse().map_err(|e: std::num::ParseIntError| {
+        ParseError::InvalidValue(flag.to_string(), e.to_string())
+    })
+}
+
+fn parse_f64(flag: &str, value: &str) -> Result<f64, ParseError> {
+    value.parse().map_err(|e: std::num::ParseFloatError| {
         ParseError::InvalidValue(flag.to_string(), e.to_string())
     })
 }
@@ -667,6 +739,91 @@ mod tests {
     fn invalid_slot_value_rejected() {
         let args = parse_args(["--db", "/db", "--in-mem", "--analyse-from", "abc"]);
         assert!(matches!(args, Err(ParseError::InvalidValue(_, _))));
+    }
+
+    #[test]
+    fn parse_cmd_line_without_config_yields_no_cardano_args() {
+        let (config, cardano) = parse_cmd_line(minimal()).expect("parses");
+        assert_eq!(config.db_dir.to_str(), Some("/var/lib/db"));
+        assert_eq!(cardano, None);
+    }
+
+    #[test]
+    fn parse_cmd_line_with_config_yields_cardano_args() {
+        let (_config, cardano) = parse_cmd_line([
+            "--db",
+            "/db",
+            "--in-mem",
+            "--count-blocks",
+            "--config",
+            "/etc/cardano/config.json",
+        ])
+        .expect("parses");
+        assert_eq!(
+            cardano,
+            Some(CardanoBlockArgs {
+                config_file: PathBuf::from("/etc/cardano/config.json"),
+                threshold: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_cmd_line_with_config_and_threshold() {
+        let (_config, cardano) = parse_cmd_line([
+            "--db",
+            "/db",
+            "--in-mem",
+            "--count-blocks",
+            "--config",
+            "config.json",
+            "--threshold",
+            "0.22",
+        ])
+        .expect("parses");
+        assert_eq!(
+            cardano,
+            Some(CardanoBlockArgs {
+                config_file: PathBuf::from("config.json"),
+                threshold: Some(0.22),
+            })
+        );
+    }
+
+    #[test]
+    fn threshold_without_config_rejected() {
+        let parsed = parse_cmd_line(["--db", "/db", "--in-mem", "--threshold", "0.5"]);
+        assert_eq!(parsed, Err(ParseError::ThresholdWithoutConfig));
+    }
+
+    #[test]
+    fn invalid_threshold_value_rejected() {
+        let parsed = parse_cmd_line([
+            "--db",
+            "/db",
+            "--in-mem",
+            "--config",
+            "c.json",
+            "--threshold",
+            "not-a-float",
+        ]);
+        assert!(matches!(parsed, Err(ParseError::InvalidValue(_, _))));
+    }
+
+    #[test]
+    fn parse_args_drops_cardano_args_half() {
+        // The `parse_args` convenience accepts `--config` (so it is not
+        // an unknown flag) but returns only the `DBAnalyserConfig`.
+        let config = parse_args([
+            "--db",
+            "/db",
+            "--in-mem",
+            "--count-blocks",
+            "--config",
+            "c.json",
+        ])
+        .expect("parses");
+        assert_eq!(config.db_dir.to_str(), Some("/db"));
     }
 
     #[test]
