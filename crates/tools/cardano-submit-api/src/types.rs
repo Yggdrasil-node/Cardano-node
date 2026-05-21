@@ -4407,9 +4407,9 @@ pub enum ConwayCertsPredFailure {
     /// Only emitted at protocol-version < 11 per upstream
     /// comment.
     WithdrawalsNotInRewardsCERTS(Withdrawals),
-    /// Tag 1: nested CERT sub-rule failure (raw pending
-    /// ConwayCertPredFailure decoder).
-    CertFailure(Vec<u8>),
+    /// Tag 1: nested CERT sub-rule failure (R627 wired to typed
+    /// `ConwayCertPredFailure`).
+    CertFailure(ConwayCertPredFailure),
 }
 
 impl ConwayCertsPredFailure {
@@ -4459,7 +4459,10 @@ impl ConwayCertsPredFailure {
                 })?;
                 Ok(Self::WithdrawalsNotInRewardsCERTS(w))
             }
-            1 => Ok(Self::CertFailure(payload_bytes.to_vec())),
+            1 => {
+                let cert = ConwayCertPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::CertFailure(cert))
+            }
             other => Err(DecoderError(format!(
                 "ConwayCertsPredFailure: unknown variant tag {other}"
             ))),
@@ -4478,7 +4481,100 @@ impl fmt::Display for ConwayCertsPredFailure {
                 write!(f, "WithdrawalsNotInRewardsCERTS ({w})")
             }
             Self::CertFailure(b) => {
-                write!(f, "CertFailure <raw-cbor {} bytes>", b.len())
+                write!(f, "CertFailure ({b})")
+            }
+        }
+    }
+}
+
+/// `ConwayCertPredFailure` mirror — Conway-era CERT sub-rule
+/// failure (nested under `ConwayCertsPredFailure::CertFailure`).
+///
+/// Upstream: `data ConwayCertPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Cert` with 3 variants encoded
+/// via CBOR `Sum` tags 1/2/3 (upstream skips tag 0). Dispatches
+/// into DELEG / POOL / GOVCERT sub-rules.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayCertPredFailure {
+    /// Tag 1: nested DELEG failure (raw, pending
+    /// `ConwayDelegPredFailure` decoder).
+    DelegFailure(Vec<u8>),
+    /// Tag 2: nested POOL failure (R627 wired to typed
+    /// `ShelleyPoolPredFailure` — upstream reuses Shelley's POOL
+    /// type at the Conway era).
+    PoolFailure(ShelleyPoolPredFailure),
+    /// Tag 3: nested GOVCERT failure (raw, pending
+    /// `ConwayGovCertPredFailure` decoder).
+    GovCertFailure(Vec<u8>),
+}
+
+impl ConwayCertPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::DelegFailure(_) => 1,
+            Self::PoolFailure(_) => 2,
+            Self::GovCertFailure(_) => 3,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::DelegFailure(_) => "DelegFailure",
+            Self::PoolFailure(_) => "PoolFailure",
+            Self::GovCertFailure(_) => "GovCertFailure",
+        }
+    }
+
+    /// Decode the full `ConwayCertPredFailure` outer envelope.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayCertPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ConwayCertPredFailure: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayCertPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload_offset = dec.position();
+        let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+            DecoderError("ConwayCertPredFailure: payload offset out of bounds".to_string())
+        })?;
+        match tag {
+            1 => Ok(Self::DelegFailure(payload_bytes.to_vec())),
+            2 => {
+                let pool = ShelleyPoolPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::PoolFailure(pool))
+            }
+            3 => Ok(Self::GovCertFailure(payload_bytes.to_vec())),
+            other => Err(DecoderError(format!(
+                "ConwayCertPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayCertPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayCertPredFailure era)`. Tag 2 routes through typed
+    /// `ShelleyPoolPredFailure`; tags 1/3 emit raw-cbor markers
+    /// pending typed DELEG / GOVCERT decoders.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DelegFailure(b) => write!(f, "DelegFailure <raw-cbor {} bytes>", b.len()),
+            Self::PoolFailure(pool) => write!(f, "PoolFailure ({pool})"),
+            Self::GovCertFailure(b) => {
+                write!(f, "GovCertFailure <raw-cbor {} bytes>", b.len())
             }
         }
     }
@@ -5844,13 +5940,22 @@ mod tests {
 
     #[test]
     fn conway_certs_pred_failure_cert_failure_tag1() {
-        let cbor = [0x82_u8, 0x01, 0x40];
+        // CERTS tag 1 with inner ConwayCertPredFailure tag 1
+        // (DelegFailure raw). Outer: [0x82, 0x01, inner]; inner:
+        // [0x82, 0x01, empty-bytes].
+        let cbor = [0x82_u8, 0x01, 0x82, 0x01, 0x40];
         let f = ConwayCertsPredFailure::from_cbor(&cbor).expect("CertFailure");
-        assert!(matches!(f, ConwayCertsPredFailure::CertFailure(_)));
+        if let ConwayCertsPredFailure::CertFailure(cert) = &f {
+            assert_eq!(cert.tag(), 1);
+            assert!(matches!(cert, ConwayCertPredFailure::DelegFailure(_)));
+        } else {
+            panic!("expected typed CertFailure, got {f:?}");
+        }
         assert_eq!(f.tag(), 1);
         assert_eq!(f.constructor(), "CertFailure");
         assert!(
-            f.to_string().starts_with("CertFailure <raw-cbor"),
+            f.to_string()
+                .starts_with("CertFailure (DelegFailure <raw-cbor"),
             "got: {f}"
         );
     }
@@ -5927,6 +6032,54 @@ mod tests {
         let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
         assert!(
             err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_cert_pred_failure_pool_failure_decodes_tag2() {
+        // outer [0x82, 0x02, inner-POOL]; inner-POOL = [0x82,
+        // 0x00, bytes(28)] for tag-0 StakePoolNotRegisteredOnKey
+        let mut cbor = vec![0x82_u8, 0x02, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x12_u8; 28]);
+        let f = ConwayCertPredFailure::from_cbor(&cbor).expect("PoolFailure");
+        if let ConwayCertPredFailure::PoolFailure(pool) = &f {
+            assert_eq!(pool.tag(), 0);
+        } else {
+            panic!("expected typed PoolFailure, got {f:?}");
+        }
+        assert_eq!(f.tag(), 2);
+        assert_eq!(f.constructor(), "PoolFailure");
+        assert!(
+            f.to_string()
+                .starts_with("PoolFailure (StakePoolNotRegisteredOnKeyPOOL (KeyHash"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_cert_pred_failure_deleg_failure_raw_routing_tag1() {
+        let cbor = [0x82_u8, 0x01, 0x40];
+        let f = ConwayCertPredFailure::from_cbor(&cbor).expect("DelegFailure");
+        assert!(matches!(f, ConwayCertPredFailure::DelegFailure(_)));
+        assert_eq!(f.tag(), 1);
+        assert_eq!(f.constructor(), "DelegFailure");
+        assert!(
+            f.to_string().starts_with("DelegFailure <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_cert_pred_failure_unknown_tag_rejects() {
+        // Tag 0 not used by upstream (CERT tags start at 1) — must
+        // reject.
+        let cbor = vec![0x82_u8, 0x00, 0x40];
+        let err = ConwayCertPredFailure::from_cbor(&cbor).expect_err("tag 0 must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 0"),
             "got: {err}"
         );
     }

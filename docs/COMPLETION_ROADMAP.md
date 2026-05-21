@@ -718,6 +718,17 @@ StrictMaybe). **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).
+R627 (2026-05-21) added the `ConwayCertPredFailure` 3-variant
+scaffold (CERT sub-rule, tags 1/2/3 — upstream skips tag 0). Tag
+2 (PoolFailure) reuses the existing typed
+`ShelleyPoolPredFailure` directly since upstream's Conway-era
+CERT continues to use Shelley's POOL type unchanged. Tags 1/3
+(DelegFailure / GovCertFailure) keep raw payloads pending
+ConwayDelegPredFailure and ConwayGovCertPredFailure decoders.
+Wired `ConwayCertsPredFailure::CertFailure(Vec<u8>)` →
+`CertFailure(ConwayCertPredFailure)` so the Conway LEDGER →
+CERTS → CERT → POOL chain now renders typed end-to-end through
+the POOL leaf.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
