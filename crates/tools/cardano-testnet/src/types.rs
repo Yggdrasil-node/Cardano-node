@@ -90,15 +90,41 @@ impl AsRef<std::path::Path> for InputNodeConfigFile {
 /// Whether the testnet harness should rewrite genesis-file timestamps
 /// during `create-env` to make them current.
 ///
-/// Upstream: `data UpdateTimestamps = UpdateTimestamps | DontUpdateTimestamps`.
+/// Upstream: `data UpdateTimestamps = UpdateTimestamps | DontUpdateTimestamps`,
+/// with `instance Default UpdateTimestamps where def = DontUpdateTimestamps`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
 pub enum UpdateTimestamps {
-    /// Rewrite timestamps (default).
-    #[default]
+    /// Rewrite timestamps.
     UpdateTimestamps,
-    /// Leave timestamps as-is (operator chose to bring their own).
+    /// Leave timestamps as-is — the upstream `Default`.
+    #[default]
     DontUpdateTimestamps,
 }
+
+/// The on-chain protocol parameters a freshly-created testnet starts
+/// with.
+///
+/// Upstream: `data TestnetOnChainParams` (`Testnet/Start/Types.hs`),
+/// with `instance Default TestnetOnChainParams where def = DefaultParams`.
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub enum TestnetOnChainParams {
+    /// The testnet's built-in default parameters (the upstream `Default`).
+    #[default]
+    DefaultParams,
+    /// Parameters from a JSON file in the Blockfrost
+    /// `epochs/latest/parameters` shape.
+    OnChainParamsFile(PathBuf),
+    /// Current mainnet on-chain parameters (fetched at runtime from
+    /// [`MAINNET_PARAMS_URL`]).
+    OnChainParamsMainnet,
+}
+
+/// The URL of the up-to-date mainnet on-chain-parameters file
+/// (Blockfrost format), used by
+/// [`TestnetOnChainParams::OnChainParamsMainnet`].
+///
+/// Mirror of the target of upstream `mainnetParamsRequest`.
+pub const MAINNET_PARAMS_URL: &str = "https://raw.githubusercontent.com/input-output-hk/cardano-parameters/refs/heads/main/mainnet/parameters.json";
 
 /// RPC server toggle — whether to start a JSON-RPC server alongside
 /// the testnet nodes.
@@ -242,11 +268,40 @@ mod tests {
     }
 
     #[test]
-    fn update_timestamps_default_is_update() {
+    fn update_timestamps_default_matches_upstream() {
+        // Upstream `instance Default UpdateTimestamps where
+        // def = DontUpdateTimestamps`.
         assert_eq!(
             UpdateTimestamps::default(),
-            UpdateTimestamps::UpdateTimestamps
+            UpdateTimestamps::DontUpdateTimestamps
         );
+    }
+
+    #[test]
+    fn testnet_on_chain_params_default_matches_upstream() {
+        // Upstream `instance Default TestnetOnChainParams where
+        // def = DefaultParams`.
+        assert_eq!(
+            TestnetOnChainParams::default(),
+            TestnetOnChainParams::DefaultParams
+        );
+    }
+
+    #[test]
+    fn testnet_on_chain_params_file_carries_path() {
+        let p = TestnetOnChainParams::OnChainParamsFile(PathBuf::from("/tmp/params.json"));
+        match p {
+            TestnetOnChainParams::OnChainParamsFile(path) => {
+                assert_eq!(path.to_str(), Some("/tmp/params.json"));
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn mainnet_params_url_is_the_blockfrost_file() {
+        assert!(MAINNET_PARAMS_URL.starts_with("https://"));
+        assert!(MAINNET_PARAMS_URL.ends_with("parameters.json"));
     }
 
     #[test]
