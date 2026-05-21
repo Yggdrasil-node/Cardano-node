@@ -40,7 +40,15 @@ pub struct NumReq(pub u16);
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct NumUnacknowledged(pub u16);
 
-use crate::protocol::sig_submission::{Sig, SigId, SigIdAndSize};
+use crate::protocol::sig_submission::{
+    Sig, SigId, SigIdAndSize, decode_sig, decode_sig_id, encode_sig, encode_sig_id,
+};
+use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+
+/// Anti-DoS pre-allocation cap for `SigSubmissionV2` indefinite-length
+/// list decoding.
+const SIG_SUBMISSION_V2_LIST_MAX: usize = 4_096;
 
 /// States of the `SigSubmissionV2` mini-protocol state machine.
 ///
@@ -120,6 +128,155 @@ impl SigSubmissionV2Message {
             SigSubmissionV2Message::MsgDone => "MsgDone",
         }
     }
+
+    /// The CBOR message-envelope tag (`encodeSigSubmissionV2`'s
+    /// `encodeWord` key).
+    pub fn wire_tag(&self) -> u8 {
+        match self {
+            SigSubmissionV2Message::MsgRequestSigIds { .. } => 1,
+            SigSubmissionV2Message::MsgReplySigIds { .. } => 2,
+            SigSubmissionV2Message::MsgReplyNoSigIds => 3,
+            SigSubmissionV2Message::MsgRequestSigs { .. } => 4,
+            SigSubmissionV2Message::MsgReplySigs { .. } => 5,
+            SigSubmissionV2Message::MsgDone => 6,
+        }
+    }
+
+    /// Encode this message to CBOR.
+    ///
+    /// Wire format — mirror of upstream `encodeSigSubmissionV2`:
+    /// - `MsgRequestSigIds` is `[1, blocking, ack, req]`
+    /// - `MsgReplySigIds` is `[2, <indef [[sigId, size]]>]`
+    /// - `MsgReplyNoSigIds` is `[3]`
+    /// - `MsgRequestSigs` is `[4, <indef [sigId]>]`
+    /// - `MsgReplySigs` is `[5, <indef [sig]>]`
+    /// - `MsgDone` is `[6]`
+    ///
+    /// The lists are CBOR *indefinite*-length arrays.
+    pub fn to_cbor(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        match self {
+            SigSubmissionV2Message::MsgRequestSigIds { blocking, ack, req } => {
+                enc.array(4)
+                    .unsigned(1)
+                    .bool(*blocking)
+                    .unsigned(u64::from(ack.0))
+                    .unsigned(u64::from(req.0));
+            }
+            SigSubmissionV2Message::MsgReplySigIds { ids } => {
+                enc.array(2).unsigned(2);
+                enc.array_indef();
+                for item in ids {
+                    enc.array(2);
+                    encode_sig_id(&item.sig_id, &mut enc);
+                    enc.unsigned(u64::from(item.size));
+                }
+                enc.break_stop();
+            }
+            SigSubmissionV2Message::MsgReplyNoSigIds => {
+                enc.array(1).unsigned(3);
+            }
+            SigSubmissionV2Message::MsgRequestSigs { ids } => {
+                enc.array(2).unsigned(4);
+                enc.array_indef();
+                for id in ids {
+                    encode_sig_id(id, &mut enc);
+                }
+                enc.break_stop();
+            }
+            SigSubmissionV2Message::MsgReplySigs { sigs } => {
+                enc.array(2).unsigned(5);
+                enc.array_indef();
+                for sig in sigs {
+                    encode_sig(sig, &mut enc);
+                }
+                enc.break_stop();
+            }
+            SigSubmissionV2Message::MsgDone => {
+                enc.array(1).unsigned(6);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes.
+    ///
+    /// Inverse of [`Self::to_cbor`]. The blocking / non-blocking
+    /// distinction of `MsgReplySigIds` is a protocol-state property
+    /// (enforced by [`SigSubmissionV2State::transition`]); the decoded
+    /// message simply carries the identifier list.
+    pub fn from_cbor(data: &[u8]) -> Result<SigSubmissionV2Message, LedgerError> {
+        let mut dec = Decoder::new(data);
+        let len = dec.array()?;
+        let tag = dec.unsigned()?;
+        let msg = match (tag, len) {
+            (1, 4) => SigSubmissionV2Message::MsgRequestSigIds {
+                blocking: dec.bool()?,
+                ack: NumIdsAck(dec.unsigned()? as u16),
+                req: NumIdsReq(dec.unsigned()? as u16),
+            },
+            (2, 2) => SigSubmissionV2Message::MsgReplySigIds {
+                ids: decode_indef(&mut dec, |d| {
+                    let pair = d.array()?;
+                    if pair != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: pair as usize,
+                        });
+                    }
+                    let sig_id = decode_sig_id(d)?;
+                    let size = d.unsigned()? as u32;
+                    Ok(SigIdAndSize { sig_id, size })
+                })?,
+            },
+            (3, 1) => SigSubmissionV2Message::MsgReplyNoSigIds,
+            (4, 2) => SigSubmissionV2Message::MsgRequestSigs {
+                ids: decode_indef(&mut dec, decode_sig_id)?,
+            },
+            (5, 2) => SigSubmissionV2Message::MsgReplySigs {
+                sigs: decode_indef(&mut dec, |d| {
+                    let raw = d.bytes_owned()?;
+                    decode_sig(&raw)
+                })?,
+            },
+            (6, 1) => SigSubmissionV2Message::MsgDone,
+            _ => {
+                return Err(LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: tag as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(LedgerError::CborTrailingBytes(dec.remaining()));
+        }
+        Ok(msg)
+    }
+}
+
+/// Decode a CBOR indefinite-length array, applying `item` to each
+/// element, with an anti-DoS element cap.
+fn decode_indef<T>(
+    dec: &mut Decoder,
+    mut item: impl FnMut(&mut Decoder) -> Result<T, LedgerError>,
+) -> Result<Vec<T>, LedgerError> {
+    if dec.array_begin()?.is_some() {
+        return Err(LedgerError::CborDecodeError(
+            "SigSubmissionV2: expected an indefinite-length array".to_string(),
+        ));
+    }
+    let mut items = Vec::new();
+    while !dec.is_break() {
+        if items.len() >= SIG_SUBMISSION_V2_LIST_MAX {
+            return Err(LedgerError::DecodedCountTooLarge {
+                count: items.len() as u64,
+                max: SIG_SUBMISSION_V2_LIST_MAX,
+            });
+        }
+        items.push(item(dec)?);
+    }
+    dec.consume_break()?;
+    Ok(items)
 }
 
 /// An illegal `SigSubmissionV2` state transition.
@@ -286,6 +443,51 @@ mod tests {
                 .transition(&SigSubmissionV2Message::MsgReplySigs { sigs: vec![] })
                 .is_err()
         );
+    }
+
+    #[test]
+    fn message_codec_round_trips() {
+        use crate::protocol::sig_submission::{SigHash, SigId};
+        let sig_id = SigId(SigHash(vec![0xAA, 0xBB]));
+        let messages = vec![
+            SigSubmissionV2Message::MsgRequestSigIds {
+                blocking: true,
+                ack: NumIdsAck(5),
+                req: NumIdsReq(33),
+            },
+            SigSubmissionV2Message::MsgReplySigIds {
+                ids: vec![SigIdAndSize {
+                    sig_id: sig_id.clone(),
+                    size: 2800,
+                }],
+            },
+            SigSubmissionV2Message::MsgReplyNoSigIds,
+            SigSubmissionV2Message::MsgRequestSigs {
+                ids: vec![sig_id.clone()],
+            },
+            SigSubmissionV2Message::MsgReplySigs { sigs: vec![] },
+            SigSubmissionV2Message::MsgDone,
+        ];
+        for msg in messages {
+            let encoded = msg.to_cbor();
+            let decoded = SigSubmissionV2Message::from_cbor(&encoded).expect("decodes");
+            assert_eq!(decoded, msg);
+        }
+    }
+
+    #[test]
+    fn message_envelope_bytes_and_unknown_tag() {
+        // `[3]` and `[6]` — a CBOR array of one unsigned integer.
+        assert_eq!(
+            SigSubmissionV2Message::MsgReplyNoSigIds.to_cbor(),
+            vec![0x81, 0x03]
+        );
+        assert_eq!(SigSubmissionV2Message::MsgDone.to_cbor(), vec![0x81, 0x06]);
+        // An unknown tag is rejected.
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(99);
+        let err = SigSubmissionV2Message::from_cbor(&enc.into_bytes()).expect_err("rejects");
+        assert!(matches!(err, LedgerError::CborTypeMismatch { .. }));
     }
 
     #[test]
