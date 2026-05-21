@@ -3095,8 +3095,20 @@ pub enum GovAction {
         /// The previous committee governance action, if any.
         prev: Option<GovActionId>,
     },
-    /// Tag 4: constitutional-committee update. Raw payload.
-    UpdateCommittee(Vec<u8>),
+    /// Tag 4: constitutional-committee update (R672 typed) —
+    /// `StrictMaybe GovPurposeId` + cold-credential remove-set +
+    /// add-map (`Credential → EpochNo`) + new quorum threshold.
+    UpdateCommittee {
+        /// The previous committee governance action, if any.
+        prev: Option<GovActionId>,
+        /// Committee cold credentials to remove.
+        remove: Vec<Credential>,
+        /// Committee cold credentials to add, with their term
+        /// expiry epoch.
+        add: Vec<(Credential, u64)>,
+        /// The new committee quorum threshold.
+        threshold: UnitInterval,
+    },
     /// Tag 5: new-constitution proposal (R671 typed) —
     /// `StrictMaybe (GovPurposeId 'ConstitutionPurpose)` + the
     /// proposed `Constitution`.
@@ -3118,7 +3130,7 @@ impl GovAction {
             Self::HardForkInitiation { .. } => 1,
             Self::TreasuryWithdrawals { .. } => 2,
             Self::NoConfidence { .. } => 3,
-            Self::UpdateCommittee(_) => 4,
+            Self::UpdateCommittee { .. } => 4,
             Self::NewConstitution { .. } => 5,
             Self::InfoAction => 6,
         }
@@ -3131,7 +3143,7 @@ impl GovAction {
             Self::HardForkInitiation { .. } => "HardForkInitiation",
             Self::TreasuryWithdrawals { .. } => "TreasuryWithdrawals",
             Self::NoConfidence { .. } => "NoConfidence",
-            Self::UpdateCommittee(_) => "UpdateCommittee",
+            Self::UpdateCommittee { .. } => "UpdateCommittee",
             Self::NewConstitution { .. } => "NewConstitution",
             Self::InfoAction => "InfoAction",
         }
@@ -3253,6 +3265,59 @@ impl GovAction {
             let constitution = Constitution::from_decoder(dec)?;
             return Ok(Self::NewConstitution { prev, constitution });
         }
+        if tag == 4 {
+            // UpdateCommittee — `[4, decodeNullStrictMaybe
+            // GovPurposeId, Set Credential, Map Credential
+            // EpochNo, UnitInterval]`.
+            if len != 5 {
+                return Err(DecoderError(format!(
+                    "UpdateCommittee: expected 5-element envelope, got len {len}"
+                )));
+            }
+            let prev =
+                decode_null_strict_maybe(dec, "UpdateCommittee prev", GovActionId::from_decoder)?;
+            // remove-set — optionally tag-258-wrapped credential
+            // array.
+            let remove_major = dec
+                .peek_major()
+                .map_err(|err| DecoderError(format!("UpdateCommittee: remove peek: {err:?}")))?;
+            if remove_major == 6 {
+                let set_tag = dec
+                    .tag()
+                    .map_err(|err| DecoderError(format!("UpdateCommittee: remove tag: {err:?}")))?;
+                if set_tag != 258 {
+                    return Err(DecoderError(format!(
+                        "UpdateCommittee: expected remove-set tag 258, got {set_tag}"
+                    )));
+                }
+            }
+            let remove_count = dec.array().map_err(|err| {
+                DecoderError(format!("UpdateCommittee: expected remove array: {err:?}"))
+            })?;
+            let mut remove = Vec::with_capacity(remove_count as usize);
+            for _ in 0..remove_count {
+                remove.push(Credential::from_decoder(dec)?);
+            }
+            // add-map — `Credential → EpochNo`.
+            let add_count = dec.map().map_err(|err| {
+                DecoderError(format!("UpdateCommittee: expected add map: {err:?}"))
+            })?;
+            let mut add = Vec::with_capacity(add_count as usize);
+            for _ in 0..add_count {
+                let cred = Credential::from_decoder(dec)?;
+                let epoch = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("UpdateCommittee: expected EpochNo: {err:?}"))
+                })?;
+                add.push((cred, epoch));
+            }
+            let threshold = UnitInterval::from_decoder(dec)?;
+            return Ok(Self::UpdateCommittee {
+                prev,
+                remove,
+                add,
+                threshold,
+            });
+        }
         // Skip the remaining payload elements to advance the
         // decoder, then capture them raw by byte range.
         let payload_start = dec.position();
@@ -3267,7 +3332,6 @@ impl GovAction {
             .to_vec();
         match tag {
             0 => Ok(Self::ParameterChange(raw)),
-            4 => Ok(Self::UpdateCommittee(raw)),
             other => Err(DecoderError(format!(
                 "GovAction: unknown variant tag {other}"
             ))),
@@ -3333,8 +3397,40 @@ impl fmt::Display for GovAction {
                 };
                 write!(f, "NewConstitution ({prev_render}) ({constitution})")
             }
-            Self::ParameterChange(b) | Self::UpdateCommittee(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::UpdateCommittee {
+                prev,
+                remove,
+                add,
+                threshold,
+            } => {
+                let prev_render = match prev {
+                    None => "SNothing".to_string(),
+                    Some(gaid) => {
+                        format!("SJust (GovPurposeId {{unGovPurposeId = {gaid}}})")
+                    }
+                };
+                write!(f, "UpdateCommittee ({prev_render}) (fromList [")?;
+                let mut first = true;
+                for cred in remove {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    write!(f, "{cred}")?;
+                }
+                f.write_str("]) (fromList [")?;
+                first = true;
+                for (cred, epoch) in add {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    write!(f, "({cred},EpochNo {epoch})")?;
+                }
+                write!(f, "]) ({threshold})")
+            }
+            Self::ParameterChange(b) => {
+                write!(f, "ParameterChange <raw-cbor {} bytes>", b.len())
             }
         }
     }
@@ -11904,6 +12000,54 @@ mod tests {
             f.to_string(),
             "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
         );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_malformed_proposal_update_committee() {
+        // MalformedProposal carrying a GovAction UpdateCommittee
+        // — `[4, SNothing, removeSet[1], addMap{1}, UnitInterval]`.
+        let mut cbor = vec![0x82_u8, 0x01, 0x85, 0x04, 0xF6];
+        // remove set: array(1) of Credential [0, bytes(28)]
+        cbor.push(0x81);
+        cbor.push(0x82);
+        cbor.push(0x00);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xA7_u8; 28]);
+        // add map(1): Credential [1, bytes(28)] → EpochNo 320
+        cbor.push(0xA1);
+        cbor.push(0x82);
+        cbor.push(0x01);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xB8_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x01, 0x40]); // EpochNo 320
+        // threshold: UnitInterval tag30 [2, 3]
+        cbor.extend_from_slice(&[0xD8, 0x1E, 0x82, 0x02, 0x03]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::UpdateCommittee {
+            prev,
+            remove,
+            add,
+            threshold,
+        }) = &f
+        {
+            assert!(prev.is_none());
+            assert_eq!(remove.len(), 1);
+            assert!(matches!(remove[0], Credential::KeyHashObj(_)));
+            assert_eq!(add.len(), 1);
+            assert_eq!(add[0].1, 320);
+            assert_eq!(threshold.numerator, 2);
+            assert_eq!(threshold.denominator, 3);
+        } else {
+            panic!("expected MalformedProposal UpdateCommittee, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("MalformedProposal (UpdateCommittee (SNothing) (fromList [KeyHashObj"),
+            "got: {s}"
+        );
+        assert!(s.contains(",EpochNo 320)]) (2 % 3))"), "got: {s}");
     }
 
     #[test]

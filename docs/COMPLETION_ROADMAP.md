@@ -777,11 +777,14 @@ Vec<(RewardAccount, Coin)>, guardrail: Option<ScriptHash> }`
 (`Map AccountAddress Coin` + null-encoded `StrictMaybe
 ScriptHash`). R671 (2026-05-21) added the `Constitution` type
 (`Anchor` + null-encoded `StrictMaybe ScriptHash`) and typed
-`GovAction::NewConstitution` — `{ prev: Option<GovActionId>,
-constitution: Constitution }`. **5 of 7 GovAction variants are
-now fully typed**; the other 2 (ParameterChange /
-UpdateCommittee) keep raw payloads pending the PParamsUpdate
-and committee-update decoders. R653
+`GovAction::NewConstitution`. R672 (2026-05-21) typed
+`GovAction::UpdateCommittee` — `{ prev: Option<GovActionId>,
+remove: Vec<Credential>, add: Vec<(Credential, EpochNo)>,
+threshold: UnitInterval }` (`StrictMaybe GovPurposeId` +
+cold-credential remove-set + add-map + quorum threshold). **6
+of 7 GovAction variants are now fully typed**; only
+`ParameterChange` keeps a raw payload pending the
+`PParamsUpdate` decoder. R653
 (2026-05-21) added the `Anchor` and `ProposalProcedure` types
 (4-field record: deposit / return-addr / GovAction / Anchor)
 and wired GOV tags 8 (`InvalidPrevGovActionId`) and 12
