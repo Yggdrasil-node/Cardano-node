@@ -718,10 +718,14 @@ carrier, and wired GOV tag 0 (`GovActionsDoNotExist`). R644
 `NonEmptyAccountAddress` carrier, and wired GOV tags 16
 (`ProposalReturnAccountDoesNotExist` — single AccountAddress)
 and 17 (`TreasuryWithdrawalReturnAccountsDoNotExist` — NonEmpty
-AccountAddress). **4 of 19 Conway GOV variants now carry typed
-payloads**; the other 15 keep raw inner CBOR pending typed
-governance-specific decoders (GovAction, Voter,
-ProposalProcedure, ProtVer, Credential roles, StrictMaybe). **All 9 Conway LEDGER root variants now carry
+AccountAddress). R645 (2026-05-21) added the
+`StrictMaybeScriptHash` type (Option of 28-byte ScriptHash) and
+wired GOV tag 11 (`InvalidGuardrailsScriptHash` — a `{ got,
+expected }` pair of StrictMaybe ScriptHash). **5 of 19 Conway
+GOV variants now carry typed payloads**; the other 14 keep raw
+inner CBOR pending typed governance-specific decoders
+(GovAction, Voter, ProposalProcedure, ProtVer, Credential
+roles, NonEmptyMap). **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).

@@ -949,6 +949,52 @@ impl fmt::Display for StrictMaybeScriptIntegrityHash {
     }
 }
 
+/// `StrictMaybe ScriptHash` renderer — a 28-byte script hash
+/// option. `StrictMaybe` is CBOR-encoded as a list (0-element =
+/// `SNothing`, 1-element = `SJust`). Display matches upstream
+/// stock-derived Show: `SNothing` / `SJust (ScriptHash
+/// "<hex>")`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StrictMaybeScriptHash(pub Option<[u8; 28]>);
+
+impl StrictMaybeScriptHash {
+    /// Decode from an in-progress decoder (CBOR list: 0-element =
+    /// SNothing, 1-element = SJust 28-byte hash).
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "StrictMaybeScriptHash: expected CBOR list: {err:?}"
+            ))
+        })?;
+        match len {
+            0 => Ok(Self(None)),
+            1 => {
+                let hash_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "StrictMaybeScriptHash: expected hash bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                    DecoderError("StrictMaybeScriptHash: hash must be 28 bytes".to_string())
+                })?;
+                Ok(Self(Some(arr)))
+            }
+            other => Err(DecoderError(format!(
+                "StrictMaybeScriptHash: expected 0- or 1-element list, got len {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for StrictMaybeScriptHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            None => f.write_str("SNothing"),
+            Some(hash) => write!(f, "SJust (ScriptHash \"{}\")", hex::encode(hash)),
+        }
+    }
+}
+
 /// `StrictMaybe ByteString` renderer. `StrictMaybe` is
 /// CBOR-encoded as a list (0-element = `SNothing`, 1-element =
 /// `SJust`). Display matches upstream stock-derived Show:
@@ -7014,8 +7060,15 @@ pub enum ConwayGovPredFailure {
     /// RelGT ProtVer` via ToGroup. Raw.
     ProposalCantFollow(Vec<u8>),
     /// Tag 11: guardrails-script-hash mismatch —
-    /// `StrictMaybe ScriptHash + StrictMaybe ScriptHash`. Raw.
-    InvalidGuardrailsScriptHash(Vec<u8>),
+    /// `StrictMaybe ScriptHash + StrictMaybe ScriptHash` (R645
+    /// typed).
+    InvalidGuardrailsScriptHash {
+        /// The guardrails script hash present in the proposal.
+        got: StrictMaybeScriptHash,
+        /// The guardrails script hash of the current
+        /// constitution.
+        expected: StrictMaybeScriptHash,
+    },
     /// Tag 12: proposal not allowed during bootstrap —
     /// `ProposalProcedure era`. Raw.
     DisallowedProposalDuringBootstrap(Vec<u8>),
@@ -7054,7 +7107,7 @@ impl ConwayGovPredFailure {
             Self::InvalidPrevGovActionId(_) => 8,
             Self::VotingOnExpiredGovAction(_) => 9,
             Self::ProposalCantFollow(_) => 10,
-            Self::InvalidGuardrailsScriptHash(_) => 11,
+            Self::InvalidGuardrailsScriptHash { .. } => 11,
             Self::DisallowedProposalDuringBootstrap(_) => 12,
             Self::DisallowedVotesDuringBootstrap(_) => 13,
             Self::VotersDoNotExist(_) => 14,
@@ -7079,7 +7132,7 @@ impl ConwayGovPredFailure {
             Self::InvalidPrevGovActionId(_) => "InvalidPrevGovActionId",
             Self::VotingOnExpiredGovAction(_) => "VotingOnExpiredGovAction",
             Self::ProposalCantFollow(_) => "ProposalCantFollow",
-            Self::InvalidGuardrailsScriptHash(_) => "InvalidGuardrailsScriptHash",
+            Self::InvalidGuardrailsScriptHash { .. } => "InvalidGuardrailsScriptHash",
             Self::DisallowedProposalDuringBootstrap(_) => "DisallowedProposalDuringBootstrap",
             Self::DisallowedVotesDuringBootstrap(_) => "DisallowedVotesDuringBootstrap",
             Self::VotersDoNotExist(_) => "VotersDoNotExist",
@@ -7196,10 +7249,16 @@ impl ConwayGovPredFailure {
                 "ProposalCantFollow",
                 4,
             )?)),
-            11 => Ok(Self::InvalidGuardrailsScriptHash(capture_raw(
-                "InvalidGuardrailsScriptHash",
-                3,
-            )?)),
+            11 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "InvalidGuardrailsScriptHash: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let got = StrictMaybeScriptHash::from_decoder(&mut dec)?;
+                let expected = StrictMaybeScriptHash::from_decoder(&mut dec)?;
+                Ok(Self::InvalidGuardrailsScriptHash { got, expected })
+            }
             12 => Ok(Self::DisallowedProposalDuringBootstrap(capture_raw(
                 "DisallowedProposalDuringBootstrap",
                 2,
@@ -7285,7 +7344,6 @@ impl fmt::Display for ConwayGovPredFailure {
             | Self::InvalidPrevGovActionId(b)
             | Self::VotingOnExpiredGovAction(b)
             | Self::ProposalCantFollow(b)
-            | Self::InvalidGuardrailsScriptHash(b)
             | Self::DisallowedProposalDuringBootstrap(b)
             | Self::DisallowedVotesDuringBootstrap(b)
             | Self::VotersDoNotExist(b)
@@ -7302,6 +7360,9 @@ impl fmt::Display for ConwayGovPredFailure {
             }
             Self::TreasuryWithdrawalReturnAccountsDoNotExist(accounts) => {
                 write!(f, "TreasuryWithdrawalReturnAccountsDoNotExist ({accounts})")
+            }
+            Self::InvalidGuardrailsScriptHash { got, expected } => {
+                write!(f, "InvalidGuardrailsScriptHash ({got}) ({expected})")
             }
         }
     }
@@ -8594,6 +8655,28 @@ mod tests {
             err.to_string()
                 .contains("NonEmpty requires at least one entry"),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_invalid_guardrails_script_hash_tag11() {
+        // outer [0x83, 0x0B, got SMaybe, expected SMaybe].
+        // got = SJust ScriptHash(28 of 0x66); expected = SNothing.
+        let mut cbor = vec![0x83_u8, 0x0B, 0x81]; // SJust list(1)
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x66_u8; 28]);
+        cbor.push(0x80); // SNothing list(0)
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("InvalidGuardrailsScriptHash");
+        if let ConwayGovPredFailure::InvalidGuardrailsScriptHash { got, expected } = &f {
+            assert_eq!(got.0, Some([0x66_u8; 28]));
+            assert_eq!(expected.0, None);
+        } else {
+            panic!("expected InvalidGuardrailsScriptHash, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "InvalidGuardrailsScriptHash (SJust (ScriptHash \"66666666666666666666666666666666666666666666666666666666\")) (SNothing)"
         );
     }
 
