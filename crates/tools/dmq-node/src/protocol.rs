@@ -8,5 +8,6 @@
 //! Rust file, mirroring the established
 //! `crates/network/src/protocols/` one-file-per-mini-protocol pattern.
 
+pub mod local_msg_notification;
 pub mod local_msg_submission;
 pub mod sig_submission;
