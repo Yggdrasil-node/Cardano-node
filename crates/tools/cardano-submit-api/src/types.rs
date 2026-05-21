@@ -7542,6 +7542,219 @@ impl fmt::Display for TagMismatchDescription {
     }
 }
 
+/// Plutus ledger language mirroring upstream `data Language =
+/// PlutusV1 | PlutusV2 | PlutusV3 | PlutusV4` from
+/// `Cardano.Ledger.Plutus.Language`. CBOR-encoded as a Word8
+/// enum (0 = PlutusV1, 1 = PlutusV2, 2 = PlutusV3, 3 =
+/// PlutusV4). Display matches the stock-derived Show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Language {
+    /// Plutus V1.
+    PlutusV1,
+    /// Plutus V2.
+    PlutusV2,
+    /// Plutus V3.
+    PlutusV3,
+    /// Plutus V4.
+    PlutusV4,
+}
+
+impl Language {
+    /// Decode a `Language` from the next CBOR Word8 enum value.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let n = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("Language: expected Word8 enum: {err:?}")))?;
+        match n {
+            0 => Ok(Self::PlutusV1),
+            1 => Ok(Self::PlutusV2),
+            2 => Ok(Self::PlutusV3),
+            3 => Ok(Self::PlutusV4),
+            other => Err(DecoderError(format!(
+                "Language: unknown language enum {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for Language {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::PlutusV1 => "PlutusV1",
+            Self::PlutusV2 => "PlutusV2",
+            Self::PlutusV3 => "PlutusV3",
+            Self::PlutusV4 => "PlutusV4",
+        })
+    }
+}
+
+/// `CollectError` mirror — a Plutus-script input-collection
+/// error from `Cardano.Ledger.Alonzo.Plutus.Context`. 4-variant
+/// sum encoded via CBOR `Sum` tags 0-3.
+///
+/// R654 ships the scaffold: tag 1 (`NoWitness` — `ScriptHash`)
+/// and tag 2 (`NoCostModel` — `Language`) carry typed payloads;
+/// tags 0 (`NoRedeemer` — `PlutusPurpose AsItem`) and 3
+/// (`BadTranslation` — era-specific `ContextError`) keep raw
+/// inner CBOR pending those decoder ports.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CollectError {
+    /// Tag 0: no redeemer for a Plutus script purpose. Raw
+    /// payload pending the `PlutusPurpose AsItem` decoder.
+    NoRedeemer(Vec<u8>),
+    /// Tag 1: no script witness for a hash — `ScriptHash` (R654
+    /// typed).
+    NoWitness(ScriptHash),
+    /// Tag 2: no cost model for a Plutus language — `Language`
+    /// (R654 typed).
+    NoCostModel(Language),
+    /// Tag 3: Plutus script-context translation failure. Raw
+    /// payload pending the era-specific `ContextError` decoder.
+    BadTranslation(Vec<u8>),
+}
+
+impl CollectError {
+    /// Upstream CBOR `Sum` tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::NoRedeemer(_) => 0,
+            Self::NoWitness(_) => 1,
+            Self::NoCostModel(_) => 2,
+            Self::BadTranslation(_) => 3,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::NoRedeemer(_) => "NoRedeemer",
+            Self::NoWitness(_) => "NoWitness",
+            Self::NoCostModel(_) => "NoCostModel",
+            Self::BadTranslation(_) => "BadTranslation",
+        }
+    }
+
+    /// Decode a single `CollectError` from an in-progress
+    /// decoder (2-element `Sum` envelope `[tag, payload]`).
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("CollectError: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "CollectError: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("CollectError: expected Word8 tag: {err:?}")))?;
+        match tag {
+            1 => {
+                let hash_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!("NoWitness: expected ScriptHash bytes: {err:?}"))
+                })?;
+                let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                    DecoderError("NoWitness: ScriptHash must be 28 bytes".to_string())
+                })?;
+                Ok(Self::NoWitness(ScriptHash(arr)))
+            }
+            2 => {
+                let lang = Language::from_decoder(dec)?;
+                Ok(Self::NoCostModel(lang))
+            }
+            0 | 3 => {
+                let payload_start = dec.position();
+                dec.skip()
+                    .map_err(|err| DecoderError(format!("CollectError: payload skip: {err:?}")))?;
+                let payload_end = dec.position();
+                let raw = source
+                    .get(payload_start..payload_end)
+                    .ok_or_else(|| {
+                        DecoderError("CollectError: payload byte range out of bounds".to_string())
+                    })?
+                    .to_vec();
+                Ok(if tag == 0 {
+                    Self::NoRedeemer(raw)
+                } else {
+                    Self::BadTranslation(raw)
+                })
+            }
+            other => Err(DecoderError(format!(
+                "CollectError: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for CollectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoRedeemer(b) | Self::BadTranslation(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::NoWitness(hash) => write!(f, "NoWitness ({hash})"),
+            Self::NoCostModel(lang) => write!(f, "NoCostModel {lang}"),
+        }
+    }
+}
+
+/// Non-empty list of Plutus collection errors mirroring upstream
+/// `NonEmpty (CollectError era)`. CBOR wire format is a plain
+/// CBOR array with ≥ 1 entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyCollectError {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<CollectError>,
+}
+
+impl NonEmptyCollectError {
+    /// Decode a `NonEmpty (CollectError era)` from canonical
+    /// CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyCollectError: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyCollectError: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(CollectError::from_decoder(&mut dec, bytes)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyCollectError {
+    /// Render upstream `Show (NonEmpty a)`: `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyCollectError enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for e in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{e}")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// `ConwayUtxosPredFailure` mirror — Conway-era UTXOS sub-rule
 /// failure (under `ConwayUtxoPredFailure::UtxosFailure`).
 ///
@@ -7561,9 +7774,8 @@ pub enum ConwayUtxosPredFailure {
         description: TagMismatchDescription,
     },
     /// Tag 1: could not collect all Plutus script inputs —
-    /// `NonEmpty (CollectError era)`. Raw pending CollectError
-    /// decoder.
-    CollectErrors(Vec<u8>),
+    /// `NonEmpty (CollectError era)` (R654 typed).
+    CollectErrors(NonEmptyCollectError),
 }
 
 impl ConwayUtxosPredFailure {
@@ -7625,15 +7837,12 @@ impl ConwayUtxosPredFailure {
                     )));
                 }
                 let payload_offset = dec.position();
-                let raw = bytes
-                    .get(payload_offset..)
-                    .ok_or_else(|| {
-                        DecoderError(
-                            "ConwayUtxosPredFailure: payload offset out of bounds".to_string(),
-                        )
-                    })?
-                    .to_vec();
-                Ok(Self::CollectErrors(raw))
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxosPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::CollectErrors(NonEmptyCollectError::from_cbor(
+                    payload_bytes,
+                )?))
             }
             other => Err(DecoderError(format!(
                 "ConwayUtxosPredFailure: unknown variant tag {other}"
@@ -7657,8 +7866,8 @@ impl fmt::Display for ConwayUtxosPredFailure {
                     if *is_valid { "True" } else { "False" }
                 )
             }
-            Self::CollectErrors(b) => {
-                write!(f, "CollectErrors <raw-cbor {} bytes>", b.len())
+            Self::CollectErrors(errors) => {
+                write!(f, "CollectErrors ({errors})")
             }
         }
     }
@@ -10713,14 +10922,41 @@ mod tests {
     }
 
     #[test]
-    fn conway_utxos_pred_failure_collect_errors_raw_tag1() {
-        let cbor = [0x82_u8, 0x01, 0x80];
+    fn conway_utxos_pred_failure_collect_errors_typed_tag1() {
+        // outer [0x82, 0x01, NonEmpty [CollectError]]. NonEmpty
+        // array(2): NoWitness [1, bytes(28)], NoCostModel [2, 2].
+        let mut cbor = vec![0x82_u8, 0x01, 0x82, 0x82, 0x01];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xB3_u8; 28]);
+        cbor.extend_from_slice(&[0x82, 0x02, 0x02]); // NoCostModel PlutusV3
         let f = ConwayUtxosPredFailure::from_cbor(&cbor).expect("CollectErrors");
-        assert!(matches!(f, ConwayUtxosPredFailure::CollectErrors(_)));
-        assert_eq!(f.tag(), 1);
+        if let ConwayUtxosPredFailure::CollectErrors(errors) = &f {
+            assert_eq!(errors.entries.len(), 2);
+            assert!(matches!(errors.entries[0], CollectError::NoWitness(_)));
+            assert!(matches!(
+                errors.entries[1],
+                CollectError::NoCostModel(Language::PlutusV3)
+            ));
+        } else {
+            panic!("expected CollectErrors, got {f:?}");
+        }
+        let s = f.to_string();
         assert!(
-            f.to_string().starts_with("CollectErrors <raw-cbor"),
-            "got: {f}"
+            s.starts_with("CollectErrors (NoWitness (ScriptHash \"b3b3"),
+            "got: {s}"
+        );
+        assert!(s.contains("NoCostModel PlutusV3"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_utxos_pred_failure_collect_errors_rejects_empty() {
+        let cbor = [0x82_u8, 0x01, 0x80];
+        let err = ConwayUtxosPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
         );
     }
 
