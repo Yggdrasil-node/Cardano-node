@@ -326,6 +326,31 @@ pub enum SigValidationError {
     SigResultOther(String),
 }
 
+impl SigValidationError {
+    /// Render this error as JSON.
+    ///
+    /// Mirror of upstream `instance ToJSON SigValidationError`:
+    /// `SigDuplicate` / `SigExpired` render as the bare strings
+    /// `"duplicate"` / `"expired"`; `SigResultOther` as
+    /// `{"type":"other","reason":<text>}`; every other variant as
+    /// `{"type":"invalid","reason":<rendered error>}`.
+    ///
+    /// Upstream's `"invalid"` `reason` uses Haskell `show`; the Rust
+    /// port uses the variant's `Debug` rendering — the JSON
+    /// *structure* is byte-exact, the human-readable `reason` text is
+    /// the Rust formatting of the same fields.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            SigValidationError::SigDuplicate => serde_json::Value::String("duplicate".to_string()),
+            SigValidationError::SigExpired => serde_json::Value::String("expired".to_string()),
+            SigValidationError::SigResultOther(reason) => {
+                serde_json::json!({ "type": "other", "reason": reason })
+            }
+            other => serde_json::json!({ "type": "invalid", "reason": format!("{other:?}") }),
+        }
+    }
+}
+
 /// A trace event emitted when a signature fails validation.
 ///
 /// Upstream `data SigValidationTrace = InvalidSignature SigId
@@ -709,6 +734,26 @@ mod tests {
             SigValidationError::SigResultOther("a".to_string()),
             SigValidationError::SigResultOther("b".to_string())
         );
+    }
+
+    #[test]
+    fn sig_validation_error_to_json_matches_upstream_shapes() {
+        assert_eq!(
+            SigValidationError::SigDuplicate.to_json(),
+            serde_json::json!("duplicate")
+        );
+        assert_eq!(
+            SigValidationError::SigExpired.to_json(),
+            serde_json::json!("expired")
+        );
+        assert_eq!(
+            SigValidationError::SigResultOther("boom".to_string()).to_json(),
+            serde_json::json!({ "type": "other", "reason": "boom" })
+        );
+        // Every other variant → {"type":"invalid","reason":<rendered>}.
+        let invalid = SigValidationError::ClockSkew.to_json();
+        assert_eq!(invalid["type"], serde_json::json!("invalid"));
+        assert_eq!(invalid["reason"], serde_json::json!("ClockSkew"));
     }
 
     #[test]
