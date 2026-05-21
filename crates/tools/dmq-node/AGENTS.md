@@ -54,10 +54,27 @@ Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase
   the `LocalMsgSubmission` / `LocalMsgNotification` mini-protocols, and
   the NtN/NtC version-data + negotiation all reuse `crates/network`
   mini-protocol machinery (`TxSubmission2`, `NetworkTopology`,
-  `TxDecisionPolicy`, `BlockingReplyList`). This is a cross-crate
-  integration sub-arc — scope it with a `parity-plan`, verifying
-  first whether `crates/network`'s `TxSubmission2` codec is reusable
-  over the `SigId`/`Sig` types.
+  `TxDecisionPolicy`, `BlockingReplyList`).
+  **R731 investigation — a hard prerequisite.** `crates/network`'s
+  `protocols/tx_submission.rs::TxSubmissionMessage` is **concrete**:
+  it hardcodes the ledger `TxId` for identifiers and `Vec<u8>` for
+  transaction bodies (`use yggdrasil_ledger::TxId`; the file comment
+  states "Transaction identifiers use the canonical ledger `TxId`
+  wrapper"). Upstream `TxSubmission2 txid tx` is **generic**, and
+  `SigSubmission crypto = TxSubmission2 SigId (Sig crypto)` depends on
+  that genericity. So `codecSigSubmission` cannot reuse
+  `crates/network`'s codec as-is. This is an **architectural fork**
+  that warrants a deliberate decision (and a `parity-plan` for
+  whichever path):
+  1. Refactor `crates/network`'s `TxSubmission2` message / codec /
+     drivers / inbound-governor to be generic over `<Id, Tx>` (the
+     node instantiates `Id = TxId, Tx = Vec<u8>`). This matches
+     upstream's generic shape and lets DMQ reuse it — but it is a
+     protocol-critical, multi-round change to a core crate the node's
+     own tx-submission depends on.
+  2. Give dmq-node its own `SigSubmission` mini-protocol state
+     machine + codec, independent of `crates/network` (no core-crate
+     change; duplicates the `TxSubmission2` protocol shape).
 - ❌ Diffusion / NodeKernel / PeerSelection wiring — returns
   `RunError::DiffusionWiringDeferred { host, local_socket,
   config_file, topology_file, cardano_socket, cardano_magic,
