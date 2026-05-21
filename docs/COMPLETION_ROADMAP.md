@@ -758,7 +758,19 @@ Network, Mismatch. The 11 remaining variants
 (0/2/6/11/12/13/14/15/20/21/22) keep raw inner CBOR pending
 Conway UTXOS + ValidityInterval + Value + ExUnits + DeltaCoin +
 NonEmptyMap decoders. The Conway LEDGER → UTXOW → UTXO chain
-now renders typed end-to-end through 12 UTXO leaves.
+now renders typed end-to-end through 12 UTXO leaves. R631
+(2026-05-21) added the `ConwayUtxosPredFailure` 2-variant
+scaffold (the UTXOS Plutus-script-evaluation sub-rule) plus the
+`FailureDescription` and `TagMismatchDescription` helper types,
+and wired `ConwayUtxoPredFailure::UtxosFailure(Vec<u8>)` →
+`UtxosFailure(ConwayUtxosPredFailure)`. Tag 0
+`ValidationTagMismatch` is fully typed — `{ is_valid: bool,
+description: TagMismatchDescription }` where
+TagMismatchDescription decodes PassedUnexpectedly /
+FailedUnexpectedly(NonEmpty FailureDescription). Tag 1
+`CollectErrors` keeps a raw payload pending the CollectError
+decoder. The Conway LEDGER → UTXOW → UTXO → UTXOS chain now
+renders typed end-to-end for the ValidationTagMismatch path.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

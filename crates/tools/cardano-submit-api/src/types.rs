@@ -4992,9 +4992,9 @@ impl fmt::Display for ConwayGovCertPredFailure {
 /// DeltaCoin / NonEmptyMap decoders.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayUtxoPredFailure {
-    /// Tag 0: nested UTXOS sub-rule failure — raw pending Conway
-    /// UTXOS decoder.
-    UtxosFailure(Vec<u8>),
+    /// Tag 0: nested UTXOS sub-rule failure (R631 wired to typed
+    /// `ConwayUtxosPredFailure`).
+    UtxosFailure(ConwayUtxosPredFailure),
     /// Tag 1: bad transaction inputs — `NonEmptySet TxIn` (R603
     /// typed).
     BadInputsUTxO(NonEmptySetTxIn),
@@ -5166,7 +5166,15 @@ impl ConwayUtxoPredFailure {
             Ok(payload_bytes.to_vec())
         };
         match tag {
-            0 => Ok(Self::UtxosFailure(capture_raw("UtxosFailure", 2)?)),
+            0 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "UtxosFailure: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let utxos = ConwayUtxosPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::UtxosFailure(utxos))
+            }
             1 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -5378,8 +5386,8 @@ impl fmt::Display for ConwayUtxoPredFailure {
     /// bytes>`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UtxosFailure(b)
-            | Self::OutsideValidityIntervalUTxO(b)
+            Self::UtxosFailure(utxos) => write!(f, "UtxosFailure ({utxos})"),
+            Self::OutsideValidityIntervalUTxO(b)
             | Self::ValueNotConservedUTxO(b)
             | Self::OutputTooBigUTxO(b)
             | Self::InsufficientCollateral(b)
@@ -5424,6 +5432,279 @@ impl fmt::Display for ConwayUtxoPredFailure {
                 write!(f, "TooManyCollateralInputs ({mm})")
             }
             Self::NoCollateralInputs => f.write_str("NoCollateralInputs"),
+        }
+    }
+}
+
+/// `FailureDescription` mirror from
+/// `Cardano.Ledger.Alonzo.Rules.Utxos`. Single variant
+/// `PlutusFailure Text ByteString`; CBOR `Sum` tag 1 (upstream
+/// deliberately skips tag 0 — a removed legacy constructor).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FailureDescription {
+    /// Human-readable failure explanation.
+    pub message: String,
+    /// Base64-encoded reconstruction context (raw bytes).
+    pub context: Vec<u8>,
+}
+
+impl FailureDescription {
+    /// Decode `FailureDescription` from the canonical 3-element
+    /// CBOR `Sum` envelope `[1, text, bytes]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!("FailureDescription: expected CBOR array: {err:?}"))
+        })?;
+        if len != 3 {
+            return Err(DecoderError(format!(
+                "FailureDescription: expected 3-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!("FailureDescription: expected Word8 tag: {err:?}"))
+        })?;
+        if tag != 1 {
+            return Err(DecoderError(format!(
+                "FailureDescription: unknown tag {tag} (only tag 1 PlutusFailure is valid)"
+            )));
+        }
+        let message = dec
+            .text_owned()
+            .map_err(|err| DecoderError(format!("FailureDescription: expected text: {err:?}")))?;
+        let context = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("FailureDescription: expected bytes: {err:?}")))?
+            .to_vec();
+        Ok(Self { message, context })
+    }
+}
+
+impl fmt::Display for FailureDescription {
+    /// Render upstream stock-derived `Show FailureDescription`:
+    /// `PlutusFailure <text> <bytestring>`. The Text is rendered
+    /// with Haskell `Show String` escapes; the reconstruction
+    /// ByteString (often a large base64 blob) is rendered as a
+    /// hex marker.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PlutusFailure {} <bytestring {} bytes>",
+            show_haskell_bytestring_like(&self.message),
+            self.context.len()
+        )
+    }
+}
+
+/// `TagMismatchDescription` mirror from
+/// `Cardano.Ledger.Alonzo.Rules.Utxos`. CBOR `Sum` tags 0/1.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TagMismatchDescription {
+    /// Tag 0: scripts passed when the tx claimed they would fail.
+    PassedUnexpectedly,
+    /// Tag 1: scripts failed when the tx claimed they would pass
+    /// — `NonEmpty FailureDescription`.
+    FailedUnexpectedly(Vec<FailureDescription>),
+}
+
+impl TagMismatchDescription {
+    /// Decode `TagMismatchDescription` from its CBOR `Sum`
+    /// envelope (1-element for tag 0, 2-element for tag 1).
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "TagMismatchDescription: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if !(1..=2).contains(&len) {
+            return Err(DecoderError(format!(
+                "TagMismatchDescription: expected 1- or 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "TagMismatchDescription: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        match tag {
+            0 => {
+                if len != 1 {
+                    return Err(DecoderError(format!(
+                        "PassedUnexpectedly: expected 1-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::PassedUnexpectedly)
+            }
+            1 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "FailedUnexpectedly: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let count = dec.array().map_err(|err| {
+                    DecoderError(format!(
+                        "FailedUnexpectedly: expected NonEmpty array: {err:?}"
+                    ))
+                })?;
+                if count == 0 {
+                    return Err(DecoderError(
+                        "FailedUnexpectedly: NonEmpty requires at least one entry".to_string(),
+                    ));
+                }
+                let mut entries = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    entries.push(FailureDescription::from_decoder(dec)?);
+                }
+                Ok(Self::FailedUnexpectedly(entries))
+            }
+            other => Err(DecoderError(format!(
+                "TagMismatchDescription: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for TagMismatchDescription {
+    /// Render upstream stock-derived `Show TagMismatchDescription`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PassedUnexpectedly => f.write_str("PassedUnexpectedly"),
+            Self::FailedUnexpectedly(entries) => {
+                let (head, tail) = entries
+                    .split_first()
+                    .expect("FailedUnexpectedly enforces ≥1 entry at decode time");
+                write!(f, "FailedUnexpectedly ({head} :| [")?;
+                let mut first = true;
+                for e in tail {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    write!(f, "{e}")?;
+                }
+                f.write_str("])")
+            }
+        }
+    }
+}
+
+/// `ConwayUtxosPredFailure` mirror — Conway-era UTXOS sub-rule
+/// failure (under `ConwayUtxoPredFailure::UtxosFailure`).
+///
+/// Upstream: `data ConwayUtxosPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Utxos` with 2 variants encoded
+/// via CBOR `Sum` tags 0/1. The UTXOS rule is the Plutus
+/// script-evaluation phase of UTxO validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayUtxosPredFailure {
+    /// Tag 0: the tx `isValid` tag disagrees with script
+    /// evaluation — `IsValid + TagMismatchDescription` (R631
+    /// typed).
+    ValidationTagMismatch {
+        /// The `isValid` flag the transaction declared.
+        is_valid: bool,
+        /// Why the script evaluation disagreed.
+        description: TagMismatchDescription,
+    },
+    /// Tag 1: could not collect all Plutus script inputs —
+    /// `NonEmpty (CollectError era)`. Raw pending CollectError
+    /// decoder.
+    CollectErrors(Vec<u8>),
+}
+
+impl ConwayUtxosPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::ValidationTagMismatch { .. } => 0,
+            Self::CollectErrors(_) => 1,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::ValidationTagMismatch { .. } => "ValidationTagMismatch",
+            Self::CollectErrors(_) => "CollectErrors",
+        }
+    }
+
+    /// Decode the full `ConwayUtxosPredFailure` outer envelope.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayUtxosPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(2..=3).contains(&len) {
+            return Err(DecoderError(format!(
+                "ConwayUtxosPredFailure: expected 2- or 3-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayUtxosPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        match tag {
+            0 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ValidationTagMismatch: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let is_valid = dec.bool().map_err(|err| {
+                    DecoderError(format!("ValidationTagMismatch: isValid: {err:?}"))
+                })?;
+                let description = TagMismatchDescription::from_decoder(&mut dec)?;
+                Ok(Self::ValidationTagMismatch {
+                    is_valid,
+                    description,
+                })
+            }
+            1 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "CollectErrors: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_offset = dec.position();
+                let raw = bytes
+                    .get(payload_offset..)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ConwayUtxosPredFailure: payload offset out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(Self::CollectErrors(raw))
+            }
+            other => Err(DecoderError(format!(
+                "ConwayUtxosPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayUtxosPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayUtxosPredFailure era)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ValidationTagMismatch {
+                is_valid,
+                description,
+            } => {
+                write!(
+                    f,
+                    "ValidationTagMismatch (IsValid {}) ({description})",
+                    if *is_valid { "True" } else { "False" }
+                )
+            }
+            Self::CollectErrors(b) => {
+                write!(f, "CollectErrors <raw-cbor {} bytes>", b.len())
+            }
         }
     }
 }
@@ -7244,6 +7525,106 @@ mod tests {
         assert!(
             err.to_string().contains("unknown variant tag 99"),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_utxos_pred_failure_validation_tag_mismatch_passed_tag0() {
+        // outer [0x83, 0x00, isValid=true, [0x81, 0x00]]
+        // (TagMismatchDescription PassedUnexpectedly)
+        let cbor = [0x83_u8, 0x00, 0xf5, 0x81, 0x00];
+        let f = ConwayUtxosPredFailure::from_cbor(&cbor).expect("ValidationTagMismatch");
+        if let ConwayUtxosPredFailure::ValidationTagMismatch {
+            is_valid,
+            description,
+        } = &f
+        {
+            assert!(*is_valid);
+            assert!(matches!(
+                description,
+                TagMismatchDescription::PassedUnexpectedly
+            ));
+        } else {
+            panic!("expected ValidationTagMismatch, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ValidationTagMismatch (IsValid True) (PassedUnexpectedly)"
+        );
+    }
+
+    #[test]
+    fn conway_utxos_pred_failure_validation_tag_mismatch_failed_tag0() {
+        // outer [0x83, 0x00, isValid=false, TagMismatchDescription
+        // FailedUnexpectedly [FailureDescription PlutusFailure]].
+        // TagMismatchDescription [0x82, 0x01, [array(1) of
+        // FailureDescription]]; FailureDescription [0x83, 0x01,
+        // text "boom", bytes "ctx"].
+        let mut cbor = vec![0x83_u8, 0x00, 0xf4, 0x82, 0x01, 0x81, 0x83, 0x01];
+        cbor.push(0x64); // text(4)
+        cbor.extend_from_slice(b"boom");
+        cbor.push(0x43); // bytes(3)
+        cbor.extend_from_slice(b"ctx");
+        let f = ConwayUtxosPredFailure::from_cbor(&cbor).expect("ValidationTagMismatch");
+        if let ConwayUtxosPredFailure::ValidationTagMismatch {
+            is_valid,
+            description,
+        } = &f
+        {
+            assert!(!*is_valid);
+            if let TagMismatchDescription::FailedUnexpectedly(entries) = description {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].message, "boom");
+                assert_eq!(entries[0].context, b"ctx");
+            } else {
+                panic!("expected FailedUnexpectedly, got {description:?}");
+            }
+        } else {
+            panic!("expected ValidationTagMismatch, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ValidationTagMismatch (IsValid False) (FailedUnexpectedly (PlutusFailure \"boom\" <bytestring 3 bytes> :| []))"
+        );
+    }
+
+    #[test]
+    fn conway_utxos_pred_failure_collect_errors_raw_tag1() {
+        let cbor = [0x82_u8, 0x01, 0x80];
+        let f = ConwayUtxosPredFailure::from_cbor(&cbor).expect("CollectErrors");
+        assert!(matches!(f, ConwayUtxosPredFailure::CollectErrors(_)));
+        assert_eq!(f.tag(), 1);
+        assert!(
+            f.to_string().starts_with("CollectErrors <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxos_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ConwayUtxosPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_utxos_typed_routing_tag0() {
+        // UTXO tag 0 → UTXOS tag 0 ValidationTagMismatch
+        // (PassedUnexpectedly). Outer [0x82, 0x00, [0x83, 0x00,
+        // true, [0x81, 0x00]]].
+        let cbor = [0x82_u8, 0x00, 0x83, 0x00, 0xf5, 0x81, 0x00];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("UtxosFailure");
+        if let ConwayUtxoPredFailure::UtxosFailure(utxos) = &f {
+            assert_eq!(utxos.tag(), 0);
+        } else {
+            panic!("expected typed UtxosFailure, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "UtxosFailure (ValidationTagMismatch (IsValid True) (PassedUnexpectedly))"
         );
     }
 
