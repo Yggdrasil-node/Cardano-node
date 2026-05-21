@@ -5708,6 +5708,222 @@ impl fmt::Display for ConwayPlutusPurposeIx {
     }
 }
 
+/// `ConwayPlutusPurpose AsItem` mirror — the item-carrying form
+/// of a Conway Plutus script purpose (`ConwayPlutusPurpose f
+/// era` with `f = AsItem`). Each variant carries the actual
+/// purpose item rather than a redeemer-pointer index.
+///
+/// CBOR wire format is a 2-element `CBORGroup` `[word8-tag,
+/// item]` (tags 0-5). R655 ships typed payloads for the
+/// variants whose item types already have carriers; the
+/// `ConwayCertifying` item (a `TxCert`, a large per-era ADT)
+/// keeps raw inner CBOR.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayPlutusPurposeItem {
+    /// Tag 0: spending a transaction input — `TxIn`.
+    ConwaySpending(TxIn),
+    /// Tag 1: minting under a policy — `PolicyID`.
+    ConwayMinting(PolicyId),
+    /// Tag 2: certifying a tx certificate — `TxCert`. Raw
+    /// pending the per-era TxCert decoder.
+    ConwayCertifying(Vec<u8>),
+    /// Tag 3: rewarding a reward account — `AccountAddress`.
+    ConwayRewarding(yggdrasil_ledger::RewardAccount),
+    /// Tag 4: voting — `Voter`.
+    ConwayVoting(Voter),
+    /// Tag 5: proposing a governance action — `ProposalProcedure`.
+    ConwayProposing(ProposalProcedure),
+}
+
+impl ConwayPlutusPurposeItem {
+    /// Decode a single `ConwayPlutusPurpose AsItem` from its
+    /// 2-element CBORGroup envelope `[word8-tag, item]`.
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayPlutusPurposeItem: expected 2-element group: {err:?}"
+            ))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ConwayPlutusPurposeItem: expected 2-element group, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayPlutusPurposeItem: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        match tag {
+            0 => Ok(Self::ConwaySpending(TxIn::from_decoder(dec)?)),
+            1 => {
+                let hash_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!("ConwayMinting: expected PolicyID bytes: {err:?}"))
+                })?;
+                let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                    DecoderError("ConwayMinting: PolicyID must be 28 bytes".to_string())
+                })?;
+                Ok(Self::ConwayMinting(PolicyId(arr)))
+            }
+            2 => {
+                let payload_start = dec.position();
+                dec.skip().map_err(|err| {
+                    DecoderError(format!("ConwayCertifying: TxCert skip: {err:?}"))
+                })?;
+                let payload_end = dec.position();
+                let raw = source
+                    .get(payload_start..payload_end)
+                    .ok_or_else(|| {
+                        DecoderError(
+                            "ConwayCertifying: TxCert byte range out of bounds".to_string(),
+                        )
+                    })?
+                    .to_vec();
+                Ok(Self::ConwayCertifying(raw))
+            }
+            3 => {
+                let acct_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "ConwayRewarding: expected AccountAddress bytes: {err:?}"
+                    ))
+                })?;
+                let account =
+                    yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes).ok_or_else(|| {
+                        DecoderError(format!(
+                            "ConwayRewarding: invalid reward-account ({} bytes)",
+                            acct_bytes.len()
+                        ))
+                    })?;
+                Ok(Self::ConwayRewarding(account))
+            }
+            4 => Ok(Self::ConwayVoting(Voter::from_decoder(dec)?)),
+            5 => Ok(Self::ConwayProposing(ProposalProcedure::from_decoder(
+                dec, source,
+            )?)),
+            other => Err(DecoderError(format!(
+                "ConwayPlutusPurposeItem: unknown purpose tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayPlutusPurposeItem {
+    /// Render upstream stock-derived `Show (ConwayPlutusPurpose
+    /// AsItem era)`: `<Constructor> (AsItem {unAsItem =
+    /// <item>})`. The `ConwayCertifying` raw payload emits a
+    /// `<raw-cbor>` marker in place of the typed item.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ConwaySpending(tx_in) => {
+                write!(f, "ConwaySpending (AsItem {{unAsItem = {tx_in}}})")
+            }
+            Self::ConwayMinting(pid) => {
+                write!(f, "ConwayMinting (AsItem {{unAsItem = {pid}}})")
+            }
+            Self::ConwayCertifying(b) => {
+                write!(
+                    f,
+                    "ConwayCertifying (AsItem {{unAsItem = <raw-cbor {} bytes>}})",
+                    b.len()
+                )
+            }
+            Self::ConwayRewarding(account) => {
+                write!(
+                    f,
+                    "ConwayRewarding (AsItem {{unAsItem = {}}})",
+                    show_reward_account(account)
+                )
+            }
+            Self::ConwayVoting(voter) => {
+                write!(f, "ConwayVoting (AsItem {{unAsItem = {voter}}})")
+            }
+            Self::ConwayProposing(proposal) => {
+                write!(f, "ConwayProposing (AsItem {{unAsItem = {proposal}}})")
+            }
+        }
+    }
+}
+
+/// Non-empty list of `(PlutusPurpose AsItem, ScriptHash)` pairs
+/// mirroring upstream `NonEmpty (PlutusPurpose AsItem era,
+/// ScriptHash)` — the payload of `MissingRedeemers`. CBOR wire
+/// format is a plain CBOR array of 2-element `[purpose, hash]`
+/// arrays; empty arrays reject at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyMissingRedeemer {
+    /// Decoded `(purpose, script-hash)` pairs in wire order.
+    /// Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<(ConwayPlutusPurposeItem, ScriptHash)>,
+}
+
+impl NonEmptyMissingRedeemer {
+    /// Decode a `NonEmpty (PlutusPurpose AsItem, ScriptHash)`
+    /// from canonical CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyMissingRedeemer: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyMissingRedeemer: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let pair_len = dec.array().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyMissingRedeemer: expected 2-element pair: {err:?}"
+                ))
+            })?;
+            if pair_len != 2 {
+                return Err(DecoderError(format!(
+                    "NonEmptyMissingRedeemer: expected 2-element pair, got len {pair_len}"
+                )));
+            }
+            let purpose = ConwayPlutusPurposeItem::from_decoder(&mut dec, bytes)?;
+            let hash_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyMissingRedeemer: expected ScriptHash bytes: {err:?}"
+                ))
+            })?;
+            let arr: [u8; 28] = hash_bytes.try_into().map_err(|_| {
+                DecoderError("NonEmptyMissingRedeemer: ScriptHash must be 28 bytes".to_string())
+            })?;
+            entries.push((purpose, ScriptHash(arr)));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyMissingRedeemer {
+    /// Render upstream `Show (NonEmpty (PlutusPurpose AsItem,
+    /// ScriptHash))`: `<head> :| [<tail>...]` with each pair as
+    /// `(<PlutusPurpose>, <ScriptHash>)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyMissingRedeemer enforces ≥1 entry at decode time");
+        write!(f, "({}, {}) :| [", head.0, head.1)?;
+        let mut first = true;
+        for (purpose, hash) in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "({purpose}, {hash})")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Non-empty list of `ConwayPlutusPurpose AsIx` mirroring upstream
 /// `NonEmpty (PlutusPurpose AsIx era)`. CBOR wire format is a
 /// plain array of 2-element CBORGroup envelopes.
@@ -5809,9 +6025,8 @@ pub enum ConwayUtxowPredFailure {
     /// required — `NonEmptySet ScriptHash` (R599 typed).
     ExtraneousScriptWitnessesUTXOW(NonEmptySetScriptHash),
     /// Tag 10: missing redeemers — `NonEmpty (PlutusPurpose
-    /// AsItem era, ScriptHash)`. Raw pending PlutusPurpose
-    /// decoder.
-    MissingRedeemers(Vec<u8>),
+    /// AsItem era, ScriptHash)` (R655 typed).
+    MissingRedeemers(NonEmptyMissingRedeemer),
     /// Tag 11: missing required datums — `NonEmptySet DataHash +
     /// Set DataHash` (R632 typed).
     MissingRequiredDatums {
@@ -5929,21 +6144,6 @@ impl ConwayUtxowPredFailure {
             ))
         })?;
         let payload_offset = dec.position();
-        // Helper: capture remaining bytes as raw payload for the
-        // not-yet-typed variants.
-        let capture_raw = |label: &str, expected_len: u64| -> Result<Vec<u8>, DecoderError> {
-            if len != expected_len {
-                return Err(DecoderError(format!(
-                    "{label}: expected {expected_len}-element envelope, got len {len}"
-                )));
-            }
-            bytes
-                .get(payload_offset..)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| {
-                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
-                })
-        };
         match tag {
             0 => {
                 if len != 2 {
@@ -6071,8 +6271,21 @@ impl ConwayUtxowPredFailure {
                     NonEmptySetTxIn::from_cbor(payload_bytes)?,
                 ))
             }
-            // Pending typed decoders: capture raw bytes.
-            10 => Ok(Self::MissingRedeemers(capture_raw("MissingRedeemers", 2)?)),
+            // Tag 10: NonEmpty (PlutusPurpose AsItem, ScriptHash)
+            // (R655 typed).
+            10 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "MissingRedeemers: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::MissingRedeemers(NonEmptyMissingRedeemer::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             // Tags 11/12: NonEmptySet DataHash + Set DataHash
             // (R632 typed).
             11 => {
@@ -6172,8 +6385,8 @@ impl fmt::Display for ConwayUtxowPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UtxoFailure(utxo) => write!(f, "UtxoFailure ({utxo})"),
-            Self::MissingRedeemers(b) => {
-                write!(f, "MissingRedeemers <raw-cbor {} bytes>", b.len())
+            Self::MissingRedeemers(redeemers) => {
+                write!(f, "MissingRedeemers ({redeemers})")
             }
             Self::ScriptIntegrityHashMismatch { mismatch, provided } => {
                 write!(f, "ScriptIntegrityHashMismatch ({mismatch}) ({provided})")
@@ -9434,15 +9647,50 @@ mod tests {
     }
 
     #[test]
-    fn conway_utxow_pred_failure_routes_pending_to_raw_tag10() {
-        // tag 10 (MissingRedeemers) — payload pending PlutusPurpose
-        let cbor = [0x82_u8, 0x0A, 0x80];
+    fn conway_utxow_pred_failure_missing_redeemers_tag10() {
+        // outer [0x82, 0x0A, NonEmpty [(PlutusPurpose AsItem,
+        // ScriptHash)]]. NonEmpty array(1) of pair
+        // [ConwaySpending(TxIn), ScriptHash].
+        let mut cbor = vec![0x82_u8, 0x0A, 0x81, 0x82];
+        // PlutusPurpose AsItem [0, TxIn [txid32, ix=0]]
+        cbor.push(0x82);
+        cbor.push(0x00);
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x1D_u8; 32]);
+        cbor.push(0x00); // TxIn ix = 0
+        // ScriptHash bytes(28)
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x2E_u8; 28]);
         let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingRedeemers");
-        assert_eq!(f.tag(), 10);
-        assert_eq!(f.constructor(), "MissingRedeemers");
+        if let ConwayUtxowPredFailure::MissingRedeemers(redeemers) = &f {
+            assert_eq!(redeemers.entries.len(), 1);
+            assert!(matches!(
+                redeemers.entries[0].0,
+                ConwayPlutusPurposeItem::ConwaySpending(_)
+            ));
+            assert_eq!(redeemers.entries[0].1.0, [0x2E_u8; 28]);
+        } else {
+            panic!("expected MissingRedeemers, got {f:?}");
+        }
+        let s = f.to_string();
         assert!(
-            f.to_string().starts_with("MissingRedeemers <raw-cbor"),
-            "got: {f}"
+            s.starts_with("MissingRedeemers ((ConwaySpending (AsItem {unAsItem = TxIn (TxId"),
+            "got: {s}"
+        );
+        assert!(s.ends_with(":| [])"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_redeemers_rejects_empty() {
+        let cbor = [0x82_u8, 0x0A, 0x80];
+        let err = ConwayUtxowPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
         );
     }
 

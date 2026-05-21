@@ -871,11 +871,19 @@ ToGroup-flattened). R639 (2026-05-21) typed Conway UTXOW tag 18
 type and wired the variant to `{ mismatch:
 Mismatch<StrictMaybeScriptIntegrityHash>, provided:
 StrictMaybeBytes }` (the Mismatch encoded as a nested 2-array,
-not ToGroup-flattened). **17 of 19 Conway UTXOW variants now
-carry typed payloads**; only tag 10 (MissingRedeemers —
-`NonEmpty (PlutusPurpose AsItem, ScriptHash)`, the AsItem form
-carrying the actual TxIn/PolicyID/TxCert/etc. item) remains raw
-pending the PlutusPurpose-AsItem decoder.
+not ToGroup-flattened). R655 (2026-05-21) added the
+`ConwayPlutusPurposeItem` enum (the AsItem form of the Plutus
+purpose — TxIn / PolicyID / AccountAddress / Voter /
+ProposalProcedure typed; TxCert raw) and the
+`NonEmptyMissingRedeemer` pair-list carrier, and wired GOV
+UTXOW tag 10 (`MissingRedeemers`). **All 19 Conway UTXOW
+variants now carry typed payloads — the Conway UTXOW sub-rule
+is fully typed.** Every Conway predicate-failure sub-rule
+(LEDGER 9/9, UTXOW 19/19, UTXO 23/23, UTXOS 2/2, CERT chain
+DELEG/POOL/GOVCERT, GOV 19/19) is now structurally typed
+end-to-end; only the deepest leaf payloads (TxCert,
+PParamsUpdate, Constitution, ContextError, PlutusPurpose
+NoRedeemer) remain raw within their carriers.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
