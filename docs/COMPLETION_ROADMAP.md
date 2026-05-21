@@ -941,12 +941,13 @@ registration parameters — `ConwayTxCertPool` now carries a
 `PoolParams` struct with typed VRF key hash, pledge, cost,
 margin and reward account. R666 (2026-05-21) added the
 `PoolMetadata` / `StrictMaybePoolMetadata` types and typed the
-`PoolParams` owner-set (`Vec<KeyHash>`, tag-258-tolerant) and
-the optional `ppMetadata`; only the `ppRelays` `StrictSeq
-StakePoolRelay` sequence remains raw within `PoolParams`.
-**All three `ConwayTxCert` certificate families carry typed
-payloads, and `RegPool`'s `PoolParams` is typed through every
-field except the relay sequence.**
+`PoolParams` owner-set and the optional `ppMetadata`. R667
+(2026-05-21) added the `StakePoolRelay` 3-variant enum
+(SingleHostAddr / SingleHostName / MultiHostName) and the
+`decode_null_strict_maybe` helper, typing the `ppRelays`
+sequence. **The entire Conway `TxCert` tree — all three
+certificate families and the full `RegPool` `PoolParams` record
+— now carries typed payloads end-to-end.**
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

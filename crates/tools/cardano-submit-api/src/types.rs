@@ -6006,8 +6006,8 @@ pub struct PoolParams {
     /// The pool-owner staking key hashes (`ppOwners`).
     pub owners: Vec<KeyHash>,
     /// The pool relays (`ppRelays`, a `StrictSeq
-    /// StakePoolRelay`) — raw pending the typed relay decoder.
-    pub relays_raw: Vec<u8>,
+    /// StakePoolRelay`).
+    pub relays: Vec<StakePoolRelay>,
     /// The optional pool metadata (`ppMetadata`).
     pub metadata: StrictMaybePoolMetadata,
 }
@@ -6089,15 +6089,168 @@ impl fmt::Display for StrictMaybePoolMetadata {
     }
 }
 
+/// Decode a `null`-encoded `StrictMaybe` value: CBOR `null`
+/// yields `None`, any other token yields `Some(decode(dec))`.
+fn decode_null_strict_maybe<T>(
+    dec: &mut yggdrasil_ledger::Decoder<'_>,
+    label: &str,
+    decode: impl FnOnce(&mut yggdrasil_ledger::Decoder<'_>) -> Result<T, DecoderError>,
+) -> Result<Option<T>, DecoderError> {
+    let major = dec
+        .peek_major()
+        .map_err(|err| DecoderError(format!("{label}: peek: {err:?}")))?;
+    if major == 7 {
+        dec.null()
+            .map_err(|err| DecoderError(format!("{label}: expected null: {err:?}")))?;
+        Ok(None)
+    } else {
+        Ok(Some(decode(dec)?))
+    }
+}
+
+/// Stake-pool relay mirroring upstream `data StakePoolRelay =
+/// SingleHostAddr (StrictMaybe Port) (StrictMaybe IPv4)
+/// (StrictMaybe IPv6) | SingleHostName (StrictMaybe Port)
+/// DnsName | MultiHostName DnsName`. CBOR wire format is a
+/// `Sum` (tags 0-2); the optional fields are `null`-encoded.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StakePoolRelay {
+    /// A relay identified by IP address(es) and optional port.
+    SingleHostAddr {
+        /// Optional relay port.
+        port: Option<u16>,
+        /// Optional IPv4 address (4 bytes).
+        ipv4: Option<[u8; 4]>,
+        /// Optional IPv6 address (16 bytes).
+        ipv6: Option<[u8; 16]>,
+    },
+    /// A relay identified by a DNS A/AAAA name and optional port.
+    SingleHostName {
+        /// Optional relay port.
+        port: Option<u16>,
+        /// The relay DNS name.
+        dns: String,
+    },
+    /// A relay identified by a DNS SRV name.
+    MultiHostName {
+        /// The relay DNS SRV name.
+        dns: String,
+    },
+}
+
+impl StakePoolRelay {
+    /// Decode a single `StakePoolRelay` from its CBOR `Sum`
+    /// envelope.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("StakePoolRelay: expected Sum array: {err:?}")))?;
+        if len == 0 {
+            return Err(DecoderError(
+                "StakePoolRelay: empty Sum envelope".to_string(),
+            ));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("StakePoolRelay: expected Word8 tag: {err:?}")))?;
+        let read_port = |dec: &mut yggdrasil_ledger::Decoder<'_>| -> Result<u16, DecoderError> {
+            let raw = dec
+                .unsigned()
+                .map_err(|err| DecoderError(format!("StakePoolRelay: port: {err:?}")))?;
+            u16::try_from(raw).map_err(|_| {
+                DecoderError(format!("StakePoolRelay: port {raw} does not fit Word16"))
+            })
+        };
+        match tag {
+            0 => {
+                let port = decode_null_strict_maybe(dec, "StakePoolRelay port", read_port)?;
+                let ipv4 = decode_null_strict_maybe(dec, "StakePoolRelay ipv4", |dec| {
+                    let bytes = dec.bytes().map_err(|err| {
+                        DecoderError(format!("StakePoolRelay: ipv4 bytes: {err:?}"))
+                    })?;
+                    bytes.try_into().map_err(|_| {
+                        DecoderError("StakePoolRelay: IPv4 must be 4 bytes".to_string())
+                    })
+                })?;
+                let ipv6 = decode_null_strict_maybe(dec, "StakePoolRelay ipv6", |dec| {
+                    let bytes = dec.bytes().map_err(|err| {
+                        DecoderError(format!("StakePoolRelay: ipv6 bytes: {err:?}"))
+                    })?;
+                    bytes.try_into().map_err(|_| {
+                        DecoderError("StakePoolRelay: IPv6 must be 16 bytes".to_string())
+                    })
+                })?;
+                Ok(Self::SingleHostAddr { port, ipv4, ipv6 })
+            }
+            1 => {
+                let port = decode_null_strict_maybe(dec, "StakePoolRelay port", read_port)?;
+                let dns = dec.text_owned().map_err(|err| {
+                    DecoderError(format!("StakePoolRelay: expected DnsName: {err:?}"))
+                })?;
+                Ok(Self::SingleHostName { port, dns })
+            }
+            2 => {
+                let dns = dec.text_owned().map_err(|err| {
+                    DecoderError(format!("StakePoolRelay: expected DnsName: {err:?}"))
+                })?;
+                Ok(Self::MultiHostName { dns })
+            }
+            other => Err(DecoderError(format!(
+                "StakePoolRelay: unknown relay tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for StakePoolRelay {
+    /// Render upstream stock-derived `Show StakePoolRelay`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let show_port = |port: &Option<u16>| match port {
+            None => "SNothing".to_string(),
+            Some(p) => format!("SJust (Port {{portToWord16 = {p}}})"),
+        };
+        match self {
+            Self::SingleHostAddr { port, ipv4, ipv6 } => {
+                let ipv4_render = match ipv4 {
+                    None => "SNothing".to_string(),
+                    Some(b) => {
+                        format!("SJust {}.{}.{}.{}", b[0], b[1], b[2], b[3])
+                    }
+                };
+                let ipv6_render = match ipv6 {
+                    None => "SNothing".to_string(),
+                    Some(b) => {
+                        let groups: Vec<String> = b
+                            .chunks(2)
+                            .map(|g| format!("{:x}", u16::from(g[0]) << 8 | u16::from(g[1])))
+                            .collect();
+                        format!("SJust {}", groups.join(":"))
+                    }
+                };
+                write!(
+                    f,
+                    "SingleHostAddr ({}) ({ipv4_render}) ({ipv6_render})",
+                    show_port(port)
+                )
+            }
+            Self::SingleHostName { port, dns } => {
+                write!(
+                    f,
+                    "SingleHostName ({}) (DnsName {{dnsToText = \"{dns}\"}})",
+                    show_port(port)
+                )
+            }
+            Self::MultiHostName { dns } => {
+                write!(f, "MultiHostName (DnsName {{dnsToText = \"{dns}\"}})")
+            }
+        }
+    }
+}
+
 impl PoolParams {
     /// Decode the `PoolParams` group fields that follow the pool
-    /// operator key hash inside a `RegPool` certificate. `source`
-    /// is the certificate envelope's source bytes (for the raw
-    /// `ppRelays` capture).
-    fn from_decoder(
-        dec: &mut yggdrasil_ledger::Decoder<'_>,
-        source: &[u8],
-    ) -> Result<Self, DecoderError> {
+    /// operator key hash inside a `RegPool` certificate.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
         let vrf_bytes = dec
             .bytes()
             .map_err(|err| DecoderError(format!("PoolParams: expected VRF bytes: {err:?}")))?;
@@ -6153,16 +6306,14 @@ impl PoolParams {
             })?;
             owners.push(KeyHash(arr));
         }
-        // ppRelays — a single `StrictSeq StakePoolRelay` element,
-        // captured raw pending the typed relay decoder.
-        let relay_start = dec.position();
-        dec.skip()
-            .map_err(|err| DecoderError(format!("PoolParams: relays skip: {err:?}")))?;
-        let relay_stop = dec.position();
-        let relays_raw = source
-            .get(relay_start..relay_stop)
-            .ok_or_else(|| DecoderError("PoolParams: relays byte range out of bounds".to_string()))?
-            .to_vec();
+        // ppRelays — a `StrictSeq StakePoolRelay` (a CBOR array).
+        let relay_count = dec
+            .array()
+            .map_err(|err| DecoderError(format!("PoolParams: expected relays array: {err:?}")))?;
+        let mut relays = Vec::with_capacity(relay_count as usize);
+        for _ in 0..relay_count {
+            relays.push(StakePoolRelay::from_decoder(dec)?);
+        }
         let metadata = StrictMaybePoolMetadata::from_decoder(dec)?;
         Ok(Self {
             vrf,
@@ -6171,7 +6322,7 @@ impl PoolParams {
             margin,
             reward_account,
             owners,
-            relays_raw,
+            relays,
             metadata,
         })
     }
@@ -6198,12 +6349,16 @@ impl fmt::Display for PoolParams {
             first = false;
             write!(f, "{owner}")?;
         }
-        write!(
-            f,
-            "], ppRelays = <raw-cbor {} bytes>, ppMetadata = {}}}",
-            self.relays_raw.len(),
-            self.metadata
-        )
+        f.write_str("], ppRelays = StrictSeq {getSeq = fromList [")?;
+        first = true;
+        for relay in &self.relays {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{relay}")?;
+        }
+        write!(f, "]}}, ppMetadata = {}}}", self.metadata)
     }
 }
 
@@ -6335,10 +6490,7 @@ impl TxCert {
 
     /// Decode a single `ConwayTxCert` from its flat CBOR `Sum`
     /// envelope `[tag, ...payload]`.
-    fn from_decoder(
-        dec: &mut yggdrasil_ledger::Decoder<'_>,
-        source: &[u8],
-    ) -> Result<Self, DecoderError> {
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
         let len = dec
             .array()
             .map_err(|err| DecoderError(format!("TxCert: expected Sum array: {err:?}")))?;
@@ -6428,7 +6580,7 @@ impl TxCert {
                     // fields (VRF / pledge / cost / margin /
                     // reward account / owners / relays /
                     // metadata).
-                    params = Some(PoolParams::from_decoder(dec, source)?);
+                    params = Some(PoolParams::from_decoder(dec)?);
                 }
                 Ok(Self::ConwayTxCertPool {
                     cert_tag,
@@ -6607,7 +6759,7 @@ impl ConwayPlutusPurposeItem {
                 })?;
                 Ok(Self::ConwayMinting(PolicyId(arr)))
             }
-            2 => Ok(Self::ConwayCertifying(TxCert::from_decoder(dec, source)?)),
+            2 => Ok(Self::ConwayCertifying(TxCert::from_decoder(dec)?)),
             3 => {
                 let acct_bytes = dec.bytes().map_err(|err| {
                     DecoderError(format!(
@@ -10633,7 +10785,7 @@ mod tests {
         cbor.extend_from_slice(&[0xB2_u8; 28]);
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
-        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("AuthCommitteeHotKey");
+        let cert = TxCert::from_decoder(&mut dec).expect("AuthCommitteeHotKey");
         if let TxCert::ConwayTxCertGov {
             cert_tag,
             credential,
@@ -10667,7 +10819,7 @@ mod tests {
         cbor.extend_from_slice(&[0x19, 0x01, 0x90]); // epoch 400
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
-        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RetirePool");
+        let cert = TxCert::from_decoder(&mut dec).expect("RetirePool");
         if let TxCert::ConwayTxCertPool {
             cert_tag,
             epoch,
@@ -10711,7 +10863,7 @@ mod tests {
         cbor.push(0xF6); // metadata: null
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
-        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RegPool");
+        let cert = TxCert::from_decoder(&mut dec).expect("RegPool");
         if let TxCert::ConwayTxCertPool {
             cert_tag,
             epoch,
@@ -10773,7 +10925,7 @@ mod tests {
         cbor.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
-        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RegPool");
+        let cert = TxCert::from_decoder(&mut dec).expect("RegPool");
         let TxCert::ConwayTxCertPool {
             params: Some(params),
             ..
@@ -10800,6 +10952,77 @@ mod tests {
     }
 
     #[test]
+    fn pool_params_decodes_typed_relays() {
+        // RegPool envelope whose PoolParams carries a relay
+        // sequence with one SingleHostAddr (port 3001 + IPv4)
+        // and one MultiHostName.
+        let mut cbor = vec![0x8A_u8, 0x03];
+        cbor.push(0x58); // operator key hash bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x10_u8; 28]);
+        cbor.push(0x58); // VRF bytes(32)
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x20_u8; 32]);
+        cbor.push(0x00); // pledge 0
+        cbor.push(0x00); // cost 0
+        cbor.extend_from_slice(&[0xD8, 0x1E, 0x82, 0x00, 0x01]); // margin 0 % 1
+        cbor.push(0x58); // reward account bytes(29)
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x30_u8; 28]);
+        cbor.push(0x80); // owners: empty set
+        // relays: array(2)
+        cbor.push(0x82);
+        // SingleHostAddr [0, SJust port, SJust ipv4, SNothing]
+        cbor.push(0x84);
+        cbor.push(0x00);
+        cbor.extend_from_slice(&[0x19, 0x0B, 0xB9]); // port 3001
+        cbor.push(0x44); // ipv4 bytes(4)
+        cbor.extend_from_slice(&[10, 0, 0, 7]);
+        cbor.push(0xF6); // ipv6 = null
+        // MultiHostName [2, "_pool._tcp.x"]
+        cbor.push(0x82);
+        cbor.push(0x02);
+        cbor.push(0x6C); // text(12)
+        cbor.extend_from_slice(b"_pool._tcp.x");
+        cbor.push(0xF6); // metadata: null
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let cert = TxCert::from_decoder(&mut dec).expect("RegPool");
+        let TxCert::ConwayTxCertPool {
+            params: Some(params),
+            ..
+        } = &cert
+        else {
+            panic!("expected RegPool with params, got {cert:?}");
+        };
+        assert_eq!(params.relays.len(), 2);
+        match &params.relays[0] {
+            StakePoolRelay::SingleHostAddr { port, ipv4, ipv6 } => {
+                assert_eq!(*port, Some(3001));
+                assert_eq!(*ipv4, Some([10, 0, 0, 7]));
+                assert!(ipv6.is_none());
+            }
+            other => panic!("expected SingleHostAddr, got {other:?}"),
+        }
+        assert!(matches!(
+            &params.relays[1],
+            StakePoolRelay::MultiHostName { dns } if dns == "_pool._tcp.x"
+        ));
+        let s = cert.to_string();
+        assert!(
+            s.contains(
+                "SingleHostAddr (SJust (Port {portToWord16 = 3001})) (SJust 10.0.0.7) (SNothing)"
+            ),
+            "got: {s}"
+        );
+        assert!(
+            s.contains("MultiHostName (DnsName {dnsToText = \"_pool._tcp.x\"})"),
+            "got: {s}"
+        );
+    }
+
+    #[test]
     fn tx_cert_decodes_gov_reg_drep_with_anchor() {
         // TxCert Sum tag 16 (RegDRepTxCert) — `[16, drepCred,
         // deposit, StrictMaybe Anchor]`. anchor = SNothing (null).
@@ -10813,7 +11036,7 @@ mod tests {
         cbor.push(0xF6); // anchor = null → SNothing
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
-        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RegDRepTxCert");
+        let cert = TxCert::from_decoder(&mut dec).expect("RegDRepTxCert");
         if let TxCert::ConwayTxCertGov {
             cert_tag,
             deposit,
