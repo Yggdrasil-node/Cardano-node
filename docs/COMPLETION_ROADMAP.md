@@ -805,11 +805,16 @@ added the `ConwayPlutusPurposeIx` enum (the index-only
 `ConwayPlutusPurpose AsIx` form, 6 variants Spending/Minting/
 Certifying/Rewarding/Voting/Proposing each carrying a Word32
 redeemer pointer) and the `NonEmptyPlutusPurposeIx` carrier.
-**15 of 19 Conway UTXOW variants now carry typed payloads**;
-only tags 10 (MissingRedeemers — `PlutusPurpose AsItem` form),
-13 (PPViewHashesDontMatch), 18 (ScriptIntegrityHashMismatch)
-remain raw pending PlutusPurpose-AsItem + StrictMaybe
-ScriptIntegrityHash decoders.
+R638 (2026-05-21) typed Conway UTXOW tag 13
+(`PPViewHashesDontMatch`) — added the
+`StrictMaybeScriptIntegrityHash` type (Option of 32-byte
+SafeHash, CBOR-list-encoded) and wired the variant to
+`Mismatch<StrictMaybeScriptIntegrityHash>` (RelEQ,
+ToGroup-flattened). **16 of 19 Conway UTXOW variants now carry
+typed payloads**; only tags 10 (MissingRedeemers —
+`PlutusPurpose AsItem` form) and 18
+(ScriptIntegrityHashMismatch) remain raw pending the
+PlutusPurpose-AsItem + StrictMaybe-ByteString decoders.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

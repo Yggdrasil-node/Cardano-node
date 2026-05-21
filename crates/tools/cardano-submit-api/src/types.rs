@@ -742,6 +742,55 @@ impl fmt::Display for ExUnits {
     }
 }
 
+/// `StrictMaybe ScriptIntegrityHash` renderer.
+/// `ScriptIntegrityHash` is upstream `type ScriptIntegrityHash =
+/// SafeHash EraIndependentScriptIntegrity` — a 32-byte SafeHash.
+/// `StrictMaybe` is CBOR-encoded as a list (0-element =
+/// `SNothing`, 1-element = `SJust`). Display matches upstream
+/// stock-derived Show: `SNothing` / `SJust (SafeHash "<hex>")`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StrictMaybeScriptIntegrityHash(pub Option<[u8; 32]>);
+
+impl StrictMaybeScriptIntegrityHash {
+    /// Decode from an in-progress decoder (CBOR list: 0-element =
+    /// SNothing, 1-element = SJust 32-byte hash).
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "StrictMaybeScriptIntegrityHash: expected CBOR list: {err:?}"
+            ))
+        })?;
+        match len {
+            0 => Ok(Self(None)),
+            1 => {
+                let hash_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "StrictMaybeScriptIntegrityHash: expected hash bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 32] = hash_bytes.try_into().map_err(|_| {
+                    DecoderError(
+                        "StrictMaybeScriptIntegrityHash: hash must be 32 bytes".to_string(),
+                    )
+                })?;
+                Ok(Self(Some(arr)))
+            }
+            other => Err(DecoderError(format!(
+                "StrictMaybeScriptIntegrityHash: expected 0- or 1-element list, got len {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for StrictMaybeScriptIntegrityHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            None => f.write_str("SNothing"),
+            Some(hash) => write!(f, "SJust (SafeHash \"{}\")", hex::encode(hash)),
+        }
+    }
+}
+
 /// Typed payload for
 /// `ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals`.
 ///
@@ -4571,9 +4620,9 @@ pub enum ConwayUtxowPredFailure {
         acceptable: SetDataHash,
     },
     /// Tag 13: protocol-params-view hash mismatch —
-    /// `Mismatch RelEQ (StrictMaybe ScriptIntegrityHash)`. Raw
-    /// pending StrictMaybe ScriptIntegrityHash decoder.
-    PPViewHashesDontMatch(Vec<u8>),
+    /// `Mismatch RelEQ (StrictMaybe ScriptIntegrityHash)` via
+    /// ToGroup flattened (R638 typed).
+    PPViewHashesDontMatch(Mismatch<StrictMaybeScriptIntegrityHash>),
     /// Tag 14: TxIns missing required DataHash —
     /// `NonEmptySet TxIn` (R603 typed).
     UnspendableUTxONoDatumHash(NonEmptySetTxIn),
@@ -4835,10 +4884,22 @@ impl ConwayUtxowPredFailure {
                     acceptable,
                 })
             }
-            13 => Ok(Self::PPViewHashesDontMatch(capture_raw(
-                "PPViewHashesDontMatch",
-                3,
-            )?)),
+            13 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "PPViewHashesDontMatch: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                // ToGroup flattens the Mismatch: supplied then
+                // expected.
+                let supplied = StrictMaybeScriptIntegrityHash::from_decoder(&mut dec)?;
+                let expected = StrictMaybeScriptIntegrityHash::from_decoder(&mut dec)?;
+                Ok(Self::PPViewHashesDontMatch(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied,
+                    expected,
+                }))
+            }
             15 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -4871,10 +4932,11 @@ impl fmt::Display for ConwayUtxowPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UtxoFailure(utxo) => write!(f, "UtxoFailure ({utxo})"),
-            Self::MissingRedeemers(b)
-            | Self::PPViewHashesDontMatch(b)
-            | Self::ScriptIntegrityHashMismatch(b) => {
+            Self::MissingRedeemers(b) | Self::ScriptIntegrityHashMismatch(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::PPViewHashesDontMatch(mm) => {
+                write!(f, "PPViewHashesDontMatch ({mm})")
             }
             Self::ExtraRedeemers(purposes) => {
                 write!(f, "ExtraRedeemers ({purposes})")
@@ -8091,6 +8153,34 @@ mod tests {
             err.to_string().contains("unknown variant tag 99"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_pp_view_hashes_dont_match_tag13() {
+        // outer [0x83, 0x0D, supplied SMaybe, expected SMaybe]
+        // (ToGroup flattened). supplied = SJust hash(32 of 0xAB),
+        // expected = SNothing.
+        let mut cbor = vec![0x83_u8, 0x0D, 0x81]; // SJust list(1)
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xAB_u8; 32]);
+        cbor.push(0x80); // SNothing list(0)
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("PPViewHashesDontMatch");
+        if let ConwayUtxowPredFailure::PPViewHashesDontMatch(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelEQ);
+            assert_eq!(mm.supplied.0, Some([0xAB_u8; 32]));
+            assert_eq!(mm.expected.0, None);
+        } else {
+            panic!("expected PPViewHashesDontMatch, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "PPViewHashesDontMatch (Mismatch (RelEQ) {supplied: SJust (SafeHash \"abab"
+            ),
+            "got: {s}"
+        );
+        assert!(s.ends_with("expected: SNothing})"), "got: {s}");
     }
 
     #[test]
