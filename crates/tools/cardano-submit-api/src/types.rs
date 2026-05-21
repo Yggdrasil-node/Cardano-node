@@ -2870,6 +2870,59 @@ impl fmt::Display for NonEmptyTxOutCoinPair {
     }
 }
 
+/// Non-empty map from transaction inputs to outputs mirroring
+/// upstream `NonEmptyMap TxIn (TxOut era)` (`newtype NonEmptyMap
+/// k v = NonEmptyMap (Map k v)`). CBOR wire format is a CBOR map
+/// (`TxIn` key → Shelley `TxOut` value); empty maps are rejected
+/// at decode time. Entries are kept in wire order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyMapTxInTxOut {
+    /// Decoded `(input, output)` entries in wire order.
+    /// Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<(TxIn, ShelleyTxOut)>,
+}
+
+impl NonEmptyMapTxInTxOut {
+    /// Decode a `NonEmptyMap TxIn (TxOut era)` from canonical
+    /// CBOR bytes (a CBOR map).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.map().map_err(|err| {
+            DecoderError(format!("NonEmptyMapTxInTxOut: expected CBOR map: {err:?}"))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyMapTxInTxOut: NonEmptyMap requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let tx_in = TxIn::from_decoder(&mut dec)?;
+            let tx_out = ShelleyTxOut::from_decoder(&mut dec)?;
+            entries.push((tx_in, tx_out));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyMapTxInTxOut {
+    /// Render upstream stock-derived `Show (NonEmptyMap k v)`:
+    /// `NonEmptyMap (fromList [(<k>, <v>), ...])`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptyMap (fromList [")?;
+        let mut first = true;
+        for (tx_in, tx_out) in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "({tx_in}, {tx_out})")?;
+        }
+        f.write_str("])")
+    }
+}
+
 /// Non-empty list of transaction outputs mirroring upstream
 /// `NonEmpty (TxOut era)`. CBOR wire format is a regular CBOR
 /// array with ≥1 entry. NonEmpty invariant enforced at decode time.
@@ -5784,8 +5837,8 @@ pub enum ConwayUtxoPredFailure {
         required: u64,
     },
     /// Tag 13: UTxO entries with the wrong script kind —
-    /// `NonEmptyMap TxIn (TxOut era)`. Raw pending map decoder.
-    ScriptsNotPaidUTxO(Vec<u8>),
+    /// `NonEmptyMap TxIn (TxOut era)` (R641 typed).
+    ScriptsNotPaidUTxO(NonEmptyMapTxInTxOut),
     /// Tag 14: tx execution units exceed the maximum —
     /// `Mismatch RelLTEQ ExUnits` via ToGroup flattened,
     /// expected-first per `swapMismatch` (R637 typed).
@@ -6063,10 +6116,16 @@ impl ConwayUtxoPredFailure {
                 })?;
                 Ok(Self::InsufficientCollateral { balance, required })
             }
-            13 => Ok(Self::ScriptsNotPaidUTxO(capture_raw(
-                "ScriptsNotPaidUTxO",
-                2,
-            )?)),
+            13 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ScriptsNotPaidUTxO: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::ScriptsNotPaidUTxO(NonEmptyMapTxInTxOut::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             14 => {
                 if len != 3 {
                     return Err(DecoderError(format!(
@@ -6192,9 +6251,11 @@ impl fmt::Display for ConwayUtxoPredFailure {
             Self::UtxosFailure(utxos) => write!(f, "UtxosFailure ({utxos})"),
             Self::ValueNotConservedUTxO(b)
             | Self::OutputTooBigUTxO(b)
-            | Self::ScriptsNotPaidUTxO(b)
             | Self::CollateralContainsNonADA(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ScriptsNotPaidUTxO(map) => {
+                write!(f, "ScriptsNotPaidUTxO ({map})")
             }
             Self::BabbageOutputTooSmallUTxO(pairs) => {
                 write!(f, "BabbageOutputTooSmallUTxO ({pairs})")
@@ -8639,6 +8700,52 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_scripts_not_paid_tag13() {
+        // outer [0x82, 0x0D, map(1){TxIn: TxOut}]. TxIn =
+        // [txid32, ix]; TxOut = [bytes(29) addr, coin].
+        let mut cbor = vec![0x82_u8, 0x0D, 0xA1]; // map(1)
+        // key: TxIn [txid32, ix=2]
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x55_u8; 32]);
+        cbor.push(0x02);
+        // value: TxOut [bytes(29), coin=900]
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0x61);
+        cbor.extend_from_slice(&[0xEE_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x03, 0x84]); // coin 900
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("ScriptsNotPaidUTxO");
+        if let ConwayUtxoPredFailure::ScriptsNotPaidUTxO(map) = &f {
+            assert_eq!(map.entries.len(), 1);
+            assert_eq!(map.entries[0].0.tx_ix.0, 2);
+            assert_eq!(map.entries[0].1.coin, 900);
+        } else {
+            panic!("expected ScriptsNotPaidUTxO, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("ScriptsNotPaidUTxO (NonEmptyMap (fromList [(TxIn (TxId"),
+            "got: {s}"
+        );
+        assert!(s.contains(", Coin 900))])"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_scripts_not_paid_rejects_empty() {
+        let cbor = [0x82_u8, 0x0D, 0xA0];
+        let err =
+            ConwayUtxoPredFailure::from_cbor(&cbor).expect_err("empty NonEmptyMap must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmptyMap requires at least one entry"),
             "got: {err}"
         );
     }

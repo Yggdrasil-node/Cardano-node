@@ -779,11 +779,14 @@ wired the variant. R637 (2026-05-21) typed Conway UTXO tag 14
 ToGroup-flattened expected-first). R640 (2026-05-21) typed
 Conway UTXO tag 21 (`BabbageOutputTooSmallUTxO`) — added the
 `NonEmptyTxOutCoinPair` carrier (NonEmpty list of `(ShelleyTxOut,
-Coin)` pairs) and wired the variant. **20 of 23 Conway UTXO
-variants now carry typed payloads**; the 3 remaining (6
-ValueNotConservedUTxO, 13 ScriptsNotPaidUTxO, 15
-CollateralContainsNonADA) keep raw inner CBOR pending Value /
-NonEmptyMap decoders. R631
+Coin)` pairs) and wired the variant. R641 (2026-05-21) typed
+Conway UTXO tag 13 (`ScriptsNotPaidUTxO`) — added the
+`NonEmptyMapTxInTxOut` carrier (CBOR-map-encoded NonEmptyMap
+TxIn → TxOut) and wired the variant. **21 of 23 Conway UTXO
+variants now carry typed payloads**; the 2 remaining (6
+ValueNotConservedUTxO, 15 CollateralContainsNonADA) keep raw
+inner CBOR pending the era-specific multi-asset Value decoder.
+R631
 (2026-05-21) added the `ConwayUtxosPredFailure` 2-variant
 scaffold (the UTXOS Plutus-script-evaluation sub-rule) plus the
 `FailureDescription` and `TagMismatchDescription` helper types,
