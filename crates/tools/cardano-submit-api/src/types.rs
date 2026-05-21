@@ -746,7 +746,7 @@ impl fmt::Display for ExUnits {
 /// = PolicyID {policyID :: ScriptHash}`. A 28-byte script hash.
 /// Display matches the stock-derived record Show:
 /// `PolicyID {policyID = ScriptHash "<hex>"}`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct PolicyId(pub [u8; 28]);
 
 impl fmt::Display for PolicyId {
@@ -764,7 +764,7 @@ impl fmt::Display for PolicyId {
 /// variable-length byte string (≤ 32 bytes). Display matches
 /// upstream `Show AssetName = show . assetNameToBytesAsHex`:
 /// the hex of the bytes, quoted.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct AssetName(pub Vec<u8>);
 
 impl fmt::Display for AssetName {
@@ -779,7 +779,7 @@ impl fmt::Display for AssetName {
 /// Entries are kept in wire order. Display matches the
 /// stock-derived Show: `MultiAsset (fromList [(<PolicyID>,
 /// fromList [(<AssetName>, <amount>)]), ...])`.
-#[derive(Clone, Debug, Eq, PartialEq, Default)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 pub struct MultiAsset {
     /// Per-policy asset bundles in wire order.
     pub policies: Vec<(PolicyId, Vec<(AssetName, i64)>)>,
@@ -851,7 +851,7 @@ impl fmt::Display for MultiAsset {
 ///
 /// Display matches the stock-derived Show: `MaryValue (Coin <n>)
 /// (<MultiAsset>)`.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct MaryValue {
     /// The ADA (lovelace) component.
     pub coin: u64,
@@ -3712,23 +3712,6 @@ impl fmt::Display for NonEmptySetAddr {
     }
 }
 
-/// Read a TxOut value field's lovelace component. The `value`
-/// of a TxOut is era-dependent: Shelley `Coin` (a bare CBOR
-/// integer), or Mary+ `MaryValue` (a bare integer for ADA-only
-/// outputs, otherwise a 2-element `[coin, multiasset]` array).
-/// In every form the lovelace amount is the headline figure.
-fn read_txout_value_lovelace(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<u64, DecoderError> {
-    let major = dec
-        .peek_major()
-        .map_err(|err| DecoderError(format!("TxOut value: peek: {err:?}")))?;
-    if major == 4 {
-        Ok(MaryValue::from_decoder(dec)?.coin)
-    } else {
-        dec.unsigned()
-            .map_err(|err| DecoderError(format!("TxOut value: expected coin: {err:?}")))
-    }
-}
-
 /// Transaction-output mirroring upstream `data TxOut era`. The
 /// decoder is era-tolerant — it accepts every on-wire TxOut
 /// shape so a predicate-failure carrier holding outputs from any
@@ -3740,18 +3723,19 @@ fn read_txout_value_lovelace(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<
 ///   3: script_ref}`.
 ///
 /// Upstream `Show ShelleyTxOut = show . viewCompactTxOut` renders
-/// as a Haskell tuple `(<Addr>, Coin <n>)` — `viewCompactTxOut`
+/// as a Haskell tuple `(<Addr>, <Value>)` — `viewCompactTxOut`
 /// returns `(Addr, Value)` and the tuple Show wraps each element.
-/// The struct keeps the headline `(address, lovelace)`; the
-/// Alonzo datum hash and Babbage datum / script-reference fields
-/// are consumed but not stored.
+/// The struct keeps the headline `(address, value)`; the Alonzo
+/// datum hash and Babbage datum / script-reference fields are
+/// consumed but not stored.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ShelleyTxOut {
     /// Output address bytes (29-byte tagged form for Shelley).
     pub addr: Addr,
-    /// Output lovelace amount (the `Coin` component of the
-    /// era-specific `Value`).
-    pub coin: u64,
+    /// Output value — the era-specific `Value`, normalised to a
+    /// `MaryValue` (a Shelley bare `Coin` lifts to a `MaryValue`
+    /// with an empty asset bundle).
+    pub value: MaryValue,
 }
 
 impl ShelleyTxOut {
@@ -3774,13 +3758,13 @@ impl ShelleyTxOut {
         }
         let addr =
             Addr::from_decoder(dec).map_err(|err| DecoderError(format!("TxOut: {}", err.0)))?;
-        let coin = read_txout_value_lovelace(dec)?;
+        let value = MaryValue::from_decoder(dec)?;
         // Alonzo 3-array carries a trailing datum hash — consume it.
         if len == 3 {
             dec.skip()
                 .map_err(|err| DecoderError(format!("TxOut: datum-hash skip: {err:?}")))?;
         }
-        Ok(Self { addr, coin })
+        Ok(Self { addr, value })
     }
 
     /// Decode the Babbage/Conway CBOR-map TxOut form: key 0 =
@@ -3791,7 +3775,7 @@ impl ShelleyTxOut {
             .map()
             .map_err(|err| DecoderError(format!("TxOut map: expected CBOR map: {err:?}")))?;
         let mut addr: Option<Addr> = None;
-        let mut coin: Option<u64> = None;
+        let mut value: Option<MaryValue> = None;
         for _ in 0..entries {
             let key = dec
                 .unsigned()
@@ -3804,7 +3788,7 @@ impl ShelleyTxOut {
                     );
                 }
                 1 => {
-                    coin = Some(read_txout_value_lovelace(dec)?);
+                    value = Some(MaryValue::from_decoder(dec)?);
                 }
                 _ => {
                     dec.skip()
@@ -3815,7 +3799,7 @@ impl ShelleyTxOut {
         Ok(Self {
             addr: addr
                 .ok_or_else(|| DecoderError("TxOut map: missing address (key 0)".to_string()))?,
-            coin: coin
+            value: value
                 .ok_or_else(|| DecoderError("TxOut map: missing value (key 1)".to_string()))?,
         })
     }
@@ -3823,11 +3807,11 @@ impl ShelleyTxOut {
 
 impl fmt::Display for ShelleyTxOut {
     /// Render upstream `Show ShelleyTxOut = show .
-    /// viewCompactTxOut`: `(<Addr>, Coin <coin>)`. The Haskell tuple
+    /// viewCompactTxOut`: `(<Addr>, <Value>)`. The Haskell tuple
     /// Show inlines each element at p=0 with comma separation;
     /// the outer parens are part of the tuple syntax.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({}, {})", self.addr, CoinShow(self.coin))
+        write!(f, "({}, {})", self.addr, self.value)
     }
 }
 
@@ -11043,7 +11027,7 @@ mod tests {
         let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("BabbageOutputTooSmallUTxO");
         if let ConwayUtxoPredFailure::BabbageOutputTooSmallUTxO(pairs) = &f {
             assert_eq!(pairs.entries.len(), 1);
-            assert_eq!(pairs.entries[0].0.coin, 500);
+            assert_eq!(pairs.entries[0].0.value.coin, 500);
             assert_eq!(pairs.entries[0].1, 1_000_000);
         } else {
             panic!("expected BabbageOutputTooSmallUTxO, got {f:?}");
@@ -11055,7 +11039,10 @@ mod tests {
             s.starts_with("BabbageOutputTooSmallUTxO (((Addr Mainnet"),
             "got: {s}"
         );
-        assert!(s.contains(", Coin 500), Coin 1000000)"), "got: {s}");
+        assert!(
+            s.contains(", MaryValue (Coin 500) (MultiAsset (fromList []))), Coin 1000000)"),
+            "got: {s}"
+        );
         assert!(s.ends_with(":| [])"), "got: {s}");
     }
 
@@ -11092,7 +11079,7 @@ mod tests {
         if let ConwayUtxoPredFailure::ScriptsNotPaidUTxO(map) = &f {
             assert_eq!(map.entries.len(), 1);
             assert_eq!(map.entries[0].0.tx_ix.0, 2);
-            assert_eq!(map.entries[0].1.coin, 900);
+            assert_eq!(map.entries[0].1.value.coin, 900);
         } else {
             panic!("expected ScriptsNotPaidUTxO, got {f:?}");
         }
@@ -11101,7 +11088,10 @@ mod tests {
             s.starts_with("ScriptsNotPaidUTxO (NonEmptyMap (fromList [(TxIn (TxId"),
             "got: {s}"
         );
-        assert!(s.contains(", Coin 900))])"), "got: {s}");
+        assert!(
+            s.contains(", MaryValue (Coin 900) (MultiAsset (fromList []))))])"),
+            "got: {s}"
+        );
     }
 
     #[test]
@@ -12029,7 +12019,7 @@ mod tests {
             let entry = &outs.entries[0];
             assert_eq!(entry.addr.0.len(), 29);
             assert_eq!(entry.addr.0[0], 0x61);
-            assert_eq!(entry.coin, 100);
+            assert_eq!(entry.value.coin, 100);
         } else {
             panic!("expected OutputTooSmallUTxO typed, got {f:?}");
         }
@@ -12047,7 +12037,10 @@ mod tests {
             "got: {s}"
         );
         assert!(s.contains("StakeRefNull"), "got: {s}");
-        assert!(s.contains(", Coin 100)"), "got: {s}");
+        assert!(
+            s.contains(", MaryValue (Coin 100) (MultiAsset (fromList [])))"),
+            "got: {s}"
+        );
         assert!(s.ends_with(":| [])"), "got: {s}");
     }
 
@@ -12217,7 +12210,7 @@ mod tests {
         let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("ShelleyTxOut");
         assert_eq!(tx_out.addr.0.len(), 29);
         assert_eq!(tx_out.addr.0[0], 0x61);
-        assert_eq!(tx_out.coin, 1_000_000);
+        assert_eq!(tx_out.value.coin, 1_000_000);
         let s = tx_out.to_string();
         // 0x61 — enterprise address, key payment credential,
         // Mainnet, null stake reference.
@@ -12226,7 +12219,10 @@ mod tests {
             "got: {s}"
         );
         assert!(s.contains("(StakeRefNull)"), "got: {s}");
-        assert!(s.ends_with(", Coin 1000000)"), "got: {s}");
+        assert!(
+            s.ends_with(", MaryValue (Coin 1000000) (MultiAsset (fromList [])))"),
+            "got: {s}"
+        );
     }
 
     #[test]
@@ -12245,7 +12241,7 @@ mod tests {
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
         let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("Alonzo TxOut");
-        assert_eq!(tx_out.coin, 1_000_000);
+        assert_eq!(tx_out.value.coin, 1_000_000);
         assert_eq!(tx_out.addr.0[0], 0x61);
     }
 
@@ -12265,8 +12261,41 @@ mod tests {
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
         let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("Babbage TxOut");
-        assert_eq!(tx_out.coin, 2000);
+        assert_eq!(tx_out.value.coin, 2000);
         assert_eq!(tx_out.addr.0[0], 0x61);
+    }
+
+    #[test]
+    fn shelley_tx_out_surfaces_multi_asset_value() {
+        // Babbage map TxOut whose value carries a native-asset
+        // bundle — the MultiAsset must render in Display.
+        let mut cbor = vec![0xA2_u8, 0x00];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0x61);
+        cbor.extend_from_slice(&[0x24_u8; 28]);
+        cbor.push(0x01); // key 1: value
+        cbor.push(0x82); // [coin, multiasset]
+        cbor.extend_from_slice(&[0x19, 0x0B, 0xB8]); // coin 3000
+        cbor.push(0xA1); // multiasset map(1)
+        cbor.push(0x58); // PolicyID bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xF1_u8; 28]);
+        cbor.push(0xA1); // asset map(1)
+        cbor.push(0x43); // AssetName bytes(3)
+        cbor.extend_from_slice(b"NFT");
+        cbor.push(0x01); // amount 1
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("multi-asset TxOut");
+        assert_eq!(tx_out.value.coin, 3000);
+        assert_eq!(tx_out.value.assets.policies.len(), 1);
+        let s = tx_out.to_string();
+        assert!(
+            s.contains("MaryValue (Coin 3000) (MultiAsset (fromList [(PolicyID"),
+            "got: {s}"
+        );
+        assert!(s.contains("fromList [(\"4e4654\",1)]"), "got: {s}");
     }
 
     #[test]
