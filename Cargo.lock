@@ -3461,6 +3461,7 @@ dependencies = [
  "yggdrasil-consensus",
  "yggdrasil-crypto",
  "yggdrasil-ledger",
+ "yggdrasil-network",
  "yggdrasil-telemetry",
 ]
 

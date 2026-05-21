@@ -33,6 +33,7 @@ pub mod parser;
 pub mod policy;
 pub mod protocol;
 pub mod status;
+pub mod topology;
 pub mod types;
 
 /// Process-exit-code wrapper around the run-loop dispatch.
