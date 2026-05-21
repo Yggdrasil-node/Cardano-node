@@ -3085,6 +3085,9 @@ pub enum PParamValue {
     /// `drepVotingThresholds`) — a fixed-length array of
     /// rationals.
     VotingThresholds(Vec<UnitInterval>),
+    /// The Plutus cost-model map (`costModels`) — per-language
+    /// `(language-id, cost-integer-array)` entries.
+    CostModels(Vec<(u64, Vec<i64>)>),
     /// A not-yet-typed structured parameter value.
     Raw(Vec<u8>),
 }
@@ -3109,6 +3112,25 @@ impl fmt::Display for PParamValue {
                     write!(f, "{t}")?;
                 }
                 f.write_str("]")
+            }
+            Self::CostModels(models) => {
+                f.write_str("CostModels (fromList [")?;
+                let mut first = true;
+                for (lang, costs) in models {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    let lang_name = match lang {
+                        0 => "PlutusV1",
+                        1 => "PlutusV2",
+                        2 => "PlutusV3",
+                        3 => "PlutusV4",
+                        _ => "PlutusUnknown",
+                    };
+                    write!(f, "({lang_name},<{} costs>)", costs.len())?;
+                }
+                f.write_str("])")
             }
             Self::Raw(b) => write!(f, "<raw-cbor {} bytes>", b.len()),
         }
@@ -3175,6 +3197,35 @@ impl PParamsUpdate {
                     thresholds.push(UnitInterval::from_decoder(dec)?);
                 }
                 PParamValue::VotingThresholds(thresholds)
+            } else if key == 18 {
+                // costModels — a `{language-id: [cost-int, ...]}`
+                // map.
+                let lang_count = dec.map().map_err(|err| {
+                    DecoderError(format!("PParamsUpdate costModels: expected map: {err:?}"))
+                })?;
+                let mut models = Vec::with_capacity(lang_count as usize);
+                for _ in 0..lang_count {
+                    let lang = dec.unsigned().map_err(|err| {
+                        DecoderError(format!(
+                            "PParamsUpdate costModels: expected language id: {err:?}"
+                        ))
+                    })?;
+                    let cost_count = dec.array().map_err(|err| {
+                        DecoderError(format!(
+                            "PParamsUpdate costModels: expected cost array: {err:?}"
+                        ))
+                    })?;
+                    let mut costs = Vec::with_capacity(cost_count as usize);
+                    for _ in 0..cost_count {
+                        costs.push(dec.signed().map_err(|err| {
+                            DecoderError(format!(
+                                "PParamsUpdate costModels: expected cost integer: {err:?}"
+                            ))
+                        })?);
+                    }
+                    models.push((lang, costs));
+                }
+                PParamValue::CostModels(models)
             } else if major == 0 {
                 let n = dec
                     .unsigned()
@@ -12241,6 +12292,44 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
+        );
+    }
+
+    #[test]
+    fn pparams_update_decodes_cost_models() {
+        // ParameterChange whose PParamsUpdate sets costModels
+        // (id 18) — `{0: [1,2,3], 2: [4,5]}`.
+        let mut cbor = vec![0x82_u8, 0x01, 0x84, 0x00, 0xF6];
+        cbor.push(0xA1); // PParamsUpdate map(1)
+        cbor.push(0x12); // param id 18 (costModels)
+        cbor.push(0xA2); // costModels map(2)
+        cbor.push(0x00); // language 0 (PlutusV1)
+        cbor.extend_from_slice(&[0x83, 0x01, 0x02, 0x03]); // [1,2,3]
+        cbor.push(0x02); // language 2 (PlutusV3)
+        cbor.extend_from_slice(&[0x82, 0x04, 0x05]); // [4,5]
+        cbor.push(0xF6); // guardrail = null
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::ParameterChange {
+            pparams_update,
+            ..
+        }) = &f
+        {
+            match &pparams_update.updates[0].1 {
+                PParamValue::CostModels(models) => {
+                    assert_eq!(models.len(), 2);
+                    assert_eq!(models[0], (0, vec![1, 2, 3]));
+                    assert_eq!(models[1], (2, vec![4, 5]));
+                }
+                other => panic!("expected CostModels, got {other:?}"),
+            }
+        } else {
+            panic!("expected ParameterChange, got {f:?}");
+        }
+        assert!(
+            f.to_string().contains(
+                "(costModels,CostModels (fromList [(PlutusV1,<3 costs>),(PlutusV3,<2 costs>)]))"
+            ),
+            "got: {f}"
         );
     }
 

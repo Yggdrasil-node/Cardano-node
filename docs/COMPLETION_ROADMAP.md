@@ -794,10 +794,12 @@ integer-valued parameters decode to a typed `Word`. R677
 (2026-05-21) added the `PParamValue::Rational` variant for the
 tag-30 rational parameters. R678 (2026-05-21) added the
 `PParamValue::ExUnits` / `ExUnitPrices` variants. R679
-(2026-05-21) added the `PParamValue::VotingThresholds` variant
-— `poolVotingThresholds` / `drepVotingThresholds` decode to a
-typed `Vec<UnitInterval>`; only the `costModels` parameter
-keeps a `<raw-cbor>` marker. R653
+(2026-05-21) added the `PParamValue::VotingThresholds` variant.
+R680 (2026-05-21) added the `PParamValue::CostModels` variant —
+`costModels` decodes to a typed `Vec<(language-id,
+cost-integer-array)>`. **Every Conway `PParamsUpdate`
+parameter value now decodes to a typed `PParamValue` — the
+`PParamsUpdate` value tree is complete.** R653
 (2026-05-21) added the `Anchor` and `ProposalProcedure` types
 (4-field record: deposit / return-addr / GovAction / Anchor)
 and wired GOV tags 8 (`InvalidPrevGovActionId`) and 12
