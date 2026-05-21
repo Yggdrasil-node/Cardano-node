@@ -3730,9 +3730,9 @@ pub enum ConwayLedgerPredFailure {
     /// Tag 1: nested Conway UTXOW failure (R624 wired to the
     /// typed `ConwayUtxowPredFailure` 19-variant scaffold).
     ConwayUtxowFailure(ConwayUtxowPredFailure),
-    /// Tag 2: nested Conway CERTS failure (raw, pending Conway
-    /// CERTS sub-rule decoder). Replaces Shelley's DELEGS path.
-    ConwayCertsFailure(Vec<u8>),
+    /// Tag 2: nested Conway CERTS failure (R625 wired to typed
+    /// `ConwayCertsPredFailure`). Replaces Shelley's DELEGS path.
+    ConwayCertsFailure(ConwayCertsPredFailure),
     /// Tag 3: nested Conway GOV failure (raw, pending GOV
     /// sub-rule decoder). New in Conway for governance actions.
     ConwayGovFailure(Vec<u8>),
@@ -3827,12 +3827,26 @@ impl ConwayLedgerPredFailure {
                 let utxow = ConwayUtxowPredFailure::from_cbor(payload_bytes)?;
                 Ok(Self::ConwayUtxowFailure(utxow))
             }
-            // Tags 2/3: CERTS/GOV sub-rules raw pending typed
-            // decoders.
-            2..=3 => {
+            // Tag 2: typed Conway CERTS sub-rule (R625).
+            2 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
-                        "ConwayLedgerPredFailure tag {tag}: expected 2-element envelope, got len {len}"
+                        "ConwayCertsFailure: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ConwayLedgerPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let certs = ConwayCertsPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::ConwayCertsFailure(certs))
+            }
+            // Tag 3: GOV sub-rule raw pending typed decoder.
+            3 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ConwayGovFailure: expected 2-element envelope, got len {len}"
                     )));
                 }
                 let raw = bytes
@@ -3843,11 +3857,7 @@ impl ConwayLedgerPredFailure {
                         )
                     })?
                     .to_vec();
-                Ok(match tag {
-                    2 => Self::ConwayCertsFailure(raw),
-                    3 => Self::ConwayGovFailure(raw),
-                    _ => unreachable!("tag range checked above"),
-                })
+                Ok(Self::ConwayGovFailure(raw))
             }
             // Tag 4: NonEmpty (KeyHash Staking).
             4 => {
@@ -3964,8 +3974,11 @@ impl fmt::Display for ConwayLedgerPredFailure {
             Self::ConwayUtxowFailure(utxow) => {
                 write!(f, "ConwayUtxowFailure ({utxow})")
             }
-            Self::ConwayCertsFailure(b) | Self::ConwayGovFailure(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::ConwayCertsFailure(certs) => {
+                write!(f, "ConwayCertsFailure ({certs})")
+            }
+            Self::ConwayGovFailure(b) => {
+                write!(f, "ConwayGovFailure <raw-cbor {} bytes>", b.len())
             }
             Self::ConwayWdrlNotDelegatedToDRep(keys) => {
                 write!(f, "ConwayWdrlNotDelegatedToDRep ({keys})")
@@ -4376,6 +4389,97 @@ impl fmt::Display for ConwayUtxowPredFailure {
             Self::InvalidMetadata => f.write_str("InvalidMetadata"),
             Self::UnspendableUTxONoDatumHash(set) => {
                 write!(f, "UnspendableUTxONoDatumHash ({set})")
+            }
+        }
+    }
+}
+
+/// `ConwayCertsPredFailure` mirror — Conway-era CERTS sub-rule
+/// failure (under `ConwayLedgerPredFailure::ConwayCertsFailure`).
+///
+/// Upstream: `data ConwayCertsPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Certs` with 2 variants encoded
+/// via CBOR `Sum` tags 0/1. CERTS replaces Shelley's DELEGS at
+/// the Conway era.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayCertsPredFailure {
+    /// Tag 0: withdrawals refer to non-rewarded accounts or
+    /// partial-withdraw an amount — `Withdrawals` (R596 typed).
+    /// Only emitted at protocol-version < 11 per upstream
+    /// comment.
+    WithdrawalsNotInRewardsCERTS(Withdrawals),
+    /// Tag 1: nested CERT sub-rule failure (raw pending
+    /// ConwayCertPredFailure decoder).
+    CertFailure(Vec<u8>),
+}
+
+impl ConwayCertsPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::WithdrawalsNotInRewardsCERTS(_) => 0,
+            Self::CertFailure(_) => 1,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::WithdrawalsNotInRewardsCERTS(_) => "WithdrawalsNotInRewardsCERTS",
+            Self::CertFailure(_) => "CertFailure",
+        }
+    }
+
+    /// Decode the full `ConwayCertsPredFailure` outer envelope.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayCertsPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ConwayCertsPredFailure: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayCertsPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload_offset = dec.position();
+        let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+            DecoderError("ConwayCertsPredFailure: payload offset out of bounds".to_string())
+        })?;
+        match tag {
+            0 => {
+                let w = Withdrawals::from_cbor(payload_bytes).map_err(|err| {
+                    DecoderError(format!("WithdrawalsNotInRewardsCERTS: {}", err.0))
+                })?;
+                Ok(Self::WithdrawalsNotInRewardsCERTS(w))
+            }
+            1 => Ok(Self::CertFailure(payload_bytes.to_vec())),
+            other => Err(DecoderError(format!(
+                "ConwayCertsPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayCertsPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayCertsPredFailure era)`. Typed payloads route
+    /// through their typed Display; raw variants emit
+    /// `<raw-cbor N bytes>`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::WithdrawalsNotInRewardsCERTS(w) => {
+                write!(f, "WithdrawalsNotInRewardsCERTS ({w})")
+            }
+            Self::CertFailure(b) => {
+                write!(f, "CertFailure <raw-cbor {} bytes>", b.len())
             }
         }
     }
@@ -5417,6 +5521,64 @@ mod tests {
         assert!(
             f.to_string().starts_with("MissingRedeemers <raw-cbor"),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_certs_pred_failure_withdrawals_not_in_rewards_tag0() {
+        // outer [0x82, 0x00, empty-map 0xa0]
+        let cbor = [0x82_u8, 0x00, 0xa0];
+        let f = ConwayCertsPredFailure::from_cbor(&cbor).expect("WithdrawalsNotInRewardsCERTS");
+        if let ConwayCertsPredFailure::WithdrawalsNotInRewardsCERTS(w) = &f {
+            assert!(w.entries.is_empty());
+        } else {
+            panic!("expected WithdrawalsNotInRewardsCERTS, got {f:?}");
+        }
+        assert_eq!(f.tag(), 0);
+        assert_eq!(f.constructor(), "WithdrawalsNotInRewardsCERTS");
+        assert_eq!(
+            f.to_string(),
+            "WithdrawalsNotInRewardsCERTS (Withdrawals {unWithdrawals = fromList []})"
+        );
+    }
+
+    #[test]
+    fn conway_certs_pred_failure_cert_failure_tag1() {
+        let cbor = [0x82_u8, 0x01, 0x40];
+        let f = ConwayCertsPredFailure::from_cbor(&cbor).expect("CertFailure");
+        assert!(matches!(f, ConwayCertsPredFailure::CertFailure(_)));
+        assert_eq!(f.tag(), 1);
+        assert_eq!(f.constructor(), "CertFailure");
+        assert!(
+            f.to_string().starts_with("CertFailure <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_certs_typed_routing_tag2() {
+        // Outer LEDGER [0x82, 0x02, inner-CERTS]; inner-CERTS
+        // [0x82, 0x00, empty-map 0xa0] = WithdrawalsNotInRewardsCERTS
+        let cbor = [0x82_u8, 0x02, 0x82, 0x00, 0xa0];
+        let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayCertsFailure");
+        if let ConwayLedgerPredFailure::ConwayCertsFailure(certs) = &f {
+            assert_eq!(certs.tag(), 0);
+        } else {
+            panic!("expected ConwayCertsFailure(_), got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ConwayCertsFailure (WithdrawalsNotInRewardsCERTS (Withdrawals {unWithdrawals = fromList []}))"
+        );
+    }
+
+    #[test]
+    fn conway_certs_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ConwayCertsPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
         );
     }
 

@@ -698,9 +698,15 @@ MissingRedeemers, 11 MissingRequiredDatums, 12
 NotAllowedSupplementalDatums, 13 PPViewHashesDontMatch, 15
 ExtraRedeemers, 18 ScriptIntegrityHashMismatch) carry raw inner
 CBOR pending Conway UTXO + PlutusPurpose + DataHash +
-ScriptIntegrityHash + StrictMaybe decoders. Conway CERTS / GOV
-sub-rule variants (LEDGER tags 2/3) remain raw pending their own
-decoder scaffolds.
+ScriptIntegrityHash + StrictMaybe decoders. R625 (2026-05-21)
+added the `ConwayCertsPredFailure` 2-variant scaffold (tag 0
+`WithdrawalsNotInRewardsCERTS(Withdrawals)` typed; tag 1
+`CertFailure(Vec<u8>)` raw pending the nested CERT sub-rule
+decoder) and wired
+`ConwayLedgerPredFailure::ConwayCertsFailure(Vec<u8>)` →
+`ConwayCertsFailure(ConwayCertsPredFailure)`. Conway CERTS
+replaces Shelley's DELEGS at the Conway era. Only the GOV
+sub-rule (LEDGER tag 3) remains raw at the LEDGER level.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
