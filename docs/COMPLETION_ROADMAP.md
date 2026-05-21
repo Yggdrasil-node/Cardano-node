@@ -666,8 +666,15 @@ render the typed shape `Addr <Net> (<payment>) (StakeRefPtr (Ptr
 (SlotNo32 N) (TxIx {unTxIx = N}) (CertIx {unCertIx = N})))`
 matching upstream stock-derived Show. Malformed pointer tails
 report a `<malformed-ptr ...>` marker. Alonzo 3-array TxOut +
-Babbage map-form TxOut and the typed Byron bootstrap parse remain
-pending. R623 (2026-05-21) opened **Conway-era LEDGER coverage**
+Babbage map-form TxOut remain pending. R656 (2026-05-21) closed
+the typed Byron bootstrap parse — added `render_byron_bootstrap`,
+which parses the CRC-protected Byron `Address` CBOR (`[#6.24(inner),
+crc32]`, inner = `[addrRoot 28-byte hash, addrAttributes, addrType]`)
+and renders the typed `AddrBootstrap (BootstrapAddress
+{unBootstrapAddress = Address {addrRoot, addrAttributes, addrType}})`
+shape; malformed Byron input falls back to a hex marker. The
+`Attributes AddrAttributes` map is surfaced as a byte-count marker.
+R623 (2026-05-21) opened **Conway-era LEDGER coverage**
 with the `ConwayLedgerPredFailure` 9-variant scaffold (tags 1-9;
 upstream skipped tag 0). Per-era LEDGER coverage status:
 **Shelley/Allegra/Mary/Alonzo/Babbage all reuse

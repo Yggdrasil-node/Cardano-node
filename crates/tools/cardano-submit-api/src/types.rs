@@ -3424,13 +3424,18 @@ impl fmt::Display for Addr {
         }
         let header = self.0[0];
         if header & 0x80 != 0 {
-            // Byron bootstrap — typed split pending.
-            return write!(
-                f,
-                "AddrBootstrap <hex {} bytes: {}>",
-                self.0.len(),
-                hex::encode(&self.0)
-            );
+            // Byron bootstrap — parse the CRC-protected Address
+            // structure; fall back to a hex marker on malformed
+            // input.
+            return match render_byron_bootstrap(&self.0) {
+                Some(rendered) => f.write_str(&rendered),
+                None => write!(
+                    f,
+                    "AddrBootstrap <malformed hex {} bytes: {}>",
+                    self.0.len(),
+                    hex::encode(&self.0)
+                ),
+            };
         }
         let payment_is_script = header & 0x10 != 0;
         let payment_label = if payment_is_script {
@@ -3504,6 +3509,61 @@ impl fmt::Display for Addr {
         };
         write!(f, "Addr {network} ({payment}) ({stake_ref_render})")
     }
+}
+
+/// Render a Byron bootstrap address as a typed `AddrBootstrap`
+/// shape, parsing the upstream `Address` CBOR structure.
+///
+/// A Byron `Address` is CRC-protected (upstream
+/// `encodeCrcProtected`): a 2-element CBOR array `[#6.24(inner),
+/// crc32]` where `inner` is a CBOR-encoded 3-tuple `[addrRoot
+/// (28-byte AddressHash), addrAttributes (Attributes map),
+/// addrType (0 = ATVerKey, 2 = ATRedeem)]`.
+///
+/// Returns the typed render on success; `None` (caller falls
+/// back to the hex marker) when any structural expectation
+/// fails. The `Attributes AddrAttributes` map is surfaced as a
+/// byte-count marker rather than fully decoded.
+fn render_byron_bootstrap(bytes: &[u8]) -> Option<String> {
+    use yggdrasil_ledger::Decoder;
+    let mut dec = Decoder::new(bytes);
+    // Outer CRC-protected 2-array.
+    let outer = dec.array().ok()?;
+    if outer != 2 {
+        return None;
+    }
+    // Element 0: tag-24-wrapped CBOR bytestring (the address body).
+    if dec.tag().ok()? != 24 {
+        return None;
+    }
+    let body = dec.bytes().ok()?.to_vec();
+    let crc = dec.unsigned().ok()?;
+    // Inner body: CBOR 3-tuple [addrRoot, addrAttributes, addrType].
+    let mut inner = Decoder::new(&body);
+    if inner.array().ok()? != 3 {
+        return None;
+    }
+    let root = inner.bytes().ok()?;
+    if root.len() != 28 {
+        return None;
+    }
+    let root_hex = hex::encode(root);
+    let attr_start = inner.position();
+    inner.skip().ok()?;
+    let attr_end = inner.position();
+    let attr_len = attr_end.saturating_sub(attr_start);
+    let addr_type = inner.unsigned().ok()?;
+    let addr_type_render = match addr_type {
+        0 => "ATVerKey".to_string(),
+        2 => "ATRedeem".to_string(),
+        other => format!("ATUnknown {other}"),
+    };
+    Some(format!(
+        "AddrBootstrap (BootstrapAddress {{unBootstrapAddress = \
+         Address {{addrRoot = AbstractHash \"{root_hex}\", \
+         addrAttributes = <Attributes {attr_len} bytes>, \
+         addrType = {addr_type_render}}}}}) <crc32 {crc}>"
+    ))
 }
 
 /// Decode a Cardano pointer-address tail into `(slot, tx_ix,
@@ -11959,13 +12019,41 @@ mod tests {
         let s = Addr(ptr_bad).to_string();
         assert!(s.contains("StakeRefPtr <malformed-ptr"), "got: {s}");
 
-        // Byron bootstrap (bit 7 set).
-        let boot = vec![0x82_u8, 0x11, 0x22, 0x33];
-        let s = Addr(boot).to_string();
+        // Byron bootstrap — malformed (outer 2-array but no
+        // tag-24 body).
+        let boot_bad = vec![0x82_u8, 0x11, 0x22, 0x33];
+        let s = Addr(boot_bad).to_string();
         assert!(
-            s.starts_with("AddrBootstrap <hex 4 bytes: 82112233"),
+            s.starts_with("AddrBootstrap <malformed hex 4 bytes: 82112233"),
             "got: {s}"
         );
+    }
+
+    #[test]
+    fn addr_typed_display_byron_bootstrap() {
+        // Well-formed Byron Address: CRC-protected 2-array
+        // [#6.24(inner), crc32]. inner = [root(28), attrs{}, type].
+        let mut inner = vec![0x83_u8, 0x58, 0x1C];
+        inner.extend_from_slice(&[0xAB_u8; 28]);
+        inner.push(0xA0); // empty attributes map
+        inner.push(0x00); // addrType = ATVerKey
+        let mut addr = vec![0x82_u8, 0xD8, 0x18]; // outer 2-arr, tag 24
+        addr.push(0x58); // bytes header
+        addr.push(inner.len() as u8);
+        addr.extend_from_slice(&inner);
+        addr.extend_from_slice(&[0x1A, 0x12, 0x34, 0x56, 0x78]); // crc32
+        // The address bytestring starts 0x82 — high bit set, so
+        // it routes through the Byron-bootstrap branch.
+        assert_ne!(addr[0] & 0x80, 0);
+        let s = Addr(addr).to_string();
+        assert!(
+            s.starts_with(
+                "AddrBootstrap (BootstrapAddress {unBootstrapAddress = Address {addrRoot = AbstractHash \"abababab"
+            ),
+            "got: {s}"
+        );
+        assert!(s.contains("addrType = ATVerKey"), "got: {s}");
+        assert!(s.ends_with("<crc32 305419896>"), "got: {s}");
     }
 
     #[test]
@@ -11974,23 +12062,23 @@ mod tests {
         let mut cbor = vec![0x82_u8];
         cbor.push(0x58);
         cbor.push(29);
-        cbor.push(0xE1);
+        cbor.push(0x61); // enterprise/key/Mainnet payment address
         cbor.extend_from_slice(&[0x77_u8; 28]);
         cbor.extend_from_slice(&[0x1A, 0x00, 0x0F, 0x42, 0x40]); // 1_000_000
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
         let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("ShelleyTxOut");
         assert_eq!(tx_out.addr.0.len(), 29);
-        assert_eq!(tx_out.addr.0[0], 0xE1);
+        assert_eq!(tx_out.addr.0[0], 0x61);
         assert_eq!(tx_out.coin, 1_000_000);
         let s = tx_out.to_string();
-        // 0xE1 sets bit 7 → Byron bootstrap branch in the typed
-        // header decoder. Display renders as `AddrBootstrap` with
-        // the hex marker (full Byron typed parse pending).
+        // 0x61 — enterprise address, key payment credential,
+        // Mainnet, null stake reference.
         assert!(
-            s.starts_with("(AddrBootstrap <hex 29 bytes: e177"),
+            s.starts_with("(Addr Mainnet (KeyHashObj (KeyHash {unKeyHash = \"7777"),
             "got: {s}"
         );
+        assert!(s.contains("(StakeRefNull)"), "got: {s}");
         assert!(s.ends_with(", Coin 1000000)"), "got: {s}");
     }
 
