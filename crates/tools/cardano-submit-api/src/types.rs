@@ -3100,12 +3100,52 @@ impl PParamsUpdate {
         }
         Ok(Self { updates })
     }
+
+    /// The upstream Conway protocol-parameter name for a CBOR
+    /// `PParamsUpdate` map key (per `Cardano.Ledger.Conway.PParams`
+    /// `ParamId`). Returns `None` for ids outside the known
+    /// range.
+    pub fn param_name(id: u64) -> Option<&'static str> {
+        Some(match id {
+            0 => "minFeeA",
+            1 => "minFeeB",
+            2 => "maxBBSize",
+            3 => "maxTxSize",
+            4 => "maxBHSize",
+            5 => "keyDeposit",
+            6 => "poolDeposit",
+            7 => "eMax",
+            8 => "nOpt",
+            9 => "a0",
+            10 => "rho",
+            11 => "tau",
+            16 => "minPoolCost",
+            17 => "coinsPerUTxOByte",
+            18 => "costModels",
+            19 => "prices",
+            20 => "maxTxExUnits",
+            21 => "maxBlockExUnits",
+            22 => "maxValSize",
+            23 => "collateralPercentage",
+            24 => "maxCollateralInputs",
+            25 => "poolVotingThresholds",
+            26 => "drepVotingThresholds",
+            27 => "committeeMinSize",
+            28 => "committeeMaxTermLength",
+            29 => "govActionLifetime",
+            30 => "govActionDeposit",
+            31 => "drepDeposit",
+            32 => "drepActivity",
+            33 => "minFeeRefScriptCostPerByte",
+            _ => return None,
+        })
+    }
 }
 
 impl fmt::Display for PParamsUpdate {
-    /// Render the set of updated parameter ids; the per-parameter
-    /// values keep a `<raw-cbor N bytes>` marker pending their
-    /// typed decoders.
+    /// Render the updated parameters by their upstream Conway
+    /// name; the per-parameter values keep a `<raw-cbor N
+    /// bytes>` marker pending their typed decoders.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("PParamsUpdate (fromList [")?;
         let mut first = true;
@@ -3114,7 +3154,14 @@ impl fmt::Display for PParamsUpdate {
                 f.write_str(",")?;
             }
             first = false;
-            write!(f, "({key},<raw-cbor {} bytes>)", raw.len())?;
+            match Self::param_name(*key) {
+                Some(name) => {
+                    write!(f, "({name},<raw-cbor {} bytes>)", raw.len())?;
+                }
+                None => {
+                    write!(f, "(param-{key},<raw-cbor {} bytes>)", raw.len())?;
+                }
+            }
         }
         f.write_str("])")
     }
@@ -12101,6 +12148,31 @@ mod tests {
     }
 
     #[test]
+    fn pparams_update_renders_named_parameters() {
+        // ParameterChange whose PParamsUpdate touches a named
+        // parameter (33 = minFeeRefScriptCostPerByte) and an
+        // unknown id (99 → `param-99`).
+        let mut cbor = vec![0x82_u8, 0x01, 0x84, 0x00, 0xF6];
+        cbor.push(0xA2); // PParamsUpdate map(2)
+        cbor.push(0x18);
+        cbor.push(33); // param id 33
+        cbor.push(0x05); // value 5
+        cbor.push(0x18);
+        cbor.push(99); // unknown param id 99
+        cbor.push(0x06); // value 6
+        cbor.push(0xF6); // guardrail = null
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        let s = f.to_string();
+        assert!(
+            s.contains("(minFeeRefScriptCostPerByte,<raw-cbor 1 bytes>)"),
+            "got: {s}"
+        );
+        assert!(s.contains("(param-99,<raw-cbor 1 bytes>)"), "got: {s}");
+        assert_eq!(PParamsUpdate::param_name(17), Some("coinsPerUTxOByte"));
+        assert_eq!(PParamsUpdate::param_name(99), None);
+    }
+
+    #[test]
     fn conway_gov_pred_failure_malformed_proposal_parameter_change() {
         // MalformedProposal carrying a GovAction ParameterChange
         // — `[0, SNothing, PParamsUpdate{2 params}, SNothing]`.
@@ -12130,7 +12202,7 @@ mod tests {
         let s = f.to_string();
         assert!(
             s.starts_with(
-                "MalformedProposal (ParameterChange (SNothing) (PParamsUpdate (fromList [(0,"
+                "MalformedProposal (ParameterChange (SNothing) (PParamsUpdate (fromList [(minFeeA,"
             ),
             "got: {s}"
         );

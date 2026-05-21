@@ -786,9 +786,13 @@ cold-credential remove-set + add-map + quorum threshold). R673
 parameter-id → raw value, surfacing the updated-parameter set)
 and typed `GovAction::ParameterChange` — `{ prev, pparams_update:
 PParamsUpdate, guardrail }`. **All 7 GovAction variants now
-carry typed payloads** — the only remaining raw leaf is the
-per-parameter `PParamsUpdate` values (the ~30 protocol
-parameters). R653
+carry typed payloads.** R675 (2026-05-21) added the
+`PParamsUpdate::param_name` lookup — the `PParamsUpdate` Display
+now renders each updated parameter by its upstream Conway name
+(`minFeeA`, `coinsPerUTxOByte`, `drepDeposit`, …) rather than a
+bare integer id; the per-parameter values still keep a
+`<raw-cbor>` marker pending the ~30 per-parameter typed value
+decoders. R653
 (2026-05-21) added the `Anchor` and `ProposalProcedure` types
 (4-field record: deposit / return-addr / GovAction / Anchor)
 and wired GOV tags 8 (`InvalidPrevGovActionId`) and 12
