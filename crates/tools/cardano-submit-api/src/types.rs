@@ -2075,14 +2075,29 @@ impl fmt::Display for VotingPeriod {
 ///          | AddrBootstrap BootstrapAddress`
 /// from `Cardano.Ledger.Address`.
 ///
-/// CBOR wire format is a single bytestring; the first byte's high
-/// nibble encodes the address type (Shelley vs Bootstrap), the low
-/// nibble encodes the network ID.
+/// CBOR wire format is a single bytestring whose first byte encodes
+/// the address type in the high nibble (per upstream `putAddr`):
 ///
-/// R607 stores the raw address bytes verbatim and renders them as
-/// a hex-tagged marker; the full typed Shelley/Bootstrap split + the
-/// upstream stock-derived Show parse-tree (PaymentCredential +
-/// StakeReference) lands in a follow-on round.
+/// | Header bits | Type | Body |
+/// |-------------|------|------|
+/// | `0000_NNNN` | Base addr (key/key) | 28-byte payment hash + 28-byte stake hash |
+/// | `0001_NNNN` | Base addr (script/key) | 28+28 |
+/// | `0010_NNNN` | Base addr (key/script) | 28+28 |
+/// | `0011_NNNN` | Base addr (script/script) | 28+28 |
+/// | `0100_NNNN` | Pointer (key) | 28 + variable Ptr |
+/// | `0101_NNNN` | Pointer (script) | 28 + variable Ptr |
+/// | `0110_NNNN` | Enterprise (key) | 28 |
+/// | `0111_NNNN` | Enterprise (script) | 28 |
+/// | `1xxx_xxxx` | Byron bootstrap | variable |
+///
+/// `NNNN` is the network id (Testnet=0, Mainnet=1).
+///
+/// The struct stores the raw on-wire bytes; `Display` parses the
+/// header byte and renders the typed structure (base/pointer/
+/// enterprise/bootstrap) matching upstream's stock-derived Show.
+/// Pointer-address typed body decoding (variable-length encoded
+/// `Ptr` values) is deferred — pointer addresses render with a
+/// typed payment credential plus a raw hex pointer tail.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Addr(pub Vec<u8>);
 
@@ -2099,20 +2114,105 @@ impl Addr {
         }
         Ok(Self(bytes.to_vec()))
     }
+
+    /// Network ID extracted from the address header byte (low
+    /// nibble for Shelley addresses; for Byron bootstrap, returns
+    /// Mainnet as a default — upstream `getNetwork` inspects the
+    /// Byron attribute payload, which yggdrasil doesn't yet
+    /// decode).
+    fn network_from_header(&self) -> Network {
+        let header = self.0[0];
+        if header & 0x80 != 0 {
+            // Byron bootstrap — full Byron addr decode required to
+            // recover the network attribute. Default to Mainnet
+            // for the marker render.
+            Network::Mainnet
+        } else if header & 0x0F == 0 {
+            Network::Testnet
+        } else {
+            Network::Mainnet
+        }
+    }
 }
 
 impl fmt::Display for Addr {
-    /// Render as `Addr <hex N bytes>` until the full Shelley /
-    /// Bootstrap parse-tree port lands. The hex envelope preserves
-    /// the raw on-wire bytes for operators while making the
-    /// raw-payload status visible.
+    /// Render the typed Shelley / Bootstrap address shape matching
+    /// upstream's stock-derived `Show Addr`:
+    /// - Shelley: `Addr <Network> (<PaymentCredential>) (<StakeReference>)`.
+    /// - Bootstrap: `AddrBootstrap <hex N bytes>` (full Byron
+    ///   typed parse pending).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Addr <hex {} bytes: {}>",
-            self.0.len(),
-            hex::encode(&self.0)
-        )
+        if self.0.is_empty() {
+            return f.write_str("Addr <empty>");
+        }
+        let header = self.0[0];
+        if header & 0x80 != 0 {
+            // Byron bootstrap — typed split pending.
+            return write!(
+                f,
+                "AddrBootstrap <hex {} bytes: {}>",
+                self.0.len(),
+                hex::encode(&self.0)
+            );
+        }
+        let payment_is_script = header & 0x10 != 0;
+        let payment_label = if payment_is_script {
+            "ScriptHashObj"
+        } else {
+            "KeyHashObj"
+        };
+        let payment_hash_label = if payment_is_script {
+            "ScriptHash"
+        } else {
+            "KeyHash"
+        };
+        let network = self.network_from_header();
+        // Body starts at byte 1.
+        let body = &self.0[1..];
+        if body.len() < 28 {
+            return write!(
+                f,
+                "Addr <malformed: header {:#04X}, body {} bytes>",
+                header,
+                body.len()
+            );
+        }
+        let pay_hex = hex::encode(&body[..28]);
+        let payment = if payment_is_script {
+            format!("{payment_label} ({payment_hash_label} \"{pay_hex}\")")
+        } else {
+            format!("{payment_label} ({payment_hash_label} {{unKeyHash = \"{pay_hex}\"}})")
+        };
+        let type_bits = header & 0xF0;
+        let stake_ref_render = match type_bits {
+            0x00 | 0x10 => {
+                // Base address — 28-byte stake-key credential.
+                if body.len() < 56 {
+                    return write!(f, "Addr {network} ({payment}) <truncated base stake hash>");
+                }
+                let stake_hex = hex::encode(&body[28..56]);
+                format!("StakeRefBase (KeyHashObj (KeyHash {{unKeyHash = \"{stake_hex}\"}}))")
+            }
+            0x20 | 0x30 => {
+                if body.len() < 56 {
+                    return write!(
+                        f,
+                        "Addr {network} ({payment}) <truncated base stake script hash>"
+                    );
+                }
+                let stake_hex = hex::encode(&body[28..56]);
+                format!("StakeRefBase (ScriptHashObj (ScriptHash \"{stake_hex}\"))")
+            }
+            0x40 | 0x50 => {
+                // Pointer address — variable-length Ptr tail; raw
+                // hex fallback for now.
+                let ptr_hex = hex::encode(&body[28..]);
+                format!("StakeRefPtr <hex {} bytes: {ptr_hex}>", body.len() - 28)
+            }
+            0x60 | 0x70 => "StakeRefNull".to_string(),
+            other => format!("<unknown stake type {other:#04X}>"),
+        };
+        write!(f, "Addr {network} ({payment}) ({stake_ref_render})")
     }
 }
 
@@ -4937,16 +5037,81 @@ mod tests {
             panic!("expected OutputTooSmallUTxO typed, got {f:?}");
         }
         let s = f.to_string();
-        // Expected shape: `OutputTooSmallUTxO ((Addr <hex 29 bytes:
-        // ...>, Coin 100) :| [])`. The inner ShelleyTxOut renders
-        // as a Haskell tuple `(Addr ..., Coin 100)` per upstream
-        // `show . viewCompactTxOut`.
+        // Header byte 0x61 = enterprise address (high nibble
+        // 0x60), payment=KeyHash, network=Mainnet (low nibble
+        // 0x01). Body = 28×0xAA. R621 renders the typed shape:
+        // `OutputTooSmallUTxO ((Addr Mainnet (KeyHashObj (KeyHash
+        // {unKeyHash = "aaaa..."})) (StakeRefNull), Coin 100) :|
+        // [])`.
         assert!(
-            s.starts_with("OutputTooSmallUTxO ((Addr <hex 29 bytes: 61aaaa"),
+            s.starts_with(
+                "OutputTooSmallUTxO ((Addr Mainnet (KeyHashObj (KeyHash {unKeyHash = \"aaaa"
+            ),
             "got: {s}"
         );
+        assert!(s.contains("StakeRefNull"), "got: {s}");
         assert!(s.contains(", Coin 100)"), "got: {s}");
         assert!(s.ends_with(":| [])"), "got: {s}");
+    }
+
+    #[test]
+    fn addr_typed_display_covers_all_shelley_types() {
+        // Base address — key/key, Mainnet, 28+28 body.
+        let mut base = vec![0x01_u8]; // 0000_0001
+        base.extend_from_slice(&[0x11_u8; 28]);
+        base.extend_from_slice(&[0x22_u8; 28]);
+        let s = Addr(base).to_string();
+        assert!(
+            s.starts_with("Addr Mainnet (KeyHashObj (KeyHash {unKeyHash = \"11"),
+            "got: {s}"
+        );
+        assert!(
+            s.contains("StakeRefBase (KeyHashObj (KeyHash {unKeyHash = \"22"),
+            "got: {s}"
+        );
+
+        // Base address — script/script, Testnet (low nibble 0).
+        let mut base_ss = vec![0x30_u8]; // 0011_0000
+        base_ss.extend_from_slice(&[0x33_u8; 28]);
+        base_ss.extend_from_slice(&[0x44_u8; 28]);
+        let s = Addr(base_ss).to_string();
+        assert!(
+            s.starts_with("Addr Testnet (ScriptHashObj (ScriptHash \"33"),
+            "got: {s}"
+        );
+        assert!(
+            s.contains("StakeRefBase (ScriptHashObj (ScriptHash \"44"),
+            "got: {s}"
+        );
+
+        // Enterprise address — script-payment, no stake.
+        let mut ent = vec![0x71_u8]; // 0111_0001
+        ent.extend_from_slice(&[0x55_u8; 28]);
+        let s = Addr(ent).to_string();
+        assert!(
+            s.starts_with("Addr Mainnet (ScriptHashObj (ScriptHash \"55"),
+            "got: {s}"
+        );
+        assert!(s.ends_with("StakeRefNull)"), "got: {s}");
+
+        // Pointer address — key-payment + variable pointer tail.
+        let mut ptr = vec![0x40_u8]; // 0100_0000
+        ptr.extend_from_slice(&[0x66_u8; 28]);
+        ptr.extend_from_slice(&[0xAB, 0xCD]); // dummy pointer tail
+        let s = Addr(ptr).to_string();
+        assert!(
+            s.starts_with("Addr Testnet (KeyHashObj (KeyHash {unKeyHash = \"66"),
+            "got: {s}"
+        );
+        assert!(s.contains("StakeRefPtr <hex 2 bytes: abcd>"), "got: {s}");
+
+        // Byron bootstrap (bit 7 set).
+        let boot = vec![0x82_u8, 0x11, 0x22, 0x33];
+        let s = Addr(boot).to_string();
+        assert!(
+            s.starts_with("AddrBootstrap <hex 4 bytes: 82112233"),
+            "got: {s}"
+        );
     }
 
     #[test]
@@ -4965,7 +5130,13 @@ mod tests {
         assert_eq!(tx_out.addr.0[0], 0xE1);
         assert_eq!(tx_out.coin, 1_000_000);
         let s = tx_out.to_string();
-        assert!(s.starts_with("(Addr <hex 29 bytes: e177"), "got: {s}");
+        // 0xE1 sets bit 7 → Byron bootstrap branch in the typed
+        // header decoder. Display renders as `AddrBootstrap` with
+        // the hex marker (full Byron typed parse pending).
+        assert!(
+            s.starts_with("(AddrBootstrap <hex 29 bytes: e177"),
+            "got: {s}"
+        );
         assert!(s.ends_with(", Coin 1000000)"), "got: {s}");
     }
 
@@ -5222,10 +5393,14 @@ mod tests {
             panic!("expected WrongNetwork, got {f:?}");
         }
         let s = f.to_string();
+        // Header 0x61 = enterprise/key/Mainnet; body 28 bytes of
+        // 0x77. Display renders the typed shape via the typed
+        // Addr enum.
         assert!(
-            s.starts_with("WrongNetwork Mainnet (NonEmptySet (fromList [Addr <hex 29 bytes: 61"),
+            s.starts_with("WrongNetwork Mainnet (NonEmptySet (fromList [Addr Mainnet (KeyHashObj (KeyHash {unKeyHash = \"77"),
             "got: {s}"
         );
+        assert!(s.contains("StakeRefNull"), "got: {s}");
     }
 
     #[test]
