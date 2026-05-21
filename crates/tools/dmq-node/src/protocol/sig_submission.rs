@@ -728,6 +728,76 @@ impl SigSubmissionMessage {
             SigSubmissionMessage::MsgInit => 6,
         }
     }
+
+    /// Human-readable tag name, used in transition-error messages.
+    pub fn tag_name(&self) -> &'static str {
+        match self {
+            SigSubmissionMessage::MsgInit => "MsgInit",
+            SigSubmissionMessage::MsgRequestTxIds { .. } => "MsgRequestTxIds",
+            SigSubmissionMessage::MsgReplyTxIds { .. } => "MsgReplyTxIds",
+            SigSubmissionMessage::MsgRequestTxs { .. } => "MsgRequestTxs",
+            SigSubmissionMessage::MsgReplyTxs { .. } => "MsgReplyTxs",
+            SigSubmissionMessage::MsgDone => "MsgDone",
+        }
+    }
+}
+
+/// An illegal `SigSubmission` state transition.
+///
+/// Mirror of `crates/network`'s `TxSubmissionTransitionError`.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("illegal SigSubmission transition: {message} not allowed in {state:?}")]
+pub struct SigSubmissionTransitionError {
+    /// The state the message arrived in.
+    pub state: SigSubmissionState,
+    /// The offending message's tag name.
+    pub message: &'static str,
+}
+
+impl SigSubmissionState {
+    /// The next state after an incoming message, or an error if the
+    /// transition is illegal.
+    ///
+    /// Mirror of `crates/network`'s `TxSubmissionState::transition` —
+    /// the `SigSubmission` protocol is `TxSubmission2`, so the
+    /// transition table is identical.
+    pub fn transition(
+        self,
+        msg: &SigSubmissionMessage,
+    ) -> Result<SigSubmissionState, SigSubmissionTransitionError> {
+        match (self, msg) {
+            // Client agency — StInit.
+            (SigSubmissionState::StInit, SigSubmissionMessage::MsgInit) => {
+                Ok(SigSubmissionState::StIdle)
+            }
+            // Server agency — StIdle.
+            (
+                SigSubmissionState::StIdle,
+                SigSubmissionMessage::MsgRequestTxIds { blocking, .. },
+            ) => Ok(SigSubmissionState::StTxIds {
+                blocking: *blocking,
+            }),
+            (SigSubmissionState::StIdle, SigSubmissionMessage::MsgRequestTxs { .. }) => {
+                Ok(SigSubmissionState::StTxs)
+            }
+            // Client agency — StTxIds.
+            (SigSubmissionState::StTxIds { .. }, SigSubmissionMessage::MsgReplyTxIds { .. }) => {
+                Ok(SigSubmissionState::StIdle)
+            }
+            // MsgDone only from a blocking StTxIds.
+            (SigSubmissionState::StTxIds { blocking: true }, SigSubmissionMessage::MsgDone) => {
+                Ok(SigSubmissionState::StDone)
+            }
+            // Client agency — StTxs.
+            (SigSubmissionState::StTxs, SigSubmissionMessage::MsgReplyTxs { .. }) => {
+                Ok(SigSubmissionState::StIdle)
+            }
+            (state, msg) => Err(SigSubmissionTransitionError {
+                state,
+                message: msg.tag_name(),
+            }),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1021,6 +1091,57 @@ mod tests {
             3
         );
         assert_eq!(SigSubmissionMessage::MsgDone.wire_tag(), 4);
+    }
+
+    #[test]
+    fn sig_submission_transition_follows_the_protocol() {
+        // The legal happy-path walk: Init → Idle → TxIds → Idle → Txs
+        // → Idle, then a blocking TxIds → Done.
+        let s = SigSubmissionState::StInit
+            .transition(&SigSubmissionMessage::MsgInit)
+            .expect("init");
+        assert_eq!(s, SigSubmissionState::StIdle);
+        let s = s
+            .transition(&SigSubmissionMessage::MsgRequestTxIds {
+                blocking: false,
+                ack: 0,
+                req: 2,
+            })
+            .expect("request ids");
+        assert_eq!(s, SigSubmissionState::StTxIds { blocking: false });
+        let s = s
+            .transition(&SigSubmissionMessage::MsgReplyTxIds { sig_ids: vec![] })
+            .expect("reply ids");
+        assert_eq!(s, SigSubmissionState::StIdle);
+        let s = s
+            .transition(&SigSubmissionMessage::MsgRequestTxs { sig_ids: vec![] })
+            .expect("request txs");
+        assert_eq!(s, SigSubmissionState::StTxs);
+        let s = s
+            .transition(&SigSubmissionMessage::MsgReplyTxs { sigs: vec![] })
+            .expect("reply txs");
+        assert_eq!(s, SigSubmissionState::StIdle);
+        // MsgDone is legal only from a blocking StTxIds.
+        let done = SigSubmissionState::StTxIds { blocking: true }
+            .transition(&SigSubmissionMessage::MsgDone)
+            .expect("done");
+        assert_eq!(done, SigSubmissionState::StDone);
+    }
+
+    #[test]
+    fn sig_submission_transition_rejects_illegal_messages() {
+        // MsgDone from a non-blocking StTxIds is illegal.
+        let err = SigSubmissionState::StTxIds { blocking: false }
+            .transition(&SigSubmissionMessage::MsgDone)
+            .expect_err("rejects");
+        assert_eq!(err.message, "MsgDone");
+        assert_eq!(err.state, SigSubmissionState::StTxIds { blocking: false });
+        // A reply in StIdle is illegal.
+        assert!(
+            SigSubmissionState::StIdle
+                .transition(&SigSubmissionMessage::MsgReplyTxs { sigs: vec![] })
+                .is_err()
+        );
     }
 
     #[test]
