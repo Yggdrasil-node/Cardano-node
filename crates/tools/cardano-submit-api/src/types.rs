@@ -3184,6 +3184,131 @@ impl fmt::Display for GovAction {
     }
 }
 
+/// Off-chain metadata anchor mirroring upstream `data Anchor =
+/// Anchor { anchorUrl :: Url, anchorDataHash :: SafeHash
+/// AnchorData }`. CBOR wire format is a 2-element array
+/// `[url-text, 32-byte-hash]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Anchor {
+    /// The metadata URL.
+    pub url: String,
+    /// 32-byte hash of the off-chain metadata content.
+    pub data_hash: [u8; 32],
+}
+
+impl Anchor {
+    /// Decode an `Anchor` from its 2-element CBOR record array
+    /// `[url, dataHash]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("Anchor: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "Anchor: expected 2-element array, got len {len}"
+            )));
+        }
+        let url = dec
+            .text_owned()
+            .map_err(|err| DecoderError(format!("Anchor: expected Url text: {err:?}")))?;
+        let hash_bytes = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("Anchor: expected dataHash bytes: {err:?}")))?;
+        let data_hash: [u8; 32] = hash_bytes
+            .try_into()
+            .map_err(|_| DecoderError("Anchor: dataHash must be 32 bytes".to_string()))?;
+        Ok(Self { url, data_hash })
+    }
+}
+
+impl fmt::Display for Anchor {
+    /// Render upstream stock-derived record Show:
+    /// `Anchor {anchorUrl = Url {urlToText = "<url>"},
+    /// anchorDataHash = SafeHash "<hex>"}`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Anchor {{anchorUrl = Url {{urlToText = \"{}\"}}, anchorDataHash = SafeHash \"{}\"}}",
+            self.url,
+            hex::encode(self.data_hash)
+        )
+    }
+}
+
+/// Conway governance proposal procedure mirroring upstream `data
+/// ProposalProcedure era = ProposalProcedure { pProcDeposit ::
+/// Coin, pProcReturnAddr :: AccountAddress, pProcGovAction ::
+/// GovAction era, pProcAnchor :: Anchor }`. CBOR wire format is
+/// a 4-element record array.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalProcedure {
+    /// The proposal deposit amount.
+    pub deposit: u64,
+    /// The deposit-return reward account.
+    pub return_addr: yggdrasil_ledger::RewardAccount,
+    /// The proposed governance action.
+    pub gov_action: GovAction,
+    /// The off-chain metadata anchor.
+    pub anchor: Anchor,
+}
+
+impl ProposalProcedure {
+    /// Decode a `ProposalProcedure` from its 4-element CBOR
+    /// record array. Caller passes the original source bytes so
+    /// the nested `GovAction` payload can be captured by byte
+    /// range.
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("ProposalProcedure: expected 4-array: {err:?}")))?;
+        if len != 4 {
+            return Err(DecoderError(format!(
+                "ProposalProcedure: expected 4-element array, got len {len}"
+            )));
+        }
+        let deposit = dec.unsigned().map_err(|err| {
+            DecoderError(format!("ProposalProcedure: expected deposit Coin: {err:?}"))
+        })?;
+        let addr_bytes = dec.bytes().map_err(|err| {
+            DecoderError(format!(
+                "ProposalProcedure: expected return-addr bytes: {err:?}"
+            ))
+        })?;
+        let return_addr =
+            yggdrasil_ledger::RewardAccount::from_bytes(addr_bytes).ok_or_else(|| {
+                DecoderError(format!(
+                    "ProposalProcedure: invalid reward-account ({} bytes)",
+                    addr_bytes.len()
+                ))
+            })?;
+        let gov_action = GovAction::from_decoder(dec, source)?;
+        let anchor = Anchor::from_decoder(dec)?;
+        Ok(Self {
+            deposit,
+            return_addr,
+            gov_action,
+            anchor,
+        })
+    }
+}
+
+impl fmt::Display for ProposalProcedure {
+    /// Render upstream stock-derived record Show.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "ProposalProcedure {{pProcDeposit = {}, pProcReturnAddr = {}, pProcGovAction = {}, pProcAnchor = {}}}",
+            CoinShow(self.deposit),
+            show_reward_account(&self.return_addr),
+            self.gov_action,
+            self.anchor
+        )
+    }
+}
+
 /// PPUP voting period mirroring upstream
 /// `data VotingPeriod = VoteForThisEpoch | VoteForNextEpoch`.
 /// CBOR encoding: Word8 (0=VoteForThisEpoch, 1=VoteForNextEpoch).
@@ -7595,7 +7720,7 @@ pub enum ConwayGovPredFailure {
     ExpirationEpochTooSmall(NonEmptyMapCredentialEpoch),
     /// Tag 8: invalid previous gov-action id —
     /// `ProposalProcedure era`. Raw.
-    InvalidPrevGovActionId(Vec<u8>),
+    InvalidPrevGovActionId(ProposalProcedure),
     /// Tag 9: voting on expired gov action —
     /// `NonEmpty (Voter, GovActionId)`. Raw.
     VotingOnExpiredGovAction(NonEmptyVoterGovActionId),
@@ -7621,7 +7746,7 @@ pub enum ConwayGovPredFailure {
     },
     /// Tag 12: proposal not allowed during bootstrap —
     /// `ProposalProcedure era`. Raw.
-    DisallowedProposalDuringBootstrap(Vec<u8>),
+    DisallowedProposalDuringBootstrap(ProposalProcedure),
     /// Tag 13: votes not allowed during bootstrap —
     /// `NonEmpty (Voter, GovActionId)`. Raw.
     DisallowedVotesDuringBootstrap(NonEmptyVoterGovActionId),
@@ -7719,19 +7844,6 @@ impl ConwayGovPredFailure {
             DecoderError(format!("ConwayGovPredFailure: expected Word8 tag: {err:?}"))
         })?;
         let payload_offset = dec.position();
-        let capture_raw = |label: &str, expected_len: u64| -> Result<Vec<u8>, DecoderError> {
-            if len != expected_len {
-                return Err(DecoderError(format!(
-                    "{label}: expected {expected_len}-element envelope, got len {len}"
-                )));
-            }
-            bytes
-                .get(payload_offset..)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| {
-                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
-                })
-        };
         match tag {
             // Tag 4: typed ProposalDepositIncorrect — Mismatch
             // RelEQ Coin via ToGroup flattened.
@@ -7852,10 +7964,15 @@ impl ConwayGovPredFailure {
                     NonEmptyMapCredentialEpoch::from_cbor(payload_bytes)?,
                 ))
             }
-            8 => Ok(Self::InvalidPrevGovActionId(capture_raw(
-                "InvalidPrevGovActionId",
-                2,
-            )?)),
+            8 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "InvalidPrevGovActionId: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let proposal = ProposalProcedure::from_decoder(&mut dec, bytes)?;
+                Ok(Self::InvalidPrevGovActionId(proposal))
+            }
             9 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -7899,10 +8016,15 @@ impl ConwayGovPredFailure {
                 let expected = StrictMaybeScriptHash::from_decoder(&mut dec)?;
                 Ok(Self::InvalidGuardrailsScriptHash { got, expected })
             }
-            12 => Ok(Self::DisallowedProposalDuringBootstrap(capture_raw(
-                "DisallowedProposalDuringBootstrap",
-                2,
-            )?)),
+            12 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "DisallowedProposalDuringBootstrap: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let proposal = ProposalProcedure::from_decoder(&mut dec, bytes)?;
+                Ok(Self::DisallowedProposalDuringBootstrap(proposal))
+            }
             13 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -8010,8 +8132,11 @@ impl fmt::Display for ConwayGovPredFailure {
             Self::GovActionsDoNotExist(ids) => {
                 write!(f, "GovActionsDoNotExist ({ids})")
             }
-            Self::InvalidPrevGovActionId(b) | Self::DisallowedProposalDuringBootstrap(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::InvalidPrevGovActionId(proposal) => {
+                write!(f, "InvalidPrevGovActionId ({proposal})")
+            }
+            Self::DisallowedProposalDuringBootstrap(proposal) => {
+                write!(f, "DisallowedProposalDuringBootstrap ({proposal})")
             }
             Self::MalformedProposal(action) => {
                 write!(f, "MalformedProposal ({action})")
@@ -9564,6 +9689,48 @@ mod tests {
             panic!("expected MalformedProposal, got {f:?}");
         }
         assert_eq!(f.to_string(), "MalformedProposal (InfoAction)");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_invalid_prev_gov_action_id_tag8() {
+        // outer [0x82, 0x08, ProposalProcedure]. ProposalProcedure
+        // = [deposit, returnAddr bytes(29), GovAction InfoAction,
+        // Anchor [url, hash32]].
+        let mut cbor = vec![0x82_u8, 0x08, 0x84];
+        cbor.extend_from_slice(&[0x19, 0x03, 0xE8]); // deposit 1000
+        // returnAddr bytes(29)
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x4C_u8; 28]);
+        // GovAction InfoAction [0x81, 0x06]
+        cbor.push(0x81);
+        cbor.push(0x06);
+        // Anchor [url "ipfs://x", hash32]
+        cbor.push(0x82);
+        cbor.push(0x68); // text(8)
+        cbor.extend_from_slice(b"ipfs://x");
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x7E_u8; 32]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("InvalidPrevGovActionId");
+        if let ConwayGovPredFailure::InvalidPrevGovActionId(proposal) = &f {
+            assert_eq!(proposal.deposit, 1000);
+            assert!(matches!(proposal.gov_action, GovAction::InfoAction));
+            assert_eq!(proposal.anchor.url, "ipfs://x");
+        } else {
+            panic!("expected InvalidPrevGovActionId, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("InvalidPrevGovActionId (ProposalProcedure {pProcDeposit = Coin 1000"),
+            "got: {s}"
+        );
+        assert!(s.contains("pProcGovAction = InfoAction"), "got: {s}");
+        assert!(
+            s.contains("anchorUrl = Url {urlToText = \"ipfs://x\"}"),
+            "got: {s}"
+        );
     }
 
     #[test]

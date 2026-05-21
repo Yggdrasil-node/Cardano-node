@@ -747,9 +747,15 @@ NoConfidence / UpdateCommittee / NewConstitution / InfoAction;
 variant tag + constructor name typed, payloads raw pending
 PParamsUpdate / Constitution / UnitInterval decoders;
 `InfoAction` fully typed) and wired GOV tags 1
-(`MalformedProposal`) and 15 (`ZeroTreasuryWithdrawals`). **17
-of 19 Conway GOV variants now carry typed payloads**; the other
-2 (tags 8/12 — `ProposalProcedure era`) keep raw inner CBOR. **All 9 Conway LEDGER root variants now carry
+(`MalformedProposal`) and 15 (`ZeroTreasuryWithdrawals`). R653
+(2026-05-21) added the `Anchor` and `ProposalProcedure` types
+(4-field record: deposit / return-addr / GovAction / Anchor)
+and wired GOV tags 8 (`InvalidPrevGovActionId`) and 12
+(`DisallowedProposalDuringBootstrap`). **All 19 Conway GOV
+variants now carry typed payloads — the Conway GOV sub-rule is
+fully typed.** (The nested GovAction payloads — PParamsUpdate /
+Constitution / UnitInterval — remain raw within the GovAction
+scaffold.) **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).
