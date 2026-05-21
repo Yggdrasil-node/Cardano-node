@@ -1554,13 +1554,15 @@ fn show_stake_credential(credential: &yggdrasil_ledger::StakeCredential) -> Stri
 }
 
 /// Render upstream `Show (PParamsUpdate ConwayEra)` as the
-/// 30-field `ConwayPParams` record with all-SNothing field values for
-/// the empty-update path. Non-empty updates return a typed `TxGenError`
-/// naming the first set field whose per-type Show is not yet ported —
-/// these wrap rich domain types (`CoinPerByte`, `CompactForm Coin`,
-/// `EpochInterval`, `NonNegativeInterval`, `Prices`, `OrdExUnits`,
-/// `PoolVotingThresholds`, `DRepVotingThresholds`, `CostModels`) that
-/// each need dedicated Show ports.
+/// 30-field `ConwayPParams` record. Every Conway field is rendered
+/// at its typed `StrictMaybe value` (`CompactForm Coin` /
+/// `CoinPerByte` / `EpochInterval` / `NonNegativeInterval` /
+/// `Prices` / `OrdExUnits` / `PoolVotingThresholds` /
+/// `DRepVotingThresholds` / `CostModels`). The only rejection
+/// path is a malformed input: a `ProtocolParameterUpdate` that
+/// sets a Shelley-era-only field (`d`, `extra_entropy`,
+/// `protocol_version`, `min_utxo_value`) which has no Conway
+/// `PParamsUpdate` representation at all.
 ///
 /// Field order matches upstream `Cardano.Ledger.Conway.PParams.ConwayPParams`
 /// — 30 fields starting at `cppTxFeePerByte` and ending at
