@@ -11,3 +11,4 @@
 pub mod local_msg_notification;
 pub mod local_msg_submission;
 pub mod sig_submission;
+pub mod sig_submission_v2;
