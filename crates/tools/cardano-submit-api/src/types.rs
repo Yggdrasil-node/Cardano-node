@@ -2237,6 +2237,113 @@ impl fmt::Display for TxId {
     }
 }
 
+/// Governance-action identifier mirroring upstream `data
+/// GovActionId = GovActionId { gaidTxId :: TxId, gaidGovActionIx
+/// :: GovActionIx }`. `GovActionIx` is a `Word16` newtype. CBOR
+/// wire format is a 2-element record array `[txid, ix]`. Display
+/// matches the stock-derived record Show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct GovActionId {
+    /// The transaction that submitted the governance action.
+    pub tx_id: TxId,
+    /// The action's index within that transaction.
+    pub gov_action_ix: u16,
+}
+
+impl GovActionId {
+    /// Decode a `GovActionId` from its 2-element CBOR record
+    /// array `[txid, govActionIx]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("GovActionId: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "GovActionId: expected 2-element array, got len {len}"
+            )));
+        }
+        let id_bytes = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("GovActionId: expected TxId bytes: {err:?}")))?;
+        let id_arr: [u8; 32] = id_bytes
+            .try_into()
+            .map_err(|_| DecoderError("GovActionId: TxId must be 32 bytes".to_string()))?;
+        let raw_ix = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("GovActionId: expected GovActionIx: {err:?}")))?;
+        let gov_action_ix = u16::try_from(raw_ix).map_err(|_| {
+            DecoderError(format!(
+                "GovActionId: GovActionIx {raw_ix} does not fit Word16"
+            ))
+        })?;
+        Ok(Self {
+            tx_id: TxId(id_arr),
+            gov_action_ix,
+        })
+    }
+}
+
+impl fmt::Display for GovActionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "GovActionId {{gaidTxId = {}, gaidGovActionIx = GovActionIx {{unGovActionIx = {}}}}}",
+            self.tx_id, self.gov_action_ix
+        )
+    }
+}
+
+/// Non-empty list of governance-action identifiers mirroring
+/// upstream `NonEmpty GovActionId`. CBOR wire format is a plain
+/// CBOR array with ≥ 1 entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyGovActionId {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<GovActionId>,
+}
+
+impl NonEmptyGovActionId {
+    /// Decode a `NonEmpty GovActionId` from canonical CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!("NonEmptyGovActionId: expected CBOR array: {err:?}"))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyGovActionId: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(GovActionId::from_decoder(&mut dec)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyGovActionId {
+    /// Render upstream `Show (NonEmpty a)`: `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyGovActionId enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for g in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{g}")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Transaction-output index newtype mirroring upstream
 /// `newtype TxIx = TxIx {unTxIx :: Word16}`. Display matches
 /// upstream stock-derived record Show: `TxIx {unTxIx = <n>}`.
@@ -6798,8 +6905,8 @@ impl fmt::Display for ConwayUtxosPredFailure {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayGovPredFailure {
     /// Tag 0: governance actions referenced by votes do not exist
-    /// — `NonEmpty GovActionId`. Raw pending GovActionId decoder.
-    GovActionsDoNotExist(Vec<u8>),
+    /// — `NonEmpty GovActionId` (R643 typed).
+    GovActionsDoNotExist(NonEmptyGovActionId),
     /// Tag 1: proposal is malformed — `GovAction era`. Raw
     /// pending GovAction decoder.
     MalformedProposal(Vec<u8>),
@@ -6968,11 +7075,21 @@ impl ConwayGovPredFailure {
                     expected,
                 }))
             }
+            // Tag 0: NonEmpty GovActionId (R643 typed).
+            0 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "GovActionsDoNotExist: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::GovActionsDoNotExist(NonEmptyGovActionId::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             // Raw variants with various envelope lengths.
-            0 => Ok(Self::GovActionsDoNotExist(capture_raw(
-                "GovActionsDoNotExist",
-                2,
-            )?)),
             1 => Ok(Self::MalformedProposal(capture_raw(
                 "MalformedProposal",
                 2,
@@ -7057,8 +7174,10 @@ impl fmt::Display for ConwayGovPredFailure {
                 };
                 write!(f, "ProposalDepositIncorrect ({typed})")
             }
-            Self::GovActionsDoNotExist(b)
-            | Self::MalformedProposal(b)
+            Self::GovActionsDoNotExist(ids) => {
+                write!(f, "GovActionsDoNotExist ({ids})")
+            }
+            Self::MalformedProposal(b)
             | Self::ProposalProcedureNetworkIdMismatch(b)
             | Self::TreasuryWithdrawalsNetworkIdMismatch(b)
             | Self::DisallowedVoters(b)
@@ -8270,15 +8389,43 @@ mod tests {
     }
 
     #[test]
-    fn conway_gov_pred_failure_routes_pending_to_raw_tag0() {
-        // tag 0 (GovActionsDoNotExist) — pending GovActionId
-        let cbor = [0x82_u8, 0x00, 0x80];
+    fn conway_gov_pred_failure_gov_actions_do_not_exist_tag0() {
+        // outer [0x82, 0x00, NonEmpty [GovActionId]]. NonEmpty
+        // array(1) of GovActionId [txid32, ix=4].
+        let mut cbor = vec![0x82_u8, 0x00, 0x81, 0x82];
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x3C_u8; 32]);
+        cbor.push(0x04); // GovActionIx = 4
         let f = ConwayGovPredFailure::from_cbor(&cbor).expect("GovActionsDoNotExist");
-        assert_eq!(f.tag(), 0);
-        assert_eq!(f.constructor(), "GovActionsDoNotExist");
+        if let ConwayGovPredFailure::GovActionsDoNotExist(ids) = &f {
+            assert_eq!(ids.entries.len(), 1);
+            assert_eq!(ids.entries[0].gov_action_ix, 4);
+            assert_eq!(ids.entries[0].tx_id.0, [0x3C_u8; 32]);
+        } else {
+            panic!("expected GovActionsDoNotExist, got {f:?}");
+        }
+        let s = f.to_string();
         assert!(
-            f.to_string().starts_with("GovActionsDoNotExist <raw-cbor"),
-            "got: {f}"
+            s.starts_with(
+                "GovActionsDoNotExist (GovActionId {gaidTxId = TxId {unTxId = SafeHash \"3c3c"
+            ),
+            "got: {s}"
+        );
+        assert!(
+            s.ends_with("gaidGovActionIx = GovActionIx {unGovActionIx = 4}} :| [])"),
+            "got: {s}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_gov_actions_do_not_exist_rejects_empty() {
+        let cbor = [0x82_u8, 0x00, 0x80];
+        let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
         );
     }
 
