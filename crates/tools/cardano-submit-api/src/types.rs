@@ -4503,9 +4503,9 @@ pub enum ConwayCertPredFailure {
     /// `ShelleyPoolPredFailure` — upstream reuses Shelley's POOL
     /// type at the Conway era).
     PoolFailure(ShelleyPoolPredFailure),
-    /// Tag 3: nested GOVCERT failure (raw, pending
-    /// `ConwayGovCertPredFailure` decoder).
-    GovCertFailure(Vec<u8>),
+    /// Tag 3: nested GOVCERT failure (R629 wired to typed
+    /// `ConwayGovCertPredFailure`).
+    GovCertFailure(ConwayGovCertPredFailure),
 }
 
 impl ConwayCertPredFailure {
@@ -4559,7 +4559,10 @@ impl ConwayCertPredFailure {
                 let pool = ShelleyPoolPredFailure::from_cbor(payload_bytes)?;
                 Ok(Self::PoolFailure(pool))
             }
-            3 => Ok(Self::GovCertFailure(payload_bytes.to_vec())),
+            3 => {
+                let govcert = ConwayGovCertPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::GovCertFailure(govcert))
+            }
             other => Err(DecoderError(format!(
                 "ConwayCertPredFailure: unknown variant tag {other}"
             ))),
@@ -4576,8 +4579,8 @@ impl fmt::Display for ConwayCertPredFailure {
         match self {
             Self::DelegFailure(deleg) => write!(f, "DelegFailure ({deleg})"),
             Self::PoolFailure(pool) => write!(f, "PoolFailure ({pool})"),
-            Self::GovCertFailure(b) => {
-                write!(f, "GovCertFailure <raw-cbor {} bytes>", b.len())
+            Self::GovCertFailure(govcert) => {
+                write!(f, "GovCertFailure ({govcert})")
             }
         }
     }
@@ -4778,6 +4781,184 @@ impl fmt::Display for ConwayDelegPredFailure {
                     expected: CoinShow(mm.expected),
                 };
                 write!(f, "RefundIncorrectDELEG ({typed})")
+            }
+        }
+    }
+}
+
+/// `ConwayGovCertPredFailure` mirror — Conway-era GOVCERT
+/// sub-rule failure (under `ConwayCertPredFailure::GovCertFailure`).
+///
+/// Upstream: `data ConwayGovCertPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.GovCert` with 6 variants encoded
+/// via CBOR `Sum` tags 0-5. Covers DRep registration/refund
+/// predicates and committee hot/cold authorization checks.
+///
+/// R629 ships **all 6 variants fully typed** by reusing existing
+/// carriers (Credential, Mismatch<u64>).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayGovCertPredFailure {
+    /// Tag 0: DRep credential is already registered —
+    /// `Credential DRepRole`.
+    ConwayDRepAlreadyRegistered(Credential),
+    /// Tag 1: DRep credential is not registered —
+    /// `Credential DRepRole`.
+    ConwayDRepNotRegistered(Credential),
+    /// Tag 2: DRep deposit mismatch — `Mismatch RelEQ Coin` via
+    /// `ToGroup` flattened encoding (3-element envelope with
+    /// supplied-then-expected).
+    ConwayDRepIncorrectDeposit(Mismatch<u64>),
+    /// Tag 3: committee cold credential previously resigned —
+    /// `Credential ColdCommitteeRole`.
+    ConwayCommitteeHasPreviouslyResigned(Credential),
+    /// Tag 4: DRep refund mismatch — `Mismatch RelEQ Coin` via
+    /// `ToGroup` flattened.
+    ConwayDRepIncorrectRefund(Mismatch<u64>),
+    /// Tag 5: committee cold credential not known —
+    /// `Credential ColdCommitteeRole`.
+    ConwayCommitteeIsUnknown(Credential),
+}
+
+impl ConwayGovCertPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::ConwayDRepAlreadyRegistered(_) => 0,
+            Self::ConwayDRepNotRegistered(_) => 1,
+            Self::ConwayDRepIncorrectDeposit(_) => 2,
+            Self::ConwayCommitteeHasPreviouslyResigned(_) => 3,
+            Self::ConwayDRepIncorrectRefund(_) => 4,
+            Self::ConwayCommitteeIsUnknown(_) => 5,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::ConwayDRepAlreadyRegistered(_) => "ConwayDRepAlreadyRegistered",
+            Self::ConwayDRepNotRegistered(_) => "ConwayDRepNotRegistered",
+            Self::ConwayDRepIncorrectDeposit(_) => "ConwayDRepIncorrectDeposit",
+            Self::ConwayCommitteeHasPreviouslyResigned(_) => "ConwayCommitteeHasPreviouslyResigned",
+            Self::ConwayDRepIncorrectRefund(_) => "ConwayDRepIncorrectRefund",
+            Self::ConwayCommitteeIsUnknown(_) => "ConwayCommitteeIsUnknown",
+        }
+    }
+
+    /// Decode the full `ConwayGovCertPredFailure` outer envelope.
+    /// Tags 0/1/3/5 use 2-element envelopes; tags 2/4 use
+    /// 3-element ToGroup-flattened envelopes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayGovCertPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(2..=3).contains(&len) {
+            return Err(DecoderError(format!(
+                "ConwayGovCertPredFailure: expected 2- or 3-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayGovCertPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let credential_variant = |dec: &mut Decoder<'_>,
+                                  label: &str|
+         -> Result<Credential, DecoderError> {
+            if len != 2 {
+                return Err(DecoderError(format!(
+                    "{label}: expected 2-element envelope, got len {len}"
+                )));
+            }
+            Credential::from_decoder(dec).map_err(|err| DecoderError(format!("{label}: {}", err.0)))
+        };
+        let togroup_coin_mismatch =
+            |dec: &mut Decoder<'_>, label: &str| -> Result<Mismatch<u64>, DecoderError> {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "{label}: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let supplied = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("{label}: supplied: {err:?}")))?;
+                let expected = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("{label}: expected: {err:?}")))?;
+                Ok(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied,
+                    expected,
+                })
+            };
+        match tag {
+            0 => Ok(Self::ConwayDRepAlreadyRegistered(credential_variant(
+                &mut dec,
+                "ConwayDRepAlreadyRegistered",
+            )?)),
+            1 => Ok(Self::ConwayDRepNotRegistered(credential_variant(
+                &mut dec,
+                "ConwayDRepNotRegistered",
+            )?)),
+            2 => Ok(Self::ConwayDRepIncorrectDeposit(togroup_coin_mismatch(
+                &mut dec,
+                "ConwayDRepIncorrectDeposit",
+            )?)),
+            3 => Ok(Self::ConwayCommitteeHasPreviouslyResigned(
+                credential_variant(&mut dec, "ConwayCommitteeHasPreviouslyResigned")?,
+            )),
+            4 => Ok(Self::ConwayDRepIncorrectRefund(togroup_coin_mismatch(
+                &mut dec,
+                "ConwayDRepIncorrectRefund",
+            )?)),
+            5 => Ok(Self::ConwayCommitteeIsUnknown(credential_variant(
+                &mut dec,
+                "ConwayCommitteeIsUnknown",
+            )?)),
+            other => Err(DecoderError(format!(
+                "ConwayGovCertPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayGovCertPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayGovCertPredFailure era)`. All variants typed —
+    /// Credential and Mismatch<CoinShow> route through their
+    /// typed Display.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ConwayDRepAlreadyRegistered(cred) => {
+                write!(f, "ConwayDRepAlreadyRegistered ({cred})")
+            }
+            Self::ConwayDRepNotRegistered(cred) => {
+                write!(f, "ConwayDRepNotRegistered ({cred})")
+            }
+            Self::ConwayDRepIncorrectDeposit(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "ConwayDRepIncorrectDeposit ({typed})")
+            }
+            Self::ConwayCommitteeHasPreviouslyResigned(cred) => {
+                write!(f, "ConwayCommitteeHasPreviouslyResigned ({cred})")
+            }
+            Self::ConwayDRepIncorrectRefund(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "ConwayDRepIncorrectRefund ({typed})")
+            }
+            Self::ConwayCommitteeIsUnknown(cred) => {
+                write!(f, "ConwayCommitteeIsUnknown ({cred})")
             }
         }
     }
@@ -6365,6 +6546,96 @@ mod tests {
         let err = ConwayDelegPredFailure::from_cbor(&cbor).expect_err("tag 0 must reject");
         assert!(
             err.to_string().contains("unknown variant tag 0"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_cert_pred_failure_drep_already_registered_tag0() {
+        // outer [0x82, 0x00, credential[2-array: 0, bytes(28)]]
+        let mut cbor = vec![0x82_u8, 0x00, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x33_u8; 28]);
+        let f = ConwayGovCertPredFailure::from_cbor(&cbor).expect("ConwayDRepAlreadyRegistered");
+        if let ConwayGovCertPredFailure::ConwayDRepAlreadyRegistered(cred) = &f {
+            assert!(matches!(cred, Credential::KeyHashObj(_)));
+        } else {
+            panic!("expected ConwayDRepAlreadyRegistered, got {f:?}");
+        }
+        assert_eq!(f.tag(), 0);
+        assert!(
+            f.to_string()
+                .starts_with("ConwayDRepAlreadyRegistered (KeyHashObj (KeyHash"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_cert_pred_failure_drep_incorrect_deposit_tag2() {
+        // outer [0x83, 0x02, supplied=10, expected=20] (ToGroup-flattened)
+        let cbor = [0x83_u8, 0x02, 0x0a, 0x14];
+        let f = ConwayGovCertPredFailure::from_cbor(&cbor).expect("ConwayDRepIncorrectDeposit");
+        if let ConwayGovCertPredFailure::ConwayDRepIncorrectDeposit(mm) = &f {
+            assert_eq!(mm.supplied, 10);
+            assert_eq!(mm.expected, 20);
+        } else {
+            panic!("expected ConwayDRepIncorrectDeposit, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ConwayDRepIncorrectDeposit (Mismatch (RelEQ) {supplied: Coin 10, expected: Coin 20})"
+        );
+    }
+
+    #[test]
+    fn conway_gov_cert_pred_failure_committee_resigned_tag3() {
+        let mut cbor = vec![0x82_u8, 0x03, 0x82, 0x01];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x44_u8; 28]);
+        let f = ConwayGovCertPredFailure::from_cbor(&cbor)
+            .expect("ConwayCommitteeHasPreviouslyResigned");
+        if let ConwayGovCertPredFailure::ConwayCommitteeHasPreviouslyResigned(cred) = &f {
+            assert!(matches!(cred, Credential::ScriptHashObj(_)));
+        } else {
+            panic!("expected ConwayCommitteeHasPreviouslyResigned, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("ConwayCommitteeHasPreviouslyResigned (ScriptHashObj (ScriptHash"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_cert_pred_failure_gov_cert_failure_typed_routing_tag3() {
+        // CERT tag 3 with inner GOVCERT tag 0
+        // (ConwayDRepAlreadyRegistered KeyHashObj). Outer:
+        // [0x82, 0x03, [0x82, 0x00, [0x82, 0x00, bytes(28)]]]
+        let mut cbor = vec![0x82_u8, 0x03, 0x82, 0x00, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x99_u8; 28]);
+        let f = ConwayCertPredFailure::from_cbor(&cbor).expect("GovCertFailure");
+        if let ConwayCertPredFailure::GovCertFailure(govcert) = &f {
+            assert_eq!(govcert.tag(), 0);
+        } else {
+            panic!("expected typed GovCertFailure, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("GovCertFailure (ConwayDRepAlreadyRegistered (KeyHashObj"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_cert_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ConwayGovCertPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
             "got: {err}"
         );
     }

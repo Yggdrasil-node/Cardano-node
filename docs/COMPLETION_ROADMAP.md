@@ -737,7 +737,17 @@ carriers (Credential R618, KeyHash, Mismatch<u64> R615, CoinShow
 R615). Tags 7/8 use the nested 2-array Mismatch encoding (not
 ToGroup-flattened — distinct from Conway LEDGER tags 5/6 + GOV
 tag 4). The Conway LEDGER → CERTS → CERT → DELEG chain now
-renders typed end-to-end through all 8 DELEG leaves.
+renders typed end-to-end through all 8 DELEG leaves. R629
+(2026-05-21) added the `ConwayGovCertPredFailure` 6-variant
+scaffold (tags 0-5) and wired
+`ConwayCertPredFailure::GovCertFailure(Vec<u8>)` →
+`GovCertFailure(ConwayGovCertPredFailure)`. **All 6 GOVCERT
+variants carry fully-typed payloads** — tags 0/1/3/5 Credential
+(DRep / committee-cold roles), tags 2/4 Mismatch Coin via
+ToGroup flattened. **This closes the entire Conway CERT
+sub-rule (3/3 typed: DELEG 8/8, POOL 6/6 via Shelley reuse,
+GOVCERT 6/6).** The Conway LEDGER → CERTS → CERT → {DELEG, POOL,
+GOVCERT} chain renders typed end-to-end through every leaf.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
