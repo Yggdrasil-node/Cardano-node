@@ -939,11 +939,14 @@ group raw. R665 (2026-05-21) added the `UnitInterval` (tag-30
 rational) and `PoolParams` types and typed the `RegPool`
 registration parameters — `ConwayTxCertPool` now carries a
 `PoolParams` struct with typed VRF key hash, pledge, cost,
-margin and reward account; only the `PoolParams`
-owners/relays/metadata collection tail remains raw. **All three
-`ConwayTxCert` certificate families now carry typed payloads,
-fully through the `RegPool` parameter scalars** — only the
-deepest `PoolParams` collection fields remain raw.
+margin and reward account. R666 (2026-05-21) added the
+`PoolMetadata` / `StrictMaybePoolMetadata` types and typed the
+`PoolParams` owner-set (`Vec<KeyHash>`, tag-258-tolerant) and
+the optional `ppMetadata`; only the `ppRelays` `StrictSeq
+StakePoolRelay` sequence remains raw within `PoolParams`.
+**All three `ConwayTxCert` certificate families carry typed
+payloads, and `RegPool`'s `PoolParams` is typed through every
+field except the relay sequence.**
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

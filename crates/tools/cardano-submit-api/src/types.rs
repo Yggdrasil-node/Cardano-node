@@ -5987,10 +5987,10 @@ impl fmt::Display for UnitInterval {
 /// PoolParams` (`StakePoolParams`). The 9-field `encCBORGroup`
 /// is flattened into the `RegPool` certificate's `Sum` envelope.
 ///
-/// R665 types the scalar prefix (VRF key hash, pledge, cost,
-/// margin, reward account); the `owners` / `relays` / `metadata`
-/// collection fields keep raw inner CBOR pending their typed
-/// decoders.
+/// R665/R666 type the scalar prefix (VRF key hash, pledge,
+/// cost, margin, reward account), the pool-owner key-hash set
+/// and the optional metadata; only the `ppRelays` sequence keeps
+/// raw inner CBOR pending the typed `StakePoolRelay` decoder.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolParams {
     /// VRF verification-key hash (`ppVrf`, a 32-byte hash).
@@ -6003,20 +6003,100 @@ pub struct PoolParams {
     pub margin: UnitInterval,
     /// The pledge/reward return account (`ppRewardAccount`).
     pub reward_account: yggdrasil_ledger::RewardAccount,
-    /// The remaining group fields — pool owners, relays and
-    /// optional metadata — raw pending their typed decoders.
-    pub rest: Vec<u8>,
+    /// The pool-owner staking key hashes (`ppOwners`).
+    pub owners: Vec<KeyHash>,
+    /// The pool relays (`ppRelays`, a `StrictSeq
+    /// StakePoolRelay`) — raw pending the typed relay decoder.
+    pub relays_raw: Vec<u8>,
+    /// The optional pool metadata (`ppMetadata`).
+    pub metadata: StrictMaybePoolMetadata,
+}
+
+/// Stake-pool off-chain metadata mirroring upstream `data
+/// PoolMetadata = PoolMetadata { pmUrl :: Url, pmHash ::
+/// ByteString }`. CBOR wire format is a 2-element array
+/// `[url-text, hash-bytes]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolMetadata {
+    /// The metadata URL.
+    pub url: String,
+    /// The 32-byte metadata content hash.
+    pub hash: Vec<u8>,
+}
+
+impl PoolMetadata {
+    /// Decode a `PoolMetadata` from its 2-element CBOR record
+    /// array.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("PoolMetadata: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "PoolMetadata: expected 2-element array, got len {len}"
+            )));
+        }
+        let url = dec
+            .text_owned()
+            .map_err(|err| DecoderError(format!("PoolMetadata: expected Url text: {err:?}")))?;
+        let hash = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("PoolMetadata: expected hash bytes: {err:?}")))?
+            .to_vec();
+        Ok(Self { url, hash })
+    }
+}
+
+impl fmt::Display for PoolMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PoolMetadata {{pmUrl = Url {{urlToText = \"{}\"}}, pmHash = \"{}\"}}",
+            self.url,
+            hex::encode(&self.hash)
+        )
+    }
+}
+
+/// `StrictMaybe PoolMetadata` renderer — a `null`-encoded
+/// optional `PoolMetadata` (upstream `encodeNullStrictMaybe`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StrictMaybePoolMetadata(pub Option<PoolMetadata>);
+
+impl StrictMaybePoolMetadata {
+    /// Decode a `null`-encoded `StrictMaybe PoolMetadata`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("StrictMaybePoolMetadata: peek: {err:?}")))?;
+        if major == 7 {
+            dec.null().map_err(|err| {
+                DecoderError(format!("StrictMaybePoolMetadata: expected null: {err:?}"))
+            })?;
+            Ok(Self(None))
+        } else {
+            Ok(Self(Some(PoolMetadata::from_decoder(dec)?)))
+        }
+    }
+}
+
+impl fmt::Display for StrictMaybePoolMetadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            None => f.write_str("SNothing"),
+            Some(meta) => write!(f, "SJust ({meta})"),
+        }
+    }
 }
 
 impl PoolParams {
     /// Decode the `PoolParams` group fields that follow the pool
     /// operator key hash inside a `RegPool` certificate. `source`
     /// is the certificate envelope's source bytes (for the raw
-    /// tail capture); `end` is the envelope's element count.
+    /// `ppRelays` capture).
     fn from_decoder(
         dec: &mut yggdrasil_ledger::Decoder<'_>,
         source: &[u8],
-        end: u64,
     ) -> Result<Self, DecoderError> {
         let vrf_bytes = dec
             .bytes()
@@ -6043,54 +6123,87 @@ impl PoolParams {
                     acct_bytes.len()
                 ))
             })?;
-        // Owners (index 7), relays (8), metadata (9) — captured
-        // raw. The certificate envelope has `end` total elements;
-        // the operator key hash + the 5 fields above consumed
-        // indices 1..7.
-        let start = dec.position();
-        for _ in 7..end {
-            dec.skip()
-                .map_err(|err| DecoderError(format!("PoolParams: tail skip: {err:?}")))?;
+        // ppOwners — `Set (KeyHash Staking)`, an optionally
+        // tag-258-wrapped array of 28-byte key hashes.
+        let owners_major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("PoolParams: owners peek: {err:?}")))?;
+        if owners_major == 6 {
+            let tag = dec
+                .tag()
+                .map_err(|err| DecoderError(format!("PoolParams: owners tag: {err:?}")))?;
+            if tag != 258 {
+                return Err(DecoderError(format!(
+                    "PoolParams: expected owners tag 258, got {tag}"
+                )));
+            }
         }
-        let stop = dec.position();
-        let rest = source
-            .get(start..stop)
-            .ok_or_else(|| DecoderError("PoolParams: tail byte range out of bounds".to_string()))?
+        let owner_count = dec
+            .array()
+            .map_err(|err| DecoderError(format!("PoolParams: expected owners array: {err:?}")))?;
+        let mut owners = Vec::with_capacity(owner_count as usize);
+        for _ in 0..owner_count {
+            let bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!(
+                    "PoolParams: expected owner key-hash bytes: {err:?}"
+                ))
+            })?;
+            let arr: [u8; 28] = bytes.try_into().map_err(|_| {
+                DecoderError("PoolParams: owner key hash must be 28 bytes".to_string())
+            })?;
+            owners.push(KeyHash(arr));
+        }
+        // ppRelays — a single `StrictSeq StakePoolRelay` element,
+        // captured raw pending the typed relay decoder.
+        let relay_start = dec.position();
+        dec.skip()
+            .map_err(|err| DecoderError(format!("PoolParams: relays skip: {err:?}")))?;
+        let relay_stop = dec.position();
+        let relays_raw = source
+            .get(relay_start..relay_stop)
+            .ok_or_else(|| DecoderError("PoolParams: relays byte range out of bounds".to_string()))?
             .to_vec();
+        let metadata = StrictMaybePoolMetadata::from_decoder(dec)?;
         Ok(Self {
             vrf,
             pledge,
             cost,
             margin,
             reward_account,
-            rest,
+            owners,
+            relays_raw,
+            metadata,
         })
     }
 }
 
 impl fmt::Display for PoolParams {
-    /// Render the typed scalar prefix of upstream's stock-derived
-    /// `Show PoolParams`; the raw collection tail emits a
-    /// `<raw-cbor N bytes>` marker.
+    /// Render upstream's stock-derived `Show PoolParams`; the
+    /// `ppRelays` sequence emits a `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "PoolParams {{ppVrf = VRFVerKeyHash \"{}\", ppPledge = {}, ppCost = {}, ppMargin = {}, ppRewardAccount = {}",
+            "PoolParams {{ppVrf = VRFVerKeyHash \"{}\", ppPledge = {}, ppCost = {}, ppMargin = {}, ppRewardAccount = {}, ppOwners = fromList [",
             hex::encode(self.vrf),
             CoinShow(self.pledge),
             CoinShow(self.cost),
             self.margin,
             show_reward_account(&self.reward_account),
         )?;
-        if self.rest.is_empty() {
-            f.write_str("}")
-        } else {
-            write!(
-                f,
-                ", ppOwnersRelaysMetadata = <raw-cbor {} bytes>}}",
-                self.rest.len()
-            )
+        let mut first = true;
+        for owner in &self.owners {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{owner}")?;
         }
+        write!(
+            f,
+            "], ppRelays = <raw-cbor {} bytes>, ppMetadata = {}}}",
+            self.relays_raw.len(),
+            self.metadata
+        )
     }
 }
 
@@ -6315,7 +6428,7 @@ impl TxCert {
                     // fields (VRF / pledge / cost / margin /
                     // reward account / owners / relays /
                     // metadata).
-                    params = Some(PoolParams::from_decoder(dec, source, len)?);
+                    params = Some(PoolParams::from_decoder(dec, source)?);
                 }
                 Ok(Self::ConwayTxCertPool {
                     cert_tag,
@@ -10624,6 +10737,64 @@ mod tests {
         );
         assert!(
             s.contains("ppPledge = Coin 100000000, ppCost = Coin 3000, ppMargin = 1 % 50"),
+            "got: {s}"
+        );
+    }
+
+    #[test]
+    fn pool_params_decodes_owners_and_metadata() {
+        // RegPool envelope whose PoolParams carries a one-owner
+        // set and a SJust PoolMetadata.
+        let mut cbor = vec![0x8A_u8, 0x03];
+        cbor.push(0x58); // operator key hash bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x10_u8; 28]);
+        cbor.push(0x58); // VRF bytes(32)
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x20_u8; 32]);
+        cbor.push(0x00); // pledge 0
+        cbor.push(0x00); // cost 0
+        cbor.extend_from_slice(&[0xD8, 0x1E, 0x82, 0x00, 0x01]); // margin 0 % 1
+        cbor.push(0x58); // reward account bytes(29)
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x30_u8; 28]);
+        // owners: array(1) of key hash bytes(28)
+        cbor.push(0x81);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x40_u8; 28]);
+        cbor.push(0x80); // relays: empty seq
+        // metadata: SJust [url, hash]
+        cbor.push(0x82);
+        cbor.push(0x6A); // text(10)
+        cbor.extend_from_slice(b"ipfs://abc");
+        cbor.push(0x44); // hash bytes(4)
+        cbor.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RegPool");
+        let TxCert::ConwayTxCertPool {
+            params: Some(params),
+            ..
+        } = &cert
+        else {
+            panic!("expected RegPool with params, got {cert:?}");
+        };
+        assert_eq!(params.owners.len(), 1);
+        assert_eq!(params.owners[0].0, [0x40_u8; 28]);
+        let meta = params.metadata.0.as_ref().expect("SJust metadata");
+        assert_eq!(meta.url, "ipfs://abc");
+        assert_eq!(meta.hash, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        let s = cert.to_string();
+        assert!(
+            s.contains("ppOwners = fromList [KeyHash {unKeyHash = \"4040"),
+            "got: {s}"
+        );
+        assert!(
+            s.contains(
+                "ppMetadata = SJust (PoolMetadata {pmUrl = Url {urlToText = \"ipfs://abc\"}, pmHash = \"deadbeef\"})"
+            ),
             "got: {s}"
         );
     }
