@@ -387,6 +387,48 @@ impl EraApplyTxError {
         }
         Ok(failures)
     }
+
+    /// Decode a Shelley-family-era `ApplyTxError` payload into the
+    /// typed predicate-failure tree.
+    ///
+    /// `ApplyTxError <era> = <Era>ApplyTxError (NonEmpty
+    /// (ShelleyLedgerPredFailure <era>))` for the
+    /// Shelley/Allegra/Mary/Alonzo/Babbage eras (which all reuse
+    /// `ShelleyLedgerPredFailure` at the LEDGER root). The raw
+    /// CBOR is a non-empty array of `ShelleyLedgerPredFailure`
+    /// envelopes.
+    pub fn decode_shelley_failures(&self) -> Result<Vec<ShelleyLedgerPredFailure>, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        if self.raw_cbor.is_empty() {
+            return Err(DecoderError(
+                "EraApplyTxError: no raw CBOR to decode".to_string(),
+            ));
+        }
+        let mut dec = Decoder::new(&self.raw_cbor);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyApplyTxError: expected NonEmpty CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "ShelleyApplyTxError: NonEmpty requires at least one failure".to_string(),
+            ));
+        }
+        let mut failures = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let start = dec.position();
+            dec.skip().map_err(|err| {
+                DecoderError(format!("ShelleyApplyTxError: failure skip: {err:?}"))
+            })?;
+            let end = dec.position();
+            let slice = self.raw_cbor.get(start..end).ok_or_else(|| {
+                DecoderError("ShelleyApplyTxError: failure byte range out of bounds".to_string())
+            })?;
+            failures.push(ShelleyLedgerPredFailure::from_cbor(slice)?);
+        }
+        Ok(failures)
+    }
 }
 
 impl fmt::Display for EraApplyTxError {
@@ -461,15 +503,32 @@ impl TxValidationErrorInCardanoMode {
 
     /// Decode the typed Conway predicate-failure tree when this
     /// rejection is Conway-era. Returns `None` for the other
-    /// eras (their `ShelleyLedgerPredFailure` payload is not yet
-    /// CBOR-decodable); `Some(Err(_))` on a malformed Conway
-    /// payload.
+    /// eras; `Some(Err(_))` on a malformed Conway payload.
     pub fn typed_conway_failures(
         &self,
     ) -> Option<Result<Vec<ConwayLedgerPredFailure>, DecoderError>> {
         match self {
             Self::Conway(payload) => Some(payload.decode_conway_failures()),
             _ => None,
+        }
+    }
+
+    /// Decode the typed Shelley-family predicate-failure tree
+    /// when this rejection is a Shelley/Allegra/Mary/Alonzo/
+    /// Babbage-era rejection (they all reuse
+    /// `ShelleyLedgerPredFailure` at the LEDGER root). Returns
+    /// `None` for the Conway era; `Some(Err(_))` on a malformed
+    /// payload.
+    pub fn typed_shelley_failures(
+        &self,
+    ) -> Option<Result<Vec<ShelleyLedgerPredFailure>, DecoderError>> {
+        match self {
+            Self::Shelley(p)
+            | Self::Allegra(p)
+            | Self::Mary(p)
+            | Self::Alonzo(p)
+            | Self::Babbage(p) => Some(p.decode_shelley_failures()),
+            Self::Conway(_) => None,
         }
     }
 }
@@ -550,6 +609,50 @@ impl ShelleyLedgerPredFailure {
             Self::DelegsFailure(_) => "DelegsFailure",
             Self::ShelleyWithdrawalsMissingAccounts(_) => "ShelleyWithdrawalsMissingAccounts",
             Self::ShelleyIncompleteWithdrawals(_) => "ShelleyIncompleteWithdrawals",
+        }
+    }
+
+    /// Decode the full `ShelleyLedgerPredFailure` outer envelope
+    /// from CBOR bytes. Upstream `Cardano.Ledger.Shelley.Rules.
+    /// Ledger.encCBOR` uses a 2-element `Sum`-tag envelope `[tag,
+    /// payload]`, tags 0-3.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyLedgerPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ShelleyLedgerPredFailure: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ShelleyLedgerPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload = bytes.get(dec.position()..).ok_or_else(|| {
+            DecoderError("ShelleyLedgerPredFailure: payload offset out of bounds".to_string())
+        })?;
+        match tag {
+            0 => Ok(Self::UtxowFailure(ShelleyUtxowPredFailure::from_cbor(
+                payload,
+            )?)),
+            1 => Ok(Self::DelegsFailure(ShelleyDelegsPredFailure::from_cbor(
+                payload,
+            )?)),
+            2 => Ok(Self::ShelleyWithdrawalsMissingAccounts(
+                Withdrawals::from_cbor(payload)?,
+            )),
+            3 => Ok(Self::ShelleyIncompleteWithdrawals(
+                IncompleteWithdrawals::from_cbor(payload)?,
+            )),
+            other => Err(DecoderError(format!(
+                "ShelleyLedgerPredFailure: unknown variant tag {other}"
+            ))),
         }
     }
 }
@@ -10958,6 +11061,31 @@ mod tests {
             TxValidationErrorInCardanoMode::from_raw(TxValidationEra::Conway, payload.clone());
         assert_eq!(err.era(), TxValidationEra::Conway);
         assert_eq!(err.payload(), &payload);
+    }
+
+    #[test]
+    fn tx_validation_error_typed_shelley_failures_decodes() {
+        // Babbage ApplyTxError raw CBOR: a NonEmpty array(1) of a
+        // ShelleyLedgerPredFailure (ShelleyWithdrawalsMissingAccounts
+        // with an empty withdrawal map).
+        let raw = vec![0x81_u8, 0x82, 0x02, 0xA0];
+        let payload = EraApplyTxError::new(raw, "withdrawals missing accounts");
+        let err = TxValidationErrorInCardanoMode::from_raw(TxValidationEra::Babbage, payload);
+        let failures = err
+            .typed_shelley_failures()
+            .expect("Shelley-family era")
+            .expect("decodes");
+        assert_eq!(failures.len(), 1);
+        assert!(matches!(
+            failures[0],
+            ShelleyLedgerPredFailure::ShelleyWithdrawalsMissingAccounts(_)
+        ));
+        // The Conway era yields None for the Shelley accessor.
+        let conway = TxValidationErrorInCardanoMode::from_raw(
+            TxValidationEra::Conway,
+            EraApplyTxError::new(vec![], "x"),
+        );
+        assert!(conway.typed_shelley_failures().is_none());
     }
 
     #[test]

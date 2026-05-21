@@ -918,14 +918,18 @@ keeps raw inner CBOR.
 Conway UTXOS sub-rule is fully typed.** The Conway LEDGER →
 UTXOW → UTXO → UTXOS chain renders typed end-to-end.
 R684 (2026-05-21) wired the top-level rejection wrapper to the
-typed tree — `EraApplyTxError::decode_conway_failures` decodes
-the Conway `ApplyTxError` payload (`NonEmpty
-(ConwayLedgerPredFailure)`) into the typed predicate-failure
-tree, and `TxValidationErrorInCardanoMode::typed_conway_failures`
-exposes it for Conway-era rejections. The A5 cardano-submit-api
-rejection enum now connects the era-tagged wrapper end-to-end
-to the typed Conway predicate-failure tree built across
-R623-R683.
+typed tree — `EraApplyTxError::decode_conway_failures` +
+`TxValidationErrorInCardanoMode::typed_conway_failures` decode
+the Conway `ApplyTxError` payload into the typed Conway
+predicate-failure tree. R685 (2026-05-21) added
+`ShelleyLedgerPredFailure::from_cbor` and the matching
+`EraApplyTxError::decode_shelley_failures` /
+`typed_shelley_failures` accessors — the
+Shelley/Allegra/Mary/Alonzo/Babbage eras (which all reuse
+`ShelleyLedgerPredFailure` at the LEDGER root) now decode
+end-to-end too. **The A5 cardano-submit-api rejection enum
+connects the era-tagged wrapper to the typed per-era
+predicate-failure tree for every era.**
 R632 (2026-05-21) typed Conway UTXOW tags 11
 (`MissingRequiredDatums`) and 12
 (`NotAllowedSupplementalDatums`) — added the `DataHash`
