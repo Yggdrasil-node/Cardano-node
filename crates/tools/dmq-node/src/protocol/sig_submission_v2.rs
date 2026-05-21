@@ -122,6 +122,64 @@ impl SigSubmissionV2Message {
     }
 }
 
+/// An illegal `SigSubmissionV2` state transition.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("illegal SigSubmissionV2 transition: {message} not allowed in {state:?}")]
+pub struct SigSubmissionV2TransitionError {
+    /// The state the message arrived in.
+    pub state: SigSubmissionV2State,
+    /// The offending message's tag name.
+    pub message: &'static str,
+}
+
+impl SigSubmissionV2State {
+    /// The next state after an incoming message, or an error if the
+    /// transition is illegal.
+    ///
+    /// Mirror of the upstream `SigSubmissionV2` `Message` transitions:
+    /// `StIdle`+`MsgRequestSigIds`→`StSigIds`,
+    /// `StSigIds`+`MsgReplySigIds`→`StIdle`, blocking
+    /// `StSigIds`+`MsgReplyNoSigIds`→`StIdle`,
+    /// `StIdle`+`MsgRequestSigs`→`StSigs`,
+    /// `StSigs`+`MsgReplySigs`→`StIdle`,
+    /// `StIdle`+`MsgDone`→`StDone`.
+    pub fn transition(
+        self,
+        msg: &SigSubmissionV2Message,
+    ) -> Result<SigSubmissionV2State, SigSubmissionV2TransitionError> {
+        match (self, msg) {
+            (
+                SigSubmissionV2State::StIdle,
+                SigSubmissionV2Message::MsgRequestSigIds { blocking, .. },
+            ) => Ok(SigSubmissionV2State::StSigIds {
+                blocking: *blocking,
+            }),
+            (
+                SigSubmissionV2State::StSigIds { .. },
+                SigSubmissionV2Message::MsgReplySigIds { .. },
+            ) => Ok(SigSubmissionV2State::StIdle),
+            // `MsgReplyNoSigIds` is valid only from a blocking request.
+            (
+                SigSubmissionV2State::StSigIds { blocking: true },
+                SigSubmissionV2Message::MsgReplyNoSigIds,
+            ) => Ok(SigSubmissionV2State::StIdle),
+            (SigSubmissionV2State::StIdle, SigSubmissionV2Message::MsgRequestSigs { .. }) => {
+                Ok(SigSubmissionV2State::StSigs)
+            }
+            (SigSubmissionV2State::StSigs, SigSubmissionV2Message::MsgReplySigs { .. }) => {
+                Ok(SigSubmissionV2State::StIdle)
+            }
+            (SigSubmissionV2State::StIdle, SigSubmissionV2Message::MsgDone) => {
+                Ok(SigSubmissionV2State::StDone)
+            }
+            (state, msg) => Err(SigSubmissionV2TransitionError {
+                state,
+                message: msg.tag_name(),
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +224,68 @@ mod tests {
             "MsgReplySigs"
         );
         assert_eq!(SigSubmissionV2Message::MsgDone.tag_name(), "MsgDone");
+    }
+
+    #[test]
+    fn transition_follows_the_protocol() {
+        // Idle → SigIds → Idle (the identifier exchange).
+        let sig_ids = SigSubmissionV2State::StIdle
+            .transition(&SigSubmissionV2Message::MsgRequestSigIds {
+                blocking: true,
+                ack: NumIdsAck(0),
+                req: NumIdsReq(3),
+            })
+            .expect("request ids");
+        assert_eq!(sig_ids, SigSubmissionV2State::StSigIds { blocking: true });
+        assert_eq!(
+            sig_ids
+                .transition(&SigSubmissionV2Message::MsgReplySigIds { ids: vec![] })
+                .expect("reply ids"),
+            SigSubmissionV2State::StIdle
+        );
+        // A blocking SigIds may also be answered with MsgReplyNoSigIds.
+        assert_eq!(
+            sig_ids
+                .transition(&SigSubmissionV2Message::MsgReplyNoSigIds)
+                .expect("reply none"),
+            SigSubmissionV2State::StIdle
+        );
+        // Idle → Sigs → Idle (the signature exchange).
+        let sigs = SigSubmissionV2State::StIdle
+            .transition(&SigSubmissionV2Message::MsgRequestSigs { ids: vec![] })
+            .expect("request sigs");
+        assert_eq!(sigs, SigSubmissionV2State::StSigs);
+        assert_eq!(
+            sigs.transition(&SigSubmissionV2Message::MsgReplySigs { sigs: vec![] })
+                .expect("reply sigs"),
+            SigSubmissionV2State::StIdle
+        );
+        // Termination.
+        assert_eq!(
+            SigSubmissionV2State::StIdle
+                .transition(&SigSubmissionV2Message::MsgDone)
+                .expect("done"),
+            SigSubmissionV2State::StDone
+        );
+    }
+
+    #[test]
+    fn transition_rejects_illegal_messages() {
+        // MsgReplyNoSigIds is illegal from a non-blocking StSigIds.
+        let err = SigSubmissionV2State::StSigIds { blocking: false }
+            .transition(&SigSubmissionV2Message::MsgReplyNoSigIds)
+            .expect_err("non-blocking cannot reply-none");
+        assert_eq!(err.message, "MsgReplyNoSigIds");
+        assert_eq!(
+            err.state,
+            SigSubmissionV2State::StSigIds { blocking: false }
+        );
+        // MsgReplySigs is illegal in StIdle.
+        assert!(
+            SigSubmissionV2State::StIdle
+                .transition(&SigSubmissionV2Message::MsgReplySigs { sigs: vec![] })
+                .is_err()
+        );
     }
 
     #[test]
