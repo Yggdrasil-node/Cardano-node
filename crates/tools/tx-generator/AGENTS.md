@@ -40,22 +40,34 @@ approved synthesis area from the sister-tools plan.
   (R701). Each was previously gated by an `ensure_absent` /
   `ensure_empty_or_absent` rejection; all now render the typed
   field value.
-- **DumpToFile remaining-work blocker:** three tx-body fields stay
-  on `ensure_absent` / `ensure_empty_or_absent` rejection —
-  `certificates`, `update`, and `auxiliary_data` (`stAuxData` /
-  `atAuxData`). `certificates` and `update` are never populated by
-  the tx-generator benchmark path, so their gates are defensive,
-  not gaps. `auxiliary_data` *can* be set (the `NtoM`
-  size-padding path emits `{ uint => TxMetaBytes }` metadata via
-  `mkMetadata`), so its gate is a real gap — but porting it needs
-  the exact upstream `Show` output for a memoized `ShelleyTxAuxData`
-  / `AlonzoTxAuxData` and for `Metadatum`, which are `MemoBytes`-
-  wrapped types whose stock-derived `Show` shape cannot be
-  guessed. **Blocked pending:** a forensic upstream reference —
-  either an upstream golden `Show (Tx)` for a Shelley tx carrying
-  metadata, or a vendored `cardano-ledger` test vector for
-  `Show (ShelleyTxAuxData)`. Do not port `auxiliary_data` on
-  assumption.
+- **DumpToFile remaining-work status (R703 investigation):**
+  three tx-body fields stay on `ensure_absent` /
+  `ensure_empty_or_absent` rejection — `certificates`, `update`,
+  `auxiliary_data`.
+  - `certificates` and `update` are **provably-dead defensive
+    gates, not gaps**: `tx_generator/tx.rs::gen_tx` hard-codes
+    `certificates: None` and `update: None` for every era, so a
+    tx-generator-built tx can never carry them.
+  - `auxiliary_data` (`stAuxData` / `atAuxData`) **is a real
+    gap** — the `NtoM` size-padding path emits `{ uint =>
+    TxMetaBytes }` metadata via `mkMetadata`. The upstream
+    `Show` chain is now mostly determined from the reference
+    tree: `ShelleyTxAuxData = MkShelleyTxAuxData (MemoBytes
+    ShelleyTxAuxDataRaw)` (stock `Show`); `Show (MemoBytes t) =
+    "<show raw> (blake2b_256: SafeHash \"<mbHash>\")"`
+    (`Cardano/Ledger/MemoBytes/Internal.hs:185`); `Show
+    ShelleyTxAuxDataRaw = "ShelleyTxAuxDataRaw {stadrMetadata =
+    fromList [...]}"`; `Metadatum = Map | List | I Integer | B
+    ByteArray | S Text` stock `Show`
+    (`Cardano/Ledger/Metadata.hs:52`). **The single remaining
+    unknown is `Show ByteArray`** for the `Metadatum.B` case —
+    a `primitive`-package (Hackage) detail that is NOT in the
+    vendored reference tree, so the `B`-byte format cannot be
+    determined here. **Blocked pending:** the `primitive`
+    package's `instance Show ByteArray`, or an upstream golden
+    `Show (Tx)` / `cardano-ledger` test vector exercising a
+    `Metadatum.B` value. Do not port `auxiliary_data` on
+    assumption.
 - Shipped: `<binary> --help` byte-equivalent to upstream (golden test
   pinned in `tests/cli_help_golden.rs`).
 - Shipped: `<binary> --version` byte-equivalent to upstream.
