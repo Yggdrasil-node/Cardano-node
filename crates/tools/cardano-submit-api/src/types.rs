@@ -5932,6 +5932,168 @@ impl fmt::Display for DRep {
     }
 }
 
+/// A bounded rational in [0,1] mirroring upstream `UnitInterval`
+/// (a `BoundedRatio`). CBOR wire format is a tag-30 rational
+/// `#6.30([numerator, denominator])`. Display matches upstream
+/// `Show` — `<numerator> % <denominator>`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UnitInterval {
+    /// Rational numerator.
+    pub numerator: u64,
+    /// Rational denominator.
+    pub denominator: u64,
+}
+
+impl UnitInterval {
+    /// Decode a `UnitInterval` from its tag-30 rational CBOR
+    /// envelope.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let tag = dec
+            .tag()
+            .map_err(|err| DecoderError(format!("UnitInterval: expected tag 30: {err:?}")))?;
+        if tag != 30 {
+            return Err(DecoderError(format!(
+                "UnitInterval: expected rational tag 30, got {tag}"
+            )));
+        }
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("UnitInterval: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "UnitInterval: expected 2-element rational, got len {len}"
+            )));
+        }
+        let numerator = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("UnitInterval: numerator: {err:?}")))?;
+        let denominator = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("UnitInterval: denominator: {err:?}")))?;
+        Ok(Self {
+            numerator,
+            denominator,
+        })
+    }
+}
+
+impl fmt::Display for UnitInterval {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} % {}", self.numerator, self.denominator)
+    }
+}
+
+/// Stake-pool registration parameters mirroring upstream `data
+/// PoolParams` (`StakePoolParams`). The 9-field `encCBORGroup`
+/// is flattened into the `RegPool` certificate's `Sum` envelope.
+///
+/// R665 types the scalar prefix (VRF key hash, pledge, cost,
+/// margin, reward account); the `owners` / `relays` / `metadata`
+/// collection fields keep raw inner CBOR pending their typed
+/// decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolParams {
+    /// VRF verification-key hash (`ppVrf`, a 32-byte hash).
+    pub vrf: [u8; 32],
+    /// The pool pledge (`ppPledge`).
+    pub pledge: u64,
+    /// The pool operating cost (`ppCost`).
+    pub cost: u64,
+    /// The pool margin (`ppMargin`).
+    pub margin: UnitInterval,
+    /// The pledge/reward return account (`ppRewardAccount`).
+    pub reward_account: yggdrasil_ledger::RewardAccount,
+    /// The remaining group fields — pool owners, relays and
+    /// optional metadata — raw pending their typed decoders.
+    pub rest: Vec<u8>,
+}
+
+impl PoolParams {
+    /// Decode the `PoolParams` group fields that follow the pool
+    /// operator key hash inside a `RegPool` certificate. `source`
+    /// is the certificate envelope's source bytes (for the raw
+    /// tail capture); `end` is the envelope's element count.
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+        end: u64,
+    ) -> Result<Self, DecoderError> {
+        let vrf_bytes = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("PoolParams: expected VRF bytes: {err:?}")))?;
+        let vrf: [u8; 32] = vrf_bytes
+            .try_into()
+            .map_err(|_| DecoderError("PoolParams: VRF key hash must be 32 bytes".to_string()))?;
+        let pledge = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("PoolParams: pledge: {err:?}")))?;
+        let cost = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("PoolParams: cost: {err:?}")))?;
+        let margin = UnitInterval::from_decoder(dec)?;
+        let acct_bytes = dec.bytes().map_err(|err| {
+            DecoderError(format!(
+                "PoolParams: expected reward-account bytes: {err:?}"
+            ))
+        })?;
+        let reward_account =
+            yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes).ok_or_else(|| {
+                DecoderError(format!(
+                    "PoolParams: invalid reward-account ({} bytes)",
+                    acct_bytes.len()
+                ))
+            })?;
+        // Owners (index 7), relays (8), metadata (9) — captured
+        // raw. The certificate envelope has `end` total elements;
+        // the operator key hash + the 5 fields above consumed
+        // indices 1..7.
+        let start = dec.position();
+        for _ in 7..end {
+            dec.skip()
+                .map_err(|err| DecoderError(format!("PoolParams: tail skip: {err:?}")))?;
+        }
+        let stop = dec.position();
+        let rest = source
+            .get(start..stop)
+            .ok_or_else(|| DecoderError("PoolParams: tail byte range out of bounds".to_string()))?
+            .to_vec();
+        Ok(Self {
+            vrf,
+            pledge,
+            cost,
+            margin,
+            reward_account,
+            rest,
+        })
+    }
+}
+
+impl fmt::Display for PoolParams {
+    /// Render the typed scalar prefix of upstream's stock-derived
+    /// `Show PoolParams`; the raw collection tail emits a
+    /// `<raw-cbor N bytes>` marker.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PoolParams {{ppVrf = VRFVerKeyHash \"{}\", ppPledge = {}, ppCost = {}, ppMargin = {}, ppRewardAccount = {}",
+            hex::encode(self.vrf),
+            CoinShow(self.pledge),
+            CoinShow(self.cost),
+            self.margin,
+            show_reward_account(&self.reward_account),
+        )?;
+        if self.rest.is_empty() {
+            f.write_str("}")
+        } else {
+            write!(
+                f,
+                ", ppOwnersRelaysMetadata = <raw-cbor {} bytes>}}",
+                self.rest.len()
+            )
+        }
+    }
+}
+
 /// `TxCert` mirror — a Conway-era transaction certificate from
 /// `Cardano.Ledger.Conway.TxCert` (`data ConwayTxCert era =
 /// ConwayTxCertDeleg ConwayDelegCert | ConwayTxCertPool PoolCert
@@ -5939,10 +6101,9 @@ impl fmt::Display for DRep {
 ///
 /// The wire format is a flat CBOR `Sum` (`decodeRecordSum`,
 /// tags 0-18); R660 classifies the tag into its upstream
-/// certificate family. The `ConwayTxCertDeleg` family is fully
-/// typed (R661/R662); the `ConwayTxCertPool` / `ConwayTxCertGov`
-/// bodies keep raw inner CBOR pending the typed `PoolCert` /
-/// `ConwayGovCert` decoders.
+/// certificate family. All three families carry typed payloads
+/// (R661-R665); only the `PoolParams` owners/relays/metadata
+/// collection tail remains raw within `ConwayTxCertPool`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TxCert {
     /// Delegation-family certificate (`ConwayTxCertDeleg`) —
@@ -5977,11 +6138,9 @@ pub enum TxCert {
         /// The retirement epoch — present only for tag 4
         /// (`RetirePoolTxCert`).
         epoch: Option<u64>,
-        /// The remaining `RegPool` `PoolParams` group fields
-        /// (VRF / pledge / cost / margin / reward account /
-        /// owners / relays / metadata) — raw pending the typed
-        /// `PoolParams` decoder; empty for `RetirePool`.
-        rest: Vec<u8>,
+        /// The registration parameters — present only for tag 3
+        /// (`RegPoolTxCert`).
+        params: Option<PoolParams>,
     },
     /// Governance-family certificate (`ConwayTxCertGov`) —
     /// upstream `Sum` tags 14-18. Fully typed: the leading
@@ -6083,22 +6242,6 @@ impl TxCert {
                 "TxCert: tag {cert_tag} (genesis/MIR) is no longer supported"
             )));
         }
-        // Capture the byte range of element indices `skip_from`
-        // ..len after advancing the decoder past them.
-        let capture_rest = |dec: &mut yggdrasil_ledger::Decoder<'_>,
-                            skip_from: u64|
-         -> Result<Vec<u8>, DecoderError> {
-            let start = dec.position();
-            for _ in skip_from..len {
-                dec.skip()
-                    .map_err(|err| DecoderError(format!("TxCert: payload skip: {err:?}")))?;
-            }
-            let end = dec.position();
-            source
-                .get(start..end)
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| DecoderError("TxCert: payload byte range out of bounds".to_string()))
-        };
         // Read a 28-byte stake-pool key hash (a bare CBOR
         // bytestring).
         let read_pool = |dec: &mut yggdrasil_ledger::Decoder<'_>| -> Result<KeyHash, DecoderError> {
@@ -6162,21 +6305,23 @@ impl TxCert {
                 // RetirePool's retiring pool).
                 let pool = read_pool(dec)?;
                 let mut epoch = None;
-                let rest = if cert_tag == 4 {
+                let mut params = None;
+                if cert_tag == 4 {
                     epoch = Some(dec.unsigned().map_err(|err| {
                         DecoderError(format!("RetirePool: expected epoch: {err:?}"))
                     })?);
-                    Vec::new()
                 } else {
                     // RegPool: the remaining PoolParams group
-                    // fields (element index 2..len).
-                    capture_rest(dec, 2)?
-                };
+                    // fields (VRF / pledge / cost / margin /
+                    // reward account / owners / relays /
+                    // metadata).
+                    params = Some(PoolParams::from_decoder(dec, source, len)?);
+                }
                 Ok(Self::ConwayTxCertPool {
                     cert_tag,
                     pool,
                     epoch,
-                    rest,
+                    params,
                 })
             }
             14..=18 => {
@@ -6249,7 +6394,7 @@ impl fmt::Display for TxCert {
                 cert_tag,
                 pool,
                 epoch,
-                rest,
+                params,
             } => {
                 write!(
                     f,
@@ -6259,8 +6404,8 @@ impl fmt::Display for TxCert {
                 if let Some(epoch) = epoch {
                     write!(f, " (EpochNo {epoch})")?;
                 }
-                if !rest.is_empty() {
-                    write!(f, " <raw-cbor {} bytes>", rest.len())?;
+                if let Some(params) = params {
+                    write!(f, " ({params})")?;
                 }
                 f.write_str(")")
             }
@@ -10413,13 +10558,13 @@ mod tests {
         if let TxCert::ConwayTxCertPool {
             cert_tag,
             epoch,
-            rest,
+            params,
             ..
         } = &cert
         {
             assert_eq!(*cert_tag, 4);
             assert_eq!(*epoch, Some(400));
-            assert!(rest.is_empty());
+            assert!(params.is_none());
         } else {
             panic!("expected ConwayTxCertPool, got {cert:?}");
         }
@@ -10432,33 +10577,54 @@ mod tests {
     #[test]
     fn tx_cert_decodes_pool_register() {
         // TxCert Sum tag 3 (RegPoolTxCert) — `[3, ...PoolParams
-        // group...]`. PoolParams leads with the operator key
-        // hash; the remaining group fields stay raw.
-        let mut cbor = vec![0x83_u8, 0x03];
+        // group...]` — a 10-element envelope (tag + 9 group
+        // fields).
+        let mut cbor = vec![0x8A_u8, 0x03];
         cbor.push(0x58); // operator key hash bytes(28)
         cbor.push(28);
         cbor.extend_from_slice(&[0x7C_u8; 28]);
-        cbor.push(0x00); // one placeholder remaining group field
+        cbor.push(0x58); // VRF key hash bytes(32)
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x5A_u8; 32]);
+        cbor.extend_from_slice(&[0x1A, 0x05, 0xF5, 0xE1, 0x00]); // pledge 100_000_000
+        cbor.extend_from_slice(&[0x19, 0x0B, 0xB8]); // cost 3000
+        cbor.extend_from_slice(&[0xD8, 0x1E, 0x82, 0x01, 0x18, 0x32]); // margin tag30 [1, 50]
+        cbor.push(0x58); // reward account bytes(29)
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x6F_u8; 28]);
+        cbor.push(0x80); // owners: empty set
+        cbor.push(0x80); // relays: empty seq
+        cbor.push(0xF6); // metadata: null
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(&cbor);
         let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RegPool");
         if let TxCert::ConwayTxCertPool {
             cert_tag,
             epoch,
-            rest,
+            params,
             ..
         } = &cert
         {
             assert_eq!(*cert_tag, 3);
             assert!(epoch.is_none());
-            assert!(!rest.is_empty());
+            let params = params.as_ref().expect("RegPool params");
+            assert_eq!(params.pledge, 100_000_000);
+            assert_eq!(params.cost, 3000);
+            assert_eq!(params.margin.numerator, 1);
+            assert_eq!(params.margin.denominator, 50);
+            assert_eq!(params.vrf, [0x5A_u8; 32]);
         } else {
             panic!("expected ConwayTxCertPool, got {cert:?}");
         }
+        let s = cert.to_string();
         assert!(
-            cert.to_string()
-                .starts_with("ConwayTxCertPool (RegPoolTxCert (KeyHash {unKeyHash = \"7c7c"),
-            "got: {cert}"
+            s.starts_with("ConwayTxCertPool (RegPoolTxCert (KeyHash {unKeyHash = \"7c7c"),
+            "got: {s}"
+        );
+        assert!(
+            s.contains("ppPledge = Coin 100000000, ppCost = Coin 3000, ppMargin = 1 % 50"),
+            "got: {s}"
         );
     }
 

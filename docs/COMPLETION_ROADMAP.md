@@ -935,10 +935,15 @@ the `ConwayTxCertPool` body — `TxCert::ConwayTxCertPool` now
 carries the typed stake-pool key hash (the `ppId` operator
 field / retiring pool, leading both certs), the `RetirePool`
 retirement epoch, and the remaining `RegPool` `PoolParams`
-group raw. **All three `ConwayTxCert` certificate families
-(`ConwayTxCertDeleg` / `ConwayTxCertPool` / `ConwayTxCertGov`)
-now carry typed payloads** — only the `RegPool` `PoolParams`
-record body remains raw within `ConwayTxCertPool`.
+group raw. R665 (2026-05-21) added the `UnitInterval` (tag-30
+rational) and `PoolParams` types and typed the `RegPool`
+registration parameters — `ConwayTxCertPool` now carries a
+`PoolParams` struct with typed VRF key hash, pledge, cost,
+margin and reward account; only the `PoolParams`
+owners/relays/metadata collection tail remains raw. **All three
+`ConwayTxCert` certificate families now carry typed payloads,
+fully through the `RegPool` parameter scalars** — only the
+deepest `PoolParams` collection fields remain raw.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
