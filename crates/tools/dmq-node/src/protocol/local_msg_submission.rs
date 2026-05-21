@@ -342,6 +342,120 @@ impl LocalMsgSubmissionClient {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Server driver (upstream `Protocol/LocalMsgSubmission/Server.hs`)
+// ---------------------------------------------------------------------------
+
+/// Errors from the [`LocalMsgSubmissionServer`] driver.
+#[derive(Debug, thiserror::Error)]
+pub enum LocalMsgSubmissionServerError {
+    /// Multiplexer transport error.
+    #[error("mux error: {0}")]
+    Mux(#[from] MuxError),
+    /// The connection was closed by the remote peer.
+    #[error("connection closed")]
+    ConnectionClosed,
+    /// An illegal protocol-state transition.
+    #[error("protocol error: {0}")]
+    Protocol(#[from] LocalMsgSubmissionTransitionError),
+    /// A CBOR decode failure on an inbound message.
+    #[error("CBOR decode error: {0}")]
+    Decode(String),
+    /// An unexpected message from the client.
+    #[error("unexpected message: {0}")]
+    UnexpectedMessage(String),
+}
+
+/// A `LocalMsgSubmission` server driver maintaining the protocol
+/// state machine.
+///
+/// Mirror of upstream `Protocol/LocalMsgSubmission/Server.hs`,
+/// following the `crates/network` driver pattern. The server receives
+/// submitted DMQ signatures and answers each with an accept / reject
+/// verdict.
+pub struct LocalMsgSubmissionServer {
+    channel: MessageChannel,
+    state: LocalMsgSubmissionState,
+}
+
+impl LocalMsgSubmissionServer {
+    /// Create a server driver from a `LocalMsgSubmission`
+    /// `ProtocolHandle`. The protocol starts in `StIdle` — the server
+    /// waits for the client's first message.
+    pub fn new(handle: ProtocolHandle) -> Self {
+        Self {
+            channel: MessageChannel::new(handle),
+            state: LocalMsgSubmissionState::StIdle,
+        }
+    }
+
+    /// The current protocol state.
+    pub fn state(&self) -> LocalMsgSubmissionState {
+        self.state
+    }
+
+    async fn send_msg(
+        &mut self,
+        msg: &LocalMsgSubmissionMessage,
+    ) -> Result<(), LocalMsgSubmissionServerError> {
+        self.state = self.state.transition(msg)?;
+        self.channel
+            .send(msg.to_cbor())
+            .await
+            .map_err(LocalMsgSubmissionServerError::Mux)
+    }
+
+    async fn recv_msg(
+        &mut self,
+    ) -> Result<LocalMsgSubmissionMessage, LocalMsgSubmissionServerError> {
+        let raw = self
+            .channel
+            .recv()
+            .await
+            .ok_or(LocalMsgSubmissionServerError::ConnectionClosed)?;
+        let msg = LocalMsgSubmissionMessage::from_cbor(&raw)
+            .map_err(|err| LocalMsgSubmissionServerError::Decode(err.to_string()))?;
+        self.state = self.state.transition(&msg)?;
+        Ok(msg)
+    }
+
+    /// Wait for the next client message.
+    ///
+    /// Returns `Some(sig)` when the client submits a signature
+    /// (`MsgSubmitTx`), or `None` when the client sends `MsgDone` and
+    /// the protocol terminates. Must be called in `StIdle` (client
+    /// agency).
+    pub async fn recv_submission(&mut self) -> Result<Option<Sig>, LocalMsgSubmissionServerError> {
+        match self.recv_msg().await? {
+            LocalMsgSubmissionMessage::MsgSubmitTx { sig } => Ok(Some(sig)),
+            LocalMsgSubmissionMessage::MsgDone => Ok(None),
+            other => Err(LocalMsgSubmissionServerError::UnexpectedMessage(format!(
+                "{other:?}"
+            ))),
+        }
+    }
+
+    /// Accept the submitted signature (`MsgAcceptTx`).
+    ///
+    /// Must be called in `StBusy` (server agency), after
+    /// [`Self::recv_submission`] returned `Some(..)`.
+    pub async fn accept(&mut self) -> Result<(), LocalMsgSubmissionServerError> {
+        self.send_msg(&LocalMsgSubmissionMessage::MsgAcceptTx).await
+    }
+
+    /// Reject the submitted signature with a reason (`MsgRejectTx`).
+    ///
+    /// Must be called in `StBusy` (server agency), after
+    /// [`Self::recv_submission`] returned `Some(..)`.
+    pub async fn reject(
+        &mut self,
+        reason: SigValidationError,
+    ) -> Result<(), LocalMsgSubmissionServerError> {
+        self.send_msg(&LocalMsgSubmissionMessage::MsgRejectTx { reason })
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -475,6 +589,19 @@ mod tests {
         let s = format!("{unexpected}");
         assert!(s.contains("unexpected message"), "got: {s}");
         assert!(s.contains("MsgSubmitTx in StBusy"), "got: {s}");
+    }
+
+    #[test]
+    fn server_error_variants_display() {
+        let closed = format!("{}", LocalMsgSubmissionServerError::ConnectionClosed);
+        assert!(closed.to_lowercase().contains("connection closed"));
+        let decode = LocalMsgSubmissionServerError::Decode("bad MsgSubmitTx".into());
+        assert!(format!("{decode}").contains("bad MsgSubmitTx"));
+        let unexpected =
+            LocalMsgSubmissionServerError::UnexpectedMessage("MsgAcceptTx in StIdle".into());
+        let s = format!("{unexpected}");
+        assert!(s.contains("unexpected message"), "got: {s}");
+        assert!(s.contains("MsgAcceptTx in StIdle"), "got: {s}");
     }
 
     #[test]
