@@ -791,6 +791,47 @@ impl fmt::Display for StrictMaybeScriptIntegrityHash {
     }
 }
 
+/// `StrictMaybe ByteString` renderer. `StrictMaybe` is
+/// CBOR-encoded as a list (0-element = `SNothing`, 1-element =
+/// `SJust`). Display matches upstream stock-derived Show:
+/// `SNothing` / `SJust <bytestring>` where the ByteString is
+/// rendered as a hex marker (cardano-submit-api does not carry
+/// the full mnemonic-escape Show helper).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StrictMaybeBytes(pub Option<Vec<u8>>);
+
+impl StrictMaybeBytes {
+    /// Decode a `StrictMaybe ByteString` from an in-progress
+    /// decoder (CBOR list: 0-element = SNothing, 1-element =
+    /// SJust bytes).
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!("StrictMaybeBytes: expected CBOR list: {err:?}"))
+        })?;
+        match len {
+            0 => Ok(Self(None)),
+            1 => {
+                let bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!("StrictMaybeBytes: expected bytes: {err:?}"))
+                })?;
+                Ok(Self(Some(bytes.to_vec())))
+            }
+            other => Err(DecoderError(format!(
+                "StrictMaybeBytes: expected 0- or 1-element list, got len {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for StrictMaybeBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            None => f.write_str("SNothing"),
+            Some(bytes) => write!(f, "SJust <bytestring {} bytes>", bytes.len()),
+        }
+    }
+}
+
 /// Typed payload for
 /// `ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals`.
 ///
@@ -4637,8 +4678,13 @@ pub enum ConwayUtxowPredFailure {
     MalformedReferenceScripts(NonEmptySetScriptHash),
     /// Tag 18: script integrity hash mismatch — `Mismatch RelEQ
     /// (StrictMaybe ScriptIntegrityHash) + StrictMaybe
-    /// ByteString`. Raw pending.
-    ScriptIntegrityHashMismatch(Vec<u8>),
+    /// ByteString` (R639 typed).
+    ScriptIntegrityHashMismatch {
+        /// Computed-vs-provided script-integrity-hash mismatch.
+        mismatch: Mismatch<StrictMaybeScriptIntegrityHash>,
+        /// The provided script-integrity bytes, if any.
+        provided: StrictMaybeBytes,
+    },
 }
 
 impl ConwayUtxowPredFailure {
@@ -4663,7 +4709,7 @@ impl ConwayUtxowPredFailure {
             Self::ExtraRedeemers(_) => 15,
             Self::MalformedScriptWitnesses(_) => 16,
             Self::MalformedReferenceScripts(_) => 17,
-            Self::ScriptIntegrityHashMismatch(_) => 18,
+            Self::ScriptIntegrityHashMismatch { .. } => 18,
         }
     }
 
@@ -4688,7 +4734,7 @@ impl ConwayUtxowPredFailure {
             Self::ExtraRedeemers(_) => "ExtraRedeemers",
             Self::MalformedScriptWitnesses(_) => "MalformedScriptWitnesses",
             Self::MalformedReferenceScripts(_) => "MalformedReferenceScripts",
-            Self::ScriptIntegrityHashMismatch(_) => "ScriptIntegrityHashMismatch",
+            Self::ScriptIntegrityHashMismatch { .. } => "ScriptIntegrityHashMismatch",
         }
     }
 
@@ -4913,10 +4959,36 @@ impl ConwayUtxowPredFailure {
                     payload_bytes,
                 )?))
             }
-            18 => Ok(Self::ScriptIntegrityHashMismatch(capture_raw(
-                "ScriptIntegrityHashMismatch",
-                3,
-            )?)),
+            18 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ScriptIntegrityHashMismatch: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                // x: Mismatch encoded as a nested 2-array
+                // [supplied, expected].
+                let mm_len = dec.array().map_err(|err| {
+                    DecoderError(format!(
+                        "ScriptIntegrityHashMismatch: expected Mismatch 2-array: {err:?}"
+                    ))
+                })?;
+                if mm_len != 2 {
+                    return Err(DecoderError(format!(
+                        "ScriptIntegrityHashMismatch: expected 2-element Mismatch, got len {mm_len}"
+                    )));
+                }
+                let supplied = StrictMaybeScriptIntegrityHash::from_decoder(&mut dec)?;
+                let expected = StrictMaybeScriptIntegrityHash::from_decoder(&mut dec)?;
+                let provided = StrictMaybeBytes::from_decoder(&mut dec)?;
+                Ok(Self::ScriptIntegrityHashMismatch {
+                    mismatch: Mismatch {
+                        relation: MismatchRelation::RelEQ,
+                        supplied,
+                        expected,
+                    },
+                    provided,
+                })
+            }
             other => Err(DecoderError(format!(
                 "ConwayUtxowPredFailure: unknown variant tag {other}"
             ))),
@@ -4932,8 +5004,11 @@ impl fmt::Display for ConwayUtxowPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UtxoFailure(utxo) => write!(f, "UtxoFailure ({utxo})"),
-            Self::MissingRedeemers(b) | Self::ScriptIntegrityHashMismatch(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::MissingRedeemers(b) => {
+                write!(f, "MissingRedeemers <raw-cbor {} bytes>", b.len())
+            }
+            Self::ScriptIntegrityHashMismatch { mismatch, provided } => {
+                write!(f, "ScriptIntegrityHashMismatch ({mismatch}) ({provided})")
             }
             Self::PPViewHashesDontMatch(mm) => {
                 write!(f, "PPViewHashesDontMatch ({mm})")
@@ -8152,6 +8227,40 @@ mod tests {
         assert!(
             err.to_string().contains("unknown variant tag 99"),
             "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_script_integrity_hash_mismatch_tag18() {
+        // outer [0x83, 0x12, Mismatch-2array, StrictMaybe-bytes].
+        // Mismatch [supplied=SJust hash, expected=SNothing].
+        // provided = SJust bytes(3).
+        let mut cbor = vec![0x83_u8, 0x12, 0x82, 0x81]; // Mismatch 2-arr, supplied SJust
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xCD_u8; 32]);
+        cbor.push(0x80); // expected SNothing
+        cbor.push(0x81); // provided SJust list(1)
+        cbor.push(0x43); // bytes(3)
+        cbor.extend_from_slice(b"sih");
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("ScriptIntegrityHashMismatch");
+        if let ConwayUtxowPredFailure::ScriptIntegrityHashMismatch { mismatch, provided } = &f {
+            assert_eq!(mismatch.supplied.0, Some([0xCD_u8; 32]));
+            assert_eq!(mismatch.expected.0, None);
+            assert_eq!(provided.0.as_deref(), Some(b"sih".as_slice()));
+        } else {
+            panic!("expected ScriptIntegrityHashMismatch, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "ScriptIntegrityHashMismatch (Mismatch (RelEQ) {supplied: SJust (SafeHash \"cdcd"
+            ),
+            "got: {s}"
+        );
+        assert!(
+            s.ends_with("expected: SNothing}) (SJust <bytestring 3 bytes>)"),
+            "got: {s}"
         );
     }
 

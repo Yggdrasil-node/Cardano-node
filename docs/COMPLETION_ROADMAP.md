@@ -810,11 +810,16 @@ R638 (2026-05-21) typed Conway UTXOW tag 13
 `StrictMaybeScriptIntegrityHash` type (Option of 32-byte
 SafeHash, CBOR-list-encoded) and wired the variant to
 `Mismatch<StrictMaybeScriptIntegrityHash>` (RelEQ,
-ToGroup-flattened). **16 of 19 Conway UTXOW variants now carry
-typed payloads**; only tags 10 (MissingRedeemers —
-`PlutusPurpose AsItem` form) and 18
-(ScriptIntegrityHashMismatch) remain raw pending the
-PlutusPurpose-AsItem + StrictMaybe-ByteString decoders.
+ToGroup-flattened). R639 (2026-05-21) typed Conway UTXOW tag 18
+(`ScriptIntegrityHashMismatch`) — added the `StrictMaybeBytes`
+type and wired the variant to `{ mismatch:
+Mismatch<StrictMaybeScriptIntegrityHash>, provided:
+StrictMaybeBytes }` (the Mismatch encoded as a nested 2-array,
+not ToGroup-flattened). **17 of 19 Conway UTXOW variants now
+carry typed payloads**; only tag 10 (MissingRedeemers —
+`NonEmpty (PlutusPurpose AsItem, ScriptHash)`, the AsItem form
+carrying the actual TxIn/PolicyID/TxCert/etc. item) remains raw
+pending the PlutusPurpose-AsItem decoder.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
