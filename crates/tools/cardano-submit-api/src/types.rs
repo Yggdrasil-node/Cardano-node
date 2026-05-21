@@ -1663,7 +1663,7 @@ impl ShelleyUtxoPredFailure {
             // Tags 6/10: `NonEmpty (TxOut era)` (R609 typed
             // wrapper; inner per-TxOut typed parse deferred).
             6 | 10 => {
-                let outs = NonEmptyTxOut::from_decoder(&mut dec, bytes)?;
+                let outs = NonEmptyTxOut::from_decoder(&mut dec)?;
                 Ok(match tag {
                     6 => Self::OutputTooSmallUTxO(outs),
                     10 => Self::OutputBootAddrAttrsTooBig(outs),
@@ -2186,117 +2186,56 @@ impl fmt::Display for NonEmptySetAddr {
     }
 }
 
-/// Era-opaque transaction-output wrapper mirroring upstream
-/// `TxOut era`. The wire format is era-specific:
+/// Shelley-era transaction-output mirroring upstream
+/// `data ShelleyTxOut era` (Shelley/Allegra/Mary). Wire format is
+/// the canonical 2-element CBOR array `[address_bytes, coin]`
+/// where for Shelley era `Value = Coin = Word64`.
 ///
-/// - Shelley/Allegra/Mary: 2-element array `[address, value]`.
-/// - Alonzo: 3-element array `[address, value, datum_hash]`.
-/// - Babbage+: CBOR map with positional keys for the four fields.
+/// Upstream `Show ShelleyTxOut = show . viewCompactTxOut` renders
+/// as a Haskell tuple `(<Addr>, Coin <n>)` — the `viewCompactTxOut`
+/// helper returns `(Addr, Value)` and the tuple Show wraps each
+/// element in its own Show.
 ///
-/// R609 captures the raw bytes verbatim for each TxOut. The full
-/// typed Shelley/Babbage parse-tree (Address + Value +
-/// {DatumHash|Datum} + Script) lands in a follow-on round.
+/// Alonzo (3-array) and Babbage+ (CBOR map) outputs are not yet
+/// covered — the `ShelleyUtxoPredFailure` enum is era-tagged at
+/// the outer envelope so its variant payloads inherit Shelley-era
+/// shape.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct RawTxOut(pub Vec<u8>);
+pub struct ShelleyTxOut {
+    /// Output address bytes (29-byte tagged form for Shelley).
+    pub addr: Addr,
+    /// Output value (Coin = Word64 for Shelley era).
+    pub coin: u64,
+}
 
-impl RawTxOut {
-    /// Decode a single TxOut by consuming the next CBOR datum,
-    /// regardless of era-specific shape. The bytes from the
-    /// pre-call decoder position through the post-call position are
-    /// captured verbatim.
-    fn from_decoder(
-        dec: &mut yggdrasil_ledger::Decoder<'_>,
-        source: &[u8],
-    ) -> Result<Self, DecoderError> {
-        let start = dec.position();
-        // Skip a single CBOR datum to advance the decoder. We use
-        // the `array` / `map` outer envelope walk that matches the
-        // era-specific top-level shape. For the Shelley-era 2-array
-        // case, this consumes `[address, value]`; for Babbage+ map
-        // it consumes the map and all entries.
-        skip_single_datum(dec).map_err(|err| DecoderError(format!("TxOut: skip: {}", err.0)))?;
-        let end = dec.position();
-        let slice = source
-            .get(start..end)
-            .ok_or_else(|| DecoderError("TxOut: decoder position out of bounds".to_string()))?;
-        Ok(Self(slice.to_vec()))
+impl ShelleyTxOut {
+    /// Decode a single Shelley-era TxOut as the canonical
+    /// 2-element CBOR array `[bytes(addr), coin]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("ShelleyTxOut: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ShelleyTxOut: expected 2-array, got len {len}"
+            )));
+        }
+        let addr = Addr::from_decoder(dec)
+            .map_err(|err| DecoderError(format!("ShelleyTxOut: {}", err.0)))?;
+        let coin = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("ShelleyTxOut: expected coin: {err:?}")))?;
+        Ok(Self { addr, coin })
     }
 }
 
-impl fmt::Display for RawTxOut {
-    /// Render as `TxOut <hex N bytes>` until the full era-specific
-    /// parse-tree port lands. The hex preserves the raw on-wire
-    /// bytes for operators while making the raw-payload status
-    /// visible.
+impl fmt::Display for ShelleyTxOut {
+    /// Render upstream `Show ShelleyTxOut = show .
+    /// viewCompactTxOut`: `(<Addr>, Coin <coin>)`. The Haskell tuple
+    /// Show inlines each element at p=0 with comma separation;
+    /// the outer parens are part of the tuple syntax.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "TxOut <hex {} bytes: {}>",
-            self.0.len(),
-            hex::encode(&self.0)
-        )
-    }
-}
-
-/// Skip a single CBOR datum at the decoder's current position
-/// without inspecting its contents. Handles the major types
-/// `unsigned`, `negative`, `bytes`, `text`, `array`, `map`, `tag`,
-/// `simple/float` per RFC 8949 §3.
-fn skip_single_datum(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<(), DecoderError> {
-    let major = dec
-        .peek_major()
-        .map_err(|err| DecoderError(format!("peek-major: {err:?}")))?;
-    match major {
-        // 0: unsigned, 1: negative
-        0 => {
-            dec.unsigned()
-                .map_err(|err| DecoderError(format!("unsigned: {err:?}")))?;
-            Ok(())
-        }
-        1 => {
-            // Negative ints decode as signed; fall back to a raw
-            // datum walk via array(0). We don't currently need them
-            // for TxOut payloads, so emit a focused error.
-            Err(DecoderError(
-                "skip_single_datum: negative integers not supported".to_string(),
-            ))
-        }
-        // 2: bytes
-        2 => {
-            dec.bytes()
-                .map_err(|err| DecoderError(format!("bytes: {err:?}")))?;
-            Ok(())
-        }
-        // 4: array — recurse per element.
-        4 => {
-            let len = dec
-                .array()
-                .map_err(|err| DecoderError(format!("array: {err:?}")))?;
-            for _ in 0..len {
-                skip_single_datum(dec)?;
-            }
-            Ok(())
-        }
-        // 5: map — recurse per key/value pair.
-        5 => {
-            let len = dec
-                .map()
-                .map_err(|err| DecoderError(format!("map: {err:?}")))?;
-            for _ in 0..len {
-                skip_single_datum(dec)?;
-                skip_single_datum(dec)?;
-            }
-            Ok(())
-        }
-        // 6: tag — consume then skip the tagged datum.
-        6 => {
-            dec.tag()
-                .map_err(|err| DecoderError(format!("tag: {err:?}")))?;
-            skip_single_datum(dec)
-        }
-        other => Err(DecoderError(format!(
-            "skip_single_datum: unsupported major type {other}"
-        ))),
+        write!(f, "({}, {})", self.addr, CoinShow(self.coin))
     }
 }
 
@@ -2305,26 +2244,22 @@ fn skip_single_datum(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<(), Deco
 /// array with ≥1 entry. NonEmpty invariant enforced at decode time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NonEmptyTxOut {
-    /// Decoded entries. Guaranteed non-empty by `from_cbor` /
-    /// `from_decoder`.
-    pub entries: Vec<RawTxOut>,
+    /// Decoded Shelley-era entries (typed Addr + Coin). Guaranteed
+    /// non-empty by `from_cbor` / `from_decoder`.
+    pub entries: Vec<ShelleyTxOut>,
 }
 
 impl NonEmptyTxOut {
-    /// Decode `NonEmpty (TxOut era)` from canonical CBOR bytes.
+    /// Decode `NonEmpty (TxOut era)` from canonical CBOR bytes
+    /// using Shelley-era TxOut shape.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
         use yggdrasil_ledger::Decoder;
         let mut dec = Decoder::new(bytes);
-        Self::from_decoder(&mut dec, bytes)
+        Self::from_decoder(&mut dec)
     }
 
-    /// Decode from an in-progress `Decoder`. Caller must pass the
-    /// original source bytes so each TxOut entry can be captured
-    /// verbatim by byte range.
-    pub fn from_decoder(
-        dec: &mut yggdrasil_ledger::Decoder<'_>,
-        source: &[u8],
-    ) -> Result<Self, DecoderError> {
+    /// Decode from an in-progress `Decoder` (Shelley-era TxOut).
+    pub fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
         let count = dec
             .array()
             .map_err(|err| DecoderError(format!("NonEmptyTxOut: expected CBOR array: {err:?}")))?;
@@ -2335,7 +2270,7 @@ impl NonEmptyTxOut {
         }
         let mut entries = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            entries.push(RawTxOut::from_decoder(dec, source)?);
+            entries.push(ShelleyTxOut::from_decoder(dec)?);
         }
         Ok(Self { entries })
     }
@@ -4980,8 +4915,8 @@ mod tests {
 
     #[test]
     fn shelley_utxo_pred_failure_output_too_small_decodes_tag6() {
-        // Tag 6 with NonEmpty [TxOut bytes]; TxOut is a 2-array
-        // [addr-bytes, coin] for Shelley era.
+        // Tag 6 with NonEmpty [TxOut(addr, coin=100)]; Shelley
+        // TxOut is a 2-array [bytes(addr), coin].
         let mut cbor = vec![0x82_u8, 0x06];
         cbor.push(0x81); // NonEmpty array(1)
         cbor.push(0x82); // TxOut 2-array
@@ -4994,15 +4929,44 @@ mod tests {
         let f = ShelleyUtxoPredFailure::from_cbor(&cbor).expect("OutputTooSmallUTxO");
         if let ShelleyUtxoPredFailure::OutputTooSmallUTxO(outs) = &f {
             assert_eq!(outs.entries.len(), 1);
-            // The captured TxOut bytes should be the full 2-array
-            // including the array header.
-            assert_eq!(outs.entries[0].0[0], 0x82); // 2-array
+            let entry = &outs.entries[0];
+            assert_eq!(entry.addr.0.len(), 29);
+            assert_eq!(entry.addr.0[0], 0x61);
+            assert_eq!(entry.coin, 100);
         } else {
             panic!("expected OutputTooSmallUTxO typed, got {f:?}");
         }
         let s = f.to_string();
-        assert!(s.starts_with("OutputTooSmallUTxO (TxOut <hex"), "got: {s}");
-        assert!(s.ends_with("]) ") || s.ends_with("])"), "got: {s}");
+        // Expected shape: `OutputTooSmallUTxO ((Addr <hex 29 bytes:
+        // ...>, Coin 100) :| [])`. The inner ShelleyTxOut renders
+        // as a Haskell tuple `(Addr ..., Coin 100)` per upstream
+        // `show . viewCompactTxOut`.
+        assert!(
+            s.starts_with("OutputTooSmallUTxO ((Addr <hex 29 bytes: 61aaaa"),
+            "got: {s}"
+        );
+        assert!(s.contains(", Coin 100)"), "got: {s}");
+        assert!(s.ends_with(":| [])"), "got: {s}");
+    }
+
+    #[test]
+    fn shelley_tx_out_typed_round_trip() {
+        // 2-array: [bytes(29) addr, coin=1_000_000]
+        let mut cbor = vec![0x82_u8];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x77_u8; 28]);
+        cbor.extend_from_slice(&[0x1A, 0x00, 0x0F, 0x42, 0x40]); // 1_000_000
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("ShelleyTxOut");
+        assert_eq!(tx_out.addr.0.len(), 29);
+        assert_eq!(tx_out.addr.0[0], 0xE1);
+        assert_eq!(tx_out.coin, 1_000_000);
+        let s = tx_out.to_string();
+        assert!(s.starts_with("(Addr <hex 29 bytes: e177"), "got: {s}");
+        assert!(s.ends_with(", Coin 1000000)"), "got: {s}");
     }
 
     #[test]

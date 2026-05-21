@@ -648,8 +648,18 @@ lt_expected})`. **All 6 POOL variants now carry typed payloads.**
 The **entire Shelley LEDGER predicate-failure tree is now
 structurally typed** (LEDGER 4/4 + UTXOW 11/11 + UTXO 11/11 +
 PPUP 3/3 + DELEGS→DELPL→DELEG 16/16 + DELEGS→DELPL→POOL 6/6).
-Within Shelley, only per-TxOut typed parse (era-specific
-Shelley/Babbage) and full typed `Addr` parse remain pending.
+Within Shelley, only full typed `Addr` parse (Shelley/Bootstrap
+split) remains pending. R620 (2026-05-21) replaced the
+era-opaque `RawTxOut(Vec<u8>)` carrier with the typed
+`ShelleyTxOut { addr: Addr, coin: u64 }` matching upstream
+`data ShelleyTxOut era = TxOutCompact !CompactAddr !(CompactForm
+(Value era))` (Shelley/Allegra/Mary 2-array wire format). The
+`NonEmptyTxOut` carrier used by UTXO tags 6/10 now holds typed
+Shelley-era outputs. Display matches upstream `show .
+viewCompactTxOut`: `(<Addr>, Coin <n>)` Haskell-tuple form. The
+now-unused `skip_single_datum` CBOR walker was removed. Alonzo
+3-array TxOut + Babbage map-form TxOut + full Shelley/Bootstrap
+typed Addr split remain pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
