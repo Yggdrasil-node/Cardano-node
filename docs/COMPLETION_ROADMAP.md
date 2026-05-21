@@ -791,11 +791,13 @@ carry typed payloads.** R675 (2026-05-21) added the
 renders each updated parameter by its upstream Conway name.
 R676 (2026-05-21) added the `PParamValue` enum — the
 integer-valued parameters decode to a typed `Word`. R677
-(2026-05-21) added the `PParamValue::Rational` variant — the
-tag-30 rational parameters (`a0`, `rho`, `tau`,
-`minFeeRefScriptCostPerByte`) now decode to a typed
-`UnitInterval`; only the structured parameters (cost models,
-ExUnits, voting thresholds) keep a `<raw-cbor>` marker. R653
+(2026-05-21) added the `PParamValue::Rational` variant for the
+tag-30 rational parameters. R678 (2026-05-21) added the
+`PParamValue::ExUnits` and `PParamValue::ExUnitPrices` variants
+— `maxTxExUnits` / `maxBlockExUnits` decode to typed `ExUnits`,
+`prices` to a memory/step `UnitInterval` pair; only the cost
+models and voting-threshold parameters keep a `<raw-cbor>`
+marker. R653
 (2026-05-21) added the `Anchor` and `ProposalProcedure` types
 (4-field record: deposit / return-addr / GovAction / Anchor)
 and wired GOV tags 8 (`InvalidPrevGovActionId`) and 12

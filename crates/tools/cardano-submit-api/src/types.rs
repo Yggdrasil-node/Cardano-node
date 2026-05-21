@@ -3070,6 +3070,17 @@ pub enum PParamValue {
     Word(u64),
     /// A tag-30 rational parameter value.
     Rational(UnitInterval),
+    /// An execution-units budget (`maxTxExUnits` /
+    /// `maxBlockExUnits`).
+    ExUnits(ExUnits),
+    /// Execution-unit prices (`prices` — a memory-price and a
+    /// step-price rational).
+    ExUnitPrices {
+        /// The per-memory-unit price.
+        mem: UnitInterval,
+        /// The per-CPU-step price.
+        step: UnitInterval,
+    },
     /// A not-yet-typed structured parameter value.
     Raw(Vec<u8>),
 }
@@ -3079,6 +3090,10 @@ impl fmt::Display for PParamValue {
         match self {
             Self::Word(n) => write!(f, "{n}"),
             Self::Rational(r) => write!(f, "{r}"),
+            Self::ExUnits(ex) => write!(f, "{ex}"),
+            Self::ExUnitPrices { mem, step } => {
+                write!(f, "Prices {{prMem = {mem}, prSteps = {step}}}")
+            }
             Self::Raw(b) => write!(f, "<raw-cbor {} bytes>", b.len()),
         }
     }
@@ -3116,7 +3131,24 @@ impl PParamsUpdate {
             let major = dec
                 .peek_major()
                 .map_err(|err| DecoderError(format!("PParamsUpdate: value peek: {err:?}")))?;
-            let value = if major == 0 {
+            let value = if key == 20 || key == 21 {
+                // maxTxExUnits / maxBlockExUnits — `ExUnits`.
+                PParamValue::ExUnits(ExUnits::from_decoder(dec)?)
+            } else if key == 19 {
+                // prices — `[memPrice, stepPrice]`, each a tag-30
+                // rational.
+                let plen = dec.array().map_err(|err| {
+                    DecoderError(format!("PParamsUpdate prices: expected 2-array: {err:?}"))
+                })?;
+                if plen != 2 {
+                    return Err(DecoderError(format!(
+                        "PParamsUpdate prices: expected 2-element array, got len {plen}"
+                    )));
+                }
+                let mem = UnitInterval::from_decoder(dec)?;
+                let step = UnitInterval::from_decoder(dec)?;
+                PParamValue::ExUnitPrices { mem, step }
+            } else if major == 0 {
                 let n = dec
                     .unsigned()
                     .map_err(|err| DecoderError(format!("PParamsUpdate: value Word: {err:?}")))?;
@@ -12182,6 +12214,68 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
+        );
+    }
+
+    #[test]
+    fn pparams_update_decodes_exunits_and_prices() {
+        // ParameterChange whose PParamsUpdate sets maxTxExUnits
+        // (id 20) and prices (id 19).
+        let mut cbor = vec![0x82_u8, 0x01, 0x84, 0x00, 0xF6];
+        cbor.push(0xA2); // PParamsUpdate map(2)
+        // id 20 (maxTxExUnits) → ExUnits [mem 14000000, steps 10000000000]
+        cbor.push(0x14);
+        cbor.push(0x82);
+        cbor.extend_from_slice(&[0x1A, 0x00, 0xD5, 0x9F, 0x80]); // mem 14_000_000
+        cbor.extend_from_slice(&[0x1B, 0x00, 0x00, 0x00, 0x02, 0x54, 0x0B, 0xE4, 0x00]); // steps 10_000_000_000
+        // id 19 (prices) → [memPrice 577/10000, stepPrice 721/10000000]
+        cbor.push(0x13);
+        cbor.push(0x82);
+        cbor.extend_from_slice(&[0xD8, 0x1E, 0x82, 0x19, 0x02, 0x41, 0x19, 0x27, 0x10]);
+        cbor.extend_from_slice(&[
+            0xD8, 0x1E, 0x82, 0x19, 0x02, 0xD1, 0x1A, 0x00, 0x98, 0x96, 0x80,
+        ]);
+        cbor.push(0xF6); // guardrail = null
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::ParameterChange {
+            pparams_update,
+            ..
+        }) = &f
+        {
+            let ex = pparams_update
+                .updates
+                .iter()
+                .find(|(k, _)| *k == 20)
+                .map(|(_, v)| v)
+                .expect("maxTxExUnits");
+            match ex {
+                PParamValue::ExUnits(e) => {
+                    assert_eq!(e.mem, 14_000_000);
+                    assert_eq!(e.steps, 10_000_000_000);
+                }
+                other => panic!("expected ExUnits, got {other:?}"),
+            }
+            let prices = pparams_update
+                .updates
+                .iter()
+                .find(|(k, _)| *k == 19)
+                .map(|(_, v)| v)
+                .expect("prices");
+            match prices {
+                PParamValue::ExUnitPrices { mem, step } => {
+                    assert_eq!(mem.numerator, 577);
+                    assert_eq!(step.numerator, 721);
+                }
+                other => panic!("expected ExUnitPrices, got {other:?}"),
+            }
+        } else {
+            panic!("expected ParameterChange, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(s.contains("(maxTxExUnits,WrapExUnits"), "got: {s}");
+        assert!(
+            s.contains("(prices,Prices {prMem = 577 % 10000, prSteps = 721 % 10000000})"),
+            "got: {s}"
         );
     }
 
