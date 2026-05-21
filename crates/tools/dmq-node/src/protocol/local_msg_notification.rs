@@ -16,6 +16,7 @@
 use crate::protocol::sig_submission::{Sig, decode_sig, encode_sig};
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_network::{MessageChannel, MuxError, ProtocolHandle};
 
 /// Anti-DoS cap on the number of messages decoded from a `MsgReply`
 /// indefinite-length array.
@@ -281,6 +282,114 @@ impl LocalMsgNotificationState {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Client driver (upstream `Protocol/LocalMsgNotification/Client.hs`)
+// ---------------------------------------------------------------------------
+
+/// Errors from the [`LocalMsgNotificationClient`] driver.
+///
+/// Mirror of the per-driver error enums in `crates/network` (e.g.
+/// `KeepAliveClientError`).
+#[derive(Debug, thiserror::Error)]
+pub enum LocalMsgNotificationClientError {
+    /// Multiplexer transport error.
+    #[error("mux error: {0}")]
+    Mux(#[from] MuxError),
+    /// The connection was closed by the remote peer.
+    #[error("connection closed")]
+    ConnectionClosed,
+    /// An illegal protocol-state transition.
+    #[error("protocol error: {0}")]
+    Protocol(#[from] LocalMsgNotificationTransitionError),
+    /// A CBOR decode failure on an inbound message.
+    #[error("CBOR decode error: {0}")]
+    Decode(String),
+    /// An unexpected message from the server.
+    #[error("unexpected message: {0}")]
+    UnexpectedMessage(String),
+}
+
+/// A `LocalMsgNotification` client driver maintaining the protocol
+/// state machine.
+///
+/// Mirror of upstream `Protocol/LocalMsgNotification/Client.hs`
+/// (`localMsgNotificationClientPeer`), following the
+/// `crates/network` mini-protocol-driver pattern (`keepalive_client.rs`)
+/// — a struct wrapping a [`MessageChannel`] plus typed protocol
+/// methods. The client drives the exchange: it requests notification
+/// batches and terminates the protocol.
+pub struct LocalMsgNotificationClient {
+    channel: MessageChannel,
+    state: LocalMsgNotificationState,
+}
+
+impl LocalMsgNotificationClient {
+    /// Create a client driver from a `LocalMsgNotification`
+    /// `ProtocolHandle`. The protocol starts in `StIdle` — client
+    /// agency.
+    pub fn new(handle: ProtocolHandle) -> Self {
+        Self {
+            channel: MessageChannel::new(handle),
+            state: LocalMsgNotificationState::StIdle,
+        }
+    }
+
+    /// The current protocol state.
+    pub fn state(&self) -> LocalMsgNotificationState {
+        self.state
+    }
+
+    async fn send_msg(
+        &mut self,
+        msg: &LocalMsgNotificationMessage,
+    ) -> Result<(), LocalMsgNotificationClientError> {
+        self.state = self.state.transition(msg)?;
+        self.channel
+            .send(msg.to_cbor())
+            .await
+            .map_err(LocalMsgNotificationClientError::Mux)
+    }
+
+    async fn recv_msg(
+        &mut self,
+    ) -> Result<LocalMsgNotificationMessage, LocalMsgNotificationClientError> {
+        let raw = self
+            .channel
+            .recv()
+            .await
+            .ok_or(LocalMsgNotificationClientError::ConnectionClosed)?;
+        let msg = LocalMsgNotificationMessage::from_cbor(&raw)
+            .map_err(|err| LocalMsgNotificationClientError::Decode(err.to_string()))?;
+        self.state = self.state.transition(&msg)?;
+        Ok(msg)
+    }
+
+    /// Request a batch of notified signatures — send `MsgRequest` and
+    /// await the server's `MsgReply`.
+    ///
+    /// `blocking` selects the blocking style: a blocking request is
+    /// used once the server has announced it has no further messages.
+    pub async fn request(
+        &mut self,
+        blocking: bool,
+    ) -> Result<(BlockingReplyList, HasMore), LocalMsgNotificationClientError> {
+        self.send_msg(&LocalMsgNotificationMessage::MsgRequest { blocking })
+            .await?;
+        match self.recv_msg().await? {
+            LocalMsgNotificationMessage::MsgReply { reply, has_more } => Ok((reply, has_more)),
+            other => Err(LocalMsgNotificationClientError::UnexpectedMessage(format!(
+                "{other:?}"
+            ))),
+        }
+    }
+
+    /// Terminate the protocol cleanly with `MsgClientDone`.
+    pub async fn done(mut self) -> Result<(), LocalMsgNotificationClientError> {
+        self.send_msg(&LocalMsgNotificationMessage::MsgClientDone)
+            .await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,6 +438,29 @@ mod tests {
     #[test]
     fn has_more_round_trips() {
         assert_ne!(HasMore::HasMore, HasMore::DoesNotHaveMore);
+    }
+
+    #[test]
+    fn client_error_connection_closed_displays() {
+        let s = format!("{}", LocalMsgNotificationClientError::ConnectionClosed);
+        assert!(s.to_lowercase().contains("connection closed"), "got: {s}");
+    }
+
+    #[test]
+    fn client_error_decode_propagates_inner_reason() {
+        let err = LocalMsgNotificationClientError::Decode("malformed MsgReply".into());
+        let s = format!("{err}");
+        assert!(s.contains("CBOR decode"), "got: {s}");
+        assert!(s.contains("malformed MsgReply"), "got: {s}");
+    }
+
+    #[test]
+    fn client_error_unexpected_message_propagates_inner() {
+        let err =
+            LocalMsgNotificationClientError::UnexpectedMessage("MsgClientDone in StBusy".into());
+        let s = format!("{err}");
+        assert!(s.contains("unexpected message"), "got: {s}");
+        assert!(s.contains("MsgClientDone in StBusy"), "got: {s}");
     }
 
     #[test]
