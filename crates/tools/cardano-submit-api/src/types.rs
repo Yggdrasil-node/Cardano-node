@@ -9188,9 +9188,9 @@ impl fmt::Display for Language {
 /// inner CBOR pending those decoder ports.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CollectError {
-    /// Tag 0: no redeemer for a Plutus script purpose. Raw
-    /// payload pending the `PlutusPurpose AsItem` decoder.
-    NoRedeemer(Vec<u8>),
+    /// Tag 0: no redeemer for a Plutus script purpose —
+    /// `PlutusPurpose AsItem` (R674 typed).
+    NoRedeemer(ConwayPlutusPurposeItem),
     /// Tag 1: no script witness for a hash — `ScriptHash` (R654
     /// typed).
     NoWitness(ScriptHash),
@@ -9254,7 +9254,10 @@ impl CollectError {
                 let lang = Language::from_decoder(dec)?;
                 Ok(Self::NoCostModel(lang))
             }
-            0 | 3 => {
+            0 => Ok(Self::NoRedeemer(ConwayPlutusPurposeItem::from_decoder(
+                dec, source,
+            )?)),
+            3 => {
                 let payload_start = dec.position();
                 dec.skip()
                     .map_err(|err| DecoderError(format!("CollectError: payload skip: {err:?}")))?;
@@ -9265,11 +9268,7 @@ impl CollectError {
                         DecoderError("CollectError: payload byte range out of bounds".to_string())
                     })?
                     .to_vec();
-                Ok(if tag == 0 {
-                    Self::NoRedeemer(raw)
-                } else {
-                    Self::BadTranslation(raw)
-                })
+                Ok(Self::BadTranslation(raw))
             }
             other => Err(DecoderError(format!(
                 "CollectError: unknown variant tag {other}"
@@ -9281,8 +9280,9 @@ impl CollectError {
 impl fmt::Display for CollectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NoRedeemer(b) | Self::BadTranslation(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::NoRedeemer(purpose) => write!(f, "NoRedeemer ({purpose})"),
+            Self::BadTranslation(b) => {
+                write!(f, "BadTranslation <raw-cbor {} bytes>", b.len())
             }
             Self::NoWitness(hash) => write!(f, "NoWitness ({hash})"),
             Self::NoCostModel(lang) => write!(f, "NoCostModel {lang}"),
@@ -13220,6 +13220,36 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ValidationTagMismatch (IsValid False) (FailedUnexpectedly (PlutusFailure \"boom\" <bytestring 3 bytes> :| []))"
+        );
+    }
+
+    #[test]
+    fn conway_utxos_pred_failure_collect_errors_no_redeemer() {
+        // CollectErrors carrying a NoRedeemer with a typed
+        // PlutusPurpose AsItem (ConwayMinting PolicyID).
+        let mut cbor = vec![0x82_u8, 0x01, 0x81, 0x82, 0x00];
+        // CollectError NoRedeemer payload: PlutusPurpose AsItem
+        // [1, PolicyID bytes(28)] (ConwayMinting).
+        cbor.push(0x82);
+        cbor.push(0x01);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xC9_u8; 28]);
+        let f = ConwayUtxosPredFailure::from_cbor(&cbor).expect("CollectErrors");
+        if let ConwayUtxosPredFailure::CollectErrors(errors) = &f {
+            assert_eq!(errors.entries.len(), 1);
+            match &errors.entries[0] {
+                CollectError::NoRedeemer(ConwayPlutusPurposeItem::ConwayMinting(_)) => {}
+                other => panic!("expected NoRedeemer ConwayMinting, got {other:?}"),
+            }
+        } else {
+            panic!("expected CollectErrors, got {f:?}");
+        }
+        assert!(
+            f.to_string().contains(
+                "NoRedeemer (ConwayMinting (AsItem {unAsItem = PolicyID {policyID = ScriptHash \"c9c9"
+            ),
+            "got: {f}"
         );
     }
 

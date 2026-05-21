@@ -885,12 +885,13 @@ FailedUnexpectedly(NonEmpty FailureDescription). R654
 (2026-05-21) typed tag 1 `CollectErrors` — added the `Language`
 enum (PlutusV1-V4) and the `CollectError` 4-variant scaffold
 (tag 1 `NoWitness` ScriptHash typed, tag 2 `NoCostModel`
-Language typed; tags 0/3 `NoRedeemer`/`BadTranslation` raw
-pending PlutusPurpose-AsItem / ContextError decoders) plus the
-`NonEmptyCollectError` carrier. **Both Conway UTXOS variants now
-carry typed payloads — the Conway UTXOS sub-rule is fully
-typed.** The Conway LEDGER → UTXOW → UTXO → UTXOS chain renders
-typed end-to-end.
+Language typed) plus the `NonEmptyCollectError` carrier. R674
+(2026-05-21) typed `CollectError::NoRedeemer` (tag 0) to carry
+a `ConwayPlutusPurposeItem` (the `PlutusPurpose AsItem` form);
+only tag 3 `BadTranslation` (`ContextError`) keeps a raw
+payload. **Both Conway UTXOS variants now carry typed payloads
+— the Conway UTXOS sub-rule is fully typed.** The Conway LEDGER
+→ UTXOW → UTXO → UTXOS chain renders typed end-to-end.
 R632 (2026-05-21) typed Conway UTXOW tags 11
 (`MissingRequiredDatums`) and 12
 (`NotAllowedSupplementalDatums`) — added the `DataHash`
