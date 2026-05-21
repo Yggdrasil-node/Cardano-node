@@ -468,7 +468,17 @@ own parser / generator / submission implementation plus upstream
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
-### A5 — cardano-submit-api structured rejection enum  (`TECH-DEBT.md` §"validation error")
+### A5 — cardano-submit-api structured rejection enum — ✅ CODE COMPLETE (verified 2026-05-21, R688)
+The typed predicate-failure decoder tree is structurally complete:
+`TxValidationErrorInCardanoMode` decodes a tx-submission rejection
+end-to-end into the typed per-era predicate-failure tree for every
+era (Conway LEDGER 9/9 → UTXOW 19/19 / UTXO 23/23 / UTXOS 2/2 /
+CERT chain / GOV 19/19; the Shelley-family LEDGER tree; the
+`TxCert` / `GovAction` / `PParamsUpdate` / `CollectError` /
+`ContextError` leaf trees). 355 `yggdrasil-cardano-submit-api`
+lib tests pass. Operator-soak certification remains tracked
+separately under **B2**. The original phased history follows.
+
 Phase 1 (raw-bytes carrier) landed pre-R594. R594 shipped the
 Phase-2 type-level scaffold: `TxValidationErrorInCardanoMode`
 era-tagged enum + `TxValidationEra` discriminator + `EraApplyTxError`
@@ -1011,14 +1021,17 @@ margin and reward account. R666 (2026-05-21) added the
 sequence. **The entire Conway `TxCert` tree — all three
 certificate families and the full `RegPool` `PoolParams` record
 — now carries typed payloads end-to-end.**
-Phase-2.5+ remaining work: per-variant decoders for those 5 raw
-UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
-tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
-`ShelleyLedgerPredFailure::UtxowFailure(Vec<u8>)`, then mirroring
-the predicate-failure tree for Allegra/Mary/Alonzo/Babbage/Conway
-eras (Conway adds 4+ governance-specific variants).
-**Exit:** operators can pattern-match typed rejection variants
-without a CBOR re-walk.
+Phase-2.5+ remaining work is **complete as of R688**: every
+Shelley-family and Conway LEDGER predicate-failure variant —
+and every nested sub-rule, certificate, governance action and
+protocol-parameter payload underneath — decodes into a typed
+Rust value. The only remaining raw carrier is
+`PParamValue::Raw`, a deliberate forward-compatible fallback
+for unrecognised protocol-parameter value shapes.
+**Exit:** ✅ operators can pattern-match typed rejection
+variants without a CBOR re-walk —
+`TxValidationErrorInCardanoMode::typed_conway_failures` /
+`typed_shelley_failures` return the typed tree directly.
 
 ### A6 — Workspace + documentation hygiene
 Post-reorganization cleanup guardrails:
