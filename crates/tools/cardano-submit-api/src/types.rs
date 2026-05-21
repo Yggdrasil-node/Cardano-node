@@ -4049,9 +4049,9 @@ fn show_haskell_bytestring_like(s: &str) -> String {
 /// ScriptIntegrityHash decoders.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayUtxowPredFailure {
-    /// Tag 0: nested Conway UTXO failure — raw pending Conway
-    /// UTXO sub-rule decoder.
-    UtxoFailure(Vec<u8>),
+    /// Tag 0: nested Conway UTXO failure (R630 wired to typed
+    /// `ConwayUtxoPredFailure`).
+    UtxoFailure(ConwayUtxoPredFailure),
     /// Tag 1: witnesses that failed verification —
     /// `NonEmpty (VKey Witness)` (R601 typed).
     InvalidWitnessesUTXOW(NonEmptyVKey),
@@ -4201,7 +4201,19 @@ impl ConwayUtxowPredFailure {
                 })
         };
         match tag {
-            0 => Ok(Self::UtxoFailure(capture_raw("UtxoFailure", 2)?)),
+            0 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "UtxoFailure: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let utxo_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::UtxoFailure(ConwayUtxoPredFailure::from_cbor(
+                    utxo_bytes,
+                )?))
+            }
             1 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -4348,8 +4360,8 @@ impl fmt::Display for ConwayUtxowPredFailure {
     /// variants emit a `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UtxoFailure(b)
-            | Self::MissingRedeemers(b)
+            Self::UtxoFailure(utxo) => write!(f, "UtxoFailure ({utxo})"),
+            Self::MissingRedeemers(b)
             | Self::MissingRequiredDatums(b)
             | Self::NotAllowedSupplementalDatums(b)
             | Self::PPViewHashesDontMatch(b)
@@ -4960,6 +4972,458 @@ impl fmt::Display for ConwayGovCertPredFailure {
             Self::ConwayCommitteeIsUnknown(cred) => {
                 write!(f, "ConwayCommitteeIsUnknown ({cred})")
             }
+        }
+    }
+}
+
+/// `ConwayUtxoPredFailure` mirror — Conway-era UTXO sub-rule
+/// failure (under `ConwayUtxowPredFailure::UtxoFailure`).
+///
+/// Upstream: `data ConwayUtxoPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Utxo` with 23 variants encoded
+/// via CBOR `Sum` tags 0-22. The largest sub-rule enum — covers
+/// the full UTxO acceptance check (inputs, outputs, fee, value
+/// conservation, collateral, network IDs).
+///
+/// R630 ships the scaffold with typed payloads for the 12
+/// variants that reuse existing carriers; the 11 remaining
+/// variants (0/2/6/11/12/13/14/15/20/21/22) keep raw inner CBOR
+/// pending UTXOS / ValidityInterval / Value / ExUnits /
+/// DeltaCoin / NonEmptyMap decoders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayUtxoPredFailure {
+    /// Tag 0: nested UTXOS sub-rule failure — raw pending Conway
+    /// UTXOS decoder.
+    UtxosFailure(Vec<u8>),
+    /// Tag 1: bad transaction inputs — `NonEmptySet TxIn` (R603
+    /// typed).
+    BadInputsUTxO(NonEmptySetTxIn),
+    /// Tag 2: tx validity interval excludes the current slot —
+    /// `ValidityInterval + SlotNo`. Raw pending decoder.
+    OutsideValidityIntervalUTxO(Vec<u8>),
+    /// Tag 3: tx size exceeds the maximum — `Mismatch RelLTEQ
+    /// Word32` via ToGroup flattened (R630 typed).
+    MaxTxSizeUTxO(Mismatch<u64>),
+    /// Tag 4: tx input set is empty — no payload.
+    InputSetEmptyUTxO,
+    /// Tag 5: fee below the minimum — `Mismatch RelGTEQ Coin`
+    /// via ToGroup flattened, expected-first per `swapMismatch`
+    /// (R630 typed).
+    FeeTooSmallUTxO(Mismatch<u64>),
+    /// Tag 6: value not conserved (consumed != produced) —
+    /// `Mismatch RelEQ (Value era)`. Raw pending Value decoder.
+    ValueNotConservedUTxO(Vec<u8>),
+    /// Tag 7: addresses with the wrong network id —
+    /// `Network + NonEmptySet Addr` (R630 typed).
+    WrongNetwork {
+        /// Expected (ledger) network id.
+        expected: Network,
+        /// Addresses carrying the wrong network id.
+        wrongs: NonEmptySetAddr,
+    },
+    /// Tag 8: reward addresses with the wrong network id —
+    /// `Network + NonEmptySet AccountAddress` (R630 typed).
+    WrongNetworkWithdrawal {
+        /// Expected (ledger) network id.
+        expected: Network,
+        /// Reward addresses carrying the wrong network id.
+        wrongs: NonEmptySetAccountAddress,
+    },
+    /// Tag 9: outputs below the minimum value — `NonEmpty
+    /// (TxOut era)` (R620 typed via NonEmptyTxOut).
+    OutputTooSmallUTxO(NonEmptyTxOut),
+    /// Tag 10: bootstrap-address outputs with attributes too
+    /// big — `NonEmpty (TxOut era)` (R620 typed).
+    OutputBootAddrAttrsTooBig(NonEmptyTxOut),
+    /// Tag 11: outputs too big — `NonEmpty (Int, Int, TxOut
+    /// era)`. Raw pending triple decoder.
+    OutputTooBigUTxO(Vec<u8>),
+    /// Tag 12: insufficient collateral — `DeltaCoin + Coin`.
+    /// Raw pending signed-coin decoder.
+    InsufficientCollateral(Vec<u8>),
+    /// Tag 13: UTxO entries with the wrong script kind —
+    /// `NonEmptyMap TxIn (TxOut era)`. Raw pending map decoder.
+    ScriptsNotPaidUTxO(Vec<u8>),
+    /// Tag 14: tx execution units exceed the maximum —
+    /// `Mismatch RelLTEQ ExUnits`. Raw pending ExUnits decoder.
+    ExUnitsTooBigUTxO(Vec<u8>),
+    /// Tag 15: collateral inputs contain non-ADA tokens —
+    /// `Value era`. Raw pending Value decoder.
+    CollateralContainsNonADA(Vec<u8>),
+    /// Tag 16: wrong network id in tx body — `Mismatch RelEQ
+    /// Network` via ToGroup flattened, expected-first per
+    /// `swapMismatch` (R630 typed).
+    WrongNetworkInTxBody(Mismatch<Network>),
+    /// Tag 17: slot outside the consensus forecast range —
+    /// `SlotNo` (R630 typed).
+    OutsideForecast(u64),
+    /// Tag 18: too many collateral inputs — `Mismatch RelLTEQ
+    /// Word16` via ToGroup flattened, expected-first per
+    /// `swapMismatch` (R630 typed).
+    TooManyCollateralInputs(Mismatch<u64>),
+    /// Tag 19: no collateral inputs supplied — no payload.
+    NoCollateralInputs,
+    /// Tag 20: total-collateral field mismatch — `DeltaCoin +
+    /// Coin`. Raw pending signed-coin decoder.
+    IncorrectTotalCollateralField(Vec<u8>),
+    /// Tag 21: outputs below the minimum value (Babbage form) —
+    /// `NonEmpty (TxOut era, Coin)`. Raw pending pair decoder.
+    BabbageOutputTooSmallUTxO(Vec<u8>),
+    /// Tag 22: TxIns appearing in both inputs and reference
+    /// inputs — `NonEmpty TxIn`. Raw pending NonEmpty (non-Set)
+    /// TxIn decoder.
+    BabbageNonDisjointRefInputs(Vec<u8>),
+}
+
+impl ConwayUtxoPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::UtxosFailure(_) => 0,
+            Self::BadInputsUTxO(_) => 1,
+            Self::OutsideValidityIntervalUTxO(_) => 2,
+            Self::MaxTxSizeUTxO(_) => 3,
+            Self::InputSetEmptyUTxO => 4,
+            Self::FeeTooSmallUTxO(_) => 5,
+            Self::ValueNotConservedUTxO(_) => 6,
+            Self::WrongNetwork { .. } => 7,
+            Self::WrongNetworkWithdrawal { .. } => 8,
+            Self::OutputTooSmallUTxO(_) => 9,
+            Self::OutputBootAddrAttrsTooBig(_) => 10,
+            Self::OutputTooBigUTxO(_) => 11,
+            Self::InsufficientCollateral(_) => 12,
+            Self::ScriptsNotPaidUTxO(_) => 13,
+            Self::ExUnitsTooBigUTxO(_) => 14,
+            Self::CollateralContainsNonADA(_) => 15,
+            Self::WrongNetworkInTxBody(_) => 16,
+            Self::OutsideForecast(_) => 17,
+            Self::TooManyCollateralInputs(_) => 18,
+            Self::NoCollateralInputs => 19,
+            Self::IncorrectTotalCollateralField(_) => 20,
+            Self::BabbageOutputTooSmallUTxO(_) => 21,
+            Self::BabbageNonDisjointRefInputs(_) => 22,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::UtxosFailure(_) => "UtxosFailure",
+            Self::BadInputsUTxO(_) => "BadInputsUTxO",
+            Self::OutsideValidityIntervalUTxO(_) => "OutsideValidityIntervalUTxO",
+            Self::MaxTxSizeUTxO(_) => "MaxTxSizeUTxO",
+            Self::InputSetEmptyUTxO => "InputSetEmptyUTxO",
+            Self::FeeTooSmallUTxO(_) => "FeeTooSmallUTxO",
+            Self::ValueNotConservedUTxO(_) => "ValueNotConservedUTxO",
+            Self::WrongNetwork { .. } => "WrongNetwork",
+            Self::WrongNetworkWithdrawal { .. } => "WrongNetworkWithdrawal",
+            Self::OutputTooSmallUTxO(_) => "OutputTooSmallUTxO",
+            Self::OutputBootAddrAttrsTooBig(_) => "OutputBootAddrAttrsTooBig",
+            Self::OutputTooBigUTxO(_) => "OutputTooBigUTxO",
+            Self::InsufficientCollateral(_) => "InsufficientCollateral",
+            Self::ScriptsNotPaidUTxO(_) => "ScriptsNotPaidUTxO",
+            Self::ExUnitsTooBigUTxO(_) => "ExUnitsTooBigUTxO",
+            Self::CollateralContainsNonADA(_) => "CollateralContainsNonADA",
+            Self::WrongNetworkInTxBody(_) => "WrongNetworkInTxBody",
+            Self::OutsideForecast(_) => "OutsideForecast",
+            Self::TooManyCollateralInputs(_) => "TooManyCollateralInputs",
+            Self::NoCollateralInputs => "NoCollateralInputs",
+            Self::IncorrectTotalCollateralField(_) => "IncorrectTotalCollateralField",
+            Self::BabbageOutputTooSmallUTxO(_) => "BabbageOutputTooSmallUTxO",
+            Self::BabbageNonDisjointRefInputs(_) => "BabbageNonDisjointRefInputs",
+        }
+    }
+
+    /// Decode the full `ConwayUtxoPredFailure` outer envelope.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayUtxoPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(1..=4).contains(&len) {
+            return Err(DecoderError(format!(
+                "ConwayUtxoPredFailure: expected 1- to 4-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayUtxoPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let payload_offset = dec.position();
+        let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+            DecoderError("ConwayUtxoPredFailure: payload offset out of bounds".to_string())
+        })?;
+        let capture_raw = |label: &str, expected_len: u64| -> Result<Vec<u8>, DecoderError> {
+            if len != expected_len {
+                return Err(DecoderError(format!(
+                    "{label}: expected {expected_len}-element envelope, got len {len}"
+                )));
+            }
+            Ok(payload_bytes.to_vec())
+        };
+        match tag {
+            0 => Ok(Self::UtxosFailure(capture_raw("UtxosFailure", 2)?)),
+            1 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "BadInputsUTxO: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::BadInputsUTxO(NonEmptySetTxIn::from_cbor(
+                    payload_bytes,
+                )?))
+            }
+            2 => Ok(Self::OutsideValidityIntervalUTxO(capture_raw(
+                "OutsideValidityIntervalUTxO",
+                3,
+            )?)),
+            3 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "MaxTxSizeUTxO: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let supplied = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("MaxTxSizeUTxO: supplied: {err:?}")))?;
+                let expected = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("MaxTxSizeUTxO: expected: {err:?}")))?;
+                Ok(Self::MaxTxSizeUTxO(Mismatch {
+                    relation: MismatchRelation::RelLTEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            4 => {
+                if len != 1 {
+                    return Err(DecoderError(format!(
+                        "InputSetEmptyUTxO: expected 1-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::InputSetEmptyUTxO)
+            }
+            5 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "FeeTooSmallUTxO: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                // swapMismatch: wire order is expected-then-supplied.
+                let expected = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("FeeTooSmallUTxO: expected: {err:?}")))?;
+                let supplied = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("FeeTooSmallUTxO: supplied: {err:?}")))?;
+                Ok(Self::FeeTooSmallUTxO(Mismatch {
+                    relation: MismatchRelation::RelGTEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            6 => Ok(Self::ValueNotConservedUTxO(capture_raw(
+                "ValueNotConservedUTxO",
+                3,
+            )?)),
+            7 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "WrongNetwork: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let expected = Network::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetwork: {}", err.0)))?;
+                let rest = bytes.get(dec.position()..).ok_or_else(|| {
+                    DecoderError("WrongNetwork: addr-set offset out of bounds".to_string())
+                })?;
+                let wrongs = NonEmptySetAddr::from_cbor(rest)?;
+                Ok(Self::WrongNetwork { expected, wrongs })
+            }
+            8 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "WrongNetworkWithdrawal: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let expected = Network::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetworkWithdrawal: {}", err.0)))?;
+                let rest = bytes.get(dec.position()..).ok_or_else(|| {
+                    DecoderError(
+                        "WrongNetworkWithdrawal: acct-set offset out of bounds".to_string(),
+                    )
+                })?;
+                let wrongs = NonEmptySetAccountAddress::from_cbor(rest)?;
+                Ok(Self::WrongNetworkWithdrawal { expected, wrongs })
+            }
+            9 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "OutputTooSmallUTxO: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::OutputTooSmallUTxO(NonEmptyTxOut::from_cbor(
+                    payload_bytes,
+                )?))
+            }
+            10 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "OutputBootAddrAttrsTooBig: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::OutputBootAddrAttrsTooBig(NonEmptyTxOut::from_cbor(
+                    payload_bytes,
+                )?))
+            }
+            11 => Ok(Self::OutputTooBigUTxO(capture_raw("OutputTooBigUTxO", 2)?)),
+            12 => Ok(Self::InsufficientCollateral(capture_raw(
+                "InsufficientCollateral",
+                3,
+            )?)),
+            13 => Ok(Self::ScriptsNotPaidUTxO(capture_raw(
+                "ScriptsNotPaidUTxO",
+                2,
+            )?)),
+            14 => Ok(Self::ExUnitsTooBigUTxO(capture_raw(
+                "ExUnitsTooBigUTxO",
+                3,
+            )?)),
+            15 => Ok(Self::CollateralContainsNonADA(capture_raw(
+                "CollateralContainsNonADA",
+                2,
+            )?)),
+            16 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "WrongNetworkInTxBody: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                // swapMismatch: wire order is expected-then-supplied.
+                let expected = Network::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetworkInTxBody: {}", err.0)))?;
+                let supplied = Network::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("WrongNetworkInTxBody: {}", err.0)))?;
+                Ok(Self::WrongNetworkInTxBody(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            17 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "OutsideForecast: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let slot = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("OutsideForecast: slot: {err:?}")))?;
+                Ok(Self::OutsideForecast(slot))
+            }
+            18 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "TooManyCollateralInputs: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                // swapMismatch: wire order is expected-then-supplied.
+                let expected = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("TooManyCollateralInputs: expected: {err:?}"))
+                })?;
+                let supplied = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("TooManyCollateralInputs: supplied: {err:?}"))
+                })?;
+                Ok(Self::TooManyCollateralInputs(Mismatch {
+                    relation: MismatchRelation::RelLTEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            19 => {
+                if len != 1 {
+                    return Err(DecoderError(format!(
+                        "NoCollateralInputs: expected 1-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::NoCollateralInputs)
+            }
+            20 => Ok(Self::IncorrectTotalCollateralField(capture_raw(
+                "IncorrectTotalCollateralField",
+                3,
+            )?)),
+            21 => Ok(Self::BabbageOutputTooSmallUTxO(capture_raw(
+                "BabbageOutputTooSmallUTxO",
+                2,
+            )?)),
+            22 => Ok(Self::BabbageNonDisjointRefInputs(capture_raw(
+                "BabbageNonDisjointRefInputs",
+                2,
+            )?)),
+            other => Err(DecoderError(format!(
+                "ConwayUtxoPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayUtxoPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayUtxoPredFailure era)`. Typed variants route through
+    /// their typed Display; raw variants emit `<raw-cbor N
+    /// bytes>`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UtxosFailure(b)
+            | Self::OutsideValidityIntervalUTxO(b)
+            | Self::ValueNotConservedUTxO(b)
+            | Self::OutputTooBigUTxO(b)
+            | Self::InsufficientCollateral(b)
+            | Self::ScriptsNotPaidUTxO(b)
+            | Self::ExUnitsTooBigUTxO(b)
+            | Self::CollateralContainsNonADA(b)
+            | Self::IncorrectTotalCollateralField(b)
+            | Self::BabbageOutputTooSmallUTxO(b)
+            | Self::BabbageNonDisjointRefInputs(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::BadInputsUTxO(set) => write!(f, "BadInputsUTxO ({set})"),
+            Self::MaxTxSizeUTxO(mm) => write!(f, "MaxTxSizeUTxO ({mm})"),
+            Self::InputSetEmptyUTxO => f.write_str("InputSetEmptyUTxO"),
+            Self::FeeTooSmallUTxO(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "FeeTooSmallUTxO ({typed})")
+            }
+            Self::WrongNetwork { expected, wrongs } => {
+                write!(f, "WrongNetwork {expected} ({wrongs})")
+            }
+            Self::WrongNetworkWithdrawal { expected, wrongs } => {
+                write!(f, "WrongNetworkWithdrawal {expected} ({wrongs})")
+            }
+            Self::OutputTooSmallUTxO(outs) => {
+                write!(f, "OutputTooSmallUTxO ({outs})")
+            }
+            Self::OutputBootAddrAttrsTooBig(outs) => {
+                write!(f, "OutputBootAddrAttrsTooBig ({outs})")
+            }
+            Self::WrongNetworkInTxBody(mm) => {
+                write!(f, "WrongNetworkInTxBody ({mm})")
+            }
+            Self::OutsideForecast(slot) => {
+                write!(f, "OutsideForecast (SlotNo {slot})")
+            }
+            Self::TooManyCollateralInputs(mm) => {
+                write!(f, "TooManyCollateralInputs ({mm})")
+            }
+            Self::NoCollateralInputs => f.write_str("NoCollateralInputs"),
         }
     }
 }
@@ -6670,6 +7134,132 @@ mod tests {
             err.to_string().contains("unknown variant tag 99"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_input_set_empty_tag4() {
+        let cbor = [0x81_u8, 0x04];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("InputSetEmptyUTxO");
+        assert!(matches!(f, ConwayUtxoPredFailure::InputSetEmptyUTxO));
+        assert_eq!(f.tag(), 4);
+        assert_eq!(f.to_string(), "InputSetEmptyUTxO");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_no_collateral_inputs_tag19() {
+        let cbor = [0x81_u8, 0x13];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("NoCollateralInputs");
+        assert!(matches!(f, ConwayUtxoPredFailure::NoCollateralInputs));
+        assert_eq!(f.tag(), 19);
+        assert_eq!(f.to_string(), "NoCollateralInputs");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_max_tx_size_tag3() {
+        // outer [0x83, 0x03, supplied=20000, expected=16384]
+        let cbor = [0x83_u8, 0x03, 0x19, 0x4E, 0x20, 0x19, 0x40, 0x00];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("MaxTxSizeUTxO");
+        if let ConwayUtxoPredFailure::MaxTxSizeUTxO(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelLTEQ);
+            assert_eq!(mm.supplied, 20000);
+            assert_eq!(mm.expected, 16384);
+        } else {
+            panic!("expected MaxTxSizeUTxO, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "MaxTxSizeUTxO (Mismatch (RelLTEQ) {supplied: 20000, expected: 16384})"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_fee_too_small_tag5() {
+        // Tag 5 uses swapMismatch: wire order is
+        // expected-then-supplied. outer [0x83, 0x05, expected=170000,
+        // supplied=150000]. 170000 = 0x00029810, 150000 = 0x000249F0.
+        let cbor = [
+            0x83_u8, 0x05, 0x1A, 0x00, 0x02, 0x98, 0x10, 0x1A, 0x00, 0x02, 0x49, 0xF0,
+        ];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("FeeTooSmallUTxO");
+        if let ConwayUtxoPredFailure::FeeTooSmallUTxO(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelGTEQ);
+            assert_eq!(mm.supplied, 150000);
+            assert_eq!(mm.expected, 170000);
+        } else {
+            panic!("expected FeeTooSmallUTxO, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "FeeTooSmallUTxO (Mismatch (RelGTEQ) {supplied: Coin 150000, expected: Coin 170000})"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_bad_inputs_tag1() {
+        // outer [0x82, 0x01, tag-258 array(1) of TxIn [txid32, ix]]
+        let mut cbor = vec![0x82_u8, 0x01, 0xD9, 0x01, 0x02, 0x81, 0x82];
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x11_u8; 32]);
+        cbor.push(0x00); // ix = 0
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("BadInputsUTxO");
+        if let ConwayUtxoPredFailure::BadInputsUTxO(set) = &f {
+            assert_eq!(set.entries.len(), 1);
+        } else {
+            panic!("expected BadInputsUTxO, got {f:?}");
+        }
+        assert!(
+            f.to_string().starts_with("BadInputsUTxO (NonEmptySet"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_outside_forecast_tag17() {
+        let cbor = [0x82_u8, 0x11, 0x1A, 0x00, 0x0F, 0x42, 0x40];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("OutsideForecast");
+        assert!(matches!(
+            f,
+            ConwayUtxoPredFailure::OutsideForecast(1_000_000)
+        ));
+        assert_eq!(f.to_string(), "OutsideForecast (SlotNo 1000000)");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_routes_pending_to_raw_tag6() {
+        // tag 6 (ValueNotConservedUTxO) — Value payload pending
+        let cbor = [0x83_u8, 0x06, 0x00, 0x00];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("ValueNotConservedUTxO");
+        assert_eq!(f.tag(), 6);
+        assert!(
+            f.to_string().starts_with("ValueNotConservedUTxO <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ConwayUtxoPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_utxo_typed_routing_tag0() {
+        // UTXOW tag 0 → UTXO tag 4 (InputSetEmptyUTxO). Outer
+        // [0x82, 0x00, [0x81, 0x04]].
+        let cbor = [0x82_u8, 0x00, 0x81, 0x04];
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("UtxoFailure");
+        if let ConwayUtxowPredFailure::UtxoFailure(utxo) = &f {
+            assert_eq!(utxo.tag(), 4);
+            assert!(matches!(utxo, ConwayUtxoPredFailure::InputSetEmptyUTxO));
+        } else {
+            panic!("expected typed UtxoFailure, got {f:?}");
+        }
+        assert_eq!(f.to_string(), "UtxoFailure (InputSetEmptyUTxO)");
     }
 
     #[test]

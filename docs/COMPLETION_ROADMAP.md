@@ -748,6 +748,17 @@ ToGroup flattened. **This closes the entire Conway CERT
 sub-rule (3/3 typed: DELEG 8/8, POOL 6/6 via Shelley reuse,
 GOVCERT 6/6).** The Conway LEDGER → CERTS → CERT → {DELEG, POOL,
 GOVCERT} chain renders typed end-to-end through every leaf.
+R630 (2026-05-21) added the `ConwayUtxoPredFailure` 23-variant
+scaffold (the largest sub-rule enum — tags 0-22) and wired
+`ConwayUtxowPredFailure::UtxoFailure(Vec<u8>)` →
+`UtxoFailure(ConwayUtxoPredFailure)`. **12 of 23 Conway UTXO
+variants carry typed payloads** — reuses NonEmptySetTxIn,
+NonEmptySetAddr, NonEmptySetAccountAddress, NonEmptyTxOut,
+Network, Mismatch. The 11 remaining variants
+(0/2/6/11/12/13/14/15/20/21/22) keep raw inner CBOR pending
+Conway UTXOS + ValidityInterval + Value + ExUnits + DeltaCoin +
+NonEmptyMap decoders. The Conway LEDGER → UTXOW → UTXO chain
+now renders typed end-to-end through 12 UTXO leaves.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
