@@ -658,11 +658,16 @@ parses the header byte and renders the typed
 `Addr <Network> (<PaymentCredential>) (<StakeReference>)` shape
 matching upstream stock-derived Show for all 8 Shelley address
 types (base/pointer/enterprise × key/script) plus
-`AddrBootstrap <hex N bytes>` for Byron addresses. Pointer
-addresses render the typed payment credential with `StakeRefPtr
-<hex N bytes>` for the variable-length pointer tail (Ptr decoder
-deferred). Alonzo 3-array TxOut + Babbage map-form TxOut and the
-typed Byron bootstrap parse remain pending.
+`AddrBootstrap <hex N bytes>` for Byron addresses. R622 (2026-05-21) closed the pointer-address tail: added
+`decode_addr_ptr` / `decode_addr_vlq_word64` helpers that decode
+upstream's `putVariableLengthWord64` encoding (7 data bits per
+byte MSB-first, high bit = continuation). Pointer addresses now
+render the typed shape `Addr <Net> (<payment>) (StakeRefPtr (Ptr
+(SlotNo32 N) (TxIx {unTxIx = N}) (CertIx {unCertIx = N})))`
+matching upstream stock-derived Show. Malformed pointer tails
+report a `<malformed-ptr ...>` marker. Alonzo 3-array TxOut +
+Babbage map-form TxOut and the typed Byron bootstrap parse remain
+pending.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

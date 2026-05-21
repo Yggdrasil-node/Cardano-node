@@ -2204,16 +2204,59 @@ impl fmt::Display for Addr {
                 format!("StakeRefBase (ScriptHashObj (ScriptHash \"{stake_hex}\"))")
             }
             0x40 | 0x50 => {
-                // Pointer address — variable-length Ptr tail; raw
-                // hex fallback for now.
-                let ptr_hex = hex::encode(&body[28..]);
-                format!("StakeRefPtr <hex {} bytes: {ptr_hex}>", body.len() - 28)
+                // Pointer address — variable-length Ptr tail (3
+                // VLQ-encoded Word64s: slot, tx_ix, cert_ix per
+                // upstream `putPtr`).
+                match decode_addr_ptr(&body[28..]) {
+                    Some((slot, tx_ix, cert_ix)) => {
+                        format!(
+                            "StakeRefPtr (Ptr (SlotNo32 {slot}) (TxIx {{unTxIx = {tx_ix}}}) (CertIx {{unCertIx = {cert_ix}}}))"
+                        )
+                    }
+                    None => {
+                        let ptr_hex = hex::encode(&body[28..]);
+                        format!(
+                            "StakeRefPtr <malformed-ptr hex {} bytes: {ptr_hex}>",
+                            body.len() - 28
+                        )
+                    }
+                }
             }
             0x60 | 0x70 => "StakeRefNull".to_string(),
             other => format!("<unknown stake type {other:#04X}>"),
         };
         write!(f, "Addr {network} ({payment}) ({stake_ref_render})")
     }
+}
+
+/// Decode a Cardano pointer-address tail into `(slot, tx_ix,
+/// cert_ix)`. The encoding is upstream's variable-length Word64
+/// per `putVariableLengthWord64`: each byte contributes 7 data
+/// bits MSB-first; the high bit is a continuation flag (1 = more
+/// bytes follow). Returns `None` when the tail is malformed or
+/// truncated.
+fn decode_addr_ptr(tail: &[u8]) -> Option<(u64, u64, u64)> {
+    let mut cursor = 0;
+    let slot = decode_addr_vlq_word64(tail, &mut cursor)?;
+    let tx_ix = decode_addr_vlq_word64(tail, &mut cursor)?;
+    let cert_ix = decode_addr_vlq_word64(tail, &mut cursor)?;
+    Some((slot, tx_ix, cert_ix))
+}
+
+fn decode_addr_vlq_word64(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
+    let mut value: u64 = 0;
+    // Up to 10 bytes (7 bits each = 70 bits) suffice for Word64;
+    // upstream's encoder always emits at most 10 bytes for the
+    // 64-bit case.
+    for _ in 0..10 {
+        let byte = *bytes.get(*cursor)?;
+        *cursor += 1;
+        value = value.checked_shl(7)?.checked_add(u64::from(byte & 0x7F))?;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+    }
+    None
 }
 
 /// Non-empty set of Cardano addresses mirroring upstream
@@ -5094,16 +5137,45 @@ mod tests {
         );
         assert!(s.ends_with("StakeRefNull)"), "got: {s}");
 
-        // Pointer address — key-payment + variable pointer tail.
+        // Pointer address — key-payment + 3 VLQ-encoded Ptr
+        // fields (slot=5, tx_ix=3, cert_ix=7). Each fits in a
+        // single byte with the continuation bit clear.
         let mut ptr = vec![0x40_u8]; // 0100_0000
         ptr.extend_from_slice(&[0x66_u8; 28]);
-        ptr.extend_from_slice(&[0xAB, 0xCD]); // dummy pointer tail
+        ptr.extend_from_slice(&[0x05, 0x03, 0x07]);
         let s = Addr(ptr).to_string();
         assert!(
             s.starts_with("Addr Testnet (KeyHashObj (KeyHash {unKeyHash = \"66"),
             "got: {s}"
         );
-        assert!(s.contains("StakeRefPtr <hex 2 bytes: abcd>"), "got: {s}");
+        assert!(
+            s.contains(
+                "StakeRefPtr (Ptr (SlotNo32 5) (TxIx {unTxIx = 3}) (CertIx {unCertIx = 7}))"
+            ),
+            "got: {s}"
+        );
+
+        // Pointer address — multi-byte VLQ for slot (300 →
+        // 0x82 0x2C: 0x82 = 0x80 | 0x02, then 0x2C = 44; combined
+        // (2 << 7) | 44 = 300).
+        let mut ptr_multi = vec![0x40_u8];
+        ptr_multi.extend_from_slice(&[0x77_u8; 28]);
+        ptr_multi.extend_from_slice(&[0x82, 0x2C, 0x01, 0x02]);
+        let s = Addr(ptr_multi).to_string();
+        assert!(
+            s.contains(
+                "StakeRefPtr (Ptr (SlotNo32 300) (TxIx {unTxIx = 1}) (CertIx {unCertIx = 2}))"
+            ),
+            "got: {s}"
+        );
+
+        // Pointer address — truncated tail (missing cert_ix)
+        // routes to the malformed marker.
+        let mut ptr_bad = vec![0x40_u8];
+        ptr_bad.extend_from_slice(&[0x88_u8; 28]);
+        ptr_bad.extend_from_slice(&[0x05, 0x03]);
+        let s = Addr(ptr_bad).to_string();
+        assert!(s.contains("StakeRefPtr <malformed-ptr"), "got: {s}");
 
         // Byron bootstrap (bit 7 set).
         let boot = vec![0x82_u8, 0x11, 0x22, 0x33];
