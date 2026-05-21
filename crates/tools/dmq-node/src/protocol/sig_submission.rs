@@ -18,6 +18,8 @@
 
 use std::fmt;
 
+use yggdrasil_crypto::{KesSignature, VerificationKey};
+
 /// The hash identifying a DMQ signature.
 ///
 /// Upstream `newtype SigHash = SigHash { getSigHash :: ByteString }`.
@@ -96,6 +98,38 @@ impl fmt::Debug for CborBytes {
             write!(f, "{byte:02x}")?;
         }
         Ok(())
+    }
+}
+
+/// A DMQ signature's KES signature.
+///
+/// Upstream `newtype SigKESSignature crypto =
+/// SigKESSignature { getSigKESSignature :: SigKES (KES crypto) }`. The
+/// `crypto` type parameter collapses to yggdrasil's concrete
+/// [`KesSignature`] — yggdrasil is not generic over the crypto suite.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SigKesSignature(pub KesSignature);
+
+impl SigKesSignature {
+    /// The wrapped KES signature — upstream `getSigKESSignature`.
+    pub fn get(&self) -> &KesSignature {
+        &self.0
+    }
+}
+
+/// A DMQ signature's cold (DSIGN) verification key.
+///
+/// Upstream `newtype SigColdKey crypto =
+/// SigColdKey { getSigColdKey :: VerKeyDSIGN (KES.DSIGN crypto) }`.
+/// Collapses to yggdrasil's concrete Ed25519 [`VerificationKey`] — the
+/// cold key that issues the signature's operational certificate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SigColdKey(pub VerificationKey);
+
+impl SigColdKey {
+    /// The wrapped Ed25519 verification key — upstream `getSigColdKey`.
+    pub fn get(&self) -> &VerificationKey {
+        &self.0
     }
 }
 
@@ -248,6 +282,22 @@ mod tests {
     #[test]
     fn cbor_bytes_empty_renders_empty() {
         assert_eq!(format!("{:?}", CborBytes(Vec::new())), "");
+    }
+
+    #[test]
+    fn sig_kes_signature_wraps_and_compares() {
+        let sig = SigKesSignature(KesSignature([0x22; 64]));
+        assert_eq!(sig, SigKesSignature(KesSignature([0x22; 64])));
+        assert_ne!(sig, SigKesSignature(KesSignature([0x00; 64])));
+        assert_eq!(sig.get(), &KesSignature([0x22; 64]));
+    }
+
+    #[test]
+    fn sig_cold_key_wraps_and_compares() {
+        let key = SigColdKey(VerificationKey([0x11; 32]));
+        assert_eq!(key, SigColdKey(VerificationKey([0x11; 32])));
+        assert_ne!(key, SigColdKey(VerificationKey([0xFF; 32])));
+        assert_eq!(key.get(), &VerificationKey([0x11; 32]));
     }
 
     #[test]
