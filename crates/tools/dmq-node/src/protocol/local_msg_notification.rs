@@ -13,7 +13,13 @@
 //! is parameterized over the message type upstream; for DMQ that is
 //! [`Sig`].
 
-use crate::protocol::sig_submission::Sig;
+use crate::protocol::sig_submission::{Sig, decode_sig, encode_sig};
+use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
+
+/// Anti-DoS cap on the number of messages decoded from a `MsgReply`
+/// indefinite-length array.
+const LOCAL_MSG_NOTIFICATION_LIST_MAX: usize = 4_096;
 
 /// Whether the server has more messages it can provide.
 ///
@@ -113,6 +119,123 @@ impl LocalMsgNotificationMessage {
             LocalMsgNotificationMessage::MsgClientDone => "MsgClientDone",
         }
     }
+
+    /// Encode this message to CBOR.
+    ///
+    /// Wire format — mirror of upstream
+    /// `LocalMsgNotification/Codec.hs`:
+    /// - `MsgRequest` is `[0, blocking]`
+    /// - `MsgReply` non-blocking is `[1, <indef [msg]>, hasMore]`
+    /// - `MsgReply` blocking is `[2, <indef [msg]>]` (no `hasMore` —
+    ///   the upstream "Issue #15")
+    /// - `MsgClientDone` is `[3]`
+    ///
+    /// The message list is a CBOR *indefinite*-length array; each
+    /// message is `encode_sig` (a CBOR byte string).
+    pub fn to_cbor(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        match self {
+            LocalMsgNotificationMessage::MsgRequest { blocking } => {
+                enc.array(2).unsigned(0).bool(*blocking);
+            }
+            LocalMsgNotificationMessage::MsgReply {
+                reply: BlockingReplyList::NonBlocking(messages),
+                has_more,
+            } => {
+                enc.array(3).unsigned(1);
+                enc.array_indef();
+                for sig in messages {
+                    encode_sig(sig, &mut enc);
+                }
+                enc.break_stop();
+                enc.bool(*has_more == HasMore::HasMore);
+            }
+            LocalMsgNotificationMessage::MsgReply {
+                reply: BlockingReplyList::Blocking(messages),
+                has_more: _,
+            } => {
+                enc.array(2).unsigned(2);
+                enc.array_indef();
+                for sig in messages {
+                    encode_sig(sig, &mut enc);
+                }
+                enc.break_stop();
+            }
+            LocalMsgNotificationMessage::MsgClientDone => {
+                enc.array(1).unsigned(3);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes.
+    ///
+    /// Inverse of [`Self::to_cbor`]. A blocking `MsgReply` (tag `2`)
+    /// has no encoded `hasMore`, so it decodes with
+    /// `HasMore::DoesNotHaveMore` (the upstream "Issue #15").
+    pub fn from_cbor(data: &[u8]) -> Result<LocalMsgNotificationMessage, LedgerError> {
+        let mut dec = Decoder::new(data);
+        let arr = dec.array()?;
+        let tag = dec.unsigned()?;
+        let msg = match (tag, arr) {
+            (0, 2) => LocalMsgNotificationMessage::MsgRequest {
+                blocking: dec.bool()?,
+            },
+            (1, 3) => {
+                let messages = decode_indef_sigs(&mut dec)?;
+                let has_more = if dec.bool()? {
+                    HasMore::HasMore
+                } else {
+                    HasMore::DoesNotHaveMore
+                };
+                LocalMsgNotificationMessage::MsgReply {
+                    reply: BlockingReplyList::NonBlocking(messages),
+                    has_more,
+                }
+            }
+            (2, 2) => {
+                let messages = decode_indef_sigs(&mut dec)?;
+                LocalMsgNotificationMessage::MsgReply {
+                    reply: BlockingReplyList::Blocking(messages),
+                    has_more: HasMore::DoesNotHaveMore,
+                }
+            }
+            (3, 1) => LocalMsgNotificationMessage::MsgClientDone,
+            _ => {
+                return Err(LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: tag as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(LedgerError::CborTrailingBytes(dec.remaining()));
+        }
+        Ok(msg)
+    }
+}
+
+/// Decode the `MsgReply` indefinite-length array of `encode_sig`-encoded
+/// signatures.
+fn decode_indef_sigs(dec: &mut Decoder) -> Result<Vec<Sig>, LedgerError> {
+    if dec.array_begin()?.is_some() {
+        return Err(LedgerError::CborDecodeError(
+            "LocalMsgNotification.MsgReply: expected an indefinite-length array".to_string(),
+        ));
+    }
+    let mut sigs = Vec::new();
+    while !dec.is_break() {
+        if sigs.len() >= LOCAL_MSG_NOTIFICATION_LIST_MAX {
+            return Err(LedgerError::DecodedCountTooLarge {
+                count: sigs.len() as u64,
+                max: LOCAL_MSG_NOTIFICATION_LIST_MAX,
+            });
+        }
+        let raw = dec.bytes_owned()?;
+        sigs.push(decode_sig(&raw)?);
+    }
+    dec.consume_break()?;
+    Ok(sigs)
 }
 
 /// An illegal `LocalMsgNotification` state transition.
@@ -206,6 +329,43 @@ mod tests {
     #[test]
     fn has_more_round_trips() {
         assert_ne!(HasMore::HasMore, HasMore::DoesNotHaveMore);
+    }
+
+    #[test]
+    fn codec_round_trips_every_message() {
+        let messages = vec![
+            LocalMsgNotificationMessage::MsgRequest { blocking: true },
+            LocalMsgNotificationMessage::MsgRequest { blocking: false },
+            LocalMsgNotificationMessage::MsgReply {
+                reply: BlockingReplyList::NonBlocking(vec![]),
+                has_more: HasMore::HasMore,
+            },
+            LocalMsgNotificationMessage::MsgClientDone,
+        ];
+        for msg in messages {
+            let encoded = msg.to_cbor();
+            let decoded = LocalMsgNotificationMessage::from_cbor(&encoded).expect("decodes");
+            assert_eq!(decoded, msg);
+        }
+    }
+
+    #[test]
+    fn blocking_reply_decodes_without_has_more_flag() {
+        // A blocking MsgReply omits hasMore on the wire (upstream
+        // "Issue #15") — it always decodes as DoesNotHaveMore, even if
+        // the encoded value carried HasMore.
+        let msg = LocalMsgNotificationMessage::MsgReply {
+            reply: BlockingReplyList::Blocking(vec![]),
+            has_more: HasMore::HasMore,
+        };
+        let decoded = LocalMsgNotificationMessage::from_cbor(&msg.to_cbor()).expect("decodes");
+        assert_eq!(
+            decoded,
+            LocalMsgNotificationMessage::MsgReply {
+                reply: BlockingReplyList::Blocking(vec![]),
+                has_more: HasMore::DoesNotHaveMore,
+            }
+        );
     }
 
     #[test]
