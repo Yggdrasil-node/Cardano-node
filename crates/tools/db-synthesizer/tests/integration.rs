@@ -202,7 +202,7 @@ fn run_synthesizes_chain_db_that_reopens_from_disk() {
 
     // Verification: reopen the synthesized ChainDB with yggdrasil's
     // own FileImmutable and confirm the block count.
-    let store = FileImmutable::open(&target).expect("reopens");
+    let store = FileImmutable::open(target.join("immutable")).expect("reopens");
     assert_eq!(store.len(), 12, "12 blocks synthesized + persisted");
 }
 
@@ -213,7 +213,7 @@ fn synthesized_chain_is_prev_hash_threaded() {
     let args = args_for(tmp.path(), &target, 8, "create");
     yggdrasil_db_synthesizer::run(&args).expect("run succeeds");
 
-    let store = FileImmutable::open(&target).expect("reopens");
+    let store = FileImmutable::open(target.join("immutable")).expect("reopens");
     let blocks = store.suffix_after(&Point::Origin).expect("walks chain");
     assert_eq!(blocks.len(), 8);
 
@@ -240,13 +240,16 @@ fn append_mode_resumes_and_extends_chain_db() {
     // First pass: create with 5 blocks.
     let create = args_for(tmp.path(), &target, 5, "create");
     yggdrasil_db_synthesizer::run(&create).expect("create succeeds");
-    assert_eq!(FileImmutable::open(&target).unwrap().len(), 5);
+    assert_eq!(
+        FileImmutable::open(target.join("immutable")).unwrap().len(),
+        5
+    );
 
     // Second pass: append 7 more — total 12.
     let append = args_for(tmp.path(), &target, 7, "append");
     yggdrasil_db_synthesizer::run(&append).expect("append succeeds");
 
-    let store = FileImmutable::open(&target).expect("reopens");
+    let store = FileImmutable::open(target.join("immutable")).expect("reopens");
     assert_eq!(store.len(), 12);
     let blocks = store.suffix_after(&Point::Origin).unwrap();
     // The chain stays consistently threaded across the two passes.
@@ -268,7 +271,7 @@ fn force_mode_overwrites_existing_chain_db() {
     let force = args_for(tmp.path(), &target, 3, "force");
     yggdrasil_db_synthesizer::run(&force).expect("force succeeds");
 
-    let store = FileImmutable::open(&target).expect("reopens");
+    let store = FileImmutable::open(target.join("immutable")).expect("reopens");
     assert_eq!(store.len(), 3, "force wiped the 20-block chain");
 }
 
@@ -295,7 +298,7 @@ fn zero_block_limit_is_a_noop() {
     let args = args_for(tmp.path(), &target, 0, "create");
     yggdrasil_db_synthesizer::run(&args).expect("run succeeds");
 
-    let store = FileImmutable::open(&target).expect("reopens");
+    let store = FileImmutable::open(target.join("immutable")).expect("reopens");
     assert_eq!(store.len(), 0);
 }
 
@@ -313,7 +316,7 @@ fn synthesize_default_is_deterministic_across_runs() {
             &target,
         )
         .unwrap();
-        let store = FileImmutable::open(&target).unwrap();
+        let store = FileImmutable::open(target.join("immutable")).unwrap();
         store
             .suffix_after(&Point::Origin)
             .unwrap()
@@ -334,7 +337,10 @@ fn praos_synthesis_persists_a_ledger_checkpoint() {
     yggdrasil_db_synthesizer::run(&args).expect("run succeeds");
 
     // The immutable blocks are still present and readable.
-    assert_eq!(FileImmutable::open(&target).unwrap().len(), 6);
+    assert_eq!(
+        FileImmutable::open(target.join("immutable")).unwrap().len(),
+        6
+    );
 
     // A ledger checkpoint was persisted under `<db>/ledger/` and
     // round-trips through the typed `LedgerStateCheckpoint` codec.

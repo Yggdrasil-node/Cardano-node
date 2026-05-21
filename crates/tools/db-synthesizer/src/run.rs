@@ -287,7 +287,7 @@ pub fn synthesize(
 ) -> Result<SynthesizeOutcome, RunError> {
     pre_open_chain_db(options.open_mode, db_dir)?;
 
-    let mut store = FileImmutable::open(db_dir)?;
+    let mut store = FileImmutable::open(db_dir.join("immutable"))?;
 
     // Mirror of upstream's tip-driven resume:
     //   slotNo = case pointSlot tip of { Origin -> 0; At s -> succ s }
@@ -331,7 +331,7 @@ fn synthesize_with_forge_state(
 
     pre_open_chain_db(options.open_mode, db_dir)?;
 
-    let mut store = FileImmutable::open(db_dir)?;
+    let mut store = FileImmutable::open(db_dir.join("immutable"))?;
     let resumed_from = match store.get_tip() {
         Point::Origin => SlotNo(0),
         Point::BlockPoint(slot, _) => SlotNo(slot.0 + 1),
@@ -1056,7 +1056,7 @@ mod tests {
         assert_eq!(outcome.resumed_from, SlotNo(0));
 
         // Verification: reopen the ChainDB from disk and count.
-        let reopened = FileImmutable::open(&target).unwrap();
+        let reopened = FileImmutable::open(target.join("immutable")).unwrap();
         assert_eq!(reopened.len(), 6);
     }
 
@@ -1080,7 +1080,7 @@ mod tests {
         // Resume slot is tip_slot + 1; first pass forged slots 0..2.
         assert_eq!(outcome.resumed_from, SlotNo(3));
 
-        let reopened = FileImmutable::open(&target).unwrap();
+        let reopened = FileImmutable::open(target.join("immutable")).unwrap();
         assert_eq!(reopened.len(), 7);
     }
 
@@ -1102,7 +1102,7 @@ mod tests {
         assert_eq!(outcome.forge.result.forged, 2);
         assert_eq!(outcome.resumed_from, SlotNo(0));
 
-        let reopened = FileImmutable::open(&target).unwrap();
+        let reopened = FileImmutable::open(target.join("immutable")).unwrap();
         assert_eq!(reopened.len(), 2);
     }
 
@@ -1124,7 +1124,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(outcome.forge.result.forged, 0);
-        let reopened = FileImmutable::open(&target).unwrap();
+        let reopened = FileImmutable::open(target.join("immutable")).unwrap();
         assert_eq!(reopened.len(), 0);
     }
 

@@ -89,7 +89,7 @@ pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
     use yggdrasil_ledger::Point;
     use yggdrasil_storage::{FileImmutable, ImmutableStore};
 
-    let store = FileImmutable::open(&config.db_dir).map_err(RunError::Storage)?;
+    let store = FileImmutable::open(config.db_dir.join("immutable")).map_err(RunError::Storage)?;
     let raw_iter = store
         .iter_after(&Point::Origin)
         .map_err(RunError::Storage)?;

@@ -45,9 +45,10 @@ operator-procedure level is sufficient.
   trait method + `InMemoryImmutable` + `FileImmutable` impls +
   `ChainDb::truncate_immutable_after_slot` wrapper (R347).
 - ✅ `crates/tools/db-truncater/src/run.rs::run()` opens a
-  `FileImmutable::open(&config.db_dir)` → calls
+  `FileImmutable::open(config.db_dir.join("immutable"))` → calls
   `resolve_target()` → calls `store.trim_after_slot()` → returns
-  `TruncateOutcome { resolved_slot, blocks_removed }` (R349).
+  `TruncateOutcome { resolved_slot, blocks_removed }` (R349; R706
+  moved the open to the canonical `immutable/` ChainDb subdir).
 - ✅ End-to-end integration tests cover both
   `TruncateAfterSlot` (slot passes through verbatim) and
   `TruncateAfterBlock` (looked up via `suffix_after`).

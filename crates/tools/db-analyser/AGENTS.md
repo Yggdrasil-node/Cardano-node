@@ -58,9 +58,11 @@ layer diverges).
   (`src/analysis/runner.rs`) ports upstream `Analysis.hs::runAnalysis`
   (R479).
 - ✅ End-to-end run path via `lib.rs::run`: opens
-  `FileImmutable::open(&config.db_dir)` → walks
+  `FileImmutable::open(config.db_dir.join("immutable"))` → walks
   `ImmutableStore::iter_after(&Point::Origin)` (R482 streaming
-  iter) → dispatches → renders to stdout (R481+R482).
+  iter) → dispatches → renders to stdout (R481+R482; R706 moved
+  the open to the canonical `immutable/` ChainDb subdir so a
+  node-produced ChainDb is readable directly).
 - ✅ 6 integration tests at `tests/end_to_end_chain_walk.rs`
   exercise the production call path against a temp ChainDB.
 

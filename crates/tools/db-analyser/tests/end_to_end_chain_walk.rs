@@ -147,7 +147,9 @@ fn end_to_end_lib_run_renders_to_stdout() {
     // store, walks the chain, dispatches, renders to stdout. Just
     // confirms it returns Ok(()).
     let dir = TempDir::new().unwrap();
-    let mut store = FileImmutable::open(dir.path()).unwrap();
+    // `db_analyser::run` opens `<db_dir>/immutable`, so the fixture
+    // store is built under the `immutable/` ChainDb subdir.
+    let mut store = FileImmutable::open(dir.path().join("immutable")).unwrap();
     store.append_block(synthetic_block(0x01, 0, 0)).unwrap();
     store.append_block(synthetic_block(0x02, 20, 1)).unwrap();
     drop(store);
@@ -166,7 +168,8 @@ fn end_to_end_lib_run_propagates_check_no_thunks_carve_out() {
     // that returns an error — and it's a permanent carve-out,
     // not a deferral.
     let dir = TempDir::new().unwrap();
-    let store = FileImmutable::open(dir.path()).unwrap();
+    // `db_analyser::run` opens `<db_dir>/immutable`.
+    let store = FileImmutable::open(dir.path().join("immutable")).unwrap();
     drop(store);
 
     let config = mk_config(

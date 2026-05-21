@@ -234,12 +234,19 @@ Praos forging needs. Verified decomposition:
       the db-synthesizer integration suite (`write_bulk_credentials`
       now `chmod`s the secret-key fixture so the credential-loader
       permission check is deterministic).
-    - **Remaining:** (a) move the immutable blocks under a proper
-      `immutable/` subdir so the output is a canonical ChainDb layout;
-      (b) teach `db-analyser` to load the persisted `LedgerStore`
-      snapshot as the apply-loop's starting state — today `db-analyser`
-      reads only the immutable blocks and does not consume a ledger
-      snapshot.
+    - ✅ **Slice 2** (round 706) — canonical ChainDb layout: the
+      db-synthesizer now writes its immutable blocks under a
+      `<db>/immutable/` subdir (alongside the R705 `<db>/ledger/`),
+      matching the node's own `<storage>/{immutable,volatile,ledger}/`
+      layout. `db-analyser` and `db-truncater` were migrated in
+      lockstep to open `<db_dir>/immutable` — so all three tools now
+      agree on the canonical layout and can read a node-produced
+      ChainDb directly. Coordinated change across the three tool
+      crates + their test fixtures; all suites green.
+    - **Remaining:** teach `db-analyser` to load the persisted
+      `LedgerStore` snapshot as the apply-loop's starting state —
+      today `db-analyser` reads only the immutable blocks and does
+      not consume a ledger snapshot.
 
 **Each slice is its own protocol-critical round** — author a `parity-plan`
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**

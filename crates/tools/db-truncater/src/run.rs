@@ -61,7 +61,9 @@ pub struct TruncateOutcome {
 /// the DB cannot be opened, the block-number lookup fails, or the
 /// trim itself fails.
 pub fn run(config: &DBTruncaterConfig) -> Result<TruncateOutcome, RunError> {
-    let mut store = FileImmutable::open(&config.db_dir)?;
+    // The configured `db_dir` is the ChainDb root; the immutable
+    // blocks live under its canonical `immutable/` subdir.
+    let mut store = FileImmutable::open(config.db_dir.join("immutable"))?;
     run_with_store(config, &mut store)
 }
 
@@ -218,7 +220,10 @@ mod tests {
         // few blocks, persist, then `run()` against the dir.
         let dir = tempfile::tempdir().expect("tempdir");
         {
-            let mut store = yggdrasil_storage::FileImmutable::open(dir.path()).expect("open");
+            // `run` opens `<db_dir>/immutable`, so the fixture store
+            // is built under the canonical `immutable/` subdir.
+            let mut store =
+                yggdrasil_storage::FileImmutable::open(dir.path().join("immutable")).expect("open");
             store.append_block(test_block(0x01, 10, 1)).unwrap();
             store.append_block(test_block(0x02, 20, 2)).unwrap();
             store.append_block(test_block(0x03, 30, 3)).unwrap();
@@ -233,7 +238,8 @@ mod tests {
         assert_eq!(outcome.resolved_slot, SlotNo(15));
 
         // Re-open and verify persistence.
-        let store2 = yggdrasil_storage::FileImmutable::open(dir.path()).expect("reopen");
+        let store2 =
+            yggdrasil_storage::FileImmutable::open(dir.path().join("immutable")).expect("reopen");
         assert_eq!(store2.len(), 1);
     }
 }
