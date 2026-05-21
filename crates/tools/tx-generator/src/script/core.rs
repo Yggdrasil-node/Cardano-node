@@ -1134,7 +1134,7 @@ fn show_alonzo_tx_for_dump(
     let aux_data_hash = show_strict_maybe_aux_data_hash(tx.body.auxiliary_data_hash);
     ensure_empty_mint(tx.body.mint.as_ref(), "Alonzo", "atbrMint")?;
     let script_integrity_hash = show_strict_maybe_script_integrity_hash(tx.body.script_data_hash);
-    ensure_empty_or_absent(tx.body.collateral.as_deref(), "Alonzo", "atbrCollateral")?;
+    let collateral = show_tx_in_list(tx.body.collateral.as_deref().unwrap_or_default());
     ensure_absent(tx.auxiliary_data.as_ref(), "Alonzo", "atAuxData")?;
 
     let req_signer_hashes = show_req_signer_hashes(tx.body.required_signers.as_deref());
@@ -1146,7 +1146,7 @@ fn show_alonzo_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraAlonzo (AlonzoTx {{atBody = MkAlonzoTxBody AlonzoTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrCollateral = fromList [], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = {withdrawals}, atbrTxFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrReqSignerHashes = {req_signer_hashes}, atbrMint = MultiAsset (fromList []), atbrScriptIntegrityHash = {script_integrity_hash}, atbrAuxDataHash = {aux_data_hash}, atbrTxNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraAlonzo (AlonzoTx {{atBody = MkAlonzoTxBody AlonzoTxBodyRaw {{atbrInputs = fromList [{inputs}], atbrCollateral = fromList [{collateral}], atbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, atbrCerts = StrictSeq {{fromStrict = fromList []}}, atbrWithdrawals = {withdrawals}, atbrTxFee = Coin {}, atbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, atbrUpdate = SNothing, atbrReqSignerHashes = {req_signer_hashes}, atbrMint = MultiAsset (fromList []), atbrScriptIntegrityHash = {script_integrity_hash}, atbrAuxDataHash = {aux_data_hash}, atbrTxNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1162,11 +1162,7 @@ fn show_babbage_tx_for_dump(
     let aux_data_hash = show_strict_maybe_aux_data_hash(tx.body.auxiliary_data_hash);
     ensure_empty_mint(tx.body.mint.as_ref(), "Babbage", "btbrMint")?;
     let script_integrity_hash = show_strict_maybe_script_integrity_hash(tx.body.script_data_hash);
-    ensure_empty_or_absent(
-        tx.body.collateral.as_deref(),
-        "Babbage",
-        "btbrCollateralInputs",
-    )?;
+    let collateral = show_tx_in_list(tx.body.collateral.as_deref().unwrap_or_default());
     ensure_absent(
         tx.body.collateral_return.as_ref(),
         "Babbage",
@@ -1193,7 +1189,7 @@ fn show_babbage_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {{atBody = MkBabbageTxBody BabbageTxBodyRaw {{btbrInputs = fromList [{inputs}], btbrCollateralInputs = fromList [], btbrReferenceInputs = fromList [], btbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, btbrCollateralReturn = SNothing, btbrTotalCollateral = SNothing, btbrCerts = StrictSeq {{fromStrict = fromList []}}, btbrWithdrawals = {withdrawals}, btbrFee = Coin {}, btbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, btbrUpdate = SNothing, btbrReqSignerHashes = {req_signer_hashes}, btbrMint = MultiAsset (fromList []), btbrScriptIntegrityHash = {script_integrity_hash}, btbrAuxDataHash = {aux_data_hash}, btbrNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {{atBody = MkBabbageTxBody BabbageTxBodyRaw {{btbrInputs = fromList [{inputs}], btbrCollateralInputs = fromList [{collateral}], btbrReferenceInputs = fromList [], btbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, btbrCollateralReturn = SNothing, btbrTotalCollateral = SNothing, btbrCerts = StrictSeq {{fromStrict = fromList []}}, btbrWithdrawals = {withdrawals}, btbrFee = Coin {}, btbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, btbrUpdate = SNothing, btbrReqSignerHashes = {req_signer_hashes}, btbrMint = MultiAsset (fromList []), btbrScriptIntegrityHash = {script_integrity_hash}, btbrAuxDataHash = {aux_data_hash}, btbrNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1208,11 +1204,7 @@ fn show_conway_tx_for_dump(
     let aux_data_hash = show_strict_maybe_aux_data_hash(tx.body.auxiliary_data_hash);
     ensure_empty_mint(tx.body.mint.as_ref(), "Conway", "ctbrMint")?;
     let script_integrity_hash = show_strict_maybe_script_integrity_hash(tx.body.script_data_hash);
-    ensure_empty_or_absent(
-        tx.body.collateral.as_deref(),
-        "Conway",
-        "ctbrCollateralInputs",
-    )?;
+    let collateral = show_tx_in_list(tx.body.collateral.as_deref().unwrap_or_default());
     ensure_absent(
         tx.body.collateral_return.as_ref(),
         "Conway",
@@ -1244,7 +1236,7 @@ fn show_conway_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = {withdrawals}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = {req_signer_hashes}, ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = {script_integrity_hash}, ctbrAuxDataHash = {aux_data_hash}, ctbrNetworkId = {network_id}, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = {proposal_procedures}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [{collateral}], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = {withdrawals}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = {req_signer_hashes}, ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = {script_integrity_hash}, ctbrAuxDataHash = {aux_data_hash}, ctbrNetworkId = {network_id}, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = {proposal_procedures}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -3995,6 +3987,32 @@ mod tests {
         assert_eq!(
             show_plutus_data(&outer),
             "Map [(I 0,Constr 0 [I 7,List [B \"a\"]])]"
+        );
+    }
+
+    #[test]
+    fn dumptofile_collateral_list_renders_sorted() {
+        // The collateral set reuses `show_tx_in_list`, which
+        // sorts to match upstream `Set TxIn` Show ordering.
+        let collateral = [
+            ShelleyTxIn {
+                transaction_id: [0xCC_u8; 32],
+                index: 0,
+            },
+            ShelleyTxIn {
+                transaction_id: [0x11_u8; 32],
+                index: 4,
+            },
+        ];
+        let rendered = show_tx_in_list(&collateral);
+        assert_eq!(
+            rendered,
+            format!(
+                "TxIn (TxId {{unTxId = SafeHash \"{}\"}}) (TxIx {{unTxIx = 4}}),\
+TxIn (TxId {{unTxId = SafeHash \"{}\"}}) (TxIx {{unTxIx = 0}})",
+                "11".repeat(32),
+                "cc".repeat(32),
+            )
         );
     }
 
