@@ -22,7 +22,7 @@ Vendored at: `.reference-haskell-cardano-node/deps/dmq-node/` (51 `.hs` files).
 
 Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase D.1 mini-arc R450-R459 (10 rounds, MEDIUM). R453-R454 port the DMQ wire protocol + mempool queue logic; R455 reuses the local-socket pattern from `crates/network/src/local_state_query_server.rs`; R456 reuses `crates/network` mux for the cardano-node connection.
 
-## Current functional surface (post-R754)
+## Current functional surface (post-R768)
 
 ### CLI surface
 
@@ -77,19 +77,36 @@ protocol-definition surface is now comprehensively ported:
 - ✅ `sig_submission_v2.rs` — `SigSubmissionProtocolError`
   (`SigSubmissionV2/Types.hs`).
 
-### Deferred — the runtime / diffusion sub-arc
+### Runtime / diffusion sub-arc — peer drivers + version surfaces complete (R758-R768)
 
-- ❌ The typed-protocols **peer drivers** (`Protocol/*/{Client,Server,
-  Inbound,Outbound}.hs`) and the **runtime** (`NodeKernel`,
-  `Diffusion/*`, the NtN / NtC mux bundles, `Tracer.hs`,
-  `Handlers/TopLevel.hs`). A peer driver is only meaningful plugged
-  into the mux + diffusion layer, so these ship **together** as one
-  deliberate `crates/network`-integration sub-arc — not as
-  standalone slices. `run` returns
-  `RunError::DiffusionWiringDeferred` until that sub-arc lands. See
-  the **Carve-out inventory** below.
+The decomposable runtime surface is ported as 10 bounded slices,
+following the `crates/network` mini-protocol-driver pattern
+(`keepalive_client.rs` — a driver struct wrapping a
+`yggdrasil_network::MessageChannel`):
+
+- ✅ Peer drivers — `LocalMsgNotificationClient` / `Server`,
+  `LocalMsgSubmissionClient` / `Server`, `SigSubmissionV2Inbound` /
+  `Outbound` (V1 `SigSubmission` reuses upstream `TxSubmission2`'s
+  peers). Upstream's pipelined peers are ported as the non-pipelined
+  linear driver — consistent with yggdrasil's other drivers.
+- ✅ NtN / NtC version surfaces — `NodeToNodeVersionData` /
+  `NodeToClientVersionData`: the handshake version data, the
+  `Acceptable` negotiation, and the CBOR-term codecs.
+- ✅ The NtN / NtC mux mini-protocol numbers (`node_to_node.rs` /
+  `node_to_client.rs`) and `NTC_MAX_SIGS_TO_ACK`.
+
+### Deferred — the mux / diffusion event-loop integration
+
+- ❌ The `ntnApps` / `ntcApps` mux-application wiring, `NodeKernel`,
+  `Diffusion/*`, `Tracer.hs`, `Handlers/TopLevel.hs`, and the `run()`
+  loop. These are STM-var-record + event-loop integration — they wire
+  the (now-complete) drivers into a live mux / diffusion process and
+  have no standalone bounded test target. `run` returns
+  `RunError::DiffusionWiringDeferred` until this lands; its
+  verification is the end-to-end byte-equivalence soak against the
+  upstream binary (operator-gated). See the **Carve-out inventory**.
 - ❌ End-to-end behavioral tests against the upstream binary —
-  pending that sub-arc.
+  pending that integration.
 
 ## Carve-out inventory (R444 structured deferral surface)
 
@@ -99,7 +116,7 @@ descriptor.
 
 | Carve-out                            | Status helper                          | Deferral rationale (one-liner)                                            |
 |--------------------------------------|----------------------------------------|---------------------------------------------------------------------------|
-| Peer drivers + Diffusion / NodeKernel / mux wiring | `status::diffusion_wiring_status()` | The DMQ protocol-definition surface is complete (R717-R754); what remains is the runtime sub-arc — the typed-protocols peer drivers (`Protocol/*/{Client,Server,Inbound,Outbound}.hs`) plus `NodeKernel` / `Diffusion/*` / the NtN-NtC mux bundles / `Tracer.hs`. These are entangled (a peer driver is only exercisable inside the mux) and reuse `crates/network`'s mux + peer-selection machinery — one deliberate integration sub-arc, not standalone slices. |
+| Mux / diffusion event-loop integration | `status::diffusion_wiring_status()` | The DMQ protocol surface (R717-R757) and the runtime sub-arc's decomposable surface — all six peer drivers, the NtN/NtC version surfaces, the mux protocol numbers (R758-R768) — are complete. What remains is the `ntnApps` / `ntcApps` mux-application wiring plus `NodeKernel` / `Diffusion/*` / `Tracer.hs` and the `run()` loop: STM-var-record + event-loop integration that wires the drivers into a live process, reusing `crates/network`'s mux + peer-selection machinery. Verified by the operator-gated end-to-end soak, not standalone slices. |
 
 ## Build + run
 
