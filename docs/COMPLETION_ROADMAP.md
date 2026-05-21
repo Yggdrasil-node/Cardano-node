@@ -771,6 +771,17 @@ FailedUnexpectedly(NonEmpty FailureDescription). Tag 1
 `CollectErrors` keeps a raw payload pending the CollectError
 decoder. The Conway LEDGER → UTXOW → UTXO → UTXOS chain now
 renders typed end-to-end for the ValidationTagMismatch path.
+R632 (2026-05-21) typed Conway UTXOW tags 11
+(`MissingRequiredDatums`) and 12
+(`NotAllowedSupplementalDatums`) — added the `DataHash`
+(32-byte), `SetDataHash`, and `NonEmptySetDataHash` carriers
+(tag-258-tolerant hash sets) and wired both variants to struct
+shapes `{ NonEmptySetDataHash, SetDataHash }`. **14 of 19 Conway
+UTXOW variants now carry typed payloads**; only tags 10
+(MissingRedeemers), 13 (PPViewHashesDontMatch), 15
+(ExtraRedeemers), 18 (ScriptIntegrityHashMismatch) remain raw
+pending PlutusPurpose + StrictMaybe ScriptIntegrityHash
+decoders.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

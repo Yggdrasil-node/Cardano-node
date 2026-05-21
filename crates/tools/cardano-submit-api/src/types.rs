@@ -833,6 +833,130 @@ impl fmt::Display for NonEmptySetScriptHash {
     }
 }
 
+/// 32-byte data hash mirroring upstream `type DataHash = SafeHash
+/// EraIndependentData` from `Cardano.Ledger.Hashes`. As a type
+/// alias over `SafeHash`, its stock Show is just the SafeHash
+/// Show: `SafeHash "<hex>"`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct DataHash(pub [u8; 32]);
+
+impl fmt::Display for DataHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SafeHash \"{}\"", hex::encode(self.0))
+    }
+}
+
+/// Set of 32-byte data hashes mirroring upstream `Set DataHash`.
+/// CBOR shape: optional CBOR tag 258 followed by an array of
+/// 32-byte byte-strings. Unlike [`NonEmptySetDataHash`], the
+/// empty set is permitted (mirrors `Set` rather than
+/// `NonEmptySet`).
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct SetDataHash {
+    /// Decoded set entries (possibly empty).
+    pub entries: std::collections::BTreeSet<DataHash>,
+}
+
+/// Decode a `Set`/`NonEmptySet` of 32-byte data hashes from an
+/// in-progress decoder, accepting the optional tag-258 prefix.
+fn decode_data_hash_set(
+    dec: &mut yggdrasil_ledger::Decoder<'_>,
+    label: &str,
+) -> Result<std::collections::BTreeSet<DataHash>, DecoderError> {
+    let major = dec
+        .peek_major()
+        .map_err(|err| DecoderError(format!("{label}: peek: {err:?}")))?;
+    if major == 6 {
+        let tag = dec
+            .tag()
+            .map_err(|err| DecoderError(format!("{label}: tag: {err:?}")))?;
+        if tag != 258 {
+            return Err(DecoderError(format!(
+                "{label}: expected tag 258, got {tag}"
+            )));
+        }
+    }
+    let count = dec
+        .array()
+        .map_err(|err| DecoderError(format!("{label}: expected CBOR array: {err:?}")))?;
+    let mut entries = std::collections::BTreeSet::new();
+    for _ in 0..count {
+        let hash_bytes = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("{label}: expected DataHash bytes: {err:?}")))?;
+        let arr: [u8; 32] = hash_bytes
+            .try_into()
+            .map_err(|_| DecoderError(format!("{label}: DataHash must be 32 bytes")))?;
+        entries.insert(DataHash(arr));
+    }
+    Ok(entries)
+}
+
+impl SetDataHash {
+    /// Decode a `Set DataHash` from an in-progress decoder.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        Ok(Self {
+            entries: decode_data_hash_set(dec, "SetDataHash")?,
+        })
+    }
+}
+
+impl fmt::Display for SetDataHash {
+    /// Render upstream `Show (Set DataHash)`: `fromList [...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("fromList [")?;
+        let mut first = true;
+        for hash in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{hash}")?;
+        }
+        f.write_str("]")
+    }
+}
+
+/// Non-empty set of 32-byte data hashes mirroring upstream
+/// `NonEmptySet DataHash`. Empty sets are rejected at decode
+/// time to honour the NonEmpty invariant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptySetDataHash {
+    /// Decoded set entries. Guaranteed non-empty by `from_decoder`.
+    pub entries: std::collections::BTreeSet<DataHash>,
+}
+
+impl NonEmptySetDataHash {
+    /// Decode a `NonEmptySet DataHash` from an in-progress
+    /// decoder.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let entries = decode_data_hash_set(dec, "NonEmptySetDataHash")?;
+        if entries.is_empty() {
+            return Err(DecoderError(
+                "NonEmptySetDataHash: NonEmptySet requires at least one entry".to_string(),
+            ));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptySetDataHash {
+    /// Render upstream `Show (NonEmptySet DataHash)`:
+    /// `NonEmptySet (fromList [...])`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptySet (fromList [")?;
+        let mut first = true;
+        for hash in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{hash}")?;
+        }
+        f.write_str("])")
+    }
+}
+
 /// 28-byte key-hash newtype mirroring upstream
 /// `newtype KeyHash (r :: KeyRole) = KeyHash {unKeyHash :: Hash
 /// ADDRHASH (VerKeyDSIGN DSIGN)}` from `Cardano.Ledger.Hashes`.
@@ -4083,12 +4207,22 @@ pub enum ConwayUtxowPredFailure {
     /// AsItem era, ScriptHash)`. Raw pending PlutusPurpose
     /// decoder.
     MissingRedeemers(Vec<u8>),
-    /// Tag 11: missing required datums — `NonEmptySet DataHash
-    /// + Set DataHash`. Raw pending DataHash decoder.
-    MissingRequiredDatums(Vec<u8>),
-    /// Tag 12: not-allowed supplemental datums — same shape as
-    /// tag 11. Raw pending.
-    NotAllowedSupplementalDatums(Vec<u8>),
+    /// Tag 11: missing required datums — `NonEmptySet DataHash +
+    /// Set DataHash` (R632 typed).
+    MissingRequiredDatums {
+        /// Data hashes that were required but not supplied.
+        missing: NonEmptySetDataHash,
+        /// Data hashes that were received with the transaction.
+        received: SetDataHash,
+    },
+    /// Tag 12: not-allowed supplemental datums — `NonEmptySet
+    /// DataHash + Set DataHash` (R632 typed).
+    NotAllowedSupplementalDatums {
+        /// Supplied data hashes that are not allowed.
+        unallowed: NonEmptySetDataHash,
+        /// Data hashes that would be acceptable as supplemental.
+        acceptable: SetDataHash,
+    },
     /// Tag 13: protocol-params-view hash mismatch —
     /// `Mismatch RelEQ (StrictMaybe ScriptIntegrityHash)`. Raw
     /// pending StrictMaybe ScriptIntegrityHash decoder.
@@ -4126,8 +4260,8 @@ impl ConwayUtxowPredFailure {
             Self::InvalidMetadata => 8,
             Self::ExtraneousScriptWitnessesUTXOW(_) => 9,
             Self::MissingRedeemers(_) => 10,
-            Self::MissingRequiredDatums(_) => 11,
-            Self::NotAllowedSupplementalDatums(_) => 12,
+            Self::MissingRequiredDatums { .. } => 11,
+            Self::NotAllowedSupplementalDatums { .. } => 12,
             Self::PPViewHashesDontMatch(_) => 13,
             Self::UnspendableUTxONoDatumHash(_) => 14,
             Self::ExtraRedeemers(_) => 15,
@@ -4151,8 +4285,8 @@ impl ConwayUtxowPredFailure {
             Self::InvalidMetadata => "InvalidMetadata",
             Self::ExtraneousScriptWitnessesUTXOW(_) => "ExtraneousScriptWitnessesUTXOW",
             Self::MissingRedeemers(_) => "MissingRedeemers",
-            Self::MissingRequiredDatums(_) => "MissingRequiredDatums",
-            Self::NotAllowedSupplementalDatums(_) => "NotAllowedSupplementalDatums",
+            Self::MissingRequiredDatums { .. } => "MissingRequiredDatums",
+            Self::NotAllowedSupplementalDatums { .. } => "NotAllowedSupplementalDatums",
             Self::PPViewHashesDontMatch(_) => "PPViewHashesDontMatch",
             Self::UnspendableUTxONoDatumHash(_) => "UnspendableUTxONoDatumHash",
             Self::ExtraRedeemers(_) => "ExtraRedeemers",
@@ -4329,14 +4463,31 @@ impl ConwayUtxowPredFailure {
             }
             // Pending typed decoders: capture raw bytes.
             10 => Ok(Self::MissingRedeemers(capture_raw("MissingRedeemers", 2)?)),
-            11 => Ok(Self::MissingRequiredDatums(capture_raw(
-                "MissingRequiredDatums",
-                3,
-            )?)),
-            12 => Ok(Self::NotAllowedSupplementalDatums(capture_raw(
-                "NotAllowedSupplementalDatums",
-                3,
-            )?)),
+            // Tags 11/12: NonEmptySet DataHash + Set DataHash
+            // (R632 typed).
+            11 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "MissingRequiredDatums: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let missing = NonEmptySetDataHash::from_decoder(&mut dec)?;
+                let received = SetDataHash::from_decoder(&mut dec)?;
+                Ok(Self::MissingRequiredDatums { missing, received })
+            }
+            12 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "NotAllowedSupplementalDatums: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let unallowed = NonEmptySetDataHash::from_decoder(&mut dec)?;
+                let acceptable = SetDataHash::from_decoder(&mut dec)?;
+                Ok(Self::NotAllowedSupplementalDatums {
+                    unallowed,
+                    acceptable,
+                })
+            }
             13 => Ok(Self::PPViewHashesDontMatch(capture_raw(
                 "PPViewHashesDontMatch",
                 3,
@@ -4362,12 +4513,22 @@ impl fmt::Display for ConwayUtxowPredFailure {
         match self {
             Self::UtxoFailure(utxo) => write!(f, "UtxoFailure ({utxo})"),
             Self::MissingRedeemers(b)
-            | Self::MissingRequiredDatums(b)
-            | Self::NotAllowedSupplementalDatums(b)
             | Self::PPViewHashesDontMatch(b)
             | Self::ExtraRedeemers(b)
             | Self::ScriptIntegrityHashMismatch(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::MissingRequiredDatums { missing, received } => {
+                write!(f, "MissingRequiredDatums ({missing}) ({received})")
+            }
+            Self::NotAllowedSupplementalDatums {
+                unallowed,
+                acceptable,
+            } => {
+                write!(
+                    f,
+                    "NotAllowedSupplementalDatums ({unallowed}) ({acceptable})"
+                )
             }
             Self::InvalidWitnessesUTXOW(keys) => {
                 write!(f, "InvalidWitnessesUTXOW ({keys})")
@@ -7046,6 +7207,71 @@ mod tests {
         assert!(
             f.to_string().starts_with("MissingRedeemers <raw-cbor"),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_required_datums_tag11() {
+        // outer [0x83, 0x0B, NonEmptySet [1 hash], Set [1 hash]]
+        let mut cbor = vec![0x83_u8, 0x0B];
+        // NonEmptySet: tag-258 array(1) of bytes(32)
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02, 0x81]);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x11_u8; 32]);
+        // Set: bare array(1) of bytes(32)
+        cbor.push(0x81);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x22_u8; 32]);
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingRequiredDatums");
+        if let ConwayUtxowPredFailure::MissingRequiredDatums { missing, received } = &f {
+            assert_eq!(missing.entries.len(), 1);
+            assert_eq!(received.entries.len(), 1);
+        } else {
+            panic!("expected MissingRequiredDatums, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("MissingRequiredDatums (NonEmptySet (fromList [SafeHash \"1111"),
+            "got: {s}"
+        );
+        assert!(s.contains(") (fromList [SafeHash \"2222"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_not_allowed_supplemental_datums_tag12_empty_set() {
+        // outer [0x83, 0x0C, NonEmptySet [1 hash], Set []]
+        let mut cbor = vec![0x83_u8, 0x0C];
+        cbor.extend_from_slice(&[0xD9, 0x01, 0x02, 0x81]);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x33_u8; 32]);
+        cbor.push(0x80); // empty Set
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("NotAllowedSupplementalDatums");
+        if let ConwayUtxowPredFailure::NotAllowedSupplementalDatums {
+            unallowed,
+            acceptable,
+        } = &f
+        {
+            assert_eq!(unallowed.entries.len(), 1);
+            assert!(acceptable.entries.is_empty());
+        } else {
+            panic!("expected NotAllowedSupplementalDatums, got {f:?}");
+        }
+        assert!(f.to_string().ends_with(") (fromList [])"), "got: {f}");
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_required_datums_rejects_empty_nonempty_set() {
+        // NonEmptySet must reject an empty array.
+        let cbor = [0x83_u8, 0x0B, 0x80, 0x80];
+        let err =
+            ConwayUtxowPredFailure::from_cbor(&cbor).expect_err("empty NonEmptySet must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmptySet requires at least one entry"),
+            "got: {err}"
         );
     }
 
