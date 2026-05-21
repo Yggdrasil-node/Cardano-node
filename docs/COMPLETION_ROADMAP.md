@@ -767,11 +767,15 @@ wired GOV tag 10 (`ProposalCantFollow` — `StrictMaybe
 GovPurposeId` + `Mismatch RelGT ProtVer` ToGroup-flattened).
 R652 (2026-05-21) added the `GovAction` 7-variant scaffold
 (ParameterChange / HardForkInitiation / TreasuryWithdrawals /
-NoConfidence / UpdateCommittee / NewConstitution / InfoAction;
-variant tag + constructor name typed, payloads raw pending
-PParamsUpdate / Constitution / UnitInterval decoders;
-`InfoAction` fully typed) and wired GOV tags 1
-(`MalformedProposal`) and 15 (`ZeroTreasuryWithdrawals`). R653
+NoConfidence / UpdateCommittee / NewConstitution / InfoAction)
+and wired GOV tags 1 (`MalformedProposal`) and 15
+(`ZeroTreasuryWithdrawals`). R668 (2026-05-21) typed the
+`GovAction::HardForkInitiation` variant — `{ prev:
+Option<GovActionId>, protver: ProtVer }` (`StrictMaybe
+GovPurposeId` null-encoded + `ProtVer`); `InfoAction` (tag 6)
+and `HardForkInitiation` (tag 1) are now fully typed, the other
+5 GovAction variants keep raw payloads pending PParamsUpdate /
+Constitution / TreasuryWithdrawals-map / committee decoders. R653
 (2026-05-21) added the `Anchor` and `ProposalProcedure` types
 (4-field record: deposit / return-addr / GovAction / Anchor)
 and wired GOV tags 8 (`InvalidPrevGovActionId`) and 12

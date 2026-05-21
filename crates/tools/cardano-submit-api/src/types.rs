@@ -3071,8 +3071,15 @@ impl fmt::Display for StrictMaybeGovPurposeId {
 pub enum GovAction {
     /// Tag 0: protocol-parameter change proposal. Raw payload.
     ParameterChange(Vec<u8>),
-    /// Tag 1: hard-fork initiation proposal. Raw payload.
-    HardForkInitiation(Vec<u8>),
+    /// Tag 1: hard-fork initiation proposal (R668 typed) —
+    /// `StrictMaybe (GovPurposeId 'HardForkPurpose)` + the
+    /// proposed `ProtVer`.
+    HardForkInitiation {
+        /// The previous hard-fork governance action, if any.
+        prev: Option<GovActionId>,
+        /// The proposed new protocol version.
+        protver: ProtVer,
+    },
     /// Tag 2: treasury withdrawals proposal. Raw payload.
     TreasuryWithdrawals(Vec<u8>),
     /// Tag 3: no-confidence motion. Raw payload.
@@ -3090,7 +3097,7 @@ impl GovAction {
     pub fn tag(&self) -> u8 {
         match self {
             Self::ParameterChange(_) => 0,
-            Self::HardForkInitiation(_) => 1,
+            Self::HardForkInitiation { .. } => 1,
             Self::TreasuryWithdrawals(_) => 2,
             Self::NoConfidence(_) => 3,
             Self::UpdateCommittee(_) => 4,
@@ -3103,7 +3110,7 @@ impl GovAction {
     pub fn constructor(&self) -> &'static str {
         match self {
             Self::ParameterChange(_) => "ParameterChange",
-            Self::HardForkInitiation(_) => "HardForkInitiation",
+            Self::HardForkInitiation { .. } => "HardForkInitiation",
             Self::TreasuryWithdrawals(_) => "TreasuryWithdrawals",
             Self::NoConfidence(_) => "NoConfidence",
             Self::UpdateCommittee(_) => "UpdateCommittee",
@@ -3139,6 +3146,22 @@ impl GovAction {
             }
             return Ok(Self::InfoAction);
         }
+        if tag == 1 {
+            // HardForkInitiation — `[1, decodeNullStrictMaybe
+            // GovPurposeId, ProtVer]`.
+            if len != 3 {
+                return Err(DecoderError(format!(
+                    "HardForkInitiation: expected 3-element envelope, got len {len}"
+                )));
+            }
+            let prev = decode_null_strict_maybe(
+                dec,
+                "HardForkInitiation prev",
+                GovActionId::from_decoder,
+            )?;
+            let protver = ProtVer::from_decoder(dec)?;
+            return Ok(Self::HardForkInitiation { prev, protver });
+        }
         // Skip the remaining payload elements to advance the
         // decoder, then capture them raw by byte range.
         let payload_start = dec.position();
@@ -3153,7 +3176,6 @@ impl GovAction {
             .to_vec();
         match tag {
             0 => Ok(Self::ParameterChange(raw)),
-            1 => Ok(Self::HardForkInitiation(raw)),
             2 => Ok(Self::TreasuryWithdrawals(raw)),
             3 => Ok(Self::NoConfidence(raw)),
             4 => Ok(Self::UpdateCommittee(raw)),
@@ -3172,8 +3194,16 @@ impl fmt::Display for GovAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InfoAction => f.write_str("InfoAction"),
+            Self::HardForkInitiation { prev, protver } => {
+                let prev_render = match prev {
+                    None => "SNothing".to_string(),
+                    Some(gaid) => {
+                        format!("SJust (GovPurposeId {{unGovPurposeId = {gaid}}})")
+                    }
+                };
+                write!(f, "HardForkInitiation ({prev_render}) ({protver})")
+            }
             Self::ParameterChange(b)
-            | Self::HardForkInitiation(b)
             | Self::TreasuryWithdrawals(b)
             | Self::NoConfidence(b)
             | Self::UpdateCommittee(b)
@@ -11555,6 +11585,34 @@ mod tests {
             "got: {s}"
         );
         assert!(s.ends_with(") Testnet"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_malformed_proposal_hard_fork() {
+        // MalformedProposal carrying a GovAction HardForkInitiation
+        // — `[1, SNothing, ProtVer [10, 0]]`.
+        let cbor = [
+            0x82_u8, 0x01, // ConwayGovPredFailure MalformedProposal
+            0x83, 0x01, // GovAction [1, ...]
+            0xF6, // prev = null → SNothing
+            0x82, 0x0A, 0x00, // ProtVer [10, 0]
+        ];
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::HardForkInitiation {
+            prev,
+            protver,
+        }) = &f
+        {
+            assert!(prev.is_none());
+            assert_eq!(protver.major, 10);
+            assert_eq!(protver.minor, 0);
+        } else {
+            panic!("expected MalformedProposal HardForkInitiation, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "MalformedProposal (HardForkInitiation (SNothing) (ProtVer {pvMajor = 10, pvMinor = 0}))"
+        );
     }
 
     #[test]
