@@ -72,7 +72,7 @@ fn end_to_end_count_blocks_via_file_immutable() {
     let store = FileImmutable::open(dir.path()).unwrap();
     let blocks = store.suffix_after(&Point::Origin).unwrap();
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::CountBlocks { total, first, last } => {
@@ -95,7 +95,7 @@ fn end_to_end_show_slot_block_no_via_file_immutable() {
     let store = FileImmutable::open(dir.path()).unwrap();
     let blocks = store.suffix_after(&Point::Origin).unwrap();
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::ShowSlotBlockNo);
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::ShowSlotBlockNo { lines } => {
@@ -124,7 +124,7 @@ fn end_to_end_only_validation_via_file_immutable() {
     let store = FileImmutable::open(dir.path()).unwrap();
     let blocks = store.suffix_after(&Point::Origin).unwrap();
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::OnlyValidation);
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::OnlyValidation { blocks_processed } => {
@@ -141,7 +141,7 @@ fn end_to_end_empty_chain_returns_empty_outcomes() {
     let store = FileImmutable::open(dir.path()).unwrap();
     let blocks = store.suffix_after(&Point::Origin).unwrap();
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::CountBlocks { total, first, last } => {
@@ -167,7 +167,7 @@ fn end_to_end_lib_run_renders_to_stdout() {
     drop(store);
 
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
-    let result = yggdrasil_db_analyser::run(&config);
+    let result = yggdrasil_db_analyser::run(&config, None);
     assert!(result.is_ok(), "run failed: {:?}", result);
 }
 
@@ -184,7 +184,7 @@ fn end_to_end_lib_run_accepts_consistent_ledger_snapshot() {
     write_ledger_snapshot(dir.path(), 20);
 
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
-    let result = yggdrasil_db_analyser::run(&config);
+    let result = yggdrasil_db_analyser::run(&config, None);
     assert!(result.is_ok(), "run failed: {:?}", result);
 }
 
@@ -201,7 +201,7 @@ fn end_to_end_lib_run_rejects_ledger_snapshot_ahead_of_chain() {
     write_ledger_snapshot(dir.path(), 999);
 
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
-    let err = yggdrasil_db_analyser::run(&config).unwrap_err();
+    let err = yggdrasil_db_analyser::run(&config, None).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("ledger snapshot at slot 999")
@@ -227,7 +227,7 @@ fn end_to_end_lib_run_propagates_check_no_thunks_carve_out() {
         dir.path().to_path_buf(),
         AnalysisName::CheckNoThunksEvery(50),
     );
-    let err = yggdrasil_db_analyser::run(&config).unwrap_err();
+    let err = yggdrasil_db_analyser::run(&config, None).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("CheckNoThunksEvery"),
@@ -264,7 +264,7 @@ fn end_to_end_trace_ledger_processing_via_file_immutable() {
         dir.path().to_path_buf(),
         AnalysisName::TraceLedgerProcessing,
     );
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::TraceLedgerProcessing {
@@ -311,7 +311,7 @@ fn end_to_end_benchmark_ledger_ops_via_file_immutable() {
         dir.path().to_path_buf(),
         AnalysisName::BenchmarkLedgerOps(None, LedgerApplicationMode::LedgerReapply),
     );
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::BenchmarkLedgerOps {
@@ -357,7 +357,7 @@ fn end_to_end_store_ledger_state_at_via_file_immutable() {
         dir.path().to_path_buf(),
         AnalysisName::StoreLedgerStateAt(SlotNo(20), LedgerApplicationMode::LedgerReapply),
     );
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::StoreLedgerStateAt {
@@ -395,7 +395,7 @@ fn end_to_end_repro_mempool_and_forge_via_file_immutable() {
         dir.path().to_path_buf(),
         AnalysisName::ReproMempoolAndForge(1),
     );
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::ReproMempoolAndForge {
@@ -456,7 +456,7 @@ fn end_to_end_lib_run_respects_select_db_origin() {
     // run_analysis directly with the equivalent shape.
     let store = FileImmutable::open(dir.path()).unwrap();
     let blocks = store.iter_after(&Point::Origin).unwrap();
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
     match outcome {
         AnalysisOutcome::CountBlocks { total, .. } => assert_eq!(total, 3),
         _ => panic!("wrong outcome variant"),
@@ -486,7 +486,7 @@ fn end_to_end_lib_run_respects_select_db_at_slot() {
         Box::new(raw.skip_while(move |b| b.header.slot_no.0 < target));
     let mut config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
     config.select_db = SelectDB::SelectImmutableDB(WithOrigin::At(SlotNo(20)));
-    let outcome = run_analysis(&config, skipped).unwrap();
+    let outcome = run_analysis(&config, skipped, None).unwrap();
     match outcome {
         AnalysisOutcome::CountBlocks { total, first, last } => {
             assert_eq!(total, 2, "skipped slot-10 block; 2 remaining");
@@ -513,7 +513,7 @@ fn end_to_end_lib_run_select_db_at_slot_past_tip_yields_empty() {
         Box::new(raw.skip_while(move |b| b.header.slot_no.0 < target));
     let mut config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
     config.select_db = SelectDB::SelectImmutableDB(WithOrigin::At(SlotNo(9999)));
-    let outcome = run_analysis(&config, skipped).unwrap();
+    let outcome = run_analysis(&config, skipped, None).unwrap();
     match outcome {
         AnalysisOutcome::CountBlocks { total, .. } => assert_eq!(total, 0),
         _ => panic!("wrong outcome variant"),
@@ -542,14 +542,14 @@ fn end_to_end_lib_run_respects_verbose_flag() {
 
     let mut config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
     config.verbose = true;
-    let result_verbose = yggdrasil_db_analyser::run(&config);
+    let result_verbose = yggdrasil_db_analyser::run(&config, None);
     assert!(
         result_verbose.is_ok(),
         "verbose=true run failed: {result_verbose:?}"
     );
 
     config.verbose = false;
-    let result_quiet = yggdrasil_db_analyser::run(&config);
+    let result_quiet = yggdrasil_db_analyser::run(&config, None);
     assert!(
         result_quiet.is_ok(),
         "verbose=false run failed: {result_quiet:?}"
@@ -585,7 +585,7 @@ fn end_to_end_count_blocks_respects_limit_truncation() {
         AnalysisName::CountBlocks,
         Limit::Limit(2),
     );
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::CountBlocks { total, first, last } => {
@@ -618,7 +618,7 @@ fn end_to_end_show_slot_block_no_respects_limit_truncation() {
         AnalysisName::ShowSlotBlockNo,
         Limit::Limit(1),
     );
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::ShowSlotBlockNo { lines } => {
@@ -650,7 +650,7 @@ fn end_to_end_limit_unlimited_is_equivalent_to_no_truncation() {
         AnalysisName::CountBlocks,
         Limit::Unlimited,
     );
-    let outcome_unlim = run_analysis(&config_unlim, blocks_a).unwrap();
+    let outcome_unlim = run_analysis(&config_unlim, blocks_a, None).unwrap();
 
     let store_b = FileImmutable::open(dir.path()).unwrap();
     let blocks_b = store_b.suffix_after(&Point::Origin).unwrap();
@@ -659,7 +659,7 @@ fn end_to_end_limit_unlimited_is_equivalent_to_no_truncation() {
         AnalysisName::CountBlocks,
         Limit::Limit(100),
     );
-    let outcome_overrun = run_analysis(&config_overrun, blocks_b).unwrap();
+    let outcome_overrun = run_analysis(&config_overrun, blocks_b, None).unwrap();
 
     assert_eq!(outcome_unlim, outcome_overrun);
 }
@@ -685,7 +685,7 @@ fn end_to_end_get_block_application_metrics_via_file_immutable() {
         dir.path().to_path_buf(),
         AnalysisName::GetBlockApplicationMetrics(NumberOfBlocks(1), None),
     );
-    let outcome = run_analysis(&config, blocks).unwrap();
+    let outcome = run_analysis(&config, blocks, None).unwrap();
 
     match outcome {
         AnalysisOutcome::GetBlockApplicationMetrics {
@@ -706,4 +706,101 @@ fn end_to_end_get_block_application_metrics_via_file_immutable() {
         }
         _ => panic!("wrong outcome variant"),
     }
+}
+
+// ── Genesis-bootstrap arc slice 5b: --config end-to-end ─────────────
+
+/// Minimal `AlonzoGenesis`-parseable JSON.
+const MINIMAL_ALONZO_GENESIS: &str = r#"{"executionPrices":{"prMem":{"numerator":1,"denominator":1},"prSteps":{"numerator":1,"denominator":1}},"maxTxExUnits":{"exUnitsMem":1,"exUnitsSteps":1},"maxBlockExUnits":{"exUnitsMem":1,"exUnitsSteps":1}}"#;
+
+/// Write a node `config.json` + every era's genesis under `<tmp>/node/`.
+/// Returns the config-file path.
+fn write_node_config(tmp: &std::path::Path) -> std::path::PathBuf {
+    let cfg_dir = tmp.join("node");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(cfg_dir.join("byron.json"), "{}").unwrap();
+    std::fs::write(cfg_dir.join("shelley.json"), r#"{"epochLength":86400}"#).unwrap();
+    std::fs::write(cfg_dir.join("alonzo.json"), MINIMAL_ALONZO_GENESIS).unwrap();
+    std::fs::write(cfg_dir.join("conway.json"), "{}").unwrap();
+    let config = cfg_dir.join("config.json");
+    std::fs::write(
+        &config,
+        r#"{"RequiresNetworkMagic":"RequiresMagic","ByronGenesisFile":"byron.json","ShelleyGenesisFile":"shelley.json","AlonzoGenesisFile":"alonzo.json","ConwayGenesisFile":"conway.json"}"#,
+    )
+    .unwrap();
+    config
+}
+
+#[test]
+fn end_to_end_lib_run_with_config_threads_genesis_seeded_state() {
+    // Slice 5b: with `--config` supplied, `run` builds the
+    // genesis-seeded `LedgerState` (make_protocol_info +
+    // build_genesis_ledger_state) and threads it through
+    // `run_analysis`. This confirms the whole config → genesis →
+    // runner path completes without error for a ledger-applying
+    // analysis.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path().join("immutable")).unwrap();
+    let mut b0 = synthetic_block(0xB0, 0, 0);
+    b0.era = Era::Byron;
+    store.append_block(b0).unwrap();
+    let mut b1 = synthetic_block(0xB1, 20, 1);
+    b1.era = Era::Byron;
+    store.append_block(b1).unwrap();
+    drop(store);
+
+    let config_path = write_node_config(dir.path());
+    let cardano_args = yggdrasil_db_analyser::has_analysis::CardanoBlockArgs {
+        config_file: config_path,
+        threshold: None,
+    };
+    let config = mk_config(
+        dir.path().to_path_buf(),
+        AnalysisName::TraceLedgerProcessing,
+    );
+    let result = yggdrasil_db_analyser::run(&config, Some(&cardano_args));
+    assert!(result.is_ok(), "run with --config failed: {result:?}");
+}
+
+#[test]
+fn end_to_end_genesis_seeded_state_changes_store_ledger_snapshot() {
+    // Slice 5b: the genesis-seeded state genuinely reaches the
+    // ledger-applying handlers. A `StoreLedgerStateAt` run seeded
+    // from a node config (protocol params + network id present)
+    // captures a snapshot that differs from the `None` run's
+    // empty-`LedgerState::new()` snapshot.
+    use yggdrasil_db_analyser::analysis::runner::run_analysis;
+    use yggdrasil_db_analyser::has_analysis::{
+        CardanoBlockArgs, HasProtocolInfo, build_genesis_ledger_state,
+    };
+    use yggdrasil_db_analyser::types::LedgerApplicationMode;
+
+    let dir = TempDir::new().unwrap();
+    let config_path = write_node_config(dir.path());
+    let bundle = <Block as HasProtocolInfo>::make_protocol_info(CardanoBlockArgs {
+        config_file: config_path,
+        threshold: None,
+    })
+    .expect("genesis bundle");
+    let genesis_state = build_genesis_ledger_state(&bundle).expect("genesis ledger state");
+
+    let mut blk = synthetic_block(0xB0, 0, 0);
+    blk.era = Era::Byron;
+    let config = mk_config(
+        dir.path().to_path_buf(),
+        AnalysisName::StoreLedgerStateAt(SlotNo(0), LedgerApplicationMode::LedgerReapply),
+    );
+    let snapshot =
+        |seed: Option<LedgerState>| match run_analysis(&config, vec![blk.clone()], seed).unwrap() {
+            AnalysisOutcome::StoreLedgerStateAt { snapshot_bytes, .. } => snapshot_bytes,
+            _ => panic!("wrong outcome variant"),
+        };
+    let seeded = snapshot(Some(genesis_state));
+    let unseeded = snapshot(None);
+    assert!(!seeded.is_empty());
+    assert!(!unseeded.is_empty());
+    assert_ne!(
+        seeded, unseeded,
+        "the genesis-seeded state must change the captured snapshot"
+    );
 }

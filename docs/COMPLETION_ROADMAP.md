@@ -345,17 +345,22 @@ one extraction):
     `initial_state` parameter — when `Some`, they bootstrap from it
     instead of `LedgerState::new()`. `run_analysis` passes `None`
     (behavior-preserving plumbing).
-  - **Slice 5b — wire `run` to supply the genesis-seeded state.**
-    `run` calls `make_protocol_info` + `build_genesis_ledger_state`
-    when `--config` is supplied and threads the resulting
-    `LedgerState` through `run_analysis` into the 5 handlers. Closes
-    the arc's validation gate.
-  **Validation gate:** a Conway genesis from
-  `configuration/preview/` parses; `db-analyser --config
-  <preview-config> --db <synthesized-chain>` runs the apply-loop
-  analyses without empty-`LedgerState::new()` apply failures.
-  **Each slice is its own round** — author a `parity-plan` for
-  slice 3 (it touches genesis-config parsing).
+  - ✅ **Slice 5b** (round 716) — `run` takes an
+    `Option<&CardanoBlockArgs>`; when `--config` is supplied it calls
+    `make_protocol_info` + `build_genesis_ledger_state` and threads
+    the genesis-seeded `LedgerState` through `run_analysis` into the
+    5 ledger-applying handlers. `run_main` passes the parsed
+    `cardano_args`.
+  **Arc status: CODE COMPLETE (R710-R716).** `db-analyser` now
+  accepts `--config PATH`, builds the genesis-seeded initial
+  `LedgerState`, and the 5 ledger-applying analyses bootstrap from
+  it instead of an empty `LedgerState::new()`. The R713/R714 tests
+  parse the real vendored `configuration/preview/` genesis bundle
+  and fold it into a `LedgerState`; the R716 tests confirm the full
+  config→genesis→runner path end-to-end. A full operator rehearsal
+  (`db-analyser --config <preview-config> --db <synthesized-chain>`
+  against a db-synthesizer-produced chain) remains an operator-side
+  integration exercise, not a code gap.
 
 **Each slice is its own protocol-critical round** — author a `parity-plan`
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**

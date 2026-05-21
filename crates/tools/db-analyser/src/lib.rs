@@ -46,10 +46,10 @@ pub fn run_main() -> ExitCode {
     // yggdrasil-node. Idempotent: a second call is a no-op.
     let _ = yggdrasil_telemetry::init_subscriber(&yggdrasil_telemetry::TracingConfig::default());
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    // `_cardano_args` carries the parsed `--config` / `--threshold`
-    // surface; the genesis-seeded ledger bootstrap that consumes it is
-    // genesis-bootstrap arc slices 3-4.
-    let (config, _cardano_args) = match parser::parse_cmd_line(&argv) {
+    // `cardano_args` carries the parsed `--config` / `--threshold`
+    // surface; `run` consumes it to build the genesis-seeded ledger
+    // state for the ledger-applying analyses.
+    let (config, cardano_args) = match parser::parse_cmd_line(&argv) {
         Ok(parsed) => parsed,
         Err(parser::ParseError::HelpRequested) => {
             let _ = std::io::stdout().write_all(parser::HELP_TEXT.as_bytes());
@@ -64,7 +64,7 @@ pub fn run_main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match run(&config) {
+    match run(&config, cardano_args.as_ref()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             let _ = writeln!(std::io::stderr(), "Error: {err}");
@@ -80,15 +80,19 @@ pub fn run_main() -> ExitCode {
 /// the immutable chain via [`yggdrasil_storage::ImmutableStore::suffix_after`],
 /// and dispatches through [`analysis::runner::run_analysis`].
 ///
-/// Of the 13 upstream `AnalysisName` variants, 7 are
-/// block-iteration-only and ship in this arc (`ShowSlotBlockNo`,
-/// `CountBlocks`, `CountTxOutputs`, `ShowBlockHeaderSize`,
-/// `ShowBlockTxsSize`, `ShowEBBs`, `OnlyValidation`); the
-/// remaining 6 require a ledger-state apply-loop and return a
-/// structured `RequiresLedgerStateApplyLoop` error pending a
-/// future arc. See [`status::analysis_dispatch_status`] for the
-/// full inventory.
-pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
+/// When `cardano_args` carries a `--config` path (genesis-bootstrap
+/// arc slice 5b), `run` builds the genesis-seeded initial
+/// `LedgerState` — `make_protocol_info` loads the genesis bundle and
+/// `build_genesis_ledger_state` folds it — then threads it through
+/// [`analysis::runner::run_analysis`], so the ledger-applying analyses
+/// replay on top of the operator's genesis rather than an empty
+/// `LedgerState::new()`. With no `--config` the analyses keep the
+/// empty-state behavior. See [`status::analysis_dispatch_status`] for
+/// the per-analysis inventory.
+pub fn run(
+    config: &types::DBAnalyserConfig,
+    cardano_args: Option<&has_analysis::CardanoBlockArgs>,
+) -> eyre::Result<()> {
     use yggdrasil_ledger::Point;
     use yggdrasil_storage::{FileImmutable, FileLedgerStore, ImmutableStore, LedgerStore};
 
@@ -137,7 +141,22 @@ pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
             Box::new(raw_iter.skip_while(move |b| b.header.slot_no.0 < target))
         }
     };
-    let outcome = analysis::runner::run_analysis(config, blocks).map_err(RunError::Analysis)?;
+    // Genesis-bootstrap arc slice 5b: when `--config` is supplied,
+    // build the genesis-seeded initial `LedgerState` and thread it
+    // through the runner so the ledger-applying analyses replay on
+    // top of the operator's genesis instead of `LedgerState::new()`.
+    let genesis_ledger_state = match cardano_args {
+        Some(args) => {
+            let bundle =
+                <yggdrasil_ledger::Block as has_analysis::HasProtocolInfo>::make_protocol_info(
+                    args.clone(),
+                )?;
+            Some(has_analysis::build_genesis_ledger_state(&bundle)?)
+        }
+        None => None,
+    };
+    let outcome = analysis::runner::run_analysis(config, blocks, genesis_ledger_state)
+        .map_err(RunError::Analysis)?;
     render_outcome(&outcome, config.verbose)?;
     Ok(())
 }

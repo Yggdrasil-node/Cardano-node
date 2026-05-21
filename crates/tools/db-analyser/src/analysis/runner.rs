@@ -351,6 +351,7 @@ fn apply_limit<I: IntoIterator<Item = Block>>(blocks: I, limit: Limit) -> Vec<Bl
 pub fn run_analysis<I: IntoIterator<Item = Block>>(
     config: &DBAnalyserConfig,
     blocks: I,
+    genesis_ledger_state: Option<LedgerState>,
 ) -> Result<AnalysisOutcome, AnalysisError> {
     let bounded = apply_limit(blocks, config.conf_limit);
     match &config.analysis {
@@ -363,25 +364,29 @@ pub fn run_analysis<I: IntoIterator<Item = Block>>(
         AnalysisName::OnlyValidation => Ok(analysis_only_validation(&bounded)),
         // Ledger-state-dependent analyses — return structured error
         // pending the ledger-state apply-loop arc.
-        AnalysisName::StoreLedgerStateAt(target_slot, _mode) => {
-            Ok(analysis_store_ledger_state_at(&bounded, *target_slot, None))
-        }
+        AnalysisName::StoreLedgerStateAt(target_slot, _mode) => Ok(
+            analysis_store_ledger_state_at(&bounded, *target_slot, genesis_ledger_state),
+        ),
         AnalysisName::CheckNoThunksEvery(_) => Err(AnalysisError::NotApplicableToRust {
             analysis_name: "CheckNoThunksEvery".to_string(),
             reason: "NoThunks-style ledger-state inspection walks GHC's lazy heap for unevaluated thunks; Rust is eagerly evaluated and has no runtime thunks to inspect.".to_string(),
         }),
         AnalysisName::TraceLedgerProcessing => {
-            Ok(analysis_trace_ledger_processing(&bounded, None))
+            Ok(analysis_trace_ledger_processing(&bounded, genesis_ledger_state))
         }
         AnalysisName::BenchmarkLedgerOps(_, _) => {
-            Ok(analysis_benchmark_ledger_ops(&bounded, None))
+            Ok(analysis_benchmark_ledger_ops(&bounded, genesis_ledger_state))
         }
         AnalysisName::ReproMempoolAndForge(_n) => {
-            Ok(analysis_repro_mempool_and_forge(&bounded, None))
+            Ok(analysis_repro_mempool_and_forge(&bounded, genesis_ledger_state))
         }
-        AnalysisName::GetBlockApplicationMetrics(every_n, _path) => Ok(
-            analysis_get_block_application_metrics(&bounded, every_n.0.max(1), None),
-        ),
+        AnalysisName::GetBlockApplicationMetrics(every_n, _path) => {
+            Ok(analysis_get_block_application_metrics(
+                &bounded,
+                every_n.0.max(1),
+                genesis_ledger_state,
+            ))
+        }
     }
 }
 
@@ -1350,7 +1355,7 @@ mod tests {
     #[test]
     fn run_analysis_dispatches_trace_ledger_processing() {
         let config = mk_config(AnalysisName::TraceLedgerProcessing, Limit::Unlimited);
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)], None).unwrap();
         assert!(matches!(
             outcome,
             AnalysisOutcome::TraceLedgerProcessing { .. }
@@ -1442,7 +1447,7 @@ mod tests {
     #[test]
     fn run_analysis_dispatches_show_slot_block_no() {
         let config = mk_config(AnalysisName::ShowSlotBlockNo, Limit::Unlimited);
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)], None).unwrap();
         assert!(matches!(outcome, AnalysisOutcome::ShowSlotBlockNo { .. }));
     }
 
@@ -1456,6 +1461,7 @@ mod tests {
                 mk_block(20, 1, None),
                 mk_block(40, 2, None),
             ],
+            None,
         )
         .unwrap();
         match outcome {
@@ -1467,14 +1473,14 @@ mod tests {
     #[test]
     fn run_analysis_dispatches_count_tx_outputs() {
         let config = mk_config(AnalysisName::CountTxOutputs, Limit::Unlimited);
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)], None).unwrap();
         assert!(matches!(outcome, AnalysisOutcome::CountTxOutputs { .. }));
     }
 
     #[test]
     fn run_analysis_dispatches_show_block_header_size() {
         let config = mk_config(AnalysisName::ShowBlockHeaderSize, Limit::Unlimited);
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, Some(123))]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, Some(123))], None).unwrap();
         match outcome {
             AnalysisOutcome::ShowBlockHeaderSize { max_size, .. } => assert_eq!(max_size, 123),
             _ => panic!("wrong outcome variant"),
@@ -1484,22 +1490,26 @@ mod tests {
     #[test]
     fn run_analysis_dispatches_show_block_txs_size() {
         let config = mk_config(AnalysisName::ShowBlockTxsSize, Limit::Unlimited);
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)], None).unwrap();
         assert!(matches!(outcome, AnalysisOutcome::ShowBlockTxsSize { .. }));
     }
 
     #[test]
     fn run_analysis_dispatches_show_ebbs() {
         let config = mk_config(AnalysisName::ShowEBBs, Limit::Unlimited);
-        let outcome = run_analysis(&config, Vec::<Block>::new()).unwrap();
+        let outcome = run_analysis(&config, Vec::<Block>::new(), None).unwrap();
         assert!(matches!(outcome, AnalysisOutcome::ShowEBBs { .. }));
     }
 
     #[test]
     fn run_analysis_dispatches_only_validation() {
         let config = mk_config(AnalysisName::OnlyValidation, Limit::Unlimited);
-        let outcome =
-            run_analysis(&config, vec![mk_block(0, 0, None), mk_block(20, 1, None)]).unwrap();
+        let outcome = run_analysis(
+            &config,
+            vec![mk_block(0, 0, None), mk_block(20, 1, None)],
+            None,
+        )
+        .unwrap();
         match outcome {
             AnalysisOutcome::OnlyValidation { blocks_processed } => {
                 assert_eq!(blocks_processed, 2);
@@ -1516,7 +1526,7 @@ mod tests {
             AnalysisName::BenchmarkLedgerOps(None, LedgerApplicationMode::LedgerReapply),
             Limit::Unlimited,
         );
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)], None).unwrap();
         assert!(matches!(
             outcome,
             AnalysisOutcome::BenchmarkLedgerOps { .. }
@@ -1608,7 +1618,7 @@ mod tests {
             AnalysisName::GetBlockApplicationMetrics(NumberOfBlocks(1), None),
         ] {
             let config = mk_config(analysis.clone(), Limit::Unlimited);
-            let result = run_analysis(&config, Vec::<Block>::new());
+            let result = run_analysis(&config, Vec::<Block>::new(), None);
             assert!(
                 result.is_ok(),
                 "analysis {analysis:?} should now ship, got {result:?}"
@@ -1616,7 +1626,7 @@ mod tests {
         }
         // CheckNoThunksEvery is the only permanent carve-out.
         let config = mk_config(AnalysisName::CheckNoThunksEvery(100), Limit::Unlimited);
-        let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
+        let err = run_analysis(&config, Vec::<Block>::new(), None).unwrap_err();
         assert!(matches!(err, AnalysisError::NotApplicableToRust { .. }));
     }
 
@@ -1628,7 +1638,7 @@ mod tests {
             AnalysisName::GetBlockApplicationMetrics(NumberOfBlocks(1), None),
             Limit::Unlimited,
         );
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)], None).unwrap();
         assert!(matches!(
             outcome,
             AnalysisOutcome::GetBlockApplicationMetrics { .. }
@@ -1896,7 +1906,7 @@ mod tests {
     #[test]
     fn run_analysis_dispatches_repro_mempool_and_forge() {
         let config = mk_config(AnalysisName::ReproMempoolAndForge(50), Limit::Unlimited);
-        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)]).unwrap();
+        let outcome = run_analysis(&config, vec![mk_block(0, 0, None)], None).unwrap();
         assert!(matches!(
             outcome,
             AnalysisOutcome::ReproMempoolAndForge { .. }
@@ -2036,7 +2046,7 @@ mod tests {
         );
         let mut blk = mk_block(0, 0, None);
         blk.era = yggdrasil_ledger::Era::Byron;
-        let outcome = run_analysis(&config, vec![blk]).unwrap();
+        let outcome = run_analysis(&config, vec![blk], None).unwrap();
         assert!(matches!(
             outcome,
             AnalysisOutcome::StoreLedgerStateAt { .. }
@@ -2072,7 +2082,7 @@ mod tests {
         // analysis (inspects GHC lazy heap thunks). Permanent
         // carve-out → NotApplicableToRust variant.
         let config = mk_config(AnalysisName::CheckNoThunksEvery(100), Limit::Unlimited);
-        let err = run_analysis(&config, Vec::<Block>::new()).unwrap_err();
+        let err = run_analysis(&config, Vec::<Block>::new(), None).unwrap_err();
         match err {
             AnalysisError::NotApplicableToRust {
                 analysis_name,
@@ -2110,6 +2120,7 @@ mod tests {
                 mk_block(20, 1, None),
                 mk_block(40, 2, None),
             ],
+            None,
         )
         .unwrap();
         match outcome {
