@@ -917,10 +917,16 @@ RegDRepTxCert, …); the per-certificate payload stays raw
 pending the typed `ConwayDelegCert` / `PoolCert` /
 `ConwayGovCert` decoders. `ConwayPlutusPurposeItem::ConwayCertifying`
 now carries a typed `TxCert`. R661 (2026-05-21) typed the
-staking credential in every delegation-family certificate —
-`TxCert::ConwayTxCertDeleg` now carries a typed `Credential`
-(always the first payload field of tags 0-2/7-13) plus a raw
-tail for the pool-key-hash / DRep / deposit fields.
+staking credential in every delegation-family certificate.
+R662 (2026-05-21) added the `DRep` enum (DRepKeyHash /
+DRepScriptHash / DRepAlwaysAbstain / DRepAlwaysNoConfidence)
+and fully typed the delegation-certificate tail —
+`TxCert::ConwayTxCertDeleg` now carries `credential` plus typed
+`pool: Option<KeyHash>`, `drep: Option<DRep>`, `deposit:
+Option<u64>` fields decoded positionally per the upstream
+`conwayTxCertDelegDecoder`. **The entire `ConwayTxCertDeleg`
+delegation-certificate family is now fully typed**; only the
+`ConwayTxCertPool` / `ConwayTxCertGov` bodies remain raw.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

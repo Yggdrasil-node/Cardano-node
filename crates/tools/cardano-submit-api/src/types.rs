@@ -5864,6 +5864,74 @@ impl fmt::Display for ConwayPlutusPurposeIx {
     }
 }
 
+/// Delegated-representative reference mirroring upstream `data
+/// DRep = DRepKeyHash (KeyHash DRepRole) | DRepScriptHash
+/// ScriptHash | DRepAlwaysAbstain | DRepAlwaysNoConfidence`
+/// from `Cardano.Ledger.DRep`. CBOR wire format is a `Sum`:
+/// `[0, keyhash]`, `[1, scripthash]`, `[2]`, `[3]`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DRep {
+    /// A DRep identified by a verification-key hash.
+    DRepKeyHash(KeyHash),
+    /// A DRep identified by a script hash.
+    DRepScriptHash(ScriptHash),
+    /// The pre-defined "always abstain" DRep.
+    DRepAlwaysAbstain,
+    /// The pre-defined "always vote no-confidence" DRep.
+    DRepAlwaysNoConfidence,
+}
+
+impl DRep {
+    /// Decode a `DRep` from its CBOR `Sum` envelope.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("DRep: expected Sum array: {err:?}")))?;
+        if len == 0 {
+            return Err(DecoderError("DRep: empty Sum envelope".to_string()));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("DRep: expected Word8 tag: {err:?}")))?;
+        match tag {
+            0 => {
+                let bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!("DRepKeyHash: expected key-hash bytes: {err:?}"))
+                })?;
+                let arr: [u8; 28] = bytes.try_into().map_err(|_| {
+                    DecoderError("DRepKeyHash: key hash must be 28 bytes".to_string())
+                })?;
+                Ok(Self::DRepKeyHash(KeyHash(arr)))
+            }
+            1 => {
+                let bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "DRepScriptHash: expected script-hash bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 28] = bytes.try_into().map_err(|_| {
+                    DecoderError("DRepScriptHash: script hash must be 28 bytes".to_string())
+                })?;
+                Ok(Self::DRepScriptHash(ScriptHash(arr)))
+            }
+            2 => Ok(Self::DRepAlwaysAbstain),
+            3 => Ok(Self::DRepAlwaysNoConfidence),
+            other => Err(DecoderError(format!("DRep: unknown DRep tag {other}"))),
+        }
+    }
+}
+
+impl fmt::Display for DRep {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DRepKeyHash(kh) => write!(f, "DRepKeyHash ({kh})"),
+            Self::DRepScriptHash(sh) => write!(f, "DRepScriptHash ({sh})"),
+            Self::DRepAlwaysAbstain => f.write_str("DRepAlwaysAbstain"),
+            Self::DRepAlwaysNoConfidence => f.write_str("DRepAlwaysNoConfidence"),
+        }
+    }
+}
+
 /// `TxCert` mirror — a Conway-era transaction certificate from
 /// `Cardano.Ledger.Conway.TxCert` (`data ConwayTxCert era =
 /// ConwayTxCertDeleg ConwayDelegCert | ConwayTxCertPool PoolCert
@@ -5871,25 +5939,30 @@ impl fmt::Display for ConwayPlutusPurposeIx {
 ///
 /// The wire format is a flat CBOR `Sum` (`decodeRecordSum`,
 /// tags 0-18); R660 classifies the tag into its upstream
-/// certificate family and surfaces the specific certificate
-/// constructor name, keeping the per-certificate payload raw
-/// pending the typed `ConwayDelegCert` / `PoolCert` /
+/// certificate family. The `ConwayTxCertDeleg` family is fully
+/// typed (R661/R662); the `ConwayTxCertPool` / `ConwayTxCertGov`
+/// bodies keep raw inner CBOR pending the typed `PoolCert` /
 /// `ConwayGovCert` decoders.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TxCert {
     /// Delegation-family certificate (`ConwayTxCertDeleg`) —
-    /// upstream `Sum` tags 0-2 and 7-13. Every delegation
-    /// certificate's first payload field is the staking
-    /// credential, which R661 surfaces typed.
+    /// upstream `Sum` tags 0-2 and 7-13. Fully typed: the staking
+    /// credential plus the per-tag tail (stake-pool key hash,
+    /// `DRep`, deposit `Coin`).
     ConwayTxCertDeleg {
         /// The upstream `decodeRecordSum` tag.
         cert_tag: u64,
         /// The staking credential the certificate acts on.
         credential: Credential,
-        /// The remaining per-certificate payload after the
-        /// credential (pool key hash / DRep / deposit — raw
-        /// pending their typed decoders).
-        rest: Vec<u8>,
+        /// Target stake-pool key hash, for the delegation
+        /// certificates that delegate stake (tags 2/10/11/13).
+        pool: Option<KeyHash>,
+        /// Target `DRep`, for the certificates that delegate
+        /// voting power (tags 9/10/12/13).
+        drep: Option<DRep>,
+        /// Deposit `Coin`, for the deposit-bearing certificates
+        /// (tags 7/8/11/12/13).
+        deposit: Option<u64>,
     },
     /// Stake-pool-family certificate (`ConwayTxCertPool`) —
     /// upstream `Sum` tags 3-4.
@@ -5971,16 +6044,61 @@ impl TxCert {
                 .map(<[u8]>::to_vec)
                 .ok_or_else(|| DecoderError("TxCert: payload byte range out of bounds".to_string()))
         };
+        // Read a 28-byte stake-pool key hash (a bare CBOR
+        // bytestring).
+        let read_pool = |dec: &mut yggdrasil_ledger::Decoder<'_>| -> Result<KeyHash, DecoderError> {
+            let bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!("TxCert: expected pool key-hash bytes: {err:?}"))
+            })?;
+            let arr: [u8; 28] = bytes
+                .try_into()
+                .map_err(|_| DecoderError("TxCert: pool key hash must be 28 bytes".to_string()))?;
+            Ok(KeyHash(arr))
+        };
+        let read_deposit = |dec: &mut yggdrasil_ledger::Decoder<'_>| -> Result<u64, DecoderError> {
+            dec.unsigned()
+                .map_err(|err| DecoderError(format!("TxCert: expected deposit Coin: {err:?}")))
+        };
         match cert_tag {
             0..=2 | 7..=13 => {
                 // Every delegation certificate's first payload
-                // field is the staking credential.
+                // field is the staking credential; the tail
+                // (pool key hash / DRep / deposit) is positional
+                // per the upstream `conwayTxCertDelegDecoder`.
                 let credential = Credential::from_decoder(dec)?;
-                let rest = capture_rest(dec, 2)?;
+                let mut pool = None;
+                let mut drep = None;
+                let mut deposit = None;
+                match cert_tag {
+                    0 | 1 => {}
+                    2 => pool = Some(read_pool(dec)?),
+                    7 | 8 => deposit = Some(read_deposit(dec)?),
+                    9 => drep = Some(DRep::from_decoder(dec)?),
+                    10 => {
+                        pool = Some(read_pool(dec)?);
+                        drep = Some(DRep::from_decoder(dec)?);
+                    }
+                    11 => {
+                        pool = Some(read_pool(dec)?);
+                        deposit = Some(read_deposit(dec)?);
+                    }
+                    12 => {
+                        drep = Some(DRep::from_decoder(dec)?);
+                        deposit = Some(read_deposit(dec)?);
+                    }
+                    13 => {
+                        pool = Some(read_pool(dec)?);
+                        drep = Some(DRep::from_decoder(dec)?);
+                        deposit = Some(read_deposit(dec)?);
+                    }
+                    _ => unreachable!("delegation tag range is 0-2/7-13"),
+                }
                 Ok(Self::ConwayTxCertDeleg {
                     cert_tag,
                     credential,
-                    rest,
+                    pool,
+                    drep,
+                    deposit,
                 })
             }
             3 | 4 => Ok(Self::ConwayTxCertPool {
@@ -6002,26 +6120,33 @@ impl fmt::Display for TxCert {
     /// Render `<Family> (<CertificateConstructor> ...)` — the
     /// family mirrors upstream's `ConwayTxCert` 3-way split; the
     /// inner certificate constructor is named from the wire tag.
-    /// Delegation certificates surface the typed staking
-    /// credential; remaining per-certificate fields render as a
-    /// `<raw-cbor N bytes>` marker.
+    /// Delegation certificates are fully typed (credential plus
+    /// pool / DRep / deposit tail); pool / govcert bodies render
+    /// a `<raw-cbor N bytes>` marker.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ConwayTxCertDeleg {
                 cert_tag,
                 credential,
-                rest,
+                pool,
+                drep,
+                deposit,
             } => {
                 write!(
                     f,
                     "ConwayTxCertDeleg ({} ({credential})",
                     Self::cert_constructor(*cert_tag)
                 )?;
-                if rest.is_empty() {
-                    f.write_str(")")
-                } else {
-                    write!(f, " <raw-cbor {} bytes>)", rest.len())
+                if let Some(pool) = pool {
+                    write!(f, " ({pool})")?;
                 }
+                if let Some(drep) = drep {
+                    write!(f, " ({drep})")?;
+                }
+                if let Some(deposit) = deposit {
+                    write!(f, " ({})", CoinShow(*deposit))?;
+                }
+                f.write_str(")")
             }
             Self::ConwayTxCertPool { cert_tag, raw } => {
                 write!(
@@ -10037,13 +10162,15 @@ mod tests {
                 ConwayPlutusPurposeItem::ConwayCertifying(TxCert::ConwayTxCertDeleg {
                     cert_tag,
                     credential,
-                    rest,
+                    pool,
+                    drep,
+                    deposit,
                 }) => {
                     assert_eq!(*cert_tag, 1);
                     assert!(matches!(credential, Credential::KeyHashObj(_)));
                     // Tag 1 (UnRegTxCert) is `[tag, credential]`
                     // — no trailing fields.
-                    assert!(rest.is_empty());
+                    assert!(pool.is_none() && drep.is_none() && deposit.is_none());
                 }
                 other => panic!("expected ConwayCertifying deleg, got {other:?}"),
             }
@@ -10084,12 +10211,16 @@ mod tests {
                 ConwayPlutusPurposeItem::ConwayCertifying(TxCert::ConwayTxCertDeleg {
                     cert_tag,
                     credential,
-                    rest,
+                    pool,
+                    drep,
+                    deposit,
                 }) => {
                     assert_eq!(*cert_tag, 7);
                     assert!(matches!(credential, Credential::ScriptHashObj(_)));
-                    // Trailing deposit Coin (3 CBOR bytes).
-                    assert!(!rest.is_empty());
+                    // Tag 7 (RegDepositTxCert) carries a typed
+                    // deposit Coin and no pool / DRep.
+                    assert!(pool.is_none() && drep.is_none());
+                    assert_eq!(*deposit, Some(10000));
                 }
                 other => panic!("expected ConwayCertifying deleg, got {other:?}"),
             }
@@ -10101,7 +10232,67 @@ mod tests {
                 .contains("ConwayTxCertDeleg (RegDepositTxCert (ScriptHashObj (ScriptHash \"6c6c"),
             "got: {f}"
         );
-        assert!(f.to_string().contains("<raw-cbor 3 bytes>"), "got: {f}");
+        assert!(f.to_string().contains(") (Coin 10000))"), "got: {f}");
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_missing_redeemers_certifying_reg_deposit_deleg() {
+        // ConwayCertifying carrying a TxCert Sum tag 13
+        // (RegDepositDelegTxCert / DelegStakeVote) — `[13, cred,
+        // poolKeyHash, DRep, deposit]`, so all three typed tail
+        // fields (pool / drep / deposit) are surfaced.
+        let mut cbor = vec![0x82_u8, 0x0A, 0x81, 0x82];
+        cbor.push(0x82); // PlutusPurpose AsItem [2, TxCert]
+        cbor.push(0x02);
+        cbor.push(0x85); // TxCert Sum [13, cred, pool, drep, deposit]
+        cbor.push(0x0D);
+        cbor.push(0x82); // credential [0, bytes(28)]
+        cbor.push(0x00);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x11_u8; 28]);
+        cbor.push(0x58); // pool key hash bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x22_u8; 28]);
+        cbor.push(0x82); // DRep [0, keyhash(28)] (DRepKeyHash)
+        cbor.push(0x00);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x33_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x13, 0x88]); // deposit 5000
+        cbor.push(0x58); // pair ScriptHash bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x44_u8; 28]);
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("MissingRedeemers");
+        if let ConwayUtxowPredFailure::MissingRedeemers(redeemers) = &f {
+            match &redeemers.entries[0].0 {
+                ConwayPlutusPurposeItem::ConwayCertifying(TxCert::ConwayTxCertDeleg {
+                    cert_tag,
+                    pool,
+                    drep,
+                    deposit,
+                    ..
+                }) => {
+                    assert_eq!(*cert_tag, 13);
+                    assert!(pool.is_some());
+                    assert!(matches!(drep, Some(DRep::DRepKeyHash(_))));
+                    assert_eq!(*deposit, Some(5000));
+                }
+                other => panic!("expected ConwayCertifying deleg, got {other:?}"),
+            }
+        } else {
+            panic!("expected MissingRedeemers, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.contains("RegDepositDelegTxCert (KeyHashObj (KeyHash {unKeyHash = \"1111"),
+            "got: {s}"
+        );
+        assert!(
+            s.contains("(DRepKeyHash (KeyHash {unKeyHash = \"3333"),
+            "got: {s}"
+        );
+        assert!(s.contains("(Coin 5000))"), "got: {s}");
     }
 
     #[test]
