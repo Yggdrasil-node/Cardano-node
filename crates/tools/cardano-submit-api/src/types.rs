@@ -3059,14 +3059,17 @@ impl fmt::Display for StrictMaybeGovPurposeId {
 
 /// A decoded protocol-parameter value within a `PParamsUpdate`.
 /// The integer-valued parameters (Coin / Word16 / Word32 /
-/// EpochInterval — minFeeA, keyDeposit, maxTxSize, …) decode to
-/// a typed `Word`; the rational and structured parameters
-/// (`a0`, `rho`, cost models, ExUnits, voting thresholds) keep
-/// raw inner CBOR pending their typed decoders.
+/// EpochInterval) decode to a typed `Word`; the rational
+/// parameters (`a0`, `rho`, `tau`, `minFeeRefScriptCostPerByte`)
+/// to a typed `Rational`; the structured parameters (cost
+/// models, ExUnits, voting thresholds) keep raw inner CBOR
+/// pending their typed decoders.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PParamValue {
     /// An unsigned integer parameter value.
     Word(u64),
+    /// A tag-30 rational parameter value.
+    Rational(UnitInterval),
     /// A not-yet-typed structured parameter value.
     Raw(Vec<u8>),
 }
@@ -3075,6 +3078,7 @@ impl fmt::Display for PParamValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Word(n) => write!(f, "{n}"),
+            Self::Rational(r) => write!(f, "{r}"),
             Self::Raw(b) => write!(f, "<raw-cbor {} bytes>", b.len()),
         }
     }
@@ -3117,6 +3121,10 @@ impl PParamsUpdate {
                     .unsigned()
                     .map_err(|err| DecoderError(format!("PParamsUpdate: value Word: {err:?}")))?;
                 PParamValue::Word(n)
+            } else if major == 6 {
+                // Tag-30 rational (`a0` / `rho` / `tau` /
+                // `minFeeRefScriptCostPerByte`).
+                PParamValue::Rational(UnitInterval::from_decoder(dec)?)
             } else {
                 let value_start = dec.position();
                 dec.skip()
@@ -12175,6 +12183,35 @@ mod tests {
             f.to_string(),
             "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
         );
+    }
+
+    #[test]
+    fn pparams_update_decodes_rational_value() {
+        // ParameterChange whose PParamsUpdate sets `a0` (id 9) to
+        // a tag-30 rational 3 % 1000.
+        let mut cbor = vec![0x82_u8, 0x01, 0x84, 0x00, 0xF6];
+        cbor.push(0xA1); // PParamsUpdate map(1)
+        cbor.push(0x09); // param id 9 (a0)
+        cbor.extend_from_slice(&[0xD8, 0x1E, 0x82, 0x03, 0x19, 0x03, 0xE8]); // tag30 [3, 1000]
+        cbor.push(0xF6); // guardrail = null
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::ParameterChange {
+            pparams_update,
+            ..
+        }) = &f
+        {
+            assert_eq!(pparams_update.updates.len(), 1);
+            match &pparams_update.updates[0].1 {
+                PParamValue::Rational(r) => {
+                    assert_eq!(r.numerator, 3);
+                    assert_eq!(r.denominator, 1000);
+                }
+                other => panic!("expected Rational, got {other:?}"),
+            }
+        } else {
+            panic!("expected ParameterChange, got {f:?}");
+        }
+        assert!(f.to_string().contains("(a0,3 % 1000)"), "got: {f}");
     }
 
     #[test]

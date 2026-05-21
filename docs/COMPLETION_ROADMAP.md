@@ -789,10 +789,12 @@ PParamsUpdate, guardrail }`. **All 7 GovAction variants now
 carry typed payloads.** R675 (2026-05-21) added the
 `PParamsUpdate::param_name` lookup — the `PParamsUpdate` Display
 renders each updated parameter by its upstream Conway name.
-R676 (2026-05-21) added the `PParamValue` enum (`Word` /
-`Raw`) — the integer-valued parameters (Coin / Word16 / Word32
-/ EpochInterval) now decode to a typed `Word`; only the
-rational and structured parameters (`a0`, `rho`, cost models,
+R676 (2026-05-21) added the `PParamValue` enum — the
+integer-valued parameters decode to a typed `Word`. R677
+(2026-05-21) added the `PParamValue::Rational` variant — the
+tag-30 rational parameters (`a0`, `rho`, `tau`,
+`minFeeRefScriptCostPerByte`) now decode to a typed
+`UnitInterval`; only the structured parameters (cost models,
 ExUnits, voting thresholds) keep a `<raw-cbor>` marker. R653
 (2026-05-21) added the `Anchor` and `ProposalProcedure` types
 (4-field record: deposit / return-addr / GovAction / Anchor)
