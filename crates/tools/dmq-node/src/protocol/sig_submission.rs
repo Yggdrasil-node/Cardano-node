@@ -17,6 +17,7 @@
 //! rounds, appended to this file.
 
 use std::fmt;
+use std::time::Duration;
 
 use yggdrasil_consensus::OpCert;
 use yggdrasil_crypto::{KesSignature, Signature, SumKesVerificationKey, VerificationKey};
@@ -867,6 +868,14 @@ impl SigSubmissionMessage {
 /// the inbound governor.
 const SIG_SUBMISSION_LIST_MAX: usize = 4_096;
 
+/// `shortWait` — upstream `Ouroboros.Network.Protocol.Limits.shortWait`
+/// (`Just 10`).
+const SHORT_WAIT: Option<Duration> = Some(Duration::from_secs(10));
+
+/// `smallByteLimit` — upstream
+/// `Ouroboros.Network.Protocol.Limits.smallByteLimit` (`0xffff`).
+const SMALL_BYTE_LIMIT: u64 = 0xffff;
+
 /// An illegal `SigSubmission` state transition.
 ///
 /// Mirror of `crates/network`'s `TxSubmissionTransitionError`.
@@ -922,6 +931,33 @@ impl SigSubmissionState {
                 message: msg.tag_name(),
             }),
         }
+    }
+
+    /// The inactivity timeout for this protocol state — `None` is
+    /// upstream `waitForever`.
+    ///
+    /// Mirror of upstream `Codec.hs::timeLimitsSigSubmission`:
+    /// `StInit` / `StIdle` / blocking `StTxIds` wait forever;
+    /// non-blocking `StTxIds` and `StTxs` use `shortWait`. The
+    /// terminal `StDone` has no active timeout.
+    pub fn time_limit(self) -> Option<Duration> {
+        match self {
+            SigSubmissionState::StInit
+            | SigSubmissionState::StIdle
+            | SigSubmissionState::StTxIds { blocking: true }
+            | SigSubmissionState::StDone => None,
+            SigSubmissionState::StTxIds { blocking: false } | SigSubmissionState::StTxs => {
+                SHORT_WAIT
+            }
+        }
+    }
+
+    /// The maximum inbound-message size for this protocol state.
+    ///
+    /// Mirror of upstream `Codec.hs::byteLimitsSigSubmission` —
+    /// `smallByteLimit` for every state.
+    pub fn byte_limit(self) -> u64 {
+        SMALL_BYTE_LIMIT
     }
 }
 
@@ -1345,6 +1381,38 @@ mod tests {
             matches!(err, LedgerError::CborTypeMismatch { .. }),
             "unexpected error: {err:?}"
         );
+    }
+
+    #[test]
+    fn sig_submission_time_limits_match_upstream() {
+        // waitForever (None) for Init / Idle / blocking TxIds / Done.
+        assert_eq!(SigSubmissionState::StInit.time_limit(), None);
+        assert_eq!(SigSubmissionState::StIdle.time_limit(), None);
+        assert_eq!(
+            SigSubmissionState::StTxIds { blocking: true }.time_limit(),
+            None
+        );
+        assert_eq!(SigSubmissionState::StDone.time_limit(), None);
+        // shortWait (10s) for non-blocking TxIds and Txs.
+        let short = Some(std::time::Duration::from_secs(10));
+        assert_eq!(
+            SigSubmissionState::StTxIds { blocking: false }.time_limit(),
+            short
+        );
+        assert_eq!(SigSubmissionState::StTxs.time_limit(), short);
+    }
+
+    #[test]
+    fn sig_submission_byte_limit_is_small_byte_limit() {
+        for state in [
+            SigSubmissionState::StInit,
+            SigSubmissionState::StIdle,
+            SigSubmissionState::StTxIds { blocking: true },
+            SigSubmissionState::StTxs,
+            SigSubmissionState::StDone,
+        ] {
+            assert_eq!(state.byte_limit(), 0xffff);
+        }
     }
 
     #[test]
