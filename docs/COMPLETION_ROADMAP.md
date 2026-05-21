@@ -727,9 +727,14 @@ tag 7 (`ExpirationEpochTooSmall` — `NonEmptyMap (Credential
 ColdCommitteeRole) EpochNo`). R647 (2026-05-21) added the
 `NonEmptySetCredential` carrier (tag-258-tolerant set of
 Credential) and wired GOV tag 6 (`ConflictingCommitteeUpdate`).
-**7 of 19 Conway GOV variants now carry typed payloads**; the
-other 12 keep raw inner CBOR pending typed governance-specific
-decoders (GovAction, Voter, ProposalProcedure, ProtVer). **All 9 Conway LEDGER root variants now carry
+R648 (2026-05-21) added the `Voter` enum (CommitteeVoter /
+DRepVoter / StakePoolVoter), the `NonEmptyVoter` carrier, and
+the `NonEmptyVoterGovActionId` pair-list carrier, and wired GOV
+tags 5 (`DisallowedVoters`), 9 (`VotingOnExpiredGovAction`), 13
+(`DisallowedVotesDuringBootstrap`), 14 (`VotersDoNotExist`).
+**11 of 19 Conway GOV variants now carry typed payloads**; the
+other 8 keep raw inner CBOR pending typed governance-specific
+decoders (GovAction, ProposalProcedure, ProtVer). **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).

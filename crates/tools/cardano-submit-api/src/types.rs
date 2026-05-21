@@ -2339,6 +2339,189 @@ impl fmt::Display for GovActionId {
     }
 }
 
+/// Governance voter mirroring upstream `data Voter =
+/// CommitteeVoter (Credential HotCommitteeRole) | DRepVoter
+/// (Credential DRepRole) | StakePoolVoter (KeyHash StakePool)`.
+///
+/// CBOR wire format is a 2-element array `[wire-tag, hash]`:
+/// wire-tag 0/1 = CommitteeVoter (KeyHash / ScriptHash), 2/3 =
+/// DRepVoter (KeyHash / ScriptHash), 4 = StakePoolVoter
+/// (KeyHash). Display matches upstream stock-derived Show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Voter {
+    /// Constitutional-committee hot credential.
+    CommitteeVoter(Credential),
+    /// Delegated-representative credential.
+    DRepVoter(Credential),
+    /// Stake-pool operator key hash.
+    StakePoolVoter(KeyHash),
+}
+
+impl Voter {
+    /// Decode a `Voter` from its 2-element CBOR `Sum` envelope
+    /// `[wire-tag, 28-byte-hash]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("Voter: expected 2-array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "Voter: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("Voter: expected Word8 tag: {err:?}")))?;
+        let hash_bytes = dec
+            .bytes()
+            .map_err(|err| DecoderError(format!("Voter: expected hash bytes: {err:?}")))?;
+        let arr: [u8; 28] = hash_bytes
+            .try_into()
+            .map_err(|_| DecoderError("Voter: hash must be 28 bytes".to_string()))?;
+        match tag {
+            0 => Ok(Self::CommitteeVoter(Credential::KeyHashObj(KeyHash(arr)))),
+            1 => Ok(Self::CommitteeVoter(Credential::ScriptHashObj(ScriptHash(
+                arr,
+            )))),
+            2 => Ok(Self::DRepVoter(Credential::KeyHashObj(KeyHash(arr)))),
+            3 => Ok(Self::DRepVoter(Credential::ScriptHashObj(ScriptHash(arr)))),
+            4 => Ok(Self::StakePoolVoter(KeyHash(arr))),
+            other => Err(DecoderError(format!("Voter: unknown voter tag {other}"))),
+        }
+    }
+}
+
+impl fmt::Display for Voter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CommitteeVoter(cred) => write!(f, "CommitteeVoter ({cred})"),
+            Self::DRepVoter(cred) => write!(f, "DRepVoter ({cred})"),
+            Self::StakePoolVoter(kh) => write!(f, "StakePoolVoter ({kh})"),
+        }
+    }
+}
+
+/// Non-empty list of governance voters mirroring upstream
+/// `NonEmpty Voter`. CBOR wire format is a plain CBOR array with
+/// ≥ 1 entry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyVoter {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<Voter>,
+}
+
+impl NonEmptyVoter {
+    /// Decode a `NonEmpty Voter` from canonical CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec
+            .array()
+            .map_err(|err| DecoderError(format!("NonEmptyVoter: expected CBOR array: {err:?}")))?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyVoter: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(Voter::from_decoder(&mut dec)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyVoter {
+    /// Render upstream `Show (NonEmpty Voter)`: `<head> :|
+    /// [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyVoter enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for v in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{v}")?;
+        }
+        f.write_str("]")
+    }
+}
+
+/// Non-empty list of `(Voter, GovActionId)` pairs mirroring
+/// upstream `NonEmpty (Voter, GovActionId)`. CBOR wire format is
+/// a plain CBOR array of 2-element `[voter, gov-action-id]`
+/// arrays; empty arrays reject at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyVoterGovActionId {
+    /// Decoded `(voter, gov-action)` pairs in wire order.
+    /// Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<(Voter, GovActionId)>,
+}
+
+impl NonEmptyVoterGovActionId {
+    /// Decode a `NonEmpty (Voter, GovActionId)` from canonical
+    /// CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyVoterGovActionId: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyVoterGovActionId: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let pair_len = dec.array().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyVoterGovActionId: expected 2-element pair: {err:?}"
+                ))
+            })?;
+            if pair_len != 2 {
+                return Err(DecoderError(format!(
+                    "NonEmptyVoterGovActionId: expected 2-element pair, got len {pair_len}"
+                )));
+            }
+            let voter = Voter::from_decoder(&mut dec)?;
+            let gov_action = GovActionId::from_decoder(&mut dec)?;
+            entries.push((voter, gov_action));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyVoterGovActionId {
+    /// Render upstream `Show (NonEmpty (Voter, GovActionId))`:
+    /// `<head> :| [<tail>...]` where each pair is `(<Voter>,
+    /// <GovActionId>)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyVoterGovActionId enforces ≥1 entry at decode time");
+        write!(f, "({}, {}) :| [", head.0, head.1)?;
+        let mut first = true;
+        for (voter, gov_action) in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "({voter}, {gov_action})")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Non-empty list of governance-action identifiers mirroring
 /// upstream `NonEmpty GovActionId`. CBOR wire format is a plain
 /// CBOR array with ≥ 1 entry.
@@ -7166,7 +7349,7 @@ pub enum ConwayGovPredFailure {
     ProposalDepositIncorrect(Mismatch<u64>),
     /// Tag 5: disallowed voters for specific actions —
     /// `NonEmpty (Voter, GovActionId)`. Raw.
-    DisallowedVoters(Vec<u8>),
+    DisallowedVoters(NonEmptyVoterGovActionId),
     /// Tag 6: cold-committee credentials both removed and added
     /// — `NonEmptySet (Credential ColdCommitteeRole)` (R647
     /// typed).
@@ -7180,7 +7363,7 @@ pub enum ConwayGovPredFailure {
     InvalidPrevGovActionId(Vec<u8>),
     /// Tag 9: voting on expired gov action —
     /// `NonEmpty (Voter, GovActionId)`. Raw.
-    VotingOnExpiredGovAction(Vec<u8>),
+    VotingOnExpiredGovAction(NonEmptyVoterGovActionId),
     /// Tag 10: hard-fork proposal protocol-version sequence —
     /// `StrictMaybe (GovPurposeId 'HardForkPurpose) + Mismatch
     /// RelGT ProtVer` via ToGroup. Raw.
@@ -7200,10 +7383,10 @@ pub enum ConwayGovPredFailure {
     DisallowedProposalDuringBootstrap(Vec<u8>),
     /// Tag 13: votes not allowed during bootstrap —
     /// `NonEmpty (Voter, GovActionId)`. Raw.
-    DisallowedVotesDuringBootstrap(Vec<u8>),
+    DisallowedVotesDuringBootstrap(NonEmptyVoterGovActionId),
     /// Tag 14: voters do not exist in ledger state —
     /// `NonEmpty Voter`. Raw.
-    VotersDoNotExist(Vec<u8>),
+    VotersDoNotExist(NonEmptyVoter),
     /// Tag 15: treasury withdrawals sum to zero —
     /// `GovAction era`. Raw.
     ZeroTreasuryWithdrawals(Vec<u8>),
@@ -7354,7 +7537,19 @@ impl ConwayGovPredFailure {
                 "TreasuryWithdrawalsNetworkIdMismatch",
                 3,
             )?)),
-            5 => Ok(Self::DisallowedVoters(capture_raw("DisallowedVoters", 2)?)),
+            5 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "DisallowedVoters: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::DisallowedVoters(NonEmptyVoterGovActionId::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             6 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -7385,10 +7580,19 @@ impl ConwayGovPredFailure {
                 "InvalidPrevGovActionId",
                 2,
             )?)),
-            9 => Ok(Self::VotingOnExpiredGovAction(capture_raw(
-                "VotingOnExpiredGovAction",
-                2,
-            )?)),
+            9 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "VotingOnExpiredGovAction: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::VotingOnExpiredGovAction(
+                    NonEmptyVoterGovActionId::from_cbor(payload_bytes)?,
+                ))
+            }
             10 => Ok(Self::ProposalCantFollow(capture_raw(
                 "ProposalCantFollow",
                 4,
@@ -7407,11 +7611,32 @@ impl ConwayGovPredFailure {
                 "DisallowedProposalDuringBootstrap",
                 2,
             )?)),
-            13 => Ok(Self::DisallowedVotesDuringBootstrap(capture_raw(
-                "DisallowedVotesDuringBootstrap",
-                2,
-            )?)),
-            14 => Ok(Self::VotersDoNotExist(capture_raw("VotersDoNotExist", 2)?)),
+            13 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "DisallowedVotesDuringBootstrap: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::DisallowedVotesDuringBootstrap(
+                    NonEmptyVoterGovActionId::from_cbor(payload_bytes)?,
+                ))
+            }
+            14 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "VotersDoNotExist: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::VotersDoNotExist(NonEmptyVoter::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             15 => Ok(Self::ZeroTreasuryWithdrawals(capture_raw(
                 "ZeroTreasuryWithdrawals",
                 2,
@@ -7482,16 +7707,24 @@ impl fmt::Display for ConwayGovPredFailure {
             Self::MalformedProposal(b)
             | Self::ProposalProcedureNetworkIdMismatch(b)
             | Self::TreasuryWithdrawalsNetworkIdMismatch(b)
-            | Self::DisallowedVoters(b)
             | Self::InvalidPrevGovActionId(b)
-            | Self::VotingOnExpiredGovAction(b)
             | Self::ProposalCantFollow(b)
             | Self::DisallowedProposalDuringBootstrap(b)
-            | Self::DisallowedVotesDuringBootstrap(b)
-            | Self::VotersDoNotExist(b)
             | Self::ZeroTreasuryWithdrawals(b)
             | Self::UnelectedCommitteeVoters(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::DisallowedVoters(pairs) => {
+                write!(f, "DisallowedVoters ({pairs})")
+            }
+            Self::VotingOnExpiredGovAction(pairs) => {
+                write!(f, "VotingOnExpiredGovAction ({pairs})")
+            }
+            Self::DisallowedVotesDuringBootstrap(pairs) => {
+                write!(f, "DisallowedVotesDuringBootstrap ({pairs})")
+            }
+            Self::VotersDoNotExist(voters) => {
+                write!(f, "VotersDoNotExist ({voters})")
             }
             Self::ProposalReturnAccountDoesNotExist(account) => {
                 write!(
@@ -8837,6 +9070,73 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("NonEmptySet requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_voters_do_not_exist_tag14() {
+        // outer [0x82, 0x0E, NonEmpty [Voter]]. NonEmpty array(1)
+        // of Voter [4, bytes(28)] (StakePoolVoter).
+        let mut cbor = vec![0x82_u8, 0x0E, 0x81, 0x82, 0x04];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x6A_u8; 28]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("VotersDoNotExist");
+        if let ConwayGovPredFailure::VotersDoNotExist(voters) = &f {
+            assert_eq!(voters.entries.len(), 1);
+            assert!(matches!(voters.entries[0], Voter::StakePoolVoter(_)));
+        } else {
+            panic!("expected VotersDoNotExist, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("VotersDoNotExist (StakePoolVoter (KeyHash {unKeyHash = \"6a6a"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_disallowed_voters_tag5() {
+        // outer [0x82, 0x05, NonEmpty [(Voter, GovActionId)]].
+        // pair = [Voter [2, bytes(28)] (DRepVoter KeyHashObj),
+        // GovActionId [txid32, ix=1]].
+        let mut cbor = vec![0x82_u8, 0x05, 0x81, 0x82];
+        // Voter [2, bytes(28)]
+        cbor.push(0x82);
+        cbor.push(0x02);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x9B_u8; 28]);
+        // GovActionId [txid32, ix=1]
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x2D_u8; 32]);
+        cbor.push(0x01);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("DisallowedVoters");
+        if let ConwayGovPredFailure::DisallowedVoters(pairs) = &f {
+            assert_eq!(pairs.entries.len(), 1);
+            assert!(matches!(pairs.entries[0].0, Voter::DRepVoter(_)));
+            assert_eq!(pairs.entries[0].1.gov_action_ix, 1);
+        } else {
+            panic!("expected DisallowedVoters, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("DisallowedVoters ((DRepVoter (KeyHashObj"),
+            "got: {s}"
+        );
+        assert!(s.ends_with(":| [])"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_voters_do_not_exist_rejects_empty() {
+        let cbor = [0x82_u8, 0x0E, 0x80];
+        let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
             "got: {err}"
         );
     }
