@@ -924,9 +924,16 @@ and fully typed the delegation-certificate tail —
 `TxCert::ConwayTxCertDeleg` now carries `credential` plus typed
 `pool: Option<KeyHash>`, `drep: Option<DRep>`, `deposit:
 Option<u64>` fields decoded positionally per the upstream
-`conwayTxCertDelegDecoder`. **The entire `ConwayTxCertDeleg`
-delegation-certificate family is now fully typed**; only the
-`ConwayTxCertPool` / `ConwayTxCertGov` bodies remain raw.
+`conwayTxCertDelegDecoder`. R663 (2026-05-21) added the
+`StrictMaybeAnchor` type (`null`-encoded `StrictMaybe Anchor`)
+and fully typed the governance-certificate family —
+`TxCert::ConwayTxCertGov` now carries the leading `credential`
+plus typed `hot_credential: Option<Credential>`, `deposit:
+Option<u64>`, `anchor: Option<StrictMaybeAnchor>` fields for
+the committee/DRep certs (tags 14-18). **Both the
+`ConwayTxCertDeleg` and `ConwayTxCertGov` certificate families
+are now fully typed**; only the `ConwayTxCertPool` (`PoolCert`,
+tags 3-4) body remains raw.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

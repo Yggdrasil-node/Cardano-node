@@ -5973,13 +5973,57 @@ pub enum TxCert {
         raw: Vec<u8>,
     },
     /// Governance-family certificate (`ConwayTxCertGov`) —
-    /// upstream `Sum` tags 14-18.
+    /// upstream `Sum` tags 14-18. Fully typed: the leading
+    /// credential (cold-committee for tags 14/15, DRep for
+    /// 16/17/18) plus the per-tag tail.
     ConwayTxCertGov {
         /// The upstream `decodeRecordSum` tag.
         cert_tag: u64,
-        /// The raw per-certificate payload (after the tag).
-        raw: Vec<u8>,
+        /// The leading credential (committee cold key for
+        /// AuthCommitteeHotKey / ResignCommitteeCold; the DRep
+        /// credential for the DRep-registration certificates).
+        credential: Credential,
+        /// The hot-committee credential — present only for tag
+        /// 14 (`AuthCommitteeHotKeyTxCert`).
+        hot_credential: Option<Credential>,
+        /// The DRep deposit `Coin` — present for tags 16/17.
+        deposit: Option<u64>,
+        /// The off-chain metadata anchor (`StrictMaybe Anchor`,
+        /// `null`-encoded) — present for tags 15/16/18.
+        anchor: Option<StrictMaybeAnchor>,
     },
+}
+
+/// `StrictMaybe Anchor` renderer — a `null`-encoded optional
+/// `Anchor` (upstream `decodeNullStrictMaybe`: CBOR `null` =
+/// `SNothing`, otherwise the encoded `Anchor` = `SJust`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StrictMaybeAnchor(pub Option<Anchor>);
+
+impl StrictMaybeAnchor {
+    /// Decode a `null`-encoded `StrictMaybe Anchor`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("StrictMaybeAnchor: peek: {err:?}")))?;
+        if major == 7 {
+            dec.null().map_err(|err| {
+                DecoderError(format!("StrictMaybeAnchor: expected null: {err:?}"))
+            })?;
+            Ok(Self(None))
+        } else {
+            Ok(Self(Some(Anchor::from_decoder(dec)?)))
+        }
+    }
+}
+
+impl fmt::Display for StrictMaybeAnchor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            None => f.write_str("SNothing"),
+            Some(anchor) => write!(f, "SJust ({anchor})"),
+        }
+    }
 }
 
 impl TxCert {
@@ -6105,10 +6149,33 @@ impl TxCert {
                 cert_tag,
                 raw: capture_rest(dec, 1)?,
             }),
-            14..=18 => Ok(Self::ConwayTxCertGov {
-                cert_tag,
-                raw: capture_rest(dec, 1)?,
-            }),
+            14..=18 => {
+                // Every governance certificate's first payload
+                // field is a credential; the tail is positional
+                // per the upstream `conwayTxCertDelegDecoder`.
+                let credential = Credential::from_decoder(dec)?;
+                let mut hot_credential = None;
+                let mut deposit = None;
+                let mut anchor = None;
+                match cert_tag {
+                    14 => hot_credential = Some(Credential::from_decoder(dec)?),
+                    15 => anchor = Some(StrictMaybeAnchor::from_decoder(dec)?),
+                    16 => {
+                        deposit = Some(read_deposit(dec)?);
+                        anchor = Some(StrictMaybeAnchor::from_decoder(dec)?);
+                    }
+                    17 => deposit = Some(read_deposit(dec)?),
+                    18 => anchor = Some(StrictMaybeAnchor::from_decoder(dec)?),
+                    _ => unreachable!("govcert tag range is 14-18"),
+                }
+                Ok(Self::ConwayTxCertGov {
+                    cert_tag,
+                    credential,
+                    hot_credential,
+                    deposit,
+                    anchor,
+                })
+            }
             other => Err(DecoderError(format!(
                 "TxCert: unknown certificate tag {other}"
             ))),
@@ -6156,13 +6223,28 @@ impl fmt::Display for TxCert {
                     raw.len()
                 )
             }
-            Self::ConwayTxCertGov { cert_tag, raw } => {
+            Self::ConwayTxCertGov {
+                cert_tag,
+                credential,
+                hot_credential,
+                deposit,
+                anchor,
+            } => {
                 write!(
                     f,
-                    "ConwayTxCertGov ({} <raw-cbor {} bytes>)",
-                    Self::cert_constructor(*cert_tag),
-                    raw.len()
-                )
+                    "ConwayTxCertGov ({} ({credential})",
+                    Self::cert_constructor(*cert_tag)
+                )?;
+                if let Some(hot) = hot_credential {
+                    write!(f, " ({hot})")?;
+                }
+                if let Some(deposit) = deposit {
+                    write!(f, " ({})", CoinShow(*deposit))?;
+                }
+                if let Some(anchor) = anchor {
+                    write!(f, " ({anchor})")?;
+                }
+                f.write_str(")")
             }
         }
     }
@@ -10233,6 +10315,82 @@ mod tests {
             "got: {f}"
         );
         assert!(f.to_string().contains(") (Coin 10000))"), "got: {f}");
+    }
+
+    #[test]
+    fn tx_cert_decodes_gov_auth_committee_hot_key() {
+        // TxCert Sum tag 14 (AuthCommitteeHotKeyTxCert) —
+        // `[14, coldCred, hotCred]`.
+        let mut cbor = vec![0x83_u8, 0x0E];
+        cbor.push(0x82); // cold credential [0, bytes(28)]
+        cbor.push(0x00);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xA1_u8; 28]);
+        cbor.push(0x82); // hot credential [1, bytes(28)]
+        cbor.push(0x01);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xB2_u8; 28]);
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("AuthCommitteeHotKey");
+        if let TxCert::ConwayTxCertGov {
+            cert_tag,
+            credential,
+            hot_credential,
+            deposit,
+            anchor,
+        } = &cert
+        {
+            assert_eq!(*cert_tag, 14);
+            assert!(matches!(credential, Credential::KeyHashObj(_)));
+            assert!(matches!(hot_credential, Some(Credential::ScriptHashObj(_))));
+            assert!(deposit.is_none() && anchor.is_none());
+        } else {
+            panic!("expected ConwayTxCertGov, got {cert:?}");
+        }
+        assert!(
+            cert.to_string()
+                .starts_with("ConwayTxCertGov (AuthCommitteeHotKeyTxCert (KeyHashObj"),
+            "got: {cert}"
+        );
+    }
+
+    #[test]
+    fn tx_cert_decodes_gov_reg_drep_with_anchor() {
+        // TxCert Sum tag 16 (RegDRepTxCert) — `[16, drepCred,
+        // deposit, StrictMaybe Anchor]`. anchor = SNothing (null).
+        let mut cbor = vec![0x84_u8, 0x10];
+        cbor.push(0x82); // DRep credential [0, bytes(28)]
+        cbor.push(0x00);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xC3_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x07, 0xD0]); // deposit 2000
+        cbor.push(0xF6); // anchor = null → SNothing
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RegDRepTxCert");
+        if let TxCert::ConwayTxCertGov {
+            cert_tag,
+            deposit,
+            anchor,
+            ..
+        } = &cert
+        {
+            assert_eq!(*cert_tag, 16);
+            assert_eq!(*deposit, Some(2000));
+            assert!(matches!(anchor, Some(StrictMaybeAnchor(None))));
+        } else {
+            panic!("expected ConwayTxCertGov, got {cert:?}");
+        }
+        let s = cert.to_string();
+        assert!(
+            s.starts_with("ConwayTxCertGov (RegDRepTxCert (KeyHashObj"),
+            "got: {s}"
+        );
+        assert!(s.ends_with("(Coin 2000) (SNothing))"), "got: {s}");
     }
 
     #[test]
