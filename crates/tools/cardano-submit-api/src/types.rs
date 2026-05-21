@@ -3081,6 +3081,10 @@ pub enum PParamValue {
         /// The per-CPU-step price.
         step: UnitInterval,
     },
+    /// A vote-threshold vector (`poolVotingThresholds` /
+    /// `drepVotingThresholds`) — a fixed-length array of
+    /// rationals.
+    VotingThresholds(Vec<UnitInterval>),
     /// A not-yet-typed structured parameter value.
     Raw(Vec<u8>),
 }
@@ -3093,6 +3097,18 @@ impl fmt::Display for PParamValue {
             Self::ExUnits(ex) => write!(f, "{ex}"),
             Self::ExUnitPrices { mem, step } => {
                 write!(f, "Prices {{prMem = {mem}, prSteps = {step}}}")
+            }
+            Self::VotingThresholds(thresholds) => {
+                f.write_str("[")?;
+                let mut first = true;
+                for t in thresholds {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    write!(f, "{t}")?;
+                }
+                f.write_str("]")
             }
             Self::Raw(b) => write!(f, "<raw-cbor {} bytes>", b.len()),
         }
@@ -3148,6 +3164,17 @@ impl PParamsUpdate {
                 let mem = UnitInterval::from_decoder(dec)?;
                 let step = UnitInterval::from_decoder(dec)?;
                 PParamValue::ExUnitPrices { mem, step }
+            } else if key == 25 || key == 26 {
+                // poolVotingThresholds / drepVotingThresholds —
+                // a fixed-length array of tag-30 rationals.
+                let tlen = dec.array().map_err(|err| {
+                    DecoderError(format!("PParamsUpdate thresholds: expected array: {err:?}"))
+                })?;
+                let mut thresholds = Vec::with_capacity(tlen as usize);
+                for _ in 0..tlen {
+                    thresholds.push(UnitInterval::from_decoder(dec)?);
+                }
+                PParamValue::VotingThresholds(thresholds)
             } else if major == 0 {
                 let n = dec
                     .unsigned()
@@ -12214,6 +12241,44 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ZeroTreasuryWithdrawals (TreasuryWithdrawals (fromList []) (SNothing))"
+        );
+    }
+
+    #[test]
+    fn pparams_update_decodes_voting_thresholds() {
+        // ParameterChange whose PParamsUpdate sets
+        // poolVotingThresholds (id 25) — a 5-element array of
+        // tag-30 rationals (all 1 % 2 here).
+        let mut cbor = vec![0x82_u8, 0x01, 0x84, 0x00, 0xF6];
+        cbor.push(0xA1); // PParamsUpdate map(1)
+        cbor.push(0x18);
+        cbor.push(25); // param id 25
+        cbor.push(0x85); // array(5)
+        for _ in 0..5 {
+            cbor.extend_from_slice(&[0xD8, 0x1E, 0x82, 0x01, 0x02]); // tag30 [1, 2]
+        }
+        cbor.push(0xF6); // guardrail = null
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::ParameterChange {
+            pparams_update,
+            ..
+        }) = &f
+        {
+            match &pparams_update.updates[0].1 {
+                PParamValue::VotingThresholds(thresholds) => {
+                    assert_eq!(thresholds.len(), 5);
+                    assert_eq!(thresholds[0].numerator, 1);
+                    assert_eq!(thresholds[0].denominator, 2);
+                }
+                other => panic!("expected VotingThresholds, got {other:?}"),
+            }
+        } else {
+            panic!("expected ParameterChange, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .contains("(poolVotingThresholds,[1 % 2,1 % 2,1 % 2,1 % 2,1 % 2])"),
+            "got: {f}"
         );
     }
 
