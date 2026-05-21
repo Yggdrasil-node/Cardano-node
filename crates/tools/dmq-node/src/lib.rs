@@ -29,6 +29,7 @@ pub mod configuration;
 pub mod node_to_client;
 pub mod node_to_node;
 pub mod parser;
+pub mod policy;
 pub mod protocol;
 pub mod status;
 pub mod types;
