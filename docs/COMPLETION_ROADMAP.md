@@ -713,11 +713,15 @@ sub-rule, new in Conway for governance actions) and wired
 `ProposalDepositIncorrect` carries a typed `Mismatch<u64>` (Coin
 via ToGroup flattened). R643 (2026-05-21) added the `GovActionId`
 type (TxId + Word16 GovActionIx record) and `NonEmptyGovActionId`
-carrier, and wired GOV tag 0 (`GovActionsDoNotExist`). **2 of
-19 Conway GOV variants now carry typed payloads**; the other 17
-keep raw inner CBOR pending typed governance-specific decoders
-(GovAction, Voter, ProposalProcedure, ProtVer, Credential roles,
-StrictMaybe). **All 9 Conway LEDGER root variants now carry
+carrier, and wired GOV tag 0 (`GovActionsDoNotExist`). R644
+(2026-05-21) added the `show_reward_account` helper and the
+`NonEmptyAccountAddress` carrier, and wired GOV tags 16
+(`ProposalReturnAccountDoesNotExist` — single AccountAddress)
+and 17 (`TreasuryWithdrawalReturnAccountsDoNotExist` — NonEmpty
+AccountAddress). **4 of 19 Conway GOV variants now carry typed
+payloads**; the other 15 keep raw inner CBOR pending typed
+governance-specific decoders (GovAction, Voter,
+ProposalProcedure, ProtVer, Credential roles, StrictMaybe). **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).

@@ -2629,6 +2629,29 @@ impl NonEmptySetAccountAddress {
     }
 }
 
+/// Render a single `RewardAccount` as upstream's stock-derived
+/// `Show AccountAddress`: `AccountAddress {aaNetworkId =
+/// <Network>, aaId = <Credential>}`.
+fn show_reward_account(account: &yggdrasil_ledger::RewardAccount) -> String {
+    let network = match account.network {
+        0 => "Testnet",
+        1 => "Mainnet",
+        _ => "Unknown",
+    };
+    let inner = match account.credential {
+        yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => {
+            format!(
+                "KeyHashObj (KeyHash {{unKeyHash = \"{}\"}})",
+                hex::encode(h)
+            )
+        }
+        yggdrasil_ledger::StakeCredential::ScriptHash(h) => {
+            format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
+        }
+    };
+    format!("AccountAddress {{aaNetworkId = {network}, aaId = {inner}}}")
+}
+
 impl fmt::Display for NonEmptySetAccountAddress {
     /// Render upstream `Show (NonEmptySet AccountAddress)`:
     /// `NonEmptySet (fromList [AccountAddress {...}, ...])`.
@@ -2640,29 +2663,79 @@ impl fmt::Display for NonEmptySetAccountAddress {
                 f.write_str(",")?;
             }
             first = false;
-            let network = match account.network {
-                0 => "Testnet",
-                1 => "Mainnet",
-                _ => "Unknown",
-            };
-            let inner = match account.credential {
-                yggdrasil_ledger::StakeCredential::AddrKeyHash(h) => {
-                    format!(
-                        "KeyHashObj (KeyHash {{unKeyHash = \"{}\"}})",
-                        hex::encode(h)
-                    )
-                }
-                yggdrasil_ledger::StakeCredential::ScriptHash(h) => {
-                    format!("ScriptHashObj (ScriptHash \"{}\")", hex::encode(h))
-                }
-            };
-            write!(
-                f,
-                "AccountAddress {{aaNetworkId = {network}, aaId = {inner}}}"
-            )?;
+            f.write_str(&show_reward_account(account))?;
         }
         f.write_str("])")?;
         Ok(())
+    }
+}
+
+/// Non-empty list of reward-account addresses mirroring upstream
+/// `NonEmpty AccountAddress`. Unlike [`NonEmptySetAccountAddress`],
+/// this preserves wire order and permits duplicates — the CBOR
+/// wire format is a plain CBOR array (no tag-258 prefix). Empty
+/// arrays are rejected at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyAccountAddress {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<yggdrasil_ledger::RewardAccount>,
+}
+
+impl NonEmptyAccountAddress {
+    /// Decode a `NonEmpty AccountAddress` from canonical CBOR
+    /// bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyAccountAddress: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyAccountAddress: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let key_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyAccountAddress: expected AccountAddress bytes: {err:?}"
+                ))
+            })?;
+            let account =
+                yggdrasil_ledger::RewardAccount::from_bytes(key_bytes).ok_or_else(|| {
+                    DecoderError(format!(
+                        "NonEmptyAccountAddress: invalid reward-account ({} bytes)",
+                        key_bytes.len()
+                    ))
+                })?;
+            entries.push(account);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyAccountAddress {
+    /// Render upstream `Show (NonEmpty AccountAddress)`:
+    /// `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyAccountAddress enforces ≥1 entry at decode time");
+        write!(f, "{} :| [", show_reward_account(head))?;
+        let mut first = true;
+        for account in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            f.write_str(&show_reward_account(account))?;
+        }
+        f.write_str("]")
     }
 }
 
@@ -6956,11 +7029,11 @@ pub enum ConwayGovPredFailure {
     /// `GovAction era`. Raw.
     ZeroTreasuryWithdrawals(Vec<u8>),
     /// Tag 16: proposal return-account address does not exist —
-    /// `AccountAddress`. Raw.
-    ProposalReturnAccountDoesNotExist(Vec<u8>),
+    /// `AccountAddress` (R644 typed).
+    ProposalReturnAccountDoesNotExist(yggdrasil_ledger::RewardAccount),
     /// Tag 17: treasury withdrawal return-accounts do not exist
-    /// — `NonEmpty AccountAddress`. Raw.
-    TreasuryWithdrawalReturnAccountsDoNotExist(Vec<u8>),
+    /// — `NonEmpty AccountAddress` (R644 typed).
+    TreasuryWithdrawalReturnAccountsDoNotExist(NonEmptyAccountAddress),
     /// Tag 18: votes by unelected committee members —
     /// `NonEmpty (Credential HotCommitteeRole)`. Raw.
     UnelectedCommitteeVoters(Vec<u8>),
@@ -7140,13 +7213,39 @@ impl ConwayGovPredFailure {
                 "ZeroTreasuryWithdrawals",
                 2,
             )?)),
-            16 => Ok(Self::ProposalReturnAccountDoesNotExist(capture_raw(
-                "ProposalReturnAccountDoesNotExist",
-                2,
-            )?)),
-            17 => Ok(Self::TreasuryWithdrawalReturnAccountsDoNotExist(
-                capture_raw("TreasuryWithdrawalReturnAccountsDoNotExist", 2)?,
-            )),
+            16 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ProposalReturnAccountDoesNotExist: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let acct_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "ProposalReturnAccountDoesNotExist: expected AccountAddress bytes: {err:?}"
+                    ))
+                })?;
+                let account =
+                    yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes).ok_or_else(|| {
+                        DecoderError(format!(
+                            "ProposalReturnAccountDoesNotExist: invalid reward-account ({} bytes)",
+                            acct_bytes.len()
+                        ))
+                    })?;
+                Ok(Self::ProposalReturnAccountDoesNotExist(account))
+            }
+            17 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "TreasuryWithdrawalReturnAccountsDoNotExist: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::TreasuryWithdrawalReturnAccountsDoNotExist(
+                    NonEmptyAccountAddress::from_cbor(payload_bytes)?,
+                ))
+            }
             18 => Ok(Self::UnelectedCommitteeVoters(capture_raw(
                 "UnelectedCommitteeVoters",
                 2,
@@ -7191,10 +7290,18 @@ impl fmt::Display for ConwayGovPredFailure {
             | Self::DisallowedVotesDuringBootstrap(b)
             | Self::VotersDoNotExist(b)
             | Self::ZeroTreasuryWithdrawals(b)
-            | Self::ProposalReturnAccountDoesNotExist(b)
-            | Self::TreasuryWithdrawalReturnAccountsDoNotExist(b)
             | Self::UnelectedCommitteeVoters(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ProposalReturnAccountDoesNotExist(account) => {
+                write!(
+                    f,
+                    "ProposalReturnAccountDoesNotExist ({})",
+                    show_reward_account(account)
+                )
+            }
+            Self::TreasuryWithdrawalReturnAccountsDoNotExist(accounts) => {
+                write!(f, "TreasuryWithdrawalReturnAccountsDoNotExist ({accounts})")
             }
         }
     }
@@ -8421,6 +8528,67 @@ mod tests {
     #[test]
     fn conway_gov_pred_failure_gov_actions_do_not_exist_rejects_empty() {
         let cbor = [0x82_u8, 0x00, 0x80];
+        let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_proposal_return_account_tag16() {
+        // outer [0x82, 0x10, AccountAddress bytes(29)]. Reward
+        // account header 0xE1 = stake-key/Mainnet.
+        let mut cbor = vec![0x82_u8, 0x10];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x2B_u8; 28]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ProposalReturnAccountDoesNotExist");
+        if let ConwayGovPredFailure::ProposalReturnAccountDoesNotExist(account) = &f {
+            assert_eq!(account.network, 1);
+        } else {
+            panic!("expected ProposalReturnAccountDoesNotExist, got {f:?}");
+        }
+        assert!(
+            f.to_string().starts_with(
+                "ProposalReturnAccountDoesNotExist (AccountAddress {aaNetworkId = Mainnet"
+            ),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_treasury_withdrawal_return_accounts_tag17() {
+        // outer [0x82, 0x11, NonEmpty [AccountAddress]]. NonEmpty
+        // array(1) of bytes(29).
+        let mut cbor = vec![0x82_u8, 0x11, 0x81];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xF0); // script/Testnet
+        cbor.extend_from_slice(&[0x4D_u8; 28]);
+        let f = ConwayGovPredFailure::from_cbor(&cbor)
+            .expect("TreasuryWithdrawalReturnAccountsDoNotExist");
+        if let ConwayGovPredFailure::TreasuryWithdrawalReturnAccountsDoNotExist(accounts) = &f {
+            assert_eq!(accounts.entries.len(), 1);
+            assert_eq!(accounts.entries[0].network, 0);
+        } else {
+            panic!("expected TreasuryWithdrawalReturnAccountsDoNotExist, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "TreasuryWithdrawalReturnAccountsDoNotExist (AccountAddress {aaNetworkId = Testnet"
+            ),
+            "got: {s}"
+        );
+        assert!(s.ends_with(":| [])"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_treasury_withdrawal_return_accounts_rejects_empty() {
+        let cbor = [0x82_u8, 0x11, 0x80];
         let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
         assert!(
             err.to_string()
