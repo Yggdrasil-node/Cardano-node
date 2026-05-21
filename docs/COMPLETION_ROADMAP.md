@@ -285,8 +285,22 @@ one extraction):
     `yggdrasil-node-genesis`, so `db-analyser` reuses them without
     a sister-tool cross-dependency. `build_base_ledger_state` +
     `BaseLedgerStateInputs` already live there
-    (`crates/node/genesis/src/lib.rs:2960,3001`). Behavior-
-    preserving extraction — db-synthesizer's gates stay green.
+    (`crates/node/genesis/src/lib.rs:2960,3001`); so do every
+    per-era genesis loader (`load_shelley_genesis` etc.).
+    **R709 investigation — slice 1 is bigger than "behavior-
+    preserving move":** the extraction subgraph spans three
+    db-synthesizer files — `NodeConfigStub` (`types.rs`),
+    `parse_node_config_stub` + `AdjustFilePaths` +
+    `NodeConfigStubParseError` (`orphans.rs` — **a strict-mirror
+    file** mirroring upstream `Orphans.hs`), and
+    `resolve_node_config_stub` + `GenesisBundle` +
+    `load_genesis_bundle` (`run.rs`). Moving the `orphans.rs`
+    helpers must follow the `round-extraction` skill recipe and
+    update `docs/strict-mirror-audit.tsv`; the loaders' error type
+    (`RunError::{ConfigRead,ConfigParse,ConfigStub}`) needs a
+    `yggdrasil-node-genesis`-side replacement (likely folding into
+    `GenesisLoadError`). **This slice warrants a `parity-plan` and
+    a deliberate start — it is not a drop-in move.**
   - **Slice 2 — `db-analyser --config PATH` parser flag.** Add the
     flag + `DBAnalyserConfig` field, mirroring upstream
     `parseConfigFile`.
