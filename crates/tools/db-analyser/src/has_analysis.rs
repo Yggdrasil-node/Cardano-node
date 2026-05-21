@@ -31,6 +31,7 @@
 //!   documented in [`crate::csv`].
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Block-byte-count alias, used by [`HasAnalysis::block_tx_sizes`].
 ///
@@ -169,6 +170,32 @@ pub trait HasProtocolInfo: Sized {
     /// Build a `ProtocolInfo` from the supplied args. Mirror of
     /// upstream `mkProtocolInfo :: Args blk -> IO (ProtocolInfo blk)`.
     fn make_protocol_info(args: Self::Args) -> Result<Self::ProtocolInfo, Self::Error>;
+}
+
+/// CLI-derived arguments for constructing the Cardano-block protocol
+/// info — the `HasProtocolInfo` `Args` data-family instance.
+///
+/// Upstream `Block/Cardano.hs`:
+/// ```haskell
+/// data Args (CardanoBlock StandardCrypto) = CardanoBlockArgs
+///   { configFile :: FilePath
+///   , threshold  :: Maybe PBftSignatureThreshold
+///   }
+/// ```
+///
+/// db-analyser collapses the three per-era `Block/{Byron,Shelley,Cardano}.hs`
+/// modules into this module — see the [`HasAnalysis`] impl docstring — so
+/// the `Args (CardanoBlock StandardCrypto)` data-family instance lives
+/// here rather than in a `block/cardano.rs` mirror. `config_file` is the
+/// operator's node `config.json`; `threshold` is the optional Byron PBFT
+/// signature threshold (upstream `PBftSignatureThreshold` is a `Double`
+/// newtype → `f64`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CardanoBlockArgs {
+    /// Path to the operator's node `config.json`.
+    pub config_file: PathBuf,
+    /// Optional Byron PBFT signature threshold.
+    pub threshold: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +558,28 @@ mod tests {
     fn has_protocol_info_args_passes_through_to_make_protocol_info() {
         let protocol_info = StubProtocol::make_protocol_info(21).expect("constructs");
         assert_eq!(protocol_info, 42);
+    }
+
+    #[test]
+    fn cardano_block_args_constructs_without_threshold() {
+        let args = CardanoBlockArgs {
+            config_file: PathBuf::from("/etc/cardano/config.json"),
+            threshold: None,
+        };
+        assert_eq!(args.config_file, PathBuf::from("/etc/cardano/config.json"));
+        assert_eq!(args.threshold, None);
+    }
+
+    #[test]
+    fn cardano_block_args_carries_pbft_threshold() {
+        let args = CardanoBlockArgs {
+            config_file: PathBuf::from("config.json"),
+            threshold: Some(0.22),
+        };
+        assert_eq!(args.threshold, Some(0.22));
+        // The data-family instance derives structural equality, mirror
+        // of upstream's `CardanoBlockArgs` record being comparable.
+        assert_eq!(args.clone(), args);
     }
 
     // ── HasAnalysis for yggdrasil_ledger::Block (R476) ─────────────────

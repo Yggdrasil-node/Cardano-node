@@ -278,44 +278,53 @@ params absent). Upstream `db-analyser` takes `--config PATH`
 + genesis-seeded initial `LedgerState` from it. Verified
 decomposition (the loaders already exist; this is wiring +
 one extraction):
-  - **Slice 1 — extract the shared config→genesis loaders.** Move
-    `load_genesis_bundle` / `load_consensus_protocol` /
-    `build_initial_forge_state` / `load_initial_forge_state` (today
-    in `crates/tools/db-synthesizer/src/run.rs`) into
-    `yggdrasil-node-genesis`, so `db-analyser` reuses them without
-    a sister-tool cross-dependency. `build_base_ledger_state` +
-    `BaseLedgerStateInputs` already live there
-    (`crates/node/genesis/src/lib.rs:2960,3001`); so do every
-    per-era genesis loader (`load_shelley_genesis` etc.).
-    **R709 investigation — slice 1 is bigger than "behavior-
-    preserving move":** the extraction subgraph spans three
-    db-synthesizer files — `NodeConfigStub` (`types.rs`),
-    `parse_node_config_stub` + `AdjustFilePaths` +
-    `NodeConfigStubParseError` (`orphans.rs` — **a strict-mirror
-    file** mirroring upstream `Orphans.hs`), and
-    `resolve_node_config_stub` + `GenesisBundle` +
-    `load_genesis_bundle` (`run.rs`). Moving the `orphans.rs`
-    helpers must follow the `round-extraction` skill recipe and
-    update `docs/strict-mirror-audit.tsv`; the loaders' error type
-    (`RunError::{ConfigRead,ConfigParse,ConfigStub}`) needs a
-    `yggdrasil-node-genesis`-side replacement (likely folding into
-    `GenesisLoadError`). **This slice warrants a `parity-plan` and
-    a deliberate start — it is not a drop-in move.**
+  - **R710 RE-SCOPE — the original slice 1 was wrong-shaped.** The
+    R708 plan said "extract the db-synthesizer config→genesis
+    loaders into `yggdrasil-node-genesis`". R709 found that
+    entangled three db-synthesizer **strict-mirror files**
+    (`types.rs`/`orphans.rs`/`run.rs`, mirroring upstream
+    `DBSynthesizer/{Types,Orphans,Run}.hs`). R710 found *why* that
+    is the wrong shape: upstream `db-analyser` does **not** borrow
+    db-synthesizer's loaders — it has its own
+    `DBAnalyser/Block/Cardano.hs`, whose `Args (CardanoBlock
+    StandardCrypto) = CardanoBlockArgs { configFile, threshold }` +
+    `mkProtocolInfo` is the config→genesis path. yggdrasil
+    deliberately has **no `block/` subtree**: the three
+    `Block/{Byron,Shelley,Cardano}.hs` `HasAnalysis` instances are
+    collapsed into `has_analysis.rs` because `yggdrasil_ledger::Block`
+    is a unified era-tagged type (see the `HasAnalysis` impl
+    docstring there). The re-scoped arc extends that collapse — the
+    `CardanoBlockArgs` surface lives in `has_analysis.rs` — so
+    **db-synthesizer's strict-mirror files are not touched at all**:
+    the R709 entanglement is dissolved, no extraction, and no
+    `parity-plan` is needed (this is `round-extraction` territory).
+  - ✅ **Slice 1** (round 710) — `CardanoBlockArgs { config_file,
+    threshold }` added to `has_analysis.rs`, mirroring upstream
+    `Block/Cardano.hs::Args (CardanoBlock StandardCrypto)`. The real
+    config-args type the parser flag (slice 2) populates.
   - **Slice 2 — `db-analyser --config PATH` parser flag.** Add the
-    flag + `DBAnalyserConfig` field, mirroring upstream
-    `parseConfigFile`.
-  - **Slice 3 — load the genesis-seeded `LedgerState` in `run`.**
+    flag + `DBAnalyserConfig` field, populating `CardanoBlockArgs`,
+    mirroring upstream `app/DBAnalyser/Parsers.hs::parseConfigFile`.
+  - **Slice 3 — `CardanoConfig` mirror + config→genesis-bundle
+    loading.** Port `Cardano.Node.Types::CardanoConfig` (per-era
+    genesis paths + `AdjustFilePaths`) — R710 verified no such
+    mirror exists anywhere in `crates/`. Then a `HasProtocolInfo for
+    yggdrasil_ledger::Block` impl reads the config + loads the
+    genesis bundle (db-analyser's own copy — mirror of
+    `Block/Cardano.hs::mkProtocolInfo`, NOT a reuse of
+    db-synthesizer's `NodeConfigStub`).
+  - **Slice 4 — load the genesis-seeded `LedgerState` in `run`.**
     When `--config` is supplied, build the initial `LedgerState`
-    via the slice-1 shared loader.
-  - **Slice 4 — thread it into the analysis runner.** The 6
+    via the slice-3 loader.
+  - **Slice 5 — thread it into the analysis runner.** The 6
     ledger-applying analyses bootstrap from the genesis-seeded
     `LedgerState` instead of `LedgerState::new()`.
   **Validation gate:** a Conway genesis from
   `configuration/preview/` parses; `db-analyser --config
   <preview-config> --db <synthesized-chain>` runs the apply-loop
   analyses without empty-`LedgerState::new()` apply failures.
-  **Each slice is its own round** — author a `parity-plan` for the
-  slices that touch genesis-config parsing.
+  **Each slice is its own round** — author a `parity-plan` for
+  slice 3 (it touches genesis-config parsing).
 
 **Each slice is its own protocol-critical round** — author a `parity-plan`
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**
