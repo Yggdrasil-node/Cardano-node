@@ -24,9 +24,10 @@ use yggdrasil_crypto::blake2b::{hash_bytes_224, hash_bytes_256};
 use yggdrasil_crypto::vrf::VrfSecretKey;
 use yggdrasil_db_synthesizer::{parser, run};
 use yggdrasil_ledger::{
-    Address, BaseAddress, BlockNo, HeaderHash, Point, RewardAccount, SlotNo, StakeCredential,
+    Address, BaseAddress, BlockNo, CborDecode, HeaderHash, LedgerStateCheckpoint, Point,
+    RewardAccount, SlotNo, StakeCredential,
 };
-use yggdrasil_storage::{FileImmutable, ImmutableStore};
+use yggdrasil_storage::{FileImmutable, FileLedgerStore, ImmutableStore, LedgerStore};
 
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
@@ -78,7 +79,23 @@ fn write_bulk_credentials(dir: &std::path::Path) -> std::path::PathBuf {
         text_envelope("KesSigningKey_ed25519_kes_2^0", &cbor_bstr(&kes_seed)),
     );
     let path = dir.join("bulk-credentials.json");
+    // A prior call (tests that build `args_for` twice) may have left
+    // the file read-only (0o400); restore write access before
+    // overwriting.
+    #[cfg(unix)]
+    if path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     std::fs::write(&path, bulk).unwrap();
+    // The credential loader rejects a secret-key file that grants
+    // group/world access; tighten the mode so the test is
+    // umask-independent.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400)).unwrap();
+    }
     path
 }
 
@@ -305,4 +322,32 @@ fn synthesize_default_is_deterministic_across_runs() {
             .collect::<Vec<_>>()
     };
     assert_eq!(make(), make(), "structural synthesis is deterministic");
+}
+
+#[test]
+fn praos_synthesis_persists_a_ledger_checkpoint() {
+    // R3c-6 slice 1: the bulk-credentials Praos forge path writes a
+    // `LedgerStore` snapshot into the ChainDb `ledger/` subdir.
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().join("chaindb");
+    let args = args_for(tmp.path(), &target, 6, "create");
+    yggdrasil_db_synthesizer::run(&args).expect("run succeeds");
+
+    // The immutable blocks are still present and readable.
+    assert_eq!(FileImmutable::open(&target).unwrap().len(), 6);
+
+    // A ledger checkpoint was persisted under `<db>/ledger/` and
+    // round-trips through the typed `LedgerStateCheckpoint` codec.
+    let ledger_store =
+        FileLedgerStore::open_read_only(target.join("ledger")).expect("ledger store opens");
+    let (snapshot_slot, payload) = ledger_store
+        .latest_snapshot()
+        .expect("a ledger checkpoint was persisted");
+    assert!(!payload.is_empty(), "checkpoint payload is non-empty");
+    let checkpoint =
+        LedgerStateCheckpoint::from_cbor_bytes(payload).expect("checkpoint round-trips");
+    // The snapshot is keyed at the forged tip slot, and the restored
+    // ledger state's tip agrees with that slot.
+    let restored = checkpoint.restore();
+    assert_eq!(restored.tip.slot(), Some(snapshot_slot));
 }

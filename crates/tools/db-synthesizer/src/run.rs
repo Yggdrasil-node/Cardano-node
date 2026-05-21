@@ -50,7 +50,7 @@ use yggdrasil_consensus::{
 use yggdrasil_ledger::{
     Address, Delegations, IndividualStake, StakeCredential, StakeSnapshot, StakeSnapshots,
 };
-use yggdrasil_ledger::{Era, LedgerState, Nonce, Point, SlotNo};
+use yggdrasil_ledger::{CborEncode, Era, LedgerState, Nonce, Point, SlotNo};
 use yggdrasil_node_block_producer::{
     BlockProducerCredentials, BlockProducerError, load_block_producer_credentials,
     load_bulk_block_producer_credentials,
@@ -63,7 +63,9 @@ use yggdrasil_node_genesis::{
     load_alonzo_genesis, load_byron_genesis_utxo, load_conway_genesis, load_shelley_genesis,
     shelley_genesis_hash_to_praos_nonce,
 };
-use yggdrasil_storage::{FileImmutable, ImmutableStore, StorageError};
+use yggdrasil_storage::{
+    FileImmutable, FileLedgerStore, ImmutableStore, LedgerStore, StorageError,
+};
 
 use crate::forging::{
     ForgeRunOutcome, ForgeRuntimeConfig, ForgeState, run_forge, run_structural_forge,
@@ -344,6 +346,18 @@ fn synthesize_with_forge_state(
         runtime_config,
         forgers,
     )?;
+
+    // R3c-6 slice 1: persist the forged tip's ledger-state checkpoint
+    // into the ChainDb `ledger/` subdir, so the synthesized chain
+    // carries a `LedgerStore` snapshot alongside its immutable blocks.
+    // Skip when the forge tip is still `Origin` (no blocks forged or
+    // replayed) — there is no meaningful post-genesis state to save.
+    if let Some(tip_slot) = forge.final_state.ledger_state.tip.slot() {
+        let checkpoint = forge.final_state.ledger_state.checkpoint();
+        let mut ledger_store = FileLedgerStore::open(db_dir.join("ledger"))?;
+        ledger_store.save_snapshot(tip_slot, checkpoint.to_cbor_bytes())?;
+    }
+
     Ok(SynthesizeOutcome {
         forge,
         resumed_from,

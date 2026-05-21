@@ -224,6 +224,22 @@ Praos forging needs. Verified decomposition:
     advances across epochs.
   - 🟡 **R3c-6 — `FileImmutable` → `ChainDb` migration.** Persist a
     `LedgerStore` snapshot so `db-analyser` can validate the synthesized chain.
+    - ✅ **Slice 1** (round 705) — `synthesize_with_forge_state` now
+      persists the forged tip's ledger-state checkpoint into a
+      `<db>/ledger/` subdir via `FileLedgerStore` + the existing
+      `LedgerStateCheckpoint` CBOR codec (reuses the node's snapshot
+      format; no new wire format). The immutable blocks stay flat, so
+      `db-analyser` (which opens `FileImmutable` directly) is
+      unaffected. Also fixed a pre-existing umask-dependent failure in
+      the db-synthesizer integration suite (`write_bulk_credentials`
+      now `chmod`s the secret-key fixture so the credential-loader
+      permission check is deterministic).
+    - **Remaining:** (a) move the immutable blocks under a proper
+      `immutable/` subdir so the output is a canonical ChainDb layout;
+      (b) teach `db-analyser` to load the persisted `LedgerStore`
+      snapshot as the apply-loop's starting state — today `db-analyser`
+      reads only the immutable blocks and does not consume a ledger
+      snapshot.
 
 **Each slice is its own protocol-critical round** — author a `parity-plan`
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**
