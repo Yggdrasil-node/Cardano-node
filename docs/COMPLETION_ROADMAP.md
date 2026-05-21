@@ -782,11 +782,15 @@ Conway UTXO tag 21 (`BabbageOutputTooSmallUTxO`) — added the
 Coin)` pairs) and wired the variant. R641 (2026-05-21) typed
 Conway UTXO tag 13 (`ScriptsNotPaidUTxO`) — added the
 `NonEmptyMapTxInTxOut` carrier (CBOR-map-encoded NonEmptyMap
-TxIn → TxOut) and wired the variant. **21 of 23 Conway UTXO
-variants now carry typed payloads**; the 2 remaining (6
-ValueNotConservedUTxO, 15 CollateralContainsNonADA) keep raw
-inner CBOR pending the era-specific multi-asset Value decoder.
-R631
+TxIn → TxOut) and wired the variant. R642 (2026-05-21) added
+the Mary-era multi-asset value decoder — `PolicyId`,
+`AssetName`, `MultiAsset` (nested CBOR map), and `MaryValue`
+(handles both bare-coin ADA-only and 2-array forms) — and wired
+Conway UTXO tags 6 (`ValueNotConservedUTxO` —
+`Mismatch<MaryValue>` ToGroup) and 15
+(`CollateralContainsNonADA` — `MaryValue`). **All 23 Conway
+UTXO variants now carry typed payloads — the Conway UTXO
+sub-rule is fully typed.** R631
 (2026-05-21) added the `ConwayUtxosPredFailure` 2-variant
 scaffold (the UTXOS Plutus-script-evaluation sub-rule) plus the
 `FailureDescription` and `TagMismatchDescription` helper types,

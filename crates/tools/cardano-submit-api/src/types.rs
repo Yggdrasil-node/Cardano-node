@@ -742,6 +742,164 @@ impl fmt::Display for ExUnits {
     }
 }
 
+/// Minting-policy identifier mirroring upstream `newtype PolicyID
+/// = PolicyID {policyID :: ScriptHash}`. A 28-byte script hash.
+/// Display matches the stock-derived record Show:
+/// `PolicyID {policyID = ScriptHash "<hex>"}`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct PolicyId(pub [u8; 28]);
+
+impl fmt::Display for PolicyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "PolicyID {{policyID = ScriptHash \"{}\"}}",
+            hex::encode(self.0)
+        )
+    }
+}
+
+/// Native-asset name mirroring upstream `newtype AssetName =
+/// AssetName {assetNameBytes :: ShortByteString}` — a
+/// variable-length byte string (≤ 32 bytes). Display matches
+/// upstream `Show AssetName = show . assetNameToBytesAsHex`:
+/// the hex of the bytes, quoted.
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct AssetName(pub Vec<u8>);
+
+impl fmt::Display for AssetName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"{}\"", hex::encode(&self.0))
+    }
+}
+
+/// Multi-asset bundle mirroring upstream `newtype MultiAsset =
+/// MultiAsset (Map PolicyID (Map AssetName Integer))`. CBOR wire
+/// format is a nested CBOR map `{PolicyID: {AssetName: amount}}`.
+/// Entries are kept in wire order. Display matches the
+/// stock-derived Show: `MultiAsset (fromList [(<PolicyID>,
+/// fromList [(<AssetName>, <amount>)]), ...])`.
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct MultiAsset {
+    /// Per-policy asset bundles in wire order.
+    pub policies: Vec<(PolicyId, Vec<(AssetName, i64)>)>,
+}
+
+impl MultiAsset {
+    /// Decode a `MultiAsset` from an in-progress decoder (a
+    /// nested CBOR map).
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let policy_count = dec.map().map_err(|err| {
+            DecoderError(format!("MultiAsset: expected policy CBOR map: {err:?}"))
+        })?;
+        let mut policies = Vec::with_capacity(policy_count as usize);
+        for _ in 0..policy_count {
+            let pid_bytes = dec.bytes().map_err(|err| {
+                DecoderError(format!("MultiAsset: expected PolicyID bytes: {err:?}"))
+            })?;
+            let pid: [u8; 28] = pid_bytes
+                .try_into()
+                .map_err(|_| DecoderError("MultiAsset: PolicyID must be 28 bytes".to_string()))?;
+            let asset_count = dec.map().map_err(|err| {
+                DecoderError(format!("MultiAsset: expected asset CBOR map: {err:?}"))
+            })?;
+            let mut assets = Vec::with_capacity(asset_count as usize);
+            for _ in 0..asset_count {
+                let name = dec.bytes().map_err(|err| {
+                    DecoderError(format!("MultiAsset: expected AssetName bytes: {err:?}"))
+                })?;
+                let amount = dec.signed().map_err(|err| {
+                    DecoderError(format!("MultiAsset: expected asset amount: {err:?}"))
+                })?;
+                assets.push((AssetName(name.to_vec()), amount));
+            }
+            policies.push((PolicyId(pid), assets));
+        }
+        Ok(Self { policies })
+    }
+}
+
+impl fmt::Display for MultiAsset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("MultiAsset (fromList [")?;
+        let mut first_policy = true;
+        for (pid, assets) in &self.policies {
+            if !first_policy {
+                f.write_str(",")?;
+            }
+            first_policy = false;
+            write!(f, "({pid},fromList [")?;
+            let mut first_asset = true;
+            for (name, amount) in assets {
+                if !first_asset {
+                    f.write_str(",")?;
+                }
+                first_asset = false;
+                write!(f, "({name},{amount})")?;
+            }
+            f.write_str("])")?;
+        }
+        f.write_str("])")
+    }
+}
+
+/// Mary-era transaction value mirroring upstream `data MaryValue
+/// = MaryValue !Coin !MultiAsset`. CBOR wire format is era-aware
+/// (per upstream `EncCBOR MaryValue`): a bare CBOR integer when
+/// the multi-asset bundle is empty (ADA-only), otherwise a
+/// 2-element array `[coin, multiasset]`.
+///
+/// Display matches the stock-derived Show: `MaryValue (Coin <n>)
+/// (<MultiAsset>)`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaryValue {
+    /// The ADA (lovelace) component.
+    pub coin: u64,
+    /// The native-asset bundle (empty for ADA-only values).
+    pub assets: MultiAsset,
+}
+
+impl MaryValue {
+    /// Decode a `MaryValue` from an in-progress decoder. Accepts
+    /// both the bare-integer (ADA-only) and 2-element-array
+    /// (with multi-asset) encodings.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("MaryValue: peek: {err:?}")))?;
+        if major == 4 {
+            let len = dec
+                .array()
+                .map_err(|err| DecoderError(format!("MaryValue: expected 2-array: {err:?}")))?;
+            if len != 2 {
+                return Err(DecoderError(format!(
+                    "MaryValue: expected 2-element array, got len {len}"
+                )));
+            }
+            let coin = dec
+                .unsigned()
+                .map_err(|err| DecoderError(format!("MaryValue: expected coin: {err:?}")))?;
+            let assets = MultiAsset::from_decoder(dec)?;
+            Ok(Self { coin, assets })
+        } else {
+            // Bare-integer ADA-only value.
+            let coin = dec
+                .unsigned()
+                .map_err(|err| DecoderError(format!("MaryValue: expected bare coin: {err:?}")))?;
+            Ok(Self {
+                coin,
+                assets: MultiAsset::default(),
+            })
+        }
+    }
+}
+
+impl fmt::Display for MaryValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "MaryValue ({}) ({})", CoinShow(self.coin), self.assets)
+    }
+}
+
 /// `StrictMaybe ScriptIntegrityHash` renderer.
 /// `ScriptIntegrityHash` is upstream `type ScriptIntegrityHash =
 /// SafeHash EraIndependentScriptIntegrity` — a 32-byte SafeHash.
@@ -5801,8 +5959,9 @@ pub enum ConwayUtxoPredFailure {
     /// (R630 typed).
     FeeTooSmallUTxO(Mismatch<u64>),
     /// Tag 6: value not conserved (consumed != produced) —
-    /// `Mismatch RelEQ (Value era)`. Raw pending Value decoder.
-    ValueNotConservedUTxO(Vec<u8>),
+    /// `Mismatch RelEQ (Value era)` via ToGroup flattened,
+    /// consumed-first (R642 typed).
+    ValueNotConservedUTxO(Mismatch<MaryValue>),
     /// Tag 7: addresses with the wrong network id —
     /// `Network + NonEmptySet Addr` (R630 typed).
     WrongNetwork {
@@ -5844,8 +6003,8 @@ pub enum ConwayUtxoPredFailure {
     /// expected-first per `swapMismatch` (R637 typed).
     ExUnitsTooBigUTxO(Mismatch<ExUnits>),
     /// Tag 15: collateral inputs contain non-ADA tokens —
-    /// `Value era`. Raw pending Value decoder.
-    CollateralContainsNonADA(Vec<u8>),
+    /// `Value era` (R642 typed).
+    CollateralContainsNonADA(MaryValue),
     /// Tag 16: wrong network id in tx body — `Mismatch RelEQ
     /// Network` via ToGroup flattened, expected-first per
     /// `swapMismatch` (R630 typed).
@@ -6047,10 +6206,22 @@ impl ConwayUtxoPredFailure {
                     expected,
                 }))
             }
-            6 => Ok(Self::ValueNotConservedUTxO(capture_raw(
-                "ValueNotConservedUTxO",
-                3,
-            )?)),
+            6 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ValueNotConservedUTxO: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                // ToGroup flattened: consumed (supplied) then
+                // produced (expected).
+                let supplied = MaryValue::from_decoder(&mut dec)?;
+                let expected = MaryValue::from_decoder(&mut dec)?;
+                Ok(Self::ValueNotConservedUTxO(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied,
+                    expected,
+                }))
+            }
             7 => {
                 if len != 3 {
                     return Err(DecoderError(format!(
@@ -6141,10 +6312,16 @@ impl ConwayUtxoPredFailure {
                     expected,
                 }))
             }
-            15 => Ok(Self::CollateralContainsNonADA(capture_raw(
-                "CollateralContainsNonADA",
-                2,
-            )?)),
+            15 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "CollateralContainsNonADA: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::CollateralContainsNonADA(MaryValue::from_decoder(
+                    &mut dec,
+                )?))
+            }
             16 => {
                 if len != 3 {
                     return Err(DecoderError(format!(
@@ -6249,10 +6426,14 @@ impl fmt::Display for ConwayUtxoPredFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UtxosFailure(utxos) => write!(f, "UtxosFailure ({utxos})"),
-            Self::ValueNotConservedUTxO(b)
-            | Self::OutputTooBigUTxO(b)
-            | Self::CollateralContainsNonADA(b) => {
-                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            Self::OutputTooBigUTxO(b) => {
+                write!(f, "OutputTooBigUTxO <raw-cbor {} bytes>", b.len())
+            }
+            Self::ValueNotConservedUTxO(mm) => {
+                write!(f, "ValueNotConservedUTxO ({mm})")
+            }
+            Self::CollateralContainsNonADA(value) => {
+                write!(f, "CollateralContainsNonADA ({value})")
             }
             Self::ScriptsNotPaidUTxO(map) => {
                 write!(f, "ScriptsNotPaidUTxO ({map})")
@@ -8751,6 +8932,71 @@ mod tests {
     }
 
     #[test]
+    fn conway_utxo_pred_failure_value_not_conserved_tag6() {
+        // outer [0x83, 0x06, consumed MaryValue, produced
+        // MaryValue]. consumed = bare coin 1000; produced =
+        // [coin 900, multiasset {policy: {asset: 5}}].
+        let mut cbor = vec![0x83_u8, 0x06];
+        cbor.extend_from_slice(&[0x19, 0x03, 0xE8]); // consumed: bare coin 1000
+        // produced: 2-array [coin 900, multiasset]
+        cbor.push(0x82);
+        cbor.extend_from_slice(&[0x19, 0x03, 0x84]); // coin 900
+        cbor.push(0xA1); // multiasset map(1)
+        cbor.push(0x58); // PolicyID bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x9A_u8; 28]);
+        cbor.push(0xA1); // asset map(1)
+        cbor.push(0x44); // AssetName bytes(4)
+        cbor.extend_from_slice(b"gold");
+        cbor.push(0x05); // amount 5
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("ValueNotConservedUTxO");
+        if let ConwayUtxoPredFailure::ValueNotConservedUTxO(mm) = &f {
+            assert_eq!(mm.supplied.coin, 1000);
+            assert!(mm.supplied.assets.policies.is_empty());
+            assert_eq!(mm.expected.coin, 900);
+            assert_eq!(mm.expected.assets.policies.len(), 1);
+            assert_eq!(mm.expected.assets.policies[0].1[0].1, 5);
+        } else {
+            panic!("expected ValueNotConservedUTxO, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "ValueNotConservedUTxO (Mismatch (RelEQ) {supplied: MaryValue (Coin 1000) (MultiAsset (fromList []))"
+            ),
+            "got: {s}"
+        );
+        assert!(s.contains("fromList [(\"676f6c64\",5)]"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_collateral_contains_non_ada_tag15() {
+        // outer [0x82, 0x0F, MaryValue]. MaryValue = [coin 200,
+        // multiasset {policy: {asset: 3}}].
+        let mut cbor = vec![0x82_u8, 0x0F, 0x82];
+        cbor.extend_from_slice(&[0x18, 0xC8]); // coin 200
+        cbor.push(0xA1);
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x77_u8; 28]);
+        cbor.push(0xA1);
+        cbor.push(0x40); // AssetName bytes(0) — the empty ADA-name slot
+        cbor.push(0x03); // amount 3
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("CollateralContainsNonADA");
+        if let ConwayUtxoPredFailure::CollateralContainsNonADA(value) = &f {
+            assert_eq!(value.coin, 200);
+            assert_eq!(value.assets.policies.len(), 1);
+        } else {
+            panic!("expected CollateralContainsNonADA, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .starts_with("CollateralContainsNonADA (MaryValue (Coin 200)"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
     fn conway_utxo_pred_failure_babbage_non_disjoint_ref_inputs_tag22() {
         // outer [0x82, 0x16, NonEmpty [TxIn]]. NonEmpty is a bare
         // array(1) of TxIn [txid32, ix].
@@ -8786,13 +9032,22 @@ mod tests {
     }
 
     #[test]
-    fn conway_utxo_pred_failure_routes_pending_to_raw_tag6() {
-        // tag 6 (ValueNotConservedUTxO) — Value payload pending
+    fn conway_utxo_pred_failure_value_not_conserved_ada_only_tag6() {
+        // tag 6 with both MaryValues bare-coin (ADA-only):
+        // [0x83, 0x06, 0, 0].
         let cbor = [0x83_u8, 0x06, 0x00, 0x00];
         let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("ValueNotConservedUTxO");
         assert_eq!(f.tag(), 6);
+        if let ConwayUtxoPredFailure::ValueNotConservedUTxO(mm) = &f {
+            assert_eq!(mm.supplied.coin, 0);
+            assert!(mm.supplied.assets.policies.is_empty());
+            assert_eq!(mm.expected.coin, 0);
+        } else {
+            panic!("expected ValueNotConservedUTxO, got {f:?}");
+        }
         assert!(
-            f.to_string().starts_with("ValueNotConservedUTxO <raw-cbor"),
+            f.to_string()
+                .starts_with("ValueNotConservedUTxO (Mismatch (RelEQ)"),
             "got: {f}"
         );
     }
