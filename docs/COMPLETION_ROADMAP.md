@@ -602,6 +602,42 @@ own parser / generator / submission implementation plus upstream
   = comparing bootstrapWitKeyHash`. The remaining tx-generator
   blocker is upstream-binary soak evidence — every documented
   byte-parity gap inside yggdrasil is now closed.
+
+**dmq-node — DMQ protocol surface CODE COMPLETE (R717-R756, 40 rounds).**
+R717-R731 ported the V1 `SigSubmission` `Type.hs` data plus the
+standalone codec functions and investigated the `TxSubmission2` reuse,
+finding `crates/network`'s `TxSubmission2` is **concrete** (not generic
+over the id/tx types). R732 resolved that architectural fork
+(advisor-confirmed) in favour of dmq-node-**local** protocol modules —
+the wire format is identical either way, so a generic refactor of the
+core network crate would buy zero wire-parity bytes. R732-R756 then
+delivered the comprehensive protocol-definition surface:
+
+- V1 `SigSubmission` — state machine, transition, message codec,
+  `timeLimits`/`byteLimits`, and the complete `validateSig` validator
+  (KES-period, ocert-counter, pool-eligibility, ocert-signature and
+  KES-signature checks plus the `validate_sig` / `validate_sig_batch`
+  composition with context rollback). R745 was a correctness fix —
+  `SigKesSignature` is a Sum6 `SumKesSignature` (448 bytes), not the
+  64-byte base KES signature.
+- V2 `SigSubmissionV2` — count newtypes, state machine, transition,
+  message codec, limit tables, the `Collect` pipelined-result type.
+- `LocalMsgSubmission` / `LocalMsgNotification` — types, transitions,
+  codecs.
+- NtN/NtC version types, `Policy`, `Topology`, `PoolValidationCtx`,
+  `SigSubmissionProtocolError`.
+
+**Remaining dmq-node scope — the runtime / diffusion sub-arc.** The
+typed-protocols peer drivers (`Protocol/*/{Client,Server,Inbound,
+Outbound}.hs` — continuation-style, framework-bound) plus the runtime
+(`NodeKernel`, `Diffusion/*`, the NtN/NtC mux bundles, `Tracer.hs`,
+`Handlers/TopLevel.hs`) form one entangled
+`crates/network`-integration sub-arc — a peer driver is only
+exercisable plugged into the mux, so none has a standalone test
+target. This is the explicit `DiffusionWiringDeferred` carve-out; it
+warrants its own `parity-plan` and is not decomposable into standalone
+bounded slices.
+
 **Scope:** ~5–8 rounds per tool. **Exit:** each
 reaches `implemented_needs_11_0_1_evidence` in `parity-matrix.json`.
 
