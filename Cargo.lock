@@ -3410,6 +3410,7 @@ dependencies = [
  "yggdrasil-consensus",
  "yggdrasil-crypto",
  "yggdrasil-ledger",
+ "yggdrasil-node-config",
  "yggdrasil-storage",
  "yggdrasil-telemetry",
 ]

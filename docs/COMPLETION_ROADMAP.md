@@ -311,14 +311,21 @@ one extraction):
     block-iteration analyses decode without protocol info, the
     R475-R481 carve-out). `--threshold` without `--config` is a
     `ParseError::ThresholdWithoutConfig`.
-  - **Slice 3 — `CardanoConfig` mirror + config→genesis-bundle
-    loading.** Port `Cardano.Node.Types::CardanoConfig` (per-era
-    genesis paths + `AdjustFilePaths`) — R710 verified no such
-    mirror exists anywhere in `crates/`. Then a `HasProtocolInfo for
-    yggdrasil_ledger::Block` impl reads the config + loads the
-    genesis bundle (db-analyser's own copy — mirror of
-    `Block/Cardano.hs::mkProtocolInfo`, NOT a reuse of
-    db-synthesizer's `NodeConfigStub`).
+  - ✅ **Slice 3a** (round 712) — `CardanoConfig` +
+    `CardanoHardForkTriggers` types in `has_analysis.rs`, with serde
+    `Deserialize` (= upstream `FromJSON CardanoConfig`) and
+    `adjust_file_paths` (= `AdjustFilePaths`). R712 corrected the
+    R708 guess: `CardanoConfig` is defined *in* upstream
+    `Block/Cardano.hs` (not `Cardano.Node.Types`), so the mirror
+    lives in `has_analysis.rs` alongside `CardanoBlockArgs`. New
+    workspace-internal dep `yggdrasil-node-config` (for
+    `RequiresNetworkMagic`). The `Test*HardForkAtEpoch` monotonicity
+    check is ported.
+  - **Slice 3b — `HasProtocolInfo for yggdrasil_ledger::Block`.**
+    `make_protocol_info` resolves the config-relative genesis paths
+    and loads the genesis bundle — db-analyser's own copy, mirror of
+    `Block/Cardano.hs::mkProtocolInfo` (new dep
+    `yggdrasil-node-genesis`).
   - **Slice 4 — load the genesis-seeded `LedgerState` in `run`.**
     When `--config` is supplied, build the initial `LedgerState`
     via the slice-3 loader.

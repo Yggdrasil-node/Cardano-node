@@ -33,6 +33,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use serde::Deserialize;
+use yggdrasil_node_config::RequiresNetworkMagic;
+
 /// Block-byte-count alias, used by [`HasAnalysis::block_tx_sizes`].
 ///
 /// Upstream: `import Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)`,
@@ -196,6 +199,303 @@ pub struct CardanoBlockArgs {
     pub config_file: PathBuf,
     /// Optional Byron PBFT signature threshold.
     pub threshold: Option<f64>,
+}
+
+/// Per-era hard-fork trigger epochs from a node `config.json`.
+///
+/// Mirror of upstream `Block/Cardano.hs::CardanoHardForkTriggers` — a
+/// typed `NP` over the Shelley-onward era list. yggdrasil flattens it to
+/// one `Option<u64>` per era: `None` is `CardanoTriggerHardForkAtDefaultVersion`
+/// (the fork fires at the era's default protocol-version bump);
+/// `Some(epoch)` is `CardanoTriggerHardForkAtEpoch epoch` (a
+/// `Test<Era>HardForkAtEpoch` override). This is the same raw shape
+/// `db-synthesizer`'s `NodeHardForkProtocolConfiguration` uses.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CardanoHardForkTriggers {
+    /// `TestShelleyHardForkAtEpoch`.
+    pub shelley: Option<u64>,
+    /// `TestAllegraHardForkAtEpoch`.
+    pub allegra: Option<u64>,
+    /// `TestMaryHardForkAtEpoch`.
+    pub mary: Option<u64>,
+    /// `TestAlonzoHardForkAtEpoch`.
+    pub alonzo: Option<u64>,
+    /// `TestBabbageHardForkAtEpoch`.
+    pub babbage: Option<u64>,
+    /// `TestConwayHardForkAtEpoch`.
+    pub conway: Option<u64>,
+    /// `TestDijkstraHardForkAtEpoch`.
+    pub dijkstra: Option<u64>,
+}
+
+impl CardanoHardForkTriggers {
+    /// The seven triggers in era order, Shelley → Dijkstra.
+    fn in_era_order(&self) -> [Option<u64>; 7] {
+        [
+            self.shelley,
+            self.allegra,
+            self.mary,
+            self.alonzo,
+            self.babbage,
+            self.conway,
+            self.dijkstra,
+        ]
+    }
+}
+
+/// Era names for [`CardanoHardForkTriggers::in_era_order`] positions.
+const HARD_FORK_ERA_NAMES: [&str; 7] = [
+    "Shelley", "Allegra", "Mary", "Alonzo", "Babbage", "Conway", "Dijkstra",
+];
+
+/// The node `config.json` fields `db-analyser` needs to build a
+/// genesis-seeded protocol info.
+///
+/// Mirror of upstream `Block/Cardano.hs::CardanoConfig`. Upstream defines
+/// it inside `Block/Cardano.hs`; db-analyser collapses that module into
+/// this one (see the [`HasAnalysis`] impl docstring), so `CardanoConfig`
+/// lives here alongside [`CardanoBlockArgs`]. The genesis-file hashes are
+/// kept as the raw hex `String` (upstream's `Crypto.Hash Raw` / `Nonce`),
+/// matching `db-synthesizer`'s `Option<String>` genesis-hash fields.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CardanoConfig {
+    /// `RequiresNetworkMagic` — whether Byron headers carry magic inline.
+    pub requires_network_magic: RequiresNetworkMagic,
+    /// `ByronGenesisFile`.
+    pub byron_genesis_path: PathBuf,
+    /// `ByronGenesisHash` — optional expected hash (raw hex).
+    pub byron_genesis_hash: Option<String>,
+    /// `ShelleyGenesisFile`.
+    pub shelley_genesis_path: PathBuf,
+    /// `ShelleyGenesisHash` — optional expected hash (raw hex).
+    pub shelley_genesis_hash: Option<String>,
+    /// `AlonzoGenesisFile`.
+    pub alonzo_genesis_path: PathBuf,
+    /// `ConwayGenesisFile`.
+    pub conway_genesis_path: PathBuf,
+    /// `DijkstraGenesisFile` — absent until the era is activated.
+    pub dijkstra_genesis_path: Option<PathBuf>,
+    /// Per-era `Test*HardForkAtEpoch` triggers.
+    pub hard_fork_triggers: CardanoHardForkTriggers,
+}
+
+impl CardanoConfig {
+    /// Apply `f` to every embedded genesis-file path.
+    ///
+    /// Mirror of upstream `instance AdjustFilePaths CardanoConfig` —
+    /// db-analyser resolves the genesis paths relative to the config
+    /// file's own directory. Byron / Shelley / Alonzo / Conway are the
+    /// only eras carrying genesis data; Dijkstra's is optional.
+    pub fn adjust_file_paths<F>(self, f: F) -> Self
+    where
+        F: Fn(PathBuf) -> PathBuf,
+    {
+        CardanoConfig {
+            byron_genesis_path: f(self.byron_genesis_path),
+            shelley_genesis_path: f(self.shelley_genesis_path),
+            alonzo_genesis_path: f(self.alonzo_genesis_path),
+            conway_genesis_path: f(self.conway_genesis_path),
+            dijkstra_genesis_path: self.dijkstra_genesis_path.map(&f),
+            ..self
+        }
+    }
+}
+
+/// Errors from JSON-decoding a [`CardanoConfig`].
+#[derive(Debug, thiserror::Error)]
+pub enum CardanoConfigParseError {
+    /// Top-level JSON value is not an object.
+    #[error("CardanoConfig expected: JSON object; got {0}")]
+    NotAnObject(String),
+    /// `RequiresNetworkMagic` is absent or not a recognized value.
+    #[error("CardanoConfig.RequiresNetworkMagic: {0}")]
+    InvalidRequiresNetworkMagic(String),
+    /// A required genesis-file path field is absent.
+    #[error("CardanoConfig.{field} expected: string path; missing or not a string")]
+    RequiredPathMissing {
+        /// JSON key name of the missing field.
+        field: &'static str,
+    },
+    /// A path field has a non-string JSON value.
+    #[error("CardanoConfig.{field} expected: string path; got non-string JSON value")]
+    InvalidPathType {
+        /// JSON key name of the malformed field.
+        field: &'static str,
+    },
+    /// An optional string-valued field has a non-string JSON value.
+    #[error("CardanoConfig.{field} expected: optional string")]
+    InvalidOptionalString {
+        /// JSON key name of the malformed field.
+        field: &'static str,
+    },
+    /// A `Test*HardForkAtEpoch` field is not a non-negative integer.
+    #[error("CardanoConfig.{field} expected: optional integer epoch")]
+    InvalidTrigger {
+        /// JSON key name of the malformed field.
+        field: &'static str,
+    },
+    /// A later era's `Test*HardForkAtEpoch` is set while an earlier
+    /// era's is not. Mirror of upstream's `isBad` monotonicity `fail`.
+    #[error(
+        "CardanoConfig: a Test*HardForkAtEpoch is set for {later} but not for the earlier {earlier}"
+    )]
+    NonMonotoneHardForkTriggers {
+        /// The earlier era whose trigger is missing.
+        earlier: &'static str,
+        /// The later era whose trigger is set.
+        later: &'static str,
+    },
+}
+
+/// Custom [`Deserialize`] for [`CardanoConfig`] — mirror of upstream
+/// `instance FromJSON CardanoConfig`'s `withObject "CardanoConfigFile"`.
+impl<'de> Deserialize<'de> for CardanoConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        parse_cardano_config(raw).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Parse a node `config.json` JSON value into a [`CardanoConfig`].
+///
+/// Mirror of upstream `instance FromJSON CardanoConfig`. Extra keys
+/// (e.g. `AlonzoGenesisHash`, `ConwayGenesisHash`, non-genesis node
+/// config) are ignored, exactly as upstream's `withObject` tolerates
+/// them.
+pub fn parse_cardano_config(
+    value: serde_json::Value,
+) -> Result<CardanoConfig, CardanoConfigParseError> {
+    let obj = match &value {
+        serde_json::Value::Object(map) => map,
+        other => {
+            return Err(CardanoConfigParseError::NotAnObject(
+                describe_json_value_kind(other).to_string(),
+            ));
+        }
+    };
+
+    let requires_network_magic: RequiresNetworkMagic = match obj.get("RequiresNetworkMagic") {
+        Some(v) => serde_json::from_value(v.clone())
+            .map_err(|e| CardanoConfigParseError::InvalidRequiresNetworkMagic(e.to_string()))?,
+        None => {
+            return Err(CardanoConfigParseError::InvalidRequiresNetworkMagic(
+                "missing".to_string(),
+            ));
+        }
+    };
+
+    let byron_genesis_path = required_genesis_path(obj, "ByronGenesisFile")?;
+    let shelley_genesis_path = required_genesis_path(obj, "ShelleyGenesisFile")?;
+    let alonzo_genesis_path = required_genesis_path(obj, "AlonzoGenesisFile")?;
+    let conway_genesis_path = required_genesis_path(obj, "ConwayGenesisFile")?;
+    let dijkstra_genesis_path = optional_genesis_path(obj, "DijkstraGenesisFile")?;
+
+    let byron_genesis_hash = optional_config_string(obj, "ByronGenesisHash")?;
+    let shelley_genesis_hash = optional_config_string(obj, "ShelleyGenesisHash")?;
+
+    let hard_fork_triggers = parse_hard_fork_triggers(obj)?;
+
+    Ok(CardanoConfig {
+        requires_network_magic,
+        byron_genesis_path,
+        byron_genesis_hash,
+        shelley_genesis_path,
+        shelley_genesis_hash,
+        alonzo_genesis_path,
+        conway_genesis_path,
+        dijkstra_genesis_path,
+        hard_fork_triggers,
+    })
+}
+
+fn parse_hard_fork_triggers(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Result<CardanoHardForkTriggers, CardanoConfigParseError> {
+    let triggers = CardanoHardForkTriggers {
+        shelley: optional_epoch(obj, "TestShelleyHardForkAtEpoch")?,
+        allegra: optional_epoch(obj, "TestAllegraHardForkAtEpoch")?,
+        mary: optional_epoch(obj, "TestMaryHardForkAtEpoch")?,
+        alonzo: optional_epoch(obj, "TestAlonzoHardForkAtEpoch")?,
+        babbage: optional_epoch(obj, "TestBabbageHardForkAtEpoch")?,
+        conway: optional_epoch(obj, "TestConwayHardForkAtEpoch")?,
+        dijkstra: optional_epoch(obj, "TestDijkstraHardForkAtEpoch")?,
+    };
+
+    // Mirror of upstream's `isBad` monotonicity check: a set trigger for
+    // some era requires the immediately-earlier era's trigger to be set
+    // too (the upstream `... :* CardanoTriggerHardForkAtEpoch{} :* _`
+    // pattern recurses over every adjacent pair).
+    let order = triggers.in_era_order();
+    for i in 1..order.len() {
+        if order[i].is_some() && order[i - 1].is_none() {
+            return Err(CardanoConfigParseError::NonMonotoneHardForkTriggers {
+                earlier: HARD_FORK_ERA_NAMES[i - 1],
+                later: HARD_FORK_ERA_NAMES[i],
+            });
+        }
+    }
+    Ok(triggers)
+}
+
+fn required_genesis_path(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<PathBuf, CardanoConfigParseError> {
+    match obj.get(field) {
+        None => Err(CardanoConfigParseError::RequiredPathMissing { field }),
+        Some(serde_json::Value::String(s)) => Ok(PathBuf::from(s)),
+        Some(_) => Err(CardanoConfigParseError::InvalidPathType { field }),
+    }
+}
+
+fn optional_genesis_path(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<Option<PathBuf>, CardanoConfigParseError> {
+    match obj.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(PathBuf::from(s))),
+        Some(_) => Err(CardanoConfigParseError::InvalidPathType { field }),
+    }
+}
+
+fn optional_config_string(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<Option<String>, CardanoConfigParseError> {
+    match obj.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(CardanoConfigParseError::InvalidOptionalString { field }),
+    }
+}
+
+fn optional_epoch(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<Option<u64>, CardanoConfigParseError> {
+    match obj.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .map(Some)
+            .ok_or(CardanoConfigParseError::InvalidTrigger { field }),
+        Some(_) => Err(CardanoConfigParseError::InvalidTrigger { field }),
+    }
+}
+
+fn describe_json_value_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -580,6 +880,180 @@ mod tests {
         // The data-family instance derives structural equality, mirror
         // of upstream's `CardanoBlockArgs` record being comparable.
         assert_eq!(args.clone(), args);
+    }
+
+    // ── CardanoConfig (genesis-bootstrap arc, slice 3a) ────────────────
+
+    fn full_cardano_config_json() -> &'static str {
+        r#"{
+            "RequiresNetworkMagic": "RequiresMagic",
+            "ByronGenesisFile": "byron-genesis.json",
+            "ByronGenesisHash": "83de1d73",
+            "ShelleyGenesisFile": "shelley-genesis.json",
+            "ShelleyGenesisHash": "363498d1",
+            "AlonzoGenesisFile": "alonzo-genesis.json",
+            "ConwayGenesisFile": "conway-genesis.json",
+            "DijkstraGenesisFile": "dijkstra-genesis.json",
+            "TestShelleyHardForkAtEpoch": 1,
+            "TestAllegraHardForkAtEpoch": 2,
+            "AlonzoGenesisHash": "ignored-extra-key"
+        }"#
+    }
+
+    #[test]
+    fn parses_full_cardano_config() {
+        let value: serde_json::Value = serde_json::from_str(full_cardano_config_json()).unwrap();
+        let cc = parse_cardano_config(value).expect("parses");
+        assert_eq!(
+            cc.requires_network_magic,
+            RequiresNetworkMagic::RequiresMagic
+        );
+        assert_eq!(cc.byron_genesis_path, PathBuf::from("byron-genesis.json"));
+        assert_eq!(cc.byron_genesis_hash.as_deref(), Some("83de1d73"));
+        assert_eq!(cc.shelley_genesis_hash.as_deref(), Some("363498d1"));
+        assert_eq!(
+            cc.dijkstra_genesis_path,
+            Some(PathBuf::from("dijkstra-genesis.json"))
+        );
+        assert_eq!(cc.hard_fork_triggers.shelley, Some(1));
+        assert_eq!(cc.hard_fork_triggers.allegra, Some(2));
+        assert_eq!(cc.hard_fork_triggers.mary, None);
+    }
+
+    #[test]
+    fn parses_minimal_cardano_config_without_optionals() {
+        let json = r#"{
+            "RequiresNetworkMagic": "RequiresNoMagic",
+            "ByronGenesisFile": "b.json",
+            "ShelleyGenesisFile": "s.json",
+            "AlonzoGenesisFile": "a.json",
+            "ConwayGenesisFile": "c.json"
+        }"#;
+        let cc: CardanoConfig = serde_json::from_str(json).expect("parses");
+        assert_eq!(
+            cc.requires_network_magic,
+            RequiresNetworkMagic::RequiresNoMagic
+        );
+        assert_eq!(cc.byron_genesis_hash, None);
+        assert_eq!(cc.dijkstra_genesis_path, None);
+        assert_eq!(cc.hard_fork_triggers, CardanoHardForkTriggers::default());
+    }
+
+    #[test]
+    fn rejects_cardano_config_missing_required_genesis_path() {
+        let json = r#"{
+            "RequiresNetworkMagic": "RequiresMagic",
+            "ByronGenesisFile": "b.json",
+            "AlonzoGenesisFile": "a.json",
+            "ConwayGenesisFile": "c.json"
+        }"#;
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let err = parse_cardano_config(value).expect_err("missing ShelleyGenesisFile");
+        assert!(matches!(
+            err,
+            CardanoConfigParseError::RequiredPathMissing {
+                field: "ShelleyGenesisFile"
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_cardano_config_missing_network_magic() {
+        let json = r#"{
+            "ByronGenesisFile": "b.json",
+            "ShelleyGenesisFile": "s.json",
+            "AlonzoGenesisFile": "a.json",
+            "ConwayGenesisFile": "c.json"
+        }"#;
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let err = parse_cardano_config(value).expect_err("missing RequiresNetworkMagic");
+        assert!(matches!(
+            err,
+            CardanoConfigParseError::InvalidRequiresNetworkMagic(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_non_object_cardano_config() {
+        let value: serde_json::Value = serde_json::from_str("[1,2,3]").unwrap();
+        let err = parse_cardano_config(value).expect_err("not an object");
+        assert!(matches!(err, CardanoConfigParseError::NotAnObject(k) if k == "array"));
+    }
+
+    #[test]
+    fn rejects_non_monotone_hard_fork_triggers() {
+        // Conway trigger set, but Babbage (the earlier era) is not.
+        let json = r#"{
+            "RequiresNetworkMagic": "RequiresMagic",
+            "ByronGenesisFile": "b.json",
+            "ShelleyGenesisFile": "s.json",
+            "AlonzoGenesisFile": "a.json",
+            "ConwayGenesisFile": "c.json",
+            "TestShelleyHardForkAtEpoch": 0,
+            "TestAllegraHardForkAtEpoch": 0,
+            "TestMaryHardForkAtEpoch": 0,
+            "TestAlonzoHardForkAtEpoch": 0,
+            "TestConwayHardForkAtEpoch": 5
+        }"#;
+        let value: serde_json::Value = serde_json::from_str(json).unwrap();
+        let err = parse_cardano_config(value).expect_err("non-monotone triggers");
+        assert!(matches!(
+            err,
+            CardanoConfigParseError::NonMonotoneHardForkTriggers {
+                earlier: "Babbage",
+                later: "Conway"
+            }
+        ));
+    }
+
+    #[test]
+    fn cardano_config_adjust_file_paths_applies_to_every_genesis_path() {
+        let value: serde_json::Value = serde_json::from_str(full_cardano_config_json()).unwrap();
+        let cc = parse_cardano_config(value).unwrap();
+        let prefix = PathBuf::from("/etc/cardano");
+        let adjusted = cc.adjust_file_paths(|p| prefix.join(p));
+        assert_eq!(
+            adjusted.byron_genesis_path,
+            PathBuf::from("/etc/cardano/byron-genesis.json")
+        );
+        assert_eq!(
+            adjusted.shelley_genesis_path,
+            PathBuf::from("/etc/cardano/shelley-genesis.json")
+        );
+        assert_eq!(
+            adjusted.alonzo_genesis_path,
+            PathBuf::from("/etc/cardano/alonzo-genesis.json")
+        );
+        assert_eq!(
+            adjusted.conway_genesis_path,
+            PathBuf::from("/etc/cardano/conway-genesis.json")
+        );
+        assert_eq!(
+            adjusted.dijkstra_genesis_path,
+            Some(PathBuf::from("/etc/cardano/dijkstra-genesis.json"))
+        );
+        // Non-path fields are untouched.
+        assert_eq!(adjusted.shelley_genesis_hash.as_deref(), Some("363498d1"));
+    }
+
+    #[test]
+    fn parses_vendored_preview_config_json() {
+        // The genesis-bootstrap arc's validation gate targets the
+        // vendored preview config; confirm `CardanoConfig` parses it.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../configuration/preview/config.json");
+        let raw = std::fs::read_to_string(&path).expect("read preview config.json");
+        let cc: CardanoConfig = serde_json::from_str(&raw).expect("parses preview config");
+        assert_eq!(
+            cc.requires_network_magic,
+            RequiresNetworkMagic::RequiresMagic
+        );
+        assert_eq!(cc.byron_genesis_path, PathBuf::from("byron-genesis.json"));
+        // Preview sets Shelley..Alonzo triggers at epoch 0; later eras
+        // unset — monotone, so the parse succeeds.
+        assert_eq!(cc.hard_fork_triggers.shelley, Some(0));
+        assert_eq!(cc.hard_fork_triggers.alonzo, Some(0));
+        assert_eq!(cc.hard_fork_triggers.babbage, None);
     }
 
     // ── HasAnalysis for yggdrasil_ledger::Block (R476) ─────────────────

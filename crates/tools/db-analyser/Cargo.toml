@@ -32,6 +32,7 @@ thiserror = { workspace = true }
 yggdrasil-consensus = { path = "../../consensus" }
 yggdrasil-crypto = { path = "../../crypto" }
 yggdrasil-ledger = { path = "../../ledger" }
+yggdrasil-node-config = { path = "../../node/config" }
 yggdrasil-storage = { path = "../../storage" }
 
 yggdrasil-telemetry.workspace = true
