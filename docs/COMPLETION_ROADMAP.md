@@ -930,10 +930,15 @@ and fully typed the governance-certificate family —
 `TxCert::ConwayTxCertGov` now carries the leading `credential`
 plus typed `hot_credential: Option<Credential>`, `deposit:
 Option<u64>`, `anchor: Option<StrictMaybeAnchor>` fields for
-the committee/DRep certs (tags 14-18). **Both the
-`ConwayTxCertDeleg` and `ConwayTxCertGov` certificate families
-are now fully typed**; only the `ConwayTxCertPool` (`PoolCert`,
-tags 3-4) body remains raw.
+the committee/DRep certs (tags 14-18). R664 (2026-05-21) typed
+the `ConwayTxCertPool` body — `TxCert::ConwayTxCertPool` now
+carries the typed stake-pool key hash (the `ppId` operator
+field / retiring pool, leading both certs), the `RetirePool`
+retirement epoch, and the remaining `RegPool` `PoolParams`
+group raw. **All three `ConwayTxCert` certificate families
+(`ConwayTxCertDeleg` / `ConwayTxCertPool` / `ConwayTxCertGov`)
+now carry typed payloads** — only the `RegPool` `PoolParams`
+record body remains raw within `ConwayTxCertPool`.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

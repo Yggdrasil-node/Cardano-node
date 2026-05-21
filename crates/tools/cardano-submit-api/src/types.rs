@@ -5965,12 +5965,23 @@ pub enum TxCert {
         deposit: Option<u64>,
     },
     /// Stake-pool-family certificate (`ConwayTxCertPool`) —
-    /// upstream `Sum` tags 3-4.
+    /// upstream `Sum` tags 3-4. The stake-pool key hash leads
+    /// both certificates (the `ppId` operator field of `RegPool`
+    /// and the retiring pool of `RetirePool`).
     ConwayTxCertPool {
         /// The upstream `decodeRecordSum` tag.
         cert_tag: u64,
-        /// The raw per-certificate payload (after the tag).
-        raw: Vec<u8>,
+        /// The stake-pool key hash (the first payload field of
+        /// both `RegPool` and `RetirePool`).
+        pool: KeyHash,
+        /// The retirement epoch — present only for tag 4
+        /// (`RetirePoolTxCert`).
+        epoch: Option<u64>,
+        /// The remaining `RegPool` `PoolParams` group fields
+        /// (VRF / pledge / cost / margin / reward account /
+        /// owners / relays / metadata) — raw pending the typed
+        /// `PoolParams` decoder; empty for `RetirePool`.
+        rest: Vec<u8>,
     },
     /// Governance-family certificate (`ConwayTxCertGov`) —
     /// upstream `Sum` tags 14-18. Fully typed: the leading
@@ -6145,10 +6156,29 @@ impl TxCert {
                     deposit,
                 })
             }
-            3 | 4 => Ok(Self::ConwayTxCertPool {
-                cert_tag,
-                raw: capture_rest(dec, 1)?,
-            }),
+            3 | 4 => {
+                // Both pool certificates lead with the stake-pool
+                // key hash (RegPool's `ppId` operator field /
+                // RetirePool's retiring pool).
+                let pool = read_pool(dec)?;
+                let mut epoch = None;
+                let rest = if cert_tag == 4 {
+                    epoch = Some(dec.unsigned().map_err(|err| {
+                        DecoderError(format!("RetirePool: expected epoch: {err:?}"))
+                    })?);
+                    Vec::new()
+                } else {
+                    // RegPool: the remaining PoolParams group
+                    // fields (element index 2..len).
+                    capture_rest(dec, 2)?
+                };
+                Ok(Self::ConwayTxCertPool {
+                    cert_tag,
+                    pool,
+                    epoch,
+                    rest,
+                })
+            }
             14..=18 => {
                 // Every governance certificate's first payload
                 // field is a credential; the tail is positional
@@ -6215,13 +6245,24 @@ impl fmt::Display for TxCert {
                 }
                 f.write_str(")")
             }
-            Self::ConwayTxCertPool { cert_tag, raw } => {
+            Self::ConwayTxCertPool {
+                cert_tag,
+                pool,
+                epoch,
+                rest,
+            } => {
                 write!(
                     f,
-                    "ConwayTxCertPool ({} <raw-cbor {} bytes>)",
-                    Self::cert_constructor(*cert_tag),
-                    raw.len()
-                )
+                    "ConwayTxCertPool ({} ({pool})",
+                    Self::cert_constructor(*cert_tag)
+                )?;
+                if let Some(epoch) = epoch {
+                    write!(f, " (EpochNo {epoch})")?;
+                }
+                if !rest.is_empty() {
+                    write!(f, " <raw-cbor {} bytes>", rest.len())?;
+                }
+                f.write_str(")")
             }
             Self::ConwayTxCertGov {
                 cert_tag,
@@ -10353,6 +10394,70 @@ mod tests {
         assert!(
             cert.to_string()
                 .starts_with("ConwayTxCertGov (AuthCommitteeHotKeyTxCert (KeyHashObj"),
+            "got: {cert}"
+        );
+    }
+
+    #[test]
+    fn tx_cert_decodes_pool_retire() {
+        // TxCert Sum tag 4 (RetirePoolTxCert) — `[4, poolKeyHash,
+        // epoch]`.
+        let mut cbor = vec![0x83_u8, 0x04];
+        cbor.push(0x58); // pool key hash bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x9E_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x01, 0x90]); // epoch 400
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RetirePool");
+        if let TxCert::ConwayTxCertPool {
+            cert_tag,
+            epoch,
+            rest,
+            ..
+        } = &cert
+        {
+            assert_eq!(*cert_tag, 4);
+            assert_eq!(*epoch, Some(400));
+            assert!(rest.is_empty());
+        } else {
+            panic!("expected ConwayTxCertPool, got {cert:?}");
+        }
+        assert_eq!(
+            cert.to_string(),
+            "ConwayTxCertPool (RetirePoolTxCert (KeyHash {unKeyHash = \"9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e9e\"}) (EpochNo 400))"
+        );
+    }
+
+    #[test]
+    fn tx_cert_decodes_pool_register() {
+        // TxCert Sum tag 3 (RegPoolTxCert) — `[3, ...PoolParams
+        // group...]`. PoolParams leads with the operator key
+        // hash; the remaining group fields stay raw.
+        let mut cbor = vec![0x83_u8, 0x03];
+        cbor.push(0x58); // operator key hash bytes(28)
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x7C_u8; 28]);
+        cbor.push(0x00); // one placeholder remaining group field
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let cert = TxCert::from_decoder(&mut dec, &cbor).expect("RegPool");
+        if let TxCert::ConwayTxCertPool {
+            cert_tag,
+            epoch,
+            rest,
+            ..
+        } = &cert
+        {
+            assert_eq!(*cert_tag, 3);
+            assert!(epoch.is_none());
+            assert!(!rest.is_empty());
+        } else {
+            panic!("expected ConwayTxCertPool, got {cert:?}");
+        }
+        assert!(
+            cert.to_string()
+                .starts_with("ConwayTxCertPool (RegPoolTxCert (KeyHash {unKeyHash = \"7c7c"),
             "got: {cert}"
         );
     }
