@@ -87,9 +87,35 @@ pub fn run_main() -> ExitCode {
 /// full inventory.
 pub fn run(config: &types::DBAnalyserConfig) -> eyre::Result<()> {
     use yggdrasil_ledger::Point;
-    use yggdrasil_storage::{FileImmutable, ImmutableStore};
+    use yggdrasil_storage::{FileImmutable, FileLedgerStore, ImmutableStore, LedgerStore};
 
     let store = FileImmutable::open(config.db_dir.join("immutable")).map_err(RunError::Storage)?;
+
+    // R707 (A3 R3c-6 slice 3): ChainDB consistency guard. If the
+    // ChainDB carries a `ledger/` snapshot directory, the latest
+    // persisted ledger snapshot must not be ahead of the immutable
+    // chain tip — a snapshot describes ledger state *as of* a
+    // persisted block, so a snapshot slot past the immutable tip
+    // means a corrupt / inconsistent ChainDB. This is a structural
+    // guard only — it does not (yet) replay the chain against the
+    // snapshot; full ledger-state validation is blocked on the
+    // genesis-bootstrap arc deferred at R488.
+    let ledger_dir = config.db_dir.join("ledger");
+    if ledger_dir.is_dir() {
+        let ledger_store =
+            FileLedgerStore::open_read_only(&ledger_dir).map_err(RunError::Storage)?;
+        if let Some((snapshot_slot, _)) = ledger_store.latest_snapshot() {
+            let tip_slot = store.get_tip().slot().map_or(0, |s| s.0);
+            if snapshot_slot.0 > tip_slot {
+                return Err(RunError::LedgerSnapshotAheadOfChain {
+                    snapshot: snapshot_slot.0,
+                    tip: tip_slot,
+                }
+                .into());
+            }
+        }
+    }
+
     let raw_iter = store
         .iter_after(&Point::Origin)
         .map_err(RunError::Storage)?;
@@ -356,4 +382,18 @@ pub enum RunError {
     /// requested (pending a future arc).
     #[error("yggdrasil-db-analyser: analysis error: {0}")]
     Analysis(#[from] analysis::runner::AnalysisError),
+    /// The ChainDB carries a `ledger/` snapshot whose slot is ahead
+    /// of the immutable-chain tip — a corrupt / inconsistent
+    /// ChainDB (a ledger snapshot can never describe state past the
+    /// last persisted block).
+    #[error(
+        "yggdrasil-db-analyser: inconsistent ChainDB: ledger snapshot at slot {snapshot} \
+         is ahead of the immutable tip at slot {tip}"
+    )]
+    LedgerSnapshotAheadOfChain {
+        /// Slot of the latest persisted ledger snapshot.
+        snapshot: u64,
+        /// Slot of the immutable-chain tip.
+        tip: u64,
+    },
 }

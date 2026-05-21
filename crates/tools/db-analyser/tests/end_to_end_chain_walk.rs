@@ -14,8 +14,20 @@ use yggdrasil_db_analyser::analysis::runner::{AnalysisOutcome, run_analysis};
 use yggdrasil_db_analyser::types::{
     AnalysisName, DBAnalyserConfig, LedgerDBBackend, Limit, SelectDB, ValidateBlocks, WithOrigin,
 };
-use yggdrasil_ledger::{Block, BlockHeader, BlockNo, Era, HeaderHash, Point, SlotNo};
-use yggdrasil_storage::{FileImmutable, ImmutableStore};
+use yggdrasil_ledger::{
+    Block, BlockHeader, BlockNo, CborEncode, Era, HeaderHash, LedgerState, Point, SlotNo,
+};
+use yggdrasil_storage::{FileImmutable, FileLedgerStore, ImmutableStore, LedgerStore};
+
+/// Write a ledger checkpoint at `slot` into the ChainDb `ledger/`
+/// subdir, so the R707 consistency guard has a snapshot to check.
+fn write_ledger_snapshot(db_dir: &std::path::Path, slot: u64) {
+    let mut ledger = FileLedgerStore::open(db_dir.join("ledger")).unwrap();
+    let checkpoint = LedgerState::new(Era::Byron).checkpoint();
+    ledger
+        .save_snapshot(SlotNo(slot), checkpoint.to_cbor_bytes())
+        .unwrap();
+}
 
 fn synthetic_block(byte: u8, slot: u64, block_no: u64) -> Block {
     Block {
@@ -157,6 +169,45 @@ fn end_to_end_lib_run_renders_to_stdout() {
     let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
     let result = yggdrasil_db_analyser::run(&config);
     assert!(result.is_ok(), "run failed: {:?}", result);
+}
+
+#[test]
+fn end_to_end_lib_run_accepts_consistent_ledger_snapshot() {
+    // R707: a ChainDb whose `ledger/` snapshot is at-or-before the
+    // immutable tip passes the consistency guard.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path().join("immutable")).unwrap();
+    store.append_block(synthetic_block(0x01, 0, 0)).unwrap();
+    store.append_block(synthetic_block(0x02, 20, 1)).unwrap();
+    drop(store);
+    // Snapshot at slot 20 == immutable tip — consistent.
+    write_ledger_snapshot(dir.path(), 20);
+
+    let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
+    let result = yggdrasil_db_analyser::run(&config);
+    assert!(result.is_ok(), "run failed: {:?}", result);
+}
+
+#[test]
+fn end_to_end_lib_run_rejects_ledger_snapshot_ahead_of_chain() {
+    // R707: a ChainDb whose `ledger/` snapshot slot is past the
+    // immutable tip is corrupt — the guard rejects it.
+    let dir = TempDir::new().unwrap();
+    let mut store = FileImmutable::open(dir.path().join("immutable")).unwrap();
+    store.append_block(synthetic_block(0x01, 0, 0)).unwrap();
+    store.append_block(synthetic_block(0x02, 20, 1)).unwrap();
+    drop(store);
+    // Snapshot at slot 999 — far ahead of the immutable tip (20).
+    write_ledger_snapshot(dir.path(), 999);
+
+    let config = mk_config(dir.path().to_path_buf(), AnalysisName::CountBlocks);
+    let err = yggdrasil_db_analyser::run(&config).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("ledger snapshot at slot 999")
+            && msg.contains("ahead of the immutable tip at slot 20"),
+        "unexpected error: {msg}"
+    );
 }
 
 #[test]

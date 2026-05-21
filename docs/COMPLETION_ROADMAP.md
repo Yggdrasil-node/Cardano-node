@@ -243,10 +243,29 @@ Praos forging needs. Verified decomposition:
       agree on the canonical layout and can read a node-produced
       ChainDb directly. Coordinated change across the three tool
       crates + their test fixtures; all suites green.
-    - **Remaining:** teach `db-analyser` to load the persisted
-      `LedgerStore` snapshot as the apply-loop's starting state —
-      today `db-analyser` reads only the immutable blocks and does
-      not consume a ledger snapshot.
+    - ✅ **Slice 3** (round 707) — `db-analyser` consistency guard:
+      when a ChainDb carries a `<db>/ledger/` snapshot, `run`
+      now checks the latest snapshot slot is not ahead of the
+      immutable-chain tip (a snapshot past the last persisted
+      block = corrupt ChainDb → structured
+      `LedgerSnapshotAheadOfChain` error). This is the first
+      `db-analyser` consumer of the persisted snapshot.
+      **Scope honesty:** this is a *structural* guard only — it
+      does **not** replay the chain against the snapshot. The
+      original "so `db-analyser` can validate the synthesized
+      chain" goal (replay all blocks from genesis and confirm the
+      resulting ledger state matches the persisted snapshot) is a
+      true *ledger* validation and is **blocked on the
+      genesis-bootstrap arc deferred at R488** — `db-analyser`'s
+      ledger-applying analyses still bootstrap an empty
+      `LedgerState::new()` rather than a genesis-seeded state, so
+      real blocks fail at apply time. The snapshot the synthesizer
+      writes is at the *final* tip (a post-application checkpoint),
+      which does not serve as an apply-loop *starting* state.
+  **R3c-6 status:** the three structural slices are done; the
+  remaining work is the R488 genesis-bootstrap arc (CLI genesis
+  flags + protocol-params hydration), without which `db-analyser`
+  cannot run a real ledger apply-loop from genesis.
 
 **Each slice is its own protocol-critical round** — author a `parity-plan`
 first; R3a/R3c touch the consensus `OpCert` / forge surface. **Exit (R3c):**
