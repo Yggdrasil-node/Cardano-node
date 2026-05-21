@@ -7393,12 +7393,22 @@ pub enum ConwayGovPredFailure {
     /// pending GovAction decoder.
     MalformedProposal(Vec<u8>),
     /// Tag 2: proposal account address is on wrong network —
-    /// `AccountAddress + Network`. Raw pending AccountAddress
-    /// decoder.
-    ProposalProcedureNetworkIdMismatch(Vec<u8>),
+    /// `AccountAddress + Network` (R650 typed).
+    ProposalProcedureNetworkIdMismatch {
+        /// The proposal's return account address.
+        account: yggdrasil_ledger::RewardAccount,
+        /// The expected (ledger) network id.
+        network: Network,
+    },
     /// Tag 3: treasury withdrawal account addresses on wrong
-    /// network — `NonEmptySet AccountAddress + Network`. Raw.
-    TreasuryWithdrawalsNetworkIdMismatch(Vec<u8>),
+    /// network — `NonEmptySet AccountAddress + Network` (R650
+    /// typed).
+    TreasuryWithdrawalsNetworkIdMismatch {
+        /// The treasury-withdrawal account addresses.
+        accounts: NonEmptySetAccountAddress,
+        /// The expected (ledger) network id.
+        network: Network,
+    },
     /// Tag 4: proposal deposit value mismatch — `Mismatch RelEQ
     /// Coin` via ToGroup flattened (R626 typed).
     ProposalDepositIncorrect(Mismatch<u64>),
@@ -7462,8 +7472,8 @@ impl ConwayGovPredFailure {
         match self {
             Self::GovActionsDoNotExist(_) => 0,
             Self::MalformedProposal(_) => 1,
-            Self::ProposalProcedureNetworkIdMismatch(_) => 2,
-            Self::TreasuryWithdrawalsNetworkIdMismatch(_) => 3,
+            Self::ProposalProcedureNetworkIdMismatch { .. } => 2,
+            Self::TreasuryWithdrawalsNetworkIdMismatch { .. } => 3,
             Self::ProposalDepositIncorrect(_) => 4,
             Self::DisallowedVoters(_) => 5,
             Self::ConflictingCommitteeUpdate(_) => 6,
@@ -7487,8 +7497,10 @@ impl ConwayGovPredFailure {
         match self {
             Self::GovActionsDoNotExist(_) => "GovActionsDoNotExist",
             Self::MalformedProposal(_) => "MalformedProposal",
-            Self::ProposalProcedureNetworkIdMismatch(_) => "ProposalProcedureNetworkIdMismatch",
-            Self::TreasuryWithdrawalsNetworkIdMismatch(_) => "TreasuryWithdrawalsNetworkIdMismatch",
+            Self::ProposalProcedureNetworkIdMismatch { .. } => "ProposalProcedureNetworkIdMismatch",
+            Self::TreasuryWithdrawalsNetworkIdMismatch { .. } => {
+                "TreasuryWithdrawalsNetworkIdMismatch"
+            }
             Self::ProposalDepositIncorrect(_) => "ProposalDepositIncorrect",
             Self::DisallowedVoters(_) => "DisallowedVoters",
             Self::ConflictingCommitteeUpdate(_) => "ConflictingCommitteeUpdate",
@@ -7584,14 +7596,41 @@ impl ConwayGovPredFailure {
                 "MalformedProposal",
                 2,
             )?)),
-            2 => Ok(Self::ProposalProcedureNetworkIdMismatch(capture_raw(
-                "ProposalProcedureNetworkIdMismatch",
-                3,
-            )?)),
-            3 => Ok(Self::TreasuryWithdrawalsNetworkIdMismatch(capture_raw(
-                "TreasuryWithdrawalsNetworkIdMismatch",
-                3,
-            )?)),
+            2 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ProposalProcedureNetworkIdMismatch: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let acct_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "ProposalProcedureNetworkIdMismatch: expected AccountAddress bytes: {err:?}"
+                    ))
+                })?;
+                let account =
+                    yggdrasil_ledger::RewardAccount::from_bytes(acct_bytes).ok_or_else(|| {
+                        DecoderError(format!(
+                            "ProposalProcedureNetworkIdMismatch: invalid reward-account ({} bytes)",
+                            acct_bytes.len()
+                        ))
+                    })?;
+                let network = Network::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("ProposalProcedureNetworkIdMismatch: {}", err.0))
+                })?;
+                Ok(Self::ProposalProcedureNetworkIdMismatch { account, network })
+            }
+            3 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "TreasuryWithdrawalsNetworkIdMismatch: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let accounts = NonEmptySetAccountAddress::from_decoder(&mut dec)?;
+                let network = Network::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("TreasuryWithdrawalsNetworkIdMismatch: {}", err.0))
+                })?;
+                Ok(Self::TreasuryWithdrawalsNetworkIdMismatch { accounts, network })
+            }
             5 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -7769,13 +7808,24 @@ impl fmt::Display for ConwayGovPredFailure {
                 write!(f, "GovActionsDoNotExist ({ids})")
             }
             Self::MalformedProposal(b)
-            | Self::ProposalProcedureNetworkIdMismatch(b)
-            | Self::TreasuryWithdrawalsNetworkIdMismatch(b)
             | Self::InvalidPrevGovActionId(b)
             | Self::ProposalCantFollow(b)
             | Self::DisallowedProposalDuringBootstrap(b)
             | Self::ZeroTreasuryWithdrawals(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ProposalProcedureNetworkIdMismatch { account, network } => {
+                write!(
+                    f,
+                    "ProposalProcedureNetworkIdMismatch ({}) {network}",
+                    show_reward_account(account)
+                )
+            }
+            Self::TreasuryWithdrawalsNetworkIdMismatch { accounts, network } => {
+                write!(
+                    f,
+                    "TreasuryWithdrawalsNetworkIdMismatch ({accounts}) {network}"
+                )
             }
             Self::UnelectedCommitteeVoters(creds) => {
                 write!(f, "UnelectedCommitteeVoters ({creds})")
@@ -9239,6 +9289,58 @@ mod tests {
                 .contains("NonEmpty requires at least one entry"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_proposal_procedure_network_mismatch_tag2() {
+        // outer [0x83, 0x02, AccountAddress bytes(29), Network=1].
+        let mut cbor = vec![0x83_u8, 0x02];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xE1); // stake-key/Mainnet reward account
+        cbor.extend_from_slice(&[0x3F_u8; 28]);
+        cbor.push(0x01); // Network = Mainnet
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ProposalProcedureNetworkIdMismatch");
+        if let ConwayGovPredFailure::ProposalProcedureNetworkIdMismatch { account, network } = &f {
+            assert_eq!(account.network, 1);
+            assert_eq!(*network, Network::Mainnet);
+        } else {
+            panic!("expected ProposalProcedureNetworkIdMismatch, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with(
+                "ProposalProcedureNetworkIdMismatch (AccountAddress {aaNetworkId = Mainnet"
+            ),
+            "got: {s}"
+        );
+        assert!(s.ends_with(") Mainnet"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_treasury_withdrawals_network_mismatch_tag3() {
+        // outer [0x83, 0x03, NonEmptySet [AccountAddress], Network].
+        let mut cbor = vec![0x83_u8, 0x03, 0xD9, 0x01, 0x02, 0x81];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0xF0); // script/Testnet reward account
+        cbor.extend_from_slice(&[0x52_u8; 28]);
+        cbor.push(0x00); // Network = Testnet
+        let f =
+            ConwayGovPredFailure::from_cbor(&cbor).expect("TreasuryWithdrawalsNetworkIdMismatch");
+        if let ConwayGovPredFailure::TreasuryWithdrawalsNetworkIdMismatch { accounts, network } = &f
+        {
+            assert_eq!(accounts.entries.len(), 1);
+            assert_eq!(*network, Network::Testnet);
+        } else {
+            panic!("expected TreasuryWithdrawalsNetworkIdMismatch, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("TreasuryWithdrawalsNetworkIdMismatch (NonEmptySet (fromList ["),
+            "got: {s}"
+        );
+        assert!(s.ends_with(") Testnet"), "got: {s}");
     }
 
     #[test]

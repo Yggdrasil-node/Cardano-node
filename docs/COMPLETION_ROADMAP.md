@@ -733,11 +733,15 @@ the `NonEmptyVoterGovActionId` pair-list carrier, and wired GOV
 tags 5 (`DisallowedVoters`), 9 (`VotingOnExpiredGovAction`), 13
 (`DisallowedVotesDuringBootstrap`), 14 (`VotersDoNotExist`).
 R649 (2026-05-21) added the `NonEmptyCredential` list carrier
-and wired GOV tag 18 (`UnelectedCommitteeVoters`). **12 of 19
-Conway GOV variants now carry typed payloads**; the other 7
-keep raw inner CBOR pending typed governance-specific decoders
-(GovAction, ProposalProcedure, ProtVer, AccountAddress+Network
-pairs). **All 9 Conway LEDGER root variants now carry
+and wired GOV tag 18 (`UnelectedCommitteeVoters`). R650
+(2026-05-21) wired GOV tags 2
+(`ProposalProcedureNetworkIdMismatch` — AccountAddress +
+Network) and 3 (`TreasuryWithdrawalsNetworkIdMismatch` —
+NonEmptySet AccountAddress + Network) to typed struct variants.
+**14 of 19 Conway GOV variants now carry typed payloads**; the
+other 5 keep raw inner CBOR pending typed governance-specific
+decoders (GovAction tags 1/15, ProposalProcedure tags 8/12,
+ProtVer tag 10). **All 9 Conway LEDGER root variants now carry
 typed payloads at one level of nesting** — every LEDGER root tag
 has a structurally-typed Rust value (sub-rule payloads at one
 level deeper may still be raw within each sub-rule's variants).
