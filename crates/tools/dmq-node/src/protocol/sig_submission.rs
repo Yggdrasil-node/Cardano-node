@@ -20,6 +20,8 @@ use std::fmt;
 
 use yggdrasil_consensus::OpCert;
 use yggdrasil_crypto::{KesSignature, VerificationKey};
+use yggdrasil_ledger::LedgerError;
+use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
 /// The hash identifying a DMQ signature.
 ///
@@ -353,6 +355,25 @@ pub struct SigValidationException {
     pub error: SigValidationError,
 }
 
+// ---------------------------------------------------------------------------
+// CBOR codec (upstream `SigSubmission/Codec.hs`)
+// ---------------------------------------------------------------------------
+
+/// Encode a [`SigId`] as a CBOR byte string.
+///
+/// Mirror of upstream `encodeSigId SigId{getSigId} =
+/// encodeBytes (getSigHash getSigId)` (`SigSubmission/Codec.hs`).
+pub fn encode_sig_id(sig_id: &SigId, enc: &mut Encoder) {
+    enc.bytes(sig_id.get().get());
+}
+
+/// Decode a [`SigId`] from a CBOR byte string.
+///
+/// Mirror of upstream `decodeSigId = SigId . SigHash <$> decodeBytes`.
+pub fn decode_sig_id(dec: &mut Decoder) -> Result<SigId, LedgerError> {
+    Ok(SigId(SigHash(dec.bytes_owned()?)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,5 +551,24 @@ mod tests {
         let rendered = format!("{exc}");
         assert!(rendered.contains("dead"), "got: {rendered}");
         assert!(rendered.contains("SigExpired"), "got: {rendered}");
+    }
+
+    #[test]
+    fn encode_sig_id_produces_cbor_byte_string() {
+        let mut enc = Encoder::new();
+        encode_sig_id(&SigId(SigHash(vec![0xAA, 0xBB])), &mut enc);
+        // CBOR major type 2, length 2 → 0x42, then the raw bytes.
+        assert_eq!(enc.into_bytes(), vec![0x42, 0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn sig_id_codec_round_trips() {
+        let original = SigId(SigHash(vec![0x01, 0x02, 0x03, 0x04]));
+        let mut enc = Encoder::new();
+        encode_sig_id(&original, &mut enc);
+        let encoded = enc.into_bytes();
+        let mut dec = Decoder::new(&encoded);
+        let decoded = decode_sig_id(&mut dec).expect("decodes");
+        assert_eq!(decoded, original);
     }
 }
