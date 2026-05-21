@@ -4,8 +4,8 @@
 > Update descriptions in the manifest, then run `python .claude/scripts/filetree.py accept-current`.
 
 - Schema version: 1
-- Generated at: 2026-05-20T21:50:10Z
-- Files described: 1475
+- Generated at: 2026-05-21T23:54:15Z
+- Files described: 1659
 
 ## Workspace
 
@@ -1393,8 +1393,8 @@
 - `crates/tools/cardano-submit-api/AGENTS.md`
   - Guidance for the pure-Rust port of upstream `cardano-submit-api`.: **Status:** `partial` (post-R344 functional binary with metrics; integration soak + closeout remain — operator-ti
 - `crates/tools/cardano-submit-api/Cargo.toml`
-  - Cargo manifest for the tools crate.
-  - Declares crate metadata, dependencies, features, and local lint behavior.
+  - Cargo manifest for the yggdrasil-cardano-submit-api crate.
+  - Pure-Rust port of the upstream cardano-submit-api HTTP transaction-submission service.
 - `crates/tools/cardano-submit-api/src/cli/mod.rs`
   - CLI module umbrella (Yggdrasil-side parent shell for cli/types.rs + cli/parsers.rs). ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell that.
 - `crates/tools/cardano-submit-api/src/cli/parsers.rs`
@@ -1548,10 +1548,11 @@
 - `crates/tools/cardano-tracer/tests/fixtures/upstream-version.txt`
   - Project file at crates/tools/cardano-tracer/tests/fixtures/upstream-version.txt.
 - `crates/tools/db-analyser/AGENTS.md`
-  - Guidance for the pure-Rust port of upstream `db-analyser`.: **Status:** `partial` (post-R493 dispatch-coverage matrix.
+  - Per-directory guidance for the pure-Rust db-analyser tool crate.
+  - Tracks dispatch-coverage status across upstream AnalysisName variants and parity rules.
 - `crates/tools/db-analyser/Cargo.toml`
-  - Cargo manifest for the tools crate.
-  - Declares crate metadata, dependencies, features, and local lint behavior.
+  - Cargo manifest for the yggdrasil-db-analyser crate.
+  - Pure-Rust port of the upstream db-analyser ChainDB forensic analyser.
 - `crates/tools/db-analyser/src/analysis.rs`
   - Analysis dispatch layer — parent shell for the analysis sub-tree. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell for the `analysis/` sub-tree. The.
 - `crates/tools/db-analyser/src/analysis/benchmark_ledger_ops.rs`
@@ -1626,7 +1627,8 @@
   - End-to-end integration tests for db-synthesizer forge, genesis-loading, and Praos block-production slices.
   - Exercises argv parsing through ChainDB output with staked Shelley genesis and bulk credentials.
 - `crates/tools/db-truncater/AGENTS.md`
-  - Guidance for the pure-Rust port of upstream `db-truncater`.: **Status:** `partial` (functionally complete; awaiting operator.
+  - Per-directory guidance for the pure-Rust db-truncater tool crate.
+  - Tracks ChainDB-rewind status, the storage-extension arc, and parity rules.
 - `crates/tools/db-truncater/Cargo.toml`
   - Cargo manifest for the tools crate.
   - Declares crate metadata, dependencies, features, and local lint behavior.
@@ -1653,14 +1655,53 @@
   - Declares crate metadata, dependencies, features, and local lint behavior.
 - `crates/tools/dmq-node/src/configuration.rs`
   - Configuration-file loading and CLI-vs-file-vs-defaults merge logic. ## Naming parity **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/Configuration.hs.
+- `crates/tools/dmq-node/src/diffusion.rs`
+  - DMQ diffusion-layer validation-context types: PoolId, StakeSnapshot, and PoolValidationCtx.
+  - Ports the self-contained data types from upstream DMQ Diffusion/NodeKernel/Types.hs.
 - `crates/tools/dmq-node/src/lib.rs`
   - Pure-Rust port of upstream `dmq-node`. ## Naming parity **Strict mirror:** none. Yggdrasil-side parent shell + R335-pattern file-mirror + CLI-parser skeleton for the `dmq-node` sis
 - `crates/tools/dmq-node/src/main.rs`
   - Binary entry point for the `dmq-node` deployable. ## Naming parity **Strict mirror:** none. R335-pattern minimal binary wrapper that delegates to `yggdrasil_dmq_node::run_main()`.
+- `crates/tools/dmq-node/src/node_to_client.rs`
+  - DMQ node-to-client protocol surface: module-tree parent plus LocalMsgSubmission/LocalMsgNotification mux mini-protocol numbers.
+  - Mirrors the self-contained constants of upstream DMQ/NodeToClient.hs.
+- `crates/tools/dmq-node/src/node_to_client/version.rs`
+  - DMQ node-to-client protocol version: NodeToClientVersion enum and NodeToClientVersionData handshake codec.
+  - Strict mirror of upstream DMQ/NodeToClient/Version.hs.
+- `crates/tools/dmq-node/src/node_to_node.rs`
+  - DMQ node-to-node protocol surface: module-tree parent plus SigSubmission/KeepAlive/PeerSharing mux mini-protocol numbers.
+  - Mirrors the self-contained constants of upstream DMQ/NodeToNode.hs.
+- `crates/tools/dmq-node/src/node_to_node/version.rs`
+  - DMQ node-to-node protocol version: NodeToNodeVersion enum and NodeToNodeVersionData handshake codec.
+  - Strict mirror of upstream DMQ/NodeToNode/Version.hs.
 - `crates/tools/dmq-node/src/parser.rs`
   - CLI argument parser for the `dmq-node` binary. ## Naming parity **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/Configuration/CLIOptions.hs.
+- `crates/tools/dmq-node/src/policy.rs`
+  - DMQ mini-protocol policy: the SigSubmission decision policy and per-peer ingress limits.
+  - Carries dmq-node-local mirrors of TxDecisionPolicy/MiniProtocolLimits; mirror of upstream DMQ/Policy.hs.
+- `crates/tools/dmq-node/src/protocol.rs`
+  - DMQ mini-protocol module-tree parent for the upstream DMQ/Protocol/ directory.
+  - Each mini-protocol collapses its upstream Type/Codec/Client/Server/Validate files into one Rust file.
+- `crates/tools/dmq-node/src/protocol/local_msg_notification.rs`
+  - DMQ LocalMsgNotification mini-protocol: server pushes newly-diffused signatures to a local client (node-to-client).
+  - Collapses upstream DMQ/Protocol/LocalMsgNotification Type/Codec/Client/Server.hs into one file.
+- `crates/tools/dmq-node/src/protocol/local_msg_submission.rs`
+  - DMQ LocalMsgSubmission mini-protocol: local DMQ-signature submission over a LocalTxSubmission-shaped exchange (node-to-client).
+  - Collapses upstream DMQ/Protocol/LocalMsgSubmission Type/Codec/Client/Server.hs into one file.
+- `crates/tools/dmq-node/src/protocol/sig_submission.rs`
+  - DMQ SigSubmission mini-protocol: signature diffusion reusing TxSubmission2, plus the Sig payload types, codec, and validator.
+  - Collapses upstream DMQ/Protocol/SigSubmission Type/Codec/Validate.hs into one file.
+- `crates/tools/dmq-node/src/protocol/sig_submission_v2.rs`
+  - DMQ SigSubmissionV2 mini-protocol: ObjectDiffusion-based signature diffusion with count newtypes, messages, transitions, and codec.
+  - Collapses upstream DMQ/Protocol/SigSubmissionV2 Type/Codec/Inbound/Outbound.hs into one file.
+- `crates/tools/dmq-node/src/sig_submission_v2.rs`
+  - DMQ SigSubmissionV2 higher-level protocol surface: the SigSubmissionProtocolError peer-misbehaviour enum and inbound/outbound drivers.
+  - Yggdrasil-side module for the upstream DMQ/SigSubmissionV2/ directory.
 - `crates/tools/dmq-node/src/status.rs`
   - Programmatic-introspection helpers for the dmq-node deferred surfaces. R444 surfaces the Diffusion / NodeKernel / PeerSelection wiring carve-outs as a `*_status()` helper.
+- `crates/tools/dmq-node/src/topology.rs`
+  - DMQ topology-file configuration: reads and parses a DMQ topology JSON document into a TopologyConfig.
+  - Strict mirror of upstream DMQ/Configuration/Topology.hs.
 - `crates/tools/dmq-node/src/types.rs`
   - Typed configuration surface for the `dmq-node` binary. ## Naming parity **Strict mirror:** deps/dmq-node/dmq-node/src/DMQ/Configuration/CLIOptions.hs.
 - `crates/tools/dmq-node/tests/cli_help_golden.rs`
@@ -2351,6 +2392,348 @@
   - Round 591 Remove inert ntn feature flag (A1 partial): ---.
 - `docs/operational-runs/2026-05-20-round-592-remove-inert-plutus-feature.md`
   - Round 592 Remove inert plutus feature flag from yggdrasil-ledger (A1 partial): ---.
+- `docs/operational-runs/2026-05-20-round-594-cardano-submit-api-typed-rejection-scaffold.md`
+  - Operational run record: Round 594 cardano-submit-api typed rejection scaffold (A5 Phase-2).
+- `docs/operational-runs/2026-05-20-round-595-shelley-ledger-pred-failure-scaffold.md`
+  - Operational run record: Round 595 Shelley LEDGER predicate-failure scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-596-cardano-submit-api-withdrawals-decoder.md`
+  - Operational run record: Round 596 cardano-submit-api typed Withdrawals decoder (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-597-shelley-ledger-pred-failure-typed-payloads.md`
+  - Operational run record: Round 597 ShelleyLedgerPredFailure typed payloads + Mismatch decoder (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-598-shelley-utxow-pred-failure-scaffold.md`
+  - Operational run record: Round 598 ShelleyUtxowPredFailure scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-599-non-empty-set-script-hash-decoder.md`
+  - Operational run record: Round 599 NonEmptySet ScriptHash decoder (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-600-keyhash-set-decoders.md`
+  - Operational run record: Round 600 KeyHash + NonEmptySet/Set decoders for UTXOW tags 1/5 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-601-non-empty-vkey-decoder.md`
+  - Operational run record: Round 601 NonEmpty VKey Witness decoder for UTXOW tag 0 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-602-shelley-utxo-pred-failure-scaffold.md`
+  - Operational run record: Round 602 ShelleyUtxoPredFailure scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-603-non-empty-set-txin-decoder.md`
+  - Operational run record: Round 603 NonEmptySet TxIn decoder for ShelleyUtxoPredFailure tag 0 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-604-network-non-empty-set-account-address.md`
+  - Operational run record: Round 604 Network enum + NonEmptySet AccountAddress decoder (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-605-shelley-ppup-pred-failure-scaffold.md`
+  - Operational run record: Round 605 ShelleyPpupPredFailure scaffold + wire UTXO tag 7 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-606-shelley-ppup-pred-failure-typed-payloads.md`
+  - Operational run record: Round 606 ShelleyPpupPredFailure per-variant typed decoders (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-607-addr-non-empty-set-wrong-network.md`
+  - Operational run record: Round 607 Addr + NonEmptySetAddr scaffold + wire UTXO tag 8 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-608-value-not-conserved-coin-mismatch.md`
+  - Operational run record: Round 608 ValueNotConservedUTxO typed Coin Mismatch (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-609-non-empty-tx-out-scaffold.md`
+  - Operational run record: Round 609 NonEmptyTxOut scaffold for UTXO tags 6/10 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-610-utxow-utxo-bubble-up.md`
+  - Operational run record: Round 610 Wire typed UTXO sub-rule into UTXOW tag 4 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-611-ledger-utxow-bubble-up.md`
+  - Operational run record: Round 611 Wire typed UTXOW into LEDGER tag 0 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-612-shelley-delegs-pred-failure-scaffold.md`
+  - Operational run record: Round 612 ShelleyDelegsPredFailure scaffold + wire LEDGER tag 1 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-613-shelley-delpl-pred-failure-scaffold.md`
+  - Operational run record: Round 613 ShelleyDelplPredFailure scaffold + wire DELEGS DelplFailure (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-614-shelley-pool-pred-failure-scaffold.md`
+  - Operational run record: Round 614 ShelleyPoolPredFailure scaffold + wire DELPL tag 0 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-615-shelley-deleg-pred-failure-scaffold.md`
+  - Operational run record: Round 615 ShelleyDelegPredFailure scaffold + wire DELPL tag 1 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-616-shelley-pool-pred-failure-typed-payloads.md`
+  - Operational run record: Round 616 ShelleyPoolPredFailure typed payloads for tags 3/4/5/6 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-617-shelley-deleg-mirpot-typed-payloads.md`
+  - Operational run record: Round 617 Typed DELEG decoders for tags 7/8/13/15 (MIRPot + Mismatch) (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-618-credential-deleg-typed-payloads.md`
+  - Operational run record: Round 618 Credential decoder + wire DELEG tags 0/1/3 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-619-pool-tag1-retirement-wrong-epoch-typed.md`
+  - Operational run record: Round 619 POOL tag 1 StakePoolRetirementWrongEpochPOOL typed (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-620-shelley-tx-out-typed.md`
+  - Operational run record: Round 620 Typed Shelley TxOut parser (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-621-addr-typed-display.md`
+  - Operational run record: Round 621 Typed Addr Display — Shelley header decoding (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-622-ptr-vlq-decoder.md`
+  - Operational run record: Round 622 Typed Ptr decoder for Shelley pointer addresses (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-623-conway-ledger-pred-failure-scaffold.md`
+  - Operational run record: Round 623 Conway LEDGER predicate-failure scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-624-conway-utxow-pred-failure-scaffold.md`
+  - Operational run record: Round 624 ConwayUtxowPredFailure scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-625-conway-certs-pred-failure-scaffold.md`
+  - Operational run record: Round 625 ConwayCertsPredFailure scaffold + wire LEDGER tag 2 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-626-conway-gov-pred-failure-scaffold.md`
+  - Operational run record: Round 626 ConwayGovPredFailure scaffold + wire LEDGER tag 3 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-627-conway-cert-pred-failure-scaffold.md`
+  - Operational run record: Round 627 ConwayCertPredFailure scaffold + wire CERTS tag 1 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-628-conway-deleg-pred-failure-scaffold.md`
+  - Operational run record: Round 628 ConwayDelegPredFailure scaffold + wire CERT tag 1 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-629-conway-govcert-pred-failure-scaffold.md`
+  - Operational run record: Round 629 ConwayGovCertPredFailure scaffold + wire CERT tag 3 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-630-conway-utxo-pred-failure-scaffold.md`
+  - Operational run record: Round 630 ConwayUtxoPredFailure scaffold + wire UTXOW tag 0 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-631-conway-utxos-pred-failure-scaffold.md`
+  - Operational run record: Round 631 ConwayUtxosPredFailure scaffold + wire UTXO tag 0 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-632-conway-utxow-datahash-sets.md`
+  - Operational run record: Round 632 Typed Conway UTXOW DataHash-set variants (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-633-conway-utxo-deltacoin-variants.md`
+  - Operational run record: Round 633 Typed Conway UTXO DeltaCoin variants (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-634-conway-utxo-validity-interval.md`
+  - Operational run record: Round 634 Typed Conway UTXO ValidityInterval variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-635-conway-utxo-nonempty-txin.md`
+  - Operational run record: Round 635 Typed Conway UTXO NonEmpty-TxIn variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-636-conway-utxow-extra-redeemers.md`
+  - Operational run record: Round 636 Typed Conway UTXOW ExtraRedeemers variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-637-conway-utxo-exunits.md`
+  - Operational run record: Round 637 Typed Conway UTXO ExUnitsTooBigUTxO variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-638-conway-utxow-ppview-hashes.md`
+  - Operational run record: Round 638 Typed Conway UTXOW PPViewHashesDontMatch variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-639-conway-utxow-script-integrity-mismatch.md`
+  - Operational run record: Round 639 Typed Conway UTXOW ScriptIntegrityHashMismatch variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-640-conway-utxo-babbage-output-too-small.md`
+  - Operational run record: Round 640 Typed Conway UTXO BabbageOutputTooSmallUTxO variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-641-conway-utxo-scripts-not-paid.md`
+  - Operational run record: Round 641 Typed Conway UTXO ScriptsNotPaidUTxO variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-642-conway-utxo-maryvalue.md`
+  - Operational run record: Round 642 MultiAsset MaryValue decoder closes Conway UTXO (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-643-conway-gov-actions-do-not-exist.md`
+  - Operational run record: Round 643 Typed Conway GOV GovActionsDoNotExist variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-644-conway-gov-account-address.md`
+  - Operational run record: Round 644 Typed Conway GOV AccountAddress variants (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-645-conway-gov-guardrails-script-hash.md`
+  - Operational run record: Round 645 Typed Conway GOV InvalidGuardrailsScriptHash variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-646-conway-gov-expiration-epoch.md`
+  - Operational run record: Round 646 Typed Conway GOV ExpirationEpochTooSmall variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-647-conway-gov-conflicting-committee-update.md`
+  - Operational run record: Round 647 Typed Conway GOV ConflictingCommitteeUpdate variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-648-conway-gov-voter-variants.md`
+  - Operational run record: Round 648 Typed Conway GOV Voter variants (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-649-conway-gov-unelected-committee-voters.md`
+  - Operational run record: Round 649 Typed Conway GOV UnelectedCommitteeVoters variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-650-conway-gov-network-id-mismatch.md`
+  - Operational run record: Round 650 Typed Conway GOV network-id-mismatch variants (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-651-conway-gov-proposal-cant-follow.md`
+  - Operational run record: Round 651 Typed Conway GOV ProposalCantFollow variant (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-652-conway-gov-action-scaffold.md`
+  - Operational run record: Round 652 Conway GovAction scaffold + GOV tags 1/15 (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-653-conway-gov-proposal-procedure.md`
+  - Operational run record: Round 653 Conway ProposalProcedure scaffold closes Conway GOV (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-654-conway-utxos-collect-errors.md`
+  - Operational run record: Round 654 Conway UTXOS CollectErrors typed scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-655-conway-utxow-missing-redeemers.md`
+  - Operational run record: Round 655 Conway UTXOW MissingRedeemers closes Conway sub-rule tree (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-656-byron-bootstrap-address.md`
+  - Operational run record: Round 656 Typed Byron bootstrap address parse (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-657-byron-addr-attributes.md`
+  - Operational run record: Round 657 Typed Byron AddrAttributes decode (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-658-era-tolerant-txout.md`
+  - Operational run record: Round 658 Era-tolerant TxOut decode (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-659-txout-multi-asset-value.md`
+  - Operational run record: Round 659 Surface TxOut multi-asset value in Display (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-660-conway-txcert-scaffold.md`
+  - Operational run record: Round 660 Conway TxCert scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-661-conway-deleg-cert-credential.md`
+  - Operational run record: Round 661 Typed staking credential in Conway delegation certs (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-662-conway-deleg-cert-tail.md`
+  - Operational run record: Round 662 Typed DRep + delegation-cert tail (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-663-conway-govcert-bodies.md`
+  - Operational run record: Round 663 Typed ConwayTxCertGov certificate bodies (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-664-conway-poolcert-body.md`
+  - Operational run record: Round 664 Typed ConwayTxCertPool body (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-665-conway-poolparams.md`
+  - Operational run record: Round 665 Typed RegPool PoolParams record (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-666-poolparams-owners-metadata.md`
+  - Operational run record: Round 666 Typed PoolParams owners + metadata (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-667-stake-pool-relay.md`
+  - Operational run record: Round 667 Typed StakePoolRelay sequence (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-668-govaction-hardfork.md`
+  - Operational run record: Round 668 Typed GovAction HardForkInitiation (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-669-govaction-no-confidence.md`
+  - Operational run record: Round 669 Typed GovAction NoConfidence (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-670-govaction-treasury-withdrawals.md`
+  - Operational run record: Round 670 Typed GovAction TreasuryWithdrawals (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-671-govaction-new-constitution.md`
+  - Operational run record: Round 671 Typed GovAction NewConstitution (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-672-govaction-update-committee.md`
+  - Operational run record: Round 672 Typed GovAction UpdateCommittee (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-673-govaction-parameter-change.md`
+  - Operational run record: Round 673 Typed GovAction ParameterChange + PParamsUpdate scaffold (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-674-collecterror-no-redeemer.md`
+  - Operational run record: Round 674 Typed CollectError NoRedeemer (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-675-pparams-update-named.md`
+  - Operational run record: Round 675 Named PParamsUpdate parameters (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-676-pparams-scalar-values.md`
+  - Operational run record: Round 676 Typed scalar PParamsUpdate values (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-677-pparams-rational-values.md`
+  - Operational run record: Round 677 Typed rational PParamsUpdate values (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-678-pparams-exunits.md`
+  - Operational run record: Round 678 Typed PParamsUpdate ExUnits parameters (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-679-pparams-voting-thresholds.md`
+  - Operational run record: Round 679 Typed PParamsUpdate voting-threshold parameters (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-680-pparams-cost-models.md`
+  - Operational run record: Round 680 Typed PParamsUpdate costModels parameter (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-681-collecterror-bad-translation.md`
+  - Operational run record: Round 681 Typed CollectError BadTranslation / ContextError (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-682-context-error-proposal-procedures.md`
+  - Operational run record: Round 682 Typed ContextError ProposalProceduresFieldNotSupported (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-683-context-error-voting-procedures.md`
+  - Operational run record: Round 683 Typed ContextError VotingProceduresFieldNotSupported (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-684-era-aware-typed-decode.md`
+  - Operational run record: Round 684 Era-aware typed decode through TxValidationErrorInCardanoMode (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-685-shelley-ledger-pred-failure-decode.md`
+  - Operational run record: Round 685 ShelleyLedgerPredFailure::from_cbor + Shelley-family typed decode (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-686-babbage-context-error.md`
+  - Operational run record: Round 686 Typed ContextError BabbageContextError (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-687-conway-utxo-output-too-big.md`
+  - Operational run record: Round 687 Typed Conway UTXO OutputTooBigUTxO (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-688-stale-doc-comment-audit.md`
+  - Operational run record: Round 688 Stale-doc-comment audit (A5 Phase-2.5).
+- `docs/operational-runs/2026-05-21-round-689-parity-summary-update.md`
+  - Operational run record: Round 689 PARITY_SUMMARY update for the A5 typed-rejection arc (A6 doc hygiene).
+- `docs/operational-runs/2026-05-21-round-690-completion-roadmap-a5-complete.md`
+  - Operational run record: Round 690 Mark A5 typed-decoder arc complete in COMPLETION_ROADMAP (A6 doc hygiene).
+- `docs/operational-runs/2026-05-21-round-691-tx-generator-stale-gov-action-docs.md`
+  - Operational run record: Round 691 Correct stale tx-generator GovAction renderer doc comments (A4).
+- `docs/operational-runs/2026-05-21-round-692-tx-generator-network-id-render.md`
+  - Operational run record: Round 692 tx-generator DumpToFile renders tx-body network id (A4).
+- `docs/operational-runs/2026-05-21-round-693-tx-generator-withdrawals-render.md`
+  - Operational run record: Round 693 tx-generator DumpToFile renders tx-body withdrawals (A4).
+- `docs/operational-runs/2026-05-21-round-694-tx-generator-req-signer-hashes.md`
+  - Operational run record: Round 694 tx-generator DumpToFile renders required-signer hashes (A4).
+- `docs/operational-runs/2026-05-21-round-695-tx-generator-aux-data-hash.md`
+  - Operational run record: Round 695 tx-generator DumpToFile renders tx-body aux-data hash (A4).
+- `docs/operational-runs/2026-05-21-round-696-tx-generator-script-integrity-hash.md`
+  - Operational run record: Round 696 tx-generator DumpToFile renders script-integrity hash (A4).
+- `docs/operational-runs/2026-05-21-round-697-tx-generator-collateral-inputs.md`
+  - Operational run record: Round 697 tx-generator DumpToFile renders collateral inputs (A4).
+- `docs/operational-runs/2026-05-21-round-698-tx-generator-reference-inputs.md`
+  - Operational run record: Round 698 tx-generator DumpToFile renders reference inputs (A4).
+- `docs/operational-runs/2026-05-21-round-699-tx-generator-total-collateral.md`
+  - Operational run record: Round 699 tx-generator DumpToFile renders total collateral (A4).
+- `docs/operational-runs/2026-05-21-round-700-tx-generator-collateral-return.md`
+  - Operational run record: Round 700 tx-generator DumpToFile renders collateral return (A4).
+- `docs/operational-runs/2026-05-21-round-701-tx-generator-mint.md`
+  - Operational run record: Round 701 tx-generator DumpToFile renders tx-body mint (A4).
+- `docs/operational-runs/2026-05-21-round-702-tx-generator-dumptofile-sweep-status.md`
+  - Operational run record: Round 702 tx-generator DumpToFile sweep status + blocker flag (A4).
+- `docs/operational-runs/2026-05-21-round-703-tx-generator-aux-data-blocker-precision.md`
+  - Operational run record: Round 703 tx-generator auxiliary_data blocker — precise narrowing (A4).
+- `docs/operational-runs/2026-05-21-round-704-tx-generator-pparams-update-stale-doc.md`
+  - Operational run record: Round 704 Correct stale show_conway_pparams_update doc comment (A4).
+- `docs/operational-runs/2026-05-21-round-705-db-synthesizer-ledger-checkpoint.md`
+  - Operational run record: Round 705 db-synthesizer persists a ledger checkpoint (A3 R3c-6 slice 1).
+- `docs/operational-runs/2026-05-21-round-706-chaindb-immutable-subdir.md`
+  - Operational run record: Round 706 db tools — canonical immutable/ ChainDb subdir (A3 R3c-6 slice 2).
+- `docs/operational-runs/2026-05-21-round-707-db-analyser-ledger-snapshot-guard.md`
+  - Operational run record: Round 707 db-analyser ledger-snapshot consistency guard (A3 R3c-6 slice 3).
+- `docs/operational-runs/2026-05-21-round-708-db-analyser-genesis-bootstrap-scoping.md`
+  - Operational run record: Round 708 Scope the db-analyser genesis-bootstrap arc (A3).
+- `docs/operational-runs/2026-05-21-round-710-db-analyser-cardano-block-args.md`
+  - Operational run record: Round 710 db-analyser CardanoBlockArgs (genesis-bootstrap arc, slice 1 re-scoped).
+- `docs/operational-runs/2026-05-21-round-711-db-analyser-config-flag.md`
+  - Operational run record: Round 711 db-analyser --config parser flag (genesis-bootstrap arc, slice 2).
+- `docs/operational-runs/2026-05-21-round-712-db-analyser-cardano-config.md`
+  - Operational run record: Round 712 db-analyser CardanoConfig (genesis-bootstrap arc, slice 3a).
+- `docs/operational-runs/2026-05-21-round-713-db-analyser-make-protocol-info.md`
+  - Operational run record: Round 713 db-analyser HasProtocolInfo (genesis-bootstrap arc, slice 3b).
+- `docs/operational-runs/2026-05-21-round-714-db-analyser-genesis-ledger-state.md`
+  - Operational run record: Round 714 db-analyser genesis-seeded LedgerState builder (genesis-bootstrap arc, slice 4).
+- `docs/operational-runs/2026-05-21-round-715-db-analyser-injectable-initial-state.md`
+  - Operational run record: Round 715 db-analyser injectable initial LedgerState (genesis-bootstrap arc, slice 5a).
+- `docs/operational-runs/2026-05-21-round-716-db-analyser-genesis-bootstrap-arc-close.md`
+  - Operational run record: Round 716 db-analyser genesis-bootstrap arc close (slice 5b).
+- `docs/operational-runs/2026-05-21-round-717-dmq-node-sig-submission-types.md`
+  - Operational run record: Round 717 dmq-node SigSubmission protocol types (dmq-node arc, slice 1).
+- `docs/operational-runs/2026-05-21-round-718-dmq-node-sig-validation-error.md`
+  - Operational run record: Round 718 dmq-node SigValidationError tree (dmq-node arc, slice 2).
+- `docs/operational-runs/2026-05-21-round-719-dmq-node-sig-crypto-newtypes.md`
+  - Operational run record: Round 719 dmq-node SigSubmission crypto newtypes (dmq-node arc, slice 3).
+- `docs/operational-runs/2026-05-21-round-720-dmq-node-sig-op-certificate.md`
+  - Operational run record: Round 720 dmq-node SigOpCertificate (dmq-node arc, slice 4).
+- `docs/operational-runs/2026-05-21-round-721-dmq-node-sig-raw-payload.md`
+  - Operational run record: Round 721 dmq-node SigRaw/Sig payload types (dmq-node arc, slice 5).
+- `docs/operational-runs/2026-05-21-round-722-dmq-node-sig-id-codec.md`
+  - Operational run record: Round 722 dmq-node SigId CBOR codec (dmq-node arc, slice 6).
+- `docs/operational-runs/2026-05-21-round-723-dmq-node-sig-opcert-codec.md`
+  - Operational run record: Round 723 dmq-node SigOpCertificate codec (dmq-node arc, slice 7).
+- `docs/operational-runs/2026-05-21-round-724-dmq-node-sig-raw-codec.md`
+  - Operational run record: Round 724 dmq-node SigRaw/Sig codec (dmq-node arc, slice 8).
+- `docs/operational-runs/2026-05-21-round-725-dmq-node-sig-decoder.md`
+  - Operational run record: Round 725 dmq-node Sig decoder with signed-bytes capture (dmq-node arc, slice 9).
+- `docs/operational-runs/2026-05-21-round-726-dmq-node-sig-validation-error-json.md`
+  - Operational run record: Round 726 dmq-node SigValidationError JSON (dmq-node arc, slice 10).
+- `docs/operational-runs/2026-05-21-round-727-dmq-node-validate-kes-period.md`
+  - Operational run record: Round 727 dmq-node KES-period validation (dmq-node arc, slice 11).
+- `docs/operational-runs/2026-05-21-round-728-dmq-node-ntn-version.md`
+  - Operational run record: Round 728 dmq-node NodeToNodeVersion (dmq-node arc, slice 12).
+- `docs/operational-runs/2026-05-21-round-729-dmq-node-ntc-version.md`
+  - Operational run record: Round 729 dmq-node NodeToClientVersion (dmq-node arc, slice 13).
+- `docs/operational-runs/2026-05-21-round-732-dmq-node-sigsubmission-protocol-types.md`
+  - Operational run record: Round 732 dmq-node SigSubmission protocol types (dmq-node arc, slice 14).
+- `docs/operational-runs/2026-05-21-round-733-dmq-node-sigsubmission-transition.md`
+  - Operational run record: Round 733 dmq-node SigSubmission transition validation (dmq-node arc, slice 15).
+- `docs/operational-runs/2026-05-21-round-734-dmq-node-sigsubmission-codec.md`
+  - Operational run record: Round 734 dmq-node SigSubmission message codec (dmq-node arc, slice 16).
+- `docs/operational-runs/2026-05-21-round-735-dmq-node-sigsubmission-limits.md`
+  - Operational run record: Round 735 dmq-node SigSubmission protocol limits (dmq-node arc, slice 17).
+- `docs/operational-runs/2026-05-21-round-736-dmq-node-local-msg-submission.md`
+  - Operational run record: Round 736 dmq-node LocalMsgSubmission protocol (dmq-node arc, slice 18).
+- `docs/operational-runs/2026-05-21-round-737-dmq-node-local-msg-submission-codec.md`
+  - Operational run record: Round 737 dmq-node LocalMsgSubmission codec (dmq-node arc, slice 19).
+- `docs/operational-runs/2026-05-21-round-738-dmq-node-local-msg-notification.md`
+  - Operational run record: Round 738 dmq-node LocalMsgNotification protocol (dmq-node arc, slice 20).
+- `docs/operational-runs/2026-05-21-round-739-dmq-node-blocking-reply-list.md`
+  - Operational run record: Round 739 dmq-node BlockingReplyList (dmq-node arc, slice 21).
+- `docs/operational-runs/2026-05-21-round-740-dmq-node-local-msg-notification-codec.md`
+  - Operational run record: Round 740 dmq-node LocalMsgNotification codec (dmq-node arc, slice 22).
+- `docs/operational-runs/2026-05-21-round-741-dmq-node-policy.md`
+  - Operational run record: Round 741 dmq-node Policy (dmq-node arc, slice 23).
+- `docs/operational-runs/2026-05-21-round-742-dmq-node-pool-validation-ctx.md`
+  - Operational run record: Round 742 dmq-node PoolValidationCtx (dmq-node arc, slice 24).
+- `docs/operational-runs/2026-05-21-round-743-dmq-node-ocert-counter-check.md`
+  - Operational run record: Round 743 dmq-node ocert-counter validation (dmq-node arc, slice 25).
+- `docs/operational-runs/2026-05-21-round-744-dmq-node-pool-eligibility.md`
+  - Operational run record: Round 744 dmq-node pool-eligibility validation (dmq-node arc, slice 26).
+- `docs/operational-runs/2026-05-21-round-745-dmq-node-sum-kes-signature-fix.md`
+  - Operational run record: Round 745 dmq-node Sum6 KES-signature correction (dmq-node arc, slice 27).
+- `docs/operational-runs/2026-05-21-round-746-dmq-node-crypto-validation.md`
+  - Operational run record: Round 746 dmq-node cryptographic validation (dmq-node arc, slice 28).
+- `docs/operational-runs/2026-05-21-round-747-dmq-node-validate-sig.md`
+  - Operational run record: Round 747 dmq-node validate_sig entry point (dmq-node arc, slice 29).
+- `docs/operational-runs/2026-05-21-round-748-dmq-node-topology.md`
+  - Operational run record: Round 748 dmq-node Topology configuration (dmq-node arc, slice 30).
+- `docs/operational-runs/2026-05-21-round-749-dmq-node-sig-submission-v2-error.md`
+  - Operational run record: Round 749 dmq-node SigSubmissionV2 protocol error (dmq-node arc, slice 31).
+- `docs/operational-runs/2026-05-21-round-750-dmq-node-sig-submission-v2-state.md`
+  - Operational run record: Round 750 dmq-node SigSubmissionV2 protocol state (dmq-node arc, slice 32).
+- `docs/operational-runs/2026-05-21-round-751-dmq-node-sig-submission-v2-messages.md`
+  - Operational run record: Round 751 dmq-node SigSubmissionV2 messages (dmq-node arc, slice 33).
+- `docs/operational-runs/2026-05-21-round-752-dmq-node-sig-submission-v2-transition.md`
+  - Operational run record: Round 752 dmq-node SigSubmissionV2 transitions (dmq-node arc, slice 34).
+- `docs/operational-runs/2026-05-21-round-753-dmq-node-sig-submission-v2-codec.md`
+  - Operational run record: Round 753 dmq-node SigSubmissionV2 codec (dmq-node arc, slice 35).
+- `docs/operational-runs/2026-05-21-round-754-dmq-node-sig-submission-v2-limits.md`
+  - Operational run record: Round 754 dmq-node SigSubmissionV2 protocol limits (dmq-node arc, slice 36).
+- `docs/operational-runs/2026-05-21-round-756-dmq-node-sig-submission-v2-collect.md`
+  - Operational run record: Round 756 dmq-node SigSubmissionV2 Collect type (dmq-node arc, slice 37).
+- `docs/operational-runs/2026-05-21-round-759-dmq-node-local-msg-notification-client.md`
+  - Operational run record: Round 759 dmq-node LocalMsgNotification client driver (dmq-node runtime sub-arc, slice 1).
+- `docs/operational-runs/2026-05-21-round-760-dmq-node-local-msg-notification-server.md`
+  - Operational run record: Round 760 dmq-node LocalMsgNotification server driver (dmq-node runtime sub-arc, slice 2).
+- `docs/operational-runs/2026-05-21-round-761-dmq-node-local-msg-submission-client.md`
+  - Operational run record: Round 761 dmq-node LocalMsgSubmission client driver (dmq-node runtime sub-arc, slice 3).
+- `docs/operational-runs/2026-05-21-round-762-dmq-node-local-msg-submission-server.md`
+  - Operational run record: Round 762 dmq-node LocalMsgSubmission server driver (dmq-node runtime sub-arc, slice 4).
+- `docs/operational-runs/2026-05-21-round-763-dmq-node-sig-submission-v2-outbound.md`
+  - Operational run record: Round 763 dmq-node SigSubmissionV2 outbound driver (dmq-node runtime sub-arc, slice 5).
+- `docs/operational-runs/2026-05-21-round-764-dmq-node-sig-submission-v2-inbound.md`
+  - Operational run record: Round 764 dmq-node SigSubmissionV2 inbound driver (dmq-node runtime sub-arc, slice 6).
+- `docs/operational-runs/2026-05-21-round-765-dmq-node-ntn-version-data.md`
+  - Operational run record: Round 765 dmq-node NodeToNodeVersionData + negotiation (dmq-node runtime sub-arc, slice 7).
+- `docs/operational-runs/2026-05-22-round-766-dmq-node-ntn-version-data-codec.md`
+  - Operational run record: Round 766 dmq-node NodeToNodeVersionData codec (dmq-node runtime sub-arc, slice 8).
+- `docs/operational-runs/2026-05-22-round-767-dmq-node-ntc-version-data.md`
+  - Operational run record: Round 767 dmq-node NodeToClientVersionData (dmq-node runtime sub-arc, slice 9).
+- `docs/operational-runs/2026-05-22-round-768-dmq-node-mux-protocol-numbers.md`
+  - Operational run record: Round 768 dmq-node mux protocol numbers (dmq-node runtime sub-arc, slice 10).
+- `docs/operational-runs/2026-05-22-round-770-a1-ntc-flag-removal.md`
+  - Operational run record: Round 770 A1 closeout — remove the inert ntc feature flag.
+- `docs/operational-runs/2026-05-22-round-771-a6-filetree-refresh.md`
+  - Operational run record: Round 771 A6 closeout — refresh the filetree manifest.
 - `docs/operational-runs/archive/2026-04-27-round-151-chainsync-pool-wiring.md`
   - Round 151 — ChainSync worker pool runtime wiring + observability: Date: 2026-04-27.
 - `docs/operational-runs/archive/2026-04-27-round-152-cardano-cli-tip-parity.md`

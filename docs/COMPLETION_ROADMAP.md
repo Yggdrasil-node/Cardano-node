@@ -1213,7 +1213,7 @@ variants without a CBOR re-walk —
 `TxValidationErrorInCardanoMode::typed_conway_failures` /
 `typed_shelley_failures` return the typed tree directly.
 
-### A6 — Workspace + documentation hygiene
+### A6 — Workspace + documentation hygiene — ✅ COMPLETE (verified 2026-05-22, R771)
 Post-reorganization cleanup guardrails:
 - **Workspace members:** closed. The root `Cargo.toml` now explicitly lists
   the shipped `crates/node/cardano-node` binary crate plus all 9 Wave 5
@@ -1232,9 +1232,13 @@ Post-reorganization cleanup guardrails:
 - **Historical-doc paths:** round-stamped historical narratives now use the
   post-split `crates/node/<sub-crate>/...` paths where they mention local Rust
   files; keep upstream Haskell `cardano-node/...` URLs unchanged.
-- **Filetree descriptions:** `.claude/filetree/manifest.json` was bootstrapped
-  2026-05-17 with auto-derived descriptions; refine the weak ones incrementally
-  via the `cardano-filetree-maintainer` skill / `filetree-reviewer` agent.
+- **Filetree descriptions:** closed R771. `.claude/filetree/manifest.json`
+  (bootstrapped 2026-05-17) was brought fully current after the R717-R770
+  dmq-node arc — the `filetree-reviewer` agent added entries for the new
+  dmq-node source files and the `docs/operational-runs/` history and
+  refreshed stale entries; `python3 .claude/scripts/filetree.py check` is
+  clean. Keep it current via the `cardano-filetree-maintainer` skill /
+  `filetree-reviewer` agent after future file additions.
 
 ---
 
