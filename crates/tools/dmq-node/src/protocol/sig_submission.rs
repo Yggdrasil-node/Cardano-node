@@ -21,7 +21,7 @@ use std::fmt;
 use yggdrasil_consensus::OpCert;
 use yggdrasil_crypto::{KesSignature, Signature, SumKesVerificationKey, VerificationKey};
 use yggdrasil_ledger::LedgerError;
-use yggdrasil_ledger::cbor::{Decoder, Encoder};
+use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
 /// The hash identifying a DMQ signature.
 ///
@@ -740,7 +740,132 @@ impl SigSubmissionMessage {
             SigSubmissionMessage::MsgDone => "MsgDone",
         }
     }
+
+    /// Encode this message to CBOR.
+    ///
+    /// Wire format — byte-identical to `crates/network`'s
+    /// `TxSubmissionMessage::to_cbor` for the message envelope, with
+    /// `SigId` / `Sig` payloads (mirror of upstream
+    /// `encodeTxSubmission2`):
+    /// - `MsgInit`         is `[6]`
+    /// - `MsgRequestTxIds` is `[0, blocking, ack, req]`
+    /// - `MsgReplyTxIds`   is `[1, [[sigId, size], ...]]`
+    /// - `MsgRequestTxs`   is `[2, [sigId, ...]]`
+    /// - `MsgReplyTxs`     is `[3, [sig, ...]]`
+    /// - `MsgDone`         is `[4]`
+    pub fn to_cbor(&self) -> Vec<u8> {
+        let mut enc = Encoder::new();
+        match self {
+            SigSubmissionMessage::MsgInit => {
+                enc.array(1).unsigned(6);
+            }
+            SigSubmissionMessage::MsgRequestTxIds { blocking, ack, req } => {
+                enc.array(4)
+                    .unsigned(0)
+                    .bool(*blocking)
+                    .unsigned(u64::from(*ack))
+                    .unsigned(u64::from(*req));
+            }
+            SigSubmissionMessage::MsgReplyTxIds { sig_ids } => {
+                enc.array(2).unsigned(1);
+                enc.array(sig_ids.len() as u64);
+                for item in sig_ids {
+                    enc.array(2);
+                    encode_sig_id(&item.sig_id, &mut enc);
+                    enc.unsigned(u64::from(item.size));
+                }
+            }
+            SigSubmissionMessage::MsgRequestTxs { sig_ids } => {
+                enc.array(2).unsigned(2);
+                enc.array(sig_ids.len() as u64);
+                for sig_id in sig_ids {
+                    encode_sig_id(sig_id, &mut enc);
+                }
+            }
+            SigSubmissionMessage::MsgReplyTxs { sigs } => {
+                enc.array(2).unsigned(3);
+                enc.array(sigs.len() as u64);
+                for sig in sigs {
+                    encode_sig(sig, &mut enc);
+                }
+            }
+            SigSubmissionMessage::MsgDone => {
+                enc.array(1).unsigned(4);
+            }
+        }
+        enc.into_bytes()
+    }
+
+    /// Decode a message from CBOR bytes.
+    ///
+    /// Inverse of [`Self::to_cbor`]; rejects an unknown tag, a
+    /// wrong-arity envelope, or trailing bytes.
+    pub fn from_cbor(data: &[u8]) -> Result<SigSubmissionMessage, LedgerError> {
+        let mut dec = Decoder::new(data);
+        let arr_len = dec.array()?;
+        let tag = dec.unsigned()?;
+        let msg = match (tag, arr_len) {
+            (6, 1) => SigSubmissionMessage::MsgInit,
+            (0, 4) => {
+                let blocking = dec.bool()?;
+                let ack = dec.unsigned()? as u16;
+                let req = dec.unsigned()? as u16;
+                SigSubmissionMessage::MsgRequestTxIds { blocking, ack, req }
+            }
+            (1, 2) => {
+                let count = dec.array()?;
+                let mut sig_ids = vec_with_strict_capacity(count, SIG_SUBMISSION_LIST_MAX)?;
+                for _ in 0..count {
+                    let inner = dec.array()?;
+                    if inner != 2 {
+                        return Err(LedgerError::CborInvalidLength {
+                            expected: 2,
+                            actual: inner as usize,
+                        });
+                    }
+                    let sig_id = decode_sig_id(&mut dec)?;
+                    let size = dec.unsigned()? as u32;
+                    sig_ids.push(SigIdAndSize { sig_id, size });
+                }
+                SigSubmissionMessage::MsgReplyTxIds { sig_ids }
+            }
+            (2, 2) => {
+                let count = dec.array()?;
+                let mut sig_ids = vec_with_strict_capacity(count, SIG_SUBMISSION_LIST_MAX)?;
+                for _ in 0..count {
+                    sig_ids.push(decode_sig_id(&mut dec)?);
+                }
+                SigSubmissionMessage::MsgRequestTxs { sig_ids }
+            }
+            (3, 2) => {
+                let count = dec.array()?;
+                let mut sigs = vec_with_strict_capacity(count, SIG_SUBMISSION_LIST_MAX)?;
+                for _ in 0..count {
+                    let raw = dec.bytes_owned()?;
+                    sigs.push(decode_sig(&raw)?);
+                }
+                SigSubmissionMessage::MsgReplyTxs { sigs }
+            }
+            (4, 1) => SigSubmissionMessage::MsgDone,
+            _ => {
+                return Err(LedgerError::CborTypeMismatch {
+                    expected: 0,
+                    actual: tag as u8,
+                });
+            }
+        };
+        if !dec.is_empty() {
+            return Err(LedgerError::CborTrailingBytes(dec.remaining()));
+        }
+        Ok(msg)
+    }
 }
+
+/// Anti-DoS pre-allocation cap for `SigSubmissionMessage` list
+/// decoding — far above any legitimate message. The protocol-level
+/// in-flight limits (upstream `Policy.hs`) are enforced separately by
+/// the inbound governor.
+const SIG_SUBMISSION_LIST_MAX: usize = 4_096;
 
 /// An illegal `SigSubmission` state transition.
 ///
@@ -1164,6 +1289,62 @@ mod tests {
             }
             _ => panic!("wrong variant"),
         }
+    }
+
+    fn sample_sig() -> Sig {
+        let raw = sample_sig_raw();
+        let mut enc = Encoder::new();
+        encode_sig_raw(&raw, &mut enc);
+        decode_sig(&enc.into_bytes()).expect("sample sig")
+    }
+
+    #[test]
+    fn sig_submission_message_codec_round_trips() {
+        let sig_id = SigId(SigHash(vec![0xAB, 0xCD]));
+        let messages = vec![
+            SigSubmissionMessage::MsgInit,
+            SigSubmissionMessage::MsgRequestTxIds {
+                blocking: true,
+                ack: 3,
+                req: 7,
+            },
+            SigSubmissionMessage::MsgReplyTxIds {
+                sig_ids: vec![SigIdAndSize {
+                    sig_id: sig_id.clone(),
+                    size: 99,
+                }],
+            },
+            SigSubmissionMessage::MsgRequestTxs {
+                sig_ids: vec![sig_id.clone()],
+            },
+            SigSubmissionMessage::MsgReplyTxs {
+                sigs: vec![sample_sig()],
+            },
+            SigSubmissionMessage::MsgDone,
+        ];
+        for msg in messages {
+            let encoded = msg.to_cbor();
+            let decoded = SigSubmissionMessage::from_cbor(&encoded).expect("decodes");
+            assert_eq!(decoded, msg);
+        }
+    }
+
+    #[test]
+    fn sig_submission_message_envelope_bytes() {
+        // `[6]` and `[4]` — a CBOR array of one unsigned integer.
+        assert_eq!(SigSubmissionMessage::MsgInit.to_cbor(), vec![0x81, 0x06]);
+        assert_eq!(SigSubmissionMessage::MsgDone.to_cbor(), vec![0x81, 0x04]);
+    }
+
+    #[test]
+    fn from_cbor_rejects_unknown_tag() {
+        let mut enc = Encoder::new();
+        enc.array(1).unsigned(99);
+        let err = SigSubmissionMessage::from_cbor(&enc.into_bytes()).expect_err("rejects");
+        assert!(
+            matches!(err, LedgerError::CborTypeMismatch { .. }),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
