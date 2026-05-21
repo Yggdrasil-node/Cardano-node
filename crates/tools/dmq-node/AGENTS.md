@@ -30,13 +30,34 @@ Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase
   host/port/local-socket/config-file/topology-file/cardano-socket/
   network-magic parsed + validated + merged with config-file
   contents (R369 layered).
-- 🟡 `protocol/sig_submission.rs` — DMQ `SigSubmission` mini-protocol
-  port (collapses upstream `DMQ/Protocol/SigSubmission/{Type,Codec,
-  Validate}.hs`, the `crates/network/src/protocols/` pattern). R717
-  shipped the `Type.hs` byte-wrapper newtypes (`SigHash`, `SigId`,
-  `SigBody`, `CborBytes`); the `SigRaw`/`Sig` payload types, the
-  `SigValidationError` tree, the codec, and the validator land in
-  subsequent dmq-node-arc rounds.
+- ✅ `protocol/sig_submission.rs` — DMQ `SigSubmission` mini-protocol,
+  **self-contained surface complete** (R717-R727, collapses upstream
+  `DMQ/Protocol/SigSubmission/{Type,Codec,Validate}.hs`):
+  - `Type.hs` data types — `SigHash`/`SigId`/`SigBody`/`CborBytes`
+    (R717), `SigValidationError`/`Trace`/`Exception` (R718),
+    `SigKesSignature`/`SigColdKey`/`SigOpCertificate` (R719-R720),
+    `PosixTime`/`SigRaw`/`SigRawWithSignedBytes`/`Sig` (R721).
+  - `Codec.hs` — `encode/decode_sig_id` (R722),
+    `encode/decode_sig_op_certificate` (R723), `encode_sig` +
+    `encode/decode_sig_raw` (R724), `decode_sig` with
+    `sigRawSignedBytes` capture (R725).
+  - `SigValidationError::to_json` (R726); `validate_kes_period` +
+    `MAX_CLOCK_SKEW_SEC` (R727).
+- ✅ `node_to_node/version.rs` (R728) + `node_to_client/version.rs`
+  (R729) — the NtN / NtC protocol-version enums + CBOR-term codecs.
+- 🟡 **dmq-node ↔ `crates/network` integration sub-arc (pending).**
+  The remaining `SigSubmission` work — the `codecSigSubmission`
+  `TxSubmission2` wrapper, the `timeLimits`/`byteLimits` tables, the
+  rest of `validateSig` (the stateful pool-eligibility / opcert-counter
+  / KES-signature checks, gated on `Diffusion/NodeKernel`'s
+  `PoolValidationCtx`) — plus `Policy.hs`, `Configuration/Topology.hs`,
+  the `LocalMsgSubmission` / `LocalMsgNotification` mini-protocols, and
+  the NtN/NtC version-data + negotiation all reuse `crates/network`
+  mini-protocol machinery (`TxSubmission2`, `NetworkTopology`,
+  `TxDecisionPolicy`, `BlockingReplyList`). This is a cross-crate
+  integration sub-arc — scope it with a `parity-plan`, verifying
+  first whether `crates/network`'s `TxSubmission2` codec is reusable
+  over the `SigId`/`Sig` types.
 - ❌ Diffusion / NodeKernel / PeerSelection wiring — returns
   `RunError::DiffusionWiringDeferred { host, local_socket,
   config_file, topology_file, cardano_socket, cardano_magic,
