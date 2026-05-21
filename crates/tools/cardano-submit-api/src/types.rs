@@ -2797,6 +2797,79 @@ impl fmt::Display for ShelleyTxOut {
     }
 }
 
+/// Non-empty list of `(TxOut, Coin)` pairs mirroring upstream
+/// `NonEmpty (TxOut era, Coin)` — the payload of
+/// `BabbageOutputTooSmallUTxO`. Each pair binds a Shelley-era
+/// output to its minimum-value requirement. CBOR wire format is
+/// a regular CBOR array of 2-element `[TxOut, Coin]` arrays;
+/// empty arrays are rejected at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyTxOutCoinPair {
+    /// Decoded `(output, min-value)` pairs in wire order.
+    /// Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<(ShelleyTxOut, u64)>,
+}
+
+impl NonEmptyTxOutCoinPair {
+    /// Decode a `NonEmpty (TxOut, Coin)` from canonical CBOR
+    /// bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyTxOutCoinPair: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyTxOutCoinPair: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let pair_len = dec.array().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyTxOutCoinPair: expected 2-element pair: {err:?}"
+                ))
+            })?;
+            if pair_len != 2 {
+                return Err(DecoderError(format!(
+                    "NonEmptyTxOutCoinPair: expected 2-element pair, got len {pair_len}"
+                )));
+            }
+            let tx_out = ShelleyTxOut::from_decoder(&mut dec)?;
+            let coin = dec.unsigned().map_err(|err| {
+                DecoderError(format!("NonEmptyTxOutCoinPair: expected Coin: {err:?}"))
+            })?;
+            entries.push((tx_out, coin));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyTxOutCoinPair {
+    /// Render upstream `Show (NonEmpty (TxOut, Coin))`:
+    /// `<head> :| [<tail>...]` where each pair is a Haskell tuple
+    /// `(<TxOut>, Coin <n>)`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyTxOutCoinPair enforces ≥1 entry at decode time");
+        write!(f, "({}, {}) :| [", head.0, CoinShow(head.1))?;
+        let mut first = true;
+        for (tx_out, coin) in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "({tx_out}, {})", CoinShow(*coin))?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// Non-empty list of transaction outputs mirroring upstream
 /// `NonEmpty (TxOut era)`. CBOR wire format is a regular CBOR
 /// array with ≥1 entry. NonEmpty invariant enforced at decode time.
@@ -5742,8 +5815,8 @@ pub enum ConwayUtxoPredFailure {
         declared: u64,
     },
     /// Tag 21: outputs below the minimum value (Babbage form) —
-    /// `NonEmpty (TxOut era, Coin)`. Raw pending pair decoder.
-    BabbageOutputTooSmallUTxO(Vec<u8>),
+    /// `NonEmpty (TxOut era, Coin)` (R640 typed).
+    BabbageOutputTooSmallUTxO(NonEmptyTxOutCoinPair),
     /// Tag 22: TxIns appearing in both inputs and reference
     /// inputs — `NonEmpty TxIn` (R635 typed).
     BabbageNonDisjointRefInputs(NonEmptyTxIn),
@@ -6082,10 +6155,16 @@ impl ConwayUtxoPredFailure {
                 })?;
                 Ok(Self::IncorrectTotalCollateralField { provided, declared })
             }
-            21 => Ok(Self::BabbageOutputTooSmallUTxO(capture_raw(
-                "BabbageOutputTooSmallUTxO",
-                2,
-            )?)),
+            21 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "BabbageOutputTooSmallUTxO: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                Ok(Self::BabbageOutputTooSmallUTxO(
+                    NonEmptyTxOutCoinPair::from_cbor(payload_bytes)?,
+                ))
+            }
             22 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
@@ -6114,9 +6193,11 @@ impl fmt::Display for ConwayUtxoPredFailure {
             Self::ValueNotConservedUTxO(b)
             | Self::OutputTooBigUTxO(b)
             | Self::ScriptsNotPaidUTxO(b)
-            | Self::CollateralContainsNonADA(b)
-            | Self::BabbageOutputTooSmallUTxO(b) => {
+            | Self::CollateralContainsNonADA(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::BabbageOutputTooSmallUTxO(pairs) => {
+                write!(f, "BabbageOutputTooSmallUTxO ({pairs})")
             }
             Self::ExUnitsTooBigUTxO(mm) => write!(f, "ExUnitsTooBigUTxO ({mm})"),
             Self::BabbageNonDisjointRefInputs(ins) => {
@@ -8517,6 +8598,48 @@ mod tests {
                 "ValidityInterval {invalidBefore = SNothing, invalidHereafter = SNothing}"
             ),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_babbage_output_too_small_tag21() {
+        // outer [0x82, 0x15, NonEmpty [(TxOut, Coin)]]. NonEmpty
+        // array(1) of pair [TxOut, Coin]. TxOut = [bytes(29) addr,
+        // coin=500]; pair coin (min value) = 1000000.
+        let mut cbor = vec![0x82_u8, 0x15, 0x81, 0x82, 0x82];
+        cbor.push(0x58); // addr bytes header
+        cbor.push(29);
+        cbor.push(0x61); // enterprise/key/Mainnet header
+        cbor.extend_from_slice(&[0xCC_u8; 28]);
+        cbor.extend_from_slice(&[0x19, 0x01, 0xF4]); // TxOut coin = 500
+        cbor.extend_from_slice(&[0x1A, 0x00, 0x0F, 0x42, 0x40]); // min value = 1_000_000
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("BabbageOutputTooSmallUTxO");
+        if let ConwayUtxoPredFailure::BabbageOutputTooSmallUTxO(pairs) = &f {
+            assert_eq!(pairs.entries.len(), 1);
+            assert_eq!(pairs.entries[0].0.coin, 500);
+            assert_eq!(pairs.entries[0].1, 1_000_000);
+        } else {
+            panic!("expected BabbageOutputTooSmallUTxO, got {f:?}");
+        }
+        let s = f.to_string();
+        // `BabbageOutputTooSmallUTxO (` + pair tuple `(` + TxOut
+        // tuple `(` = three opening parens.
+        assert!(
+            s.starts_with("BabbageOutputTooSmallUTxO (((Addr Mainnet"),
+            "got: {s}"
+        );
+        assert!(s.contains(", Coin 500), Coin 1000000)"), "got: {s}");
+        assert!(s.ends_with(":| [])"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_babbage_output_too_small_rejects_empty() {
+        let cbor = [0x82_u8, 0x15, 0x80];
+        let err = ConwayUtxoPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
         );
     }
 
