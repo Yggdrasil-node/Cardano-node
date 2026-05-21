@@ -4309,6 +4309,152 @@ fn show_haskell_bytestring_like(s: &str) -> String {
     out
 }
 
+/// `ConwayPlutusPurpose AsIx` mirror — the index-only form of a
+/// Conway Plutus script purpose (`ConwayPlutusPurpose f era` with
+/// `f = AsIx`). Each variant carries an `AsIx Word32` redeemer
+/// pointer. CBOR wire format is a 2-element `CBORGroup`
+/// `[word8-tag, word32-index]` per upstream `EncCBORGroup
+/// (ConwayPlutusPurpose f era)` (tags 0-5).
+///
+/// Display matches upstream stock-derived `Show (ConwayPlutusPurpose
+/// AsIx era)`: `<Constructor> (AsIx {unAsIx = <n>})`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub enum ConwayPlutusPurposeIx {
+    /// Tag 0: spending a transaction input.
+    ConwaySpending(u32),
+    /// Tag 1: minting under a policy.
+    ConwayMinting(u32),
+    /// Tag 2: certifying a tx certificate.
+    ConwayCertifying(u32),
+    /// Tag 3: rewarding a reward account.
+    ConwayRewarding(u32),
+    /// Tag 4: voting (Conway governance).
+    ConwayVoting(u32),
+    /// Tag 5: proposing a governance action (Conway).
+    ConwayProposing(u32),
+}
+
+impl ConwayPlutusPurposeIx {
+    /// Upstream stock-derived `Show` constructor name.
+    fn constructor(self) -> &'static str {
+        match self {
+            Self::ConwaySpending(_) => "ConwaySpending",
+            Self::ConwayMinting(_) => "ConwayMinting",
+            Self::ConwayCertifying(_) => "ConwayCertifying",
+            Self::ConwayRewarding(_) => "ConwayRewarding",
+            Self::ConwayVoting(_) => "ConwayVoting",
+            Self::ConwayProposing(_) => "ConwayProposing",
+        }
+    }
+
+    /// Decode a single `ConwayPlutusPurpose AsIx` from its
+    /// 2-element CBORGroup envelope `[word8-tag, word32-index]`.
+    fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayPlutusPurposeIx: expected 2-element group: {err:?}"
+            ))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ConwayPlutusPurposeIx: expected 2-element group, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayPlutusPurposeIx: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        let raw_ix = dec.unsigned().map_err(|err| {
+            DecoderError(format!("ConwayPlutusPurposeIx: expected index: {err:?}"))
+        })?;
+        let ix = u32::try_from(raw_ix).map_err(|_| {
+            DecoderError(format!(
+                "ConwayPlutusPurposeIx: index {raw_ix} does not fit Word32"
+            ))
+        })?;
+        match tag {
+            0 => Ok(Self::ConwaySpending(ix)),
+            1 => Ok(Self::ConwayMinting(ix)),
+            2 => Ok(Self::ConwayCertifying(ix)),
+            3 => Ok(Self::ConwayRewarding(ix)),
+            4 => Ok(Self::ConwayVoting(ix)),
+            5 => Ok(Self::ConwayProposing(ix)),
+            other => Err(DecoderError(format!(
+                "ConwayPlutusPurposeIx: unknown purpose tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayPlutusPurposeIx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ix = match self {
+            Self::ConwaySpending(i)
+            | Self::ConwayMinting(i)
+            | Self::ConwayCertifying(i)
+            | Self::ConwayRewarding(i)
+            | Self::ConwayVoting(i)
+            | Self::ConwayProposing(i) => *i,
+        };
+        write!(f, "{} (AsIx {{unAsIx = {ix}}})", self.constructor())
+    }
+}
+
+/// Non-empty list of `ConwayPlutusPurpose AsIx` mirroring upstream
+/// `NonEmpty (PlutusPurpose AsIx era)`. CBOR wire format is a
+/// plain array of 2-element CBORGroup envelopes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyPlutusPurposeIx {
+    /// Decoded entries in wire order. Guaranteed non-empty by
+    /// `from_cbor`.
+    pub entries: Vec<ConwayPlutusPurposeIx>,
+}
+
+impl NonEmptyPlutusPurposeIx {
+    /// Decode a `NonEmpty (PlutusPurpose AsIx era)` from canonical
+    /// CBOR bytes.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyPlutusPurposeIx: expected CBOR array: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyPlutusPurposeIx: NonEmpty requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            entries.push(ConwayPlutusPurposeIx::from_decoder(&mut dec)?);
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyPlutusPurposeIx {
+    /// Render upstream `Show (NonEmpty a)`: `<head> :| [<tail>...]`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (head, tail) = self
+            .entries
+            .split_first()
+            .expect("NonEmptyPlutusPurposeIx enforces ≥1 entry at decode time");
+        write!(f, "{head} :| [")?;
+        let mut first = true;
+        for p in tail {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "{p}")?;
+        }
+        f.write_str("]")
+    }
+}
+
 /// `ConwayUtxowPredFailure` mirror — Conway-era UTXOW sub-rule
 /// failure (under `ConwayLedgerPredFailure::ConwayUtxowFailure`).
 ///
@@ -4383,8 +4529,8 @@ pub enum ConwayUtxowPredFailure {
     /// `NonEmptySet TxIn` (R603 typed).
     UnspendableUTxONoDatumHash(NonEmptySetTxIn),
     /// Tag 15: extra redeemers — `NonEmpty (PlutusPurpose AsIx
-    /// era)`. Raw pending PlutusPurpose decoder.
-    ExtraRedeemers(Vec<u8>),
+    /// era)` (R636 typed).
+    ExtraRedeemers(NonEmptyPlutusPurposeIx),
     /// Tag 16: malformed script witnesses —
     /// `NonEmptySet ScriptHash` (R599 typed).
     MalformedScriptWitnesses(NonEmptySetScriptHash),
@@ -4644,7 +4790,19 @@ impl ConwayUtxowPredFailure {
                 "PPViewHashesDontMatch",
                 3,
             )?)),
-            15 => Ok(Self::ExtraRedeemers(capture_raw("ExtraRedeemers", 2)?)),
+            15 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ExtraRedeemers: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayUtxowPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::ExtraRedeemers(NonEmptyPlutusPurposeIx::from_cbor(
+                    payload_bytes,
+                )?))
+            }
             18 => Ok(Self::ScriptIntegrityHashMismatch(capture_raw(
                 "ScriptIntegrityHashMismatch",
                 3,
@@ -4666,9 +4824,11 @@ impl fmt::Display for ConwayUtxowPredFailure {
             Self::UtxoFailure(utxo) => write!(f, "UtxoFailure ({utxo})"),
             Self::MissingRedeemers(b)
             | Self::PPViewHashesDontMatch(b)
-            | Self::ExtraRedeemers(b)
             | Self::ScriptIntegrityHashMismatch(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::ExtraRedeemers(purposes) => {
+                write!(f, "ExtraRedeemers ({purposes})")
             }
             Self::MissingRequiredDatums { missing, received } => {
                 write!(f, "MissingRequiredDatums ({missing}) ({received})")
@@ -7870,6 +8030,62 @@ mod tests {
             err.to_string().contains("unknown variant tag 99"),
             "got: {err}"
         );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_extra_redeemers_tag15() {
+        // outer [0x82, 0x0F, NonEmpty [PlutusPurpose AsIx]].
+        // NonEmpty array(2): [ConwaySpending(AsIx 3),
+        // ConwayMinting(AsIx 7)]. Each purpose is a 2-element
+        // group [tag, index].
+        let cbor = [0x82_u8, 0x0F, 0x82, 0x82, 0x00, 0x03, 0x82, 0x01, 0x07];
+        let f = ConwayUtxowPredFailure::from_cbor(&cbor).expect("ExtraRedeemers");
+        if let ConwayUtxowPredFailure::ExtraRedeemers(purposes) = &f {
+            assert_eq!(purposes.entries.len(), 2);
+            assert_eq!(
+                purposes.entries[0],
+                ConwayPlutusPurposeIx::ConwaySpending(3)
+            );
+            assert_eq!(purposes.entries[1], ConwayPlutusPurposeIx::ConwayMinting(7));
+        } else {
+            panic!("expected ExtraRedeemers, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ExtraRedeemers (ConwaySpending (AsIx {unAsIx = 3}) :| [ConwayMinting (AsIx {unAsIx = 7})])"
+        );
+    }
+
+    #[test]
+    fn conway_utxow_pred_failure_extra_redeemers_rejects_empty() {
+        let cbor = [0x82_u8, 0x0F, 0x80];
+        let err = ConwayUtxowPredFailure::from_cbor(&cbor).expect_err("empty NonEmpty must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_plutus_purpose_ix_covers_all_six_purposes() {
+        for (tag, expected) in [
+            (0_u8, "ConwaySpending"),
+            (1, "ConwayMinting"),
+            (2, "ConwayCertifying"),
+            (3, "ConwayRewarding"),
+            (4, "ConwayVoting"),
+            (5, "ConwayProposing"),
+        ] {
+            // Wrap a single purpose in a NonEmpty for decoding.
+            let cbor = [0x82_u8, 0x0F, 0x81, 0x82, tag, 0x09];
+            let f =
+                ConwayUtxowPredFailure::from_cbor(&cbor).expect("ExtraRedeemers single purpose");
+            let ConwayUtxowPredFailure::ExtraRedeemers(purposes) = &f else {
+                panic!("expected ExtraRedeemers, got {f:?}");
+            };
+            assert_eq!(purposes.entries[0].constructor(), expected);
+        }
     }
 
     #[test]

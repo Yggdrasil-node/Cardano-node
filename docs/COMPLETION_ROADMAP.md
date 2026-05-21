@@ -796,12 +796,17 @@ R632 (2026-05-21) typed Conway UTXOW tags 11
 (`NotAllowedSupplementalDatums`) — added the `DataHash`
 (32-byte), `SetDataHash`, and `NonEmptySetDataHash` carriers
 (tag-258-tolerant hash sets) and wired both variants to struct
-shapes `{ NonEmptySetDataHash, SetDataHash }`. **14 of 19 Conway
-UTXOW variants now carry typed payloads**; only tags 10
-(MissingRedeemers), 13 (PPViewHashesDontMatch), 15
-(ExtraRedeemers), 18 (ScriptIntegrityHashMismatch) remain raw
-pending PlutusPurpose + StrictMaybe ScriptIntegrityHash
-decoders.
+shapes `{ NonEmptySetDataHash, SetDataHash }`. R636
+(2026-05-21) typed Conway UTXOW tag 15 (`ExtraRedeemers`) —
+added the `ConwayPlutusPurposeIx` enum (the index-only
+`ConwayPlutusPurpose AsIx` form, 6 variants Spending/Minting/
+Certifying/Rewarding/Voting/Proposing each carrying a Word32
+redeemer pointer) and the `NonEmptyPlutusPurposeIx` carrier.
+**15 of 19 Conway UTXOW variants now carry typed payloads**;
+only tags 10 (MissingRedeemers — `PlutusPurpose AsItem` form),
+13 (PPViewHashesDontMatch), 18 (ScriptIntegrityHashMismatch)
+remain raw pending PlutusPurpose-AsItem + StrictMaybe
+ScriptIntegrityHash decoders.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
