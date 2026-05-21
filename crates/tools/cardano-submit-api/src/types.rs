@@ -594,6 +594,24 @@ impl fmt::Display for CoinShow {
     }
 }
 
+/// Signed coin-delta renderer matching upstream `Show DeltaCoin`:
+/// `newtype DeltaCoin = DeltaCoin Integer` with `deriving (Show)
+/// via Quiet`. Quiet keeps the constructor name; the inner
+/// `Integer` is shown at precedence 11, so negative values are
+/// parenthesised: `DeltaCoin 5` / `DeltaCoin (-5)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct DeltaCoinShow(pub i64);
+
+impl fmt::Display for DeltaCoinShow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 < 0 {
+            write!(f, "DeltaCoin ({})", self.0)
+        } else {
+            write!(f, "DeltaCoin {}", self.0)
+        }
+    }
+}
+
 /// Typed payload for
 /// `ShelleyLedgerPredFailure::ShelleyIncompleteWithdrawals`.
 ///
@@ -5199,9 +5217,14 @@ pub enum ConwayUtxoPredFailure {
     /// Tag 11: outputs too big — `NonEmpty (Int, Int, TxOut
     /// era)`. Raw pending triple decoder.
     OutputTooBigUTxO(Vec<u8>),
-    /// Tag 12: insufficient collateral — `DeltaCoin + Coin`.
-    /// Raw pending signed-coin decoder.
-    InsufficientCollateral(Vec<u8>),
+    /// Tag 12: insufficient collateral — `DeltaCoin + Coin`
+    /// (R633 typed).
+    InsufficientCollateral {
+        /// Collateral balance computed (signed delta).
+        balance: i64,
+        /// Collateral required for the given fee.
+        required: u64,
+    },
     /// Tag 13: UTxO entries with the wrong script kind —
     /// `NonEmptyMap TxIn (TxOut era)`. Raw pending map decoder.
     ScriptsNotPaidUTxO(Vec<u8>),
@@ -5225,8 +5248,13 @@ pub enum ConwayUtxoPredFailure {
     /// Tag 19: no collateral inputs supplied — no payload.
     NoCollateralInputs,
     /// Tag 20: total-collateral field mismatch — `DeltaCoin +
-    /// Coin`. Raw pending signed-coin decoder.
-    IncorrectTotalCollateralField(Vec<u8>),
+    /// Coin` (R633 typed).
+    IncorrectTotalCollateralField {
+        /// Collateral provided (signed delta).
+        provided: i64,
+        /// Collateral amount declared in the transaction body.
+        declared: u64,
+    },
     /// Tag 21: outputs below the minimum value (Babbage form) —
     /// `NonEmpty (TxOut era, Coin)`. Raw pending pair decoder.
     BabbageOutputTooSmallUTxO(Vec<u8>),
@@ -5252,7 +5280,7 @@ impl ConwayUtxoPredFailure {
             Self::OutputTooSmallUTxO(_) => 9,
             Self::OutputBootAddrAttrsTooBig(_) => 10,
             Self::OutputTooBigUTxO(_) => 11,
-            Self::InsufficientCollateral(_) => 12,
+            Self::InsufficientCollateral { .. } => 12,
             Self::ScriptsNotPaidUTxO(_) => 13,
             Self::ExUnitsTooBigUTxO(_) => 14,
             Self::CollateralContainsNonADA(_) => 15,
@@ -5260,7 +5288,7 @@ impl ConwayUtxoPredFailure {
             Self::OutsideForecast(_) => 17,
             Self::TooManyCollateralInputs(_) => 18,
             Self::NoCollateralInputs => 19,
-            Self::IncorrectTotalCollateralField(_) => 20,
+            Self::IncorrectTotalCollateralField { .. } => 20,
             Self::BabbageOutputTooSmallUTxO(_) => 21,
             Self::BabbageNonDisjointRefInputs(_) => 22,
         }
@@ -5281,7 +5309,7 @@ impl ConwayUtxoPredFailure {
             Self::OutputTooSmallUTxO(_) => "OutputTooSmallUTxO",
             Self::OutputBootAddrAttrsTooBig(_) => "OutputBootAddrAttrsTooBig",
             Self::OutputTooBigUTxO(_) => "OutputTooBigUTxO",
-            Self::InsufficientCollateral(_) => "InsufficientCollateral",
+            Self::InsufficientCollateral { .. } => "InsufficientCollateral",
             Self::ScriptsNotPaidUTxO(_) => "ScriptsNotPaidUTxO",
             Self::ExUnitsTooBigUTxO(_) => "ExUnitsTooBigUTxO",
             Self::CollateralContainsNonADA(_) => "CollateralContainsNonADA",
@@ -5289,7 +5317,7 @@ impl ConwayUtxoPredFailure {
             Self::OutsideForecast(_) => "OutsideForecast",
             Self::TooManyCollateralInputs(_) => "TooManyCollateralInputs",
             Self::NoCollateralInputs => "NoCollateralInputs",
-            Self::IncorrectTotalCollateralField(_) => "IncorrectTotalCollateralField",
+            Self::IncorrectTotalCollateralField { .. } => "IncorrectTotalCollateralField",
             Self::BabbageOutputTooSmallUTxO(_) => "BabbageOutputTooSmallUTxO",
             Self::BabbageNonDisjointRefInputs(_) => "BabbageNonDisjointRefInputs",
         }
@@ -5450,10 +5478,20 @@ impl ConwayUtxoPredFailure {
                 )?))
             }
             11 => Ok(Self::OutputTooBigUTxO(capture_raw("OutputTooBigUTxO", 2)?)),
-            12 => Ok(Self::InsufficientCollateral(capture_raw(
-                "InsufficientCollateral",
-                3,
-            )?)),
+            12 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "InsufficientCollateral: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let balance = dec.signed().map_err(|err| {
+                    DecoderError(format!("InsufficientCollateral: balance: {err:?}"))
+                })?;
+                let required = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("InsufficientCollateral: required: {err:?}"))
+                })?;
+                Ok(Self::InsufficientCollateral { balance, required })
+            }
             13 => Ok(Self::ScriptsNotPaidUTxO(capture_raw(
                 "ScriptsNotPaidUTxO",
                 2,
@@ -5521,10 +5559,20 @@ impl ConwayUtxoPredFailure {
                 }
                 Ok(Self::NoCollateralInputs)
             }
-            20 => Ok(Self::IncorrectTotalCollateralField(capture_raw(
-                "IncorrectTotalCollateralField",
-                3,
-            )?)),
+            20 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "IncorrectTotalCollateralField: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let provided = dec.signed().map_err(|err| {
+                    DecoderError(format!("IncorrectTotalCollateralField: provided: {err:?}"))
+                })?;
+                let declared = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("IncorrectTotalCollateralField: declared: {err:?}"))
+                })?;
+                Ok(Self::IncorrectTotalCollateralField { provided, declared })
+            }
             21 => Ok(Self::BabbageOutputTooSmallUTxO(capture_raw(
                 "BabbageOutputTooSmallUTxO",
                 2,
@@ -5551,14 +5599,28 @@ impl fmt::Display for ConwayUtxoPredFailure {
             Self::OutsideValidityIntervalUTxO(b)
             | Self::ValueNotConservedUTxO(b)
             | Self::OutputTooBigUTxO(b)
-            | Self::InsufficientCollateral(b)
             | Self::ScriptsNotPaidUTxO(b)
             | Self::ExUnitsTooBigUTxO(b)
             | Self::CollateralContainsNonADA(b)
-            | Self::IncorrectTotalCollateralField(b)
             | Self::BabbageOutputTooSmallUTxO(b)
             | Self::BabbageNonDisjointRefInputs(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
+            }
+            Self::InsufficientCollateral { balance, required } => {
+                write!(
+                    f,
+                    "InsufficientCollateral ({}) ({})",
+                    DeltaCoinShow(*balance),
+                    CoinShow(*required)
+                )
+            }
+            Self::IncorrectTotalCollateralField { provided, declared } => {
+                write!(
+                    f,
+                    "IncorrectTotalCollateralField ({}) ({})",
+                    DeltaCoinShow(*provided),
+                    CoinShow(*declared)
+                )
             }
             Self::BadInputsUTxO(set) => write!(f, "BadInputsUTxO ({set})"),
             Self::MaxTxSizeUTxO(mm) => write!(f, "MaxTxSizeUTxO ({mm})"),
@@ -7730,6 +7792,42 @@ mod tests {
             ConwayUtxoPredFailure::OutsideForecast(1_000_000)
         ));
         assert_eq!(f.to_string(), "OutsideForecast (SlotNo 1000000)");
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_insufficient_collateral_tag12() {
+        // outer [0x83, 0x0C, balance=-500 (negative), required=1000]
+        // -500 CBOR negative: 0x39 0x01 0xF3 (negative, -(0x01F3+1)
+        // = -500).
+        let cbor = [0x83_u8, 0x0C, 0x39, 0x01, 0xF3, 0x19, 0x03, 0xE8];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("InsufficientCollateral");
+        if let ConwayUtxoPredFailure::InsufficientCollateral { balance, required } = &f {
+            assert_eq!(*balance, -500);
+            assert_eq!(*required, 1000);
+        } else {
+            panic!("expected InsufficientCollateral, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "InsufficientCollateral (DeltaCoin (-500)) (Coin 1000)"
+        );
+    }
+
+    #[test]
+    fn conway_utxo_pred_failure_incorrect_total_collateral_tag20() {
+        // outer [0x83, 0x14, provided=750 (positive), declared=800]
+        let cbor = [0x83_u8, 0x14, 0x19, 0x02, 0xEE, 0x19, 0x03, 0x20];
+        let f = ConwayUtxoPredFailure::from_cbor(&cbor).expect("IncorrectTotalCollateralField");
+        if let ConwayUtxoPredFailure::IncorrectTotalCollateralField { provided, declared } = &f {
+            assert_eq!(*provided, 750);
+            assert_eq!(*declared, 800);
+        } else {
+            panic!("expected IncorrectTotalCollateralField, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "IncorrectTotalCollateralField (DeltaCoin 750) (Coin 800)"
+        );
     }
 
     #[test]

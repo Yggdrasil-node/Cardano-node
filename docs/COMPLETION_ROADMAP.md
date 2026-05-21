@@ -758,7 +758,16 @@ Network, Mismatch. The 11 remaining variants
 (0/2/6/11/12/13/14/15/20/21/22) keep raw inner CBOR pending
 Conway UTXOS + ValidityInterval + Value + ExUnits + DeltaCoin +
 NonEmptyMap decoders. The Conway LEDGER → UTXOW → UTXO chain
-now renders typed end-to-end through 12 UTXO leaves. R631
+now renders typed end-to-end through 12 UTXO leaves. R633
+(2026-05-21) typed Conway UTXO tags 12 (InsufficientCollateral)
+and 20 (IncorrectTotalCollateralField) — added the
+`DeltaCoinShow` helper (Quiet-Show signed `DeltaCoin Integer`,
+parenthesising negatives) and wired both variants to struct
+shapes `{ i64 delta, u64 coin }`. With R631's tag-0 UtxosFailure
+typed, **15 of 23 Conway UTXO variants now carry typed
+payloads**; the 8 remaining (2/6/11/13/14/15/21/22) keep raw
+inner CBOR pending ValidityInterval / Value / ExUnits /
+NonEmptyMap / triple / pair decoders. R631
 (2026-05-21) added the `ConwayUtxosPredFailure` 2-variant
 scaffold (the UTXOS Plutus-script-evaluation sub-rule) plus the
 `FailureDescription` and `TagMismatchDescription` helper types,
