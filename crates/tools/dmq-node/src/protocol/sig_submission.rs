@@ -19,7 +19,7 @@
 use std::fmt;
 
 use yggdrasil_consensus::OpCert;
-use yggdrasil_crypto::{KesSignature, VerificationKey};
+use yggdrasil_crypto::{KesSignature, Signature, SumKesVerificationKey, VerificationKey};
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder};
 
@@ -374,6 +374,56 @@ pub fn decode_sig_id(dec: &mut Decoder) -> Result<SigId, LedgerError> {
     Ok(SigId(SigHash(dec.bytes_owned()?)))
 }
 
+/// Decode a CBOR byte string of exactly `N` bytes into a fixed array.
+fn decode_fixed_bytes<const N: usize>(dec: &mut Decoder) -> Result<[u8; N], LedgerError> {
+    let bytes = dec.bytes_owned()?;
+    <[u8; N]>::try_from(bytes.as_slice()).map_err(|_| LedgerError::CborInvalidLength {
+        expected: N,
+        actual: bytes.len(),
+    })
+}
+
+/// Encode a [`SigOpCertificate`] as a CBOR 4-element array.
+///
+/// Mirror of upstream `encodeSigOpCertificate`:
+/// `encodeListLen 4 <> encodeVerKeyKES (ocertVkHot) <> toCBOR (ocertN)
+/// <> toCBOR (ocertKESPeriod) <> encodeSignedDSIGN (ocertSigma)`.
+/// `encodeVerKeyKES` and `encodeSignedDSIGN` are CBOR byte strings of
+/// the raw key / signature bytes; `ocertN` / `ocertKESPeriod` are CBOR
+/// unsigned integers.
+pub fn encode_sig_op_certificate(cert: &SigOpCertificate, enc: &mut Encoder) {
+    let ocert = cert.get();
+    enc.array(4);
+    enc.bytes(&ocert.hot_vkey.0);
+    enc.unsigned(ocert.sequence_number);
+    enc.unsigned(ocert.kes_period);
+    enc.bytes(&ocert.sigma.0);
+}
+
+/// Decode a [`SigOpCertificate`] from a CBOR 4-element array.
+///
+/// Mirror of upstream `decodeSigOpCertificate` — rejects any list
+/// length other than 4.
+pub fn decode_sig_op_certificate(dec: &mut Decoder) -> Result<SigOpCertificate, LedgerError> {
+    let len = dec.array()?;
+    if len != 4 {
+        return Err(LedgerError::CborInvalidLength {
+            expected: 4,
+            actual: len as usize,
+        });
+    }
+    let hot_vkey = decode_fixed_bytes::<32>(dec)?;
+    let sequence_number = dec.unsigned()?;
+    let kes_period = dec.unsigned()?;
+    let sigma = decode_fixed_bytes::<64>(dec)?;
+    Ok(SigOpCertificate(OpCert {
+        hot_vkey: SumKesVerificationKey(hot_vkey),
+        sequence_number,
+        kes_period,
+        sigma: Signature(sigma),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,5 +620,46 @@ mod tests {
         let mut dec = Decoder::new(&encoded);
         let decoded = decode_sig_id(&mut dec).expect("decodes");
         assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn sig_op_certificate_codec_round_trips() {
+        let cert = SigOpCertificate(OpCert {
+            hot_vkey: SumKesVerificationKey([0x33; 32]),
+            sequence_number: 42,
+            kes_period: 7,
+            sigma: Signature([0x44; 64]),
+        });
+        let mut enc = Encoder::new();
+        encode_sig_op_certificate(&cert, &mut enc);
+        let encoded = enc.into_bytes();
+        // A CBOR definite-length array of 4 elements.
+        assert_eq!(encoded[0], 0x84);
+        let mut dec = Decoder::new(&encoded);
+        let decoded = decode_sig_op_certificate(&mut dec).expect("decodes");
+        assert_eq!(decoded, cert);
+    }
+
+    #[test]
+    fn decode_sig_op_certificate_rejects_wrong_list_length() {
+        // A 3-element CBOR array — not a valid SigOpCertificate.
+        let mut enc = Encoder::new();
+        enc.array(3);
+        enc.unsigned(1);
+        enc.unsigned(2);
+        enc.unsigned(3);
+        let encoded = enc.into_bytes();
+        let mut dec = Decoder::new(&encoded);
+        let err = decode_sig_op_certificate(&mut dec).expect_err("rejects");
+        assert!(
+            matches!(
+                err,
+                LedgerError::CborInvalidLength {
+                    expected: 4,
+                    actual: 3
+                }
+            ),
+            "unexpected error: {err:?}"
+        );
     }
 }
