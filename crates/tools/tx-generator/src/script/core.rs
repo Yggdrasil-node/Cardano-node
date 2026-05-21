@@ -1440,12 +1440,8 @@ fn show_url(url: &str) -> String {
 /// fromList [...]}, osSet = fromList [...]}` matching upstream stock-derived
 /// `Show (OSet (ProposalProcedure era))`.
 ///
-/// Rejects ProposalProcedures carrying `GovAction` variants whose rendering
-/// is not yet ported (ParameterChange, TreasuryWithdrawals,
-/// UpdateCommittee — these wrap rich types like `ProtocolParameterUpdate`
-/// and `UnitInterval` whose Shows are deferred to a future round). The
-/// remaining 4 variants (InfoAction, NoConfidence, HardForkInitiation,
-/// NewConstitution) are rendered.
+/// All seven `GovAction` variants are rendered (see
+/// [`show_conway_gov_action`]).
 fn show_conway_proposal_procedures(
     procedures: Option<&[yggdrasil_ledger::ProposalProcedure]>,
 ) -> Result<String, Error> {
@@ -1510,11 +1506,16 @@ fn show_account_address_from_record(ra: &yggdrasil_ledger::RewardAccount) -> Res
     ))
 }
 
-/// Render upstream `Show (GovAction era)` for the 4 simple variants:
-/// `InfoAction`, `NoConfidence`, `HardForkInitiation`, `NewConstitution`.
-/// The 3 complex variants (`ParameterChange`, `TreasuryWithdrawals`,
-/// `UpdateCommittee`) return a typed `TxGenError` until their internal
-/// types (`ProtocolParameterUpdate`, `UnitInterval`) gain Show ports.
+/// Render upstream `Show (GovAction era)` for all seven variants:
+/// `InfoAction`, `NoConfidence`, `HardForkInitiation`,
+/// `NewConstitution`, `ParameterChange`, `TreasuryWithdrawals`, and
+/// `UpdateCommittee`.
+///
+/// `ParameterChange` delegates to [`show_conway_pparams_update`],
+/// which returns a typed `TxGenError` only when the carried
+/// `ProtocolParameterUpdate` sets a Shelley-era-only field that has
+/// no Conway `PParamsUpdate` representation (a malformed input, not
+/// a missing port).
 fn show_conway_gov_action(action: &yggdrasil_ledger::GovAction) -> Result<String, Error> {
     use yggdrasil_ledger::GovAction;
     match action {
@@ -1647,12 +1648,13 @@ fn show_stake_credential(credential: &yggdrasil_ledger::StakeCredential) -> Stri
 fn show_conway_pparams_update(
     ppu: &yggdrasil_ledger::ProtocolParameterUpdate,
 ) -> Result<String, Error> {
-    // Detect set fields whose per-type Show is not yet ported and surface
-    // them in the rejection message. The yggdrasil ProtocolParameterUpdate
-    // carries a superset of Conway's PParams (it preserves Shelley-era
-    // fields like `d`, `extra_entropy`, `min_utxo_value`,
-    // `protocol_version` that Conway dropped); those Shelley-era-only
-    // fields cannot be rendered against Conway PParamsUpdate at all.
+    // The yggdrasil ProtocolParameterUpdate carries a superset of
+    // Conway's PParams — it preserves Shelley-era fields (`d`,
+    // `extra_entropy`, `min_utxo_value`, `protocol_version`) that
+    // Conway dropped. A Conway `ParameterChange` carrying any of
+    // those is a malformed input: the field has no Conway
+    // `PParamsUpdate` representation, so it is surfaced as a typed
+    // rejection rather than rendered.
     let mut set_fields: Vec<&'static str> = Vec::new();
     if ppu.d.is_some() {
         set_fields.push("d (Shelley-era only — no Conway field)");
@@ -1671,7 +1673,7 @@ fn show_conway_pparams_update(
     }
     if !set_fields.is_empty() {
         return Err(lift_tx_gen_error(format!(
-            "DumpToFile: Conway Show(Tx) renderer does not yet support non-empty ParameterChange fields: {}",
+            "DumpToFile: Conway ParameterChange carries field(s) with no Conway PParamsUpdate representation: {}",
             set_fields.join(", ")
         )));
     }
