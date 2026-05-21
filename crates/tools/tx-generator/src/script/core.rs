@@ -1173,11 +1173,7 @@ fn show_babbage_tx_for_dump(
         "Babbage",
         "btbrTotalCollateral",
     )?;
-    ensure_empty_or_absent(
-        tx.body.reference_inputs.as_deref(),
-        "Babbage",
-        "btbrReferenceInputs",
-    )?;
+    let reference_inputs = show_tx_in_list(tx.body.reference_inputs.as_deref().unwrap_or_default());
     ensure_absent(tx.auxiliary_data.as_ref(), "Babbage", "atAuxData")?;
 
     let req_signer_hashes = show_req_signer_hashes(tx.body.required_signers.as_deref());
@@ -1189,7 +1185,7 @@ fn show_babbage_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {{atBody = MkBabbageTxBody BabbageTxBodyRaw {{btbrInputs = fromList [{inputs}], btbrCollateralInputs = fromList [{collateral}], btbrReferenceInputs = fromList [], btbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, btbrCollateralReturn = SNothing, btbrTotalCollateral = SNothing, btbrCerts = StrictSeq {{fromStrict = fromList []}}, btbrWithdrawals = {withdrawals}, btbrFee = Coin {}, btbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, btbrUpdate = SNothing, btbrReqSignerHashes = {req_signer_hashes}, btbrMint = MultiAsset (fromList []), btbrScriptIntegrityHash = {script_integrity_hash}, btbrAuxDataHash = {aux_data_hash}, btbrNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraBabbage (AlonzoTx {{atBody = MkBabbageTxBody BabbageTxBodyRaw {{btbrInputs = fromList [{inputs}], btbrCollateralInputs = fromList [{collateral}], btbrReferenceInputs = fromList [{reference_inputs}], btbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, btbrCollateralReturn = SNothing, btbrTotalCollateral = SNothing, btbrCerts = StrictSeq {{fromStrict = fromList []}}, btbrWithdrawals = {withdrawals}, btbrFee = Coin {}, btbrValidityInterval = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, btbrUpdate = SNothing, btbrReqSignerHashes = {req_signer_hashes}, btbrMint = MultiAsset (fromList []), btbrScriptIntegrityHash = {script_integrity_hash}, btbrAuxDataHash = {aux_data_hash}, btbrNetworkId = {network_id}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -1215,11 +1211,7 @@ fn show_conway_tx_for_dump(
         "Conway",
         "ctbrTotalCollateral",
     )?;
-    ensure_empty_or_absent(
-        tx.body.reference_inputs.as_deref(),
-        "Conway",
-        "ctbrReferenceInputs",
-    )?;
+    let reference_inputs = show_tx_in_list(tx.body.reference_inputs.as_deref().unwrap_or_default());
     let voting_procedures = show_conway_voting_procedures(tx.body.voting_procedures.as_ref());
     let proposal_procedures =
         show_conway_proposal_procedures(tx.body.proposal_procedures.as_deref())?;
@@ -1236,7 +1228,7 @@ fn show_conway_tx_for_dump(
     let network_id = show_strict_maybe_network(tx.body.network_id)?;
 
     Ok(format!(
-        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [{collateral}], ctbrReferenceInputs = fromList [], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = {withdrawals}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = {req_signer_hashes}, ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = {script_integrity_hash}, ctbrAuxDataHash = {aux_data_hash}, ctbrNetworkId = {network_id}, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = {proposal_procedures}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
+        "\nShelleyTx ShelleyBasedEraConway (AlonzoTx {{atBody = MkConwayTxBody ConwayTxBodyRaw {{ctbrSpendInputs = fromList [{inputs}], ctbrCollateralInputs = fromList [{collateral}], ctbrReferenceInputs = fromList [{reference_inputs}], ctbrOutputs = StrictSeq {{fromStrict = fromList [{outputs}]}}, ctbrCollateralReturn = SNothing, ctbrTotalCollateral = SNothing, ctbrCerts = OSet {{osSSeq = StrictSeq {{fromStrict = fromList []}}, osSet = fromList []}}, ctbrWithdrawals = {withdrawals}, ctbrFee = Coin {}, ctbrVldt = ValidityInterval {{invalidBefore = {}, invalidHereafter = {}}}, ctbrReqSignerHashes = {req_signer_hashes}, ctbrMint = MultiAsset (fromList []), ctbrScriptIntegrityHash = {script_integrity_hash}, ctbrAuxDataHash = {aux_data_hash}, ctbrNetworkId = {network_id}, ctbrVotingProcedures = {voting_procedures}, ctbrProposalProcedures = {proposal_procedures}, ctbrCurrentTreasuryValue = {current_treasury_value}, ctbrTreasuryDonation = {treasury_donation}}} (blake2b_256: SafeHash \"{body_hash}\"), atWits = {witnesses}, atIsValid = IsValid {is_valid}, atAuxData = SNothing}})",
         tx.body.fee,
         show_strict_maybe_slot(tx.body.validity_interval_start),
         show_strict_maybe_slot(tx.body.ttl),
@@ -3987,6 +3979,25 @@ mod tests {
         assert_eq!(
             show_plutus_data(&outer),
             "Map [(I 0,Constr 0 [I 7,List [B \"a\"]])]"
+        );
+    }
+
+    #[test]
+    fn dumptofile_reference_inputs_render() {
+        // Babbage/Conway reference inputs reuse `show_tx_in_list`:
+        // an absent set interpolates into `fromList []`, a set
+        // entry renders the typed `TxIn`.
+        assert_eq!(show_tx_in_list(<&[ShelleyTxIn]>::default()), "");
+        let single = [ShelleyTxIn {
+            transaction_id: [0x2A_u8; 32],
+            index: 7,
+        }];
+        assert_eq!(
+            show_tx_in_list(&single),
+            format!(
+                "TxIn (TxId {{unTxId = SafeHash \"{}\"}}) (TxIx {{unTxIx = 7}})",
+                "2a".repeat(32)
+            )
         );
     }
 
