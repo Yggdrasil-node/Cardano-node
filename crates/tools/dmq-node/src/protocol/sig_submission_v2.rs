@@ -557,6 +557,128 @@ impl SigSubmissionV2Outbound {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Inbound peer driver (upstream `Protocol/SigSubmissionV2/Inbound.hs`)
+// ---------------------------------------------------------------------------
+
+/// Errors from the [`SigSubmissionV2Inbound`] driver.
+#[derive(Debug, thiserror::Error)]
+pub enum SigSubmissionV2InboundError {
+    /// Multiplexer transport error.
+    #[error("mux error: {0}")]
+    Mux(#[from] MuxError),
+    /// The connection was closed by the remote peer.
+    #[error("connection closed")]
+    ConnectionClosed,
+    /// An illegal protocol-state transition.
+    #[error("protocol error: {0}")]
+    Protocol(#[from] SigSubmissionV2TransitionError),
+    /// A CBOR decode failure on an inbound message.
+    #[error("CBOR decode error: {0}")]
+    Decode(String),
+    /// An unexpected message from the outbound peer.
+    #[error("unexpected message: {0}")]
+    UnexpectedMessage(String),
+}
+
+/// The `SigSubmissionV2` inbound (client) peer driver.
+///
+/// Mirror of upstream `Protocol/SigSubmissionV2/Inbound.hs`. The
+/// inbound side requests signature identifiers and then signatures.
+/// Upstream's peer is pipelined (`SigSubmissionInboundPipelined`); the
+/// Rust port is the non-pipelined linear driver — consistent with
+/// yggdrasil's other mini-protocol drivers, and a correct
+/// implementation of the inbound side's wire behaviour (pipelining is
+/// a throughput optimisation, not a wire-format property).
+pub struct SigSubmissionV2Inbound {
+    channel: MessageChannel,
+    state: SigSubmissionV2State,
+}
+
+impl SigSubmissionV2Inbound {
+    /// Create an inbound driver from a `SigSubmissionV2`
+    /// `ProtocolHandle`. The protocol starts in `StIdle` — inbound
+    /// agency.
+    pub fn new(handle: ProtocolHandle) -> Self {
+        Self {
+            channel: MessageChannel::new(handle),
+            state: SigSubmissionV2State::StIdle,
+        }
+    }
+
+    /// The current protocol state.
+    pub fn state(&self) -> SigSubmissionV2State {
+        self.state
+    }
+
+    async fn send_msg(
+        &mut self,
+        msg: &SigSubmissionV2Message,
+    ) -> Result<(), SigSubmissionV2InboundError> {
+        self.state = self.state.transition(msg)?;
+        self.channel
+            .send(msg.to_cbor())
+            .await
+            .map_err(SigSubmissionV2InboundError::Mux)
+    }
+
+    async fn recv_msg(&mut self) -> Result<SigSubmissionV2Message, SigSubmissionV2InboundError> {
+        let raw = self
+            .channel
+            .recv()
+            .await
+            .ok_or(SigSubmissionV2InboundError::ConnectionClosed)?;
+        let msg = SigSubmissionV2Message::from_cbor(&raw)
+            .map_err(|err| SigSubmissionV2InboundError::Decode(err.to_string()))?;
+        self.state = self.state.transition(&msg)?;
+        Ok(msg)
+    }
+
+    /// Request signature identifiers — send `MsgRequestSigIds` and
+    /// await the reply.
+    ///
+    /// Returns `Some(ids)` for a `MsgReplySigIds` reply, or `None` for
+    /// `MsgReplyNoSigIds` (a blocking request the outbound side
+    /// answered with nothing).
+    pub async fn request_sig_ids(
+        &mut self,
+        blocking: bool,
+        ack: NumIdsAck,
+        req: NumIdsReq,
+    ) -> Result<Option<Vec<SigIdAndSize>>, SigSubmissionV2InboundError> {
+        self.send_msg(&SigSubmissionV2Message::MsgRequestSigIds { blocking, ack, req })
+            .await?;
+        match self.recv_msg().await? {
+            SigSubmissionV2Message::MsgReplySigIds { ids } => Ok(Some(ids)),
+            SigSubmissionV2Message::MsgReplyNoSigIds => Ok(None),
+            other => Err(SigSubmissionV2InboundError::UnexpectedMessage(format!(
+                "{other:?}"
+            ))),
+        }
+    }
+
+    /// Request specific signatures by identifier — send
+    /// `MsgRequestSigs` and await `MsgReplySigs`.
+    pub async fn request_sigs(
+        &mut self,
+        ids: Vec<SigId>,
+    ) -> Result<Vec<Sig>, SigSubmissionV2InboundError> {
+        self.send_msg(&SigSubmissionV2Message::MsgRequestSigs { ids })
+            .await?;
+        match self.recv_msg().await? {
+            SigSubmissionV2Message::MsgReplySigs { sigs } => Ok(sigs),
+            other => Err(SigSubmissionV2InboundError::UnexpectedMessage(format!(
+                "{other:?}"
+            ))),
+        }
+    }
+
+    /// Terminate the protocol cleanly with `MsgDone`.
+    pub async fn done(mut self) -> Result<(), SigSubmissionV2InboundError> {
+        self.send_msg(&SigSubmissionV2Message::MsgDone).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,6 +928,19 @@ mod tests {
         let s = format!("{unexpected}");
         assert!(s.contains("unexpected message"), "got: {s}");
         assert!(s.contains("MsgReplySigs in StIdle"), "got: {s}");
+    }
+
+    #[test]
+    fn inbound_error_variants_display() {
+        let closed = format!("{}", SigSubmissionV2InboundError::ConnectionClosed);
+        assert!(closed.to_lowercase().contains("connection closed"));
+        let decode = SigSubmissionV2InboundError::Decode("bad MsgReplySigIds".into());
+        assert!(format!("{decode}").contains("bad MsgReplySigIds"));
+        let unexpected =
+            SigSubmissionV2InboundError::UnexpectedMessage("MsgRequestSigs in StSigs".into());
+        let s = format!("{unexpected}");
+        assert!(s.contains("unexpected message"), "got: {s}");
+        assert!(s.contains("MsgRequestSigs in StSigs"), "got: {s}");
     }
 
     #[test]
