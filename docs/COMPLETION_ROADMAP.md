@@ -728,7 +728,16 @@ ConwayDelegPredFailure and ConwayGovCertPredFailure decoders.
 Wired `ConwayCertsPredFailure::CertFailure(Vec<u8>)` →
 `CertFailure(ConwayCertPredFailure)` so the Conway LEDGER →
 CERTS → CERT → POOL chain now renders typed end-to-end through
-the POOL leaf.
+the POOL leaf. R628 (2026-05-21) added the
+`ConwayDelegPredFailure` 8-variant scaffold (tags 1-8; upstream
+skips tag 0) and wired `ConwayCertPredFailure::DelegFailure(Vec<u8>)`
+→ `DelegFailure(ConwayDelegPredFailure)`. **All 8 Conway DELEG
+variants carry fully-typed payloads** by reusing existing
+carriers (Credential R618, KeyHash, Mismatch<u64> R615, CoinShow
+R615). Tags 7/8 use the nested 2-array Mismatch encoding (not
+ToGroup-flattened — distinct from Conway LEDGER tags 5/6 + GOV
+tag 4). The Conway LEDGER → CERTS → CERT → DELEG chain now
+renders typed end-to-end through all 8 DELEG leaves.
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into

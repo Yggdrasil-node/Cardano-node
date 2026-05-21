@@ -4496,9 +4496,9 @@ impl fmt::Display for ConwayCertsPredFailure {
 /// into DELEG / POOL / GOVCERT sub-rules.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConwayCertPredFailure {
-    /// Tag 1: nested DELEG failure (raw, pending
-    /// `ConwayDelegPredFailure` decoder).
-    DelegFailure(Vec<u8>),
+    /// Tag 1: nested DELEG failure (R628 wired to typed
+    /// `ConwayDelegPredFailure`).
+    DelegFailure(ConwayDelegPredFailure),
     /// Tag 2: nested POOL failure (R627 wired to typed
     /// `ShelleyPoolPredFailure` — upstream reuses Shelley's POOL
     /// type at the Conway era).
@@ -4551,7 +4551,10 @@ impl ConwayCertPredFailure {
             DecoderError("ConwayCertPredFailure: payload offset out of bounds".to_string())
         })?;
         match tag {
-            1 => Ok(Self::DelegFailure(payload_bytes.to_vec())),
+            1 => {
+                let deleg = ConwayDelegPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::DelegFailure(deleg))
+            }
             2 => {
                 let pool = ShelleyPoolPredFailure::from_cbor(payload_bytes)?;
                 Ok(Self::PoolFailure(pool))
@@ -4571,10 +4574,210 @@ impl fmt::Display for ConwayCertPredFailure {
     /// pending typed DELEG / GOVCERT decoders.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DelegFailure(b) => write!(f, "DelegFailure <raw-cbor {} bytes>", b.len()),
+            Self::DelegFailure(deleg) => write!(f, "DelegFailure ({deleg})"),
             Self::PoolFailure(pool) => write!(f, "PoolFailure ({pool})"),
             Self::GovCertFailure(b) => {
                 write!(f, "GovCertFailure <raw-cbor {} bytes>", b.len())
+            }
+        }
+    }
+}
+
+/// `ConwayDelegPredFailure` mirror — Conway-era DELEG sub-rule
+/// failure (under `ConwayCertPredFailure::DelegFailure`).
+///
+/// Upstream: `data ConwayDelegPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Deleg` with 8 variants encoded
+/// via CBOR `Sum` tags 1-8 (upstream skips tag 0). Conway DELEG
+/// differs from Shelley DELEG: it adds DRep delegation, removes
+/// MIR-related variants, and uses the nested 2-array Mismatch
+/// encoding (not ToGroup-flattened) for tags 7/8.
+///
+/// R628 ships **all 8 variants fully typed** by reusing existing
+/// carriers (Credential, KeyHash, Mismatch<u64>).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayDelegPredFailure {
+    /// Tag 1: deposit amount in cert mismatches PParams deposit
+    /// — `Coin` (R628 typed).
+    IncorrectDepositDELEG(u64),
+    /// Tag 2: stake key already registered —
+    /// `Credential Staking` (R628 typed).
+    StakeKeyRegisteredDELEG(Credential),
+    /// Tag 3: stake key not registered — `Credential Staking`.
+    StakeKeyNotRegisteredDELEG(Credential),
+    /// Tag 4: stake key has non-zero account balance — `Coin`.
+    StakeKeyHasNonZeroAccountBalanceDELEG(u64),
+    /// Tag 5: delegatee DRep not registered —
+    /// `Credential DRepRole`.
+    DelegateeDRepNotRegisteredDELEG(Credential),
+    /// Tag 6: delegatee stake pool not registered —
+    /// `KeyHash StakePool`.
+    DelegateeStakePoolNotRegisteredDELEG(KeyHash),
+    /// Tag 7: deposit mismatch on registration —
+    /// `Mismatch RelEQ Coin` (nested 2-array, not
+    /// ToGroup-flattened per upstream's `To mm`).
+    DepositIncorrectDELEG(Mismatch<u64>),
+    /// Tag 8: refund mismatch on unregistration —
+    /// `Mismatch RelEQ Coin`.
+    RefundIncorrectDELEG(Mismatch<u64>),
+}
+
+impl ConwayDelegPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::IncorrectDepositDELEG(_) => 1,
+            Self::StakeKeyRegisteredDELEG(_) => 2,
+            Self::StakeKeyNotRegisteredDELEG(_) => 3,
+            Self::StakeKeyHasNonZeroAccountBalanceDELEG(_) => 4,
+            Self::DelegateeDRepNotRegisteredDELEG(_) => 5,
+            Self::DelegateeStakePoolNotRegisteredDELEG(_) => 6,
+            Self::DepositIncorrectDELEG(_) => 7,
+            Self::RefundIncorrectDELEG(_) => 8,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::IncorrectDepositDELEG(_) => "IncorrectDepositDELEG",
+            Self::StakeKeyRegisteredDELEG(_) => "StakeKeyRegisteredDELEG",
+            Self::StakeKeyNotRegisteredDELEG(_) => "StakeKeyNotRegisteredDELEG",
+            Self::StakeKeyHasNonZeroAccountBalanceDELEG(_) => {
+                "StakeKeyHasNonZeroAccountBalanceDELEG"
+            }
+            Self::DelegateeDRepNotRegisteredDELEG(_) => "DelegateeDRepNotRegisteredDELEG",
+            Self::DelegateeStakePoolNotRegisteredDELEG(_) => "DelegateeStakePoolNotRegisteredDELEG",
+            Self::DepositIncorrectDELEG(_) => "DepositIncorrectDELEG",
+            Self::RefundIncorrectDELEG(_) => "RefundIncorrectDELEG",
+        }
+    }
+
+    /// Decode the full `ConwayDelegPredFailure` outer envelope.
+    /// All variants use a 2-element envelope `[tag, payload]`.
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayDelegPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ConwayDelegPredFailure: expected 2-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!(
+                "ConwayDelegPredFailure: expected Word8 tag: {err:?}"
+            ))
+        })?;
+        match tag {
+            1 => {
+                let coin = dec
+                    .unsigned()
+                    .map_err(|err| DecoderError(format!("IncorrectDepositDELEG: coin: {err:?}")))?;
+                Ok(Self::IncorrectDepositDELEG(coin))
+            }
+            2 => {
+                let cred = Credential::from_decoder(&mut dec)
+                    .map_err(|err| DecoderError(format!("StakeKeyRegisteredDELEG: {}", err.0)))?;
+                Ok(Self::StakeKeyRegisteredDELEG(cred))
+            }
+            3 => {
+                let cred = Credential::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("StakeKeyNotRegisteredDELEG: {}", err.0))
+                })?;
+                Ok(Self::StakeKeyNotRegisteredDELEG(cred))
+            }
+            4 => {
+                let coin = dec.unsigned().map_err(|err| {
+                    DecoderError(format!(
+                        "StakeKeyHasNonZeroAccountBalanceDELEG: coin: {err:?}"
+                    ))
+                })?;
+                Ok(Self::StakeKeyHasNonZeroAccountBalanceDELEG(coin))
+            }
+            5 => {
+                let cred = Credential::from_decoder(&mut dec).map_err(|err| {
+                    DecoderError(format!("DelegateeDRepNotRegisteredDELEG: {}", err.0))
+                })?;
+                Ok(Self::DelegateeDRepNotRegisteredDELEG(cred))
+            }
+            6 => {
+                let kh_bytes = dec.bytes().map_err(|err| {
+                    DecoderError(format!(
+                        "DelegateeStakePoolNotRegisteredDELEG: KeyHash bytes: {err:?}"
+                    ))
+                })?;
+                let arr: [u8; 28] = kh_bytes.try_into().map_err(|_| {
+                    DecoderError(
+                        "DelegateeStakePoolNotRegisteredDELEG: KeyHash must be 28 bytes"
+                            .to_string(),
+                    )
+                })?;
+                Ok(Self::DelegateeStakePoolNotRegisteredDELEG(KeyHash(arr)))
+            }
+            7 => {
+                let mm = decode_mismatch_u64(&mut dec, MismatchRelation::RelEQ)
+                    .map_err(|err| DecoderError(format!("DepositIncorrectDELEG: {}", err.0)))?;
+                Ok(Self::DepositIncorrectDELEG(mm))
+            }
+            8 => {
+                let mm = decode_mismatch_u64(&mut dec, MismatchRelation::RelEQ)
+                    .map_err(|err| DecoderError(format!("RefundIncorrectDELEG: {}", err.0)))?;
+                Ok(Self::RefundIncorrectDELEG(mm))
+            }
+            other => Err(DecoderError(format!(
+                "ConwayDelegPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayDelegPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayDelegPredFailure era)`. All variants typed.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IncorrectDepositDELEG(c) => {
+                write!(f, "IncorrectDepositDELEG ({})", CoinShow(*c))
+            }
+            Self::StakeKeyRegisteredDELEG(cred) => {
+                write!(f, "StakeKeyRegisteredDELEG ({cred})")
+            }
+            Self::StakeKeyNotRegisteredDELEG(cred) => {
+                write!(f, "StakeKeyNotRegisteredDELEG ({cred})")
+            }
+            Self::StakeKeyHasNonZeroAccountBalanceDELEG(c) => {
+                write!(
+                    f,
+                    "StakeKeyHasNonZeroAccountBalanceDELEG ({})",
+                    CoinShow(*c)
+                )
+            }
+            Self::DelegateeDRepNotRegisteredDELEG(cred) => {
+                write!(f, "DelegateeDRepNotRegisteredDELEG ({cred})")
+            }
+            Self::DelegateeStakePoolNotRegisteredDELEG(kh) => {
+                write!(f, "DelegateeStakePoolNotRegisteredDELEG ({kh})")
+            }
+            Self::DepositIncorrectDELEG(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "DepositIncorrectDELEG ({typed})")
+            }
+            Self::RefundIncorrectDELEG(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "RefundIncorrectDELEG ({typed})")
             }
         }
     }
@@ -5940,23 +6143,31 @@ mod tests {
 
     #[test]
     fn conway_certs_pred_failure_cert_failure_tag1() {
-        // CERTS tag 1 with inner ConwayCertPredFailure tag 1
-        // (DelegFailure raw). Outer: [0x82, 0x01, inner]; inner:
-        // [0x82, 0x01, empty-bytes].
-        let cbor = [0x82_u8, 0x01, 0x82, 0x01, 0x40];
+        // CERTS → CERT → DELEG chain. Outer CERTS [0x82, 0x01,
+        // inner-CERT]; inner-CERT [0x82, 0x01, inner-DELEG];
+        // inner-DELEG [0x82, 0x01, coin=100] for
+        // IncorrectDepositDELEG.
+        let cbor = [0x82_u8, 0x01, 0x82, 0x01, 0x82, 0x01, 0x18, 100];
         let f = ConwayCertsPredFailure::from_cbor(&cbor).expect("CertFailure");
         if let ConwayCertsPredFailure::CertFailure(cert) = &f {
             assert_eq!(cert.tag(), 1);
-            assert!(matches!(cert, ConwayCertPredFailure::DelegFailure(_)));
+            if let ConwayCertPredFailure::DelegFailure(deleg) = cert {
+                assert_eq!(deleg.tag(), 1);
+                assert!(matches!(
+                    deleg,
+                    ConwayDelegPredFailure::IncorrectDepositDELEG(100)
+                ));
+            } else {
+                panic!("expected DelegFailure inside CERT, got {cert:?}");
+            }
         } else {
             panic!("expected typed CertFailure, got {f:?}");
         }
         assert_eq!(f.tag(), 1);
         assert_eq!(f.constructor(), "CertFailure");
-        assert!(
-            f.to_string()
-                .starts_with("CertFailure (DelegFailure <raw-cbor"),
-            "got: {f}"
+        assert_eq!(
+            f.to_string(),
+            "CertFailure (DelegFailure (IncorrectDepositDELEG (Coin 100)))"
         );
     }
 
@@ -6060,15 +6271,101 @@ mod tests {
     }
 
     #[test]
-    fn conway_cert_pred_failure_deleg_failure_raw_routing_tag1() {
-        let cbor = [0x82_u8, 0x01, 0x40];
+    fn conway_cert_pred_failure_deleg_failure_typed_routing_tag1() {
+        // CERT tag 1 with inner DELEG tag 1 (IncorrectDepositDELEG
+        // coin=50). Outer [0x82, 0x01, [0x82, 0x01, 50]].
+        let cbor = [0x82_u8, 0x01, 0x82, 0x01, 0x18, 50];
         let f = ConwayCertPredFailure::from_cbor(&cbor).expect("DelegFailure");
-        assert!(matches!(f, ConwayCertPredFailure::DelegFailure(_)));
+        if let ConwayCertPredFailure::DelegFailure(deleg) = &f {
+            assert_eq!(deleg.tag(), 1);
+            assert!(matches!(
+                deleg,
+                ConwayDelegPredFailure::IncorrectDepositDELEG(50)
+            ));
+        } else {
+            panic!("expected typed DelegFailure, got {f:?}");
+        }
         assert_eq!(f.tag(), 1);
         assert_eq!(f.constructor(), "DelegFailure");
+        assert_eq!(
+            f.to_string(),
+            "DelegFailure (IncorrectDepositDELEG (Coin 50))"
+        );
+    }
+
+    #[test]
+    fn conway_deleg_pred_failure_incorrect_deposit_tag1() {
+        let cbor = [0x82_u8, 0x01, 0x18, 200];
+        let f = ConwayDelegPredFailure::from_cbor(&cbor).expect("IncorrectDepositDELEG");
+        assert!(matches!(
+            f,
+            ConwayDelegPredFailure::IncorrectDepositDELEG(200)
+        ));
+        assert_eq!(f.tag(), 1);
+        assert_eq!(f.to_string(), "IncorrectDepositDELEG (Coin 200)");
+    }
+
+    #[test]
+    fn conway_deleg_pred_failure_stake_key_registered_tag2() {
+        // outer [0x82, 0x02, credential[2-array: 0, bytes(28)]]
+        let mut cbor = vec![0x82_u8, 0x02, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0xAB_u8; 28]);
+        let f = ConwayDelegPredFailure::from_cbor(&cbor).expect("StakeKeyRegisteredDELEG");
+        if let ConwayDelegPredFailure::StakeKeyRegisteredDELEG(cred) = &f {
+            assert!(matches!(cred, Credential::KeyHashObj(_)));
+        } else {
+            panic!("expected StakeKeyRegisteredDELEG, got {f:?}");
+        }
         assert!(
-            f.to_string().starts_with("DelegFailure <raw-cbor"),
+            f.to_string()
+                .starts_with("StakeKeyRegisteredDELEG (KeyHashObj (KeyHash"),
             "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_deleg_pred_failure_delegatee_stake_pool_not_registered_tag6() {
+        let mut cbor = vec![0x82_u8, 0x06];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x77_u8; 28]);
+        let f =
+            ConwayDelegPredFailure::from_cbor(&cbor).expect("DelegateeStakePoolNotRegisteredDELEG");
+        if let ConwayDelegPredFailure::DelegateeStakePoolNotRegisteredDELEG(kh) = &f {
+            assert_eq!(kh.0, [0x77_u8; 28]);
+        } else {
+            panic!("expected DelegateeStakePoolNotRegisteredDELEG, got {f:?}");
+        }
+    }
+
+    #[test]
+    fn conway_deleg_pred_failure_deposit_incorrect_tag7() {
+        // outer [0x82, 0x07, mismatch [supplied=10, expected=20]]
+        let cbor = [0x82_u8, 0x07, 0x82, 0x0a, 0x14];
+        let f = ConwayDelegPredFailure::from_cbor(&cbor).expect("DepositIncorrectDELEG");
+        if let ConwayDelegPredFailure::DepositIncorrectDELEG(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelEQ);
+            assert_eq!(mm.supplied, 10);
+            assert_eq!(mm.expected, 20);
+        } else {
+            panic!("expected DepositIncorrectDELEG, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "DepositIncorrectDELEG (Mismatch (RelEQ) {supplied: Coin 10, expected: Coin 20})"
+        );
+    }
+
+    #[test]
+    fn conway_deleg_pred_failure_unknown_tag_rejects() {
+        // Tag 0 not used by upstream (DELEG tags start at 1).
+        let cbor = vec![0x82_u8, 0x00, 0x40];
+        let err = ConwayDelegPredFailure::from_cbor(&cbor).expect_err("tag 0 must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 0"),
+            "got: {err}"
         );
     }
 
