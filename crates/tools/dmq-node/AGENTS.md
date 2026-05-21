@@ -1,8 +1,9 @@
 # Guidance for the pure-Rust port of upstream `dmq-node`.
 
-**Status:** `partial` (post-R335-pattern skeleton). Concrete
-subcommand dispatch lands at **R451+** per the R326-R459
-sister-tools port arc plan. Scope band: **MEDIUM**.
+**Status:** `partial`. The DMQ protocol-definition surface is
+**complete** (R717-R754 — see *Current functional surface*); the
+remaining runtime / diffusion sub-arc is a deliberate carve-out.
+Scope band: **MEDIUM**.
 
 ## Strict 1:1 file-mirror policy (R274+)
 
@@ -21,67 +22,74 @@ Vendored at: `.reference-haskell-cardano-node/deps/dmq-node/` (51 `.hs` files).
 
 Delegated Mempool Queue diffusion-layer node (sister project for Mithril). Phase D.1 mini-arc R450-R459 (10 rounds, MEDIUM). R453-R454 port the DMQ wire protocol + mempool queue logic; R455 reuses the local-socket pattern from `crates/network/src/local_state_query_server.rs`; R456 reuses `crates/network` mux for the cardano-node connection.
 
-## Current functional surface (post-R444)
+## Current functional surface (post-R754)
 
-- ✅ `<binary> --help` byte-equivalent to upstream (golden test pinned
-  in `tests/cli_help_golden.rs`).
-- ✅ `<binary> --version` byte-equivalent to upstream.
+### CLI surface
+
+- ✅ `<binary> --help` / `--version` byte-equivalent to upstream
+  (golden tests in `tests/`).
 - ✅ Typed `parser::Args` + `configuration::Configuration` dispatch —
   host/port/local-socket/config-file/topology-file/cardano-socket/
-  network-magic parsed + validated + merged with config-file
+  network-magic parsed, validated, and merged with config-file
   contents (R369 layered).
-- ✅ `protocol/sig_submission.rs` — DMQ `SigSubmission` mini-protocol,
-  **self-contained surface complete** (R717-R727, collapses upstream
-  `DMQ/Protocol/SigSubmission/{Type,Codec,Validate}.hs`):
-  - `Type.hs` data types — `SigHash`/`SigId`/`SigBody`/`CborBytes`
-    (R717), `SigValidationError`/`Trace`/`Exception` (R718),
-    `SigKesSignature`/`SigColdKey`/`SigOpCertificate` (R719-R720),
-    `PosixTime`/`SigRaw`/`SigRawWithSignedBytes`/`Sig` (R721).
-  - `Codec.hs` — `encode/decode_sig_id` (R722),
-    `encode/decode_sig_op_certificate` (R723), `encode_sig` +
-    `encode/decode_sig_raw` (R724), `decode_sig` with
-    `sigRawSignedBytes` capture (R725).
-  - `SigValidationError::to_json` (R726); `validate_kes_period` +
-    `MAX_CLOCK_SKEW_SEC` (R727).
-- ✅ `node_to_node/version.rs` (R728) + `node_to_client/version.rs`
-  (R729) — the NtN / NtC protocol-version enums + CBOR-term codecs.
-- 🟡 **dmq-node ↔ `crates/network` integration sub-arc (pending).**
-  The remaining `SigSubmission` work — the `codecSigSubmission`
-  `TxSubmission2` wrapper, the `timeLimits`/`byteLimits` tables, the
-  rest of `validateSig` (the stateful pool-eligibility / opcert-counter
-  / KES-signature checks, gated on `Diffusion/NodeKernel`'s
-  `PoolValidationCtx`) — plus `Policy.hs`, `Configuration/Topology.hs`,
-  the `LocalMsgSubmission` / `LocalMsgNotification` mini-protocols, and
-  the NtN/NtC version-data + negotiation all reuse `crates/network`
-  mini-protocol machinery (`TxSubmission2`, `NetworkTopology`,
-  `TxDecisionPolicy`, `BlockingReplyList`).
-  **R731 investigation — a hard prerequisite.** `crates/network`'s
-  `protocols/tx_submission.rs::TxSubmissionMessage` is **concrete**:
-  it hardcodes the ledger `TxId` for identifiers and `Vec<u8>` for
-  transaction bodies (`use yggdrasil_ledger::TxId`; the file comment
-  states "Transaction identifiers use the canonical ledger `TxId`
-  wrapper"). Upstream `TxSubmission2 txid tx` is **generic**, and
-  `SigSubmission crypto = TxSubmission2 SigId (Sig crypto)` depends on
-  that genericity. So `codecSigSubmission` cannot reuse
-  `crates/network`'s codec as-is. This is an **architectural fork**
-  that warrants a deliberate decision (and a `parity-plan` for
-  whichever path):
-  1. Refactor `crates/network`'s `TxSubmission2` message / codec /
-     drivers / inbound-governor to be generic over `<Id, Tx>` (the
-     node instantiates `Id = TxId, Tx = Vec<u8>`). This matches
-     upstream's generic shape and lets DMQ reuse it — but it is a
-     protocol-critical, multi-round change to a core crate the node's
-     own tx-submission depends on.
-  2. Give dmq-node its own `SigSubmission` mini-protocol state
-     machine + codec, independent of `crates/network` (no core-crate
-     change; duplicates the `TxSubmission2` protocol shape).
-- ❌ Diffusion / NodeKernel / PeerSelection wiring — returns
-  `RunError::DiffusionWiringDeferred { host, local_socket,
-  config_file, topology_file, cardano_socket, cardano_magic,
-  dmq_magic }` (R444 structured deferral). See **Carve-out
-  inventory** below.
-- ❌ End-to-end behavioral tests against upstream binary — pending
-  the dmq-node mini-arc (R450-R459).
+
+### DMQ protocol surface — complete (R717-R754)
+
+The R731 architectural fork — upstream `SigSubmission = TxSubmission2
+SigId Sig` cannot reuse `crates/network`'s **concrete** `TxSubmission2`
+(it hardcodes the ledger `TxId` / `Vec<u8>`, not generic over the
+id/tx types) — was resolved at **R732** (advisor-confirmed) in favour
+of **dmq-node-local protocol modules**: the wire format is identical
+either way, so a generic refactor of the core network crate would buy
+zero wire-parity bytes while risking the node's own tx-submission. The
+protocol-definition surface is now comprehensively ported:
+
+- ✅ `protocol/sig_submission.rs` — V1 `SigSubmission`
+  (`Protocol/SigSubmission/{Type,Codec,Validate}.hs`): all `Type.hs`
+  data types; the full CBOR codec (`SigId`, `SigOpCertificate`,
+  `SigRaw`, `Sig` with `sigRawSignedBytes` capture); the complete
+  `validateSig` validator — all five checks (`validate_kes_period`,
+  `validate_ocert_counter`, `validate_pool_eligibility`,
+  `validate_ocert_signature`, `validate_kes_signature`) plus the
+  `validate_sig` / `validate_sig_batch` composition with context
+  rollback; the state machine + transition + message codec +
+  `timeLimits` / `byteLimits`.
+- ✅ `protocol/sig_submission_v2.rs` — V2 `SigSubmissionV2`
+  (`Protocol/SigSubmissionV2/{Type,Codec}.hs`): the count newtypes,
+  state machine, message enum, transition, full CBOR codec, and the
+  limit tables.
+- ✅ `protocol/local_msg_submission.rs` — `LocalMsgSubmission`
+  (`= LocalTxSubmission Sig SigValidationError`): types, transition,
+  codec (incl. the `encodeReject` / `decodeReject` error codec).
+- ✅ `protocol/local_msg_notification.rs` — `LocalMsgNotification`:
+  `HasMore`, `BlockingReplyList`, the state machine, transition, and
+  the indefinite-array message codec.
+- ✅ `node_to_node/version.rs` + `node_to_client/version.rs` — the
+  NtN / NtC protocol-version enums + CBOR-term codecs.
+- ✅ `policy.rs` — `SigDecisionPolicy` + the ingress limit
+  (`DMQ/Policy.hs`).
+- ✅ `topology.rs` — the topology-file reader
+  (`DMQ/Configuration/Topology.hs`, reusing `crates/network`'s
+  `TopologyConfig`).
+- ✅ `diffusion.rs` — `PoolValidationCtx` / `PoolId` /
+  `StakeSnapshot` (the validation context from
+  `Diffusion/NodeKernel/Types.hs`).
+- ✅ `sig_submission_v2.rs` — `SigSubmissionProtocolError`
+  (`SigSubmissionV2/Types.hs`).
+
+### Deferred — the runtime / diffusion sub-arc
+
+- ❌ The typed-protocols **peer drivers** (`Protocol/*/{Client,Server,
+  Inbound,Outbound}.hs`) and the **runtime** (`NodeKernel`,
+  `Diffusion/*`, the NtN / NtC mux bundles, `Tracer.hs`,
+  `Handlers/TopLevel.hs`). A peer driver is only meaningful plugged
+  into the mux + diffusion layer, so these ship **together** as one
+  deliberate `crates/network`-integration sub-arc — not as
+  standalone slices. `run` returns
+  `RunError::DiffusionWiringDeferred` until that sub-arc lands. See
+  the **Carve-out inventory** below.
+- ❌ End-to-end behavioral tests against the upstream binary —
+  pending that sub-arc.
 
 ## Carve-out inventory (R444 structured deferral surface)
 
@@ -91,7 +99,7 @@ descriptor.
 
 | Carve-out                            | Status helper                          | Deferral rationale (one-liner)                                            |
 |--------------------------------------|----------------------------------------|---------------------------------------------------------------------------|
-| Diffusion / NodeKernel / PeerSelection wiring | `status::diffusion_wiring_status()` | Gated on dmq-node mini-arc (R450-R459 — Tier 4 sister project). Leverages `crates/network/`'s existing surfaces (shipped) but needs the dmq-specific wire protocol + local-socket server. |
+| Peer drivers + Diffusion / NodeKernel / mux wiring | `status::diffusion_wiring_status()` | The DMQ protocol-definition surface is complete (R717-R754); what remains is the runtime sub-arc — the typed-protocols peer drivers (`Protocol/*/{Client,Server,Inbound,Outbound}.hs`) plus `NodeKernel` / `Diffusion/*` / the NtN-NtC mux bundles / `Tracer.hs`. These are entangled (a peer driver is only exercisable inside the mux) and reuse `crates/network`'s mux + peer-selection machinery — one deliberate integration sub-arc, not standalone slices. |
 
 ## Build + run
 
