@@ -3307,6 +3307,65 @@ impl fmt::Display for NonEmptyMapTxInTxOut {
     }
 }
 
+/// Non-empty map from committee credentials to epoch numbers
+/// mirroring upstream `NonEmptyMap (Credential ColdCommitteeRole)
+/// EpochNo`. CBOR wire format is a CBOR map (`Credential` key →
+/// `EpochNo` value). Entries are kept in wire order; empty maps
+/// are rejected at decode time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NonEmptyMapCredentialEpoch {
+    /// Decoded `(credential, epoch)` entries in wire order.
+    /// Guaranteed non-empty by `from_cbor`.
+    pub entries: Vec<(Credential, u64)>,
+}
+
+impl NonEmptyMapCredentialEpoch {
+    /// Decode a `NonEmptyMap (Credential ...) EpochNo` from
+    /// canonical CBOR bytes (a CBOR map).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let count = dec.map().map_err(|err| {
+            DecoderError(format!(
+                "NonEmptyMapCredentialEpoch: expected CBOR map: {err:?}"
+            ))
+        })?;
+        if count == 0 {
+            return Err(DecoderError(
+                "NonEmptyMapCredentialEpoch: NonEmptyMap requires at least one entry".to_string(),
+            ));
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            let cred = Credential::from_decoder(&mut dec)?;
+            let epoch = dec.unsigned().map_err(|err| {
+                DecoderError(format!(
+                    "NonEmptyMapCredentialEpoch: expected EpochNo: {err:?}"
+                ))
+            })?;
+            entries.push((cred, epoch));
+        }
+        Ok(Self { entries })
+    }
+}
+
+impl fmt::Display for NonEmptyMapCredentialEpoch {
+    /// Render upstream stock-derived `Show (NonEmptyMap k v)`:
+    /// `NonEmptyMap (fromList [(<Credential>, <EpochNo>), ...])`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NonEmptyMap (fromList [")?;
+        let mut first = true;
+        for (cred, epoch) in &self.entries {
+            if !first {
+                f.write_str(",")?;
+            }
+            first = false;
+            write!(f, "({cred},EpochNo {epoch})")?;
+        }
+        f.write_str("])")
+    }
+}
+
 /// Non-empty list of transaction outputs mirroring upstream
 /// `NonEmpty (TxOut era)`. CBOR wire format is a regular CBOR
 /// array with ≥1 entry. NonEmpty invariant enforced at decode time.
@@ -7046,9 +7105,9 @@ pub enum ConwayGovPredFailure {
     /// — `NonEmptySet (Credential ColdCommitteeRole)`. Raw.
     ConflictingCommitteeUpdate(Vec<u8>),
     /// Tag 7: committee expiration epoch too small —
-    /// `NonEmptyMap (Credential ColdCommitteeRole) EpochNo`.
-    /// Raw.
-    ExpirationEpochTooSmall(Vec<u8>),
+    /// `NonEmptyMap (Credential ColdCommitteeRole) EpochNo`
+    /// (R646 typed).
+    ExpirationEpochTooSmall(NonEmptyMapCredentialEpoch),
     /// Tag 8: invalid previous gov-action id —
     /// `ProposalProcedure era`. Raw.
     InvalidPrevGovActionId(Vec<u8>),
@@ -7233,10 +7292,19 @@ impl ConwayGovPredFailure {
                 "ConflictingCommitteeUpdate",
                 2,
             )?)),
-            7 => Ok(Self::ExpirationEpochTooSmall(capture_raw(
-                "ExpirationEpochTooSmall",
-                2,
-            )?)),
+            7 => {
+                if len != 2 {
+                    return Err(DecoderError(format!(
+                        "ExpirationEpochTooSmall: expected 2-element envelope, got len {len}"
+                    )));
+                }
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::ExpirationEpochTooSmall(
+                    NonEmptyMapCredentialEpoch::from_cbor(payload_bytes)?,
+                ))
+            }
             8 => Ok(Self::InvalidPrevGovActionId(capture_raw(
                 "InvalidPrevGovActionId",
                 2,
@@ -7340,7 +7408,6 @@ impl fmt::Display for ConwayGovPredFailure {
             | Self::TreasuryWithdrawalsNetworkIdMismatch(b)
             | Self::DisallowedVoters(b)
             | Self::ConflictingCommitteeUpdate(b)
-            | Self::ExpirationEpochTooSmall(b)
             | Self::InvalidPrevGovActionId(b)
             | Self::VotingOnExpiredGovAction(b)
             | Self::ProposalCantFollow(b)
@@ -7363,6 +7430,9 @@ impl fmt::Display for ConwayGovPredFailure {
             }
             Self::InvalidGuardrailsScriptHash { got, expected } => {
                 write!(f, "InvalidGuardrailsScriptHash ({got}) ({expected})")
+            }
+            Self::ExpirationEpochTooSmall(map) => {
+                write!(f, "ExpirationEpochTooSmall ({map})")
             }
         }
     }
@@ -8654,6 +8724,43 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("NonEmpty requires at least one entry"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_expiration_epoch_too_small_tag7() {
+        // outer [0x82, 0x07, map(1){Credential: EpochNo}].
+        // Credential = [0, bytes(28)] (KeyHashObj); EpochNo = 250.
+        let mut cbor = vec![0x82_u8, 0x07, 0xA1, 0x82, 0x00];
+        cbor.push(0x58);
+        cbor.push(28);
+        cbor.extend_from_slice(&[0x5E_u8; 28]);
+        cbor.extend_from_slice(&[0x18, 0xFA]); // EpochNo 250
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ExpirationEpochTooSmall");
+        if let ConwayGovPredFailure::ExpirationEpochTooSmall(map) = &f {
+            assert_eq!(map.entries.len(), 1);
+            assert!(matches!(map.entries[0].0, Credential::KeyHashObj(_)));
+            assert_eq!(map.entries[0].1, 250);
+        } else {
+            panic!("expected ExpirationEpochTooSmall, got {f:?}");
+        }
+        let s = f.to_string();
+        assert!(
+            s.starts_with("ExpirationEpochTooSmall (NonEmptyMap (fromList [(KeyHashObj"),
+            "got: {s}"
+        );
+        assert!(s.contains(",EpochNo 250)])"), "got: {s}");
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_expiration_epoch_too_small_rejects_empty() {
+        let cbor = [0x82_u8, 0x07, 0xA0];
+        let err =
+            ConwayGovPredFailure::from_cbor(&cbor).expect_err("empty NonEmptyMap must reject");
+        assert!(
+            err.to_string()
+                .contains("NonEmptyMap requires at least one entry"),
             "got: {err}"
         );
     }
