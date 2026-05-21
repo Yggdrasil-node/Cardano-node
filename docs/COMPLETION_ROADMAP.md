@@ -665,8 +665,14 @@ byte MSB-first, high bit = continuation). Pointer addresses now
 render the typed shape `Addr <Net> (<payment>) (StakeRefPtr (Ptr
 (SlotNo32 N) (TxIx {unTxIx = N}) (CertIx {unCertIx = N})))`
 matching upstream stock-derived Show. Malformed pointer tails
-report a `<malformed-ptr ...>` marker. Alonzo 3-array TxOut +
-Babbage map-form TxOut remain pending. R656 (2026-05-21) closed
+report a `<malformed-ptr ...>` marker. R658 (2026-05-21) made
+the TxOut decoder era-tolerant — `ShelleyTxOut::from_decoder`
+now accepts the Shelley/Mary 2-array, the Alonzo 3-array
+`[addr, value, datum_hash]`, and the Babbage/Conway CBOR-map
+`{0: addr, 1: value, 2: datum, 3: script_ref}` forms, extracting
+the lovelace amount via a `MaryValue`-aware value reader (the
+Alonzo datum hash and Babbage datum / script-ref fields are
+consumed but not stored). R656 (2026-05-21) closed
 the typed Byron bootstrap parse — added `render_byron_bootstrap`,
 which parses the CRC-protected Byron `Address` CBOR (`[#6.24(inner),
 crc32]`, inner = `[addrRoot 28-byte hash, addrAttributes, addrType]`)

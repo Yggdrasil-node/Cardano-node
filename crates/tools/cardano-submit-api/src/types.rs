@@ -3712,46 +3712,112 @@ impl fmt::Display for NonEmptySetAddr {
     }
 }
 
-/// Shelley-era transaction-output mirroring upstream
-/// `data ShelleyTxOut era` (Shelley/Allegra/Mary). Wire format is
-/// the canonical 2-element CBOR array `[address_bytes, coin]`
-/// where for Shelley era `Value = Coin = Word64`.
+/// Read a TxOut value field's lovelace component. The `value`
+/// of a TxOut is era-dependent: Shelley `Coin` (a bare CBOR
+/// integer), or Mary+ `MaryValue` (a bare integer for ADA-only
+/// outputs, otherwise a 2-element `[coin, multiasset]` array).
+/// In every form the lovelace amount is the headline figure.
+fn read_txout_value_lovelace(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<u64, DecoderError> {
+    let major = dec
+        .peek_major()
+        .map_err(|err| DecoderError(format!("TxOut value: peek: {err:?}")))?;
+    if major == 4 {
+        Ok(MaryValue::from_decoder(dec)?.coin)
+    } else {
+        dec.unsigned()
+            .map_err(|err| DecoderError(format!("TxOut value: expected coin: {err:?}")))
+    }
+}
+
+/// Transaction-output mirroring upstream `data TxOut era`. The
+/// decoder is era-tolerant — it accepts every on-wire TxOut
+/// shape so a predicate-failure carrier holding outputs from any
+/// era decodes correctly:
+///
+/// - Shelley/Allegra/Mary 2-array `[address, value]`.
+/// - Alonzo 3-array `[address, value, datum_hash]`.
+/// - Babbage/Conway CBOR map `{0: address, 1: value, 2: datum,
+///   3: script_ref}`.
 ///
 /// Upstream `Show ShelleyTxOut = show . viewCompactTxOut` renders
-/// as a Haskell tuple `(<Addr>, Coin <n>)` — the `viewCompactTxOut`
-/// helper returns `(Addr, Value)` and the tuple Show wraps each
-/// element in its own Show.
-///
-/// Alonzo (3-array) and Babbage+ (CBOR map) outputs are not yet
-/// covered — the `ShelleyUtxoPredFailure` enum is era-tagged at
-/// the outer envelope so its variant payloads inherit Shelley-era
-/// shape.
+/// as a Haskell tuple `(<Addr>, Coin <n>)` — `viewCompactTxOut`
+/// returns `(Addr, Value)` and the tuple Show wraps each element.
+/// The struct keeps the headline `(address, lovelace)`; the
+/// Alonzo datum hash and Babbage datum / script-reference fields
+/// are consumed but not stored.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ShelleyTxOut {
     /// Output address bytes (29-byte tagged form for Shelley).
     pub addr: Addr,
-    /// Output value (Coin = Word64 for Shelley era).
+    /// Output lovelace amount (the `Coin` component of the
+    /// era-specific `Value`).
     pub coin: u64,
 }
 
 impl ShelleyTxOut {
-    /// Decode a single Shelley-era TxOut as the canonical
-    /// 2-element CBOR array `[bytes(addr), coin]`.
+    /// Decode a single TxOut, accepting the Shelley 2-array, the
+    /// Alonzo 3-array, and the Babbage/Conway CBOR-map forms.
     fn from_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let major = dec
+            .peek_major()
+            .map_err(|err| DecoderError(format!("TxOut: peek: {err:?}")))?;
+        if major == 5 {
+            return Self::from_map_decoder(dec);
+        }
         let len = dec
             .array()
-            .map_err(|err| DecoderError(format!("ShelleyTxOut: expected 2-array: {err:?}")))?;
-        if len != 2 {
+            .map_err(|err| DecoderError(format!("TxOut: expected array form: {err:?}")))?;
+        if len != 2 && len != 3 {
             return Err(DecoderError(format!(
-                "ShelleyTxOut: expected 2-array, got len {len}"
+                "TxOut: expected 2- or 3-element array, got len {len}"
             )));
         }
-        let addr = Addr::from_decoder(dec)
-            .map_err(|err| DecoderError(format!("ShelleyTxOut: {}", err.0)))?;
-        let coin = dec
-            .unsigned()
-            .map_err(|err| DecoderError(format!("ShelleyTxOut: expected coin: {err:?}")))?;
+        let addr =
+            Addr::from_decoder(dec).map_err(|err| DecoderError(format!("TxOut: {}", err.0)))?;
+        let coin = read_txout_value_lovelace(dec)?;
+        // Alonzo 3-array carries a trailing datum hash — consume it.
+        if len == 3 {
+            dec.skip()
+                .map_err(|err| DecoderError(format!("TxOut: datum-hash skip: {err:?}")))?;
+        }
         Ok(Self { addr, coin })
+    }
+
+    /// Decode the Babbage/Conway CBOR-map TxOut form: key 0 =
+    /// address, key 1 = value; keys 2 (datum) / 3 (script_ref)
+    /// are consumed but not stored.
+    fn from_map_decoder(dec: &mut yggdrasil_ledger::Decoder<'_>) -> Result<Self, DecoderError> {
+        let entries = dec
+            .map()
+            .map_err(|err| DecoderError(format!("TxOut map: expected CBOR map: {err:?}")))?;
+        let mut addr: Option<Addr> = None;
+        let mut coin: Option<u64> = None;
+        for _ in 0..entries {
+            let key = dec
+                .unsigned()
+                .map_err(|err| DecoderError(format!("TxOut map: expected Word key: {err:?}")))?;
+            match key {
+                0 => {
+                    addr = Some(
+                        Addr::from_decoder(dec)
+                            .map_err(|err| DecoderError(format!("TxOut map: {}", err.0)))?,
+                    );
+                }
+                1 => {
+                    coin = Some(read_txout_value_lovelace(dec)?);
+                }
+                _ => {
+                    dec.skip()
+                        .map_err(|err| DecoderError(format!("TxOut map: field skip: {err:?}")))?;
+                }
+            }
+        }
+        Ok(Self {
+            addr: addr
+                .ok_or_else(|| DecoderError("TxOut map: missing address (key 0)".to_string()))?,
+            coin: coin
+                .ok_or_else(|| DecoderError("TxOut map: missing value (key 1)".to_string()))?,
+        })
     }
 }
 
@@ -12161,6 +12227,46 @@ mod tests {
         );
         assert!(s.contains("(StakeRefNull)"), "got: {s}");
         assert!(s.ends_with(", Coin 1000000)"), "got: {s}");
+    }
+
+    #[test]
+    fn shelley_tx_out_decodes_alonzo_three_array() {
+        // Alonzo 3-array: [addr, value, datum_hash]. value is a
+        // bare coin; datum_hash is bytes(32).
+        let mut cbor = vec![0x83_u8];
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0x61);
+        cbor.extend_from_slice(&[0x55_u8; 28]);
+        cbor.extend_from_slice(&[0x1A, 0x00, 0x0F, 0x42, 0x40]); // coin 1_000_000
+        cbor.push(0x58); // datum hash bytes(32)
+        cbor.push(32);
+        cbor.extend_from_slice(&[0xDD_u8; 32]);
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("Alonzo TxOut");
+        assert_eq!(tx_out.coin, 1_000_000);
+        assert_eq!(tx_out.addr.0[0], 0x61);
+    }
+
+    #[test]
+    fn shelley_tx_out_decodes_babbage_map_form() {
+        // Babbage/Conway map form: {0: addr, 1: value} where
+        // value is a [coin, multiasset] 2-array.
+        let mut cbor = vec![0xA2_u8, 0x00]; // map(2), key 0
+        cbor.push(0x58);
+        cbor.push(29);
+        cbor.push(0x61);
+        cbor.extend_from_slice(&[0x99_u8; 28]);
+        cbor.push(0x01); // key 1: value
+        cbor.push(0x82); // value 2-array [coin, multiasset]
+        cbor.extend_from_slice(&[0x19, 0x07, 0xD0]); // coin 2000
+        cbor.push(0xA0); // empty multiasset map
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let tx_out = ShelleyTxOut::from_decoder(&mut dec).expect("Babbage TxOut");
+        assert_eq!(tx_out.coin, 2000);
+        assert_eq!(tx_out.addr.0[0], 0x61);
     }
 
     #[test]
