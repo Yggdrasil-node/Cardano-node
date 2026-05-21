@@ -236,11 +236,11 @@ impl LocalMsgSubmissionState {
 mod tests {
     use super::*;
     use crate::protocol::sig_submission::{
-        PosixTime, SigBody, SigColdKey, SigHash, SigId, SigKesSignature, SigOpCertificate, SigRaw,
-        encode_sig_raw,
+        DMQ_KES_DEPTH, PosixTime, SigBody, SigColdKey, SigHash, SigId, SigKesSignature,
+        SigOpCertificate, SigRaw, encode_sig_raw,
     };
     use yggdrasil_consensus::OpCert;
-    use yggdrasil_crypto::{KesSignature, Signature, SumKesVerificationKey, VerificationKey};
+    use yggdrasil_crypto::{Signature, SumKesSignature, SumKesVerificationKey, VerificationKey};
 
     /// A minimal placeholder `Sig` whose `sig_raw_bytes` is a valid
     /// encoded `SigRaw`, so it survives a `MsgSubmitTx` codec
@@ -258,7 +258,13 @@ mod tests {
             }),
             sig_raw_cold_key: SigColdKey(VerificationKey([0; 32])),
             sig_raw_expires_at: PosixTime(0),
-            sig_raw_kes_signature: SigKesSignature(KesSignature([0; 64])),
+            sig_raw_kes_signature: SigKesSignature(
+                SumKesSignature::from_bytes(
+                    DMQ_KES_DEPTH,
+                    &vec![0u8; SumKesSignature::expected_size(DMQ_KES_DEPTH)],
+                )
+                .expect("dummy kes sig"),
+            ),
         };
         let mut enc = Encoder::new();
         encode_sig_raw(&sig_raw, &mut enc);

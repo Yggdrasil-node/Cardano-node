@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use crate::diffusion::{PoolId, PoolValidationCtx};
 use yggdrasil_consensus::OpCert;
-use yggdrasil_crypto::{KesSignature, Signature, SumKesVerificationKey, VerificationKey};
+use yggdrasil_crypto::{Signature, SumKesSignature, SumKesVerificationKey, VerificationKey};
 use yggdrasil_ledger::LedgerError;
 use yggdrasil_ledger::cbor::{Decoder, Encoder, vec_with_strict_capacity};
 
@@ -106,18 +106,26 @@ impl fmt::Debug for CborBytes {
     }
 }
 
+/// The KES composition depth for DMQ signatures.
+///
+/// `Cardano.KESAgent.Protocols.StandardCrypto` fixes
+/// `KES StandardCrypto = Sum6KES Ed25519DSIGN Blake2b_256` — depth 6,
+/// a `64 + 6 * 64 = 448`-byte signature.
+pub const DMQ_KES_DEPTH: u32 = 6;
+
 /// A DMQ signature's KES signature.
 ///
 /// Upstream `newtype SigKESSignature crypto =
 /// SigKESSignature { getSigKESSignature :: SigKES (KES crypto) }`. The
 /// `crypto` type parameter collapses to yggdrasil's concrete
-/// [`KesSignature`] — yggdrasil is not generic over the crypto suite.
+/// [`SumKesSignature`] — for `StandardCrypto` the KES is `Sum6KES`
+/// (depth 6, a 448-byte signature; see [`DMQ_KES_DEPTH`]).
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SigKesSignature(pub KesSignature);
+pub struct SigKesSignature(pub SumKesSignature);
 
 impl SigKesSignature {
     /// The wrapped KES signature — upstream `getSigKESSignature`.
-    pub fn get(&self) -> &KesSignature {
+    pub fn get(&self) -> &SumKesSignature {
         &self.0
     }
 }
@@ -410,6 +418,16 @@ fn decode_fixed_bytes<const N: usize>(dec: &mut Decoder) -> Result<[u8; N], Ledg
     })
 }
 
+/// Decode a CBOR byte string into a [`DMQ_KES_DEPTH`]-deep
+/// [`SumKesSignature`] — the `decodeSigKES` of upstream's KES.
+fn decode_kes_signature(dec: &mut Decoder) -> Result<SumKesSignature, LedgerError> {
+    let bytes = dec.bytes_owned()?;
+    SumKesSignature::from_bytes(DMQ_KES_DEPTH, &bytes).map_err(|_| LedgerError::CborInvalidLength {
+        expected: SumKesSignature::expected_size(DMQ_KES_DEPTH),
+        actual: bytes.len(),
+    })
+}
+
 /// Decode a CBOR array header and require it to declare exactly `n`
 /// elements.
 fn expect_array_len(dec: &mut Decoder, n: u64) -> Result<(), LedgerError> {
@@ -491,7 +509,7 @@ pub fn encode_sig_raw(raw: &SigRaw, enc: &mut Encoder) {
     enc.unsigned(raw.sig_raw_kes_period);
     enc.unsigned(u64::from(raw.sig_raw_expires_at.0));
     // [1] KES signature.
-    enc.bytes(&raw.sig_raw_kes_signature.0.0);
+    enc.bytes(raw.sig_raw_kes_signature.0.to_bytes());
     // [2] operational certificate.
     encode_sig_op_certificate(&raw.sig_raw_op_certificate, enc);
     // [3] cold key.
@@ -526,7 +544,7 @@ pub fn decode_sig_raw(dec: &mut Decoder) -> Result<SigRaw, LedgerError> {
     let (sig_raw_id, sig_raw_body, sig_raw_kes_period, sig_raw_expires_at) =
         decode_sig_payload(dec)?;
     // [1] KES signature.
-    let sig_raw_kes_signature = SigKesSignature(KesSignature(decode_fixed_bytes::<64>(dec)?));
+    let sig_raw_kes_signature = SigKesSignature(decode_kes_signature(dec)?);
     // [2] operational certificate.
     let sig_raw_op_certificate = decode_sig_op_certificate(dec)?;
     // [3] cold key.
@@ -560,7 +578,7 @@ pub fn decode_sig(input: &[u8]) -> Result<Sig, LedgerError> {
     let (sig_raw_id, sig_raw_body, sig_raw_kes_period, sig_raw_expires_at) =
         decode_sig_payload(&mut dec)?;
     let end = dec.position();
-    let sig_raw_kes_signature = SigKesSignature(KesSignature(decode_fixed_bytes::<64>(&mut dec)?));
+    let sig_raw_kes_signature = SigKesSignature(decode_kes_signature(&mut dec)?);
     let sig_raw_op_certificate = decode_sig_op_certificate(&mut dec)?;
     let sig_raw_cold_key = SigColdKey(VerificationKey(decode_fixed_bytes::<32>(&mut dec)?));
     let sig_raw = SigRaw {
@@ -1096,10 +1114,27 @@ mod tests {
 
     #[test]
     fn sig_kes_signature_wraps_and_compares() {
-        let sig = SigKesSignature(KesSignature([0x22; 64]));
-        assert_eq!(sig, SigKesSignature(KesSignature([0x22; 64])));
-        assert_ne!(sig, SigKesSignature(KesSignature([0x00; 64])));
-        assert_eq!(sig.get(), &KesSignature([0x22; 64]));
+        let sig = SigKesSignature(kes_sig(0x22));
+        assert_eq!(sig, SigKesSignature(kes_sig(0x22)));
+        assert_ne!(sig, SigKesSignature(kes_sig(0x00)));
+        assert_eq!(sig.get(), &kes_sig(0x22));
+    }
+
+    #[test]
+    fn sig_kes_signature_is_a_depth_six_sum_kes_signature() {
+        // The DMQ KES is `Sum6KES` — a 448-byte signature, not the
+        // 64-byte base KES signature.
+        let raw = sample_sig_raw();
+        assert_eq!(raw.sig_raw_kes_signature.0.depth(), DMQ_KES_DEPTH);
+        assert_eq!(
+            raw.sig_raw_kes_signature.0.to_bytes().len(),
+            SumKesSignature::expected_size(DMQ_KES_DEPTH),
+        );
+        // The Sum6 signature survives the `SigRaw` codec round-trip.
+        let mut enc = Encoder::new();
+        encode_sig_raw(&raw, &mut enc);
+        let decoded = decode_sig_raw(&mut Decoder::new(&enc.into_bytes())).expect("decodes");
+        assert_eq!(decoded.sig_raw_kes_signature, raw.sig_raw_kes_signature);
     }
 
     #[test]
@@ -1125,6 +1160,12 @@ mod tests {
         assert_eq!(cert.get().sequence_number, 1);
     }
 
+    /// A placeholder depth-6 KES signature with every byte set to `b`.
+    fn kes_sig(b: u8) -> SumKesSignature {
+        let size = SumKesSignature::expected_size(DMQ_KES_DEPTH);
+        SumKesSignature::from_bytes(DMQ_KES_DEPTH, &vec![b; size]).unwrap()
+    }
+
     fn sample_sig_raw() -> SigRaw {
         use yggdrasil_crypto::{Signature, SumKesVerificationKey};
         SigRaw {
@@ -1139,7 +1180,7 @@ mod tests {
             }),
             sig_raw_cold_key: SigColdKey(VerificationKey([0x11; 32])),
             sig_raw_expires_at: PosixTime(1_700_000_000),
-            sig_raw_kes_signature: SigKesSignature(KesSignature([0x22; 64])),
+            sig_raw_kes_signature: SigKesSignature(kes_sig(0x22)),
         }
     }
 
