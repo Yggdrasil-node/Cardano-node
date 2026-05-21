@@ -3733,9 +3733,10 @@ pub enum ConwayLedgerPredFailure {
     /// Tag 2: nested Conway CERTS failure (R625 wired to typed
     /// `ConwayCertsPredFailure`). Replaces Shelley's DELEGS path.
     ConwayCertsFailure(ConwayCertsPredFailure),
-    /// Tag 3: nested Conway GOV failure (raw, pending GOV
-    /// sub-rule decoder). New in Conway for governance actions.
-    ConwayGovFailure(Vec<u8>),
+    /// Tag 3: nested Conway GOV failure (R626 wired to typed
+    /// `ConwayGovPredFailure`). New in Conway for governance
+    /// actions.
+    ConwayGovFailure(ConwayGovPredFailure),
     /// Tag 4: withdrawal target was not delegated to a DRep —
     /// `NonEmpty (KeyHash Staking)` (R623 typed).
     ConwayWdrlNotDelegatedToDRep(NonEmptyKeyHash),
@@ -3842,22 +3843,20 @@ impl ConwayLedgerPredFailure {
                 let certs = ConwayCertsPredFailure::from_cbor(payload_bytes)?;
                 Ok(Self::ConwayCertsFailure(certs))
             }
-            // Tag 3: GOV sub-rule raw pending typed decoder.
+            // Tag 3: typed Conway GOV sub-rule (R626).
             3 => {
                 if len != 2 {
                     return Err(DecoderError(format!(
                         "ConwayGovFailure: expected 2-element envelope, got len {len}"
                     )));
                 }
-                let raw = bytes
-                    .get(payload_offset..)
-                    .ok_or_else(|| {
-                        DecoderError(
-                            "ConwayLedgerPredFailure: payload offset out of bounds".to_string(),
-                        )
-                    })?
-                    .to_vec();
-                Ok(Self::ConwayGovFailure(raw))
+                let payload_bytes = bytes.get(payload_offset..).ok_or_else(|| {
+                    DecoderError(
+                        "ConwayLedgerPredFailure: payload offset out of bounds".to_string(),
+                    )
+                })?;
+                let gov = ConwayGovPredFailure::from_cbor(payload_bytes)?;
+                Ok(Self::ConwayGovFailure(gov))
             }
             // Tag 4: NonEmpty (KeyHash Staking).
             4 => {
@@ -3977,8 +3976,8 @@ impl fmt::Display for ConwayLedgerPredFailure {
             Self::ConwayCertsFailure(certs) => {
                 write!(f, "ConwayCertsFailure ({certs})")
             }
-            Self::ConwayGovFailure(b) => {
-                write!(f, "ConwayGovFailure <raw-cbor {} bytes>", b.len())
+            Self::ConwayGovFailure(gov) => {
+                write!(f, "ConwayGovFailure ({gov})")
             }
             Self::ConwayWdrlNotDelegatedToDRep(keys) => {
                 write!(f, "ConwayWdrlNotDelegatedToDRep ({keys})")
@@ -4480,6 +4479,307 @@ impl fmt::Display for ConwayCertsPredFailure {
             }
             Self::CertFailure(b) => {
                 write!(f, "CertFailure <raw-cbor {} bytes>", b.len())
+            }
+        }
+    }
+}
+
+/// `ConwayGovPredFailure` mirror — Conway-era GOV sub-rule
+/// failure (under `ConwayLedgerPredFailure::ConwayGovFailure`).
+///
+/// Upstream: `data ConwayGovPredFailure era` from
+/// `Cardano.Ledger.Conway.Rules.Gov` with 19 variants encoded
+/// via CBOR `Sum` tags 0-18. The variants encode every governance
+/// rule failure (proposal validation, voting eligibility,
+/// committee updates, etc.).
+///
+/// R626 ships the scaffold + typed payload for tag 4
+/// (ProposalDepositIncorrect — `Mismatch RelEQ Coin` via
+/// `ToGroup`). The remaining 18 variants keep raw inner CBOR
+/// pending typed governance-specific decoders (GovActionId,
+/// GovAction, Voter, ProposalProcedure, ProtVer, Credential
+/// roles, etc.).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConwayGovPredFailure {
+    /// Tag 0: governance actions referenced by votes do not exist
+    /// — `NonEmpty GovActionId`. Raw pending GovActionId decoder.
+    GovActionsDoNotExist(Vec<u8>),
+    /// Tag 1: proposal is malformed — `GovAction era`. Raw
+    /// pending GovAction decoder.
+    MalformedProposal(Vec<u8>),
+    /// Tag 2: proposal account address is on wrong network —
+    /// `AccountAddress + Network`. Raw pending AccountAddress
+    /// decoder.
+    ProposalProcedureNetworkIdMismatch(Vec<u8>),
+    /// Tag 3: treasury withdrawal account addresses on wrong
+    /// network — `NonEmptySet AccountAddress + Network`. Raw.
+    TreasuryWithdrawalsNetworkIdMismatch(Vec<u8>),
+    /// Tag 4: proposal deposit value mismatch — `Mismatch RelEQ
+    /// Coin` via ToGroup flattened (R626 typed).
+    ProposalDepositIncorrect(Mismatch<u64>),
+    /// Tag 5: disallowed voters for specific actions —
+    /// `NonEmpty (Voter, GovActionId)`. Raw.
+    DisallowedVoters(Vec<u8>),
+    /// Tag 6: cold-committee credentials both removed and added
+    /// — `NonEmptySet (Credential ColdCommitteeRole)`. Raw.
+    ConflictingCommitteeUpdate(Vec<u8>),
+    /// Tag 7: committee expiration epoch too small —
+    /// `NonEmptyMap (Credential ColdCommitteeRole) EpochNo`.
+    /// Raw.
+    ExpirationEpochTooSmall(Vec<u8>),
+    /// Tag 8: invalid previous gov-action id —
+    /// `ProposalProcedure era`. Raw.
+    InvalidPrevGovActionId(Vec<u8>),
+    /// Tag 9: voting on expired gov action —
+    /// `NonEmpty (Voter, GovActionId)`. Raw.
+    VotingOnExpiredGovAction(Vec<u8>),
+    /// Tag 10: hard-fork proposal protocol-version sequence —
+    /// `StrictMaybe (GovPurposeId 'HardForkPurpose) + Mismatch
+    /// RelGT ProtVer` via ToGroup. Raw.
+    ProposalCantFollow(Vec<u8>),
+    /// Tag 11: guardrails-script-hash mismatch —
+    /// `StrictMaybe ScriptHash + StrictMaybe ScriptHash`. Raw.
+    InvalidGuardrailsScriptHash(Vec<u8>),
+    /// Tag 12: proposal not allowed during bootstrap —
+    /// `ProposalProcedure era`. Raw.
+    DisallowedProposalDuringBootstrap(Vec<u8>),
+    /// Tag 13: votes not allowed during bootstrap —
+    /// `NonEmpty (Voter, GovActionId)`. Raw.
+    DisallowedVotesDuringBootstrap(Vec<u8>),
+    /// Tag 14: voters do not exist in ledger state —
+    /// `NonEmpty Voter`. Raw.
+    VotersDoNotExist(Vec<u8>),
+    /// Tag 15: treasury withdrawals sum to zero —
+    /// `GovAction era`. Raw.
+    ZeroTreasuryWithdrawals(Vec<u8>),
+    /// Tag 16: proposal return-account address does not exist —
+    /// `AccountAddress`. Raw.
+    ProposalReturnAccountDoesNotExist(Vec<u8>),
+    /// Tag 17: treasury withdrawal return-accounts do not exist
+    /// — `NonEmpty AccountAddress`. Raw.
+    TreasuryWithdrawalReturnAccountsDoNotExist(Vec<u8>),
+    /// Tag 18: votes by unelected committee members —
+    /// `NonEmpty (Credential HotCommitteeRole)`. Raw.
+    UnelectedCommitteeVoters(Vec<u8>),
+}
+
+impl ConwayGovPredFailure {
+    /// Upstream CBOR tag for this variant.
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::GovActionsDoNotExist(_) => 0,
+            Self::MalformedProposal(_) => 1,
+            Self::ProposalProcedureNetworkIdMismatch(_) => 2,
+            Self::TreasuryWithdrawalsNetworkIdMismatch(_) => 3,
+            Self::ProposalDepositIncorrect(_) => 4,
+            Self::DisallowedVoters(_) => 5,
+            Self::ConflictingCommitteeUpdate(_) => 6,
+            Self::ExpirationEpochTooSmall(_) => 7,
+            Self::InvalidPrevGovActionId(_) => 8,
+            Self::VotingOnExpiredGovAction(_) => 9,
+            Self::ProposalCantFollow(_) => 10,
+            Self::InvalidGuardrailsScriptHash(_) => 11,
+            Self::DisallowedProposalDuringBootstrap(_) => 12,
+            Self::DisallowedVotesDuringBootstrap(_) => 13,
+            Self::VotersDoNotExist(_) => 14,
+            Self::ZeroTreasuryWithdrawals(_) => 15,
+            Self::ProposalReturnAccountDoesNotExist(_) => 16,
+            Self::TreasuryWithdrawalReturnAccountsDoNotExist(_) => 17,
+            Self::UnelectedCommitteeVoters(_) => 18,
+        }
+    }
+
+    /// Upstream stock-derived `Show` constructor name.
+    pub fn constructor(&self) -> &'static str {
+        match self {
+            Self::GovActionsDoNotExist(_) => "GovActionsDoNotExist",
+            Self::MalformedProposal(_) => "MalformedProposal",
+            Self::ProposalProcedureNetworkIdMismatch(_) => "ProposalProcedureNetworkIdMismatch",
+            Self::TreasuryWithdrawalsNetworkIdMismatch(_) => "TreasuryWithdrawalsNetworkIdMismatch",
+            Self::ProposalDepositIncorrect(_) => "ProposalDepositIncorrect",
+            Self::DisallowedVoters(_) => "DisallowedVoters",
+            Self::ConflictingCommitteeUpdate(_) => "ConflictingCommitteeUpdate",
+            Self::ExpirationEpochTooSmall(_) => "ExpirationEpochTooSmall",
+            Self::InvalidPrevGovActionId(_) => "InvalidPrevGovActionId",
+            Self::VotingOnExpiredGovAction(_) => "VotingOnExpiredGovAction",
+            Self::ProposalCantFollow(_) => "ProposalCantFollow",
+            Self::InvalidGuardrailsScriptHash(_) => "InvalidGuardrailsScriptHash",
+            Self::DisallowedProposalDuringBootstrap(_) => "DisallowedProposalDuringBootstrap",
+            Self::DisallowedVotesDuringBootstrap(_) => "DisallowedVotesDuringBootstrap",
+            Self::VotersDoNotExist(_) => "VotersDoNotExist",
+            Self::ZeroTreasuryWithdrawals(_) => "ZeroTreasuryWithdrawals",
+            Self::ProposalReturnAccountDoesNotExist(_) => "ProposalReturnAccountDoesNotExist",
+            Self::TreasuryWithdrawalReturnAccountsDoNotExist(_) => {
+                "TreasuryWithdrawalReturnAccountsDoNotExist"
+            }
+            Self::UnelectedCommitteeVoters(_) => "UnelectedCommitteeVoters",
+        }
+    }
+
+    /// Decode the full `ConwayGovPredFailure` outer envelope. Most
+    /// variants use a 2-element envelope; tags 2/3/11 use 3-element
+    /// (two args); tag 4 uses 3-element ToGroup-flattened (Mismatch
+    /// `supplied, expected`); tag 10 uses 4-element (StrictMaybe +
+    /// ToGroup Mismatch).
+    pub fn from_cbor(bytes: &[u8]) -> Result<Self, DecoderError> {
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(bytes);
+        let len = dec.array().map_err(|err| {
+            DecoderError(format!(
+                "ConwayGovPredFailure: expected outer CBOR array: {err:?}"
+            ))
+        })?;
+        if !(2..=4).contains(&len) {
+            return Err(DecoderError(format!(
+                "ConwayGovPredFailure: expected 2- to 4-element array, got len {len}"
+            )));
+        }
+        let tag = dec.unsigned().map_err(|err| {
+            DecoderError(format!("ConwayGovPredFailure: expected Word8 tag: {err:?}"))
+        })?;
+        let payload_offset = dec.position();
+        let capture_raw = |label: &str, expected_len: u64| -> Result<Vec<u8>, DecoderError> {
+            if len != expected_len {
+                return Err(DecoderError(format!(
+                    "{label}: expected {expected_len}-element envelope, got len {len}"
+                )));
+            }
+            bytes
+                .get(payload_offset..)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| {
+                    DecoderError("ConwayGovPredFailure: payload offset out of bounds".to_string())
+                })
+        };
+        match tag {
+            // Tag 4: typed ProposalDepositIncorrect — Mismatch
+            // RelEQ Coin via ToGroup flattened.
+            4 => {
+                if len != 3 {
+                    return Err(DecoderError(format!(
+                        "ProposalDepositIncorrect: expected 3-element envelope, got len {len}"
+                    )));
+                }
+                let supplied = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("ProposalDepositIncorrect: supplied: {err:?}"))
+                })?;
+                let expected = dec.unsigned().map_err(|err| {
+                    DecoderError(format!("ProposalDepositIncorrect: expected: {err:?}"))
+                })?;
+                Ok(Self::ProposalDepositIncorrect(Mismatch {
+                    relation: MismatchRelation::RelEQ,
+                    supplied,
+                    expected,
+                }))
+            }
+            // Raw variants with various envelope lengths.
+            0 => Ok(Self::GovActionsDoNotExist(capture_raw(
+                "GovActionsDoNotExist",
+                2,
+            )?)),
+            1 => Ok(Self::MalformedProposal(capture_raw(
+                "MalformedProposal",
+                2,
+            )?)),
+            2 => Ok(Self::ProposalProcedureNetworkIdMismatch(capture_raw(
+                "ProposalProcedureNetworkIdMismatch",
+                3,
+            )?)),
+            3 => Ok(Self::TreasuryWithdrawalsNetworkIdMismatch(capture_raw(
+                "TreasuryWithdrawalsNetworkIdMismatch",
+                3,
+            )?)),
+            5 => Ok(Self::DisallowedVoters(capture_raw("DisallowedVoters", 2)?)),
+            6 => Ok(Self::ConflictingCommitteeUpdate(capture_raw(
+                "ConflictingCommitteeUpdate",
+                2,
+            )?)),
+            7 => Ok(Self::ExpirationEpochTooSmall(capture_raw(
+                "ExpirationEpochTooSmall",
+                2,
+            )?)),
+            8 => Ok(Self::InvalidPrevGovActionId(capture_raw(
+                "InvalidPrevGovActionId",
+                2,
+            )?)),
+            9 => Ok(Self::VotingOnExpiredGovAction(capture_raw(
+                "VotingOnExpiredGovAction",
+                2,
+            )?)),
+            10 => Ok(Self::ProposalCantFollow(capture_raw(
+                "ProposalCantFollow",
+                4,
+            )?)),
+            11 => Ok(Self::InvalidGuardrailsScriptHash(capture_raw(
+                "InvalidGuardrailsScriptHash",
+                3,
+            )?)),
+            12 => Ok(Self::DisallowedProposalDuringBootstrap(capture_raw(
+                "DisallowedProposalDuringBootstrap",
+                2,
+            )?)),
+            13 => Ok(Self::DisallowedVotesDuringBootstrap(capture_raw(
+                "DisallowedVotesDuringBootstrap",
+                2,
+            )?)),
+            14 => Ok(Self::VotersDoNotExist(capture_raw("VotersDoNotExist", 2)?)),
+            15 => Ok(Self::ZeroTreasuryWithdrawals(capture_raw(
+                "ZeroTreasuryWithdrawals",
+                2,
+            )?)),
+            16 => Ok(Self::ProposalReturnAccountDoesNotExist(capture_raw(
+                "ProposalReturnAccountDoesNotExist",
+                2,
+            )?)),
+            17 => Ok(Self::TreasuryWithdrawalReturnAccountsDoNotExist(
+                capture_raw("TreasuryWithdrawalReturnAccountsDoNotExist", 2)?,
+            )),
+            18 => Ok(Self::UnelectedCommitteeVoters(capture_raw(
+                "UnelectedCommitteeVoters",
+                2,
+            )?)),
+            other => Err(DecoderError(format!(
+                "ConwayGovPredFailure: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ConwayGovPredFailure {
+    /// Render upstream stock-derived `Show
+    /// (ConwayGovPredFailure era)`. Tag 4 routes through typed
+    /// `Mismatch<CoinShow>`; all other variants emit `<raw-cbor
+    /// N bytes>` until their typed governance-specific decoders
+    /// land.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ProposalDepositIncorrect(mm) => {
+                let typed = Mismatch {
+                    relation: mm.relation,
+                    supplied: CoinShow(mm.supplied),
+                    expected: CoinShow(mm.expected),
+                };
+                write!(f, "ProposalDepositIncorrect ({typed})")
+            }
+            Self::GovActionsDoNotExist(b)
+            | Self::MalformedProposal(b)
+            | Self::ProposalProcedureNetworkIdMismatch(b)
+            | Self::TreasuryWithdrawalsNetworkIdMismatch(b)
+            | Self::DisallowedVoters(b)
+            | Self::ConflictingCommitteeUpdate(b)
+            | Self::ExpirationEpochTooSmall(b)
+            | Self::InvalidPrevGovActionId(b)
+            | Self::VotingOnExpiredGovAction(b)
+            | Self::ProposalCantFollow(b)
+            | Self::InvalidGuardrailsScriptHash(b)
+            | Self::DisallowedProposalDuringBootstrap(b)
+            | Self::DisallowedVotesDuringBootstrap(b)
+            | Self::VotersDoNotExist(b)
+            | Self::ZeroTreasuryWithdrawals(b)
+            | Self::ProposalReturnAccountDoesNotExist(b)
+            | Self::TreasuryWithdrawalReturnAccountsDoNotExist(b)
+            | Self::UnelectedCommitteeVoters(b) => {
+                write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
             }
         }
     }
@@ -5569,6 +5869,65 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ConwayCertsFailure (WithdrawalsNotInRewardsCERTS (Withdrawals {unWithdrawals = fromList []}))"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_proposal_deposit_incorrect_tag4() {
+        // outer [0x83, 0x04, supplied=500, expected=1000] (ToGroup
+        // flattened Mismatch RelEQ Coin)
+        let cbor = [0x83_u8, 0x04, 0x19, 0x01, 0xF4, 0x19, 0x03, 0xE8];
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("ProposalDepositIncorrect");
+        if let ConwayGovPredFailure::ProposalDepositIncorrect(mm) = &f {
+            assert_eq!(mm.relation, MismatchRelation::RelEQ);
+            assert_eq!(mm.supplied, 500);
+            assert_eq!(mm.expected, 1000);
+        } else {
+            panic!("expected ProposalDepositIncorrect, got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ProposalDepositIncorrect (Mismatch (RelEQ) {supplied: Coin 500, expected: Coin 1000})"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_routes_pending_to_raw_tag0() {
+        // tag 0 (GovActionsDoNotExist) — pending GovActionId
+        let cbor = [0x82_u8, 0x00, 0x80];
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("GovActionsDoNotExist");
+        assert_eq!(f.tag(), 0);
+        assert_eq!(f.constructor(), "GovActionsDoNotExist");
+        assert!(
+            f.to_string().starts_with("GovActionsDoNotExist <raw-cbor"),
+            "got: {f}"
+        );
+    }
+
+    #[test]
+    fn conway_ledger_pred_failure_gov_typed_routing_tag3() {
+        // Outer LEDGER [0x82, 0x03, inner-GOV]; inner-GOV
+        // [0x83, 0x04, supplied=100, expected=200] (Mismatch)
+        let cbor = [0x82_u8, 0x03, 0x83, 0x04, 0x18, 100, 0x18, 200];
+        let f = ConwayLedgerPredFailure::from_cbor(&cbor).expect("ConwayGovFailure");
+        if let ConwayLedgerPredFailure::ConwayGovFailure(gov) = &f {
+            assert_eq!(gov.tag(), 4);
+        } else {
+            panic!("expected ConwayGovFailure(_), got {f:?}");
+        }
+        assert_eq!(
+            f.to_string(),
+            "ConwayGovFailure (ProposalDepositIncorrect (Mismatch (RelEQ) {supplied: Coin 100, expected: Coin 200}))"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_unknown_tag_rejects() {
+        let cbor = vec![0x82_u8, 0x18, 99, 0x40];
+        let err = ConwayGovPredFailure::from_cbor(&cbor).expect_err("unknown tag must reject");
+        assert!(
+            err.to_string().contains("unknown variant tag 99"),
+            "got: {err}"
         );
     }
 

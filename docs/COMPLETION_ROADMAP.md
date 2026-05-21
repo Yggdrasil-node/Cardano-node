@@ -705,8 +705,19 @@ added the `ConwayCertsPredFailure` 2-variant scaffold (tag 0
 decoder) and wired
 `ConwayLedgerPredFailure::ConwayCertsFailure(Vec<u8>)` →
 `ConwayCertsFailure(ConwayCertsPredFailure)`. Conway CERTS
-replaces Shelley's DELEGS at the Conway era. Only the GOV
-sub-rule (LEDGER tag 3) remains raw at the LEDGER level.
+replaces Shelley's DELEGS at the Conway era. R626 (2026-05-21)
+added the `ConwayGovPredFailure` 19-variant scaffold (the GOV
+sub-rule, new in Conway for governance actions) and wired
+`ConwayLedgerPredFailure::ConwayGovFailure(Vec<u8>)` →
+`ConwayGovFailure(ConwayGovPredFailure)`. Tag 4
+`ProposalDepositIncorrect` carries a typed `Mismatch<u64>` (Coin
+via ToGroup flattened); the other 18 variants keep raw inner
+CBOR pending typed governance-specific decoders (GovActionId,
+GovAction, Voter, ProposalProcedure, ProtVer, Credential roles,
+StrictMaybe). **All 9 Conway LEDGER root variants now carry
+typed payloads at one level of nesting** — every LEDGER root tag
+has a structurally-typed Rust value (sub-rule payloads at one
+level deeper may still be raw within each sub-rule's variants).
 Phase-2.5+ remaining work: per-variant decoders for those 5 raw
 UTXO variants, `ShelleyDelegsPredFailure` (tag-1 of the LEDGER
 tree), wiring the typed `ShelleyUtxowPredFailure` decoder into
