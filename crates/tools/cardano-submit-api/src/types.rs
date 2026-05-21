@@ -9417,9 +9417,9 @@ pub enum ContextError {
     /// Tag 12: the voting-procedures field is not supported.
     /// Raw.
     VotingProceduresFieldNotSupported(Vec<u8>),
-    /// Tag 13: the proposal-procedures field is not supported.
-    /// Raw.
-    ProposalProceduresFieldNotSupported(Vec<u8>),
+    /// Tag 13: the proposal-procedures field is not supported —
+    /// `OSet (ProposalProcedure era)` (R682 typed).
+    ProposalProceduresFieldNotSupported(Vec<ProposalProcedure>),
     /// Tag 14: the treasury-donation field is not supported —
     /// `Coin` (R681 typed).
     TreasuryDonationFieldNotSupported(u64),
@@ -9473,7 +9473,35 @@ impl ContextError {
                 Ok(Self::CurrentTreasuryFieldNotSupported(coin))
             }
             12 => Ok(Self::VotingProceduresFieldNotSupported(capture_raw(dec)?)),
-            13 => Ok(Self::ProposalProceduresFieldNotSupported(capture_raw(dec)?)),
+            13 => {
+                // OSet (ProposalProcedure era) — an optionally
+                // tag-258-wrapped array of proposal procedures.
+                let major = dec.peek_major().map_err(|err| {
+                    DecoderError(format!(
+                        "ProposalProceduresFieldNotSupported: peek: {err:?}"
+                    ))
+                })?;
+                if major == 6 {
+                    let set_tag = dec.tag().map_err(|err| {
+                        DecoderError(format!("ProposalProceduresFieldNotSupported: tag: {err:?}"))
+                    })?;
+                    if set_tag != 258 {
+                        return Err(DecoderError(format!(
+                            "ProposalProceduresFieldNotSupported: expected tag 258, got {set_tag}"
+                        )));
+                    }
+                }
+                let count = dec.array().map_err(|err| {
+                    DecoderError(format!(
+                        "ProposalProceduresFieldNotSupported: expected array: {err:?}"
+                    ))
+                })?;
+                let mut procedures = Vec::with_capacity(count as usize);
+                for _ in 0..count {
+                    procedures.push(ProposalProcedure::from_decoder(dec, source)?);
+                }
+                Ok(Self::ProposalProceduresFieldNotSupported(procedures))
+            }
             14 => {
                 let coin = dec.unsigned().map_err(|err| {
                     DecoderError(format!(
@@ -9519,12 +9547,17 @@ impl fmt::Display for ContextError {
                     b.len()
                 )
             }
-            Self::ProposalProceduresFieldNotSupported(b) => {
-                write!(
-                    f,
-                    "ProposalProceduresFieldNotSupported <raw-cbor {} bytes>",
-                    b.len()
-                )
+            Self::ProposalProceduresFieldNotSupported(procedures) => {
+                f.write_str("ProposalProceduresFieldNotSupported (fromList [")?;
+                let mut first = true;
+                for procedure in procedures {
+                    if !first {
+                        f.write_str(",")?;
+                    }
+                    first = false;
+                    write!(f, "{procedure}")?;
+                }
+                f.write_str("])")
             }
             Self::TreasuryDonationFieldNotSupported(coin) => {
                 write!(f, "TreasuryDonationFieldNotSupported ({})", CoinShow(*coin))
@@ -13732,6 +13765,47 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ValidationTagMismatch (IsValid False) (FailedUnexpectedly (PlutusFailure \"boom\" <bytestring 3 bytes> :| []))"
+        );
+    }
+
+    #[test]
+    fn context_error_decodes_proposal_procedures_field() {
+        // ContextError tag 13 (ProposalProceduresFieldNotSupported)
+        // — an OSet with one ProposalProcedure.
+        let mut cbor = vec![0x82_u8, 0x0D]; // ContextError [13, ...]
+        cbor.push(0xD9); // tag 258 (set)
+        cbor.push(0x01);
+        cbor.push(0x02);
+        cbor.push(0x81); // array(1)
+        // ProposalProcedure [deposit, returnAddr, GovAction, Anchor]
+        cbor.push(0x84);
+        cbor.extend_from_slice(&[0x19, 0x03, 0xE8]); // deposit 1000
+        cbor.push(0x58); // returnAddr bytes(29)
+        cbor.push(29);
+        cbor.push(0xE1);
+        cbor.extend_from_slice(&[0x2C_u8; 28]);
+        cbor.extend_from_slice(&[0x81, 0x06]); // GovAction InfoAction
+        // Anchor [url, hash32]
+        cbor.push(0x82);
+        cbor.push(0x63);
+        cbor.extend_from_slice(b"u:x");
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x5D_u8; 32]);
+        use yggdrasil_ledger::Decoder;
+        let mut dec = Decoder::new(&cbor);
+        let ctx = ContextError::from_decoder(&mut dec, &cbor).expect("ContextError");
+        if let ContextError::ProposalProceduresFieldNotSupported(procedures) = &ctx {
+            assert_eq!(procedures.len(), 1);
+            assert_eq!(procedures[0].deposit, 1000);
+        } else {
+            panic!("expected ProposalProceduresFieldNotSupported, got {ctx:?}");
+        }
+        assert!(
+            ctx.to_string().starts_with(
+                "ProposalProceduresFieldNotSupported (fromList [ProposalProcedure {pProcDeposit = Coin 1000"
+            ),
+            "got: {ctx}"
         );
     }
 
