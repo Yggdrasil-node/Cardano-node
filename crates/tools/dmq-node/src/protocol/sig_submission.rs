@@ -383,6 +383,19 @@ fn decode_fixed_bytes<const N: usize>(dec: &mut Decoder) -> Result<[u8; N], Ledg
     })
 }
 
+/// Decode a CBOR array header and require it to declare exactly `n`
+/// elements.
+fn expect_array_len(dec: &mut Decoder, n: u64) -> Result<(), LedgerError> {
+    let len = dec.array()?;
+    if len != n {
+        return Err(LedgerError::CborInvalidLength {
+            expected: n as usize,
+            actual: len as usize,
+        });
+    }
+    Ok(())
+}
+
 /// Encode a [`SigOpCertificate`] as a CBOR 4-element array.
 ///
 /// Mirror of upstream `encodeSigOpCertificate`:
@@ -422,6 +435,76 @@ pub fn decode_sig_op_certificate(dec: &mut Decoder) -> Result<SigOpCertificate, 
         kes_period,
         sigma: Signature(sigma),
     }))
+}
+
+/// Encode a [`Sig`] as a CBOR byte string of its cached `SigRaw`
+/// bytes.
+///
+/// Mirror of upstream `encodeSig = encodeBytes . sigRawBytes` — a
+/// `Sig` carries the already-encoded `SigRaw`; encoding wraps those
+/// bytes in a CBOR byte string.
+pub fn encode_sig(sig: &Sig, enc: &mut Encoder) {
+    enc.bytes(&sig.sig_raw_bytes);
+}
+
+/// Encode a [`SigRaw`] as the CBOR 4-element array `decodeSig` parses.
+///
+/// Mirror of the structure upstream `decodeSig` decodes: a 4-element
+/// array `[payload, kesSignature, opCertificate, coldKey]` where
+/// `payload` is itself the 4-element array
+/// `[sigId, sigBody, kesPeriod, expiresAt]` — the bytes the KES key
+/// signs. The KES signature and cold key encode as CBOR byte strings
+/// (`encodeSigKES` / `encodeVerKeyDSIGN`).
+pub fn encode_sig_raw(raw: &SigRaw, enc: &mut Encoder) {
+    enc.array(4);
+    // [0] payload — the signed sub-array.
+    enc.array(4);
+    encode_sig_id(&raw.sig_raw_id, enc);
+    enc.bytes(raw.sig_raw_body.get());
+    enc.unsigned(raw.sig_raw_kes_period);
+    enc.unsigned(u64::from(raw.sig_raw_expires_at.0));
+    // [1] KES signature.
+    enc.bytes(&raw.sig_raw_kes_signature.0.0);
+    // [2] operational certificate.
+    encode_sig_op_certificate(&raw.sig_raw_op_certificate, enc);
+    // [3] cold key.
+    enc.bytes(&raw.sig_raw_cold_key.0.0);
+}
+
+/// Decode a [`SigRaw`] from the CBOR 4-element array.
+///
+/// Mirror of the structure upstream `decodeSig` parses — without the
+/// `sigRawSignedBytes` byte-offset capture, which the (later)
+/// `Sig`-level decoder adds.
+pub fn decode_sig_raw(dec: &mut Decoder) -> Result<SigRaw, LedgerError> {
+    expect_array_len(dec, 4)?;
+    // [0] payload.
+    expect_array_len(dec, 4)?;
+    let sig_raw_id = decode_sig_id(dec)?;
+    let sig_raw_body = SigBody(dec.bytes_owned()?);
+    let sig_raw_kes_period = dec.unsigned()?;
+    let expires = dec.unsigned()?;
+    let sig_raw_expires_at =
+        PosixTime(
+            u32::try_from(expires).map_err(|_| LedgerError::ValueOverflow {
+                site: "SigRaw.expiresAt",
+            })?,
+        );
+    // [1] KES signature.
+    let sig_raw_kes_signature = SigKesSignature(KesSignature(decode_fixed_bytes::<64>(dec)?));
+    // [2] operational certificate.
+    let sig_raw_op_certificate = decode_sig_op_certificate(dec)?;
+    // [3] cold key.
+    let sig_raw_cold_key = SigColdKey(VerificationKey(decode_fixed_bytes::<32>(dec)?));
+    Ok(SigRaw {
+        sig_raw_id,
+        sig_raw_body,
+        sig_raw_kes_period,
+        sig_raw_op_certificate,
+        sig_raw_cold_key,
+        sig_raw_expires_at,
+        sig_raw_kes_signature,
+    })
 }
 
 #[cfg(test)]
@@ -638,6 +721,34 @@ mod tests {
         let mut dec = Decoder::new(&encoded);
         let decoded = decode_sig_op_certificate(&mut dec).expect("decodes");
         assert_eq!(decoded, cert);
+    }
+
+    #[test]
+    fn sig_raw_codec_round_trips() {
+        let raw = sample_sig_raw();
+        let mut enc = Encoder::new();
+        encode_sig_raw(&raw, &mut enc);
+        let encoded = enc.into_bytes();
+        // Outer CBOR definite-length array of 4.
+        assert_eq!(encoded[0], 0x84);
+        let mut dec = Decoder::new(&encoded);
+        let decoded = decode_sig_raw(&mut dec).expect("decodes");
+        assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn encode_sig_emits_cached_sig_raw_bytes_as_byte_string() {
+        let sig = Sig {
+            sig_raw_bytes: vec![0x01, 0x02, 0x03],
+            sig_raw_with_signed_bytes: SigRawWithSignedBytes {
+                sig_raw_signed_bytes: vec![0xDE],
+                sig_raw: sample_sig_raw(),
+            },
+        };
+        let mut enc = Encoder::new();
+        encode_sig(&sig, &mut enc);
+        // CBOR byte string of length 3 → 0x43, then the cached bytes.
+        assert_eq!(enc.into_bytes(), vec![0x43, 0x01, 0x02, 0x03]);
     }
 
     #[test]
