@@ -3082,8 +3082,12 @@ pub enum GovAction {
     },
     /// Tag 2: treasury withdrawals proposal. Raw payload.
     TreasuryWithdrawals(Vec<u8>),
-    /// Tag 3: no-confidence motion. Raw payload.
-    NoConfidence(Vec<u8>),
+    /// Tag 3: no-confidence motion (R669 typed) — `StrictMaybe
+    /// (GovPurposeId 'CommitteePurpose)`.
+    NoConfidence {
+        /// The previous committee governance action, if any.
+        prev: Option<GovActionId>,
+    },
     /// Tag 4: constitutional-committee update. Raw payload.
     UpdateCommittee(Vec<u8>),
     /// Tag 5: new-constitution proposal. Raw payload.
@@ -3099,7 +3103,7 @@ impl GovAction {
             Self::ParameterChange(_) => 0,
             Self::HardForkInitiation { .. } => 1,
             Self::TreasuryWithdrawals(_) => 2,
-            Self::NoConfidence(_) => 3,
+            Self::NoConfidence { .. } => 3,
             Self::UpdateCommittee(_) => 4,
             Self::NewConstitution(_) => 5,
             Self::InfoAction => 6,
@@ -3112,7 +3116,7 @@ impl GovAction {
             Self::ParameterChange(_) => "ParameterChange",
             Self::HardForkInitiation { .. } => "HardForkInitiation",
             Self::TreasuryWithdrawals(_) => "TreasuryWithdrawals",
-            Self::NoConfidence(_) => "NoConfidence",
+            Self::NoConfidence { .. } => "NoConfidence",
             Self::UpdateCommittee(_) => "UpdateCommittee",
             Self::NewConstitution(_) => "NewConstitution",
             Self::InfoAction => "InfoAction",
@@ -3162,6 +3166,18 @@ impl GovAction {
             let protver = ProtVer::from_decoder(dec)?;
             return Ok(Self::HardForkInitiation { prev, protver });
         }
+        if tag == 3 {
+            // NoConfidence — `[3, decodeNullStrictMaybe
+            // GovPurposeId]`.
+            if len != 2 {
+                return Err(DecoderError(format!(
+                    "NoConfidence: expected 2-element envelope, got len {len}"
+                )));
+            }
+            let prev =
+                decode_null_strict_maybe(dec, "NoConfidence prev", GovActionId::from_decoder)?;
+            return Ok(Self::NoConfidence { prev });
+        }
         // Skip the remaining payload elements to advance the
         // decoder, then capture them raw by byte range.
         let payload_start = dec.position();
@@ -3177,7 +3193,6 @@ impl GovAction {
         match tag {
             0 => Ok(Self::ParameterChange(raw)),
             2 => Ok(Self::TreasuryWithdrawals(raw)),
-            3 => Ok(Self::NoConfidence(raw)),
             4 => Ok(Self::UpdateCommittee(raw)),
             5 => Ok(Self::NewConstitution(raw)),
             other => Err(DecoderError(format!(
@@ -3203,9 +3218,17 @@ impl fmt::Display for GovAction {
                 };
                 write!(f, "HardForkInitiation ({prev_render}) ({protver})")
             }
+            Self::NoConfidence { prev } => {
+                let prev_render = match prev {
+                    None => "SNothing".to_string(),
+                    Some(gaid) => {
+                        format!("SJust (GovPurposeId {{unGovPurposeId = {gaid}}})")
+                    }
+                };
+                write!(f, "NoConfidence ({prev_render})")
+            }
             Self::ParameterChange(b)
             | Self::TreasuryWithdrawals(b)
-            | Self::NoConfidence(b)
             | Self::UpdateCommittee(b)
             | Self::NewConstitution(b) => {
                 write!(f, "{} <raw-cbor {} bytes>", self.constructor(), b.len())
@@ -11612,6 +11635,32 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "MalformedProposal (HardForkInitiation (SNothing) (ProtVer {pvMajor = 10, pvMinor = 0}))"
+        );
+    }
+
+    #[test]
+    fn conway_gov_pred_failure_malformed_proposal_no_confidence() {
+        // MalformedProposal carrying a GovAction NoConfidence —
+        // `[3, SJust GovActionId]`.
+        let mut cbor = vec![0x82_u8, 0x01, 0x82, 0x03];
+        // prev = SJust GovActionId [txid32, ix=2]
+        cbor.push(0x82);
+        cbor.push(0x58);
+        cbor.push(32);
+        cbor.extend_from_slice(&[0x71_u8; 32]);
+        cbor.push(0x02);
+        let f = ConwayGovPredFailure::from_cbor(&cbor).expect("MalformedProposal");
+        if let ConwayGovPredFailure::MalformedProposal(GovAction::NoConfidence { prev }) = &f {
+            let gaid = prev.as_ref().expect("SJust prev");
+            assert_eq!(gaid.gov_action_ix, 2);
+        } else {
+            panic!("expected MalformedProposal NoConfidence, got {f:?}");
+        }
+        assert!(
+            f.to_string().starts_with(
+                "MalformedProposal (NoConfidence (SJust (GovPurposeId {unGovPurposeId = GovActionId"
+            ),
+            "got: {f}"
         );
     }
 
