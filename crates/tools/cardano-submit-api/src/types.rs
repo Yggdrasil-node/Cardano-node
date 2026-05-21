@@ -9376,11 +9376,7 @@ impl fmt::Display for Language {
 /// error from `Cardano.Ledger.Alonzo.Plutus.Context`. 4-variant
 /// sum encoded via CBOR `Sum` tags 0-3.
 ///
-/// R654 ships the scaffold: tag 1 (`NoWitness` — `ScriptHash`)
-/// and tag 2 (`NoCostModel` — `Language`) carry typed payloads;
-/// tags 0 (`NoRedeemer` — `PlutusPurpose AsItem`) and 3
-/// (`BadTranslation` — era-specific `ContextError`) keep raw
-/// inner CBOR pending those decoder ports.
+/// All four variants carry typed payloads (R654/R674/R681).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CollectError {
     /// Tag 0: no redeemer for a Plutus script purpose —
@@ -9392,9 +9388,152 @@ pub enum CollectError {
     /// Tag 2: no cost model for a Plutus language — `Language`
     /// (R654 typed).
     NoCostModel(Language),
-    /// Tag 3: Plutus script-context translation failure. Raw
-    /// payload pending the era-specific `ContextError` decoder.
-    BadTranslation(Vec<u8>),
+    /// Tag 3: Plutus script-context translation failure —
+    /// `ContextError` (R681 typed).
+    BadTranslation(ContextError),
+}
+
+/// `ContextError` mirror — a Conway-era Plutus script-context
+/// translation error (`data ConwayContextError era` from
+/// `Cardano.Ledger.Conway.TxInfo`). CBOR `Sum` tags 8-15.
+///
+/// R681 ships the scaffold: tags 9/10/11/14/15 carry typed
+/// payloads (TxCert, PlutusPurpose AsItem, Coin, Coin, NonEmpty
+/// TxIn); tags 8/12/13 (`BabbageContextError`, voting/proposal
+/// procedure fields) keep raw inner CBOR.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContextError {
+    /// Tag 8: an inherited Babbage-era context error. Raw.
+    BabbageContextError(Vec<u8>),
+    /// Tag 9: a certificate not supported in the script context
+    /// — `TxCert` (R681 typed).
+    CertificateNotSupported(TxCert),
+    /// Tag 10: a Plutus purpose not supported in the script
+    /// context — `PlutusPurpose AsItem` (R681 typed).
+    PlutusPurposeNotSupported(ConwayPlutusPurposeItem),
+    /// Tag 11: the current-treasury field is not supported —
+    /// `Coin` (R681 typed).
+    CurrentTreasuryFieldNotSupported(u64),
+    /// Tag 12: the voting-procedures field is not supported.
+    /// Raw.
+    VotingProceduresFieldNotSupported(Vec<u8>),
+    /// Tag 13: the proposal-procedures field is not supported.
+    /// Raw.
+    ProposalProceduresFieldNotSupported(Vec<u8>),
+    /// Tag 14: the treasury-donation field is not supported —
+    /// `Coin` (R681 typed).
+    TreasuryDonationFieldNotSupported(u64),
+    /// Tag 15: reference inputs not disjoint from inputs —
+    /// `NonEmpty TxIn` (R681 typed).
+    ReferenceInputsNotDisjointFromInputs(NonEmptyTxIn),
+}
+
+impl ContextError {
+    /// Decode a `ContextError` from its CBOR `Sum` envelope
+    /// `[tag, payload]` (tags 8-15).
+    fn from_decoder(
+        dec: &mut yggdrasil_ledger::Decoder<'_>,
+        source: &[u8],
+    ) -> Result<Self, DecoderError> {
+        let len = dec
+            .array()
+            .map_err(|err| DecoderError(format!("ContextError: expected Sum array: {err:?}")))?;
+        if len != 2 {
+            return Err(DecoderError(format!(
+                "ContextError: expected 2-element envelope, got len {len}"
+            )));
+        }
+        let tag = dec
+            .unsigned()
+            .map_err(|err| DecoderError(format!("ContextError: expected Word8 tag: {err:?}")))?;
+        // Capture the single payload element raw (for the
+        // not-yet-typed variants).
+        let capture_raw =
+            |dec: &mut yggdrasil_ledger::Decoder<'_>| -> Result<Vec<u8>, DecoderError> {
+                let start = dec.position();
+                dec.skip()
+                    .map_err(|err| DecoderError(format!("ContextError: payload skip: {err:?}")))?;
+                let end = dec.position();
+                source.get(start..end).map(<[u8]>::to_vec).ok_or_else(|| {
+                    DecoderError("ContextError: payload byte range out of bounds".to_string())
+                })
+            };
+        match tag {
+            8 => Ok(Self::BabbageContextError(capture_raw(dec)?)),
+            9 => Ok(Self::CertificateNotSupported(TxCert::from_decoder(dec)?)),
+            10 => Ok(Self::PlutusPurposeNotSupported(
+                ConwayPlutusPurposeItem::from_decoder(dec, source)?,
+            )),
+            11 => {
+                let coin = dec.unsigned().map_err(|err| {
+                    DecoderError(format!(
+                        "CurrentTreasuryFieldNotSupported: expected Coin: {err:?}"
+                    ))
+                })?;
+                Ok(Self::CurrentTreasuryFieldNotSupported(coin))
+            }
+            12 => Ok(Self::VotingProceduresFieldNotSupported(capture_raw(dec)?)),
+            13 => Ok(Self::ProposalProceduresFieldNotSupported(capture_raw(dec)?)),
+            14 => {
+                let coin = dec.unsigned().map_err(|err| {
+                    DecoderError(format!(
+                        "TreasuryDonationFieldNotSupported: expected Coin: {err:?}"
+                    ))
+                })?;
+                Ok(Self::TreasuryDonationFieldNotSupported(coin))
+            }
+            15 => {
+                let payload = source.get(dec.position()..).ok_or_else(|| {
+                    DecoderError("ContextError: payload offset out of bounds".to_string())
+                })?;
+                Ok(Self::ReferenceInputsNotDisjointFromInputs(
+                    NonEmptyTxIn::from_cbor(payload)?,
+                ))
+            }
+            other => Err(DecoderError(format!(
+                "ContextError: unknown variant tag {other}"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for ContextError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BabbageContextError(b) => {
+                write!(f, "BabbageContextError <raw-cbor {} bytes>", b.len())
+            }
+            Self::CertificateNotSupported(cert) => {
+                write!(f, "CertificateNotSupported ({cert})")
+            }
+            Self::PlutusPurposeNotSupported(purpose) => {
+                write!(f, "PlutusPurposeNotSupported ({purpose})")
+            }
+            Self::CurrentTreasuryFieldNotSupported(coin) => {
+                write!(f, "CurrentTreasuryFieldNotSupported ({})", CoinShow(*coin))
+            }
+            Self::VotingProceduresFieldNotSupported(b) => {
+                write!(
+                    f,
+                    "VotingProceduresFieldNotSupported <raw-cbor {} bytes>",
+                    b.len()
+                )
+            }
+            Self::ProposalProceduresFieldNotSupported(b) => {
+                write!(
+                    f,
+                    "ProposalProceduresFieldNotSupported <raw-cbor {} bytes>",
+                    b.len()
+                )
+            }
+            Self::TreasuryDonationFieldNotSupported(coin) => {
+                write!(f, "TreasuryDonationFieldNotSupported ({})", CoinShow(*coin))
+            }
+            Self::ReferenceInputsNotDisjointFromInputs(ins) => {
+                write!(f, "ReferenceInputsNotDisjointFromInputs ({ins})")
+            }
+        }
+    }
 }
 
 impl CollectError {
@@ -9452,19 +9591,9 @@ impl CollectError {
             0 => Ok(Self::NoRedeemer(ConwayPlutusPurposeItem::from_decoder(
                 dec, source,
             )?)),
-            3 => {
-                let payload_start = dec.position();
-                dec.skip()
-                    .map_err(|err| DecoderError(format!("CollectError: payload skip: {err:?}")))?;
-                let payload_end = dec.position();
-                let raw = source
-                    .get(payload_start..payload_end)
-                    .ok_or_else(|| {
-                        DecoderError("CollectError: payload byte range out of bounds".to_string())
-                    })?
-                    .to_vec();
-                Ok(Self::BadTranslation(raw))
-            }
+            3 => Ok(Self::BadTranslation(ContextError::from_decoder(
+                dec, source,
+            )?)),
             other => Err(DecoderError(format!(
                 "CollectError: unknown variant tag {other}"
             ))),
@@ -9476,9 +9605,7 @@ impl fmt::Display for CollectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoRedeemer(purpose) => write!(f, "NoRedeemer ({purpose})"),
-            Self::BadTranslation(b) => {
-                write!(f, "BadTranslation <raw-cbor {} bytes>", b.len())
-            }
+            Self::BadTranslation(ctx) => write!(f, "BadTranslation ({ctx})"),
             Self::NoWitness(hash) => write!(f, "NoWitness ({hash})"),
             Self::NoCostModel(lang) => write!(f, "NoCostModel {lang}"),
         }
@@ -13605,6 +13732,35 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "ValidationTagMismatch (IsValid False) (FailedUnexpectedly (PlutusFailure \"boom\" <bytestring 3 bytes> :| []))"
+        );
+    }
+
+    #[test]
+    fn conway_utxos_pred_failure_collect_errors_bad_translation() {
+        // CollectErrors carrying a BadTranslation whose
+        // ContextError is tag 11 (CurrentTreasuryFieldNotSupported
+        // — a Coin).
+        let cbor = [
+            0x82_u8, 0x01, // ConwayUtxosPredFailure CollectErrors
+            0x81, // NonEmpty array(1)
+            0x82, 0x03, // CollectError [3, ...] (BadTranslation)
+            0x82, 0x0B, 0x19, 0x03, 0xE8, // ContextError [11, Coin 1000]
+        ];
+        let f = ConwayUtxosPredFailure::from_cbor(&cbor).expect("CollectErrors");
+        if let ConwayUtxosPredFailure::CollectErrors(errors) = &f {
+            match &errors.entries[0] {
+                CollectError::BadTranslation(ContextError::CurrentTreasuryFieldNotSupported(
+                    coin,
+                )) => assert_eq!(*coin, 1000),
+                other => panic!("expected BadTranslation treasury, got {other:?}"),
+            }
+        } else {
+            panic!("expected CollectErrors, got {f:?}");
+        }
+        assert!(
+            f.to_string()
+                .contains("BadTranslation (CurrentTreasuryFieldNotSupported (Coin 1000))"),
+            "got: {f}"
         );
     }
 
